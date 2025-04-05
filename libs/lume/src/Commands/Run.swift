@@ -6,37 +6,51 @@ struct Run: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         abstract: "Run a virtual machine"
     )
-    
-    @Argument(help: "Name of the virtual machine or image to pull and run (format: name or name:tag)", completion: .custom(completeVMName))
+
+    @Argument(
+        help: "Name of the virtual machine or image to pull and run (format: name or name:tag)",
+        completion: .custom(completeVMName))
     var name: String
-    
+
     @Flag(name: [.short, .long], help: "Do not start the VNC client")
     var noDisplay: Bool = false
-    
-    @Option(name: [.customLong("shared-dir")], help: "Directory to share with the VM. Can be just a path for read-write access (e.g. ~/src) or path:tag where tag is 'ro' for read-only or 'rw' for read-write (e.g. ~/src:ro)")
+
+    @Option(
+        name: [.customLong("shared-dir")],
+        help:
+            "Directory to share with the VM. Can be just a path for read-write access (e.g. ~/src) or path:tag where tag is 'ro' for read-only or 'rw' for read-write (e.g. ~/src:ro)"
+    )
     var sharedDirectories: [String] = []
 
-    @Option(help: "For Linux VMs only, a read-only disk image to attach to the VM (e.g. --mount=\"ubuntu.iso\")", completion: .file())
-    var mount: Path?
-    
+    @Option(
+        help:
+            "For Linux VMs only, a read-only disk image to attach to the VM (e.g. --mount=\"ubuntu.iso\")",
+        completion: .file())
+    var mount: String?
+
     @Option(help: "Github Container Registry to pull the images from. Defaults to ghcr.io")
     var registry: String = "ghcr.io"
 
     @Option(help: "Organization to pull the images from. Defaults to trycua")
     var organization: String = "trycua"
-    
-    @Option(name: [.customLong("vnc-port")], help: "Port to use for the VNC server. Defaults to 0 (auto-assign)")
+
+    @Option(
+        name: [.customLong("vnc-port")],
+        help: "Port to use for the VNC server. Defaults to 0 (auto-assign)")
     var vncPort: Int = 0
 
     @Option(help: "For MacOS VMs only, boot into the VM in recovery mode")
     var recoveryMode: Bool = false
+
+    @Option(name: .customLong("location"), help: "VM location to use")
+    var location: String?
 
     private var parsedSharedDirectories: [SharedDirectory] {
         get throws {
             try sharedDirectories.map { dirString -> SharedDirectory in
                 let components = dirString.split(separator: ":", maxSplits: 1)
                 let hostPath = String(components[0])
-                
+
                 // If no tag is provided, default to read-write
                 if components.count == 1 {
                     return SharedDirectory(
@@ -45,7 +59,7 @@ struct Run: AsyncParsableCommand {
                         readOnly: false
                     )
                 }
-                
+
                 // Parse the tag if provided
                 let tag = String(components[1])
                 let readOnly: Bool
@@ -55,9 +69,11 @@ struct Run: AsyncParsableCommand {
                 case "rw":
                     readOnly = false
                 default:
-                    throw ValidationError("Invalid tag value. Must be either 'ro' for read-only or 'rw' for read-write")
+                    throw ValidationError(
+                        "Invalid tag value. Must be either 'ro' for read-only or 'rw' for read-write"
+                    )
                 }
-                
+
                 return SharedDirectory(
                     hostPath: hostPath,
                     tag: VZVirtioFileSystemDeviceConfiguration.macOSGuestAutomountTag,
@@ -66,24 +82,22 @@ struct Run: AsyncParsableCommand {
             }
         }
     }
-    
+
     init() {
     }
 
     @MainActor
     func run() async throws {
-        let vmController = LumeController()
-        let dirs = try parsedSharedDirectories
-        
-        try await vmController.runVM(
+        try await LumeController().runVM(
             name: name,
             noDisplay: noDisplay,
-            sharedDirectories: dirs,
-            mount: mount,
+            sharedDirectories: parsedSharedDirectories,
+            mount: mount.map { Path($0) },
             registry: registry,
             organization: organization,
             vncPort: vncPort,
-            recoveryMode: recoveryMode
+            recoveryMode: recoveryMode,
+            locationName: location
         )
     }
 }

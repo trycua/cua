@@ -8,17 +8,17 @@ import Virtualization
 final class SharedVM {
     static let shared: SharedVM = SharedVM()
     private var runningVMs: [String: VM] = [:]
-    
+
     private init() {}
-    
+
     func getVM(name: String) -> VM? {
         return runningVMs[name]
     }
-    
+
     func setVM(name: String, vm: VM) {
         runningVMs[name] = vm
     }
-    
+
     func removeVM(name: String) {
         runningVMs.removeValue(forKey: name)
     }
@@ -50,8 +50,10 @@ final class LumeController {
     @MainActor
     public func list() throws -> [VMDetails] {
         do {
-            let statuses = try home.getAllVMDirectories().map { directory in
-                let vm = try self.get(name: directory.name)
+            let vmLocations = try home.getAllVMDirectories()
+            let statuses = try vmLocations.map { vmWithLoc in
+                let vm = try self.get(
+                    name: vmWithLoc.directory.name, locationName: vmWithLoc.locationName)
                 return vm.details
             }
             return statuses
@@ -62,22 +64,38 @@ final class LumeController {
     }
 
     @MainActor
-    public func clone(name: String, newName: String) throws {
+    public func clone(
+        name: String, newName: String, sourceLocation: String? = nil, destLocation: String? = nil
+    ) throws {
         let normalizedName = normalizeVMName(name: name)
         let normalizedNewName = normalizeVMName(name: newName)
-        Logger.info("Cloning VM", metadata: ["source": normalizedName, "destination": normalizedNewName])
+        Logger.info(
+            "Cloning VM",
+            metadata: [
+                "source": normalizedName,
+                "destination": normalizedNewName,
+                "sourceLocation": sourceLocation ?? "default",
+                "destLocation": destLocation ?? "default",
+            ])
 
         do {
-            try self.validateVMExists(normalizedName)
-            
+            try self.validateVMExists(normalizedName, locationName: sourceLocation)
+
             // Copy the VM directory
-            try home.copyVMDirectory(from: normalizedName, to: normalizedNewName)
-            
+            try home.copyVMDirectory(
+                from: normalizedName,
+                to: normalizedNewName,
+                sourceLocation: sourceLocation,
+                destLocation: destLocation
+            )
+
             // Update MAC address in the cloned VM to ensure uniqueness
-            let clonedVM = try get(name: normalizedNewName)
+            let clonedVM = try get(name: normalizedNewName, locationName: destLocation)
             try clonedVM.setMacAddress(VZMACAddress.randomLocallyAdministered().string)
-            
-            Logger.info("VM cloned successfully", metadata: ["source": normalizedName, "destination": normalizedNewName])
+
+            Logger.info(
+                "VM cloned successfully",
+                metadata: ["source": normalizedName, "destination": normalizedNewName])
         } catch {
             Logger.error("Failed to clone VM", metadata: ["error": error.localizedDescription])
             throw error
@@ -85,12 +103,12 @@ final class LumeController {
     }
 
     @MainActor
-    public func get(name: String) throws -> VM {
+    public func get(name: String, locationName: String? = nil) throws -> VM {
         let normalizedName = normalizeVMName(name: name)
         do {
-            try self.validateVMExists(normalizedName)
+            try self.validateVMExists(normalizedName, locationName: locationName)
 
-            let vm = try self.loadVM(name: normalizedName)
+            let vm = try self.loadVM(name: normalizedName, locationName: locationName)
             return vm
         } catch {
             Logger.error("Failed to get VM", metadata: ["error": error.localizedDescription])
@@ -107,13 +125,15 @@ final class LumeController {
         cpuCount: Int,
         memorySize: UInt64,
         display: String,
-        ipsw: String?
+        ipsw: String?,
+        locationName: String? = nil
     ) async throws {
         Logger.info(
             "Creating VM",
             metadata: [
                 "name": name,
                 "os": os,
+                "location": locationName ?? "default",
                 "disk_size": "\(diskSize / 1024 / 1024)MB",
                 "cpu_count": "\(cpuCount)",
                 "memory_size": "\(memorySize / 1024 / 1024)MB",
@@ -122,7 +142,7 @@ final class LumeController {
             ])
 
         do {
-            try validateCreateParameters(name: name, os: os, ipsw: ipsw)
+            try validateCreateParameters(name: name, os: os, ipsw: ipsw, locationName: locationName)
 
             let vm = try await createTempVMConfig(
                 os: os,
@@ -140,7 +160,7 @@ final class LumeController {
                 display: display
             )
 
-            try vm.finalize(to: name, home: home)
+            try vm.finalize(to: name, home: home, locationName: locationName)
 
             Logger.info("VM created successfully", metadata: ["name": name])
         } catch {
@@ -150,19 +170,24 @@ final class LumeController {
     }
 
     @MainActor
-    public func delete(name: String) async throws {
+    public func delete(name: String, locationName: String? = nil) async throws {
         let normalizedName = normalizeVMName(name: name)
-        Logger.info("Deleting VM", metadata: ["name": normalizedName])
+        Logger.info(
+            "Deleting VM",
+            metadata: [
+                "name": normalizedName,
+                "location": locationName ?? "default",
+            ])
 
         do {
-            try self.validateVMExists(normalizedName)
+            try self.validateVMExists(normalizedName, locationName: locationName)
 
             // Stop VM if it's running
             if SharedVM.shared.getVM(name: normalizedName) != nil {
                 try await stopVM(name: normalizedName)
             }
 
-            let vmDir = home.getVMDirectory(normalizedName)
+            let vmDir = try home.getVMDirectory(normalizedName, locationName: locationName)
             try vmDir.delete()
 
             Logger.info("VM deleted successfully", metadata: ["name": normalizedName])
@@ -181,22 +206,24 @@ final class LumeController {
         cpu: Int? = nil,
         memory: UInt64? = nil,
         diskSize: UInt64? = nil,
-        display: String? = nil
+        display: String? = nil,
+        locationName: String? = nil
     ) throws {
         let normalizedName = normalizeVMName(name: name)
         Logger.info(
             "Updating VM settings",
             metadata: [
                 "name": normalizedName,
+                "location": locationName ?? "default",
                 "cpu": cpu.map { "\($0)" } ?? "unchanged",
                 "memory": memory.map { "\($0 / 1024 / 1024)MB" } ?? "unchanged",
                 "disk_size": diskSize.map { "\($0 / 1024 / 1024)MB" } ?? "unchanged",
                 "display": display ?? "unchanged",
             ])
         do {
-            try self.validateVMExists(normalizedName)
+            try self.validateVMExists(normalizedName, locationName: locationName)
 
-            let vm = try get(name: normalizedName)
+            let vm = try get(name: normalizedName, locationName: locationName)
 
             // Apply settings in order
             if let cpu = cpu {
@@ -257,15 +284,18 @@ final class LumeController {
         registry: String = "ghcr.io",
         organization: String = "trycua",
         vncPort: Int = 0,
-        recoveryMode: Bool = false
+        recoveryMode: Bool = false,
+        locationName: String? = nil
     ) async throws {
         let normalizedName = normalizeVMName(name: name)
         Logger.info(
             "Running VM",
             metadata: [
                 "name": normalizedName,
+                "location": locationName ?? "default",
                 "no_display": "\(noDisplay)",
-                "shared_directories": "\(sharedDirectories.map( { $0.string } ).joined(separator: ", "))",
+                "shared_directories":
+                    "\(sharedDirectories.map( { $0.string } ).joined(separator: ", "))",
                 "mount": mount?.path ?? "none",
                 "vnc_port": "\(vncPort)",
                 "recovery_mode": "\(recoveryMode)",
@@ -276,19 +306,31 @@ final class LumeController {
             let components = name.split(separator: ":")
             if components.count == 2 {
                 do {
-                    try self.validateVMExists(normalizedName)
+                    try self.validateVMExists(normalizedName, locationName: locationName)
                 } catch {
                     // If the VM doesn't exist, try to pull the image
-                    try await pullImage(image: name, name: nil, registry: registry, organization: organization)
+                    try await pullImage(
+                        image: name,
+                        name: nil,
+                        registry: registry,
+                        organization: organization,
+                        locationName: locationName
+                    )
                 }
             }
 
             try validateRunParameters(
-                name: normalizedName, sharedDirectories: sharedDirectories, mount: mount)
+                name: normalizedName,
+                sharedDirectories: sharedDirectories,
+                mount: mount,
+                locationName: locationName
+            )
 
-            let vm = try get(name: normalizedName)
+            let vm = try get(name: normalizedName, locationName: locationName)
             SharedVM.shared.setVM(name: normalizedName, vm: vm)
-            try await vm.run(noDisplay: noDisplay, sharedDirectories: sharedDirectories, mount: mount, vncPort: vncPort, recoveryMode: recoveryMode)
+            try await vm.run(
+                noDisplay: noDisplay, sharedDirectories: sharedDirectories, mount: mount,
+                vncPort: vncPort, recoveryMode: recoveryMode)
             Logger.info("VM started successfully", metadata: ["name": normalizedName])
         } catch {
             SharedVM.shared.removeVM(name: normalizedName)
@@ -316,9 +358,13 @@ final class LumeController {
     }
 
     @MainActor
-    public func pullImage(image: String, name: String?, registry: String, organization: String, noCache: Bool = false)
-        async throws
-    {
+    public func pullImage(
+        image: String,
+        name: String?,
+        registry: String,
+        organization: String,
+        locationName: String? = nil
+    ) async throws {
         do {
             let vmName: String = name ?? normalizeVMName(name: image)
 
@@ -329,19 +375,31 @@ final class LumeController {
                     "name": name ?? "default",
                     "registry": registry,
                     "organization": organization,
+                    "location": locationName ?? "default",
                 ])
 
             try self.validatePullParameters(
-                image: image, name: vmName, registry: registry, organization: organization)
+                image: image,
+                name: vmName,
+                registry: registry,
+                organization: organization,
+                locationName: locationName
+            )
 
             let imageContainerRegistry = ImageContainerRegistry(
                 registry: registry, organization: organization)
-            try await imageContainerRegistry.pull(image: image, name: vmName, noCache: noCache)
+            try await imageContainerRegistry.pull(
+                image: image, name: vmName, locationName: locationName)
 
-            Logger.info("Setting new VM mac address")
+            Logger.info(
+                "Setting new VM mac address",
+                metadata: [
+                    "vm_name": vmName,
+                    "location": locationName ?? "default",
+                ])
 
             // Update MAC address in the cloned VM to ensure uniqueness
-            let vm = try get(name: vmName)
+            let vm = try get(name: vmName, locationName: locationName)
             try vm.setMacAddress(VZMACAddress.randomLocallyAdministered().string)
 
             Logger.info(
@@ -351,6 +409,7 @@ final class LumeController {
                     "name": vmName,
                     "registry": registry,
                     "organization": organization,
+                    "location": locationName ?? "default",
                 ])
         } catch {
             Logger.error("Failed to pull image", metadata: ["error": error.localizedDescription])
@@ -361,14 +420,17 @@ final class LumeController {
     @MainActor
     public func pruneImages() async throws {
         Logger.info("Pruning cached images")
-        
+
         do {
-            let home = FileManager.default.homeDirectoryForCurrentUser
-            let cacheDir = home.appendingPathComponent(".lume/cache/ghcr")
-            
-            if FileManager.default.fileExists(atPath: cacheDir.path) {
-                try FileManager.default.removeItem(at: cacheDir)
-                try FileManager.default.createDirectory(at: cacheDir, withIntermediateDirectories: true)
+            // Use configured cache directory
+            let cacheDir = (SettingsManager.shared.getCacheDirectory() as NSString)
+                .expandingTildeInPath
+            let ghcrDir = URL(fileURLWithPath: cacheDir).appendingPathComponent("ghcr")
+
+            if FileManager.default.fileExists(atPath: ghcrDir.path) {
+                try FileManager.default.removeItem(at: ghcrDir)
+                try FileManager.default.createDirectory(
+                    at: ghcrDir, withIntermediateDirectories: true)
                 Logger.info("Successfully removed cached images")
             } else {
                 Logger.info("No cached images found")
@@ -392,19 +454,80 @@ final class LumeController {
     @MainActor
     public func getImages(organization: String = "trycua") async throws -> ImageList {
         Logger.info("Listing local images", metadata: ["organization": organization])
-        
-        let imageContainerRegistry = ImageContainerRegistry(registry: "ghcr.io", organization: organization)
+
+        let imageContainerRegistry = ImageContainerRegistry(
+            registry: "ghcr.io", organization: organization)
         let cachedImages = try await imageContainerRegistry.getImages()
-        
+
         let imageInfos = cachedImages.map { image in
             ImageInfo(
                 repository: image.repository,
                 imageId: String(image.manifestId.prefix(12))
             )
         }
-        
+
         ImagesPrinter.print(images: imageInfos.map { "\($0.repository):\($0.imageId)" })
         return ImageList(local: imageInfos, remote: [])
+    }
+
+    // MARK: - Settings Management
+
+    public func getSettings() -> LumeSettings {
+        return SettingsManager.shared.getSettings()
+    }
+
+    public func setHomeDirectory(_ path: String) throws {
+        // Try to set the home directory in settings
+        try SettingsManager.shared.setHomeDirectory(path: path)
+
+        // Force recreate home instance to use the new path
+        try home.validateHomeDirectory()
+
+        Logger.info("Home directory updated", metadata: ["path": path])
+    }
+
+    // MARK: - VM Location Management
+
+    public func addLocation(name: String, path: String) throws {
+        Logger.info("Adding VM location", metadata: ["name": name, "path": path])
+
+        try home.addLocation(name: name, path: path)
+
+        Logger.info("VM location added successfully", metadata: ["name": name])
+    }
+
+    public func removeLocation(name: String) throws {
+        Logger.info("Removing VM location", metadata: ["name": name])
+
+        try home.removeLocation(name: name)
+
+        Logger.info("VM location removed successfully", metadata: ["name": name])
+    }
+
+    public func setDefaultLocation(name: String) throws {
+        Logger.info("Setting default VM location", metadata: ["name": name])
+
+        try home.setDefaultLocation(name: name)
+
+        Logger.info("Default VM location set successfully", metadata: ["name": name])
+    }
+
+    public func getLocations() -> [VMLocation] {
+        return home.getLocations()
+    }
+
+    // MARK: - Cache Directory Management
+
+    public func setCacheDirectory(path: String) throws {
+        Logger.info("Setting cache directory", metadata: ["path": path])
+
+        try SettingsManager.shared.setCacheDirectory(path: path)
+
+        Logger.info("Cache directory updated", metadata: ["path": path])
+    }
+
+    public func getCacheDirectory() -> String {
+        return SettingsManager.shared.getCacheDirectory()
     }
 
     // MARK: - Private Helper Methods
@@ -443,8 +566,8 @@ final class LumeController {
     }
 
     @MainActor
-    private func loadVM(name: String) throws -> VM {
-        let vmDir = home.getVMDirectory(name)
+    private func loadVM(name: String, locationName: String? = nil) throws -> VM {
+        let vmDir = try home.getVMDirectory(name, locationName: locationName)
         guard vmDir.initialized() else {
             throw VMError.notInitialized(name)
         }
@@ -459,7 +582,9 @@ final class LumeController {
 
     // MARK: - Validation Methods
 
-    private func validateCreateParameters(name: String, os: String, ipsw: String?) throws {
+    private func validateCreateParameters(
+        name: String, os: String, ipsw: String?, locationName: String?
+    ) throws {
         if os.lowercased() == "macos" {
             guard let ipsw = ipsw else {
                 throw ValidationError("IPSW path required for macOS VM")
@@ -475,7 +600,7 @@ final class LumeController {
             throw ValidationError("Unsupported OS type: \(os)")
         }
 
-        let vmDir = home.getVMDirectory(name)
+        let vmDir = try home.getVMDirectory(name, locationName: locationName)
         if vmDir.exists() {
             throw VMError.alreadyExists(name)
         }
@@ -493,15 +618,19 @@ final class LumeController {
         }
     }
 
-    public func validateVMExists(_ name: String) throws {
-        let vmDir = home.getVMDirectory(name)
+    public func validateVMExists(_ name: String, locationName: String? = nil) throws {
+        let vmDir = try home.getVMDirectory(name, locationName: locationName)
         guard vmDir.initialized() else {
             throw VMError.notFound(name)
         }
     }
 
     private func validatePullParameters(
-        image: String, name: String, registry: String, organization: String
+        image: String,
+        name: String,
+        registry: String,
+        organization: String,
+        locationName: String? = nil
     ) throws {
         guard !image.isEmpty else {
             throw ValidationError("Image name cannot be empty")
@@ -516,20 +645,21 @@ final class LumeController {
             throw ValidationError("Organization cannot be empty")
         }
 
-        let vmDir = home.getVMDirectory(name)
+        let vmDir = try home.getVMDirectory(name, locationName: locationName)
         if vmDir.exists() {
             throw VMError.alreadyExists(name)
         }
     }
 
     private func validateRunParameters(
-        name: String, sharedDirectories: [SharedDirectory]?, mount: Path?
+        name: String, sharedDirectories: [SharedDirectory]?, mount: Path?,
+        locationName: String? = nil
     ) throws {
-        try self.validateVMExists(name)
-        if let dirs: [SharedDirectory] = sharedDirectories {
+        try self.validateVMExists(name, locationName: locationName)
+        if let dirs = sharedDirectories {
             try self.validateSharedDirectories(dirs)
         }
-        let vmConfig = try home.getVMDirectory(name).loadConfig()
+        let vmConfig = try home.getVMDirectory(name, locationName: locationName).loadConfig()
         switch vmConfig.os.lowercased() {
         case "macos":
             if mount != nil {

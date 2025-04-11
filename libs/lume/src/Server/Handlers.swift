@@ -1,11 +1,11 @@
+import ArgumentParser
 import Foundation
 import Virtualization
-import ArgumentParser
 
 @MainActor
 extension Server {
     // MARK: - VM Management Handlers
-    
+
     func handleListVMs() async throws -> HTTPResponse {
         do {
             let vmController = LumeController()
@@ -15,7 +15,7 @@ extension Server {
             return .badRequest(message: error.localizedDescription)
         }
     }
-    
+
     func handleGetVM(name: String) async throws -> HTTPResponse {
         do {
             let vmController = LumeController()
@@ -25,17 +25,18 @@ extension Server {
             return .badRequest(message: error.localizedDescription)
         }
     }
-    
+
     func handleCreateVM(_ body: Data?) async throws -> HTTPResponse {
         guard let body = body,
-              let request = try? JSONDecoder().decode(CreateVMRequest.self, from: body) else {
+            let request = try? JSONDecoder().decode(CreateVMRequest.self, from: body)
+        else {
             return HTTPResponse(
                 statusCode: .badRequest,
                 headers: ["Content-Type": "application/json"],
                 body: try JSONEncoder().encode(APIError(message: "Invalid request body"))
             )
         }
-        
+
         do {
             let sizes = try request.parse()
             let vmController = LumeController()
@@ -48,11 +49,13 @@ extension Server {
                 display: request.display,
                 ipsw: request.ipsw
             )
-            
+
             return HTTPResponse(
                 statusCode: .ok,
                 headers: ["Content-Type": "application/json"],
-                body: try JSONEncoder().encode(["message": "VM created successfully", "name": request.name])
+                body: try JSONEncoder().encode([
+                    "message": "VM created successfully", "name": request.name,
+                ])
             )
         } catch {
             return HTTPResponse(
@@ -67,33 +70,37 @@ extension Server {
         do {
             let vmController = LumeController()
             try await vmController.delete(name: name)
-            return HTTPResponse(statusCode: .ok, headers: ["Content-Type": "application/json"], body: Data())
+            return HTTPResponse(
+                statusCode: .ok, headers: ["Content-Type": "application/json"], body: Data())
         } catch {
-            return HTTPResponse(statusCode: .badRequest, headers: ["Content-Type": "application/json"], body: try JSONEncoder().encode(APIError(message: error.localizedDescription)))
+            return HTTPResponse(
+                statusCode: .badRequest, headers: ["Content-Type": "application/json"],
+                body: try JSONEncoder().encode(APIError(message: error.localizedDescription)))
         }
     }
-    
+
     func handleCloneVM(_ body: Data?) async throws -> HTTPResponse {
         guard let body = body,
-              let request = try? JSONDecoder().decode(CloneRequest.self, from: body) else {
+            let request = try? JSONDecoder().decode(CloneRequest.self, from: body)
+        else {
             return HTTPResponse(
                 statusCode: .badRequest,
                 headers: ["Content-Type": "application/json"],
                 body: try JSONEncoder().encode(APIError(message: "Invalid request body"))
             )
         }
-        
+
         do {
             let vmController = LumeController()
             try vmController.clone(name: request.name, newName: request.newName)
-            
+
             return HTTPResponse(
                 statusCode: .ok,
                 headers: ["Content-Type": "application/json"],
                 body: try JSONEncoder().encode([
                     "message": "VM cloned successfully",
                     "source": request.name,
-                    "destination": request.newName
+                    "destination": request.newName,
                 ])
             )
         } catch {
@@ -104,19 +111,20 @@ extension Server {
             )
         }
     }
-    
+
     // MARK: - VM Operation Handlers
-    
+
     func handleSetVM(name: String, body: Data?) async throws -> HTTPResponse {
         guard let body = body,
-              let request = try? JSONDecoder().decode(SetVMRequest.self, from: body) else {
+            let request = try? JSONDecoder().decode(SetVMRequest.self, from: body)
+        else {
             return HTTPResponse(
                 statusCode: .badRequest,
                 headers: ["Content-Type": "application/json"],
                 body: try JSONEncoder().encode(APIError(message: "Invalid request body"))
             )
         }
-        
+
         do {
             let vmController = LumeController()
             let sizes = try request.parse()
@@ -127,7 +135,7 @@ extension Server {
                 diskSize: sizes.diskSize,
                 display: sizes.display?.string
             )
-            
+
             return HTTPResponse(
                 statusCode: .ok,
                 headers: ["Content-Type": "application/json"],
@@ -141,7 +149,7 @@ extension Server {
             )
         }
     }
-    
+
     func handleStopVM(name: String) async throws -> HTTPResponse {
         do {
             let vmController = LumeController()
@@ -161,11 +169,13 @@ extension Server {
     }
 
     func handleRunVM(name: String, body: Data?) async throws -> HTTPResponse {
-        let request = body.flatMap { try? JSONDecoder().decode(RunVMRequest.self, from: $0) } ?? RunVMRequest(noDisplay: nil, sharedDirectories: nil, recoveryMode: nil)
-        
+        let request =
+            body.flatMap { try? JSONDecoder().decode(RunVMRequest.self, from: $0) }
+            ?? RunVMRequest(noDisplay: nil, sharedDirectories: nil, recoveryMode: nil)
+
         do {
             let dirs = try request.parse()
-            
+
             // Start VM in background
             startVM(
                 name: name,
@@ -173,7 +183,7 @@ extension Server {
                 sharedDirectories: dirs,
                 recoveryMode: request.recoveryMode ?? false
             )
-            
+
             // Return response immediately
             return HTTPResponse(
                 statusCode: .accepted,
@@ -181,7 +191,7 @@ extension Server {
                 body: try JSONEncoder().encode([
                     "message": "VM start initiated",
                     "name": name,
-                    "status": "pending"
+                    "status": "pending",
                 ])
             )
         } catch {
@@ -192,9 +202,9 @@ extension Server {
             )
         }
     }
-    
+
     // MARK: - Image Management Handlers
-    
+
     func handleIPSW() async throws -> HTTPResponse {
         do {
             let vmController = LumeController()
@@ -215,7 +225,8 @@ extension Server {
 
     func handlePull(_ body: Data?) async throws -> HTTPResponse {
         guard let body = body,
-              let request = try? JSONDecoder().decode(PullRequest.self, from: body) else {
+            let request = try? JSONDecoder().decode(PullRequest.self, from: body)
+        else {
             return HTTPResponse(
                 statusCode: .badRequest,
                 headers: ["Content-Type": "application/json"],
@@ -225,7 +236,12 @@ extension Server {
 
         do {
             let vmController = LumeController()
-            try await vmController.pullImage(image: request.image, name: request.name, registry: request.registry, organization: request.organization, noCache: request.noCache)
+            try await vmController.pullImage(
+                image: request.image,
+                name: request.name,
+                registry: request.registry,
+                organization: request.organization
+            )
             return HTTPResponse(
                 statusCode: .ok,
                 headers: ["Content-Type": "application/json"],
@@ -257,30 +273,34 @@ extension Server {
             )
         }
     }
-    
+
     func handleGetImages(_ request: HTTPRequest) async throws -> HTTPResponse {
         let pathAndQuery = request.path.split(separator: "?", maxSplits: 1)
-        let queryParams = pathAndQuery.count > 1 ? pathAndQuery[1]
-            .split(separator: "&")
-            .reduce(into: [String: String]()) { dict, param in
-                let parts = param.split(separator: "=", maxSplits: 1)
-                if parts.count == 2 {
-                    dict[String(parts[0])] = String(parts[1])
-                }
-            } : [:]
-        
+        let queryParams =
+            pathAndQuery.count > 1
+            ? pathAndQuery[1]
+                .split(separator: "&")
+                .reduce(into: [String: String]()) { dict, param in
+                    let parts = param.split(separator: "=", maxSplits: 1)
+                    if parts.count == 2 {
+                        dict[String(parts[0])] = String(parts[1])
+                    }
+                } : [:]
+
         let organization = queryParams["organization"] ?? "trycua"
-        
+
         do {
             let vmController = LumeController()
             let imageList = try await vmController.getImages(organization: organization)
-            
+
             // Create a response format that matches the CLI output
-            let response = imageList.local.map { [
-                "repository": $0.repository,
-                "imageId": $0.imageId
-            ] }
-            
+            let response = imageList.local.map {
+                [
+                    "repository": $0.repository,
+                    "imageId": $0.imageId,
+                ]
+            }
+
             return HTTPResponse(
                 statusCode: .ok,
                 headers: ["Content-Type": "application/json"],
@@ -294,9 +314,9 @@ extension Server {
             )
         }
     }
-    
+
     // MARK: - Private Helper Methods
-    
+
     nonisolated private func startVM(
         name: String,
         noDisplay: Bool,
@@ -315,10 +335,12 @@ extension Server {
                 )
                 Logger.info("VM started successfully in background", metadata: ["name": name])
             } catch {
-                Logger.error("Failed to start VM in background", metadata: [
-                    "name": name,
-                    "error": error.localizedDescription
-                ])
+                Logger.error(
+                    "Failed to start VM in background",
+                    metadata: [
+                        "name": name,
+                        "error": error.localizedDescription,
+                    ])
             }
         }
     }

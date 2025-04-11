@@ -15,7 +15,8 @@ enum CommandRegistry {
             IPSW.self,
             Serve.self,
             Delete.self,
-            Prune.self
+            Prune.self,
+            Config.self,
         ]
     }
 }

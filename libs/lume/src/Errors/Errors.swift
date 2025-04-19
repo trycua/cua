@@ -5,6 +5,15 @@ enum HomeError: Error, LocalizedError {
     case directoryAccessDenied(path: String)
     case invalidHomeDirectory
     case directoryAlreadyExists(path: String)
+    case homeNotFound
+    case defaultStorageNotDefined
+    case storageLocationNotFound(String)
+    case storageLocationNotADirectory(String)
+    case storageLocationNotWritable(String)
+    case invalidStorageLocation(String)
+    case cannotCreateDirectory(String)
+    case cannotGetVMsDirectory
+    case vmDirectoryNotFound(String)
     
     var errorDescription: String? {
         switch self {
@@ -16,6 +25,24 @@ enum HomeError: Error, LocalizedError {
             return "Invalid home directory configuration"
         case .directoryAlreadyExists(let path):
             return "Directory already exists at path: \(path)"
+        case .homeNotFound:
+            return "Home directory not found."
+        case .defaultStorageNotDefined:
+            return "Default storage location is not defined."
+        case .storageLocationNotFound(let path):
+            return "Storage location not found: \(path)"
+        case .storageLocationNotADirectory(let path):
+            return "Storage location is not a directory: \(path)"
+        case .storageLocationNotWritable(let path):
+            return "Storage location is not writable: \(path)"
+        case .invalidStorageLocation(let path):
+            return "Invalid storage location specified: \(path)"
+        case .cannotCreateDirectory(let path):
+            return "Cannot create directory: \(path)"
+        case .cannotGetVMsDirectory:
+            return "Cannot determine the VMs directory."
+        case .vmDirectoryNotFound(let path):
+            return "VM directory not found: \(path)"
         }
     }
 }
@@ -28,23 +55,32 @@ enum PullError: Error, LocalizedError {
     case missingPart(Int)
     case decompressionFailed(String)
     case reassemblyFailed(String)
+    case fileCreationFailed(String)
+    case reassemblySetupFailed(path: String, underlyingError: Error)
+    case missingUncompressedSizeAnnotation
     
     var errorDescription: String? {
         switch self {
         case .invalidImageFormat:
             return "Invalid image format. Expected format: name:tag"
         case .tokenFetchFailed:
-            return "Failed to obtain authentication token"
+            return "Failed to fetch authentication token from registry."
         case .manifestFetchFailed:
-            return "Failed to fetch manifest"
+            return "Failed to fetch image manifest from registry."
         case .layerDownloadFailed(let digest):
             return "Failed to download layer: \(digest)"
-        case .missingPart(let number):
-            return "Missing disk image part \(number)"
-        case .decompressionFailed(let filename):
-            return "Failed to decompress file: \(filename)"
+        case .missingPart(let partNum):
+            return "Missing required part number \(partNum) for reassembly."
+        case .decompressionFailed(let file):
+            return "Failed to decompress file: \(file)"
         case .reassemblyFailed(let reason):
             return "Disk image reassembly failed: \(reason)."
+        case .fileCreationFailed(let path):
+            return "Failed to create the necessary file at path: \(path)"
+        case .reassemblySetupFailed(let path, let underlyingError):
+            return "Failed to set up for reassembly at path: \(path). Underlying error: \(underlyingError.localizedDescription)"
+        case .missingUncompressedSizeAnnotation:
+            return "Could not find the required uncompressed disk size annotation in the image config.json."
         }
     }
 }
@@ -163,6 +199,26 @@ enum VMError: Error, LocalizedError {
             return "Unsupported operating system: \(os)"
         case .invalidDisplayResolution(let resolution):
             return "Invalid display resolution: \(resolution)"
+        }
+    }
+}
+
+enum ResticError: Error {
+    case snapshotFailed(String)
+    case restoreFailed(String)
+    case genericError(String)
+}
+
+enum VmrunError: Error, LocalizedError {
+    case commandNotFound
+    case operationFailed(command: String, output: String?)
+
+    var errorDescription: String? {
+        switch self {
+        case .commandNotFound:
+            return "vmrun command not found. Ensure VMware Fusion is installed and in the system PATH."
+        case .operationFailed(let command, let output):
+            return "vmrun command '\(command)' failed. Output: \(output ?? "No output")"
         }
     }
 }

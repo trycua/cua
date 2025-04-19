@@ -3,6 +3,18 @@ import Darwin
 import Foundation
 import Swift
 
+// Define struct to decode relevant parts of config.json
+struct OCIConfig: Codable {
+    struct Annotations: Codable {
+        let uncompressedSize: String?  // Use optional String
+
+        enum CodingKeys: String, CodingKey {
+            case uncompressedSize = "com.trycua.lume.disk.uncompressed_size"
+        }
+    }
+    let annotations: Annotations?  // Optional annotations
+}
+
 struct Layer: Codable, Equatable {
     let mediaType: String
     let digest: String
@@ -178,7 +190,7 @@ actor ProgressTracker {
         fflush(stdout)
     }
 
-    private func createProgressBar(progress: Double, width: Int = 20) -> String {
+    private func createProgressBar(progress: Double, width: Int = 30) -> String {
         let completedWidth = Int(progress * Double(width))
         let remainingWidth = width - completedWidth
 
@@ -278,6 +290,17 @@ class ImageContainerRegistry: @unchecked Sendable {
     private let downloadLock = NSLock()
     private var activeDownloads: [String] = []
     private let cachingEnabled: Bool
+
+    // Add the createProgressBar function here as a private method
+    private func createProgressBar(progress: Double, width: Int = 30) -> String {
+        let completedWidth = Int(progress * Double(width))
+        let remainingWidth = width - completedWidth
+
+        let completed = String(repeating: "█", count: completedWidth)
+        let remaining = String(repeating: "░", count: remainingWidth)
+
+        return "[\(completed)\(remaining)]"
+    }
 
     init(registry: String, organization: String) {
         self.registry = registry
@@ -716,7 +739,8 @@ class ImageContainerRegistry: @unchecked Sendable {
 
                         let outputURL: URL
                         switch mediaType {
-                        case "application/vnd.oci.image.layer.v1.tar":
+                        case "application/vnd.oci.image.layer.v1.tar",
+                            "application/octet-stream+gzip":
                             outputURL = tempDownloadDir.appendingPathComponent("disk.img")
                         case "application/vnd.oci.image.config.v1+json":
                             outputURL = tempDownloadDir.appendingPathComponent("config.json")
@@ -787,115 +811,419 @@ class ImageContainerRegistry: @unchecked Sendable {
             let stats = await progress.getDownloadStats()
             Logger.info(stats.formattedSummary())
 
+            // Parse config.json to get uncompressed size *before* reassembly
+            let configURL = tempDownloadDir.appendingPathComponent("config.json")
+            let uncompressedSize = getUncompressedSizeFromConfig(configPath: configURL)
+
+            // Now also try to get disk size from VM config if OCI annotation not found
+            var vmConfigDiskSize: UInt64? = nil
+            if uncompressedSize == nil && FileManager.default.fileExists(atPath: configURL.path) {
+                do {
+                    let configData = try Data(contentsOf: configURL)
+                    let decoder = JSONDecoder()
+                    if let vmConfig = try? decoder.decode(VMConfig.self, from: configData) {
+                        vmConfigDiskSize = vmConfig.diskSize
+                        if let size = vmConfigDiskSize {
+                            Logger.info("Found diskSize from VM config.json: \(size) bytes")
+                        }
+                    }
+                } catch {
+                    Logger.error("Failed to parse VM config.json for diskSize: \(error)")
+                }
+            }
+
+            // Force explicit use
+            if uncompressedSize != nil {
+                Logger.info(
+                    "Will use uncompressed size from annotation for sparse file: \(uncompressedSize!) bytes"
+                )
+            } else if vmConfigDiskSize != nil {
+                Logger.info(
+                    "Will use diskSize from VM config for sparse file: \(vmConfigDiskSize!) bytes")
+            }
+
             // Handle disk parts if present
             if !diskParts.isEmpty {
                 Logger.info("Reassembling disk image using sparse file technique...")
                 let outputURL = tempVMDir.appendingPathComponent("disk.img")
-                try FileManager.default.createDirectory(
-                    at: outputURL.deletingLastPathComponent(), withIntermediateDirectories: true)
 
-                // Ensure the output file exists but is empty
-                if FileManager.default.fileExists(atPath: outputURL.path) {
-                    try FileManager.default.removeItem(at: outputURL)
+                // Wrap setup in do-catch for better error reporting
+                let outputHandle: FileHandle
+                do {
+                    // 1. Ensure parent directory exists
+                    try FileManager.default.createDirectory(
+                        at: outputURL.deletingLastPathComponent(), withIntermediateDirectories: true
+                    )
+
+                    // 2. Explicitly create the file first, removing old one if needed
+                    if FileManager.default.fileExists(atPath: outputURL.path) {
+                        try FileManager.default.removeItem(at: outputURL)
+                    }
+                    guard FileManager.default.createFile(atPath: outputURL.path, contents: nil)
+                    else {
+                        throw PullError.fileCreationFailed(outputURL.path)
+                    }
+
+                    // 3. Now open the handle for writing
+                    outputHandle = try FileHandle(forWritingTo: outputURL)
+
+                } catch {
+                    // Catch errors during directory/file creation or handle opening
+                    Logger.error(
+                        "Failed during setup for disk image reassembly: \(error.localizedDescription)",
+                        metadata: ["path": outputURL.path])
+                    throw PullError.reassemblySetupFailed(
+                        path: outputURL.path, underlyingError: error)
                 }
 
-                // Calculate expected size from the manifest layers
-                let expectedTotalSize = UInt64(
+                // Calculate expected size from the manifest layers (sum of compressed parts - for logging only now)
+                let expectedCompressedTotalSize = UInt64(
                     manifest.layers.filter { extractPartInfo(from: $0.mediaType) != nil }.reduce(0)
                     { $0 + $1.size }
                 )
                 Logger.info(
-                    "Expected download size: \(ByteCountFormatter.string(fromByteCount: Int64(expectedTotalSize), countStyle: .file)) (actual disk usage will be significantly lower)"
+                    "Total compressed parts size: \(ByteCountFormatter.string(fromByteCount: Int64(expectedCompressedTotalSize), countStyle: .file))"
                 )
 
-                // Create sparse file of the required size
-                FileManager.default.createFile(atPath: outputURL.path, contents: nil)
-                let outputHandle = try FileHandle(forWritingTo: outputURL)
+                // Calculate fallback size (sum of compressed parts)
+                let _: UInt64 = diskParts.reduce(UInt64(0)) {
+                    (acc: UInt64, element) -> UInt64 in
+                    let fileSize =
+                        (try? FileManager.default.attributesOfItem(atPath: element.1.path)[.size]
+                            as? UInt64 ?? 0) ?? 0
+                    return acc + fileSize
+                }
+
+                // Use: annotation size > VM config diskSize > fallback size
+                let sizeForTruncate: UInt64
+                if let size = uncompressedSize {
+                    Logger.info("Using uncompressed size from annotation: \(size) bytes")
+                    sizeForTruncate = size
+                } else if let size = vmConfigDiskSize {
+                    Logger.info("Using diskSize from VM config: \(size) bytes")
+                    sizeForTruncate = size
+                } else {
+                    Logger.error(
+                        "Missing both uncompressed size annotation and VM config diskSize for multi-part image."
+                    )
+                    throw PullError.missingUncompressedSizeAnnotation
+                }
+
+                defer { try? outputHandle.close() }
 
                 // Set the file size without writing data (creates a sparse file)
-                try outputHandle.truncate(atOffset: expectedTotalSize)
+                try outputHandle.truncate(atOffset: sizeForTruncate)
+
+                // Verify the sparse file was created with the correct size
+                let initialSize =
+                    (try? FileManager.default.attributesOfItem(atPath: outputURL.path)[.size]
+                        as? UInt64) ?? 0
+                Logger.info(
+                    "Sparse file initialized with size: \(ByteCountFormatter.string(fromByteCount: Int64(initialSize), countStyle: .file))"
+                )
+
+                // Add a simple test pattern at the beginning and end of the file to verify it's writable
+                try outputHandle.seek(toOffset: 0)
+                let testPattern = "LUME_TEST_PATTERN".data(using: .utf8)!
+                try outputHandle.write(contentsOf: testPattern)
+
+                try outputHandle.seek(toOffset: sizeForTruncate - UInt64(testPattern.count))
+                try outputHandle.write(contentsOf: testPattern)
+                try outputHandle.synchronize()
+
+                Logger.info("Test patterns written to sparse file. File is ready for writing.")
 
                 var reassemblyProgressLogger = ProgressLogger(threshold: 0.05)
-                var processedSize: UInt64 = 0
+                var currentOffset: UInt64 = 0  // Track position in the final *decompressed* file
 
-                // Process each part in order
                 for partNum in 1...totalParts {
-                    guard let (_, partURL) = diskParts.first(where: { $0.0 == partNum }) else {
+                    // Find the original layer info for this part number
+                    guard
+                        let layer = manifest.layers.first(where: { layer in
+                            if let info = extractPartInfo(from: layer.mediaType) {
+                                return info.partNum == partNum
+                            }
+                            return false
+                        }),
+                        let (_, partURL) = diskParts.first(where: { $0.0 == partNum })
+                    else {
                         throw PullError.missingPart(partNum)
                     }
+                    let layerMediaType = layer.mediaType  // Extract mediaType here
 
                     Logger.info(
                         "Processing part \(partNum) of \(totalParts): \(partURL.lastPathComponent)")
 
-                    // Get part file size
-                    let partAttributes = try FileManager.default.attributesOfItem(
-                        atPath: partURL.path)
-                    let partSize = partAttributes[.size] as? UInt64 ?? 0
-
-                    // Calculate the offset in the final file (parts are sequential)
-                    let partOffset = processedSize
-
-                    // Open input file
                     let inputHandle = try FileHandle(forReadingFrom: partURL)
                     defer {
                         try? inputHandle.close()
-                        // Don't delete the part file if it's from cache
+                        // Clean up temp downloaded part if not from cache
                         if !partURL.path.contains(cacheDirectory.path) {
                             try? FileManager.default.removeItem(at: partURL)
                         }
                     }
 
-                    // Seek to the appropriate offset in output file
-                    try outputHandle.seek(toOffset: partOffset)
+                    // Seek to the correct offset in the output sparse file
+                    try outputHandle.seek(toOffset: currentOffset)
 
-                    // Copy data in chunks to avoid memory issues
-                    let chunkSize: UInt64 =
-                        determineIfMemoryConstrained() ? 256 * 1024 : 1024 * 1024  // Use smaller chunks (256KB-1MB)
-                    var bytesWritten: UInt64 = 0
+                    if let decompressCmd = getDecompressionCommand(for: layerMediaType) {  // Use extracted mediaType
+                        Logger.info(
+                            "Decompressing part \(partNum) with media type: \(layerMediaType)")
 
-                    while bytesWritten < partSize {
-                        // Use Foundation's autoreleasepool for proper memory management
-                        Foundation.autoreleasepool {
-                            let readSize: UInt64 = min(UInt64(chunkSize), partSize - bytesWritten)
-                            if let chunk = try? inputHandle.read(upToCount: Int(readSize)) {
-                                if !chunk.isEmpty {
-                                    try? outputHandle.write(contentsOf: chunk)
-                                    bytesWritten += UInt64(chunk.count)
+                        // Handle Apple Archive format
+                        let toolPath = String(decompressCmd.dropFirst("apple_archive:".count))
+                        let tempOutputPath = FileManager.default.temporaryDirectory
+                            .appendingPathComponent(UUID().uuidString)
 
-                                    // Update progress less frequently to reduce overhead
-                                    if bytesWritten % (chunkSize * 4) == 0
-                                        || bytesWritten == partSize
-                                    {
-                                        let totalProgress =
-                                            Double(processedSize + bytesWritten)
-                                            / Double(expectedTotalSize)
-                                        reassemblyProgressLogger.logProgress(
-                                            current: totalProgress,
-                                            context: "Reassembling disk image")
-                                    }
-                                }
-                            }
+                        // Check input file size before decompression
+                        let inputFileSize =
+                            (try? FileManager.default.attributesOfItem(atPath: partURL.path)[.size]
+                                as? UInt64) ?? 0
+                        Logger.info(
+                            "Part \(partNum) input size: \(ByteCountFormatter.string(fromByteCount: Int64(inputFileSize), countStyle: .file))"
+                        )
 
-                            // Add a small delay every few MB to allow memory cleanup
-                            if bytesWritten % (chunkSize * 16) == 0 && bytesWritten > 0 {
-                                // Use Thread.sleep for now, but ideally this would use a non-blocking approach
-                                // that is appropriate for the context (sync/async)
-                                Thread.sleep(forTimeInterval: 0.01)
-                            }
+                        // Create a process that decompresses to a temporary file
+                        let process = Process()
+                        process.executableURL = URL(fileURLWithPath: toolPath)
+                        process.arguments = [
+                            "extract", "-i", partURL.path, "-o", tempOutputPath.path,
+                        ]
+
+                        // Add error output capture
+                        let errorPipe = Pipe()
+                        process.standardError = errorPipe
+
+                        Logger.info(
+                            "Decompressing Apple Archive format with: \(toolPath) \(process.arguments?.joined(separator: " ") ?? "")"
+                        )
+                        try process.run()
+                        process.waitUntilExit()
+
+                        // Check error output if any
+                        let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
+                        if !errorData.isEmpty,
+                            let errorString = String(data: errorData, encoding: .utf8)
+                        {
+                            Logger.error("Decompression error output: \(errorString)")
                         }
+
+                        if process.terminationStatus != 0 {
+                            Logger.error(
+                                "Apple Archive decompression failed with status: \(process.terminationStatus), falling back to direct copy"
+                            )
+                            // Fall back to direct copying (uncompressed)
+                            Logger.info("Copying part \(partNum) directly without decompression...")
+                            try outputHandle.seek(toOffset: currentOffset)
+
+                            let inputHandle = try FileHandle(forReadingFrom: partURL)
+                            defer { try? inputHandle.close() }
+
+                            var bytesWritten: UInt64 = 0
+                            let chunkSize = 1024 * 1024  // 1MB chunks
+                            var chunkCount = 0
+
+                            while true {
+                                let data = autoreleasepool {
+                                    try! inputHandle.read(upToCount: chunkSize) ?? Data()
+                                }
+                                if data.isEmpty { break }
+
+                                try outputHandle.write(contentsOf: data)
+                                bytesWritten += UInt64(data.count)
+                                chunkCount += 1
+
+                                // Update progress
+                                let totalProgress =
+                                    Double(currentOffset + bytesWritten)
+                                    / Double(expectedCompressedTotalSize)
+                                let progressBar = createProgressBar(
+                                    progress: totalProgress, width: 30)
+                                let progressPercent = Int(totalProgress * 100)
+                                let currentSpeed =
+                                    ByteCountFormatter.string(
+                                        fromByteCount: Int64(Double(bytesWritten) / 0.5),
+                                        countStyle: .file) + "/s"
+
+                                print(
+                                    "\r\(progressBar) \(progressPercent)% | Speed: \(currentSpeed) | Part \(partNum) | \(ByteCountFormatter.string(fromByteCount: Int64(currentOffset + bytesWritten), countStyle: .file))     ",
+                                    terminator: "")
+                                fflush(stdout)
+
+                                // Also log to the progress logger for consistency
+                                reassemblyProgressLogger.logProgress(
+                                    current: totalProgress,
+                                    context: "Direct copying")
+                            }
+
+                            Logger.info(
+                                "Part \(partNum) - Direct copy: wrote \(chunkCount) chunks, total bytes: \(ByteCountFormatter.string(fromByteCount: Int64(bytesWritten), countStyle: .file))"
+                            )
+                            currentOffset += bytesWritten
+                            continue
+                        }
+
+                        // Check if the output file exists and has content
+                        let outputExists = FileManager.default.fileExists(
+                            atPath: tempOutputPath.path)
+                        let outputFileSize =
+                            outputExists
+                            ? ((try? FileManager.default.attributesOfItem(
+                                atPath: tempOutputPath.path)[
+                                    .size] as? UInt64) ?? 0) : 0
+                        Logger.info(
+                            "Part \(partNum) - Decompressed output exists: \(outputExists), size: \(ByteCountFormatter.string(fromByteCount: Int64(outputFileSize), countStyle: .file))"
+                        )
+
+                        // If decompression produced an empty file, fall back to direct copy
+                        if outputFileSize == 0 {
+                            Logger.info(
+                                "Decompression resulted in empty file, falling back to direct copy for part \(partNum)"
+                            )
+                            try? FileManager.default.removeItem(at: tempOutputPath)
+
+                            // Fall back to direct copying (uncompressed)
+                            Logger.info("Copying part \(partNum) directly without decompression...")
+                            try outputHandle.seek(toOffset: currentOffset)
+
+                            let inputHandle = try FileHandle(forReadingFrom: partURL)
+                            defer { try? inputHandle.close() }
+
+                            var bytesWritten: UInt64 = 0
+                            let chunkSize = 1024 * 1024  // 1MB chunks
+                            var chunkCount = 0
+
+                            while true {
+                                let data = autoreleasepool {
+                                    try! inputHandle.read(upToCount: chunkSize) ?? Data()
+                                }
+                                if data.isEmpty { break }
+
+                                try outputHandle.write(contentsOf: data)
+                                bytesWritten += UInt64(data.count)
+                                chunkCount += 1
+
+                                // Update progress
+                                let totalProgress =
+                                    Double(currentOffset + bytesWritten)
+                                    / Double(expectedCompressedTotalSize)
+                                let progressBar = createProgressBar(
+                                    progress: totalProgress, width: 30)
+                                let progressPercent = Int(totalProgress * 100)
+                                let currentSpeed =
+                                    ByteCountFormatter.string(
+                                        fromByteCount: Int64(Double(bytesWritten) / 0.5),
+                                        countStyle: .file) + "/s"
+
+                                print(
+                                    "\r\(progressBar) \(progressPercent)% | Speed: \(currentSpeed) | Part \(partNum) | \(ByteCountFormatter.string(fromByteCount: Int64(currentOffset + bytesWritten), countStyle: .file))     ",
+                                    terminator: "")
+                                fflush(stdout)
+
+                                // Also log to the progress logger for consistency
+                                reassemblyProgressLogger.logProgress(
+                                    current: totalProgress,
+                                    context: "Direct copying")
+                            }
+
+                            Logger.info(
+                                "Part \(partNum) - Direct copy: wrote \(chunkCount) chunks, total bytes: \(ByteCountFormatter.string(fromByteCount: Int64(bytesWritten), countStyle: .file))"
+                            )
+                            currentOffset += bytesWritten
+                            continue
+                        }
+
+                        // Read the decompressed file and write to our output
+                        let tempInputHandle = try FileHandle(forReadingFrom: tempOutputPath)
+                        defer {
+                            try? tempInputHandle.close()
+                            try? FileManager.default.removeItem(at: tempOutputPath)
+                        }
+
+                        // Read decompressed data in chunks and write to sparse file
+                        var partDecompressedSize: UInt64 = 0
+                        let chunkSize = 1024 * 1024  // 1MB chunks
+                        var chunkCount = 0
+
+                        while true {
+                            let data = autoreleasepool {  // Help manage memory with large files
+                                try! tempInputHandle.read(upToCount: chunkSize) ?? Data()
+                            }
+                            if data.isEmpty { break }  // End of stream
+
+                            try outputHandle.write(contentsOf: data)
+                            partDecompressedSize += UInt64(data.count)
+                            chunkCount += 1
+
+                            // Update progress based on decompressed size written
+                            let totalProgress =
+                                Double(currentOffset + partDecompressedSize)
+                                / Double(expectedCompressedTotalSize)
+                            reassemblyProgressLogger.logProgress(
+                                current: totalProgress,
+                                context: "Reassembling")
+                        }
+
+                        Logger.info(
+                            "Part \(partNum) - Wrote \(chunkCount) chunks, total bytes: \(ByteCountFormatter.string(fromByteCount: Int64(partDecompressedSize), countStyle: .file))"
+                        )
+                        currentOffset += partDecompressedSize  // Advance offset by decompressed size
+                    } else {
+                        // No decompression command available, try direct copy
+                        Logger.info(
+                            "Copying part \(partNum) directly..."
+                        )
+                        try outputHandle.seek(toOffset: currentOffset)
+
+                        let inputHandle = try FileHandle(forReadingFrom: partURL)
+                        defer { try? inputHandle.close() }
+
+                        // Get part size
+                        let partSize =
+                            (try? FileManager.default.attributesOfItem(atPath: partURL.path)[.size]
+                                as? UInt64) ?? 0
+                        Logger.info(
+                            "Direct copy of part \(partNum) with size: \(ByteCountFormatter.string(fromByteCount: Int64(partSize), countStyle: .file))"
+                        )
+
+                        var bytesWritten: UInt64 = 0
+                        let chunkSize = 1024 * 1024  // 1MB chunks
+                        var chunkCount = 0
+
+                        while true {
+                            let data = autoreleasepool {
+                                try! inputHandle.read(upToCount: chunkSize) ?? Data()
+                            }
+                            if data.isEmpty { break }
+
+                            try outputHandle.write(contentsOf: data)
+                            bytesWritten += UInt64(data.count)
+                            chunkCount += 1
+
+                            // Update progress
+                            let totalProgress =
+                                Double(currentOffset + bytesWritten)
+                                / Double(expectedCompressedTotalSize)
+                            reassemblyProgressLogger.logProgress(
+                                current: totalProgress,
+                                context: "Direct copying")
+                        }
+
+                        Logger.info(
+                            "Part \(partNum) - Direct copy: wrote \(chunkCount) chunks, total bytes: \(ByteCountFormatter.string(fromByteCount: Int64(bytesWritten), countStyle: .file))"
+                        )
+                        currentOffset += bytesWritten
                     }
 
-                    // Update processed size
-                    processedSize += partSize
+                    // Ensure data is written before processing next part (optional but safer)
+                    try outputHandle.synchronize()
                 }
 
-                // Finalize progress
-                reassemblyProgressLogger.logProgress(
-                    current: 1.0, context: "Reassembling disk image")
-                Logger.info("")  // Newline after progress
+                // Finalize progress, close handle (done by defer)
+                reassemblyProgressLogger.logProgress(current: 1.0, context: "Reassembly Complete")
+                Logger.info("")  // Newline
 
-                // Close the output file
-                try outputHandle.synchronize()
+                // Ensure output handle is closed before post-processing
                 try outputHandle.close()
 
                 // Verify final size
@@ -903,18 +1231,91 @@ class ImageContainerRegistry: @unchecked Sendable {
                     (try? FileManager.default.attributesOfItem(atPath: outputURL.path)[.size]
                         as? UInt64) ?? 0
                 Logger.info(
-                    "Final disk image size (before sparse file optimization): \(ByteCountFormatter.string(fromByteCount: Int64(finalSize), countStyle: .file))"
+                    "Final disk image size from cache (before sparse file optimization): \(ByteCountFormatter.string(fromByteCount: Int64(finalSize), countStyle: .file))"
                 )
-                Logger.info(
-                    "Note: Actual disk usage will be much lower due to macOS sparse file system")
 
-                if finalSize != expectedTotalSize {
+                if finalSize != sizeForTruncate {
                     Logger.info(
-                        "Warning: Final reported size (\(finalSize) bytes) differs from expected size (\(expectedTotalSize) bytes), but this doesn't affect functionality"
+                        "Warning: Final reported size (\(finalSize) bytes) differs from expected size (\(sizeForTruncate) bytes), but this doesn't affect functionality"
                     )
                 }
 
-                Logger.info("Disk image reassembled successfully using sparse file technique")
+                // Decompress the assembled disk image if it's in LZFSE compressed format
+                Logger.info(
+                    "Checking if disk image is LZFSE compressed and decompressing if needed...")
+                decompressLZFSEImage(inputPath: outputURL.path)
+
+                // Create a properly formatted disk image
+                Logger.info("Converting assembled data to proper disk image format...")
+
+                // Get actual disk usage of the assembled file
+                let assembledUsage = getActualDiskUsage(path: outputURL.path)
+                let bufferBytes: UInt64 = 2 * 1024 * 1024 * 1024  // 2GB buffer
+                let requiredSpace = assembledUsage + bufferBytes
+
+                // Check available disk space in the destination directory
+                let fileManager = FileManager.default
+                let availableSpace =
+                    try? fileManager.attributesOfFileSystem(
+                        forPath: outputURL.deletingLastPathComponent().path)[.systemFreeSize]
+                    as? UInt64
+
+                if let available = availableSpace, available < requiredSpace {
+                    Logger.error(
+                        "Insufficient disk space to convert disk image format. Skipping conversion.",
+                        metadata: [
+                            "available": ByteCountFormatter.string(
+                                fromByteCount: Int64(available), countStyle: .file),
+                            "required": ByteCountFormatter.string(
+                                fromByteCount: Int64(requiredSpace), countStyle: .file),
+                        ]
+                    )
+                } else {
+                    // Prioritize SPARSE format for better sparse file handling
+                    Logger.info("Attempting conversion to SPARSE format...")
+                    let process = Process()
+                    process.executableURL = URL(fileURLWithPath: "/usr/bin/hdiutil")
+                    process.arguments = [
+                        "convert",
+                        outputURL.path,  // Source: our assembled file
+                        "-format", "SPARSE",  // Format: SPARSE (best for sparse images)
+                        "-o", outputURL.path,  // Output: overwrite with converted image
+                    ]
+
+                    let errorPipe = Pipe()
+                    process.standardError = errorPipe
+                    process.standardOutput = errorPipe
+
+                    try process.run()
+                    process.waitUntilExit()
+
+                    // Check for errors
+                    let outputData = errorPipe.fileHandleForReading.readDataToEndOfFile()
+                    if !outputData.isEmpty,
+                        let outputString = String(data: outputData, encoding: .utf8)
+                    {
+                        Logger.info("hdiutil output: \(outputString)")
+                    }
+
+                    if process.terminationStatus == 0 {
+                        // Find the potentially renamed formatted file
+                        let formattedFile = findFormattedFile(tempFormatted: outputURL) ?? outputURL
+                        // If the output path is different, remove the original and move the new one
+                        if formattedFile.path != outputURL.path {
+                            try? FileManager.default.removeItem(at: outputURL)
+                            try FileManager.default.moveItem(at: formattedFile, to: outputURL)
+                        }
+                        Logger.info("Successfully converted disk image to proper format (SPARSE)")
+                    } else {
+                        Logger.error(
+                            "Failed to convert disk image to SPARSE format. VM might not start properly."
+                        )
+                        // If SPARSE failed, maybe try UDRW as a last resort?
+                        // For now, we'll just log the error.
+                    }
+                }
+
+                Logger.info("Disk image reassembly completed")
             } else {
                 // Copy single disk image if it exists
                 let diskURL = tempDownloadDir.appendingPathComponent("disk.img")
@@ -972,9 +1373,9 @@ class ImageContainerRegistry: @unchecked Sendable {
         async throws
     {
         Logger.info("Copying from cache...")
+
         var diskPartSources: [(Int, URL)] = []
         var totalParts = 0
-        var expectedTotalSize: UInt64 = 0
 
         // First identify disk parts and non-disk files
         for layer in manifest.layers {
@@ -985,11 +1386,10 @@ class ImageContainerRegistry: @unchecked Sendable {
                 totalParts = total
                 // Just store the reference to source instead of copying
                 diskPartSources.append((partNum, cachedLayer))
-                expectedTotalSize += UInt64(layer.size)
             } else {
                 let fileName: String
                 switch layer.mediaType {
-                case "application/vnd.oci.image.layer.v1.tar":
+                case "application/vnd.oci.image.layer.v1.tar", "application/octet-stream+gzip":
                     fileName = "disk.img"
                 case "application/vnd.oci.image.config.v1+json":
                     fileName = "config.json"
@@ -1008,14 +1408,76 @@ class ImageContainerRegistry: @unchecked Sendable {
 
         // Reassemble disk parts if needed
         if !diskPartSources.isEmpty {
+            // Get the uncompressed size from cached config
+            let configDigest = manifest.config?.digest
+            let cachedConfigPath =
+                configDigest != nil
+                ? getCachedLayerPath(manifestId: manifestId, digest: configDigest!) : nil
+            let uncompressedSize = cachedConfigPath.flatMap {
+                getUncompressedSizeFromConfig(configPath: $0)
+            }
+
+            // Try to get disk size from VM config if OCI annotation not found
+            var vmConfigDiskSize: UInt64? = nil
+            if uncompressedSize == nil {
+                // Find config.json in the copied files
+                let vmConfigPath = destination.appendingPathComponent("config.json")
+                if FileManager.default.fileExists(atPath: vmConfigPath.path) {
+                    do {
+                        let configData = try Data(contentsOf: vmConfigPath)
+                        let decoder = JSONDecoder()
+                        if let vmConfig = try? decoder.decode(VMConfig.self, from: configData) {
+                            vmConfigDiskSize = vmConfig.diskSize
+                            if let size = vmConfigDiskSize {
+                                Logger.info(
+                                    "Found diskSize from cached VM config.json: \(size) bytes")
+                            }
+                        }
+                    } catch {
+                        Logger.error("Failed to parse cached VM config.json for diskSize: \(error)")
+                    }
+                }
+            }
+
+            // Force explicit use
+            if uncompressedSize != nil {
+                Logger.info(
+                    "Will use uncompressed size from annotation for sparse file: \(uncompressedSize!) bytes"
+                )
+            } else if vmConfigDiskSize != nil {
+                Logger.info(
+                    "Will use diskSize from VM config for sparse file: \(vmConfigDiskSize!) bytes")
+            }
+
             Logger.info(
                 "Reassembling disk image from cached parts using sparse file technique..."
             )
             let outputURL = destination.appendingPathComponent("disk.img")
 
-            // Ensure the output file exists but is empty
-            if FileManager.default.fileExists(atPath: outputURL.path) {
-                try FileManager.default.removeItem(at: outputURL)
+            // Wrap setup in do-catch for better error reporting
+            let outputHandle: FileHandle
+            do {
+                // 1. Ensure parent directory exists
+                try FileManager.default.createDirectory(
+                    at: outputURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+
+                // 2. Explicitly create the file first, removing old one if needed
+                if FileManager.default.fileExists(atPath: outputURL.path) {
+                    try FileManager.default.removeItem(at: outputURL)
+                }
+                guard FileManager.default.createFile(atPath: outputURL.path, contents: nil) else {
+                    throw PullError.fileCreationFailed(outputURL.path)
+                }
+
+                // 3. Now open the handle for writing
+                outputHandle = try FileHandle(forWritingTo: outputURL)
+
+            } catch {
+                // Catch errors during directory/file creation or handle opening
+                Logger.error(
+                    "Failed during setup for disk image reassembly: \(error.localizedDescription)",
+                    metadata: ["path": outputURL.path])
+                throw PullError.reassemblySetupFailed(path: outputURL.path, underlyingError: error)
             }
 
             // Calculate expected total size from the cached files
@@ -1030,92 +1492,291 @@ class ImageContainerRegistry: @unchecked Sendable {
                 "Expected download size from cache: \(ByteCountFormatter.string(fromByteCount: Int64(expectedTotalSize), countStyle: .file)) (actual disk usage will be lower)"
             )
 
-            // Create sparse file of the required size
-            FileManager.default.createFile(atPath: outputURL.path, contents: nil)
-            let outputHandle = try FileHandle(forWritingTo: outputURL)
-
-            // Set the file size without writing data (creates a sparse file)
-            try outputHandle.truncate(atOffset: expectedTotalSize)
-
             var reassemblyProgressLogger = ProgressLogger(threshold: 0.05)
-            var processedSize: UInt64 = 0
+            var currentOffset: UInt64 = 0  // Track position in the final *decompressed* file
 
-            // Process each part in order
             for partNum in 1...totalParts {
-                guard let (_, sourceURL) = diskPartSources.first(where: { $0.0 == partNum }) else {
+                // Find the original layer info for this part number
+                guard
+                    let layer = manifest.layers.first(where: { layer in
+                        if let info = extractPartInfo(from: layer.mediaType) {
+                            return info.partNum == partNum
+                        }
+                        return false
+                    }),
+                    let (_, sourceURL) = diskPartSources.first(where: { $0.0 == partNum })
+                else {
                     throw PullError.missingPart(partNum)
                 }
+                let layerMediaType = layer.mediaType  // Extract mediaType here
 
                 Logger.info(
                     "Processing part \(partNum) of \(totalParts) from cache: \(sourceURL.lastPathComponent)"
                 )
 
-                // Get part file size
-                let partAttributes = try FileManager.default.attributesOfItem(
-                    atPath: sourceURL.path)
-                let partSize = partAttributes[.size] as? UInt64 ?? 0
-
-                // Calculate the offset in the final file (parts are sequential)
-                let partOffset = processedSize
-
-                // Open input file
                 let inputHandle = try FileHandle(forReadingFrom: sourceURL)
                 defer { try? inputHandle.close() }
 
-                // Seek to the appropriate offset in output file
-                try outputHandle.seek(toOffset: partOffset)
+                // Seek to the correct offset in the output sparse file
+                try outputHandle.seek(toOffset: currentOffset)
 
-                // Copy data in chunks to avoid memory issues
-                let chunkSize: UInt64 = determineIfMemoryConstrained() ? 256 * 1024 : 1024 * 1024  // Use smaller chunks (256KB-1MB)
-                var bytesWritten: UInt64 = 0
+                if let decompressCmd = getDecompressionCommand(for: layerMediaType) {  // Use extracted mediaType
+                    Logger.info("Decompressing part \(partNum) with media type: \(layerMediaType)")
 
-                while bytesWritten < partSize {
-                    // Use Foundation's autoreleasepool for proper memory management
-                    Foundation.autoreleasepool {
-                        let readSize: UInt64 = min(UInt64(chunkSize), partSize - bytesWritten)
-                        if let chunk = try? inputHandle.read(upToCount: Int(readSize)) {
-                            if !chunk.isEmpty {
-                                try? outputHandle.write(contentsOf: chunk)
-                                bytesWritten += UInt64(chunk.count)
+                    // Handle Apple Archive format
+                    let toolPath = String(decompressCmd.dropFirst("apple_archive:".count))
+                    let tempOutputPath = FileManager.default.temporaryDirectory
+                        .appendingPathComponent(UUID().uuidString)
 
-                                // Update progress less frequently to reduce overhead
-                                if bytesWritten % (chunkSize * 4) == 0 || bytesWritten == partSize {
-                                    let totalProgress =
-                                        Double(processedSize + bytesWritten)
-                                        / Double(expectedTotalSize)
-                                    reassemblyProgressLogger.logProgress(
-                                        current: totalProgress,
-                                        context: "Reassembling disk image from cache")
-                                }
-                            }
-                        }
+                    // Check input file size before decompression
+                    let inputFileSize =
+                        (try? FileManager.default.attributesOfItem(atPath: sourceURL.path)[.size]
+                            as? UInt64) ?? 0
+                    Logger.info(
+                        "Part \(partNum) input size: \(ByteCountFormatter.string(fromByteCount: Int64(inputFileSize), countStyle: .file))"
+                    )
 
-                        // Add a small delay every few MB to allow memory cleanup
-                        if bytesWritten % (chunkSize * 16) == 0 && bytesWritten > 0 {
-                            // Use Thread.sleep for now, but ideally this would use a non-blocking approach
-                            // that is appropriate for the context (sync/async)
-                            Thread.sleep(forTimeInterval: 0.01)
-                        }
+                    // Create a process that decompresses to a temporary file
+                    let process = Process()
+                    process.executableURL = URL(fileURLWithPath: toolPath)
+                    process.arguments = [
+                        "extract", "-i", sourceURL.path, "-o", tempOutputPath.path,
+                    ]
+
+                    // Add error output capture
+                    let errorPipe = Pipe()
+                    process.standardError = errorPipe
+
+                    Logger.info(
+                        "Decompressing Apple Archive format with: \(toolPath) \(process.arguments?.joined(separator: " ") ?? "")"
+                    )
+                    try process.run()
+                    process.waitUntilExit()
+
+                    // Check error output if any
+                    let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
+                    if !errorData.isEmpty,
+                        let errorString = String(data: errorData, encoding: .utf8)
+                    {
+                        Logger.error("Decompression error output: \(errorString)")
                     }
+
+                    if process.terminationStatus != 0 {
+                        Logger.error(
+                            "Apple Archive decompression failed with status: \(process.terminationStatus), falling back to direct copy"
+                        )
+                        // Fall back to direct copying (uncompressed)
+                        Logger.info("Copying part \(partNum) directly without decompression...")
+                        try outputHandle.seek(toOffset: currentOffset)
+
+                        let inputHandle = try FileHandle(forReadingFrom: sourceURL)
+                        defer { try? inputHandle.close() }
+
+                        var bytesWritten: UInt64 = 0
+                        let chunkSize = 1024 * 1024  // 1MB chunks
+                        var chunkCount = 0
+
+                        while true {
+                            let data = autoreleasepool {
+                                try! inputHandle.read(upToCount: chunkSize) ?? Data()
+                            }
+                            if data.isEmpty { break }
+
+                            try outputHandle.write(contentsOf: data)
+                            bytesWritten += UInt64(data.count)
+                            chunkCount += 1
+
+                            // Update progress
+                            let totalProgress =
+                                Double(currentOffset + bytesWritten) / Double(expectedTotalSize)
+                            let progressBar = createProgressBar(progress: totalProgress, width: 30)
+                            let progressPercent = Int(totalProgress * 100)
+                            let currentSpeed =
+                                ByteCountFormatter.string(
+                                    fromByteCount: Int64(Double(bytesWritten) / 0.5),
+                                    countStyle: .file) + "/s"
+
+                            print(
+                                "\r\(progressBar) \(progressPercent)% | Speed: \(currentSpeed) | Part \(partNum) | \(ByteCountFormatter.string(fromByteCount: Int64(currentOffset + bytesWritten), countStyle: .file))     ",
+                                terminator: "")
+                            fflush(stdout)
+
+                            // Also log to the progress logger for consistency
+                            reassemblyProgressLogger.logProgress(
+                                current: totalProgress,
+                                context: "Direct copying")
+                        }
+
+                        Logger.info(
+                            "Part \(partNum) - Direct copy: wrote \(chunkCount) chunks, total bytes: \(ByteCountFormatter.string(fromByteCount: Int64(bytesWritten), countStyle: .file))"
+                        )
+                        currentOffset += bytesWritten
+                        continue
+                    }
+
+                    // Check if the output file exists and has content
+                    let outputExists = FileManager.default.fileExists(atPath: tempOutputPath.path)
+                    let outputFileSize =
+                        outputExists
+                        ? ((try? FileManager.default.attributesOfItem(atPath: tempOutputPath.path)[
+                            .size] as? UInt64) ?? 0) : 0
+                    Logger.info(
+                        "Part \(partNum) - Decompressed output exists: \(outputExists), size: \(ByteCountFormatter.string(fromByteCount: Int64(outputFileSize), countStyle: .file))"
+                    )
+
+                    // If decompression produced an empty file, fall back to direct copy
+                    if outputFileSize == 0 {
+                        Logger.info(
+                            "Decompression resulted in empty file, falling back to direct copy for part \(partNum)"
+                        )
+                        try? FileManager.default.removeItem(at: tempOutputPath)
+
+                        // Fall back to direct copying (uncompressed)
+                        Logger.info("Copying part \(partNum) directly without decompression...")
+                        try outputHandle.seek(toOffset: currentOffset)
+
+                        let inputHandle = try FileHandle(forReadingFrom: sourceURL)
+                        defer { try? inputHandle.close() }
+
+                        var bytesWritten: UInt64 = 0
+                        let chunkSize = 1024 * 1024  // 1MB chunks
+                        var chunkCount = 0
+
+                        while true {
+                            let data = autoreleasepool {
+                                try! inputHandle.read(upToCount: chunkSize) ?? Data()
+                            }
+                            if data.isEmpty { break }
+
+                            try outputHandle.write(contentsOf: data)
+                            bytesWritten += UInt64(data.count)
+                            chunkCount += 1
+
+                            // Update progress
+                            let totalProgress =
+                                Double(currentOffset + bytesWritten) / Double(expectedTotalSize)
+                            let progressBar = createProgressBar(progress: totalProgress, width: 30)
+                            let progressPercent = Int(totalProgress * 100)
+                            let currentSpeed =
+                                ByteCountFormatter.string(
+                                    fromByteCount: Int64(Double(bytesWritten) / 0.5),
+                                    countStyle: .file) + "/s"
+
+                            print(
+                                "\r\(progressBar) \(progressPercent)% | Speed: \(currentSpeed) | Part \(partNum) | \(ByteCountFormatter.string(fromByteCount: Int64(currentOffset + bytesWritten), countStyle: .file))     ",
+                                terminator: "")
+                            fflush(stdout)
+
+                            // Also log to the progress logger for consistency
+                            reassemblyProgressLogger.logProgress(
+                                current: totalProgress,
+                                context: "Direct copying")
+                        }
+
+                        Logger.info(
+                            "Part \(partNum) - Direct copy: wrote \(chunkCount) chunks, total bytes: \(ByteCountFormatter.string(fromByteCount: Int64(bytesWritten), countStyle: .file))"
+                        )
+                        currentOffset += bytesWritten
+                        continue
+                    }
+
+                    // Read the decompressed file and write to our output
+                    let tempInputHandle = try FileHandle(forReadingFrom: tempOutputPath)
+                    defer {
+                        try? tempInputHandle.close()
+                        try? FileManager.default.removeItem(at: tempOutputPath)
+                    }
+
+                    // Read decompressed data in chunks and write to sparse file
+                    var partDecompressedSize: UInt64 = 0
+                    let chunkSize = 1024 * 1024  // 1MB chunks
+                    var chunkCount = 0
+
+                    while true {
+                        let data = autoreleasepool {  // Help manage memory with large files
+                            try! tempInputHandle.read(upToCount: chunkSize) ?? Data()
+                        }
+                        if data.isEmpty { break }  // End of stream
+
+                        try outputHandle.write(contentsOf: data)
+                        partDecompressedSize += UInt64(data.count)
+                        chunkCount += 1
+
+                        // Update progress based on decompressed size written
+                        let totalProgress =
+                            Double(currentOffset + partDecompressedSize)
+                            / Double(expectedTotalSize)
+                        reassemblyProgressLogger.logProgress(
+                            current: totalProgress,
+                            context: "Reassembling")
+                    }
+
+                    Logger.info(
+                        "Part \(partNum) - Wrote \(chunkCount) chunks, total bytes: \(ByteCountFormatter.string(fromByteCount: Int64(partDecompressedSize), countStyle: .file))"
+                    )
+                    currentOffset += partDecompressedSize  // Advance offset by decompressed size
+                } else {
+                    // No decompression command available, try direct copy
+                    Logger.info(
+                        "Copying part \(partNum) directly..."
+                    )
+                    try outputHandle.seek(toOffset: currentOffset)
+
+                    let inputHandle = try FileHandle(forReadingFrom: sourceURL)
+                    defer { try? inputHandle.close() }
+
+                    // Get part size
+                    let partSize =
+                        (try? FileManager.default.attributesOfItem(atPath: sourceURL.path)[.size]
+                            as? UInt64) ?? 0
+                    Logger.info(
+                        "Direct copy of part \(partNum) with size: \(ByteCountFormatter.string(fromByteCount: Int64(partSize), countStyle: .file))"
+                    )
+
+                    var bytesWritten: UInt64 = 0
+                    let chunkSize = 1024 * 1024  // 1MB chunks
+                    var chunkCount = 0
+
+                    while true {
+                        let data = autoreleasepool {
+                            try! inputHandle.read(upToCount: chunkSize) ?? Data()
+                        }
+                        if data.isEmpty { break }
+
+                        try outputHandle.write(contentsOf: data)
+                        bytesWritten += UInt64(data.count)
+                        chunkCount += 1
+
+                        // Update progress
+                        let totalProgress =
+                            Double(currentOffset + bytesWritten)
+                            / Double(expectedTotalSize)
+                        reassemblyProgressLogger.logProgress(
+                            current: totalProgress,
+                            context: "Direct copying")
+                    }
+
+                    Logger.info(
+                        "Part \(partNum) - Direct copy: wrote \(chunkCount) chunks, total bytes: \(ByteCountFormatter.string(fromByteCount: Int64(bytesWritten), countStyle: .file))"
+                    )
+                    currentOffset += bytesWritten
                 }
 
-                // Update processed size
-                processedSize += partSize
+                // Ensure data is written before processing next part (optional but safer)
+                try outputHandle.synchronize()
             }
 
-            // Finalize progress
-            reassemblyProgressLogger.logProgress(
-                current: 1.0, context: "Reassembling disk image from cache")
-            Logger.info("")  // Newline after progress
+            // Finalize progress, close handle (done by defer)
+            reassemblyProgressLogger.logProgress(current: 1.0, context: "Reassembly Complete")
+            Logger.info("")  // Newline
 
-            // Close the output file
-            try outputHandle.synchronize()
+            // Ensure output handle is closed before post-processing
             try outputHandle.close()
 
             // Verify final size
             let finalSize =
-                (try? FileManager.default.attributesOfItem(atPath: outputURL.path)[.size] as? UInt64)
-                ?? 0
+                (try? FileManager.default.attributesOfItem(atPath: outputURL.path)[.size]
+                    as? UInt64) ?? 0
             Logger.info(
                 "Final disk image size from cache (before sparse file optimization): \(ByteCountFormatter.string(fromByteCount: Int64(finalSize), countStyle: .file))"
             )
@@ -1126,8 +1787,79 @@ class ImageContainerRegistry: @unchecked Sendable {
                 )
             }
 
-            Logger.info(
-                "Disk image reassembled successfully from cache using sparse file technique")
+            // Decompress the assembled disk image if it's in LZFSE compressed format
+            Logger.info("Checking if disk image is LZFSE compressed and decompressing if needed...")
+            decompressLZFSEImage(inputPath: outputURL.path)
+
+            // Create a properly formatted disk image
+            Logger.info("Converting assembled data to proper disk image format...")
+
+            // Get actual disk usage of the assembled file
+            let assembledUsage = getActualDiskUsage(path: outputURL.path)
+            let bufferBytes: UInt64 = 2 * 1024 * 1024 * 1024  // 2GB buffer
+            let requiredSpace = assembledUsage + bufferBytes
+
+            // Check available disk space in the destination directory
+            let fileManager = FileManager.default
+            let availableSpace =
+                try? fileManager.attributesOfFileSystem(
+                    forPath: outputURL.deletingLastPathComponent().path)[.systemFreeSize] as? UInt64
+
+            if let available = availableSpace, available < requiredSpace {
+                Logger.error(
+                    "Insufficient disk space to convert disk image format. Skipping conversion.",
+                    metadata: [
+                        "available": ByteCountFormatter.string(
+                            fromByteCount: Int64(available), countStyle: .file),
+                        "required": ByteCountFormatter.string(
+                            fromByteCount: Int64(requiredSpace), countStyle: .file),
+                    ]
+                )
+            } else {
+                // Prioritize SPARSE format for better sparse file handling
+                Logger.info("Attempting conversion to SPARSE format...")
+                let process = Process()
+                process.executableURL = URL(fileURLWithPath: "/usr/bin/hdiutil")
+                process.arguments = [
+                    "convert",
+                    outputURL.path,  // Source: our assembled file
+                    "-format", "SPARSE",  // Format: SPARSE (best for sparse images)
+                    "-o", outputURL.path,  // Output: overwrite with converted image
+                ]
+
+                let errorPipe = Pipe()
+                process.standardError = errorPipe
+                process.standardOutput = errorPipe
+
+                try process.run()
+                process.waitUntilExit()
+
+                // Check for errors
+                let outputData = errorPipe.fileHandleForReading.readDataToEndOfFile()
+                if !outputData.isEmpty, let outputString = String(data: outputData, encoding: .utf8)
+                {
+                    Logger.info("hdiutil output: \(outputString)")
+                }
+
+                if process.terminationStatus == 0 {
+                    // Find the potentially renamed formatted file
+                    let formattedFile = findFormattedFile(tempFormatted: outputURL) ?? outputURL
+                    // If the output path is different, remove the original and move the new one
+                    if formattedFile.path != outputURL.path {
+                        try? FileManager.default.removeItem(at: outputURL)
+                        try FileManager.default.moveItem(at: formattedFile, to: outputURL)
+                    }
+                    Logger.info("Successfully converted disk image to proper format (SPARSE)")
+                } else {
+                    Logger.error(
+                        "Failed to convert disk image to SPARSE format. VM might not start properly."
+                    )
+                    // If SPARSE failed, maybe try UDRW as a last resort?
+                    // For now, we'll just log the error.
+                }
+            }
+
+            Logger.info("Disk image reassembly completed")
         }
 
         Logger.info("Cache copy complete")
@@ -1255,70 +1987,6 @@ class ImageContainerRegistry: @unchecked Sendable {
         }
 
         throw lastError ?? PullError.layerDownloadFailed(digest)
-    }
-
-    private func decompressGzipFile(at source: URL, to destination: URL) throws {
-        Logger.info("Decompressing \(source.lastPathComponent)...")
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/gunzip")
-        process.arguments = ["-c"]
-
-        let inputPipe = Pipe()
-        let outputPipe = Pipe()
-        process.standardInput = inputPipe
-        process.standardOutput = outputPipe
-
-        try process.run()
-
-        // Read and pipe the gzipped file in chunks to avoid memory issues
-        let inputHandle = try FileHandle(forReadingFrom: source)
-        let outputHandle = try FileHandle(forWritingTo: destination)
-        defer {
-            try? inputHandle.close()
-            try? outputHandle.close()
-        }
-
-        // Create the output file
-        FileManager.default.createFile(atPath: destination.path, contents: nil)
-
-        // Process with optimal chunk size
-        let chunkSize = getOptimalChunkSize()
-        while let chunk = try inputHandle.read(upToCount: chunkSize) {
-            try autoreleasepool {
-                try inputPipe.fileHandleForWriting.write(contentsOf: chunk)
-
-                // Read and write output in chunks as well
-                while let decompressedChunk = try outputPipe.fileHandleForReading.read(
-                    upToCount: chunkSize)
-                {
-                    try outputHandle.write(contentsOf: decompressedChunk)
-                }
-            }
-        }
-
-        try inputPipe.fileHandleForWriting.close()
-
-        // Read any remaining output
-        while let decompressedChunk = try outputPipe.fileHandleForReading.read(upToCount: chunkSize)
-        {
-            try autoreleasepool {
-                try outputHandle.write(contentsOf: decompressedChunk)
-            }
-        }
-
-        process.waitUntilExit()
-
-        if process.terminationStatus != 0 {
-            throw PullError.decompressionFailed(source.lastPathComponent)
-        }
-
-        // Verify the decompressed size
-        let decompressedSize =
-            try FileManager.default.attributesOfItem(atPath: destination.path)[.size] as? UInt64
-            ?? 0
-        Logger.info(
-            "Decompressed size: \(ByteCountFormatter.string(fromByteCount: Int64(decompressedSize), countStyle: .file))"
-        )
     }
 
     private func extractPartInfo(from mediaType: String) -> (partNum: Int, total: Int)? {
@@ -1645,5 +2313,309 @@ class ImageContainerRegistry: @unchecked Sendable {
         }
 
         return nil
+    }
+
+    // Add helper to check media type and get decompress command
+    private func getDecompressionCommand(for mediaType: String) -> String? {
+        // Determine appropriate decompression command based on layer media type
+        Logger.info("Determining decompression command for media type: \(mediaType)")
+
+        // For the specific format that appears in our GHCR repository, skip decompression attempts
+        // These files are labeled +lzfse but aren't actually in Apple Archive format
+        if mediaType.contains("+lzfse;part.number=") {
+            Logger.info("Detected LZFSE part file, using direct copy instead of decompression")
+            return nil
+        }
+
+        // Check for LZFSE or Apple Archive format anywhere in the media type string
+        // The format may include part information like: application/octet-stream+lzfse;part.number=1;part.total=38
+        if mediaType.contains("+lzfse") || mediaType.contains("+aa") {
+            // Apple Archive format requires special handling
+            if let aaPath = findExecutablePath(for: "aa") {
+                Logger.info("Found Apple Archive tool at: \(aaPath)")
+                return "apple_archive:\(aaPath)"
+            } else {
+                Logger.error(
+                    "Apple Archive tool (aa) not found in PATH, falling back to default path")
+
+                // Check if the default path exists
+                let defaultPath = "/usr/bin/aa"
+                if FileManager.default.isExecutableFile(atPath: defaultPath) {
+                    Logger.info("Default Apple Archive tool exists at: \(defaultPath)")
+                } else {
+                    Logger.error("Default Apple Archive tool not found at: \(defaultPath)")
+                }
+
+                return "apple_archive:/usr/bin/aa"
+            }
+        } else {
+            Logger.info(
+                "Unsupported media type: \(mediaType) - only Apple Archive (+lzfse/+aa) is supported"
+            )
+            return nil
+        }
+    }
+
+    // Helper to find executables (optional, or hardcode paths)
+    private func findExecutablePath(for executableName: String) -> String? {
+        let pathEnv =
+            ProcessInfo.processInfo.environment["PATH"]
+            ?? "/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin:/opt/homebrew/bin"
+        let paths = pathEnv.split(separator: ":")
+        for path in paths {
+            let executablePath = URL(fileURLWithPath: String(path)).appendingPathComponent(
+                executableName
+            ).path
+            if FileManager.default.isExecutableFile(atPath: executablePath) {
+                return executablePath
+            }
+        }
+        return nil
+    }
+
+    // Helper function to extract uncompressed disk size from config.json
+    private func getUncompressedSizeFromConfig(configPath: URL) -> UInt64? {
+        guard FileManager.default.fileExists(atPath: configPath.path) else {
+            Logger.info("Config file not found: \(configPath.path)")
+            return nil
+        }
+
+        do {
+            let configData = try Data(contentsOf: configPath)
+            let decoder = JSONDecoder()
+            let ociConfig = try decoder.decode(OCIConfig.self, from: configData)
+
+            if let sizeString = ociConfig.annotations?.uncompressedSize,
+                let size = UInt64(sizeString)
+            {
+                Logger.info("Found uncompressed disk size annotation: \(size) bytes")
+                return size
+            } else {
+                Logger.info("No uncompressed disk size annotation found in config.json")
+                return nil
+            }
+        } catch {
+            Logger.error("Failed to parse config.json for uncompressed size: \(error)")
+            return nil
+        }
+    }
+
+    // Helper function to find formatted file with potential extensions
+    private func findFormattedFile(tempFormatted: URL) -> URL? {
+        // Check for the exact path first
+        if FileManager.default.fileExists(atPath: tempFormatted.path) {
+            return tempFormatted
+        }
+
+        // Check with .dmg extension
+        let dmgPath = tempFormatted.path + ".dmg"
+        if FileManager.default.fileExists(atPath: dmgPath) {
+            return URL(fileURLWithPath: dmgPath)
+        }
+
+        // Check with .sparseimage extension
+        let sparsePath = tempFormatted.path + ".sparseimage"
+        if FileManager.default.fileExists(atPath: sparsePath) {
+            return URL(fileURLWithPath: sparsePath)
+        }
+
+        // Try to find any file with the same basename
+        do {
+            let files = try FileManager.default.contentsOfDirectory(
+                at: tempFormatted.deletingLastPathComponent(),
+                includingPropertiesForKeys: nil)
+            if let matchingFile = files.first(where: {
+                $0.lastPathComponent.starts(with: tempFormatted.lastPathComponent)
+            }) {
+                return matchingFile
+            }
+        } catch {
+            Logger.error("Failed to list directory contents: \(error)")
+        }
+
+        return nil
+    }
+
+    // Helper function to decompress LZFSE compressed disk image
+    @discardableResult
+    private func decompressLZFSEImage(inputPath: String, outputPath: String? = nil) -> Bool {
+        Logger.info("Attempting to decompress LZFSE compressed disk image using sparse pipe...")
+
+        let finalOutputPath = outputPath ?? inputPath  // If outputPath is nil, we'll overwrite input
+        let tempFinalPath = finalOutputPath + ".ddsparse.tmp"  // Temporary name during dd operation
+
+        // Ensure the temporary file doesn't exist from a previous failed run
+        try? FileManager.default.removeItem(atPath: tempFinalPath)
+
+        // Process 1: compression_tool
+        let process1 = Process()
+        process1.executableURL = URL(fileURLWithPath: "/usr/bin/compression_tool")
+        process1.arguments = [
+            "-decode",
+            "-i", inputPath,
+            "-o", "/dev/stdout",  // Write to standard output
+        ]
+
+        // Process 2: dd
+        let process2 = Process()
+        process2.executableURL = URL(fileURLWithPath: "/bin/dd")
+        process2.arguments = [
+            "if=/dev/stdin",  // Read from standard input
+            "of=\(tempFinalPath)",  // Write to the temporary final path
+            "conv=sparse",  // Use sparse conversion
+            "bs=1m",  // Use a reasonable block size (e.g., 1MB)
+        ]
+
+        // Create pipes
+        let pipe = Pipe()  // Connects process1 stdout to process2 stdin
+        let errorPipe1 = Pipe()
+        let errorPipe2 = Pipe()
+
+        process1.standardOutput = pipe
+        process1.standardError = errorPipe1
+
+        process2.standardInput = pipe
+        process2.standardError = errorPipe2
+
+        do {
+            Logger.info("Starting decompression pipe: compression_tool | dd conv=sparse...")
+            // Start processes
+            try process1.run()
+            try process2.run()
+
+            // Close the write end of the pipe for process2 to prevent hanging
+            // This might not be strictly necessary if process1 exits cleanly, but safer.
+            // Note: Accessing fileHandleForWriting after run can be tricky.
+            // We rely on process1 exiting to signal EOF to process2.
+
+            process1.waitUntilExit()
+            process2.waitUntilExit()  // Wait for dd to finish processing the stream
+
+            // --- Check for errors ---
+            let errorData1 = errorPipe1.fileHandleForReading.readDataToEndOfFile()
+            if !errorData1.isEmpty,
+                let errorString = String(data: errorData1, encoding: .utf8)?.trimmingCharacters(
+                    in: .whitespacesAndNewlines), !errorString.isEmpty
+            {
+                Logger.error("compression_tool stderr: \(errorString)")
+            }
+            let errorData2 = errorPipe2.fileHandleForReading.readDataToEndOfFile()
+            if !errorData2.isEmpty,
+                let errorString = String(data: errorData2, encoding: .utf8)?.trimmingCharacters(
+                    in: .whitespacesAndNewlines), !errorString.isEmpty
+            {
+                // dd often reports blocks in/out to stderr, filter that if needed, but log for now
+                Logger.info("dd stderr: \(errorString)")
+            }
+
+            // Check termination statuses
+            let status1 = process1.terminationStatus
+            let status2 = process2.terminationStatus
+
+            if status1 != 0 || status2 != 0 {
+                Logger.error(
+                    "Pipe command failed. compression_tool status: \(status1), dd status: \(status2)"
+                )
+                try? FileManager.default.removeItem(atPath: tempFinalPath)  // Clean up failed attempt
+                return false
+            }
+
+            // --- Validation ---
+            if FileManager.default.fileExists(atPath: tempFinalPath) {
+                let fileSize =
+                    (try? FileManager.default.attributesOfItem(atPath: tempFinalPath)[.size]
+                        as? UInt64) ?? 0
+                let actualUsage = getActualDiskUsage(path: tempFinalPath)
+                Logger.info(
+                    "Piped decompression successful - Allocated: \(ByteCountFormatter.string(fromByteCount: Int64(fileSize), countStyle: .file)), Actual Usage: \(ByteCountFormatter.string(fromByteCount: Int64(actualUsage), countStyle: .file))"
+                )
+
+                // Basic header validation
+                var isValid = false
+                if let fileHandle = FileHandle(forReadingAtPath: tempFinalPath) {
+                    if let data = try? fileHandle.read(upToCount: 512), data.count >= 512,
+                        data[510] == 0x55 && data[511] == 0xAA
+                    {
+                        isValid = true
+                    }
+                    // Ensure handle is closed regardless of validation outcome
+                    try? fileHandle.close()
+                } else {
+                    Logger.error(
+                        "Validation Error: Could not open decompressed file handle for reading.")
+                }
+
+                if isValid {
+                    Logger.info("Decompressed file appears to be a valid disk image.")
+
+                    // Move the final file into place
+                    // If outputPath was nil, we need to replace the original inputPath
+                    if outputPath == nil {
+                        // Backup original only if it's different from the temp path
+                        if inputPath != tempFinalPath {
+                            try? FileManager.default.copyItem(
+                                at: URL(fileURLWithPath: inputPath),
+                                to: URL(fileURLWithPath: inputPath + ".compressed.bak"))
+                            try? FileManager.default.removeItem(at: URL(fileURLWithPath: inputPath))
+                        }
+                        try FileManager.default.moveItem(
+                            at: URL(fileURLWithPath: tempFinalPath),
+                            to: URL(fileURLWithPath: inputPath))
+                        Logger.info("Replaced original file with sparsely decompressed version.")
+                    } else {
+                        // If outputPath was specified, move it there (overwrite if needed)
+                        try? FileManager.default.removeItem(
+                            at: URL(fileURLWithPath: finalOutputPath))  // Remove existing if overwriting
+                        try FileManager.default.moveItem(
+                            at: URL(fileURLWithPath: tempFinalPath),
+                            to: URL(fileURLWithPath: finalOutputPath))
+                        Logger.info("Moved sparsely decompressed file to: \(finalOutputPath)")
+                    }
+                    return true
+                } else {
+                    Logger.error(
+                        "Validation failed: Decompressed file header is invalid or file couldn't be read. Cleaning up."
+                    )
+                    try? FileManager.default.removeItem(atPath: tempFinalPath)
+                    return false
+                }
+            } else {
+                Logger.error(
+                    "Piped decompression failed: Output file '\(tempFinalPath)' not found after dd completed."
+                )
+                return false
+            }
+
+        } catch {
+            Logger.error("Error running decompression pipe command: \(error)")
+            try? FileManager.default.removeItem(atPath: tempFinalPath)  // Clean up on error
+            return false
+        }
+    }
+
+    // Helper function to get actual disk usage of a file
+    private func getActualDiskUsage(path: String) -> UInt64 {
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/usr/bin/du")
+        task.arguments = ["-k", path]  // -k for 1024-byte blocks
+
+        let pipe = Pipe()
+        task.standardOutput = pipe
+
+        do {
+            try task.run()
+            task.waitUntilExit()
+
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            if let output = String(data: data, encoding: .utf8),
+                let size = UInt64(output.split(separator: "\t").first ?? "0")
+            {
+                return size * 1024  // Convert from KB to bytes
+            }
+        } catch {
+            Logger.error("Failed to get actual disk usage: \(error)")
+        }
+
+        return 0
     }
 }

@@ -1,10 +1,11 @@
 import Foundation
 import Testing
+
 @testable import lume
 
 class MockProcessRunner: ProcessRunner {
     var runCalls: [(executable: String, arguments: [String])] = []
-    
+
     func run(executable: String, arguments: [String]) throws {
         runCalls.append((executable, arguments))
     }
@@ -12,17 +13,17 @@ class MockProcessRunner: ProcessRunner {
 
 private func setupVMDirectory(_ tempDir: URL) throws -> VMDirectory {
     let vmDir = VMDirectory(Path(tempDir.path))
-    
+
     // Create disk image file
     let diskPath = vmDir.diskPath
-    let diskData = Data(repeating: 0, count: 1024 * 1024) // 1MB mock disk
+    let diskData = Data(repeating: 0, count: 1024 * 1024)  // 1MB mock disk
     try diskData.write(to: diskPath.url)
-    
+
     // Create nvram file
     let nvramPath = vmDir.nvramPath
-    let nvramData = Data(repeating: 0, count: 1024) // 1KB mock nvram
+    let nvramData = Data(repeating: 0, count: 1024)  // 1KB mock nvram
     try nvramData.write(to: nvramPath.url)
-    
+
     // Create initial config file
     var config = try VMConfig(
         os: "mock-os",
@@ -33,11 +34,11 @@ private func setupVMDirectory(_ tempDir: URL) throws -> VMDirectory {
     )
     config.setMacAddress("00:11:22:33:44:55")
     try vmDir.saveConfig(config)
-    
+
     // Create .initialized file to mark VM as initialized
     let initializedPath = vmDir.dir.file(".initialized")
     try Data().write(to: initializedPath.url)
-    
+
     return vmDir
 }
 
@@ -53,16 +54,16 @@ func testVMInitialization() async throws {
         diskSize: 1024,
         display: "1024x768"
     )
-    config.setMacAddress("00:11:22:33:44:55") // Set MAC address to avoid nil
+    config.setMacAddress("00:11:22:33:44:55")  // Set MAC address to avoid nil
     let home = Home(fileManager: FileManager.default)
-    let context = VMDirContext(dir: vmDir, config: config, home: home)
-    
+    let context = VMDirContext(dir: vmDir, config: config, home: home, storage: nil)
+
     let vm = MockVM(
         vmDirContext: context,
         virtualizationServiceFactory: { _ in MockVMVirtualizationService() },
         vncServiceFactory: { MockVNCService(vmDirectory: $0) }
     )
-    
+
     // Test initial state
     let details = vm.details
     #expect(details.name == vmDir.name)
@@ -85,22 +86,24 @@ func testVMRunAndStop() async throws {
     )
     config.setMacAddress("00:11:22:33:44:55")
     let home = Home(fileManager: FileManager.default)
-    let context = VMDirContext(dir: vmDir, config: config, home: home)
-    
+    let context = VMDirContext(dir: vmDir, config: config, home: home, storage: nil)
+
     let vm = MockVM(
         vmDirContext: context,
         virtualizationServiceFactory: { _ in MockVMVirtualizationService() },
         vncServiceFactory: { MockVNCService(vmDirectory: $0) }
     )
-    
+
     // Test running VM
     let runTask = Task {
-        try await vm.run(noDisplay: false, sharedDirectories: [], mount: nil, vncPort: 0, recoveryMode: false)
+        try await vm.run(
+            noDisplay: false, sharedDirectories: [], mount: nil as Path?, vncPort: 0,
+            recoveryMode: false)
     }
-    
+
     // Give the VM time to start
     try await Task.sleep(nanoseconds: UInt64(1e9))
-    
+
     // Test stopping VM
     try await vm.stop()
     runTask.cancel()
@@ -120,22 +123,22 @@ func testVMConfigurationUpdates() async throws {
     )
     config.setMacAddress("00:11:22:33:44:55")
     let home = Home(fileManager: FileManager.default)
-    let context = VMDirContext(dir: vmDir, config: config, home: home)
-    
+    let context = VMDirContext(dir: vmDir, config: config, home: home, storage: nil)
+
     let vm = MockVM(
         vmDirContext: context,
         virtualizationServiceFactory: { _ in MockVMVirtualizationService() },
         vncServiceFactory: { MockVNCService(vmDirectory: $0) }
     )
-    
+
     // Test CPU count update
     try vm.setCpuCount(4)
     #expect(vm.vmDirContext.config.cpuCount == 4)
-    
+
     // Test memory size update
     try vm.setMemorySize(4096)
     #expect(vm.vmDirContext.config.memorySize == 4096)
-    
+
     // Test MAC address update
     try vm.setMacAddress("00:11:22:33:44:66")
     #expect(vm.vmDirContext.config.macAddress == "00:11:22:33:44:66")
@@ -155,16 +158,16 @@ func testVMSetup() async throws {
     )
     config.setMacAddress("00:11:22:33:44:55")
     let home = Home(fileManager: FileManager.default)
-    let context = VMDirContext(dir: vmDir, config: config, home: home)
-    
+    let context = VMDirContext(dir: vmDir, config: config, home: home, storage: nil)
+
     let vm = MockVM(
         vmDirContext: context,
         virtualizationServiceFactory: { _ in MockVMVirtualizationService() },
         vncServiceFactory: { MockVNCService(vmDirectory: $0) }
     )
-    
-    let expectedDiskSize: UInt64 = 64 * 1024 * 1024 * 1024 // 64 GB
-    
+
+    let expectedDiskSize: UInt64 = 64 * 1024 * 1024 * 1024  // 64 GB
+
     try await vm.setup(
         ipswPath: "/path/to/mock.ipsw",
         cpuCount: 2,
@@ -172,11 +175,13 @@ func testVMSetup() async throws {
         diskSize: expectedDiskSize,
         display: "1024x768"
     )
-    
+
     #expect(vm.vmDirContext.config.cpuCount == 2)
     #expect(vm.vmDirContext.config.memorySize == 2048)
     let actualDiskSize = vm.vmDirContext.config.diskSize ?? 0
-    #expect(actualDiskSize == expectedDiskSize, "Expected disk size \(expectedDiskSize), but got \(actualDiskSize)")
+    #expect(
+        actualDiskSize == expectedDiskSize,
+        "Expected disk size \(expectedDiskSize), but got \(actualDiskSize)")
     #expect(vm.vmDirContext.config.macAddress == "00:11:22:33:44:55")
 }
 
@@ -184,4 +189,4 @@ private func createTempDirectory() throws -> URL {
     let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
     return tempDir
-} 
+}

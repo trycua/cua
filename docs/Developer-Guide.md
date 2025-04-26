@@ -17,7 +17,7 @@ Each package has its own virtual environment and dependencies, managed through P
 
 1. Install Lume CLI:
 ```bash
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/lume/scripts/install.sh)"
+sudo /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/lume/scripts/install.sh)"
 ```
 
 2. Clone the repository:

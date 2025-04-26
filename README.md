@@ -227,6 +227,7 @@ Apple, macOS, and Apple Silicon are trademarks of Apple Inc. Ubuntu and Canonica
     </tr>
     <tr>
       <td align="center" valign="top" width="14.28%"><a href="https://www.encona.com/"><img src="https://avatars.githubusercontent.com/u/891558?v=4?s=100" width="100px;" alt="Rahim Nathwani"/><br /><sub><b>Rahim Nathwani</b></sub></a><br /><a href="#code-rahimnathwani" title="Code">💻</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="http://denormalized.io"><img src="https://avatars.githubusercontent.com/u/1541411?v=4?s=100" width="100px;" alt="Matt Green"/><br /><sub><b>Matt Green</b></sub></a><br /><a href="#code-emgeee" title="Code">💻</a></td>
     </tr>
   </tbody>
 </table>

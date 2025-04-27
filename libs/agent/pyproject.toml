@@ -23,7 +23,7 @@ dependencies = [
     "cua-core>=0.1.0,<0.2.0",
     "certifi>=2024.2.2"
 ]
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 
 [project.optional-dependencies]
 anthropic = [
@@ -96,11 +96,11 @@ source-includes = ["tests/", "README.md", "LICENSE"]
 
 [tool.black]
 line-length = 100
-target-version = ["py310"]
+target-version = ["py311"]
 
 [tool.ruff]
 line-length = 100
-target-version = "py310"
+target-version = "py311"
 select = ["E", "F", "B", "I"]
 fix = true
 
@@ -109,7 +109,7 @@ docstring-code-format = true
 
 [tool.mypy]
 strict = true
-python_version = "3.10"
+python_version = "3.11"
 ignore_missing_imports = true
 disallow_untyped_defs = true
 check_untyped_defs = true

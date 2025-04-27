@@ -10,7 +10,7 @@ CUA libraries collect minimal anonymous usage data to help improve our software.
 
 - Basic system information:
   - Operating system (e.g., 'darwin', 'win32', 'linux')
-  - Python version (e.g., '3.10.0')
+  - Python version (e.g., '3.11.0')
 - Module initialization events:
   - When a module (like 'computer' or 'agent') is imported
   - Version of the module being used

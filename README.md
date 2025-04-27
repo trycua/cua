@@ -35,12 +35,13 @@
 
 - Mac with Apple Silicon (M1/M2/M3/M4 series)
 - macOS 15 (Sequoia) or newer
-- Python 3.10+ (required for the Computer, Agent, and MCP libraries). We recommend using Conda (or Anaconda) to create an ad hoc Python environment.
+- Python 3.11+ (required for the Computer, Agent, and MCP libraries). We recommend using Conda (or Anaconda) to create an ad hoc Python environment.
 - Disk space for VM images (30GB+ recommended)
 
 ## Quick Start
 
 ### Option 1: Lume CLI Only (VM Management)
+
 If you only need the virtualization capabilities:
 
 ```bash
@@ -50,29 +51,35 @@ If you only need the virtualization capabilities:
 For Lume usage instructions, refer to the [Lume documentation](./libs/lume/README.md).
 
 ### Option 2: Full Computer-Use Agent Capabilities
+
 If you want to use AI agents with virtualized environments:
 
 1. Install the Lume CLI:
+
    ```bash
    /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/lume/scripts/install.sh)"
    ```
 
 2. Pull the latest macOS CUA image:
+
    ```bash
    lume pull macos-sequoia-cua:latest
    ```
 
 3. Start Lume daemon service:
+
    ```bash
    lume serve
    ```
 
 4. Install the Python libraries:
+
    ```bash
    pip install cua-computer cua-agent[all]
    ```
 
 5. Use the libraries in your Python code:
+
    ```python
    from computer import Computer
    from agent import ComputerAgent, LLM, AgentLoop, LLMProvider
@@ -92,7 +99,7 @@ If you want to use AI agents with virtualized environments:
        async for result in agent.run(task):
          print(result)
    ```
-   
+
    Explore the [Agent Notebook](./notebooks/) for a ready-to-run example.
 
 6. Optionally, you can use the Agent with a Gradio UI:
@@ -108,6 +115,7 @@ If you want to use AI agents with virtualized environments:
    ```
 
 ### Option 3: Build from Source (Nightly)
+
 If you want to contribute to the project or need the latest nightly features:
 
    ```bash
@@ -121,7 +129,7 @@ If you want to contribute to the project or need the latest nightly features:
    # Build the project
    ./scripts/build.sh
    ```
-   
+
    See our [Developer-Guide](./docs/Developer-Guide.md) for more information.
 
 ## Monorepo Libraries

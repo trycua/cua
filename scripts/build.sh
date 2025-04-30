@@ -3,6 +3,21 @@
 # Exit on error
 set -e
 
+# Parse args
+UV=
+while [[ $@ -gt 0 ]]; do
+	case "$1" in
+		--uv)
+			UV=yes
+			shift
+			;;
+		*)
+			echo "Usage: $0 [--uv]" >&2
+			exit 1
+			;;
+	esac
+done
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -54,12 +69,18 @@ print_success "Environment cleanup complete"
 
 # Create and activate virtual environment
 print_step "Creating virtual environment..."
-python -m venv .venv
+if [ -n "${UV}" ]; then
+	uv venv .venv
+	PIP="uv pip"
+else
+	python -m venv .venv
+	PIP="python -m pip"
+fi
 source .venv/bin/activate
 
 # Upgrade pip and install build tools
 print_step "Upgrading pip and installing build tools..."
-python -m pip install --upgrade pip setuptools wheel
+${PIP} install --upgrade pip setuptools wheel
 
 # Function to install a package and its dependencies
 install_package() {
@@ -71,9 +92,9 @@ install_package() {
     
     if [ -f "pyproject.toml" ]; then
         if [ -n "$extras" ]; then
-            pip install -e ".[${extras}]"
+            ${PIP} install -e ".[${extras}]"
         else
-            pip install -e .
+            ${PIP} install -e .
         fi
     else
         print_error "No pyproject.toml found in ${package_dir}"
@@ -109,7 +130,7 @@ install_package "libs/mcp-server" "mcp-server"
 
 # Install development tools from root project
 print_step "Installing development dependencies..."
-pip install -e ".[dev,test,docs]"
+${PIP} install -e ".[dev,test,docs]"
 
 # Create a .env file for VS Code to use the virtual environment
 print_step "Creating .env file for VS Code..."

@@ -1,9 +1,9 @@
-from typing import Optional, List, Literal, Dict, Any, Union, TYPE_CHECKING, cast
+from typing import Optional, List, Dict, Any, Union, TYPE_CHECKING, cast
 from pylume import PyLume
-from pylume.models import VMRunOpts, VMUpdateOpts, ImageRef, SharedDirectory, VMStatus
+from pylume.models import VMRunOpts, VMUpdateOpts, SharedDirectory, VMStatus
 import asyncio
 from .models import Computer as ComputerConfig, Display
-from .interface.factory import InterfaceFactory
+from .interface.factory import InterfaceFactory, OSType
 import time
 from PIL import Image
 import io
@@ -13,8 +13,6 @@ import json
 import logging
 from .telemetry import record_computer_initialization
 import os
-
-OSType = Literal["macos", "linux"]
 
 # Import BaseComputerInterface for type annotations
 if TYPE_CHECKING:
@@ -29,15 +27,15 @@ class Computer:
         display: Union[Display, Dict[str, int], str] = "1024x768",
         memory: str = "8GB",
         cpu: str = "4",
-        os: OSType = "macos",
+        os_type: OSType = "macos",
         name: str = "",
         image: str = "macos-sequoia-cua:latest",
         shared_directories: Optional[List[str]] = None,
-        use_host_computer_server: bool = False,
+        running_server_host: str | None = None,
         verbosity: Union[int, LogLevel] = logging.INFO,
         telemetry_enabled: bool = True,
         port: Optional[int] = 3000,
-        host: str = os.environ.get("PYLUME_HOST", "localhost"),
+        pylume_host: str = os.environ.get("PYLUME_HOST", "localhost"),
     ):
         """Initialize a new Computer instance.
 
@@ -49,7 +47,7 @@ class Computer:
                     Defaults to "1024x768"
             memory: The VM memory allocation. Defaults to "8GB"
             cpu: The VM CPU allocation. Defaults to "4"
-            os: The operating system type ('macos' or 'linux')
+            os_type: The operating system type ('macos', 'linux' or 'windows')
             name: The VM name
             image: The VM image name
             shared_directories: Optional list of directory paths to share with the VM
@@ -58,7 +56,7 @@ class Computer:
                       LogLevel enum values are still accepted for backward compatibility
             telemetry_enabled: Whether to enable telemetry tracking. Defaults to True.
             port: Optional port to use for the PyLume server
-            host: Host to use for PyLume connections (e.g. "localhost", "host.docker.internal")
+            pylume_host: Host to use for PyLume connections (e.g. "localhost", "host.docker.internal")
         """
 
         self.logger = Logger("cua.computer", verbosity)
@@ -67,7 +65,7 @@ class Computer:
         # Store original parameters
         self.image = image
         self.port = port
-        self.host = host
+        self.pylume_host = pylume_host
 
         # Store telemetry preference
         self._telemetry_enabled = telemetry_enabled
@@ -84,7 +82,7 @@ class Computer:
         self.vm_logger = Logger("cua.vm", verbosity)
         self.interface_logger = Logger("cua.interface", verbosity)
 
-        if not use_host_computer_server:
+        if not running_server_host:
             if ":" not in image or len(image.split(":")) != 2:
                 raise ValueError("Image must be in the format <image_name>:<tag>")
 
@@ -125,7 +123,7 @@ class Computer:
 
         # Initialize with proper typing - None at first, will be set in run()
         self._interface = None
-        self.os = os
+        self.os_type = os_type
         self.shared_paths = []
         if shared_directories:
             for path in shared_directories:
@@ -134,7 +132,7 @@ class Computer:
                     raise ValueError(f"Shared directory does not exist: {path}")
                 self.shared_paths.append(abs_path)
         self._pylume_context = None
-        self.use_host_computer_server = use_host_computer_server
+        self.running_server_host = running_server_host
 
         # Record initialization in telemetry (if enabled)
         if telemetry_enabled:
@@ -178,17 +176,16 @@ class Computer:
 
         try:
             # If using host computer server
-            if self.use_host_computer_server:
+            if self.running_server_host:
                 self.logger.info("Using host computer server")
-                # Set ip_address for host computer server mode
-                ip_address = "localhost"
+                ip_address = self.running_server_host
                 # Create the interface with explicit type annotation
                 from .interface.base import BaseComputerInterface
 
                 self._interface = cast(
                     BaseComputerInterface,
                     InterfaceFactory.create_interface_for_os(
-                        os=self.os, ip_address=ip_address  # type: ignore[arg-type]
+                        os_type=self.os_type, ip_address=ip_address  # type: ignore[arg-type]
                     ),
                 )
 
@@ -214,9 +211,9 @@ class Computer:
                             self.logger.verbose(f"Using specified port for PyLume: {self.port}")
 
                         # Add host if specified
-                        if hasattr(self, "host") and self.host != "localhost":
-                            pylume_kwargs["host"] = self.host
-                            self.logger.verbose(f"Using specified host for PyLume: {self.host}")
+                        if hasattr(self, "pylume_host") and self.pylume_host != "localhost":
+                            pylume_kwargs["host"] = self.pylume_host
+                            self.logger.verbose(f"Using specified host for PyLume: {self.pylume_host}")
 
                         # Create PyLume instance with configured parameters
                         self.config.pylume = PyLume(**pylume_kwargs)
@@ -288,13 +285,13 @@ class Computer:
 
         try:
             # Initialize the interface using the factory with the specified OS
-            self.logger.info(f"Initializing interface for {self.os} at {ip_address}")
+            self.logger.info(f"Initializing interface for {self.os_type} at {ip_address}")
             from .interface.base import BaseComputerInterface
 
             self._interface = cast(
                 BaseComputerInterface,
                 InterfaceFactory.create_interface_for_os(
-                    os=self.os, ip_address=ip_address  # type: ignore[arg-type]
+                    os_type=self.os_type, ip_address=ip_address  # type: ignore[arg-type]
                 ),
             )
 
@@ -312,7 +309,7 @@ class Computer:
                 )
 
             # Create an event to keep the VM running in background if needed
-            if not self.use_host_computer_server:
+            if not self.running_server_host:
                 self._stop_event = asyncio.Event()
                 self._keep_alive_task = asyncio.create_task(self._stop_event.wait())
 
@@ -346,7 +343,7 @@ class Computer:
             if self._interface:  # Only try to close interface if it exists
                 self.logger.verbose("Closing interface...")
                 # For host computer server, just use normal close to keep the server running
-                if self.use_host_computer_server:
+                if self.running_server_host:
                     self._interface.close()
                 else:
                     # For VM mode, force close the connection
@@ -355,7 +352,7 @@ class Computer:
                     else:
                         self._interface.close()
 
-            if not self.use_host_computer_server and self._pylume_context:
+            if not self.running_server_host and self._pylume_context:
                 try:
                     self.logger.info(f"Stopping VM {self.config.name}...")
                     await self.config.pylume.stop_vm(self.config.name)  # type: ignore[attr-defined]
@@ -378,8 +375,8 @@ class Computer:
     # @property
     async def get_ip(self) -> str:
         """Get the IP address of the VM or localhost if using host computer server."""
-        if self.use_host_computer_server:
-            return "127.0.0.1"
+        if self.running_server_host:
+            return self.running_server_host
         ip = await self.config.get_ip()
         return ip or "unknown"  # Return "unknown" if ip is None
 
@@ -389,7 +386,7 @@ class Computer:
         Returns:
             VM status information or None if using host computer server.
         """
-        if self.use_host_computer_server:
+        if self.running_server_host:
             return None
 
         timeout = 600  # 10 minutes timeout (increased from 4 minutes)

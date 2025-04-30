@@ -3,12 +3,14 @@
 from typing import Literal
 from .base import BaseComputerInterface
 
+OSType = Literal["macos", "linux", "windows"]
+
 class InterfaceFactory:
     """Factory for creating OS-specific computer interfaces."""
     
     @staticmethod
     def create_interface_for_os(
-        os: Literal['macos', 'linux'],
+        os_type: OSType,
         ip_address: str
     ) -> BaseComputerInterface:
         """Create an interface for the specified OS.
@@ -25,8 +27,12 @@ class InterfaceFactory:
         """
         # Import implementations here to avoid circular imports
         from .macos import MacOSComputerInterface
+        from .windows import WindowsComputerInterface
         
-        if os == 'macos':
-            return MacOSComputerInterface(ip_address)
-        else:
-            raise ValueError(f"Unsupported OS type: {os}") 
+        match os_type:
+            case 'macos':
+                return MacOSComputerInterface(ip_address)
+            case 'windows':
+                return WindowsComputerInterface(ip_address)
+            case _:
+                raise ValueError(f"Unsupported OS type: {os_type}")

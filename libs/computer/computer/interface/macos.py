@@ -34,7 +34,6 @@ class MacOSComputerInterface(BaseComputerInterface):
     async def _keep_alive(self):
         """Keep the WebSocket connection alive with automatic reconnection."""
         retry_count = 0
-        max_log_attempts = 1  # Only log the first attempt at INFO level
         log_interval = 500  # Then log every 500th attempt (significantly increased from 30)
         last_warning_time = 0
         min_warning_interval = 30  # Minimum seconds between connection lost warnings

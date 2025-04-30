@@ -43,5 +43,6 @@ except Exception as e:
     logger.warning(f"Error initializing telemetry: {e}")
 
 from .computer import Computer
+from .interface.factory import OSType
 
-__all__ = ["Computer"]
+__all__ = ["Computer", "OSType"]

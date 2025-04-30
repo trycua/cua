@@ -44,6 +44,7 @@ Action = Literal[
     "double_click",
     "screenshot",
     "scroll",
+    "drag",
 ]
 
 
@@ -162,9 +163,14 @@ class ComputerTool(BaseComputerTool, BaseOpenAITool):
                 y = kwargs.get("y")
                 if x is None or y is None:
                     raise ToolError("x and y coordinates are required for scroll action")
-                scroll_x = kwargs.get("scroll_x", 0) // 20
-                scroll_y = kwargs.get("scroll_y", 0) // 20
+                scroll_x = kwargs.get("scroll_x", 0) // 50
+                scroll_y = kwargs.get("scroll_y", 0) // 50
                 return await self.handle_scroll(x, y, scroll_x, scroll_y)
+            elif type == "drag":
+                path = kwargs.get("path")
+                if not path or not isinstance(path, list) or len(path) < 2:
+                    raise ToolError("path is required for drag action and must contain at least 2 points")
+                return await self.handle_drag(path)
             elif type == "screenshot":
                 return await self.screenshot()
             elif type == "wait":
@@ -240,11 +246,7 @@ class ComputerTool(BaseComputerTool, BaseOpenAITool):
 
             if len(mapped_keys) > 1:
                 # For key combinations (like Ctrl+C)
-                for k in mapped_keys:
-                    await self.computer.interface.press_key(k)
-                await asyncio.sleep(0.1)
-                for k in reversed(mapped_keys):
-                    await self.computer.interface.press_key(k)
+                await self.computer.interface.hotkey(*mapped_keys)
             else:
                 # Single key press
                 await self.computer.interface.press_key(mapped_keys[0])
@@ -305,6 +307,41 @@ class ComputerTool(BaseComputerTool, BaseOpenAITool):
         except Exception as e:
             self.logger.error(f"Error in handle_scroll: {str(e)}")
             raise ToolError(f"Failed to scroll at ({x}, {y}): {str(e)}")
+
+    async def handle_drag(self, path: List[Dict[str, int]]) -> ToolResult:
+        """Handle mouse drag operation using a path of coordinates.
+
+        Args:
+            path: List of coordinate points {"x": int, "y": int} defining the drag path
+
+        Returns:
+            ToolResult with the operation result and screenshot
+        """
+        try:
+            # Convert from [{"x": x, "y": y}, ...] format to [(x, y), ...] format
+            points = [(p["x"], p["y"]) for p in path]
+            
+            # Perform drag action
+            if len(points) == 2:
+                await self.computer.interface.move_cursor(points[0][0], points[0][1])
+                await self.computer.interface.drag_to(points[1][0], points[1][1])
+            else:
+                await self.computer.interface.drag(points, button="left")
+            
+            # Wait for UI to update
+            await asyncio.sleep(0.5)
+            
+            # Take screenshot after action
+            screenshot = await self.computer.interface.screenshot()
+            base64_screenshot = base64.b64encode(screenshot).decode("utf-8")
+            
+            return ToolResult(
+                output=f"Dragged from ({path[0]['x']}, {path[0]['y']}) to ({path[-1]['x']}, {path[-1]['y']})",
+                base64_image=base64_screenshot,
+            )
+        except Exception as e:
+            self.logger.error(f"Error in handle_drag: {str(e)}")
+            raise ToolError(f"Failed to perform drag operation: {str(e)}")
 
     async def screenshot(self) -> ToolResult:
         """Take a screenshot."""

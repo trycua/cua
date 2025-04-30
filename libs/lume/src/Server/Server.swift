@@ -79,9 +79,11 @@ final class Server {
         routes = [
             Route(
                 method: "GET", path: "/lume/vms",
-                handler: { [weak self] _ in
+                handler: { [weak self] request in
                     guard let self else { throw HTTPError.internalError }
-                    return try await self.handleListVMs()
+                    // Extract storage from query params if present
+                    let storage = self.extractQueryParam(request: request, name: "storage")
+                    return try await self.handleListVMs(storage: storage)
                 }),
             Route(
                 method: "GET", path: "/lume/vms/:name",

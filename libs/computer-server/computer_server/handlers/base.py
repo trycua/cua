@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List, Tuple
 
 class BaseAccessibilityHandler(ABC):
     """Abstract base class for OS-specific accessibility handlers."""
@@ -55,6 +55,17 @@ class BaseAutomationHandler(ABC):
         Args:
             x: The x coordinate to drag to
             y: The y coordinate to drag to
+            button: The mouse button to use ('left', 'middle', 'right')
+            duration: How long the drag should take in seconds
+        """
+        pass
+    
+    @abstractmethod
+    async def drag(self, path: List[Tuple[int, int]], button: str = "left", duration: float = 0.5) -> Dict[str, Any]:
+        """Drag the cursor from current position to specified coordinates.
+        
+        Args:
+            path: A list of tuples of x and y coordinates to drag to
             button: The mouse button to use ('left', 'middle', 'right')
             duration: How long the drag should take in seconds
         """

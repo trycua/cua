@@ -48,7 +48,7 @@ struct Run: AsyncParsableCommand {
     @Option(help: "For MacOS VMs only, boot into the VM in recovery mode")
     var recoveryMode: Bool = false
 
-    @Option(name: .customLong("storage"), help: "VM storage location to use")
+    @Option(name: .customLong("storage"), help: "VM storage location to use or direct path to VM location")
     var storage: String?
 
     private var parsedSharedDirectories: [SharedDirectory] {

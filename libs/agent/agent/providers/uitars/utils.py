@@ -4,8 +4,113 @@ import logging
 import base64
 import re
 from typing import Any, Dict, List, Optional, Union, Tuple
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
+
+from ...core.types import AgentResponse
+
+async def to_agent_response_format(
+    response: Dict[str, Any],
+    messages: List[Dict[str, Any]],
+    model: Optional[str] = None,
+) -> AgentResponse:
+    """Convert raw UI-TARS response to agent response format.
+    
+    Args:
+        response: Raw UI-TARS response
+        messages: List of messages in standard format
+        model: Optional model name
+    
+    Returns:
+        AgentResponse: Standardized agent response format
+    """
+    # Create unique IDs for this response
+    response_id = f"resp_{datetime.now().strftime('%Y%m%d%H%M%S')}_{id(response)}"
+    reasoning_id = f"rs_{response_id}"
+    action_id = f"cu_{response_id}"
+    call_id = f"call_{response_id}"
+
+    # Parse actions from the raw response
+    content = response["choices"][0]["message"]["content"]
+    actions = parse_actions(content)
+    
+    # Extract thought content if available
+    reasoning_text = ""
+    if "Thought:" in content:
+        thought_match = re.search(r"Thought: (.*?)(?=\s*Action:|$)", content, re.DOTALL)
+        if thought_match:
+            reasoning_text = thought_match.group(1).strip()
+    
+    # Create output items
+    output_items = []
+    if reasoning_text:
+        output_items.append({
+            "type": "reasoning",
+            "id": reasoning_id,
+            "text": reasoning_text
+        })
+    if actions:
+        for i, action in enumerate(actions):
+            action_name, tool_args = parse_action_parameters(action)
+            if action_name == "finished":
+                output_items.append({
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{
+                        "type": "output_text",
+                        "text": tool_args["content"]
+                    }],
+                    "id": f"action_{i}_{action_id}",
+                    "status": "completed"
+                })
+            else:
+                if tool_args.get("action") == action_name:
+                    del tool_args["action"]
+                output_items.append({
+                    "type": "computer_call",
+                    "id": f"{action}_{i}_{action_id}",
+                    "call_id": f"call_{i}_{action_id}",
+                    "action": { "type": action_name, **tool_args },
+                    "pending_safety_checks": [],
+                    "status": "completed"
+                })
+    
+    # Create agent response
+    agent_response = AgentResponse(
+        id=response_id,
+        object="response",
+        created_at=int(datetime.now().timestamp()),
+        status="completed",
+        error=None,
+        incomplete_details=None,
+        instructions=None,
+        max_output_tokens=None,
+        model=model or response["model"],
+        output=output_items,
+        parallel_tool_calls=True,
+        previous_response_id=None,
+        reasoning={"effort": "medium"},
+        store=True,
+        temperature=0.0,
+        top_p=0.7,
+        text={"format": {"type": "text"}},
+        tool_choice="auto",
+        tools=[
+            {
+                "type": "computer_use_preview",
+                "display_height": 768,
+                "display_width": 1024,
+                "environment": "mac",
+            }
+        ],
+        truncation="auto",
+        usage=response["usage"],
+        user=None,
+        metadata={},
+        response=response
+    )
+    return agent_response
 
 
 def add_box_token(input_string: str) -> str:
@@ -74,7 +179,13 @@ def parse_action_parameters(action: str) -> Tuple[str, Dict[str, Any]]:
     """
     # Handle "finished" action
     if action.startswith("finished"):
-        return "finished", {}
+        # Parse content if it exists
+        content_match = re.search(r"content='([^']*)'", action)
+        if content_match:
+            content = content_match.group(1)
+            return "finished", {"content": content}
+        else:
+            return "finished", {}
     
     # Parse action parameters
     action_match = re.match(r'(\w+)\((.*)\)', action)

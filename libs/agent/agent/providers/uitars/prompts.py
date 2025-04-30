@@ -1,5 +1,9 @@
 """Prompts for UI-TARS agent."""
 
+MAC_SPECIFIC_NOTES = """
+(You are operating on macOS, use 'cmd' instead of 'ctrl' for most shortcuts e.g., hotkey(key='cmd c') for copy, hotkey(key='cmd v') for paste, hotkey(key='cmd t') for new tab).)
+"""
+
 SYSTEM_PROMPT = "You are a helpful assistant."
 
 COMPUTER_USE = """You are a GUI agent. You are given a task and your action history, with screenshots. You need to perform the next action to complete the task.
@@ -56,4 +60,4 @@ finished(content='xxx') # Use escape characters \\', \\", and \\n in content par
 
 ## User Instruction
 {instruction}
-""" 
+"""

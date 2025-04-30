@@ -328,6 +328,11 @@ class MacOSComputerInterface(BaseComputerInterface):
             "drag_to", {"x": x, "y": y, "button": button, "duration": duration}
         )
 
+    async def drag(self, path: List[Tuple[int, int]], button: str = "left", duration: float = 0.5) -> None:
+        await self._send_command(
+            "drag", {"path": path, "button": button, "duration": duration}
+        )
+
     # Keyboard Actions
     async def type_text(self, text: str) -> None:
         await self._send_command("type_text", {"text": text})

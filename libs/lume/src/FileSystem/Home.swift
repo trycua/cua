@@ -92,6 +92,28 @@ final class Home {
         let baseDir = Path(location.expandedPath)
         return VMDirectory(baseDir.directory(name))
     }
+    
+    /// Gets a VM directory from a direct file path
+    ///
+    /// - Parameters:
+    ///   - name: Name of the VM directory
+    ///   - storagePath: Direct file system path where the VM is located
+    /// - Returns: A VMDirectory instance
+    /// - Throws: HomeError if path is invalid
+    func getVMDirectoryFromPath(_ name: String, storagePath: String) throws -> VMDirectory {
+        let baseDir = Path(storagePath)
+        
+        // Create the directory if it doesn't exist
+        if !fileExists(at: storagePath) {
+            Logger.info("Creating storage directory", metadata: ["path": storagePath])
+            try createVMLocation(at: storagePath)
+        } else if !isValidDirectory(at: storagePath) {
+            // Path exists but isn't a valid directory
+            throw HomeError.invalidHomeDirectory
+        }
+        
+        return VMDirectory(baseDir.directory(name))
+    }
 
     /// Returns all initialized VM directories across all locations
     /// - Returns: An array of VMDirectory instances with location info

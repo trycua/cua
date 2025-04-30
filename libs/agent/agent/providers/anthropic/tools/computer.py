@@ -161,15 +161,17 @@ class ComputerTool(BaseComputerTool, BaseAnthropicTool):
                     self.logger.info(f"Moving cursor to ({x}, {y})")
                     await self.computer.interface.move_cursor(x, y)
                 elif action == "left_click_drag":
-                    self.logger.info(f"Dragging from ({x}, {y})")
-                    # First move to the position
-                    await self.computer.interface.move_cursor(x, y)
-                    # Then perform drag operation - check if drag_to exists or we need to use other methods
-                    try:
-                        await self.computer.interface.drag_to(x, y)
-                    except Exception as e:
-                        self.logger.error(f"Error during drag operation: {str(e)}")
-                        raise ToolError(f"Failed to perform drag: {str(e)}")
+                    # Get the start coordinate from kwargs
+                    start_coordinate = kwargs.get("start_coordinate")
+                    if not start_coordinate:
+                        raise ToolError("start_coordinate is required for left_click_drag action")
+                    
+                    start_x, start_y = start_coordinate
+                    end_x, end_y = x, y
+                    
+                    self.logger.info(f"Dragging from ({start_x}, {start_y}) to ({end_x}, {end_y})")
+                    await self.computer.interface.move_cursor(start_x, start_y)
+                    await self.computer.interface.drag_to(end_x, end_y)
 
                 # Wait briefly for any UI changes
                 await asyncio.sleep(0.5)

@@ -20,24 +20,32 @@ INSTALL_DIR="${INSTALL_DIR:-$DEFAULT_INSTALL_DIR}"
 GITHUB_REPO="trycua/cua"
 LATEST_RELEASE_URL="https://api.github.com/repos/$GITHUB_REPO/releases/latest"
 
+# Option to skip background service setup (default: install it)
+INSTALL_BACKGROUND_SERVICE=true
+
 # Parse command line arguments
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --install-dir=*)
       INSTALL_DIR="${1#*=}"
       ;;
+    --no-background-service|--skip-background-service)
+      INSTALL_BACKGROUND_SERVICE=false
+      ;;
     --help)
       echo "${BOLD}${BLUE}Lume Installer${NORMAL}"
       echo "Usage: $0 [OPTIONS]"
       echo ""
       echo "Options:"
-      echo "  --install-dir=DIR   Install to the specified directory (default: $DEFAULT_INSTALL_DIR)"
-      echo "  --help              Display this help message"
+      echo "  --install-dir=DIR         Install to the specified directory (default: $DEFAULT_INSTALL_DIR)"
+      echo "  --no-background-service   Do not setup the Lume background service (LaunchAgent)"
+      echo "  --help                    Display this help message"
       echo ""
       echo "Examples:"
-      echo "  $0                               # Install to $DEFAULT_INSTALL_DIR"
-      echo "  $0 --install-dir=/usr/local/bin  # Install to system directory (may require root privileges)"
-      echo "  INSTALL_DIR=/opt/lume $0         # Install to /opt/lume (legacy env var support)"
+      echo "  $0                                   # Install to $DEFAULT_INSTALL_DIR and setup background service"
+      echo "  $0 --install-dir=/usr/local/bin      # Install to system directory (may require root privileges)"
+      echo "  $0 --no-background-service           # Install without setting up the background service"
+      echo "  INSTALL_DIR=/opt/lume $0             # Install to /opt/lume (legacy env var support)"
       exit 0
       ;;
     *)
@@ -173,11 +181,25 @@ install_binary() {
   
   # Check if the installation directory is in PATH
   if [ -n "${PATH##*$INSTALL_DIR*}" ]; then
+    SHELL_NAME=$(basename "$SHELL")
     echo "${YELLOW}Warning: $INSTALL_DIR is not in your PATH.${NORMAL}"
-    echo "To add it, run one of these commands based on your shell:"
-    echo "  For bash: echo 'export PATH=\"\$PATH:$INSTALL_DIR\"' >> ~/.bash_profile"
-    echo "  For zsh:  echo 'export PATH=\"\$PATH:$INSTALL_DIR\"' >> ~/.zshrc"
-    echo "  For fish: echo 'fish_add_path $INSTALL_DIR' >> ~/.config/fish/config.fish"
+    case "$SHELL_NAME" in
+      zsh)
+        echo "To add it, run:"
+        echo "  echo 'export PATH=\"\$PATH:$INSTALL_DIR\"' >> ~/.zprofile"
+        ;;
+      bash)
+        echo "To add it, run:"
+        echo "  echo 'export PATH=\"\$PATH:$INSTALL_DIR\"' >> ~/.bash_profile"
+        ;;
+      fish)
+        echo "To add it, run:"
+        echo "  echo 'fish_add_path $INSTALL_DIR' >> ~/.config/fish/config.fish"
+        ;;
+      *)
+        echo "Add $INSTALL_DIR to your PATH in your shell profile file."
+        ;;
+    esac
   fi
 }
 
@@ -188,11 +210,97 @@ main() {
   create_temp_dir
   download_release
   install_binary
-  
+
   echo ""
   echo "${GREEN}${BOLD}Lume has been successfully installed!${NORMAL}"
   echo "Run ${BOLD}lume${NORMAL} to get started."
+
+  if [ "$INSTALL_BACKGROUND_SERVICE" = true ]; then
+    # --- Setup background service (LaunchAgent) for Lume ---
+    SERVICE_NAME="com.trycua.lume_daemon"
+    PLIST_PATH="$HOME/Library/LaunchAgents/$SERVICE_NAME.plist"
+    LUME_BIN="$INSTALL_DIR/lume"
+
+    echo ""
+    echo "Setting up LaunchAgent to run lume daemon on login..."
+
+    # Create LaunchAgents directory if it doesn't exist
+    mkdir -p "$HOME/Library/LaunchAgents"
+
+    # Unload existing service if present
+    if [ -f "$PLIST_PATH" ]; then
+      echo "Existing LaunchAgent found. Unloading..."
+      launchctl unload "$PLIST_PATH" 2>/dev/null || true
+    fi
+
+    # Create the plist file
+    cat <<EOF > "$PLIST_PATH"
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>$SERVICE_NAME</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>$LUME_BIN</string>
+        <string>serve</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>WorkingDirectory</key>
+    <string>$HOME</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$HOME/.local/bin</string>
+        <key>HOME</key>
+        <string>$HOME</string>
+    </dict>
+    <key>StandardOutPath</key>
+    <string>/tmp/lume_daemon.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/lume_daemon.error.log</string>
+    <key>ProcessType</key>
+    <string>Interactive</string>
+    <key>SessionType</key>
+    <string>Aqua</string>
+</dict>
+</plist>
+EOF
+
+    # Set permissions
+    chmod 644 "$PLIST_PATH"
+    touch /tmp/lume_daemon.log /tmp/lume_daemon.error.log
+    chmod 644 /tmp/lume_daemon.log /tmp/lume_daemon.error.log
+
+    # Load the LaunchAgent
+    echo "Loading LaunchAgent..."
+    launchctl unload "$PLIST_PATH" 2>/dev/null || true
+    launchctl load "$PLIST_PATH"
+
+    echo "${GREEN}Lume daemon LaunchAgent installed and loaded. It will start automatically on login!${NORMAL}"
+    echo "To check status: launchctl list | grep $SERVICE_NAME"
+    echo "To view logs: tail -f /tmp/lume_daemon.log"
+    echo ""
+    echo "To remove the lume daemon service, run:"
+    echo "  launchctl unload \"$PLIST_PATH\""
+    echo "  rm \"$PLIST_PATH\""
+  else
+    SERVICE_NAME="com.trycua.lume_daemon"
+    PLIST_PATH="$HOME/Library/LaunchAgents/$SERVICE_NAME.plist"
+    if [ -f "$PLIST_PATH" ]; then
+      echo "Removing existing Lume background service (LaunchAgent)..."
+      launchctl unload "$PLIST_PATH" 2>/dev/null || true
+      rm "$PLIST_PATH"
+      echo "Lume background service (LaunchAgent) removed."
+    else
+      echo "Skipping Lume background service (LaunchAgent) setup as requested (use --no-background-service)."
+    fi
+  fi
 }
 
 # Run the installation
-main 
+main

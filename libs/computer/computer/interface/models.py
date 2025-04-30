@@ -7,6 +7,9 @@ NavigationKey = Literal['pagedown', 'pageup', 'home', 'end', 'left', 'right', 'u
 # Special key literals
 SpecialKey = Literal['enter', 'esc', 'tab', 'space', 'backspace', 'del']
 
+# Modifier key literals
+ModifierKey = Literal['ctrl', 'alt', 'shift', 'win', 'command', 'option']
+
 # Function key literals
 FunctionKey = Literal['f1', 'f2', 'f3', 'f4', 'f5', 'f6', 'f7', 'f8', 'f9', 'f10', 'f11', 'f12']
 
@@ -34,6 +37,14 @@ class Key(Enum):
     SPACE = 'space'
     BACKSPACE = 'backspace'
     DELETE = 'del'
+    
+    # Modifier keys
+    ALT = 'alt'
+    CTRL = 'ctrl'
+    SHIFT = 'shift'
+    WIN = 'win'
+    COMMAND = 'command'
+    OPTION = 'option'
     
     # Function keys
     F1 = 'f1'
@@ -73,14 +84,27 @@ class Key(Enum):
             'escape': cls.ESCAPE,
             'esc': cls.ESC,
             'delete': cls.DELETE,
-            'del': cls.DELETE
+            'del': cls.DELETE,
+            # Modifier key mappings
+            'alt': cls.ALT,
+            'ctrl': cls.CTRL,
+            'control': cls.CTRL,
+            'shift': cls.SHIFT,
+            'win': cls.WIN,
+            'windows': cls.WIN,
+            'super': cls.WIN,
+            'command': cls.COMMAND,
+            'cmd': cls.COMMAND,
+            '⌘': cls.COMMAND,
+            'option': cls.OPTION,
+            '⌥': cls.OPTION,
         }
         
         normalized = key.lower().strip()
         return key_mapping.get(normalized, key)
 
 # Combined key type
-KeyType = Union[Key, NavigationKey, SpecialKey, FunctionKey, str]
+KeyType = Union[Key, NavigationKey, SpecialKey, ModifierKey, FunctionKey, str]
 
 class AccessibilityWindow(TypedDict):
     """Information about a window in the accessibility tree."""

@@ -6,10 +6,10 @@ import Virtualization
 extension Server {
     // MARK: - VM Management Handlers
 
-    func handleListVMs() async throws -> HTTPResponse {
+    func handleListVMs(storage: String? = nil) async throws -> HTTPResponse {
         do {
             let vmController = LumeController()
-            let vms = try vmController.list()
+            let vms = try vmController.list(storage: storage)
             return try .json(vms)
         } catch {
             return .badRequest(message: error.localizedDescription)

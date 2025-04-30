@@ -93,7 +93,14 @@ class OAICompatClient(BaseOmniClient):
         """
         headers = {"Content-Type": "application/json", "Authorization": f"Bearer {self.api_key}"}
 
-        final_messages = [{"role": "system", "content": system}]
+        final_messages = [
+            {
+                "role": "system", 
+                "content": [
+                    { "type": "text", "text": system }
+                ]
+            }
+        ]
 
         # Process messages
         for item in messages:
@@ -117,7 +124,10 @@ class OAICompatClient(BaseOmniClient):
                     else:
                         message = {
                             "role": item["role"],
-                            "content": [{"type": "text", "text": item["content"]}],
+                            "content": [{
+                                "type": "text", 
+                                "text": item["content"]
+                            }],
                         }
                     final_messages.append(message)
             else:

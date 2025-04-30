@@ -65,6 +65,7 @@ async def websocket_endpoint(websocket: WebSocket):
         "type_text": manager.automation_handler.type_text,
         "press_key": manager.automation_handler.press_key,
         "drag_to": manager.automation_handler.drag_to,
+        "drag": manager.automation_handler.drag,
         "hotkey": manager.automation_handler.hotkey,
         "get_cursor_position": manager.automation_handler.get_cursor_position,
         "get_screen_size": manager.automation_handler.get_screen_size,

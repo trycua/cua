@@ -12,7 +12,7 @@ struct Get: AsyncParsableCommand {
     @Option(name: [.long, .customShort("f")], help: "Output format (json|text)")
     var format: FormatOption = .text
 
-    @Option(name: .customLong("storage"), help: "VM storage location to use")
+    @Option(name: .customLong("storage"), help: "VM storage location to use or direct path to VM location")
     var storage: String?
 
     init() {

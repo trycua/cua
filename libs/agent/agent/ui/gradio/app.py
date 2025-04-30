@@ -35,6 +35,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, AsyncGenerator, Any, Tuple, Union
 import gradio as gr
 from gradio.components.chatbot import MetadataDict
+from typing import cast
 
 # Import from agent package
 from agent.core.types import AgentResponse
@@ -322,63 +323,6 @@ def get_ollama_models() -> List[str]:
         logging.error(f"Error getting Ollama models: {e}")
         return []
 
-
-def extract_synthesized_text(
-    result: Union[AgentResponse, Dict[str, Any]],
-) -> Tuple[str, MetadataDict]:
-    """Extract synthesized text from the agent result."""
-    synthesized_text = ""
-    metadata = MetadataDict()
-
-    if "output" in result and result["output"]:
-        for output in result["output"]:
-            if output.get("type") == "reasoning":
-                metadata["title"] = "🧠 Reasoning"
-                content = output.get("content", "")
-                if content:
-                    synthesized_text += f"{content}\n"
-            elif output.get("type") == "message":
-                # Handle message type outputs - can contain rich content
-                content = output.get("content", [])
-
-                # Content is usually an array of content blocks
-                if isinstance(content, list):
-                    for block in content:
-                        if isinstance(block, dict) and block.get("type") == "output_text":
-                            text_value = block.get("text", "")
-                            if text_value:
-                                synthesized_text += f"{text_value}\n"
-
-            elif output.get("type") == "computer_call":
-                action = output.get("action", {})
-                action_type = action.get("type", "")
-
-                # Create a descriptive text about the action
-                if action_type == "click":
-                    button = action.get("button", "")
-                    x = action.get("x", "")
-                    y = action.get("y", "")
-                    synthesized_text += f"Clicked {button} at position ({x}, {y}).\n"
-                elif action_type == "type":
-                    text = action.get("text", "")
-                    synthesized_text += f"Typed: {text}.\n"
-                elif action_type == "keypress":
-                    # Extract key correctly from either keys array or key field
-                    if isinstance(action.get("keys"), list):
-                        key = ", ".join(action.get("keys"))
-                    else:
-                        key = action.get("key", "")
-
-                    synthesized_text += f"Pressed key: {key}\n"
-                else:
-                    synthesized_text += f"Performed {action_type} action.\n"
-
-                metadata["status"] = "done"
-                metadata["title"] = f"🛠️ {synthesized_text.strip().splitlines()[-1]}"
-
-    return synthesized_text.strip(), metadata
-
-
 def create_computer_instance(verbosity: int = logging.INFO) -> Computer:
     """Create or get the global Computer instance."""
     global global_computer
@@ -446,66 +390,6 @@ def create_agent(
     )
 
     return global_agent
-
-
-def process_agent_result(result: Union[AgentResponse, Dict[str, Any]]) -> Tuple[str, MetadataDict]:
-    """Process agent results for the Gradio UI."""
-    # Extract text content
-    text_obj = result.get("text", {})
-    metadata = result.get("metadata", {})
-
-    # Create a properly typed MetadataDict
-    metadata_dict = MetadataDict()
-    metadata_dict["title"] = metadata.get("title", "")
-    metadata_dict["status"] = "done"
-    metadata = metadata_dict
-
-    # For OpenAI's Computer-Use Agent, text field is an object with format property
-    if (
-        text_obj
-        and isinstance(text_obj, dict)
-        and "format" in text_obj
-        and not text_obj.get("value", "")
-    ):
-        content, metadata = extract_synthesized_text(result)
-    else:
-        if not text_obj:
-            text_obj = result
-
-        # For other types of results, try to get text directly
-        if isinstance(text_obj, dict):
-            if "value" in text_obj:
-                content = text_obj["value"]
-            elif "text" in text_obj:
-                content = text_obj["text"]
-            elif "content" in text_obj:
-                content = text_obj["content"]
-            else:
-                content = ""
-        else:
-            content = str(text_obj) if text_obj else ""
-
-    # If still no content but we have outputs, create a summary
-    if not content and "output" in result and result["output"]:
-        output = result["output"]
-        for out in output:
-            if out.get("type") == "reasoning":
-                content = out.get("content", "")
-                if content:
-                    break
-            elif out.get("type") == "computer_call":
-                action = out.get("action", {})
-                action_type = action.get("type", "")
-                if action_type:
-                    content = f"Performing action: {action_type}"
-                    break
-
-    # Clean up the text - ensure content is a string
-    if not isinstance(content, str):
-        content = str(content) if content else ""
-
-    return content, metadata
-
 
 def create_gradio_ui(
     provider_name: str = "openai",
@@ -907,17 +791,64 @@ def create_gradio_ui(
 
                         # Stream responses from the agent
                         async for result in global_agent.run(last_user_message):
-                            # Process result
-                            content, metadata = process_agent_result(result)
-
-                            # Skip empty content
-                            if content or metadata.get("title"):
-                                history.append(
-                                    gr.ChatMessage(
-                                        role="assistant", content=content, metadata=metadata
+                            print(f"DEBUG - Agent response ------- START")
+                            from pprint import pprint
+                            pprint(result)
+                            print(f"DEBUG - Agent response ------- END")
+                            
+                            def generate_gradio_messages():
+                                if result.get("content"):
+                                    yield gr.ChatMessage(
+                                        role="assistant",
+                                        content=result.get("content", ""),
+                                        metadata=cast(MetadataDict, result.get("metadata", {}))
                                     )
-                                )
-                            yield history
+                                else:
+                                    outputs = result.get("output", [])
+                                    for output in outputs:
+                                        if output.get("type") == "message":
+                                            content = output.get("content", [])
+                                            for content_part in content:
+                                                if content_part.get("text"):
+                                                    yield gr.ChatMessage(
+                                                        role=output.get("role", "assistant"),
+                                                        content=content_part.get("text", ""),
+                                                        metadata=content_part.get("metadata", {})
+                                                    )
+                                        elif output.get("type") == "reasoning":
+                                            # if it's openAI, we only have access to a summary of the reasoning
+                                            summary_content = output.get("summary", [])
+                                            if summary_content:
+                                                for summary_part in summary_content:
+                                                    if summary_part.get("type") == "summary_text":
+                                                        yield gr.ChatMessage(
+                                                            role="assistant",
+                                                            content=summary_part.get("text", "")
+                                                        )
+                                            else:
+                                                summary_content = output.get("text", "")
+                                                if summary_content:
+                                                    yield gr.ChatMessage(
+                                                        role="assistant",
+                                                        content=summary_content,
+                                                    )
+                                        elif output.get("type") == "computer_call":
+                                            action = output.get("action", {})
+                                            action_type = action.get("type", "")
+                                            if action_type:
+                                                action_title = f"🛠️ Performing {action_type}"
+                                                if action.get("x") and action.get("y"):
+                                                    action_title += f" at ({action['x']}, {action['y']})"
+                                                yield gr.ChatMessage(
+                                                    role="assistant",
+                                                    content=f"```json\n{json.dumps(action)}\n```",
+                                                    metadata={"title": action_title}
+                                                )
+                            
+                            for message in generate_gradio_messages():
+                                history.append(message)
+                                yield history
+                            
                     except Exception as e:
                         import traceback
 

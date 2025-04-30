@@ -9,7 +9,7 @@ struct Stop: AsyncParsableCommand {
     @Argument(help: "Name of the virtual machine", completion: .custom(completeVMName))
     var name: String
 
-    @Option(name: .customLong("storage"), help: "VM storage location to use")
+    @Option(name: .customLong("storage"), help: "VM storage location to use or direct path to VM location")
     var storage: String?
 
     init() {

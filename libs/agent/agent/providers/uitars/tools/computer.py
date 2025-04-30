@@ -173,9 +173,13 @@ class ComputerTool(BaseComputerTool):
             elif action == "hotkey":
                 if "keys" in kwargs:
                     keys = kwargs["keys"]
-                    for key in keys:
-                        await self.computer.interface.press_key(key)
                     
+                    if len(keys) > 1:
+                        await self.computer.interface.hotkey(*keys)
+                    else:
+                        # Single key press
+                        await self.computer.interface.press_key(keys[0])
+                        
                     # Wait for UI to update
                     await asyncio.sleep(0.3)
                     

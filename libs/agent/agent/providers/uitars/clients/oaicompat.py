@@ -94,8 +94,15 @@ class OAICompatClient(BaseUITarsClient):
         """
         headers = {"Content-Type": "application/json", "Authorization": f"Bearer {self.api_key}"}
 
-        final_messages = [{"role": "system", "content": system}]
-
+        final_messages = [
+            {
+                "role": "system", 
+                "content": [
+                    { "type": "text", "text": system }
+                ]
+            }
+        ]
+        
         # Process messages
         for item in messages:
             if isinstance(item, dict):
@@ -138,8 +145,13 @@ class OAICompatClient(BaseUITarsClient):
                     message = {"role": "user", "content": [{"type": "text", "text": item}]}
                 final_messages.append(message)
 
-        payload = {"model": self.model, "messages": final_messages, "temperature": self.temperature}
-        payload["max_tokens"] = max_tokens or self.max_tokens
+        payload = {
+            "model": self.model, 
+            "messages": final_messages, 
+            "max_tokens": max_tokens or self.max_tokens,
+            "temperature": self.temperature,
+            "top_p": 0.7,
+        }
 
         try:
             async with aiohttp.ClientSession() as session:
@@ -178,25 +190,21 @@ class OAICompatClient(BaseUITarsClient):
                     response_text = await response.text()
                     logger.debug(f"Response content: {response_text}")
                     
+                    # if 503, then the endpoint is still warming up
+                    if response.status == 503:
+                        logger.error(f"Endpoint is still warming up, please try again later")
+                        raise Exception(f"Endpoint is still warming up: {response_text}")
+                    
                     # Try to parse as JSON if the content type is appropriate
                     if "application/json" in response.headers.get('Content-Type', ''):
                         response_json = await response.json()
                     else:
                         raise Exception(f"Response is not JSON format")
-                        # # Optionally try to parse it anyway
-                        # try:
-                        #     import json
-                        #     response_json = json.loads(response_text)
-                        # except json.JSONDecodeError as e:
-                        #     print(f"Failed to parse response as JSON: {e}")
 
                     if response.status != 200:
-                        error_msg = response_json.get("error", {}).get(
-                            "message", str(response_json)
-                        )
-                        logger.error(f"Error in API call: {error_msg}")
-                        raise Exception(f"API error: {error_msg}")
-
+                        logger.error(f"Error in API call: {response_text}")
+                        raise Exception(f"API error: {response_text}")
+                    
                     return response_json
 
         except Exception as e:

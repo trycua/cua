@@ -79,6 +79,17 @@ class BaseComputerInterface(ABC):
         """
         pass
 
+    @abstractmethod
+    async def drag(self, path: List[Tuple[int, int]], button: str = "left", duration: float = 0.5) -> None:
+        """Drag the cursor along a path of coordinates.
+
+        Args:
+            path: List of (x, y) coordinate tuples defining the drag path
+            button: The mouse button to use ('left', 'middle', 'right')
+            duration: Total time in seconds that the drag operation should take
+        """
+        pass
+
     # Keyboard Actions
     @abstractmethod
     async def type_text(self, text: str) -> None:

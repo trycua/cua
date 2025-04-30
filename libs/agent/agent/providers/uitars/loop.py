@@ -17,10 +17,10 @@ from ...core.types import AgentResponse, LLMProvider
 from ...core.visualization import VisualizationHelper
 from computer import Computer
 
-from .utils import add_box_token, parse_actions, parse_action_parameters
+from .utils import add_box_token, parse_actions, parse_action_parameters, to_agent_response_format
 from .tools.manager import ToolManager
 from .tools.computer import ToolResult
-from .prompts import COMPUTER_USE, SYSTEM_PROMPT
+from .prompts import COMPUTER_USE, SYSTEM_PROMPT, MAC_SPECIFIC_NOTES
 
 from .clients.oaicompat import OAICompatClient
 
@@ -184,7 +184,7 @@ class UITARSLoop(BaseLoop):
         if first_user_idx is not None and instruction:
             # Create the computer use prompt
             user_prompt = COMPUTER_USE.format(
-                instruction=instruction,
+                instruction='\n'.join([instruction, MAC_SPECIFIC_NOTES]),
                 language="English"
             )
             
@@ -232,8 +232,11 @@ class UITARSLoop(BaseLoop):
                     if self.client is None:
                         raise RuntimeError("Failed to initialize client")
 
-                # Convert messages to UI-TARS format
+                # Get messages in standard format from the message manager
+                self.message_manager.messages = messages.copy()
                 prepared_messages = self.message_manager.get_messages()
+                
+                # Convert messages to UI-TARS format
                 uitars_messages = self.to_uitars_format(prepared_messages)
                 
                 # Log request
@@ -504,41 +507,14 @@ class UITARSLoop(BaseLoop):
 
                 # Update whether an action screenshot was saved this turn
                 action_screenshot_saved = action_screenshot_saved or new_screenshot_saved
-
-                # Parse actions from the raw response
-                raw_response = response["choices"][0]["message"]["content"]
-                parsed_actions = parse_actions(raw_response)
                 
-                # Extract thought content if available
-                thought = ""
-                if "Thought:" in raw_response:
-                    thought_match = re.search(r"Thought: (.*?)(?=\s*Action:|$)", raw_response, re.DOTALL)
-                    if thought_match:
-                        thought = thought_match.group(1).strip()
+                agent_response = await to_agent_response_format(
+                    response,
+                    messages,
+                    model=self.model,
+                )
+                yield agent_response
                 
-                # Create standardized thought response format
-                thought_response = {
-                    "role": "assistant",
-                    "content": thought or raw_response,
-                    "metadata": {
-                        "title": "🧠 UI-TARS Thoughts"
-                    }
-                }
-                
-                # Create action response format
-                action_response = {
-                    "role": "assistant",
-                    "content": str(parsed_actions),
-                    "metadata": {
-                        "title": "🖱️ UI-TARS Actions",
-                    }
-                }
-
-                # Yield both responses to the caller (thoughts first, then actions)
-                yield thought_response
-                if parsed_actions:
-                    yield action_response
-
                 # Check if we should continue this conversation
                 running = should_continue
 
@@ -559,7 +535,8 @@ class UITARSLoop(BaseLoop):
                     logger.error(f"Maximum retry attempts reached. Last error was: {str(e)}")
 
                 yield {
-                    "error": str(e),
+                    "role": "assistant",
+                    "content": f"Error: {str(e)}",
                     "metadata": {"title": "❌ Error"},
                 }
 

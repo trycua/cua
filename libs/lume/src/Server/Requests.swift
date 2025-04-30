@@ -109,7 +109,7 @@ struct PushRequest: Codable {
     let tags: [String] // List of tags to push
     var registry: String // Registry URL
     var organization: String // Organization/user in the registry
-    let storage: String? // Optional VM storage location
+    let storage: String? // Optional VM storage location or direct path
     var chunkSizeMb: Int // Chunk size
     // dryRun and reassemble are less common for API, default to false?
     // verbose is usually handled by server logging

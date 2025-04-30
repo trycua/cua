@@ -1,0 +1,200 @@
+#!/usr/bin/env bash
+
+# Exit on errors, undefined variables, and propagate errors in pipes
+set -eo pipefail
+
+# Always use the current working directory as the build context
+SCRIPT_DIR="$(pwd)"
+PORT=8080
+DEBUG=${LUMIER_DEBUG:-0}
+
+usage() {
+    cat <<EOF
+Lumier - Docker container wrapper for lume Virtual Machines
+
+Usage: $(basename "$0") COMMAND [OPTIONS]
+
+Commands:
+  run [DOCKER_ARGS]       Build (if needed) and run the Lumier container with Docker args
+  tunnel start            Start the Lumier tunnel
+  tunnel stop             Stop the Lumier tunnel
+  tunnel status           Check the status of the Lumier tunnel
+  build [DOCKER_ARGS]     Build the Lumier Docker image with optional Docker args
+  help                    Show this help message
+
+Docker Container Environment Variables:
+  These can be set using Docker's -e flag:
+  
+  VM_NAME                 Set the VM name (default: lumier)
+  VERSION                 Set the VM image (default: ghcr.io/trycua/macos-sequoia-vanilla:latest)
+  CPU_CORES               Set the number of CPU cores (default: 4)
+  RAM_SIZE                Set the memory size in MB (default: 8192)
+  HOST_DATA_PATH          Path to mount as shared directory in the VM
+  LUMIER_DEBUG            Enable debug mode (set to 1)
+
+Script Environment Variables:
+  LUMIER_IMAGE            Docker image name (default: lumier:latest)
+
+Examples:
+  # Run a VM with default settings
+  $(basename "$0") run -it --rm
+  
+  # Run a VM with custom settings using Docker's -e flag
+  $(basename "$0") run -it --rm \\
+      --name custom-container-name \\
+      -e VM_NAME=my-vm \\
+      -e VERSION=ghcr.io/trycua/macos-sequoia-cua:latest \\
+      -e RAM_SIZE=16384 \\
+      -v $(pwd)/mount:/data
+
+  # Build with a custom image name
+  LUMIER_IMAGE=myorg/lumier:v1 $(basename "$0") build
+EOF
+}
+
+# Check if the tunnel is active
+is_tunnel_active() {
+    if lsof -i TCP:$PORT 2>/dev/null | grep LISTEN > /dev/null; then
+        return 0  # Tunnel is active
+    else
+        return 1  # Tunnel is not active
+    fi
+}
+
+# Start the tunnel if needed
+ensure_tunnel() {
+    if ! is_tunnel_active; then
+        echo "Tunnel is not active. Starting tunnel..."
+        "$SCRIPT_DIR/src/bin/server.sh" start
+        sleep 2  # Wait for the tunnel to start
+        
+        if ! is_tunnel_active; then
+            echo "Failed to start tunnel. Make sure 'lume' is installed on your host."
+            exit 1
+        fi
+    else
+        echo "Tunnel is already active."
+    fi
+}
+
+# Build the Docker image with cache busting
+build_image() {
+    local image_name="${LUMIER_IMAGE:-lumier:latest}"
+    echo "Building Lumier Docker image: $image_name"
+    echo "SCRIPT_DIR=$SCRIPT_DIR"
+    echo "Checking for Dockerfile at: $SCRIPT_DIR/Dockerfile"
+    ls -l "$SCRIPT_DIR/Dockerfile" || echo "Dockerfile not found at $SCRIPT_DIR/Dockerfile"
+    
+    # Pass any additional arguments to docker build with cache busting
+    docker build --build-arg CACHEBUST=$(date +%s) -t "$image_name" "$SCRIPT_DIR" "$@"
+    
+    echo "Lumier image built successfully: $image_name"
+}
+
+# Run the Docker container
+run_container() {
+    local image_name="${LUMIER_IMAGE:-lumier:latest}"
+    
+    # Ensure the Docker image exists
+    if ! docker image inspect "$image_name" &>/dev/null; then
+        echo "Docker image '$image_name' not found. Building it..."
+        build_image
+    fi
+    
+    # Ensure the tunnel is running
+    ensure_tunnel
+    
+    # Automatically resolve and pass host paths for storage and data
+    STORAGE_PATH="${HOST_STORAGE_PATH:-$(realpath ./storage)}"
+    DATA_PATH="${HOST_DATA_PATH:-$(realpath ./shared)}"
+
+    # Only add -e if not already present in args
+    DOCKER_ARGS=( )
+    add_env_var() {
+        local var="$1"; local val="$2"; local flag="-e $var="
+        for arg in "$@"; do
+            [[ "$arg" == *"$flag"* ]] && return 0
+        done
+        DOCKER_ARGS+=( -e "$var=$val" )
+    }
+    add_env_var HOST_STORAGE_PATH "$STORAGE_PATH"
+    add_env_var HOST_DATA_PATH "$DATA_PATH"
+
+    # Detect --name argument and set VM_NAME if not already present
+    local container_name=""
+    local prev_arg=""
+    for arg in "$@"; do
+        if [[ "$prev_arg" == "--name" ]]; then
+            container_name="$arg"
+            break
+        elif [[ "$arg" == --name=* ]]; then
+            container_name="${arg#--name=}"
+            break
+        fi
+        prev_arg="$arg"
+    done
+    # Only add -e VM_NAME if not already present and container_name is set
+    local vm_name_set=false
+    for arg in "$@"; do
+        if [[ "$arg" == "-e" ]] && [[ "$2" == VM_NAME=* ]]; then
+            vm_name_set=true
+            break
+        elif [[ "$arg" == "-eVM_NAME="* ]]; then
+            vm_name_set=true
+            break
+        elif [[ "$arg" == "-e"* ]] && [[ "$arg" == *"VM_NAME="* ]]; then
+            vm_name_set=true
+            break
+        fi
+    done
+    if [[ -n "$container_name" && "$vm_name_set" != true ]]; then
+        DOCKER_ARGS+=( -e "VM_NAME=$container_name" )
+    fi
+
+    echo "Running Lumier container with image: $image_name"
+    if [[ "$*" == *"-p 8006:8006"* || "$*" == *"-p"*"8006:8006"* ]]; then
+        docker run "${DOCKER_ARGS[@]}" "$@" "$image_name"
+    else
+        docker run "${DOCKER_ARGS[@]}" -p 8006:8006 "$@" "$image_name"
+    fi
+}
+
+# Main command handling
+case "${1:-help}" in
+    run)
+        shift
+        run_container "$@"
+        ;;
+    tunnel)
+        # Handle tunnel subcommands
+        case "${2:-}" in
+            start)
+                "$SCRIPT_DIR/src/bin/server.sh" start
+                ;;
+            stop)
+                "$SCRIPT_DIR/src/bin/server.sh" stop
+                ;;
+            status)
+                "$SCRIPT_DIR/src/bin/server.sh" status
+                ;;
+            *)
+                echo "Unknown tunnel subcommand: $2"
+                usage
+                exit 1
+                ;;
+        esac
+        ;;
+
+    build)
+        shift
+        build_image "$@"
+        ;;
+    help)
+        usage
+        ;;
+    *)
+        echo "Unknown command: $1"
+        usage
+        exit 1
+        ;;
+esac 

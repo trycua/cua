@@ -8,7 +8,7 @@ import Foundation
 /// - Handling disk operations
 /// - Managing VM state and locking
 /// - Providing access to VM-related paths
-struct VMDirectory {
+struct VMDirectory: Sendable {
     // MARK: - Constants
     
     private enum FileNames {
@@ -26,8 +26,6 @@ struct VMDirectory {
     let configPath: Path
     let sessionsPath: Path
     
-    private let fileManager: FileManager
-    
     /// The name of the VM directory
     var name: String { dir.name }
     
@@ -36,10 +34,8 @@ struct VMDirectory {
     /// Creates a new VMDirectory instance
     /// - Parameters:
     ///   - dir: The base directory path for the VM
-    ///   - fileManager: FileManager instance to use for file operations
-    init(_ dir: Path, fileManager: FileManager = .default) {
+    init(_ dir: Path) {
         self.dir = dir
-        self.fileManager = fileManager
         self.nvramPath = dir.file(FileNames.nvram)
         self.diskPath = dir.file(FileNames.disk)
         self.configPath = dir.file(FileNames.config)
@@ -52,7 +48,25 @@ struct VMDirectory {
 extension VMDirectory {
     /// Checks if the VM directory is fully initialized with all required files
     func initialized() -> Bool {
-        configPath.exists() && diskPath.exists() && nvramPath.exists()
+        // Add detailed logging for debugging
+        let configExists = configPath.exists()
+        let diskExists = diskPath.exists()
+        let nvramExists = nvramPath.exists()
+        
+        Logger.info(
+            "VM directory initialization check", 
+            metadata: [
+                "directory": dir.path,
+                "config_path": configPath.path,
+                "config_exists": "\(configExists)",
+                "disk_path": diskPath.path,
+                "disk_exists": "\(diskExists)",
+                "nvram_path": nvramPath.path,
+                "nvram_exists": "\(nvramExists)"
+            ]
+        )
+        
+        return configExists && diskExists && nvramExists
     }
 
     /// Checks if the VM directory exists
@@ -70,7 +84,7 @@ extension VMDirectory {
     func setDisk(_ size: UInt64) throws {
         do {
             if !diskPath.exists() {
-                guard fileManager.createFile(atPath: diskPath.path, contents: nil) else {
+                guard FileManager.default.createFile(atPath: diskPath.path, contents: nil) else {
                     throw VMDirectoryError.fileCreationFailed(diskPath.path)
                 }
             }
@@ -96,7 +110,7 @@ extension VMDirectory {
         
         do {
             let data = try encoder.encode(config)
-            guard fileManager.createFile(atPath: configPath.path, contents: data) else {
+            guard FileManager.default.createFile(atPath: configPath.path, contents: data) else {
                 throw VMDirectoryError.fileCreationFailed(configPath.path)
             }
         } catch {
@@ -108,7 +122,7 @@ extension VMDirectory {
     /// - Returns: The loaded configuration
     /// - Throws: VMDirectoryError if the load operation fails
     func loadConfig() throws -> VMConfig {
-        guard let data = fileManager.contents(atPath: configPath.path) else {
+        guard let data = FileManager.default.contents(atPath: configPath.path) else {
             throw VMDirectoryError.configNotFound
         }
         
@@ -137,7 +151,7 @@ extension VMDirectory {
         
         do {
             let data = try encoder.encode(session)
-            guard fileManager.createFile(atPath: sessionsPath.path, contents: data) else {
+            guard FileManager.default.createFile(atPath: sessionsPath.path, contents: data) else {
                 throw VMDirectoryError.fileCreationFailed(sessionsPath.path)
             }
         } catch {
@@ -149,7 +163,7 @@ extension VMDirectory {
     /// - Returns: The loaded VNC session
     /// - Throws: VMDirectoryError if the load operation fails
     func loadSession() throws -> VNCSession {
-        guard let data = fileManager.contents(atPath: sessionsPath.path) else {
+        guard let data = FileManager.default.contents(atPath: sessionsPath.path) else {
             throw VMDirectoryError.sessionNotFound
         }
         
@@ -163,7 +177,7 @@ extension VMDirectory {
     
     /// Removes the VNC session information from disk
     func clearSession() {
-        try? fileManager.removeItem(atPath: sessionsPath.path)
+        try? FileManager.default.removeItem(atPath: sessionsPath.path)
     }
 }
 
@@ -176,6 +190,6 @@ extension VMDirectory: CustomStringConvertible {
 
 extension VMDirectory {
     func delete() throws {
-        try fileManager.removeItem(atPath: dir.path)
+        try FileManager.default.removeItem(atPath: dir.path)
     }
 }

@@ -643,7 +643,7 @@ class ImageContainerRegistry: @unchecked Sendable {
         image: String,
         name: String?,
         locationName: String? = nil
-    ) async throws {
+    ) async throws -> VMDirectory {
         guard !image.isEmpty else {
             throw ValidationError("Image name cannot be empty")
         }
@@ -652,7 +652,16 @@ class ImageContainerRegistry: @unchecked Sendable {
 
         // Use provided name or derive from image
         let vmName = name ?? image.split(separator: ":").first.map(String.init) ?? ""
-        let vmDir = try home.getVMDirectory(vmName, storage: locationName)
+        
+        // Determine if locationName is a direct path or a named storage location
+        let vmDir: VMDirectory
+        if let locationName = locationName, locationName.contains("/") || locationName.contains("\\") {
+            // Direct path
+            vmDir = try home.getVMDirectoryFromPath(vmName, storagePath: locationName)
+        } else {
+            // Named storage or default location
+            vmDir = try home.getVMDirectory(vmName, storage: locationName)
+        }
 
         // Optimize network early in the process
         optimizeNetworkSettings()
@@ -991,6 +1000,7 @@ class ImageContainerRegistry: @unchecked Sendable {
         Logger.info(
             "Run 'lume run \(vmName)' to reduce the disk image file size by using macOS sparse file system"
         )
+        return vmDir
     }
 
     // Helper function to clean up a specific cache entry
@@ -3024,7 +3034,8 @@ class ImageContainerRegistry: @unchecked Sendable {
 
                             // Replace original with optimized version
                             try FileManager.default.removeItem(at: reassembledFile)
-                            try FileManager.default.moveItem(at: optimizedFile, to: reassembledFile)
+                            try FileManager.default.moveItem(
+                                at: optimizedFile, to: reassembledFile)
                             Logger.info("Using sparse-optimized file for verification")
                         } else {
                             Logger.info(

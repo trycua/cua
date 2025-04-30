@@ -29,7 +29,7 @@ class Computer:
         display: Union[Display, Dict[str, int], str] = "1024x768",
         memory: str = "8GB",
         cpu: str = "4",
-        os: OSType = "macos",
+        os_type: OSType = "macos",
         name: str = "",
         image: str = "macos-sequoia-cua:latest",
         shared_directories: Optional[List[str]] = None,
@@ -68,6 +68,7 @@ class Computer:
         self.image = image
         self.port = port
         self.host = host
+        self.os_type = os_type
 
         # Store telemetry preference
         self._telemetry_enabled = telemetry_enabled
@@ -129,8 +130,8 @@ class Computer:
         self.shared_paths = []
         if shared_directories:
             for path in shared_directories:
-                abs_path = os.path.abspath(os.path.expanduser(path))  # type: ignore[attr-defined]
-                if not os.path.exists(abs_path):  # type: ignore[attr-defined]
+                abs_path = os.path.abspath(os.path.expanduser(path))
+                if not os.path.exists(abs_path):
                     raise ValueError(f"Shared directory does not exist: {path}")
                 self.shared_paths.append(abs_path)
         self._pylume_context = None
@@ -188,7 +189,7 @@ class Computer:
                 self._interface = cast(
                     BaseComputerInterface,
                     InterfaceFactory.create_interface_for_os(
-                        os=self.os, ip_address=ip_address  # type: ignore[arg-type]
+                        os=self.os_type, ip_address=ip_address  # type: ignore[arg-type]
                     ),
                 )
 
@@ -288,13 +289,13 @@ class Computer:
 
         try:
             # Initialize the interface using the factory with the specified OS
-            self.logger.info(f"Initializing interface for {self.os} at {ip_address}")
+            self.logger.info(f"Initializing interface for {self.os_type} at {ip_address}")
             from .interface.base import BaseComputerInterface
 
             self._interface = cast(
                 BaseComputerInterface,
                 InterfaceFactory.create_interface_for_os(
-                    os=self.os, ip_address=ip_address  # type: ignore[arg-type]
+                    os=self.os_type, ip_address=ip_address  # type: ignore[arg-type]
                 ),
             )
 

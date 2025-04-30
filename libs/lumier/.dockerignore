@@ -1,0 +1,24 @@
+# Ignore macOS system files and trash
+.DS_Store
+.Trashes
+**/.Trashes
+**/.*
+
+# Ignore Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Ignore virtual environments
+.venv/
+venv/
+
+# Ignore editor/project files
+.vscode/
+.idea/
+*.swp
+
+# Ignore test artifacts
+test-results/
+
+# Ignore anything else you don't want in the Docker build context

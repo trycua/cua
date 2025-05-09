@@ -9,7 +9,7 @@ description = "CUA (Computer Use Agent) mono-repo"
 license = { text = "MIT" }
 name = "cua-workspace"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 version = "0.1.0"
 
 [project.urls]
@@ -53,13 +53,13 @@ respect-source-order = true
 
 [tool.black]
 line-length = 100
-target-version = ["py310"]
+target-version = ["py311"]
 
 [tool.ruff]
 fix = true
 line-length = 100
 select = ["B", "E", "F", "I"]
-target-version = "py310"
+target-version = "py311"
 
 [tool.ruff.format]
 docstring-code-format = true
@@ -68,7 +68,7 @@ docstring-code-format = true
 check_untyped_defs = true
 disallow_untyped_defs = true
 ignore_missing_imports = true
-python_version = "3.10"
+python_version = "3.11"
 show_error_codes = true
 strict = true
 warn_return_any = true

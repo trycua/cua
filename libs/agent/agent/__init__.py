@@ -3,7 +3,7 @@
 import sys
 import logging
 
-__version__ = "0.1.0"
+__version__ = "0.1.31"
 
 # Initialize logging
 logger = logging.getLogger("cua.agent")

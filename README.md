@@ -66,7 +66,7 @@ If you want to use AI agents with virtualized environments:
 
 2. Pull the latest macOS CUA image:
    ```bash
-   lume pull macos-sequoia-cua:latest
+   lume pull macos-sequoia-cua-sparse:latest
    ```
 
 3. Install the Python libraries:

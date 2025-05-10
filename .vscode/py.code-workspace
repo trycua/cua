@@ -105,7 +105,7 @@
             "${workspaceFolder:cua-root}/libs/som",
             "${workspaceFolder:cua-root}/libs/pylume"
         ],
-        "python.languageServer": "Pylance",
+        "python.languageServer": "None",
         "[python]": {
             "editor.formatOnSave": true,
             "editor.defaultFormatter": "ms-python.black-formatter",

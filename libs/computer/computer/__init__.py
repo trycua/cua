@@ -42,6 +42,10 @@ except Exception as e:
     # Other issues with telemetry
     logger.warning(f"Error initializing telemetry: {e}")
 
+# Core components
 from .computer import Computer
 
-__all__ = ["Computer"]
+# Provider components
+from .providers.base import VMProviderType
+
+__all__ = ["Computer", "VMProviderType"]

@@ -20,7 +20,7 @@ for path in pythonpath.split(":"):
         sys.path.append(path)
         print(f"Added to sys.path: {path}")
 
-from computer.computer import Computer
+from computer import Computer, VMProviderType
 from computer.logger import LogLevel
 from computer.utils import get_image_size
 
@@ -37,6 +37,7 @@ async def main():
             os_type="macos",
             verbosity=LogLevel.NORMAL,  # Use QUIET to suppress most logs
             use_host_computer_server=False,
+            provider_type=VMProviderType.LUME,  # Explicitly use the Lume provider
         )
         try:
             await computer.run()

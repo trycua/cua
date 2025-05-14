@@ -1,3 +1,5 @@
+[![MseeP.ai Security Assessment Badge](https://mseep.net/pr/trycua-cua-badge.png)](https://mseep.ai/app/trycua-cua)
+
 <div align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" alt="Cua logo" height="150" srcset="img/logo_white.png">

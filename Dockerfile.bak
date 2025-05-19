@@ -52,13 +52,4 @@ RUN rm -rf /app/* /app/.??*
 # via host.docker.internal:7777
 
 # Default command
-# Create a non-root user and group
-RUN groupadd -r cua && useradd -r -g cua cua
-
-# Set ownership of application files
-RUN chown -R cua:cua /app
-
-# Switch to non-root user
-USER cua
-
 CMD ["bash"] 

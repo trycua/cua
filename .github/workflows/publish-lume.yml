@@ -243,4 +243,4 @@ jobs:
             /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/lume/scripts/install.sh)"
             ```
           generate_release_notes: true
-          make_latest: true 
+          draft: false 

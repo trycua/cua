@@ -1,0 +1,56 @@
+{
+  "name": "@cua/computer",
+  "version": "0.0.1",
+  "packageManager": "pnpm@10.11.0",
+  "description": "Typescript SDK for c/ua computer interaction",
+  "type": "module",
+  "license": "MIT",
+  "homepage": "",
+  "bugs": {
+    "url": "https://github.com/trycua/cua/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/trycua/cua.git"
+  },
+  "author": "c/ua",
+  "files": [
+    "dist"
+  ],
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": "./dist/index.js",
+    "./package.json": "./package.json"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "lint": "biome lint .",
+    "lint:fix": "biome lint --fix .",
+    "build": "tsdown",
+    "dev": "tsdown --watch",
+    "test": "vitest",
+    "typecheck": "tsc --noEmit",
+    "release": "bumpp && pnpm publish",
+    "prepublishOnly": "pnpm run build"
+  },
+  "dependencies": {
+    "pino": "^9.7.0",
+    "sharp": "^0.33.0",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^1.9.4",
+    "@types/node": "^22.15.17",
+    "@types/ws": "^8.18.1",
+    "bumpp": "^10.1.0",
+    "happy-dom": "^17.4.7",
+    "tsdown": "^0.11.9",
+    "tsx": "^4.19.4",
+    "typescript": "^5.8.3",
+    "vitest": "^3.1.3"
+  }
+}

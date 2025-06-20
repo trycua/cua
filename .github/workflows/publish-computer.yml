@@ -59,7 +59,7 @@ jobs:
     - name: Update dependencies to latest versions
       id: update-deps
       run: |
-        cd libs/computer
+        cd libs/computer/python
         # Install required package for PyPI API access
         pip install requests
         
@@ -124,7 +124,7 @@ jobs:
     uses: ./.github/workflows/reusable-publish.yml
     with:
       package_name: "computer"
-      package_dir: "libs/computer"
+      package_dir: "libs/computer/python"
       version: ${{ needs.prepare.outputs.version }}
       is_lume_package: false
       base_package_name: "cua-computer"

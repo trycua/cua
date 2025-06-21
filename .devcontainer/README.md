@@ -6,12 +6,16 @@ This repository includes a Dev Container configuration that simplifies the devel
 
 ![Clipboard-20250611-180809-459](https://github.com/user-attachments/assets/447eaeeb-0eec-4354-9a82-44446e202e06)
 
-1. **Install Dev Containers extension** in VS Code
-2. **Clone and open in container**: 
-   - Press `Ctrl+Shift+P` (or `Cmd+Shift+P` on Mac)
-   - Type "Dev Containers: Clone Repository in Container Volume..."
-   - Paste the repository URL: `https://github.com/trycua/cua.git`
-3. **Hit play**: Once the container builds, you're ready to develop!
+1. **Install the Dev Containers extension ([VS Code](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-containers) or [WindSurf](https://docs.windsurf.com/windsurf/advanced#dev-containers-beta))**
+2. **Open the repository in the Dev Container:**
+    - Press `Ctrl+Shift+P` (or `⌘+Shift+P` on macOS)
+    - Select `Dev Containers: Clone Repository in Container Volume...` and paste the repository URL: `https://github.com/trycua/cua.git` (if not cloned) or `Dev Containers: Open Folder in Container...` (if git cloned).
+     > **Note**: On WindSurf, the post install hook might not run automatically. If so, run `/bin/bash .devcontainer/post-install.sh` manually.
+3. **Open the VS Code workspace:** Once the post-install.sh is done running, open the `.vscode/py.code-workspace` workspace and press ![Open Workspace](https://github.com/user-attachments/assets/923bdd43-8c8f-4060-8d78-75bfa302b48c)
+.
+4. **Run the Agent UI example:** Click ![Run Agent UI](https://github.com/user-attachments/assets/7a61ef34-4b22-4dab-9864-f86bf83e290b)
+ to start the Gradio UI. If prompted to install **debugpy (Python Debugger)** to enable remote debugging, select 'Yes' to proceed.
+5. **Access the Gradio UI:** The Gradio UI will be available at `http://localhost:7860` and will automatically forward to your host machine.
 
 ## What's Included
 

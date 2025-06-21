@@ -50,7 +50,7 @@
 |-------------------|-------------|------|------------|-------|-------|
 | **playground-docker.sh** | Docker Desktop + WSL2 | ❌ Not supported | ❌ Not supported | ✅ Full | Requires WSL2 |
 | **Dev Container** | VS Code/WindSurf + Docker + WSL2 | ❌ Not supported | ❌ Not supported | ✅ Full | Requires WSL2 |
-| **PyPI packages** | Python 3.12+ | ❌ Not supported | ✅ Limited | ✅ Full | WSL for .sh scripts |
+| **PyPI packages** | Python 3.12+ | ❌ Not supported | ✅ Full | ✅ Full |  |
 
 **Windows Host Requirements:**
 - Windows 10/11 with WSL2 enabled for shell script execution
@@ -69,7 +69,7 @@
 |----------|----------|-----------------|------------|-------|
 | **Lume** | ✅ Full support | ⚠️ Limited support | ⚠️ Limited support | macOS: native; Ubuntu/Linux/Windows: need custom image |
 | **Cloud** | 🚧 Coming soon | ✅ Full support | 🚧 Coming soon | Currently Ubuntu only, macOS/Windows in development |
-| **Winsandbox** | ❌ Not supported | ❌ Not supported | ✅ Windows only | Windows Sandbox environments only |
+| **Winsandbox** | ❌ Not supported | ❌ Not supported | ✅ Windows only | Windows 10/11 environments only |
 
 ---
 

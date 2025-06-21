@@ -1,0 +1,13 @@
+{
+  "session_id": "20250621_170208",
+  "start_time": "2025-06-21T17:02:08.248985",
+  "events": [
+    {
+      "timestamp": "2025-06-21T17:02:08.249806",
+      "type": "user_input",
+      "data": {
+        "instruction": "Save an image of a cat to the desktop."
+      }
+    }
+  ]
+}

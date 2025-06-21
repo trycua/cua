@@ -1,0 +1,13 @@
+{
+  "session_id": "20250621_170509",
+  "start_time": "2025-06-21T17:05:09.089960",
+  "events": [
+    {
+      "timestamp": "2025-06-21T17:05:09.091378",
+      "type": "user_input",
+      "data": {
+        "instruction": "Launch Calculator, perform 123 + 456, then report the result."
+      }
+    }
+  ]
+}

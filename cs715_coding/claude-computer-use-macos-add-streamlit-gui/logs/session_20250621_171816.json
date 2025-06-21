@@ -1,0 +1,44 @@
+{
+  "session_id": "20250621_171816",
+  "start_time": "2025-06-21T17:18:16.372379",
+  "events": [
+    {
+      "timestamp": "2025-06-21T17:18:16.373719",
+      "type": "user_input",
+      "data": {
+        "instruction": "Save an image of a cat to the desktop."
+      }
+    },
+    {
+      "timestamp": "2025-06-21T17:19:15.708793",
+      "type": "user_input",
+      "data": {
+        "instruction": "Launch Calculator, perform 123 + 456, then report the result."
+      }
+    },
+    {
+      "timestamp": "2025-06-21T17:19:17.354341",
+      "type": "user_input",
+      "data": {
+        "instruction": "Launch Calculator, perform 123 + 456, then report the result."
+      }
+    },
+    {
+      "timestamp": "2025-06-21T17:19:17.355259",
+      "type": "model_selection",
+      "data": {
+        "model": "claude-sonnet-4-20250514"
+      }
+    },
+    {
+      "timestamp": "2025-06-21T17:19:17.626920",
+      "type": "error",
+      "data": {
+        "error_message": "Error during sampling loop: Error code: 400 - {'type': 'error', 'error': {'type': 'invalid_request_error', 'message': \"'claude-sonnet-4-20250514' does not support tool types: computer_20241022, bash_20241022, text_editor_20241022. Did you mean one of bash_20250124, computer_20250124, text_editor_20250124, text_editor_20250429, web_search_20250305?\"}}",
+        "exception_type": "BadRequestError"
+      }
+    }
+  ],
+  "end_time": "2025-06-21T17:19:17.627530",
+  "status": "error"
+}

@@ -1,0 +1,278 @@
+{
+  "session_id": "20250621_172705",
+  "start_time": "2025-06-21T17:27:05.495887",
+  "events": [
+    {
+      "timestamp": "2025-06-21T17:27:05.500357",
+      "type": "user_input",
+      "data": {
+        "instruction": "Save an image of a cat to the desktop."
+      }
+    },
+    {
+      "timestamp": "2025-06-21T17:27:18.969903",
+      "type": "user_input",
+      "data": {
+        "instruction": ""
+      }
+    },
+    {
+      "timestamp": "2025-06-21T17:27:26.772713",
+      "type": "user_input",
+      "data": {
+        "instruction": "Launch Calculator, perform 123 + 456, then report the result."
+      }
+    },
+    {
+      "timestamp": "2025-06-21T17:27:26.937777",
+      "type": "user_input",
+      "data": {
+        "instruction": "Launch Calculator, perform 123 + 456, then report the result."
+      }
+    },
+    {
+      "timestamp": "2025-06-21T17:27:26.938729",
+      "type": "model_selection",
+      "data": {
+        "model": "claude-sonnet-4-20250514"
+      }
+    },
+    {
+      "timestamp": "2025-06-21T17:27:27.141132",
+      "type": "error",
+      "data": {
+        "error_message": "Error during sampling loop: Error code: 400 - {'type': 'error', 'error': {'type': 'invalid_request_error', 'message': \"tools.0: Input tag 'computer_20250124' found using 'type' does not match any of the expected tags: 'bash_20241022', 'bash_20250124', 'computer_20241022', 'custom', 'text_editor_20241022', 'text_editor_20250124', 'text_editor_20250429', 'web_search_20250305'\"}}",
+        "exception_type": "BadRequestError"
+      }
+    },
+    {
+      "timestamp": "2025-06-21T17:29:02.547707",
+      "type": "user_input",
+      "data": {
+        "instruction": "Launch Calculator, perform 123 + 456, then report the result."
+      }
+    },
+    {
+      "timestamp": "2025-06-21T17:29:02.549265",
+      "type": "model_selection",
+      "data": {
+        "model": "claude-3-5-sonnet-20241022"
+      }
+    },
+    {
+      "timestamp": "2025-06-21T17:29:02.758534",
+      "type": "error",
+      "data": {
+        "error_message": "Error during sampling loop: Error code: 400 - {'type': 'error', 'error': {'type': 'invalid_request_error', 'message': \"tools.2.text_editor_20250429.name: Input should be 'str_replace_based_edit_tool'\"}}",
+        "exception_type": "BadRequestError"
+      }
+    },
+    {
+      "timestamp": "2025-06-21T17:32:08.256586",
+      "type": "user_input",
+      "data": {
+        "instruction": "Launch Calculator, perform 123 + 456, then report the result."
+      }
+    },
+    {
+      "timestamp": "2025-06-21T17:32:08.258248",
+      "type": "model_selection",
+      "data": {
+        "model": "claude-3-5-sonnet-20241022"
+      }
+    },
+    {
+      "timestamp": "2025-06-21T17:32:12.937956",
+      "type": "api_response",
+      "data": {
+        "content": [
+          {
+            "type": "text",
+            "text": "I'll help you launch Calculator and perform the calculation. Let me break this down into steps:\n\n1. First, let's launch Calculator using the `open` command\n2. Then I'll take a screenshot to confirm it's open\n3. Next I'll type the calculation and get the result"
+          },
+          {
+            "type": "tool_use",
+            "id": "toolu_01999B1KcUrA9bEhiypEp9ub",
+            "name": "bash",
+            "input": {
+              "command": "open -a Calculator"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "timestamp": "2025-06-21T17:32:16.220426",
+      "type": "api_response",
+      "data": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Let me take a screenshot to confirm Calculator is open:"
+          },
+          {
+            "type": "tool_use",
+            "id": "toolu_01CtfUJ5q99y1nWeezmSY4mv",
+            "name": "computer",
+            "input": {
+              "action": "screenshot"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "timestamp": "2025-06-21T17:32:16.643964",
+      "type": "tool_result",
+      "data": {
+        "tool_use_id": "toolu_01CtfUJ5q99y1nWeezmSY4mv",
+        "image_path": "screenshots/screenshot_toolu_01CtfUJ5q99y1nWeezmSY4mv.png"
+      }
+    },
+    {
+      "timestamp": "2025-06-21T17:32:22.251858",
+      "type": "api_response",
+      "data": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Now I'll type the calculation:"
+          },
+          {
+            "type": "tool_use",
+            "id": "toolu_01PpU55F32KWUfd9y5pCxU5U",
+            "name": "computer",
+            "input": {
+              "action": "type",
+              "text": "123"
+            }
+          },
+          {
+            "type": "tool_use",
+            "id": "toolu_0181ag9UUVuJmdZoYjCL2ixG",
+            "name": "computer",
+            "input": {
+              "action": "type",
+              "text": "+"
+            }
+          },
+          {
+            "type": "tool_use",
+            "id": "toolu_0171MYZqECpNwshDZcuqXB6U",
+            "name": "computer",
+            "input": {
+              "action": "type",
+              "text": "456"
+            }
+          },
+          {
+            "type": "tool_use",
+            "id": "toolu_013nV3ep4wSCkhQouSCik9DA",
+            "name": "computer",
+            "input": {
+              "action": "key",
+              "text": "Return"
+            }
+          },
+          {
+            "type": "tool_use",
+            "id": "toolu_01Hn7feqSq1TbV6BrLS9eY2u",
+            "name": "computer",
+            "input": {
+              "action": "screenshot"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "timestamp": "2025-06-21T17:32:22.533584",
+      "type": "tool_result",
+      "data": {
+        "tool_use_id": "toolu_01PpU55F32KWUfd9y5pCxU5U",
+        "output": "Typed text: 123"
+      }
+    },
+    {
+      "timestamp": "2025-06-21T17:32:22.702416",
+      "type": "tool_result",
+      "data": {
+        "tool_use_id": "toolu_0181ag9UUVuJmdZoYjCL2ixG",
+        "output": "Typed text: +"
+      }
+    },
+    {
+      "timestamp": "2025-06-21T17:32:22.927458",
+      "type": "tool_result",
+      "data": {
+        "tool_use_id": "toolu_0171MYZqECpNwshDZcuqXB6U",
+        "output": "Typed text: 456"
+      }
+    },
+    {
+      "timestamp": "2025-06-21T17:32:23.059010",
+      "type": "tool_result",
+      "data": {
+        "tool_use_id": "toolu_013nV3ep4wSCkhQouSCik9DA",
+        "output": "Key combination 'Return' pressed."
+      }
+    },
+    {
+      "timestamp": "2025-06-21T17:32:23.508014",
+      "type": "tool_result",
+      "data": {
+        "tool_use_id": "toolu_01Hn7feqSq1TbV6BrLS9eY2u",
+        "image_path": "screenshots/screenshot_toolu_01Hn7feqSq1TbV6BrLS9eY2u.png"
+      }
+    },
+    {
+      "timestamp": "2025-06-21T17:32:26.501625",
+      "type": "api_response",
+      "data": {
+        "content": [
+          {
+            "type": "text",
+            "text": "The result of 123 + 456 = 579."
+          }
+        ]
+      }
+    },
+    {
+      "timestamp": "2025-06-21T17:33:48.519409",
+      "type": "user_input",
+      "data": {
+        "instruction": "Launch Calculator, perform 123 + 456, then report the result."
+      }
+    },
+    {
+      "timestamp": "2025-06-21T17:33:49.543885",
+      "type": "user_input",
+      "data": {
+        "instruction": "Launch Calculator, perform 123 + 456, then report the result."
+      }
+    },
+    {
+      "timestamp": "2025-06-21T17:33:54.146101",
+      "type": "user_input",
+      "data": {
+        "instruction": "Launch Calculator, perform 123 + 456, then report the result."
+      }
+    },
+    {
+      "timestamp": "2025-06-21T17:33:55.006999",
+      "type": "user_input",
+      "data": {
+        "instruction": "Launch Calculator, perform 123 + 456, then report the result."
+      }
+    },
+    {
+      "timestamp": "2025-06-21T17:35:37.465299",
+      "type": "user_input",
+      "data": {
+        "instruction": "Launch Calculator, perform 123 + 456, then report the result."
+      }
+    }
+  ],
+  "end_time": "2025-06-21T17:32:26.504383",
+  "status": "completed"
+}

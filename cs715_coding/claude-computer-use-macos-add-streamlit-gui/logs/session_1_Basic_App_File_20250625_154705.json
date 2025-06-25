@@ -1,0 +1,277 @@
+{
+  "session_id": "1_Basic_App_File_20250625_154705",
+  "start_time": "2025-06-25T15:47:05.546250",
+  "events": [
+    {
+      "timestamp": "2025-06-25T15:47:05.546996",
+      "type": "test_metadata",
+      "data": {
+        "Test_ID": "1",
+        "Cat": "Basic_App_File"
+      }
+    },
+    {
+      "timestamp": "2025-06-25T15:47:05.547818",
+      "type": "user_input",
+      "data": {
+        "instruction": "Launch Calculator, perform 123 + 456, then report the result."
+      }
+    },
+    {
+      "timestamp": "2025-06-25T15:47:05.548265",
+      "type": "model_selection",
+      "data": {
+        "model": "claude-3-5-sonnet-20241022"
+      }
+    },
+    {
+      "timestamp": "2025-06-25T15:47:16.745545",
+      "type": "token_usage",
+      "data": {
+        "input_tokens": 2522,
+        "output_tokens": 103,
+        "cost_usd": 0.009111,
+        "model": "claude-3-5-sonnet-20241022"
+      }
+    },
+    {
+      "timestamp": "2025-06-25T15:47:16.746473",
+      "type": "api_response",
+      "data": {
+        "content": [
+          {
+            "type": "text",
+            "text": "I'll help you launch Calculator and perform the calculation. Let me break this down into steps:\n\n1. First, let's take a screenshot to see the current state\n2. Launch Calculator\n3. Type the calculation\n4. Get the result"
+          },
+          {
+            "type": "tool_use",
+            "id": "toolu_01XVp3U4QuRvfcKZPuNgSnDA",
+            "name": "computer",
+            "input": {
+              "action": "screenshot"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "timestamp": "2025-06-25T15:47:17.163361",
+      "type": "tool_result",
+      "data": {
+        "tool_use_id": "toolu_01XVp3U4QuRvfcKZPuNgSnDA",
+        "image_path": "screenshots/screenshot_toolu_01XVp3U4QuRvfcKZPuNgSnDA.png"
+      }
+    },
+    {
+      "timestamp": "2025-06-25T15:47:43.368327",
+      "type": "token_usage",
+      "data": {
+        "input_tokens": 4030,
+        "output_tokens": 67,
+        "cost_usd": 0.013095000000000002,
+        "model": "claude-3-5-sonnet-20241022"
+      }
+    },
+    {
+      "timestamp": "2025-06-25T15:47:43.369672",
+      "type": "api_response",
+      "data": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Now, let me launch Calculator using the bash command:"
+          },
+          {
+            "type": "tool_use",
+            "id": "toolu_01MPJxMrYZQBUWC4WD8RcqFU",
+            "name": "bash",
+            "input": {
+              "command": "open -a Calculator"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "timestamp": "2025-06-25T15:47:53.093222",
+      "type": "token_usage",
+      "data": {
+        "input_tokens": 4122,
+        "output_tokens": 65,
+        "cost_usd": 0.013341,
+        "model": "claude-3-5-sonnet-20241022"
+      }
+    },
+    {
+      "timestamp": "2025-06-25T15:47:53.094051",
+      "type": "api_response",
+      "data": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Let me take another screenshot to confirm the Calculator is open:"
+          },
+          {
+            "type": "tool_use",
+            "id": "toolu_013mrSTvnqynvRg3ULWzxZRC",
+            "name": "computer",
+            "input": {
+              "action": "screenshot"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "timestamp": "2025-06-25T15:47:53.535488",
+      "type": "tool_result",
+      "data": {
+        "tool_use_id": "toolu_013mrSTvnqynvRg3ULWzxZRC",
+        "image_path": "screenshots/screenshot_toolu_013mrSTvnqynvRg3ULWzxZRC.png"
+      }
+    },
+    {
+      "timestamp": "2025-06-25T15:48:15.334185",
+      "type": "token_usage",
+      "data": {
+        "input_tokens": 5592,
+        "output_tokens": 264,
+        "cost_usd": 0.020735999999999997,
+        "model": "claude-3-5-sonnet-20241022"
+      }
+    },
+    {
+      "timestamp": "2025-06-25T15:48:15.335371",
+      "type": "api_response",
+      "data": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Now I'll type the calculation:"
+          },
+          {
+            "type": "tool_use",
+            "id": "toolu_01HzpJqiarKx2pGhro9A4Wu3",
+            "name": "computer",
+            "input": {
+              "action": "type",
+              "text": "123"
+            }
+          },
+          {
+            "type": "tool_use",
+            "id": "toolu_01TiRxUERHCvDPsHgJWj4HC5",
+            "name": "computer",
+            "input": {
+              "action": "type",
+              "text": "+"
+            }
+          },
+          {
+            "type": "tool_use",
+            "id": "toolu_01V77t5DUnbHwuMx7u8WEBa6",
+            "name": "computer",
+            "input": {
+              "action": "type",
+              "text": "456"
+            }
+          },
+          {
+            "type": "tool_use",
+            "id": "toolu_016oaM9P7BHwr1QP9JXoaeUK",
+            "name": "computer",
+            "input": {
+              "action": "key",
+              "text": "Return"
+            }
+          },
+          {
+            "type": "tool_use",
+            "id": "toolu_015WgcbsUeoL9zjskor4ofKb",
+            "name": "computer",
+            "input": {
+              "action": "screenshot"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "timestamp": "2025-06-25T15:48:15.579124",
+      "type": "tool_result",
+      "data": {
+        "tool_use_id": "toolu_01HzpJqiarKx2pGhro9A4Wu3",
+        "output": "Typed text: 123"
+      }
+    },
+    {
+      "timestamp": "2025-06-25T15:48:15.753077",
+      "type": "tool_result",
+      "data": {
+        "tool_use_id": "toolu_01TiRxUERHCvDPsHgJWj4HC5",
+        "output": "Typed text: +"
+      }
+    },
+    {
+      "timestamp": "2025-06-25T15:48:15.976992",
+      "type": "tool_result",
+      "data": {
+        "tool_use_id": "toolu_01V77t5DUnbHwuMx7u8WEBa6",
+        "output": "Typed text: 456"
+      }
+    },
+    {
+      "timestamp": "2025-06-25T15:48:16.121230",
+      "type": "tool_result",
+      "data": {
+        "tool_use_id": "toolu_016oaM9P7BHwr1QP9JXoaeUK",
+        "output": "Key combination 'Return' pressed."
+      }
+    },
+    {
+      "timestamp": "2025-06-25T15:48:16.565768",
+      "type": "tool_result",
+      "data": {
+        "tool_use_id": "toolu_015WgcbsUeoL9zjskor4ofKb",
+        "image_path": "screenshots/screenshot_toolu_015WgcbsUeoL9zjskor4ofKb.png"
+      }
+    },
+    {
+      "timestamp": "2025-06-25T15:48:29.141659",
+      "type": "token_usage",
+      "data": {
+        "input_tokens": 7393,
+        "output_tokens": 18,
+        "cost_usd": 0.022449,
+        "model": "claude-3-5-sonnet-20241022"
+      }
+    },
+    {
+      "timestamp": "2025-06-25T15:48:29.143245",
+      "type": "api_response",
+      "data": {
+        "content": [
+          {
+            "type": "text",
+            "text": "The result of 123 + 456 = 579."
+          }
+        ]
+      }
+    },
+    {
+      "timestamp": "2025-06-25T15:48:29.148914",
+      "type": "session_summary",
+      "data": {
+        "total_input_tokens": 23659,
+        "total_output_tokens": 517,
+        "total_tokens": 24176,
+        "total_cost_usd": 0.078732,
+        "model": "claude-3-5-sonnet-20241022",
+        "test_id": "1",
+        "category": "Basic_App_File"
+      }
+    }
+  ],
+  "end_time": "2025-06-25T15:48:29.150035",
+  "status": "completed"
+}

@@ -60,7 +60,8 @@ def analyze_log_page(json_content, selected_json):
     # Extract metadata
     metadata = None
     for event in json_content.get("events", []):
-        if event.get("type") == "session_metadata":
+        # Check for both metadata types for backward compatibility
+        if event.get("type") in ["session_metadata", "test_metadata"]:
             metadata = event.get("data", {})
             break
     
@@ -367,10 +368,18 @@ def main():
     st.write("This is the part of Seminar CS 715 (FSS2025) at University of Mannheim, Germany.")
 
     # Add page navigation
-    page = st.sidebar.selectbox("Select Page", ["Run Experiment", "Analyze Logs"])
+    page = st.sidebar.selectbox("Select Page", ["Run Experiment", "Analyze Logs", "Evaluate Tasks"])
     
     if page == "Analyze Logs":
         analyze_logs_main()
+        return
+    elif page == "Evaluate Tasks":
+        # Import and run evaluation interface
+        try:
+            from run_eval import evaluation_interface
+            evaluation_interface()
+        except ImportError as e:
+            st.error(f"Could not load evaluation interface: {e}")
         return
 
     # Add auto-scroll JavaScript

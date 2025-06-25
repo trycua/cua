@@ -1,0 +1,240 @@
+{
+  "session_id": "1_Basic_App_File_20250625_182754",
+  "start_time": "2025-06-25T18:27:54.706430",
+  "events": [
+    {
+      "timestamp": "2025-06-25T18:27:54.707495",
+      "type": "session_metadata",
+      "data": {
+        "Test_ID": "1",
+        "Cat": "Basic_App_File"
+      }
+    },
+    {
+      "timestamp": "2025-06-25T18:27:54.707964",
+      "type": "user_input",
+      "data": {
+        "instruction": "Launch Calculator, perform 123 + 456, then report the result."
+      }
+    },
+    {
+      "timestamp": "2025-06-25T18:27:54.708573",
+      "type": "model_selection",
+      "data": {
+        "model": "claude-3-5-sonnet-20241022"
+      }
+    },
+    {
+      "timestamp": "2025-06-25T18:28:00.208771",
+      "type": "token_usage",
+      "data": {
+        "input_tokens": 2522,
+        "output_tokens": 128,
+        "cost_usd": 0.009486,
+        "model": "claude-3-5-sonnet-20241022"
+      }
+    },
+    {
+      "timestamp": "2025-06-25T18:28:00.209362",
+      "type": "api_response",
+      "data": {
+        "content": [
+          {
+            "type": "text",
+            "text": "I'll help you launch Calculator and perform that calculation. Let me break this down into steps:\n\n1. First, let's take a screenshot to see the current state of the desktop\n2. Launch Calculator using the `open` command\n3. Take another screenshot to confirm Calculator is open\n4. Type the calculation\n5. Get the result\n\nLet's start:"
+          },
+          {
+            "type": "tool_use",
+            "id": "toolu_013z1NyxH8pLJ4UEHJGBik7u",
+            "name": "computer",
+            "input": {
+              "action": "screenshot"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "timestamp": "2025-06-25T18:28:00.752173",
+      "type": "tool_result",
+      "data": {
+        "tool_use_id": "toolu_013z1NyxH8pLJ4UEHJGBik7u",
+        "image_path": "screenshots/screenshot_toolu_013z1NyxH8pLJ4UEHJGBik7u.png"
+      }
+    },
+    {
+      "timestamp": "2025-06-25T18:28:03.967432",
+      "type": "token_usage",
+      "data": {
+        "input_tokens": 4055,
+        "output_tokens": 62,
+        "cost_usd": 0.013094999999999999,
+        "model": "claude-3-5-sonnet-20241022"
+      }
+    },
+    {
+      "timestamp": "2025-06-25T18:28:03.968472",
+      "type": "api_response",
+      "data": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Now let's launch Calculator:"
+          },
+          {
+            "type": "tool_use",
+            "id": "toolu_01A8KuM6v7jwozZPfvCgPjm9",
+            "name": "bash",
+            "input": {
+              "command": "open -a Calculator"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "timestamp": "2025-06-25T18:28:07.474264",
+      "type": "token_usage",
+      "data": {
+        "input_tokens": 4142,
+        "output_tokens": 64,
+        "cost_usd": 0.013386000000000002,
+        "model": "claude-3-5-sonnet-20241022"
+      }
+    },
+    {
+      "timestamp": "2025-06-25T18:28:07.475330",
+      "type": "api_response",
+      "data": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Let's take another screenshot to confirm Calculator is open:"
+          },
+          {
+            "type": "tool_use",
+            "id": "toolu_01MDHTSZNva17nSUrYhEWV49",
+            "name": "computer",
+            "input": {
+              "action": "screenshot"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "timestamp": "2025-06-25T18:28:07.998681",
+      "type": "tool_result",
+      "data": {
+        "tool_use_id": "toolu_01MDHTSZNva17nSUrYhEWV49",
+        "image_path": "screenshots/screenshot_toolu_01MDHTSZNva17nSUrYhEWV49.png"
+      }
+    },
+    {
+      "timestamp": "2025-06-25T18:28:14.361080",
+      "type": "token_usage",
+      "data": {
+        "input_tokens": 5611,
+        "output_tokens": 281,
+        "cost_usd": 0.021048,
+        "model": "claude-3-5-sonnet-20241022"
+      }
+    },
+    {
+      "timestamp": "2025-06-25T18:28:14.362833",
+      "type": "api_response",
+      "data": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Now I'll type the calculation. I'll type 123 first, then the plus sign, then 456:"
+          },
+          {
+            "type": "tool_use",
+            "id": "toolu_01Mytp7iDvFzFQR2QC7Zw2yW",
+            "name": "computer",
+            "input": {
+              "action": "type",
+              "text": "123"
+            }
+          },
+          {
+            "type": "tool_use",
+            "id": "toolu_015jsfyM6SjChzUzW3ouHSEi",
+            "name": "computer",
+            "input": {
+              "action": "key",
+              "text": "plus"
+            }
+          },
+          {
+            "type": "tool_use",
+            "id": "toolu_01XMCzdhdxaNPxtyhnPUpjpq",
+            "name": "computer",
+            "input": {
+              "action": "type",
+              "text": "456"
+            }
+          },
+          {
+            "type": "tool_use",
+            "id": "toolu_016hqPfUyn3FSZtwRPd5ijUP",
+            "name": "computer",
+            "input": {
+              "action": "key",
+              "text": "Return"
+            }
+          },
+          {
+            "type": "tool_use",
+            "id": "toolu_01U4G9PkNqe2dkA8Cei1tQFh",
+            "name": "computer",
+            "input": {
+              "action": "screenshot"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "timestamp": "2025-06-25T18:28:14.678618",
+      "type": "tool_result",
+      "data": {
+        "tool_use_id": "toolu_01Mytp7iDvFzFQR2QC7Zw2yW",
+        "output": "Typed text: 123"
+      }
+    },
+    {
+      "timestamp": "2025-06-25T18:28:14.785466",
+      "type": "tool_result",
+      "data": {
+        "tool_use_id": "toolu_015jsfyM6SjChzUzW3ouHSEi",
+        "output": "Key combination 'plus' pressed."
+      }
+    },
+    {
+      "timestamp": "2025-06-25T18:28:15.011661",
+      "type": "tool_result",
+      "data": {
+        "tool_use_id": "toolu_01XMCzdhdxaNPxtyhnPUpjpq",
+        "output": "Typed text: 456"
+      }
+    },
+    {
+      "timestamp": "2025-06-25T18:28:15.147801",
+      "type": "tool_result",
+      "data": {
+        "tool_use_id": "toolu_016hqPfUyn3FSZtwRPd5ijUP",
+        "output": "Key combination 'Return' pressed."
+      }
+    },
+    {
+      "timestamp": "2025-06-25T18:28:15.664784",
+      "type": "tool_result",
+      "data": {
+        "tool_use_id": "toolu_01U4G9PkNqe2dkA8Cei1tQFh",
+        "image_path": "screenshots/screenshot_toolu_01U4G9PkNqe2dkA8Cei1tQFh.png"
+      }
+    }
+  ]
+}

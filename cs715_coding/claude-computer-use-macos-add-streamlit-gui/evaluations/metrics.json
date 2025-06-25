@@ -1,0 +1,62 @@
+[
+  {
+    "task_id": "unknown_20250625_151749",
+    "tsr": 0.0,
+    "ssr": 1.0,
+    "ae": 0.6666666666666666,
+    "total_steps": 7,
+    "successful_steps": 7,
+    "failed_steps": 0,
+    "actual_actions": 4,
+    "optimal_actions": 6,
+    "notes": ""
+  },
+  {
+    "task_id": "1_1_Basic_App_File_20250625_182904",
+    "tsr": 1.0,
+    "ssr": 1.0,
+    "ae": 1.0,
+    "total_steps": 7,
+    "successful_steps": 7,
+    "failed_steps": 0,
+    "actual_actions": 4,
+    "optimal_actions": 4,
+    "notes": ""
+  },
+  {
+    "task_id": "1_1_Basic_App_File_20250625_182754",
+    "tsr": 0.0,
+    "ssr": 0.5714285714285714,
+    "ae": 1.0,
+    "total_steps": 7,
+    "successful_steps": 4,
+    "failed_steps": 3,
+    "actual_actions": 4,
+    "optimal_actions": 4,
+    "notes": ""
+  },
+  {
+    "task_id": "1_1_Basic_App_File_20250625_154333",
+    "tsr": 0.0,
+    "ssr": 0.0,
+    "ae": 0.0,
+    "total_steps": 0,
+    "successful_steps": 0,
+    "failed_steps": 0,
+    "actual_actions": 0,
+    "optimal_actions": 1,
+    "notes": ""
+  },
+  {
+    "task_id": "1_1_Basic_App_File_20250625_154705",
+    "tsr": 0.0,
+    "ssr": 1.0,
+    "ae": 1.0,
+    "total_steps": 7,
+    "successful_steps": 7,
+    "failed_steps": 0,
+    "actual_actions": 4,
+    "optimal_actions": 4,
+    "notes": ""
+  }
+]

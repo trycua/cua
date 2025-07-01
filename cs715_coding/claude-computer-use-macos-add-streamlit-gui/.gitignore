@@ -28,3 +28,21 @@ dist/
 
 # macOS Trash folder
 .Trash/
+
+# Environment variables
+.env
+.env.local
+.env.production
+
+# Evaluation system generated files
+evaluations/*.json
+evaluations/*.csv
+logs/*.json
+screenshots/*.png
+screenshots/*.jpg
+
+# Temporary and cache files
+*.tmp
+*.cache
+.pytest_cache/
+.coverage

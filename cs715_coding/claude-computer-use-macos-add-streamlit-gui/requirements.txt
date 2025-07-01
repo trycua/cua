@@ -3,3 +3,5 @@ pillow
 PyAutoGUI
 streamlit
 plotly
+pandas
+python-dotenv

@@ -114,7 +114,8 @@ def evaluation_interface():
     page = st.sidebar.selectbox("Select Page", [
         "Evaluate Tasks", 
         "View Results", 
-        "Metrics Dashboard"
+        "Metrics Dashboard",
+        "Retry Management"
     ])
     
     if page == "Evaluate Tasks":
@@ -123,6 +124,8 @@ def evaluation_interface():
         view_results_page(tasks, evaluations, calculator)
     elif page == "Metrics Dashboard":
         metrics_dashboard_page(tasks, evaluations, calculator, storage)
+    elif page == "Retry Management":
+        retry_management_page(tasks, evaluations, calculator)
 
 
 def evaluate_tasks_page(tasks: List[Task], evaluations: Dict[str, EvaluationResult], storage: EvaluationStorage):
@@ -414,6 +417,58 @@ def _display_evaluation_form(selected_task: Task, evaluations: Dict[str, Evaluat
             
             st.success(f"✅ Evaluation saved for task {selected_task.test_id}")
             st.rerun()
+    
+    # Add retry functionality for failed tasks
+    if not task_successful:
+        st.subheader("🔄 Retry Options")
+        st.write("**This task was marked as failed. You can:**")
+        
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            if st.button("🚀 Retry Task", type="primary", help="Run the same task again with the same instruction"):
+                st.info("🔄 **Retry functionality coming soon!**\n\nThis would integrate with the main experiment runner to:")
+                st.write("• Re-run the exact same instruction")
+                st.write("• Generate a new session with timestamp")  
+                st.write("• Allow comparison between attempts")
+                
+        with col2:
+            if st.button("✏️ Retry with Modified Instruction", help="Edit the instruction and retry"):
+                st.info("📝 **Modified retry functionality coming soon!**\n\nThis would allow you to:")
+                st.write("• Edit the original instruction") 
+                st.write("• Add clarifications or corrections")
+                st.write("• Run with the improved prompt")
+                
+        with col3:
+            if st.button("📋 Mark for Batch Retry", help="Add to a list for later batch processing"):
+                if 'retry_queue' not in st.session_state:
+                    st.session_state.retry_queue = []
+                
+                task_info = {
+                    'task_id': get_unique_task_id(selected_task),
+                    'test_id': selected_task.test_id,
+                    'instruction': selected_task.instruction,
+                    'session_id': selected_task.session_id,
+                    'added_date': datetime.now().isoformat()
+                }
+                
+                if task_info not in st.session_state.retry_queue:
+                    st.session_state.retry_queue.append(task_info)
+                    st.success(f"✅ Task {selected_task.test_id} added to retry queue!")
+                else:
+                    st.warning("⚠️ Task already in retry queue")
+                    
+        # Show current retry queue if it exists
+        if 'retry_queue' in st.session_state and st.session_state.retry_queue:
+            st.write("**📋 Current Retry Queue:**")
+            for i, task_info in enumerate(st.session_state.retry_queue):
+                col1, col2 = st.columns([4, 1])
+                with col1:
+                    st.write(f"{i+1}. **{task_info['test_id']}**: {task_info['instruction'][:60]}...")
+                with col2:
+                    if st.button("❌", key=f"remove_retry_{i}", help="Remove from queue"):
+                        st.session_state.retry_queue.pop(i)
+                        st.rerun()
 
 
 def view_results_page(tasks: List[Task], evaluations: Dict[str, EvaluationResult], calculator: MetricsCalculator):
@@ -751,5 +806,219 @@ def metrics_dashboard_page(tasks: List[Task], evaluations: Dict[str, EvaluationR
             st.download_button("Download JSON", json_data, "task_metrics.json", "application/json")
 
 
-if __name__ == "__main__":
-    evaluation_interface()
+def retry_management_page(tasks: List[Task], evaluations: Dict[str, EvaluationResult], 
+                         calculator: MetricsCalculator):
+    """Page for managing retry operations for failed tasks."""
+    st.header("🔄 Retry Management")
+    st.write("Manage and track task retries for failed evaluations.")
+    
+    # Get failed tasks
+    evaluated_tasks = [t for t in tasks if get_unique_task_id(t) in evaluations]
+    failed_tasks = []
+    
+    for task in evaluated_tasks:
+        unique_task_id = get_unique_task_id(task)
+        evaluation = evaluations[unique_task_id]
+        if not evaluation.task_successful:
+            failed_tasks.append((task, evaluation))
+    
+    # Summary metrics
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        st.metric("Total Tasks", len(tasks))
+    with col2:
+        st.metric("Evaluated Tasks", len(evaluated_tasks))
+    with col3:
+        st.metric("Failed Tasks", len(failed_tasks))
+    with col4:
+        retry_queue_count = len(st.session_state.get('retry_queue', []))
+        st.metric("In Retry Queue", retry_queue_count)
+    
+    # Failed Tasks Section
+    st.subheader("❌ Failed Tasks")
+    
+    if not failed_tasks:
+        st.info("🎉 No failed tasks found! All evaluated tasks were successful.")
+    else:
+        st.write(f"**Found {len(failed_tasks)} failed tasks that may need retry:**")
+        
+        # Create tabs for different views
+        tab1, tab2 = st.tabs(["📋 Failed Tasks List", "📊 Failure Analysis"])
+        
+        with tab1:
+            # Display failed tasks with retry options
+            for i, (task, evaluation) in enumerate(failed_tasks):
+                with st.expander(
+                    f"**{task.test_id}** - {evaluation.evaluated_by} "
+                    f"({evaluation.evaluation_date[:10]}) - "
+                    f"{len(evaluation.step_failures)} failed steps"
+                ):
+                    col1, col2 = st.columns([2, 1])
+                    
+                    with col1:
+                        st.write(f"**Instruction:** {task.instruction}")
+                        st.write(f"**Session ID:** {task.session_id}")
+                        st.write(f"**Total Steps:** {len(task.steps)}")
+                        st.write(f"**Failed Steps:** {len(evaluation.step_failures)}")
+                        if evaluation.notes:
+                            st.write(f"**Notes:** {evaluation.notes}")
+                    
+                    with col2:
+                        # Retry options
+                        st.write("**Retry Options:**")
+                        
+                        if st.button(f"🚀 Quick Retry", key=f"quick_retry_{i}"):
+                            st.info("🔄 **Quick retry coming soon!**")
+                            st.write("• Same instruction")
+                            st.write("• New session")
+                            
+                        if st.button(f"✏️ Edit & Retry", key=f"edit_retry_{i}"):
+                            st.info("📝 **Edit & retry coming soon!**")
+                            st.write("• Modify instruction")
+                            st.write("• Run improved version")
+                            
+                        if st.button(f"📋 Add to Queue", key=f"queue_{i}"):
+                            if 'retry_queue' not in st.session_state:
+                                st.session_state.retry_queue = []
+                            
+                            task_info = {
+                                'task_id': get_unique_task_id(task),
+                                'test_id': task.test_id,
+                                'instruction': task.instruction,
+                                'session_id': task.session_id,
+                                'failure_reason': evaluation.notes or "Multiple step failures",
+                                'failed_steps': len(evaluation.step_failures),
+                                'added_date': datetime.now().isoformat()
+                            }
+                            
+                            if not any(q['task_id'] == task_info['task_id'] 
+                                     for q in st.session_state.retry_queue):
+                                st.session_state.retry_queue.append(task_info)
+                                st.success("✅ Added to retry queue!")
+                                st.rerun()
+                            else:
+                                st.warning("⚠️ Already in queue")
+        
+        with tab2:
+            # Failure analysis
+            st.write("**📊 Failure Analysis:**")
+            
+            # Analyze failure patterns
+            failure_by_test_id = {}
+            total_failed_steps = 0
+            
+            for task, evaluation in failed_tasks:
+                test_id = task.test_id
+                if test_id not in failure_by_test_id:
+                    failure_by_test_id[test_id] = {
+                        'count': 0,
+                        'total_steps': 0,
+                        'failed_steps': 0
+                    }
+                
+                failure_by_test_id[test_id]['count'] += 1
+                failure_by_test_id[test_id]['total_steps'] += len(task.steps)
+                failure_by_test_id[test_id]['failed_steps'] += len(evaluation.step_failures)
+                total_failed_steps += len(evaluation.step_failures)
+            
+            # Display analysis
+            analysis_df = pd.DataFrame([
+                {
+                    'Test ID': test_id,
+                    'Failed Tasks': data['count'],
+                    'Avg Total Steps': data['total_steps'] / data['count'],
+                    'Avg Failed Steps': data['failed_steps'] / data['count'],
+                    'Failure Rate': (data['failed_steps'] / data['total_steps']) * 100
+                }
+                for test_id, data in failure_by_test_id.items()
+            ])
+            
+            st.dataframe(analysis_df.style.format({
+                'Avg Total Steps': '{:.1f}',
+                'Avg Failed Steps': '{:.1f}',
+                'Failure Rate': '{:.1f}%'
+            }), use_container_width=True)
+            
+            # Failure patterns chart
+            if len(analysis_df) > 0:
+                fig = px.bar(analysis_df, x='Test ID', y='Failed Tasks',
+                           title="Failed Tasks by Test ID")
+                st.plotly_chart(fig, use_container_width=True)
+    
+    # Retry Queue Management
+    st.subheader("📋 Retry Queue")
+    
+    if 'retry_queue' not in st.session_state or not st.session_state.retry_queue:
+        st.info("No tasks in retry queue. Add failed tasks from above or from the evaluation interface.")
+    else:
+        st.write(f"**{len(st.session_state.retry_queue)} tasks in retry queue:**")
+        
+        # Queue actions
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            if st.button("🔄 Batch Retry All", type="primary"):
+                st.info("🚀 **Batch retry coming soon!**\n\nThis will:")
+                st.write("• Process all queued tasks")
+                st.write("• Run them sequentially")
+                st.write("• Generate retry reports")
+                
+        with col2:
+            if st.button("📤 Export Queue"):
+                queue_data = pd.DataFrame(st.session_state.retry_queue)
+                csv = queue_data.to_csv(index=False)
+                st.download_button(
+                    "Download Queue CSV", 
+                    csv, 
+                    "retry_queue.csv", 
+                    "text/csv"
+                )
+                
+        with col3:
+            if st.button("🗑️ Clear Queue"):
+                if st.button("⚠️ Confirm Clear", type="secondary"):
+                    st.session_state.retry_queue = []
+                    st.success("✅ Queue cleared!")
+                    st.rerun()
+        
+        # Display queue items
+        for i, item in enumerate(st.session_state.retry_queue):
+            with st.expander(
+                f"**{item['test_id']}** - {item['failed_steps']} failed steps - "
+                f"Added: {item['added_date'][:10]}"
+            ):
+                col1, col2 = st.columns([3, 1])
+                
+                with col1:
+                    st.write(f"**Instruction:** {item['instruction']}")
+                    st.write(f"**Session ID:** {item['session_id']}")
+                    st.write(f"**Failure Reason:** {item['failure_reason']}")
+                    st.write(f"**Failed Steps:** {item['failed_steps']}")
+                
+                with col2:
+                    if st.button("🚀 Retry Now", key=f"retry_now_{i}"):
+                        st.info("🔄 **Individual retry coming soon!**")
+                        
+                    if st.button("❌ Remove", key=f"remove_{i}"):
+                        st.session_state.retry_queue.pop(i)
+                        st.success("✅ Removed from queue!")
+                        st.rerun()
+    
+    # Integration Instructions
+    st.subheader("🔧 Integration Notes")
+    st.info("""
+    **🚀 Future Integration Plans:**
+    
+    The retry functionality is designed to integrate with the main experiment runner:
+    
+    1. **Quick Retry**: Re-run the exact same instruction with a new session ID
+    2. **Edit & Retry**: Allow instruction modification before retry
+    3. **Batch Processing**: Process multiple retries automatically
+    4. **Results Tracking**: Compare original vs retry performance
+    5. **Success Rate Improvement**: Track how retries improve overall success rates
+    
+    **📝 Implementation Notes:**
+    - Retry sessions will have "_retry_N" suffix in session ID
+    - Original evaluations will be preserved for comparison
+    - Retry statistics will be tracked separately
+    - Integration with existing log parser and evaluation system
+    """)

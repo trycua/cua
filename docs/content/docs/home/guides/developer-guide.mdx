@@ -1,10 +1,18 @@
-# Getting Started
+---
+title: Developer Guide
+description: The guide for developing within the cua repository.
+---
+
+import { GithubInfo } from 'fumadocs-ui/components/github-info';
+
+<GithubInfo owner="trycua" repo="cua" token={process.env.GITHUB_TOKEN} />
 
 ## Project Structure
 
 The project is organized as a monorepo with these main packages:
 
 ### Python
+
 - `libs/python/core/` - Base package with telemetry support
 - `libs/python/computer/` - Computer-use interface (CUI) library
 - `libs/python/agent/` - AI agent library with multi-provider support
@@ -13,10 +21,12 @@ The project is organized as a monorepo with these main packages:
 - `libs/python/pylume/` - Python bindings for Lume
 
 ### TypeScript
+
 - `libs/typescript/computer/` - Computer-use interface (CUI) library
 - `libs/typescript/agent/` - AI agent library with multi-provider support
 
 ### Other
+
 - `libs/lume/` - Lume CLI
 
 Each package has its own virtual environment and dependencies, managed through PDM.
@@ -25,36 +35,36 @@ Each package has its own virtual environment and dependencies, managed through P
 
 1. Install Lume CLI:
 
-    ```bash
-    /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/lume/scripts/install.sh)"
-    ```
+   ```bash
+   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/lume/scripts/install.sh)"
+   ```
 
 2. Clone the repository:
 
-    ```bash
-    git clone https://github.com/trycua/cua.git
-    cd cua
-    ```
+   ```bash
+   git clone https://github.com/trycua/cua.git
+   cd cua
+   ```
 
 3. Create a `.env.local` file in the root directory with your API keys:
 
-    ```bash
-    # Required for Anthropic provider
-    ANTHROPIC_API_KEY=your_anthropic_key_here
+   ```bash
+   # Required for Anthropic provider
+   ANTHROPIC_API_KEY=your_anthropic_key_here
 
-    # Required for OpenAI provider
-    OPENAI_API_KEY=your_openai_key_here
-    ```
+   # Required for OpenAI provider
+   OPENAI_API_KEY=your_openai_key_here
+   ```
 
 4. Open the workspace in VSCode or Cursor:
 
-    ```bash
-    # For Cua Python development
-    code .vscode/py.code-workspace
+   ```bash
+   # For Cua Python development
+   code .vscode/py.code-workspace
 
-    # For Lume (Swift) development
-    code .vscode/lume.code-workspace
-    ```
+   # For Lume (Swift) development
+   code .vscode/lume.code-workspace
+   ```
 
 Using the workspace file is strongly recommended as it:
 
@@ -135,27 +145,27 @@ As an alternative to installing directly on your host machine, you can use Docke
 
 1. Build the development Docker image:
 
-    ```bash
-    ./scripts/run-docker-dev.sh build
-    ```
+   ```bash
+   ./scripts/run-docker-dev.sh build
+   ```
 
 2. Run an example in the container:
 
-    ```bash
-    ./scripts/run-docker-dev.sh run computer_examples.py
-    ```
+   ```bash
+   ./scripts/run-docker-dev.sh run computer_examples.py
+   ```
 
 3. Get an interactive shell in the container:
 
-    ```bash
-    ./scripts/run-docker-dev.sh run --interactive
-    ```
+   ```bash
+   ./scripts/run-docker-dev.sh run --interactive
+   ```
 
 4. Stop any running containers:
 
-    ```bash
-    ./scripts/run-docker-dev.sh stop
-    ```
+   ```bash
+   ./scripts/run-docker-dev.sh stop
+   ```
 
 ### How it Works
 

@@ -1,0 +1,350 @@
+---
+title: Lumier
+description: Run macOS and Linux virtual machines effortlessly in Docker containers with browser-based VNC access.
+macos: true
+linux: true
+github:
+  - https://github.com/trycua/cua/tree/main/libs/lumier
+---
+
+import { buttonVariants } from 'fumadocs-ui/components/ui/button';
+import { cn } from 'fumadocs-ui/utils/cn';
+import { ChevronRight } from 'lucide-react';
+import Link from 'next/link';
+import { Step, Steps } from 'fumadocs-ui/components/steps';
+
+## What is Lumier?
+
+Lumier is a streamlined interface for running macOS and Linux virtual machines with minimal setup. It packages a pre-configured environment in Docker that connects to the `lume` virtualization service on your host machine.
+
+<div align="center">
+  <video
+    src="https://github.com/user-attachments/assets/2ecca01c-cb6f-4c35-a5a7-69bc58bd94e2"
+    width="800"
+    controls></video>
+</div>
+
+### Features
+
+- **Quick Setup** - Get a VM running in minutes
+- **Browser Access** - VNC interface accessible from any browser
+- **Easy File Sharing** - Seamless file transfer between host and VM
+- **Simple Configuration** - Environment variables for easy customization
+- **Hardware Acceleration** - Native virtualization using Apple's framework
+
+<Callout type="info">
+  Lumier uses Docker as a packaging system, not for isolation. It creates true
+  virtual machines using Apple's Virtualization Framework through the Lume CLI.
+</Callout>
+
+## Installation
+
+### Prerequisites
+
+<Steps>
+<Step>
+### Install Docker for Apple Silicon
+
+Download and install [Docker Desktop](https://desktop.docker.com/mac/main/arm64/Docker.dmg) for Mac.
+
+Make sure Docker is running before proceeding to the next step.
+
+</Step>
+
+<Step>
+### Install Lume Virtualization Service
+
+Install [Lume](./lume/) with a single command:
+
+```bash
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/lume/scripts/install.sh)"
+```
+
+<Callout type="info">
+  Lume runs as a background service on port 7777. If this port is already in
+  use, specify a different port with the `--port` option during installation.
+</Callout>
+</Step>
+</Steps>
+
+## Getting Started
+
+### Quick Start
+
+Run your first macOS VM with a single Docker command:
+
+```bash
+# Run a macOS VM with default settings
+docker run -it \
+  -e LUME_SERVER_URL="host.docker.internal:7777" \
+  -p 5900:5900 \
+  ghcr.io/trycua/lumier:latest
+```
+
+### Basic Configuration
+
+Customize your VM with environment variables:
+
+```bash
+docker run -it \
+  -e LUME_SERVER_URL="host.docker.internal:7777" \
+  -e VM_NAME="my-dev-vm" \
+  -e VM_CPUS="8" \
+  -e VM_MEMORY="16384" \
+  -e VM_STORAGE="100" \
+  -e VNC_PASSWORD="mysecretpassword" \
+  -p 5900:5900 \
+  ghcr.io/trycua/lumier:latest
+```
+
+### Access Your VM
+
+Once running, access your VM through:
+
+1. **VNC Client**: Connect to `vnc://localhost:5900`
+2. **Web Browser**: Navigate to `http://localhost:5900` (if using noVNC)
+
+## Examples
+
+### Ephemeral VM (Temporary)
+
+Run a VM that resets on restart - perfect for testing:
+
+```bash
+docker run -it --rm \
+    --name macos-vm \
+    -p 8006:8006 \
+    -e VM_NAME=macos-vm \
+    -e VERSION=ghcr.io/trycua/macos-sequoia-cua:latest \
+    -e CPU_CORES=4 \
+    -e RAM_SIZE=8192 \
+    trycua/lumier:latest
+```
+
+<Callout type="info">
+  Access your VM at `http://localhost:8006` after startup. Changes will be lost
+  when the container stops.
+</Callout>
+
+### Persistent VM
+
+Save your VM state between sessions with persistent storage:
+
+```bash
+# First, create a storage directory if it doesn't exist
+mkdir -p storage
+
+# Then run the container with persistent storage
+docker run -it --rm \
+    --name lumier-vm \
+    -p 8006:8006 \
+    -v $(pwd)/storage:/storage \
+    -e VM_NAME=lumier-vm \
+    -e VERSION=ghcr.io/trycua/macos-sequoia-cua:latest \
+    -e CPU_CORES=4 \
+    -e RAM_SIZE=8192 \
+    -e HOST_STORAGE_PATH=$(pwd)/storage \
+    trycua/lumier:latest
+```
+
+### File Sharing
+
+Share files between your host and VM:
+
+```bash
+# Create both storage and shared folders
+mkdir -p storage shared
+
+# Run with both persistent storage and a shared folder
+docker run -it --rm \
+    --name lumier-vm \
+    -p 8006:8006 \
+    -v $(pwd)/storage:/storage \
+    -v $(pwd)/shared:/shared \
+    -e VM_NAME=lumier-vm \
+    -e VERSION=ghcr.io/trycua/macos-sequoia-cua:latest \
+    -e CPU_CORES=4 \
+    -e RAM_SIZE=8192 \
+    -e HOST_STORAGE_PATH=$(pwd)/storage \
+    -e HOST_SHARED_PATH=$(pwd)/shared \
+    trycua/lumier:latest
+```
+
+Files in the `shared` folder are accessible from both your Mac and the VM.
+
+### Automation with Startup Scripts
+
+Automate VM setup with startup scripts:
+
+```bash
+# Create the lifecycle directory in your shared folder
+mkdir -p shared/lifecycle
+
+# Create a sample on-logon.sh script
+cat > shared/lifecycle/on-logon.sh << 'EOF'
+#!/usr/bin/env bash
+
+# Create a file on the desktop
+echo "Hello from Lumier!" > /Users/lume/Desktop/hello_lume.txt
+
+# You can add more commands to execute at VM startup
+# For example:
+# - Configure environment variables
+# - Start applications
+# - Mount network drives
+# - Set up development environments
+EOF
+
+# Make the script executable
+chmod +x shared/lifecycle/on-logon.sh
+```
+
+The script runs automatically on VM startup with access to:
+
+- Home directory: `/Users/lume`
+- Shared folder: `/Volumes/My Shared Files`
+- All VM resources
+
+### Docker Compose
+
+For easier management, use Docker Compose:
+
+```yaml
+services:
+  lumier:
+    image: trycua/lumier:latest
+    container_name: lumier-vm
+    restart: unless-stopped
+    ports:
+      - '8006:8006' # Port for VNC access
+    volumes:
+      - ./storage:/storage # VM persistent storage
+      - ./shared:/shared # Shared folder accessible in the VM
+    environment:
+      - VM_NAME=lumier-vm
+      - VERSION=ghcr.io/trycua/macos-sequoia-cua:latest
+      - CPU_CORES=4
+      - RAM_SIZE=8192
+      - HOST_STORAGE_PATH=${PWD}/storage
+      - HOST_SHARED_PATH=${PWD}/shared
+    stop_signal: SIGINT
+    stop_grace_period: 2m
+```
+
+Run with Docker Compose:
+
+```bash
+# First create the required directories
+mkdir -p storage shared
+
+# Start the container
+docker-compose up -d
+
+# View the logs
+docker-compose logs -f
+
+# Stop the container when done
+docker-compose down
+```
+
+## Advanced Topics
+
+### Building from Source
+
+Customize Lumier by building from source:
+
+```bash
+# Clone the repository
+git clone https://github.com/trycua/cua.git
+cd cua/libs/lumier
+
+# Build the Docker image
+docker build -t lumier-custom:latest .
+
+# 3. Run your custom build
+docker run -it --rm \
+    --name lumier-vm \
+    -p 8006:8006 \
+    -e VM_NAME=lumier-vm \
+    -e VERSION=ghcr.io/trycua/macos-sequoia-cua:latest \
+    -e CPU_CORES=4 \
+    -e RAM_SIZE=8192 \
+    lumier-custom:latest
+```
+
+### Customization Options
+
+The Dockerfile provides several customization points:
+
+1. **Base image**: The container uses Debian Bullseye Slim as the base. You can modify this if needed.
+2. **Installed packages**: You can add or remove packages in the apt-get install list.
+3. **Hooks**: Check the `/run/hooks/` directory for scripts that run at specific points during VM lifecycle.
+4. **Configuration**: Review `/run/config/constants.sh` for default settings.
+
+After making your modifications, you can build and push your custom image to your own Docker Hub repository:
+
+```bash
+# Build with a custom tag
+docker build -t yourusername/lumier:custom .
+
+# Push to Docker Hub (after docker login)
+docker push yourusername/lumier:custom
+```
+
+### Configuration Reference
+
+#### Environment Variables
+
+| Variable            | Description                 | Default                     | Example                                   |
+| ------------------- | --------------------------- | --------------------------- | ----------------------------------------- |
+| `LUME_SERVER_URL`   | Lume service URL            | `host.docker.internal:7777` | `host.docker.internal:8080`               |
+| `VM_NAME`           | Virtual machine name        | `lumier-vm`                 | `my-dev-vm`                               |
+| `VERSION`           | VM image to use             | -                           | `ghcr.io/trycua/macos-sequoia-cua:latest` |
+| `VM_CPUS`           | Number of CPU cores         | `4`                         | `8`                                       |
+| `VM_MEMORY`         | Memory in MB                | `8192`                      | `16384`                                   |
+| `VM_STORAGE`        | Storage size in GB          | `50`                        | `100`                                     |
+| `VNC_PASSWORD`      | VNC access password         | -                           | `mysecretpassword`                        |
+| `HOST_STORAGE_PATH` | Host path for VM storage    | -                           | `$(pwd)/storage`                          |
+| `HOST_SHARED_PATH`  | Host path for shared folder | -                           | `$(pwd)/shared`                           |
+
+#### Port Configuration
+
+- **VNC Port**: `-p 5900:5900` for standard VNC access
+- **Web Port**: `-p 8006:8006` for browser-based access
+- Use different host ports if defaults are occupied: `-p 8007:8006`
+
+## Resources
+
+<Cards>
+  <Card
+    title="Lume Documentation"
+    description="Learn more about the virtualization service powering Lumier"
+    href="/home/libraries/lume"
+  />
+  <Card
+    title="Computer Library"
+    description="Automate your VMs with the Computer library"
+    href="/home/libraries/computer"
+  />
+</Cards>
+
+---
+
+<Callout type="info">
+  **Need detailed API documentation?**{' '}
+  <span className="w-full">
+    Explore the complete API reference with detailed class documentation, and
+    method signatures.
+  </span>
+  <a
+    href="/api/lumier"
+    className={cn(
+      buttonVariants({
+        color: 'secondary',
+      }),
+      'no-underline h-10'
+    )}>
+    View API Reference
+    <ChevronRight size={18} />
+  </a>
+</Callout>

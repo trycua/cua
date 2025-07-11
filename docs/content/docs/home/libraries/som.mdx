@@ -1,0 +1,209 @@
+---
+title: Set-of-Mark
+description: A high-performance visual grounding library for detecting and analyzing UI elements in screenshots.
+macos: true
+windows: true
+linux: true
+pypi: cua-computer
+github:
+  - https://github.com/trycua/cua/tree/main/libs/python/som
+---
+
+import { buttonVariants } from 'fumadocs-ui/components/ui/button';
+import { cn } from 'fumadocs-ui/utils/cn';
+import { ChevronRight } from 'lucide-react';
+
+## Overview
+
+**Set-of-Mark (Som)** is a high-performance visual grounding library for detecting and analyzing UI elements in screenshots. Built for the Computer-Use Agent (CUA) framework, it combines state-of-the-art computer vision models to identify icons, buttons, and text in user interfaces.
+
+<Callout type="info">
+  Som is optimized for **Apple Silicon** with Metal Performance Shaders (MPS)
+  acceleration, achieving sub-second detection times while maintaining high
+  accuracy.
+</Callout>
+
+### Key Features
+
+- **Hardware Acceleration** - Automatic detection of MPS, CUDA, or CPU
+- **Multi-Model Architecture** - YOLO for icons + EasyOCR for text
+- **Optimized Performance** - Sub-second detection on Apple Silicon
+- **Flexible Configuration** - Tunable thresholds for different use cases
+- **Rich Output Format** - Structured data with confidence scores
+- **Visual Debugging** - Annotated screenshots with numbered elements
+
+## Installation
+
+### Install from PyPI
+
+```bash
+pip install cua-som
+```
+
+<Callout type="warning">
+  Som requires Python 3.11 or higher. For best performance, use macOS with Apple
+  Silicon.
+</Callout>
+
+### Install from Source
+
+```bash
+# Clone the repository
+git clone https://github.com/cua/som.git
+cd som
+
+# Using PDM (recommended)
+pdm install
+
+# Or using pip
+pip install -e .
+```
+
+### System Requirements
+
+| Platform | Hardware                 | Detection Time |
+| -------- | ------------------------ | -------------- |
+| macOS    | Apple Silicon (M1/M2/M3) | ~0.4s          |
+| Any      | CPU only                 | ~1.3s          |
+
+## Getting Started
+
+### Basic Usage
+
+Here's a simple example to detect UI elements in a screenshot:
+
+```python
+from som import OmniParser
+from PIL import Image
+
+# Initialize the parser
+parser = OmniParser()
+
+# Load and process an image
+image = Image.open("screenshot.png")
+result = parser.parse(
+    image,
+    box_threshold=0.3,    # Confidence threshold
+    iou_threshold=0.1,    # Overlap threshold
+    use_ocr=True         # Enable text detection
+)
+
+# Print detected elements
+for elem in result.elements:
+    if elem.type == "icon":
+        print(f"Icon: confidence={elem.confidence:.3f}, bbox={elem.bbox.coordinates}")
+    else:  # text
+        print(f"Text: '{elem.content}', confidence={elem.confidence:.3f}")
+```
+
+### Advanced Configuration
+
+Customize detection parameters for your specific use case:
+
+```python
+result = parser.parse(
+    image,
+    box_threshold=0.3,    # Confidence threshold (0.0-1.0)
+    iou_threshold=0.1,    # Overlap threshold (0.0-1.0)
+    use_ocr=True,         # Enable text detection
+)
+```
+
+## Configuration Guide
+
+### Box Thresholds
+
+Controls detection confidence (default: 0.3)
+
+- **Higher values (0.4-0.5)**: More precise, fewer false positives
+- **Lower values (0.1 - 0.2)**: More detections, may include noise
+- **Recommended**: 0.3 for balanced performance
+
+### Intersection Over Union (IOU) Thresholds
+
+Set the `iou_threshold` parameter to control when overlapping element boxes should be merged into a single detection. A value of 0.1-0.2 is recommended for most use cases. Higher values will require more overlap before merging occurs.
+
+<div class="flex gap-x-6">
+
+<IOU
+  title="Low Overlap (Keep Both)"
+  description="When boxes have minimal overlap (IOU ~ 0.05), both detections are kept as separate elements."
+  rect1={{
+    left: 30,
+    top: 30,
+    width: 60,
+    height: 50,
+    fill: 'rgba(0, 0, 255, 0.6)',
+    name: 'box1',
+  }}
+  rect2={{
+    left: 80,
+    top: 70,
+    width: 60,
+    height: 50,
+    fill: 'rgba(255, 165, 0, 0.6)',
+    name: 'box2',
+  }}
+/>
+
+<IOU
+  title="High Overlap (Merge)"
+  description="When boxes significant overlap (IOU ~ 0.4), they are merged into a single detection to avoid duplicates."
+  rect1={{
+      left: 30,
+      top: 30,
+      width: 80,
+      height: 60,
+      fill: 'rgba(0, 0, 255, 0.6)',
+      name: 'box1',
+    }}
+  rect2={{
+      left: 50,
+      top: 40,
+      width: 80,
+      height: 60,
+      fill: 'rgba(255, 165, 0, 0.6)',
+      name: 'box2',
+    }}
+/>
+</div>
+
+## Performance
+
+<Cards>
+  <Card title="Metal Performance Shaders (Apple Silicon)" description="Best performance on macOS">
+    - Multi-scale detection (640px, 1280px, 1920px) 
+    - Test-time augmentation enabled
+    - Half-precision (FP16) 
+    - ~0.4s average detection time
+    - Best for production use
+  </Card>
+
+  <Card title="CPU Fallback" description="Universal compatibility">
+    - Single-scale detection (1280px) 
+    - Full precision (FP32) 
+    - ~1.3s average time
+    - Reliable fallback option
+  </Card>
+</Cards>
+
+---
+
+<Callout type="info">
+  **Need the full API documentation?**
+  <span className="w-full">
+    Explore the complete API reference with detailed class documentation, and
+    method signatures.
+  </span>
+  <a
+    href="/api/som"
+    className={cn(
+      buttonVariants({
+        color: 'secondary',
+      }),
+      'no-underline h-10'
+    )}>
+    View API Reference
+    <ChevronRight size={18} />
+  </a>
+</Callout>

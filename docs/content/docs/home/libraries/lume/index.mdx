@@ -1,0 +1,353 @@
+---
+title: Lume
+description: A lightweight Command Line Interface and local API server for creating, running and managing macOS and Linux virtual machines.
+macos: true
+linux: true
+github:
+  - https://github.com/trycua/cua/tree/main/libs/lume
+---
+
+import Link from 'next/link';
+import { buttonVariants } from 'fumadocs-ui/components/ui/button';
+import { Step, Steps } from 'fumadocs-ui/components/steps';
+import { cn } from 'fumadocs-ui/utils/cn';
+import { ChevronRight } from 'lucide-react';
+
+# Lume
+
+Lume is a lightweight Command Line Interface and local API server for creating, running and managing **macOS and Linux virtual machines** with near-native performance on Apple Silicon, using Apple's [`Virtualization.Framework`](https://developer.apple.com/documentation/virtualization).
+
+## Quick Start
+
+Install and run a prebuilt macOS VM in two commands:
+
+```bash
+# Install Lume
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/lume/scripts/install.sh)"
+# Pull & start a macOS image
+lume run macos-sequoia-vanilla:latest
+```
+
+<Callout type="warning">
+  **Security Note**: All prebuilt images use the default password `lume`. Change
+  this immediately after your first login using the `passwd` command.
+</Callout>
+
+**System Requirements**:
+
+- Apple Silicon Mac (M1, M2, M3, etc.)
+- macOS 13.0 or later
+- At least 8GB of RAM (16GB recommended)
+- At least 50GB of free disk space
+
+## Install
+
+Install with a single command:
+
+```bash
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/lume/scripts/install.sh)"
+```
+
+By default, Lume is installed as a background service that starts automatically on login. If you prefer to start the Lume API service manually when needed, you can use the `--no-background-service` option:
+
+```bash
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/lume/scripts/install.sh) --no-background-service"
+```
+
+<Callout type="info">
+  **Note:** With this option, you'll need to manually start the Lume API service
+  by running `lume serve` in your terminal whenever you need to use tools or
+  libraries that rely on the Lume API (such as the Computer-Use Agent).
+</Callout>
+
+You can also download the `lume.pkg.tar.gz` archive from the [latest release](https://github.com/trycua/cua/releases?q=lume&expanded=true), extract it, and install the package manually.
+
+## Using Lume
+
+Once installed, you can start using Lume with these common workflows:
+
+<Steps>
+<Step>
+### Run a Prebuilt VM
+
+```bash
+# Run a macOS Sequoia VM
+lume run macos-sequoia-vanilla:latest
+
+# Run an Ubuntu VM
+lume run ubuntu-noble-vanilla:latest
+```
+
+<Callout type="info">
+  We provide [prebuilt VM images](#prebuilt-images) in our [ghcr
+  registry](https://github.com/orgs/trycua/packages).
+</Callout>
+
+</Step>
+
+<Step>
+### Create a Custom VM
+
+```bash
+# Create a new macOS VM
+lume create my-macos-vm --cpu 4 --memory 8GB --disk-size 50GB
+
+# Create a Linux VM
+lume create my-linux-vm --os linux --cpu 2 --memory 4GB
+```
+
+<Callout type="info">
+  **Disk Space**: The actual disk space used by sparse images will be much lower than the logical size listed. You can resize VM disks after creation using `lume set <name> --disk-size <size>`.
+</Callout>
+</Step>
+
+<Step>
+### Manage Your VMs
+
+```bash
+# List all VMs
+lume ls
+
+# Get VM details
+lume get my-vm
+
+# Stop a running VM
+lume stop my-vm
+```
+
+</Step>
+</Steps>
+
+## Prebuilt Images
+
+Pre-built images are available in the registry [ghcr.io/trycua](https://github.com/orgs/trycua/packages).
+
+| Image                   | Tag                 | Description                                                                                     | Logical Size |
+| ----------------------- | ------------------- | ----------------------------------------------------------------------------------------------- | ------------ |
+| `macos-sequoia-vanilla` | `latest`, `15.2`    | macOS Sequoia 15.2 image                                                                        | 20GB         |
+| `macos-sequoia-xcode`   | `latest`, `15.2`    | macOS Sequoia 15.2 image with Xcode command line tools                                          | 22GB         |
+| `macos-sequoia-cua`     | `latest`, `15.3`    | macOS Sequoia 15.3 image compatible with the Computer interface                                 | 24GB         |
+| `ubuntu-noble-vanilla`  | `latest`, `24.04.1` | [Ubuntu Server for ARM 24.04.1 LTS](https://ubuntu.com/download/server/arm) with Ubuntu Desktop | 20GB         |
+
+## Lume CLI
+
+```bash
+lume <command>
+
+Commands:
+  lume create <name>            Create a new macOS or Linux VM
+  lume run <name>               Run a VM
+  lume ls                       List all VMs
+  lume get <name>               Get detailed information about a VM
+  lume set <name>               Modify VM configuration
+  lume stop <name>              Stop a running VM
+  lume delete <name>            Delete a VM
+  lume pull <image>             Pull a macOS image from container registry
+  lume push <name> <image:tag>  Push a VM image to a container registry
+  lume clone <name> <new-name>  Clone an existing VM
+  lume config                   Get or set lume configuration
+  lume images                   List available macOS images in local cache
+  lume ipsw                     Get the latest macOS restore image URL
+  lume prune                    Remove cached images
+  lume serve                    Start the API server
+
+Options:
+  --help     Show help [boolean]
+  --version  Show version number [boolean]
+
+Command Options:
+  create:
+    --os <os>            Operating system to install (macOS or linux, default: macOS)
+    --cpu <cores>        Number of CPU cores (default: 4)
+    --memory <size>      Memory size, e.g., 8GB (default: 4GB)
+    --disk-size <size>   Disk size, e.g., 50GB (default: 40GB)
+    --display <res>      Display resolution (default: 1024x768)
+    --ipsw <path>        Path to IPSW file or 'latest' for macOS VMs
+    --storage <name>     VM storage location to use
+
+  run:
+    --no-display                Do not start the VNC client app
+    --shared-dir <dir>          Share directory with VM (format: path[:ro|rw])
+    --mount <path>              For Linux VMs only, attach a read-only disk image
+    --registry <url>            Container registry URL (default: ghcr.io)
+    --organization <org>        Organization to pull from (default: trycua)
+    --vnc-port <port>           Port to use for the VNC server (default: 0 for auto-assign)
+    --recovery-mode <boolean>   For MacOS VMs only, start VM in recovery mode (default: false)
+    --storage <name>            VM storage location to use
+
+  set:
+    --cpu <cores>        New number of CPU cores (e.g., 4)
+    --memory <size>      New memory size (e.g., 8192MB or 8GB)
+    --disk-size <size>   New disk size (e.g., 40960MB or 40GB)
+    --display <res>      New display resolution in format WIDTHxHEIGHT (e.g., 1024x768)
+    --storage <name>     VM storage location to use
+
+  delete:
+    --force              Force deletion without confirmation
+    --storage <name>     VM storage location to use
+
+  pull:
+    --registry <url>     Container registry URL (default: ghcr.io)
+    --organization <org> Organization to pull from (default: trycua)
+    --storage <name>     VM storage location to use
+
+  push:
+    --additional-tags <tags...>  Additional tags to push the same image to
+    --registry <url>            Container registry URL (default: ghcr.io)
+    --organization <org>        Organization/user to push to (default: trycua)
+    --storage <name>            VM storage location to use
+    --chunk-size-mb <size>      Chunk size for disk image upload in MB (default: 512)
+    --verbose                   Enable verbose logging
+    --dry-run                   Prepare files and show plan without uploading
+    --reassemble                Verify integrity by reassembling chunks (requires --dry-run)
+
+  get:
+    -f, --format <format> Output format (json|text)
+    --storage <name>      VM storage location to use
+
+  stop:
+    --storage <name>     VM storage location to use
+
+  clone:
+    --source-storage <name> Source VM storage location
+    --dest-storage <name>   Destination VM storage location
+
+  config:
+    get                  Get current configuration
+    storage              Manage VM storage locations
+      add <name> <path>  Add a new VM storage location
+      remove <name>      Remove a VM storage location
+      list               List all VM storage locations
+      default <name>     Set the default VM storage location
+    cache                Manage cache settings
+      get                Get current cache directory
+      set <path>         Set cache directory
+    caching              Manage image caching settings
+      get                Show current caching status
+      set <boolean>      Enable or disable image caching
+
+  serve:
+    --port <port>        Port to listen on (default: 7777)
+```
+
+## Common Workflows
+
+### Development Environment Setup
+
+```bash
+# Create a development VM with more resources
+lume create dev-vm --cpu 6 --memory 12GB --disk-size 100GB
+
+# Run with shared directory for code
+lume run dev-vm --shared-dir ~/Projects:rw
+```
+
+### Testing Different macOS Versions
+
+```bash
+# Pull and run different macOS versions
+lume pull macos-sequoia-vanilla:latest
+lume run macos-sequoia-vanilla:latest
+
+# Clone a VM for testing
+lume clone my-vm my-vm-test
+```
+
+### File Sharing Examples
+
+```bash
+# Share a read-only directory
+lume run my-vm --shared-dir ~/Documents:ro
+
+# Share multiple directories
+lume run my-vm --shared-dir ~/Projects:rw --shared-dir ~/Downloads:ro
+
+# For Linux VMs, mount additional disk images
+lume run ubuntu-vm --mount ~/disk-image.img
+```
+
+## Local API Server
+
+Lume exposes a local HTTP API server for programmatic VM management, perfect for automation and integration with other tools.
+
+```bash
+# Start the API server
+lume serve
+```
+
+<Callout type="info">
+  <span className="w-full">
+    Read the doucmentation on the local API server.
+  </span>
+  <Link
+    href="/home/libraries/lume/http-api"
+    className={cn(
+      buttonVariants({
+        color: 'secondary',
+      }),
+      'no-underline h-10'
+    )}>
+    Lume API Server Documentation
+    <ChevronRight size={18} />
+  </Link>
+</Callout>
+
+## Development
+
+If you're working on Lume in the context of the C/ua monorepo, we recommend using the dedicated VS Code workspace configuration:
+
+```bash
+# Open VS Code workspace from the root of the monorepo
+code .vscode/lume.code-workspace
+```
+
+This workspace is preconfigured with Swift language support, build tasks, and debug configurations.
+
+## FAQ
+
+### Can I run multiple VMs simultaneously?
+
+Yes, you can run multiple VMs at the same time as long as your system has sufficient resources (CPU, memory, and disk space).
+
+### How do I share files between the host and VM?
+
+Use the `--shared-dir` option when running a VM:
+
+```bash
+lume run my-vm --shared-dir ~/Projects:rw
+```
+
+The shared directory will be automatically mounted in the VM.
+
+### Where are VM files stored?
+
+By default, VMs are stored in `~/.lume/vms/`. You can configure additional storage locations using the `lume config storage` commands.
+
+### How do I update Lume?
+
+Run the install script again to update to the latest version:
+
+```bash
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/lume/scripts/install.sh)"
+```
+
+---
+
+<Callout type="info">
+  **Need detailed API documentation?**{' '}
+  <span className="w-full">
+    Explore the complete API reference with detailed class documentation, and
+    method signatures.
+  </span>
+  <a
+    href="/api/lume"
+    className={cn(
+      buttonVariants({
+        color: 'secondary',
+      }),
+      'no-underline h-10'
+    )}>
+    View API Reference
+    <ChevronRight size={18} />
+  </a>
+</Callout>

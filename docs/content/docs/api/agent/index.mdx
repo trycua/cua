@@ -1,0 +1,37 @@
+---
+title: Agent
+description: Current api reference for the agent library
+---
+
+The Agent API reference documentation is currently under development.
+
+## Overview
+
+The Agent library provides programmatic interfaces for AI agent interactions.
+
+## API Documentation
+
+```python
+# Import necessary components
+from agent import ComputerAgent, LLM, AgentLoop, LLMProvider
+
+# UI-TARS-1.5 agent for local execution with MLX
+ComputerAgent(loop=AgentLoop.UITARS, model=LLM(provider=LLMProvider.MLXVLM, name="mlx-community/UI-TARS-1.5-7B-6bit"))
+# OpenAI Computer-Use agent using OPENAI_API_KEY
+ComputerAgent(loop=AgentLoop.OPENAI, model=LLM(provider=LLMProvider.OPENAI, name="computer-use-preview"))
+# Anthropic Claude agent using ANTHROPIC_API_KEY
+ComputerAgent(loop=AgentLoop.ANTHROPIC, model=LLM(provider=LLMProvider.ANTHROPIC))
+
+# OmniParser loop for UI control using Set-of-Marks (SOM) prompting and any vision LLM
+ComputerAgent(loop=AgentLoop.OMNI, model=LLM(provider=LLMProvider.OLLAMA, name="gemma3:12b-it-q4_K_M"))
+# OpenRouter example using OAICOMPAT provider
+ComputerAgent(
+    loop=AgentLoop.OMNI,
+    model=LLM(
+        provider=LLMProvider.OAICOMPAT,
+        name="openai/gpt-4o-mini",
+        provider_base_url="https://openrouter.ai/api/v1"
+    ),
+    api_key="your-openrouter-api-key"
+)
+```

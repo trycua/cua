@@ -1,0 +1,60 @@
+---
+title: Computer Server
+description: The server component for the Computer-Use Interface framework.
+pypi: cua-computer-server
+macos: true
+linux: true
+windows: true
+github:
+  - https://github.com/trycua/cua/tree/main/libs/python/computer-server
+---
+
+import { buttonVariants } from 'fumadocs-ui/components/ui/button';
+import { cn } from 'fumadocs-ui/utils/cn';
+import { ChevronRight } from 'lucide-react';
+
+**Computer Server** provides the websocket interface for the [Computer-Use Interface (CUI)](./computer/) to interact with.
+
+## Features
+
+- WebSocket API for computer-use
+- Cross-platform support (macOS, Linux, Windows)
+- Integration with the CUI library for screen control, keyboard/mouse automation, and accessibility
+
+## Install
+
+```bash
+pip install cua-computer-server
+```
+
+## Examples & Guides
+
+<Cards>
+  <Card
+    href="https://github.com/trycua/cua/tree/main/notebooks/computer_server_nb.ipynb"
+    title="Computer-Use Server Notebook">
+    Step-by-step guide using the Computer-Use Server on a host system or virtual
+    machine.
+  </Card>
+</Cards>
+
+---
+
+<Callout type="info">
+  **Need detailed API documentation?**
+  <span className="w-full">
+    Explore the complete API reference with detailed class documentation, and
+    method signatures.
+  </span>
+  <a
+    href="/api/computer-server"
+    className={cn(
+      buttonVariants({
+        color: 'secondary',
+      }),
+      'no-underline h-10'
+    )}>
+    View API Reference
+    <ChevronRight size={18} />
+  </a>
+</Callout>

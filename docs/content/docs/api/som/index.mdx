@@ -1,0 +1,47 @@
+---
+title: Set-of-Mark
+---
+
+The SOM (Set-of-Mark) API reference documentation is currently under development.
+
+## Overview
+
+The SOM library provides visual element detection and interaction capabilities.
+
+## API Documentation
+
+### OmniParser Class
+
+```python
+class OmniParser:
+    def __init__(self, device: str = "auto"):
+        """Initialize the parser with automatic device detection"""
+
+    def parse(
+        self,
+        image: PIL.Image,
+        box_threshold: float = 0.3,
+        iou_threshold: float = 0.1,
+        use_ocr: bool = True,
+        ocr_engine: str = "easyocr"
+    ) -> ParseResult:
+        """Parse UI elements from an image"""
+```
+
+### ParseResult Object
+
+```python
+@dataclass
+class ParseResult:
+    elements: List[UIElement]      # Detected elements
+    visualized_image: PIL.Image    # Annotated image
+    processing_time: float         # Time in seconds
+
+    def to_dict(self) -> dict:
+        """Convert to JSON-serializable dictionary"""
+
+    def filter_by_type(self, elem_type: str) -> List[UIElement]:
+        """Filter elements by type ('icon' or 'text')"""
+```
+
+More Coming soon.

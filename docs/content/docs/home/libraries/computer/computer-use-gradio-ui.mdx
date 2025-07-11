@@ -1,0 +1,90 @@
+---
+title: Gradio UI with the Python Computer Interface
+description: The computer module includes a Gradio UI for creating and sharing demonstration data. This guide makes it easy for people to build community datasets for better computer use models with an upload to Huggingface feature.
+---
+
+<Callout title="Note">
+  For precise control of the computer, we recommend using VNC or Screen Sharing
+  instead of Gradio UI.
+</Callout>
+
+```bash
+# Install with UI support
+pip install "cua/computer[ui]"
+```
+
+## Building and Sharing Demonstrations with Huggingface
+
+Follow these steps to contribute your own demonstrations:
+
+### 1. Set up Huggingface Access
+
+Set your HF_TOKEN in a .env file or in your environment variables:
+
+```bash
+# In .env file
+HF_TOKEN=your_huggingface_token
+```
+
+### 2. Launch the Computer UI
+
+```python
+# launch_ui.py
+from computer.ui.gradio.app import create_gradio_ui
+from dotenv import load_dotenv
+load_dotenv('.env')
+
+app = create_gradio_ui()
+app.launch(share=False)
+```
+
+For examples, see [Computer UI Examples](https://github.com/trycua/cua/tree/main/examples/computer_ui_examples.py)
+
+### 3. Record Your Tasks
+
+<details open>
+  <summary>View demonstration video</summary>
+  <video
+    src="https://github.com/user-attachments/assets/de3c3477-62fe-413c-998d-4063e48de176"
+    controls
+    width="600"></video>
+</details>
+
+Record yourself performing various computer tasks using the UI.
+
+### 4. Save Your Demonstrations
+
+<details open>
+  <summary>View demonstration video</summary>
+  <video
+    src="https://github.com/user-attachments/assets/5ad1df37-026a-457f-8b49-922ae805faef"
+    controls
+    width="600"></video>
+</details>
+
+Save each task by picking a descriptive name and adding relevant tags (e.g., "office", "web-browsing", "coding").
+
+### 5. Record Additional Demonstrations
+
+Repeat steps 3 and 4 until you have a good amount of demonstrations covering different tasks and scenarios.
+
+### 6. Upload to Huggingface
+
+<details open>
+  <summary>View demonstration video</summary>
+  <video
+    src="https://github.com/user-attachments/assets/c586d460-3877-4b5f-a736-3248886d2134"
+    controls
+    width="600"></video>
+</details>
+
+Upload your dataset to Huggingface by:
+
+- Naming it as `{your_username}/{dataset_name}`
+- Choosing public or private visibility
+- Optionally selecting specific tags to upload only tasks with certain tags
+
+### Examples and Resources
+
+- Example Dataset: [ddupont/test-dataset](https://huggingface.co/datasets/ddupont/test-dataset)
+- Find Community Datasets: 🔍 [Browse CUA Datasets on Huggingface](https://huggingface.co/datasets?other=cua)

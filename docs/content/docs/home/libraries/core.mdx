@@ -1,0 +1,49 @@
+---
+title: Core
+description: Core infrastructure and shared utilities powering the Cua computer-use platform
+pypi: cua-core
+npm: '@trycua/core'
+macos: true
+windows: true
+linux: true
+github:
+  - https://github.com/trycua/cua/tree/main/libs/python/core
+  - https://github.com/trycua/cua/tree/main/libs/typescript/core
+---
+
+import { buttonVariants } from 'fumadocs-ui/components/ui/button';
+import { cn } from 'fumadocs-ui/utils/cn';
+import { ChevronRight } from 'lucide-react';
+
+# Features
+
+- Privacy-focused telemetry system for transparent usage analytics
+- Common helper functions and utilities used by other Cua packages
+- Core infrastructure components shared between modules
+
+## Installation
+
+```bash
+pip install cua-core
+```
+
+---
+
+<Callout type="info">
+  **Need detailed API documentation?**{' '}
+  <span className="w-full">
+    Explore the complete API reference with detailed class documentation, and
+    method signatures.
+  </span>
+  <a
+    href="/api/core"
+    className={cn(
+      buttonVariants({
+        color: 'secondary',
+      }),
+      'no-underline h-10'
+    )}>
+    View API Reference
+    <ChevronRight size={18} />
+  </a>
+</Callout>

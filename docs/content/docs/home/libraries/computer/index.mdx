@@ -1,0 +1,185 @@
+---
+title: Computer
+description: The Computer-Use Interface (CUI) framework for interacting with local macOS, Linux, and Windows sandboxes.
+macos: true
+windows: true
+linux: true
+pypi: cua-computer
+npm: '@trycua/computer'
+github:
+  - https://github.com/trycua/cua/tree/main/libs/python/computer
+  - https://github.com/trycua/cua/tree/main/libs/typescript/computer
+---
+
+import { Tabs, Tab } from 'fumadocs-ui/components/tabs';
+import { buttonVariants } from 'fumadocs-ui/components/ui/button';
+import { cn } from 'fumadocs-ui/utils/cn';
+import { ChevronRight } from 'lucide-react';
+
+Computer, when paired with [Computer Server](../computer-server.mdx) enables programatic interaction with cross-platform sandboxes. It powers C/ua systems and is PyAutoGUI-compatible and pluggable with any AI agent system (Cua, Langchain, CrewAI, AutoGen).
+
+The Python version relies on [Lume](./lume.mdx) for creating and managing sandbox environments.
+
+## Installation
+
+<Tabs groupId='language' persist items={['Python', 'TypeScript']}>
+  <Tab value="Python">
+    ```bash
+    pip install "cua-computer[all]"
+    ```
+    The `cua-computer` PyPi package automatically pulls the latest executable version of Lume through [pylume](https://github.com/trycua/pylume).
+
+  </Tab>
+  <Tab value="TypeScript">
+    ```bash
+    npm install @trycua/computer
+    ```
+  </Tab>
+</Tabs>
+
+## Features
+
+- Create and manage virtual machine sandboxes
+- Take screenshots of the virtual machine
+- Control mouse movements and clicks
+- Simulate keyboard input
+- Manage clipboard content
+- Interact with the operating system interface
+- Support for macOS and Linux environments
+
+## Simple Example
+
+<Tabs groupId='language' persist items={['Python', 'TypeScript']}>
+  <Tab value="Python">
+    ```python
+    from computer import Computer
+
+    computer = Computer(os_type="macos", display="1024x768", memory="8GB", cpu="4")
+    try:
+        # Start a new local vm instance using Lume
+        await computer.run()
+
+        # Interface with the instance
+        screenshot = await computer.interface.screenshot()
+        with open("screenshot.png", "wb") as f:
+            f.write(screenshot)
+
+        await computer.interface.move_cursor(100, 100)
+        await computer.interface.left_click()
+        await computer.interface.right_click(300, 300)
+        await computer.interface.double_click(400, 400)
+
+        await computer.interface.type("Hello, World!")
+        await computer.interface.press_key("enter")
+
+        await computer.interface.set_clipboard("Test clipboard")
+        content = await computer.interface.copy_to_clipboard()
+        print(f"Clipboard content: {content}")
+    finally:
+        # Stop the vm instance
+        await computer.stop()
+    ```
+
+  </Tab>
+  <Tab value="TypeScript">
+    ```typescript
+    import { Computer, OSType } from '@trycua/computer';
+
+    // This creates and interfaces with a cloud-based c/ua container.
+    const main = async () => {
+      // Create a cloud-based computer
+      const computer = new Computer({
+        name: 'cloud-vm',
+        osType: OSType.Linux,
+        apiKey: 'your-api-key',
+      });
+
+      // Access the interface
+      const interface = computer.interface;
+
+      // Screenshot operations
+      const screenshot = await interface.screenshot();
+
+      // Mouse operations
+      await interface.moveCursor(100, 100);
+      await interface.leftClick();
+      await interface.rightClick(300, 300);
+      await interface.doubleClick(400, 400);
+      await interface.dragTo(500, 500, 'left', 1000); // Drag with left button for 1 second
+
+      // Keyboard operations
+      await interface.typeText('Hello from TypeScript!');
+      await interface.pressKey('enter');
+      await interface.hotkey('command', 'a'); // Select all
+
+      // Clipboard operations
+      await interface.setClipboard('Clipboard content');
+      const content = await interface.copyToClipboard();
+
+      // File operations
+      await interface.writeText('/tmp/test.txt', 'Hello world');
+      const fileContent = await interface.readText('/tmp/test.txt');
+
+      // Run a command in the VM
+      const [stdout, stderr] = await interface.runCommand('ls -la');
+
+      // Disconnect from the cloud VM
+      await computer.disconnect();
+    };
+
+    main().catch(console.error);
+    ```
+
+  </Tab>
+</Tabs>
+
+## Examples & Guides
+
+<Tabs groupId="language" persist items={['Python', 'TypeScript']}>
+  <Tab value="Python">
+    <Cards>
+      <Card
+        href="https://github.com/trycua/cua/tree/main/notebooks/samples/computer_nb.ipynb"
+        title="Computer-Use Interface (CUI)">
+        Step-by-step guide on using the Computer-Use Interface (CUI)
+      </Card>
+
+      <Card
+        href="../libraries/computer/computer-use-gradio-ui"
+        title="Computer-Use Gradio UI">
+        Use the Computer library with a Python Gradio UI
+      </Card>
+    </Cards>
+
+  </Tab>
+  <Tab value="TypeScript">
+    <Cards>
+      <Card
+        href="https://github.com/trycua/cua/tree/main/examples/computer-example-ts"
+        title="Computer Cloud OpenAI">
+        Use C/ua Cloud Containers with OpenAI's API to execute tasks in a sandbox
+      </Card>
+    </Cards>
+  </Tab>
+</Tabs>
+
+---
+
+<Callout type="info">
+  **Need detailed API documentation?**{' '}
+  <span className="w-full">
+    Explore the complete API reference with detailed class documentation, and
+    method signatures.
+  </span>
+  <a
+    href="/api/computer"
+    className={cn(
+      buttonVariants({
+        color: 'secondary',
+      }),
+      'no-underline h-10'
+    )}>
+    View API Reference
+    <ChevronRight size={18} />
+  </a>
+</Callout>

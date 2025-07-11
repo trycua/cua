@@ -1,0 +1,83 @@
+---
+title: C/ua Usage Guide
+descrption: Follow these steps to use C/ua in your own Python code.
+---
+
+import { Step, Steps } from 'fumadocs-ui/components/steps';
+
+<Steps>
+<Step>
+
+### Install the Lume CLI
+
+```bash
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/lume/scripts/install.sh)"
+```
+
+Lume CLI manages high-performance macOS/Linux VMs with near-native speed on Apple Silicon.
+
+</Step>
+
+<Step>
+
+### Pull the macOS CUA Image
+
+```bash
+lume pull macos-sequoia-cua:latest
+```
+
+The macOS CUA image contains the default macOS apps and the Computer Server for easy automation.
+
+</Step>
+<Step>
+
+### Install the Python SDK
+
+```bash
+pip install "cua-computer[all]" "cua-agent[all]"
+```
+
+</Step>
+<Step>
+
+### Integrate with Your Own Projects
+
+```python
+from computer import Computer
+from agent import ComputerAgent, LLM
+
+async def main():
+    # Start a local macOS VM
+    computer = Computer(os_type="macos")
+    await computer.run()
+
+    # Or with C/ua Cloud Container
+    computer = Computer(
+      os_type="linux",
+      api_key="your_cua_api_key_here",
+      name="your_container_name_here"
+    )
+
+    # Example: Direct control of a macOS VM with Computer
+    computer.interface.delay = 0.1 # Wait 0.1 seconds between kb/m actions
+    await computer.interface.left_click(100, 200)
+    await computer.interface.type_text("Hello, world!")
+    screenshot_bytes = await computer.interface.screenshot()
+
+    # Example: Create and run an agent locally using mlx-community/UI-TARS-1.5-7B-6bit
+    agent = ComputerAgent(
+      computer=computer,
+      loop="uitars",
+      model=LLM(provider="mlxvlm", name="mlx-community/UI-TARS-1.5-7B-6bit")
+    )
+    async for result in agent.run("Find the trycua/cua repository on GitHub and follow the quick start guide"):
+        print(result)
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
+
+For ready-to-use examples, check out our [Notebooks](https://github.com/trycua/cua/tree/main/notebooks) collection.
+
+</Step>
+</Steps>

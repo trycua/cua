@@ -1,0 +1,158 @@
+---
+title: Gradio UI with the Python Agent
+description: The agent module includes a Gradio-based user interface for easier interaction with Computer-Use Agent workflows.
+---
+
+The agent includes a Gradio-based user interface for easier interaction.
+
+<div align="center">
+  <img src="/img/agent_gradio_ui.png" />
+</div>
+
+## Install
+
+```bash
+# Install with Gradio support
+pip install "cua-agent[ui]"
+```
+
+## Create a simple launcher script
+
+```python
+# launch_ui.py
+from agent.ui.gradio.app import create_gradio_ui
+
+app = create_gradio_ui()
+app.launch(share=False)
+```
+
+### Run the launcher
+
+```bash
+python launch_ui.py
+```
+
+This will start the Gradio interface on `http://localhost:7860`.
+
+## Features
+
+The Gradio UI provides:
+
+- **Model Selection**: Choose between different AI models and providers
+- **Task Input**: Enter tasks for the agent to execute
+- **Real-time Output**: View the agent's actions and results as they happen
+- **Screenshot Display**: See visual feedback from the computer screen
+- **Settings Management**: Configure and save your preferred settings
+
+## Supported Providers
+
+1. **OpenAI**: GPT-4 and GPT-4 Vision models
+2. **Anthropic**: Claude models
+3. **Ollama**: Local models like Gemma3
+4. **UI-TARS**: Specialized UI understanding models
+
+### Using UI-TARS
+
+UI-TARS is a specialized model for UI understanding tasks. You have two options:
+
+1. **Local MLX UI-TARS**: For running the model locally on Apple Silicon
+
+   ```bash
+   # Install MLX support
+   pip install "cua-agent[uitars-mlx]"
+   pip install git+https://github.com/ddupont808/mlx-vlm.git@stable/fix/qwen2-position-id
+   ```
+
+   Then select "UI-TARS (MLX)" in the Gradio interface.
+
+2. **OpenAI-compatible UI-TARS**: For using the original ByteDance model
+
+   - If you want to use the original ByteDance UI-TARS model via an OpenAI-compatible API, follow the [deployment guide](https://github.com/bytedance/UI-TARS/blob/main/README_deploy.md)
+   - This will give you a provider URL like `https://**************.us-east-1.aws.endpoints.huggingface.cloud/v1` which you can use in the code or Gradio UI:
+
+   ```python
+   agent = ComputerAgent(
+       computer=macos_computer,
+       loop=AgentLoop.UITARS,
+       model=LLM(
+           provider=LLMProvider.OAICOMPAT,
+           name="ByteDance-Seed/UI-TARS-1.5-7B",
+           provider_base_url="https://**************.us-east-1.aws.endpoints.huggingface.cloud/v1"
+       )
+   )
+   ```
+
+   Or in the Gradio UI, select "OpenAI Compatible" and enter:
+   - Model Name: `ByteDance-Seed/UI-TARS-1.5-7B`
+   - Base URL: Your deployment URL
+   - API Key: Your API key (if required)
+
+## Advanced Configuration
+
+### Custom Provider Settings
+
+You can configure custom providers in the UI:
+
+1. Select "OpenAI Compatible" from the provider dropdown
+2. Enter your custom model name, base URL, and API key
+3. The settings will be saved for future sessions
+
+## Environment Variables
+
+Set API keys as environment variables for security:
+
+```bash
+export OPENAI_API_KEY="your-openai-key"
+export ANTHROPIC_API_KEY="your-anthropic-key"
+export GROQ_API_KEY="your-groq-key"
+export DEEPSEEK_API_KEY="your-deepseek-key"
+export QWEN_API_KEY="your-qwen-key"
+```
+
+Or use a `.env` file:
+
+```bash
+# .env
+OPENAI_API_KEY=your-openai-key
+ANTHROPIC_API_KEY=your-anthropic-key
+# ... other keys
+```
+
+## Settings Persistence
+
+The Gradio UI automatically saves your settings to `.gradio_settings.json` in your working directory. This includes:
+
+- Selected provider and model
+- Custom provider configurations (URLs and model names)
+- Other UI preferences
+
+**Note**: API keys entered into the custom provider field are **not** saved in this file for security reasons. Manage API keys using environment variables (e.g., `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`) or a `.env` file.
+
+It's recommended to add `.gradio_settings.json` to your `.gitignore` file.
+
+## Example Usage
+
+Here's a complete example of using the Gradio UI with different providers:
+
+```python
+# launch_ui_with_env.py
+from agent.ui.gradio.app import create_gradio_ui
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
+
+# Create and launch the UI
+app = create_gradio_ui()
+app.launch(share=False, server_port=7860)
+```
+
+Once launched, you can:
+
+1. Select your preferred AI provider and model
+2. Enter a task like "Open a web browser and search for Python tutorials"
+3. Click "Run" to execute the task
+4. Watch the agent perform the actions in real-time
+5. View screenshots and logs of the execution
+
+The UI makes it easy to experiment with different models and tasks without writing code for each interaction.

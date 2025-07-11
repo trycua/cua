@@ -47,146 +47,24 @@
 </details>
 </details><br/>
 
-# 🚀 Quick Start with a Computer-Use Agent UI
+# 🚀 Quick Start
 
-**Need to automate desktop tasks? Launch the Computer-Use Agent UI with a single command.**
+Read our guide on getting started with a Computer-Use Agent:
+[Computer-Use Agent Quickstart](https://docs.trycua.com/home/guides/usage-guide)
 
-### Option 1: Fully-managed install with Docker (recommended)
+Get started using C/ua services on your machine:
+[C/ua Usage Guide](https://docs.trycua.com/home/guides/cua-usage-guide)
 
-*Docker-based guided install for quick use*
+Set up a development environment with the Dev Container:
+[Dev Container Setup](https://docs.trycua.com/home/guides/dev-container-setup)
 
-**macOS/Linux/Windows (via WSL):**
+## Lume
 
-```bash
-# Requires Docker
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/scripts/playground-docker.sh)"
-```
-
-This script will guide you through setup using Docker containers and launch the Computer-Use Agent UI.
-
----
-
-### Option 2: [Dev Container](./.devcontainer/README.md)
-
-*Best for contributors and development*
-
-This repository includes a [Dev Container](./.devcontainer/README.md) configuration that simplifies setup to a few steps:
-
-1. **Install the Dev Containers extension ([VS Code](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-containers) or [WindSurf](https://docs.windsurf.com/windsurf/advanced#dev-containers-beta))**
-2. **Open the repository in the Dev Container:**
-    - Press `Ctrl+Shift+P` (or `⌘+Shift+P` on macOS)
-    - Select `Dev Containers: Clone Repository in Container Volume...` and paste the repository URL: `https://github.com/trycua/cua.git` (if not cloned) or `Dev Containers: Open Folder in Container...` (if git cloned).
-     > **Note**: On WindSurf, the post install hook might not run automatically. If so, run `/bin/bash .devcontainer/post-install.sh` manually.
-3. **Open the VS Code workspace:** Once the post-install.sh is done running, open the `.vscode/py.code-workspace` workspace and press ![Open Workspace](https://github.com/user-attachments/assets/923bdd43-8c8f-4060-8d78-75bfa302b48c)
-.
-4. **Run the Agent UI example:** Click ![Run Agent UI](https://github.com/user-attachments/assets/7a61ef34-4b22-4dab-9864-f86bf83e290b)
- to start the Gradio UI. If prompted to install **debugpy (Python Debugger)** to enable remote debugging, select 'Yes' to proceed.
-5. **Access the Gradio UI:** The Gradio UI will be available at `http://localhost:7860` and will automatically forward to your host machine.
-
----
-
-### Option 3: PyPI
-
-*Direct Python package installation*
-
-```bash
-# conda create -yn cua python==3.12
-
-pip install -U "cua-computer[all]" "cua-agent[all]"
-python -m agent.ui # Start the agent UI
-```
-
-Or check out the [Usage Guide](#-usage-guide) to learn how to use our Python SDK in your own code.
-
----
-
-## Supported [Agent Loops](https://github.com/trycua/cua/blob/main/libs/python/agent/README.md#agent-loops)
-
-- [UITARS-1.5](https://github.com/trycua/cua/blob/main/libs/python/agent/README.md#agent-loops) - Run locally on Apple Silicon with MLX, or use cloud providers
-- [OpenAI CUA](https://github.com/trycua/cua/blob/main/libs/python/agent/README.md#agent-loops) - Use OpenAI's Computer-Use Preview model
-- [Anthropic CUA](https://github.com/trycua/cua/blob/main/libs/python/agent/README.md#agent-loops) - Use Anthropic's Computer-Use capabilities
-- [OmniParser-v2.0](https://github.com/trycua/cua/blob/main/libs/python/agent/README.md#agent-loops) - Control UI with [Set-of-Marks prompting](https://som-gpt4v.github.io/) using any vision model
-
-## 🖥️ Compatibility
-
-For detailed compatibility information including host OS support, VM emulation capabilities, and model provider compatibility, see the [Compatibility Matrix](./COMPATIBILITY.md).
-
-<br/>
-<br/>
-
-# 🐍 Usage Guide
-
-Follow these steps to use C/ua in your own Python code. See [Developer Guide](./docs/Developer-Guide.md) for building from source.
-
-### Step 1: Install Lume CLI
-
-```bash
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/lume/scripts/install.sh)"
-```
-
-Lume CLI manages high-performance macOS/Linux VMs with near-native speed on Apple Silicon.
-
-### Step 2: Pull the macOS CUA Image
-
-```bash
-lume pull macos-sequoia-cua:latest
-```
-
-The macOS CUA image contains the default Mac apps and the Computer Server for easy automation.
-
-### Step 3: Install Python SDK
-
-```bash
-pip install "cua-computer[all]" "cua-agent[all]"
-```
-
-### Step 4: Use in Your Code
-
-```python
-from computer import Computer
-from agent import ComputerAgent, LLM
-
-async def main():
-    # Start a local macOS VM
-    computer = Computer(os_type="macos")
-    await computer.run()
-
-    # Or with C/ua Cloud Container
-    computer = Computer(
-      os_type="linux",
-      api_key="your_cua_api_key_here",
-      name="your_container_name_here"
-    )
-
-    # Example: Direct control of a macOS VM with Computer
-    computer.interface.delay = 0.1 # Wait 0.1 seconds between kb/m actions
-    await computer.interface.left_click(100, 200)
-    await computer.interface.type_text("Hello, world!")
-    screenshot_bytes = await computer.interface.screenshot()
-    
-    # Example: Create and run an agent locally using mlx-community/UI-TARS-1.5-7B-6bit
-    agent = ComputerAgent(
-      computer=computer,
-      loop="uitars",
-      model=LLM(provider="mlxvlm", name="mlx-community/UI-TARS-1.5-7B-6bit")
-    )
-    async for result in agent.run("Find the trycua/cua repository on GitHub and follow the quick start guide"):
-        print(result)
-
-if __name__ == "__main__":
-    asyncio.run(main())
-```
-
-For ready-to-use examples, check out our [Notebooks](./notebooks/) collection.
-
-### Lume CLI Reference
+For managing and creating virtual machines on macOS, check out [Lume](./libs/lume/README.md).
 
 ```bash
 # Install Lume CLI and background service
 curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/lume/scripts/install.sh | bash
-
-# List all VMs
-lume ls
 
 # Pull a VM image
 lume pull macos-sequoia-cua:latest
@@ -199,12 +77,9 @@ lume run macos-sequoia-cua:latest
 
 # Stop a VM
 lume stop macos-sequoia-cua_latest
-
-# Delete a VM
-lume delete macos-sequoia-cua_latest
 ```
 
-### Lumier CLI Reference
+## Lumier
 
 For advanced container-like virtualization, check out [Lumier](./libs/lumier/README.md) - a Docker interface for macOS and Linux VMs.
 
@@ -227,7 +102,7 @@ docker run -it --rm \
     trycua/lumier:latest
 ```
 
-## Resources
+# Resources
 
 - [How to use the MCP Server with Claude Desktop or other MCP clients](./libs/python/mcp-server/README.md) - One of the easiest ways to get started with C/ua
 - [How to use OpenAI Computer-Use, Anthropic, OmniParser, or UI-TARS for your Computer-Use Agent](./libs/python/agent/README.md)
@@ -235,7 +110,7 @@ docker run -it --rm \
 - [Training Computer-Use Models: Collecting Human Trajectories with C/ua (Part 1)](https://www.trycua.com/blog/training-computer-use-models-trajectories-1)
 - [Build Your Own Operator on macOS (Part 1)](https://www.trycua.com/blog/build-your-own-operator-on-macos-1)
 
-## Modules
+# Modules
 
 | Module | Description | Installation |
 |--------|-------------|---------------|
@@ -249,122 +124,6 @@ docker run -it --rm \
 | [**Computer Server**](./libs/python/computer-server/README.md) | Server component for Computer | `pip install cua-computer-server` |
 | [**Core (Python)**](./libs/python/core/README.md) | Python Core utilities | `pip install cua-core` |
 | [**Core (Typescript)**](./libs/typescript/core/README.md) | Typescript Core utilities | `npm install @trycua/core` |
-
-## Computer Interface Reference
-
-For complete examples, see [computer_examples.py](./examples/computer_examples.py) or [computer_nb.ipynb](./notebooks/computer_nb.ipynb)
-
-```python
-# Shell Actions
-result = await computer.interface.run_command(cmd)       # Run shell command
-# result.stdout, result.stderr, result.returncode
-
-# Mouse Actions
-await computer.interface.left_click(x, y)       # Left click at coordinates
-await computer.interface.right_click(x, y)      # Right click at coordinates
-await computer.interface.double_click(x, y)     # Double click at coordinates
-await computer.interface.move_cursor(x, y)      # Move cursor to coordinates
-await computer.interface.drag_to(x, y, duration)  # Drag to coordinates
-await computer.interface.get_cursor_position()  # Get current cursor position
-await computer.interface.mouse_down(x, y, button="left")  # Press and hold a mouse button
-await computer.interface.mouse_up(x, y, button="left")    # Release a mouse button
-
-# Keyboard Actions
-await computer.interface.type_text("Hello")     # Type text
-await computer.interface.press_key("enter")     # Press a single key
-await computer.interface.hotkey("command", "c") # Press key combination
-await computer.interface.key_down("command")    # Press and hold a key
-await computer.interface.key_up("command")      # Release a key
-
-# Scrolling Actions
-await computer.interface.scroll(x, y)           # Scroll the mouse wheel
-await computer.interface.scroll_down(clicks)    # Scroll down
-await computer.interface.scroll_up(clicks)      # Scroll up
-
-# Screen Actions
-await computer.interface.screenshot()           # Take a screenshot
-await computer.interface.get_screen_size()      # Get screen dimensions
-
-# Clipboard Actions
-await computer.interface.set_clipboard(text)    # Set clipboard content
-await computer.interface.copy_to_clipboard()    # Get clipboard content
-
-# File System Operations
-await computer.interface.file_exists(path)      # Check if file exists
-await computer.interface.directory_exists(path) # Check if directory exists
-await computer.interface.read_text(path, encoding="utf-8")        # Read file content
-await computer.interface.write_text(path, content, encoding="utf-8") # Write file content
-await computer.interface.read_bytes(path)       # Read file content as bytes
-await computer.interface.write_bytes(path, content) # Write file content as bytes
-await computer.interface.delete_file(path)      # Delete file
-await computer.interface.create_dir(path)       # Create directory
-await computer.interface.delete_dir(path)       # Delete directory
-await computer.interface.list_dir(path)         # List directory contents
-
-# Accessibility
-await computer.interface.get_accessibility_tree() # Get accessibility tree
-
-# Delay Configuration
-# Set default delay between all actions (in seconds)
-computer.interface.delay = 0.5  # 500ms delay between actions
-
-# Or specify delay for individual actions
-await computer.interface.left_click(x, y, delay=1.0)     # 1 second delay after click
-await computer.interface.type_text("Hello", delay=0.2)   # 200ms delay after typing
-await computer.interface.press_key("enter", delay=0.5)   # 500ms delay after key press
-
-# Python Virtual Environment Operations
-await computer.venv_install("demo_venv", ["requests", "macos-pyxa"]) # Install packages in a virtual environment
-await computer.venv_cmd("demo_venv", "python -c 'import requests; print(requests.get(`https://httpbin.org/ip`).json())'") # Run a shell command in a virtual environment
-await computer.venv_exec("demo_venv", python_function_or_code, *args, **kwargs) # Run a Python function in a virtual environment and return the result / raise an exception
-
-# Example: Use sandboxed functions to execute code in a C/ua Container
-from computer.helpers import sandboxed
-
-@sandboxed("demo_venv")
-def greet_and_print(name):
-    """Get the HTML of the current Safari tab"""
-    import PyXA
-    safari = PyXA.Application("Safari")
-    html = safari.current_document.source()
-    print(f"Hello from inside the container, {name}!")
-    return {"greeted": name, "safari_html": html}
-
-# When a @sandboxed function is called, it will execute in the container
-result = await greet_and_print("C/ua")
-# Result: {"greeted": "C/ua", "safari_html": "<html>...</html>"}
-# stdout and stderr are also captured and printed / raised
-print("Result from sandboxed function:", result)
-```
-
-## ComputerAgent Reference
-
-For complete examples, see [agent_examples.py](./examples/agent_examples.py) or [agent_nb.ipynb](./notebooks/agent_nb.ipynb)
-
-```python
-# Import necessary components
-from agent import ComputerAgent, LLM, AgentLoop, LLMProvider
-
-# UI-TARS-1.5 agent for local execution with MLX
-ComputerAgent(loop=AgentLoop.UITARS, model=LLM(provider=LLMProvider.MLXVLM, name="mlx-community/UI-TARS-1.5-7B-6bit"))   
-# OpenAI Computer-Use agent using OPENAI_API_KEY  
-ComputerAgent(loop=AgentLoop.OPENAI, model=LLM(provider=LLMProvider.OPENAI, name="computer-use-preview"))
-# Anthropic Claude agent using ANTHROPIC_API_KEY
-ComputerAgent(loop=AgentLoop.ANTHROPIC, model=LLM(provider=LLMProvider.ANTHROPIC))
-
-# OmniParser loop for UI control using Set-of-Marks (SOM) prompting and any vision LLM
-ComputerAgent(loop=AgentLoop.OMNI, model=LLM(provider=LLMProvider.OLLAMA, name="gemma3:12b-it-q4_K_M"))      
-# OpenRouter example using OAICOMPAT provider
-ComputerAgent(
-    loop=AgentLoop.OMNI,
-    model=LLM(
-        provider=LLMProvider.OAICOMPAT, 
-        name="openai/gpt-4o-mini",
-        provider_base_url="https://openrouter.ai/api/v1"
-    ),
-    api_key="your-openrouter-api-key"
-)
-```
 
 ## Community
 

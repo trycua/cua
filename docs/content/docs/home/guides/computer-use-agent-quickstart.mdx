@@ -1,0 +1,51 @@
+---
+title: Computer-Use Agent Quickstart
+description: Launch a computer-use agent UI interface with Docker, Dev Container, or Python.
+---
+
+## Docker
+
+_Best for a simple, fully managed installation for testing and experimentation._
+
+**macOS/Linux/Windows (via WSL):**
+
+Run the following command to setup the Docker containers and launch the Computer-Use Agent UI:
+
+```bash
+# Requires Docker
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/scripts/playground-docker.sh)"
+```
+
+## Dev Container
+
+_Best for contributors and active development._
+
+Visit the [Dev Container](./dev-container-setup) guide to use the configuration that simplifies development setup to a few steps.
+
+## PyPI
+
+_Direct Python package installation_
+
+```bash
+# conda create -yn cua python==3.12
+
+pip install -U "cua-computer[all]" "cua-agent[all]"
+python -m agent.ui # Start the agent UI
+```
+
+Or check out the [Usage Guide](./cua-usage-guide) to learn how to use our Python SDK in your own code.
+
+---
+
+# Supported [Agent Loops](../libraries/agent#agent-loops)
+
+- [UITARS-1.5](https://github.com/bytedance/UI-TARS) - Run locally on Apple Silicon with MLX, or use cloud providers
+- [OpenAI CUA](https://openai.com/index/computer-using-agent/) - Use OpenAI's Computer-Use Preview model
+- [Anthropic CUA](https://docs.anthropic.com/en/docs/agents-and-tools/tool-use/computer-use-tool) - Use Anthropic's Computer-Use capabilities
+- [OmniParser-v2.0](https://github.com/microsoft/OmniParser) - Control UI with [Set-of-Marks prompting](https://som-gpt4v.github.io/) using any vision model
+
+---
+
+# Compatibility
+
+For detailed compatibility information including host OS support, VM emulation capabilities, and model provider compatibility, see the [Compatibility Guide](../compatibility).

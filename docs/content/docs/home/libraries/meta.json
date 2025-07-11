@@ -1,0 +1,16 @@
+{
+	"title": "Libraries",
+	"description": "Libraries",
+	"icon": "Library",
+	"pages": [
+		"agent",
+		"computer",
+		"computer-server",
+		"cloud",
+		"core",
+		"lume",
+		"lumier",
+		"mcp-server",
+		"som"
+	]
+}

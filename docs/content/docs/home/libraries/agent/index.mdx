@@ -1,0 +1,266 @@
+---
+title: Agent
+description: The Computer-Use framework for running multi-app agentic workflows targeting macOS, Linux, and Windows sandboxes.
+pypi: cua-computer
+macos: true
+windows: true
+linux: true
+github:
+  - https://github.com/trycua/cua/tree/main/libs/python/agent
+---
+
+import { buttonVariants } from 'fumadocs-ui/components/ui/button';
+import { cn } from 'fumadocs-ui/utils/cn';
+import { ChevronRight } from 'lucide-react';
+
+**Agent** is a powerful Computer-Use framework that enables AI agents to interact with desktop applications and perform complex multi-step workflows across macOS, Linux, and Windows environments. Built on the C/ua platform, it supports both local models (via Ollama) and cloud providers (OpenAI, Anthropic, Groq, DeepSeek, Qwen).
+
+## Installation
+
+Install CUA Agent with pip. Choose the installation that matches your needs:
+
+### All Providers (Recommended)
+
+```bash
+# Install everything you need
+pip install "cua-agent[all]"
+```
+
+### Selective Installation
+
+```bash
+# OpenAI models (GPT-4, Computer Use Preview)
+pip install "cua-agent[openai]"
+
+# Anthropic models (Claude 3.5 Sonnet)
+pip install "cua-agent[anthropic]"
+
+# Local UI-TARS models
+pip install "cua-agent[uitars]"
+
+# OmniParser + Ollama for local models
+pip install "cua-agent[omni]"
+
+# Gradio web interface
+pip install "cua-agent[ui]"
+```
+
+### Advanced: Local UI-TARS with MLX
+
+```bash
+pip install "cua-agent[uitars-mlx]"
+pip install git+https://github.com/ddupont808/mlx-vlm.git@stable/fix/qwen2-position-id
+```
+
+### Requirements
+
+- Python 3.8+
+- macOS, Linux, or Windows
+- For cloud providers: API keys (OpenAI, Anthropic, etc.)
+- For local models: Sufficient RAM and compute resources
+
+## Getting Started
+
+### Basic Usage
+
+Here's a simple example to get you started with CUA Agent. It instructs the agent to open a text editor and write "Hello World."
+
+```python
+from cua_agent import ComputerAgent, AgentLoop, LLM, LLMProvider
+from cua_computer import Computer
+
+# Set your API key
+import os
+os.environ["OPENAI_API_KEY"] = "your-api-key-here"
+
+async with Computer() as computer:
+    # Create agent with OpenAI
+    agent = ComputerAgent(
+        computer=computer,
+        loop=AgentLoop.OPENAI,
+        model=LLM(provider=LLMProvider.OPENAI)
+    )
+
+    # Run a simple task
+    async for result in agent.run("Open a text editor and write 'Hello, World!'"):
+        print(result.get("text"))
+```
+
+### Multi-Step Workflow
+
+This example defines multiple tasks for the agent to complete:
+
+```python
+async with Computer() as computer:
+    # Create agent with your preferred provider
+    agent = ComputerAgent(
+        computer=computer,
+        loop=AgentLoop.OPENAI,  # or ANTHROPIC, OMNI, UITARS
+        model=LLM(provider=LLMProvider.OPENAI)
+    )
+
+    # Define complex workflow
+    tasks = [
+        "Look for a repository named trycua/cua on GitHub.",
+        "Check the open issues, open the most recent one and read it.",
+        "Clone the repository in users/lume/projects if it doesn't exist yet.",
+        "Open the repository with an app named Cursor.",
+        "From Cursor, open Composer and write a task to help resolve the GitHub issue.",
+    ]
+
+    # Execute tasks sequentially
+    for i, task in enumerate(tasks):
+        print(f"\nExecuting task {i+1}/{len(tasks)}: {task}")
+        async for result in agent.run(task):
+            print(result.get("text"))
+        print(f"✅ Task {i+1} completed")
+```
+
+### Alternative Model Providers
+
+You may use different models with the agent library -- below are a couple of alternatives that we already support.
+
+```python
+# Anthropic Claude
+agent = ComputerAgent(
+    computer=computer,
+    loop=AgentLoop.ANTHROPIC,
+    model=LLM(provider=LLMProvider.ANTHROPIC)
+)
+
+# Local Ollama model
+agent = ComputerAgent(
+    computer=computer,
+    loop=AgentLoop.OMNI,
+    model=LLM(provider=LLMProvider.OLLAMA, name="gemma3")
+)
+
+# UI-TARS model
+agent = ComputerAgent(
+    computer=computer,
+    loop=AgentLoop.UITARS,
+    model=LLM(
+        provider=LLMProvider.OAICOMPAT,
+        name="ByteDance-Seed/UI-TARS-1.5-7B",
+        provider_base_url="https://your-endpoint.com/v1"
+    )
+)
+```
+
+## Agent Loops
+
+The `cua-agent` package provides three agent loops variations, based on different CUA models providers and techniques:
+
+| Agent Loop            | Supported Models                                                                                                                                                                                                               | Description                                                                                  | Set-Of-Marks |
+| :-------------------- | :----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :------------------------------------------------------------------------------------------- | :----------- |
+| `AgentLoop.OPENAI`    | • `computer_use_preview`                                                                                                                                                                                                       | Use OpenAI Operator CUA model                                                                | Not Required |
+| `AgentLoop.ANTHROPIC` | • `claude-3-5-sonnet-20240620`<br/>• `claude-3-7-sonnet-20250219`                                                                                                                                                              | Use Anthropic Computer-Use                                                                   | Not Required |
+| `AgentLoop.UITARS`    | • `mlx-community/UI-TARS-1.5-7B-4bit` (default)<br/>• `mlx-community/UI-TARS-1.5-7B-6bit`<br/>• `ByteDance-Seed/UI-TARS-1.5-7B` (via openAI-compatible endpoint)                                                               | Uses UI-TARS models with MLXVLM (default) or OAICOMPAT providers                             | Not Required |
+| `AgentLoop.OMNI`      | • `claude-3-5-sonnet-20240620`<br/>• `claude-3-7-sonnet-20250219`<br/>• `gpt-4.5-preview`<br/>• `gpt-4o`<br/>• `gpt-4`<br/>• `phi4`<br/>• `phi4-mini`<br/>• `gemma3`<br/>• `...`<br/>• `Any Ollama or OpenAI-compatible model` | Use OmniParser for element pixel-detection (SoM) and any VLMs for UI Grounding and Reasoning | OmniParser   |
+
+## Agent Response
+
+The `AgentResponse` class represents the structured output returned after each agent turn. It contains the agent's response, reasoning, tool usage, and other metadata. The response format aligns with the new [OpenAI Agent SDK specification](https://platform.openai.com/docs/api-reference/responses) for better consistency across different agent loops.
+
+```typescript
+interface AgentResponse {
+  id: string;
+  text: string;
+  usage?: {
+    input_tokens: number;
+    input_tokens_details?: {
+      text_tokens: number;
+      image_tokens: number;
+    };
+    output_tokens: number;
+    output_tokens_details?: {
+      text_tokens: number;
+      reasoning_tokens: number;
+    };
+    total_tokens: number;
+  };
+  tools?: Array<{
+    name: string;
+    description: string;
+  }>;
+  output?: Array<{
+    type: 'reasoning' | 'computer_call';
+    content?: string; // for reasoning type
+    tool_name?: string; // for computer_call type
+    parameters?: Record<string, any>; // for computer_call type
+    result?: string; // for computer_call type
+  }>;
+}
+```
+
+### Example Usage
+
+```python
+async for result in agent.run(task):
+  print("Response ID: ", result.get("id"))
+
+  # Print detailed usage information
+  usage = result.get("usage")
+  if usage:
+      print("\nUsage Details:")
+      print(f"  Input Tokens: {usage.get('input_tokens')}")
+      if "input_tokens_details" in usage:
+          print(f"  Input Tokens Details: {usage.get('input_tokens_details')}")
+      print(f"  Output Tokens: {usage.get('output_tokens')}")
+      if "output_tokens_details" in usage:
+          print(f"  Output Tokens Details: {usage.get('output_tokens_details')}")
+      print(f"  Total Tokens: {usage.get('total_tokens')}")
+
+  print("Response Text: ", result.get("text"))
+
+  # Print tools information
+  tools = result.get("tools")
+  if tools:
+      print("\nTools:")
+      print(tools)
+
+  # Print reasoning and tool call outputs
+  outputs = result.get("output", [])
+  for output in outputs:
+      output_type = output.get("type")
+      if output_type == "reasoning":
+          print("\nReasoning Output:")
+          print(output)
+      elif output_type == "computer_call":
+          print("\nTool Call Output:")
+          print(output)
+```
+
+## Examples & Guides
+
+<Cards>
+  <Card
+    href="https://github.com/trycua/cua/tree/main/notebooks/agent_nb.ipynb"
+    title="Agent Notebook">
+    Step-by-step instructions on using the Computer-Use Agent (CUA)
+  </Card>
+  <Card href="../libraries/agent/agent-gradio-ui" title="Agent Gradio Guide">
+    Use the Agent library with a Python Gradio UI
+  </Card>
+</Cards>
+
+---
+
+<Callout type="info">
+  **Need detailed API documentation?**{' '}
+  <span className="w-full">
+    Explore the complete API reference with detailed class documentation, and
+    method signatures.
+  </span>
+  <a
+    href="/api/agent"
+    className={cn(
+      buttonVariants({
+        color: 'secondary',
+      }),
+      'no-underline h-10'
+    )}>
+    View API Reference
+    <ChevronRight size={18} />
+  </a>
+</Callout>

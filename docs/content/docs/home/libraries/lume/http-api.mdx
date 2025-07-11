@@ -1,0 +1,598 @@
+---
+title: HTTP Server API
+description: Lume exposes a local HTTP API server that listens at localhost for programatic management of VMs.
+---
+
+import { Tabs, Tab } from 'fumadocs-ui/components/tabs';
+
+## Default URL
+
+```
+http://localhost:7777
+```
+
+<Callout type="info">
+  The HTTP API service runs on port `7777` by default. If you'd like to use a
+  different port, pass the `--port` option during installation or when running
+  `lume serve`.
+</Callout>
+
+## Endpoints
+
+### Create VM
+
+Create a new virtual machine.
+
+`POST: /vms`
+
+#### Parameters
+
+| Name     | Type    | Required | Description                          |
+| -------- | ------- | -------- | ------------------------------------ |
+| name     | string  | Yes      | Name of the VM                       |
+| os       | string  | Yes      | Guest OS (`macOS`, `linux`, etc.)    |
+| cpu      | integer | Yes      | Number of CPU cores                  |
+| memory   | string  | Yes      | Memory size (e.g. `4GB`)             |
+| diskSize | string  | Yes      | Disk size (e.g. `64GB`)              |
+| display  | string  | No       | Display resolution (e.g. `1024x768`) |
+| ipsw     | string  | No       | IPSW version (e.g. `latest`)         |
+| storage  | string  | No       | Storage type (`ssd`, etc.)           |
+
+#### Example Request
+
+<Tabs groupId="language" persist items={['Curl', 'Python', 'TypeScript']}>
+  <Tab value="Curl">
+
+```bash
+curl --connect-timeout 6000 \
+  --max-time 5000 \
+  -X POST \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "lume_vm",
+    "os": "macOS",
+    "cpu": 2,
+    "memory": "4GB",
+    "diskSize": "64GB",
+    "display": "1024x768",
+    "ipsw": "latest",
+    "storage": "ssd"
+  }' \
+  http://localhost:7777/lume/vms
+```
+
+  </Tab>
+  <Tab value="Python">
+
+```python
+import requests
+
+payload = {
+    "name": "lume_vm",
+    "os": "macOS",
+    "cpu": 2,
+    "memory": "4GB",
+    "diskSize": "64GB",
+    "display": "1024x768",
+    "ipsw": "latest",
+    "storage": "ssd"
+}
+r = requests.post("http://localhost:7777/lume/vms", json=payload, timeout=50)
+print(r.json())
+```
+
+  </Tab>
+  <Tab value="TypeScript">
+
+```typescript
+const payload = {
+  name: "lume_vm",
+  os: "macOS",
+  cpu: 2,
+  memory: "4GB",
+  diskSize: "64GB",
+  display: "1024x768",
+  ipsw: "latest",
+  storage: "ssd"
+}
+
+const res = await fetch('http://localhost:7777/lume/vms', {
+    methdo: 'POST'
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+});
+console.log(await res.json())
+```
+
+  </Tab>
+</Tabs>
+
+### Run VM
+
+Run a virtual machine instance.
+
+`POST: /vms/:name/run`
+
+#### Parameters
+
+| Name              | Type            | Required | Description                                         |
+| ----------------- | --------------- | -------- | --------------------------------------------------- |
+| noDisplay         | boolean         | No       | If true, do not start VNC client                    |
+| sharedDirectories | array of object | No       | List of shared directories (`hostPath`, `readOnly`) |
+| recoveryMode      | boolean         | No       | Start in recovery mode                              |
+| storage           | string          | No       | Storage type (`ssd`, etc.)                          |
+
+#### Example Request
+
+<Tabs groupId="language" persist items={['Curl', 'Python', 'TypeScript']}>
+  <Tab value="Curl">
+
+```bash
+# Basic run
+curl --connect-timeout 6000 \
+  --max-time 5000 \
+  -X POST \
+  http://localhost:7777/lume/vms/my-vm-name/run
+
+# Run with VNC client started and shared directory
+curl --connect-timeout 6000 \
+  --max-time 5000 \
+  -X POST \
+  -H "Content-Type: application/json" \
+  -d '{
+    "noDisplay": false,
+    "sharedDirectories": [
+      {
+        "hostPath": "~/Projects",
+        "readOnly": false
+      }
+    ],
+    "recoveryMode": false,
+    "storage": "ssd"
+  }' \
+  http://localhost:7777/lume/vms/lume_vm/run
+```
+
+  </Tab>
+  <Tab value="Python">
+
+```python
+import requests
+
+# Basic run
+r = requests.post("http://localhost:7777/lume/vms/my-vm-name/run", timeout=50)
+print(r.json())
+
+# With VNC and shared directory
+payload = {
+    "noDisplay": False,
+    "sharedDirectories": [
+        {"hostPath": "~/Projects", "readOnly": False}
+    ],
+    "recoveryMode": False,
+    "storage": "ssd"
+}
+r = requests.post("http://localhost:7777/lume/vms/lume_vm/run", json=payload, timeout=50)
+print(r.json())
+```
+
+  </Tab>
+  <Tab value="TypeScript">
+
+```typescript
+// Basic run
+const res = await fetch('http://localhost:7777/lume/vms/my-vm-name/run', {
+  method: 'POST',
+});
+console.log(await res.json());
+
+// With VNC and shared directory
+const payload = {
+  noDisplay: false,
+  sharedDirectories: [{ hostPath: '~/Projects', readOnly: false }],
+  recoveryMode: false,
+  storage: 'ssd',
+};
+const res2 = await fetch('http://localhost:7777/lume/vms/lume_vm/run', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify(payload),
+});
+console.log(await res2.json());
+```
+
+  </Tab>
+</Tabs>
+
+### List VMs
+
+List all virtual machines.
+
+`GET: /vms`
+
+#### Example Request
+
+<Tabs groupId="language" persist items={['Curl', 'Python', 'TypeScript']}>
+  <Tab value="Curl">
+
+```bash
+curl --connect-timeout 6000 \
+  --max-time 5000 \
+  http://localhost:7777/lume/vms
+```
+
+  </Tab>
+  <Tab value="Python">
+
+```python
+import requests
+
+r = requests.get("http://localhost:7777/lume/vms", timeout=50)
+print(r.json())
+```
+
+  </Tab>
+  <Tab value="TypeScript">
+
+```typescript
+const res = await fetch('http://localhost:7777/lume/vms');
+console.log(await res.json());
+```
+
+  </Tab>
+</Tabs>
+
+```json
+[
+  {
+    "name": "my-vm",
+    "state": "stopped",
+    "os": "macOS",
+    "cpu": 2,
+    "memory": "4GB",
+    "diskSize": "64GB"
+  },
+  {
+    "name": "my-vm-2",
+    "state": "stopped",
+    "os": "linux",
+    "cpu": 2,
+    "memory": "4GB",
+    "diskSize": "64GB"
+  }
+]
+```
+
+### Get VM Details
+
+Get details for a specific virtual machine.
+
+`GET: /vms/:name`
+
+#### Parameters
+
+| Name    | Type   | Required | Description                |
+| ------- | ------ | -------- | -------------------------- |
+| storage | string | No       | Storage type (`ssd`, etc.) |
+
+#### Example Request
+
+<Tabs groupId="language" persist items={['Curl', 'Python', 'TypeScript']}>
+  <Tab value="Curl">
+
+```bash
+# Basic get
+curl --connect-timeout 6000 \
+  --max-time 5000 \
+  http://localhost:7777/lume/vms/lume_vm
+
+# Get with specific storage
+curl --connect-timeout 6000 \
+  --max-time 5000 \
+  http://localhost:7777/lume/vms/lume_vm?storage=ssd
+```
+
+  </Tab>
+  <Tab value="Python">
+
+```python
+import requests
+
+# Basic get
+details = requests.get("http://localhost:7777/lume/vms/lume_vm", timeout=50)
+print(details.json())
+
+# Get with specific storage
+details = requests.get("http://localhost:7777/lume/vms/lume_vm", params={"storage": "ssd"}, timeout=50)
+print(details.json())
+```
+
+  </Tab>
+  <Tab value="TypeScript">
+
+```typescript
+// Basic get
+const res = await fetch('http://localhost:7777/lume/vms/lume_vm');
+console.log(await res.json());
+
+// Get with specific storage
+const res2 = await fetch('http://localhost:7777/lume/vms/lume_vm?storage=ssd');
+console.log(await res2.json());
+```
+
+  </Tab>
+</Tabs>
+
+```json
+{
+  "name": "lume_vm",
+  "state": "stopped",
+  "os": "macOS",
+  "cpu": 2,
+  "memory": "4GB",
+  "diskSize": "64GB",
+  "display": "1024x768",
+  "ipAddress": "192.168.65.2",
+  "vncPort": 5900,
+  "sharedDirectories": [
+    {
+      "hostPath": "~/Projects",
+      "readOnly": false,
+      "tag": "com.apple.virtio-fs.automount"
+    }
+  ]
+}
+```
+
+### Update VM Configuration
+
+Update the configuration of a virtual machine.
+
+`PUT: /vms/:name`
+
+#### Parameters
+
+| Name     | Type    | Required | Description                           |
+| -------- | ------- | -------- | ------------------------------------- |
+| cpu      | integer | No       | Number of CPU cores                   |
+| memory   | string  | No       | Memory size (e.g. `8GB`)              |
+| diskSize | string  | No       | Disk size (e.g. `100GB`)              |
+| display  | string  | No       | Display resolution (e.g. `1920x1080`) |
+| storage  | string  | No       | Storage type (`ssd`, etc.)            |
+
+#### Example Request
+
+<Tabs groupId="language" persist items={['Curl', 'Python', 'TypeScript']}>
+  <Tab value="Curl">
+
+```bash
+curl --connect-timeout 6000 \
+  --max-time 5000 \
+  -X PUT \
+  -H "Content-Type: application/json" \
+  -d '{
+    "cpu": 4,
+    "memory": "8GB",
+    "diskSize": "100GB",
+    "display": "1920x1080",
+    "storage": "ssd"
+  }' \
+  http://localhost:7777/lume/vms/lume_vm
+```
+
+  </Tab>
+  <Tab value="Python">
+
+```python
+import requests
+
+payload = {
+    "cpu": 4,
+    "memory": "8GB",
+    "diskSize": "100GB",
+    "display": "1920x1080",
+    "storage": "ssd"
+}
+r = requests.put("http://localhost:7777/lume/vms/lume_vm", json=payload, timeout=50)
+print(r.json())
+```
+
+  </Tab>
+  <Tab value="TypeScript">
+
+```typescript
+const payload = {
+  cpu: 4,
+  memory: '8GB',
+  diskSize: '100GB',
+  display: '1920x1080',
+  storage: 'ssd',
+};
+const res = await fetch('http://localhost:7777/lume/vms/lume_vm', {
+  method: 'PUT',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify(payload),
+});
+console.log(await res.json());
+```
+
+  </Tab>
+</Tabs>
+
+### Stop VM
+
+Stop a running virtual machine.
+
+`POST: /vms/:name/stop`
+
+#### Example Request
+
+<Tabs groupId="language" persist items={['Curl', 'Python', 'TypeScript']}>
+  <Tab value="Curl">
+
+```bash
+curl --connect-timeout 6000 \
+  --max-time 5000 \
+  -X POST \
+  http://localhost:7777/lume/vms/lume_vm/stop
+```
+
+  </Tab>
+  <Tab value="Python">
+
+```python
+import requests
+
+r = requests.post("http://localhost:7777/lume/vms/lume_vm/stop", timeout=50)
+print(r.json())
+```
+
+  </Tab>
+  <Tab value="TypeScript">
+
+```typescript
+const res = await fetch('http://localhost:7777/lume/vms/lume_vm/stop', {
+  method: 'POST',
+});
+console.log(await res.json());
+```
+
+  </Tab>
+</Tabs>
+
+### Delete VM
+
+Delete a virtual machine instance.
+
+`DELETE: /vms/:name`
+
+#### Parameters
+
+| Name    | Type   | Required | Description                |
+| ------- | ------ | -------- | -------------------------- |
+| storage | string | No       | Storage type (`ssd`, etc.) |
+
+#### Example Request
+
+<Tabs groupId="language" persist items={['Curl', 'Python', 'TypeScript']}>
+  <Tab value="Curl">
+
+```bash
+# Basic delete
+curl --connect-timeout 6000 \
+  --max-time 5000 \
+  -X DELETE \
+  http://localhost:7777/lume/vms/lume_vm
+
+# Delete with specific storage
+curl --connect-timeout 6000 \
+  --max-time 5000 \
+  -X DELETE \
+  http://localhost:7777/lume/vms/lume_vm?storage=ssd
+```
+
+  </Tab>
+  <Tab value="Python">
+
+```python
+import requests
+
+# Basic delete
+r = requests.delete("http://localhost:7777/lume/vms/lume_vm", timeout=50)
+print(r.status_code)
+
+# Delete with specific storage
+r = requests.delete("http://localhost:7777/lume/vms/lume_vm", params={"storage": "ssd"}, timeout=50)
+print(r.status_code)
+```
+
+  </Tab>
+  <Tab value="TypeScript">
+
+```typescript
+// Basic delete
+const res = await fetch('http://localhost:7777/lume/vms/lume_vm', {
+  method: 'DELETE',
+});
+console.log(res.status);
+
+// Delete with specific storage
+const res2 = await fetch('http://localhost:7777/lume/vms/lume_vm?storage=ssd', {
+  method: 'DELETE',
+});
+console.log(res2.status);
+```
+
+  </Tab>
+</Tabs>
+
+### Pull VM Image
+
+Pull a VM image from a registry.
+
+`POST: /images/pull`
+
+#### Parameters
+
+| Name         | Type   | Required | Description                           |
+| ------------ | ------ | -------- | ------------------------------------- |
+| image        | string | Yes      | Image name (e.g. `macos-sequoia-...`) |
+| registry     | string | Yes      | Registry host (e.g. `ghcr.io`)        |
+| organization | string | Yes      | Organization name                     |
+| storage      | string | No       | Storage type (`ssd`, etc.)            |
+
+#### Example Request
+
+<Tabs groupId="language" persist items={['Curl', 'Python', 'TypeScript']}>
+  <Tab value="Curl">
+
+```bash
+curl --connect-timeout 6000 \
+  --max-time 5000 \
+  -X POST \
+  -H "Content-Type: application/json" \
+  -d '{
+    "image": "macos-sequoia-vanilla:latest",
+    "registry": "ghcr.io",
+    "organization": "trycua",
+    "storage": "ssd"
+  }' \
+  http://localhost:7777/lume/images/pull
+```
+
+  </Tab>
+  <Tab value="Python">
+
+```python
+import requests
+
+payload = {
+    "image": "macos-sequoia-vanilla:latest",
+    "registry": "ghcr.io",
+    "organization": "trycua",
+    "storage": "ssd"
+}
+r = requests.post("http://localhost:7777/lume/images/pull", json=payload, timeout=50)
+print(r.json())
+```
+
+  </Tab>
+  <Tab value="TypeScript">
+
+```typescript
+const payload = {
+  image: 'macos-sequoia-vanilla:latest',
+  registry: 'ghcr.io',
+  organization: 'trycua',
+  storage: 'ssd',
+};
+const res = await fetch('http://localhost:7777/lume/images/pull', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify(payload),
+});
+console.log(await res.json());
+```
+
+  </Tab>
+</Tabs>

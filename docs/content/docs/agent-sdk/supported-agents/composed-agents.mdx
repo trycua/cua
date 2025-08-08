@@ -28,11 +28,25 @@ Any model that supports `predict_click()` can be used as the grounding component
 Any vision-enabled LiteLLM-compatible model can be used as the thinking component:
 
 - **Anthropic**: `anthropic/claude-3-5-sonnet-20241022`, `anthropic/claude-3-opus-20240229`
-- **OpenAI**: `openai/gpt-4o`, `openai/gpt-4-vision-preview`
+- **OpenAI**: `openai/gpt-5`, `openai/gpt-o3`, `openai/gpt-4o`
 - **Google**: `gemini/gemini-1.5-pro`, `vertex_ai/gemini-pro-vision`
 - **Local models**: Any Hugging Face vision-language model
 
 ## Usage Examples
+
+### GTA1 + GPT-5
+
+Use Google's Gemini for planning with specialized grounding:
+
+```python
+agent = ComputerAgent(
+    "huggingface-local/HelloKKMe/GTA1-7B+openai/gpt-5",
+    tools=[computer]
+)
+
+async for _ in agent.run("Take a screenshot, analyze the UI, and click on the most prominent button"):
+    pass
+```
 
 ### GTA1 + Claude 3.5 Sonnet
 
@@ -49,20 +63,6 @@ async for _ in agent.run("Open Firefox, navigate to github.com, and search for '
 # Success! 🎉
 # - Claude 3.5 Sonnet plans the sequence of actions
 # - GTA1-7B provides precise click coordinates for each UI element
-```
-
-### GTA1 + Gemini Pro
-
-Use Google's Gemini for planning with specialized grounding:
-
-```python
-agent = ComputerAgent(
-    "huggingface-local/HelloKKMe/GTA1-7B+gemini/gemini-1.5-pro",
-    tools=[computer]
-)
-
-async for _ in agent.run("Take a screenshot, analyze the UI, and click on the most prominent button"):
-    pass
 ```
 
 ### UI-TARS + GPT-4o

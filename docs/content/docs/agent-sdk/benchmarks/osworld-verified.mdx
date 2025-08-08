@@ -1,0 +1,89 @@
+---
+title: OSWorld-Verified
+description: Benchmark ComputerAgent on OSWorld tasks using HUD
+---
+
+OSWorld-Verified is a curated subset of OSWorld tasks that can be run using the HUD framework. Use ComputerAgent with HUD to benchmark on these tasks.
+
+## Setup
+
+```bash
+pip install hud-python==0.2.10
+```
+
+Set environment variables:
+```bash
+export HUD_API_KEY="your_hud_key"
+export ANTHROPIC_API_KEY="your_anthropic_key"  # For Claude
+export OPENAI_API_KEY="your_openai_key"        # For OpenAI
+```
+
+## Quick Start
+
+```python
+import asyncio
+from hud import gym, load_taskset
+from agent.integrations.hud import ComputerAgent
+
+async def run_osworld():
+    # Load taskset
+    taskset = await load_taskset("OSWorld-Verified")
+    test = taskset[144]  # Example task
+    
+    # Create environment (~2.5 min startup)
+    env = await gym.make(test)
+    
+    # Create agent
+    agent = ComputerAgent(
+        model="anthropic/claude-3-5-sonnet-20241022", # any ComputerAgent model string
+        environment="linux"
+    )
+    
+    # Run benchmark
+    obs, _ = await env.reset()
+    for i in range(100):
+        action, done = await agent.predict(obs)
+        obs, reward, terminated, info = await env.step(action)
+        if done or terminated:
+            break
+    
+    # Evaluate results
+    result = await env.evaluate()
+    await env.close()
+    
+    return result
+
+# Run benchmark
+result = asyncio.run(run_osworld())
+print(f"Success: {result.get('success', False)}")
+```
+
+## Parallel Execution
+
+Run all tasks in parallel using `run_job`:
+
+```python
+from agent.integrations.hud import run_job
+from hud import load_taskset
+from hud.taskset import TaskSet
+import logging
+
+# Load taskset
+taskset = await load_taskset("OSWorld-Verified")
+taskset = TaskSet(tasks=taskset[:10]) # limit to 10 tasks instead of all 370
+
+# Run benchmark job
+job = await run_job(
+    model="openai/computer-use-preview",
+    task_or_taskset=taskset,
+    job_name="test-computeragent-job",
+    max_concurrent_tasks=5,
+    # add any extra ComputerAgent kwargs:
+    verbosity=logging.INFO,  # Enable logging
+    # trajectory_dir=".."       # Save trajectories locally
+)
+
+# Get results OR view them at app.hud.so
+print(await job.get_analytics())
+print(f"View results at: https://app.hud.so/jobs/{job.id}")
+```

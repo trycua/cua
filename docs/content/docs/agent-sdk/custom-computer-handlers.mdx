@@ -1,0 +1,130 @@
+---
+title: Custom Computers
+slug: custom-computer-handlers
+---
+
+The Agent SDK supports defining custom computer handlers using a simple dictionary interface. This enables integration with custom automation backends, testing frameworks, or specialized computer control systems.
+
+## Example: Defining a Custom Computer Handler
+
+```python
+import asyncio
+from PIL import Image
+
+# Define your custom computer functions
+async def take_screenshot():
+    """Your custom screenshot implementation"""
+    # Return PIL Image, bytes, or base64 string
+    return Image.new('RGB', (1920, 1080), color='white')
+
+# Create dict-based computer handler - only 'screenshot' is required
+custom_computer = {
+    'screenshot': take_screenshot, # required
+
+    # everything below is optional
+    'environment': 'linux', # linux, mac, windows, browser
+    'dimensions': (1920, 1080), # (width, height)
+    'click': lambda x, y, button: print(f"Clicking at ({x}, {y}) with {button} button"),
+}
+```
+
+You can then use this as a tool for your agent:
+
+```python
+from agent import ComputerAgent
+
+agent = ComputerAgent(
+    model="anthropic/claude-3-5-sonnet-20240620",
+    tools=[custom_computer],
+)
+
+# Agent will automatically convert dict to agent.computers.CustomComputerHandler
+await agent.run("Take a screenshot and click at coordinates 100, 200")
+```
+
+## Class-Based Implementation
+
+For more complex implementations, you can create a custom class by inheriting from `AsyncComputerHandler`:
+
+```python
+from agent.computers import AsyncComputerHandler
+from PIL import Image
+from typing import Literal, List, Dict, Union, Optional
+
+class MyCustomComputer(AsyncComputerHandler):
+    """Custom computer handler implementation."""
+    
+    def __init__(self):
+        # Initialize your custom computer interface here
+        pass
+    
+    # ==== Computer-Use-Preview Action Space ==== 
+
+    async def get_environment(self) -> Literal["windows", "mac", "linux", "browser"]:
+        """Get the current environment type."""
+        ...
+    
+    async def get_dimensions(self) -> tuple[int, int]:
+        """Get screen dimensions as (width, height)."""
+        ...
+    
+    async def screenshot(self) -> str:
+        """Take a screenshot and return as base64 string."""
+        ...
+    
+    async def click(self, x: int, y: int, button: str = "left") -> None:
+        """Click at coordinates with specified button."""
+        ...
+    
+    async def double_click(self, x: int, y: int) -> None:
+        """Double click at coordinates."""
+        ...
+    
+    async def scroll(self, x: int, y: int, scroll_x: int, scroll_y: int) -> None:
+        """Scroll at coordinates with specified scroll amounts."""
+        ...
+    
+    async def type(self, text: str) -> None:
+        """Type text."""
+        ...
+    
+    async def wait(self, ms: int = 1000) -> None:
+        """Wait for specified milliseconds."""
+        ...
+    
+    async def move(self, x: int, y: int) -> None:
+        """Move cursor to coordinates."""
+        ...
+    
+    async def keypress(self, keys: Union[List[str], str]) -> None:
+        """Press key combination."""
+        ...
+    
+    async def drag(self, path: List[Dict[str, int]]) -> None:
+        """Drag along specified path."""
+        ...
+    
+    async def get_current_url(self) -> str:
+        """Get current URL (for browser environments)."""
+        ...
+    
+    # ==== Anthropic Action Space ==== 
+
+    async def left_mouse_down(self, x: Optional[int] = None, y: Optional[int] = None) -> None:
+        """Left mouse down at coordinates."""
+        ...
+    
+    async def left_mouse_up(self, x: Optional[int] = None, y: Optional[int] = None) -> None:
+        """Left mouse up at coordinates."""
+        ...
+
+# Use with agent
+custom_computer = MyCustomComputer()
+
+agent = ComputerAgent(
+    model="anthropic/claude-3-5-sonnet-20240620",
+    tools=[custom_computer],
+)
+
+await agent.run("Take a screenshot and click at coordinates 100, 200")
+```

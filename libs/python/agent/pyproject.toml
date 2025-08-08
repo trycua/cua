@@ -47,6 +47,9 @@ ui = [
 cli = [
     "yaspin>=3.1.0",
 ]
+hud = [
+    "hud-python==0.2.10",
+]
 all = [
     # omni requirements
     "ultralytics>=8.0.0",
@@ -59,6 +62,8 @@ all = [
     "python-dotenv>=1.0.1",
     # cli requirements
     "yaspin>=3.1.0",
+    # hud requirements
+    "hud-python==0.2.10",
 ]
 
 [tool.uv]

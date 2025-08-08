@@ -1,0 +1,49 @@
+---
+title: HUD Evals
+description: Use ComputerAgent with HUD for benchmarking and evaluation
+---
+
+The HUD integration allows you to use ComputerAgent with the [HUD benchmarking framework](https://www.hud.so/), providing the same interface as existing HUD agents while leveraging ComputerAgent's capabilities.
+
+## Installation
+
+```bash
+pip install "cua-agent[hud]"
+## or install hud-python directly
+# pip install hud-python==0.2.10
+```
+
+## Usage
+
+```python
+from agent.integrations.hud import run_job
+from hud import load_taskset
+from hud.taskset import TaskSet
+import logging
+
+# Load taskset
+taskset = await load_taskset("OSWorld-Verified")
+taskset = TaskSet(tasks=taskset[:10]) # limit to 10 tasks instead of all 370
+
+# Run benchmark job
+job = await run_job(
+    model="openai/computer-use-preview",
+    # model="anthropic/claude-3-5-sonnet-20241022",
+    # model="huggingface-local/HelloKKMe/GTA1-7B+openai/gpt-5",
+    task_or_taskset=taskset,
+    job_name="test-computeragent-job",
+    max_concurrent_tasks=5,
+    # add any extra ComputerAgent kwargs:
+    verbosity=logging.INFO,  # Enable logging
+    # trajectory_dir=".."       # Save trajectories locally
+)
+
+# Get results OR view them at app.hud.so
+print(await job.get_analytics())
+print(f"View results at: https://app.hud.so/jobs/{job.id}")
+```
+
+**Available Benchmarks:**
+1. [OSWorld-Verified](/agent-sdk/benchmarks/osworld-verified) - Benchmark on OSWorld tasks
+
+See the [HUD docs](https://docs.hud.so/environment-creation) for more eval environments.

@@ -4,35 +4,44 @@ Computer handler implementation for OpenAI computer-use-preview protocol.
 
 import base64
 from typing import Dict, List, Any, Literal, Union, Optional
-from .types import Computer
+from .base import AsyncComputerHandler
+from computer import Computer
 
-
-class OpenAIComputerHandler:
+class cuaComputerHandler(AsyncComputerHandler):
     """Computer handler that implements the Computer protocol using the computer interface."""
     
-    def __init__(self, computer_interface):
+    def __init__(self, cua_computer: Computer):
         """Initialize with a computer interface (from tool schema)."""
-        self.interface = computer_interface
+        self.cua_computer = cua_computer
+        self.interface = None
+
+    async def _initialize(self):
+        if hasattr(self.cua_computer, '_initialized') and not self.cua_computer._initialized:
+            await self.cua_computer.run()
+        self.interface = self.cua_computer.interface
     
     # ==== Computer-Use-Preview Action Space ==== 
 
     async def get_environment(self) -> Literal["windows", "mac", "linux", "browser"]:
         """Get the current environment type."""
-        # For now, return a default - this could be enhanced to detect actual environment
-        return "windows"
+        # TODO: detect actual environment
+        return "linux"
 
     async def get_dimensions(self) -> tuple[int, int]:
         """Get screen dimensions as (width, height)."""
+        assert self.interface is not None
         screen_size = await self.interface.get_screen_size()
         return screen_size["width"], screen_size["height"]
     
     async def screenshot(self) -> str:
         """Take a screenshot and return as base64 string."""
+        assert self.interface is not None
         screenshot_bytes = await self.interface.screenshot()
         return base64.b64encode(screenshot_bytes).decode('utf-8')
     
     async def click(self, x: int, y: int, button: str = "left") -> None:
         """Click at coordinates with specified button."""
+        assert self.interface is not None
         if button == "left":
             await self.interface.left_click(x, y)
         elif button == "right":
@@ -43,28 +52,34 @@ class OpenAIComputerHandler:
     
     async def double_click(self, x: int, y: int) -> None:
         """Double click at coordinates."""
+        assert self.interface is not None
         await self.interface.double_click(x, y)
     
     async def scroll(self, x: int, y: int, scroll_x: int, scroll_y: int) -> None:
         """Scroll at coordinates with specified scroll amounts."""
+        assert self.interface is not None
         await self.interface.move_cursor(x, y)
         await self.interface.scroll(scroll_x, scroll_y)
     
     async def type(self, text: str) -> None:
         """Type text."""
+        assert self.interface is not None
         await self.interface.type_text(text)
     
     async def wait(self, ms: int = 1000) -> None:
         """Wait for specified milliseconds."""
+        assert self.interface is not None
         import asyncio
         await asyncio.sleep(ms / 1000.0)
     
     async def move(self, x: int, y: int) -> None:
         """Move cursor to coordinates."""
+        assert self.interface is not None
         await self.interface.move_cursor(x, y)
     
     async def keypress(self, keys: Union[List[str], str]) -> None:
         """Press key combination."""
+        assert self.interface is not None
         if isinstance(keys, str):
             keys = keys.replace("-", "+").split("+")
         if len(keys) == 1:
@@ -75,6 +90,7 @@ class OpenAIComputerHandler:
     
     async def drag(self, path: List[Dict[str, int]]) -> None:
         """Drag along specified path."""
+        assert self.interface is not None
         if not path:
             return
         
@@ -99,23 +115,10 @@ class OpenAIComputerHandler:
     # ==== Anthropic Computer Action Space ==== 
     async def left_mouse_down(self, x: Optional[int] = None, y: Optional[int] = None) -> None:
         """Left mouse down at coordinates."""
+        assert self.interface is not None
         await self.interface.mouse_down(x, y, button="left")
     
     async def left_mouse_up(self, x: Optional[int] = None, y: Optional[int] = None) -> None:
         """Left mouse up at coordinates."""
+        assert self.interface is not None
         await self.interface.mouse_up(x, y, button="left")
-
-def acknowledge_safety_check_callback(message: str, allow_always: bool = False) -> bool:
-    """Safety check callback for user acknowledgment."""
-    if allow_always:
-        return True
-    response = input(
-        f"Safety Check Warning: {message}\nDo you want to acknowledge and proceed? (y/n): "
-    ).lower()
-    return response.strip() == "y"
-
-
-def check_blocklisted_url(url: str) -> None:
-    """Check if URL is blocklisted (placeholder implementation)."""
-    # This would contain actual URL checking logic
-    pass

@@ -24,6 +24,7 @@ distribution = false
 
 [tool.pdm.dev-dependencies]
 dev = [
+    "-e core @ file:///${PROJECT_ROOT}/libs/python/core",
     "-e agent @ file:///${PROJECT_ROOT}/libs/python/agent",
     "-e computer @ file:///${PROJECT_ROOT}/libs/python/computer",
     "-e computer-server @ file:///${PROJECT_ROOT}/libs/python/computer-server",

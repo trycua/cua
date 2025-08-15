@@ -32,9 +32,6 @@ try:
         record_event,
     )
 
-    # Import set_dimension from our own telemetry module
-    from .telemetry import set_dimension
-
     # Check if telemetry is enabled
     if is_telemetry_enabled():
         logger.info("Telemetry is enabled")
@@ -48,9 +45,6 @@ try:
                 "python_version": sys.version,
             },
         )
-
-        # Set the package version as a dimension
-        set_dimension("agent_version", __version__)
 
         # Flush events to ensure they're sent
         flush()

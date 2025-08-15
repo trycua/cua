@@ -9,9 +9,17 @@ import re
 from .logger import Logger, LogLevel
 import json
 import logging
-from .telemetry import record_computer_initialization
+from core.telemetry import is_telemetry_enabled, record_event
 import os
 from . import helpers
+
+import platform
+
+SYSTEM_INFO = {
+    "os": platform.system().lower(),
+    "os_version": platform.release(),
+    "python_version": platform.python_version(),
+}
 
 # Import provider related modules
 from .providers.base import VMProviderType
@@ -190,8 +198,8 @@ class Computer:
         self.use_host_computer_server = use_host_computer_server
 
         # Record initialization in telemetry (if enabled)
-        if telemetry_enabled:
-            record_computer_initialization()
+        if telemetry_enabled and is_telemetry_enabled():
+            record_event("computer_initialized", SYSTEM_INFO)
         else:
             self.logger.debug("Telemetry disabled - skipping initialization tracking")
 

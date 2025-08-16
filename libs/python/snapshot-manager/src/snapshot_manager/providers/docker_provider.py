@@ -6,8 +6,11 @@ to create efficient container snapshots.
 """
 
 import logging
+import tarfile
+import tempfile
 from datetime import datetime
-from typing import Any, Dict, Optional
+from io import BytesIO
+from typing import Any, Dict, List, Optional
 
 import docker
 from docker.errors import DockerException, NotFound
@@ -43,6 +46,174 @@ class DockerSnapshotProvider(SnapshotProvider):
             logger.info("Docker connection validated successfully")
         except DockerException as e:
             raise SnapshotError(f"Failed to connect to Docker: {e}")
+
+    def _analyze_container_volumes(self, container_id: str) -> Dict[str, Any]:
+        """
+        Analyze volumes attached to a container.
+        
+        Args:
+            container_id: ID of the container to analyze
+            
+        Returns:
+            Dictionary with volume analysis results
+        """
+        try:
+            container = self.client.containers.get(container_id)
+            mounts = container.attrs.get("Mounts", [])
+            
+            logger.debug(f"Container mounts structure: {mounts}")
+            
+            named_volumes = []
+            bind_mounts = []
+            
+            for mount in mounts:
+                # Handle different mount structure formats
+                if isinstance(mount, dict):
+                    mount_info = {
+                        "type": mount.get("Type"),
+                        "source": mount.get("Source"),
+                        "destination": mount.get("Destination"),
+                        "mode": mount.get("Mode", "rw"),
+                        "rw": mount.get("RW", True),
+                        "name": mount.get("Name"),
+                    }
+                    
+                    if mount.get("Type") == "volume":
+                        named_volumes.append(mount_info)
+                    elif mount.get("Type") == "bind":
+                        bind_mounts.append(mount_info)
+                else:
+                    logger.warning(f"Unexpected mount structure: {type(mount)} - {mount}")
+            
+            return {
+                "named_volumes": named_volumes,
+                "bind_mounts": bind_mounts,
+                "total_volumes": len(named_volumes),
+                "total_bind_mounts": len(bind_mounts),
+            }
+            
+        except NotFound:
+            raise ContainerNotFoundError(f"Container {container_id} not found")
+        except DockerException as e:
+            raise SnapshotError(f"Failed to analyze container volumes: {e}")
+
+    def _backup_named_volume_as_tar(self, volume_name: str) -> bytes:
+        """
+        Create a tar archive of a named volume's data.
+        
+        Args:
+            volume_name: Name of the Docker volume to backup
+            
+        Returns:
+            Tar archive as bytes
+            
+        Raises:
+            SnapshotError: If volume backup fails
+        """
+        try:
+            logger.info(f"Creating tar backup of volume: {volume_name}")
+            
+            # Verify volume exists
+            try:
+                volume = self.client.volumes.get(volume_name)
+                logger.debug(f"Volume {volume_name} found: {volume.attrs}")
+            except NotFound:
+                raise SnapshotError(f"Volume {volume_name} not found")
+            
+            # Create temporary container to access volume data
+            # Using alpine for minimal footprint
+            temp_container_config = {
+                "image": "alpine:latest",
+                "command": "sleep 30",
+                "volumes": {volume_name: {"bind": "/volume_data", "mode": "ro"}},
+                "detach": True,
+                "remove": False,
+                "name": f"volume-backup-{volume_name}-temp"
+            }
+            
+            temp_container = None
+            try:
+                # Pull alpine if not available (but don't wait too long)
+                try:
+                    self.client.images.get("alpine:latest")
+                except NotFound:
+                    logger.info("Pulling alpine:latest for volume backup...")
+                    self.client.images.pull("alpine:latest")
+                
+                # Create and start temporary container
+                temp_container = self.client.containers.run(**temp_container_config)
+                logger.debug(f"Created temporary container: {temp_container.name}")
+                
+                # Create tar archive of volume contents
+                tar_stream, _ = temp_container.get_archive("/volume_data")
+                
+                # Convert stream to bytes
+                tar_data = BytesIO()
+                for chunk in tar_stream:
+                    tar_data.write(chunk)
+                
+                tar_bytes = tar_data.getvalue()
+                logger.info(f"Volume {volume_name} backed up: {len(tar_bytes)} bytes")
+                
+                return tar_bytes
+                
+            finally:
+                # Clean up temporary container
+                if temp_container:
+                    try:
+                        temp_container.stop(timeout=5)
+                        temp_container.remove()
+                        logger.debug(f"Cleaned up temporary container: {temp_container.name}")
+                    except Exception as e:
+                        logger.warning(f"Failed to clean up temporary container: {e}")
+                        
+        except DockerException as e:
+            raise SnapshotError(f"Failed to backup volume {volume_name}: {e}")
+        except Exception as e:
+            raise SnapshotError(f"Unexpected error backing up volume {volume_name}: {e}")
+
+    def _backup_container_volumes(self, volume_analysis: Dict[str, Any]) -> Dict[str, bytes]:
+        """
+        Backup all named volumes from a container's volume analysis.
+        
+        Args:
+            volume_analysis: Result from _analyze_container_volumes
+            
+        Returns:
+            Dictionary mapping volume names to tar archive bytes
+            
+        Raises:
+            SnapshotError: If any volume backup fails
+        """
+        volume_backups = {}
+        
+        # Process named volumes
+        for volume_info in volume_analysis.get("named_volumes", []):
+            volume_name = volume_info.get("name")
+            if not volume_name:
+                logger.warning(f"Skipping volume without name: {volume_info}")
+                continue
+                
+            try:
+                tar_data = self._backup_named_volume_as_tar(volume_name)
+                volume_backups[volume_name] = tar_data
+                logger.info(f"Successfully backed up volume: {volume_name}")
+            except Exception as e:
+                logger.error(f"Failed to backup volume {volume_name}: {e}")
+                # Continue with other volumes, but track the failure
+                # We could make this configurable (fail-fast vs best-effort)
+                raise SnapshotError(f"Volume backup failed for {volume_name}: {e}")
+        
+        # Log bind mount warnings  
+        bind_mounts = volume_analysis.get("bind_mounts", [])
+        if bind_mounts:
+            logger.warning(f"⚠️  {len(bind_mounts)} bind mount(s) detected - NOT included in snapshot:")
+            for mount in bind_mounts:
+                logger.warning(f"   Bind mount: {mount.get('source')} → {mount.get('destination')}")
+                logger.warning(f"   Recommendation: Use named volumes for portable snapshots")
+        
+        logger.info(f"Volume backup completed: {len(volume_backups)} volumes, {len(bind_mounts)} bind mounts skipped")
+        return volume_backups
 
     def _generate_image_tag(self, metadata: SnapshotMetadata) -> str:
         """
@@ -144,6 +315,10 @@ class DockerSnapshotProvider(SnapshotProvider):
             # Validate container exists and get info
             container_info = self._get_container_info(container_id)
 
+            # Analyze volumes attached to the container
+            volume_analysis = self._analyze_container_volumes(container_id)
+            logger.info(f"Volume analysis: {volume_analysis['total_volumes']} named volumes, {volume_analysis['total_bind_mounts']} bind mounts")
+
             # Update metadata with container information
             metadata.container_id = container_info["id"]
             metadata.container_name = container_info["name"]
@@ -203,6 +378,7 @@ class DockerSnapshotProvider(SnapshotProvider):
                     "original_mounts": container_info["mounts"],
                     "original_network_settings": container_info["network_settings"],
                     "original_image": container_info["image"],
+                    "volume_analysis": volume_analysis,
                 }
             )
 

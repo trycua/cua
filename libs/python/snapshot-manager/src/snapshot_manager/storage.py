@@ -364,78 +364,78 @@ class FileSystemSnapshotStorage(SnapshotStorage):
     async def save_volume_data(self, snapshot_id: str, volume_name: str, tar_data: bytes) -> None:
         """
         Save volume tar data to storage.
-        
+
         Args:
             snapshot_id: ID of the snapshot this volume belongs to
             volume_name: Name of the volume
             tar_data: Tar archive data as bytes
-            
+
         Raises:
             StorageError: If saving fails
         """
         try:
             volume_file = self.volumes_dir / f"{snapshot_id}_{volume_name}.tar"
-            
-            async with aiofiles.open(volume_file, 'wb') as f:
+
+            async with aiofiles.open(volume_file, "wb") as f:
                 await f.write(tar_data)
-                
+
             logger.debug(f"Saved volume data: {volume_file} ({len(tar_data)} bytes)")
-            
+
         except Exception as e:
             raise StorageError(f"Failed to save volume data {volume_name} for {snapshot_id}: {e}")
 
     async def load_volume_data(self, snapshot_id: str, volume_name: str) -> bytes:
         """
         Load volume tar data from storage.
-        
+
         Args:
             snapshot_id: ID of the snapshot
             volume_name: Name of the volume
-            
+
         Returns:
             Tar archive data as bytes
-            
+
         Raises:
             StorageError: If loading fails
         """
         try:
             volume_file = self.volumes_dir / f"{snapshot_id}_{volume_name}.tar"
-            
+
             if not volume_file.exists():
                 raise StorageError(f"Volume data not found: {volume_file}")
-                
-            async with aiofiles.open(volume_file, 'rb') as f:
+
+            async with aiofiles.open(volume_file, "rb") as f:
                 tar_data = await f.read()
-                
+
             logger.debug(f"Loaded volume data: {volume_file} ({len(tar_data)} bytes)")
             return tar_data
-            
+
         except Exception as e:
             raise StorageError(f"Failed to load volume data {volume_name} for {snapshot_id}: {e}")
 
     async def list_volume_files(self, snapshot_id: str) -> List[str]:
         """
         List volume files for a snapshot.
-        
+
         Args:
             snapshot_id: ID of the snapshot
-            
+
         Returns:
             List of volume names that have stored data
         """
         try:
             volume_files = list(self.volumes_dir.glob(f"{snapshot_id}_*.tar"))
             volume_names = []
-            
+
             for volume_file in volume_files:
                 # Extract volume name from filename: "snapshot_id_volume_name.tar"
                 filename = volume_file.stem  # Remove .tar extension
                 if filename.startswith(f"{snapshot_id}_"):
-                    volume_name = filename[len(f"{snapshot_id}_"):]
+                    volume_name = filename[len(f"{snapshot_id}_") :]
                     volume_names.append(volume_name)
-                    
+
             return volume_names
-            
+
         except Exception as e:
             logger.error(f"Failed to list volume files for {snapshot_id}: {e}")
             return []
@@ -443,11 +443,11 @@ class FileSystemSnapshotStorage(SnapshotStorage):
     async def delete_volume_data(self, snapshot_id: str, volume_name: Optional[str] = None) -> None:
         """
         Delete volume data from storage.
-        
+
         Args:
             snapshot_id: ID of the snapshot
             volume_name: Name of specific volume to delete, or None to delete all volumes for snapshot
-            
+
         Raises:
             StorageError: If deletion fails
         """
@@ -464,6 +464,6 @@ class FileSystemSnapshotStorage(SnapshotStorage):
                 for volume_file in volume_files:
                     volume_file.unlink()
                     logger.debug(f"Deleted volume data: {volume_file}")
-                    
+
         except Exception as e:
             raise StorageError(f"Failed to delete volume data for {snapshot_id}: {e}")

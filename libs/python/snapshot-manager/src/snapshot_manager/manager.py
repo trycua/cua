@@ -168,6 +168,21 @@ class SnapshotManager:
             # Create the snapshot using the provider
             metadata = await self.provider.create_snapshot(container_id, metadata)
 
+            # Save volume backups if any were created
+            if hasattr(metadata, '_volume_backups') and metadata._volume_backups:
+                logger.info(f"Storing {len(metadata._volume_backups)} volume backups...")
+                
+                # Check if storage supports volume operations
+                if hasattr(self.storage, 'save_volume_data'):
+                    for volume_name, tar_data in metadata._volume_backups.items():
+                        await self.storage.save_volume_data(metadata.snapshot_id, volume_name, tar_data)
+                        logger.debug(f"Stored volume backup: {volume_name} ({len(tar_data)} bytes)")
+                else:
+                    logger.warning("Storage backend does not support volume data - volumes not stored")
+                
+                # Clean up temporary attribute
+                delattr(metadata, '_volume_backups')
+
             # Save metadata to storage
             await self.storage.save_metadata(metadata)
 

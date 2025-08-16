@@ -155,6 +155,11 @@ class SnapshotManager:
                 action_context=action_context,
                 run_id=run_id,
                 labels=labels or {},
+                image_id=None,
+                image_tag=None,
+                storage_path=None,
+                size_bytes=None,
+                parent_snapshot_id=None,
             )
 
             # Check if we need to enforce limits before creating

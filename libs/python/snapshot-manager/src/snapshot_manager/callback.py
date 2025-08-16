@@ -6,7 +6,7 @@ to automatically create snapshots at appropriate lifecycle events.
 """
 
 import logging
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, Callable
 
 try:
     from agent.callbacks.base import AsyncCallbackHandler
@@ -36,20 +36,26 @@ class SnapshotCallback(AsyncCallbackHandler):
 
     def __init__(
         self,
-        snapshot_manager: Optional[SnapshotManager] = None,
+        snapshot_manager: SnapshotManager,
         config: Optional[SnapshotConfig] = None,
-        container_resolver: Optional[callable] = None,
+        container_resolver: Optional[Callable[[Dict[str, Any]], Optional[str]]] = None,
     ):
         """
         Initialize the snapshot callback.
 
         Args:
-            snapshot_manager: SnapshotManager instance to use
-            config: Configuration for snapshot behavior
+            snapshot_manager: SnapshotManager instance with explicit provider/storage wiring
+            config: Configuration for snapshot behavior (uses manager's config if None)
             container_resolver: Function to resolve container ID from agent context
         """
-        self.snapshot_manager = snapshot_manager or SnapshotManager()
-        self.config = config or SnapshotConfig()
+        if snapshot_manager is None:
+            raise ValueError(
+                "SnapshotManager must be explicitly provided with proper "
+                "DockerSnapshotProvider and storage configuration"
+            )
+
+        self.snapshot_manager = snapshot_manager
+        self.config = config or snapshot_manager.config
 
         # Function to resolve container ID from agent context
         # Default implementation assumes container info is in kwargs

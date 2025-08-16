@@ -28,6 +28,8 @@ dev = [
     "pytest-asyncio>=0.21.0",
     "black>=23.0.0",
     "ruff>=0.1.0",
+    "mypy>=1.17.1",
+    "types-aiofiles>=24.1.0.20250809",
 ]
 
 [project.scripts]

@@ -248,6 +248,7 @@ class TestSnapshotCallback:
         manager = Mock(spec=SnapshotManager)
         manager.should_create_snapshot = AsyncMock(return_value=True)
         manager.create_snapshot = AsyncMock()
+        manager.config = SnapshotConfig()  # Add config property for callback
         return manager
 
     @pytest.fixture

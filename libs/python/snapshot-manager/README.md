@@ -29,6 +29,7 @@ pip install cua-snapshot-manager
 
 - **🔄 Automatic Snapshots**: Integrate with CUA Agent callbacks for hands-free operation
 - **🐳 Docker Native**: Uses `docker commit` for efficient container snapshots  
+- **📦 Volume Support**: Automatic backup/restore of named volumes with bind mount warnings
 - **⚡ Configurable Triggers**: Manual, run start/end, before/after actions
 - **🧹 Smart Retention**: Automatic cleanup with configurable policies
 - **📊 Rich Metadata**: Timestamps, descriptions, agent context tracking
@@ -111,12 +112,16 @@ The system consists of pluggable components for maximum flexibility:
 
 See [ARCHITECTURE.md](./ARCHITECTURE.md) for detailed design decisions and technical overview.
 
-## Examples
+## Examples & Testing
 
-Comprehensive examples are available in the [examples/](./examples/) directory:
+**Examples** in [examples/](./examples/):
+- [`cua_volume_example.py`](./examples/cua_volume_example.py) - CUA Agent integration with volume support
+- [`cua_callback_integration.py`](./examples/cua_callback_integration.py) - Automatic callback triggers demonstration
 
-- [`basic_usage.py`](./examples/basic_usage.py) - Basic CLI operations without CUA Agent
-- [`cua_snapshot_test.py`](./examples/cua_snapshot_test.py) - Full CUA Agent integration test
+**Tests** in [tests/](./tests/):
+- Comprehensive test suite covering snapshot manager core functionality
+- Volume support tests for detection, backup, storage, and restore
+- All 19 tests passing with full coverage of critical features
 
 ## Contributing
 

@@ -37,6 +37,7 @@ The CUA Snapshot Manager provides state capture and restoration for Docker conta
 │    Provider     │ │   shotStorage   │
 │                 │ │                 │
 │ • docker commit │ │ • JSON metadata │
+│ • volume backup │ │ • volume tar    │
 │ • container ops │ │ • indexing      │
 │ • validation    │ │ • statistics    │
 └─────────┬───────┘ └─────────┬───────┘
@@ -47,6 +48,7 @@ The CUA Snapshot Manager provides state capture and restoration for Docker conta
 │                 │ │                 │
 │ • Images        │ │ • ./snapshots/  │
 │ • Containers    │ │   ├─metadata/   │
+│ • Volumes       │ │   ├─volumes/    │
 │ • Commit/Run    │ │   └─index.json  │
 └─────────────────┘ └─────────────────┘
 ```
@@ -59,19 +61,26 @@ The CUA Snapshot Manager provides state capture and restoration for Docker conta
 - Network settings and port mappings
 - Labels and original image reference
 
+**Named Volume Data:**
+- Full volume contents backed up as tar archives
+- Volume analysis with type identification (named vs bind mounts)
+- Automatic volume restoration with data integrity verification
+- Bind mount detection with portability warnings
+
 **Metadata:**
 - Timestamp and trigger context (manual, run_start, run_end, before/after actions)
 - Human-readable descriptions and agent run IDs
 - Storage statistics and restoration tracking
 - Container relationship mapping
+- Volume backup manifest and storage locations
 
 ## What's NOT Captured
 **Excluded by Design:**
 - Live running processes and their memory state
 - Temporary filesystems (`/tmp`, `/proc`, `/sys`, `/dev`)
 - Real-time network connections and sockets
-- Named volume *contents* (currently - planned via tar backup)
-- Host-mounted bind mount contents (warned, not captured)
+- Host-mounted bind mount contents (warned about, not portable across systems)
+- Anonymous volumes (Docker limitation, data lost on container removal)
 
 **Technical Limitations:**
 - Containers must be in valid state (running/paused/exited/created)
@@ -91,9 +100,9 @@ The CUA Snapshot Manager provides state capture and restoration for Docker conta
 - Includes basic health check validation
 
 **Volume Handling:**
-- Named volumes: Preserved by reference (data intact if volume exists)
-- Bind mounts: Configuration preserved, warns if host path unavailable
-- Anonymous volumes: Lost (Docker limitation)
+- Named volumes: Full data backup as tar archives, automatic restoration with integrity verification
+- Bind mounts: Configuration preserved, warnings displayed about portability concerns
+- Anonymous volumes: Lost (Docker limitation, not backed up)
 
 ## Limits & Policies
 **Storage Limits:**
@@ -127,3 +136,35 @@ The CUA Snapshot Manager provides state capture and restoration for Docker conta
 - Uses Docker's native `docker commit` for efficiency
 - Leverages Docker image layer sharing for space optimization
 - Direct integration with Docker API (no CLI shelling)
+
+## Volume Backup & Restore Logic
+
+**Volume Detection:**
+1. Analyze container mount configuration via Docker API
+2. Categorize mounts by type: named volumes vs bind mounts
+3. Generate volume analysis report with portability warnings
+
+**Backup Process:**
+1. For each named volume attached to container:
+   - Create temporary alpine container with volume mounted read-only
+   - Extract complete volume data using `docker get_archive` (tar format)
+   - Store tar archives in `./snapshots/volumes/{snapshot_id}_{volume_name}.tar`
+2. Log warnings for bind mounts (not included in backup)
+3. Record volume manifest in snapshot metadata
+
+**Restore Process:**
+1. Create or verify target volumes exist in Docker
+2. For each backed-up volume:
+   - Create temporary alpine container with volume mounted read-write
+   - Clear existing volume contents (ensuring clean restore)
+   - Extract tar data using `docker put_archive`
+   - Verify extraction success
+3. Attach restored volumes to new container with original mount paths
+
+**Storage Structure:**
+```
+./snapshots/
+├── metadata/{snapshot_id}.json     # Container + volume metadata
+├── volumes/{snapshot_id}_{vol}.tar  # Volume data archives
+└── index.json                      # Global snapshot index
+```

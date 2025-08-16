@@ -109,8 +109,9 @@ class TestSnapshotManager:
 
         # Restore it
         from snapshot_manager.models import RestoreOptions
+
         options = RestoreOptions(new_container_name="restored_container")
-        
+
         restored_id = await snapshot_manager.restore_snapshot(metadata.snapshot_id, options)
         assert restored_id is not None
 
@@ -121,10 +122,10 @@ class TestSnapshotManager:
         first_snapshot = await snapshot_manager.create_snapshot(
             "test_container", SnapshotTrigger.MANUAL, description="First snapshot"
         )
-        
+
         # Now use the resolved container_id for subsequent snapshots
         container_id = first_snapshot.container_id
-        
+
         # Create more snapshots using the actual container_id
         for i in range(3):  # Create 3 more (total will be 4, limit is 3)
             await snapshot_manager.create_snapshot(
@@ -142,14 +143,14 @@ class TestSnapshotManager:
         metadata = await snapshot_manager.create_snapshot(
             "test_container", SnapshotTrigger.MANUAL, description="To be deleted"
         )
-        
+
         # Verify it exists
         snapshots = await snapshot_manager.list_snapshots()
         assert len(snapshots) == 1
-        
+
         # Delete it
         await snapshot_manager.delete_snapshot(metadata.snapshot_id)
-        
+
         # Verify it's gone
         snapshots = await snapshot_manager.list_snapshots()
         assert len(snapshots) == 0
@@ -159,15 +160,15 @@ class TestSnapshotManager:
         """Test time-based cleanup of old snapshots."""
         from datetime import datetime, timedelta
         from unittest.mock import patch
-        
+
         # Create snapshots with different ages by mocking timestamp
         snapshots_created = []
-        
+
         # Create an "old" snapshot (10 days ago)
-        with patch('snapshot_manager.models.datetime') as mock_datetime:
+        with patch("snapshot_manager.models.datetime") as mock_datetime:
             old_time = datetime.now() - timedelta(days=10)
             mock_datetime.now.return_value = old_time
-            
+
             old_snapshot = await snapshot_manager.create_snapshot(
                 "test_container", SnapshotTrigger.MANUAL, description="Old snapshot"
             )
@@ -175,23 +176,23 @@ class TestSnapshotManager:
             old_snapshot.timestamp = old_time
             await snapshot_manager.storage.update_metadata(old_snapshot)
             snapshots_created.append(old_snapshot)
-        
+
         # Create a recent snapshot (1 day ago)
         recent_snapshot = await snapshot_manager.create_snapshot(
             "test_container", SnapshotTrigger.MANUAL, description="Recent snapshot"
         )
         snapshots_created.append(recent_snapshot)
-        
+
         # Verify we have 2 snapshots
         all_snapshots = await snapshot_manager.list_snapshots()
         assert len(all_snapshots) == 2
-        
+
         # Cleanup snapshots older than 5 days
         cleaned_count = await snapshot_manager.cleanup_old_snapshots(max_age_days=5)
-        
+
         # Should have cleaned up 1 old snapshot
         assert cleaned_count == 1
-        
+
         # Verify only recent snapshot remains
         remaining_snapshots = await snapshot_manager.list_snapshots()
         assert len(remaining_snapshots) == 1
@@ -232,6 +233,7 @@ class TestDockerSnapshotProvider:
     async def test_validate_container_not_found(self, docker_provider, mock_docker_client):
         """Test container validation when container doesn't exist."""
         from docker.errors import NotFound
+
         mock_docker_client.containers.get.side_effect = NotFound("Container not found")
         is_valid = await docker_provider.validate_container("nonexistent_container")
         assert is_valid is False
@@ -252,6 +254,7 @@ class TestSnapshotCallback:
     def snapshot_callback(self, mock_snapshot_manager):
         """Create a SnapshotCallback for testing."""
         from snapshot_manager.callback import SnapshotCallback
+
         return SnapshotCallback(snapshot_manager=mock_snapshot_manager)
 
     @pytest.mark.asyncio
@@ -259,7 +262,7 @@ class TestSnapshotCallback:
         """Test run start callback creates snapshot."""
         kwargs = {"container_id": "test_container"}
         await snapshot_callback.on_run_start(kwargs, [])
-        
+
         mock_snapshot_manager.create_snapshot.assert_called_once()
         call_args = mock_snapshot_manager.create_snapshot.call_args
         assert call_args[1]["trigger"] == SnapshotTrigger.RUN_START

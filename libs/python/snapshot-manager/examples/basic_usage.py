@@ -223,9 +223,9 @@ async def advanced_configuration_example():
     print(f"  - Auto cleanup after: {advanced_config.auto_cleanup_days} days")
     print(f"  - Naming pattern: {advanced_config.naming_pattern}")
 
-        # Create manager with advanced config
+    # Create manager with advanced config
     SnapshotManager(config=advanced_config)
-    
+
     print("✅ Advanced configuration applied")
 
 

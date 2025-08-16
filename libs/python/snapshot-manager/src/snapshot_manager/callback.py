@@ -10,11 +10,13 @@ from typing import Dict, List, Any, Optional
 
 try:
     from agent.callbacks.base import AsyncCallbackHandler
+
     HAVE_CUA_SDK = True
 except ImportError:
     # Fallback for when CUA SDK is not available
     class AsyncCallbackHandler:
         pass
+
     HAVE_CUA_SDK = False
 
 from .manager import SnapshotManager
@@ -26,7 +28,7 @@ logger = logging.getLogger(__name__)
 class SnapshotCallback(AsyncCallbackHandler):
     """
     CUA Agent SDK callback handler for snapshot management.
-    
+
     This callback integrates with the agent's lifecycle to automatically
     create snapshots when configured events occur. It's designed to be
     pluggable and non-intrusive to existing agent workflows.

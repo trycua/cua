@@ -1,0 +1,59 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cua-snapshot-manager"
+version = "0.1.0"
+description = "Snapshot-based state management system for the Cua Agent SDK"
+authors = [
+    {name = "Daniele", email = "daniele@example.com"}
+]
+license = {text = "MIT"}
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "docker>=6.0.0",
+    "pydantic>=2.0.0",
+    "click>=8.0.0",
+    "aiofiles>=23.0.0",
+    "cua-agent[all]>=0.2.5",
+    "cua-computer>=0.2.6",
+    "python-dotenv>=1.1.1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.21.0",
+    "black>=23.0.0",
+    "ruff>=0.1.0",
+    "mypy>=1.17.1",
+    "types-aiofiles>=24.1.0.20250809",
+]
+
+[project.scripts]
+snapshot-manager = "snapshot_manager.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-dir]
+"" = "src"
+
+[tool.black]
+line-length = 100
+target-version = ['py38']
+
+[tool.ruff]
+line-length = 100
+target-version = "py38"
+
+[dependency-groups]
+dev = [
+    "black>=24.8.0",
+    "isort>=5.13.2",
+    "pytest>=8.4.1",
+    "pytest-asyncio>=1.1.0",
+    "ruff>=0.12.9",
+]

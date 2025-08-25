@@ -22,6 +22,7 @@ import inspect
 from .adapters import (
     HuggingFaceLocalAdapter,
     HumanAdapter,
+    MLXVLMAdapter,
 )
 from .callbacks import (
     ImageRetentionCallback, 
@@ -234,9 +235,11 @@ class ComputerAgent:
             device="auto"
         )
         human_adapter = HumanAdapter()
+        mlx_adapter = MLXVLMAdapter()
         litellm.custom_provider_map = [
             {"provider": "huggingface-local", "custom_handler": hf_adapter},
-            {"provider": "human", "custom_handler": human_adapter}
+            {"provider": "human", "custom_handler": human_adapter},
+            {"provider": "mlx", "custom_handler": mlx_adapter}
         ]
         litellm.suppress_debug_info = True
 

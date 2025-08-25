@@ -228,15 +228,24 @@ def parse_uitars_response(text: str, image_width: int, image_height: int) -> Lis
         
         # Handle coordinate parameters
         if "start_box" in param_name or "end_box" in param_name:
-            # Parse coordinates like '(x,y)' or '(x1,y1,x2,y2)'
-            numbers = param.replace("(", "").replace(")", "").split(",")
-            float_numbers = [float(num.strip()) / 1000 for num in numbers]  # Normalize to 0-1 range
+            # Parse coordinates like '<|box_start|>(x,y)<|box_end|>' or '(x,y)'
+            # First, remove special tokens
+            clean_param = param.replace("<|box_start|>", "").replace("<|box_end|>", "")
+            # Then remove parentheses and split
+            numbers = clean_param.replace("(", "").replace(")", "").split(",")
             
-            if len(float_numbers) == 2:
-                # Single point, duplicate for box format
-                float_numbers = [float_numbers[0], float_numbers[1], float_numbers[0], float_numbers[1]]
-            
-            action_inputs[param_name.strip()] = str(float_numbers)
+            try:
+                float_numbers = [float(num.strip()) / 1000 for num in numbers]  # Normalize to 0-1 range
+                
+                if len(float_numbers) == 2:
+                    # Single point, duplicate for box format
+                    float_numbers = [float_numbers[0], float_numbers[1], float_numbers[0], float_numbers[1]]
+                
+                action_inputs[param_name.strip()] = str(float_numbers)
+            except ValueError as e:
+                # If parsing fails, keep the original parameter value
+                print(f"Warning: Could not parse coordinates '{param}': {e}")
+                action_inputs[param_name.strip()] = param
     
     return [{
         "thought": thought,

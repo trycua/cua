@@ -1,0 +1,166 @@
+---
+title: REST Proxy API Reference
+description: Reference for the /responses REST endpoint of the Agent Proxy Server.
+---
+
+The Agent Proxy Server exposes a REST endpoint for ComputerAgent execution:
+
+- `http://localhost:8000/responses`
+
+## Starting HTTP Server
+
+```bash
+python -m agent.proxy.cli --mode http
+```
+
+## POST /responses
+
+- Accepts agent requests as JSON in the request body
+- Returns the first result from ComputerAgent execution
+- Supports both simple text and multi-modal inputs
+
+### Request Format
+```json
+{
+  "model": "anthropic/claude-3-5-sonnet-20241022",
+  "input": "Your instruction here",
+  "agent_kwargs": {
+    "save_trajectory": true,
+    "verbosity": 20
+  },
+  "computer_kwargs": {
+    "os_type": "linux",
+    "provider_type": "cloud"
+  }
+}
+```
+
+### Multi-modal Request Format
+```json
+{
+  "model": "anthropic/claude-3-5-sonnet-20241022",
+  "input": [
+    {
+      "role": "user",
+      "content": [
+        {"type": "input_text", "text": "what is in this image?"},
+        {
+          "type": "input_image",
+          "image_url": "https://example.com/image.jpg"
+        }
+      ]
+    }
+  ]
+}
+```
+
+### Required Parameters
+- `model`: Model string (e.g., "anthropic/claude-3-5-sonnet-20241022")
+- `input`: String or message array with the user's instruction
+
+### Optional Parameters
+- `agent_kwargs`: Dictionary of ComputerAgent configuration options
+- `computer_kwargs`: Dictionary of Computer instance configuration options
+
+### Example Request (Python)
+```python
+import requests
+
+url = "http://localhost:8000/responses"
+body = {
+    "model": "anthropic/claude-3-5-sonnet-20241022",
+    "input": "Take a screenshot and tell me what you see"
+}
+resp = requests.post(url, json=body)
+print(resp.json())
+```
+
+### Example Request (cURL)
+```bash
+curl http://localhost:8000/responses \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "anthropic/claude-3-5-sonnet-20241022",
+    "input": "Tell me a three sentence bedtime story about a unicorn."
+  }'
+```
+
+### Multi-modal Example (cURL)
+```bash
+curl http://localhost:8000/responses \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "anthropic/claude-3-5-sonnet-20241022",
+    "input": [
+      {
+        "role": "user",
+        "content": [
+          {"type": "input_text", "text": "what is in this image?"},
+          {
+            "type": "input_image",
+            "image_url": "https://upload.wikimedia.org/wikipedia/commons/thumb/d/dd/Gfp-wisconsin-madison-the-nature-boardwalk.jpg/2560px-Gfp-wisconsin-madison-the-nature-boardwalk.jpg"
+          }
+        ]
+      }
+    ]
+  }'
+```
+
+### Response Format
+```json
+{
+  "success": true,
+  "result": {
+    // Agent response data
+  },
+  "model": "anthropic/claude-3-5-sonnet-20241022"
+}
+```
+
+### Error Response Format
+```json
+{
+  "success": false,
+  "error": "Error description",
+  "model": "anthropic/claude-3-5-sonnet-20241022"
+}
+```
+
+## GET /health
+
+Health check endpoint that returns server status.
+
+### Response Format
+```json
+{
+  "status": "healthy"
+}
+```
+
+## Configuration
+
+### Environment Variables
+- `CUA_CONTAINER_NAME`: Default container name for cloud provider
+- `CUA_API_KEY`: Default API key for cloud provider
+
+### Agent Configuration (`agent_kwargs`)
+Common options:
+- `save_trajectory`: Boolean - Save conversation trajectory
+- `verbosity`: Integer - Logging level (10=DEBUG, 20=INFO, etc.)
+- `max_trajectory_budget`: Float - Budget limit for trajectory
+- `telemetry_enabled`: Boolean or Dict - Enable telemetry tracking
+
+### Computer Configuration (`computer_kwargs`)
+Common options:
+- `os_type`: String - "linux", "windows", "macos"
+- `provider_type`: String - "cloud", "local", "docker"
+- `name`: String - Instance name
+- `api_key`: String - Provider API key
+
+## Error Handling
+
+Common error scenarios:
+- **400 Bad Request**: Invalid JSON or missing required parameters
+- **500 Internal Server Error**: Agent execution errors or computer setup failures
+
+All errors return a structured JSON response with `success: false` and an `error` field describing the issue.

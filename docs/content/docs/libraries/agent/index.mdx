@@ -114,3 +114,37 @@ agent = ComputerAgent(
     callbacks=[ImageRetentionCallback(only_n_most_recent_images=3)]
 )
 ```
+
+## Proxy Server API
+
+The Agent library includes a proxy server that exposes ComputerAgent functionality over HTTP and P2P (WebRTC) connections, allowing remote clients to interact with agents through REST-like APIs.
+
+### Starting the Proxy Server
+
+```bash
+# HTTP server (default)
+python -m agent.proxy.cli
+
+# P2P server with WebRTC
+python -m agent.proxy.cli --mode p2p --peer-id computer-agent-proxy
+
+# Both HTTP and P2P
+python -m agent.proxy.cli --mode both --peer-id computer-agent-proxy
+```
+
+### API References
+
+- [REST API Reference](./REST-API) - HTTP endpoints for agent execution
+- [PeerJS API Reference](./PeerJS-API) - P2P WebRTC connections for direct browser-to-agent communication
+
+### Quick Example
+
+```bash
+curl http://localhost:8000/responses \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "anthropic/claude-3-5-sonnet-20241022",
+    "input": "Take a screenshot and tell me what you see"
+  }'
+```
+```

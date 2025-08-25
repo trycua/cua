@@ -23,7 +23,10 @@
   "pnpm": {
     "onlyBuiltDependencies": [
       "@biomejs/biome",
-      "esbuild"
+      "esbuild",
+      "protobufjs",
+      "sharp",
+      "unrs-resolver"
     ]
   }
 }

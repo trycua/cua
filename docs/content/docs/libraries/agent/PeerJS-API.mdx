@@ -1,0 +1,306 @@
+---
+title: PeerJS Proxy API Reference
+description: Reference for the P2P WebRTC endpoint of the Agent Proxy Server.
+---
+
+The Agent Proxy Server supports peer-to-peer (P2P) connections using WebRTC through the PeerJS protocol. This allows direct browser-to-agent communication without intermediary servers.
+
+## Connection Setup
+
+### Prerequisites
+- Install peerjs-python: `pip install peerjs-python aiortc`
+- Running signaling server (default: localhost:9000)
+
+### Starting P2P Server
+```bash
+# P2P only
+python -m agent.proxy.cli --mode p2p --peer-id computer-agent-proxy
+
+# Both HTTP and P2P
+python -m agent.proxy.cli --mode both --peer-id computer-agent-proxy
+
+# Custom signaling server
+python -m agent.proxy.cli --mode p2p \
+  --peer-id my-agent \
+  --signaling-host signaling.example.com \
+  --signaling-port 443 \
+  --signaling-secure
+```
+
+## Client Connection (Python)
+
+### Basic Connection
+```python
+import asyncio
+import json
+from peerjs import Peer, PeerOptions, ConnectionEventType
+from aiortc import RTCConfiguration, RTCIceServer
+
+async def connect_to_agent():
+    # Set up peer options
+    options = PeerOptions(
+        host="localhost",
+        port=9000,
+        secure=False,
+        config=RTCConfiguration(
+            iceServers=[RTCIceServer(urls="stun:stun.l.google.com:19302")]
+        )
+    )
+    
+    # Create client peer
+    client_peer = Peer(id="my-client", peer_options=options)
+    await client_peer.start()
+    
+    # Connect to agent proxy
+    connection = client_peer.connect("computer-agent-proxy")
+    
+    @connection.on(ConnectionEventType.Open)
+    async def connection_open():
+        print("Connected to agent proxy")
+        
+        # Send agent request
+        request = {
+            "model": "anthropic/claude-3-5-sonnet-20241022",
+            "input": "Hello from P2P client!"
+        }
+        await connection.send(json.dumps(request))
+    
+    @connection.on(ConnectionEventType.Data)
+    async def connection_data(data):
+        response = json.loads(data) if isinstance(data, str) else data
+        print(f"Agent response: {response}")
+        await client_peer.destroy()
+    
+    # Keep connection alive
+    await asyncio.sleep(10)
+
+asyncio.run(connect_to_agent())
+```
+
+### HTTP-like Requests over P2P
+```python
+import asyncio
+import json
+from peerjs import Peer, PeerOptions, ConnectionEventType
+
+async def http_over_p2p():
+    # Connect to peer
+    client_peer = Peer(id="http-client", peer_options=options)
+    await client_peer.start()
+    connection = client_peer.connect("computer-agent-proxy")
+    
+    @connection.on(ConnectionEventType.Open)
+    async def connection_open():
+        # Send HTTP-like request
+        http_request = {
+            "method": "POST",
+            "path": "/responses",
+            "body": {
+                "model": "anthropic/claude-3-5-sonnet-20241022",
+                "input": "Take a screenshot and describe what you see"
+            }
+        }
+        await connection.send(json.dumps(http_request))
+    
+    @connection.on(ConnectionEventType.Data)
+    async def connection_data(data):
+        response = json.loads(data)
+        # Response format: {"status": 200, "headers": {...}, "body": {...}}
+        print(f"Status: {response['status']}")
+        print(f"Body: {response['body']}")
+
+asyncio.run(http_over_p2p())
+```
+
+## Client Connection (JavaScript/Browser)
+
+### Basic Browser Client
+```javascript
+import Peer from 'peerjs';
+
+// Create peer connection
+const peer = new Peer('browser-client', {
+  host: 'localhost',
+  port: 9000,
+  path: '/peerjs'
+});
+
+// Connect to agent proxy
+const conn = peer.connect('computer-agent-proxy');
+
+conn.on('open', () => {
+  console.log('Connected to agent proxy');
+  
+  // Send agent request
+  const request = {
+    model: 'anthropic/claude-3-5-sonnet-20241022',
+    input: 'Hello from browser!'
+  };
+  conn.send(JSON.stringify(request));
+});
+
+conn.on('data', (data) => {
+  const response = JSON.parse(data);
+  console.log('Agent response:', response);
+});
+
+conn.on('error', (err) => {
+  console.error('Connection error:', err);
+});
+```
+
+### Multi-modal Browser Request
+```javascript
+conn.on('open', () => {
+  const request = {
+    model: 'anthropic/claude-3-5-sonnet-20241022',
+    input: [
+      {
+        role: 'user',
+        content: [
+          { type: 'input_text', text: 'Analyze this image' },
+          { 
+            type: 'input_image', 
+            image_url: 'https://example.com/image.jpg' 
+          }
+        ]
+      }
+    ]
+  };
+  conn.send(JSON.stringify(request));
+});
+```
+
+## Message Formats
+
+### Direct Agent Request
+Send agent requests directly as JSON:
+```json
+{
+  "model": "anthropic/claude-3-5-sonnet-20241022",
+  "input": "Your instruction here",
+  "agent_kwargs": {
+    "save_trajectory": true
+  }
+}
+```
+
+### HTTP-like Request
+Send HTTP-style requests for REST API compatibility:
+```json
+{
+  "method": "POST",
+  "path": "/responses",
+  "body": {
+    "model": "anthropic/claude-3-5-sonnet-20241022",
+    "input": "Your instruction here"
+  }
+}
+```
+
+## Response Formats
+
+### Direct Response
+```json
+{
+  "success": true,
+  "result": {
+    // Agent response data
+  },
+  "model": "anthropic/claude-3-5-sonnet-20241022"
+}
+```
+
+### HTTP-like Response
+```json
+{
+  "status": 200,
+  "headers": {
+    "Content-Type": "application/json"
+  },
+  "body": {
+    "success": true,
+    "result": {
+      // Agent response data
+    }
+  }
+}
+```
+
+### Welcome Message
+Upon connection, the server sends a welcome message:
+```json
+{
+  "type": "welcome",
+  "message": "Connected to ComputerAgent Proxy",
+  "endpoints": ["/responses"]
+}
+```
+
+## Connection Events
+
+### Client Events
+- `open`: Connection established
+- `data`: Data received from agent
+- `close`: Connection closed
+- `error`: Connection error
+
+### Server Events
+- `connection`: New peer connection
+- `error`: Server error
+
+## Configuration
+
+### ICE Servers
+Default STUN servers for NAT traversal:
+```javascript
+[
+  { urls: "stun:stun.l.google.com:19302" },
+  { urls: "stun:stun1.l.google.com:19302" }
+]
+```
+
+### Custom Configuration
+```python
+options = PeerOptions(
+    host="your-signaling-server.com",
+    port=443,
+    secure=True,
+    config=RTCConfiguration(
+        iceServers=[
+            RTCIceServer(urls="stun:stun.l.google.com:19302"),
+            RTCIceServer(
+                urls="turn:your-turn-server.com:3478",
+                username="user",
+                credential="pass"
+            )
+        ]
+    )
+)
+```
+
+## Error Handling
+
+### Connection Errors
+```python
+@connection.on(ConnectionEventType.Error)
+async def connection_error(error):
+    print(f"Connection error: {error}")
+    # Implement reconnection logic
+```
+
+### Request Errors
+Invalid requests return error responses:
+```json
+{
+  "success": false,
+  "error": "Invalid JSON in request"
+}
+```
+
+## Security Considerations
+
+- WebRTC connections are encrypted by default
+- Signaling server should use HTTPS/WSS in production
+- Consider implementing peer authentication
+- Use TURN servers for better connectivity in restrictive networks

@@ -10,5 +10,15 @@ from . import omniparser
 from . import gta1
 from . import composed_grounded
 from . import glm45v
+from . import opencua
 
-__all__ = ["anthropic", "openai", "uitars", "omniparser", "gta1", "composed_grounded", "glm45v"]
+__all__ = [
+    "anthropic", 
+    "openai", 
+    "uitars", 
+    "omniparser", 
+    "gta1", 
+    "composed_grounded", 
+    "glm45v", 
+    "opencua"
+]

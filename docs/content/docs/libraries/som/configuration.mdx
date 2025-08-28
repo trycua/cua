@@ -6,37 +6,14 @@ title: Configuration
 
 #### Box Threshold (0.3)
 Controls the confidence threshold for accepting detections:
-```
-High Threshold (0.3):     Low Threshold (0.01):
-+----------------+        +----------------+
-|                |        |  +--------+    |
-|   Confident    |        |  |Unsure?|    |
-|   Detection    |        |  +--------+    |
-|   (✓ Accept)   |        |  (? Reject)   |
-|                |        |                |
-+----------------+        +----------------+
-conf = 0.85             conf = 0.02
-```
+<img src="/docs/img/som_box_threshold.png" alt="Illustration of confidence thresholds in object detection, with a high-confidence detection accepted and a low-confidence detection rejected." width="500px" />
 - Higher values (0.3) yield more precise but fewer detections
 - Lower values (0.01) catch more potential icons but increase false positives
 - Default is 0.3 for optimal precision/recall balance
 
 #### IOU Threshold (0.1)
 Controls how overlapping detections are merged:
-```
-IOU = Intersection Area / Union Area
-
-Low Overlap (Keep Both):   High Overlap (Merge):
-+----------+              +----------+
-|     Box1 |              |  Box1   |
-|          |     vs.      |+-----+  |
-+----------+              ||Box2 |  |
-    +----------+          |+-----+  |
-    |   Box2   |          +----------+
-    |          |
-    +----------+
-IOU ≈ 0.05 (Keep Both)    IOU ≈ 0.7 (Merge)
-```
+<img src="/docs/img/som_iou_threshold.png" alt="Diagram showing Intersection over Union (IOU) with low overlap between two boxes kept separate and high overlap leading to merging." width="500px" />
 - Lower values (0.1) more aggressively remove overlapping boxes
 - Higher values (0.5) allow more overlapping detections
 - Default is 0.1 to handle densely packed UI elements

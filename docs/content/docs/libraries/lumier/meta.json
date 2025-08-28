@@ -1,0 +1,7 @@
+{
+	"pages": [
+		"installation",
+		"docker",
+		"docker-compose"
+	]
+}

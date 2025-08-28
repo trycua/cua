@@ -6,6 +6,20 @@ Callbacks in the Agent SDK provide hooks into the agent's lifecycle, allowing fo
 
 The callback lifecycle is described in [Agent Lifecycle](callbacks/agent-lifecycle).
 
+## Usage
+
+You can add preprocessing and postprocessing hooks using callbacks, or write your own by subclassing `AsyncCallbackHandler`:
+
+```python
+from agent.callbacks import ImageRetentionCallback, PIIAnonymizationCallback
+
+agent = ComputerAgent(
+    model="anthropic/claude-3-5-sonnet-20241022",
+    tools=[computer],
+    callbacks=[ImageRetentionCallback(only_n_most_recent_images=3)]
+)
+```
+
 ## Built-in Callbacks
 
 - [BudgetManagerCallback](callbacks/cost-saving): Stops execution when budget exceeded

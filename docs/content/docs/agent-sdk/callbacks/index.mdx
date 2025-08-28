@@ -4,11 +4,12 @@ title: Callbacks
 
 Callbacks in the Agent SDK provide hooks into the agent's lifecycle, allowing for custom functionality to be executed at various stages of an agent's run. They enable extensibility by allowing developers to integrate their own logic for tasks such as logging, cost management, and data anonymization.
 
-This section details the various callbacks available in the Agent SDK.
+The callback lifecycle is described in [Agent Lifecycle](callbacks/agent-lifecycle).
 
-## Available Callbacks
+## Built-in Callbacks
 
-- [Cost Saving](callbacks/cost-saving)
-- [Logging](callbacks/logging)
+- [BudgetManagerCallback](callbacks/cost-saving): Stops execution when budget exceeded
+- [LoggingCallback](callbacks/trajectories): Logs agent activities
+- **ImageRetentionCallback**: Limits recent images in context
+- **TrajectorySaverCallback**: Saves conversation trajectories
 - [PII Anonymization](callbacks/pii-anonymization)
-- [Trajectories](callbacks/trajectories)

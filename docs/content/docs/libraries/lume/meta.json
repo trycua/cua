@@ -1,7 +1,8 @@
 {
 	"pages": [
 		"installation",
-		"cli-reference", 
+		"prebuilt-images",
+		"cli-reference",
 		"http-api"
 	]
 }

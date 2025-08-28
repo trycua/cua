@@ -5,51 +5,6 @@ description: Command Line Interface reference for Lume
 
 import { Callout } from 'fumadocs-ui/components/callout';
 
-Lume is a lightweight Command Line Interface and local API server for creating, running and managing **macOS and Linux virtual machines** with near-native performance on Apple Silicon, using Apple's [Virtualization.Framework](https://developer.apple.com/documentation/virtualization).
-
-## Quick Start
-
-Install and run a prebuilt macOS VM in two commands:
-
-```bash
-# Install Lume
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/lume/scripts/install.sh)"
-# Pull & start a macOS image
-lume run macos-sequoia-vanilla:latest
-```
-
-<Callout title="Security Note">
-All prebuilt images use the default password `lume`. Change this immediately after your first login using the `passwd` command.
-</Callout>
-
-**System Requirements**:
-- Apple Silicon Mac (M1, M2, M3, etc.)
-- macOS 13.0 or later
-- At least 8GB of RAM (16GB recommended)
-- At least 50GB of free disk space
-
-## Install
-
-Install with a single command:
-
-```bash
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/lume/scripts/install.sh)"
-```
-
-By default, Lume is installed as a background service that starts automatically on login. If you prefer to start the Lume API service manually when needed, you can use the `--no-background-service` option:
-
-```bash
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/lume/scripts/install.sh) --no-background-service"
-```
-
-<Callout title="Note">
-With this option, you'll need to manually start the Lume API service by running `lume serve` in your terminal whenever you need to use tools or libraries that rely on the Lume API (such as the Computer-Use Agent).
-</Callout>
-
-You can also download the `lume.pkg.tar.gz` archive from the [latest release](https://github.com/trycua/cua/releases?q=lume&expanded=true), extract it, and install the package manually.
-
-## Using Lume
-
 Once installed, you can start using Lume with these common workflows:
 
 ### Run a Prebuilt VM

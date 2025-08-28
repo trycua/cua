@@ -1,0 +1,7 @@
+{
+	"pages": [
+		"installation",
+		"cli-reference", 
+		"http-api"
+	]
+}

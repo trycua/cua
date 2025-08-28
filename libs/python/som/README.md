@@ -75,93 +75,9 @@ for elem in result.elements:
         print(f"Text: '{elem.content}', confidence={elem.confidence:.3f}")
 ```
 
-## Configuration
+## Docs
 
-### Detection Parameters
-
-#### Box Threshold (0.3)
-Controls the confidence threshold for accepting detections:
-```
-High Threshold (0.3):     Low Threshold (0.01):
-+----------------+        +----------------+
-|                |        |  +--------+    |
-|   Confident    |        |  |Unsure?|    |
-|   Detection    |        |  +--------+    |
-|   (✓ Accept)   |        |  (? Reject)   |
-|                |        |                |
-+----------------+        +----------------+
-conf = 0.85             conf = 0.02
-```
-- Higher values (0.3) yield more precise but fewer detections
-- Lower values (0.01) catch more potential icons but increase false positives
-- Default is 0.3 for optimal precision/recall balance
-
-#### IOU Threshold (0.1)
-Controls how overlapping detections are merged:
-```
-IOU = Intersection Area / Union Area
-
-Low Overlap (Keep Both):   High Overlap (Merge):
-+----------+              +----------+
-|     Box1 |              |  Box1   |
-|          |     vs.      |+-----+  |
-+----------+              ||Box2 |  |
-    +----------+          |+-----+  |
-    |   Box2   |          +----------+
-    |          |
-    +----------+
-IOU ≈ 0.05 (Keep Both)    IOU ≈ 0.7 (Merge)
-```
-- Lower values (0.1) more aggressively remove overlapping boxes
-- Higher values (0.5) allow more overlapping detections
-- Default is 0.1 to handle densely packed UI elements
-
-### OCR Configuration
-
-- **Engine**: EasyOCR
-  - Primary choice for all platforms
-  - Fast initialization and processing
-  - Built-in English language support
-  - GPU acceleration when available
-
-- **Settings**:
-  - Timeout: 5 seconds
-  - Confidence threshold: 0.5
-  - Paragraph mode: Disabled
-  - Language: English only
-
-## Performance
-
-### Hardware Acceleration
-
-#### MPS (Metal Performance Shaders)
-- Multi-scale detection (640px, 1280px, 1920px)
-- Test-time augmentation enabled
-- Half-precision (FP16)
-- Average detection time: ~0.4s
-- Best for production use when available
-
-#### CPU
-- Single-scale detection (1280px)
-- Full-precision (FP32)
-- Average detection time: ~1.3s
-- Reliable fallback option
-
-### Example Output Structure
-
-```
-examples/output/
-├── {timestamp}_no_ocr/
-│   ├── annotated_images/
-│   │   └── screenshot_analyzed.png
-│   ├── screen_details.txt
-│   └── summary.json
-└── {timestamp}_ocr/
-    ├── annotated_images/
-    │   └── screenshot_analyzed.png
-    ├── screen_details.txt
-    └── summary.json
-```
+- [Configuration](http://localhost:8090/docs/libraries/som/configuration)
 
 ## Development
 

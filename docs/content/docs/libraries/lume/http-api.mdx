@@ -49,6 +49,126 @@ curl --connect-timeout 6000 \
   -X POST \
   -H "Content-Type: application/json" \
   -d '{
+    "name": "ssd",
+    "path": "/Volumes/SSD/lume/vms"
+  }' \
+  http://localhost:7777/lume/config/locations
+```
+
+  </Tab>
+  <Tab value="Python">
+
+```python
+import requests
+
+payload = {
+    "name": "ssd",
+    "path": "/Volumes/SSD/lume/vms"
+}
+r = requests.post("http://localhost:7777/lume/config/locations", json=payload, timeout=50)
+print(r.json())
+```
+
+  </Tab>
+  <Tab value="TypeScript">
+
+```typescript
+const payload = {
+  name: 'ssd',
+  path: '/Volumes/SSD/lume/vms',
+};
+const res = await fetch('http://localhost:7777/lume/config/locations', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify(payload),
+});
+console.log(await res.json());
+```
+
+  </Tab>
+</Tabs>
+
+### Remove VM Storage Location
+
+Remove a VM storage location.
+
+`DELETE: /lume/config/locations/:name`
+
+#### Example Request
+
+<Tabs groupId="language" persist items={['Curl', 'Python', 'TypeScript']}>
+  <Tab value="Curl">
+
+```bash
+curl --connect-timeout 6000 \
+  --max-time 5000 \
+  -X DELETE \
+  http://localhost:7777/lume/config/locations/ssd
+```
+
+  </Tab>
+  <Tab value="Python">
+
+```python
+import requests
+
+r = requests.delete("http://localhost:7777/lume/config/locations/ssd", timeout=50)
+print(r.status_code)
+```
+
+  </Tab>
+  <Tab value="TypeScript">
+
+```typescript
+const res = await fetch('http://localhost:7777/lume/config/locations/ssd', {
+  method: 'DELETE',
+});
+console.log(res.status);
+```
+
+  </Tab>
+</Tabs>
+
+### Set Default VM Storage Location
+
+Set a storage location as the default.
+
+`POST: /lume/config/locations/default/:name`
+
+#### Example Request
+
+<Tabs groupId="language" persist items={['Curl', 'Python', 'TypeScript']}>
+  <Tab value="Curl">
+
+```bash
+curl --connect-timeout 6000 \
+  --max-time 5000 \
+  -X POST \
+  http://localhost:7777/lume/config/locations/default/ssd
+```
+
+  </Tab>
+  <Tab value="Python">
+
+```python
+import requests
+
+r = requests.post("http://localhost:7777/lume/config/locations/default/ssd", timeout=50)
+print(r.json())
+```
+
+  </Tab>
+  <Tab value="TypeScript">
+
+```typescript
+const res = await fetch('http://localhost:7777/lume/config/locations/default/ssd', {
+  method: 'POST',
+});
+console.log(await res.json());
+```
+
+  </Tab>
+</Tabs>
     "name": "lume_vm",
     "os": "macOS",
     "cpu": 2,

@@ -3,6 +3,8 @@ title: Lume CLI Reference
 description: Command Line Interface reference for Lume
 ---
 
+import { Callout } from 'fumadocs-ui/components/callout';
+
 Lume is a lightweight Command Line Interface and local API server for creating, running and managing **macOS and Linux virtual machines** with near-native performance on Apple Silicon, using Apple's [Virtualization.Framework](https://developer.apple.com/documentation/virtualization).
 
 ## Quick Start
@@ -16,7 +18,9 @@ Install and run a prebuilt macOS VM in two commands:
 lume run macos-sequoia-vanilla:latest
 ```
 
-> **Security Note**: All prebuilt images use the default password `lume`. Change this immediately after your first login using the `passwd` command.
+<Callout title="Security Note">
+All prebuilt images use the default password `lume`. Change this immediately after your first login using the `passwd` command.
+</Callout>
 
 **System Requirements**:
 - Apple Silicon Mac (M1, M2, M3, etc.)
@@ -38,7 +42,9 @@ By default, Lume is installed as a background service that starts automatically 
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/lume/scripts/install.sh) --no-background-service"
 ```
 
-> **Note:** With this option, you'll need to manually start the Lume API service by running `lume serve` in your terminal whenever you need to use tools or libraries that rely on the Lume API (such as the Computer-Use Agent).
+<Callout title="Note">
+With this option, you'll need to manually start the Lume API service by running `lume serve` in your terminal whenever you need to use tools or libraries that rely on the Lume API (such as the Computer-Use Agent).
+</Callout>
 
 You can also download the `lume.pkg.tar.gz` archive from the [latest release](https://github.com/trycua/cua/releases?q=lume&expanded=true), extract it, and install the package manually.
 
@@ -56,7 +62,9 @@ lume run macos-sequoia-vanilla:latest
 lume run ubuntu-noble-vanilla:latest
 ```
 
-> We provide prebuilt VM images in our [ghcr registry](https://github.com/orgs/trycua/packages).
+<Callout>
+We provide prebuilt VM images in our [ghcr registry](https://github.com/orgs/trycua/packages).
+</Callout>
 
 ### Create a Custom VM
 
@@ -68,4 +76,6 @@ lume create my-macos-vm --cpu 4 --memory 8GB --disk-size 50GB
 lume create my-linux-vm --os linux --cpu 2 --memory 4GB
 ```
 
-> **Disk Space**: The actual disk space used by sparse images will be much lower than the logical size listed. You can resize VM disks after creation using `lume set <name> --disk-size <size>`.
+<Callout title="Disk Space">
+The actual disk space used by sparse images will be much lower than the logical size listed. You can resize VM disks after creation using `lume set <name> --disk-size <size>`.
+</Callout>

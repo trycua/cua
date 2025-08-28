@@ -21,18 +21,11 @@
 
 ## Prerequisites
 
-Before installing the MCP server, you'll need to set up full Computer-Use Agent capabilities. This includes:
+Cua MCP Server requires [lume](https://github.com/trycua/cua/blob/main/libs/lume/README.md#install) to be installed.
 
-1. Installing the Lume CLI
-2. Pulling the latest macOS CUA image
-3. Starting the Lume daemon service
-4. Installing the required Python libraries (Optional: only needed if you want to verify the agent is working before installing MCP server)
+## Install
 
-Make sure these steps are completed and working before proceeding with the MCP server installation.
-
-## Easy Setup Script
-
-If you want to simplify installation, you can use this one-liner to download and run the installation script:
+Download and run the installation script:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/python/mcp-server/scripts/install_mcp_server.sh | bash
@@ -54,9 +47,9 @@ You can then use the script in your MCP configuration like this:
 }
 ```
 
-## Development Guide
+## Development
 
-If you want to develop with the cua-mcp-server directly without installation, you can use this configuration:
+Use this configuration to develop with the cua-mcp-server directly without installation:
 
 ```json
 {

@@ -29,8 +29,8 @@ agent = ComputerAgent(
 ```python
 agent = ComputerAgent(
     model="anthropic/claude-3-5-sonnet-20241022",
-    tools=[computer],
-    trajectory_dir="trajectories"  # Auto-adds TrajectorySaverCallback
+    trajectory_dir="trajectories",  # Auto-save trajectories
+    tools=[computer]
 )
 ```
 
@@ -45,6 +45,12 @@ The viewer provides:
 - No data collection
 
 ## Trajectory Structure
+
+Trajectories are saved with:
+- Complete conversation history
+- Usage statistics and costs
+- Timestamps and metadata
+- Screenshots and computer actions
 
 Each trajectory contains:
 - **metadata.json**: Run info, timestamps, usage stats (`total_tokens`, `response_cost`)

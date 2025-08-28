@@ -28,19 +28,23 @@ agent = ComputerAgent(
 ## Budget Manager Shorthand
 
 ```python
+# Simple budget limit
 agent = ComputerAgent(
     model="anthropic/claude-3-5-sonnet-20241022",
-    tools=[computer],
-    max_trajectory_budget=5.0  # Auto-adds BudgetManagerCallback
+    max_trajectory_budget=5.0  # $5 limit
 )
 ```
 
 **Or with options:**
 ```python
+# Advanced budget configuration
 agent = ComputerAgent(
     model="anthropic/claude-3-5-sonnet-20241022",
-    tools=[computer],
-    max_trajectory_budget={"max_budget": 5.0, "raise_error": True}
+    max_trajectory_budget={
+        "max_budget": 10.0,
+        "raise_error": True,  # Raise error when exceeded
+        "reset_after_each_run": False  # Persistent across runs
+    }
 )
 ```
 

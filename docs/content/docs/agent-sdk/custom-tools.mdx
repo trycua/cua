@@ -1,11 +1,29 @@
 ---
-title: Sandboxed Tools
-slug: sandboxed-tools
+title: Custom Tools
+slug: custom-tools
 ---
 
 The Agent SDK supports defining custom Python tools that run securely in sandboxed environments on remote Cua Computers. This enables safe execution of user-defined functions, isolation of dependencies, and robust automation workflows.
 
-## Example: Defining a Sandboxed Tool
+## Custom Tools
+
+Define a custom tool for an agent:
+
+```python
+def calculate(a: int, b: int) -> int:
+    """Calculate the sum of two integers"""
+    return a + b
+
+# Use with agent
+agent = ComputerAgent(
+    model="anthropic/claude-3-5-sonnet-20241022",
+    tools=[computer, calculate]
+)
+```
+
+## Sandboxed Tools
+
+Define a sandboxed tool:
 
 ```python
 from computer.helpers import sandboxed

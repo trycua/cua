@@ -22,7 +22,7 @@ agent = ComputerAgent(
     tools=[computer]
 )
 
-prompt = "open github, navigate to trycua/cua"
+prompt = "Take a screenshot and tell me what you see"
 
 async for result in agent.run(prompt):
     if result["output"][-1]["type"] == "message":
@@ -30,6 +30,69 @@ async for result in agent.run(prompt):
 ```
 
 For a list of supported models and configurations, see the [Supported Agents](./supported-agents/computer-use-agents) page.
+
+### Response Format
+
+```python
+{
+    "output": [
+        {
+            "type": "message",
+            "role": "assistant",
+            "content": [{"type": "output_text", "text": "I can see..."}]
+        },
+        {
+            "type": "computer_call",
+            "action": {"type": "screenshot"},
+            "call_id": "call_123"
+        },
+        {
+            "type": "computer_call_output",
+            "call_id": "call_123",
+            "output": {"image_url": "data:image/png;base64,..."}
+        }
+    ],
+    "usage": {
+        "prompt_tokens": 150,
+        "completion_tokens": 75,
+        "total_tokens": 225,
+        "response_cost": 0.01,
+    }
+}
+```
+
+### Environment Variables
+
+Use the following environment variables to configure the agent and its access to cloud computers and LLM providers:
+
+```bash
+# Computer instance (cloud)
+export CUA_CONTAINER_NAME="your-container-name"
+export CUA_API_KEY="your-cua-api-key"
+
+# LLM API keys
+export ANTHROPIC_API_KEY="your-anthropic-key"
+export OPENAI_API_KEY="your-openai-key"
+```
+
+### Input and output
+
+The input prompt passed to `Agent.run` can either be a string or a list of message dictionaries:
+
+```python
+messages = [
+    {
+        "role": "user",
+        "content": "Take a screenshot and describe what you see"
+    },
+    {
+        "role": "assistant", 
+        "content": "I'll take a screenshot for you."
+    }
+]
+```
+
+The output is an AsyncGenerator that yields response chunks.
 
 ### Parameters
 
@@ -79,4 +142,30 @@ agent = ComputerAgent(
     use_prompt_caching=True,
     max_trajectory_budget={"max_budget": 5.0, "raise_error": True}
 )
+```
+
+### Streaming Responses
+
+```python
+async for result in agent.run(messages, stream=True):
+    # Process streaming chunks
+    for item in result["output"]:
+        if item["type"] == "message":
+            print(item["content"][0]["text"], end="", flush=True)
+        elif item["type"] == "computer_call":
+            action = item["action"]
+            print(f"\n[Action: {action['type']}]")
+```
+
+### Error Handling
+
+```python
+try:
+    async for result in agent.run(messages):
+        # Process results
+        pass
+except BudgetExceededException:
+    print("Budget limit exceeded")
+except Exception as e:
+    print(f"Agent error: {e}")
 ```

@@ -64,3 +64,10 @@ The `cua-computer` PyPi package pulls automatically the latest executable versio
 Refer to this notebook for a step-by-step guide on how to use the Computer-Use Interface (CUI):
 
 - [Computer-Use Interface (CUI)](https://github.com/trycua/cua/blob/main/notebooks/computer_nb.ipynb)
+
+## Docs
+
+- [Computers](https://trycua.com/docs/computer-sdk/computers)
+- [Commands](https://trycua.com/docs/computer-sdk/commands)
+- [Computer UI](https://trycua.com/docs/computer-sdk/computer-ui)
+- [Sandboxed Python](https://trycua.com/docs/computer-sdk/sandboxed-python)

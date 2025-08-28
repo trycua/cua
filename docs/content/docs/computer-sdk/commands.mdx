@@ -202,17 +202,17 @@ Direct file and directory manipulation:
   </Tab>
   <Tab value="TypeScript">
     ```typescript
-    // File existence checks
+    # File existence checks
     await computer.interface.fileExists(path);      // Check if file exists
     await computer.interface.directoryExists(path); // Check if directory exists
 
-    // File content operations
+    # File content operations
     await computer.interface.readText(path, "utf-8");        // Read file content
     await computer.interface.writeText(path, content, "utf-8"); // Write file content
     await computer.interface.readBytes(path);       // Read file content as bytes
     await computer.interface.writeBytes(path, content); // Write file content as bytes
 
-    // File and directory management
+    # File and directory management
     await computer.interface.deleteFile(path);      // Delete file
     await computer.interface.createDir(path);       // Create directory
     await computer.interface.deleteDir(path);       // Delete directory

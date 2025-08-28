@@ -243,3 +243,38 @@ Access system accessibility information:
 ```
 </Tab>
 </Tabs>
+
+## Delay Configuration
+
+Control timing between actions:
+
+<Tabs items={['Python']}>
+  <Tab value="Python">
+    ```python
+    # Set default delay between all actions (in seconds)
+    computer.interface.delay = 0.5  # 500ms delay between actions
+
+    # Or specify delay for individual actions
+    await computer.interface.left_click(x, y, delay=1.0)     # 1 second delay after click
+    await computer.interface.type_text("Hello", delay=0.2)   # 200ms delay after typing
+    await computer.interface.press_key("enter", delay=0.5)   # 500ms delay after key press
+    ```
+
+  </Tab>
+</Tabs>
+
+## Python Virtual Environment Operations
+
+Manage Python environments:
+
+<Tabs items={['Python']}>
+  <Tab value="Python">
+    ```python
+    # Virtual environment management
+    await computer.venv_install("demo_venv", ["requests", "macos-pyxa"]) # Install packages in a virtual environment
+    await computer.venv_cmd("demo_venv", "python -c 'import requests; print(requests.get(`https://httpbin.org/ip`).json())'') # Run a shell command in a virtual environment
+    await computer.venv_exec("demo_venv", python_function_or_code, *args, **kwargs) # Run a Python function in a virtual environment and return the result / raise an exception
+    ```
+
+  </Tab>
+</Tabs>

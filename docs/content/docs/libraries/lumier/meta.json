@@ -2,6 +2,7 @@
 	"pages": [
 		"installation",
 		"docker",
-		"docker-compose"
+		"docker-compose",
+		"building-lumier"
 	]
 }

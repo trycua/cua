@@ -155,7 +155,7 @@ class GTA1Config(AsyncAgentConfig):
         api_kwargs = {
             "model": model,
             "messages": [system_message, user_message],
-            "max_tokens": 32,
+            "max_tokens": 2056,
             "temperature": 0.0,
             **kwargs
         }

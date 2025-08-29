@@ -5,65 +5,22 @@ github:
   - https://github.com/trycua/cua/tree/main/libs/lumier
 ---
 
-## Overview
+**Lumier** is an interface for running macOS virtual machines with minimal setup. It uses Docker as a packaging system to deliver a pre-configured environment that connects to the `lume` virtualization service running on your host machine. With Lumier, you get:
 
-The Lumier library provides a Docker-based interface for creating performant macOS virtual machines.
+- A ready-to-use macOS or Linux virtual machine in minutes
+- Browser-based VNC access to your VM
+- Easy file sharing between your host and VM
+- Simple configuration through environment variables
 
-## Installation
+## How It Works
 
-**Requirements:**
-- Docker for Apple Silicon (or compatible Mac)
-- Lume virtualization CLI (install with: `/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/lume/scripts/install.sh)"`)
+<Callout title="Note">
+We're using Docker primarily as a convenient delivery mechanism, not as an isolation layer. Unlike traditional Docker containers, Lumier leverages the Apple Virtualization Framework (Apple Vz) through the `lume` CLI to create true virtual machines.
+</Callout>
 
-## Usage
+Here's what's happening behind the scenes:
 
-### Run a macOS VM (ephemeral)
-```bash
-docker run -it --rm \
-  --name macos-vm \
-  -p 8006:8006 \
-  -e VM_NAME=macos-vm \
-  -e VERSION=ghcr.io/trycua/macos-sequoia-cua:latest \
-  -e CPU_CORES=4 \
-  -e RAM_SIZE=8192 \
-  trycua/lumier:latest
-```
-Access the VM in your browser at [http://localhost:8006](http://localhost:8006).
-
-### Persistent Storage
-```bash
-mkdir -p storage
-
-docker run -it --rm \
-  --name lumier-vm \
-  -p 8006:8006 \
-  -v $(pwd)/storage:/storage \
-  -e VM_NAME=lumier-vm \
-  -e VERSION=ghcr.io/trycua/macos-sequoia-cua:latest \
-  -e CPU_CORES=4 \
-  -e RAM_SIZE=8192 \
-  -e HOST_STORAGE_PATH=$(pwd)/storage \
-  trycua/lumier:latest
-```
-
-### Shared Folder
-```bash
-mkdir -p shared
-
-docker run -it --rm \
-  --name lumier-vm \
-  -p 8006:8006 \
-  -v $(pwd)/storage:/storage \
-  -v $(pwd)/shared:/shared \
-  -e VM_NAME=lumier-vm \
-  -e VERSION=ghcr.io/trycua/macos-sequoia-cua:latest \
-  -e CPU_CORES=4 \
-  -e RAM_SIZE=8192 \
-  -e HOST_STORAGE_PATH=$(pwd)/storage \
-  -e HOST_SHARED_PATH=$(pwd)/shared \
-  trycua/lumier:latest
-```
-
----
-
-See the [Lumier README](https://github.com/trycua/cua/tree/main/libs/lumier) for advanced options, Docker Compose setup, and automation scripts.
+1. The Docker container provides a consistent environment to run the Lumier interface
+2. Lumier connects to the Lume service running on your host Mac
+3. Lume uses Apple's Virtualization Framework to create a true macOS virtual machine
+4. The VM runs with hardware acceleration using your Mac's native virtualization capabilities

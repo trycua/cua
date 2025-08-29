@@ -4,11 +4,11 @@
 	"pages": [
         "agent-loops",
         "supported-agents",
+		"supported-model-providers",
 		"chat-history",
 		"callbacks",
-        "sandboxed-tools",
+        "custom-tools",
 		"custom-computer-handlers",
-    	"local-models",
         "prompt-caching",
 		"usage-tracking",
 		"benchmarks",

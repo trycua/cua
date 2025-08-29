@@ -43,10 +43,3 @@ Called when responses are received from agent loop.
 
 ### 10. `on_run_end(kwargs, old_items, new_items)`
 Called when agent run completes. Finalize tracking, save trajectories.
-
-## Built-in Callbacks
-
-- **ImageRetentionCallback**: Limits recent images in context
-- **BudgetManagerCallback**: Stops execution when budget exceeded
-- **TrajectorySaverCallback**: Saves conversation trajectories
-- **LoggingCallback**: Logs agent activities

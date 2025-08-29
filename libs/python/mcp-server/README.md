@@ -17,59 +17,19 @@
 
 **cua-mcp-server** is a MCP server for the Computer-Use Agent (CUA), allowing you to run CUA through Claude Desktop or other MCP clients.
 
-## LiteLLM Integration
-
-This MCP server features comprehensive liteLLM integration, allowing you to use any supported LLM provider with a simple model string configuration.
-
-- **Unified Configuration**: Use a single `CUA_MODEL_NAME` environment variable with a model string
-- **Automatic Provider Detection**: The agent automatically detects the provider and capabilities from the model string
-- **Extensive Provider Support**: Works with Anthropic, OpenAI, local models, and any liteLLM-compatible provider
-
-### Model String Examples:
-- **Anthropic**: `"anthropic/claude-3-5-sonnet-20241022"`
-- **OpenAI**: `"openai/computer-use-preview"`
-- **UI-TARS**: `"huggingface-local/ByteDance-Seed/UI-TARS-1.5-7B"`
-- **Omni + Any LiteLLM**: `"omniparser+litellm/gpt-4o"`, `"omniparser+litellm/claude-3-haiku"`, `"omniparser+ollama_chat/gemma3"`
-
 ### Get started with Agent
 
 ## Prerequisites
 
-Before installing the MCP server, you'll need to set up full Computer-Use Agent capabilities. This includes:
+Cua MCP Server requires [lume](https://github.com/trycua/cua/blob/main/libs/lume/README.md#install) to be installed.
 
-1. Installing the Lume CLI
-2. Pulling the latest macOS CUA image
-3. Starting the Lume daemon service
-4. Installing the required Python libraries (Optional: only needed if you want to verify the agent is working before installing MCP server)
+## Install
 
-Make sure these steps are completed and working before proceeding with the MCP server installation.
-
-## Installation
-
-Install the package from PyPI:
-
-```bash
-pip install cua-mcp-server
-```
-
-This will install:
-- The MCP server
-- CUA agent and computer dependencies 
-- An executable `cua-mcp-server` script in your PATH
-
-## Easy Setup Script
-
-If you want to simplify installation, you can use this one-liner to download and run the installation script:
+Download and run the installation script:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/python/mcp-server/scripts/install_mcp_server.sh | bash
 ```
-
-This script will:
-- Create the ~/.cua directory if it doesn't exist
-- Generate a startup script at ~/.cua/start_mcp_server.sh
-- Make the script executable
-- The startup script automatically manages Python virtual environments and installs/updates the cua-mcp-server package
 
 You can then use the script in your MCP configuration like this:
 
@@ -87,9 +47,9 @@ You can then use the script in your MCP configuration like this:
 }
 ```
 
-## Development Guide
+## Development
 
-If you want to develop with the cua-mcp-server directly without installation, you can use this configuration:
+Use this configuration to develop with the cua-mcp-server directly without installation:
 
 ```json
 {
@@ -112,61 +72,11 @@ This configuration:
 
 Just add this to your MCP client's configuration and it will use your local development version of the server.
 
-### Troubleshooting
+## Docs
 
-If you get a `/bin/bash: ~/cua/libs/python/mcp-server/scripts/start_mcp_server.sh: No such file or directory` error, try changing the path to the script to be absolute instead of relative.
-
-To see the logs:
-```
-tail -n 20 -f ~/Library/Logs/Claude/mcp*.log
-```
-
-## Claude Desktop Integration
-
-To use with Claude Desktop, add an entry to your Claude Desktop configuration (`claude_desktop_config.json`, typically found in `~/.config/claude-desktop/`):
-
-For more information on MCP with Claude Desktop, see the [official MCP User Guide](https://modelcontextprotocol.io/quickstart/user).
-
-## Cursor Integration
-
-To use with Cursor, add an MCP configuration file in one of these locations:
-
-- **Project-specific**: Create `.cursor/mcp.json` in your project directory
-- **Global**: Create `~/.cursor/mcp.json` in your home directory
-
-After configuration, you can simply tell Cursor's Agent to perform computer tasks by explicitly mentioning the CUA agent, such as "Use the computer control tools to open Safari."
-
-For more information on MCP with Cursor, see the [official Cursor MCP documentation](https://docs.cursor.com/context/model-context-protocol).
-
-### First-time Usage Notes
-
-**API Keys**: Ensure you have valid API keys:
-   - Add your Anthropic API key, or other model provider API key in the Claude Desktop config (as shown above)
-   - Or set it as an environment variable in your shell profile
-
-## Configuration
-
-The server is configured using environment variables (can be set in the Claude Desktop config):
-
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `CUA_MODEL_NAME` | Model string (e.g., "anthropic/claude-3-5-sonnet-20241022", "openai/computer-use-preview", "huggingface-local/ByteDance-Seed/UI-TARS-1.5-7B", "omniparser+litellm/gpt-4o", "omniparser+ollama_chat/gemma3") | anthropic/claude-3-5-sonnet-20241022 |
-| `CUA_MAX_IMAGES` | Maximum number of images to keep in context | 3 |
-
-## Available Tools
-
-The MCP server exposes the following tools to Claude:
-
-1. `run_cua_task` - Run a single Computer-Use Agent task with the given instruction
-2. `run_multi_cua_tasks` - Run multiple tasks in sequence
-
-## Usage
-
-Once configured, you can simply ask Claude to perform computer tasks:
-
-- "Open Chrome and go to github.com"
-- "Create a folder called 'Projects' on my desktop"
-- "Find all PDFs in my Downloads folder"
-- "Take a screenshot and highlight the error message"
-
-Claude will automatically use your CUA agent to perform these tasks.
+- [Installation](https://trycua.com/docs/libraries/mcp-server/installation)
+- [Configuration](https://trycua.com/docs/libraries/mcp-server/configuration)
+- [Usage](https://trycua.com/docs/libraries/mcp-server/usage)
+- [Tools](https://trycua.com/docs/libraries/mcp-server/tools)
+- [Client Integrations](https://trycua.com/docs/libraries/mcp-server/client-integrations)
+- [LLM Integrations](https://trycua.com/docs/libraries/mcp-server/llm-integrations)

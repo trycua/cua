@@ -36,3 +36,10 @@ pip install cua-computer-server
 Refer to this notebook for a step-by-step guide on how to use the Computer-Use Server on the host system or VM:
 
 - [Computer-Use Server](../../notebooks/computer_server_nb.ipynb)
+
+## Docs
+
+- [Commands](https://trycua.com/docs/libraries/computer-server/Commands)
+- [REST-API](https://trycua.com/docs/libraries/computer-server/REST-API)
+- [WebSocket-API](https://trycua.com/docs/libraries/computer-server/WebSocket-API)
+- [Index](https://trycua.com/docs/libraries/computer-server/index)

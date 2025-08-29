@@ -10,6 +10,14 @@ Lume development requires:
 - macOS Sequoia 15.2 or higher
 - (Optional) VS Code with Swift extension
 
+If you're working on Lume in the context of the Cua monorepo, we recommend using the dedicated VS Code workspace configuration:
+
+```bash
+# Open VS Code workspace from the root of the monorepo
+code .vscode/lume.code-workspace
+```
+This workspace is preconfigured with Swift language support, build tasks, and debug configurations.
+
 ## Setting Up the Repository Locally
 
 1. **Fork the Repository**: Create your own fork of lume

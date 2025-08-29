@@ -1,4 +1,6 @@
-# FAQs
+---
+title: FAQ
+---
 
 ### Where are the VMs stored?
 

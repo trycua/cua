@@ -1,28 +1,35 @@
-# Cua Computer TypeScript Library
+<div align="center">
+<h1>
+  <div class="image-wrapper" style="display: inline-block;">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" alt="logo" height="150" srcset="https://raw.githubusercontent.com/trycua/cua/main/img/logo_white.png" style="display: block; margin: auto;">
+      <source media="(prefers-color-scheme: light)" alt="logo" height="150" srcset="https://raw.githubusercontent.com/trycua/cua/main/img/logo_black.png" style="display: block; margin: auto;">
+      <img alt="Shows my svg">
+    </picture>
+  </div>
 
-The TypeScript library for C/cua Computer - a powerful computer control and automation library.
+  [![TypeScript](https://img.shields.io/badge/TypeScript-333333?logo=typescript&logoColor=white&labelColor=333333)](#)
+  [![macOS](https://img.shields.io/badge/macOS-000000?logo=apple&logoColor=F0F0F0)](#)
+  [![Discord](https://img.shields.io/badge/Discord-%235865F2.svg?&logo=discord&logoColor=white)](https://discord.com/invite/mVnXXpdE85)
+  [![NPM](https://img.shields.io/npm/v/@trycua/computer?color=333333)](https://www.npmjs.com/package/@trycua/computer)
+</h1>
+</div>
 
-## Overview
+**@trycua/computer** is a Computer-Use Interface (CUI) framework powering Cua for interacting with local macOS and Linux sandboxes, Playwright-compatible, and pluggable with any AI agent systems (Cua, Langchain, CrewAI, AutoGen). Computer relies on [Lume](https://github.com/trycua/lume) for creating and managing sandbox environments.
 
-This library is a TypeScript port of the Python computer library, providing the same functionality for controlling virtual machines and computer interfaces. It enables programmatic control of virtual machines through various providers and offers a consistent interface for interacting with the VM's operating system.
+### Get started with Computer
 
-## Installation
-
-```bash
-npm install @trycua/computer
-# or
-pnpm add @trycua/computer
-```
-
-## Usage
+<div align="center">
+    <img src="https://raw.githubusercontent.com/trycua/cua/main/img/computer.png"/>
+</div>
 
 ```typescript
-import { Computer } from '@trycua/computer';
+import { Computer, OSType } from '@trycua/computer';
 
 // Create a new computer instance
 const computer = new Computer({
   osType: OSType.LINUX,
-  name: 's-linux-vm_id'
+  name: 's-linux-vm_id',
   apiKey: 'your-api-key'
 });
 
@@ -30,60 +37,47 @@ const computer = new Computer({
 await computer.run();
 
 // Get the computer interface for interaction
-const interface = computer.interface;
+const computerInterface = computer.interface;
 
 // Take a screenshot
-const screenshot = await interface.getScreenshot();
+const screenshot = await computerInterface.getScreenshot();
+// In a Node.js environment, you might save it like this:
+// import * as fs from 'fs';
+// fs.writeFileSync('screenshot.png', Buffer.from(screenshot));
 
 // Click at coordinates
-await interface.click(500, 300);
+await computerInterface.click(500, 300);
 
 // Type text
-await interface.typeText('Hello, world!');
+await computerInterface.typeText('Hello, world!');
 
 // Stop the computer
 await computer.stop();
 ```
 
-## Architecture
+## Install
 
-The library is organized into the following structure:
-
-### Core Components
-
-- **Computer Factory**: A factory object that creates appropriate computer instances
-- **BaseComputer**: Abstract base class with shared functionality for all computer types
-- **Types**: Type definitions for configuration options and shared interfaces
-
-### Provider Implementations
-
-- **Computer**: Implementation for cloud-based VMs
-
-## Development
-
-- Install dependencies:
+To install the Computer-Use Interface (CUI):
 
 ```bash
-pnpm install
+npm install @trycua/computer
+# or
+pnpm add @trycua/computer
 ```
 
-- Run the unit tests:
+The `@trycua/computer` package provides the TypeScript library for interacting with computer interfaces.
 
-```bash
-pnpm test
-```
+## Run
 
-- Build the library:
+Refer to this example for a step-by-step guide on how to use the Computer-Use Interface (CUI):
 
-```bash
-pnpm build
-```
+- [Computer-Use Interface (CUI)](https://github.com/trycua/cua/tree/main/examples/computer-example-ts)
 
-- Type checking:
+## Docs
 
-```bash
-pnpm typecheck
-```
+- [Computers](https://trycua.com/docs/computer-sdk/computers)
+- [Commands](https://trycua.com/docs/computer-sdk/commands)
+- [Computer UI](https://trycua.com/docs/computer-sdk/computer-ui)
 
 ## License
 

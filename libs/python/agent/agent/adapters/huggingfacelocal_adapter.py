@@ -15,54 +15,31 @@ try:
 except ImportError:
     HF_AVAILABLE = False
 
+from .models import load_model as load_model_handler
 
 class HuggingFaceLocalAdapter(CustomLLM):
     """HuggingFace Local Adapter for running vision-language models locally."""
     
-    def __init__(self, device: str = "auto", **kwargs):
+    def __init__(self, device: str = "auto", trust_remote_code: bool = False, **kwargs):
         """Initialize the adapter.
         
         Args:
             device: Device to load model on ("auto", "cuda", "cpu", etc.)
+            trust_remote_code: Whether to trust remote code
             **kwargs: Additional arguments
         """
         super().__init__()
         self.device = device
-        self.models = {}  # Cache for loaded models
-        self.processors = {}  # Cache for loaded processors
+        self.trust_remote_code = trust_remote_code
+        # Cache for model handlers keyed by model_name
+        self._handlers: Dict[str, Any] = {}
         self._executor = ThreadPoolExecutor(max_workers=1)  # Single thread pool
         
-    def _load_model_and_processor(self, model_name: str):
-        """Load model and processor if not already cached.
-        
-        Args:
-            model_name: Name of the model to load
-            
-        Returns:
-            Tuple of (model, processor)
-        """
-        if model_name not in self.models:
-            # Load model
-            model = AutoModelForImageTextToText.from_pretrained(
-                model_name,
-                torch_dtype=torch.float16,
-                device_map=self.device,
-                attn_implementation="sdpa"
-            )
-            
-            # Load processor
-            processor = AutoProcessor.from_pretrained(
-                model_name,
-                min_pixels=3136,
-                max_pixels=4096 * 2160,
-                device_map=self.device
-            )
-            
-            # Cache them
-            self.models[model_name] = model
-            self.processors[model_name] = processor
-            
-        return self.models[model_name], self.processors[model_name]
+    def _get_handler(self, model_name: str):
+        """Get or create a model handler for the given model name."""
+        if model_name not in self._handlers:
+            self._handlers[model_name] = load_model_handler(model_name=model_name, device=self.device, trust_remote_code=self.trust_remote_code)
+        return self._handlers[model_name]
     
     def _convert_messages(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Convert OpenAI format messages to HuggingFace format.
@@ -133,41 +110,13 @@ class HuggingFaceLocalAdapter(CustomLLM):
         if ignored_kwargs:
             warnings.warn(f"Ignoring unsupported kwargs: {ignored_kwargs}")
         
-        # Load model and processor
-        model, processor = self._load_model_and_processor(model_name)
-        
         # Convert messages to HuggingFace format
         hf_messages = self._convert_messages(messages)
         
-        # Apply chat template and tokenize
-        inputs = processor.apply_chat_template(
-            hf_messages,
-            add_generation_prompt=True,
-            tokenize=True,
-            return_dict=True,
-            return_tensors="pt"
-        )
-        
-        # Move inputs to the same device as model
-        inputs = inputs.to(model.device)
-        
-        # Generate response
-        with torch.no_grad():
-            generated_ids = model.generate(**inputs, max_new_tokens=max_new_tokens)
-            
-        # Trim input tokens from output
-        generated_ids_trimmed = [
-            out_ids[len(in_ids):] for in_ids, out_ids in zip(inputs.input_ids, generated_ids)
-        ]
-        
-        # Decode output
-        output_text = processor.batch_decode(
-            generated_ids_trimmed, 
-            skip_special_tokens=True, 
-            clean_up_tokenization_spaces=False
-        )
-        
-        return output_text[0] if output_text else ""
+        # Delegate to model handler
+        handler = self._get_handler(model_name)
+        generated_text = handler.generate(hf_messages, max_new_tokens=max_new_tokens)
+        return generated_text
     
     def completion(self, *args, **kwargs) -> ModelResponse:
         """Synchronous completion method.

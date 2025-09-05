@@ -331,6 +331,7 @@ Examples:
         agent_kwargs = {
             "model": args.model,
             "tools": [computer],
+            "trust_remote_code": True, # needed for some local models (e.g., InternVL, OpenCUA)
             "verbosity": 20 if args.verbose else 30,  # DEBUG vs WARNING
             "max_retries": args.max_retries
         }

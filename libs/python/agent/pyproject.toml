@@ -46,6 +46,13 @@ glm45v-hf = [
     "torch",
     "transformers-v4.55.0-GLM-4.5V-preview"
 ]
+opencua-hf = [
+    "accelerate",
+    "torch",
+    "transformers==4.53.0",
+    "tiktoken>=0.11.0",
+    "blobfile>=3.0.0"
+]
 ui = [
     "gradio>=5.23.3",
     "python-dotenv>=1.0.1",
@@ -62,6 +69,9 @@ all = [
     "accelerate",
     "torch",
     "transformers>=4.54.0",
+    # opencua requirements
+    "tiktoken>=0.11.0",
+    "blobfile>=3.0.0",
     # ui requirements
     "gradio>=5.23.3",
     "python-dotenv>=1.0.1",

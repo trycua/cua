@@ -844,7 +844,7 @@ Where x,y are coordinates normalized to 0-999 range."""
             api_kwargs = {
                 "model": model,
                 "messages": litellm_messages,
-                "max_tokens": 100,
+                "max_tokens": 2056,
                 "temperature": 0.001,
                 "extra_body": {
                     "skip_special_tokens": False,
@@ -856,6 +856,7 @@ Where x,y are coordinates normalized to 0-999 range."""
             
             # Extract response content
             response_content = response.choices[0].message.content.strip()
+            print(response)
             
             # Parse response for click coordinates
             # Look for coordinates in the response, handling special tokens
@@ -866,7 +867,7 @@ Where x,y are coordinates normalized to 0-999 range."""
                 # Fallback: look for coordinates without special tokens
                 coord_pattern = r"left_click\(start_box='?\[(\d+),(\d+)\]'?\)"
                 match = re.search(coord_pattern, response_content)
-            
+
             if match:
                 x, y = int(match.group(1)), int(match.group(2))
                 

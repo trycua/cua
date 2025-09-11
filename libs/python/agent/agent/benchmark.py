@@ -8,13 +8,13 @@ screenshot() and tracks clicks against the provided bounding box.
 
 Dataset default: "MMInstruction/OSWorld-G"
 Each row is expected to have keys:
-  - "instructions": str               # instruction text
+  - "instruction": str               # instruction text
   - "image": PIL.Image.Image          # screenshot image
   - "image_size": Tuple[int, int]     # (width, height)
   - "box_coordinates": Tuple[int,int,int,int]  # (x, y, w, h)
 
 The mock tool exposes methods: screenshot, click, get_dimensions, get_environment.
-We run agent.run(instructions) and consume up to 5 steps.
+We run agent.run(instruction) and consume up to 5 steps.
 We mark success if any click landed within the target bbox.
 """
 
@@ -116,7 +116,7 @@ async def run_offline_dataset(
             img = Image.fromarray(img)
         img_size: Tuple[int, int] = tuple(row["image_size"])  # (w, h)
         bbox_xywh: Tuple[int, int, int, int] = tuple(row["box_coordinates"])  # (x,y,w,h)
-        instruction: str = row["instructions"]
+        instruction: str = row["instruction"]
 
         row_ctx = RowContext(image=img, image_size=(int(img_size[0]), int(img_size[1])), bbox_xywh=(
             int(bbox_xywh[0]), int(bbox_xywh[1]), int(bbox_xywh[2]), int(bbox_xywh[3])

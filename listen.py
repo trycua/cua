@@ -5,7 +5,8 @@ import sounddevice as sd
 import numpy as np
 import websockets
 from hum import record_hum
-
+from midi import convert_to_midi
+import time
 API_KEY = "8461cb9f-7560-4c62-a120-7173b2696850"
 ASSISTANT_ID = "a6210139-4abf-4ed8-b1a5-0996953045b3"
 CALL_URL = "https://api.vapi.ai/call"
@@ -89,7 +90,7 @@ async def listen(ws):
                     and data.get("role") == "assistant"
                 ):
                     print("🔚 Assistant finished phrase, waiting 3s then closing...")
-                    await asyncio.sleep(3)
+                    
                     await ws.close(code=1000, reason="done")
                     return  # exit listen()
 
@@ -114,6 +115,7 @@ if __name__ == "__main__":
     asyncio.run(main())
 
     # After WS closes, start hum recording
-    print("🎶 Now recording hum...")
+
     record_hum("hum.wav")
+    convert_to_midi("hum.wav")
     print("✅ Hum recording saved as hum.wav")

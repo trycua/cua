@@ -1,9 +1,11 @@
 import sounddevice as sd
 import soundfile as sf
 import numpy as np
+import time
 def record_hum(output_file="hum.wav", samplerate=44100, channels=1, silence_thresh=0.01, min_silence_len=2):
+    time.sleep(3)
     print("🎤 Ready. Start humming...")
-
+    
     recording = []
     silence_counter = 0
     chunk_size = int(samplerate * 0.1)  # 100ms chunks

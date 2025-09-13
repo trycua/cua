@@ -5,7 +5,6 @@ import sounddevice as sd
 import numpy as np
 import websockets
 from hum import record_hum
-import re
 
 API_KEY = "8461cb9f-7560-4c62-a120-7173b2696850"
 ASSISTANT_ID = "a6210139-4abf-4ed8-b1a5-0996953045b3"
@@ -18,7 +17,11 @@ def create_ws_call():
         "assistantId": ASSISTANT_ID,
         "transport": {
             "provider": "vapi.websocket",
-            "audioFormat": {"format": "pcm_s16le", "container": "raw", "sampleRate": 16000},
+            "audioFormat": {
+                "format": "pcm_s16le",
+                "container": "raw",
+                "sampleRate": 16000,
+            },
         },
     }
     resp = requests.post(CALL_URL, headers=headers, json=payload)
@@ -77,31 +80,40 @@ async def listen(ws):
                     print(f"✅ Instrument: {instrument_name}")
                     with open("instrument.txt", "w") as f:
                         f.write(instrument_name)
-                    phrase_detected = True  # mark it
+                    phrase_detected = True
 
             elif data.get("type") == "speech-update":
-                # Assistant finished speaking after phrase
-                if phrase_detected and data.get("status") == "stopped" and data.get("role") == "assistant":
+                if (
+                    phrase_detected
+                    and data.get("status") == "stopped"
+                    and data.get("role") == "assistant"
+                ):
                     print("🔚 Assistant finished phrase, waiting 3s then closing...")
                     await asyncio.sleep(3)
                     await ws.close(code=1000, reason="done")
-                    raise asyncio.CancelledError
+                    return  # exit listen()
 
 
 async def main():
     ws_url = create_ws_call()
     queue = asyncio.Queue()
 
-    async with websockets.connect(ws_url) as ws:
-        await asyncio.gather(
-            audio_producer(queue),
-            audio_consumer(ws, queue),
-            listen(ws),
-            return_exceptions=True
-        )
+    try:
+        async with websockets.connect(ws_url) as ws:
+            await asyncio.gather(
+                audio_producer(queue),
+                audio_consumer(ws, queue),
+                listen(ws),
+            )
+    except Exception as e:
+        print("⚠️ Main loop ended:", e)
 
 
 if __name__ == "__main__":
-    
+    # Run websocket loop
     asyncio.run(main())
-    
+
+    # After WS closes, start hum recording
+    print("🎶 Now recording hum...")
+    record_hum("hum.wav")
+    print("✅ Hum recording saved as hum.wav")

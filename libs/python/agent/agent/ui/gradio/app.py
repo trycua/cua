@@ -32,7 +32,7 @@ from typing import cast
 # Import from agent package
 from agent import ComputerAgent
 from agent.types import Messages, AgentResponse
-from computer import Computer
+from agent.computer import Computer
 
 # Global variables
 global_agent = None

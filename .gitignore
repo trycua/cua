@@ -164,6 +164,7 @@ libs/python/omniparser/weights/icon_detect/model.pt
 # Example test data and output
 examples/test_data/
 examples/output/
+output/
 
 /screenshots/
 

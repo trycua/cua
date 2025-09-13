@@ -167,7 +167,7 @@ async def test_remote_decorator(computer):
         }
     
     # Call the decorated function
-    result = await get_package_version()
+    result = get_package_version()
     
     # Verify the function executed in the virtual environment
     assert "python_version" in result
@@ -189,7 +189,7 @@ async def test_remote_decorator_with_custom_computer(computer):
         }
     
     # Call the decorated function
-    result = await get_system_info()
+    result = get_system_info()
     
     # Verify the function executed in the virtual environment
     assert "python_version" in result

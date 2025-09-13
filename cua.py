@@ -24,26 +24,26 @@ async def computer_use_agent(midi_file='./hum_basic_pitch.mid', instrument='guit
     
     # Connect to the cloud computer environment
     async with Computer(
-        os_type="linux",                    # Using Linux environment
-        provider_type="cloud",              # Cloud-based computer
-        name="l-linux-x318jdeu72",         # Specific instance name
-        api_key=os.getenv('CUA_API_KEY')
-    ) as computer:
+        os_type="linux",
+        provider_type="docker",
+        image="trycua/cua-ubuntu:latest",
+        name="bandlabs-container"
+    ) as container:
         print("🖥️ Connected to cloud computer")
         
         # Start the computer interface
-        await computer.run()
+        await container.run()
         print("▶️ Computer interface started")
         
         # Upload the MIDI file to the remote computer
-        await computer.interface.write_bytes("~/Downloads/midi-file-name.midi", content)
+        await container.interface.write_bytes("~/Downloads/midi-file-name.midi", content)
         print("✅ MIDI file uploaded to ~/Downloads/midi-file-name.midi")
         midi_name = "midi-file-name.midi"
 
 
         agent = ComputerAgent(
             model="anthropic/claude-opus-4-20250514",
-            tools=[computer],
+            tools=[container],
             max_trajectory_budget=5.0
         )
         tasks = [f"""
@@ -74,7 +74,9 @@ Do the following step by step:
 5. In the search bar, type in the {instrument} name. Select the first clickable option in the list in the pop up. Click the "Instrument" button in the bottom left corner.
 
 
-6. Click the long white cursor and drag it to the beginning.
+6. Click the long white cursor and drag it to the beginning. 
+
+7. Click the play button at the top. It is a button with a triangle rotated to the side as an icon. It is the button, that when you hover, it shows text "Play (Left or Right)".
 
 Rules:
 - Always interact inside BandLab, not the browser’s URL bar.

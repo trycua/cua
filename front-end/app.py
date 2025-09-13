@@ -38,7 +38,7 @@ class MicUI(QtWidgets.QWidget):
         section_frame.setLayout(frame_layout)
 
         # ---- Status Label ----
-        self.status_label = QtWidgets.QLabel("Mic OFF / Paused")
+        self.status_label = QtWidgets.QLabel("OFF")
         self.status_label.setStyleSheet("color: #ffffff; font-size: 16px; font-weight: bold;")
         self.status_label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         frame_layout.addWidget(self.status_label)
@@ -109,7 +109,7 @@ class MicUI(QtWidgets.QWidget):
         self.play_pause_button.setIcon(QtGui.QIcon(icon))
 
     def update_status_label(self):
-        self.status_label.setText("Mic ON / Playing" if self.active else "Mic OFF / Paused")
+        self.status_label.setText("ON" if self.active else "OFF")
 
 
 if __name__ == "__main__":

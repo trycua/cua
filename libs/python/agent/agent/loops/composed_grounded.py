@@ -126,7 +126,7 @@ def get_last_computer_call_image(messages: List[Dict[str, Any]]) -> Optional[str
 
 
 @register_agent(r".*\+.*", priority=1)
-class ComposedGroundedConfig:
+class ComposedGroundedConfig(AsyncAgentConfig):
     """
     Composed-grounded agent configuration that uses both grounding and thinking models.
     

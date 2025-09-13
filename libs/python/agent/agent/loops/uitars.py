@@ -780,7 +780,7 @@ class UITARSConfig:
             api_kwargs = {
                 "model": model,
                 "messages": litellm_messages,
-                "max_tokens": 100,
+                "max_tokens": 2056,
                 "temperature": 0.0,
                 "do_sample": False
             }

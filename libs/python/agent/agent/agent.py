@@ -171,6 +171,7 @@ class ComputerAgent:
         use_prompt_caching: Optional[bool] = False,
         max_trajectory_budget: Optional[float | dict] = None,
         telemetry_enabled: Optional[bool] = True,
+        trust_remote_code: Optional[bool] = False,
         **kwargs
     ):
         """
@@ -190,6 +191,7 @@ class ComputerAgent:
             use_prompt_caching: If set, use prompt caching to avoid reprocessing the same prompt. Intended for use with anthropic providers.
             max_trajectory_budget: If set, adds BudgetManagerCallback to track usage costs and stop when budget is exceeded
             telemetry_enabled: If set, adds TelemetryCallback to track anonymized usage data. Enabled by default.
+            trust_remote_code: If set, trust remote code when loading local models. Disabled by default.
             **kwargs: Additional arguments passed to the agent loop
         """        
         # If the loop is "human/human", we need to prefix a grounding model fallback
@@ -209,6 +211,7 @@ class ComputerAgent:
         self.use_prompt_caching = use_prompt_caching
         self.telemetry_enabled = telemetry_enabled
         self.kwargs = kwargs
+        self.trust_remote_code = trust_remote_code
 
         # == Add built-in callbacks ==
 
@@ -252,7 +255,8 @@ class ComputerAgent:
 
         # Register local model providers
         hf_adapter = HuggingFaceLocalAdapter(
-            device="auto"
+            device="auto",
+            trust_remote_code=self.trust_remote_code or False
         )
         human_adapter = HumanAdapter()
         mlx_adapter = MLXVLMAdapter()

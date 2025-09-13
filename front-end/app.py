@@ -14,11 +14,8 @@ class MainWindow(QtWidgets.QWidget):
         layout = QtWidgets.QHBoxLayout()
         self.setLayout(layout)
 
-        # Left: MusicUI
-        layout.addWidget(MusicUI(), stretch=3)
-
         # Right: MicUI
-        layout.addWidget(MicUI(), stretch=2)
+        layout.addWidget(MicUI())
 
 
 if __name__ == "__main__":

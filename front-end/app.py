@@ -48,6 +48,8 @@ class WaveformWidget(QtWidgets.QWidget):
 class MicUI(QtWidgets.QWidget):
     def __init__(self):
         super().__init__()
+        # 🔹 Initialize active state
+        self.active = False   
         self.setWindowTitle("Microphone UI")
         self.resize(320, 550)
 
@@ -112,46 +114,43 @@ class MicUI(QtWidgets.QWidget):
         glow_effect.setColor(QColor(174, 29, 111, 200))
         section_frame.setGraphicsEffect(glow_effect)
 
+        # Use QVBoxLayout with spacers for fixed positioning
         frame_layout = QtWidgets.QVBoxLayout()
-        frame_layout.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        frame_layout.setAlignment(QtCore.Qt.AlignmentFlag.AlignTop)
         section_frame.setLayout(frame_layout)
 
         # ---- Status Label ----
         self.status_label = QtWidgets.QLabel("OFF")
-        self.status_label.setStyleSheet("""
-            QLabel {
-                font-size: 16px;
-                font-weight: bold;
-                color: #ffffff;
-                background: transparent;   /* no background */
-                border: none;              /* no border */
-            }
-        """)
         self.status_label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        self.status_label.setStyleSheet("""
+            margin-top: 40px;
+            font-size: 16px;
+            font-weight: bold;
+            color: #ffffff;
+            background: transparent;
+            border: none;
+        """)
         frame_layout.addWidget(self.status_label)
 
+        frame_layout.addSpacing(20)  # space between label and mic button
 
-        frame_layout.addSpacing(10)
-
-        # ---- Microphone button (toggle) ----
-        self.active = False
+        # ---- Microphone button ----
         self.mic_button = QtWidgets.QPushButton()
         self.mic_button.setFixedSize(100, 100)
         self.mic_button.setIcon(QtGui.QIcon("icon/mic.svg"))
         self.mic_button.setIconSize(QtCore.QSize(50, 50))
-        self.update_mic_style()
         self.mic_button.clicked.connect(self.toggle_active)
-
         frame_layout.addWidget(self.mic_button, alignment=QtCore.Qt.AlignmentFlag.AlignCenter)
-        frame_layout.addSpacing(20)
+
+        frame_layout.addSpacing(20)  # space between mic button and play/pause
+
 
         # ---- Play/Pause button ----
         self.play_pause_button = QtWidgets.QPushButton()
-        self.play_pause_button.setIcon(QtGui.QIcon("icon/play.svg"))
         self.play_pause_button.setFixedSize(50, 50)
-        self.play_pause_button.clicked.connect(self.toggle_active)
+        self.play_pause_button.setIcon(QtGui.QIcon("icon/play.svg"))
         self.play_pause_button.setIconSize(QtCore.QSize(30, 30))
-
+        self.play_pause_button.clicked.connect(self.toggle_active)
         self.play_pause_button.setStyleSheet("""
             QPushButton {
                 background-color: #3c2d40;
@@ -160,18 +159,18 @@ class MicUI(QtWidgets.QWidget):
                 background-color: #5e3b5e;
             }
         """)
-
         frame_layout.addWidget(self.play_pause_button, alignment=QtCore.Qt.AlignmentFlag.AlignCenter)
 
-        # === Waveform visualizer ===
-        self.waveform = WaveformWidget()
-        self.waveform.setSizePolicy(QtWidgets.QSizePolicy.Policy.Expanding,
-                            QtWidgets.QSizePolicy.Policy.Fixed)
-        self.waveform.setMinimumWidth(200)   # ensures it's bigger than default
-        self.waveform.setMinimumHeight(120)  # make it a bit taller too if you want
+        frame_layout.addSpacing(20)  # space between buttons and waveform
 
-        self.waveform.setVisible(False)   # 🔹 start hidden until mic is ON
+        # ---- Waveform (reserve space) ----
+        self.waveform = WaveformWidget()
+        self.waveform.setFixedHeight(120)   # reserve space, won't change layout
+        self.waveform.setVisible(False)     # start hidden
         frame_layout.addWidget(self.waveform)
+
+        # ---- Add spacer at the bottom to prevent other layout shifts ----
+        frame_layout.addStretch()
 
         main_layout.addWidget(section_frame)
         frame_layout.addSpacing(50)

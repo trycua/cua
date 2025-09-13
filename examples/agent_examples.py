@@ -42,10 +42,10 @@ async def run_agent_example():
             # Supported models:
             
             # == OpenAI CUA (computer-use-preview) ==
-            model="openai/computer-use-preview",
+            # model="openai/computer-use-preview",
 
             # == Anthropic CUA (Claude > 3.5) ==
-            # model="anthropic/claude-opus-4-20250514", 
+            model="anthropic/claude-opus-4-20250514", 
             # model="anthropic/claude-sonnet-4-20250514",
             # model="anthropic/claude-3-7-sonnet-20250219",
             # model="anthropic/claude-3-5-sonnet-20241022",

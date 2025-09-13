@@ -36,9 +36,9 @@ async def main():
             name="macos",
             verbosity=LogLevel.VERBOSE,
             provider_type=VMProviderType.LUME,
-            storage="/Users/<USER>/repos/trycua/computer/examples/storage",
+            storage=str(project_root / "examples" / "storage"),
             shared_directories=[
-                "/Users/<USER>/repos/trycua/computer/examples/shared"
+                str(project_root / "examples" / "shared")
             ],
             ephemeral=False,
         )

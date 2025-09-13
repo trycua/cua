@@ -11,7 +11,7 @@ ENV PYTHONUNBUFFERED=1 \
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     build-essential \
-    libgl1-mesa-glx \
+    libgl1-mesa-dev \
     libglib2.0-0 \
     libxcb-xinerama0 \
     libxkbcommon-x11-0 \

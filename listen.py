@@ -43,25 +43,32 @@ async def audio_producer(queue: asyncio.Queue):
 
 
 async def audio_consumer(ws, queue: asyncio.Queue):
-    """Send audio from queue to websocket"""
+    """Send mic audio from queue to websocket"""
     while True:
         chunk = await queue.get()
         await ws.send(chunk)
 
 
 async def listen(ws):
-    """Receive messages (transcripts, control messages, etc.)"""
-    async for message in ws:
-        try:
-            data = json.loads(message)
-        except Exception:
-            print("🔊 Binary/Non-JSON message received")
-            continue
+    """Play assistant audio + print transcripts"""
+    # speaker stream
+    with sd.OutputStream(samplerate=16000, channels=1, dtype="int16") as speaker:
+        async for message in ws:
+            if isinstance(message, (bytes, bytearray)):
+                # raw PCM from assistant → play it
+                audio = np.frombuffer(message, dtype=np.int16)
+                speaker.write(audio)
+            else:
+                try:
+                    data = json.loads(message)
+                except Exception:
+                    print("Non-JSON:", message)
+                    continue
 
-        if data.get("type") == "transcript":
-            print("📝 Transcript:", data.get("text"))
-        else:
-            print("📩 Message:", data)
+                if data.get("type") == "transcript":
+                    print("📝 Transcript:", data.get("text"))
+                else:
+                    print("📩 Message:", data)
 
 
 async def main():

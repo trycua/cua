@@ -4,6 +4,7 @@ OperatorValidatorCallback
 Ensures agent output actions conform to expected schemas by fixing common issues:
 - click: add default button='left' if missing
 - keypress: wrap keys string into a list
+- backfill missing x/y coordinates from prior messages
 - etc.
 
 This runs in on_llm_end, which receives the output array (AgentMessage[] as dicts).
@@ -11,13 +12,53 @@ The purpose is to avoid spending another LLM call to fix broken computer call sy
 """
 from __future__ import annotations
 
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional, Tuple
 
 from .base import AsyncCallbackHandler
 
 
 class OperatorNormalizerCallback(AsyncCallbackHandler):
     """Normalizes common computer call hallucinations / errors in computer call syntax."""
+
+    def __init__(self) -> None:
+        # Track last known cursor coordinates from prior computer actions
+        self._last_xy: Optional[Tuple[int, int]] = None
+
+    async def on_llm_start(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Capture the last seen (x, y) coordinates from the inbound message history.
+
+        We look for recent computer_call actions with explicit x/y (click/move/scroll/etc.)
+        or a drag path and store the most recent coordinates so they can be used as defaults
+        in on_llm_end if a new action requires x/y but omitted them.
+        """
+        # Walk messages from newest to oldest to find most recent coordinates
+        for item in reversed(messages or []):
+            try:
+                if not isinstance(item, dict):
+                    continue
+                if item.get("type") == "computer_call":
+                    action = item.get("action")
+                    if isinstance(action, dict):
+                        # Prefer explicit x/y if present
+                        if isinstance(action.get("x"), int) and isinstance(action.get("y"), int):
+                            self._last_xy = (action["x"], action["y"])
+                            break
+                        # Drag actions may include a path; use last point if available
+                        path = action.get("path")
+                        if isinstance(path, list) and path:
+                            last = path[-1]
+                            if (
+                                isinstance(last, (list, tuple))
+                                and len(last) == 2
+                                and all(isinstance(v, int) for v in last)
+                            ):
+                                self._last_xy = (int(last[0]), int(last[1]))
+                                break
+            except Exception:
+                # Never block the run if there's a malformed message
+                continue
+
+        return messages
 
     async def on_llm_end(self, output: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         # Mutate in-place as requested, but still return the list for chaining
@@ -71,6 +112,23 @@ class OperatorNormalizerCallback(AsyncCallbackHandler):
             if action_type == "scroll":
                 action["scroll_x"] = action.get("scroll_x", 0)
                 action["scroll_y"] = action.get("scroll_y", 0)
+            coord_required_types = {
+                "click",
+                "double_click",
+                "move",
+                "scroll",
+                "left_mouse_down",
+                "left_mouse_up",
+                "triple_click",
+            }
+            if action_type in coord_required_types:
+                # If an action type requires coordinates but they're missing, backfill with last known
+                if (action.get("x") is None or action.get("y") is None) and self._last_xy is not None:
+                    action.setdefault("x", int(self._last_xy[0]))
+                    action.setdefault("y", int(self._last_xy[1]))
+                # If the action has coordinates, update the last known coordinates
+                if "x" in action and "y" in action:
+                    self._last_xy = (action["x"], action["y"])
             # ensure keys arg is a list (normalize aliases first)
             if action_type == "keypress":
                 keys = action.get("keys")
@@ -100,7 +158,7 @@ class OperatorNormalizerCallback(AsyncCallbackHandler):
             keep = required_keys_by_type.get(action_type or "")
             if keep:
                 _keep_keys(action, keep)
-            
+
 
         # # Second pass: if an assistant message is immediately followed by a computer_call,
         # # replace the assistant message itself with a reasoning message with summary text.

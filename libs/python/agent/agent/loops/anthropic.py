@@ -643,7 +643,39 @@ def _convert_responses_items_to_completion_messages(messages: Messages) -> List[
     
     return completion_messages
 
-def _convert_completion_to_responses_items(response: Any) -> List[Dict[str, Any]]:
+def _get_last_coordinates(messages: Messages) -> Tuple[Optional[int], Optional[int]]:
+    """Scan prior messages (responses_items format) for the most recent x/y.
+
+    Looks at computer_call actions for explicit x/y, or drag path last point.
+    Returns (x, y) or (None, None) if none found.
+    """
+    if not isinstance(messages, list):
+        return (None, None)
+    for m in reversed(messages):
+        try:
+            if not isinstance(m, dict):
+                continue
+            if m.get("type") == "computer_call":
+                action = m.get("action")
+                if isinstance(action, dict):
+                    x = action.get("x")
+                    y = action.get("y")
+                    if isinstance(x, int) and isinstance(y, int):
+                        return (x, y)
+                    path = action.get("path")
+                    if isinstance(path, list) and path:
+                        last = path[-1]
+                        if (
+                            isinstance(last, dict)
+                            and isinstance(last.get("x"), int)
+                            and isinstance(last.get("y"), int)
+                        ):
+                            return (int(last["x"]), int(last["y"]))
+        except Exception:
+            continue
+    return (None, None)
+
+def _convert_completion_to_responses_items(response: Any, last_xy: Tuple[Optional[int], Optional[int]] = (None, None)) -> List[Dict[str, Any]]:
     """Convert liteLLM completion response to responses_items message format."""
     responses_items = []
     
@@ -676,10 +708,10 @@ def _convert_completion_to_responses_items(response: Any) -> List[Dict[str, Any]
                             if action_type == "screenshot":
                                 responses_items.append(make_screenshot_item(call_id=call_id))
                             elif action_type in ["click", "left_click"]:
-                                coordinate = tool_input.get("coordinate", [0, 0])
+                                coordinate = tool_input.get("coordinate", [None, None])
                                 responses_items.append(make_click_item(
-                                    x=coordinate[0] if len(coordinate) > 0 else 0,
-                                    y=coordinate[1] if len(coordinate) > 1 else 0,
+                                    x=(coordinate[0] if len(coordinate) > 0 and coordinate[0] is not None else (last_xy[0] or 0)),
+                                    y=(coordinate[1] if len(coordinate) > 1 and coordinate[1] is not None else (last_xy[1] or 0)),
                                     call_id=call_id
                                 ))
                             elif action_type in ["type", "type_text"]:
@@ -694,67 +726,67 @@ def _convert_completion_to_responses_items(response: Any) -> List[Dict[str, Any]
                                 ))
                             elif action_type in ["mouse_move", "move_cursor", "move"]:
                                 # Mouse move - create a custom action item
-                                coordinate = tool_input.get("coordinate", [0, 0])
+                                coordinate = tool_input.get("coordinate", [None, None])
                                 responses_items.append(
                                     make_move_item(
-                                        x=coordinate[0] if len(coordinate) > 0 else 0,
-                                        y=coordinate[1] if len(coordinate) > 1 else 0,
+                                        x=(coordinate[0] if len(coordinate) > 0 and coordinate[0] is not None else (last_xy[0] or 0)),
+                                        y=(coordinate[1] if len(coordinate) > 1 and coordinate[1] is not None else (last_xy[1] or 0)),
                                         call_id=call_id
                                     )
                                 )
                             
                             # Enhanced actions (computer_20250124) Available in Claude 4 and Claude Sonnet 3.7
                             elif action_type == "scroll":
-                                coordinate = tool_input.get("coordinate", [0, 0])
+                                coordinate = tool_input.get("coordinate", [None, None])
                                 scroll_amount = tool_input.get("scroll_amount", 3)
                                 scroll_x = scroll_amount if tool_input.get("scroll_direction", "down") == "right" else \
                                     -scroll_amount if tool_input.get("scroll_direction", "down") == "left" else 0
                                 scroll_y = scroll_amount if tool_input.get("scroll_direction", "down") == "down" else \
                                     -scroll_amount if tool_input.get("scroll_direction", "down") == "up" else 0
                                 responses_items.append(make_scroll_item(
-                                    x=coordinate[0] if len(coordinate) > 0 else 0,
-                                    y=coordinate[1] if len(coordinate) > 1 else 0,
+                                    x=(coordinate[0] if len(coordinate) > 0 and coordinate[0] is not None else (last_xy[0] or 0)),
+                                    y=(coordinate[1] if len(coordinate) > 1 and coordinate[1] is not None else (last_xy[1] or 0)),
                                     scroll_x=scroll_x,
                                     scroll_y=scroll_y,
                                     call_id=call_id
                                 ))
                             elif action_type in ["left_click_drag", "drag"]:
-                                start_coord = tool_input.get("start_coordinate", [0, 0])
-                                end_coord = tool_input.get("end_coordinate", [0, 0])
+                                start_coord = tool_input.get("start_coordinate", [None, None])
+                                end_coord = tool_input.get("end_coordinate", [None, None])
                                 responses_items.append(make_drag_item(
                                     path=[
                                         {
-                                            "x": start_coord[0] if len(start_coord) > 0 else 0,
-                                            "y": start_coord[1] if len(start_coord) > 1 else 0
+                                            "x": (start_coord[0] if len(start_coord) > 0 and start_coord[0] is not None else (last_xy[0] or 0)),
+                                            "y": (start_coord[1] if len(start_coord) > 1 and start_coord[1] is not None else (last_xy[1] or 0))
                                         },
                                         {
-                                            "x": end_coord[0] if len(end_coord) > 0 else 0,
-                                            "y": end_coord[1] if len(end_coord) > 1 else 0
+                                            "x": (end_coord[0] if len(end_coord) > 0 and end_coord[0] is not None else (last_xy[0] or 0)),
+                                            "y": (end_coord[1] if len(end_coord) > 1 and end_coord[1] is not None else (last_xy[1] or 0))
                                         }
                                     ],
                                     call_id=call_id
                                 ))
                             elif action_type == "right_click":
-                                coordinate = tool_input.get("coordinate", [0, 0])
+                                coordinate = tool_input.get("coordinate", [None, None])
                                 responses_items.append(make_click_item(
-                                    x=coordinate[0] if len(coordinate) > 0 else 0,
-                                    y=coordinate[1] if len(coordinate) > 1 else 0,
+                                    x=(coordinate[0] if len(coordinate) > 0 and coordinate[0] is not None else (last_xy[0] or 0)),
+                                    y=(coordinate[1] if len(coordinate) > 1 and coordinate[1] is not None else (last_xy[1] or 0)),
                                     button="right",
                                     call_id=call_id
                                 ))
                             elif action_type == "middle_click":
-                                coordinate = tool_input.get("coordinate", [0, 0])
+                                coordinate = tool_input.get("coordinate", [None, None])
                                 responses_items.append(make_click_item(
-                                    x=coordinate[0] if len(coordinate) > 0 else 0,
-                                    y=coordinate[1] if len(coordinate) > 1 else 0,
+                                    x=(coordinate[0] if len(coordinate) > 0 and coordinate[0] is not None else (last_xy[0] or 0)),
+                                    y=(coordinate[1] if len(coordinate) > 1 and coordinate[1] is not None else (last_xy[1] or 0)),
                                     button="wheel",
                                     call_id=call_id
                                 ))
                             elif action_type == "double_click":
-                                coordinate = tool_input.get("coordinate", [0, 0])
+                                coordinate = tool_input.get("coordinate", [None, None])
                                 responses_items.append(make_double_click_item(
-                                    x=coordinate[0] if len(coordinate) > 0 else 0,
-                                    y=coordinate[1] if len(coordinate) > 1 else 0,
+                                    x=(coordinate[0] if len(coordinate) > 0 and coordinate[0] is not None else (last_xy[0] or 0)),
+                                    y=(coordinate[1] if len(coordinate) > 1 and coordinate[1] is not None else (last_xy[1] or 0)),
                                     call_id=call_id
                                 ))
                             elif action_type == "triple_click":
@@ -888,10 +920,10 @@ def _convert_completion_to_responses_items(response: Any) -> List[Dict[str, Any]
                             #         "y": 200
                             #     }
                             # }
-                            coordinate = args.get("coordinate", [0, 0])
+                            coordinate = args.get("coordinate", [None, None])
                             responses_items.append(make_click_item(
-                                x=coordinate[0] if len(coordinate) > 0 else 0,
-                                y=coordinate[1] if len(coordinate) > 1 else 0,
+                                x=(coordinate[0] if len(coordinate) > 0 and coordinate[0] is not None else (last_xy[0] or 0)),
+                                y=(coordinate[1] if len(coordinate) > 1 and coordinate[1] is not None else (last_xy[1] or 0)),
                                 call_id=call_id
                             ))
                         elif action_type in ["type", "type_text"]:
@@ -972,13 +1004,12 @@ def _convert_completion_to_responses_items(response: Any) -> List[Dict[str, Any]
                             #         "y": 250
                             #     }
                             # }
-                            coordinate = args.get("coordinate", [0, 0])
+                            coordinate = args.get("coordinate", [None, None])
                             responses_items.append(make_move_item(
-                                x=coordinate[0] if len(coordinate) > 0 else 0,
-                                y=coordinate[1] if len(coordinate) > 1 else 0,
+                                x=(coordinate[0] if len(coordinate) > 0 and coordinate[0] is not None else (last_xy[0] or 0)),
+                                y=(coordinate[1] if len(coordinate) > 1 and coordinate[1] is not None else (last_xy[1] or 0)),
                                 call_id=call_id
                             ))
-                        
                         # Enhanced actions (computer_20250124) Available in Claude 4 and Claude Sonnet 3.7
                         elif action_type == "scroll":
                             # Input:
@@ -1008,7 +1039,7 @@ def _convert_completion_to_responses_items(response: Any) -> List[Dict[str, Any]
                             #         "scroll_y": -5
                             #     }
                             # }
-                            coordinate = args.get("coordinate", [0, 0])
+                            coordinate = args.get("coordinate", [None, None])
                             direction = args.get("scroll_direction", "down")
                             amount = args.get("scroll_amount", 3)
                             scroll_x = amount if direction == "left" else \
@@ -1016,8 +1047,8 @@ def _convert_completion_to_responses_items(response: Any) -> List[Dict[str, Any]
                             scroll_y = amount if direction == "up" else \
                                     -amount if direction == "down" else 0
                             responses_items.append(make_scroll_item(
-                                x=coordinate[0] if len(coordinate) > 0 else 0,
-                                y=coordinate[1] if len(coordinate) > 1 else 0,
+                                x=(coordinate[0] if len(coordinate) > 0 and coordinate[0] is not None else (last_xy[0] or 0)),
+                                y=(coordinate[1] if len(coordinate) > 1 and coordinate[1] is not None else (last_xy[1] or 0)),
                                 scroll_x=scroll_x,
                                 scroll_y=scroll_y,
                                 call_id=call_id
@@ -1049,17 +1080,17 @@ def _convert_completion_to_responses_items(response: Any) -> List[Dict[str, Any]
                             #         ]
                             #     }
                             # }
-                            start_coord = args.get("start_coordinate", [0, 0])
-                            end_coord = args.get("end_coordinate", [0, 0])
+                            start_coord = args.get("start_coordinate", [None, None])
+                            end_coord = args.get("end_coordinate", [None, None])
                             responses_items.append(make_drag_item(
                                 path=[
                                     {
-                                        "x": start_coord[0] if len(start_coord) > 0 else 0,
-                                        "y": start_coord[1] if len(start_coord) > 1 else 0
+                                        "x": (start_coord[0] if len(start_coord) > 0 and start_coord[0] is not None else (last_xy[0] or 0)),
+                                        "y": (start_coord[1] if len(start_coord) > 1 and start_coord[1] is not None else (last_xy[1] or 0))
                                     },
                                     {
-                                        "x": end_coord[0] if len(end_coord) > 0 else 0,
-                                        "y": end_coord[1] if len(end_coord) > 1 else 0
+                                        "x": (end_coord[0] if len(end_coord) > 0 and end_coord[0] is not None else (last_xy[0] or 0)),
+                                        "y": (end_coord[1] if len(end_coord) > 1 and end_coord[1] is not None else (last_xy[1] or 0))
                                     }
                                 ],
                                 call_id=call_id
@@ -1089,10 +1120,10 @@ def _convert_completion_to_responses_items(response: Any) -> List[Dict[str, Any]
                             #         "button": "right"
                             #     }
                             # }
-                            coordinate = args.get("coordinate", [0, 0])
+                            coordinate = args.get("coordinate", [None, None])
                             responses_items.append(make_click_item(
-                                x=coordinate[0] if len(coordinate) > 0 else 0,
-                                y=coordinate[1] if len(coordinate) > 1 else 0,
+                                x=(coordinate[0] if len(coordinate) > 0 and coordinate[0] is not None else (last_xy[0] or 0)),
+                                y=(coordinate[1] if len(coordinate) > 1 and coordinate[1] is not None else (last_xy[1] or 0)),
                                 button="right",
                                 call_id=call_id
                             ))
@@ -1121,10 +1152,10 @@ def _convert_completion_to_responses_items(response: Any) -> List[Dict[str, Any]
                             #         "button": "wheel"
                             #     }
                             # }
-                            coordinate = args.get("coordinate", [0, 0])
+                            coordinate = args.get("coordinate", [None, None])
                             responses_items.append(make_click_item(
-                                x=coordinate[0] if len(coordinate) > 0 else 0,
-                                y=coordinate[1] if len(coordinate) > 1 else 0,
+                                x=(coordinate[0] if len(coordinate) > 0 and coordinate[0] is not None else (last_xy[0] or 0)),
+                                y=(coordinate[1] if len(coordinate) > 1 and coordinate[1] is not None else (last_xy[1] or 0)),
                                 button="wheel",
                                 call_id=call_id
                             ))
@@ -1152,10 +1183,10 @@ def _convert_completion_to_responses_items(response: Any) -> List[Dict[str, Any]
                             #         "y": 240
                             #     }
                             # }
-                            coordinate = args.get("coordinate", [0, 0])
+                            coordinate = args.get("coordinate", [None, None])
                             responses_items.append(make_double_click_item(
-                                x=coordinate[0] if len(coordinate) > 0 else 0,
-                                y=coordinate[1] if len(coordinate) > 1 else 0,
+                                x=(coordinate[0] if len(coordinate) > 0 and coordinate[0] is not None else (last_xy[0] or 0)),
+                                y=(coordinate[1] if len(coordinate) > 1 and coordinate[1] is not None else (last_xy[1] or 0)),
                                 call_id=call_id
                             ))
                         elif action_type == "triple_click":
@@ -1413,6 +1444,8 @@ class AnthropicHostedToolsConfig(AsyncAgentConfig):
         Supports Anthropic's computer use models with hosted tools.
         """
         tools = tools or []
+        # Extract last known coordinates from prior messages to backfill missing x/y
+        last_xy = _get_last_coordinates(messages)
         
         # Get tool configuration for this model
         tool_config = _get_tool_config_for_model(model)
@@ -1455,8 +1488,8 @@ class AnthropicHostedToolsConfig(AsyncAgentConfig):
         if _on_api_end:
             await _on_api_end(api_kwargs, response)
         
-        # Convert response to responses_items format
-        responses_items = _convert_completion_to_responses_items(response)
+        # Convert response to responses_items format using last_xy as fallback for coordinates
+        responses_items = _convert_completion_to_responses_items(response, last_xy=last_xy)
 
         # Extract usage information
         responses_usage = { 

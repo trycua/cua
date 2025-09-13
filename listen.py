@@ -4,6 +4,8 @@ import requests
 import sounddevice as sd
 import numpy as np
 import websockets
+from hum import record_hum
+import re
 
 API_KEY = "8461cb9f-7560-4c62-a120-7173b2696850"
 ASSISTANT_ID = "a6210139-4abf-4ed8-b1a5-0996953045b3"
@@ -50,25 +52,40 @@ async def audio_consumer(ws, queue: asyncio.Queue):
 
 
 async def listen(ws):
-    """Play assistant audio + print transcripts"""
-    # speaker stream
+    buffer = ""
+    phrase_detected = False
+    instrument_name = None
+
     with sd.OutputStream(samplerate=16000, channels=1, dtype="int16") as speaker:
         async for message in ws:
             if isinstance(message, (bytes, bytearray)):
-                # raw PCM from assistant → play it
                 audio = np.frombuffer(message, dtype=np.int16)
                 speaker.write(audio)
-            else:
-                try:
-                    data = json.loads(message)
-                except Exception:
-                    print("Non-JSON:", message)
-                    continue
+                continue
 
-                if data.get("type") == "transcript":
-                    print("📝 Transcript:", data.get("text"))
-                else:
-                    print("📩 Message:", data)
+            try:
+                data = json.loads(message)
+            except Exception:
+                continue
+
+            if data.get("type") == "model-output":
+                buffer += data.get("output", "")
+                print("🧩 Buffer:", buffer)
+
+                if not phrase_detected and "detected, please hum in 5 seconds" in buffer:
+                    instrument_name = buffer.split(" detected")[0].strip().split()[-1]
+                    print(f"✅ Instrument: {instrument_name}")
+                    with open("instrument.txt", "w") as f:
+                        f.write(instrument_name)
+                    phrase_detected = True  # mark it
+
+            elif data.get("type") == "speech-update":
+                # Assistant finished speaking after phrase
+                if phrase_detected and data.get("status") == "stopped" and data.get("role") == "assistant":
+                    print("🔚 Assistant finished phrase, waiting 3s then closing...")
+                    await asyncio.sleep(3)
+                    await ws.close(code=1000, reason="done")
+                    raise asyncio.CancelledError
 
 
 async def main():
@@ -80,11 +97,11 @@ async def main():
             audio_producer(queue),
             audio_consumer(ws, queue),
             listen(ws),
+            return_exceptions=True
         )
 
 
 if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        print("👋 Stopped by user")
+    
+    asyncio.run(main())
+    

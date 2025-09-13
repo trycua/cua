@@ -26,7 +26,7 @@ async def computer_use_agent(midi_file='./hum_basic_pitch.mid', instrument='pian
         os_type="linux",                    # Using Linux environment
         provider_type="cloud",              # Cloud-based computer
         name="l-linux-x318jdeu72",         # Specific instance name
-        api_key="sk_cua-api01_36f300ae69521b32bc04505961205c3f1ca6900773344e019e93da12b5be62d0"
+        api_key=""
     ) as computer:
         print("🖥️ Connected to cloud computer")
         

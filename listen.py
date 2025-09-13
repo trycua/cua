@@ -110,12 +110,38 @@ async def main():
         print("⚠️ Main loop ended:", e)
 
 
-if __name__ == "__main__":
+async def full_pipeline():
+    """Complete pipeline: voice assistant -> hum recording -> MIDI -> CUA"""
     # Run websocket loop
-    asyncio.run(main())
+    await main()
 
     # After WS closes, start hum recording
+    
+    # Get the instrument from the file (set by Vapi assistant)
+    instrument = "piano"  # default fallback
+    try:
+        with open("instrument.txt", "r") as f:
+            instrument = f.read().strip()
+            print(f"🎵 Detected instrument: {instrument}")
+    except FileNotFoundError:
+        print("⚠️ No instrument.txt found, using default: piano")
+    
+    # Create timestamped WAV filename
+    timestamp = int(time.time())
+    wav_file = f"hum_{timestamp}.wav"
+    
+    # Record hum and process based on instrument (hum.py handles the routing)
+    midi_file = record_hum(wav_file, instrument=instrument)
+    
+    if midi_file:
+        print(f"✅ MIDI file created: {midi_file}")
+        
+        # Send to CUA for DAW processing
+        print("🚀 Sending to CUA for DAW processing...")
+        from cua import run_cua
+        await run_cua(midi_file, instrument)
+    else:
+        print("❌ Failed to create MIDI file")
 
-    record_hum("hum.wav")
-    convert_to_midi("hum.wav")
-    print("✅ Hum recording saved as hum.wav")
+if __name__ == "__main__":
+    asyncio.run(full_pipeline())

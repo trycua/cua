@@ -194,7 +194,7 @@ class ProductScraper:
         
         return products
     
-    def search_all_sites(self, query: str, max_results_per_site: int = 5) -> List[Dict]:
+    def search_all_sites(self, query: str, max_results_per_site: int = 10) -> List[Dict]:
         """Search all supported e-commerce sites"""
         all_products = []
         

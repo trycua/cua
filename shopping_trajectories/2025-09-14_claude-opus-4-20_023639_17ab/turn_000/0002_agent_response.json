@@ -1,0 +1,57 @@
+{
+  "timestamp": "139771246036125280",
+  "model": "claude-opus-4-20250514",
+  "kwargs": {
+    "messages": [
+      {
+        "role": "user",
+        "content": "\nURGENT: Search for \"tents under 100\" on Google Shopping as FAST as possible.\n\nINSTRUCTIONS:\n1. Take ONE screenshot\n2. If search box visible: clear it, type \"tents under 100\", press Enter\n3. If not on Google Shopping: go to shopping.google.com, then search\n4. Wait 2 seconds for results\n5. STOP - do not scroll or click anything else\n\nBE FAST. NO EXTRA ACTIONS. NO SCROLLING. NO CLICKING PRODUCTS.\n"
+      }
+    ],
+    "model": "claude-opus-4-20250514",
+    "tools": [
+      {
+        "type": "computer",
+        "computer": "<computer:Computer>"
+      }
+    ],
+    "stream": false,
+    "computer_handler": "<computer:cuaComputerHandler>",
+    "max_retries": 3,
+    "use_prompt_caching": false
+  },
+  "response": {
+    "output": [
+      {
+        "id": "2050d58c-73c5-41b1-b249-933055dcc684",
+        "content": [
+          {
+            "text": "I'll help you search for \"tents under 100\" on Google Shopping as quickly as possible. Let me start by taking a screenshot to see the current state of the screen.",
+            "type": "output_text",
+            "annotations": []
+          }
+        ],
+        "role": "assistant",
+        "status": "completed",
+        "type": "message"
+      },
+      {
+        "id": "38014a94-9662-492d-85df-0cb604f55d60",
+        "call_id": "toolu_01Dt2ns6FYBdwQb9SWPoAtLY",
+        "action": {
+          "type": "screenshot"
+        },
+        "pending_safety_checks": [],
+        "status": "completed",
+        "type": "computer_call"
+      }
+    ],
+    "usage": {
+      "input_tokens": 1767,
+      "output_tokens": 89,
+      "total_tokens": 1856,
+      "response_cost": 0.03318
+    }
+  },
+  "created_at": "139771246036125910"
+}

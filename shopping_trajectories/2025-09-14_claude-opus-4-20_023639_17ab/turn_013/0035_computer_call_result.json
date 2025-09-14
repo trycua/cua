@@ -1,0 +1,24 @@
+{
+  "item": {
+    "id": "0010e5fd-8b89-4df8-a660-8f3c5f175d58",
+    "call_id": "toolu_01T1qnFEABsuhiHnX7Uo31S3",
+    "action": {
+      "type": "wait"
+    },
+    "pending_safety_checks": [],
+    "status": "completed",
+    "type": "computer_call"
+  },
+  "result": [
+    {
+      "type": "computer_call_output",
+      "call_id": "toolu_01T1qnFEABsuhiHnX7Uo31S3",
+      "acknowledged_safety_checks": [],
+      "output": {
+        "type": "input_image",
+        "image_url": "[omitted]"
+      }
+    }
+  ],
+  "created_at": "139771246473441880"
+}

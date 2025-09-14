@@ -84,7 +84,7 @@ def start_api():
         # Import Flask and create app here
         from flask import Flask, request, jsonify
         from robust_scraper import ProductScraper
-        from shopping_api import clean_and_process_data, insert_products_to_dynamodb, get_recent_searches, search_products_by_category
+        from shopping_api import clean_and_process_data, insert_products_to_dynamodb
         
         app = Flask(__name__)
         scraper = ProductScraper()
@@ -98,13 +98,20 @@ def start_api():
             try:
                 data = request.get_json()
                 query = data.get('query', '')
-                if not query:
-                    return jsonify({'error': 'Query required'}), 400
                 
-                # Use existing scraper
-                products = scraper.search_all_sites(query)
-                processed = clean_and_process_data(products)
-                saved_count = insert_products_to_dynamodb(processed)
+                if not query:
+                    return jsonify({'error': 'Query parameter is required'}), 400
+                
+                # Search products
+                products = scraper.search_all_sites(query, max_results_per_site=5)
+                
+                # Clean and process data
+                processed_products = clean_and_process_data(products)
+                
+                # Save to DynamoDB if available
+                saved_count = 0
+                if processed_products:
+                    saved_count = insert_products_to_dynamodb(processed_products)
                 
                 return jsonify({
                     'query': query,
@@ -112,26 +119,36 @@ def start_api():
                     'products_saved': saved_count,
                     'products': products
                 })
+                
             except Exception as e:
-                return jsonify({'error': str(e)}), 500
+                print(f"❌ Search error: {e}")
+                return jsonify({'error': 'Internal server error'}), 500
+        
+        @app.route('/evaluate', methods=['POST'])
+        def evaluate_products():
+            """Use Cohere AI to select the best products from DynamoDB using chooseData function"""
+            try:
+                from simple_choose_data import choose_best_k_ai
+                
+                # Run the original chooseData function (without Spark)
+                result = choose_best_k_ai()
+                
+                return jsonify(result)
+                
+            except Exception as e:
+                print(f"❌ Cohere evaluation error: {e}")
+                return jsonify({
+                    'error': 'Cohere evaluation failed',
+                    'details': str(e)
+                }), 500
         
         @app.route('/search_history', methods=['GET'])
         def search_history():
-            try:
-                limit = request.args.get('limit', 10, type=int)
-                history = get_recent_searches(limit)
-                return jsonify({'history': history})
-            except Exception as e:
-                return jsonify({'error': str(e)}), 500
+            return jsonify({'message': 'Search history endpoint - functionality removed'})
         
-        @app.route('/search_by_category/<category>', methods=['GET'])
-        def search_by_category(category):
-            try:
-                limit = request.args.get('limit', 20, type=int)
-                products = search_products_by_category(category, limit)
-                return jsonify({'category': category, 'products': products})
-            except Exception as e:
-                return jsonify({'error': str(e)}), 500
+        @app.route('/search_by_category', methods=['GET'])
+        def search_by_category():
+            return jsonify({'message': 'Category search endpoint - functionality removed'})
         
         app.run(debug=True, host='0.0.0.0', port=5001)
     except Exception as e:

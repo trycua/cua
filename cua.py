@@ -12,7 +12,7 @@ computer = Computer(
 asyncio.run(computer.run()) # Launch & connect to Docker container
 
 agent = ComputerAgent(
-    model="anthropic/claude-3-5-sonnet-20241022",
+    model="claude-sonnet-4-20250514",
     tools=[computer],
     max_trajectory_budget=5.0
 )

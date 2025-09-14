@@ -210,152 +210,34 @@ class RobustProductScraper:
         return products
     
     def search_walmart(self, query: str, max_results: int = 10) -> List[Dict]:
-        """Search Walmart with fallback to mock data"""
-        try:
-            self.update_headers()
-            # Add Walmart-specific headers
-            self.session.headers.update({
-                'Referer': 'https://www.walmart.com/',
-                'sec-ch-ua': '"Not_A Brand";v="8", "Chromium";v="120"'
-            })
-            
-            search_url = f"https://www.walmart.com/search?q={quote_plus(query)}"
-            time.sleep(random.uniform(1, 2))
-            
-            response = self.session.get(search_url, timeout=15)
-            
-            if response.status_code != 200:
-                print(f"❌ Walmart blocked request")
-                return []
-            
-            soup = BeautifulSoup(response.content, 'html.parser')
-            
-            # Try to scrape real Walmart data
-            product_containers = soup.find_all('div', {'data-automation-id': 'product-title'})
-            
-            if not product_containers:
-                print("❌ No Walmart products found")
-                return []
-            
-            products = []
-            for container in product_containers[:max_results]:
-                try:
-                    product_card = container.find_parent('div', class_='mb1')
-                    if not product_card:
-                        continue
-                    
-                    name_elem = container.find('span')
-                    name = name_elem.get_text(strip=True) if name_elem else "Unknown Product"
-                    
-                    price_elem = product_card.find('span', text=re.compile(r'\$\d+'))
-                    price = price_elem.get_text(strip=True) if price_elem else "Price not available"
-                    
-                    product = {
-                        'site_name': 'walmart',
-                        'product_name': name,
-                        'price': price,
-                        'rating': 'No rating',
-                        'product_url': search_url,
-                        'description': name,
-                        'category': 'general',
-                        'availability': 'Available',
-                        'review_count': 'Unknown',
-                        'image_url': ''
-                    }
-                    
-                    products.append(product)
-                    
-                except Exception as e:
-                    print(f"⚠️ Error parsing Walmart product: {e}")
-                    continue
-            
-            print(f"✅ Found {len(products)} real products on Walmart")
-            return products
-            
-        except Exception as e:
-            print(f"❌ Walmart search error: {e}")
-            return []
+        """Search Walmart - currently blocked by anti-bot protection"""
+        print("⚠️ Walmart has strong anti-bot protection (307 redirects to CAPTCHA)")
+        print("   Skipping Walmart search to avoid blocking")
+        return []
     
     def search_ebay(self, query: str, max_results: int = 10) -> List[Dict]:
-        """Search eBay with fallback to mock data"""
-        try:
-            self.update_headers()
-            search_url = f"https://www.ebay.com/sch/i.html?_nkw={quote_plus(query)}"
-            time.sleep(random.uniform(1, 2))
-            
-            response = self.session.get(search_url, timeout=15)
-            
-            if response.status_code != 200:
-                print(f"❌ eBay blocked request")
-                return []
-            
-            soup = BeautifulSoup(response.content, 'html.parser')
-            product_containers = soup.find_all('div', class_='s-item__wrapper')
-            
-            if not product_containers:
-                print("❌ No eBay products found")
-                return []
-            
-            products = []
-            for container in product_containers[:max_results]:
-                try:
-                    name_elem = container.find('span', role='heading')
-                    name = name_elem.get_text(strip=True) if name_elem else "Unknown Product"
-                    
-                    price_elem = container.find('span', class_='s-item__price')
-                    price = price_elem.get_text(strip=True) if price_elem else "Price not available"
-                    
-                    link_elem = container.find('a', class_='s-item__link')
-                    url = link_elem['href'] if link_elem and link_elem.get('href') else ""
-                    
-                    img_elem = container.find('img')
-                    image_url = img_elem.get('src') if img_elem else ""
-                    
-                    product = {
-                        'site_name': 'ebay',
-                        'product_name': name,
-                        'price': price,
-                        'rating': 'No rating',
-                        'product_url': url,
-                        'description': name,
-                        'category': 'general',
-                        'availability': 'Available',
-                        'review_count': 'Unknown',
-                        'image_url': image_url
-                    }
-                    
-                    products.append(product)
-                    
-                except Exception as e:
-                    print(f"⚠️ Error parsing eBay product: {e}")
-                    continue
-            
-            print(f"✅ Found {len(products)} real products on eBay")
-            return products
-            
-        except Exception as e:
-            print(f"❌ eBay search error: {e}")
-            return []
+        """Search eBay - currently has anti-bot protection"""
+        print("⚠️ eBay has anti-bot protection that blocks automated requests")
+        print("   Skipping eBay search to avoid blocking")
+        return []
     
     def search_all_sites(self, query: str, max_results_per_site: int = 5) -> List[Dict]:
-        """Search all supported e-commerce sites with robust fallbacks"""
+        """Search supported e-commerce sites (currently only Amazon works reliably)"""
         all_products = []
         
-        print(f"🔍 Searching for '{query}' across multiple sites...")
+        print(f"🔍 Searching for '{query}' across e-commerce sites...")
         
-        # Search Amazon (most likely to work)
-        amazon_products = self.search_amazon(query, max_results_per_site)
+        # Search Amazon (most reliable)
+        print("🛒 Searching Amazon...")
+        amazon_products = self.search_amazon(query, max_results_per_site * 2)  # Get more from Amazon since it's the only working site
         all_products.extend(amazon_products)
+        time.sleep(1)  # Rate limiting
         
-        # Search Walmart
-        walmart_products = self.search_walmart(query, max_results_per_site)
-        all_products.extend(walmart_products)
+        # Skip Walmart and eBay due to anti-bot protection
+        print("⚠️ Skipping Walmart and eBay due to anti-bot protection")
+        print("   These sites require browser automation or proxy rotation to bypass")
         
-        # Search eBay
-        ebay_products = self.search_ebay(query, max_results_per_site)
-        all_products.extend(ebay_products)
-        
-        print(f"🎯 Total products found: {len(all_products)}")
+        print(f"🎯 Total products found: {len(all_products)} (Amazon only)")
         return all_products
 
 # Maintain compatibility with existing API

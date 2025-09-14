@@ -1,6 +1,0 @@
-model,predict_step,predict_point
-anthropic,✅,✅
-openai,✅,✅
-uitars,✅,✅
-omniparser,❌,✅
-gta1,❌,✅

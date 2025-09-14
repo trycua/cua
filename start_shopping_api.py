@@ -74,7 +74,7 @@ def setup_dynamodb():
     """Setup DynamoDB tables if needed"""
     try:
         print("🔧 Setting up DynamoDB tables...")
-        from data_pipeline.dynamodb.dynamo_setup import create_dynamodb_table
+        # from data_pipeline.dynamodb.dynamo_setup import create_dynamodb_table
         # create_dynamodb_table("")
         print("✅ DynamoDB tables ready")
         return True
@@ -84,11 +84,15 @@ def setup_dynamodb():
         return False
     
 def clear_unstructured_products():
-    dynamodb: Any = boto3.client('dynamodb', region_name=os.getenv('AWS_REGION', 'ca-central-1'))
-    dynamodb.delete_table(TableName='shopping_products_unstructured')
+    dynamodb = boto3.resource('dynamodb', region_name=os.getenv('AWS_REGION', 'ca-central-1'))
+    table = dynamodb.Table('shopping_products_unstructured')
+    data = table.scan().get('Items', [])
 
-    from data_pipeline.dynamodb.dynamo_setup import create_dynamodb_table
-    create_dynamodb_table('shopping_products_unstructured')
+    with table.batch_writer() as batch:
+        for item in data:
+            batch.delete_item(
+                Key={k: item[k] for k in table.key_schema[0:len(table.key_schema)]}
+            )
 
 
 def start_api():

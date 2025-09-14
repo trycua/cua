@@ -74,8 +74,8 @@ def setup_dynamodb():
     """Setup DynamoDB tables if needed"""
     try:
         print("🔧 Setting up DynamoDB tables...")
-        from data_pipeline.dynamodb.dynamo_setup import create_dynamodb_tables
-        create_dynamodb_tables()
+        from data_pipeline.dynamodb.dynamo_setup import create_dynamodb_table
+        # create_dynamodb_table("")
         print("✅ DynamoDB tables ready")
         return True
     except Exception as e:
@@ -84,11 +84,11 @@ def setup_dynamodb():
         return False
     
 def clear_unstructured_products():
-    dynamodb: Any = boto3.resource('dynamodb', region_name=os.getenv('AWS_REGION', 'ca-central-1'))
+    dynamodb: Any = boto3.client('dynamodb', region_name=os.getenv('AWS_REGION', 'ca-central-1'))
     dynamodb.delete_table(TableName='shopping_products_unstructured')
 
-    from data_pipeline.dynamodb.dynamo_setup import create_dynamodb_tables
-    create_dynamodb_tables("shopping_products_unstructured")
+    from data_pipeline.dynamodb.dynamo_setup import create_dynamodb_table
+    create_dynamodb_table('shopping_products_unstructured')
 
 
 def start_api():

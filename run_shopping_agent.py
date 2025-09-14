@@ -14,6 +14,7 @@ from shopping_api import clean_and_process_data, insert_products_to_dynamodb, DY
 sys.path.append("./data-pipeline/dynamodb")
 
 from structureData import structure_data
+from chooseData import choose_best_items
 
 def run_shopping_agent(prompt: str, max_results: int = 15):
     """
@@ -200,7 +201,6 @@ def main():
     else:
         prompt = sys.argv[1]
         run_shopping_agent(prompt)
-        structure_data()    # Replace the agent's response with structured data in the DB
 
 
 if __name__ == "__main__":

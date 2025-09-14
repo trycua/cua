@@ -77,4 +77,5 @@ def structure_data():
                 Item=item
             )
 
-structure_data()
+if __name__ == "__main__":
+    structure_data()

@@ -23,7 +23,7 @@ session = boto3.Session(
 dynamodb: Any = session.resource('dynamodb')
 table = dynamodb.Table("shopping_products")
 
-def choose_best_k_ai():
+def choose_best_items():
     items = []
     for item in table.scan()["Items"]:
         items.append(item)
@@ -78,4 +78,5 @@ def choose_best_k_ai():
 
     # TODO: Use FastAPI to send result back to frontend
 
-choose_best_k_ai()
+if __name__ == "__main__":
+    choose_best_items()

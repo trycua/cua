@@ -21,57 +21,60 @@ session = boto3.Session(
     region_name=region
 )
 dynamodb: Any = session.resource('dynamodb')
-
 table = dynamodb.Table("shopping_products")
 
-items = []
-for item in table.scan()["Items"]:
-    items.append(item)
+def choose_best_k_ai():
+    items = []
+    for item in table.scan()["Items"]:
+        items.append(item)
 
-# Clean data
-itemsForAi = copy.deepcopy([x for x in items if x["availability_status"] == "in_stock" or x["availability_status"] == "unknown"])
-for item in itemsForAi:
-    for key in list(item.keys()):
-        if key not in ["category", "current_price", "description", "price_range", "product_name", "quality_score", "rating", "review_count", "site_name"]:
-            del item[key]
+    # Clean data
+    itemsForAi = copy.deepcopy([x for x in items if x["availability_status"] == "in_stock" or x["availability_status"] == "unknown"])
+    for item in itemsForAi:
+        for key in list(item.keys()):
+            if key not in ["category", "current_price", "description", "price_range", "product_name", "quality_score", "rating", "review_count", "site_name"]:
+                del item[key]
 
-system_prompt = """You are a shopping advisor. You will be given a list of products in JSON array format. 
-Each product has a category, current_price, description, price_range, product_name, quality_score, 
-rating, review_count, and site_name. Your task is to help the user find the best product based on
-affordability, quality, reviews, and reputation. You will do this by returning the index of the best product
-in the JSON array.
+    system_prompt = """You are a shopping advisor. You will be given a list of products in JSON array format. 
+    Each product has a category, current_price, description, price_range, product_name, quality_score, 
+    rating, review_count, and site_name. Your task is to help the user find the best product based on
+    affordability, quality, reviews, and reputation. You will do this by returning the index of the best product
+    in the JSON array.
 
-CRITICAL INSTRUCTIONS:
-1. ONLY return the INDEX of the best product in the JSON array. Do not provide explanations, commentary, or any other product details.
-2. Generally, the priority should be quality > reviews > affordability > reputation, but use your best judgement."""
+    CRITICAL INSTRUCTIONS:
+    1. ONLY return the INDEX of the best product in the JSON array. Do not provide explanations, commentary, or any other product details.
+    2. Generally, the priority should be quality > reviews > affordability > reputation, but use your best judgement."""
 
-print("Item choices given to AI:")
-print(itemsForAi)
-print()
+    print("Item choices given to AI:")
+    print(itemsForAi)
+    print()
 
-co = cohere.ClientV2(cohere_key)
-response = co.chat(
-    model="command-a-03-2025",
-    messages=[
-    {
-        "role": "system", 
-        "content": system_prompt
-    },
-    {
-        "role": "user",
-        "content": str(itemsForAi)
-    }] # type: ignore
-)
+    co = cohere.ClientV2(cohere_key)
+    response = co.chat(
+        model="command-a-03-2025",
+        messages=[
+        {
+            "role": "system", 
+            "content": system_prompt
+        },
+        {
+            "role": "user",
+            "content": str(itemsForAi)
+        }] # type: ignore
+    )
 
-# Extract the LLM's response
-# TODO: Add error handling for non-integer responses
-text_response = response.message.content[0].text.strip() # type: ignore
-selected_index = int(text_response)
-print("Cohere responded with:", selected_index)
-print("This corresponds to the product:", items[selected_index])
+    # Extract the LLM's response
+    # TODO: Add error handling for non-integer responses
+    text_response = response.message.content[0].text.strip() # type: ignore
+    selected_index = int(text_response)
+    print("Cohere responded with:", selected_index)
+    print("This corresponds to the product:", items[selected_index])
 
-result_table = dynamodb.Table("selected_products_result")
-# result_table.clear() TODO
-result_table.put_item(
-    Item=items[selected_index]
-)
+    result_table = dynamodb.Table("selected_products_result")
+    result_table.put_item(
+        Item=items[selected_index]
+    )
+
+    # TODO: Use FastAPI to send result back to frontend
+
+choose_best_k_ai()

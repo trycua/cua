@@ -29,7 +29,8 @@ def choose_best_k_ai():
         items.append(item)
 
     # Clean data
-    itemsForAi = copy.deepcopy([x for x in items if x["availability_status"] == "in_stock" or x["availability_status"] == "unknown"])
+    # itemsForAi = copy.deepcopy([x for x in items if x["availability_status"] == "in_stock" or x["availability_status"] == "unknown"])
+    itemsForAi = copy.deepcopy(items)
     for item in itemsForAi:
         for key in list(item.keys()):
             if key not in ["category", "current_price", "description", "price_range", "product_name", "quality_score", "rating", "review_count", "site_name"]:

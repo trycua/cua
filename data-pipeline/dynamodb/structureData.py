@@ -62,7 +62,7 @@ def structure_data():
                             "review_count": {"type": ["number", "null"]},
                             "site_name": {"type": "string"}
                         },
-                        "required": ["current_price, description, product_name, rating"]
+                        "required": ["current_price, product_name, rating"]
                     }
                 }
             } # type: ignore

@@ -11,7 +11,7 @@ load_dotenv()
 
 aws_key = os.getenv("AMAZON_API_KEY")
 aws_secret= os.getenv("AMAZON_SECRET_KEY")
-region = os.getenv("AWS_REGION", "ca-central-1")
+region = os.getenv("AWS_REGION", "us-east-1")
 cohere_key = os.getenv("COHERE_API_KEY")
 
 # spark = SparkSession.builder.appName("ShoppingAgent").getOrCreate()
@@ -21,7 +21,7 @@ session = boto3.Session(
     region_name=region
 )
 dynamodb: Any = session.resource('dynamodb')
-table = dynamodb.Table("shopping_products")
+table = dynamodb.Table("shopping_products_unstructured")
 
 def choose_k_best_items(k: int = 1):
     items = []

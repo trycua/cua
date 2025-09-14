@@ -50,9 +50,14 @@ class ProductScraper:
                     rating_elem = container.find('span', class_='a-icon-alt')
                     rating = rating_elem.get_text(strip=True) if rating_elem else "No rating"
                     
-                    # URL
-                    link_elem = container.find('h2').find('a') if container.find('h2') else None
-                    url = f"https://www.amazon.com{link_elem['href']}" if link_elem and link_elem.get('href') else ""
+                    # URL - simplified to amazon.ca
+                    url = "https://amazon.ca"
+                    
+                    # Image URL
+                    img_elem = container.find('img', class_='s-image')
+                    if not img_elem:
+                        img_elem = container.find('img')
+                    image_url = str(img_elem.get('src', '')) if img_elem and hasattr(img_elem, 'get') else ""
                     
                     product = {
                         'site_name': 'amazon',
@@ -60,6 +65,7 @@ class ProductScraper:
                         'price': price,
                         'rating': rating,
                         'product_url': url,
+                        'image_url': image_url,
                         'description': name,
                         'category': 'general',
                         'availability': 'Available',
@@ -113,12 +119,20 @@ class ProductScraper:
                     # Rating (simplified)
                     rating = "4.0 stars"  # Default since Walmart ratings are complex to scrape
                     
+                    # Image URL
+                    img_elem = product_card.find('img')
+                    image_url = str(img_elem.get('src', '')) if img_elem and hasattr(img_elem, 'get') else ""
+                    
+                    # Product URL - simplified
+                    product_url = "https://walmart.ca"
+                    
                     product = {
                         'site_name': 'walmart',
                         'product_name': name,
                         'price': price,
                         'rating': rating,
-                        'product_url': search_url,
+                        'product_url': product_url,
+                        'image_url': image_url,
                         'description': name,
                         'category': 'general',
                         'availability': 'Available',
@@ -165,9 +179,12 @@ class ProductScraper:
                     # Rating (simplified)
                     rating = "4.2 stars"  # Default since eBay ratings vary
                     
-                    # URL
-                    link_elem = container.find('a', class_='s-item__link')
-                    url = link_elem['href'] if link_elem and link_elem.get('href') else ""
+                    # URL - simplified
+                    url = "https://ebay.ca"
+                    
+                    # Image URL
+                    img_elem = container.find('img')
+                    image_url = str(img_elem.get('src', '')) if img_elem and hasattr(img_elem, 'get') else ""
                     
                     product = {
                         'site_name': 'ebay',
@@ -175,6 +192,7 @@ class ProductScraper:
                         'price': price,
                         'rating': rating,
                         'product_url': url,
+                        'image_url': image_url,
                         'description': name,
                         'category': 'general',
                         'availability': 'Available',

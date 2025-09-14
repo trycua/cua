@@ -9,6 +9,10 @@ import subprocess
 import os
 from pathlib import Path
 
+sys.path.append("./data-pipeline/dynamodb")
+
+from chooseData import choose_k_best_items
+
 def check_and_install_dependencies():
     """Check if required packages are available, install if needed"""
     required_packages = ['flask', 'beautifulsoup4', 'requests', 'boto3', 'python-dotenv']
@@ -112,12 +116,15 @@ def start_api():
                 saved_count = 0
                 if processed_products:
                     saved_count = insert_products_to_dynamodb(processed_products)
+
+                # Save 3 best results to result table (judged by Cohere AI)
+                final_products = choose_k_best_items(3)
                 
                 return jsonify({
                     'query': query,
                     'products_found': len(products),
                     'products_saved': saved_count,
-                    'products': products
+                    'products': final_products
                 })
                 
             except Exception as e:

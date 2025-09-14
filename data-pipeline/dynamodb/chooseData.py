@@ -68,6 +68,9 @@ def choose_k_best_items(k: int = 1):
     # TODO: Add error handling for non-integer responses
     text_response = response.message.content[0].text # type: ignore
     print("Overall response:", text_response)
+    result_table = dynamodb.Table("selected_products_result")
+    result_list = []
+
     for index in text_response.split(","):
         index = index.strip()
         if not index.isdigit() or int(index) < 0 or int(index) >= len(items):
@@ -78,12 +81,12 @@ def choose_k_best_items(k: int = 1):
         print("Cohere responded with:", selected_index)
         print("This corresponds to the product:", items[selected_index])
 
-        result_table = dynamodb.Table("selected_products_result")
         result_table.put_item(
             Item=items[selected_index]
         )
+        result_list.append(items[selected_index])
 
-    # TODO: Use FastAPI to send result back to frontend
+    return result_list
 
 if __name__ == "__main__":
     choose_k_best_items()

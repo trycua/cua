@@ -92,7 +92,7 @@ def insert_products_to_dynamodb(products: List[Dict]) -> int:
     
     try:
         dynamodb = boto3.resource('dynamodb', region_name=os.getenv('AWS_REGION', 'us-east-1'))
-        table = dynamodb.Table('shopping_products_unstructured')
+        table = dynamodb.Table('shopping_products')
         
         success_count = 0
         for product in products:

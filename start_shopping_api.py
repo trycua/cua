@@ -24,7 +24,7 @@ def check_and_install_dependencies():
         print(f"Installing missing packages: {', '.join(missing_packages)}")
         try:
             subprocess.check_call([
-                sys.executable, '-m', 'pip', 'install', '--user'
+                sys.executable, '-m', 'pip', 'install'
             ] + missing_packages)
             print("✅ Dependencies installed successfully")
         except subprocess.CalledProcessError as e:
@@ -81,8 +81,76 @@ def start_api():
     """Start the shopping API"""
     try:
         print("🚀 Starting Shopping API...")
-        from shopping_api import app
-        app.run(debug=True, host='0.0.0.0', port=5000)
+        # Import Flask and create app here
+        from flask import Flask, request, jsonify
+        from robust_scraper import ProductScraper
+        from shopping_api import clean_and_process_data, insert_products_to_dynamodb
+        
+        app = Flask(__name__)
+        scraper = ProductScraper()
+        
+        @app.route('/health', methods=['GET'])
+        def health():
+            return jsonify({'status': 'healthy', 'service': 'shopping_api'})
+        
+        @app.route('/search', methods=['POST'])
+        def search():
+            try:
+                data = request.get_json()
+                query = data.get('query', '')
+                
+                if not query:
+                    return jsonify({'error': 'Query parameter is required'}), 400
+                
+                # Search products
+                products = scraper.search_all_sites(query, max_results_per_site=5)
+                
+                # Clean and process data
+                processed_products = clean_and_process_data(products)
+                
+                # Save to DynamoDB if available
+                saved_count = 0
+                if processed_products:
+                    saved_count = insert_products_to_dynamodb(processed_products)
+                
+                return jsonify({
+                    'query': query,
+                    'products_found': len(products),
+                    'products_saved': saved_count,
+                    'products': products
+                })
+                
+            except Exception as e:
+                print(f"❌ Search error: {e}")
+                return jsonify({'error': 'Internal server error'}), 500
+        
+        @app.route('/evaluate', methods=['POST'])
+        def evaluate_products():
+            """Use Cohere AI to select the best products from DynamoDB using chooseData function"""
+            try:
+                from simple_choose_data import choose_best_k_ai
+                
+                # Run the original chooseData function (without Spark)
+                result = choose_best_k_ai()
+                
+                return jsonify(result)
+                
+            except Exception as e:
+                print(f"❌ Cohere evaluation error: {e}")
+                return jsonify({
+                    'error': 'Cohere evaluation failed',
+                    'details': str(e)
+                }), 500
+        
+        @app.route('/search_history', methods=['GET'])
+        def search_history():
+            return jsonify({'message': 'Search history endpoint - functionality removed'})
+        
+        @app.route('/search_by_category', methods=['GET'])
+        def search_by_category():
+            return jsonify({'message': 'Category search endpoint - functionality removed'})
+        
+        app.run(debug=True, host='0.0.0.0', port=5001)
     except Exception as e:
         print(f"❌ Failed to start API: {e}")
         return False
@@ -105,13 +173,13 @@ def main():
         print("⚠️ DynamoDB setup failed, but API can still run")
     
     # Start API
-    print("\n🎉 Starting API on http://localhost:5000")
+    print("\n🎉 Starting API on http://localhost:5001")
     print("📋 Available endpoints:")
     print("  POST /search - Main search endpoint")
     print("  GET /search_history - Recent searches")
     print("  GET /health - Health check")
     print("\n💡 Example usage:")
-    print('curl -X POST http://localhost:5000/search -H "Content-Type: application/json" -d \'{"query": "find me the best tents under 100 dollars"}\'')
+    print('curl -X POST http://localhost:5001/search -H "Content-Type: application/json" -d \'{"query": "find me the best tents under 100 dollars"}\'')
     print("\nPress Ctrl+C to stop the server")
     
     start_api()

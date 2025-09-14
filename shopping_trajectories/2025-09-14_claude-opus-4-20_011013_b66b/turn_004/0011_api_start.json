@@ -1,0 +1,80 @@
+{
+  "kwargs": {
+    "model": "claude-opus-4-20250514",
+    "messages": [
+      {
+        "role": "user",
+        "content": "\nURGENT: Search for \"tents under 100\" on Google Shopping as FAST as possible.\n\nINSTRUCTIONS:\n1. Take ONE screenshot\n2. If search box visible: clear it, type \"tents under 100\", press Enter\n3. If not on Google Shopping: go to shopping.google.com, then search\n4. Wait 2 seconds for results\n5. STOP - do not scroll or click anything else\n\nBE FAST. NO EXTRA ACTIONS. NO SCROLLING. NO CLICKING PRODUCTS.\n"
+      },
+      {
+        "role": "assistant",
+        "content": "I'll help you search for \"tents under 100\" on Google Shopping as quickly as possible. Let me start by taking a screenshot to see the current state of the screen.",
+        "tool_calls": [
+          {
+            "id": "toolu_015Npq9LxLR14vPr6oEyz3qe",
+            "type": "function",
+            "function": {
+              "name": "computer",
+              "arguments": "{\"action\": \"screenshot\"}"
+            }
+          }
+        ]
+      },
+      {
+        "role": "function",
+        "name": "computer",
+        "tool_call_id": "toolu_015Npq9LxLR14vPr6oEyz3qe",
+        "content": [
+          {
+            "type": "image_url",
+            "image_url": "[omitted]"
+          }
+        ]
+      },
+      {
+        "role": "assistant",
+        "content": "I can see the Firefox browser is open. I need to navigate to Google Shopping. I'll click on the address bar and type the URL for Google Shopping.",
+        "tool_calls": [
+          {
+            "id": "toolu_01TF41aWveWa4BSMn8p85kG8",
+            "type": "function",
+            "function": {
+              "name": "computer",
+              "arguments": "{\"action\": \"left_click\", \"coordinate\": [645, 96]}"
+            }
+          }
+        ]
+      },
+      {
+        "role": "function",
+        "name": "computer",
+        "tool_call_id": "toolu_01TF41aWveWa4BSMn8p85kG8",
+        "content": [
+          {
+            "type": "image_url",
+            "image_url": "[omitted]"
+          }
+        ]
+      }
+    ],
+    "tools": [
+      {
+        "type": "computer_20250124",
+        "function": {
+          "name": "computer",
+          "parameters": {
+            "display_height_px": 768,
+            "display_width_px": 1024,
+            "display_number": 1
+          }
+        }
+      }
+    ],
+    "stream": false,
+    "num_retries": 3,
+    "headers": {
+      "anthropic-beta": "computer-use-2025-01-24"
+    }
+  },
+  "created_at": "139771194286129390"
+}

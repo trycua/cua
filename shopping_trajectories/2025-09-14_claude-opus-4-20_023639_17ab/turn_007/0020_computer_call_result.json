@@ -1,0 +1,25 @@
+{
+  "item": {
+    "id": "2243aeea-fd1b-4a6a-9846-414e89649ed3",
+    "call_id": "toolu_01R36MeqJ5gthzatVoLdus7k",
+    "action": {
+      "text": "tents under 100",
+      "type": "type"
+    },
+    "pending_safety_checks": [],
+    "status": "completed",
+    "type": "computer_call"
+  },
+  "result": [
+    {
+      "type": "computer_call_output",
+      "call_id": "toolu_01R36MeqJ5gthzatVoLdus7k",
+      "acknowledged_safety_checks": [],
+      "output": {
+        "type": "input_image",
+        "image_url": "[omitted]"
+      }
+    }
+  ],
+  "created_at": "139771246263944740"
+}

@@ -151,13 +151,15 @@ def run_traditional_scraper(query: str, max_results: int = 20) -> List[Dict]:
         print(f"❌ Traditional scraper error: {e}")
         return []
 
-def run_cua_scraper_with_timeout(query: str, timeout_seconds: int = 90) -> List[Dict]:
-    """Run CUA scraper with timeout using subprocess"""
-    print(f"🤖 Running CUA scraper for: '{query}' (timeout: {timeout_seconds}s)")
+def run_cua_scraper_with_timeout(query: str, timeout_seconds: int = 45, fast_mode: bool = True) -> List[Dict]:
+    """Run CUA scraper with timeout using subprocess - optimized for speed"""
+    print(f"🤖 Running FAST CUA scraper for: '{query}' (timeout: {timeout_seconds}s)")
     
     try:
-        # Run working_agent.py as subprocess with timeout
+        # Run working_agent.py as subprocess with timeout and fast mode
         cmd = ['python', 'working_agent.py', query]
+        if fast_mode:
+            cmd.append('--fast')  # Add fast mode flag
         
         process = subprocess.Popen(
             cmd,
@@ -171,8 +173,8 @@ def run_cua_scraper_with_timeout(query: str, timeout_seconds: int = 90) -> List[
             stdout, stderr = process.communicate(timeout=timeout_seconds)
             
             if process.returncode == 0:
-                print(f"✅ CUA scraper completed successfully")
-                print(f"📝 CUA output: {stdout[-500:]}...")  # Show last 500 chars
+                print(f"✅ FAST CUA scraper completed successfully")
+                print(f"📝 CUA output: {stdout[-300:]}...")  # Show last 300 chars
                 
                 # CUA scraper saves directly to DynamoDB, so we return a summary
                 return [{
@@ -192,7 +194,8 @@ def run_cua_scraper_with_timeout(query: str, timeout_seconds: int = 90) -> List[
                     'timestamp': Decimal(str(int(time.time()))),
                     'extraction_type': 'cua_scraper_summary',
                     'cua_stdout': stdout,
-                    'cua_stderr': stderr
+                    'cua_stderr': stderr,
+                    'fast_mode': fast_mode
                 }]
             else:
                 print(f"❌ CUA scraper failed with return code {process.returncode}")
@@ -209,15 +212,15 @@ def run_cua_scraper_with_timeout(query: str, timeout_seconds: int = 90) -> List[
         print(f"❌ CUA scraper execution error: {e}")
         return []
 
-def dual_mode_search(query: str, mode: str = "auto", max_results: int = 20, cua_timeout: int = 90) -> Dict[str, Any]:
+def dual_mode_search(query: str, mode: str = "auto", max_results: int = 20, cua_timeout: int = 45) -> Dict[str, Any]:
     """
-    Dual-mode search supporting both traditional and CUA scraping
+    Dual-mode search with CUA fallback when traditional scrapers fail
     
     Args:
         query: Search query
-        mode: "traditional", "cua", or "auto" (tries CUA first, falls back to traditional)
+        mode: "traditional", "cua", or "auto" (tries traditional first, CUA as fallback)
         max_results: Maximum results for traditional scraper
-        cua_timeout: Timeout in seconds for CUA scraper (default 90s = 1.5 minutes)
+        cua_timeout: Timeout in seconds for CUA scraper (default 45s for speed)
     
     Returns:
         Dictionary with results and metadata
@@ -243,27 +246,31 @@ def dual_mode_search(query: str, mode: str = "auto", max_results: int = 20, cua_
             
         elif mode == "cua":
             # CUA scraper only
-            products = run_cua_scraper_with_timeout(query, cua_timeout)
+            products = run_cua_scraper_with_timeout(query, cua_timeout, fast_mode=True)
             results['mode_executed'] = 'cua'
             results['products'] = products
             results['success'] = len(products) > 0
             
         elif mode == "auto":
-            # Try CUA first, fallback to traditional
-            print("🔄 Auto mode: Trying CUA scraper first...")
-            products = run_cua_scraper_with_timeout(query, cua_timeout)
+            # Try traditional first, CUA as fast fallback
+            print("🔄 Auto mode: Trying traditional scraper first...")
+            products = run_traditional_scraper(query, max_results)
             
-            if products:
-                results['mode_executed'] = 'cua'
+            if products and len(products) > 0:
+                results['mode_executed'] = 'traditional'
                 results['products'] = products
                 results['success'] = True
-                print("✅ CUA scraper succeeded in auto mode")
+                print("✅ Traditional scraper succeeded in auto mode")
             else:
-                print("🔄 CUA failed, falling back to traditional scraper...")
-                products = run_traditional_scraper(query, max_results)
-                results['mode_executed'] = 'traditional_fallback'
+                print("🔄 Traditional failed, falling back to FAST CUA scraper...")
+                products = run_cua_scraper_with_timeout(query, cua_timeout, fast_mode=True)
+                results['mode_executed'] = 'cua_fallback'
                 results['products'] = products
                 results['success'] = len(products) > 0
+                if results['success']:
+                    print("✅ CUA fallback scraper succeeded!")
+                else:
+                    print("❌ Both traditional and CUA scrapers failed")
                 
         else:
             raise ValueError(f"Invalid mode: {mode}. Use 'traditional', 'cua', or 'auto'")

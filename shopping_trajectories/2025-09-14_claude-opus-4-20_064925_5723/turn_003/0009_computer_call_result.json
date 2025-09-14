@@ -1,0 +1,27 @@
+{
+  "item": {
+    "id": "252368bd-91e8-4347-bbf6-6160a565b7a0",
+    "call_id": "toolu_0196RD8YZ1iVyr4eJPgxTcBu",
+    "action": {
+      "button": "left",
+      "type": "click",
+      "x": 443,
+      "y": 154
+    },
+    "pending_safety_checks": [],
+    "status": "completed",
+    "type": "computer_call"
+  },
+  "result": [
+    {
+      "type": "computer_call_output",
+      "call_id": "toolu_0196RD8YZ1iVyr4eJPgxTcBu",
+      "acknowledged_safety_checks": [],
+      "output": {
+        "type": "input_image",
+        "image_url": "[omitted]"
+      }
+    }
+  ],
+  "created_at": "139771397810628220"
+}

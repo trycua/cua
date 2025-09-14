@@ -1,0 +1,80 @@
+{
+  "kwargs": {
+    "model": "claude-opus-4-20250514",
+    "messages": [
+      {
+        "role": "user",
+        "content": "\nULTRA FAST: Search for \"teddy bears\" on Google Shopping in 30 seconds or less.\n\nSPEED INSTRUCTIONS:\n1. Go directly to shopping.google.com\n2. Type \"teddy bears\" in search box and press Enter\n3. Wait 1 second for results to load\n4. STOP immediately - no scrolling, no clicking, no extra actions\n\nCRITICAL: Be as fast as possible. Every second counts.\n"
+      },
+      {
+        "role": "assistant",
+        "content": "I'll help you search for teddy bears on Google Shopping as quickly as possible. Let me start by taking a screenshot and then navigate directly to the site.",
+        "tool_calls": [
+          {
+            "id": "toolu_01KyG7RWGVn2gBFruAEyjoUS",
+            "type": "function",
+            "function": {
+              "name": "computer",
+              "arguments": "{\"action\": \"screenshot\"}"
+            }
+          }
+        ]
+      },
+      {
+        "role": "function",
+        "name": "computer",
+        "tool_call_id": "toolu_01KyG7RWGVn2gBFruAEyjoUS",
+        "content": [
+          {
+            "type": "image_url",
+            "image_url": "[omitted]"
+          }
+        ]
+      },
+      {
+        "role": "assistant",
+        "content": "Great! I'm already on Google Shopping. Now I'll quickly clear the search box and type \"teddy bears\" and press Enter.",
+        "tool_calls": [
+          {
+            "id": "toolu_0196RD8YZ1iVyr4eJPgxTcBu",
+            "type": "function",
+            "function": {
+              "name": "computer",
+              "arguments": "{\"action\": \"left_click\", \"coordinate\": [443, 154]}"
+            }
+          }
+        ]
+      },
+      {
+        "role": "function",
+        "name": "computer",
+        "tool_call_id": "toolu_0196RD8YZ1iVyr4eJPgxTcBu",
+        "content": [
+          {
+            "type": "image_url",
+            "image_url": "[omitted]"
+          }
+        ]
+      }
+    ],
+    "tools": [
+      {
+        "type": "computer_20250124",
+        "function": {
+          "name": "computer",
+          "parameters": {
+            "display_height_px": 768,
+            "display_width_px": 1024,
+            "display_number": 1
+          }
+        }
+      }
+    ],
+    "stream": false,
+    "num_retries": 3,
+    "headers": {
+      "anthropic-beta": "computer-use-2025-01-24"
+    }
+  },
+  "created_at": "139771397811374980"
+}

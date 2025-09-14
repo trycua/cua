@@ -67,20 +67,19 @@ class WorkingShoppingAgent:
         print("✅ Working agent initialized")
     
     async def navigate_and_search(self, query: str):
-        """Navigate to Google Shopping and search for products - FAST MODE"""
+        """Navigate to Google Shopping and search for products - ULTRA FAST MODE"""
         print("🧭 Agent navigating to search for:", query)
         
         navigation_prompt = f"""
-URGENT: Search for "{query}" on Google Shopping as FAST as possible.
+ULTRA FAST: Search for "{query}" on Google Shopping in 30 seconds or less.
 
-INSTRUCTIONS:
-1. Take ONE screenshot
-2. If search box visible: clear it, type "{query}", press Enter
-3. If not on Google Shopping: go to shopping.google.com, then search
-4. Wait 2 seconds for results
-5. STOP - do not scroll or click anything else
+SPEED INSTRUCTIONS:
+1. Go directly to shopping.google.com
+2. Type "{query}" in search box and press Enter
+3. Wait 1 second for results to load
+4. STOP immediately - no scrolling, no clicking, no extra actions
 
-BE FAST. NO EXTRA ACTIONS. NO SCROLLING. NO CLICKING PRODUCTS.
+CRITICAL: Be as fast as possible. Every second counts.
 """
         
         try:
@@ -273,8 +272,8 @@ NO screenshots. NO waiting. Just scroll once and extract everything visible.
             import traceback
             traceback.print_exc()
     
-    async def run_shopping_session(self, query: str):
-        """Main method - run a complete shopping session"""
+    async def run_shopping_session(self, query: str, fast_mode: bool = True):
+        """Main method - run a complete shopping session with speed optimization"""
         self.start_time = time.time()
         
         try:
@@ -286,23 +285,23 @@ NO screenshots. NO waiting. Just scroll once and extract everything visible.
             # Extract products from first screen
             total_products = await self.extract_products()
             
-            # Quick 2 scrolls max for more data (60 second limit)
-            scroll_count = 0
-            max_scrolls = 2
-            
-            while scroll_count < max_scrolls and time.time() - self.start_time < 60:
-                more_products = await self.scroll_and_extract_more()
-                total_products += more_products
-                scroll_count += 1
+            if fast_mode:
+                # Fast mode: Only 1 scroll, 45 second limit
+                if total_products < 5 and time.time() - self.start_time < 45:
+                    more_products = await self.scroll_and_extract_more()
+                    total_products += more_products
+            else:
+                # Normal mode: 2 scrolls, 60 second limit
+                scroll_count = 0
+                max_scrolls = 2
+                
+                while scroll_count < max_scrolls and time.time() - self.start_time < 60:
+                    more_products = await self.scroll_and_extract_more()
+                    total_products += more_products
+                    scroll_count += 1
             
             runtime = time.time() - self.start_time
             print(f"\n⏰ Total runtime: {runtime:.1f}s")
-            
-            # Debug: Print what we're about to save
-            print(f"\n🔍 DEBUG: About to save {len(self.products_scraped)} data blobs:")
-            for i, blob in enumerate(self.products_scraped):
-                print(f"   Blob {i+1}: {len(blob.get('raw_product_data', ''))} characters of data")
-                print(f"   Sample: {blob.get('raw_product_data', '')[:200]}...")
             
             # Save everything to DynamoDB
             await self.save_to_dynamodb()
@@ -322,32 +321,21 @@ NO screenshots. NO waiting. Just scroll once and extract everything visible.
                 await self.computer.__aexit__(None, None, None)
 
 async def main():
+    """Main function to run the shopping agent"""
     if len(sys.argv) < 2:
-        print("Usage: python working_agent.py 'search query'")
-        print("Example: python working_agent.py 'tents under 100'")
+        print("Usage: python working_agent.py <search_query> [--fast]")
         sys.exit(1)
     
     query = sys.argv[1]
-    agent = WorkingShoppingAgent()
+    fast_mode = '--fast' in sys.argv
     
-    try:
-        data_blobs = await agent.run_shopping_session(query)
-        
-        # Print summary
-        total_products = sum(blob.get('product_count', 0) for blob in data_blobs)
-        print(f"\n📊 FINAL SUMMARY:")
-        print(f"   Total products extracted: {total_products}")
-        print(f"   Data blobs saved: {len(data_blobs)}")
-        
-        for i, blob in enumerate(data_blobs, 1):
-            product_count = blob.get('product_count', 0)
-            extraction_type = blob.get('extraction_type', 'unknown')
-            print(f"   Blob {i}: {product_count} products ({extraction_type})")
-            
-    except KeyboardInterrupt:
-        print("\n⏹️ Session interrupted by user")
-    except Exception as e:
-        print(f"❌ Fatal error: {e}")
+    print(f"🛒 Starting {'FAST ' if fast_mode else ''}shopping session for: '{query}'")
+    
+    agent = WorkingShoppingAgent()
+    results = await agent.run_shopping_session(query, fast_mode=fast_mode)
+    
+    print(f"\n✅ Session complete. Found {len(results)} data blobs.")
+    return results
 
 if __name__ == "__main__":
     asyncio.run(main())

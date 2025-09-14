@@ -1,0 +1,30 @@
+{
+  "kwargs": {
+    "model": "claude-opus-4-20250514",
+    "messages": [
+      {
+        "role": "user",
+        "content": "\nULTRA FAST: Search for \"teddy bears\" on Google Shopping in 30 seconds or less.\n\nSPEED INSTRUCTIONS:\n1. Go directly to shopping.google.com\n2. Type \"teddy bears\" in search box and press Enter\n3. Wait 1 second for results to load\n4. STOP immediately - no scrolling, no clicking, no extra actions\n\nCRITICAL: Be as fast as possible. Every second counts.\n"
+      }
+    ],
+    "tools": [
+      {
+        "type": "computer_20250124",
+        "function": {
+          "name": "computer",
+          "parameters": {
+            "display_height_px": 768,
+            "display_width_px": 1024,
+            "display_number": 1
+          }
+        }
+      }
+    ],
+    "stream": false,
+    "num_retries": 3,
+    "headers": {
+      "anthropic-beta": "computer-use-2025-01-24"
+    }
+  },
+  "created_at": "139771397659177810"
+}

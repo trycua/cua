@@ -7,48 +7,247 @@ import re
 import time
 import requests
 from bs4 import BeautifulSoup
-from typing import List, Dict, Optional, Tuple, Any
 from urllib.parse import quote_plus
+import time
+import re
+import random
+import os
+from dotenv import load_dotenv
+from typing import List, Dict, Tuple, Optional, Tuple, Any
+from urllib.parse import quote_plus
+
+# Load environment variables
+load_dotenv()
 
 class ProductScraper:
     def __init__(self):
-        self.headers = {
-            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-        }
+        # Rotate between multiple realistic user agents
+        self.user_agents = [
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
+            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Safari/605.1.15',
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:120.0) Gecko/20100101 Firefox/120.0',
+            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:120.0) Gecko/20100101 Firefox/120.0'
+        ]
+        
         self.session = requests.Session()
-        self.session.headers.update(self.headers)
+        self.proxies = []  # List of proxy dictionaries
+        self.current_proxy_index = 0
+        
+        # Load proxy from environment variable if available
+        self.env_proxy = None
+        proxy_url = os.getenv('PROXY')
+        if proxy_url:
+            self.env_proxy = {
+                'http': proxy_url,
+                'https': proxy_url
+            }
+            print(f"🔗 Loaded proxy from .env: {proxy_url.split('@')[0]}@***")
+        
+        self._update_headers()
+    
+    def _update_headers(self):
+        """Update headers with random user agent and realistic browser headers"""
+        headers = {
+            'User-Agent': random.choice(self.user_agents),
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.9',
+            'Accept-Encoding': 'gzip, deflate, br',
+            'DNT': '1',
+            'Connection': 'keep-alive',
+            'Upgrade-Insecure-Requests': '1',
+            'Sec-Fetch-Dest': 'document',
+            'Sec-Fetch-Mode': 'navigate',
+            'Sec-Fetch-Site': 'none',
+            'Sec-Fetch-User': '?1',
+            'Cache-Control': 'max-age=0'
+        }
+        self.session.headers.update(headers)
+    
+    def _random_delay(self, min_seconds=1, max_seconds=3):
+        """Add random delay between requests"""
+        delay = random.uniform(min_seconds, max_seconds)
+        time.sleep(delay)
+    
+    def add_proxies(self, proxy_list: List[str]):
+        """Add a list of proxy URLs to rotate through
+        
+        Args:
+            proxy_list: List of proxy URLs in format 'http://ip:port' or 'http://user:pass@ip:port'
+        """
+        for proxy in proxy_list:
+            self.proxies.append({
+                'http': proxy,
+                'https': proxy
+            })
+        print(f"✅ Added {len(proxy_list)} proxies for rotation")
+    
+    def _get_next_proxy(self):
+        """Get the next proxy in rotation, prioritizing env proxy"""
+        # Always use env proxy if available
+        if self.env_proxy:
+            return self.env_proxy
+            
+        # Fall back to proxy list if no env proxy
+        if not self.proxies:
+            return None
+        
+        proxy = self.proxies[self.current_proxy_index]
+        self.current_proxy_index = (self.current_proxy_index + 1) % len(self.proxies)
+        return proxy
+    
+    def _make_request(self, url: str, timeout: int = 15, max_retries: int = 3):
+        """Make a request with anti-detection measures and proxy rotation"""
+        for attempt in range(max_retries):
+            try:
+                # Update headers for each attempt
+                self._update_headers()
+                
+                # Add random delay
+                self._random_delay(1, 2)
+                
+                # Get proxy if available
+                proxy = self._get_next_proxy()
+                
+                # Make request
+                response = self.session.get(url, timeout=timeout, proxies=proxy)
+                
+                if response.status_code == 200:
+                    return response
+                elif response.status_code in [403, 429, 503]:
+                    print(f"⚠️ Got {response.status_code}, retrying with different settings...")
+                    # Add longer delay for rate limiting
+                    self._random_delay(3, 6)
+                    continue
+                else:
+                    print(f"❌ Request failed with status {response.status_code}")
+                    
+            except Exception as e:
+                print(f"⚠️ Request attempt {attempt + 1} failed: {e}")
+                if attempt < max_retries - 1:
+                    self._random_delay(2, 4)
+                    continue
+        
+        return None
     
     def search_amazon(self, query: str, max_results: int = 10) -> List[Dict]:
-        """Search Amazon for products"""
+        """Search Amazon for products with anti-detection measures"""
         products = []
         try:
             search_url = f"https://www.amazon.com/s?k={quote_plus(query)}"
-            response = self.session.get(search_url, timeout=10)
+            response = self._make_request(search_url, timeout=15)
+            
+            if not response:
+                print("❌ Amazon request failed after all retries")
+                return products
             
             if response.status_code != 200:
                 print(f"❌ Amazon returned status {response.status_code}")
                 return products
             
             soup = BeautifulSoup(response.content, 'html.parser')
+            
+            # Try multiple container selectors for Amazon's changing structure
             product_containers = soup.find_all('div', {'data-component-type': 's-search-result'})
+            if not product_containers:
+                product_containers = soup.find_all('div', {'data-asin': True})
+            if not product_containers:
+                product_containers = soup.find_all('div', class_='s-result-item')
             
             for container in product_containers[:max_results]:
                 try:
-                    # Product name
-                    name_elem = container.find('h2', {'class': 'a-size-mini'})
-                    if not name_elem:
-                        name_elem = container.find('span', {'class': 'a-size-medium'})
-                    name = name_elem.get_text(strip=True) if name_elem else "Unknown Product"
+                    # Product name - comprehensive approach
+                    name = None
                     
-                    # Price
-                    price_elem = container.find('span', {'class': 'a-price-whole'})
-                    if not price_elem:
-                        price_elem = container.find('span', {'class': 'a-offscreen'})
-                    price = price_elem.get_text(strip=True) if price_elem else "Price not available"
+                    # Try common Amazon title selectors
+                    title_selectors = [
+                        'h2 a span',
+                        'h2 span',
+                        'a[data-cy="title-recipe-link"] span',
+                        '.s-size-mini span',
+                        '.a-size-base-plus',
+                        '.a-size-medium',
+                        'h2 a',
+                        'a span'
+                    ]
                     
-                    # Rating
-                    rating_elem = container.find('span', class_='a-icon-alt')
-                    rating = rating_elem.get_text(strip=True) if rating_elem else "No rating"
+                    for selector in title_selectors:
+                        try:
+                            elem = container.select_one(selector)
+                            if elem and elem.get_text(strip=True):
+                                name = elem.get_text(strip=True)
+                                break
+                        except:
+                            continue
+                    
+                    if not name:
+                        # Fallback: look for any link text that seems like a product name
+                        links = container.find_all('a')
+                        for link in links:
+                            text = link.get_text(strip=True)
+                            if text and len(text) > 10 and not text.startswith('$'):
+                                name = text
+                                break
+                    
+                    name = name or "Unknown Product"
+                    
+                    # Price - comprehensive approach
+                    price = None
+                    
+                    # Try common Amazon price selectors
+                    price_selectors = [
+                        '.a-price-whole',
+                        '.a-offscreen',
+                        '.a-price .a-offscreen',
+                        '.a-price-range',
+                        'span[aria-label*="$"]'
+                    ]
+                    
+                    for selector in price_selectors:
+                        try:
+                            elem = container.select_one(selector)
+                            if elem:
+                                price_text = elem.get_text(strip=True)
+                                if '$' in price_text or price_text.replace('.', '').replace(',', '').isdigit():
+                                    price = price_text
+                                    break
+                        except:
+                            continue
+                    
+                    if not price:
+                        # Fallback: look for any text with $ symbol
+                        all_text = container.get_text()
+                        import re
+                        price_match = re.search(r'\$[\d,]+\.?\d*', all_text)
+                        if price_match:
+                            price = price_match.group()
+                    
+                    price = price or "Price not available"
+                    
+                    # Rating - comprehensive approach
+                    rating = None
+                    
+                    # Try common rating selectors
+                    rating_selectors = [
+                        '.a-icon-alt',
+                        'span[aria-label*="out of"]',
+                        'span[aria-label*="stars"]',
+                        '.a-star-mini .a-icon-alt'
+                    ]
+                    
+                    for selector in rating_selectors:
+                        try:
+                            elem = container.select_one(selector)
+                            if elem:
+                                rating_text = elem.get_text(strip=True)
+                                if 'out of' in rating_text or 'stars' in rating_text:
+                                    rating = rating_text
+                                    break
+                        except:
+                            continue
+                    
+                    rating = rating or "No rating"
                     
                     # URL - simplified to amazon.ca
                     url = "https://amazon.ca"
@@ -86,11 +285,15 @@ class ProductScraper:
         return products
     
     def search_google_shopping(self, query: str, max_results: int = 10) -> List[Dict]:
-        """Search Google Shopping for products"""
+        """Search Google Shopping for products with proxy support"""
         products = []
         try:
             search_url = f"https://www.google.com/search?tbm=shop&q={quote_plus(query)}"
-            response = self.session.get(search_url, timeout=10)
+            response = self._make_request(search_url, timeout=15)
+            
+            if not response:
+                print("❌ Google Shopping request failed after all retries")
+                return products
             
             if response.status_code != 200:
                 print(f"❌ Google Shopping returned status {response.status_code}")
@@ -153,11 +356,15 @@ class ProductScraper:
         return products
     
     def search_canadian_tire(self, query: str, max_results: int = 10) -> List[Dict]:
-        """Search Canadian Tire for products"""
+        """Search Canadian Tire for products with proxy support"""
         products = []
         try:
             search_url = f"https://www.canadiantire.ca/en/search-results.html?q={quote_plus(query)}"
-            response = self.session.get(search_url, timeout=10)
+            response = self._make_request(search_url, timeout=15)
+            
+            if not response:
+                print("❌ Canadian Tire request failed after all retries")
+                return products
             
             if response.status_code != 200:
                 print(f"❌ Canadian Tire returned status {response.status_code}")

@@ -1,0 +1,155 @@
+{
+  "timestamp": "139771398018224280",
+  "model": "claude-opus-4-20250514",
+  "kwargs": {
+    "messages": [
+      {
+        "role": "user",
+        "content": "\nULTRA FAST: Search for \"teddy bears\" on Google Shopping in 30 seconds or less.\n\nSPEED INSTRUCTIONS:\n1. Go directly to shopping.google.com\n2. Type \"teddy bears\" in search box and press Enter\n3. Wait 1 second for results to load\n4. STOP immediately - no scrolling, no clicking, no extra actions\n\nCRITICAL: Be as fast as possible. Every second counts.\n"
+      },
+      {
+        "id": "33213279-c038-4738-84b2-a7e578a06f96",
+        "content": [
+          {
+            "text": "I'll help you search for teddy bears on Google Shopping as quickly as possible. Let me start by taking a screenshot and then navigate directly to the site.",
+            "type": "output_text",
+            "annotations": []
+          }
+        ],
+        "role": "assistant",
+        "status": "completed",
+        "type": "message"
+      },
+      {
+        "id": "b60347d9-4676-49d1-8236-b7c6c29a630d",
+        "content": [
+          {
+            "text": "Great! I'm already on Google Shopping. Now I'll quickly clear the search box and type \"teddy bears\" and press Enter.",
+            "type": "output_text",
+            "annotations": []
+          }
+        ],
+        "role": "assistant",
+        "status": "completed",
+        "type": "message"
+      },
+      {
+        "id": "5c62dee9-cb59-4423-8175-b960d918b57d",
+        "content": [
+          {
+            "text": "Good, I've clicked in the search box. Now I'll clear it and type \"teddy bears\" quickly.",
+            "type": "output_text",
+            "annotations": []
+          }
+        ],
+        "role": "assistant",
+        "status": "completed",
+        "type": "message"
+      },
+      {
+        "id": "fea7e213-5977-44de-adfb-ecd2a53292f8",
+        "call_id": "toolu_01Cu1MqtExqDAr7DdTm4Bivw",
+        "action": {
+          "keys": [
+            "ctrl",
+            "a"
+          ],
+          "type": "keypress"
+        },
+        "pending_safety_checks": [],
+        "status": "completed",
+        "type": "computer_call"
+      },
+      {
+        "type": "computer_call_output",
+        "call_id": "toolu_01Cu1MqtExqDAr7DdTm4Bivw",
+        "acknowledged_safety_checks": [],
+        "output": {
+          "type": "input_image",
+          "image_url": "[omitted]"
+        }
+      },
+      {
+        "id": "0471fbd6-21b6-4c2b-bd0e-15eb3058973b",
+        "content": [
+          {
+            "text": "Perfect! I've selected the text. Now I'll type \"teddy bears\" quickly.",
+            "type": "output_text",
+            "annotations": []
+          }
+        ],
+        "role": "assistant",
+        "status": "completed",
+        "type": "message"
+      },
+      {
+        "id": "a7da599d-e147-4a78-b027-47d7b163bbe1",
+        "call_id": "toolu_019HZKepDtvRSYkjPdjwg61u",
+        "action": {
+          "text": "teddy bears",
+          "type": "type"
+        },
+        "pending_safety_checks": [],
+        "status": "completed",
+        "type": "computer_call"
+      },
+      {
+        "type": "computer_call_output",
+        "call_id": "toolu_019HZKepDtvRSYkjPdjwg61u",
+        "acknowledged_safety_checks": [],
+        "output": {
+          "type": "input_image",
+          "image_url": "[omitted]"
+        }
+      }
+    ],
+    "model": "claude-opus-4-20250514",
+    "tools": [
+      {
+        "type": "computer",
+        "computer": "<computer:Computer>"
+      }
+    ],
+    "stream": false,
+    "computer_handler": "<computer:cuaComputerHandler>",
+    "max_retries": 3,
+    "use_prompt_caching": false
+  },
+  "response": {
+    "output": [
+      {
+        "id": "da222005-90a7-4d5d-b995-8ab309c38b05",
+        "content": [
+          {
+            "text": "Great! I've typed \"teddy bears\" and I can see Google is already showing suggestions. Now I'll press Enter to search.",
+            "type": "output_text",
+            "annotations": []
+          }
+        ],
+        "role": "assistant",
+        "status": "completed",
+        "type": "message"
+      },
+      {
+        "id": "82088845-bb3e-4371-9444-a56edc774936",
+        "call_id": "toolu_01AbRNWbHDHbfjxa2ZDTZBsa",
+        "action": {
+          "keys": [
+            "Return"
+          ],
+          "type": "keypress"
+        },
+        "pending_safety_checks": [],
+        "status": "completed",
+        "type": "computer_call"
+      }
+    ],
+    "usage": {
+      "input_tokens": 5166,
+      "output_tokens": 97,
+      "total_tokens": 5263,
+      "response_cost": 0.08476500000000001
+    }
+  },
+  "created_at": "139771398018224830"
+}

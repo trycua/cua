@@ -1,0 +1,125 @@
+{
+  "kwargs": {
+    "model": "claude-opus-4-20250514",
+    "messages": [
+      {
+        "role": "user",
+        "content": "\nULTRA FAST: Search for \"teddy bears\" on Google Shopping in 30 seconds or less.\n\nSPEED INSTRUCTIONS:\n1. Go directly to shopping.google.com\n2. Type \"teddy bears\" in search box and press Enter\n3. Wait 1 second for results to load\n4. STOP immediately - no scrolling, no clicking, no extra actions\n\nCRITICAL: Be as fast as possible. Every second counts.\n"
+      },
+      {
+        "role": "assistant",
+        "content": "I'll help you search for teddy bears on Google Shopping as quickly as possible. Let me start by taking a screenshot and then navigate directly to the site."
+      },
+      {
+        "role": "assistant",
+        "content": "Great! I'm already on Google Shopping. Now I'll quickly clear the search box and type \"teddy bears\" and press Enter."
+      },
+      {
+        "role": "assistant",
+        "content": "Good, I've clicked in the search box. Now I'll clear it and type \"teddy bears\" quickly.",
+        "tool_calls": [
+          {
+            "id": "toolu_01Cu1MqtExqDAr7DdTm4Bivw",
+            "type": "function",
+            "function": {
+              "name": "computer",
+              "arguments": "{\"action\": \"key\", \"text\": \"ctrl+a\"}"
+            }
+          }
+        ]
+      },
+      {
+        "role": "function",
+        "name": "computer",
+        "tool_call_id": "toolu_01Cu1MqtExqDAr7DdTm4Bivw",
+        "content": [
+          {
+            "type": "image_url",
+            "image_url": "[omitted]"
+          }
+        ]
+      },
+      {
+        "role": "assistant",
+        "content": "Perfect! I've selected the text. Now I'll type \"teddy bears\" quickly.",
+        "tool_calls": [
+          {
+            "id": "toolu_019HZKepDtvRSYkjPdjwg61u",
+            "type": "function",
+            "function": {
+              "name": "computer",
+              "arguments": "{\"action\": \"type\", \"text\": \"teddy bears\"}"
+            }
+          }
+        ]
+      },
+      {
+        "role": "function",
+        "name": "computer",
+        "tool_call_id": "toolu_019HZKepDtvRSYkjPdjwg61u",
+        "content": [
+          {
+            "type": "image_url",
+            "image_url": "[omitted]"
+          }
+        ]
+      }
+    ],
+    "tools": [
+      {
+        "type": "computer_20250124",
+        "function": {
+          "name": "computer",
+          "parameters": {
+            "display_height_px": 768,
+            "display_width_px": 1024,
+            "display_number": 1
+          }
+        }
+      }
+    ],
+    "stream": false,
+    "num_retries": 3,
+    "headers": {
+      "anthropic-beta": "computer-use-2025-01-24"
+    }
+  },
+  "result": {
+    "id": "chatcmpl-511a3c16-fd86-43b0-8c6f-6db41f6568a6",
+    "created": 1757847000,
+    "model": "claude-opus-4-20250514",
+    "object": "chat.completion",
+    "choices": [
+      {
+        "finish_reason": "tool_calls",
+        "index": 0,
+        "message": {
+          "content": "Great! I've typed \"teddy bears\" and I can see Google is already showing suggestions. Now I'll press Enter to search.",
+          "role": "assistant",
+          "tool_calls": [
+            {
+              "index": 1,
+              "function": {
+                "arguments": "{\"action\": \"key\", \"text\": \"Return\"}",
+                "name": "computer"
+              },
+              "id": "toolu_01AbRNWbHDHbfjxa2ZDTZBsa",
+              "type": "function"
+            }
+          ]
+        }
+      }
+    ],
+    "usage": {
+      "completion_tokens": 97,
+      "prompt_tokens": 5166,
+      "total_tokens": 5263,
+      "prompt_tokens_details": {
+        "cached_tokens": 0
+      },
+      "cache_creation_input_tokens": 0,
+      "cache_read_input_tokens": 0
+    }
+  },
+  "created_at": "139771398002057360"
+}

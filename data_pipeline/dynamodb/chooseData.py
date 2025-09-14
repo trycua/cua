@@ -4,7 +4,7 @@ from typing import Any
 from cohere import ChatMessages, TextAssistantMessageResponseContentItem
 import os
 import boto3
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 # from pyspark.sql import SparkSession
 from dotenv import load_dotenv
 
@@ -85,16 +85,29 @@ def choose_k_best_items(k: int = 1):
         # Ensure all values are DynamoDB compatible
         item_to_store = {}
         for key, value in items[selected_index].items():
-            if isinstance(value, (int, float)):
-                item_to_store[key] = Decimal(str(value))
-            elif isinstance(value, dict):
-                # Skip nested dictionaries as they're not DynamoDB compatible
+            try:
+                if isinstance(value, bool):
+                    # Handle booleans FIRST before int check (since bool is subclass of int)
+                    item_to_store[key] = value  # DynamoDB supports booleans
+                elif isinstance(value, (int, float)):
+                    item_to_store[key] = Decimal(str(value))
+                elif isinstance(value, Decimal):
+                    item_to_store[key] = value  # Already a Decimal
+                elif isinstance(value, dict):
+                    # Skip nested dictionaries as they're not DynamoDB compatible
+                    continue
+                elif isinstance(value, list):
+                    # Convert lists to strings for DynamoDB compatibility
+                    item_to_store[key] = str(value)
+                elif value is None:
+                    # Skip None values
+                    continue
+                else:
+                    # Convert everything else to string, handling any conversion issues
+                    item_to_store[key] = str(value)
+            except (ValueError, TypeError, InvalidOperation) as e:
+                print(f"⚠️ Skipping field '{key}' due to conversion error: {e}")
                 continue
-            elif isinstance(value, list):
-                # Convert lists to strings for DynamoDB compatibility
-                item_to_store[key] = str(value)
-            else:
-                item_to_store[key] = value
         
         result_table.put_item(Item=item_to_store)
         result_list.append(item_to_store)

@@ -1,0 +1,57 @@
+{
+  "timestamp": "139771397720337290",
+  "model": "claude-opus-4-20250514",
+  "kwargs": {
+    "messages": [
+      {
+        "role": "user",
+        "content": "\nULTRA FAST: Search for \"teddy bears\" on Google Shopping in 30 seconds or less.\n\nSPEED INSTRUCTIONS:\n1. Go directly to shopping.google.com\n2. Type \"teddy bears\" in search box and press Enter\n3. Wait 1 second for results to load\n4. STOP immediately - no scrolling, no clicking, no extra actions\n\nCRITICAL: Be as fast as possible. Every second counts.\n"
+      }
+    ],
+    "model": "claude-opus-4-20250514",
+    "tools": [
+      {
+        "type": "computer",
+        "computer": "<computer:Computer>"
+      }
+    ],
+    "stream": false,
+    "computer_handler": "<computer:cuaComputerHandler>",
+    "max_retries": 3,
+    "use_prompt_caching": false
+  },
+  "response": {
+    "output": [
+      {
+        "id": "33213279-c038-4738-84b2-a7e578a06f96",
+        "content": [
+          {
+            "text": "I'll help you search for teddy bears on Google Shopping as quickly as possible. Let me start by taking a screenshot and then navigate directly to the site.",
+            "type": "output_text",
+            "annotations": []
+          }
+        ],
+        "role": "assistant",
+        "status": "completed",
+        "type": "message"
+      },
+      {
+        "id": "c1c2cfa1-a806-416a-a6c1-e61af8d9b286",
+        "call_id": "toolu_01KyG7RWGVn2gBFruAEyjoUS",
+        "action": {
+          "type": "screenshot"
+        },
+        "pending_safety_checks": [],
+        "status": "completed",
+        "type": "computer_call"
+      }
+    ],
+    "usage": {
+      "input_tokens": 1749,
+      "output_tokens": 84,
+      "total_tokens": 1833,
+      "response_cost": 0.032535
+    }
+  },
+  "created_at": "139771397720338650"
+}

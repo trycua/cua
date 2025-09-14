@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 import boto3
 
-sys.path.append("./data-pipeline/dynamodb")
+sys.path.append("./data_pipeline/dynamodb")
 
 from chooseData import choose_k_best_items
 
@@ -74,8 +74,8 @@ def setup_dynamodb():
     """Setup DynamoDB tables if needed"""
     try:
         print("🔧 Setting up DynamoDB tables...")
-        # from data_pipeline.dynamodb.dynamo_setup import create_dynamodb_table
-        # create_dynamodb_table("")
+        from data_pipeline.dynamodb.simple_table_setup import create_shopping_tables
+        create_shopping_tables()
         print("✅ DynamoDB tables ready")
         return True
     except Exception as e:
@@ -90,9 +90,10 @@ def clear_unstructured_products():
 
     with table.batch_writer() as batch:
         for item in data:
-            batch.delete_item(
-                Key={k: item[k] for k in table.key_schema[0:len(table.key_schema)]}
-            )
+            # Extract key names from key_schema
+            key_names = [key['AttributeName'] for key in table.key_schema]
+            key_dict = {key_name: item[key_name] for key_name in key_names if key_name in item}
+            batch.delete_item(Key=key_dict)
 
 
 def start_api():
@@ -103,9 +104,25 @@ def start_api():
         from flask import Flask, request, jsonify
         from robust_scraper import ProductScraper
         from shopping_api import clean_and_process_data, insert_products_to_dynamodb
+        from query_interpreter import QueryInterpreter
+        from decimal import Decimal
+        import json
+        
+        def convert_decimals(obj):
+            """Convert Decimal objects to float for JSON serialization"""
+            if isinstance(obj, list):
+                return [convert_decimals(item) for item in obj]
+            elif isinstance(obj, dict):
+                return {key: convert_decimals(value) for key, value in obj.items()}
+            elif isinstance(obj, Decimal):
+                return float(obj)
+            else:
+                return obj
         
         app = Flask(__name__)
         scraper = ProductScraper()
+        query_interpreter = QueryInterpreter()
+        setup_dynamodb()
         
         @app.route('/health', methods=['GET'])
         def health():
@@ -120,8 +137,21 @@ def start_api():
                 if not query:
                     return jsonify({'error': 'Query parameter is required'}), 400
                 
-                # Search products
-                products = scraper.search_all_sites(query, max_results_per_site=5)
+                # Interpret the query using Claude
+                interpreted_query = query_interpreter.interpret_query(query)
+                print(f"🧠 Query interpretation: {interpreted_query}")
+                
+                # Generate optimized search terms
+                search_terms = query_interpreter.generate_optimized_search_terms(interpreted_query)
+                print(f"🔍 Optimized search terms: {search_terms}")
+                
+                # Get site recommendations
+                recommended_sites = query_interpreter.get_site_recommendations(interpreted_query)
+                print(f"🏪 Recommended sites: {recommended_sites}")
+                
+                # Search products using the first optimized search term (or original query if none)
+                search_query = search_terms[0] if search_terms else query
+                products = scraper.search_all_sites(search_query, max_results_per_site=5)
                 
                 # Clean and process data
                 processed_products = clean_and_process_data(products)
@@ -138,14 +168,48 @@ def start_api():
                 
                 return jsonify({
                     'query': query,
+                    'interpretation': interpreted_query,
+                    'optimized_search_terms': search_terms,
+                    'recommended_sites': recommended_sites,
                     'products_found': len(products),
                     'products_saved': saved_count,
-                    'products': final_products
+                    'products': convert_decimals(final_products)
                 })
                 
             except Exception as e:
+                import traceback
                 print(f"❌ Search error: {e}")
+                print(f"❌ Full traceback: {traceback.format_exc()}")
                 return jsonify({'error': 'Internal server error'}), 500
+        
+        @app.route('/interpret', methods=['POST'])
+        def interpret_query():
+            """Interpret a search query using Claude Anthropic"""
+            try:
+                data = request.get_json()
+                query = data.get('query', '')
+                
+                if not query:
+                    return jsonify({'error': 'Query parameter is required'}), 400
+                
+                # Interpret the query
+                interpreted_query = query_interpreter.interpret_query(query)
+                search_terms = query_interpreter.generate_optimized_search_terms(interpreted_query)
+                recommended_sites = query_interpreter.get_site_recommendations(interpreted_query)
+                
+                return jsonify({
+                    'query': query,
+                    'interpretation': interpreted_query,
+                    'optimized_search_terms': search_terms,
+                    'recommended_sites': recommended_sites
+                })
+                
+            except Exception as e:
+                print(f"❌ Query interpretation error: {e}")
+                return jsonify({
+                    'error': 'Query interpretation failed',
+                    'details': str(e)
+                }), 500
         
         @app.route('/evaluate', methods=['POST'])
         def evaluate_products():

@@ -74,7 +74,7 @@ def clean_and_process_data(products: List[Dict]) -> List[Dict]:
                 'category': str(product.get('category', 'general')),
                 'availability': str(product.get('availability', 'unknown')),
                 'review_count': str(product.get('review_count', '0')),
-                'timestamp': int(time.time()),
+                'timestamp': Decimal(str(int(time.time()))),
                 'extraction_type': 'shopping_api_processed'
             }
             

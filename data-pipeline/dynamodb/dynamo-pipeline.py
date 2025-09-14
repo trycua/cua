@@ -147,7 +147,7 @@ def clean_and_process_data(raw_products):
 def insert_products_to_dynamodb(products):
     """Insert processed products into DynamoDB"""
 
-    table = dynamodb.Table('shopping_products')
+    table = dynamodb.Table('shopping_products_unstructured')
     
     success_count = 0
     error_count = 0

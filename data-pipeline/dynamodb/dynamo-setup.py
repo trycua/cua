@@ -25,7 +25,7 @@ dynamodb: Any = session.resource('dynamodb')
 def create_dynamodb_tables():
 
     try:
-        table_name = 'shopping_products'
+        table_name = 'shopping_products_unstructured'
           
         # Products table
         products_table = dynamodb.create_table(

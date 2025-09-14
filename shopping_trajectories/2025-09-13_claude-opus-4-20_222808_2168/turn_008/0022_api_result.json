@@ -1,0 +1,125 @@
+{
+  "kwargs": {
+    "model": "claude-opus-4-20250514",
+    "messages": [
+      {
+        "role": "user",
+        "content": "\nURGENT: Search for \"camping tents under 75 dollars\" on Google Shopping as FAST as possible.\n\nINSTRUCTIONS:\n1. Take ONE screenshot\n2. If search box visible: clear it, type \"camping tents under 75 dollars\", press Enter\n3. If not on Google Shopping: go to shopping.google.com, then search\n4. Wait 2 seconds for results\n5. STOP - do not scroll or click anything else\n\nBE FAST. NO EXTRA ACTIONS. NO SCROLLING. NO CLICKING PRODUCTS.\n"
+      },
+      {
+        "role": "assistant",
+        "content": "I'll help you search for camping tents under 75 dollars on Google Shopping as quickly as possible. Let me start by taking a screenshot to see the current state of the screen."
+      },
+      {
+        "role": "assistant",
+        "content": "Perfect! I can see that Google Shopping is already open with a search box visible. The current search shows \"find me the top tents under 100 dollars\". I need to clear this and type the new search query. Let me click on the search box to clear it first."
+      },
+      {
+        "role": "assistant",
+        "content": "Good, I've clicked on the search box and I can see a dropdown menu with suggestions. Now I need to clear the current text and type the new search query. I'll select all the text first and then type the new query.",
+        "tool_calls": [
+          {
+            "id": "toolu_01FP6qxCMj6dMxWnNEMrdrAR",
+            "type": "function",
+            "function": {
+              "name": "computer",
+              "arguments": "{\"action\": \"key\", \"text\": \"ctrl+a\"}"
+            }
+          }
+        ]
+      },
+      {
+        "role": "function",
+        "name": "computer",
+        "tool_call_id": "toolu_01FP6qxCMj6dMxWnNEMrdrAR",
+        "content": [
+          {
+            "type": "image_url",
+            "image_url": "[omitted]"
+          }
+        ]
+      },
+      {
+        "role": "assistant",
+        "content": "Perfect! I can see the text in the search box is now selected (highlighted in blue). Now I'll type the new search query.",
+        "tool_calls": [
+          {
+            "id": "toolu_014RMQKTnDH6Nni2u2QJnPiX",
+            "type": "function",
+            "function": {
+              "name": "computer",
+              "arguments": "{\"action\": \"type\", \"text\": \"camping tents under 75 dollars\"}"
+            }
+          }
+        ]
+      },
+      {
+        "role": "function",
+        "name": "computer",
+        "tool_call_id": "toolu_014RMQKTnDH6Nni2u2QJnPiX",
+        "content": [
+          {
+            "type": "image_url",
+            "image_url": "[omitted]"
+          }
+        ]
+      }
+    ],
+    "tools": [
+      {
+        "type": "computer_20250124",
+        "function": {
+          "name": "computer",
+          "parameters": {
+            "display_height_px": 768,
+            "display_width_px": 1024,
+            "display_number": 1
+          }
+        }
+      }
+    ],
+    "stream": false,
+    "num_retries": 3,
+    "headers": {
+      "anthropic-beta": "computer-use-2025-01-24"
+    }
+  },
+  "result": {
+    "id": "chatcmpl-2ad208b7-faab-4e59-9727-3911410eb8a6",
+    "created": 1757816923,
+    "model": "claude-opus-4-20250514",
+    "object": "chat.completion",
+    "choices": [
+      {
+        "finish_reason": "tool_calls",
+        "index": 0,
+        "message": {
+          "content": "Great! I've typed \"camping tents under 75 dollars\" in the search box. Now I need to press Enter to search.",
+          "role": "assistant",
+          "tool_calls": [
+            {
+              "index": 1,
+              "function": {
+                "arguments": "{\"action\": \"key\", \"text\": \"Return\"}",
+                "name": "computer"
+              },
+              "id": "toolu_011RQ3kqNuvAHqZ1tMvnShFt",
+              "type": "function"
+            }
+          ]
+        }
+      }
+    ],
+    "usage": {
+      "completion_tokens": 98,
+      "prompt_tokens": 5264,
+      "total_tokens": 5362,
+      "prompt_tokens_details": {
+        "cached_tokens": 0
+      },
+      "cache_creation_input_tokens": 0,
+      "cache_read_input_tokens": 0
+    }
+  },
+  "created_at": "139771097235782710"
+}

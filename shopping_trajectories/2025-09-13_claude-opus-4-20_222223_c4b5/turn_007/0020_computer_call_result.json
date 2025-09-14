@@ -1,0 +1,25 @@
+{
+  "item": {
+    "id": "8bd9d04d-ad2c-486c-97e5-9d09f3bf3e90",
+    "call_id": "toolu_013obVaZJ1Sz1wYbodJBnSHj",
+    "action": {
+      "text": "find me the top tents under 100 dollars",
+      "type": "type"
+    },
+    "pending_safety_checks": [],
+    "status": "completed",
+    "type": "computer_call"
+  },
+  "result": [
+    {
+      "type": "computer_call_output",
+      "call_id": "toolu_013obVaZJ1Sz1wYbodJBnSHj",
+      "acknowledged_safety_checks": [],
+      "output": {
+        "type": "input_image",
+        "image_url": "[omitted]"
+      }
+    }
+  ],
+  "created_at": "139771093717047620"
+}

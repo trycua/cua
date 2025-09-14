@@ -1,0 +1,11 @@
+{
+  "trajectory_id": "2025-09-13_claude-3-opus-20_222627_d79f",
+  "created_at": "139771095876545580",
+  "status": "running",
+  "kwargs": {
+    "messages": "\nURGENT: Search for \"camping gear under 50 dollars\" on Google Shopping as FAST as possible.\n\nINSTRUCTIONS:\n1. Take ONE screenshot\n2. If search box visible: clear it, type \"camping gear under 50 dollars\", press Enter\n3. If not on Google Shopping: go to shopping.google.com, then search\n4. Wait 2 seconds for results\n5. STOP - do not scroll or click anything else\n\nBE FAST. NO EXTRA ACTIONS. NO SCROLLING. NO CLICKING PRODUCTS.\n",
+    "stream": false,
+    "model": "claude-3-opus-20240229",
+    "agent_loop": "AnthropicHostedToolsConfig"
+  }
+}

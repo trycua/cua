@@ -1,0 +1,125 @@
+{
+  "kwargs": {
+    "model": "claude-opus-4-20250514",
+    "messages": [
+      {
+        "role": "user",
+        "content": "\nURGENT: Search for \"find me the top tents under 100 dollars\" on Google Shopping as FAST as possible.\n\nINSTRUCTIONS:\n1. Take ONE screenshot\n2. If search box visible: clear it, type \"find me the top tents under 100 dollars\", press Enter\n3. If not on Google Shopping: go to shopping.google.com, then search\n4. Wait 2 seconds for results\n5. STOP - do not scroll or click anything else\n\nBE FAST. NO EXTRA ACTIONS. NO SCROLLING. NO CLICKING PRODUCTS.\n"
+      },
+      {
+        "role": "assistant",
+        "content": "I'll help you search for \"find me the top tents under 100 dollars\" on Google Shopping as quickly as possible. Let me start by taking a screenshot to see the current state of the screen."
+      },
+      {
+        "role": "assistant",
+        "content": "I can see we're already on Google Shopping with a search for \"camping gear under 30 dollars\". I need to clear the search box and enter the new search term \"find me the top tents under 100 dollars\". Let me click on the search box first to clear it."
+      },
+      {
+        "role": "assistant",
+        "content": "Good, the search box is now active. I'll select all the text and clear it first, then type the new search query."
+      },
+      {
+        "role": "assistant",
+        "content": "Perfect! The text is selected. Now I'll type the new search query."
+      },
+      {
+        "role": "assistant",
+        "content": "Good! I've typed the search query. Now I'll press Enter to execute the search."
+      },
+      {
+        "role": "assistant",
+        "content": "Perfect! The search has been executed and I can see Google Shopping is loading the results. I notice it's showing \"Searching all the product info to learn more...\" which means it's processing the search. Now I'll wait 2 seconds for the results to fully load as instructed.",
+        "tool_calls": [
+          {
+            "id": "toolu_01Cew28i5nQ6w46nnDK4Yvqu",
+            "type": "function",
+            "function": {
+              "name": "computer",
+              "arguments": "{\"action\": \"wait\"}"
+            }
+          }
+        ]
+      },
+      {
+        "role": "function",
+        "name": "computer",
+        "tool_call_id": "toolu_01Cew28i5nQ6w46nnDK4Yvqu",
+        "content": [
+          {
+            "type": "image_url",
+            "image_url": "[omitted]"
+          }
+        ]
+      },
+      {
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "id": "toolu_018h5Zoh6C3tyD1Hu1h2tggG",
+            "type": "function",
+            "function": {
+              "name": "computer",
+              "arguments": "{\"action\": \"wait\"}"
+            }
+          }
+        ]
+      },
+      {
+        "role": "function",
+        "name": "computer",
+        "tool_call_id": "toolu_018h5Zoh6C3tyD1Hu1h2tggG",
+        "content": [
+          {
+            "type": "image_url",
+            "image_url": "[omitted]"
+          }
+        ]
+      }
+    ],
+    "tools": [
+      {
+        "type": "computer_20250124",
+        "function": {
+          "name": "computer",
+          "parameters": {
+            "display_height_px": 768,
+            "display_width_px": 1024,
+            "display_number": 1
+          }
+        }
+      }
+    ],
+    "stream": false,
+    "num_retries": 3,
+    "headers": {
+      "anthropic-beta": "computer-use-2025-01-24"
+    }
+  },
+  "result": {
+    "id": "chatcmpl-ec7e9425-bf0b-48cd-bbde-a3012beff6dc",
+    "created": 1757816607,
+    "model": "claude-opus-4-20250514",
+    "object": "chat.completion",
+    "choices": [
+      {
+        "finish_reason": "stop",
+        "index": 0,
+        "message": {
+          "content": "Perfect! I have successfully completed the task. The search for \"find me the top tents under 100 dollars\" has been executed on Google Shopping and the results are now displayed. \n\nThe search results show several 2-person camping tents under $100, including:\n1. Ozark Trail 2 Person Camping Backpacking tent - $59.98 (5% OFF) from Walmart\n2. EchoSmile 2-Person White and Brown Pop Up tent - $94.99 (was $100) from Amazon CA\n3. 2-Person Camping Tent - $50.00 from Decathlon CA\n4. Coleman Sundome 2-Person Camping Tent - $55.24 (25% OFF, was $54) from eBay\n5. Camping Tent for 1 to 2 Person, Lightweight - $59.99 (14% OFF, was $70) from Amazon CA\n\nThe search has been completed as requested, and I've stopped without scrolling or clicking on any products.",
+          "role": "assistant"
+        }
+      }
+    ],
+    "usage": {
+      "completion_tokens": 240,
+      "prompt_tokens": 5279,
+      "total_tokens": 5519,
+      "prompt_tokens_details": {
+        "cached_tokens": 0
+      },
+      "cache_creation_input_tokens": 0,
+      "cache_read_input_tokens": 0
+    }
+  },
+  "created_at": "139771094072633280"
+}

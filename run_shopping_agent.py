@@ -201,6 +201,7 @@ def main():
     else:
         prompt = sys.argv[1]
         run_shopping_agent(prompt)
+        structure_data()
 
 
 if __name__ == "__main__":

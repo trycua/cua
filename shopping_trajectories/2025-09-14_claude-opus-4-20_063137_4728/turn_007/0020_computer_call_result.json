@@ -1,0 +1,25 @@
+{
+  "item": {
+    "id": "69af7ef2-e4c3-4d4e-96d7-d21390215dca",
+    "call_id": "toolu_017iGU45PaPeTPe2A4Pz6tdD",
+    "action": {
+      "text": "shopping.google.com",
+      "type": "type"
+    },
+    "pending_safety_checks": [],
+    "status": "completed",
+    "type": "computer_call"
+  },
+  "result": [
+    {
+      "type": "computer_call_output",
+      "call_id": "toolu_017iGU45PaPeTPe2A4Pz6tdD",
+      "acknowledged_safety_checks": [],
+      "output": {
+        "type": "input_image",
+        "image_url": "[omitted]"
+      }
+    }
+  ],
+  "created_at": "139771387246804800"
+}

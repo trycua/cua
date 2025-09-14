@@ -103,7 +103,7 @@ def start_api():
         # Import Flask and create app here
         from flask import Flask, request, jsonify
         from robust_scraper import ProductScraper
-        from shopping_api import clean_and_process_data, insert_products_to_dynamodb
+        from shopping_api import clean_and_process_data, insert_products_to_dynamodb, dual_mode_search
         from query_interpreter import QueryInterpreter
         from decimal import Decimal
         import json
@@ -130,6 +130,7 @@ def start_api():
         
         @app.route('/search', methods=['POST'])
         def search():
+            """Traditional scraper search endpoint (legacy)"""
             try:
                 data = request.get_json()
                 query = data.get('query', '')
@@ -137,48 +138,107 @@ def start_api():
                 if not query:
                     return jsonify({'error': 'Query parameter is required'}), 400
                 
-                # Interpret the query using Claude
-                interpreted_query = query_interpreter.interpret_query(query)
-                print(f"🧠 Query interpretation: {interpreted_query}")
+                # Use dual-mode search with traditional mode
+                results = dual_mode_search(query, mode="traditional", max_results=15)
                 
-                # Generate optimized search terms
-                search_terms = query_interpreter.generate_optimized_search_terms(interpreted_query)
-                print(f"🔍 Optimized search terms: {search_terms}")
-                
-                # Get site recommendations
-                recommended_sites = query_interpreter.get_site_recommendations(interpreted_query)
-                print(f"🏪 Recommended sites: {recommended_sites}")
-                
-                # Search products using the first optimized search term (or original query if none)
-                search_query = search_terms[0] if search_terms else query
-                products = scraper.search_all_sites(search_query, max_results_per_site=5)
-                
-                # Clean and process data
-                processed_products = clean_and_process_data(products)
-                
-                # Save to DynamoDB if available
-                saved_count = 0
-                if processed_products:
-                    saved_count = insert_products_to_dynamodb(processed_products)
-
                 # Save 3 best results to result table (judged by Cohere AI)
                 final_products = choose_k_best_items(3)
-
                 clear_unstructured_products()
                 
                 return jsonify({
-                    'query': query,
-                    'interpretation': interpreted_query,
-                    'optimized_search_terms': search_terms,
-                    'recommended_sites': recommended_sites,
-                    'products_found': len(products),
-                    'products_saved': saved_count,
-                    'products': convert_decimals(final_products)
+                    'query': results['query'],
+                    'mode': results['mode_executed'],
+                    'success': results['success'],
+                    'runtime_seconds': results['runtime_seconds'],
+                    'products_found': len(results['products']),
+                    'products_saved': results.get('saved_to_db', 0),
+                    'products': convert_decimals(final_products),
+                    'error': results.get('error_message')
                 })
                 
             except Exception as e:
                 import traceback
                 print(f"❌ Search error: {e}")
+                print(f"❌ Full traceback: {traceback.format_exc()}")
+                return jsonify({'error': 'Internal server error'}), 500
+        
+        @app.route('/search_dual', methods=['POST'])
+        def search_dual():
+            """Dual-mode search endpoint with mode selection"""
+            try:
+                data = request.get_json()
+                query = data.get('query', '')
+                mode = data.get('mode', 'auto')  # auto, traditional, or cua
+                max_results = data.get('max_results', 20)
+                cua_timeout = data.get('cua_timeout', 90)  # 1.5 minutes default
+                
+                if not query:
+                    return jsonify({'error': 'Query parameter is required'}), 400
+                
+                if mode not in ['auto', 'traditional', 'cua']:
+                    return jsonify({'error': 'Mode must be auto, traditional, or cua'}), 400
+                
+                # Run dual-mode search
+                results = dual_mode_search(query, mode=mode, max_results=max_results, cua_timeout=cua_timeout)
+                
+                # For traditional scraper results, also run AI selection
+                final_products = []
+                if results['success'] and results['mode_executed'] in ['traditional', 'traditional_fallback']:
+                    try:
+                        final_products = choose_k_best_items(3)
+                        clear_unstructured_products()
+                    except Exception as e:
+                        print(f"⚠️ AI selection failed: {e}")
+                        final_products = results['products'][:3]  # Fallback to first 3
+                else:
+                    final_products = results['products']
+                
+                return jsonify({
+                    'query': results['query'],
+                    'mode_requested': results['mode_requested'],
+                    'mode_executed': results['mode_executed'],
+                    'success': results['success'],
+                    'runtime_seconds': results['runtime_seconds'],
+                    'products_found': len(results['products']),
+                    'products_saved': results.get('saved_to_db', 0),
+                    'products': convert_decimals(final_products),
+                    'error': results.get('error_message')
+                })
+                
+            except Exception as e:
+                import traceback
+                print(f"❌ Dual search error: {e}")
+                print(f"❌ Full traceback: {traceback.format_exc()}")
+                return jsonify({'error': 'Internal server error'}), 500
+        
+        @app.route('/search_cua', methods=['POST'])
+        def search_cua():
+            """CUA scraper only endpoint"""
+            try:
+                data = request.get_json()
+                query = data.get('query', '')
+                timeout = data.get('timeout', 90)  # 1.5 minutes default
+                
+                if not query:
+                    return jsonify({'error': 'Query parameter is required'}), 400
+                
+                # Use dual-mode search with CUA mode only
+                results = dual_mode_search(query, mode="cua", cua_timeout=timeout)
+                
+                return jsonify({
+                    'query': results['query'],
+                    'mode': results['mode_executed'],
+                    'success': results['success'],
+                    'runtime_seconds': results['runtime_seconds'],
+                    'products_found': len(results['products']),
+                    'products_saved': results.get('saved_to_db', 0),
+                    'cua_data_saved_to_dynamodb': results['success'],
+                    'error': results.get('error_message')
+                })
+                
+            except Exception as e:
+                import traceback
+                print(f"❌ CUA search error: {e}")
                 print(f"❌ Full traceback: {traceback.format_exc()}")
                 return jsonify({'error': 'Internal server error'}), 500
         
@@ -262,11 +322,18 @@ def main():
     # Start API
     print("\n🎉 Starting API on http://localhost:5001")
     print("📋 Available endpoints:")
-    print("  POST /search - Main search endpoint")
-    print("  GET /search_history - Recent searches")
+    print("  POST /search - Traditional scraper (legacy)")
+    print("  POST /search_dual - Dual-mode search (auto/traditional/cua)")
+    print("  POST /search_cua - CUA scraper only")
+    print("  POST /interpret - Query interpretation")
     print("  GET /health - Health check")
     print("\n💡 Example usage:")
-    print('curl -X POST http://localhost:5001/search -H "Content-Type: application/json" -d \'{"query": "find me the best tents under 100 dollars"}\'')
+    print('# Traditional scraper:')
+    print('curl -X POST http://localhost:5001/search -H "Content-Type: application/json" -d \'{"query": "tents under 100"}\'')
+    print('\n# Dual-mode (auto - tries CUA first, falls back to traditional):')
+    print('curl -X POST http://localhost:5001/search_dual -H "Content-Type: application/json" -d \'{"query": "tents under 100", "mode": "auto"}\'')
+    print('\n# CUA scraper only (1.5 min timeout):')
+    print('curl -X POST http://localhost:5001/search_cua -H "Content-Type: application/json" -d \'{"query": "tents under 100", "timeout": 90}\'')
     print("\nPress Ctrl+C to stop the server")
     
     start_api()

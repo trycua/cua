@@ -1,0 +1,11 @@
+{
+  "trajectory_id": "2025-09-14_claude-opus-4-20_063137_4728",
+  "created_at": "139771386974539930",
+  "status": "running",
+  "kwargs": {
+    "messages": "\nURGENT: Search for \"tents under 100\" on Google Shopping as FAST as possible.\n\nINSTRUCTIONS:\n1. Take ONE screenshot\n2. If search box visible: clear it, type \"tents under 100\", press Enter\n3. If not on Google Shopping: go to shopping.google.com, then search\n4. Wait 2 seconds for results\n5. STOP - do not scroll or click anything else\n\nBE FAST. NO EXTRA ACTIONS. NO SCROLLING. NO CLICKING PRODUCTS.\n",
+    "stream": false,
+    "model": "claude-opus-4-20250514",
+    "agent_loop": "AnthropicHostedToolsConfig"
+  }
+}

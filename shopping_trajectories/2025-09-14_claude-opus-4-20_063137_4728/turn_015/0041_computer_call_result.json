@@ -1,0 +1,28 @@
+{
+  "item": {
+    "id": "782b7291-714d-4f8c-83d1-315d180c5ead",
+    "call_id": "toolu_01HWrQiJnNXSPW4niAmpi8yK",
+    "action": {
+      "keys": [
+        "ctrl",
+        "a"
+      ],
+      "type": "keypress"
+    },
+    "pending_safety_checks": [],
+    "status": "completed",
+    "type": "computer_call"
+  },
+  "result": [
+    {
+      "type": "computer_call_output",
+      "call_id": "toolu_01HWrQiJnNXSPW4niAmpi8yK",
+      "acknowledged_safety_checks": [],
+      "output": {
+        "type": "input_image",
+        "image_url": "[omitted]"
+      }
+    }
+  ],
+  "created_at": "139771387557135890"
+}

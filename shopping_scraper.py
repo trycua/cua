@@ -85,49 +85,49 @@ class ProductScraper:
         
         return products
     
-    def search_walmart(self, query: str, max_results: int = 10) -> List[Dict]:
-        """Search Walmart for products"""
+    def search_google_shopping(self, query: str, max_results: int = 10) -> List[Dict]:
+        """Search Google Shopping for products"""
         products = []
         try:
-            search_url = f"https://www.walmart.com/search?q={quote_plus(query)}"
+            search_url = f"https://www.google.com/search?tbm=shop&q={quote_plus(query)}"
             response = self.session.get(search_url, timeout=10)
             
             if response.status_code != 200:
-                print(f"❌ Walmart returned status {response.status_code}")
+                print(f"❌ Google Shopping returned status {response.status_code}")
                 return products
             
             soup = BeautifulSoup(response.content, 'html.parser')
             
-            # Walmart uses different selectors
-            product_containers = soup.find_all('div', {'data-automation-id': 'product-title'})
+            # Google Shopping product containers
+            product_containers = soup.find_all('div', class_='sh-dgr__content')
             
             for container in product_containers[:max_results]:
                 try:
-                    # Find parent container with product info
-                    product_card = container.find_parent('div', class_='mb1')
-                    if not product_card:
-                        continue
-                    
                     # Product name
-                    name_elem = container.find('span')
+                    name_elem = container.find('h3', class_='tAxDx')
+                    if not name_elem:
+                        name_elem = container.find('h4', class_='Xjkr3b')
                     name = name_elem.get_text(strip=True) if name_elem else "Unknown Product"
                     
                     # Price
-                    price_elem = product_card.find('span', string=re.compile(r'\$\d+'))
+                    price_elem = container.find('span', class_='a8Pemb')
+                    if not price_elem:
+                        price_elem = container.find('span', class_='kHxwFf')
                     price = price_elem.get_text(strip=True) if price_elem else "Price not available"
                     
-                    # Rating (simplified)
-                    rating = "4.0 stars"  # Default since Walmart ratings are complex to scrape
+                    # Rating
+                    rating_elem = container.find('span', class_='Rsc7Yb')
+                    rating = rating_elem.get_text(strip=True) if rating_elem else "4.2 stars"
                     
                     # Image URL
-                    img_elem = product_card.find('img')
+                    img_elem = container.find('img')
                     image_url = str(img_elem.get('src', '')) if img_elem and hasattr(img_elem, 'get') else ""
                     
                     # Product URL - simplified
-                    product_url = "https://walmart.ca"
+                    product_url = "https://shopping.google.com"
                     
                     product = {
-                        'site_name': 'walmart',
+                        'site_name': 'google_shopping',
                         'product_name': name,
                         'price': price,
                         'rating': rating,
@@ -142,56 +142,61 @@ class ProductScraper:
                     products.append(product)
                     
                 except Exception as e:
-                    print(f"⚠️ Error parsing Walmart product: {e}")
+                    print(f"⚠️ Error parsing Google Shopping product: {e}")
                     continue
             
-            print(f"✅ Found {len(products)} products on Walmart")
+            print(f"✅ Found {len(products)} products on Google Shopping")
             
         except Exception as e:
-            print(f"❌ Walmart search error: {e}")
+            print(f"❌ Google Shopping search error: {e}")
         
         return products
     
-    def search_ebay(self, query: str, max_results: int = 10) -> List[Dict]:
-        """Search eBay for products"""
+    def search_canadian_tire(self, query: str, max_results: int = 10) -> List[Dict]:
+        """Search Canadian Tire for products"""
         products = []
         try:
-            search_url = f"https://www.ebay.com/sch/i.html?_nkw={quote_plus(query)}"
+            search_url = f"https://www.canadiantire.ca/en/search-results.html?q={quote_plus(query)}"
             response = self.session.get(search_url, timeout=10)
             
             if response.status_code != 200:
-                print(f"❌ eBay returned status {response.status_code}")
+                print(f"❌ Canadian Tire returned status {response.status_code}")
                 return products
             
             soup = BeautifulSoup(response.content, 'html.parser')
-            product_containers = soup.find_all('div', class_='s-item__wrapper')
+            product_containers = soup.find_all('div', class_='product-tile')
             
             for container in product_containers[:max_results]:
                 try:
                     # Product name
-                    name_elem = container.find('span', role='heading')
+                    name_elem = container.find('h3', class_='product-tile__name')
+                    if not name_elem:
+                        name_elem = container.find('a', class_='product-tile__details-link')
                     name = name_elem.get_text(strip=True) if name_elem else "Unknown Product"
                     
                     # Price
-                    price_elem = container.find('span', class_='s-item__price')
+                    price_elem = container.find('span', class_='price__value')
+                    if not price_elem:
+                        price_elem = container.find('span', class_='price-current')
                     price = price_elem.get_text(strip=True) if price_elem else "Price not available"
                     
-                    # Rating (simplified)
-                    rating = "4.2 stars"  # Default since eBay ratings vary
-                    
-                    # URL - simplified
-                    url = "https://ebay.ca"
+                    # Rating
+                    rating_elem = container.find('span', class_='rating-stars')
+                    rating = rating_elem.get_text(strip=True) if rating_elem else "4.1 stars"
                     
                     # Image URL
                     img_elem = container.find('img')
                     image_url = str(img_elem.get('src', '')) if img_elem and hasattr(img_elem, 'get') else ""
                     
+                    # Product URL - simplified
+                    product_url = "https://canadiantire.ca"
+                    
                     product = {
-                        'site_name': 'ebay',
+                        'site_name': 'canadian_tire',
                         'product_name': name,
                         'price': price,
                         'rating': rating,
-                        'product_url': url,
+                        'product_url': product_url,
                         'image_url': image_url,
                         'description': name,
                         'category': 'general',
@@ -202,13 +207,13 @@ class ProductScraper:
                     products.append(product)
                     
                 except Exception as e:
-                    print(f"⚠️ Error parsing eBay product: {e}")
+                    print(f"⚠️ Error parsing Canadian Tire product: {e}")
                     continue
             
-            print(f"✅ Found {len(products)} products on eBay")
+            print(f"✅ Found {len(products)} products on Canadian Tire")
             
         except Exception as e:
-            print(f"❌ eBay search error: {e}")
+            print(f"❌ Canadian Tire search error: {e}")
         
         return products
     
@@ -223,14 +228,14 @@ class ProductScraper:
         all_products.extend(amazon_products)
         time.sleep(1)  # Rate limiting
         
-        # Search Walmart
-        walmart_products = self.search_walmart(query, max_results_per_site)
-        all_products.extend(walmart_products)
+        # Search Google Shopping
+        google_products = self.search_google_shopping(query, max_results_per_site)
+        all_products.extend(google_products)
         time.sleep(1)  # Rate limiting
         
-        # Search eBay
-        ebay_products = self.search_ebay(query, max_results_per_site)
-        all_products.extend(ebay_products)
+        # Search Canadian Tire
+        ct_products = self.search_canadian_tire(query, max_results_per_site)
+        all_products.extend(ct_products)
         
         print(f"🎯 Total products found: {len(all_products)}")
         return all_products

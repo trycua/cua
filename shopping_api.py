@@ -1,10 +1,17 @@
 #!/usr/bin/env python3
 """
 Shopping API - Core functionality for product search and data processing
+Supports both traditional scraping and CUA (Computer-Use Agent) modes
 """
 
 import os
 import time
+import asyncio
+import subprocess
+import json
+import signal
+from concurrent.futures import ThreadPoolExecutor, TimeoutError
+from threading import Timer
 import boto3
 from decimal import Decimal
 from typing import List, Dict, Any, Optional
@@ -109,4 +116,169 @@ def insert_products_to_dynamodb(products: List[Dict]) -> int:
     except Exception as e:
         print(f"❌ DynamoDB insertion error: {e}")
         return 0
+
+def run_traditional_scraper(query: str, max_results: int = 20) -> List[Dict]:
+    """Run traditional web scraper mode with query interpretation"""
+    print(f"🔍 Running traditional scraper for: '{query}'")
+    
+    try:
+        from shopping_scraper import ProductScraper
+        from query_interpreter import QueryInterpreter
+        
+        # Use query interpreter to optimize the search
+        query_interpreter = QueryInterpreter()
+        interpreted_query = query_interpreter.interpret_query(query)
+        print(f"🧠 Query interpretation: {interpreted_query.get('product_type', 'N/A')}")
+        
+        # Generate optimized search terms
+        search_terms = query_interpreter.generate_optimized_search_terms(interpreted_query)
+        print(f"🔍 Optimized search terms: {search_terms}")
+        
+        # Use the first optimized search term (or original query if none)
+        search_query = search_terms[0] if search_terms else query
+        print(f"🎯 Using search term: '{search_query}'")
+        
+        scraper = ProductScraper()
+        products = scraper.search_all_sites(search_query, max_results_per_site=max_results//3)
+        
+        # Process and clean the data
+        processed_products = clean_and_process_data(products)
+        
+        print(f"✅ Traditional scraper found {len(processed_products)} products")
+        return processed_products
+        
+    except Exception as e:
+        print(f"❌ Traditional scraper error: {e}")
+        return []
+
+def run_cua_scraper_with_timeout(query: str, timeout_seconds: int = 90) -> List[Dict]:
+    """Run CUA scraper with timeout using subprocess"""
+    print(f"🤖 Running CUA scraper for: '{query}' (timeout: {timeout_seconds}s)")
+    
+    try:
+        # Run working_agent.py as subprocess with timeout
+        cmd = ['python', 'working_agent.py', query]
+        
+        process = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            cwd=os.getcwd()
+        )
+        
+        try:
+            stdout, stderr = process.communicate(timeout=timeout_seconds)
+            
+            if process.returncode == 0:
+                print(f"✅ CUA scraper completed successfully")
+                print(f"📝 CUA output: {stdout[-500:]}...")  # Show last 500 chars
+                
+                # CUA scraper saves directly to DynamoDB, so we return a summary
+                return [{
+                    'product_id': f'cua_scraper_{int(time.time())}',
+                    'product_name': f'CUA Scraper Results for: {query}',
+                    'price': Decimal('0.0'),
+                    'price_str': 'See DynamoDB',
+                    'rating': Decimal('0.0'),
+                    'rating_str': 'N/A',
+                    'site_name': 'cua_scraper',
+                    'product_url': '',
+                    'image_url': '',
+                    'description': f'CUA scraper executed for query: {query}',
+                    'category': 'cua_results',
+                    'availability': 'completed',
+                    'review_count': '0',
+                    'timestamp': Decimal(str(int(time.time()))),
+                    'extraction_type': 'cua_scraper_summary',
+                    'cua_stdout': stdout,
+                    'cua_stderr': stderr
+                }]
+            else:
+                print(f"❌ CUA scraper failed with return code {process.returncode}")
+                print(f"📝 Error output: {stderr}")
+                return []
+                
+        except subprocess.TimeoutExpired:
+            print(f"⏰ CUA scraper timed out after {timeout_seconds} seconds")
+            process.kill()
+            process.communicate()  # Clean up
+            return []
+            
+    except Exception as e:
+        print(f"❌ CUA scraper execution error: {e}")
+        return []
+
+def dual_mode_search(query: str, mode: str = "auto", max_results: int = 20, cua_timeout: int = 90) -> Dict[str, Any]:
+    """
+    Dual-mode search supporting both traditional and CUA scraping
+    
+    Args:
+        query: Search query
+        mode: "traditional", "cua", or "auto" (tries CUA first, falls back to traditional)
+        max_results: Maximum results for traditional scraper
+        cua_timeout: Timeout in seconds for CUA scraper (default 90s = 1.5 minutes)
+    
+    Returns:
+        Dictionary with results and metadata
+    """
+    start_time = time.time()
+    results = {
+        'query': query,
+        'mode_requested': mode,
+        'mode_executed': None,
+        'products': [],
+        'success': False,
+        'runtime_seconds': 0,
+        'error_message': None
+    }
+    
+    try:
+        if mode == "traditional":
+            # Traditional scraper only
+            products = run_traditional_scraper(query, max_results)
+            results['mode_executed'] = 'traditional'
+            results['products'] = products
+            results['success'] = len(products) > 0
+            
+        elif mode == "cua":
+            # CUA scraper only
+            products = run_cua_scraper_with_timeout(query, cua_timeout)
+            results['mode_executed'] = 'cua'
+            results['products'] = products
+            results['success'] = len(products) > 0
+            
+        elif mode == "auto":
+            # Try CUA first, fallback to traditional
+            print("🔄 Auto mode: Trying CUA scraper first...")
+            products = run_cua_scraper_with_timeout(query, cua_timeout)
+            
+            if products:
+                results['mode_executed'] = 'cua'
+                results['products'] = products
+                results['success'] = True
+                print("✅ CUA scraper succeeded in auto mode")
+            else:
+                print("🔄 CUA failed, falling back to traditional scraper...")
+                products = run_traditional_scraper(query, max_results)
+                results['mode_executed'] = 'traditional_fallback'
+                results['products'] = products
+                results['success'] = len(products) > 0
+                
+        else:
+            raise ValueError(f"Invalid mode: {mode}. Use 'traditional', 'cua', or 'auto'")
+            
+    except Exception as e:
+        results['error_message'] = str(e)
+        print(f"❌ Dual-mode search error: {e}")
+    
+    results['runtime_seconds'] = round(time.time() - start_time, 2)
+    
+    # Save results to DynamoDB if we have products
+    if results['products'] and results['success']:
+        saved_count = insert_products_to_dynamodb(results['products'])
+        results['saved_to_db'] = saved_count
+        print(f"📤 Saved {saved_count} products to DynamoDB")
+    
+    return results
 

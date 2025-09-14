@@ -8,6 +8,8 @@ import sys
 import subprocess
 import os
 from pathlib import Path
+from typing import Any
+import boto3
 
 sys.path.append("./data-pipeline/dynamodb")
 
@@ -80,6 +82,14 @@ def setup_dynamodb():
         print(f"❌ DynamoDB setup failed: {e}")
         print("Please check your AWS credentials and try again")
         return False
+    
+def clear_unstructured_products():
+    dynamodb: Any = boto3.resource('dynamodb', region_name=os.getenv('AWS_REGION', 'ca-central-1'))
+    dynamodb.delete_table(TableName='shopping_products_unstructured')
+
+    from data_pipeline.dynamodb.dynamo_setup import create_dynamodb_tables
+    create_dynamodb_tables("shopping_products_unstructured")
+
 
 def start_api():
     """Start the shopping API"""
@@ -119,6 +129,8 @@ def start_api():
 
                 # Save 3 best results to result table (judged by Cohere AI)
                 final_products = choose_k_best_items(3)
+
+                clear_unstructured_products()
                 
                 return jsonify({
                     'query': query,

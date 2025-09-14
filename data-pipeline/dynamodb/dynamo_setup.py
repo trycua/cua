@@ -22,11 +22,9 @@ session = boto3.Session(
 
 dynamodb: Any = session.resource('dynamodb')  
 
-def create_dynamodb_tables():
+def create_dynamodb_table(table_name: str):
 
-    try:
-        table_name = 'shopping_products_unstructured'
-          
+    try:  
         # Products table
         products_table = dynamodb.create_table(
             TableName=table_name,
@@ -43,7 +41,7 @@ def create_dynamodb_tables():
                     'IndexName': 'category-price-index',
                     'KeySchema': [
                         {'AttributeName': 'category', 'KeyType': 'HASH'},
-                        {'AttributeName': 'price_range', 'KeyType': 'RANGE'}
+                        {'AttributeName': 'timestamp', 'KeyType': 'RANGE'}
                     ],
                     'Projection': {'ProjectionType': 'ALL'},
                 }
@@ -64,4 +62,5 @@ def create_dynamodb_tables():
             return False
 
 # Run this first
-create_dynamodb_tables()
+if __name__ == "__main__":
+    create_dynamodb_table("test")

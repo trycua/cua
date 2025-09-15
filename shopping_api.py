@@ -134,12 +134,13 @@ def run_traditional_scraper(query: str, max_results: int = 20) -> List[Dict]:
         search_terms = query_interpreter.generate_optimized_search_terms(interpreted_query)
         print(f"🔍 Optimized search terms: {search_terms}")
         
-        # Use the first optimized search term (or original query if none)
-        search_query = search_terms[0] if search_terms else query
-        print(f"🎯 Using search term: '{search_query}'")
+        # Use the first optimized search term for display, but pass original query to scraper for price extraction
+        search_term = search_terms[0] if search_terms else query
+        print(f"🎯 Using search term: '{search_term}'")
         
         scraper = ProductScraper()
-        products = scraper.search_all_sites(search_query, max_results_per_site=max_results//3)
+        # Pass original query so price constraints can be extracted properly
+        products = scraper.search_all_sites(query, max_results_per_site=max_results//3)
         
         # Process and clean the data
         processed_products = clean_and_process_data(products)

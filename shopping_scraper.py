@@ -15,6 +15,7 @@ import os
 from dotenv import load_dotenv
 from typing import List, Dict, Tuple, Optional, Tuple, Any
 from urllib.parse import quote_plus
+from query_interpreter import QueryInterpreter
 
 # Load environment variables
 load_dotenv()
@@ -34,6 +35,7 @@ class ProductScraper:
         self.session = requests.Session()
         self.proxies = []  # List of proxy dictionaries
         self.current_proxy_index = 0
+        self.query_interpreter = QueryInterpreter()
         
         # Load proxy from environment variable if available
         self.env_proxy = None
@@ -134,8 +136,36 @@ class ProductScraper:
     def search_amazon(self, query: str, max_results: int = 10) -> List[Dict]:
         """Search Amazon for products with anti-detection measures"""
         products = []
+        
+        # Use query interpreter to extract price constraints safely
         try:
-            search_url = f"https://www.amazon.com/s?k={quote_plus(query)}"
+            interpreted_query = self.query_interpreter.interpret_query(query)
+            min_price = interpreted_query.get('price_range', {}).get('min')
+            max_price = interpreted_query.get('price_range', {}).get('max')
+            search_terms = interpreted_query.get('search_terms', extract_search_terms(query))
+        except Exception as e:
+            print(f"⚠️ Query interpretation failed, using fallback: {e}")
+            # Fallback to simple price extraction - ALWAYS use original query for price extraction
+            min_price, max_price = extract_price_filter(query)
+            search_terms = extract_search_terms(query)
+        
+        # Debug: Show what we extracted
+        print(f"🔍 Original query: '{query}'")
+        print(f"📝 Search terms: '{search_terms}'")
+        print(f"💰 Extracted prices - Min: {min_price}, Max: {max_price}")
+        
+        try:
+            # Build search URL with price filters if available
+            search_url = f"https://www.amazon.com/s?k={quote_plus(search_terms)}"
+            if min_price:
+                search_url += f"&low-price={min_price}"
+            if max_price:
+                search_url += f"&high-price={max_price}"
+            
+            # Debug: Print the complete URL being fetched
+            print(f"🔍 Amazon search URL: {search_url}")
+            print(f"🏷️ Price constraints - Min: {min_price}, Max: {max_price}")
+            
             response = self._make_request(search_url, timeout=15)
             
             if not response:
@@ -192,16 +222,25 @@ class ProductScraper:
                     
                     name = name or "Unknown Product"
                     
-                    # Price - comprehensive approach
+                    # Price - comprehensive approach with more selectors
                     price = None
                     
-                    # Try common Amazon price selectors
+                    # Try comprehensive Amazon price selectors (updated for 2024)
                     price_selectors = [
                         '.a-price-whole',
                         '.a-offscreen',
                         '.a-price .a-offscreen',
                         '.a-price-range',
-                        'span[aria-label*="$"]'
+                        'span[aria-label*="$"]',
+                        '.a-price-symbol + .a-price-whole',
+                        '.a-price .a-price-whole',
+                        '.a-price-fraction',
+                        'span.a-price-whole',
+                        'span.a-price',
+                        '.s-price-instruction-style',
+                        '.a-color-price',
+                        '[data-cy="price-recipe"]',
+                        '.a-size-base.a-color-price'
                     ]
                     
                     for selector in price_selectors:
@@ -209,19 +248,39 @@ class ProductScraper:
                             elem = container.select_one(selector)
                             if elem:
                                 price_text = elem.get_text(strip=True)
-                                if '$' in price_text or price_text.replace('.', '').replace(',', '').isdigit():
-                                    price = price_text
+                                if '$' in price_text or (price_text.replace('.', '').replace(',', '').isdigit() and len(price_text) > 0):
+                                    price = price_text if '$' in price_text else f"${price_text}"
+                                    print(f"💰 Found price with selector '{selector}': {price}")
                                     break
-                        except:
+                        except Exception as e:
                             continue
                     
                     if not price:
-                        # Fallback: look for any text with $ symbol
+                        # Enhanced fallback: look for any text with $ symbol or price patterns
                         all_text = container.get_text()
-                        import re
-                        price_match = re.search(r'\$[\d,]+\.?\d*', all_text)
-                        if price_match:
-                            price = price_match.group()
+                        
+                        # Try multiple price patterns
+                        price_patterns = [
+                            r'\$[\d,]+\.?\d*',  # $123.45 or $123
+                            r'[\d,]+\.?\d*\s*dollars?',  # 123.45 dollars
+                            r'Price:\s*\$?[\d,]+\.?\d*',  # Price: $123.45
+                            r'[\d,]+\.?\d*\s*USD'  # 123.45 USD
+                        ]
+                        
+                        for pattern in price_patterns:
+                            price_match = re.search(pattern, all_text, re.IGNORECASE)
+                            if price_match:
+                                price = price_match.group()
+                                if not price.startswith('$') and 'dollar' not in price.lower() and 'usd' not in price.lower():
+                                    price = f"${price}"
+                                print(f"💰 Found price with pattern '{pattern}': {price}")
+                                break
+                    
+                    if not price:
+                        print(f"⚠️ No price found for product: {name[:50]}...")
+                        # Debug: show some of the container text to help diagnose
+                        container_text = container.get_text()[:200]
+                        print(f"🔍 Container text sample: {container_text}")
                     
                     price = price or "Price not available"
                     
@@ -425,24 +484,14 @@ class ProductScraper:
         return products
     
     def search_all_sites(self, query: str, max_results_per_site: int = 10) -> List[Dict]:
-        """Search all supported e-commerce sites"""
+        """Search Amazon for products"""
         all_products = []
         
-        print(f"🔍 Searching for '{query}' across multiple sites...")
+        print(f"🔍 Searching for '{query}' on Amazon...")
         
-        # Search Amazon
+        # Search Amazon only
         amazon_products = self.search_amazon(query, max_results_per_site)
         all_products.extend(amazon_products)
-        time.sleep(1)  # Rate limiting
-        
-        # Search Google Shopping
-        google_products = self.search_google_shopping(query, max_results_per_site)
-        all_products.extend(google_products)
-        time.sleep(1)  # Rate limiting
-        
-        # Search Canadian Tire
-        ct_products = self.search_canadian_tire(query, max_results_per_site)
-        all_products.extend(ct_products)
         
         print(f"🎯 Total products found: {len(all_products)}")
         return all_products
@@ -451,22 +500,56 @@ def extract_price_filter(query: str) -> Tuple[Optional[float], Optional[float]]:
     """Extract price constraints from natural language query"""
     query_lower = query.lower()
     
-    # Under X
-    under_match = re.search(r'under\s+\$?(\d+(?:\.\d{2})?)', query_lower)
+    # Under X (with optional "dollars")
+    under_match = re.search(r'under\s+\$?(\d+(?:\.\d{2})?)\s*(?:dollars?)?', query_lower)
     if under_match:
         return None, float(under_match.group(1))
     
-    # Between X and Y
-    between_match = re.search(r'between\s+\$?(\d+(?:\.\d{2})?)\s+and\s+\$?(\d+(?:\.\d{2})?)', query_lower)
+    # Between X and Y (with optional "dollars")
+    between_match = re.search(r'between\s+\$?(\d+(?:\.\d{2})?)\s+and\s+\$?(\d+(?:\.\d{2})?)\s*(?:dollars?)?', query_lower)
     if between_match:
         return float(between_match.group(1)), float(between_match.group(2))
     
-    # Over X
-    over_match = re.search(r'over\s+\$?(\d+(?:\.\d{2})?)', query_lower)
+    # Over X (with optional "dollars")
+    over_match = re.search(r'over\s+\$?(\d+(?:\.\d{2})?)\s*(?:dollars?)?', query_lower)
     if over_match:
         return float(over_match.group(1)), None
     
+    # Fallback: if no specific pattern matches, just take first two numbers as min/max
+    numbers = re.findall(r'\d+(?:\.\d{2})?', query)
+    
+    if len(numbers) >= 2:
+        return float(numbers[0]), float(numbers[1])
+    elif len(numbers) == 1:
+        # Single number could be max price if context suggests it
+        if any(word in query_lower for word in ['under', 'below', 'max', 'maximum']):
+            return None, float(numbers[0])
+        elif any(word in query_lower for word in ['over', 'above', 'min', 'minimum']):
+            return float(numbers[0]), None
+    
     return None, None
+
+def extract_search_terms(query: str) -> str:
+    """Extract just the product search terms, removing price constraints"""
+    # Remove common price constraint patterns
+    clean_query = query
+    
+    # Remove "between X and Y dollars" patterns
+    clean_query = re.sub(r'\s*between\s+\$?\d+(?:\.\d{2})?\s+and\s+\$?\d+(?:\.\d{2})?\s*(?:dollars?)?', '', clean_query, flags=re.IGNORECASE)
+    
+    # Remove "under X dollars" patterns
+    clean_query = re.sub(r'\s*under\s+\$?\d+(?:\.\d{2})?\s*(?:dollars?)?', '', clean_query, flags=re.IGNORECASE)
+    
+    # Remove "over X dollars" patterns
+    clean_query = re.sub(r'\s*over\s+\$?\d+(?:\.\d{2})?\s*(?:dollars?)?', '', clean_query, flags=re.IGNORECASE)
+    
+    # Remove common filler words
+    clean_query = re.sub(r'\b(give me|find me|show me|get me|i want|i need)\b', '', clean_query, flags=re.IGNORECASE)
+    
+    # Clean up extra spaces
+    clean_query = re.sub(r'\s+', ' ', clean_query).strip()
+    
+    return clean_query if clean_query else query
 
 def filter_products_by_price(products: List[Dict], min_price: Optional[float], max_price: Optional[float]) -> List[Dict]:
     """Filter products by price range"""

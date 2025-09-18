@@ -35,6 +35,12 @@ def _map_agent_output_to_openai_blocks(output_items: List[Dict[str, Any]]) -> Li
 
     Only a subset is supported: computer_call, assistant message (text), and reasoning.
     Unknown types are ignored.
+    
+    Args:
+        output_items: List of agent output items to convert
+        
+    Returns:
+        List of OpenAI ResponseOutputItem objects
     """
     blocks: List[ResponseOutputItem] = []
     for item in output_items or []:
@@ -81,6 +87,14 @@ def _map_agent_output_to_openai_blocks(output_items: List[Dict[str, Any]]) -> Li
     return blocks
 
 def _to_plain_dict_list(items: Any) -> List[Dict[str, Any]]:
+    """Convert items to a list of plain dictionaries.
+    
+    Args:
+        items: Items to convert, can be objects with model_dump method or dictionaries
+        
+    Returns:
+        List of dictionaries representing the items
+    """
     out: List[Dict[str, Any]] = []
     for it in list(items):
         if hasattr(it, "model_dump"):
@@ -100,11 +114,23 @@ class FakeAsyncOpenAI:
     """
 
     def __init__(self, computer_agent: BaseComputerAgent) -> None:
+        """Initialize the fake OpenAI client.
+        
+        Args:
+            computer_agent: The ComputerAgent instance to use for generating responses
+        """
         self._agent = computer_agent
         self.responses = self._Responses(self)
 
     class _Responses:
+        """Internal responses handler for the fake OpenAI client."""
+        
         def __init__(self, parent: "FakeAsyncOpenAI") -> None:
+            """Initialize the responses handler.
+            
+            Args:
+                parent: The parent FakeAsyncOpenAI instance
+            """
             # Caches for cross-call context when using previous_response_id
             self.blocks_cache: Dict[str, ResponseInputParam | ResponseOutputItem] = {}
             self.context_cache: Dict[str, List[str]] = {}
@@ -121,6 +147,23 @@ class FakeAsyncOpenAI:
             max_retries: int = 5,
             **_: Any,
         ) -> Any:
+            """Create a response using the computer agent.
+            
+            Args:
+                model: The model name to use
+                input: The input parameters for the response
+                tools: Optional list of tools to use
+                instructions: Optional instructions to prepend
+                previous_response_id: Optional ID of previous response for context
+                max_retries: Maximum number of retry attempts
+                **_: Additional keyword arguments (ignored)
+                
+            Returns:
+                OpenAI Response object with agent output
+                
+            Raises:
+                Exception: If all retry attempts fail
+            """
             for attempt in range(max_retries):
                 # Prepend cached blocks from previous_response_id to input
                 full_input = input
@@ -217,6 +260,25 @@ class ProxyOperatorAgent(OperatorAgent):
         telemetry_enabled: bool | None = True,
         **kwargs: Any,
     ) -> None:
+        """Initialize the proxy operator agent.
+        
+        Args:
+            model: Model name to use, defaults to "computer-use-preview"
+            allowed_tools: List of allowed tool names, defaults to ["openai_computer"]
+            trajectory_dir: Directory for storing trajectories
+            tools: Additional tools to include
+            custom_loop: Custom loop implementation
+            only_n_most_recent_images: Limit on recent images to keep
+            callbacks: List of callback functions
+            instructions: Instructions to prepend to prompts
+            verbosity: Logging verbosity level
+            max_retries: Maximum retry attempts
+            screenshot_delay: Delay between screenshots
+            use_prompt_caching: Whether to use prompt caching
+            max_trajectory_budget: Budget limit for trajectories
+            telemetry_enabled: Whether telemetry is enabled
+            **kwargs: Additional arguments passed to OperatorAgent
+        """
         model = model or "computer-use-preview"
         allowed_tools = allowed_tools or ["openai_computer"]
 

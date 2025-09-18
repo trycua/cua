@@ -17,6 +17,16 @@ class OpenCUAModel:
     """OpenCUA model handler using AutoTokenizer, AutoModel and AutoImageProcessor."""
 
     def __init__(self, model_name: str, device: str = "auto", trust_remote_code: bool = False) -> None:
+        """Initialize the OpenCUA model with specified configuration.
+        
+        Args:
+            model_name: The name or path of the model to load
+            device: Device to run the model on, defaults to "auto"
+            trust_remote_code: Whether to trust remote code when loading the model
+            
+        Raises:
+            ImportError: If OpenCUA requirements are not installed
+        """
         if not OPENCUA_AVAILABLE:
             raise ImportError(
                 "OpenCUA requirements not found. Install with: pip install \"cua-agent[opencua-hf]\""
@@ -30,6 +40,7 @@ class OpenCUAModel:
         self._load()
 
     def _load(self) -> None:
+        """Load the tokenizer, model, and image processor from the specified model name."""
         self.tokenizer = AutoTokenizer.from_pretrained(
             self.model_name, trust_remote_code=self.trust_remote_code
         )
@@ -46,6 +57,14 @@ class OpenCUAModel:
 
     @staticmethod
     def _extract_last_image_b64(messages: List[Dict[str, Any]]) -> str:
+        """Extract the base64 encoded image data from the last image in the message list.
+        
+        Args:
+            messages: List of message dictionaries in HF format with content items
+            
+        Returns:
+            Base64 encoded image data string, or empty string if no image found
+        """
         # Expect HF-format messages with content items type: "image" with data URL
         for msg in reversed(messages):
             for item in reversed(msg.get("content", [])):
@@ -56,6 +75,15 @@ class OpenCUAModel:
         return ""
 
     def generate(self, messages: List[Dict[str, Any]], max_new_tokens: int = 512) -> str:
+        """Generate text response from the model using the provided messages.
+        
+        Args:
+            messages: List of message dictionaries containing conversation history
+            max_new_tokens: Maximum number of new tokens to generate
+            
+        Returns:
+            Generated text response as a string
+        """
         assert self.model is not None and self.tokenizer is not None and self.image_processor is not None
 
         # Tokenize text side using chat template

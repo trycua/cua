@@ -1,3 +1,11 @@
+"""
+FastAPI server for computer automation and control.
+
+This module provides a web API for controlling computer interactions including
+mouse, keyboard, file system operations, and accessibility features. It supports
+both WebSocket and HTTP endpoints with optional authentication for cloud deployments.
+"""
+
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, HTTPException, Header
 from fastapi.responses import StreamingResponse, JSONResponse
 from typing import List, Dict, Any, Optional, Union, Literal, cast
@@ -112,17 +120,42 @@ handlers = {
 
 
 class AuthenticationManager:
+    """
+    Manages authentication for cloud deployments using container names and API keys.
+    
+    Provides session caching to reduce API calls and handles authentication
+    against the TryCUA API service.
+    """
+    
     def __init__(self):
+        """Initialize the authentication manager with empty session cache."""
         self.sessions: Dict[str, Dict[str, Any]] = {}
         self.container_name = os.environ.get("CONTAINER_NAME")
     
     def _hash_credentials(self, container_name: str, api_key: str) -> str:
-        """Create a hash of container name and API key for session identification"""
+        """
+        Create a hash of container name and API key for session identification.
+        
+        Args:
+            container_name: The container name to hash
+            api_key: The API key to hash
+            
+        Returns:
+            SHA256 hash of the combined credentials
+        """
         combined = f"{container_name}:{api_key}"
         return hashlib.sha256(combined.encode()).hexdigest()
     
     def _is_session_valid(self, session_data: Dict[str, Any]) -> bool:
-        """Check if a session is still valid based on expiration time"""
+        """
+        Check if a session is still valid based on expiration time.
+        
+        Args:
+            session_data: Dictionary containing session validity and expiration data
+            
+        Returns:
+            True if session is valid and not expired, False otherwise
+        """
         if not session_data.get('valid', False):
             return False
         
@@ -130,7 +163,16 @@ class AuthenticationManager:
         return time.time() < expires_at
     
     async def auth(self, container_name: str, api_key: str) -> bool:
-        """Authenticate container name and API key, using cached sessions when possible"""
+        """
+        Authenticate container name and API key, using cached sessions when possible.
+        
+        Args:
+            container_name: The container name to authenticate
+            api_key: The API key for authentication
+            
+        Returns:
+            True if authentication succeeds, False otherwise
+        """
         # If no CONTAINER_NAME is set, always allow access (local development)
         if not self.container_name:
             logger.info("No CONTAINER_NAME set in environment. Allowing access (local development mode)")
@@ -201,14 +243,33 @@ class AuthenticationManager:
 
 
 class ConnectionManager:
+    """
+    Manages WebSocket connections for the server.
+    
+    Handles connecting and disconnecting WebSocket clients.
+    """
+    
     def __init__(self):
+        """Initialize with empty connection list."""
         self.active_connections: List[WebSocket] = []
 
     async def connect(self, websocket: WebSocket):
+        """
+        Accept and register a new WebSocket connection.
+        
+        Args:
+            websocket: The WebSocket connection to accept
+        """
         await websocket.accept()
         self.active_connections.append(websocket)
 
     def disconnect(self, websocket: WebSocket):
+        """
+        Remove a WebSocket connection from active connections.
+        
+        Args:
+            websocket: The WebSocket connection to remove
+        """
         self.active_connections.remove(websocket)
 
 
@@ -217,6 +278,12 @@ auth_manager = AuthenticationManager()
 
 @app.get("/status")
 async def status():
+    """
+    Get server status including OS type and available features.
+    
+    Returns:
+        Dict containing status, OS type, and available features
+    """
     sys = platform.system().lower()
     # get os type
     if "darwin" in sys or sys == "macos" or sys == "mac":
@@ -233,6 +300,15 @@ async def status():
 
 @app.websocket("/ws", name="websocket_endpoint")
 async def websocket_endpoint(websocket: WebSocket):
+    """
+    Main WebSocket endpoint for handling computer automation commands.
+    
+    Supports authentication for cloud deployments and processes commands
+    through registered handlers.
+    
+    Args:
+        websocket: The WebSocket connection
+    """
     global handlers
 
     # WebSocket message size is configured at the app or endpoint level, not on the instance
@@ -374,15 +450,23 @@ async def cmd_endpoint(
     Backup endpoint for when WebSocket connections fail.
     Accepts commands via HTTP POST with streaming response.
     
+    Args:
+        request: The HTTP request object
+        container_name: Container name for cloud authentication (from header)
+        api_key: API key for cloud authentication (from header)
+    
     Headers:
-    - X-Container-Name: Container name for cloud authentication
-    - X-API-Key: API key for cloud authentication
+        X-Container-Name: Container name for cloud authentication
+        X-API-Key: API key for cloud authentication
     
     Body:
-    {
-        "command": "command_name",
-        "params": {...}
-    }
+        {
+            "command": "command_name",
+            "params": {...}
+        }
+    
+    Returns:
+        StreamingResponse with command execution results
     """
     global handlers
     
@@ -420,7 +504,12 @@ async def cmd_endpoint(
         raise HTTPException(status_code=400, detail=f"Unknown command: {command}")
     
     async def generate_response():
-        """Generate streaming response for the command execution"""
+        """
+        Generate streaming response for the command execution.
+        
+        Yields:
+            JSON-formatted response data as server-sent events
+        """
         try:
             # Filter params to only include those accepted by the handler function
             handler_func = handlers[command]
@@ -463,17 +552,24 @@ async def agent_response_endpoint(
     """
     Minimal proxy to run ComputerAgent for up to 2 turns.
 
+    Args:
+        request: The HTTP request object
+        api_key: API key for authentication (from header)
+
     Security:
-    - If CONTAINER_NAME is set on the server, require X-API-Key
-      and validate using AuthenticationManager unless CUA_ENABLE_PUBLIC_PROXY is true.
+        If CONTAINER_NAME is set on the server, require X-API-Key
+        and validate using AuthenticationManager unless CUA_ENABLE_PUBLIC_PROXY is true.
 
     Body JSON:
-    {
-      "model": "...",                 # required
-      "input": "... or messages[]",   # required
-      "agent_kwargs": { ... },         # optional, passed directly to ComputerAgent
-      "env": { ... }                   # optional env overrides for agent
-    }
+        {
+          "model": "...",                 # required
+          "input": "... or messages[]",   # required
+          "agent_kwargs": { ... },         # optional, passed directly to ComputerAgent
+          "env": { ... }                   # optional env overrides for agent
+        }
+    
+    Returns:
+        JSONResponse with agent execution results
     """
     if not HAS_AGENT:
         raise HTTPException(status_code=501, detail="ComputerAgent not available")
@@ -505,14 +601,26 @@ async def agent_response_endpoint(
 
     # Simple env override context
     class _EnvOverride:
+        """Context manager for temporarily overriding environment variables."""
+        
         def __init__(self, overrides: Dict[str, str]):
+            """
+            Initialize with environment variable overrides.
+            
+            Args:
+                overrides: Dictionary of environment variables to override
+            """
             self.overrides = overrides
             self._original: Dict[str, Optional[str]] = {}
+            
         def __enter__(self):
+            """Apply environment variable overrides."""
             for k, v in (self.overrides or {}).items():
                 self._original[k] = os.environ.get(k)
                 os.environ[k] = str(v)
+                
         def __exit__(self, exc_type, exc, tb):
+            """Restore original environment variables."""
             for k, old in self._original.items():
                 if old is None:
                     os.environ.pop(k, None)
@@ -521,6 +629,15 @@ async def agent_response_endpoint(
 
     # Convert input to messages
     def _to_messages(data: Union[str, List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
+        """
+        Convert string or message list to standard message format.
+        
+        Args:
+            data: Input data as string or list of message dictionaries
+            
+        Returns:
+            List of message dictionaries in standard format
+        """
         if isinstance(data, str):
             return [{"role": "user", "content": data}]
         if isinstance(data, list):
@@ -533,13 +650,26 @@ async def agent_response_endpoint(
     from agent.computers import AsyncComputerHandler  # runtime-checkable Protocol
 
     class DirectComputer(AsyncComputerHandler):
+        """
+        Direct computer interface that delegates to existing handlers.
+        
+        Implements the AsyncComputerHandler protocol for agent integration.
+        """
+        
         def __init__(self):
+            """Initialize with module-scope handler singletons."""
             # use module-scope handler singletons created by HandlerFactory
             self._auto = automation_handler
             self._file = file_handler
             self._access = accessibility_handler
 
         async def get_environment(self) -> Literal["windows", "mac", "linux", "browser"]:
+            """
+            Get the current operating system environment.
+            
+            Returns:
+                The operating system type as a string literal
+            """
             sys = platform.system().lower()
             if "darwin" in sys or sys in ("macos", "mac"):
                 return "mac"
@@ -548,14 +678,34 @@ async def agent_response_endpoint(
             return "linux"
 
         async def get_dimensions(self) -> tuple[int, int]:
+            """
+            Get screen dimensions as width, height tuple.
+            
+            Returns:
+                Tuple of (width, height) in pixels
+            """
             size = await self._auto.get_screen_size()
             return size["width"], size["height"]
 
         async def screenshot(self) -> str:
+            """
+            Take a screenshot and return as base64 encoded string.
+            
+            Returns:
+                Base64 encoded screenshot image data
+            """
             img_b64 = await self._auto.screenshot()
             return img_b64["image_data"]
 
         async def click(self, x: int, y: int, button: str = "left") -> None:
+            """
+            Click at the specified coordinates with the given button.
+            
+            Args:
+                x: X coordinate for the click
+                y: Y coordinate for the click
+                button: Mouse button to use ("left" or "right")
+            """
             if button == "left":
                 await self._auto.left_click(x, y)
             elif button == "right":
@@ -564,22 +714,63 @@ async def agent_response_endpoint(
                 await self._auto.left_click(x, y)
 
         async def double_click(self, x: int, y: int) -> None:
+            """
+            Double-click at the specified coordinates.
+            
+            Args:
+                x: X coordinate for the double-click
+                y: Y coordinate for the double-click
+            """
             await self._auto.double_click(x, y)
 
         async def scroll(self, x: int, y: int, scroll_x: int, scroll_y: int) -> None:
+            """
+            Scroll at the specified position with given scroll amounts.
+            
+            Args:
+                x: X coordinate where to scroll
+                y: Y coordinate where to scroll
+                scroll_x: Horizontal scroll amount
+                scroll_y: Vertical scroll amount
+            """
             await self._auto.move_cursor(x, y)
             await self._auto.scroll(scroll_x, scroll_y)
 
         async def type(self, text: str) -> None:
+            """
+            Type the specified text.
+            
+            Args:
+                text: Text to type
+            """
             await self._auto.type_text(text)
 
         async def wait(self, ms: int = 1000) -> None:
+            """
+            Wait for the specified number of milliseconds.
+            
+            Args:
+                ms: Number of milliseconds to wait
+            """
             await asyncio.sleep(ms / 1000.0)
 
         async def move(self, x: int, y: int) -> None:
+            """
+            Move cursor to the specified coordinates.
+            
+            Args:
+                x: X coordinate to move to
+                y: Y coordinate to move to
+            """
             await self._auto.move_cursor(x, y)
 
         async def keypress(self, keys: Union[List[str], str]) -> None:
+            """
+            Press the specified key or key combination.
+            
+            Args:
+                keys: Single key or list of keys to press
+            """
             if isinstance(keys, str):
                 parts = keys.replace("-", "+").split("+") if len(keys) > 1 else [keys]
             else:
@@ -590,6 +781,12 @@ async def agent_response_endpoint(
                 await self._auto.hotkey(parts)
 
         async def drag(self, path: List[Dict[str, int]]) -> None:
+            """
+            Drag along the specified path of coordinates.
+            
+            Args:
+                path: List of coordinate dictionaries with "x" and "y" keys
+            """
             if not path:
                 return
             start = path[0]
@@ -600,13 +797,33 @@ async def agent_response_endpoint(
             await self._auto.mouse_up(end["x"], end["y"]) 
 
         async def get_current_url(self) -> str:
+            """
+            Get current URL (not available in this server context).
+            
+            Returns:
+                Empty string as URLs are not available in desktop context
+            """
             # Not available in this server context
             return ""
 
         async def left_mouse_down(self, x: Optional[int] = None, y: Optional[int] = None) -> None:
+            """
+            Press left mouse button down at specified coordinates.
+            
+            Args:
+                x: X coordinate for mouse down (optional)
+                y: Y coordinate for mouse down (optional)
+            """
             await self._auto.mouse_down(x, y, button="left")
 
         async def left_mouse_up(self, x: Optional[int] = None, y: Optional[int] = None) -> None:
+            """
+            Release left mouse button at specified coordinates.
+            
+            Args:
+                x: X coordinate for mouse up (optional)
+                y: Y coordinate for mouse up (optional)
+            """
             await self._auto.mouse_up(x, y, button="left")
 
     # # Inline image URLs to base64
@@ -703,4 +920,5 @@ async def agent_response_endpoint(
 
 
 if __name__ == "__main__":
+    """Run the FastAPI server when executed directly."""
     uvicorn.run(app, host="0.0.0.0", port=8000)

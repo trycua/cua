@@ -1,0 +1,7 @@
+{
+  "type": "module",
+  "dependencies": {
+    "@vapi-ai/server-sdk": "^0.10.1",
+    "@vapi-ai/web": "^2.3.10"
+  }
+}

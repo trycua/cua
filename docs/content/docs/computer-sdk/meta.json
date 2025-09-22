@@ -5,6 +5,7 @@
         "computers",
         "commands",
         "computer-ui",
+        "tracing-api",
         "sandboxed-python"
 	]
 }

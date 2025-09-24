@@ -10,14 +10,16 @@ from .budget_manager import BudgetManagerCallback
 from .telemetry import TelemetryCallback
 from .operator_validator import OperatorNormalizerCallback
 from .prompt_instructions import PromptInstructionsCallback
+from .snapshot_manager import SnapshotManagerCallback
 
 __all__ = [
     "AsyncCallbackHandler",
-    "ImageRetentionCallback", 
+    "ImageRetentionCallback",
     "LoggingCallback",
     "TrajectorySaverCallback",
     "BudgetManagerCallback",
     "TelemetryCallback",
     "OperatorNormalizerCallback",
     "PromptInstructionsCallback",
+    "SnapshotManagerCallback",
 ]

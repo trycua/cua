@@ -35,6 +35,8 @@ async def run_agent_example():
             verbosity=logging.DEBUG,
         )
 
+        await computer.run()
+        
         # Create a remote Linux computer with Cua
         # computer = Computer(
         #     os_type="linux",
@@ -144,7 +146,10 @@ async def run_agent_example():
         logger.error("Error in run_agent_example: %s", e)
         traceback.print_exc()
         raise
-
+    finally:
+        # Ensure we clean up the computer connection
+        if 'computer' in locals():
+            await computer.stop()
 
 def main():
     """Run the Anthropic agent example."""

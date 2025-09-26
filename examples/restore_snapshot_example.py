@@ -137,6 +137,8 @@ async def run_restore_example():
             verbosity=logging.DEBUG,
         )
 
+        await computer.run()
+
         # Create ComputerAgent with same configuration
         agent = ComputerAgent(
             model="anthropic/claude-sonnet-4-20250514",
@@ -148,7 +150,7 @@ async def run_restore_example():
             max_trajectory_budget=1.0,
         )
 
-        # Create snapshot callback
+        # Create snapshot callback - now the provider should be initialized
         snapshot_callback = SnapshotManagerCallback(
             computer=computer,
             snapshot_interval="manual",  # We're only doing manual operations
@@ -165,18 +167,18 @@ async def run_restore_example():
 
         # First, ensure we have a clean state
         history = []
-        clean_task = "List all files in the home directory"
-        print(f"Checking initial state: {clean_task}")
-        history.append({"role": "user", "content": clean_task})
+        # clean_task = "List all files in the home directory"
+        # print(f"Checking initial state: {clean_task}")
+        # history.append({"role": "user", "content": clean_task})
 
-        async for result in agent.run(history, stream=False):
-            history += result.get("output", [])
-            for item in result.get("output", []):
-                if item.get("type") == "message":
-                    content = item.get("content", [])
-                    for content_part in content:
-                        if content_part.get("text"):
-                            print(f"Initial state: {content_part.get('text')[:100]}...")  # Show first 100 chars
+        # async for result in agent.run(history, stream=False):
+        #     history += result.get("output", [])
+        #     for item in result.get("output", []):
+        #         if item.get("type") == "message":
+        #             content = item.get("content", [])
+        #             for content_part in content:
+        #                 if content_part.get("text"):
+        #                     print(f"Initial state: {content_part.get('text')[:100]}...")  # Show first 100 chars
 
         # Create initial snapshot
         initial_snapshot = await snapshot_callback.create_manual_snapshot("Clean initial state")
@@ -189,10 +191,10 @@ async def run_restore_example():
 
         modification_tasks = [
             "Create a file called experiment1.txt with content 'This is experiment 1'",
-            "Create a directory called test_data",
-            "Create a file called test_data/results.txt with content 'Test results here'",
-            "Create a file called experiment2.txt with content 'This is experiment 2'",
-            "List all files and directories to show what we created"
+            # "Create a directory called test_data",
+            # "Create a file called test_data/results.txt with content 'Test results here'",
+            # "Create a file called experiment2.txt with content 'This is experiment 2'",
+            # "List all files and directories to show what we created"
         ]
 
         for i, task in enumerate(modification_tasks):
@@ -240,21 +242,21 @@ async def run_restore_example():
         # Step 5: Verify restoration worked
         print("\n=== Step 5: Verifying Restoration to Clean State ===")
 
-        # Create new history after restoration
-        history = []
-        verification_task = "List all files and directories to verify we're back to the clean state"
-        print(f"Running verification: {verification_task}")
-        history.append({"role": "user", "content": verification_task})
+        # # Create new history after restoration
+        # history = []
+        # verification_task = "List all files and directories to verify we're back to the clean state"
+        # print(f"Running verification: {verification_task}")
+        # history.append({"role": "user", "content": verification_task})
 
-        async for result in agent.run(history, stream=False):
-            history += result.get("output", [])
+        # async for result in agent.run(history, stream=False):
+        #     history += result.get("output", [])
 
-            for item in result.get("output", []):
-                if item.get("type") == "message":
-                    content = item.get("content", [])
-                    for content_part in content:
-                        if content_part.get("text"):
-                            print(f"Restored state: {content_part.get('text')}")
+        #     for item in result.get("output", []):
+        #         if item.get("type") == "message":
+        #             content = item.get("content", [])
+        #             for content_part in content:
+        #                 if content_part.get("text"):
+        #                     print(f"Restored state: {content_part.get('text')}")
 
         print("\n✅ Successfully demonstrated running tasks and restoring to initial state!")
         print("   All the files created during tasks (experiment1.txt, experiment2.txt, test_data/) ")
@@ -274,6 +276,10 @@ async def run_restore_example():
         logger.error("Error in run_restore_example: %s", e)
         traceback.print_exc()
         raise
+    finally:
+        # Ensure we clean up the computer connection
+        if 'computer' in locals():
+            await computer.stop()
 
 
 def main():

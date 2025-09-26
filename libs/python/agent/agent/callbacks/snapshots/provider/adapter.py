@@ -39,24 +39,67 @@ class ProviderAdapter:
         Returns:
             True if provider supports snapshots, False otherwise
         """
-        if self._validated:
-            return self._provider is not None
+        # If already validated and provider is available, return cached result
+        if self._validated and self._provider is not None:
+            return True
 
         if not self.computer:
             logger.warning("No computer instance available")
             return False
 
-        if not hasattr(self.computer, 'config') or not hasattr(self.computer.config, 'vm_provider'):
-            logger.warning("Computer does not have a configured VM provider")
+        if not hasattr(self.computer, 'config'):
+            logger.warning("Computer does not have a config attribute")
+            return False
+
+        # Check if vm_provider exists and is not None
+        if not hasattr(self.computer.config, 'vm_provider') or self.computer.config.vm_provider is None:
+            # This is expected during initialization - provider is set later during run()
+            # Reset validation to allow retry later
+            self._validated = False
+            self._provider = None
+            logger.debug("VM provider not yet initialized - will retry when needed")
             return False
 
         provider = self.computer.config.vm_provider
 
+        # Debug information
+        logger.info(f"Validating provider: {type(provider).__name__}")
+        logger.info(f"Provider type: {type(provider)}")
+        logger.info(f"Provider MRO: {[cls.__name__ for cls in type(provider).__mro__]}")
+
+        # Show all available methods
+        all_methods = dir(provider)
+        snapshot_methods = [m for m in all_methods if 'snapshot' in m.lower()]
+        logger.info(f"Available snapshot-related methods: {snapshot_methods}")
+
+        # Check if provider is actually the DockerProvider instance
+        logger.info(f"Provider instance id: {id(provider)}")
+        logger.info(f"Provider __class__.__module__: {provider.__class__.__module__}")
+
         required_methods = ['create_snapshot', 'restore_snapshot', 'list_snapshots', 'delete_snapshot']
         for method in required_methods:
-            if not hasattr(provider, method):
+            has_method = hasattr(provider, method)
+            logger.info(f"Provider {type(provider).__name__} hasattr({method}) = {has_method}")
+
+            # Try alternative check
+            try:
+                method_exists = method in dir(provider)
+                logger.info(f"Provider {type(provider).__name__} '{method}' in dir() = {method_exists}")
+            except Exception as e:
+                logger.error(f"Error checking dir for {method}: {e}")
+
+            if not has_method:
                 logger.warning(f"Provider {type(provider).__name__} missing method: {method}")
+                logger.debug(f"Available methods: {[m for m in dir(provider) if not m.startswith('_')]}")
                 return False
+            else:
+                # Check if method is actually implemented (not just raising NotImplementedError)
+                method_obj = getattr(provider, method)
+                if callable(method_obj):
+                    logger.debug(f"Provider {type(provider).__name__} has method: {method}")
+                else:
+                    logger.warning(f"Provider {type(provider).__name__} method {method} is not callable")
+                    return False
 
         self._provider = provider
         self._validated = True

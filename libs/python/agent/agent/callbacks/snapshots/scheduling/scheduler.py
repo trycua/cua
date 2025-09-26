@@ -4,6 +4,8 @@ Core snapshot scheduling logic.
 
 from typing import Optional
 import logging
+from .run_context import RunContextManager
+from .trigger_utils import TriggerDescriptor
 
 # Import within methods to avoid circular imports
 
@@ -30,8 +32,6 @@ class SnapshotScheduler:
         Args:
             snapshot_interval: When to create snapshots
         """
-        from .run_context import RunContextManager
-        from .trigger_utils import TriggerDescriptor
 
         self.snapshot_interval = self._validate_interval(snapshot_interval)
         self.run_context = RunContextManager()

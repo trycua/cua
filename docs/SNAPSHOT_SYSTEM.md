@@ -2,7 +2,37 @@
 
 ## Overview
 
-The CUA Snapshot System enables creating, managing, and restoring filesystem snapshots of Docker containers during agent execution. This provides checkpoint/restore functionality for debugging, error recovery, and state management.
+The CUA Snapshot System enables creating, managing, and restoring filesystem snapshots of Docker containers during agent execution by extending the Docker provider.
+
+## Architecture Diagram
+
+```mermaid
+flowchart TD
+    A[Agent / ComputerAgent] --> B[SnapshotManagerCallback]
+
+    B --> C{Trigger}
+    C -->|manual| D[create_manual_snapshot]
+    C -->|run_start / run_end / every_action| E[auto snapshot]
+
+    D --> F[SnapshotCreator]
+    E --> F
+    F --> G[ProviderAdapter]
+    G --> H{{Docker}}
+    H --> I[docker commit to image]
+    I --> J[Write metadata: labels and files]
+    J --> K[RetentionEnforcer]
+    K -->|count/age| L[delete old snapshots]
+
+    B --> M[restore snapshot by id]
+    M --> G
+    G --> N[restore via provider]
+    N --> O[Container filesystem replaced]
+    O --> P[Container restarted]
+    P --> Q[Agent continues from restored state]
+
+    classDef comp fill:#eaf7ff,stroke:#2b90d9,color:#0b3d62;
+    class A,B,D,E,F,G,M comp;
+```
 
 ## Core Functionality
 
@@ -32,7 +62,7 @@ The CUA Snapshot System enables creating, managing, and restoring filesystem sna
 ```python
 from computer import Computer
 from agent import ComputerAgent
-from libs.python.agent.agent.callbacks.snapshot_manager import SnapshotManagerCallback
+from libs.python.agent.agent.callbacks.snapshot_manager import SnapshotManagerCallback  # TODO This will eventually be a part of the pip package
 
 # Setup computer with Docker provider
 computer = Computer(

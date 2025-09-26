@@ -26,13 +26,14 @@ from .adapters import (
     MLXVLMAdapter,
 )
 from .callbacks import (
-    ImageRetentionCallback, 
-    LoggingCallback, 
-    TrajectorySaverCallback, 
+    ImageRetentionCallback,
+    LoggingCallback,
+    TrajectorySaverCallback,
     BudgetManagerCallback,
     TelemetryCallback,
     OperatorNormalizerCallback,
     PromptInstructionsCallback,
+    SnapshotManagerCallback,
 )
 from .computers import (
     AsyncComputerHandler,

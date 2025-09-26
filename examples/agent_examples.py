@@ -4,11 +4,15 @@ import asyncio
 import logging
 import traceback
 import signal
+import sys
+import os
 
-from computer import Computer, VMProviderType
+from computer import Computer
 
 # Import the unified agent class and types
 from agent import ComputerAgent
+
+from libs.python.agent.agent.callbacks.snapshot_manager import SnapshotManagerCallback
 
 # Import utility functions
 from utils import load_dotenv_files, handle_sigint
@@ -17,7 +21,6 @@ from utils import load_dotenv_files, handle_sigint
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-
 async def run_agent_example():
     """Run example of using the ComputerAgent with different models."""
     print("\n=== Example: ComputerAgent with different models ===")
@@ -25,7 +28,10 @@ async def run_agent_example():
     try:
         # Create a local macOS computer
         computer = Computer(
-            os_type="macos",
+            os_type="linux",
+            provider_type="docker",
+            image="trycua/cua-ubuntu:latest",
+            name='snapshot-container',
             verbosity=logging.DEBUG,
         )
 
@@ -40,13 +46,13 @@ async def run_agent_example():
         # Create ComputerAgent with new API
         agent = ComputerAgent(
             # Supported models:
-            
+
             # == OpenAI CUA (computer-use-preview) ==
-            model="openai/computer-use-preview",
+            # model="claude-3-5-sonnet-20241022",
 
             # == Anthropic CUA (Claude > 3.5) ==
-            # model="anthropic/claude-opus-4-20250514", 
-            # model="anthropic/claude-sonnet-4-20250514",
+            # model="anthropic/claude-opus-4-20250514",
+            model="anthropic/claude-sonnet-4-20250514",
             # model="anthropic/claude-3-7-sonnet-20250219",
             # model="anthropic/claude-3-5-sonnet-20241022",
 
@@ -67,14 +73,22 @@ async def run_agent_example():
             max_trajectory_budget=1.0,
         )
 
+        # Create snapshot callback after computer is configured
+        # The agent will initialize the computer when first used
+        snapshot_callback = SnapshotManagerCallback(
+            computer=computer,
+            snapshot_interval="run_boundaries",  # Snapshot at start and end of runs
+            max_snapshots=10,  # Keep up to 10 snapshots
+            retention_days=7,   # Delete snapshots older than 7 days
+            auto_cleanup=True   # Automatically cleanup old snapshots
+        )
+
+        # Add the callback to the agent's callback list
+        agent.callbacks.append(snapshot_callback)
+
         # Example tasks to demonstrate the agent
         tasks = [
-            "Look for a repository named trycua/cua on GitHub.",
-            "Check the open issues, open the most recent one and read it.",
-            "Clone the repository in users/lume/projects if it doesn't exist yet.",
-            "Open the repository with an app named Cursor (on the dock, black background and white cube icon).",
-            "From Cursor, open Composer if not already open.",
-            "Focus on the Composer text area, then write and submit a task to help resolve the GitHub issue.",
+            "Create a file called test.txt"
         ]
 
         # Use message-based conversation history
@@ -90,6 +104,7 @@ async def run_agent_example():
             async for result in agent.run(history, stream=False):
                 # Add agent outputs to history
                 history += result.get("output", [])
+                # manual_snapshot = await snapshot_callback.create_manual_snapshot(f"Step number {i} in {task}")
                 
                 # Print output for debugging
                 for item in result.get("output", []):
@@ -107,8 +122,26 @@ async def run_agent_example():
                         
             print(f"✅ Task {i+1}/{len(tasks)} completed: {task}")
 
+        # Demonstrate manual snapshot operations
+        print("\n=== Snapshot Management Demo ===")
+
+        # List snapshots created during the run
+        snapshots = await snapshot_callback.list_snapshots()
+        print(f"Agent run created {len(snapshots)} snapshots:")
+        for snap in snapshots:
+            metadata = snap.get('metadata', {})
+            print(f"  - {snap.get('tag')} (Trigger: {metadata.get('trigger', 'unknown')})")
+
+        # Create a manual snapshot
+        manual_snapshot = await snapshot_callback.create_manual_snapshot("End of demo run")
+        if manual_snapshot:
+            print(f"Created manual snapshot: {manual_snapshot.get('tag')}")
+
+        print("💡 You can restore to any snapshot using:")
+        print("   await snapshot_callback.restore_snapshot(snapshot_id)")
+
     except Exception as e:
-        logger.error(f"Error in run_agent_example: {e}")
+        logger.error("Error in run_agent_example: %s", e)
         traceback.print_exc()
         raise
 

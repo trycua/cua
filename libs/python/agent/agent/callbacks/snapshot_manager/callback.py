@@ -26,13 +26,14 @@ class SnapshotManagerCallback(AsyncCallbackHandler):
     """
 
     def __init__(self,
-                 computer: Optional[Any] = None,
-                 snapshot_interval: str = "manual",
-                 max_snapshots: int = 10,
-                 retention_days: int = 7,
-                 metadata_dir: str = "/tmp/cua_snapshots",
-                 auto_cleanup: bool = True,
-                 snapshot_prefix: str = "cua-snapshot"):
+        computer: Optional[Any] = None,
+        snapshot_interval: str = "manual",
+        max_snapshots: int = 10,
+        retention_days: int = 7,
+        metadata_dir: str = "/tmp/cua_snapshots",
+        auto_cleanup: bool = True,
+        snapshot_prefix: str = "cua-snapshot"):
+
         """Initialize the snapshot manager callback with specialized components."""
         # Initialize core components
         self.storage_manager = StorageManager(metadata_dir)

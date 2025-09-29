@@ -11,6 +11,7 @@ struct Config: ParsableCommand {
 
     // MARK: - Basic Configuration Subcommands
 
+    @MainActor
     struct Get: ParsableCommand {
         static let configuration = CommandConfiguration(
             commandName: "get",
@@ -116,6 +117,7 @@ struct Config: ParsableCommand {
             subcommands: [GetCache.self, SetCache.self]
         )
 
+        @MainActor
         struct GetCache: ParsableCommand {
             static let configuration = CommandConfiguration(
                 commandName: "get",

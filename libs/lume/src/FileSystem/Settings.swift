@@ -425,8 +425,8 @@ enum SettingsError: Error, LocalizedError {
 
 // MARK: - macOS Cache Normalization & Migration
 
-@MainActor fileprivate var _cacheDeprecationNoteThisRun: String? = nil
-@MainActor fileprivate var _cacheDeprecationEmittedThisRun: Bool = false
+fileprivate var _cacheDeprecationNoteThisRun: String? = nil
+fileprivate var _cacheDeprecationEmittedThisRun: Bool = false
 
 extension SettingsManager {
     #if os(macOS)
@@ -434,7 +434,6 @@ extension SettingsManager {
     /// ~/Library/Caches paths to the canonical ~/.lume/cache. Returns a one-time
     /// deprecation note to be printed by the CLI if work was performed or legacy
     /// directories were detected. Subsequent runs are suppressed by a marker file.
-    @MainActor
     func normalizeAndMigrateCacheDirectoryIfNeeded() -> String? {
         let cfgDirURL = URL(fileURLWithPath: self.configDir)
         let markerURL = cfgDirURL.appendingPathComponent(".cache_migration_done")
@@ -504,13 +503,10 @@ extension SettingsManager {
     }
 
     /// Returns any pending deprecation note captured during normalization for this run.
-    @MainActor
     func pendingDeprecationNote() -> String? { _cacheDeprecationNoteThisRun }
     /// Marks that the deprecation note has been emitted in this process.
-    @MainActor
     func markDeprecationEmitted() { _cacheDeprecationEmittedThisRun = true }
     /// Whether the deprecation note has been emitted in this process.
-    @MainActor
     func deprecationAlreadyEmitted() -> Bool { _cacheDeprecationEmittedThisRun }
 
     /// Internal helper to safely merge-copy one directory tree into another.
@@ -540,7 +536,7 @@ extension SettingsManager {
             let relativePath = item.path.replacingOccurrences(of: source.path + "/", with: "")
             let destURL = destination.appendingPathComponent(relativePath)
             do {
-                let values = try item.resourceValues(forKeys: [.isDirectoryKey])
+                let values = try item.resourceValues(forKeys: Set(keys))
                 if values.isDirectory == true {
                     if !fm.fileExists(atPath: destURL.path) {
                         try fm.createDirectory(at: destURL, withIntermediateDirectories: true)
@@ -574,10 +570,12 @@ extension SettingsManager {
             for src in legacySources { mergeCopy(from: src, to: cacheDir, fileManager: fm) }
             fm.createFile(atPath: markerURL.path, contents: Data(), attributes: nil)
             let note = "DEPRECATION: Lume no longer uses legacy cache directories. Your cache has been migrated to ~/.lume/cache."
+            _cacheDeprecationNoteThisRun = note
             return note
         } else {
             fm.createFile(atPath: markerURL.path, contents: Data(), attributes: nil)
             let note = "DEPRECATION: Legacy cache directories were detected under ~/Library/Caches, but a custom cache directory is configured. No automatic migration was performed."
+            _cacheDeprecationNoteThisRun = note
             return note
         }
     }

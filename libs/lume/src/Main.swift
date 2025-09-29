@@ -33,7 +33,12 @@ extension Lume {
     
     private static func executeCommand() async throws {
         var command = try parseAsRoot()
-        
+        #if os(macOS)
+        if let note = SettingsManager.shared.normalizeAndMigrateCacheDirectoryIfNeeded() {
+            Logger.info(note)
+            SettingsManager.shared.markDeprecationEmitted()
+        }
+        #endif
         if var asyncCommand = command as? AsyncParsableCommand {
             try await asyncCommand.run()
         } else {

@@ -422,3 +422,162 @@ enum SettingsError: Error, LocalizedError {
         }
     }
 }
+
+// MARK: - macOS Cache Normalization & Migration
+
+fileprivate var _cacheDeprecationNoteThisRun: String? = nil
+fileprivate var _cacheDeprecationEmittedThisRun: Bool = false
+
+extension SettingsManager {
+    #if os(macOS)
+    /// Performs macOS-only cache path normalization and safe migration from legacy
+    /// ~/Library/Caches paths to the canonical ~/.lume/cache. Returns a one-time
+    /// deprecation note to be printed by the CLI if work was performed or legacy
+    /// directories were detected. Subsequent runs are suppressed by a marker file.
+    func normalizeAndMigrateCacheDirectoryIfNeeded() -> String? {
+        let cfgDirURL = URL(fileURLWithPath: self.configDir)
+        let markerURL = cfgDirURL.appendingPathComponent(".cache_migration_done")
+        let fm = self.fileManager
+
+        // If we've already migrated/warned in a previous run, skip
+        if fm.fileExists(atPath: markerURL.path) {
+            return nil
+        }
+
+        let settings = getSettings()
+        let configuredCache = settings.cacheDirectory
+        let expandedCache = (configuredCache as NSString).expandingTildeInPath
+        let defaultCache = ("~/.lume/cache" as NSString).expandingTildeInPath
+
+        let homePath = NSHomeDirectory()
+        let legacyLower = URL(fileURLWithPath: (homePath as NSString).appendingPathComponent("Library/Caches/lume"))
+        let legacyUpper = URL(fileURLWithPath: (homePath as NSString).appendingPathComponent("Library/Caches/Lume"))
+
+        // Gather existing legacy sources and de-duplicate by file resource identifier
+        var sources: [URL] = []
+        let candidates = [legacyLower, legacyUpper].filter { fm.fileExists(atPath: $0.path) }
+        var seenIds: [AnyHashable] = []
+        for url in candidates {
+            if let id = try? url.resourceValues(forKeys: [.fileResourceIdentifierKey]).fileResourceIdentifier as? AnyHashable {
+                if !seenIds.contains(where: { $0 == id }) {
+                    sources.append(url)
+                    seenIds.append(id)
+                }
+            } else {
+                // If we can't obtain an identifier, include it conservatively
+                sources.append(url)
+            }
+        }
+
+        // If no legacy caches are present, nothing to do.
+        if sources.isEmpty {
+            return nil
+        }
+
+        // Ensure config dir exists to store marker
+        try? fm.createDirectory(at: cfgDirURL, withIntermediateDirectories: true)
+
+        // If using default cache, migrate contents safely. Otherwise warn-only.
+        if expandedCache == defaultCache {
+            let destURL = URL(fileURLWithPath: expandedCache)
+            // Ensure destination exists
+            try? fm.createDirectory(at: destURL, withIntermediateDirectories: true)
+            // Perform a safe merge copy for each legacy source
+            for src in sources {
+                mergeCopy(from: src, to: destURL, fileManager: fm)
+            }
+
+            // Write marker to avoid repeating
+            fm.createFile(atPath: markerURL.path, contents: Data(), attributes: nil)
+
+            let note = "DEPRECATION: Lume no longer uses ~/Library/Caches on macOS. Your cache has been migrated to ~/.lume/cache."
+            _cacheDeprecationNoteThisRun = note
+            return note
+        } else {
+            // Custom cache configured - do not migrate automatically
+            fm.createFile(atPath: markerURL.path, contents: Data(), attributes: nil)
+            let note = "DEPRECATION: Legacy cache directories were detected under ~/Library/Caches, but a custom cache directory is configured (\(configuredCache)). Lume now uses ~/.lume/cache by default. No automatic migration was performed. Consider running 'lume config cache set \(configuredCache)' or moving files manually."
+            _cacheDeprecationNoteThisRun = note
+            return note
+        }
+    }
+
+    /// Returns any pending deprecation note captured during normalization for this run.
+    func pendingDeprecationNote() -> String? { _cacheDeprecationNoteThisRun }
+    /// Marks that the deprecation note has been emitted in this process.
+    func markDeprecationEmitted() { _cacheDeprecationEmittedThisRun = true }
+    /// Whether the deprecation note has been emitted in this process.
+    func deprecationAlreadyEmitted() -> Bool { _cacheDeprecationEmittedThisRun }
+
+    /// Internal helper to safely merge-copy one directory tree into another.
+    /// - On conflict, destination wins and source file is skipped.
+    private func mergeCopy(from source: URL, to destination: URL, fileManager fm: FileManager) {
+        var isDir: ObjCBool = false
+        guard fm.fileExists(atPath: source.path, isDirectory: &isDir), isDir.boolValue else {
+            return
+        }
+        if !fm.fileExists(atPath: destination.path) {
+            try? fm.createDirectory(at: destination, withIntermediateDirectories: true)
+        }
+
+        let keys: [URLResourceKey] = [.isDirectoryKey]
+        let enumerator = fm.enumerator(
+            at: source,
+            includingPropertiesForKeys: keys,
+            options: [.skipsHiddenFiles,
+                      .skipsPackageDescendants],
+            errorHandler: { (url, error) -> Bool in
+                Logger.info("Skipping unreadable item", metadata: ["path": url.path, "error": error.localizedDescription])
+                return true
+            }
+        )
+
+        while let item = enumerator?.nextObject() as? URL {
+            let relativePath = item.path.replacingOccurrences(of: source.path + "/", with: "")
+            let destURL = destination.appendingPathComponent(relativePath)
+            do {
+                let values = try item.resourceValues(forKeys: Set(keys))
+                if values.isDirectory == true {
+                    if !fm.fileExists(atPath: destURL.path) {
+                        try fm.createDirectory(at: destURL, withIntermediateDirectories: true)
+                    }
+                } else {
+                    if fm.fileExists(atPath: destURL.path) {
+                        Logger.info("Skipping existing cache file", metadata: ["path": destURL.path])
+                        continue
+                    }
+                    try fm.createDirectory(at: destURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+                    try fm.copyItem(at: item, to: destURL)
+                }
+            } catch {
+                Logger.info("Skipping item due to error", metadata: ["path": item.path, "error": error.localizedDescription])
+                continue
+            }
+        }
+    }
+
+    // MARK: - Testing helper
+    /// Internal test-only entrypoint to drive migration with injected paths.
+    /// Returns the deprecation note if any work/warning was performed.
+    internal func _normalizeAndMigrateForTesting(cacheDir: URL, configDirURL: URL, legacySources: [URL], useDefaultCache: Bool) -> String? {
+        let fm = self.fileManager
+        let markerURL = configDirURL.appendingPathComponent(".cache_migration_done")
+        if fm.fileExists(atPath: markerURL.path) { return nil }
+        if legacySources.isEmpty { return nil }
+        try? fm.createDirectory(at: configDirURL, withIntermediateDirectories: true)
+        if useDefaultCache {
+            try? fm.createDirectory(at: cacheDir, withIntermediateDirectories: true)
+            for src in legacySources { mergeCopy(from: src, to: cacheDir, fileManager: fm) }
+            fm.createFile(atPath: markerURL.path, contents: Data(), attributes: nil)
+            let note = "DEPRECATION: Lume no longer uses legacy cache directories. Your cache has been migrated to ~/.lume/cache."
+            _cacheDeprecationNoteThisRun = note
+            return note
+        } else {
+            fm.createFile(atPath: markerURL.path, contents: Data(), attributes: nil)
+            let note = "DEPRECATION: Legacy cache directories were detected under ~/Library/Caches, but a custom cache directory is configured. No automatic migration was performed."
+            _cacheDeprecationNoteThisRun = note
+            return note
+        }
+    }
+    #endif
+}

@@ -26,11 +26,20 @@ struct Config: ParsableCommand {
                 "Default VM storage: \(settings.defaultLocationName) (\(settings.defaultLocation?.path ?? "not set"))"
             )
 
-            // Display cache directory
-            print("Cache directory: \(settings.cacheDirectory)")
+            // Display cache directory (resolved path)
+            let cacheResolved = (settings.cacheDirectory as NSString).expandingTildeInPath
+            print("Cache directory: \(cacheResolved)")
 
             // Display caching enabled status
             print("Caching enabled: \(settings.cachingEnabled)")
+
+            #if os(macOS)
+            if !SettingsManager.shared.deprecationAlreadyEmitted(),
+               let note = SettingsManager.shared.pendingDeprecationNote() {
+                print(note)
+                SettingsManager.shared.markDeprecationEmitted()
+            }
+            #endif
 
             // Display all locations
             if !settings.vmLocations.isEmpty {
@@ -116,17 +125,25 @@ struct Config: ParsableCommand {
             func run() throws {
                 let controller = LumeController()
                 let cacheDir = controller.getCacheDirectory()
-                print("Cache directory: \(cacheDir)")
+                let resolved = (cacheDir as NSString).expandingTildeInPath
+                print("Cache directory: \(resolved)")
+                #if os(macOS)
+                if !SettingsManager.shared.deprecationAlreadyEmitted(),
+                   let note = SettingsManager.shared.pendingDeprecationNote() {
+                    print(note)
+                    SettingsManager.shared.markDeprecationEmitted()
+                }
+                #endif
             }
         }
 
         struct SetCache: ParsableCommand {
             static let configuration = CommandConfiguration(
                 commandName: "set",
-                abstract: "Set cache directory"
+                abstract: "Set cache directory (default: ~/.lume/cache). Legacy ~/Library/Caches is deprecated"
             )
 
-            @Argument(help: "Path to cache directory")
+            @Argument(help: "Path to cache directory (default: ~/.lume/cache)")
             var path: String
 
             func run() throws {

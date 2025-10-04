@@ -167,7 +167,7 @@ async def chat_loop(agent, model: str, container_name: str, initial_prompt: str 
                 
                 # Process and display the output
                 for item in result.get("output", []):
-                    if item.get("type") == "message":
+                    if item.get("type") == "message" and item.get("role") == "assistant":
                         # Display agent text response
                         content = item.get("content", [])
                         for content_part in content:

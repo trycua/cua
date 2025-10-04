@@ -13,6 +13,7 @@ from . import glm45v
 from . import opencua
 from . import internvl
 from . import holo
+from . import moondream3
 
 __all__ = [
     "anthropic", 
@@ -25,4 +26,5 @@ __all__ = [
     "opencua",
     "internvl",
     "holo",
+    "moondream3",
 ]

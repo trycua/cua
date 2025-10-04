@@ -33,7 +33,6 @@ dev = [
     "-e computer-server @ file:///${PROJECT_ROOT}/libs/python/computer-server",
     "-e cua-som @ file:///${PROJECT_ROOT}/libs/python/som",
     "-e mcp-server @ file:///${PROJECT_ROOT}/libs/python/mcp-server",
-    "-e pylume @ file:///${PROJECT_ROOT}/libs/python/pylume",
     "black>=23.0.0",
     "ipykernel>=6.29.5",
     "jedi>=0.19.2",

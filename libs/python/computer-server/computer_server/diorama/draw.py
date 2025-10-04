@@ -37,6 +37,14 @@ from computer_server.diorama.safezone import (
 
 # Timing decorator for profiling
 def timing_decorator(func):
+    """Decorator that logs the execution time of a function.
+    
+    Args:
+        func: The function to be timed
+        
+    Returns:
+        The wrapped function with timing functionality
+    """
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
         start_time = time.time()
@@ -116,13 +124,23 @@ NSApplicationActivationOptions = {
 
 
 def CFAttributeToPyObject(attrValue):
+    """Convert Core Foundation attribute values to Python objects.
+    
+    Args:
+        attrValue: Core Foundation attribute value to convert
+        
+    Returns:
+        Python object representation of the attribute value, or None if conversion fails
+    """
     def list_helper(list_value):
+        """Convert Core Foundation array to Python list."""
         list_builder = []
         for item in list_value:
             list_builder.append(CFAttributeToPyObject(item))
         return list_builder
 
     def number_helper(number_value):
+        """Convert Core Foundation number to Python int or float."""
         success, int_value = Foundation.CFNumberGetValue(  # type: ignore
             number_value, Foundation.kCFNumberIntType, None  # type: ignore
         )
@@ -137,6 +155,7 @@ def CFAttributeToPyObject(attrValue):
         return None
 
     def axuielement_helper(element_value):
+        """Return accessibility element as-is."""
         return element_value
 
     cf_attr_type = Foundation.CFGetTypeID(attrValue)  # type: ignore
@@ -169,6 +188,15 @@ def CFAttributeToPyObject(attrValue):
         return None
 
 def element_attribute(element, attribute):
+    """Get an attribute value from an accessibility element.
+    
+    Args:
+        element: The accessibility element
+        attribute: The attribute name to retrieve
+        
+    Returns:
+        The attribute value or None if retrieval fails
+    """
     if attribute == kAXChildrenAttribute:
         err, value = AXUIElementCopyAttributeValues(element, attribute, 0, 999, None)
         if err == kAXErrorSuccess:
@@ -185,6 +213,15 @@ def element_attribute(element, attribute):
     return None
 
 def element_value(element, type):
+    """Extract a typed value from an accessibility element.
+    
+    Args:
+        element: The accessibility element containing the value
+        type: The expected value type
+        
+    Returns:
+        The extracted value or None if extraction fails
+    """
     err, value = AXValueGetValue(element, type, None)
     if err == True:
         return value
@@ -844,13 +881,23 @@ def get_dock_items() -> List[Dict[str, Any]]:
     return dock_items
 
 class AppActivationContext:
+    """Context manager for temporarily activating an application and restoring focus afterwards."""
+    
     def __init__(self, active_app_pid=None, active_app_to_use="", logger=None):
+        """Initialize the context manager.
+        
+        Args:
+            active_app_pid: Process ID of the app to activate
+            active_app_to_use: Name of the app to activate (for logging)
+            logger: Logger instance for debug messages
+        """
         self.active_app_pid = active_app_pid
         self.active_app_to_use = active_app_to_use
         self.logger = logger
         self.frontmost_app = None
 
     def __enter__(self):
+        """Activate the specified app and store the current frontmost app."""
         from AppKit import NSWorkspace
         if self.active_app_pid:
             if self.logger and self.active_app_to_use:
@@ -866,6 +913,7 @@ class AppActivationContext:
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
+        """Restore the previously frontmost app."""
         if self.frontmost_app:
             # sleep for 0.5 seconds
             time.sleep(0.5)
@@ -873,6 +921,16 @@ class AppActivationContext:
             
 
 def get_frontmost_and_active_app(all_windows, running_apps, app_whitelist):
+    """Determine which app should be activated for screenshot composition.
+    
+    Args:
+        all_windows: List of all windows with z-order information
+        running_apps: List of all running applications
+        app_whitelist: Optional list of app names to filter by
+        
+    Returns:
+        Tuple of (frontmost_app, active_app_to_use, active_app_pid)
+    """
     from AppKit import NSWorkspace
     frontmost_app = NSWorkspace.sharedWorkspace().frontmostApplication()
 
@@ -919,6 +977,8 @@ def capture_all_apps(save_to_disk: bool = False, app_whitelist: List[str] = None
         save_to_disk: Whether to save screenshots to disk
         app_whitelist: Optional list of app names to include in the recomposited screenshot
                     (will always include 'Window Server' and 'Dock')
+        output_dir: Directory to save screenshots to
+        take_focus: Whether to temporarily activate apps for better screenshot composition
         
     Returns:
         Dictionary with application information and screenshots
@@ -1110,6 +1170,16 @@ async def run_capture():
             return
         # Mosaic-pack: grid (rows of sqrt(N))
         def make_mosaic(images, pad=64, bg=(30,30,30)):
+            """Create a mosaic layout of images using rectangle packing.
+            
+            Args:
+                images: List of (group, image) tuples
+                pad: Padding between images
+                bg: Background color tuple
+                
+            Returns:
+                PIL Image containing the mosaic
+            """
             import rpack
             sizes = [(img.width + pad, img.height + pad) for _, img in images]
             positions = rpack.pack(sizes)

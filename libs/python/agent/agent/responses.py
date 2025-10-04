@@ -31,10 +31,23 @@ from openai.types.responses.easy_input_message_param import EasyInputMessagePara
 from openai.types.responses.response_input_image_param import ResponseInputImageParam
 
 def random_id():
+    """Generate a random UUID string.
+    
+    Returns:
+        str: A random UUID4 string
+    """
     return str(uuid.uuid4())
 
 # User message items
 def make_input_image_item(image_data: Union[str, bytes]) -> EasyInputMessageParam:
+    """Create an input image message item for user messages.
+    
+    Args:
+        image_data: Image data as base64 string or raw bytes
+        
+    Returns:
+        EasyInputMessageParam: A user message containing the image
+    """
     return EasyInputMessageParam(
         content=[
             ResponseInputImageParam(
@@ -48,6 +61,14 @@ def make_input_image_item(image_data: Union[str, bytes]) -> EasyInputMessagePara
 
 # Text items
 def make_reasoning_item(reasoning: str) -> ResponseReasoningItemParam:
+    """Create a reasoning item containing summary text.
+    
+    Args:
+        reasoning: The reasoning text content
+        
+    Returns:
+        ResponseReasoningItemParam: A reasoning item with the provided text
+    """
     return ResponseReasoningItemParam(
         id=random_id(),
         summary=[
@@ -57,6 +78,14 @@ def make_reasoning_item(reasoning: str) -> ResponseReasoningItemParam:
     )
 
 def make_output_text_item(content: str) -> ResponseOutputMessageParam:
+    """Create an output text message item for assistant responses.
+    
+    Args:
+        content: The text content to include in the message
+        
+    Returns:
+        ResponseOutputMessageParam: An assistant message containing the text
+    """
     return ResponseOutputMessageParam(
         id=random_id(),
         content=[
@@ -73,6 +102,16 @@ def make_output_text_item(content: str) -> ResponseOutputMessageParam:
 
 # Function call items
 def make_function_call_item(function_name: str, arguments: Dict[str, Any], call_id: Optional[str] = None) -> ResponseFunctionToolCallParam:
+    """Create a function call item with the specified name and arguments.
+    
+    Args:
+        function_name: Name of the function to call
+        arguments: Dictionary of arguments to pass to the function
+        call_id: Optional call ID, generates random ID if not provided
+        
+    Returns:
+        ResponseFunctionToolCallParam: A completed function call item
+    """
     return ResponseFunctionToolCallParam(
         id=random_id(),
         call_id=call_id if call_id else random_id(),
@@ -84,6 +123,17 @@ def make_function_call_item(function_name: str, arguments: Dict[str, Any], call_
 
 # Computer tool call items
 def make_click_item(x: int, y: int, button: Literal["left", "right", "wheel", "back", "forward"] = "left", call_id: Optional[str] = None) -> ResponseComputerToolCallParam:
+    """Create a computer click action item.
+    
+    Args:
+        x: X coordinate for the click
+        y: Y coordinate for the click
+        button: Mouse button to click (default: "left")
+        call_id: Optional call ID, generates random ID if not provided
+        
+    Returns:
+        ResponseComputerToolCallParam: A completed click action item
+    """
     return ResponseComputerToolCallParam(
         id=random_id(),
         call_id=call_id if call_id else random_id(),
@@ -99,6 +149,16 @@ def make_click_item(x: int, y: int, button: Literal["left", "right", "wheel", "b
     )
 
 def make_double_click_item(x: int, y: int, call_id: Optional[str] = None) -> ResponseComputerToolCallParam:
+    """Create a computer double-click action item.
+    
+    Args:
+        x: X coordinate for the double-click
+        y: Y coordinate for the double-click
+        call_id: Optional call ID, generates random ID if not provided
+        
+    Returns:
+        ResponseComputerToolCallParam: A completed double-click action item
+    """
     return ResponseComputerToolCallParam(
         id=random_id(),
         call_id=call_id if call_id else random_id(),
@@ -113,6 +173,15 @@ def make_double_click_item(x: int, y: int, call_id: Optional[str] = None) -> Res
     )
 
 def make_drag_item(path: List[Dict[str, int]], call_id: Optional[str] = None) -> ResponseComputerToolCallParam:
+    """Create a computer drag action item with a path of coordinates.
+    
+    Args:
+        path: List of dictionaries containing "x" and "y" coordinates for the drag path
+        call_id: Optional call ID, generates random ID if not provided
+        
+    Returns:
+        ResponseComputerToolCallParam: A completed drag action item
+    """
     drag_path = [ActionDragPath(x=point["x"], y=point["y"]) for point in path]
     return ResponseComputerToolCallParam(
         id=random_id(),
@@ -127,6 +196,15 @@ def make_drag_item(path: List[Dict[str, int]], call_id: Optional[str] = None) ->
     )
 
 def make_keypress_item(keys: List[str], call_id: Optional[str] = None) -> ResponseComputerToolCallParam:
+    """Create a computer keypress action item.
+    
+    Args:
+        keys: List of key names to press
+        call_id: Optional call ID, generates random ID if not provided
+        
+    Returns:
+        ResponseComputerToolCallParam: A completed keypress action item
+    """
     return ResponseComputerToolCallParam(
         id=random_id(),
         call_id=call_id if call_id else random_id(),
@@ -140,6 +218,16 @@ def make_keypress_item(keys: List[str], call_id: Optional[str] = None) -> Respon
     )
 
 def make_move_item(x: int, y: int, call_id: Optional[str] = None) -> ResponseComputerToolCallParam:
+    """Create a computer mouse move action item.
+    
+    Args:
+        x: X coordinate to move to
+        y: Y coordinate to move to
+        call_id: Optional call ID, generates random ID if not provided
+        
+    Returns:
+        ResponseComputerToolCallParam: A completed move action item
+    """
     return ResponseComputerToolCallParam(
         id=random_id(),
         call_id=call_id if call_id else random_id(),
@@ -154,6 +242,14 @@ def make_move_item(x: int, y: int, call_id: Optional[str] = None) -> ResponseCom
     )
 
 def make_screenshot_item(call_id: Optional[str] = None) -> ResponseComputerToolCallParam:
+    """Create a computer screenshot action item.
+    
+    Args:
+        call_id: Optional call ID, generates random ID if not provided
+        
+    Returns:
+        ResponseComputerToolCallParam: A completed screenshot action item
+    """
     return ResponseComputerToolCallParam(
         id=random_id(),
         call_id=call_id if call_id else random_id(),
@@ -166,6 +262,18 @@ def make_screenshot_item(call_id: Optional[str] = None) -> ResponseComputerToolC
     )
 
 def make_scroll_item(x: int, y: int, scroll_x: int, scroll_y: int, call_id: Optional[str] = None) -> ResponseComputerToolCallParam:
+    """Create a computer scroll action item.
+    
+    Args:
+        x: X coordinate where scrolling occurs
+        y: Y coordinate where scrolling occurs
+        scroll_x: Horizontal scroll amount
+        scroll_y: Vertical scroll amount
+        call_id: Optional call ID, generates random ID if not provided
+        
+    Returns:
+        ResponseComputerToolCallParam: A completed scroll action item
+    """
     return ResponseComputerToolCallParam(
         id=random_id(),
         call_id=call_id if call_id else random_id(),
@@ -182,6 +290,15 @@ def make_scroll_item(x: int, y: int, scroll_x: int, scroll_y: int, call_id: Opti
     )
 
 def make_type_item(text: str, call_id: Optional[str] = None) -> ResponseComputerToolCallParam:
+    """Create a computer text typing action item.
+    
+    Args:
+        text: Text to type
+        call_id: Optional call ID, generates random ID if not provided
+        
+    Returns:
+        ResponseComputerToolCallParam: A completed type action item
+    """
     return ResponseComputerToolCallParam(
         id=random_id(),
         call_id=call_id if call_id else random_id(),
@@ -195,6 +312,14 @@ def make_type_item(text: str, call_id: Optional[str] = None) -> ResponseComputer
     )
 
 def make_wait_item(call_id: Optional[str] = None) -> ResponseComputerToolCallParam:
+    """Create a computer wait action item.
+    
+    Args:
+        call_id: Optional call ID, generates random ID if not provided
+        
+    Returns:
+        ResponseComputerToolCallParam: A completed wait action item
+    """
     return ResponseComputerToolCallParam(
         id=random_id(),
         call_id=call_id if call_id else random_id(),
@@ -208,6 +333,16 @@ def make_wait_item(call_id: Optional[str] = None) -> ResponseComputerToolCallPar
 
 # Extra anthropic computer calls
 def make_left_mouse_down_item(x: Optional[int] = None, y: Optional[int] = None, call_id: Optional[str] = None) -> Dict[str, Any]:
+    """Create a left mouse button down action item.
+    
+    Args:
+        x: Optional X coordinate for the mouse down action
+        y: Optional Y coordinate for the mouse down action
+        call_id: Optional call ID, generates random ID if not provided
+        
+    Returns:
+        Dict[str, Any]: A completed left mouse down action item
+    """
     return {
         "id": random_id(),
         "call_id": call_id if call_id else random_id(),
@@ -222,6 +357,16 @@ def make_left_mouse_down_item(x: Optional[int] = None, y: Optional[int] = None, 
     }
 
 def make_left_mouse_up_item(x: Optional[int] = None, y: Optional[int] = None, call_id: Optional[str] = None) -> Dict[str, Any]:
+    """Create a left mouse button up action item.
+    
+    Args:
+        x: Optional X coordinate for the mouse up action
+        y: Optional Y coordinate for the mouse up action
+        call_id: Optional call ID, generates random ID if not provided
+        
+    Returns:
+        Dict[str, Any]: A completed left mouse up action item
+    """
     return {
         "id": random_id(),
         "call_id": call_id if call_id else random_id(),
@@ -236,6 +381,17 @@ def make_left_mouse_up_item(x: Optional[int] = None, y: Optional[int] = None, ca
     }
 
 def make_failed_tool_call_items(tool_name: str, tool_kwargs: Dict[str, Any], error_message: str, call_id: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Create a pair of items representing a failed tool call and its error output.
+    
+    Args:
+        tool_name: Name of the tool that failed
+        tool_kwargs: Arguments that were passed to the tool
+        error_message: Error message describing the failure
+        call_id: Optional call ID, generates random ID if not provided
+        
+    Returns:
+        List[Dict[str, Any]]: A list containing the function call and error output items
+    """
     call_id = call_id if call_id else random_id()
     return [
         {
@@ -253,6 +409,15 @@ def make_failed_tool_call_items(tool_name: str, tool_kwargs: Dict[str, Any], err
     ]
 
 def make_tool_error_item(error_message: str, call_id: Optional[str] = None) -> Dict[str, Any]:
+    """Create a tool error output item.
+    
+    Args:
+        error_message: Error message to include in the output
+        call_id: Optional call ID, generates random ID if not provided
+        
+    Returns:
+        Dict[str, Any]: A function call output item containing the error
+    """
     call_id = call_id if call_id else random_id()
     return {
         "type": "function_call_output",
@@ -268,6 +433,9 @@ def replace_failed_computer_calls_with_function_calls(messages: List[Dict[str, A
     
     Args:
         messages: List of message items to process
+        
+    Returns:
+        List[Dict[str, Any]]: Modified list with computer calls replaced by function calls where appropriate
     """
     messages = messages.copy()
 
@@ -309,7 +477,7 @@ def convert_computer_calls_desc2xy(responses_items: List[Dict[str, Any]], desc2x
         desc2xy: Dictionary mapping element descriptions to (x, y) coordinate tuples
         
     Returns:
-        List of response items with element_description replaced by x,y coordinates
+        List[Dict[str, Any]]: List of response items with element_description replaced by x,y coordinates
     """
     converted_items = []
     
@@ -356,7 +524,7 @@ def convert_computer_calls_xy2desc(responses_items: List[Dict[str, Any]], desc2x
         desc2xy: Dictionary mapping element descriptions to (x, y) coordinate tuples
         
     Returns:
-        List of response items with x,y coordinates replaced by element_description
+        List[Dict[str, Any]]: List of response items with x,y coordinates replaced by element_description
     """
     # Create reverse mapping from coordinates to descriptions
     xy2desc = {coords: desc for desc, coords in desc2xy.items()}
@@ -408,7 +576,7 @@ def get_all_element_descriptions(responses_items: List[Dict[str, Any]]) -> List[
         responses_items: List of response items containing computer calls
         
     Returns:
-        List of unique element descriptions found in computer calls
+        List[str]: List of unique element descriptions found in computer calls
     """
     descriptions = set()
     
@@ -438,6 +606,9 @@ def convert_responses_items_to_completion_messages(messages: List[Dict[str, Any]
         messages: List of responses_items format messages
         allow_images_in_tool_results: If True, include images in tool role messages.
                                     If False, send tool message + separate user message with image.
+                                    
+    Returns:
+        List[Dict[str, Any]]: List of messages in completion format
     """
     completion_messages = []
     
@@ -602,7 +773,14 @@ def convert_responses_items_to_completion_messages(messages: List[Dict[str, Any]
 
 
 def convert_completion_messages_to_responses_items(completion_messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Convert completion messages format to responses_items message format."""
+    """Convert completion messages format to responses_items message format.
+    
+    Args:
+        completion_messages: List of messages in completion format
+        
+    Returns:
+        List[Dict[str, Any]]: List of messages in responses_items format
+    """
     responses_items = []
     skip_next = False
     

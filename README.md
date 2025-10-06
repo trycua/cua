@@ -235,8 +235,6 @@ Thank you to all our supporters!
 
 ## Sponsors
 
-[![Sponsors](https://img.shields.io/github/sponsors/trycua?style=social)](https://github.com/sponsors/trycua)
-
-Thank you to all our sponsors!
+Thank you to all our [GitHub Sponsors](https://github.com/sponsors/trycua)!
 
 <img src="img/sponsors/coderabbit-cli.png" width="300" alt="Coderabbit Logo">

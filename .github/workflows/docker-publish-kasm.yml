@@ -4,6 +4,8 @@ on:
   push:
     branches:
       - main
+    tags:
+      - "docker-kasm-v*.*.*"
     paths:
       - "libs/kasm/**"
       - ".github/workflows/docker-publish-kasm.yml"
@@ -68,6 +70,18 @@ jobs:
           tags: |
             type=raw,value=latest
 
+      - name: Extract metadata (semantic version tag)
+        if: startsWith(github.ref, 'refs/tags/docker-kasm-v')
+        id: meta-semver
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.DOCKER_HUB_ORG }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=semver,pattern={{version}},prefix=docker-kasm-v
+            type=semver,pattern={{major}}.{{minor}},prefix=docker-kasm-v
+            type=semver,pattern={{major}},prefix=docker-kasm-v
+            type=raw,value=latest
+
       - name: Build and push Docker image (PR)
         if: github.event_name == 'pull_request'
         uses: docker/build-push-action@v5
@@ -98,11 +112,28 @@ jobs:
             type=registry,ref=${{ env.DOCKER_HUB_ORG }}/${{ env.IMAGE_NAME }}:latest
           cache-to: type=registry,ref=${{ env.DOCKER_HUB_ORG }}/${{ env.IMAGE_NAME }}:buildcache-${{ steps.platform.outputs.tag }},mode=max
 
+      - name: Build and push Docker image (semantic version tag)
+        if: startsWith(github.ref, 'refs/tags/docker-kasm-v')
+        uses: docker/build-push-action@v5
+        with:
+          context: ./libs/kasm
+          file: ./libs/kasm/Dockerfile
+          push: true
+          tags: ${{ steps.meta-semver.outputs.tags }}
+          labels: ${{ steps.meta-semver.outputs.labels }}
+          platforms: ${{ matrix.platform }}
+          cache-from: |
+            type=registry,ref=${{ env.DOCKER_HUB_ORG }}/${{ env.IMAGE_NAME }}:buildcache-${{ steps.platform.outputs.tag }}
+            type=registry,ref=${{ env.DOCKER_HUB_ORG }}/${{ env.IMAGE_NAME }}:latest
+          cache-to: type=registry,ref=${{ env.DOCKER_HUB_ORG }}/${{ env.IMAGE_NAME }}:buildcache-${{ steps.platform.outputs.tag }},mode=max
+
       - name: Image digest
-        if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main'
+        if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/docker-kasm-v')
         run: |
           if [ "${{ github.event_name }}" == "pull_request" ]; then
             echo "Image pushed with digest ${{ steps.meta-pr.outputs.digest }}"
+          elif [[ "${{ github.ref }}" == refs/tags/docker-kasm-v* ]]; then
+            echo "Image pushed with digest ${{ steps.meta-semver.outputs.digest }}"
           else
             echo "Image pushed with digest ${{ steps.meta-main.outputs.digest }}"
           fi
@@ -111,6 +142,8 @@ jobs:
         run: |
           if [ "${{ github.event_name }}" == "pull_request" ]; then
             echo "Image tags: ${{ steps.meta-pr.outputs.tags }}"
+          elif [[ "${{ github.ref }}" == refs/tags/docker-kasm-v* ]]; then
+            echo "Image tags: ${{ steps.meta-semver.outputs.tags }}"
           else
             echo "Image tags: ${{ steps.meta-main.outputs.tags }}"
           fi

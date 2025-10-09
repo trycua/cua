@@ -45,6 +45,13 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Prepare platform tag
+        id: platform
+        run: |
+          # Convert platform (e.g., linux/amd64) to a valid tag suffix (e.g., linux-amd64)
+          PLATFORM_TAG=$(echo "${{ matrix.platform }}" | sed 's/\//-/g')
+          echo "tag=${PLATFORM_TAG}" >> $GITHUB_OUTPUT
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -82,8 +89,10 @@ jobs:
           tags: ${{ steps.meta-pr.outputs.tags }}
           labels: ${{ steps.meta-pr.outputs.labels }}
           platforms: ${{ matrix.platform }}
-          cache-from: type=registry,ref=${{ env.DOCKER_HUB_ORG }}/${{ env.IMAGE_NAME }}:latest
-          cache-to: type=registry,ref=${{ env.DOCKER_HUB_ORG }}/${{ env.IMAGE_NAME }}:buildcache,mode=max
+          cache-from: |
+            type=registry,ref=${{ env.DOCKER_HUB_ORG }}/${{ env.IMAGE_NAME }}:buildcache-${{ steps.platform.outputs.tag }}
+            type=registry,ref=${{ env.DOCKER_HUB_ORG }}/${{ env.IMAGE_NAME }}:latest
+          cache-to: type=registry,ref=${{ env.DOCKER_HUB_ORG }}/${{ env.IMAGE_NAME }}:buildcache-${{ steps.platform.outputs.tag }},mode=max
 
       - name: Build and push Docker image (main branch)
         if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
@@ -95,8 +104,10 @@ jobs:
           tags: ${{ steps.meta-main.outputs.tags }}
           labels: ${{ steps.meta-main.outputs.labels }}
           platforms: ${{ matrix.platform }}
-          cache-from: type=registry,ref=${{ env.DOCKER_HUB_ORG }}/${{ env.IMAGE_NAME }}:latest
-          cache-to: type=registry,ref=${{ env.DOCKER_HUB_ORG }}/${{ env.IMAGE_NAME }}:buildcache,mode=max
+          cache-from: |
+            type=registry,ref=${{ env.DOCKER_HUB_ORG }}/${{ env.IMAGE_NAME }}:buildcache-${{ steps.platform.outputs.tag }}
+            type=registry,ref=${{ env.DOCKER_HUB_ORG }}/${{ env.IMAGE_NAME }}:latest
+          cache-to: type=registry,ref=${{ env.DOCKER_HUB_ORG }}/${{ env.IMAGE_NAME }}:buildcache-${{ steps.platform.outputs.tag }},mode=max
 
       - name: Image digest
         if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main'

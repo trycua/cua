@@ -71,6 +71,47 @@ jobs:
           echo "VERSION=${{ inputs.version }}" >> $GITHUB_ENV
           echo "version=${{ inputs.version }}" >> $GITHUB_OUTPUT
 
+      - name: Verify version consistency
+        run: |
+          cd ${{ inputs.package_dir }}
+
+          # Install toml parser
+          pip install toml
+
+          # Create Python script to extract version from pyproject.toml
+          cat > get_version.py << 'EOF'
+          import toml
+          import sys
+
+          try:
+              data = toml.load('pyproject.toml')
+              version = data.get('project', {}).get('version')
+              if version:
+                  print(version)
+              else:
+                  print("ERROR: No version found in pyproject.toml", file=sys.stderr)
+                  sys.exit(1)
+          except Exception as e:
+              print(f"ERROR: Failed to parse pyproject.toml: {e}", file=sys.stderr)
+              sys.exit(1)
+          EOF
+
+          # Get version from pyproject.toml
+          PYPROJECT_VERSION=$(python get_version.py)
+
+          # Compare with the version from tag/input
+          if [ "$PYPROJECT_VERSION" != "${{ inputs.version }}" ]; then
+            echo "❌ Version mismatch detected!"
+            echo "   pyproject.toml version: $PYPROJECT_VERSION"
+            echo "   Tag/input version: ${{ inputs.version }}"
+            echo ""
+            echo "The version in pyproject.toml must match the version being published."
+            echo "Please update pyproject.toml to version ${{ inputs.version }} or use the correct tag."
+            exit 1
+          fi
+
+          echo "✅ Version consistency check passed: $PYPROJECT_VERSION"
+
       - name: Initialize PDM in package directory
         run: |
           # Make sure we're working with a properly initialized PDM project
@@ -81,21 +122,6 @@ jobs:
             echo "No pdm.lock found, initializing PDM project..."
             pdm lock
           fi
-
-      - name: Set version in package
-        run: |
-          cd ${{ inputs.package_dir }}
-          # Replace pdm bump with direct edit of pyproject.toml
-          if [[ "$OSTYPE" == "darwin"* ]]; then
-            # macOS version of sed needs an empty string for -i
-            sed -i '' "s/version = \".*\"/version = \"$VERSION\"/" pyproject.toml
-          else
-            # Linux version
-            sed -i "s/version = \".*\"/version = \"$VERSION\"/" pyproject.toml
-          fi
-          # Verify version was updated
-          echo "Updated version in pyproject.toml:"
-          grep "version =" pyproject.toml
 
       # Conditional step for lume binary download (only for pylume package)
       - name: Download and setup lume binary

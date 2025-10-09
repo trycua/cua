@@ -2,6 +2,8 @@ name: Build and Publish CUA Ubuntu Container
 
 on:
   push:
+    branches:
+      - main
     tags:
       - "kasm-v*"
     paths:
@@ -49,8 +51,7 @@ jobs:
         with:
           images: ${{ env.DOCKER_HUB_ORG }}/${{ env.IMAGE_NAME }}
           tags: |
-            type=ref,event=branch
-            type=ref,event=pr
+            type=sha,prefix=
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=semver,pattern={{major}}

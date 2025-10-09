@@ -78,26 +78,8 @@ jobs:
           # Install toml parser
           pip install toml
 
-          # Create Python script to extract version from pyproject.toml
-          cat > get_version.py << 'EOF'
-          import toml
-          import sys
-
-          try:
-              data = toml.load('pyproject.toml')
-              version = data.get('project', {}).get('version')
-              if version:
-                  print(version)
-              else:
-                  print("ERROR: No version found in pyproject.toml", file=sys.stderr)
-                  sys.exit(1)
-          except Exception as e:
-              print(f"ERROR: Failed to parse pyproject.toml: {e}", file=sys.stderr)
-              sys.exit(1)
-          EOF
-
-          # Get version from pyproject.toml
-          PYPROJECT_VERSION=$(python get_version.py)
+          # Get version from pyproject.toml using script
+          PYPROJECT_VERSION=$(python ${GITHUB_WORKSPACE}/.github/scripts/get_pyproject_version.py)
 
           # Compare with the version from tag/input
           if [ "$PYPROJECT_VERSION" != "${{ inputs.version }}" ]; then

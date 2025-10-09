@@ -61,7 +61,7 @@ jobs:
         with:
           images: ${{ env.DOCKER_HUB_ORG }}/${{ env.IMAGE_NAME }}
           tags: |
-            type=sha,prefix=pr-${{ github.event.pull_request.number }}-
+            type=raw,value=${{ github.sha }}
 
       - name: Extract metadata (main branch)
         if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
@@ -70,12 +70,7 @@ jobs:
         with:
           images: ${{ env.DOCKER_HUB_ORG }}/${{ env.IMAGE_NAME }}
           tags: |
-            type=sha,prefix=
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=semver,pattern={{major}}
             type=raw,value=latest
-            type=raw,value=${{ inputs.version }},enable=${{ github.event_name == 'workflow_dispatch' && inputs.version != 'latest' }}
 
       - name: Build and push Docker image (PR)
         if: github.event_name == 'pull_request'

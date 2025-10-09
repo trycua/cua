@@ -4,8 +4,6 @@ on:
   push:
     branches:
       - main
-    tags:
-      - "kasm-v*"
     paths:
       - "libs/kasm/**"
       - ".github/workflows/docker-publish-kasm.yml"
@@ -13,16 +11,7 @@ on:
     paths:
       - "libs/kasm/**"
       - ".github/workflows/docker-publish-kasm.yml"
-  workflow_dispatch:
-    inputs:
-      version:
-        description: "Version tag (e.g., 1.0.0)"
-        required: false
-        default: "latest"
 
-permissions:
-  contents: read
-  packages: write
 
 env:
   IMAGE_NAME: cua-ubuntu

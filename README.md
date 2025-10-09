@@ -18,6 +18,21 @@
 >> **Track B (Remote)**: Open to everyone worldwide. 🏆 Prize: **Cash award**.    
 >>> 👉 Sign up here: [trycua.com/hackathon](https://www.trycua.com/hackathon)  
 
+## Table of Contents 🐨
+
+- [Quick Links](#quick-links-)
+- [Dark Mode Toggle](#dark-mode-toggle-coming-soon-)
+- [Quick Start](#quick-start)
+- [Usage](#usage-docs)
+- [Computer SDK](#computer-docs)
+- [Modules](#modules)
+- [Resources](#resources)
+- [Community](#community)
+- [License](#license)
+- [Contributing](#contributing)
+- [Sponsors](#sponsors)
+
+
 **cua** ("koo-ah") is Docker for [Computer-Use Agents](https://www.oneusefulthing.org/p/when-you-give-a-claude-a-mouse) - it enables AI agents to control full operating systems in virtual containers and deploy them locally or to the cloud.
 
 <div align="center">
@@ -58,7 +73,7 @@ Missing a model? [Raise a feature request](https://github.com/trycua/cua/issues/
 
 - [Get started with a Computer-Use Agent UI](https://docs.trycua.com/docs/quickstart-ui)
 - [Get started with the Computer-Use Agent CLI](https://docs.trycua.com/docs/quickstart-cli)
-- [Get started with the Python SDKs](https://docs.trycua.com/docs/quickstart-devs)
+- [Get started with the Python SDKs](https://docs.trycua.com/docs/quickstart-dev)
 
 <br/>
 
@@ -66,6 +81,7 @@ Missing a model? [Raise a feature request](https://github.com/trycua/cua/issues/
 
 ```bash
 pip install cua-agent[all]
+
 ```
 ```python
 from agent import ComputerAgent
@@ -223,3 +239,38 @@ This project is not affiliated with, endorsed by, or sponsored by Apple Inc., Ca
 Thank you to all our supporters!
 
 [![Stargazers over time](https://starchart.cc/trycua/cua.svg?variant=adaptive)](https://starchart.cc/trycua/cua)
+
+
+## Sponsors
+
+A big thank you to our amazing sponsors for supporting the CUA project!
+
+
+## Quick Links 🔗
+
+- [CUA Docs](https://docs.trycua.com)  
+- [Python SDK Quickstart](https://docs.trycua.com/docs/quickstart-devs)  
+- [Agent SDK Notebook Examples](https://github.com/trycua/cua/blob/main/notebooks/eval_osworld.ipynb)  
+
+---
+
+## Dark Mode Toggle (Coming Soon) 🌙
+
+CUA will soon support a dark mode option in the navbar.  
+This feature will allow users to switch between light and dark themes easily.  
+
+```python
+# Example usage (placeholder)
+# from cua_ui import Navbar
+# navbar = Navbar()
+# navbar.enable_dark_mode()
+
+## Community 💬
+
+<div align="center">
+  <a href="https://discord.com/invite/mVnXXpdE85" target="_blank">
+    <img src="https://img.icons8.com/color/48/000000/discord-logo.png" alt="Discord Logo" width="40" height="40"/>
+  </a>
+  <p>Join our <a href="https://discord.com/invite/mVnXXpdE85">Discord community</a> to discuss ideas, get assistance, or share demos!</p>
+</div>
+

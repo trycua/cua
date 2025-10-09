@@ -82,6 +82,8 @@ jobs:
           tags: ${{ steps.meta-pr.outputs.tags }}
           labels: ${{ steps.meta-pr.outputs.labels }}
           platforms: ${{ matrix.platform }}
+          cache-from: type=registry,ref=${{ env.DOCKER_HUB_ORG }}/${{ env.IMAGE_NAME }}:latest
+          cache-to: type=registry,ref=${{ env.DOCKER_HUB_ORG }}/${{ env.IMAGE_NAME }}:buildcache,mode=max
 
       - name: Build and push Docker image (main branch)
         if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
@@ -93,6 +95,8 @@ jobs:
           tags: ${{ steps.meta-main.outputs.tags }}
           labels: ${{ steps.meta-main.outputs.labels }}
           platforms: ${{ matrix.platform }}
+          cache-from: type=registry,ref=${{ env.DOCKER_HUB_ORG }}/${{ env.IMAGE_NAME }}:latest
+          cache-to: type=registry,ref=${{ env.DOCKER_HUB_ORG }}/${{ env.IMAGE_NAME }}:buildcache,mode=max
 
       - name: Image digest
         if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main'

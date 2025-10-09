@@ -27,37 +27,53 @@ permissions:
 
 jobs:
   prepare:
-    runs-on: macos-latest
+    runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.get-version.outputs.version }}
     steps:
       - uses: actions/checkout@v4
 
-      - name: Determine version
-        id: get-version
-        run: |
-          if [ "${{ github.event_name }}" == "push" ]; then
-            # Extract version from tag (for package-specific tags)
-            if [[ "${{ github.ref }}" =~ ^refs/tags/computer-server-v([0-9]+\.[0-9]+\.[0-9]+) ]]; then
-              VERSION=${BASH_REMATCH[1]}
-            else
-              echo "Invalid tag format for computer-server"
-              exit 1
-            fi
-          elif [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
-            # Use version from workflow dispatch
-            VERSION=${{ github.event.inputs.version }}
-          else
-            # Use version from workflow_call
-            VERSION=${{ inputs.version }}
-          fi
-          echo "VERSION=$VERSION"
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
-          python-version: "3.10"
+          python-version: "3.11"
+
+      - name: Install toml parser
+        run: pip install toml
+
+      - name: Determine version
+        id: get-version
+        run: |
+          # First, try to extract version from git tag if triggered by tag push
+          if [ "${{ github.event_name }}" == "push" ] && [[ "${{ github.ref }}" =~ ^refs/tags/computer-server-v([0-9]+\.[0-9]+\.[0-9]+) ]]; then
+            VERSION=${BASH_REMATCH[1]}
+            echo "Extracted version from tag: $VERSION"
+          # Next, try workflow dispatch input
+          elif [ "${{ github.event_name }}" == "workflow_dispatch" ] && [ -n "${{ github.event.inputs.version }}" ]; then
+            VERSION=${{ github.event.inputs.version }}
+            echo "Using version from workflow dispatch: $VERSION"
+          # Next, try workflow_call input
+          elif [ "${{ github.event_name }}" == "workflow_call" ] && [ -n "${{ inputs.version }}" ]; then
+            VERSION=${{ inputs.version }}
+            echo "Using version from workflow_call: $VERSION"
+          else
+            # Default: read from pyproject.toml
+            echo "Reading version from pyproject.toml..."
+            VERSION=$(python3 << EOF
+          import toml
+          with open("libs/python/computer-server/pyproject.toml") as f:
+              data = toml.load(f)
+              print(data.get("project", {}).get("version", ""))
+          EOF
+            )
+            if [ -z "$VERSION" ]; then
+              echo "Error: Could not extract version from pyproject.toml"
+              exit 1
+            fi
+            echo "Extracted version from pyproject.toml: $VERSION"
+          fi
+          echo "VERSION=$VERSION"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
 
   publish:
     needs: prepare

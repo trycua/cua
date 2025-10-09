@@ -1,0 +1,112 @@
+name: Auto-tag from pyproject.toml changes
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'libs/python/*/pyproject.toml'
+
+permissions:
+  contents: write
+
+jobs:
+  detect-and-tag:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2  # Need 2 commits to compare changes
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.11"
+
+      - name: Install toml parser
+        run: pip install toml
+
+      - name: Detect version changes and create tags
+        run: |
+          # Get list of changed pyproject.toml files
+          CHANGED_FILES=$(git diff --name-only HEAD~1 HEAD | grep 'libs/python/.*/pyproject.toml' || true)
+
+          if [ -z "$CHANGED_FILES" ]; then
+            echo "No pyproject.toml files changed"
+            exit 0
+          fi
+
+          echo "Changed pyproject.toml files:"
+          echo "$CHANGED_FILES"
+
+          # Process each changed file
+          for FILE in $CHANGED_FILES; do
+            echo "Processing $FILE"
+
+            # Extract package name from path (e.g., libs/python/core/pyproject.toml -> core)
+            PACKAGE_NAME=$(echo "$FILE" | sed -n 's|libs/python/\([^/]*\)/pyproject.toml|\1|p')
+
+            if [ -z "$PACKAGE_NAME" ]; then
+              echo "Could not extract package name from $FILE"
+              continue
+            fi
+
+            echo "Package name: $PACKAGE_NAME"
+
+            # Get current version from pyproject.toml
+            CURRENT_VERSION=$(python3 << EOF
+          import toml
+          with open("$FILE") as f:
+              data = toml.load(f)
+              print(data.get("project", {}).get("version", ""))
+          EOF
+            )
+
+            if [ -z "$CURRENT_VERSION" ]; then
+              echo "Could not extract version from $FILE"
+              continue
+            fi
+
+            echo "Current version: $CURRENT_VERSION"
+
+            # Check if version was actually changed in this commit
+            git show HEAD~1:"$FILE" > /tmp/prev_pyproject.toml 2>/dev/null || {
+              echo "This appears to be a new file, tagging with current version"
+              PREV_VERSION=""
+            }
+
+            if [ -f /tmp/prev_pyproject.toml ]; then
+              PREV_VERSION=$(python3 << EOF
+          import toml
+          with open("/tmp/prev_pyproject.toml") as f:
+              data = toml.load(f)
+              print(data.get("project", {}).get("version", ""))
+          EOF
+              )
+              echo "Previous version: $PREV_VERSION"
+
+              if [ "$CURRENT_VERSION" = "$PREV_VERSION" ]; then
+                echo "Version not changed for $PACKAGE_NAME, skipping"
+                continue
+              fi
+            fi
+
+            # Create tag name (e.g., core-v0.1.9)
+            TAG_NAME="${PACKAGE_NAME}-v${CURRENT_VERSION}"
+
+            echo "Creating tag: $TAG_NAME"
+
+            # Check if tag already exists
+            if git rev-parse "$TAG_NAME" >/dev/null 2>&1; then
+              echo "Tag $TAG_NAME already exists, skipping"
+              continue
+            fi
+
+            # Create and push the tag
+            git tag -a "$TAG_NAME" -m "Release $PACKAGE_NAME v${CURRENT_VERSION}"
+            git push origin "$TAG_NAME"
+
+            echo "Successfully created and pushed tag: $TAG_NAME"
+          done
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

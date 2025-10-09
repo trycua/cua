@@ -12,8 +12,8 @@ on:
         required: true
         type: string
       version:
-        description: "Version to publish"
-        required: true
+        description: "Version to publish (if not provided, will be read from pyproject.toml)"
+        required: false
         type: string
       is_lume_package:
         description: "Whether this package includes the lume binary"
@@ -65,11 +65,34 @@ jobs:
           python-version: "3.11"
           cache: true
 
+      - name: Install toml parser
+        run: pip install toml
+
       - name: Set version
         id: set-version
         run: |
-          echo "VERSION=${{ inputs.version }}" >> $GITHUB_ENV
-          echo "version=${{ inputs.version }}" >> $GITHUB_OUTPUT
+          if [ -n "${{ inputs.version }}" ]; then
+            # Use provided version
+            VERSION="${{ inputs.version }}"
+            echo "Using provided version: $VERSION"
+          else
+            # Extract version from pyproject.toml
+            echo "No version provided, reading from pyproject.toml..."
+            VERSION=$(python3 << EOF
+          import toml
+          with open("${{ inputs.package_dir }}/pyproject.toml") as f:
+              data = toml.load(f)
+              print(data.get("project", {}).get("version", ""))
+          EOF
+            )
+            if [ -z "$VERSION" ]; then
+              echo "Error: Could not extract version from pyproject.toml"
+              exit 1
+            fi
+            echo "Extracted version from pyproject.toml: $VERSION"
+          fi
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
 
       - name: Initialize PDM in package directory
         run: |
@@ -82,20 +105,13 @@ jobs:
             pdm lock
           fi
 
-      - name: Set version in package
+      - name: Verify version in package
         run: |
           cd ${{ inputs.package_dir }}
-          # Replace pdm bump with direct edit of pyproject.toml
-          if [[ "$OSTYPE" == "darwin"* ]]; then
-            # macOS version of sed needs an empty string for -i
-            sed -i '' "s/version = \".*\"/version = \"$VERSION\"/" pyproject.toml
-          else
-            # Linux version
-            sed -i "s/version = \".*\"/version = \"$VERSION\"/" pyproject.toml
-          fi
-          # Verify version was updated
-          echo "Updated version in pyproject.toml:"
+          # Verify the version in pyproject.toml matches what we're publishing
+          echo "Version in pyproject.toml:"
           grep "version =" pyproject.toml
+          echo "Publishing version: $VERSION"
 
       # Conditional step for lume binary download (only for pylume package)
       - name: Download and setup lume binary

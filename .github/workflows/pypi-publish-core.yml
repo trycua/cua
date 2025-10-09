@@ -22,41 +22,12 @@ permissions:
   contents: write
 
 jobs:
-  prepare:
-    runs-on: macos-latest
-    outputs:
-      version: ${{ steps.get-version.outputs.version }}
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Determine version
-        id: get-version
-        run: |
-          if [ "${{ github.event_name }}" == "push" ]; then
-            # Extract version from tag (for package-specific tags)
-            if [[ "${{ github.ref }}" =~ ^refs/tags/core-v([0-9]+\.[0-9]+\.[0-9]+) ]]; then
-              VERSION=${BASH_REMATCH[1]}
-            else
-              echo "Invalid tag format for core"
-              exit 1
-            fi
-          elif [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
-            # Use version from workflow dispatch
-            VERSION=${{ github.event.inputs.version }}
-          else
-            # Use version from workflow_call
-            VERSION=${{ inputs.version }}
-          fi
-          echo "VERSION=$VERSION"
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-
   publish:
-    needs: prepare
     uses: ./.github/workflows/pypi-reusable-publish.yml
     with:
       package_name: "core"
       package_dir: "libs/python/core"
-      version: ${{ needs.prepare.outputs.version }}
+      version: "" # Version will be read from pyproject.toml
       is_lume_package: false
       base_package_name: "cua-core"
     secrets:

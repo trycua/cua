@@ -1,0 +1,105 @@
+name: Create Tags from Version Changes
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'libs/python/*/pyproject.toml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  detect-version-changes:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Need full history to compare with tags
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.11"
+
+      - name: Install toml parser
+        run: pip install toml
+
+      - name: Detect version changes and create tags
+        run: |
+          # Define packages and their paths
+          declare -A packages=(
+            ["core"]="libs/python/core"
+            ["agent"]="libs/python/agent"
+            ["computer"]="libs/python/computer"
+            ["computer-server"]="libs/python/computer-server"
+            ["som"]="libs/python/som"
+            ["mcp-server"]="libs/python/mcp-server"
+            ["pylume"]="libs/python/pylume"
+          )
+
+          # Python script to extract version from pyproject.toml
+          cat > extract_version.py << 'EOF'
+          import sys
+          import toml
+
+          def get_version(toml_path):
+              try:
+                  data = toml.load(toml_path)
+                  return data['project']['version']
+              except Exception as e:
+                  print(f"Error reading {toml_path}: {e}", file=sys.stderr)
+                  return None
+
+          if __name__ == "__main__":
+              version = get_version(sys.argv[1])
+              if version:
+                  print(version)
+              else:
+                  sys.exit(1)
+          EOF
+
+          # Check each package for version changes
+          for package in "${!packages[@]}"; do
+            package_dir="${packages[$package]}"
+            pyproject_file="${package_dir}/pyproject.toml"
+
+            echo "Checking package: $package"
+
+            # Extract current version from pyproject.toml
+            if [ ! -f "$pyproject_file" ]; then
+              echo "  ⚠️  pyproject.toml not found at $pyproject_file"
+              continue
+            fi
+
+            current_version=$(python extract_version.py "$pyproject_file")
+            if [ -z "$current_version" ]; then
+              echo "  ⚠️  Could not extract version from $pyproject_file"
+              continue
+            fi
+
+            echo "  Current version in pyproject.toml: $current_version"
+
+            # Check if tag already exists
+            tag_name="${package}-v${current_version}"
+            if git rev-parse "$tag_name" >/dev/null 2>&1; then
+              echo "  ✓ Tag $tag_name already exists, skipping"
+              continue
+            fi
+
+            echo "  🏷️  Creating new tag: $tag_name"
+
+            # Create and push the tag
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+
+            git tag -a "$tag_name" -m "Release $package version $current_version"
+            git push origin "$tag_name"
+
+            echo "  ✓ Successfully created and pushed tag $tag_name"
+          done
+
+          echo ""
+          echo "Tag creation complete!"

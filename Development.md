@@ -176,6 +176,16 @@ This will:
 - Clean PDM-related files
 - Reset environment configurations
 
+## Releasing Python Packages
+
+The Python packages use an automated release process where `pyproject.toml` is the single source of truth. See the [Python Release Process documentation](./docs/PYTHON_RELEASE_PROCESS.md) for detailed instructions.
+
+**Quick summary:**
+1. Update the version in `libs/python/PACKAGE/pyproject.toml`
+2. Commit and push to `main`
+3. A tag is automatically created (e.g., `core-v0.1.9`)
+4. The package is automatically built and published to PyPI
+
 ## Code Formatting Standards
 
 The cua project follows strict code formatting standards to ensure consistency across all packages.

@@ -2,7 +2,93 @@
 
 ## Overview
 
-The Python SDK packages use `pyproject.toml` as the **source of truth** for version management. When you update a package version in `pyproject.toml` and push to the `main` branch, the release process is automated.
+The Python SDK packages use `pyproject.toml` (or `__init__.py` for pylume) as the **source of truth** for version management. When you update a package version and push to the `main` branch, the release process is automated.
+
+**NEW**: We now support automated version bumping using `bump2version` to simplify the release process and reduce manual errors.
+
+## Quick Start with bump2version (Recommended)
+
+### Installation
+
+`bump2version` is included as a dev dependency in the root `pyproject.toml`:
+
+```bash
+# Install dev dependencies (includes bump2version)
+pip install -e ".[dev]"
+# or with pdm
+pdm install
+```
+
+### Usage
+
+#### Option 1: Using the Makefile (Easiest!)
+
+We provide a `Makefile` in the root directory with convenient targets for all packages:
+
+```bash
+# Show all available targets
+make help
+
+# Show current versions of all packages
+make show-versions
+
+# Bump a specific package
+make bump-patch-core           # cua-core: 0.1.8 → 0.1.9
+make bump-minor-computer       # cua-computer: 0.4.0 → 0.5.0
+make bump-major-agent          # cua-agent: 0.4.0 → 1.0.0
+
+# Dry run (test without making changes)
+make dry-run-patch-core
+
+# Push the changes
+git push origin main
+```
+
+**Available packages:** `core`, `pylume`, `computer`, `som`, `agent`, `computer-server`, `mcp-server`
+
+#### Option 2: Using bump2version directly
+
+If you prefer to run `bump2version` directly:
+
+```bash
+# Navigate to the package directory
+cd libs/python/core
+
+# Bump the patch version (e.g., 0.1.8 → 0.1.9)
+bump2version patch
+
+# Or bump minor version (e.g., 0.1.9 → 0.2.0)
+bump2version minor
+
+# Or bump major version (e.g., 0.2.0 → 1.0.0)
+bump2version major
+
+# Push the commit (tags are created automatically by CI)
+git push origin main
+```
+
+**What happens automatically:**
+1. Updates the version in the appropriate file (`pyproject.toml` or `__init__.py`)
+2. Creates a commit with the message "Bump {package-name} to v{new_version}"
+3. After you push, the CI pipeline handles tag creation and PyPI publishing
+
+### Configuration Files
+
+Each package has a `.bumpversion.cfg` file that configures version bumping:
+
+```ini
+[bumpversion]
+current_version = 0.1.8
+commit = True
+tag = False  # Tags are created by CI, not locally
+message = Bump cua-core to v{new_version}
+
+[bumpversion:file:pyproject.toml]
+search = version = "{current_version}"
+replace = version = "{new_version}"
+```
+
+**Note**: `tag = False` because our CI pipeline creates tags automatically. This prevents duplicate tags.
 
 ## How It Works
 
@@ -48,7 +134,61 @@ When the tag is created:
 
 ## Step-by-Step Release Guide
 
-### Example: Releasing cua-core v0.1.9
+### Method 1: Using the Makefile (Easiest!)
+
+Example: Releasing cua-core v0.1.9
+
+```bash
+# From the root directory
+make bump-patch-core
+
+# Push the commit
+git push origin main
+```
+
+**What happens automatically:**
+1. The Makefile runs `bump2version` in the package directory
+2. `bump2version` updates `pyproject.toml` and creates a commit
+3. The Version Tag Creator workflow detects the version change
+4. Creates and pushes tag `core-v0.1.9`
+5. The `pypi-publish-core.yml` workflow is triggered
+6. Package is built and published to PyPI
+7. GitHub release is created with release notes
+
+**Monitor the release:**
+- Check the Actions tab in GitHub to see the workflow progress
+- Once complete, verify the package on PyPI: https://pypi.org/project/cua-core/
+
+### Method 2: Using bump2version directly
+
+Example: Releasing cua-core v0.1.9
+
+```bash
+# Navigate to package directory
+cd libs/python/core
+
+# Bump to next patch version (0.1.8 → 0.1.9)
+bump2version patch
+
+# Push the commit
+git push origin main
+```
+
+**What happens automatically:**
+1. `bump2version` updates `pyproject.toml` and creates a commit
+2. The Version Tag Creator workflow detects the version change
+3. Creates and pushes tag `core-v0.1.9`
+4. The `pypi-publish-core.yml` workflow is triggered
+5. Package is built and published to PyPI
+6. GitHub release is created with release notes
+
+**Monitor the release:**
+- Check the Actions tab in GitHub to see the workflow progress
+- Once complete, verify the package on PyPI: https://pypi.org/project/cua-core/
+
+### Method 3: Manual Version Update
+
+If you prefer to manually edit the version file:
 
 1. **Update the version in pyproject.toml:**
    ```bash
@@ -156,11 +296,16 @@ If you update multiple package versions in a single commit, the Version Tag Crea
 
 ## Best Practices
 
-1. **Always update pyproject.toml first** - Don't manually create tags without updating the version
-2. **One package per commit** - For clarity, update one package version per commit
-3. **Use semantic versioning** - Follow semver conventions (MAJOR.MINOR.PATCH)
-4. **Test before releasing** - Run tests locally before pushing version updates
-5. **Monitor the workflows** - Check GitHub Actions to ensure successful publishing
+1. **Use bump2version** - The automated tool reduces errors and ensures consistency
+2. **Always update version files first** - Don't manually create tags without updating the version
+3. **One package per commit** - For clarity, update one package version per commit
+4. **Use semantic versioning** - Follow semver conventions (MAJOR.MINOR.PATCH)
+   - **patch**: Bug fixes, minor changes (0.1.8 → 0.1.9)
+   - **minor**: New features, backwards compatible (0.1.9 → 0.2.0)
+   - **major**: Breaking changes (0.2.0 → 1.0.0)
+5. **Test before releasing** - Run tests locally before pushing version updates
+6. **Monitor the workflows** - Check GitHub Actions to ensure successful publishing
+7. **Keep .bumpversion.cfg in sync** - If you manually update versions, also update the `.bumpversion.cfg` file
 
 ## Dependencies Between Packages
 
@@ -211,3 +356,60 @@ python .github/scripts/get_pyproject_version.py libs/python/core/pyproject.toml 
 - `1` - Versions don't match or error occurred
 
 This script ensures that the version in `pyproject.toml` matches what you're trying to publish.
+
+## bump2version Tips & Troubleshooting
+
+### Dry Run
+
+Test version bumping without making changes:
+
+```bash
+cd libs/python/core
+bump2version --dry-run --verbose patch
+```
+
+### Custom Version
+
+If you need to set a specific version (not following semver):
+
+```bash
+cd libs/python/core
+bump2version --new-version 0.2.5 patch
+```
+
+### Configuration Out of Sync
+
+If `.bumpversion.cfg` shows the wrong `current_version`:
+
+1. Check the actual version in the version file (`pyproject.toml` or `__init__.py`)
+2. Update `.bumpversion.cfg` to match:
+   ```ini
+   [bumpversion]
+   current_version = 0.1.8  # Update this to match pyproject.toml
+   ```
+3. Run `bump2version` again
+
+### Commit Already Exists
+
+If you've already committed a version change manually:
+
+1. Update `.bumpversion.cfg` to reflect the new version:
+   ```bash
+   cd libs/python/core
+   # Edit .bumpversion.cfg and update current_version
+   git add .bumpversion.cfg
+   git commit --amend --no-edit
+   git push origin main
+   ```
+
+### Special Case: pylume
+
+The `pylume` package uses `__init__.py` for versioning instead of `pyproject.toml`:
+
+```bash
+cd libs/python/pylume
+bump2version patch  # Updates pylume/__init__.py
+git push origin main
+```
+
+The `.bumpversion.cfg` is already configured to handle this correctly.

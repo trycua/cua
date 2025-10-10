@@ -210,6 +210,49 @@ When you choose to install and use such optional extras, your use, modification,
 
 We welcome contributions to Cua! Please refer to our [Contributing Guidelines](CONTRIBUTING.md) for details.
 
+### Releasing Python Packages
+
+For maintainers releasing Python packages to PyPI, we provide automated tooling using `bump2version` and a convenient `Makefile`. The release process is fully automated:
+
+```bash
+# Install dev dependencies (includes bump2version) - one-time setup
+pip install -e ".[dev]"  # or: pdm install
+
+# Show available commands
+make help
+
+# Show current versions
+make show-versions
+
+# Release cua-core patch version (0.1.8 → 0.1.9)
+make bump-patch-core
+
+# Or release other packages
+make bump-minor-computer     # cua-computer: 0.4.0 → 0.5.0
+make bump-major-agent        # cua-agent: 0.4.0 → 1.0.0
+make bump-patch-mcp-server   # cua-mcp-server: 0.1.0 → 0.1.1
+
+# Push the changes
+git push origin main
+```
+
+**What happens automatically:**
+1. The Makefile runs `bump2version` in the package directory
+2. `bump2version` updates the version file and creates a commit
+3. The system creates the appropriate git tag (e.g., `core-v0.1.9`)
+4. Package is built and published to PyPI
+5. GitHub release is created with release notes
+
+**Available packages:** `core`, `pylume`, `computer`, `som`, `agent`, `computer-server`, `mcp-server`
+
+See the [full release documentation](docs/RELEASE_PROCESS.md) for:
+- Using bump2version directly (without Makefile)
+- Manual version update method
+- Package mapping and dependencies
+- Version consistency checks
+- Troubleshooting guide
+- Best practices
+
 ## Trademarks
 
 Apple, macOS, and Apple Silicon are trademarks of Apple Inc.  

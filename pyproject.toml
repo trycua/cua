@@ -35,6 +35,7 @@ dev = [
     "-e mcp-server @ file:///${PROJECT_ROOT}/libs/python/mcp-server",
     "-e pylume @ file:///${PROJECT_ROOT}/libs/python/pylume",
     "black>=23.0.0",
+    "bump2version>=1.0.1",
     "ipykernel>=6.29.5",
     "jedi>=0.19.2",
     "jupyter>=1.0.0",

@@ -11,7 +11,11 @@ Exit codes:
 """
 
 import sys
-import toml
+try:
+    import tomllib
+except ImportError:
+    # Fallback for Python < 3.11
+    import toml as tomllib
 
 
 def main():
@@ -22,7 +26,25 @@ def main():
     pyproject_path = sys.argv[1]
     expected_version = sys.argv[2]
 
-    data = toml.load(pyproject_path)
+    # tomllib requires binary mode
+    try:
+        with open(pyproject_path, 'rb') as f:
+            data = tomllib.load(f)
+    except FileNotFoundError:
+        print(f"❌ ERROR: File not found: {pyproject_path}", file=sys.stderr)
+        sys.exit(1)
+    except Exception as e:
+        # Fallback to toml if using the old library or handle other errors
+        try:
+            import toml
+            data = toml.load(pyproject_path)
+        except FileNotFoundError:
+            print(f"❌ ERROR: File not found: {pyproject_path}", file=sys.stderr)
+            sys.exit(1)
+        except Exception as toml_err:
+            print(f"❌ ERROR: Failed to parse TOML file: {e}", file=sys.stderr)
+            sys.exit(1)
+
     actual_version = data.get('project', {}).get('version')
 
     if not actual_version:
@@ -39,6 +61,7 @@ def main():
         sys.exit(1)
 
     print(f"✅ Version consistency check passed: {actual_version}")
+    sys.exit(0)
 
 
 if __name__ == '__main__':

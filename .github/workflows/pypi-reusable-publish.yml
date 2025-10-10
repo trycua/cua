@@ -73,26 +73,13 @@ jobs:
 
       - name: Verify version consistency
         run: |
-          cd ${{ inputs.package_dir }}
-
           # Install toml parser
           pip install toml
 
-          # Get version from pyproject.toml using script
-          PYPROJECT_VERSION=$(python ${GITHUB_WORKSPACE}/.github/scripts/get_pyproject_version.py)
-
-          # Compare with the version from tag/input
-          if [ "$PYPROJECT_VERSION" != "${{ inputs.version }}" ]; then
-            echo "❌ Version mismatch detected!"
-            echo "   pyproject.toml version: $PYPROJECT_VERSION"
-            echo "   Tag/input version: ${{ inputs.version }}"
-            echo ""
-            echo "The version in pyproject.toml must match the version being published."
-            echo "Please update pyproject.toml to version ${{ inputs.version }} or use the correct tag."
-            exit 1
-          fi
-
-          echo "✅ Version consistency check passed: $PYPROJECT_VERSION"
+          # Verify version matches using script (exits with error if mismatch)
+          python ${GITHUB_WORKSPACE}/.github/scripts/get_pyproject_version.py \
+            ${{ inputs.package_dir }}/pyproject.toml \
+            ${{ inputs.version }}
 
       - name: Initialize PDM in package directory
         run: |

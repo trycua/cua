@@ -173,3 +173,41 @@ When releasing dependent packages:
 3. Then release dependent packages (e.g., `agent`, `computer-server`, `mcp-server`)
 
 The agent package workflow will automatically fetch and pin the latest versions of its dependencies.
+
+## Helper Scripts
+
+The release automation relies on two Python helper scripts located in `.github/scripts/`:
+
+### detect_version_changes.py
+
+Used by the Version Tag Creator workflow to:
+- Compare versions between commits
+- Detect which packages have version changes
+- Output the appropriate git tags to create
+
+**Usage:**
+```bash
+python .github/scripts/detect_version_changes.py
+```
+
+This script is automatically called by the workflow but can be run locally for testing.
+
+### get_pyproject_version.py
+
+Used by the publish workflow to verify version consistency.
+
+**Usage:**
+```bash
+python .github/scripts/get_pyproject_version.py <pyproject_path> <expected_version>
+```
+
+**Example:**
+```bash
+python .github/scripts/get_pyproject_version.py libs/python/core/pyproject.toml 0.1.9
+```
+
+**Exit codes:**
+- `0` - Versions match (success)
+- `1` - Versions don't match or error occurred
+
+This script ensures that the version in `pyproject.toml` matches what you're trying to publish.

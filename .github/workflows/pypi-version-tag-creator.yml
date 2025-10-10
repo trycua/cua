@@ -1,0 +1,58 @@
+name: Create Tags on Version Change
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'libs/python/*/pyproject.toml'
+
+permissions:
+  contents: write
+
+jobs:
+  detect-and-tag:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2  # Need at least 2 commits to compare
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.11"
+
+      - name: Install toml parser
+        run: pip install toml
+
+      - name: Detect version changes
+        id: detect-version-changes
+        run: python .github/scripts/detect_version_changes.py
+
+      - name: Create and push tags
+        id: create-tags
+        if: steps.detect-version-changes.outputs.has_tags == 'true'
+        run: |
+          # Configure git
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Create and push each tag
+          TAGS="${{ steps.detect-version-changes.outputs.tags }}"
+          IFS=',' read -ra TAG_ARRAY <<< "$TAGS"
+
+          for tag in "${TAG_ARRAY[@]}"; do
+            echo "Creating tag: $tag"
+
+            # Check if tag already exists
+            if git rev-parse "$tag" >/dev/null 2>&1; then
+              echo "Tag $tag already exists, skipping"
+              continue
+            fi
+
+            # Create and push tag
+            git tag -a "$tag" -m "Release $tag"
+            git push origin "$tag"
+            echo "Created and pushed tag: $tag"
+          done

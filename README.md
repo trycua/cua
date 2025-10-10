@@ -192,7 +192,7 @@ Join our [Discord community](https://discord.com/invite/mVnXXpdE85) to discuss i
 
 ## License
 
-Cua is open-sourced under the MIT License - see the [LICENSE](LICENSE) file for details.  
+Cua is open-sourced under the MIT License - see the [LICENSE](LICENSEmd) file for details.  
 
 Portions of this project, specifically components adapted from Kasm Technologies Inc., are also licensed under the MIT License. See [libs/kasm/LICENSE](libs/kasm/LICENSE) for details.
 

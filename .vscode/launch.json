@@ -7,10 +7,10 @@
             "program": "examples/agent_ui_examples.py",
             "console": "integratedTerminal",
             "justMyCode": false,
-            "python": "${workspaceFolder:cua-root}/.venv/bin/python",
-            "cwd": "${workspaceFolder:cua-root}",
+            "python": "${workspaceFolder:cua-snapshot}/.venv/bin/python",
+            "cwd": "${workspaceFolder:cua-snapshot}",
             "env": {
-                "PYTHONPATH": "${workspaceFolder:cua-root}/libs/python/core:${workspaceFolder:cua-root}/libs/python/computer:${workspaceFolder:cua-root}/libs/python/agent:${workspaceFolder:cua-root}/libs/python/som:${workspaceFolder:cua-root}/libs/python/pylume"
+                "PYTHONPATH": "${workspaceFolder:cua-snapshot}/libs/python/core:${workspaceFolder:cua-snapshot}/libs/python/computer:${workspaceFolder:cua-snapshot}/libs/python/agent:${workspaceFolder:cua-snapshot}/libs/python/som:${workspaceFolder:cua-snapshot}/libs/python/pylume"
             }
         },
         {
@@ -20,10 +20,10 @@
             "program": "examples/computer_ui_examples.py",
             "console": "integratedTerminal",
             "justMyCode": false,
-            "python": "${workspaceFolder:cua-root}/.venv/bin/python",
-            "cwd": "${workspaceFolder:cua-root}",
+            "python": "${workspaceFolder:cua-snapshot}/.venv/bin/python",
+            "cwd": "${workspaceFolder:cua-snapshot}",
             "env": {
-                "PYTHONPATH": "${workspaceFolder:cua-root}/libs/python/core:${workspaceFolder:cua-root}/libs/python/computer:${workspaceFolder:cua-root}/libs/python/agent:${workspaceFolder:cua-root}/libs/python/som:${workspaceFolder:cua-root}/libs/python/pylume"
+                "PYTHONPATH": "${workspaceFolder:cua-snapshot}/libs/python/core:${workspaceFolder:cua-snapshot}/libs/python/computer:${workspaceFolder:cua-snapshot}/libs/python/agent:${workspaceFolder:cua-snapshot}/libs/python/som:${workspaceFolder:cua-snapshot}/libs/python/pylume"
             }
         },
         {
@@ -33,10 +33,10 @@
             "program": "examples/computer_examples.py",
             "console": "integratedTerminal",
             "justMyCode": true,
-            "python": "${workspaceFolder:cua-root}/.venv/bin/python",
-            "cwd": "${workspaceFolder:cua-root}",
+            "python": "${workspaceFolder:cua-snapshot}/.venv/bin/python",
+            "cwd": "${workspaceFolder:cua-snapshot}",
             "env": {
-                "PYTHONPATH": "${workspaceFolder:cua-root}/libs/python/core:${workspaceFolder:cua-root}/libs/python/computer:${workspaceFolder:cua-root}/libs/python/agent:${workspaceFolder:cua-root}/libs/python/som:${workspaceFolder:cua-root}/libs/python/pylume"
+                "PYTHONPATH": "${workspaceFolder:cua-snapshot}/libs/python/core:${workspaceFolder:cua-snapshot}/libs/python/computer:${workspaceFolder:cua-snapshot}/libs/python/agent:${workspaceFolder:cua-snapshot}/libs/python/som:${workspaceFolder:cua-snapshot}/libs/python/pylume"
             }
         },
         {
@@ -46,10 +46,23 @@
             "program": "examples/agent_examples.py",
             "console": "integratedTerminal",
             "justMyCode": false,
-            "python": "${workspaceFolder:cua-root}/.venv/bin/python",
-            "cwd": "${workspaceFolder:cua-root}",
+            "python": "${workspaceFolder:cua-snapshot}/.venv/bin/python",
+            "cwd": "${workspaceFolder:cua-snapshot}",
             "env": {
-                "PYTHONPATH": "${workspaceFolder:cua-root}/libs/python/core:${workspaceFolder:cua-root}/libs/python/computer:${workspaceFolder:cua-root}/libs/python/agent:${workspaceFolder:cua-root}/libs/python/som:${workspaceFolder:cua-root}/libs/python/pylume"
+                "PYTHONPATH": "${workspaceFolder:cua-snapshot}/libs/python/core:${workspaceFolder:cua-snapshot}/libs/python/computer:${workspaceFolder:cua-snapshot}/libs/python/agent:${workspaceFolder:cua-snapshot}/libs/python/som:${workspaceFolder:cua-snapshot}/libs/python/pylume"
+            }
+        },
+        {
+            "name": "Run Snapshot Restoration Examples",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "examples/restore_snapshot_example.py",
+            "console": "integratedTerminal",
+            "justMyCode": false,
+            "python": "${workspaceFolder:cua-snapshot}/.venv/bin/python",
+            "cwd": "${workspaceFolder:cua-snapshot}",
+            "env": {
+                "PYTHONPATH": "${workspaceFolder:cua-snapshot}/libs/python/core:${workspaceFolder:cua-snapshot}/libs/python/computer:${workspaceFolder:cua-snapshot}/libs/python/agent:${workspaceFolder:cua-snapshot}/libs/python/som:${workspaceFolder:cua-snapshot}/libs/python/pylume"
             }
         },
         {
@@ -59,10 +72,10 @@
             "program": "examples/pylume_examples.py",
             "console": "integratedTerminal",
             "justMyCode": true,
-            "python": "${workspaceFolder:cua-root}/.venv/bin/python",
-            "cwd": "${workspaceFolder:cua-root}",
+            "python": "${workspaceFolder:cua-snapshot}/.venv/bin/python",
+            "cwd": "${workspaceFolder:cua-snapshot}",
             "env": {
-                "PYTHONPATH": "${workspaceFolder:cua-root}/libs/python/core:${workspaceFolder:cua-root}/libs/python/computer:${workspaceFolder:cua-root}/libs/python/agent:${workspaceFolder:cua-root}/libs/python/som:${workspaceFolder:cua-root}/libs/python/pylume"
+                "PYTHONPATH": "${workspaceFolder:cua-snapshot}/libs/python/core:${workspaceFolder:cua-snapshot}/libs/python/computer:${workspaceFolder:cua-snapshot}/libs/python/agent:${workspaceFolder:cua-snapshot}/libs/python/som:${workspaceFolder:cua-snapshot}/libs/python/pylume"
             }
         },
         {
@@ -81,10 +94,10 @@
             ],
             "console": "integratedTerminal",
             "justMyCode": false,
-            "python": "${workspaceFolder:cua-root}/.venv/bin/python",
-            "cwd": "${workspaceFolder:cua-root}",
+            "python": "${workspaceFolder:cua-snapshot}/.venv/bin/python",
+            "cwd": "${workspaceFolder:cua-snapshot}",
             "env": {
-                "PYTHONPATH": "${workspaceFolder:cua-root}/libs/python/core:${workspaceFolder:cua-root}/libs/python/computer:${workspaceFolder:cua-root}/libs/python/agent:${workspaceFolder:cua-root}/libs/python/som:${workspaceFolder:cua-root}/libs/python/pylume"
+                "PYTHONPATH": "${workspaceFolder:cua-snapshot}/libs/python/core:${workspaceFolder:cua-snapshot}/libs/python/computer:${workspaceFolder:cua-snapshot}/libs/python/agent:${workspaceFolder:cua-snapshot}/libs/python/som:${workspaceFolder:cua-snapshot}/libs/python/pylume"
             }
         },
         {
@@ -103,10 +116,10 @@
             ],
             "console": "integratedTerminal",
             "justMyCode": false,
-            "python": "${workspaceFolder:cua-root}/.venv/bin/python",
-            "cwd": "${workspaceFolder:cua-root}",
+            "python": "${workspaceFolder:cua-snapshot}/.venv/bin/python",
+            "cwd": "${workspaceFolder:cua-snapshot}",
             "env": {
-                "PYTHONPATH": "${workspaceFolder:cua-root}/libs/python/core:${workspaceFolder:cua-root}/libs/python/computer:${workspaceFolder:cua-root}/libs/python/agent:${workspaceFolder:cua-root}/libs/python/som:${workspaceFolder:cua-root}/libs/python/pylume"
+                "PYTHONPATH": "${workspaceFolder:cua-snapshot}/libs/python/core:${workspaceFolder:cua-snapshot}/libs/python/computer:${workspaceFolder:cua-snapshot}/libs/python/agent:${workspaceFolder:cua-snapshot}/libs/python/som:${workspaceFolder:cua-snapshot}/libs/python/pylume"
             }
         },
         {
@@ -116,10 +129,10 @@
             "program": "${workspaceFolder}/libs/python/computer-server/run_server.py",
             "console": "integratedTerminal",
             "justMyCode": true,
-            "python": "${workspaceFolder:cua-root}/.venv/bin/python",
-            "cwd": "${workspaceFolder:cua-root}",
+            "python": "${workspaceFolder:cua-snapshot}/.venv/bin/python",
+            "cwd": "${workspaceFolder:cua-snapshot}",
             "env": {
-                "PYTHONPATH": "${workspaceFolder:cua-root}/libs/python/core:${workspaceFolder:cua-root}/libs/python/computer:${workspaceFolder:cua-root}/libs/python/agent:${workspaceFolder:cua-root}/libs/python/som:${workspaceFolder:cua-root}/libs/python/pylume"
+                "PYTHONPATH": "${workspaceFolder:cua-snapshot}/libs/python/core:${workspaceFolder:cua-snapshot}/libs/python/computer:${workspaceFolder:cua-snapshot}/libs/python/agent:${workspaceFolder:cua-snapshot}/libs/python/som:${workspaceFolder:cua-snapshot}/libs/python/pylume"
             }
         },
         {
@@ -137,28 +150,28 @@
             ],
             "console": "integratedTerminal",
             "justMyCode": false,
-            "python": "${workspaceFolder:cua-root}/.venv/bin/python",
-            "cwd": "${workspaceFolder:cua-root}",
+            "python": "${workspaceFolder:cua-snapshot}/.venv/bin/python",
+            "cwd": "${workspaceFolder:cua-snapshot}",
             "env": {
-                "PYTHONPATH": "${workspaceFolder:cua-root}/libs/python/core:${workspaceFolder:cua-root}/libs/python/computer-server"
+                "PYTHONPATH": "${workspaceFolder:cua-snapshot}/libs/python/core:${workspaceFolder:cua-snapshot}/libs/python/computer-server"
             }
         },
         {
             "type": "lldb",
             "request": "launch",
             "args": [],
-            "cwd": "${workspaceFolder:cua-root}/libs/lume",
+            "cwd": "${workspaceFolder:cua-snapshot}/libs/lume",
             "name": "Debug lume (libs/lume)",
-            "program": "${workspaceFolder:cua-root}/libs/lume/.build/debug/lume",
+            "program": "${workspaceFolder:cua-snapshot}/libs/lume/.build/debug/lume",
             "preLaunchTask": "swift: Build Debug lume (libs/lume)"
         },
         {
             "type": "lldb",
             "request": "launch",
             "args": [],
-            "cwd": "${workspaceFolder:cua-root}/libs/lume",
+            "cwd": "${workspaceFolder:cua-snapshot}/libs/lume",
             "name": "Release lume (libs/lume)",
-            "program": "${workspaceFolder:cua-root}/libs/lume/.build/release/lume",
+            "program": "${workspaceFolder:cua-snapshot}/libs/lume/.build/release/lume",
             "preLaunchTask": "swift: Build Release lume (libs/lume)"
         }
     ]

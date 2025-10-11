@@ -227,6 +227,13 @@ Examples:
     )
     
     parser.add_argument(
+        "--provider",
+        choices=["cloud", "lume", "winsandbox", "docker"],
+        default="cloud",
+        help="Computer provider to use: cloud (default), lume, winsandbox, or docker"
+    )
+    
+    parser.add_argument(
         "--images",
         type=int,
         default=3,
@@ -255,6 +262,12 @@ Examples:
         "-p", "--prompt",
         type=str,
         help="Initial prompt to send to the agent. Leave blank for interactive mode."
+    )
+
+    parser.add_argument(
+        "--prompt-file",
+        type=Path,
+        help="Path to a UTF-8 text file whose contents will be used as the initial prompt. If provided, overrides --prompt."
     )
 
     parser.add_argument(
@@ -289,33 +302,35 @@ Examples:
     container_name = os.getenv("CUA_CONTAINER_NAME")
     cua_api_key = os.getenv("CUA_API_KEY")
     
-    # Prompt for missing environment variables
+    # Prompt for missing environment variables (container name always required)
     if not container_name:
-        print_colored("CUA_CONTAINER_NAME not set.", dim=True)
-        print_colored("You can get a CUA container at https://www.trycua.com/", dim=True)
-        container_name = input("Enter your CUA container name: ").strip()
-        if not container_name:
-            print_colored("❌ Container name is required.")
-            sys.exit(1)
-    
-    if not cua_api_key:
+        if args.provider == "cloud":
+            print_colored("CUA_CONTAINER_NAME not set.", dim=True)
+            print_colored("You can get a CUA container at https://www.trycua.com/", dim=True)
+            container_name = input("Enter your CUA container name: ").strip()
+            if not container_name:
+                print_colored("❌ Container name is required.")
+                sys.exit(1)
+        else:
+            container_name = "cli-sandbox"
+
+    # Only require API key for cloud provider
+    if args.provider == "cloud" and not cua_api_key:
         print_colored("CUA_API_KEY not set.", dim=True)
         cua_api_key = input("Enter your CUA API key: ").strip()
         if not cua_api_key:
-            print_colored("❌ API key is required.")
+            print_colored("❌ API key is required for cloud provider.")
             sys.exit(1)
     
     # Check for provider-specific API keys based on model
     provider_api_keys = {
         "openai/": "OPENAI_API_KEY",
         "anthropic/": "ANTHROPIC_API_KEY",
-        "omniparser+": "OPENAI_API_KEY",
-        "omniparser+": "ANTHROPIC_API_KEY",
     }
     
     # Find matching provider and check for API key
     for prefix, env_var in provider_api_keys.items():
-        if args.model.startswith(prefix):
+        if prefix in args.model:
             if not os.getenv(env_var):
                 print_colored(f"{env_var} not set.", dim=True)
                 api_key = input(f"Enter your {env_var.replace('_', ' ').title()}: ").strip()
@@ -335,13 +350,25 @@ Examples:
         print_colored("Make sure agent and computer libraries are installed.", Colors.YELLOW)
         sys.exit(1)
     
+    # Resolve provider -> os_type, provider_type, api key requirement
+    provider_map = {
+        "cloud": ("linux", "cloud", True),
+        "lume": ("macos", "lume", False),
+        "winsandbox": ("windows", "winsandbox", False),
+        "docker": ("linux", "docker", False),
+    }
+    os_type, provider_type, needs_api_key = provider_map[args.provider]
+
+    computer_kwargs = {
+        "os_type": os_type,
+        "provider_type": provider_type,
+        "name": container_name,
+    }
+    if needs_api_key:
+        computer_kwargs["api_key"] = cua_api_key # type: ignore
+
     # Create computer instance
-    async with Computer(
-        os_type="linux",
-        provider_type="cloud",
-        name=container_name,
-        api_key=cua_api_key
-    ) as computer:
+    async with Computer(**computer_kwargs) as computer: # type: ignore
         
         # Create agent
         agent_kwargs = {
@@ -442,8 +469,17 @@ Examples:
             # Done
             sys.exit(0)
 
+        # Resolve initial prompt from --prompt-file or --prompt
+        initial_prompt = args.prompt or ""
+        if args.prompt_file:
+            try:
+                initial_prompt = args.prompt_file.read_text(encoding="utf-8")
+            except Exception as e:
+                print_colored(f"❌ Failed to read --prompt-file: {e}", Colors.RED, bold=True)
+                sys.exit(1)
+
         # Start chat loop (default interactive mode)
-        await chat_loop(agent, args.model, container_name, args.prompt, args.usage)
+        await chat_loop(agent, args.model, container_name, initial_prompt, args.usage)
 
 
 

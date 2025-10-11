@@ -208,7 +208,7 @@ Join our [Discord community](https://discord.com/invite/mVnXXpdE85) to discuss i
 
 ## License
 
-Cua is open-sourced under the MIT License - see the [LICENSE](LICENSE) file for details.  
+Cua is open-sourced under the MIT License - see the [LICENSE](LICENSE.md) file for details.  
 
 Portions of this project, specifically components adapted from Kasm Technologies Inc., are also licensed under the MIT License. See [libs/kasm/LICENSE](libs/kasm/LICENSE) for details.
 
@@ -252,18 +252,6 @@ A big thank you to our amazing sponsors for supporting the CUA project!
 - [Python SDK Quickstart](https://docs.trycua.com/docs/quickstart-devs)  
 - [Agent SDK Notebook Examples](https://github.com/trycua/cua/blob/main/notebooks/eval_osworld.ipynb)  
 
----
-
-## Dark Mode Toggle (Coming Soon) 🌙
-
-CUA will soon support a dark mode option in the navbar.  
-This feature will allow users to switch between light and dark themes easily.  
-
-```python
-# Example usage (placeholder)
-# from cua_ui import Navbar
-# navbar = Navbar()
-# navbar.enable_dark_mode()
 
 ## Community 💬
 
@@ -274,3 +262,8 @@ This feature will allow users to switch between light and dark themes easily.
   <p>Join our <a href="https://discord.com/invite/mVnXXpdE85">Discord community</a> to discuss ideas, get assistance, or share demos!</p>
 </div>
 
+## Sponsors
+
+Thank you to all our [GitHub Sponsors](https://github.com/sponsors/trycua)!
+
+<img width="300" alt="coderabbit-cli" src="https://github.com/user-attachments/assets/23a98e38-7897-4043-8ef7-eb990520dccc" />

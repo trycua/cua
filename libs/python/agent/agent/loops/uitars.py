@@ -1,3 +1,4 @@
+import ast
 """
 UITARS agent loop implementation using liteLLM for ByteDance-Seed/UI-TARS-1.5-7B
 Paper: https://arxiv.org/abs/2501.12326
@@ -334,7 +335,7 @@ def convert_to_computer_actions(parsed_responses: List[Dict[str, Any]], image_wi
             
             if start_box and end_box:
                 start_coords = eval(start_box)
-                end_coords = eval(end_box)
+                end_coords = ast.literal_eval(end_box)
                 
                 start_x = int((start_coords[0] + start_coords[2]) / 2 * image_width)
                 start_y = int((start_coords[1] + start_coords[3]) / 2 * image_height)

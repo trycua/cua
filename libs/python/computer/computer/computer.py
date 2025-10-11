@@ -1,3 +1,4 @@
+import traceback
 from typing import Optional, List, Literal, Dict, Any, Union, TYPE_CHECKING, cast
 import asyncio
 from .models import Computer as ComputerConfig, Display
@@ -451,6 +452,7 @@ class Computer:
                     raise RuntimeError(f"VM failed to become ready: {wait_error}")
         except Exception as e:
             self.logger.error(f"Failed to initialize computer: {e}")
+            self.logger.error(traceback.format_exc())
             raise RuntimeError(f"Failed to initialize computer: {e}")
 
         try:
@@ -557,6 +559,102 @@ class Computer:
             duration_ms = (time.time() - start_time) * 1000
             self.logger.debug(f"Computer stop process took {duration_ms:.2f}ms")
         return
+
+    async def start(self) -> None:
+        """Start the computer."""
+        await self.run()
+
+    async def restart(self) -> None:
+        """Restart the computer.
+
+        If using a VM provider that supports restart, this will issue a restart
+        without tearing down the provider context, then reconnect the interface.
+        Falls back to stop()+run() when a provider restart is not available.
+        """
+        # Host computer server: just disconnect and run again
+        if self.use_host_computer_server:
+            try:
+                await self.disconnect()
+            finally:
+                await self.run()
+            return
+
+        # If no VM provider context yet, fall back to full run
+        if not getattr(self, "_provider_context", None) or self.config.vm_provider is None:
+            self.logger.info("No provider context active; performing full restart via run()")
+            await self.run()
+            return
+
+        # Gracefully close current interface connection if present
+        if self._interface:
+            try:
+                self._interface.close()
+            except Exception as e:
+                self.logger.debug(f"Error closing interface prior to restart: {e}")
+
+        # Attempt provider-level restart if implemented
+        try:
+            storage_param = "ephemeral" if self.ephemeral else self.storage
+            if hasattr(self.config.vm_provider, "restart_vm"):
+                self.logger.info(f"Restarting VM {self.config.name} via provider...")
+                await self.config.vm_provider.restart_vm(name=self.config.name, storage=storage_param)
+            else:
+                # Fallback: stop then start without leaving provider context
+                self.logger.info(f"Provider has no restart_vm; performing stop+start for {self.config.name}...")
+                await self.config.vm_provider.stop_vm(name=self.config.name, storage=storage_param)
+                await self.config.vm_provider.run_vm(image=self.image, name=self.config.name, run_opts={}, storage=storage_param)
+        except Exception as e:
+            self.logger.error(f"Failed to restart VM via provider: {e}")
+            # As a last resort, do a full stop (with provider context exit) and run
+            try:
+                await self.stop()
+            finally:
+                await self.run()
+            return
+
+        # Wait for VM to be ready and reconnect interface
+        try:
+            self.logger.info("Waiting for VM to be ready after restart...")
+            if self.provider_type == VMProviderType.LUMIER:
+                max_retries = 60
+                retry_delay = 3
+            else:
+                max_retries = 30
+                retry_delay = 2
+            ip_address = await self.get_ip(max_retries=max_retries, retry_delay=retry_delay)
+
+            self.logger.info(f"Re-initializing interface for {self.os_type} at {ip_address}")
+            from .interface.base import BaseComputerInterface
+
+            if self.provider_type == VMProviderType.CLOUD and self.api_key and self.config.name:
+                self._interface = cast(
+                    BaseComputerInterface,
+                    InterfaceFactory.create_interface_for_os(
+                        os=self.os_type,
+                        ip_address=ip_address,
+                        api_key=self.api_key,
+                        vm_name=self.config.name,
+                    ),
+                )
+            else:
+                self._interface = cast(
+                    BaseComputerInterface,
+                    InterfaceFactory.create_interface_for_os(
+                        os=self.os_type,
+                        ip_address=ip_address,
+                    ),
+                )
+
+            self.logger.info("Connecting to WebSocket interface after restart...")
+            await self._interface.wait_for_ready(timeout=30)
+            self.logger.info("Computer reconnected and ready after restart")
+        except Exception as e:
+            self.logger.error(f"Failed to reconnect after restart: {e}")
+            # Try a full reset if reconnection failed
+            try:
+                await self.stop()
+            finally:
+                await self.run()
 
     # @property
     async def get_ip(self, max_retries: int = 15, retry_delay: int = 3) -> str:

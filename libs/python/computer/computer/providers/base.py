@@ -2,7 +2,9 @@
 
 import abc
 from enum import StrEnum
-from typing import Dict, List, Optional, Any, AsyncContextManager
+from typing import Dict, Optional, Any, AsyncContextManager
+
+from .types import ListVMsResponse
 
 
 class VMProviderType(StrEnum):
@@ -42,8 +44,13 @@ class BaseVMProvider(AsyncContextManager):
         pass
         
     @abc.abstractmethod
-    async def list_vms(self) -> List[Dict[str, Any]]:
-        """List all available VMs."""
+    async def list_vms(self) -> ListVMsResponse:
+        """List all available VMs.
+
+        Returns:
+            ListVMsResponse: A list of minimal VM objects as defined in
+            `computer.providers.types.MinimalVM`.
+        """
         pass
         
     @abc.abstractmethod
@@ -73,6 +80,20 @@ class BaseVMProvider(AsyncContextManager):
         
         Returns:
             Dictionary with VM stop status and information
+        """
+        pass
+        
+    @abc.abstractmethod
+    async def restart_vm(self, name: str, storage: Optional[str] = None) -> Dict[str, Any]:
+        """Restart a VM by name.
+        
+        Args:
+            name: Name of the VM to restart
+            storage: Optional storage path override. If provided, this will be used
+                    instead of the provider's default storage path.
+        
+        Returns:
+            Dictionary with VM restart status and information
         """
         pass
         

@@ -6,6 +6,10 @@ import type {
   AgentClientOptions,
 } from "./types";
 
+/**
+ * Client for communicating with agents through various connection types.
+ * Supports HTTP/HTTPS and peer-to-peer connections.
+ */
 export class AgentClient {
   private url: string;
   private connectionType: ConnectionType;
@@ -13,6 +17,12 @@ export class AgentClient {
   private peer?: Peer;
   private connection?: any;
 
+  /**
+   * Creates a new AgentClient instance.
+   * @param url - The URL to connect to (http://, https://, or peer://)
+   * @param options - Configuration options for the client
+   * @throws Error when URL format is invalid
+   */
   constructor(url: string, options: AgentClientOptions = {}) {
     this.url = url;
     this.options = {
@@ -33,13 +43,26 @@ export class AgentClient {
     }
   }
 
-  // Main responses API matching the desired usage pattern
+  /**
+   * API for creating agent responses.
+   */
   public responses = {
+    /**
+     * Creates a new agent response by sending a request.
+     * @param request - The agent request to send
+     * @returns Promise resolving to the agent response
+     */
     create: async (request: AgentRequest): Promise<AgentResponse> => {
       return this.sendRequest(request);
     },
   };
 
+  /**
+   * Routes the request to the appropriate sender based on connection type.
+   * @param request - The agent request to send
+   * @returns Promise resolving to the agent response
+   * @throws Error when connection type is unsupported
+   */
   private async sendRequest(request: AgentRequest): Promise<AgentResponse> {
     switch (this.connectionType) {
       case "http":
@@ -52,6 +75,12 @@ export class AgentClient {
     }
   }
 
+  /**
+   * Sends a request via HTTP/HTTPS.
+   * @param request - The agent request to send
+   * @returns Promise resolving to the agent response
+   * @throws Error when HTTP request fails or times out
+   */
   private async sendHttpRequest(request: AgentRequest): Promise<AgentResponse> {
     const controller = new AbortController();
     const timeoutId = setTimeout(
@@ -91,6 +120,12 @@ export class AgentClient {
     }
   }
 
+  /**
+   * Sends a request via peer-to-peer connection.
+   * @param request - The agent request to send
+   * @returns Promise resolving to the agent response
+   * @throws Error when peer connection fails or times out
+   */
   private async sendPeerRequest(request: AgentRequest): Promise<AgentResponse> {
     // Extract peer ID from peer:// URL
     const peerId = this.url.replace("peer://", "");
@@ -166,7 +201,10 @@ export class AgentClient {
     }
   }
 
-  // Health check method
+  /**
+   * Checks the health status of the connection.
+   * @returns Promise resolving to health status object
+   */
   async health(): Promise<{ status: string }> {
     if (this.connectionType === "peer") {
       return { status: this.peer?.open ? "connected" : "disconnected" };
@@ -183,7 +221,10 @@ export class AgentClient {
     }
   }
 
-  // Clean up resources
+  /**
+   * Closes all connections and cleans up resources.
+   * @returns Promise that resolves when cleanup is complete
+   */
   async disconnect(): Promise<void> {
     if (this.connection) {
       this.connection.close();

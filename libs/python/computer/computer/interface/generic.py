@@ -17,6 +17,16 @@ class GenericComputerInterface(BaseComputerInterface):
     """Generic interface with common functionality for all supported platforms (Windows, Linux, macOS)."""
 
     def __init__(self, ip_address: str, username: str = "lume", password: str = "lume", api_key: Optional[str] = None, vm_name: Optional[str] = None, logger_name: str = "computer.interface.generic"):
+        """Initialize the generic computer interface.
+        
+        Args:
+            ip_address: IP address of the computer to connect to
+            username: Username for authentication (default: "lume")
+            password: Password for authentication (default: "lume")
+            api_key: Optional API key for secure connections
+            vm_name: Optional VM name for container-based connections
+            logger_name: Name for the logger instance
+        """
         super().__init__(ip_address, username, password, api_key, vm_name)
         self._ws = None
         self._reconnect_task = None
@@ -72,36 +82,97 @@ class GenericComputerInterface(BaseComputerInterface):
 
     # Mouse actions
     async def mouse_down(self, x: Optional[int] = None, y: Optional[int] = None, button: str = "left", delay: Optional[float] = None) -> None:
+        """Press and hold a mouse button at the specified coordinates.
+        
+        Args:
+            x: X coordinate for the mouse action (None for current position)
+            y: Y coordinate for the mouse action (None for current position)
+            button: Mouse button to press ("left", "right", or "middle")
+            delay: Optional delay after the action
+        """
         await self._send_command("mouse_down", {"x": x, "y": y, "button": button})
         await self._handle_delay(delay)
     
     async def mouse_up(self, x: Optional[int] = None, y: Optional[int] = None, button: str = "left", delay: Optional[float] = None) -> None:
+        """Release a mouse button at the specified coordinates.
+        
+        Args:
+            x: X coordinate for the mouse action (None for current position)
+            y: Y coordinate for the mouse action (None for current position)
+            button: Mouse button to release ("left", "right", or "middle")
+            delay: Optional delay after the action
+        """
         await self._send_command("mouse_up", {"x": x, "y": y, "button": button})
         await self._handle_delay(delay)
     
     async def left_click(self, x: Optional[int] = None, y: Optional[int] = None, delay: Optional[float] = None) -> None:
+        """Perform a left mouse click at the specified coordinates.
+        
+        Args:
+            x: X coordinate for the click (None for current position)
+            y: Y coordinate for the click (None for current position)
+            delay: Optional delay after the action
+        """
         await self._send_command("left_click", {"x": x, "y": y})
         await self._handle_delay(delay)
 
     async def right_click(self, x: Optional[int] = None, y: Optional[int] = None, delay: Optional[float] = None) -> None:
+        """Perform a right mouse click at the specified coordinates.
+        
+        Args:
+            x: X coordinate for the click (None for current position)
+            y: Y coordinate for the click (None for current position)
+            delay: Optional delay after the action
+        """
         await self._send_command("right_click", {"x": x, "y": y})
         await self._handle_delay(delay)
 
     async def double_click(self, x: Optional[int] = None, y: Optional[int] = None, delay: Optional[float] = None) -> None:
+        """Perform a double left mouse click at the specified coordinates.
+        
+        Args:
+            x: X coordinate for the double click (None for current position)
+            y: Y coordinate for the double click (None for current position)
+            delay: Optional delay after the action
+        """
         await self._send_command("double_click", {"x": x, "y": y})
         await self._handle_delay(delay)
 
     async def move_cursor(self, x: int, y: int, delay: Optional[float] = None) -> None:
+        """Move the mouse cursor to the specified coordinates.
+        
+        Args:
+            x: X coordinate to move to
+            y: Y coordinate to move to
+            delay: Optional delay after the action
+        """
         await self._send_command("move_cursor", {"x": x, "y": y})
         await self._handle_delay(delay)
 
     async def drag_to(self, x: int, y: int, button: "MouseButton" = "left", duration: float = 0.5, delay: Optional[float] = None) -> None:
+        """Drag from the current cursor position to the specified coordinates.
+        
+        Args:
+            x: X coordinate to drag to
+            y: Y coordinate to drag to
+            button: Mouse button to use for dragging
+            duration: Duration of the drag operation in seconds
+            delay: Optional delay after the action
+        """
         await self._send_command(
             "drag_to", {"x": x, "y": y, "button": button, "duration": duration}
         )
         await self._handle_delay(delay)
 
     async def drag(self, path: List[Tuple[int, int]], button: "MouseButton" = "left", duration: float = 0.5, delay: Optional[float] = None) -> None:
+        """Drag along a path of coordinates.
+        
+        Args:
+            path: List of (x, y) coordinate tuples defining the drag path
+            button: Mouse button to use for dragging
+            duration: Total duration of the drag operation in seconds
+            delay: Optional delay after the action
+        """
         await self._send_command(
             "drag", {"path": path, "button": button, "duration": duration}
         )
@@ -109,14 +180,35 @@ class GenericComputerInterface(BaseComputerInterface):
 
     # Keyboard Actions
     async def key_down(self, key: "KeyType", delay: Optional[float] = None) -> None:
+        """Press and hold a key.
+        
+        Args:
+            key: Key to press down
+            delay: Optional delay after the action
+        """
         await self._send_command("key_down", {"key": key})
         await self._handle_delay(delay)
     
     async def key_up(self, key: "KeyType", delay: Optional[float] = None) -> None:
+        """Release a key.
+        
+        Args:
+            key: Key to release
+            delay: Optional delay after the action
+        """
         await self._send_command("key_up", {"key": key})
         await self._handle_delay(delay)
     
     async def type_text(self, text: str, delay: Optional[float] = None) -> None:
+        """Type text using the keyboard.
+        
+        Args:
+            text: Text to type
+            delay: Optional delay after the action
+            
+        Note:
+            For Unicode text, this method uses clipboard and paste for better compatibility.
+        """
         # Temporary fix for https://github.com/trycua/cua/issues/165
         # Check if text contains Unicode characters
         if any(ord(char) > 127 for char in text):
@@ -212,14 +304,33 @@ class GenericComputerInterface(BaseComputerInterface):
 
     # Scrolling Actions
     async def scroll(self, x: int, y: int, delay: Optional[float] = None) -> None:
+        """Scroll by the specified amount in both directions.
+        
+        Args:
+            x: Horizontal scroll amount (positive for right, negative for left)
+            y: Vertical scroll amount (positive for down, negative for up)
+            delay: Optional delay after the action
+        """
         await self._send_command("scroll", {"x": x, "y": y})
         await self._handle_delay(delay)
     
     async def scroll_down(self, clicks: int = 1, delay: Optional[float] = None) -> None:
+        """Scroll down by the specified number of clicks.
+        
+        Args:
+            clicks: Number of scroll clicks to perform
+            delay: Optional delay after the action
+        """
         await self._send_command("scroll_down", {"clicks": clicks})
         await self._handle_delay(delay)
     
     async def scroll_up(self, clicks: int = 1, delay: Optional[float] = None) -> None:
+        """Scroll up by the specified number of clicks.
+        
+        Args:
+            clicks: Number of scroll clicks to perform
+            delay: Optional delay after the action
+        """
         await self._send_command("scroll_up", {"clicks": clicks})
         await self._handle_delay(delay)
 
@@ -280,12 +391,28 @@ class GenericComputerInterface(BaseComputerInterface):
         return screenshot
 
     async def get_screen_size(self) -> Dict[str, int]:
+        """Get the current screen size.
+        
+        Returns:
+            Dictionary containing 'width' and 'height' keys with screen dimensions
+            
+        Raises:
+            RuntimeError: If unable to get screen size
+        """
         result = await self._send_command("get_screen_size")
         if result["success"] and result["size"]:
             return result["size"]
         raise RuntimeError("Failed to get screen size")
 
     async def get_cursor_position(self) -> Dict[str, int]:
+        """Get the current cursor position.
+        
+        Returns:
+            Dictionary containing 'x' and 'y' keys with cursor coordinates
+            
+        Raises:
+            RuntimeError: If unable to get cursor position
+        """
         result = await self._send_command("get_cursor_position")
         if result["success"] and result["position"]:
             return result["position"]
@@ -293,17 +420,40 @@ class GenericComputerInterface(BaseComputerInterface):
 
     # Clipboard Actions
     async def copy_to_clipboard(self) -> str:
+        """Copy current selection to clipboard and return its content.
+        
+        Returns:
+            The text content of the clipboard
+            
+        Raises:
+            RuntimeError: If unable to get clipboard content
+        """
         result = await self._send_command("copy_to_clipboard")
         if result["success"] and result["content"]:
             return result["content"]
         raise RuntimeError("Failed to get clipboard content")
 
     async def set_clipboard(self, text: str) -> None:
+        """Set the clipboard content to the specified text.
+        
+        Args:
+            text: Text to set in the clipboard
+        """
         await self._send_command("set_clipboard", {"text": text})
 
     # File Operations
     async def _write_bytes_chunked(self, path: str, content: bytes, append: bool = False, chunk_size: int = 1024 * 1024) -> None:
-        """Write large files in chunks to avoid memory issues."""
+        """Write large files in chunks to avoid memory issues.
+        
+        Args:
+            path: File path to write to
+            content: Bytes content to write
+            append: Whether to append to existing file
+            chunk_size: Size of each chunk in bytes
+            
+        Raises:
+            RuntimeError: If any chunk write operation fails
+        """
         total_size = len(content)
         current_offset = 0
         
@@ -326,6 +476,16 @@ class GenericComputerInterface(BaseComputerInterface):
             current_offset = chunk_end
 
     async def write_bytes(self, path: str, content: bytes, append: bool = False) -> None:
+        """Write bytes to a file.
+        
+        Args:
+            path: File path to write to
+            content: Bytes content to write
+            append: Whether to append to existing file instead of overwriting
+            
+        Raises:
+            RuntimeError: If the write operation fails
+        """
         # For large files, use chunked writing
         if len(content) > 5 * 1024 * 1024:  # 5MB threshold
             await self._write_bytes_chunked(path, content, append)
@@ -336,7 +496,20 @@ class GenericComputerInterface(BaseComputerInterface):
             raise RuntimeError(result.get("error", "Failed to write file"))
 
     async def _read_bytes_chunked(self, path: str, offset: int, total_length: int, chunk_size: int = 1024 * 1024) -> bytes:
-        """Read large files in chunks to avoid memory issues."""
+        """Read large files in chunks to avoid memory issues.
+        
+        Args:
+            path: File path to read from
+            offset: Starting offset in the file
+            total_length: Total number of bytes to read
+            chunk_size: Size of each chunk in bytes
+            
+        Returns:
+            The complete file content as bytes
+            
+        Raises:
+            RuntimeError: If any chunk read operation fails
+        """
         chunks = []
         current_offset = offset
         remaining = total_length
@@ -362,6 +535,19 @@ class GenericComputerInterface(BaseComputerInterface):
         return b''.join(chunks)
 
     async def read_bytes(self, path: str, offset: int = 0, length: Optional[int] = None) -> bytes:
+        """Read bytes from a file.
+        
+        Args:
+            path: File path to read from
+            offset: Starting offset in the file
+            length: Number of bytes to read (None for entire file)
+            
+        Returns:
+            The file content as bytes
+            
+        Raises:
+            RuntimeError: If the read operation fails
+        """
         # For large files, use chunked reading
         if length is None:
             # Get file size first to determine if we need chunking
@@ -406,35 +592,97 @@ class GenericComputerInterface(BaseComputerInterface):
         await self.write_bytes(path, content_bytes, append)
 
     async def get_file_size(self, path: str) -> int:
+        """Get the size of a file in bytes.
+        
+        Args:
+            path: Path to the file
+            
+        Returns:
+            File size in bytes
+            
+        Raises:
+            RuntimeError: If unable to get file size
+        """
         result = await self._send_command("get_file_size", {"path": path})
         if not result.get("success", False):
             raise RuntimeError(result.get("error", "Failed to get file size"))
         return result.get("size", 0)
 
     async def file_exists(self, path: str) -> bool:
+        """Check if a file exists.
+        
+        Args:
+            path: Path to check
+            
+        Returns:
+            True if the file exists, False otherwise
+        """
         result = await self._send_command("file_exists", {"path": path})
         return result.get("exists", False)
 
     async def directory_exists(self, path: str) -> bool:
+        """Check if a directory exists.
+        
+        Args:
+            path: Path to check
+            
+        Returns:
+            True if the directory exists, False otherwise
+        """
         result = await self._send_command("directory_exists", {"path": path})
         return result.get("exists", False)
 
     async def create_dir(self, path: str) -> None:
+        """Create a directory.
+        
+        Args:
+            path: Path of the directory to create
+            
+        Raises:
+            RuntimeError: If directory creation fails
+        """
         result = await self._send_command("create_dir", {"path": path})
         if not result.get("success", False):
             raise RuntimeError(result.get("error", "Failed to create directory"))
 
     async def delete_file(self, path: str) -> None:
+        """Delete a file.
+        
+        Args:
+            path: Path of the file to delete
+            
+        Raises:
+            RuntimeError: If file deletion fails
+        """
         result = await self._send_command("delete_file", {"path": path})
         if not result.get("success", False):
             raise RuntimeError(result.get("error", "Failed to delete file"))
 
     async def delete_dir(self, path: str) -> None:
+        """Delete a directory.
+        
+        Args:
+            path: Path of the directory to delete
+            
+        Raises:
+            RuntimeError: If directory deletion fails
+        """
         result = await self._send_command("delete_dir", {"path": path})
         if not result.get("success", False):
             raise RuntimeError(result.get("error", "Failed to delete directory"))
 
     async def list_dir(self, path: str) -> list[str]:
+        """List contents of a directory.
+        
+        Args:
+            path: Path of the directory to list
+            
+        Returns:
+            List of file and directory names in the specified directory
+            
+        Raises:
+            RuntimeError: If directory listing fails
+        """
         result = await self._send_command("list_dir", {"path": path})
         if not result.get("success", False):
             raise RuntimeError(result.get("error", "Failed to list directory"))
@@ -442,6 +690,17 @@ class GenericComputerInterface(BaseComputerInterface):
 
     # Command execution
     async def run_command(self, command: str) -> CommandResult:
+        """Execute a system command.
+        
+        Args:
+            command: Command string to execute
+            
+        Returns:
+            CommandResult containing stdout, stderr, and return code
+            
+        Raises:
+            RuntimeError: If command execution fails
+        """
         result = await self._send_command("run_command", {"command": command})
         if not result.get("success", False):
             raise RuntimeError(result.get("error", "Failed to run command"))
@@ -691,7 +950,19 @@ class GenericComputerInterface(BaseComputerInterface):
         raise ConnectionError("Failed to establish WebSocket connection after multiple retries")
 
     async def _send_command_ws(self, command: str, params: Optional[Dict] = None) -> Dict[str, Any]:
-        """Send command through WebSocket."""
+        """Send command through WebSocket.
+        
+        Args:
+            command: Command name to send
+            params: Optional parameters for the command
+            
+        Returns:
+            Response dictionary from the server
+            
+        Raises:
+            ConnectionError: If WebSocket connection fails
+            RuntimeError: If command sending fails after retries
+        """
         max_retries = 3
         retry_count = 0
         last_error = None
@@ -731,7 +1002,15 @@ class GenericComputerInterface(BaseComputerInterface):
         raise last_error if last_error else RuntimeError("Failed to send command")
 
     async def _send_command_rest(self, command: str, params: Optional[Dict] = None) -> Dict[str, Any]:
-        """Send command through REST API without retries or connection management."""
+        """Send command through REST API without retries or connection management.
+        
+        Args:
+            command: Command name to send
+            params: Optional parameters for the command
+            
+        Returns:
+            Response dictionary from the server
+        """
         try:
             # Prepare the request payload
             payload = {"command": command, "params": params or {}}
@@ -784,7 +1063,15 @@ class GenericComputerInterface(BaseComputerInterface):
             }
 
     async def _send_command(self, command: str, params: Optional[Dict] = None) -> Dict[str, Any]:
-        """Send command using REST API with WebSocket fallback."""
+        """Send command using REST API with WebSocket fallback.
+        
+        Args:
+            command: Command name to send
+            params: Optional parameters for the command
+            
+        Returns:
+            Response dictionary from the server
+        """
         # Try REST API first
         result = await self._send_command_rest(command, params)
         
@@ -801,7 +1088,16 @@ class GenericComputerInterface(BaseComputerInterface):
         return result
 
     async def wait_for_ready(self, timeout: int = 60, interval: float = 1.0):
-        """Wait for Computer API Server to be ready by testing version command."""
+        """Wait for Computer API Server to be ready by testing version command.
+        
+        Args:
+            timeout: Maximum time to wait in seconds
+            interval: Time between connection attempts in seconds
+            
+        Raises:
+            TimeoutError: If server doesn't become ready within timeout
+            RuntimeError: If there's an error while waiting
+        """
 
         # Check if REST API is available
         try:
@@ -875,7 +1171,15 @@ class GenericComputerInterface(BaseComputerInterface):
             raise RuntimeError(error_msg)
 
     async def _wait_for_ready_ws(self, timeout: int = 60, interval: float = 1.0):
-        """Wait for WebSocket connection to become available."""
+        """Wait for WebSocket connection to become available.
+        
+        Args:
+            timeout: Maximum time to wait in seconds
+            interval: Time between connection attempts in seconds
+            
+        Raises:
+            TimeoutError: If connection doesn't become ready within timeout
+        """
         start_time = time.time()
         last_error = None
         attempt_count = 0
@@ -970,4 +1274,3 @@ class GenericComputerInterface(BaseComputerInterface):
         if self._ws:
             asyncio.create_task(self._ws.close())
             self._ws = None
-

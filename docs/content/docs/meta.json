@@ -8,6 +8,7 @@
 		"quickstart-devs",
 		"quickstart-cli",
 		"telemetry",
+        "observability",
         "---[BookCopy]Computer Playbook---",
         "...computer-sdk",
 		"---[BookCopy]Agent Playbook---",

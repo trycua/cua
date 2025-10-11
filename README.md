@@ -206,6 +206,73 @@ Some optional extras for this project depend on third-party packages that are li
 
 When you choose to install and use such optional extras, your use, modification, and distribution of those third-party components are governed by their respective licenses (e.g., AGPL-3.0 for `ultralytics`).
 
+## Releasing Packages
+
+Cua uses `bump2version` to manage package versions across all Python modules. A Makefile is provided to simplify the release process.
+
+### Prerequisites 
+
+#### install `bump2version`
+
+using brew
+```
+brew install bumpversion
+```
+
+
+### View Current Versions
+
+```bash
+make show-versions
+```
+
+### Bump Package Versions
+
+To bump a specific package version:
+
+```bash
+# Patch version bump (e.g., 0.1.8 → 0.1.9)
+make bump-patch-core          # cua-core
+make bump-patch-pylume        # pylume
+make bump-patch-computer      # cua-computer
+make bump-patch-som           # cua-som
+make bump-patch-agent         # cua-agent
+make bump-patch-computer-server  # cua-computer-server
+make bump-patch-mcp-server    # cua-mcp-server
+
+# Minor version bump (e.g., 0.1.8 → 0.2.0)
+make bump-minor-core          # Replace 'core' with any package name
+
+# Major version bump (e.g., 0.1.8 → 1.0.0)
+make bump-major-core          # Replace 'core' with any package name
+```
+
+### Dry Run (Test Before Bumping)
+
+To preview changes without modifying files:
+
+```bash
+make dry-run-patch-core       # Test patch bump for cua-core
+make dry-run-minor-pylume     # Test minor bump for pylume
+make dry-run-major-agent      # Test major bump for cua-agent
+```
+
+### Bump All Packages (Use with Caution)
+
+```bash
+make bump-all-patch           # Bumps patch version for ALL packages
+```
+
+### After Bumping
+
+After running any bump command, push your changes:
+
+```bash
+git push origin main && git push origin --tags
+```
+
+For more details, run `make help` or see the [Makefile](./Makefile).
+
 ## Contributing
 
 We welcome contributions to Cua! Please refer to our [Contributing Guidelines](CONTRIBUTING.md) for details.

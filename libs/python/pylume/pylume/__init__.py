@@ -35,7 +35,7 @@ from .models import (
 # Import main class last to avoid circular imports
 from .pylume import PyLume
 
-__version__ = "0.2.2"
+__version__ = "0.2.1"
 
 __all__ = [
     "PyLume",

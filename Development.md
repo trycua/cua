@@ -10,7 +10,6 @@ The project is organized as a monorepo with these main packages:
 - `libs/som/` - Set-of-Mark parser
 - `libs/computer-server/` - Server component for VM
 - `libs/lume/` - Lume CLI
-- `libs/pylume/` - Python bindings for Lume
 
 Each package has its own virtual environment and dependencies, managed through PDM.
 

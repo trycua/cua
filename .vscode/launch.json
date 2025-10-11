@@ -10,7 +10,7 @@
             "python": "${workspaceFolder:cua-root}/.venv/bin/python",
             "cwd": "${workspaceFolder:cua-root}",
             "env": {
-                "PYTHONPATH": "${workspaceFolder:cua-root}/libs/python/core:${workspaceFolder:cua-root}/libs/python/computer:${workspaceFolder:cua-root}/libs/python/agent:${workspaceFolder:cua-root}/libs/python/som:${workspaceFolder:cua-root}/libs/python/pylume"
+                "PYTHONPATH": "${workspaceFolder:cua-root}/libs/python/core:${workspaceFolder:cua-root}/libs/python/computer:${workspaceFolder:cua-root}/libs/python/agent:${workspaceFolder:cua-root}/libs/python/som"
             }
         },
         {
@@ -23,7 +23,7 @@
             "python": "${workspaceFolder:cua-root}/.venv/bin/python",
             "cwd": "${workspaceFolder:cua-root}",
             "env": {
-                "PYTHONPATH": "${workspaceFolder:cua-root}/libs/python/core:${workspaceFolder:cua-root}/libs/python/computer:${workspaceFolder:cua-root}/libs/python/agent:${workspaceFolder:cua-root}/libs/python/som:${workspaceFolder:cua-root}/libs/python/pylume"
+                "PYTHONPATH": "${workspaceFolder:cua-root}/libs/python/core:${workspaceFolder:cua-root}/libs/python/computer:${workspaceFolder:cua-root}/libs/python/agent:${workspaceFolder:cua-root}/libs/python/som"
             }
         },
         {
@@ -36,7 +36,7 @@
             "python": "${workspaceFolder:cua-root}/.venv/bin/python",
             "cwd": "${workspaceFolder:cua-root}",
             "env": {
-                "PYTHONPATH": "${workspaceFolder:cua-root}/libs/python/core:${workspaceFolder:cua-root}/libs/python/computer:${workspaceFolder:cua-root}/libs/python/agent:${workspaceFolder:cua-root}/libs/python/som:${workspaceFolder:cua-root}/libs/python/pylume"
+                "PYTHONPATH": "${workspaceFolder:cua-root}/libs/python/core:${workspaceFolder:cua-root}/libs/python/computer:${workspaceFolder:cua-root}/libs/python/agent:${workspaceFolder:cua-root}/libs/python/som"
             }
         },
         {
@@ -49,20 +49,7 @@
             "python": "${workspaceFolder:cua-root}/.venv/bin/python",
             "cwd": "${workspaceFolder:cua-root}",
             "env": {
-                "PYTHONPATH": "${workspaceFolder:cua-root}/libs/python/core:${workspaceFolder:cua-root}/libs/python/computer:${workspaceFolder:cua-root}/libs/python/agent:${workspaceFolder:cua-root}/libs/python/som:${workspaceFolder:cua-root}/libs/python/pylume"
-            }
-        },
-        {
-            "name": "Run PyLume Examples",
-            "type": "debugpy",
-            "request": "launch",
-            "program": "examples/pylume_examples.py",
-            "console": "integratedTerminal",
-            "justMyCode": true,
-            "python": "${workspaceFolder:cua-root}/.venv/bin/python",
-            "cwd": "${workspaceFolder:cua-root}",
-            "env": {
-                "PYTHONPATH": "${workspaceFolder:cua-root}/libs/python/core:${workspaceFolder:cua-root}/libs/python/computer:${workspaceFolder:cua-root}/libs/python/agent:${workspaceFolder:cua-root}/libs/python/som:${workspaceFolder:cua-root}/libs/python/pylume"
+                "PYTHONPATH": "${workspaceFolder:cua-root}/libs/python/core:${workspaceFolder:cua-root}/libs/python/computer:${workspaceFolder:cua-root}/libs/python/agent:${workspaceFolder:cua-root}/libs/python/som"
             }
         },
         {
@@ -84,7 +71,7 @@
             "python": "${workspaceFolder:cua-root}/.venv/bin/python",
             "cwd": "${workspaceFolder:cua-root}",
             "env": {
-                "PYTHONPATH": "${workspaceFolder:cua-root}/libs/python/core:${workspaceFolder:cua-root}/libs/python/computer:${workspaceFolder:cua-root}/libs/python/agent:${workspaceFolder:cua-root}/libs/python/som:${workspaceFolder:cua-root}/libs/python/pylume"
+                "PYTHONPATH": "${workspaceFolder:cua-root}/libs/python/core:${workspaceFolder:cua-root}/libs/python/computer:${workspaceFolder:cua-root}/libs/python/agent:${workspaceFolder:cua-root}/libs/python/som"
             }
         },
         {
@@ -106,7 +93,7 @@
             "python": "${workspaceFolder:cua-root}/.venv/bin/python",
             "cwd": "${workspaceFolder:cua-root}",
             "env": {
-                "PYTHONPATH": "${workspaceFolder:cua-root}/libs/python/core:${workspaceFolder:cua-root}/libs/python/computer:${workspaceFolder:cua-root}/libs/python/agent:${workspaceFolder:cua-root}/libs/python/som:${workspaceFolder:cua-root}/libs/python/pylume"
+                "PYTHONPATH": "${workspaceFolder:cua-root}/libs/python/core:${workspaceFolder:cua-root}/libs/python/computer:${workspaceFolder:cua-root}/libs/python/agent:${workspaceFolder:cua-root}/libs/python/som"
             }
         },
         {
@@ -119,7 +106,7 @@
             "python": "${workspaceFolder:cua-root}/.venv/bin/python",
             "cwd": "${workspaceFolder:cua-root}",
             "env": {
-                "PYTHONPATH": "${workspaceFolder:cua-root}/libs/python/core:${workspaceFolder:cua-root}/libs/python/computer:${workspaceFolder:cua-root}/libs/python/agent:${workspaceFolder:cua-root}/libs/python/som:${workspaceFolder:cua-root}/libs/python/pylume"
+                "PYTHONPATH": "${workspaceFolder:cua-root}/libs/python/core:${workspaceFolder:cua-root}/libs/python/computer:${workspaceFolder:cua-root}/libs/python/agent:${workspaceFolder:cua-root}/libs/python/som"
             }
         },
         {

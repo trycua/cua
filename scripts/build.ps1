@@ -125,9 +125,6 @@ Print-Step "Installing packages in development mode..."
 # Install core first (base package with telemetry support)
 if (-not (Install-Package "libs/python/core" "core")) { exit 1 }
 
-# Install pylume (base dependency)
-if (-not (Install-Package "libs/python/pylume" "pylume")) { exit 1 }
-
 # Install computer with all its dependencies and extras
 if (-not (Install-Package "libs/python/computer" "computer" "all")) { exit 1 }
 
@@ -149,7 +146,7 @@ pip install -e ".[dev,test,docs]"
 
 # Create a .env file for VS Code to use the virtual environment
 Print-Step "Creating .env file for VS Code..."
-$pythonPath = "$PROJECT_ROOT/libs/python/core;$PROJECT_ROOT/libs/python/computer;$PROJECT_ROOT/libs/python/agent;$PROJECT_ROOT/libs/python/som;$PROJECT_ROOT/libs/python/pylume;$PROJECT_ROOT/libs/python/computer-server;$PROJECT_ROOT/libs/python/mcp-server"
+$pythonPath = "$PROJECT_ROOT/libs/python/core;$PROJECT_ROOT/libs/python/computer;$PROJECT_ROOT/libs/python/agent;$PROJECT_ROOT/libs/python/som;$PROJECT_ROOT/libs/python/computer-server;$PROJECT_ROOT/libs/python/mcp-server"
 "PYTHONPATH=$pythonPath" | Out-File -FilePath ".env" -Encoding UTF8
 
 Print-Success "All packages installed successfully!"

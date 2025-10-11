@@ -43,7 +43,7 @@ else
 fi
 
 # Environment variables
-PYTHONPATH="/app/libs/python/core:/app/libs/python/computer:/app/libs/python/agent:/app/libs/python/som:/app/libs/python/pylume:/app/libs/python/computer-server:/app/libs/python/mcp-server"
+PYTHONPATH="/app/libs/python/core:/app/libs/python/computer:/app/libs/python/agent:/app/libs/python/som:/app/libs/python/computer-server:/app/libs/python/mcp-server"
 
 # Check if Docker is installed
 if ! command -v docker &> /dev/null; then

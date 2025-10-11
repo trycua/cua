@@ -4399,18 +4399,6 @@ files = [
 ]
 
 [[package]]
-name = "pylume"
-version = "0.2.2"
-requires_python = ">=3.9"
-editable = true
-path = "./libs/python/pylume"
-summary = "Python SDK for lume - run macOS and Linux VMs on Apple Silicon"
-groups = ["dev"]
-dependencies = [
-    "pydantic>=2.11.1",
-]
-
-[[package]]
 name = "pymdown-extensions"
 version = "10.16.1"
 requires_python = ">=3.9"

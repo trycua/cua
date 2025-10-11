@@ -5,7 +5,7 @@ ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
-    PYTHONPATH="/app/libs/python/core:/app/libs/python/computer:/app/libs/python/agent:/app/libs/python/som:/app/libs/python/pylume:/app/libs/python/computer-server:/app/libs/python/mcp-server"
+    PYTHONPATH="/app/libs/python/core:/app/libs/python/computer:/app/libs/python/agent:/app/libs/python/som:/app/libs/python/computer-server:/app/libs/python/mcp-server"
 
 # Install system dependencies for ARM architecture
 RUN apt-get update && apt-get install -y --no-install-recommends \

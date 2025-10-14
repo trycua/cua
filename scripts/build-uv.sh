@@ -150,9 +150,6 @@ print_step "Installing packages in development mode with UV..."
 # Install core first (base package with telemetry support)
 install_package "libs/python/core" "core"
 
-# Install pylume (base dependency)
-install_package "libs/python/pylume" "pylume"
-
 # Install computer with all its dependencies and extras
 install_package "libs/python/computer" "computer" "all"
 
@@ -174,7 +171,7 @@ uv pip install -e ".[dev,test,docs]"
 
 # Create a .env file for VS Code to use the virtual environment
 print_step "Creating .env file for VS Code..."
-echo "PYTHONPATH=${PROJECT_ROOT}/libs/python/core:${PROJECT_ROOT}/libs/python/computer:${PROJECT_ROOT}/libs/python/agent:${PROJECT_ROOT}/libs/python/som:${PROJECT_ROOT}/libs/python/pylume:${PROJECT_ROOT}/libs/python/computer-server:${PROJECT_ROOT}/libs/python/mcp-server" > .env
+echo "PYTHONPATH=${PROJECT_ROOT}/libs/python/core:${PROJECT_ROOT}/libs/python/computer:${PROJECT_ROOT}/libs/python/agent:${PROJECT_ROOT}/libs/python/som:${PROJECT_ROOT}/libs/python/computer-server:${PROJECT_ROOT}/libs/python/mcp-server" > .env
 
 print_success "All packages installed successfully with UV!"
 print_step "Your virtual environment is ready. To activate it:"

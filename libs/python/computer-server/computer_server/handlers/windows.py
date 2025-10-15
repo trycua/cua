@@ -1,7 +1,7 @@
 """
 Windows implementation of automation and accessibility handlers.
 
-This implementation uses pyautogui for GUI automation and Windows-specific APIs
+This implementation uses pynput for GUI automation and Windows-specific APIs
 for accessibility and system operations.
 """
 from typing import Dict, Any, List, Tuple, Optional
@@ -11,20 +11,15 @@ import asyncio
 import base64
 import os
 from io import BytesIO
-from pynput.mouse import Controller as MouseController
-from pynput.keyboard import Controller as KeyboardController
+from pynput.mouse import Controller as MouseController, Button as MouseButton
+from pynput.keyboard import Controller as KeyboardController, Key as KBKey
+from typing import Union, List as _List
+from PIL import ImageGrab, Image
 
 # Configure logger
 logger = logging.getLogger(__name__)
 
-# Try to import pyautogui
-try:
-    import pyautogui
-    pyautogui.FAILSAFE = False
-    logger.info("pyautogui successfully imported, GUI automation available")
-except Exception as e:
-    logger.error(f"pyautogui import failed: {str(e)}. GUI operations will not work.")
-    pyautogui = None
+# pyautogui removed in favor of pynput
 
 # Try to import Windows-specific modules
 try:
@@ -166,9 +161,63 @@ class WindowsAccessibilityHandler(BaseAccessibilityHandler):
             return {"success": False, "error": str(e)}
 
 class WindowsAutomationHandler(BaseAutomationHandler):
-    """Windows implementation of automation handler using pyautogui and Windows APIs."""
+    """Windows implementation of automation handler using pynput and Windows APIs."""
     
     mouse = MouseController()
+    keyboard = KeyboardController()
+
+    def _map_button(self, button: str) -> MouseButton:
+        """Map a string button name to pynput MouseButton."""
+        b = (button or "left").lower()
+        if b == "left":
+            return MouseButton.left
+        if b == "right":
+            return MouseButton.right
+        if b == "middle":
+            return MouseButton.middle
+        # default to left
+        return MouseButton.left
+
+    def _key_from_string(self, key: str):
+        """Convert a key string (e.g., 'enter', 'ctrl', 'a') to pynput Key or char."""
+        if not key:
+            return None
+        lk = key.lower()
+        special = {
+            "enter": KBKey.enter,
+            "return": KBKey.enter,
+            "esc": KBKey.esc,
+            "escape": KBKey.esc,
+            "space": KBKey.space,
+            "tab": KBKey.tab,
+            "backspace": KBKey.backspace,
+            "delete": KBKey.delete,
+            "home": KBKey.home,
+            "end": KBKey.end,
+            "pageup": KBKey.page_up,
+            "pagedown": KBKey.page_down,
+            "up": KBKey.up,
+            "down": KBKey.down,
+            "left": KBKey.left,
+            "right": KBKey.right,
+            "shift": KBKey.shift,
+            "ctrl": KBKey.ctrl,
+            "control": KBKey.ctrl,
+            "alt": KBKey.alt,
+            "cmd": KBKey.cmd,
+            "win": KBKey.cmd,
+            "meta": KBKey.cmd,
+            "capslock": KBKey.caps_lock,
+            "f1": KBKey.f1, "f2": KBKey.f2, "f3": KBKey.f3, "f4": KBKey.f4,
+            "f5": KBKey.f5, "f6": KBKey.f6, "f7": KBKey.f7, "f8": KBKey.f8,
+            "f9": KBKey.f9, "f10": KBKey.f10, "f11": KBKey.f11, "f12": KBKey.f12,
+        }
+        if lk in special:
+            return special[lk]
+        # single character
+        if len(key) == 1:
+            return key
+        return None
 
     # Mouse Actions
     async def mouse_down(self, x: Optional[int] = None, y: Optional[int] = None, button: str = "left") -> Dict[str, Any]:
@@ -182,13 +231,10 @@ class WindowsAutomationHandler(BaseAutomationHandler):
         Returns:
             Dict[str, Any]: A dictionary with success status and optional error message.
         """
-        if not pyautogui:
-            return {"success": False, "error": "pyautogui not available"}
-        
         try:
             if x is not None and y is not None:
-                pyautogui.moveTo(x, y)
-            pyautogui.mouseDown(button=button)
+                self.mouse.position = (x, y)
+            self.mouse.press(self._map_button(button))
             return {"success": True}
         except Exception as e:
             return {"success": False, "error": str(e)}
@@ -204,13 +250,10 @@ class WindowsAutomationHandler(BaseAutomationHandler):
         Returns:
             Dict[str, Any]: A dictionary with success status and optional error message.
         """
-        if not pyautogui:
-            return {"success": False, "error": "pyautogui not available"}
-        
         try:
             if x is not None and y is not None:
-                pyautogui.moveTo(x, y)
-            pyautogui.mouseUp(button=button)
+                self.mouse.position = (x, y)
+            self.mouse.release(self._map_button(button))
             return {"success": True}
         except Exception as e:
             return {"success": False, "error": str(e)}
@@ -225,11 +268,8 @@ class WindowsAutomationHandler(BaseAutomationHandler):
         Returns:
             Dict[str, Any]: A dictionary with success status and optional error message.
         """
-        if not pyautogui:
-            return {"success": False, "error": "pyautogui not available"}
-        
         try:
-            pyautogui.moveTo(x, y)
+            self.mouse.position = (x, y)
             return {"success": True}
         except Exception as e:
             return {"success": False, "error": str(e)}
@@ -244,13 +284,10 @@ class WindowsAutomationHandler(BaseAutomationHandler):
         Returns:
             Dict[str, Any]: A dictionary with success status and optional error message.
         """
-        if not pyautogui:
-            return {"success": False, "error": "pyautogui not available"}
-        
         try:
             if x is not None and y is not None:
-                pyautogui.moveTo(x, y)
-            pyautogui.click()
+                self.mouse.position = (x, y)
+            self.mouse.click(MouseButton.left, 1)
             return {"success": True}
         except Exception as e:
             return {"success": False, "error": str(e)}
@@ -265,13 +302,10 @@ class WindowsAutomationHandler(BaseAutomationHandler):
         Returns:
             Dict[str, Any]: A dictionary with success status and optional error message.
         """
-        if not pyautogui:
-            return {"success": False, "error": "pyautogui not available"}
-        
         try:
             if x is not None and y is not None:
-                pyautogui.moveTo(x, y)
-            pyautogui.rightClick()
+                self.mouse.position = (x, y)
+            self.mouse.click(MouseButton.right, 1)
             return {"success": True}
         except Exception as e:
             return {"success": False, "error": str(e)}
@@ -286,13 +320,10 @@ class WindowsAutomationHandler(BaseAutomationHandler):
         Returns:
             Dict[str, Any]: A dictionary with success status and optional error message.
         """
-        if not pyautogui:
-            return {"success": False, "error": "pyautogui not available"}
-        
         try:
             if x is not None and y is not None:
-                pyautogui.moveTo(x, y)
-            pyautogui.doubleClick(interval=0.1)
+                self.mouse.position = (x, y)
+            self.mouse.click(MouseButton.left, 2)
             return {"success": True}
         except Exception as e:
             return {"success": False, "error": str(e)}
@@ -309,11 +340,11 @@ class WindowsAutomationHandler(BaseAutomationHandler):
         Returns:
             Dict[str, Any]: A dictionary with success status and optional error message.
         """
-        if not pyautogui:
-            return {"success": False, "error": "pyautogui not available"}
-        
         try:
-            pyautogui.dragTo(x, y, duration=duration, button=button)
+            # simple drag implementation
+            self.mouse.press(self._map_button(button))
+            self.mouse.position = (x, y)
+            self.mouse.release(self._map_button(button))
             return {"success": True}
         except Exception as e:
             return {"success": False, "error": str(e)}
@@ -329,19 +360,18 @@ class WindowsAutomationHandler(BaseAutomationHandler):
         Returns:
             Dict[str, Any]: A dictionary with success status and optional error message.
         """
-        if not pyautogui:
-            return {"success": False, "error": "pyautogui not available"}
-        
         try:
             if not path:
                 return {"success": False, "error": "Path is empty"}
             
             # Move to first position
-            pyautogui.moveTo(*path[0])
+            self.mouse.position = path[0]
             
             # Drag through all positions
             for x, y in path[1:]:
-                pyautogui.dragTo(x, y, duration=duration/len(path), button=button)
+                self.mouse.press(self._map_button(button))
+                self.mouse.position = (x, y)
+                self.mouse.release(self._map_button(button))
             
             return {"success": True}
         except Exception as e:
@@ -357,11 +387,11 @@ class WindowsAutomationHandler(BaseAutomationHandler):
         Returns:
             Dict[str, Any]: A dictionary with success status and optional error message.
         """
-        if not pyautogui:
-            return {"success": False, "error": "pyautogui not available"}
-        
         try:
-            pyautogui.keyDown(key)
+            k = self._key_from_string(key)
+            if k is None:
+                return {"success": False, "error": f"Unknown key: {key}"}
+            self.keyboard.press(k)
             return {"success": True}
         except Exception as e:
             return {"success": False, "error": str(e)}
@@ -375,11 +405,11 @@ class WindowsAutomationHandler(BaseAutomationHandler):
         Returns:
             Dict[str, Any]: A dictionary with success status and optional error message.
         """
-        if not pyautogui:
-            return {"success": False, "error": "pyautogui not available"}
-        
         try:
-            pyautogui.keyUp(key)
+            k = self._key_from_string(key)
+            if k is None:
+                return {"success": False, "error": f"Unknown key: {key}"}
+            self.keyboard.release(k)
             return {"success": True}
         except Exception as e:
             return {"success": False, "error": str(e)}
@@ -393,11 +423,8 @@ class WindowsAutomationHandler(BaseAutomationHandler):
         Returns:
             Dict[str, Any]: A dictionary with success status and optional error message.
         """
-        if not pyautogui:
-            return {"success": False, "error": "pyautogui not available"}
-        
         try:
-            pyautogui.write(text)
+            self.keyboard.type(text)
             return {"success": True}
         except Exception as e:
             return {"success": False, "error": str(e)}
@@ -411,11 +438,12 @@ class WindowsAutomationHandler(BaseAutomationHandler):
         Returns:
             Dict[str, Any]: A dictionary with success status and optional error message.
         """
-        if not pyautogui:
-            return {"success": False, "error": "pyautogui not available"}
-        
         try:
-            pyautogui.press(key)
+            k = self._key_from_string(key)
+            if k is None:
+                return {"success": False, "error": f"Unknown key: {key}"}
+            self.keyboard.press(k)
+            self.keyboard.release(k)
             return {"success": True}
         except Exception as e:
             return {"success": False, "error": str(e)}
@@ -429,11 +457,24 @@ class WindowsAutomationHandler(BaseAutomationHandler):
         Returns:
             Dict[str, Any]: A dictionary with success status and optional error message.
         """
-        if not pyautogui:
-            return {"success": False, "error": "pyautogui not available"}
-        
         try:
-            pyautogui.hotkey(*keys)
+            # press keys sequentially while holding modifiers
+            resolved = [self._key_from_string(k) for k in keys]
+            if any(k is None for k in resolved):
+                return {"success": False, "error": "Unknown key in hotkey sequence"}
+            seq: _List[Union[str, KBKey]] = [k for k in resolved if k is not None]  # type: ignore[assignment]
+            if not seq:
+                return {"success": False, "error": "Empty hotkey sequence"}
+            # hold all except the last
+            for k in seq[:-1]:
+                self.keyboard.press(k)
+            # tap last
+            last = seq[-1]
+            self.keyboard.press(last)
+            self.keyboard.release(last)
+            # release modifiers
+            for k in reversed(seq[:-1]):
+                self.keyboard.release(k)
             return {"success": True}
         except Exception as e:
             return {"success": False, "error": str(e)}
@@ -449,9 +490,6 @@ class WindowsAutomationHandler(BaseAutomationHandler):
         Returns:
             Dict[str, Any]: A dictionary with success status and optional error message.
         """
-        if not pyautogui:
-            return {"success": False, "error": "pyautogui not available"}
-        
         try:
             self.mouse.scroll(x, y)
             return {"success": True}
@@ -467,11 +505,9 @@ class WindowsAutomationHandler(BaseAutomationHandler):
         Returns:
             Dict[str, Any]: A dictionary with success status and optional error message.
         """
-        if not pyautogui:
-            return {"success": False, "error": "pyautogui not available"}
-        
         try:
-            pyautogui.scroll(-clicks)
+            # negative y to scroll down
+            self.mouse.scroll(0, -abs(clicks))
             return {"success": True}
         except Exception as e:
             return {"success": False, "error": str(e)}
@@ -485,11 +521,8 @@ class WindowsAutomationHandler(BaseAutomationHandler):
         Returns:
             Dict[str, Any]: A dictionary with success status and optional error message.
         """
-        if not pyautogui:
-            return {"success": False, "error": "pyautogui not available"}
-        
         try:
-            pyautogui.scroll(clicks)
+            self.mouse.scroll(0, abs(clicks))
             return {"success": True}
         except Exception as e:
             return {"success": False, "error": str(e)}
@@ -504,15 +537,11 @@ class WindowsAutomationHandler(BaseAutomationHandler):
                            Structure: {"success": bool, "image_data": str} or 
                                     {"success": bool, "error": str}
         """
-        if not pyautogui:
-            return {"success": False, "error": "pyautogui not available"}
-        
         try:
-            from PIL import Image
-            screenshot = pyautogui.screenshot()
+            screenshot = ImageGrab.grab()
             if not isinstance(screenshot, Image.Image):
                 return {"success": False, "error": "Failed to capture screenshot"}
-            
+
             buffered = BytesIO()
             screenshot.save(buffered, format="PNG", optimize=True)
             buffered.seek(0)
@@ -531,16 +560,14 @@ class WindowsAutomationHandler(BaseAutomationHandler):
                                     {"success": bool, "error": str}
         """
         try:
-            if pyautogui:
-                size = pyautogui.size()
-                return {"success": True, "size": {"width": size.width, "height": size.height}}
-            elif WINDOWS_API_AVAILABLE:
-                # Fallback to Windows API
+            if WINDOWS_API_AVAILABLE:
                 width = win32api.GetSystemMetrics(win32con.SM_CXSCREEN)
                 height = win32api.GetSystemMetrics(win32con.SM_CYSCREEN)
                 return {"success": True, "size": {"width": width, "height": height}}
             else:
-                return {"success": False, "error": "No screen size detection method available"}
+                # Fallback: use ImageGrab
+                img = ImageGrab.grab()
+                return {"success": True, "size": {"width": img.width, "height": img.height}}
         except Exception as e:
             return {"success": False, "error": str(e)}
 
@@ -554,15 +581,13 @@ class WindowsAutomationHandler(BaseAutomationHandler):
                                     {"success": bool, "error": str}
         """
         try:
-            if pyautogui:
-                pos = pyautogui.position()
-                return {"success": True, "position": {"x": pos.x, "y": pos.y}}
-            elif WINDOWS_API_AVAILABLE:
-                # Fallback to Windows API
+            if WINDOWS_API_AVAILABLE:
                 pos = win32gui.GetCursorPos()
                 return {"success": True, "position": {"x": pos[0], "y": pos[1]}}
             else:
-                return {"success": False, "error": "No cursor position detection method available"}
+                # Fallback: use pynput controller
+                x, y = self.mouse.position
+                return {"success": True, "position": {"x": int(x), "y": int(y)}}
         except Exception as e:
             return {"success": False, "error": str(e)}
 

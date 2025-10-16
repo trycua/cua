@@ -26,6 +26,8 @@ try:
 except (subprocess.SubprocessError, FileNotFoundError):
     HAS_DOCKER = False
 
+DEFAULT_API_PORT = 8000
+
 
 class DockerProvider(BaseVMProvider):
     """
@@ -36,8 +38,8 @@ class DockerProvider(BaseVMProvider):
     """
     
     def __init__(
-        self,
-        port: Optional[int] = 8000,
+        self, 
+        port: Optional[int] = DEFAULT_API_PORT,
         host: str = "localhost",
         storage: Optional[str] = None,
         shared_path: Optional[str] = None,
@@ -49,7 +51,7 @@ class DockerProvider(BaseVMProvider):
         """Initialize the Docker VM Provider.
 
         Args:
-            port: Currently unused (VM provider port)
+            port: Host port for the computer-server API (default: DEFAULT_API_PORT)
             host: Hostname for the API server (default: localhost)
             storage: Path for persistent VM storage
             shared_path: Path for shared folder between host and container
@@ -62,7 +64,7 @@ class DockerProvider(BaseVMProvider):
             vnc_port: Port for VNC interface (default: 6901)
         """
         self.host = host
-        self.api_port = 8000
+        self.api_port = DEFAULT_API_PORT if port is None else port
         self.vnc_port = vnc_port
         self.ephemeral = ephemeral
 

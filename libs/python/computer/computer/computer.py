@@ -227,6 +227,26 @@ class Computer:
         loop = asyncio.get_event_loop()
         loop.run_until_complete(self.__aexit__(exc_type, exc_val, exc_tb))
 
+    def _resolve_interface_port(self) -> Optional[int]:
+        """Determine which port the computer interface should target."""
+        provider_port: Optional[int] = None
+        if hasattr(self, "config") and getattr(self, "config", None) is not None:
+            vm_provider = getattr(self.config, "vm_provider", None)
+            provider_port = getattr(vm_provider, "api_port", None) if vm_provider else None
+
+        if isinstance(provider_port, int):
+            return provider_port
+
+        provider_type_str = (
+            self.provider_type.name.lower()
+            if isinstance(self.provider_type, VMProviderType)
+            else str(self.provider_type).lower()
+        )
+        if self.port is not None and provider_type_str == "docker":
+            return self.port
+
+        return None
+
     async def run(self) -> Optional[str]:
         """Initialize the VM and computer interface."""
         if TYPE_CHECKING:
@@ -252,7 +272,9 @@ class Computer:
                 self._interface = cast(
                     BaseComputerInterface,
                     InterfaceFactory.create_interface_for_os(
-                        os=self.os_type, ip_address=ip_address  # type: ignore[arg-type]
+                        os=self.os_type,
+                        ip_address=ip_address,  # type: ignore[arg-type]
+                        port=self._resolve_interface_port(),
                     ),
                 )
 
@@ -464,6 +486,8 @@ class Computer:
             self.logger.info(f"Initializing interface for {self.os_type} at {ip_address}")
             from .interface.base import BaseComputerInterface
 
+            interface_port = self._resolve_interface_port()
+
             # Pass authentication credentials if using cloud provider
             if self.provider_type == VMProviderType.CLOUD and self.api_key and self.config.name:
                 self._interface = cast(
@@ -472,20 +496,22 @@ class Computer:
                         os=self.os_type, 
                         ip_address=ip_address,
                         api_key=self.api_key,
-                        vm_name=self.config.name
+                        vm_name=self.config.name,
+                        port=interface_port,
                     ),
                 )
             else:
                 self._interface = cast(
                     BaseComputerInterface,
                     InterfaceFactory.create_interface_for_os(
-                        os=self.os_type, 
-                        ip_address=ip_address
+                        os=self.os_type,
+                        ip_address=ip_address,
+                        port=interface_port,
                     ),
                 )
 
             # Wait for the WebSocket interface to be ready
-            self.logger.info("Connecting to WebSocket interface...")
+            self.logger.info(f"Connecting to WebSocket interface at {self._interface.ws_uri}...")
 
             try:
                 # Use a single timeout for the entire connection process
@@ -493,9 +519,10 @@ class Computer:
                 await self._interface.wait_for_ready(timeout=30)
                 self.logger.info("WebSocket interface connected successfully")
             except TimeoutError as e:
-                self.logger.error(f"Failed to connect to WebSocket interface at {ip_address}")
+                ws_uri = getattr(self._interface, "ws_uri", f"{ip_address}:unknown")
+                self.logger.error(f"Failed to connect to WebSocket interface at {ws_uri}")
                 raise TimeoutError(
-                    f"Could not connect to WebSocket interface at {ip_address}:8000/ws: {str(e)}"
+                    f"Could not connect to WebSocket interface at {ws_uri}: {str(e)}"
                 )
                 # self.logger.warning(
                 #     f"Could not connect to WebSocket interface at {ip_address}:8000/ws: {str(e)}, expect missing functionality"

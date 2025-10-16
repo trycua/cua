@@ -16,8 +16,17 @@ from .models import Key, KeyType, MouseButton, CommandResult
 class GenericComputerInterface(BaseComputerInterface):
     """Generic interface with common functionality for all supported platforms (Windows, Linux, macOS)."""
 
-    def __init__(self, ip_address: str, username: str = "lume", password: str = "lume", api_key: Optional[str] = None, vm_name: Optional[str] = None, logger_name: str = "computer.interface.generic"):
-        super().__init__(ip_address, username, password, api_key, vm_name)
+    def __init__(
+        self,
+        ip_address: str,
+        username: str = "lume",
+        password: str = "lume",
+        api_key: Optional[str] = None,
+        vm_name: Optional[str] = None,
+        logger_name: str = "computer.interface.generic",
+        port: Optional[int] = None,
+    ):
+        super().__init__(ip_address, username, password, api_key, vm_name, port)
         self._ws = None
         self._reconnect_task = None
         self._closed = False
@@ -56,7 +65,7 @@ class GenericComputerInterface(BaseComputerInterface):
             WebSocket URI for the Computer API Server
         """
         protocol = "wss" if self.api_key else "ws"
-        port = "8443" if self.api_key else "8000"
+        port = self.port if self.port is not None else (8443 if self.api_key else 8000)
         return f"{protocol}://{self.ip_address}:{port}/ws"
     
     @property
@@ -67,7 +76,7 @@ class GenericComputerInterface(BaseComputerInterface):
             REST URI for the Computer API Server
         """
         protocol = "https" if self.api_key else "http"
-        port = "8443" if self.api_key else "8000"
+        port = self.port if self.port is not None else (8443 if self.api_key else 8000)
         return f"{protocol}://{self.ip_address}:{port}/cmd"
 
     # Mouse actions
@@ -962,4 +971,3 @@ class GenericComputerInterface(BaseComputerInterface):
         if self._ws:
             asyncio.create_task(self._ws.close())
             self._ws = None
-

@@ -1,9 +1,9 @@
 ---
 title: Introduction
-description: Overview of benchmarking in the c/ua agent framework
+description: Overview of benchmarking in the Cua agent framework
 ---
 
-The c/ua agent framework uses benchmarks to test the performance of supported models and providers at various agentic tasks.
+The Cua agent framework uses benchmarks to test the performance of supported models and providers at various agentic tasks.
 
 ## Benchmark Types
 
@@ -13,7 +13,7 @@ Computer-Agent benchmarks evaluate two key capabilities:
 
 ## Using State-of-the-Art Models
 
-Let's see how to use the SOTA vision-language models in the c/ua agent framework.
+Let's see how to use the SOTA vision-language models in the Cua agent framework.
 
 ### Plan Generation + Coordinate Generation
 
@@ -46,7 +46,7 @@ agent.predict_click("find the button to open the settings") # (27, 450)
 
 ### Composed Agent
 
-The c/ua agent framework also supports composed agents, which combine a planning model with a clicking model for the best of both worlds. Any liteLLM model can be used as the plan generation model.
+The Cua agent framework also supports composed agents, which combine a planning model with a clicking model for the best of both worlds. Any liteLLM model can be used as the plan generation model.
 
 ```python
 # It can be paired with any LLM to form a composed agent:

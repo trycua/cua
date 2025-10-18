@@ -1,6 +1,6 @@
-# Contributing to cua
+# Contributing to Cua
 
-We deeply appreciate your interest in contributing to cua! Whether you're reporting bugs, suggesting enhancements, improving docs, or submitting pull requests, your contributions help improve the project for everyone.
+We deeply appreciate your interest in contributing to Cua! Whether you're reporting bugs, suggesting enhancements, improving docs, or submitting pull requests, your contributions help improve the project for everyone.
 
 ## Reporting Bugs
 

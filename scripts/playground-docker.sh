@@ -60,7 +60,7 @@ DEMO_DIR="$HOME/.cua"
 mkdir -p "$DEMO_DIR"
 
 
-# Check if we're already in the cua repository
+# Check if we're already in the Cua repository
 # Look for the specific trycua identifier in pyproject.toml
 if [[ -f "pyproject.toml" ]] && grep -q "gh@trycua.com" "pyproject.toml"; then
   print_success "Already in Cua repository - using current directory"

@@ -42,14 +42,14 @@ export const baseOptions: BaseLayoutProps = {
   links: [
     {
       url: 'https://trycua.com',
-      text: 'cua home',
+      text: 'Cua home',
       type: 'icon',
       icon: <HomeIcon />,
       external: false,
     },
     {
       url: 'https://discord.com/invite/mVnXXpdE85',
-      text: 'cua discord',
+      text: 'Cua discord',
       type: 'icon',
       icon: (
         <>

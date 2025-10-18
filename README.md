@@ -18,7 +18,7 @@
 >> **Track B (Remote)**: 🏆 ~~Prize: **Cash award**.~~ **Concluded - Winners will be announced soon**    
 >>> ~~👉 Sign up here: [trycua.com/hackathon](https://www.trycua.com/hackathon)~~
 
-**cua** ("koo-ah") is Docker for [Computer-Use Agents](https://www.oneusefulthing.org/p/when-you-give-a-claude-a-mouse) - it enables AI agents to control full operating systems in virtual containers and deploy them locally or to the cloud.
+**Cua** ("koo-ah") is Docker for [Computer-Use Agents](https://www.oneusefulthing.org/p/when-you-give-a-claude-a-mouse) - it enables AI agents to control full operating systems in virtual containers and deploy them locally or to the cloud.
 
 <div align="center">
   <video src="https://github.com/user-attachments/assets/c619b4ea-bb8e-4382-860e-f3757e36af20" width="600" controls></video>
@@ -26,7 +26,7 @@
 
 With the Computer SDK, you can:
 - automate Windows, Linux, and macOS VMs with a consistent, [pyautogui-like API](https://docs.trycua.com/docs/libraries/computer#interface-actions)
-- create & manage VMs [locally](https://docs.trycua.com/docs/computer-sdk/computers#cua-local-containers) or using [cua cloud](https://www.trycua.com/)
+- create & manage VMs [locally](https://docs.trycua.com/docs/computer-sdk/computers#cua-local-containers) or using [Cua cloud](https://www.trycua.com/)
 
 With the Agent SDK, you can:
 - run computer-use models with a [consistent schema](https://docs.trycua.com/docs/agent-sdk/message-format)

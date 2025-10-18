@@ -1,6 +1,6 @@
 ---
 title: Quickstart (CLI)
-description: Get started with the cua Agent CLI in 4 steps
+description: Get started with the Cua Agent CLI in 4 steps
 icon: Rocket
 ---
 
@@ -8,14 +8,14 @@ import { Step, Steps } from 'fumadocs-ui/components/steps';
 import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
 import { Accordion, Accordions } from 'fumadocs-ui/components/accordion';
 
-Get up and running with the cua Agent CLI in 4 simple steps.
+Get up and running with the Cua Agent CLI in 4 simple steps.
 
 <Steps>
 <Step>
 
 ## Introduction
 
-cua combines Computer (interface) + Agent (AI) for automating desktop apps. The Agent CLI provides a clean terminal interface to control your remote computer using natural language commands.
+Cua combines Computer (interface) + Agent (AI) for automating desktop apps. The Agent CLI provides a clean terminal interface to control your remote computer using natural language commands.
 
 </Step>
 
@@ -23,7 +23,7 @@ cua combines Computer (interface) + Agent (AI) for automating desktop apps. The 
 
 ## Set Up Your Computer Environment
 
-Choose how you want to run your cua computer. **Cloud Sandbox is recommended** for the easiest setup:
+Choose how you want to run your Cua computer. **Cloud Sandbox is recommended** for the easiest setup:
 
 <Tabs items={['☁️ Cloud Sandbox (Recommended)', 'Linux on Docker', 'Windows Sandbox', 'macOS VM']}>
   <Tab value="☁️ Cloud Sandbox (Recommended)">
@@ -81,7 +81,7 @@ Choose how you want to run your cua computer. **Cloud Sandbox is recommended** f
     /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/lume/scripts/install.sh)"
     ```
 
-    2. Start a local cua macOS VM
+    2. Start a local Cua macOS VM
 
     ```bash
     lume run macos-sequoia-cua:latest
@@ -94,7 +94,7 @@ Choose how you want to run your cua computer. **Cloud Sandbox is recommended** f
 
 <Step>
 
-## Install cua
+## Install Cua
 
 <Accordions type="single" defaultValue="uv">
 
@@ -128,7 +128,7 @@ powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | ie
 
 ```bash
 uv python install 3.12
-# uv will install cua dependencies automatically when you use --with "cua-agent[cli]"
+# uv will install Cua dependencies automatically when you use --with "cua-agent[cli]"
 ```
 
 </Accordion>
@@ -178,7 +178,7 @@ conda create -n cua python=3.12
 conda activate cua
 ```
 
-### Install cua
+### Install Cua
 
 ```bash
 pip install "cua-agent[cli]" cua-computer
@@ -188,7 +188,7 @@ pip install "cua-agent[cli]" cua-computer
 
 <Accordion title="pip" value="pip">
 
-### Install cua
+### Install Cua
 
 ```bash
 pip install "cua-agent[cli]" cua-computer
@@ -202,7 +202,7 @@ pip install "cua-agent[cli]" cua-computer
 
 <Step>
 
-## Run cua CLI
+## Run Cua CLI
 
 Choose your preferred AI model:
 
@@ -312,8 +312,8 @@ python -m agent.cli omniparser+ollama_chat/llama3.2:latest
 
 If you haven't set up environment variables, the CLI will guide you through the setup:
 
-1. **Sandbox Name**: Enter your cua sandbox name (or get one at [trycua.com](https://www.trycua.com/))
-2. **CUA API Key**: Enter your cua API key
+1. **Sandbox Name**: Enter your Cua sandbox name (or get one at [trycua.com](https://www.trycua.com/))
+2. **CUA API Key**: Enter your Cua API key
 3. **Provider API Key**: Enter your AI provider API key (OpenAI, Anthropic, etc.)
 
 ### Start Chatting

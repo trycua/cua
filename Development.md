@@ -178,7 +178,7 @@ This will:
 
 ## Code Formatting Standards
 
-The cua project follows strict code formatting standards to ensure consistency across all packages.
+The Cua project follows strict code formatting standards to ensure consistency across all packages.
 
 ### Python Code Formatting
 

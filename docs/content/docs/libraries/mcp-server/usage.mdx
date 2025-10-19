@@ -13,6 +13,69 @@ Once configured, you can simply ask Claude to perform computer tasks:
 
 Claude will automatically use your CUA agent to perform these tasks.
 
+## Target Computer Options
+
+By default, the MCP server runs CUA in a virtual machine for safety. However, you can also configure it to run on your local system.
+
+### Default: Using a VM (Recommended)
+
+The MCP server will automatically start and connect to a VM based on your platform. This is the safest option as AI actions are isolated from your host system.
+
+No additional configuration is needed - this is the default behavior.
+
+### Option: Targeting Your Local Desktop
+
+<Callout type="warn">
+  **Warning:** When targeting your local system, AI models have direct access to your desktop and may perform risky actions. Use with caution.
+</Callout>
+
+To have the MCP server control your local desktop instead of a VM:
+
+1. **Start the Computer Server on your host:**
+
+```bash
+pip install cua-computer-server
+python -m computer_server
+```
+
+2. **Configure the MCP server to use your host system:**
+
+Add the `CUA_USE_HOST_COMPUTER_SERVER` environment variable to your MCP client configuration:
+
+<Tabs items={['Claude Desktop', 'Other MCP Clients']}>
+  <Tab value="Claude Desktop">
+    Update your Claude Desktop config (see [Installation](/docs/libraries/mcp-server/installation)) to include the environment variable:
+
+    ```json
+    {
+      "mcpServers": {
+        "cua-agent": {
+          "command": "/bin/bash",
+          "args": ["~/.cua/start_mcp_server.sh"],
+          "env": {
+            "CUA_MODEL_NAME": "anthropic/claude-3-5-sonnet-20241022",
+            "CUA_USE_HOST_COMPUTER_SERVER": "true"
+          }
+        }
+      }
+    }
+    ```
+  </Tab>
+  <Tab value="Other MCP Clients">
+    Set the environment variable in your MCP client configuration:
+
+    ```bash
+    export CUA_USE_HOST_COMPUTER_SERVER=true
+    ```
+
+    Then start your MCP client as usual.
+  </Tab>
+</Tabs>
+
+3. **Restart your MCP client** (e.g., Claude Desktop) to apply the changes.
+
+Now Claude will control your local desktop directly when you ask it to perform computer tasks.
+
 ### First-time Usage Notes
 
 **API Keys**: Ensure you have valid API keys:

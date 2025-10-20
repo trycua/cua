@@ -278,7 +278,7 @@ def convert_to_computer_actions(parsed_responses: List[Dict[str, Any]], image_wi
         elif action_type in ["click", "left_single"]:
             start_box = action_inputs.get("start_box")
             if start_box:
-                coords = eval(start_box)
+                coords = ast.literal_eval(start_box)
                 x = int((coords[0] + coords[2]) / 2 * image_width)
                 y = int((coords[1] + coords[3]) / 2 * image_height)
                 
@@ -287,7 +287,7 @@ def convert_to_computer_actions(parsed_responses: List[Dict[str, Any]], image_wi
         elif action_type == "double_click":
             start_box = action_inputs.get("start_box")
             if start_box:
-                coords = eval(start_box)
+                coords = ast.literal_eval(start_box)
                 x = int((coords[0] + coords[2]) / 2 * image_width)
                 y = int((coords[1] + coords[3]) / 2 * image_height)
                 
@@ -296,7 +296,7 @@ def convert_to_computer_actions(parsed_responses: List[Dict[str, Any]], image_wi
         elif action_type == "right_click":
             start_box = action_inputs.get("start_box")
             if start_box:
-                coords = eval(start_box)
+                coords = ast.literal_eval(start_box)
                 x = int((coords[0] + coords[2]) / 2 * image_width)
                 y = int((coords[1] + coords[3]) / 2 * image_height)
                 
@@ -320,7 +320,7 @@ def convert_to_computer_actions(parsed_responses: List[Dict[str, Any]], image_wi
             direction = action_inputs.get("direction", "down")
             
             if start_box:
-                coords = eval(start_box)
+                coords = ast.literal_eval(start_box)
                 x = int((coords[0] + coords[2]) / 2 * image_width)
                 y = int((coords[1] + coords[3]) / 2 * image_height)
             else:
@@ -334,8 +334,8 @@ def convert_to_computer_actions(parsed_responses: List[Dict[str, Any]], image_wi
             end_box = action_inputs.get("end_box")
             
             if start_box and end_box:
-                start_coords = eval(start_box)
-                end_coords = ast.literal_eval(end_box)
+                start_coords = ast.literal_eval(start_box)
+                end_coords = ast.literal_ast.literal_eval(end_box)
                 
                 start_x = int((start_coords[0] + start_coords[2]) / 2 * image_width)
                 start_y = int((start_coords[1] + start_coords[3]) / 2 * image_height)

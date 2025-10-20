@@ -10,17 +10,29 @@ function getDb(): Database {
 
 export function setApiKey(token: string) {
   const db = getDb();
-  const stmt = db.query("INSERT INTO kv (k, v) VALUES ('api_key', ?) ON CONFLICT(k) DO UPDATE SET v=excluded.v");
-  stmt.run(token);
+  try {
+    const stmt = db.query("INSERT INTO kv (k, v) VALUES ('api_key', ?) ON CONFLICT(k) DO UPDATE SET v=excluded.v");
+    stmt.run(token);
+  } finally {
+    db.close();
+  }
 }
 
 export function getApiKey(): string | null {
   const db = getDb();
-  const row = db.query("SELECT v FROM kv WHERE k='api_key'").get() as { v: string } | undefined;
-  return row?.v ?? null;
+  try {
+    const row = db.query("SELECT v FROM kv WHERE k='api_key'").get() as { v: string } | undefined;
+    return row?.v ?? null;
+  } finally {
+    db.close();
+  }
 }
 
 export function clearApiKey() {
   const db = getDb();
-  db.query("DELETE FROM kv WHERE k='api_key'").run();
+  try {
+    db.query("DELETE FROM kv WHERE k='api_key'").run();
+  } finally {
+    db.close();
+  }
 }

@@ -12,7 +12,6 @@ const c = {
   yellow: "\x1b[33m",
 };
 
-// openInBrowser is imported from util
 
 export async function loginViaBrowser(): Promise<string> {
   let resolveToken!: (v: string) => void;
@@ -40,9 +39,17 @@ export async function loginViaBrowser(): Promise<string> {
   console.log(`${c.yellow}${c.underline}${url}${c.reset}`);
   await openInBrowser(url);
 
-  const timeout = new Promise<string>((_, reject) => setTimeout(() => reject(new Error("Timed out waiting for authorization")), 2 * 60 * 1000));
-  try { return await Promise.race([tokenPromise, timeout]); }
-  finally { try { server.stop(); } catch {} }
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<string>((_, reject) => {
+    timeoutId = setTimeout(() => reject(new Error("Timed out waiting for authorization")), 2 * 60 * 1000);
+  });
+  try {
+    const result = await Promise.race([tokenPromise, timeout]);
+    if (timeoutId) clearTimeout(timeoutId);
+    return result;
+  } finally {
+    try { server.stop(); } catch {}
+  }
 }
 
 export async function ensureApiKeyInteractive(): Promise<string> {

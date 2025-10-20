@@ -1,0 +1,19 @@
+{
+  "name": "cua-cli",
+  "module": "index.ts",
+  "type": "module",
+  "private": true,
+  "devDependencies": {
+    "@types/bun": "latest",
+    "@types/yargs": "^17.0.33"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  },
+  "bin": {
+    "cua": "./index.ts"
+  },
+  "dependencies": {
+    "yargs": "^18.0.0"
+  }
+}

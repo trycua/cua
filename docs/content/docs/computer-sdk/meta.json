@@ -6,6 +6,7 @@
         "cloud-vm-management",
         "commands",
         "computer-ui",
+        "tracing-api",
         "sandboxed-python"
 	]
 }

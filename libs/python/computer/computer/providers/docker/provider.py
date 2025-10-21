@@ -13,6 +13,8 @@ from typing import Dict, List, Optional, Any
 import subprocess
 import time
 import re
+import uuid
+from datetime import datetime
 
 from ..base import BaseVMProvider, VMProviderType
 
@@ -506,10 +508,10 @@ class DockerProvider(BaseVMProvider):
         """Async context manager entry."""
         logger.debug("Entering DockerProvider context")
         return self
-        
+
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Async context manager exit.
-        
+
         This method handles cleanup of running containers if needed.
         """
         logger.debug(f"Exiting DockerProvider context, handling exceptions: {exc_type}")
@@ -523,3 +525,346 @@ class DockerProvider(BaseVMProvider):
             if exc_type is None:
                 raise
         return False
+
+    # Snapshot methods implementation
+    async def create_snapshot(self, name: str, snapshot_name: Optional[str] = None,
+                             metadata: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """Create a snapshot of the Docker container using docker commit.
+
+        Args:
+            name: Name of the container to snapshot
+            snapshot_name: Optional custom name for the snapshot
+            metadata: Optional metadata to associate with the snapshot
+
+        Returns:
+            Dictionary with snapshot information including id, timestamp, tag
+        """
+        try:
+            # Generate snapshot ID and timestamp
+            snapshot_id = str(uuid.uuid4())
+            timestamp = datetime.now().isoformat()
+
+            # Generate snapshot tag
+            if snapshot_name:
+                tag = snapshot_name
+            else:
+                # Use container name and short ID for uniqueness
+                tag = f"{name}-snapshot-{snapshot_id[:8]}"
+
+            # Prepare Docker labels with metadata
+            labels = {
+                "cua.snapshot.id": snapshot_id,
+                "cua.snapshot.timestamp": timestamp,
+                "cua.snapshot.container": name,
+                "cua.snapshot.type": "filesystem"
+            }
+
+            # Add custom metadata if provided
+            if metadata:
+                for key, value in metadata.items():
+                    # Docker labels must be strings
+                    labels[f"cua.snapshot.metadata.{key}"] = str(value)
+
+            # Build docker commit command with labels
+            cmd = ["docker", "commit"]
+
+            # Add each label as a LABEL instruction
+            for key, value in labels.items():
+                cmd.extend(["--change", f'LABEL {key}="{value}"'])
+
+            # Add container name and target image tag
+            cmd.extend([name, tag])
+
+            logger.info(f"Creating snapshot of container {name} with tag {tag}")
+
+            # Execute docker commit
+            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+
+            # Get the image ID from output
+            image_id = result.stdout.strip()
+
+            # Get image size
+            size_cmd = ["docker", "images", tag, "--format", "{{.Size}}"]
+            size_result = subprocess.run(size_cmd, capture_output=True, text=True)
+            size = size_result.stdout.strip() if size_result.returncode == 0 else "unknown"
+
+            logger.info(f"Successfully created snapshot {tag} (ID: {snapshot_id[:8]}, Size: {size})")
+
+            return {
+                "id": snapshot_id,
+                "tag": tag,
+                "timestamp": timestamp,
+                "container": name,
+                "image_id": image_id[:12] if len(image_id) > 12 else image_id,
+                "size": size,
+                "metadata": metadata or {},
+                "status": "created"
+            }
+
+        except subprocess.CalledProcessError as e:
+            error_msg = f"Failed to create snapshot for container {name}: {e.stderr}"
+            logger.error(error_msg)
+            return {
+                "status": "error",
+                "error": error_msg
+            }
+        except Exception as e:
+            error_msg = f"Error creating snapshot for container {name}: {e}"
+            logger.error(error_msg)
+            import traceback
+            traceback.print_exc()
+            return {
+                "status": "error",
+                "error": error_msg
+            }
+
+    async def restore_snapshot(self, name: str, snapshot_id: str) -> Dict[str, Any]:
+        """Restore container from a snapshot image.
+
+        Args:
+            name: Name of the container to restore
+            snapshot_id: ID of the snapshot to restore
+
+        Returns:
+            Dictionary with restore status
+        """
+        try:
+            logger.info(f"Restoring container {name} from snapshot {snapshot_id}")
+
+            # Find the snapshot image by ID
+            cmd = ["docker", "images", "--filter", f"label=cua.snapshot.id={snapshot_id}",
+                   "--format", "{{.Repository}}:{{.Tag}}"]
+            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+
+            snapshot_images = result.stdout.strip().split('\n')
+            snapshot_images = [img for img in snapshot_images if img and img != "<none>:<none>"]
+
+            if not snapshot_images:
+                error_msg = f"Snapshot with ID {snapshot_id} not found"
+                logger.error(error_msg)
+                return {
+                    "status": "error",
+                    "error": error_msg
+                }
+
+            snapshot_image = snapshot_images[0]
+            logger.info(f"Found snapshot image: {snapshot_image}")
+
+            # Get current container configuration before stopping
+            current_vm = await self.get_vm(name)
+
+            # Extract run options from current container
+            inspect_cmd = ["docker", "inspect", name]
+            inspect_result = subprocess.run(inspect_cmd, capture_output=True, text=True)
+
+            run_opts = {}
+            if inspect_result.returncode == 0:
+                try:
+                    container_info = json.loads(inspect_result.stdout)[0]
+                    config = container_info.get("Config", {})
+                    host_config = container_info.get("HostConfig", {})
+
+                    # Extract memory limit if set
+                    if host_config.get("Memory"):
+                        memory_bytes = host_config["Memory"]
+                        memory_gb = memory_bytes / (1024 * 1024 * 1024)
+                        run_opts["memory"] = f"{int(memory_gb)}GB"
+
+                    # Extract CPU limit if set
+                    if host_config.get("NanoCpus"):
+                        nano_cpus = host_config["NanoCpus"]
+                        cpus = nano_cpus / 1_000_000_000
+                        run_opts["cpu"] = str(int(cpus))
+
+                    # Extract port mappings
+                    if current_vm.get("ports"):
+                        # Parse ports to find VNC and API ports
+                        for container_port, host_port in current_vm["ports"].items():
+                            if "6901" in container_port:
+                                run_opts["vnc_port"] = int(host_port)
+                            elif "8000" in container_port:
+                                run_opts["api_port"] = int(host_port)
+
+                except (json.JSONDecodeError, KeyError, IndexError) as e:
+                    logger.warning(f"Could not extract all container config: {e}")
+
+            # Stop and remove current container
+            logger.info(f"Stopping current container {name}")
+            await self.stop_vm(name)
+
+            # Remove the container but keep volumes
+            remove_cmd = ["docker", "rm", name]
+            subprocess.run(remove_cmd, capture_output=True, text=True)
+
+            # Run new container from snapshot image with same configuration
+            logger.info(f"Starting new container from snapshot {snapshot_image}")
+            result = await self.run_vm(snapshot_image, name, run_opts, self.storage)
+
+            if result.get("status") == "error":
+                return result
+
+            logger.info(f"Successfully restored container {name} from snapshot {snapshot_id}")
+
+            return {
+                "status": "restored",
+                "snapshot_id": snapshot_id,
+                "snapshot_image": snapshot_image,
+                "container": name,
+                "message": f"Container {name} restored from snapshot {snapshot_id}"
+            }
+
+        except subprocess.CalledProcessError as e:
+            error_msg = f"Failed to restore snapshot: {e.stderr}"
+            logger.error(error_msg)
+            return {
+                "status": "error",
+                "error": error_msg
+            }
+        except Exception as e:
+            error_msg = f"Error restoring snapshot: {e}"
+            logger.error(error_msg)
+            import traceback
+            traceback.print_exc()
+            return {
+                "status": "error",
+                "error": error_msg
+            }
+
+    async def list_snapshots(self, name: str) -> List[Dict[str, Any]]:
+        """List all snapshots for a container.
+
+        Args:
+            name: Name of the container
+
+        Returns:
+            List of snapshot dictionaries with id, tag, timestamp, size
+        """
+        try:
+            # Find all images with the container label
+            cmd = ["docker", "images", "--filter", f"label=cua.snapshot.container={name}",
+                   "--format", "json"]
+            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+
+            snapshots = []
+
+            if result.stdout.strip():
+                for line in result.stdout.strip().split('\n'):
+                    if line.strip():
+                        try:
+                            image = json.loads(line)
+
+                            # Get full image details with labels
+                            inspect_cmd = ["docker", "inspect", f"{image['Repository']}:{image['Tag']}"]
+                            inspect_result = subprocess.run(inspect_cmd, capture_output=True, text=True)
+
+                            if inspect_result.returncode == 0:
+                                image_details = json.loads(inspect_result.stdout)[0]
+                                labels = image_details.get("Config", {}).get("Labels", {})
+
+                                # Extract metadata from labels
+                                metadata = {}
+                                for label_key, label_value in labels.items():
+                                    if label_key.startswith("cua.snapshot.metadata."):
+                                        meta_key = label_key.replace("cua.snapshot.metadata.", "")
+                                        metadata[meta_key] = label_value
+
+                                snapshot = {
+                                    "id": labels.get("cua.snapshot.id", "unknown"),
+                                    "tag": f"{image['Repository']}:{image['Tag']}",
+                                    "timestamp": labels.get("cua.snapshot.timestamp", image.get("CreatedAt", "")),
+                                    "size": image.get("Size", "unknown"),
+                                    "container": labels.get("cua.snapshot.container", name),
+                                    "metadata": metadata
+                                }
+                                snapshots.append(snapshot)
+                        except (json.JSONDecodeError, KeyError) as e:
+                            logger.warning(f"Could not parse image data: {e}")
+                            continue
+
+            # Sort by timestamp (newest first)
+            snapshots.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
+
+            logger.info(f"Found {len(snapshots)} snapshots for container {name}")
+            return snapshots
+
+        except subprocess.CalledProcessError as e:
+            logger.error(f"Failed to list snapshots: {e.stderr}")
+            return []
+        except Exception as e:
+            logger.error(f"Error listing snapshots: {e}")
+            import traceback
+            traceback.print_exc()
+            return []
+
+    async def delete_snapshot(self, snapshot_id: str) -> Dict[str, Any]:
+        """Delete a snapshot image.
+
+        Args:
+            snapshot_id: ID of the snapshot to delete
+
+        Returns:
+            Dictionary with deletion status
+        """
+        try:
+            # Find the snapshot image by ID
+            cmd = ["docker", "images", "--filter", f"label=cua.snapshot.id={snapshot_id}",
+                   "--format", "{{.Repository}}:{{.Tag}}"]
+            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+
+            snapshot_images = result.stdout.strip().split('\n')
+            snapshot_images = [img for img in snapshot_images if img and img != "<none>:<none>"]
+
+            if not snapshot_images:
+                error_msg = f"Snapshot with ID {snapshot_id} not found"
+                logger.warning(error_msg)
+                return {
+                    "status": "not_found",
+                    "snapshot_id": snapshot_id,
+                    "message": error_msg
+                }
+
+            # Delete each matching image
+            deleted_images = []
+            for image_tag in snapshot_images:
+                logger.info(f"Deleting snapshot image: {image_tag}")
+                delete_cmd = ["docker", "rmi", image_tag]
+                delete_result = subprocess.run(delete_cmd, capture_output=True, text=True)
+
+                if delete_result.returncode == 0:
+                    deleted_images.append(image_tag)
+                else:
+                    logger.warning(f"Could not delete image {image_tag}: {delete_result.stderr}")
+
+            if deleted_images:
+                logger.info(f"Successfully deleted snapshot {snapshot_id}")
+                return {
+                    "status": "deleted",
+                    "snapshot_id": snapshot_id,
+                    "deleted_images": deleted_images,
+                    "message": f"Deleted {len(deleted_images)} snapshot image(s)"
+                }
+            else:
+                return {
+                    "status": "error",
+                    "snapshot_id": snapshot_id,
+                    "error": "Could not delete any images"
+                }
+
+        except subprocess.CalledProcessError as e:
+            error_msg = f"Failed to delete snapshot: {e.stderr}"
+            logger.error(error_msg)
+            return {
+                "status": "error",
+                "snapshot_id": snapshot_id,
+                "error": error_msg
+            }
+        except Exception as e:
+            error_msg = f"Error deleting snapshot: {e}"
+            logger.error(error_msg)
+            import traceback
+            traceback.print_exc()
+            return {
+                "status": "error",
+                "snapshot_id": snapshot_id,
+                "error": error_msg
+            }

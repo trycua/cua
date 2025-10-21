@@ -251,6 +251,7 @@ trajectories/
 
 # Lumier Storage
 storage/
+!libs/python/agent/agent/callbacks/snapshots/storage/
 
 # Trashes
 .Trashes

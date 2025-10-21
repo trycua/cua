@@ -11,7 +11,8 @@ class InterfaceFactory:
         os: Literal['macos', 'linux', 'windows'],
         ip_address: str,
         api_key: Optional[str] = None,
-        vm_name: Optional[str] = None
+        vm_name: Optional[str] = None,
+        port: Optional[int] = None,
     ) -> BaseComputerInterface:
         """Create an interface for the specified OS.
         
@@ -33,10 +34,10 @@ class InterfaceFactory:
         from .windows import WindowsComputerInterface
         
         if os == 'macos':
-            return MacOSComputerInterface(ip_address, api_key=api_key, vm_name=vm_name)
+            return MacOSComputerInterface(ip_address, api_key=api_key, vm_name=vm_name, port=port)
         elif os == 'linux':
-            return LinuxComputerInterface(ip_address, api_key=api_key, vm_name=vm_name)
+            return LinuxComputerInterface(ip_address, api_key=api_key, vm_name=vm_name, port=port)
         elif os == 'windows':
-            return WindowsComputerInterface(ip_address, api_key=api_key, vm_name=vm_name)
+            return WindowsComputerInterface(ip_address, api_key=api_key, vm_name=vm_name, port=port)
         else:
             raise ValueError(f"Unsupported OS type: {os}")

@@ -8,7 +8,15 @@ from .models import MouseButton, CommandResult
 class BaseComputerInterface(ABC):
     """Base class for computer control interfaces."""
 
-    def __init__(self, ip_address: str, username: str = "lume", password: str = "lume", api_key: Optional[str] = None, vm_name: Optional[str] = None):
+    def __init__(
+        self,
+        ip_address: str,
+        username: str = "lume",
+        password: str = "lume",
+        api_key: Optional[str] = None,
+        vm_name: Optional[str] = None,
+        port: Optional[int] = None,
+    ):
         """Initialize interface.
 
         Args:
@@ -17,12 +25,14 @@ class BaseComputerInterface(ABC):
             password: Password for authentication
             api_key: Optional API key for cloud authentication
             vm_name: Optional VM name for cloud authentication
+            port: Optional custom port for the Computer API server
         """
         self.ip_address = ip_address
         self.username = username
         self.password = password
         self.api_key = api_key
         self.vm_name = vm_name
+        self.port = port
         self.logger = Logger("cua.interface", LogLevel.NORMAL)
         
         # Optional default delay time between commands (in seconds)

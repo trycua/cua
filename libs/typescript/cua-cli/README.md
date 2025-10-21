@@ -27,6 +27,8 @@ bun run ./index.ts -- --help
   - `cua vm start NAME`
   - `cua vm stop NAME`
   - `cua vm restart NAME`
+  - `cua vm vnc NAME` – opens NoVNC URL in your browser
+  - `cua vm chat NAME` – opens Dashboard Playground for the VM
 
 ## Auth Flow (Dynamic Callback Port)
 
@@ -52,5 +54,18 @@ bun run ./index.ts -- --help
 ## Notes
 
 - Stored API key lives at `~/.config/cua/cli.sqlite` under `kv(api_key)`.
-- Public API base: `https://api.cua.ai`.
+- Public API base defaults to `https://api.cua.ai` (override via `CUA_API_BASE`).
+- Website base defaults to `https://cua.ai` (override via `CUA_WEBSITE_URL`).
 - Authorization header: `Authorization: Bearer <api_key>`.
+
+### Environment overrides
+
+You can point the CLI to alternate deployments:
+
+```bash
+export CUA_API_BASE=https://api.staging.cua.ai
+export CUA_WEBSITE_URL=https://staging.cua.ai
+
+cua auth login
+cua vm chat my-vm    # opens https://staging.cua.ai/dashboard/playground?...  
+```

@@ -26,6 +26,16 @@ class InternVLModel:
     """
 
     def __init__(self, model_name: str, device: str = "auto", trust_remote_code: bool = False) -> None:
+        """Initialize the InternVL model with specified configuration.
+        
+        Args:
+            model_name: The name or path of the InternVL model to load
+            device: Device to load the model on, defaults to "auto"
+            trust_remote_code: Whether to trust remote code when loading the model
+            
+        Raises:
+            ImportError: If InternVL dependencies are not available
+        """
         if not HF_AVAILABLE:
             raise ImportError(
                 "InternVL dependencies not found. Install with: pip install \"cua-agent[internvl-hf]\""
@@ -38,6 +48,7 @@ class InternVLModel:
         self._load()
 
     def _load(self) -> None:
+        """Load the model and tokenizer from the specified model name."""
         # Load model
         self.model = AutoModel.from_pretrained(
             self.model_name,
@@ -59,6 +70,15 @@ class InternVLModel:
     IMAGENET_STD = (0.229, 0.224, 0.225)
 
     def _build_transform(self, input_size: int) -> T.Compose:
+        """Build image transformation pipeline for preprocessing.
+        
+        Args:
+            input_size: Target size for image resizing
+            
+        Returns:
+            Composed transformation pipeline that converts images to RGB, resizes, 
+            converts to tensor, and normalizes with ImageNet statistics
+        """
         MEAN, STD = self.IMAGENET_MEAN, self.IMAGENET_STD
         transform = T.Compose([
             T.Lambda(lambda img: img.convert('RGB') if img.mode != 'RGB' else img),
@@ -69,6 +89,18 @@ class InternVLModel:
         return transform
 
     def _find_closest_aspect_ratio(self, aspect_ratio: float, target_ratios: List[tuple], width: int, height: int, image_size: int):
+        """Find the target aspect ratio that best matches the input image.
+        
+        Args:
+            aspect_ratio: Original aspect ratio of the image
+            target_ratios: List of possible target aspect ratios as (width, height) tuples
+            width: Original image width
+            height: Original image height
+            image_size: Base image size for calculations
+            
+        Returns:
+            Best matching aspect ratio tuple from target_ratios
+        """
         best_ratio_diff = float('inf')
         best_ratio = (1, 1)
         area = width * height
@@ -84,6 +116,18 @@ class InternVLModel:
         return best_ratio
 
     def _dynamic_preprocess(self, image: Image.Image, min_num: int = 1, max_num: int = 12, image_size: int = 448, use_thumbnail: bool = True) -> List[Image.Image]:
+        """Preprocess image by splitting it into tiles based on aspect ratio.
+        
+        Args:
+            image: Input PIL image to preprocess
+            min_num: Minimum number of tiles to generate
+            max_num: Maximum number of tiles to generate
+            image_size: Size of each tile
+            use_thumbnail: Whether to add a thumbnail version of the full image
+            
+        Returns:
+            List of processed image tiles, optionally including a thumbnail
+        """
         orig_width, orig_height = image.size
         aspect_ratio = orig_width / orig_height
 
@@ -117,7 +161,17 @@ class InternVLModel:
         return processed_images
 
     def _load_image_from_source(self, src: str) -> Image.Image:
-        """Load PIL image from various sources: data URL, http(s), or local path."""
+        """Load PIL image from various sources: data URL, http(s), or local path.
+        
+        Args:
+            src: Image source - can be a data URL, HTTP(S) URL, or local file path
+            
+        Returns:
+            PIL Image object converted to RGB format
+            
+        Raises:
+            Various exceptions depending on source type (network errors, file errors, etc.)
+        """
         if src.startswith("data:image/"):
             # data URL base64
             header, b64data = src.split(",", 1)
@@ -131,6 +185,17 @@ class InternVLModel:
         return Image.open(src).convert('RGB')
 
     def _images_to_pixel_values(self, images: List[Image.Image], input_size: int = 448, max_num: int = 12):
+        """Convert list of PIL images to tensor pixel values for model input.
+        
+        Args:
+            images: List of PIL images to convert
+            input_size: Target size for image preprocessing
+            max_num: Maximum number of tiles per image
+            
+        Returns:
+            Tuple of (pixel_values tensor, list of patch counts per image).
+            Returns (None, []) if no images provided.
+        """
         transform = self._build_transform(input_size=input_size)
         pixel_values_list = []
         num_patches_list: List[int] = []
@@ -152,6 +217,14 @@ class InternVLModel:
         This implementation constructs InternVL-compatible inputs and uses
         `model.chat(tokenizer, pixel_values, question, history=...)` to avoid
         relying on AutoProcessor (which fails for some tokenizers).
+        
+        Args:
+            messages: List of message dictionaries with role and content fields.
+                     Content can contain text and image items.
+            max_new_tokens: Maximum number of new tokens to generate
+            
+        Returns:
+            Generated text response from the model, or empty string if generation fails
         """
         assert self.model is not None and self.tokenizer is not None
 

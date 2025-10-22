@@ -1,4 +1,7 @@
 {
+  "name": "cua-monorepo",
+  "private": true,
+  "packageManager": "pnpm@10.11.0",
   "scripts": {
     "prettier:check": "prettier --check '**/*.{ts,tsx,js,jsx,json,md,yaml,yml}'",
     "prettier:format": "prettier --write '**/*.{ts,tsx,js,jsx,json,md,yaml,yml}'"

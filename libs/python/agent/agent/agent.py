@@ -187,7 +187,7 @@ class ComputerAgent:
         trust_remote_code: Optional[bool] = False,
         api_key: Optional[str] = None,
         api_base: Optional[str] = None,
-        **kwargs,
+        **additional_generation_kwargs,
     ):
         """
         Initialize ComputerAgent.
@@ -207,7 +207,9 @@ class ComputerAgent:
             max_trajectory_budget: If set, adds BudgetManagerCallback to track usage costs and stop when budget is exceeded
             telemetry_enabled: If set, adds TelemetryCallback to track anonymized usage data. Enabled by default.
             trust_remote_code: If set, trust remote code when loading local models. Disabled by default.
-            **kwargs: Additional arguments passed to the agent loop
+            api_key: Optional API key override for the model provider
+            api_base: Optional API base URL override for the model provider
+            **additional_generation_kwargs: Additional arguments passed to the model provider
         """
         # If the loop is "human/human", we need to prefix a grounding model fallback
         if model in ["human/human", "human"]:
@@ -225,7 +227,7 @@ class ComputerAgent:
         self.screenshot_delay = screenshot_delay
         self.use_prompt_caching = use_prompt_caching
         self.telemetry_enabled = telemetry_enabled
-        self.kwargs = kwargs
+        self.kwargs = additional_generation_kwargs
         self.trust_remote_code = trust_remote_code
         self.api_key = api_key
         self.api_base = api_base
@@ -597,7 +599,12 @@ class ComputerAgent:
     # ============================================================================
 
     async def run(
-        self, messages: Messages, stream: bool = False, api_key: Optional[str] = None, api_base: Optional[str] = None, **kwargs
+        self,
+        messages: Messages,
+        stream: bool = False,
+        api_key: Optional[str] = None,
+        api_base: Optional[str] = None,
+        **additional_generation_kwargs,
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """
         Run the agent with the given messages using Computer protocol handler pattern.
@@ -605,7 +612,9 @@ class ComputerAgent:
         Args:
             messages: List of message dictionaries
             stream: Whether to stream the response
-            **kwargs: Additional arguments
+            api_key: Optional API key override for the model provider
+            api_base: Optional API base URL override for the model provider
+            **additional_generation_kwargs: Additional arguments passed to the model provider
 
         Returns:
             AsyncGenerator that yields response chunks
@@ -622,7 +631,7 @@ class ComputerAgent:
         await self._initialize_computers()
 
         # Merge kwargs and thread api credentials (run overrides constructor)
-        merged_kwargs = {**self.kwargs, **kwargs}
+        merged_kwargs = {**self.kwargs, **additional_generation_kwargs}
         if (api_key is not None) or (self.api_key is not None):
             merged_kwargs["api_key"] = api_key if api_key is not None else self.api_key
         if (api_base is not None) or (self.api_base is not None):

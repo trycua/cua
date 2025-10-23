@@ -24,7 +24,7 @@ class AsyncAgentConfig(Protocol):
         _on_api_end=None,
         _on_usage=None,
         _on_screenshot=None,
-        **generation_kwargs,
+        **generation_config,
     ) -> Dict[str, Any]:
         """
         Predict the next step based on input items.
@@ -40,7 +40,7 @@ class AsyncAgentConfig(Protocol):
             _on_api_end: Callback for API end
             _on_usage: Callback for usage tracking
             _on_screenshot: Callback for screenshot events
-            **generation_kwargs: Additional arguments for generation
+            **generation_config: Additional arguments to pass to the model provider
                 - api_key: Optional API key for the provider
                 - api_base: Optional API base URL for the provider
 
@@ -60,6 +60,9 @@ class AsyncAgentConfig(Protocol):
             model: Model name to use
             image_b64: Base64 encoded image
             instruction: Instruction for where to click
+            **generation_config: Additional arguments to pass to the model provider
+                - api_key: Optional API key for the provider
+                - api_base: Optional API base URL for the provider
 
         Returns:
             None or tuple with (x, y) coordinates

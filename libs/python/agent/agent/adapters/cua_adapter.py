@@ -9,7 +9,7 @@ from litellm.types.utils import GenericStreamingChunk, ModelResponse
 class CUAAdapter(CustomLLM):
     def __init__(self, base_url: str | None = None, api_key: str | None = None, **_: Any):
         super().__init__()
-        self.base_url = base_url or os.environ.get("CUA_BASE_URL") or "https://gateway.cua.ai/v1"
+        self.base_url = base_url or os.environ.get("CUA_BASE_URL") or "https://inference.cua.ai/v1"
         self.api_key = api_key or os.environ.get("CUA_API_KEY")
 
     def _normalize_model(self, model: str) -> str:

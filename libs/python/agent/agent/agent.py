@@ -185,6 +185,8 @@ class ComputerAgent:
         max_trajectory_budget: Optional[float | dict] = None,
         telemetry_enabled: Optional[bool] = True,
         trust_remote_code: Optional[bool] = False,
+        api_key: Optional[str] = None,
+        api_base: Optional[str] = None,
         **kwargs,
     ):
         """
@@ -225,6 +227,8 @@ class ComputerAgent:
         self.telemetry_enabled = telemetry_enabled
         self.kwargs = kwargs
         self.trust_remote_code = trust_remote_code
+        self.api_key = api_key
+        self.api_base = api_base
 
         # == Add built-in callbacks ==
 
@@ -593,7 +597,7 @@ class ComputerAgent:
     # ============================================================================
 
     async def run(
-        self, messages: Messages, stream: bool = False, **kwargs
+        self, messages: Messages, stream: bool = False, api_key: Optional[str] = None, api_base: Optional[str] = None, **kwargs
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """
         Run the agent with the given messages using Computer protocol handler pattern.
@@ -617,8 +621,12 @@ class ComputerAgent:
 
         await self._initialize_computers()
 
-        # Merge kwargs
+        # Merge kwargs and thread api credentials (run overrides constructor)
         merged_kwargs = {**self.kwargs, **kwargs}
+        if (api_key is not None) or (self.api_key is not None):
+            merged_kwargs["api_key"] = api_key if api_key is not None else self.api_key
+        if (api_base is not None) or (self.api_base is not None):
+            merged_kwargs["api_base"] = api_base if api_base is not None else self.api_base
 
         old_items = self._process_input(messages)
         new_items = []
@@ -728,8 +736,14 @@ class ComputerAgent:
                 if not self.computer_handler:
                     raise ValueError("Computer tool or image_b64 is required for predict_click")
                 image_b64 = await self.computer_handler.screenshot()
+            # Pass along api credentials if available
+            click_kwargs: Dict[str, Any] = {}
+            if self.api_key is not None:
+                click_kwargs["api_key"] = self.api_key
+            if self.api_base is not None:
+                click_kwargs["api_base"] = self.api_base
             return await self.agent_loop.predict_click(
-                model=self.model, image_b64=image_b64, instruction=instruction
+                model=self.model, image_b64=image_b64, instruction=instruction, **click_kwargs
             )
         return None
 

@@ -42,6 +42,11 @@ Control application launching and windows:
     window_id = await computer.interface.get_current_window_id()  # get the current active window id
     await computer.interface.window_size(window_id)
     await computer.interface.get_window_title(window_id)
+    await computer.interface.get_window_position(window_id)
+    await computer.interface.set_window_size(window_id, 1200, 800)
+    await computer.interface.set_window_position(window_id, 100, 100)
+    await computer.interface.maximize_window(window_id)
+    await computer.interface.minimize_window(window_id)
     await computer.interface.close_window(window_id)
     ```
 
@@ -61,6 +66,11 @@ Control application launching and windows:
     windowId = await computer.interface.getCurrentWindowId(); // current active window id
     await computer.interface.getWindowSize(windowId);
     await computer.interface.getWindowName(windowId);
+    await computer.interface.getWindowPosition(windowId);
+    await computer.interface.setWindowSize(windowId, 1200, 800);
+    await computer.interface.setWindowPosition(windowId, 100, 100);
+    await computer.interface.maximizeWindow(windowId);
+    await computer.interface.minimizeWindow(windowId);
     await computer.interface.closeWindow(windowId);
     ```
 

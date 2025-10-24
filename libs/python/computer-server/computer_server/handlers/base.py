@@ -139,18 +139,43 @@ class BaseWindowHandler(ABC):
         pass
 
     @abstractmethod
-    async def get_window_size(self, window_id: str) -> Dict[str, Any]:
+    async def get_window_size(self, window_id: str | int) -> Dict[str, Any]:
         """Get the size of a window by ID as {width, height}."""
         pass
 
     @abstractmethod
-    async def activate_window(self, window_id: str) -> Dict[str, Any]:
+    async def activate_window(self, window_id: str | int) -> Dict[str, Any]:
         """Bring a window to the foreground by ID."""
         pass
 
     @abstractmethod
-    async def close_window(self, window_id: str) -> Dict[str, Any]:
+    async def close_window(self, window_id: str | int) -> Dict[str, Any]:
         """Close a window by ID."""
+        pass
+
+    @abstractmethod
+    async def get_window_position(self, window_id: str | int) -> Dict[str, Any]:
+        """Get the top-left position of a window as {x, y}."""
+        pass
+
+    @abstractmethod
+    async def set_window_size(self, window_id: str | int, width: int, height: int) -> Dict[str, Any]:
+        """Set the size of a window by ID."""
+        pass
+
+    @abstractmethod
+    async def set_window_position(self, window_id: str | int, x: int, y: int) -> Dict[str, Any]:
+        """Set the position of a window by ID."""
+        pass
+
+    @abstractmethod
+    async def maximize_window(self, window_id: str | int) -> Dict[str, Any]:
+        """Maximize a window by ID."""
+        pass
+
+    @abstractmethod
+    async def minimize_window(self, window_id: str | int) -> Dict[str, Any]:
+        """Minimize a window by ID."""
         pass
 
 

@@ -538,6 +538,36 @@ class GenericComputerInterface(BaseComputerInterface):
             raise RuntimeError(result.get("error", "Failed to get window size"))
         return int(result.get("width", 0)), int(result.get("height", 0))
 
+    async def get_window_position(self, window_id: int | str) -> tuple[int, int]:
+        result = await self._send_command("get_window_position", {"window_id": window_id})
+        if not result.get("success", False):
+            raise RuntimeError(result.get("error", "Failed to get window position"))
+        return int(result.get("x", 0)), int(result.get("y", 0))
+
+    async def set_window_size(self, window_id: int | str, width: int, height: int) -> None:
+        result = await self._send_command(
+            "set_window_size", {"window_id": window_id, "width": width, "height": height}
+        )
+        if not result.get("success", False):
+            raise RuntimeError(result.get("error", "Failed to set window size"))
+
+    async def set_window_position(self, window_id: int | str, x: int, y: int) -> None:
+        result = await self._send_command(
+            "set_window_position", {"window_id": window_id, "x": x, "y": y}
+        )
+        if not result.get("success", False):
+            raise RuntimeError(result.get("error", "Failed to set window position"))
+
+    async def maximize_window(self, window_id: int | str) -> None:
+        result = await self._send_command("maximize_window", {"window_id": window_id})
+        if not result.get("success", False):
+            raise RuntimeError(result.get("error", "Failed to maximize window"))
+
+    async def minimize_window(self, window_id: int | str) -> None:
+        result = await self._send_command("minimize_window", {"window_id": window_id})
+        if not result.get("success", False):
+            raise RuntimeError(result.get("error", "Failed to minimize window"))
+
     async def activate_window(self, window_id: int | str) -> None:
         result = await self._send_command("activate_window", {"window_id": window_id})
         if not result.get("success", False):

@@ -109,6 +109,11 @@ handlers = {
     "get_application_windows": window_handler.get_application_windows,
     "get_window_name": window_handler.get_window_name,
     "get_window_size": window_handler.get_window_size,
+    "get_window_position": window_handler.get_window_position,
+    "set_window_size": window_handler.set_window_size,
+    "set_window_position": window_handler.set_window_position,
+    "maximize_window": window_handler.maximize_window,
+    "minimize_window": window_handler.minimize_window,
     "activate_window": window_handler.activate_window,
     "close_window": window_handler.close_window,
     # Mouse commands

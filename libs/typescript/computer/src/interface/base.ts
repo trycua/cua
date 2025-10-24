@@ -321,6 +321,11 @@ export abstract class BaseComputerInterface {
   abstract getApplicationWindows(app: string): Promise<Array<number | string>>;
   abstract getWindowName(windowId: number | string): Promise<string>;
   abstract getWindowSize(windowId: number | string): Promise<[number, number]>;
+  abstract getWindowPosition(windowId: number | string): Promise<[number, number]>;
+  abstract setWindowSize(windowId: number | string, width: number, height: number): Promise<void>;
+  abstract setWindowPosition(windowId: number | string, x: number, y: number): Promise<void>;
+  abstract maximizeWindow(windowId: number | string): Promise<void>;
+  abstract minimizeWindow(windowId: number | string): Promise<void>;
   abstract activateWindow(windowId: number | string): Promise<void>;
   abstract closeWindow(windowId: number | string): Promise<void>;
 

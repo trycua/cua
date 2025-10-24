@@ -266,6 +266,55 @@ export class MacOSComputerInterface extends BaseComputerInterface {
     return [Number(response.width) || 0, Number(response.height) || 0];
   }
 
+  /** Get window position as [x, y]. */
+  async getWindowPosition(windowId: number | string): Promise<[number, number]> {
+    const response = await this.sendCommand('get_window_position', { window_id: windowId });
+    if (!response.success) {
+      throw new Error((response.error as string) || 'Failed to get window position');
+    }
+    return [Number(response.x) || 0, Number(response.y) || 0];
+  }
+
+  /** Set window size. */
+  async setWindowSize(windowId: number | string, width: number, height: number): Promise<void> {
+    const response = await this.sendCommand('set_window_size', {
+      window_id: windowId,
+      width,
+      height,
+    });
+    if (!response.success) {
+      throw new Error((response.error as string) || 'Failed to set window size');
+    }
+  }
+
+  /** Set window position. */
+  async setWindowPosition(windowId: number | string, x: number, y: number): Promise<void> {
+    const response = await this.sendCommand('set_window_position', {
+      window_id: windowId,
+      x,
+      y,
+    });
+    if (!response.success) {
+      throw new Error((response.error as string) || 'Failed to set window position');
+    }
+  }
+
+  /** Maximize a window. */
+  async maximizeWindow(windowId: number | string): Promise<void> {
+    const response = await this.sendCommand('maximize_window', { window_id: windowId });
+    if (!response.success) {
+      throw new Error((response.error as string) || 'Failed to maximize window');
+    }
+  }
+
+  /** Minimize a window. */
+  async minimizeWindow(windowId: number | string): Promise<void> {
+    const response = await this.sendCommand('minimize_window', { window_id: windowId });
+    if (!response.success) {
+      throw new Error((response.error as string) || 'Failed to minimize window');
+    }
+  }
+
   /** Activate a window by id. */
   async activateWindow(windowId: number | string): Promise<void> {
     const response = await this.sendCommand('activate_window', { window_id: windowId });

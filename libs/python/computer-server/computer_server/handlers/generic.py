@@ -170,6 +170,66 @@ class GenericWindowHandler(BaseWindowHandler):
         except Exception as e:
             return {"success": False, "error": str(e)}
 
+    async def get_window_position(self, window_id: int | str) -> Dict[str, Any]:
+        try:
+            if pwc is None:
+                return {"success": False, "error": "pywinctl not available"}
+            w = self._get_window_by_id(window_id)
+            if not w:
+                return {"success": False, "error": "Window not found"}
+            x, y = w.position
+            return {"success": True, "x": int(x), "y": int(y)}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    async def set_window_size(self, window_id: int | str, width: int, height: int) -> Dict[str, Any]:
+        try:
+            if pwc is None:
+                return {"success": False, "error": "pywinctl not available"}
+            w = self._get_window_by_id(window_id)
+            if not w:
+                return {"success": False, "error": "Window not found"}
+            ok = w.resizeTo(int(width), int(height))
+            return {"success": bool(ok)}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    async def set_window_position(self, window_id: int | str, x: int, y: int) -> Dict[str, Any]:
+        try:
+            if pwc is None:
+                return {"success": False, "error": "pywinctl not available"}
+            w = self._get_window_by_id(window_id)
+            if not w:
+                return {"success": False, "error": "Window not found"}
+            ok = w.moveTo(int(x), int(y))
+            return {"success": bool(ok)}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    async def maximize_window(self, window_id: int | str) -> Dict[str, Any]:
+        try:
+            if pwc is None:
+                return {"success": False, "error": "pywinctl not available"}
+            w = self._get_window_by_id(window_id)
+            if not w:
+                return {"success": False, "error": "Window not found"}
+            ok = w.maximize()
+            return {"success": bool(ok)}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    async def minimize_window(self, window_id: int | str) -> Dict[str, Any]:
+        try:
+            if pwc is None:
+                return {"success": False, "error": "pywinctl not available"}
+            w = self._get_window_by_id(window_id)
+            if not w:
+                return {"success": False, "error": "Window not found"}
+            ok = w.minimize()
+            return {"success": bool(ok)}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
     async def activate_window(self, window_id: int | str) -> Dict[str, Any]:
         try:
             if pwc is None:

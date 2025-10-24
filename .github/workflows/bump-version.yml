@@ -36,6 +36,10 @@ jobs:
       version: ${{ steps.extract-version.outputs.version }}
       package_directory: ${{ steps.package.outputs.directory }}
       service: ${{ inputs.service }}
+      package_name: ${{ steps.package-metadata.outputs.package_name }}
+      base_package_name: ${{ steps.package-metadata.outputs.base_package_name }}
+      is_lume_package: ${{ steps.package-metadata.outputs.is_lume_package }}
+      tag_prefix: ${{ steps.package-metadata.outputs.tag_prefix }}
     steps:
       - name: Set package directory
         id: package
@@ -123,6 +127,63 @@ jobs:
           VERSION=$(grep '^version = ' pyproject.toml | cut -d'"' -f2)
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "Extracted version: $VERSION"
+
+      - name: Set package metadata
+        id: package-metadata
+        run: |
+          SERVICE="${{ inputs.service }}"
+
+          # Map service to package metadata
+          case "$SERVICE" in
+            "cua-agent")
+              echo "package_name=agent" >> $GITHUB_OUTPUT
+              echo "base_package_name=cua-agent" >> $GITHUB_OUTPUT
+              echo "is_lume_package=false" >> $GITHUB_OUTPUT
+              echo "tag_prefix=agent-v" >> $GITHUB_OUTPUT
+              ;;
+            "cua-computer")
+              echo "package_name=computer" >> $GITHUB_OUTPUT
+              echo "base_package_name=cua-computer" >> $GITHUB_OUTPUT
+              echo "is_lume_package=false" >> $GITHUB_OUTPUT
+              echo "tag_prefix=computer-v" >> $GITHUB_OUTPUT
+              ;;
+            "cua-computer-server")
+              echo "package_name=computer-server" >> $GITHUB_OUTPUT
+              echo "base_package_name=cua-computer-server" >> $GITHUB_OUTPUT
+              echo "is_lume_package=false" >> $GITHUB_OUTPUT
+              echo "tag_prefix=computer-server-v" >> $GITHUB_OUTPUT
+              ;;
+            "cua-core")
+              echo "package_name=core" >> $GITHUB_OUTPUT
+              echo "base_package_name=cua-core" >> $GITHUB_OUTPUT
+              echo "is_lume_package=false" >> $GITHUB_OUTPUT
+              echo "tag_prefix=core-v" >> $GITHUB_OUTPUT
+              ;;
+            "cua-mcp-server")
+              echo "package_name=mcp-server" >> $GITHUB_OUTPUT
+              echo "base_package_name=cua-mcp-server" >> $GITHUB_OUTPUT
+              echo "is_lume_package=false" >> $GITHUB_OUTPUT
+              echo "tag_prefix=mcp-server-v" >> $GITHUB_OUTPUT
+              ;;
+            "cua-som")
+              echo "package_name=som" >> $GITHUB_OUTPUT
+              echo "base_package_name=cua-som" >> $GITHUB_OUTPUT
+              echo "is_lume_package=false" >> $GITHUB_OUTPUT
+              echo "tag_prefix=som-v" >> $GITHUB_OUTPUT
+              ;;
+            "pylume")
+              echo "package_name=pylume" >> $GITHUB_OUTPUT
+              echo "base_package_name=pylume" >> $GITHUB_OUTPUT
+              echo "is_lume_package=true" >> $GITHUB_OUTPUT
+              echo "tag_prefix=pylume-v" >> $GITHUB_OUTPUT
+              ;;
+            *)
+              echo "Unknown service: $SERVICE"
+              exit 1
+              ;;
+          esac
+
+          echo "Package metadata set for $SERVICE"
 
       - name: Push changes
         run: |

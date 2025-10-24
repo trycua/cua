@@ -199,17 +199,12 @@ jobs:
 
   publish:
     needs: bump-version
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - name: Call reusable publish workflow
-        uses: ./.github/workflows/pypi-reusable-publish.yml@main
-        with:
-          package_name: ${{ needs.bump-version.outputs.package_name }}
-          package_dir: ${{ needs.bump-version.outputs.package_directory }}
-          version: ${{ needs.bump-version.outputs.version }}
-          is_lume_package: ${{ needs.bump-version.outputs.is_lume_package }}
-          base_package_name: ${{ needs.bump-version.outputs.base_package_name }}
-        secrets:
-          PYPI_TOKEN: ${{ secrets.PYPI_TOKEN }}
+    uses: ./.github/workflows/pypi-reusable-publish.yml
+    with:
+      package_name: ${{ needs.bump-version.outputs.package_name }}
+      package_dir: ${{ needs.bump-version.outputs.package_directory }}
+      version: ${{ needs.bump-version.outputs.version }}
+      is_lume_package: ${{ needs.bump-version.outputs.is_lume_package == 'true' }}
+      base_package_name: ${{ needs.bump-version.outputs.base_package_name }}
+    secrets:
+      PYPI_TOKEN: ${{ secrets.PYPI_TOKEN }}

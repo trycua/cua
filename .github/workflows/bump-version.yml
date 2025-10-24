@@ -124,7 +124,35 @@ jobs:
         id: extract-version
         run: |
           cd ${{ steps.package.outputs.directory }}
-          VERSION=$(grep '^version = ' pyproject.toml | cut -d'"' -f2)
+          VERSION=$(python3 << 'EOF'
+          import tomllib
+          import re
+          from pathlib import Path
+
+          # Read pyproject.toml
+          with open("pyproject.toml", "rb") as f:
+              config = tomllib.load(f)
+
+          # Try static version first
+          version = config.get("project", {}).get("version")
+
+          # If dynamic, read from source file
+          if not version and "version" in config.get("project", {}).get("dynamic", []):
+              pdm_version = config.get("tool", {}).get("pdm", {}).get("version", {})
+              if pdm_version.get("source") == "file":
+                  version_file = pdm_version.get("path")
+                  if version_file:
+                      content = Path(version_file).read_text()
+                      match = re.search(r'__version__\s*=\s*["\']([^"\']+)["\']', content)
+                      if match:
+                          version = match.group(1)
+
+          if not version:
+              raise ValueError("Could not extract version from pyproject.toml")
+
+          print(version)
+          EOF
+          )
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "Extracted version: $VERSION"
 

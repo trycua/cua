@@ -185,6 +185,14 @@ jobs:
 
           echo "Package metadata set for $SERVICE"
 
+      - name: Create and push tag
+        run: |
+          TAG="${{ steps.package-metadata.outputs.tag_prefix }}${{ steps.extract-version.outputs.version }}"
+          echo "Creating tag: $TAG"
+          git tag "$TAG"
+          git push origin "$TAG"
+          echo "Tag $TAG created and pushed"
+
       - name: Push changes
         run: |
           git push origin main --follow-tags

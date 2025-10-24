@@ -85,6 +85,26 @@ class BaseFileHandler(ABC):
         pass
 
 
+class BaseDesktopHandler(ABC):
+    """Abstract base class for OS-specific desktop handlers.
+
+    Categories:
+    - Wallpaper Actions: Methods for wallpaper operations
+    - Desktop shortcut actions: Methods for managing desktop shortcuts
+    """
+
+    # Wallpaper Actions
+    @abstractmethod
+    async def get_desktop_environment(self) -> Dict[str, Any]:
+        """Get the current desktop environment name."""
+        pass
+
+    @abstractmethod
+    async def set_wallpaper(self, path: str) -> Dict[str, Any]:
+        """Set the desktop wallpaper to the file at path."""
+        pass
+
+
 class BaseAutomationHandler(ABC):
     """Abstract base class for OS-specific automation handlers.
 

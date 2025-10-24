@@ -3,8 +3,8 @@
  */
 
 import type { ScreenSize } from '../types';
-import { BaseComputerInterface } from './base';
 import type { AccessibilityNode, CursorPosition, MouseButton } from './base';
+import { BaseComputerInterface } from './base';
 
 export class MacOSComputerInterface extends BaseComputerInterface {
   // Mouse Actions
@@ -210,6 +210,29 @@ export class MacOSComputerInterface extends BaseComputerInterface {
       throw new Error('Failed to get cursor position');
     }
     return response.position as CursorPosition;
+  }
+
+  // Desktop Actions
+  /**
+   * Get the current desktop environment string (e.g., 'xfce4', 'gnome', 'kde', 'mac', 'windows').
+   */
+  async getDesktopEnvironment(): Promise<string> {
+    const response = await this.sendCommand('get_desktop_environment');
+    if (!response.success) {
+      throw new Error((response.error as string) || 'Failed to get desktop environment');
+    }
+    return (response.environment as string) || 'unknown';
+  }
+
+  /**
+   * Set the desktop wallpaper image.
+   * @param path Absolute path to the image file on the VM
+   */
+  async setWallpaper(path: string): Promise<void> {
+    const response = await this.sendCommand('set_wallpaper', { path });
+    if (!response.success) {
+      throw new Error((response.error as string) || 'Failed to set wallpaper');
+    }
   }
 
   // Clipboard Actions

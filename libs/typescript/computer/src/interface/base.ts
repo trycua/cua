@@ -314,6 +314,10 @@ export abstract class BaseComputerInterface {
   abstract getScreenSize(): Promise<ScreenSize>;
   abstract getCursorPosition(): Promise<CursorPosition>;
 
+  // Desktop Actions
+  abstract getDesktopEnvironment(): Promise<string>;
+  abstract setWallpaper(path: string): Promise<void>;
+
   // Clipboard Actions
   abstract copyToClipboard(): Promise<string>;
   abstract setClipboard(text: string): Promise<void>;

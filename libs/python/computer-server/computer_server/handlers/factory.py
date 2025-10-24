@@ -4,7 +4,12 @@ from typing import Tuple, Type
 
 from computer_server.diorama.base import BaseDioramaHandler
 
-from .base import BaseAccessibilityHandler, BaseAutomationHandler, BaseFileHandler
+from .base import (
+    BaseAccessibilityHandler,
+    BaseAutomationHandler,
+    BaseDesktopHandler,
+    BaseFileHandler,
+)
 
 # Conditionally import platform-specific handlers
 system = platform.system().lower()
@@ -17,7 +22,7 @@ elif system == "linux":
 elif system == "windows":
     from .windows import WindowsAccessibilityHandler, WindowsAutomationHandler
 
-from .generic import GenericFileHandler
+from .generic import GenericDesktopHandler, GenericFileHandler
 
 
 class HandlerFactory:
@@ -50,7 +55,13 @@ class HandlerFactory:
 
     @staticmethod
     def create_handlers() -> (
-        Tuple[BaseAccessibilityHandler, BaseAutomationHandler, BaseDioramaHandler, BaseFileHandler]
+        Tuple[
+            BaseAccessibilityHandler,
+            BaseAutomationHandler,
+            BaseDioramaHandler,
+            BaseFileHandler,
+            BaseDesktopHandler,
+        ]
     ):
         """Create and return appropriate handlers for the current OS.
 
@@ -70,6 +81,7 @@ class HandlerFactory:
                 MacOSAutomationHandler(),
                 MacOSDioramaHandler(),
                 GenericFileHandler(),
+                GenericDesktopHandler(),
             )
         elif os_type == "linux":
             return (
@@ -77,6 +89,7 @@ class HandlerFactory:
                 LinuxAutomationHandler(),
                 BaseDioramaHandler(),
                 GenericFileHandler(),
+                GenericDesktopHandler(),
             )
         elif os_type == "windows":
             return (
@@ -84,6 +97,7 @@ class HandlerFactory:
                 WindowsAutomationHandler(),
                 BaseDioramaHandler(),
                 GenericFileHandler(),
+                GenericDesktopHandler(),
             )
         else:
             raise NotImplementedError(f"OS '{os_type}' is not supported")

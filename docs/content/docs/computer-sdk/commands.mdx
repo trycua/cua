@@ -13,16 +13,12 @@ Execute shell commands and get detailed results:
 
 <Tabs items={['Python', 'TypeScript']}>
   <Tab value="Python">
-    ```python
-    # Run shell command result = await
-    computer.interface.run_command(cmd) # result.stdout, result.stderr, result.returncode
-    ```
+    ```python # Run shell command result = await computer.interface.run_command(cmd) #
+    result.stdout, result.stderr, result.returncode ```
   </Tab>
   <Tab value="TypeScript">
-    ```typescript
-    // Run shell command const result = await
-    computer.interface.runCommand(cmd); // result.stdout, result.stderr, result.returncode
-    ```
+    ```typescript // Run shell command const result = await computer.interface.runCommand(cmd); //
+    result.stdout, result.stderr, result.returncode ```
   </Tab>
 </Tabs>
 
@@ -108,20 +104,14 @@ Mouse wheel and scrolling control:
 
 <Tabs items={['Python', 'TypeScript']}>
   <Tab value="Python">
-    ```python
-    # Scrolling
-    await computer.interface.scroll(x, y) # Scroll the mouse wheel
-    await computer.interface.scroll_down(clicks) # Scroll down await
-    computer.interface.scroll_up(clicks) # Scroll up
-    ```
+    ```python # Scrolling await computer.interface.scroll(x, y) # Scroll the mouse wheel await
+    computer.interface.scroll_down(clicks) # Scroll down await computer.interface.scroll_up(clicks)
+    # Scroll up ```
   </Tab>
   <Tab value="TypeScript">
-    ```typescript 
-    // Scrolling 
-    await computer.interface.scroll(x, y); // Scroll the mouse wheel 
-    await computer.interface.scrollDown(clicks); // Scroll down
-    await computer.interface.scrollUp(clicks); // Scroll up 
-    ```
+    ```typescript // Scrolling await computer.interface.scroll(x, y); // Scroll the mouse wheel
+    await computer.interface.scrollDown(clicks); // Scroll down await
+    computer.interface.scrollUp(clicks); // Scroll up ```
   </Tab>
 </Tabs>
 
@@ -146,6 +136,35 @@ Screen capture and display information:
     await computer.interface.getScreenSize(); // Get screen dimensions 
     
     ```
+  </Tab>
+</Tabs>
+
+## Desktop Actions
+
+Control desktop environment features like wallpaper:
+
+<Tabs items={['Python', 'TypeScript']}>
+  <Tab value="Python">
+    ```python 
+    # Get current desktop environment (e.g., 'xfce4', 'gnome', 'kde', 'mac', 'windows')
+    env = await computer.interface.get_desktop_environment()
+    print(env) # "xfce4"
+
+    # Set desktop wallpaper to an image file accessible on the VM
+    await computer.interface.set_wallpaper("/home/cua/shared/wallpaper.png")
+    ```
+
+  </Tab>
+  <Tab value="TypeScript">
+    ```typescript 
+    // Get current desktop environment
+    const env = await computer.interface.getDesktopEnvironment();
+    print(env) # "xfce4"
+
+    // Set desktop wallpaper to an image file accessible on the VM
+    await computer.interface.setWallpaper('/home/cua/shared/wallpaper.png');
+    ```
+
   </Tab>
 </Tabs>
 
@@ -240,7 +259,7 @@ Access system accessibility information:
     // Get accessibility tree 
    await computer.interface.getAccessibilityTree();
 
-```
+````
 </Tab>
 </Tabs>
 
@@ -278,3 +297,4 @@ Manage Python environments:
 
   </Tab>
 </Tabs>
+````

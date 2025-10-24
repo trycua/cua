@@ -487,6 +487,18 @@ class GenericComputerInterface(BaseComputerInterface):
             raise RuntimeError(result.get("error", "Failed to list directory"))
         return result.get("files", [])
 
+    # Desktop actions
+    async def get_desktop_environment(self) -> str:
+        result = await self._send_command("get_desktop_environment")
+        if not result.get("success", False):
+            raise RuntimeError(result.get("error", "Failed to get desktop environment"))
+        return result.get("environment", "unknown")
+
+    async def set_wallpaper(self, path: str) -> None:
+        result = await self._send_command("set_wallpaper", {"path": path})
+        if not result.get("success", False):
+            raise RuntimeError(result.get("error", "Failed to set wallpaper"))
+
     # Command execution
     async def run_command(self, command: str) -> CommandResult:
         result = await self._send_command("run_command", {"command": command})

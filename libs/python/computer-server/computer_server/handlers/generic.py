@@ -2,6 +2,7 @@
 Generic handlers for all OSes.
 
 Includes:
+- DesktopHandler
 - FileHandler
 
 """
@@ -10,7 +11,8 @@ import base64
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from .base import BaseFileHandler
+from ..utils import wallpaper
+from .base import BaseDesktopHandler, BaseFileHandler
 
 
 def resolve_path(path: str) -> Path:
@@ -23,6 +25,46 @@ def resolve_path(path: str) -> Path:
         Path: The resolved absolute path
     """
     return Path(path).expanduser().resolve()
+
+
+class GenericDesktopHandler(BaseDesktopHandler):
+    """
+    Generic desktop handler providing desktop-related operations.
+
+    Implements:
+    - get_desktop_environment: detect current desktop environment
+    - set_wallpaper: set desktop wallpaper path
+    """
+
+    async def get_desktop_environment(self) -> Dict[str, Any]:
+        """
+        Get the current desktop environment.
+
+        Returns:
+            Dict containing 'success' boolean and either 'environment' string or 'error' string
+        """
+        try:
+            env = wallpaper.get_desktop_environment()
+            return {"success": True, "environment": env}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    async def set_wallpaper(self, path: str) -> Dict[str, Any]:
+        """
+        Set the desktop wallpaper to the specified path.
+
+        Args:
+            path: The file path to set as wallpaper
+
+        Returns:
+            Dict containing 'success' boolean and optionally 'error' string
+        """
+        try:
+            file_path = resolve_path(path)
+            ok = wallpaper.set_wallpaper(str(file_path))
+            return {"success": bool(ok)}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
 
 
 class GenericFileHandler(BaseFileHandler):

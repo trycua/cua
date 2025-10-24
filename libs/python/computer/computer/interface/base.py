@@ -436,6 +436,26 @@ class BaseComputerInterface(ABC):
         """
         pass
 
+    # Desktop actions
+    @abstractmethod
+    async def get_desktop_environment(self) -> str:
+        """Get the current desktop environment.
+
+        Returns:
+            The name of the current desktop environment.
+        """
+        pass
+
+    @abstractmethod
+    async def set_wallpaper(self, path: str) -> None:
+        """Set the desktop wallpaper to the specified path.
+
+        Args:
+            path: The file path to set as wallpaper
+        """
+        pass
+
+    # Shell actions
     @abstractmethod
     async def run_command(self, command: str) -> CommandResult:
         """Run shell command and return structured result.

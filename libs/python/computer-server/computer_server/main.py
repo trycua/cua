@@ -75,7 +75,7 @@ except Exception:
     except Exception:
         package_version = "unknown"
 
-accessibility_handler, automation_handler, diorama_handler, file_handler = (
+accessibility_handler, automation_handler, diorama_handler, file_handler, desktop_handler = (
     HandlerFactory.create_handlers()
 )
 handlers = {
@@ -99,6 +99,9 @@ handlers = {
     "delete_file": file_handler.delete_file,
     "create_dir": file_handler.create_dir,
     "delete_dir": file_handler.delete_dir,
+    # Desktop commands
+    "get_desktop_environment": desktop_handler.get_desktop_environment,
+    "set_wallpaper": desktop_handler.set_wallpaper,
     # Mouse commands
     "mouse_down": automation_handler.mouse_down,
     "mouse_up": automation_handler.mouse_up,

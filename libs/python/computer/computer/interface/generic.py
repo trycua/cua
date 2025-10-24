@@ -499,6 +499,62 @@ class GenericComputerInterface(BaseComputerInterface):
         if not result.get("success", False):
             raise RuntimeError(result.get("error", "Failed to set wallpaper"))
 
+    # Window management
+    async def open(self, target: str) -> None:
+        result = await self._send_command("open", {"target": target})
+        if not result.get("success", False):
+            raise RuntimeError(result.get("error", "Failed to open target"))
+
+    async def launch(self, app: str, args: list[str] | None = None) -> int | None:
+        payload: dict[str, object] = {"app": app}
+        if args is not None:
+            payload["args"] = args
+        result = await self._send_command("launch", payload)
+        if not result.get("success", False):
+            raise RuntimeError(result.get("error", "Failed to launch application"))
+        return result.get("pid")  # type: ignore[return-value]
+
+    async def get_current_window_id(self) -> int | str:
+        result = await self._send_command("get_current_window_id")
+        if not result.get("success", False):
+            raise RuntimeError(result.get("error", "Failed to get current window id"))
+        return result["window_id"]  # type: ignore[return-value]
+
+    async def get_application_windows(self, app: str) -> list[int | str]:
+        result = await self._send_command("get_application_windows", {"app": app})
+        if not result.get("success", False):
+            raise RuntimeError(result.get("error", "Failed to get application windows"))
+        return list(result.get("windows", []))  # type: ignore[return-value]
+
+    async def get_window_name(self, window_id: int | str) -> str:
+        result = await self._send_command("get_window_name", {"window_id": window_id})
+        if not result.get("success", False):
+            raise RuntimeError(result.get("error", "Failed to get window name"))
+        return result.get("name", "")  # type: ignore[return-value]
+
+    async def get_window_size(self, window_id: int | str) -> tuple[int, int]:
+        result = await self._send_command("get_window_size", {"window_id": window_id})
+        if not result.get("success", False):
+            raise RuntimeError(result.get("error", "Failed to get window size"))
+        return int(result.get("width", 0)), int(result.get("height", 0))
+
+    async def activate_window(self, window_id: int | str) -> None:
+        result = await self._send_command("activate_window", {"window_id": window_id})
+        if not result.get("success", False):
+            raise RuntimeError(result.get("error", "Failed to activate window"))
+
+    async def close_window(self, window_id: int | str) -> None:
+        result = await self._send_command("close_window", {"window_id": window_id})
+        if not result.get("success", False):
+            raise RuntimeError(result.get("error", "Failed to close window"))
+
+    # Convenience aliases
+    async def get_window_title(self, window_id: int | str) -> str:
+        return await self.get_window_name(window_id)
+
+    async def window_size(self, window_id: int | str) -> tuple[int, int]:
+        return await self.get_window_size(window_id)
+
     # Command execution
     async def run_command(self, command: str) -> CommandResult:
         result = await self._send_command("run_command", {"command": command})

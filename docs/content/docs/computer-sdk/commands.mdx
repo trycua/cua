@@ -22,6 +22,51 @@ Execute shell commands and get detailed results:
   </Tab>
 </Tabs>
 
+## Window Management
+
+Control application launching and windows:
+
+<Tabs items={['Python', 'TypeScript']}>
+  <Tab value="Python">
+    ```python
+    # Launch applications
+    await computer.interface.launch("xfce4-terminal")
+    await computer.interface.launch("libreoffice --writer")
+    await computer.interface.open("https://www.google.com")
+
+    # Window management
+    windows = await computer.interface.get_application_windows("xfce4-terminal")
+    window_id = windows[0]
+    await computer.interface.activate_window(window_id)
+
+    window_id = await computer.interface.get_current_window_id()  # get the current active window id
+    await computer.interface.window_size(window_id)
+    await computer.interface.get_window_title(window_id)
+    await computer.interface.close_window(window_id)
+    ```
+
+  </Tab>
+  <Tab value="TypeScript">
+    ```typescript
+    // Launch applications
+    await computer.interface.launch("xfce4-terminal");
+    await computer.interface.launch("libreoffice --writer");
+    await computer.interface.open("https://www.google.com");
+
+    // Window management
+    const windows = await computer.interface.getApplicationWindows("xfce4-terminal");
+    let windowId = windows[0];
+    await computer.interface.activateWindow(windowId);
+
+    windowId = await computer.interface.getCurrentWindowId(); // current active window id
+    await computer.interface.getWindowSize(windowId);
+    await computer.interface.getWindowName(windowId);
+    await computer.interface.closeWindow(windowId);
+    ```
+
+  </Tab>
+</Tabs>
+
 ## Mouse Actions
 
 Precise mouse control and interaction:

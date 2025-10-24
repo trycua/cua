@@ -105,6 +105,55 @@ class BaseDesktopHandler(ABC):
         pass
 
 
+class BaseWindowHandler(ABC):
+    """Abstract class for OS-specific window management handlers.
+
+    Categories:
+    - Window Management: Methods for application/window control
+    """
+
+    # Window Management
+    @abstractmethod
+    async def open(self, target: str) -> Dict[str, Any]:
+        """Open a file or URL with the default application."""
+        pass
+
+    @abstractmethod
+    async def launch(self, app: str, args: Optional[List[str]] = None) -> Dict[str, Any]:
+        """Launch an application with optional arguments."""
+        pass
+
+    @abstractmethod
+    async def get_current_window_id(self) -> Dict[str, Any]:
+        """Get the currently active window ID."""
+        pass
+
+    @abstractmethod
+    async def get_application_windows(self, app: str) -> Dict[str, Any]:
+        """Get windows belonging to an application (by name or bundle)."""
+        pass
+
+    @abstractmethod
+    async def get_window_name(self, window_id: str) -> Dict[str, Any]:
+        """Get the title/name of a window by ID."""
+        pass
+
+    @abstractmethod
+    async def get_window_size(self, window_id: str) -> Dict[str, Any]:
+        """Get the size of a window by ID as {width, height}."""
+        pass
+
+    @abstractmethod
+    async def activate_window(self, window_id: str) -> Dict[str, Any]:
+        """Bring a window to the foreground by ID."""
+        pass
+
+    @abstractmethod
+    async def close_window(self, window_id: str) -> Dict[str, Any]:
+        """Close a window by ID."""
+        pass
+
+
 class BaseAutomationHandler(ABC):
     """Abstract base class for OS-specific automation handlers.
 

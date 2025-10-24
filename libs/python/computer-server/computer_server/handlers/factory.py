@@ -9,6 +9,7 @@ from .base import (
     BaseAutomationHandler,
     BaseDesktopHandler,
     BaseFileHandler,
+    BaseWindowHandler,
 )
 
 # Conditionally import platform-specific handlers
@@ -22,7 +23,7 @@ elif system == "linux":
 elif system == "windows":
     from .windows import WindowsAccessibilityHandler, WindowsAutomationHandler
 
-from .generic import GenericDesktopHandler, GenericFileHandler
+from .generic import GenericDesktopHandler, GenericFileHandler, GenericWindowHandler
 
 
 class HandlerFactory:
@@ -61,6 +62,7 @@ class HandlerFactory:
             BaseDioramaHandler,
             BaseFileHandler,
             BaseDesktopHandler,
+            BaseWindowHandler,
         ]
     ):
         """Create and return appropriate handlers for the current OS.
@@ -82,6 +84,7 @@ class HandlerFactory:
                 MacOSDioramaHandler(),
                 GenericFileHandler(),
                 GenericDesktopHandler(),
+                GenericWindowHandler(),
             )
         elif os_type == "linux":
             return (
@@ -90,6 +93,7 @@ class HandlerFactory:
                 BaseDioramaHandler(),
                 GenericFileHandler(),
                 GenericDesktopHandler(),
+                GenericWindowHandler(),
             )
         elif os_type == "windows":
             return (
@@ -98,6 +102,7 @@ class HandlerFactory:
                 BaseDioramaHandler(),
                 GenericFileHandler(),
                 GenericDesktopHandler(),
+                GenericWindowHandler(),
             )
         else:
             raise NotImplementedError(f"OS '{os_type}' is not supported")

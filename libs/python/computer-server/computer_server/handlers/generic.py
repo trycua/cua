@@ -8,11 +8,20 @@ Includes:
 """
 
 import base64
+import os
+import platform
+import subprocess
+import webbrowser
 from pathlib import Path
 from typing import Any, Dict, Optional
 
 from ..utils import wallpaper
-from .base import BaseDesktopHandler, BaseFileHandler
+from .base import BaseDesktopHandler, BaseFileHandler, BaseWindowHandler
+
+try:
+    import pywinctl as pwc
+except Exception:  # pragma: no cover
+    pwc = None  # type: ignore
 
 
 def resolve_path(path: str) -> Path:
@@ -25,6 +34,9 @@ def resolve_path(path: str) -> Path:
         Path: The resolved absolute path
     """
     return Path(path).expanduser().resolve()
+
+
+# ===== Cross-platform Desktop command handlers =====
 
 
 class GenericDesktopHandler(BaseDesktopHandler):
@@ -65,6 +77,125 @@ class GenericDesktopHandler(BaseDesktopHandler):
             return {"success": bool(ok)}
         except Exception as e:
             return {"success": False, "error": str(e)}
+
+
+# ===== Cross-platform window control command handlers =====
+
+
+class GenericWindowHandler(BaseWindowHandler):
+    """
+    Cross-platform window management using pywinctl where possible.
+    """
+
+    async def open(self, target: str) -> Dict[str, Any]:
+        try:
+            if target.startswith("http://") or target.startswith("https://"):
+                ok = webbrowser.open(target)
+                return {"success": bool(ok)}
+            path = str(resolve_path(target))
+            sys = platform.system().lower()
+            if sys == "darwin":
+                subprocess.Popen(["open", path])
+            elif sys == "linux":
+                subprocess.Popen(["xdg-open", path])
+            elif sys == "windows":
+                os.startfile(path)  # type: ignore[attr-defined]
+            else:
+                return {"success": False, "error": f"Unsupported OS: {sys}"}
+            return {"success": True}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    async def launch(self, app: str, args: Optional[list[str]] = None) -> Dict[str, Any]:
+        try:
+            if args:
+                proc = subprocess.Popen([app, *args])
+            else:
+                # allow shell command like "libreoffice --writer"
+                proc = subprocess.Popen(app, shell=True)
+            return {"success": True, "pid": proc.pid}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    def _get_window_by_id(self, window_id: int | str):
+        if pwc is None:
+            raise RuntimeError("pywinctl not available")
+        try:
+            windows = pwc.getAllWindowsDict()
+            return windows.get(window_id) or windows.get(int(window_id))
+        except Exception:
+            return None
+
+    async def get_current_window_id(self) -> Dict[str, Any]:
+        try:
+            if pwc is None:
+                return {"success": False, "error": "pywinctl not available"}
+            win = pwc.getActiveWindow()
+            if not win:
+                return {"success": False, "error": "No active window"}
+            return {"success": True, "window_id": win.getHandle()}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    async def get_application_windows(self, app: str) -> Dict[str, Any]:
+        try:
+            if pwc is None:
+                return {"success": False, "error": "pywinctl not available"}
+            wins = pwc.getWindowsWithTitle(app, condition=pwc.Re.CONTAINS, flags=pwc.Re.IGNORECASE)
+            ids = [w.getHandle() for w in wins]
+            return {"success": True, "windows": ids}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    async def get_window_name(self, window_id: int | str) -> Dict[str, Any]:
+        try:
+            if pwc is None:
+                return {"success": False, "error": "pywinctl not available"}
+            w = self._get_window_by_id(window_id)
+            if not w:
+                return {"success": False, "error": "Window not found"}
+            return {"success": True, "name": w.title}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    async def get_window_size(self, window_id: int | str) -> Dict[str, Any]:
+        try:
+            if pwc is None:
+                return {"success": False, "error": "pywinctl not available"}
+            w = self._get_window_by_id(window_id)
+            if not w:
+                return {"success": False, "error": "Window not found"}
+            width, height = w.size
+            return {"success": True, "width": int(width), "height": int(height)}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    async def activate_window(self, window_id: int | str) -> Dict[str, Any]:
+        try:
+            if pwc is None:
+                return {"success": False, "error": "pywinctl not available"}
+            w = self._get_window_by_id(window_id)
+            if not w:
+                return {"success": False, "error": "Window not found"}
+            ok = w.activate()
+            return {"success": bool(ok)}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    async def close_window(self, window_id: int | str) -> Dict[str, Any]:
+        try:
+            if pwc is None:
+                return {"success": False, "error": "pywinctl not available"}
+            w = self._get_window_by_id(window_id)
+            if not w:
+                return {"success": False, "error": "Window not found"}
+            ok = w.close()
+            return {"success": bool(ok)}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+
+# ===== Cross-platform file system command handlers =====
 
 
 class GenericFileHandler(BaseFileHandler):

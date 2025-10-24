@@ -75,7 +75,7 @@ except Exception:
     except Exception:
         package_version = "unknown"
 
-accessibility_handler, automation_handler, diorama_handler, file_handler, desktop_handler = (
+accessibility_handler, automation_handler, diorama_handler, file_handler, desktop_handler, window_handler = (
     HandlerFactory.create_handlers()
 )
 handlers = {
@@ -102,6 +102,15 @@ handlers = {
     # Desktop commands
     "get_desktop_environment": desktop_handler.get_desktop_environment,
     "set_wallpaper": desktop_handler.set_wallpaper,
+    # Window management
+    "open": window_handler.open,
+    "launch": window_handler.launch,
+    "get_current_window_id": window_handler.get_current_window_id,
+    "get_application_windows": window_handler.get_application_windows,
+    "get_window_name": window_handler.get_window_name,
+    "get_window_size": window_handler.get_window_size,
+    "activate_window": window_handler.activate_window,
+    "close_window": window_handler.close_window,
     # Mouse commands
     "mouse_down": automation_handler.mouse_down,
     "mouse_up": automation_handler.mouse_up,

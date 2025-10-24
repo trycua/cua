@@ -212,6 +212,76 @@ export class MacOSComputerInterface extends BaseComputerInterface {
     return response.position as CursorPosition;
   }
 
+  // Window Management
+  /** Open a file path or URL with the default handler. */
+  async open(target: string): Promise<void> {
+    const response = await this.sendCommand('open', { target });
+    if (!response.success) {
+      throw new Error((response.error as string) || 'Failed to open target');
+    }
+  }
+
+  /** Launch an application (string may include args). Returns pid if available. */
+  async launch(app: string, args?: string[]): Promise<number | undefined> {
+    const response = await this.sendCommand('launch', args ? { app, args } : { app });
+    if (!response.success) {
+      throw new Error((response.error as string) || 'Failed to launch application');
+    }
+    return (response.pid as number) || undefined;
+  }
+
+  /** Get the current active window id. */
+  async getCurrentWindowId(): Promise<number | string> {
+    const response = await this.sendCommand('get_current_window_id');
+    if (!response.success || response.window_id === undefined) {
+      throw new Error((response.error as string) || 'Failed to get current window id');
+    }
+    return response.window_id as number | string;
+  }
+
+  /** Get windows belonging to an application (by name). */
+  async getApplicationWindows(app: string): Promise<Array<number | string>> {
+    const response = await this.sendCommand('get_application_windows', { app });
+    if (!response.success) {
+      throw new Error((response.error as string) || 'Failed to get application windows');
+    }
+    return (response.windows as Array<number | string>) || [];
+  }
+
+  /** Get window title/name by id. */
+  async getWindowName(windowId: number | string): Promise<string> {
+    const response = await this.sendCommand('get_window_name', { window_id: windowId });
+    if (!response.success) {
+      throw new Error((response.error as string) || 'Failed to get window name');
+    }
+    return (response.name as string) || '';
+  }
+
+  /** Get window size as [width, height]. */
+  async getWindowSize(windowId: number | string): Promise<[number, number]> {
+    const response = await this.sendCommand('get_window_size', { window_id: windowId });
+    if (!response.success) {
+      throw new Error((response.error as string) || 'Failed to get window size');
+    }
+    return [Number(response.width) || 0, Number(response.height) || 0];
+  }
+
+  /** Activate a window by id. */
+  async activateWindow(windowId: number | string): Promise<void> {
+    const response = await this.sendCommand('activate_window', { window_id: windowId });
+    if (!response.success) {
+      throw new Error((response.error as string) || 'Failed to activate window');
+    }
+  }
+
+  /** Close a window by id. */
+  async closeWindow(windowId: number | string): Promise<void> {
+    const response = await this.sendCommand('close_window', { window_id: windowId });
+    if (!response.success) {
+      throw new Error((response.error as string) || 'Failed to close window');
+    }
+  }
+
   // Desktop Actions
   /**
    * Get the current desktop environment string (e.g., 'xfce4', 'gnome', 'kde', 'mac', 'windows').

@@ -33,6 +33,9 @@ jobs:
     outputs:
       agent_version: ${{ steps.agent_version.outputs.version }}
       computer_version: ${{ steps.computer_version.outputs.version }}
+      version: ${{ steps.extract-version.outputs.version }}
+      package_directory: ${{ steps.package.outputs.directory }}
+      service: ${{ inputs.service }}
     steps:
       - name: Set package directory
         id: package
@@ -112,6 +115,14 @@ jobs:
           VERSION=$(python -c "import tomllib; from pathlib import Path; data = tomllib.loads(Path('pyproject.toml').read_text()); print(data['project']['version'])")
           echo "Computer version: $VERSION"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Extract version from pyproject.toml
+        id: extract-version
+        run: |
+          cd ${{ steps.package.outputs.directory }}
+          VERSION=$(grep '^version = ' pyproject.toml | cut -d'"' -f2)
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Extracted version: $VERSION"
 
       - name: Push changes
         run: |

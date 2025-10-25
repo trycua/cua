@@ -123,16 +123,8 @@ class GenericWindowHandler(BaseWindowHandler):
         # Find by native handle among Window objects; getAllWindowsDict keys are titles
         try:
             for w in pwc.getAllWindows():
-                try:
-                    handle = (
-                        w.getHandle() if hasattr(w, "getHandle") else getattr(w, "handle", None)
-                    )
-                    if handle is None:
-                        continue
-                    if str(handle) == str(window_id):
-                        return w
-                except Exception:
-                    continue
+                if str(w.getHandle()) == str(window_id):
+                    return w
             return None
         except Exception:
             return None

@@ -4,7 +4,13 @@ from typing import Tuple, Type
 
 from computer_server.diorama.base import BaseDioramaHandler
 
-from .base import BaseAccessibilityHandler, BaseAutomationHandler, BaseFileHandler
+from .base import (
+    BaseAccessibilityHandler,
+    BaseAutomationHandler,
+    BaseDesktopHandler,
+    BaseFileHandler,
+    BaseWindowHandler,
+)
 
 # Conditionally import platform-specific handlers
 system = platform.system().lower()
@@ -17,7 +23,7 @@ elif system == "linux":
 elif system == "windows":
     from .windows import WindowsAccessibilityHandler, WindowsAutomationHandler
 
-from .generic import GenericFileHandler
+from .generic import GenericDesktopHandler, GenericFileHandler, GenericWindowHandler
 
 
 class HandlerFactory:
@@ -49,9 +55,14 @@ class HandlerFactory:
             raise RuntimeError(f"Failed to determine current OS: {str(e)}")
 
     @staticmethod
-    def create_handlers() -> (
-        Tuple[BaseAccessibilityHandler, BaseAutomationHandler, BaseDioramaHandler, BaseFileHandler]
-    ):
+    def create_handlers() -> Tuple[
+        BaseAccessibilityHandler,
+        BaseAutomationHandler,
+        BaseDioramaHandler,
+        BaseFileHandler,
+        BaseDesktopHandler,
+        BaseWindowHandler,
+    ]:
         """Create and return appropriate handlers for the current OS.
 
         Returns:
@@ -70,6 +81,8 @@ class HandlerFactory:
                 MacOSAutomationHandler(),
                 MacOSDioramaHandler(),
                 GenericFileHandler(),
+                GenericDesktopHandler(),
+                GenericWindowHandler(),
             )
         elif os_type == "linux":
             return (
@@ -77,6 +90,8 @@ class HandlerFactory:
                 LinuxAutomationHandler(),
                 BaseDioramaHandler(),
                 GenericFileHandler(),
+                GenericDesktopHandler(),
+                GenericWindowHandler(),
             )
         elif os_type == "windows":
             return (
@@ -84,6 +99,8 @@ class HandlerFactory:
                 WindowsAutomationHandler(),
                 BaseDioramaHandler(),
                 GenericFileHandler(),
+                GenericDesktopHandler(),
+                GenericWindowHandler(),
             )
         else:
             raise NotImplementedError(f"OS '{os_type}' is not supported")

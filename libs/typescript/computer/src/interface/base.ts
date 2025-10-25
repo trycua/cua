@@ -314,6 +314,25 @@ export abstract class BaseComputerInterface {
   abstract getScreenSize(): Promise<ScreenSize>;
   abstract getCursorPosition(): Promise<CursorPosition>;
 
+  // Window Management
+  abstract open(target: string): Promise<void>;
+  abstract launch(app: string, args?: string[]): Promise<number | undefined>;
+  abstract getCurrentWindowId(): Promise<number | string>;
+  abstract getApplicationWindows(app: string): Promise<Array<number | string>>;
+  abstract getWindowName(windowId: number | string): Promise<string>;
+  abstract getWindowSize(windowId: number | string): Promise<[number, number]>;
+  abstract getWindowPosition(windowId: number | string): Promise<[number, number]>;
+  abstract setWindowSize(windowId: number | string, width: number, height: number): Promise<void>;
+  abstract setWindowPosition(windowId: number | string, x: number, y: number): Promise<void>;
+  abstract maximizeWindow(windowId: number | string): Promise<void>;
+  abstract minimizeWindow(windowId: number | string): Promise<void>;
+  abstract activateWindow(windowId: number | string): Promise<void>;
+  abstract closeWindow(windowId: number | string): Promise<void>;
+
+  // Desktop Actions
+  abstract getDesktopEnvironment(): Promise<string>;
+  abstract setWallpaper(path: string): Promise<void>;
+
   // Clipboard Actions
   abstract copyToClipboard(): Promise<string>;
   abstract setClipboard(text: string): Promise<void>;

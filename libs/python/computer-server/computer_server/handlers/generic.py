@@ -182,7 +182,9 @@ class GenericWindowHandler(BaseWindowHandler):
         except Exception as e:
             return {"success": False, "error": str(e)}
 
-    async def set_window_size(self, window_id: int | str, width: int, height: int) -> Dict[str, Any]:
+    async def set_window_size(
+        self, window_id: int | str, width: int, height: int
+    ) -> Dict[str, Any]:
         try:
             if pwc is None:
                 return {"success": False, "error": "pywinctl not available"}

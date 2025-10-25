@@ -159,7 +159,9 @@ class BaseWindowHandler(ABC):
         pass
 
     @abstractmethod
-    async def set_window_size(self, window_id: str | int, width: int, height: int) -> Dict[str, Any]:
+    async def set_window_size(
+        self, window_id: str | int, width: int, height: int
+    ) -> Dict[str, Any]:
         """Set the size of a window by ID."""
         pass
 

@@ -55,16 +55,14 @@ class HandlerFactory:
             raise RuntimeError(f"Failed to determine current OS: {str(e)}")
 
     @staticmethod
-    def create_handlers() -> (
-        Tuple[
-            BaseAccessibilityHandler,
-            BaseAutomationHandler,
-            BaseDioramaHandler,
-            BaseFileHandler,
-            BaseDesktopHandler,
-            BaseWindowHandler,
-        ]
-    ):
+    def create_handlers() -> Tuple[
+        BaseAccessibilityHandler,
+        BaseAutomationHandler,
+        BaseDioramaHandler,
+        BaseFileHandler,
+        BaseDesktopHandler,
+        BaseWindowHandler,
+    ]:
         """Create and return appropriate handlers for the current OS.
 
         Returns:

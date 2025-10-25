@@ -75,9 +75,14 @@ except Exception:
     except Exception:
         package_version = "unknown"
 
-accessibility_handler, automation_handler, diorama_handler, file_handler, desktop_handler, window_handler = (
-    HandlerFactory.create_handlers()
-)
+(
+    accessibility_handler,
+    automation_handler,
+    diorama_handler,
+    file_handler,
+    desktop_handler,
+    window_handler,
+) = HandlerFactory.create_handlers()
 handlers = {
     "version": lambda: {"protocol": protocol_version, "package": package_version},
     # App-Use commands

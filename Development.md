@@ -349,13 +349,15 @@ For Swift code in the `libs/lume` directory:
 
 ## Releasing Packages
 
-Cua uses an automated GitHub Actions workflow to bump package versions.
+Cua uses an automated GitHub Actions workflow to bump package versions and publish to PyPI.
 
 > **Note:** The main branch is currently not protected. If branch protection is enabled in the future, the github-actions bot must be added to the bypass list for these workflows to commit directly.
 
-### Version Bump Workflow
+### Version Bump and Publish Workflow
 
 All packages are managed through a single consolidated workflow: [Bump Version](https://github.com/trycua/cua/actions/workflows/bump-version.yml)
+
+This workflow handles both version bumping and PyPI publishing in a single execution.
 
 **Supported packages:**
 
@@ -373,12 +375,19 @@ All packages are managed through a single consolidated workflow: [Bump Version](
 2. Click the "Run workflow" button in the GitHub UI
 3. Select the **service/package** you want to bump from the first dropdown
 4. Select the **bump type** (patch/minor/major) from the second dropdown
-5. Click "Run workflow" to start the version bump
-6. The workflow will automatically commit changes and push to main
+5. Click "Run workflow" to start the process
+6. The workflow will automatically:
+   - Bump the version in pyproject.toml
+   - Commit changes and push to main
+   - Create and push a package-specific tag (e.g., core-v0.1.9)
+   - Publish the package to PyPI
+   - Create a GitHub release
 
-### Rolling Back a Version Bump
+### Rolling Back a Version Bump and Release
 
-If you need to revert a version bump, follow these steps:
+If you need to revert a version bump and release, follow these steps:
+
+> **Important:** Rolling back only reverts the git commit and tag. If the package was already published to PyPI, you cannot delete or replace that version. You will need to publish a new version instead.
 
 **Step 1: Find the version bump commit**
 

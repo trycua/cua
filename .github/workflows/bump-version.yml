@@ -30,6 +30,14 @@ permissions:
 jobs:
   bump-version:
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.extract-version.outputs.version }}
+      package_directory: ${{ steps.package.outputs.directory }}
+      service: ${{ inputs.service }}
+      package_name: ${{ steps.package-metadata.outputs.package_name }}
+      base_package_name: ${{ steps.package-metadata.outputs.base_package_name }}
+      is_lume_package: ${{ steps.package-metadata.outputs.is_lume_package }}
+      tag_prefix: ${{ steps.package-metadata.outputs.tag_prefix }}
     steps:
       - name: Set package directory
         id: package
@@ -86,6 +94,119 @@ jobs:
           cd ${{ steps.package.outputs.directory }}
           bump2version ${{ inputs.bump_type }}
 
+      - name: Extract version from pyproject.toml
+        id: extract-version
+        run: |
+          cd ${{ steps.package.outputs.directory }}
+          VERSION=$(python3 << 'EOF'
+          import tomllib
+          import re
+          from pathlib import Path
+
+          # Read pyproject.toml
+          with open("pyproject.toml", "rb") as f:
+              config = tomllib.load(f)
+
+          # Try static version first
+          version = config.get("project", {}).get("version")
+
+          # If dynamic, read from source file
+          if not version and "version" in config.get("project", {}).get("dynamic", []):
+              pdm_version = config.get("tool", {}).get("pdm", {}).get("version", {})
+              if pdm_version.get("source") == "file":
+                  version_file = pdm_version.get("path")
+                  if version_file:
+                      content = Path(version_file).read_text()
+                      match = re.search(r'__version__\s*=\s*["\']([^"\']+)["\']', content)
+                      if match:
+                          version = match.group(1)
+
+          if not version:
+              raise ValueError("Could not extract version from pyproject.toml")
+
+          print(version)
+          EOF
+          )
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Extracted version: $VERSION"
+
+      - name: Set package metadata
+        id: package-metadata
+        run: |
+          SERVICE="${{ inputs.service }}"
+
+          # Map service to package metadata
+          case "$SERVICE" in
+            "cua-agent")
+              echo "package_name=agent" >> $GITHUB_OUTPUT
+              echo "base_package_name=cua-agent" >> $GITHUB_OUTPUT
+              echo "is_lume_package=false" >> $GITHUB_OUTPUT
+              echo "tag_prefix=agent-v" >> $GITHUB_OUTPUT
+              ;;
+            "cua-computer")
+              echo "package_name=computer" >> $GITHUB_OUTPUT
+              echo "base_package_name=cua-computer" >> $GITHUB_OUTPUT
+              echo "is_lume_package=false" >> $GITHUB_OUTPUT
+              echo "tag_prefix=computer-v" >> $GITHUB_OUTPUT
+              ;;
+            "cua-computer-server")
+              echo "package_name=computer-server" >> $GITHUB_OUTPUT
+              echo "base_package_name=cua-computer-server" >> $GITHUB_OUTPUT
+              echo "is_lume_package=false" >> $GITHUB_OUTPUT
+              echo "tag_prefix=computer-server-v" >> $GITHUB_OUTPUT
+              ;;
+            "cua-core")
+              echo "package_name=core" >> $GITHUB_OUTPUT
+              echo "base_package_name=cua-core" >> $GITHUB_OUTPUT
+              echo "is_lume_package=false" >> $GITHUB_OUTPUT
+              echo "tag_prefix=core-v" >> $GITHUB_OUTPUT
+              ;;
+            "cua-mcp-server")
+              echo "package_name=mcp-server" >> $GITHUB_OUTPUT
+              echo "base_package_name=cua-mcp-server" >> $GITHUB_OUTPUT
+              echo "is_lume_package=false" >> $GITHUB_OUTPUT
+              echo "tag_prefix=mcp-server-v" >> $GITHUB_OUTPUT
+              ;;
+            "cua-som")
+              echo "package_name=som" >> $GITHUB_OUTPUT
+              echo "base_package_name=cua-som" >> $GITHUB_OUTPUT
+              echo "is_lume_package=false" >> $GITHUB_OUTPUT
+              echo "tag_prefix=som-v" >> $GITHUB_OUTPUT
+              ;;
+            "pylume")
+              echo "package_name=pylume" >> $GITHUB_OUTPUT
+              echo "base_package_name=pylume" >> $GITHUB_OUTPUT
+              echo "is_lume_package=true" >> $GITHUB_OUTPUT
+              echo "tag_prefix=pylume-v" >> $GITHUB_OUTPUT
+              ;;
+            *)
+              echo "Unknown service: $SERVICE"
+              exit 1
+              ;;
+          esac
+
+          echo "Package metadata set for $SERVICE"
+
+      - name: Create and push tag
+        run: |
+          TAG="${{ steps.package-metadata.outputs.tag_prefix }}${{ steps.extract-version.outputs.version }}"
+          echo "Creating tag: $TAG"
+          git tag "$TAG"
+          git push origin "$TAG"
+          echo "Tag $TAG created and pushed"
+
       - name: Push changes
         run: |
           git push origin main --follow-tags
+
+  publish:
+    needs: bump-version
+    uses: ./.github/workflows/pypi-reusable-publish.yml
+    with:
+      package_name: ${{ needs.bump-version.outputs.package_name }}
+      package_dir: ${{ needs.bump-version.outputs.package_directory }}
+      version: ${{ needs.bump-version.outputs.version }}
+      is_lume_package: ${{ needs.bump-version.outputs.is_lume_package == 'true' }}
+      base_package_name: ${{ needs.bump-version.outputs.base_package_name }}
+    secrets:
+      PYPI_TOKEN: ${{ secrets.PYPI_TOKEN }}

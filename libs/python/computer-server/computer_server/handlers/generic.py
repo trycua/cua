@@ -117,12 +117,23 @@ class GenericWindowHandler(BaseWindowHandler):
         except Exception as e:
             return {"success": False, "error": str(e)}
 
-    def _get_window_by_id(self, window_id: int | str):
+    def _get_window_by_id(self, window_id: int | str) -> Optional[Any]:
         if pwc is None:
             raise RuntimeError("pywinctl not available")
+        # Find by native handle among Window objects; getAllWindowsDict keys are titles
         try:
-            windows = pwc.getAllWindowsDict()
-            return windows.get(window_id) or windows.get(int(window_id))
+            for w in pwc.getAllWindows():
+                try:
+                    handle = (
+                        w.getHandle() if hasattr(w, "getHandle") else getattr(w, "handle", None)
+                    )
+                    if handle is None:
+                        continue
+                    if str(handle) == str(window_id):
+                        return w
+                except Exception:
+                    continue
+            return None
         except Exception:
             return None
 

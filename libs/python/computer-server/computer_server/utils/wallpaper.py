@@ -159,40 +159,47 @@ def set_wallpaper(file_loc: str, first_run: bool = True):
         args = ["dcop", "kdesktop", "KBackgroundIface", "setWallpaper", "0", file_loc, "6"]
         subprocess.Popen(args)
     elif desktop_env == "xfce4":
-        # From http://www.commandlinefu.com/commands/view/2055/change-wallpaper-for-xfce4-4.6.0
-        if first_run:
-            args0 = [
-                "xfconf-query",
-                "-c",
-                "xfce4-desktop",
-                "-p",
-                "/backdrop/screen0/monitor0/image-path",
-                "-s",
-                file_loc,
-            ]
-            args1 = [
-                "xfconf-query",
-                "-c",
-                "xfce4-desktop",
-                "-p",
-                "/backdrop/screen0/monitor0/image-style",
-                "-s",
-                "3",
-            ]
-            args2 = [
-                "xfconf-query",
-                "-c",
-                "xfce4-desktop",
-                "-p",
-                "/backdrop/screen0/monitor0/image-show",
-                "-s",
-                "true",
-            ]
-            subprocess.Popen(args0)
-            subprocess.Popen(args1)
-            subprocess.Popen(args2)
-        args = ["xfdesktop", "--reload"]
-        subprocess.Popen(args)
+        # Iterate over all wallpaper-related keys and set to file_loc
+        try:
+            list_proc = subprocess.run(
+                ["xfconf-query", "-c", "xfce4-desktop", "-l"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                check=False,
+            )
+            keys = []
+            if list_proc.stdout:
+                for line in list_proc.stdout.splitlines():
+                    line = line.strip()
+                    if not line:
+                        continue
+                    # Common keys: .../last-image and .../image-path
+                    if "/last-image" in line or "/image-path" in line:
+                        keys.append(line)
+            # Fallback: known defaults if none were listed
+            if not keys:
+                keys = [
+                    "/backdrop/screen0/monitorVNC-0/workspace0/last-image",
+                    "/backdrop/screen0/monitor0/image-path",
+                ]
+            for key in keys:
+                subprocess.run(
+                    [
+                        "xfconf-query",
+                        "-c",
+                        "xfce4-desktop",
+                        "-p",
+                        key,
+                        "-s",
+                        file_loc,
+                    ],
+                    check=False,
+                )
+        except Exception:
+            pass
+        # Reload xfdesktop to apply changes
+        subprocess.Popen(["xfdesktop", "--reload"])
     elif desktop_env == "razor-qt":  # TODO: implement reload of desktop when possible
         if first_run:
             import configparser

@@ -37,9 +37,10 @@ jobs:
           pip install uv
           uv sync
 
-      - name: Install Node dependencies (all workspaces, incl. dev)
+      - name: Install Node dependencies
         run: |
-          pnpm -r install --frozen-lockfile
+          pnpm install --frozen-lockfile
+          pnpm -C libs/typescript install --frozen-lockfile
 
       # Python checks (isort, black, ruff, mypy)
       - name: Python lint & typecheck

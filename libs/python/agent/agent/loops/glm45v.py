@@ -762,6 +762,7 @@ class Glm4vConfig(AsyncAgentConfig):
             #     "skip_special_tokens": False,
             # }
         }
+        api_kwargs.update({k: v for k, v in (kwargs or {}).items()})
 
         # Add API callbacks
         if _on_api_start:
@@ -852,6 +853,7 @@ Where x,y are coordinates normalized to 0-999 range."""
                     "skip_special_tokens": False,
                 },
             }
+            api_kwargs.update({k: v for k, v in (kwargs or {}).items()})
 
             # Call liteLLM
             response = await litellm.acompletion(**api_kwargs)

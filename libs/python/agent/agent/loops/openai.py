@@ -140,7 +140,7 @@ class OpenAIComputerUseConfig:
         return output_dict
 
     async def predict_click(
-        self, model: str, image_b64: str, instruction: str
+        self, model: str, image_b64: str, instruction: str, **kwargs
     ) -> Optional[Tuple[int, int]]:
         """
         Predict click coordinates based on image and instruction.
@@ -208,6 +208,7 @@ Task: Click {instruction}. Output ONLY a click action on the target element.""",
             "reasoning": {"summary": "concise"},
             "truncation": "auto",
             "max_tokens": 200,  # Keep response short for click prediction
+            **kwargs,
         }
 
         # Use liteLLM responses

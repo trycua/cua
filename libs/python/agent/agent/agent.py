@@ -185,7 +185,9 @@ class ComputerAgent:
         max_trajectory_budget: Optional[float | dict] = None,
         telemetry_enabled: Optional[bool] = True,
         trust_remote_code: Optional[bool] = False,
-        **kwargs,
+        api_key: Optional[str] = None,
+        api_base: Optional[str] = None,
+        **additional_generation_kwargs,
     ):
         """
         Initialize ComputerAgent.
@@ -205,7 +207,9 @@ class ComputerAgent:
             max_trajectory_budget: If set, adds BudgetManagerCallback to track usage costs and stop when budget is exceeded
             telemetry_enabled: If set, adds TelemetryCallback to track anonymized usage data. Enabled by default.
             trust_remote_code: If set, trust remote code when loading local models. Disabled by default.
-            **kwargs: Additional arguments passed to the agent loop
+            api_key: Optional API key override for the model provider
+            api_base: Optional API base URL override for the model provider
+            **additional_generation_kwargs: Additional arguments passed to the model provider
         """
         # If the loop is "human/human", we need to prefix a grounding model fallback
         if model in ["human/human", "human"]:
@@ -223,8 +227,10 @@ class ComputerAgent:
         self.screenshot_delay = screenshot_delay
         self.use_prompt_caching = use_prompt_caching
         self.telemetry_enabled = telemetry_enabled
-        self.kwargs = kwargs
+        self.kwargs = additional_generation_kwargs
         self.trust_remote_code = trust_remote_code
+        self.api_key = api_key
+        self.api_base = api_base
 
         # == Add built-in callbacks ==
 
@@ -593,7 +599,12 @@ class ComputerAgent:
     # ============================================================================
 
     async def run(
-        self, messages: Messages, stream: bool = False, **kwargs
+        self,
+        messages: Messages,
+        stream: bool = False,
+        api_key: Optional[str] = None,
+        api_base: Optional[str] = None,
+        **additional_generation_kwargs,
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """
         Run the agent with the given messages using Computer protocol handler pattern.
@@ -601,7 +612,9 @@ class ComputerAgent:
         Args:
             messages: List of message dictionaries
             stream: Whether to stream the response
-            **kwargs: Additional arguments
+            api_key: Optional API key override for the model provider
+            api_base: Optional API base URL override for the model provider
+            **additional_generation_kwargs: Additional arguments passed to the model provider
 
         Returns:
             AsyncGenerator that yields response chunks
@@ -617,8 +630,12 @@ class ComputerAgent:
 
         await self._initialize_computers()
 
-        # Merge kwargs
-        merged_kwargs = {**self.kwargs, **kwargs}
+        # Merge kwargs and thread api credentials (run overrides constructor)
+        merged_kwargs = {**self.kwargs, **additional_generation_kwargs}
+        if (api_key is not None) or (self.api_key is not None):
+            merged_kwargs["api_key"] = api_key if api_key is not None else self.api_key
+        if (api_base is not None) or (self.api_base is not None):
+            merged_kwargs["api_base"] = api_base if api_base is not None else self.api_base
 
         old_items = self._process_input(messages)
         new_items = []
@@ -728,8 +745,14 @@ class ComputerAgent:
                 if not self.computer_handler:
                     raise ValueError("Computer tool or image_b64 is required for predict_click")
                 image_b64 = await self.computer_handler.screenshot()
+            # Pass along api credentials if available
+            click_kwargs: Dict[str, Any] = {}
+            if self.api_key is not None:
+                click_kwargs["api_key"] = self.api_key
+            if self.api_base is not None:
+                click_kwargs["api_base"] = self.api_base
             return await self.agent_loop.predict_click(
-                model=self.model, image_b64=image_b64, instruction=instruction
+                model=self.model, image_b64=image_b64, instruction=instruction, **click_kwargs
             )
         return None
 

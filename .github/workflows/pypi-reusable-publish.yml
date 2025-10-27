@@ -166,6 +166,50 @@ jobs:
           WHEEL_FILE=$(ls dist/*.whl | head -1)
           echo "WHEEL_FILE=${WHEEL_FILE}" >> $GITHUB_ENV
 
+      - name: Extract dependency versions from pyproject.toml
+        id: extract-deps
+        run: |
+          cd ${{ inputs.package_dir }}
+          python3 << 'EOF'
+          try:
+              import tomllib
+          except ImportError:
+              import tomli as tomllib
+          import re
+          from pathlib import Path
+          import os
+
+          # Read pyproject.toml
+          with open("pyproject.toml", "rb") as f:
+              config = tomllib.load(f)
+
+          dependencies = config.get("project", {}).get("dependencies", [])
+
+          # Extract version constraints for CUA packages
+          dep_versions = {}
+          for dep in dependencies:
+              # Match patterns like "cua-computer>=0.4.0,<0.5.0" or "cua-agent[all]>=0.4.0" or "pylume>=1.0.0"
+              match = re.match(r'^(cua-[a-z-]+|pylume)(?:\[[^\]]+\])?([><=!]+)([\d.]+)', dep)
+              if match:
+                  package = match.group(1)
+                  operator = match.group(2)
+                  version = match.group(3)
+                  # Use the minimum version specified (after >= or >)
+                  if '>=' in operator or '>' in operator:
+                      dep_versions[package] = version
+
+          # Write to GITHUB_ENV
+          with open(os.environ['GITHUB_ENV'], 'a') as f:
+              for package, version in dep_versions.items():
+                  # Convert "cua-computer" to "COMPUTER_VERSION", "pylume" to "PYLUME_VERSION"
+                  if package.startswith('cua-'):
+                      env_var = package[4:].upper().replace('-', '_') + '_VERSION'
+                  else:
+                      env_var = package.upper().replace('-', '_') + '_VERSION'
+                  f.write(f"{env_var}={version}\n")
+                  print(f"Set {env_var}={version}")
+          EOF
+
       - name: Prepare Simple Release Notes
         if: startsWith(github.ref, 'refs/tags/')
         run: |

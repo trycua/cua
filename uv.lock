@@ -861,7 +861,7 @@ wheels = [
 
 [[package]]
 name = "cua-agent"
-version = "0.4.35"
+version = "0.4.37"
 source = { editable = "libs/python/agent" }
 dependencies = [
     { name = "aiohttp" },
@@ -1015,11 +1015,12 @@ provides-extras = ["openai", "anthropic", "qwen", "omni", "uitars", "uitars-mlx"
 
 [[package]]
 name = "cua-computer"
-version = "0.4.10"
+version = "0.4.11"
 source = { editable = "libs/python/computer" }
 dependencies = [
     { name = "aiohttp" },
     { name = "cua-core" },
+    { name = "mslex" },
     { name = "pillow" },
     { name = "pydantic" },
     { name = "websocket-client" },
@@ -1046,6 +1047,7 @@ requires-dist = [
     { name = "datasets", marker = "extra == 'ui'", specifier = ">=3.6.0" },
     { name = "gradio", marker = "extra == 'all'", specifier = ">=5.23.3" },
     { name = "gradio", marker = "extra == 'ui'", specifier = ">=5.23.3" },
+    { name = "mslex", specifier = ">=1.3.0" },
     { name = "pillow", specifier = ">=10.0.0" },
     { name = "pydantic", specifier = ">=2.11.1" },
     { name = "python-dotenv", marker = "extra == 'all'", specifier = ">=1.0.1" },
@@ -1057,7 +1059,7 @@ provides-extras = ["lume", "lumier", "ui", "all"]
 
 [[package]]
 name = "cua-computer-server"
-version = "0.1.27"
+version = "0.1.28"
 source = { editable = "libs/python/computer-server" }
 dependencies = [
     { name = "aiohttp" },
@@ -3428,6 +3430,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/e0/47/dd32fa426cc72114383ac549964eecb20ecfd886d1e5ccf5340b55b02f57/mpmath-1.3.0.tar.gz", hash = "sha256:7a28eb2a9774d00c7bc92411c19a89209d5da7c4c9a9e227be8330a23a25b91f", size = 508106, upload-time = "2023-03-07T16:47:11.061Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/43/e3/7d92a15f894aa0c9c4b49b8ee9ac9850d6e63b03c9c32c0367a13ae62209/mpmath-1.3.0-py3-none-any.whl", hash = "sha256:a0b2b9fe80bbcd81a6647ff13108738cfb482d481d826cc0e02f5b35e5c88d2c", size = 536198, upload-time = "2023-03-07T16:47:09.197Z" },
+]
+
+[[package]]
+name = "mslex"
+version = "1.3.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/e0/97/7022667073c99a0fe028f2e34b9bf76b49a611afd21b02527fbfd92d4cd5/mslex-1.3.0.tar.gz", hash = "sha256:641c887d1d3db610eee2af37a8e5abda3f70b3006cdfd2d0d29dc0d1ae28a85d", size = 11583, upload-time = "2024-10-16T13:16:18.523Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/64/f2/66bd65ca0139675a0d7b18f0bada6e12b51a984e41a76dbe44761bf1b3ee/mslex-1.3.0-py3-none-any.whl", hash = "sha256:c7074b347201b3466fc077c5692fbce9b5f62a63a51f537a53fbbd02eff2eea4", size = 7820, upload-time = "2024-10-16T13:16:17.566Z" },
 ]
 
 [[package]]

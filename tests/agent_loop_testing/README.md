@@ -59,6 +59,7 @@ pip install -e libs/python/agent -e libs/python/computer
 ## 🧪 What This Tests
 
 ### ✅ **PASS Criteria**
+
 - AI model initializes successfully
 - AI model can analyze screenshots
 - AI model generates logical responses
@@ -67,6 +68,7 @@ pip install -e libs/python/agent -e libs/python/computer
 - Screenshot functionality works correctly
 
 ### ❌ **FAIL Criteria**
+
 - AI model fails to initialize
 - AI model crashes during execution
 - Agent loop breaks unexpectedly
@@ -86,6 +88,7 @@ The framework supports multiple types of AI models:
 ### Minimal Mock Computer
 
 The mock computer only provides:
+
 - `screenshot()`: Returns static image as base64
 - `get_screen_dimensions()`: Returns screen size
 - Action counting and statistics
@@ -95,6 +98,7 @@ The mock computer only provides:
 ### Agent Loop
 
 The `AgentLoop` class coordinates:
+
 - Taking screenshots from mock computer
 - Sending messages + images to AI model
 - Processing AI model responses
@@ -164,9 +168,9 @@ from .ai_interface import AIModelInterface, AgentResponse, AgentMessage, MockCom
 class MyCustomAIModel(AIModelInterface):
     def __init__(self, model_name: str):
         self.model_name = model_name
-    
+
     async def generate_response(
-        self, 
+        self,
         messages: List[AgentMessage],
         computer_interface: MockComputerInterface
     ) -> AgentResponse:
@@ -178,7 +182,7 @@ class MyCustomAIModel(AIModelInterface):
             tool_calls=[{"name": "click", "args": {"x": 100, "y": 200}}],
             finished=False
         )
-    
+
     def get_model_name(self) -> str:
         return self.model_name
 ```
@@ -233,21 +237,25 @@ The framework works in CI/CD environments:
 ## 🎉 Key Benefits
 
 ### ✅ **Pluggable Architecture**
+
 - Test any AI model with the same interface
 - Easy to add new models
 - Consistent testing across different providers
 
 ### ✅ **Minimal Dependencies**
+
 - Test model works without external APIs
 - Mock computer only implements what's needed
 - Clean separation of concerns
 
 ### ✅ **Focused Testing**
+
 - Tests AI model capabilities, not computer functionality
 - Verifies agent loop mechanics
 - Consistent results with static images
 
 ### ✅ **Easy to Use**
+
 - Simple command-line interface
 - Clear output and error messages
 - Works in CI/CD environments

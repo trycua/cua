@@ -4,6 +4,8 @@ name: Test CUA Supporting Models
 # Run manually using workflow_dispatch with test_models=true
 
 on:
+  pull_request:
+    branches: [ main, master ]
   workflow_dispatch:
     inputs:
       test_models:
@@ -13,9 +15,9 @@ on:
         type: boolean
 
 jobs:
-  # Test all CUA models - runs when manually triggered with test_models=true
+  # Test all CUA models - runs on PRs or when manually triggered
   test-all-models:
-    if: ${{ inputs.test_models == 'true' }}
+    if: ${{ github.event_name == 'pull_request' || inputs.test_models == 'true' }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false

@@ -11,11 +11,6 @@ on:
         required: false
         default: "true"
         type: boolean
-      max_iterations:
-        description: "Maximum iterations per test"
-        required: false
-        default: "3"
-        type: string
 
 jobs:
   # Test all CUA models - runs when manually triggered with test_models=true
@@ -108,10 +103,7 @@ jobs:
       - name: Test model with agent loop
         run: |
           cd tests/agent_loop_testing
-          python agent_test.py \
-            --model "${{ matrix.model }}" \
-            --max-iterations ${{ inputs.max_iterations || '3' }} \
-            --message "Take a screenshot and describe what you see on the desktop"
+          python agent_test.py --model "${{ matrix.model }}"
 
       - name: Upload test results
         if: always()

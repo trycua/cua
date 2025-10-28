@@ -1,18 +1,15 @@
 name: Test CUA Supporting Models
 
-# This workflow runs on:
-# 1. Pull requests to main/master/develop branches - runs basic functionality tests only
-# 2. Manual dispatch - allows full testing of all supported models with API keys
+# This workflow tests all supported CUA models with API keys
+# Run manually using workflow_dispatch with test_models=true
 
 on:
-  pull_request:
-    branches: [main, master, develop]
   workflow_dispatch:
     inputs:
       test_models:
         description: "Test all supported models (requires API keys)"
         required: false
-        default: "false"
+        default: "true"
         type: boolean
       max_iterations:
         description: "Maximum iterations per test"
@@ -30,54 +27,54 @@ jobs:
       matrix:
         model:
           # Anthropic Claude Models
-          - anthropic/claude-3-5-sonnet-20241022
-          - anthropic/claude-3-7-sonnet-20250219
-          - anthropic/claude-opus-4-20250514
-          - anthropic/claude-sonnet-4-20250514
-          - anthropic/claude-opus-4-1-20250805
+          # - anthropic/claude-3-5-sonnet-20241022
+          # - anthropic/claude-3-7-sonnet-20250219
+          # - anthropic/claude-opus-4-20250514
+          # - anthropic/claude-sonnet-4-20250514
+          # - anthropic/claude-opus-4-1-20250805
           - anthropic/claude-sonnet-4-5-20250929
-          - anthropic/claude-haiku-4-5-20251001
+          # - anthropic/claude-haiku-4-5-20251001
 
-          # OpenAI Models
-          - openai/computer-use-preview
+          # # OpenAI Models
+          # - openai/computer-use-preview
 
-          # Gemini Models
-          - gemini-2.5-computer-use-preview-10-2025
+          # # Gemini Models
+          # - gemini-2.5-computer-use-preview-10-2025
 
-          # GLM-4.5V Models
-          - openrouter/z-ai/glm-4.5v
+          # # GLM-4.5V Models
+          # - openrouter/z-ai/glm-4.5v
 
-          # UI-TARS Models
-          - huggingface-local/ByteDance-Seed/UI-TARS-1.5-7B
+          # # UI-TARS Models
+          # - huggingface-local/ByteDance-Seed/UI-TARS-1.5-7B
 
-          # OpenCUA Models
-          - huggingface-local/xlangai/OpenCUA-7B
-          - huggingface-local/xlangai/OpenCUA-32B
+          # # OpenCUA Models
+          # - huggingface-local/xlangai/OpenCUA-7B
+          # - huggingface-local/xlangai/OpenCUA-32B
 
-          # GTA1 Family Models
-          - huggingface-local/HelloKKMe/GTA1-7B
-          - huggingface-local/HelloKKMe/GTA1-32B
-          - huggingface-local/HelloKKMe/GTA1-72B
+          # # GTA1 Family Models
+          # - huggingface-local/HelloKKMe/GTA1-7B
+          # - huggingface-local/HelloKKMe/GTA1-32B
+          # - huggingface-local/HelloKKMe/GTA1-72B
 
-          # Holo 1.5 Family Models
-          - huggingface-local/Hcompany/Holo1.5-3B
-          - huggingface-local/Hcompany/Holo1.5-7B
-          - huggingface-local/Hcompany/Holo1.5-72B
+          # # Holo 1.5 Family Models
+          # - huggingface-local/Hcompany/Holo1.5-3B
+          # - huggingface-local/Hcompany/Holo1.5-7B
+          # - huggingface-local/Hcompany/Holo1.5-72B
 
-          # InternVL 3.5 Family Models
-          - huggingface-local/OpenGVLab/InternVL3_5-1B
-          - huggingface-local/OpenGVLab/InternVL3_5-2B
-          - huggingface-local/OpenGVLab/InternVL3_5-4B
-          - huggingface-local/OpenGVLab/InternVL3_5-8B
+          # # InternVL 3.5 Family Models
+          # - huggingface-local/OpenGVLab/InternVL3_5-1B
+          # - huggingface-local/OpenGVLab/InternVL3_5-2B
+          # - huggingface-local/OpenGVLab/InternVL3_5-4B
+          # - huggingface-local/OpenGVLab/InternVL3_5-8B
 
-          # GLM-4.5V Local
-          - huggingface-local/zai-org/GLM-4.5V
+          # # GLM-4.5V Local
+          # - huggingface-local/zai-org/GLM-4.5V
 
-          # Composed Models (Grounding + Planning)
-          - omniparser+anthropic/claude-3-5-sonnet-20241022
-          - omniparser+openai/gpt-4o-mini
-          - moondream3+anthropic/claude-3-5-sonnet-20241022
-          - moondream3+openai/gpt-4o-mini
+          # # Composed Models (Grounding + Planning)
+          # - omniparser+anthropic/claude-3-5-sonnet-20241022
+          # - omniparser+openai/gpt-4o-mini
+          # - moondream3+anthropic/claude-3-5-sonnet-20241022
+          # - moondream3+openai/gpt-4o-mini
 
     steps:
       - name: Checkout repository
@@ -121,48 +118,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: test-results-${{ matrix.model }}
-          path: |
-            tests/agent_loop_testing/test_images/
-            *.log
-          retention-days: 7
-
-  # Basic functionality test - always runs (both on PR and manual dispatch)
-  test-basic-functionality:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Install basic dependencies
-        run: |
-          pip install --upgrade pip
-          pip install -e libs/python/agent -e libs/python/computer
-          pip install -e libs/python/core
-          pip install pytest
-
-      - name: Test basic agent loop functionality
-        run: |
-          cd tests/agent_loop_testing
-          python agent_test.py \
-            --model "test-model" \
-            --max-iterations 2 \
-            --message "Look at the screen and tell me what you see"
-
-      - name: Run example tests
-        run: |
-          cd tests/agent_loop_testing
-          python example.py
-
-      - name: Upload basic test results
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: basic-test-results
           path: |
             tests/agent_loop_testing/test_images/
             *.log

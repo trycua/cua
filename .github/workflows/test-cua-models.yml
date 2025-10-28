@@ -1,0 +1,328 @@
+name: Test CUA Supporting Models
+
+on:
+  workflow_dispatch:
+    inputs:
+      test_cloud_models:
+        description: 'Test cloud-based models (requires API keys)'
+        required: false
+        default: 'false'
+        type: boolean
+      test_local_models:
+        description: 'Test local models (requires GPU)'
+        required: false
+        default: 'false'
+        type: boolean
+      max_iterations:
+        description: 'Maximum iterations per test'
+        required: false
+        default: '3'
+        type: string
+
+jobs:
+  test-cloud-models:
+    if: ${{ inputs.test_cloud_models == 'true' }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        model:
+          # Anthropic Claude Models
+          - anthropic/claude-3-5-sonnet-20241022
+          - anthropic/claude-3-7-sonnet-20250219
+          - anthropic/claude-opus-4-20250514
+          - anthropic/claude-sonnet-4-20250514
+          - anthropic/claude-opus-4-1-20250805
+          - anthropic/claude-sonnet-4-5-20250929
+          - anthropic/claude-haiku-4-5-20251001
+          
+          # OpenAI Models
+          - openai/computer-use-preview
+          
+          # Gemini Models
+          - gemini-2.5-computer-use-preview-10-2025
+          
+          # GLM-4.5V Models
+          - openrouter/z-ai/glm-4.5v
+          
+          # Composed Models (Grounding + Planning)
+          - omniparser+anthropic/claude-3-5-sonnet-20241022
+          - omniparser+openai/gpt-4o-mini
+          - moondream3+anthropic/claude-3-5-sonnet-20241022
+          - moondream3+openai/gpt-4o-mini
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgl1-mesa-glx libglib2.0-0
+
+      - name: Install CUA dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -e libs/python/agent -e libs/python/computer
+          pip install -e libs/python/core
+          pip install pytest
+
+      - name: Set up environment variables
+        run: |
+          echo "ANTHROPIC_API_KEY=${{ secrets.ANTHROPIC_API_KEY }}" >> $GITHUB_ENV
+          echo "OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}" >> $GITHUB_ENV
+          echo "GOOGLE_API_KEY=${{ secrets.GOOGLE_API_KEY }}" >> $GITHUB_ENV
+          echo "OPENROUTER_API_KEY=${{ secrets.OPENROUTER_API_KEY }}" >> $GITHUB_ENV
+
+      - name: Test model with agent loop
+        run: |
+          cd tests/agent_loop_testing
+          python agent_test.py \
+            --model "${{ matrix.model }}" \
+            --max-iterations ${{ inputs.max_iterations || '3' }} \
+            --message "Take a screenshot and describe what you see on the desktop"
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: test-results-${{ matrix.model }}
+          path: |
+            tests/agent_loop_testing/test_images/
+            *.log
+          retention-days: 7
+
+  test-local-models:
+    if: ${{ inputs.test_local_models == 'true' }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        model:
+          # UI-TARS Models
+          - huggingface-local/ByteDance-Seed/UI-TARS-1.5-7B
+          
+          # OpenCUA Models
+          - huggingface-local/xlangai/OpenCUA-7B
+          - huggingface-local/xlangai/OpenCUA-32B
+          
+          # GTA1 Family Models
+          - huggingface-local/HelloKKMe/GTA1-7B
+          - huggingface-local/HelloKKMe/GTA1-32B
+          - huggingface-local/HelloKKMe/GTA1-72B
+          
+          # Holo 1.5 Family Models
+          - huggingface-local/Hcompany/Holo1.5-3B
+          - huggingface-local/Hcompany/Holo1.5-7B
+          - huggingface-local/Hcompany/Holo1.5-72B
+          
+          # InternVL 3.5 Family Models
+          - huggingface-local/OpenGVLab/InternVL3_5-1B
+          - huggingface-local/OpenGVLab/InternVL3_5-2B
+          - huggingface-local/OpenGVLab/InternVL3_5-4B
+          - huggingface-local/OpenGVLab/InternVL3_5-8B
+          
+          # GLM-4.5V Local
+          - huggingface-local/zai-org/GLM-4.5V
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgl1-mesa-glx libglib2.0-0
+
+      - name: Install CUA dependencies with local model support
+        run: |
+          pip install --upgrade pip
+          pip install -e libs/python/agent -e libs/python/computer
+          pip install -e libs/python/core
+          pip install "cua-agent[uitars-hf]"
+          pip install pytest
+
+      - name: Test model with agent loop
+        run: |
+          cd tests/agent_loop_testing
+          python agent_test.py \
+            --model "${{ matrix.model }}" \
+            --max-iterations ${{ inputs.max_iterations || '3' }} \
+            --message "Take a screenshot and describe what you see on the desktop"
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: test-results-local-${{ matrix.model }}
+          path: |
+            tests/agent_loop_testing/test_images/
+            *.log
+          retention-days: 7
+
+  test-basic-functionality:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install basic dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -e libs/python/agent -e libs/python/computer
+          pip install -e libs/python/core
+          pip install pytest
+
+      - name: Test basic agent loop functionality
+        run: |
+          cd tests/agent_loop_testing
+          python agent_test.py \
+            --model "test-model" \
+            --max-iterations 2 \
+            --message "Look at the screen and tell me what you see"
+
+      - name: Run example tests
+        run: |
+          cd tests/agent_loop_testing
+          python example.py
+
+      - name: Upload basic test results
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: basic-test-results
+          path: |
+            tests/agent_loop_testing/test_images/
+            *.log
+          retention-days: 7
+
+  test-composed-models:
+    if: ${{ inputs.test_cloud_models == 'true' }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        grounding_model:
+          - omniparser
+          - moondream3
+        planning_model:
+          - anthropic/claude-3-5-sonnet-20241022
+          - openai/gpt-4o-mini
+          - openai/gpt-4o
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgl1-mesa-glx libglib2.0-0
+
+      - name: Install CUA dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -e libs/python/agent -e libs/python/computer
+          pip install -e libs/python/core
+          pip install pytest
+
+      - name: Set up environment variables
+        run: |
+          echo "ANTHROPIC_API_KEY=${{ secrets.ANTHROPIC_API_KEY }}" >> $GITHUB_ENV
+          echo "OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}" >> $GITHUB_ENV
+
+      - name: Test composed model
+        run: |
+          cd tests/agent_loop_testing
+          python agent_test.py \
+            --model "${{ matrix.grounding_model }}+${{ matrix.planning_model }}" \
+            --max-iterations ${{ inputs.max_iterations || '3' }} \
+            --message "Take a screenshot and click on the Safari icon"
+
+      - name: Upload composed test results
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: test-results-composed-${{ matrix.grounding_model }}-${{ matrix.planning_model }}
+          path: |
+            tests/agent_loop_testing/test_images/
+            *.log
+          retention-days: 7
+
+  generate-test-report:
+    needs: [test-cloud-models, test-local-models, test-basic-functionality, test-composed-models]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download all test artifacts
+        uses: actions/download-artifact@v3
+
+      - name: Generate test summary
+        run: |
+          echo "# CUA Model Test Results" > test-summary.md
+          echo "" >> test-summary.md
+          echo "## Test Summary" >> test-summary.md
+          echo "- **Cloud Models Tested**: ${{ needs.test-cloud-models.result }}" >> test-summary.md
+          echo "- **Local Models Tested**: ${{ needs.test-local-models.result }}" >> test-summary.md
+          echo "- **Basic Functionality**: ${{ needs.test-basic-functionality.result }}" >> test-summary.md
+          echo "- **Composed Models**: ${{ needs.test-composed-models.result }}" >> test-summary.md
+          echo "" >> test-summary.md
+          echo "## Test Configuration" >> test-summary.md
+          echo "- **Max Iterations**: ${{ inputs.max_iterations || '3' }}" >> test-summary.md
+          echo "- **Test Cloud Models**: ${{ inputs.test_cloud_models || 'false' }}" >> test-summary.md
+          echo "- **Test Local Models**: ${{ inputs.test_local_models || 'false' }}" >> test-summary.md
+          echo "" >> test-summary.md
+          echo "## Models Tested" >> test-summary.md
+          echo "" >> test-summary.md
+          echo "### Cloud Models" >> test-summary.md
+          echo "- Anthropic Claude models (3.5, 3.7, 4.0, 4.1, 4.5)" >> test-summary.md
+          echo "- OpenAI Computer Use Preview" >> test-summary.md
+          echo "- Gemini 2.5 CUA" >> test-summary.md
+          echo "- GLM-4.5V via OpenRouter" >> test-summary.md
+          echo "- Composed models (OmniParser + LLM, Moondream3 + LLM)" >> test-summary.md
+          echo "" >> test-summary.md
+          echo "### Local Models" >> test-summary.md
+          echo "- UI-TARS 1.5" >> test-summary.md
+          echo "- OpenCUA (7B, 32B)" >> test-summary.md
+          echo "- GTA1 Family (7B, 32B, 72B)" >> test-summary.md
+          echo "- Holo 1.5 Family (3B, 7B, 72B)" >> test-summary.md
+          echo "- InternVL 3.5 Family (1B, 2B, 4B, 8B)" >> test-summary.md
+          echo "- GLM-4.5V Local" >> test-summary.md
+          echo "" >> test-summary.md
+          echo "## Test Framework" >> test-summary.md
+          echo "This workflow uses the CUA Agent Loop Testing Framework located in \`tests/agent_loop_testing/\`." >> test-summary.md
+          echo "The framework provides:" >> test-summary.md
+          echo "- Pluggable AI model interface" >> test-summary.md
+          echo "- Minimal mock computer (screenshot only)" >> test-summary.md
+          echo "- Agent loop coordination" >> test-summary.md
+          echo "- Static image testing for consistent results" >> test-summary.md
+
+      - name: Upload test summary
+        uses: actions/upload-artifact@v3
+        with:
+          name: test-summary
+          path: test-summary.md
+          retention-days: 30

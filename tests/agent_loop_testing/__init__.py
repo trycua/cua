@@ -10,13 +10,13 @@ Automatically supports pluggable AI models including:
 - Custom models (implement AIModelInterface)
 """
 
-from .agent_test import test_agent_loop_with_model, create_ai_model
-from .ai_interface import AIModelInterface, AgentLoop, AgentMessage, AgentResponse
+from .agent_test import create_ai_model, test_agent_loop_with_model
+from .ai_interface import AgentLoop, AgentMessage, AgentResponse, AIModelInterface
 from .mock_computer import MinimalMockComputer, MockComputerInterface
 
 __all__ = [
     "test_agent_loop_with_model",
-    "create_ai_model", 
+    "create_ai_model",
     "AIModelInterface",
     "AgentLoop",
     "AgentMessage",

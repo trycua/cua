@@ -88,7 +88,7 @@ class ReleaseNotesGenerator:
                     "title": "Claude Desktop Integration",
                     "content": [
                         "Add to your Claude Desktop configuration (~/.config/claude-desktop/claude_desktop_config.json or OS-specific location):",
-                        '```json',
+                        "```json",
                         '"mcpServers": {',
                         '  "cua-agent": {',
                         '    "command": "cua-mcp-server",',
@@ -99,10 +99,10 @@ class ReleaseNotesGenerator:
                         '      "CUA_MODEL_NAME": "claude-3-opus-20240229",',
                         '      "ANTHROPIC_API_KEY": "your-api-key",',
                         '      "PYTHONIOENCODING": "utf-8"',
-                        '    }',
-                        '  }',
-                        '}',
-                        '```',
+                        "    }",
+                        "  }",
+                        "}",
+                        "```",
                     ],
                 },
             ],
@@ -157,7 +157,10 @@ class ReleaseNotesGenerator:
                 return pyproject_data["project"]["version"]
 
             # Check if version is dynamic
-            if "dynamic" in pyproject_data.get("project", {}) and "version" in pyproject_data["project"]["dynamic"]:
+            if (
+                "dynamic" in pyproject_data.get("project", {})
+                and "version" in pyproject_data["project"]["dynamic"]
+            ):
                 # Get the version source file
                 pdm_version = pyproject_data.get("tool", {}).get("pdm", {}).get("version", {})
                 if pdm_version.get("source") == "file":
@@ -239,7 +242,7 @@ class ReleaseNotesGenerator:
                 if dep_name == "lume":
                     # For lume, we'd need to read from another source (GitHub release, etc.)
                     # For now, use placeholder that can be replaced
-                    lines.append(f"* lume binary: v${{LUME_VERSION}}")
+                    lines.append("* lume binary: v${LUME_VERSION}")
                 else:
                     version_str = f"v{dep_version}" if dep_version else "latest"
                     lines.append(f"* {dep_name}: {version_str}")

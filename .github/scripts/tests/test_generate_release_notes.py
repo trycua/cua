@@ -41,19 +41,19 @@ class TestReleaseNotesGenerator(unittest.TestCase):
             init_file.parent.mkdir(parents=True, exist_ok=True)
             init_file.write_text(f'__version__ = "{version}"\n')
 
-            pyproject_content = f'''[project]
+            pyproject_content = f"""[project]
 name = "{package_dir.split('/')[-1]}"
 dynamic = ["version"]
 
 [tool.pdm.version]
 source = "file"
 path = "{package_dir.split('/')[-1]}/__init__.py"
-'''
+"""
         else:
-            pyproject_content = f'''[project]
+            pyproject_content = f"""[project]
 name = "{package_dir.split('/')[-1]}"
 version = "{version}"
-'''
+"""
 
         pyproject_path.write_text(pyproject_content)
 

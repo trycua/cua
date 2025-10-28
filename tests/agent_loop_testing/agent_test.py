@@ -9,9 +9,10 @@ Only provides screenshot functionality - no complex computer actions.
 import asyncio
 import base64
 import sys
-from pathlib import Path
-from PIL import Image, ImageDraw
 from io import BytesIO
+from pathlib import Path
+
+from PIL import Image, ImageDraw
 
 # Add project root to path
 project_root = Path(__file__).parent.parent.parent
@@ -115,7 +116,7 @@ async def test_cua_agent(model_name: str):
     try:
         # Import the real CUA agent
         from agent import ComputerAgent
-        
+
         # Create mock computer
         mock_computer = MockComputer()
         

@@ -10,6 +10,7 @@ Consolidate the logic from 7 individual PyPI publish workflows into the bump-ver
 ## Current State
 
 ### Structure
+
 - **bump-version.yml**: Handles version bumping with bump2version for 7 Python packages
 - **7 individual publish workflows**: Each package has its own workflow triggered by tags
   - pypi-publish-agent.yml
@@ -22,6 +23,7 @@ Consolidate the logic from 7 individual PyPI publish workflows into the bump-ver
 - **pypi-reusable-publish.yml**: Shared publishing logic
 
 ### Workflow Flow
+
 1. User manually runs bump-version.yml
 2. Version gets bumped in pyproject.toml
 3. Changes committed and pushed
@@ -58,21 +60,22 @@ Consolidate the logic from 7 individual PyPI publish workflows into the bump-ver
 
 ### Package Mapping
 
-| Service | package_name | package_dir | is_lume_package | base_package_name |
-|---------|-------------|-------------|-----------------|-------------------|
-| cua-agent | agent | libs/python/agent | false | cua-agent |
-| cua-computer | computer | libs/python/computer | false | cua-computer |
-| cua-computer-server | computer-server | libs/python/computer-server | false | cua-computer-server |
-| cua-core | core | libs/python/core | false | cua-core |
-| cua-mcp-server | mcp-server | libs/python/mcp-server | false | cua-mcp-server |
-| cua-som | som | libs/python/som | false | cua-som |
-| pylume | pylume | libs/python/pylume | **true** | pylume |
+| Service             | package_name    | package_dir                 | is_lume_package | base_package_name   |
+| ------------------- | --------------- | --------------------------- | --------------- | ------------------- |
+| cua-agent           | agent           | libs/python/agent           | false           | cua-agent           |
+| cua-computer        | computer        | libs/python/computer        | false           | cua-computer        |
+| cua-computer-server | computer-server | libs/python/computer-server | false           | cua-computer-server |
+| cua-core            | core            | libs/python/core            | false           | cua-core            |
+| cua-mcp-server      | mcp-server      | libs/python/mcp-server      | false           | cua-mcp-server      |
+| cua-som             | som             | libs/python/som             | false           | cua-som             |
+| pylume              | pylume          | libs/python/pylume          | **true**        | pylume              |
 
 ### Tag Naming Convention
 
 Follows existing pattern: `{service}-v{version}`
 
 Examples:
+
 - `agent-v0.2.0`
 - `computer-v1.5.3`
 - `pylume-v2.1.0`
@@ -82,6 +85,7 @@ Examples:
 ### Files to Modify
 
 **bump-version.yml**:
+
 - Add version extraction step
 - Add package metadata mapping step
 - Add tag creation and push step

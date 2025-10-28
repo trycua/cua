@@ -1,18 +1,28 @@
 """
 Agent Loop Testing Framework
 
-Tests a ComputerAgent with a static screenshot as the "VM".
-The agent will repeatedly try to click on Safari, but since it's just a static image,
-it will keep trying. We verify the agent loop doesn't break.
+Tests AI models with a minimal agent loop using a mock computer
+that only provides screenshot functionality.
 
-Automatically uses ComputerAgent if dependencies are available,
-falls back to MockAgent for demonstration if not.
+Automatically supports pluggable AI models including:
+- Test models (no external dependencies)
+- CUA models (Anthropic, OpenAI, etc.)
+- Custom models (implement AIModelInterface)
 """
 
-from .agent_test import test_agent_loop
+from .agent_test import test_agent_loop_with_model, create_ai_model
+from .ai_interface import AIModelInterface, AgentLoop, AgentMessage, AgentResponse
+from .mock_computer import MinimalMockComputer, MockComputerInterface
 
 __all__ = [
-    "test_agent_loop",
+    "test_agent_loop_with_model",
+    "create_ai_model", 
+    "AIModelInterface",
+    "AgentLoop",
+    "AgentMessage",
+    "AgentResponse",
+    "MinimalMockComputer",
+    "MockComputerInterface",
 ]
 
-__version__ = "1.0.0"
+__version__ = "2.0.0"

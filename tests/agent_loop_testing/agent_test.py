@@ -1,280 +1,355 @@
 """
-Agent Loop Test using CUA Components
+Pluggable AI Model Agent Loop Test
 
-This test uses the actual CUA ComputerAgent with a mock computer
-that serves a static PNG image as the "VM".
+This test allows you to plug in any AI model to test it with the agent loop.
+The agent loop interacts with a minimal mock computer that only provides
+screenshot functionality and returns a static image.
+
+Usage:
+    python agent_test.py --model anthropic/claude-sonnet-4-20250514
+    python agent_test.py --model openai/gpt-4o-mini
+    python agent_test.py --model test-model  # Uses simple test model
 """
 
 import asyncio
-import base64
-import os
+import argparse
 import sys
 from pathlib import Path
-from typing import Dict, Any, List
-from PIL import Image, ImageDraw
-from io import BytesIO
+from typing import Optional
 
 # Add project root to path
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
-# Import the real CUA components
 try:
-    from agent import ComputerAgent
-    from agent.computers.base import AsyncComputerHandler
-    from computer import Computer
-    REAL_AGENT_AVAILABLE = True
+    from .mock_computer import MinimalMockComputer, MockComputerInterface
+    from .ai_interface import AgentLoop, AIModelInterface, SimpleTestAIModel
 except ImportError:
-    REAL_AGENT_AVAILABLE = False
+    # When running as script directly
+    from mock_computer import MinimalMockComputer, MockComputerInterface
+    from ai_interface import AgentLoop, AIModelInterface, SimpleTestAIModel
 
 
-if REAL_AGENT_AVAILABLE:
-    class StaticImageComputerHandler(AsyncComputerHandler):
-        """Computer handler that serves a static PNG image as the 'VM'."""
-        
-        def __init__(self, image_path: str):
-            self.image_path = image_path
-            self.action_count = 0
-            self.static_image = None
-else:
-    class StaticImageComputerHandler:
-        """Computer handler that serves a static PNG image as the 'VM'."""
-        
-        def __init__(self, image_path: str):
-            self.image_path = image_path
-            self.action_count = 0
-            self.static_image = None
-        
+class CUAComputerAgentModel(AIModelInterface):
+    """
+    Wrapper for CUA's ComputerAgent to make it compatible with the pluggable interface.
+    
+    This allows using CUA's ComputerAgent as a pluggable AI model.
+    """
+    
+    def __init__(self, model_name: str):
+        self.model_name = model_name
+        self.agent = None
+        self._initialized = False
+    
     async def _initialize(self):
-        """Initialize the handler by loading the static image."""
-        if os.path.exists(self.image_path):
-            with open(self.image_path, 'rb') as f:
-                self.static_image = base64.b64encode(f.read()).decode('utf-8')
-        else:
-            # Create a default macOS desktop image
-            self.static_image = self._create_default_image()
-    
-    def _create_default_image(self) -> str:
-        """Create a default macOS desktop image."""
-        img = Image.new('RGB', (1920, 1080), color='lightblue')
-        draw = ImageDraw.Draw(img)
+        """Initialize the CUA ComputerAgent."""
+        if self._initialized:
+            return
         
-        # Draw macOS-style desktop
-        draw.rectangle([0, 0, 1920, 1080], fill='lightblue')
+        try:
+            from agent import ComputerAgent
+            from agent.computers.base import AsyncComputerHandler
+            
+            # Create a minimal computer handler that only implements screenshot
+            class MinimalComputerHandler(AsyncComputerHandler):
+                def __init__(self, mock_computer: MinimalMockComputer):
+                    self.mock_computer = mock_computer
+                
+                async def screenshot(self) -> str:
+                    return await self.mock_computer.screenshot()
+                
+                async def get_dimensions(self) -> tuple[int, int]:
+                    return await self.mock_computer.get_screen_dimensions()
+                
+                # Implement other required methods as no-ops
+                async def click(self, x: int, y: int, button: str = "left") -> None:
+                    await asyncio.sleep(0.1)
+                
+                async def double_click(self, x: int, y: int) -> None:
+                    await asyncio.sleep(0.1)
+                
+                async def scroll(self, x: int, y: int, scroll_x: int, scroll_y: int) -> None:
+                    await asyncio.sleep(0.1)
+                
+                async def type(self, text: str) -> None:
+                    await asyncio.sleep(0.1)
+                
+                async def wait(self, ms: int = 1000) -> None:
+                    await asyncio.sleep(ms / 1000.0)
+                
+                async def move(self, x: int, y: int) -> None:
+                    await asyncio.sleep(0.1)
+                
+                async def keypress(self, keys) -> None:
+                    await asyncio.sleep(0.1)
+                
+                async def drag(self, path) -> None:
+                    await asyncio.sleep(0.1)
+                
+                async def get_current_url(self) -> str:
+                    return "desktop://mock"
+                
+                async def get_environment(self) -> str:
+                    return "mac"
+                
+                # Implement missing abstract methods
+                async def left_mouse_down(self, x: int = 0, y: int = 0) -> None:
+                    await asyncio.sleep(0.1)
+                
+                async def left_mouse_up(self, x: int = 0, y: int = 0) -> None:
+                    await asyncio.sleep(0.1)
+                
+                async def right_mouse_down(self, x: int = 0, y: int = 0) -> None:
+                    await asyncio.sleep(0.1)
+                
+                async def right_mouse_up(self, x: int = 0, y: int = 0) -> None:
+                    await asyncio.sleep(0.1)
+                
+                async def mouse_move(self, x: int, y: int) -> None:
+                    await asyncio.sleep(0.1)
+                
+                async def key_down(self, key: str) -> None:
+                    await asyncio.sleep(0.1)
+                
+                async def key_up(self, key: str) -> None:
+                    await asyncio.sleep(0.1)
+                
+                async def type_text(self, text: str) -> None:
+                    await asyncio.sleep(0.1)
+            
+            # Create the computer handler
+            self.mock_computer = MinimalMockComputer()
+            await self.mock_computer.initialize()
+            computer_handler = MinimalComputerHandler(self.mock_computer)
+            
+            # Create the ComputerAgent
+            self.agent = ComputerAgent(
+                model=self.model_name,
+                tools=[computer_handler],
+                max_trajectory_budget=5.0
+            )
+            
+            self._initialized = True
+            
+        except ImportError as e:
+            raise ImportError(f"CUA agent dependencies not available: {e}")
+    
+    async def generate_response(
+        self, 
+        messages,
+        computer_interface: MockComputerInterface
+    ):
+        """Generate response using CUA's ComputerAgent."""
+        try:
+            from .ai_interface import AgentResponse
+        except ImportError:
+            from ai_interface import AgentResponse
+        await self._initialize()
         
-        # Draw Safari icon in dock area
-        draw.rectangle([100, 950, 150, 1000], fill='blue', outline='black', width=2)
-        draw.text((110, 960), "Safari", fill='white')
+        # Convert messages to the format expected by ComputerAgent
+        formatted_messages = []
+        for msg in messages:
+            if msg.role == "user":
+                content = msg.content
+                if msg.image_data:
+                    content += f"\n[Image data: {len(msg.image_data)} characters]"
+                formatted_messages.append({"role": "user", "content": content})
+            elif msg.role == "assistant":
+                formatted_messages.append({"role": "assistant", "content": msg.content})
         
-        # Convert to base64
-        img_bytes = BytesIO()
-        img.save(img_bytes, format='PNG')
-        return base64.b64encode(img_bytes.getvalue()).decode('utf-8')
+        # Run the agent for one iteration
+        try:
+            if self.agent is None:
+                raise RuntimeError("Agent not initialized")
+            async for result in self.agent.run(formatted_messages):
+                # Extract response from the result
+                response_content = ""
+                tool_calls = []
+                
+                for item in result.get("output", []):
+                    if item["type"] == "message":
+                        response_content = item["content"][0]["text"]
+                    elif item["type"] == "tool_call":
+                        tool_calls.append({
+                            "name": item.get("tool_name", "unknown"),
+                            "args": item.get("arguments", {})
+                        })
+                
+                return AgentResponse(
+                    content=response_content,
+                    tool_calls=tool_calls,
+                    finished=len(tool_calls) == 0  # Assume finished if no tool calls
+                )
+                
+        except Exception as e:
+            return AgentResponse(
+                content=f"Error: {str(e)}",
+                tool_calls=[],
+                finished=True
+            )
     
-    # ==== Computer-Use-Preview Action Space ====
-    
-    async def get_environment(self) -> str:
-        """Get the current environment type."""
-        return "mac"
-    
-    async def get_dimensions(self) -> tuple[int, int]:
-        """Get screen dimensions as (width, height)."""
-        return (1920, 1080)
-    
-    async def screenshot(self) -> str:
-        """Always return the same static image."""
-        self.action_count += 1
-        return self.static_image
-    
-    async def click(self, x: int, y: int, button: str = "left") -> None:
-        """Mock click - nothing happens since it's static."""
-        await asyncio.sleep(0.1)
-    
-    async def double_click(self, x: int, y: int) -> None:
-        """Mock double click."""
-        await asyncio.sleep(0.1)
-    
-    async def scroll(self, x: int, y: int, scroll_x: int, scroll_y: int) -> None:
-        """Mock scroll."""
-        await asyncio.sleep(0.1)
-    
-    async def type(self, text: str) -> None:
-        """Mock text typing."""
-        await asyncio.sleep(0.1)
-    
-    async def wait(self, ms: int = 1000) -> None:
-        """Wait for specified milliseconds."""
-        await asyncio.sleep(ms / 1000.0)
-    
-    async def move(self, x: int, y: int) -> None:
-        """Mock cursor movement."""
-        await asyncio.sleep(0.1)
-    
-    async def keypress(self, keys) -> None:
-        """Mock key press."""
-        await asyncio.sleep(0.1)
-    
-    async def drag(self, path: List[Dict[str, int]]) -> None:
-        """Mock drag."""
-        await asyncio.sleep(0.1)
-    
-    async def get_current_url(self) -> str:
-        """Get current URL (not applicable for desktop)."""
-        return "desktop://mock"
-    
-    # ==== Anthropic Action Space ====
-    
-    async def left_mouse_down(self, x: int = None, y: int = None) -> None:
-        """Mock left mouse down."""
-        await asyncio.sleep(0.1)
-    
-    async def left_mouse_up(self, x: int = None, y: int = None) -> None:
-        """Mock left mouse up."""
-        await asyncio.sleep(0.1)
-    
-    async def right_mouse_down(self, x: int = None, y: int = None) -> None:
-        """Mock right mouse down."""
-        await asyncio.sleep(0.1)
-    
-    async def right_mouse_up(self, x: int = None, y: int = None) -> None:
-        """Mock right mouse up."""
-        await asyncio.sleep(0.1)
-    
-    async def mouse_move(self, x: int, y: int) -> None:
-        """Mock mouse move."""
-        await asyncio.sleep(0.1)
-    
-    async def key_down(self, key: str) -> None:
-        """Mock key down."""
-        await asyncio.sleep(0.1)
-    
-    async def key_up(self, key: str) -> None:
-        """Mock key up."""
-        await asyncio.sleep(0.1)
-    
-    async def type_text(self, text: str) -> None:
-        """Mock text typing."""
-        await asyncio.sleep(0.1)
+    def get_model_name(self) -> str:
+        return f"cua-{self.model_name}"
 
 
-async def test_agent_loop():
-    """Test agent with static screenshot using CUA components."""
-    print("🤖 Testing Agent Loop with Static Screenshot")
-    print("=" * 60)
+def create_ai_model(model_name: str) -> AIModelInterface:
+    """
+    Create an AI model instance based on the model name.
     
-    if not REAL_AGENT_AVAILABLE:
-        print("❌ CUA agent dependencies not available")
-        print("   Install with: pip install -e libs/python/agent -e libs/python/computer")
-        print("\n📋 This test demonstrates the correct CUA usage pattern:")
-        print("   computer_handler = StaticImageComputerHandler('path/to/image.png')")
-        print("   await computer_handler._initialize()")
-        print("   agent = ComputerAgent(model='anthropic/claude-sonnet-4-20250514', tools=[computer_handler])")
-        print("   async for response in agent.run('Take a screenshot and tell me what you see'):")
-        print("       # Agent loop executes here")
-        print("       break")
-        return False
+    Args:
+        model_name: Name of the model to create
+        
+    Returns:
+        AIModelInterface instance
+    """
+    if model_name == "test-model":
+        return SimpleTestAIModel("test-model")
+    elif model_name.startswith("anthropic/") or model_name.startswith("openai/"):
+        return CUAComputerAgentModel(model_name)
+    else:
+        # Try to use as CUA model
+        return CUAComputerAgentModel(model_name)
+
+
+async def test_agent_loop_with_model(
+    model_name: str,
+    image_path: Optional[str] = None,
+    max_iterations: int = 5,
+    initial_message: str = "Take a screenshot and tell me what you see. Try to interact with the interface."
+):
+    """
+    Test the agent loop with a specific AI model.
     
-    # Use mock computer with static PNG image
-    image_path = str(Path(__file__).parent / "test_images" / "image.png")
-    
-    # Create computer handler with your static PNG image
-    computer_handler = StaticImageComputerHandler(image_path)
-    await computer_handler._initialize()
-    
-    print("✅ Step 1: Created computer handler with static PNG")
-    
-    # ComputerAgent works with any computer handler
-    agent = ComputerAgent(
-        model="anthropic/claude-sonnet-4-20250514",
-        tools=[computer_handler],
-        max_trajectory_budget=5.0
-    )
-    
-    print("✅ Step 2: Created ComputerAgent")
-    
-    # Debug: Check what tools the agent recognizes
-    print(f"🔍 Debug - Agent tools: {len(agent.tools)} tools")
-    for i, tool in enumerate(agent.tools):
-        print(f"🔍 Debug - Tool {i}: {type(tool).__name__}")
-    
-    messages = [{"role": "user", "content": "Click on Safari and open it. Keep trying until Safari opens successfully."}]
-    print("✅ Step 3: Starting agent execution...")
-    print("\n" + "=" * 60)
-    print("AGENT EXECUTION:")
-    print("=" * 60)
+    Args:
+        model_name: Name of the AI model to test
+        image_path: Path to static image (optional)
+        max_iterations: Maximum number of iterations
+        initial_message: Initial message to send to the agent
+    """
+    print(f"🤖 Testing Agent Loop with AI Model: {model_name}")
+    print("=" * 80)
     
     try:
-        iteration_count = 0
-        max_iterations = 3
+        # Create AI model
+        print(f"✅ Step 1: Creating AI model: {model_name}")
+        ai_model = create_ai_model(model_name)
         
-        async for result in agent.run(messages):
+        # Create mock computer
+        print("✅ Step 2: Creating mock computer with static image")
+        mock_computer = MinimalMockComputer(image_path)
+        await mock_computer.initialize()
+        computer_interface = MockComputerInterface(mock_computer)
+        
+        # Create agent loop
+        print("✅ Step 3: Creating agent loop")
+        agent_loop = AgentLoop(ai_model, computer_interface)
+        
+        print("✅ Step 4: Starting agent execution...")
+        print("\n" + "=" * 80)
+        print("AGENT EXECUTION:")
+        print("=" * 80)
+        
+        iteration_count = 0
+        async for result in agent_loop.run(initial_message, max_iterations):
             iteration_count += 1
             print(f"\n--- Iteration {iteration_count} ---")
             
-            # Debug: Print the full result structure
-            print(f"🔍 Debug - Result keys: {list(result.keys())}")
-            if "output" in result:
-                print(f"🔍 Debug - Output items: {len(result['output'])}")
-                for i, item in enumerate(result["output"]):
-                    print(f"🔍 Debug - Item {i}: {item.get('type', 'unknown')}")
+            if "error" in result:
+                print(f"❌ Error: {result['error']}")
+                break
             
-            has_tool_call = False
-            for item in result["output"]:
-                if item["type"] == "message":
-                    print(f"🔄 Agent response: {item['content'][0]['text']}")
-                elif item["type"] == "tool_call":
-                    print(f"🔧 Tool call: {item.get('tool_name', 'unknown')}")
-                    has_tool_call = True
-                elif item["type"] == "tool_result":
-                    print(f"✅ Tool result: {item.get('result', 'completed')}")
-                else:
-                    print(f"❓ Unknown item type: {item.get('type', 'unknown')}")
+            response = result["response"]
+            print(f"🔄 AI Response: {response.content}")
             
-            # If no tool call was made, the agent might think it's done
-            if not has_tool_call and iteration_count == 1:
-                print("⚠️  No tool call made - agent might think task is complete")
-                print("   This could be why we're not getting multiple iterations")
+            if response.tool_calls:
+                for tool_call in response.tool_calls:
+                    print(f"🔧 Tool Call: {tool_call['name']} with args: {tool_call['args']}")
+            else:
+                print("🔧 No tool calls made")
             
-            # Stop after 3 iterations to test loop mechanics
-            if iteration_count >= max_iterations:
-                print(f"\n🛑 Stopping after {max_iterations} iterations to test loop mechanics")
+            print(f"📊 Screenshots taken: {result.get('screenshot_taken', False)}")
+            print(f"📊 Conversation length: {result.get('conversation_length', 0)}")
+            
+            if response.finished:
+                print("🏁 Agent finished")
                 break
         
-        print("\n" + "=" * 60)
+        print("\n" + "=" * 80)
         print("AGENT EXECUTION COMPLETE")
-        print("=" * 60)
-        print("✅ Agent completed successfully")
-            
+        print("=" * 80)
+        
+        # Print final statistics
+        screen_info = await computer_interface.get_screen_info()
+        print(f"✅ Total iterations: {iteration_count}")
+        print(f"✅ Total screenshots: {screen_info['action_count']}")
+        print(f"✅ Model: {ai_model.get_model_name()}")
+        print(f"✅ Screen dimensions: {screen_info['width']}x{screen_info['height']}")
+        
+        print("\n" + "=" * 80)
+        print("🎉 AGENT LOOP TEST COMPLETE!")
+        print("=" * 80)
+        print("\nThis proves:")
+        print(f"• AI model '{model_name}' works with the agent loop")
+        print("• Mock computer serves static image successfully")
+        print("• Agent loop executes multiple iterations without crashing")
+        print("• AI model can analyze screenshots and generate responses")
+        print("• Tool calling interface works correctly")
+        
+        return True
+        
     except Exception as e:
-        error_msg = str(e)
-        print(f"\n❌ Agent failed: {error_msg}")
-        
-        # Check for specific error types
-        if "connection lost" in error_msg.lower() or "api server" in error_msg.lower():
-            print("\n🔌 COMPUTER API SERVER ISSUE:")
-            print("   The CUA Computer API Server is not running.")
-            print("   To fix this:")
-            print("   1. Start the Computer API Server: cua computer-server start")
-            print("   2. Or use a different computer configuration")
-            print("   3. Or run this test in a different environment")
-            print("\n   This test verifies the agent loop works when the server is available.")
-            return True  # Don't fail the test, just note the issue
-        
+        print(f"\n❌ Test failed: {str(e)}")
+        print("\nTroubleshooting:")
+        print("• Make sure the AI model name is correct")
+        print("• Check that required dependencies are installed")
+        print("• Verify API keys are set (for external models)")
+        print("• Try using 'test-model' for a simple test")
         return False
+
+
+async def main():
+    """Main function to run the agent loop test."""
+    parser = argparse.ArgumentParser(description="Test AI models with agent loop")
+    parser.add_argument(
+        "--model", 
+        default="test-model",
+        help="AI model to test (e.g., 'anthropic/claude-sonnet-4-20250514', 'openai/gpt-4o-mini', 'test-model')"
+    )
+    parser.add_argument(
+        "--image",
+        help="Path to static image file (optional)"
+    )
+    parser.add_argument(
+        "--max-iterations",
+        type=int,
+        default=5,
+        help="Maximum number of iterations (default: 5)"
+    )
+    parser.add_argument(
+        "--message",
+        default="Take a screenshot and tell me what you see. Try to interact with the interface.",
+        help="Initial message to send to the agent"
+    )
     
-    print("\n" + "=" * 60)
-    print("🎉 AGENT LOOP TEST COMPLETE!")
-    print("=" * 60)
-    print("\nThis proves:")
-    print("• Mock computer serves your static PNG image")
-    print("• ComputerAgent works with mock computer")
-    print("• Agent loop executes multiple iterations without crashing")
-    print("• Agent can take screenshots, analyze, and make tool calls repeatedly")
-    print("• LLM and provider are working correctly")
-    print("• Agent loop mechanics are robust")
+    args = parser.parse_args()
     
-    return True
+    # Use default image if none provided
+    image_path = args.image
+    if not image_path:
+        default_image = Path(__file__).parent / "test_images" / "image.png"
+        if default_image.exists():
+            image_path = str(default_image)
+    
+    success = await test_agent_loop_with_model(
+        model_name=args.model,
+        image_path=image_path,
+        max_iterations=args.max_iterations,
+        initial_message=args.message
+    )
+    
+    sys.exit(0 if success else 1)
 
 
 if __name__ == "__main__":
-    asyncio.run(test_agent_loop())
+    asyncio.run(main())

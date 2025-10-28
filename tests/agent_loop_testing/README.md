@@ -1,16 +1,16 @@
-# Agent Loop Testing Framework
+# Pluggable AI Model Agent Loop Testing Framework
 
-A testing framework that spins up an **agent** and uses a static screenshot as the "VM". The agent will repeatedly try to click on Safari, but since it's just a static image, it will keep trying. We verify the agent loop doesn't break.
+A testing framework that allows you to **plug in any AI model** to test it with the agent loop. The agent loop interacts with a **minimal mock computer** that only provides screenshot functionality and returns a static image.
 
 ## 🎯 Purpose
 
-This framework tests a **ComputerAgent** with a **static screenshot** as the "VM":
+This framework tests **any AI model** with a **minimal agent loop**:
 
-1. **Spin up Agent** - Initialize ComputerAgent with LLM
-2. **Use Mock Computer** - Use a mock computer that serves your static PNG image
-3. **Give Agent Task** - Ask it to "Take a screenshot and tell me what you see"
-4. **Monitor Agent Loop** - Watch it execute the task
-5. **Verify Loop Works** - Confirm the agent completes without crashing
+1. **Plug in AI Model** - Use any AI model (Anthropic, OpenAI, custom, or test model)
+2. **Minimal Mock Computer** - Only provides screenshot functionality (no complex computer actions)
+3. **Agent Loop** - Coordinates between AI model and mock computer
+4. **Static Image** - Uses a static PNG image as the "VM" for consistent testing
+5. **Verify Loop Works** - Confirm the agent loop executes without crashing
 
 ## 📁 Structure
 
@@ -18,168 +18,238 @@ This framework tests a **ComputerAgent** with a **static screenshot** as the "VM
 tests/agent_loop_testing/
 ├── __init__.py                    # Package initialization
 ├── README.md                      # This file
-├── real_agent_test.py             # Real agent test with static screenshot
+├── agent_test.py                  # Main test runner with pluggable AI models
+├── ai_interface.py                # AI model interfaces and agent loop
+├── mock_computer.py               # Minimal mock computer (screenshot only)
 └── test_images/
-    └── image.png                   # Your macOS desktop image
+    └── image.png                   # Static macOS desktop image
 ```
 
 ## 🚀 Quick Start
 
-### Run the Agent Test
+### Run with Different AI Models
 
 ```bash
-# Install dependencies first
+# Test with a simple test model (no external dependencies)
+python tests/agent_loop_testing/agent_test.py --model test-model
+
+# Test with Anthropic Claude
+python tests/agent_loop_testing/agent_test.py --model anthropic/claude-sonnet-4-20250514
+
+# Test with OpenAI GPT-4o Mini
+python tests/agent_loop_testing/agent_test.py --model openai/gpt-4o-mini
+
+# Test with custom image
+python tests/agent_loop_testing/agent_test.py --model test-model --image /path/to/image.png
+
+# Test with custom parameters
+python tests/agent_loop_testing/agent_test.py --model test-model --max-iterations 3 --message "Click on Safari"
+```
+
+### Install Dependencies (for external AI models)
+
+```bash
+# For CUA models (Anthropic, OpenAI, etc.)
 pip install -e libs/python/agent -e libs/python/computer
 
-# Run the agent test (no computer server needed!)
-python tests/agent_loop_testing/agent_test.py
-```
-
-### Expected Output
-
-```
-🤖 Testing Agent Loop with Static Screenshot
-============================================================
-✅ Step 1: Created computer handler with static PNG
-✅ Step 2: Created ComputerAgent
-✅ Step 3: Starting agent execution...
-
-============================================================
-AGENT EXECUTION:
-============================================================
-
---- Iteration 1 ---
-🔄 Agent response: I can see a macOS desktop with Safari in the dock...
-🔧 Tool call: click
-✅ Tool result: completed
-
---- Iteration 2 ---
-🔄 Agent response: I clicked on Safari but nothing happened. Let me try again...
-🔧 Tool call: click
-✅ Tool result: completed
-
---- Iteration 3 ---
-🔄 Agent response: The Safari icon still hasn't responded. Let me try a different approach...
-🔧 Tool call: double_click
-✅ Tool result: completed
-
-🛑 Stopping after 3 iterations to test loop mechanics
-
-============================================================
-AGENT EXECUTION COMPLETE
-============================================================
-✅ Agent completed successfully
-
-============================================================
-🎉 AGENT LOOP TEST COMPLETE!
-============================================================
-
-This proves:
-• Mock computer serves your static PNG image
-• ComputerAgent works with mock computer
-• Agent loop executes multiple iterations without crashing
-• Agent can take screenshots, analyze, and make tool calls repeatedly
-• LLM and provider are working correctly
-• Agent loop mechanics are robust
+# For test model only (no additional dependencies needed)
+# Just run the test directly
 ```
 
 ## 🧪 What This Tests
 
 ### ✅ **PASS Criteria**
-- Agent initializes successfully
-- Agent takes screenshots from static image
-- Agent analyzes the image and generates logical actions
-- Agent executes actions (clicks, types, etc.)
-- Agent loop continues even when actions have no effect
-- Agent doesn't crash or break the loop
-- LLM and provider are working correctly
+- AI model initializes successfully
+- AI model can analyze screenshots
+- AI model generates logical responses
+- Agent loop executes multiple iterations
+- Agent loop doesn't crash or break
+- Screenshot functionality works correctly
 
 ### ❌ **FAIL Criteria**
-- Agent fails to initialize
-- Agent crashes during execution
-- Agent loop breaks or stops unexpectedly
-- LLM fails to analyze images or generate actions
-- Actions fail to execute
+- AI model fails to initialize
+- AI model crashes during execution
+- Agent loop breaks unexpectedly
+- Screenshot functionality fails
+- External API errors (for cloud models)
 
-## ⚠️ Important Notes
+## 🔧 Architecture
 
-**This tests the agent loop mechanics, not agent correctness.**
+### Pluggable AI Models
 
-**Prerequisites:**
-- Valid API keys for the LLM provider (Anthropic, OpenAI, etc.)
-- Dependencies installed (`pip install -e libs/python/agent -e libs/python/computer`)
-- Your static PNG image in `test_images/image.png`
+The framework supports multiple types of AI models:
 
-The workflow:
-1. Agent sees static screenshot (thinks it's a real VM)
-2. Agent tries to click on Safari icon
-3. Agent takes another screenshot (gets same static image)
-4. Agent realizes nothing changed and tries again
-5. Agent tries different approaches (double-click, different coordinates)
-6. This repeats for 3 iterations (proving loop doesn't break)
+1. **Test Model** (`test-model`): Simple deterministic model for testing
+2. **CUA Models**: Anthropic, OpenAI, and other models via CUA's ComputerAgent
+3. **Custom Models**: Implement `AIModelInterface` for custom models
 
-This tests:
-- ✅ Agent initialization and execution
-- ✅ Screenshot analysis and action generation
-- ✅ Action execution and loop mechanics
-- ✅ Error handling when actions have no effect
-- ✅ LLM connectivity and functionality
+### Minimal Mock Computer
 
-This does NOT test:
-- ❌ Agent correctness (whether it clicks the right things)
-- ❌ Real-world behavior with actual UI changes
-- ❌ Complex scenarios or edge cases
+The mock computer only provides:
+- `screenshot()`: Returns static image as base64
+- `get_screen_dimensions()`: Returns screen size
+- Action counting and statistics
 
-## 🔧 Configuration
+**No complex computer actions** - just screenshot functionality for testing AI model capabilities.
 
-### Timeout Settings
+### Agent Loop
 
-The test has built-in safety limits:
+The `AgentLoop` class coordinates:
+- Taking screenshots from mock computer
+- Sending messages + images to AI model
+- Processing AI model responses
+- Managing conversation history
+- Iteration control and limits
 
-```python
-# In real_agent_test.py
-agent = ComputerAgent(
-    model="gpt-4o-mini",  # Lightweight model for testing
-    max_iterations=5,     # Limit iterations
-)
+## 📊 Example Output
 
-# Test timeout
-result = await asyncio.wait_for(
-    agent.run(task),
-    timeout=60.0  # 60 second timeout
-)
+```
+🤖 Testing Agent Loop with AI Model: test-model
+================================================================================
+✅ Step 1: Creating AI model: test-model
+✅ Step 2: Creating mock computer with static image
+✅ Step 3: Creating agent loop
+✅ Step 4: Starting agent execution...
+
+================================================================================
+AGENT EXECUTION:
+================================================================================
+
+--- Iteration 1 ---
+🔄 AI Response: I can see a macOS desktop with Safari, Terminal, and Finder icons in the dock. Let me click on Safari to open it.
+🔧 Tool Call: click with args: {'x': 125, 'y': 975}
+📊 Screenshots taken: True
+📊 Conversation length: 2
+
+--- Iteration 2 ---
+🔄 AI Response: I clicked on Safari but it didn't open. Let me try clicking on Terminal instead.
+🔧 Tool Call: click with args: {'x': 225, 'y': 975}
+📊 Screenshots taken: True
+📊 Conversation length: 4
+
+--- Iteration 3 ---
+🔄 AI Response: I've tried clicking on different icons but nothing seems to be happening. This might be a static image. Let me finish here.
+🔧 No tool calls made
+📊 Screenshots taken: True
+📊 Conversation length: 6
+🏁 Agent finished
+
+================================================================================
+AGENT EXECUTION COMPLETE
+================================================================================
+✅ Total iterations: 3
+✅ Total screenshots: 3
+✅ Model: test-model
+✅ Screen dimensions: 1920x1080
+
+================================================================================
+🎉 AGENT LOOP TEST COMPLETE!
+================================================================================
+
+This proves:
+• AI model 'test-model' works with the agent loop
+• Mock computer serves static image successfully
+• Agent loop executes multiple iterations without crashing
+• AI model can analyze screenshots and generate responses
+• Tool calling interface works correctly
 ```
 
-### Custom Screenshot
+## 🔌 Adding Custom AI Models
 
-The test uses your provided screenshot:
+To add a custom AI model, implement the `AIModelInterface`:
 
 ```python
-screenshot_path = Path(__file__).parent / "test_images" / "image.png"
+from .ai_interface import AIModelInterface, AgentResponse, AgentMessage, MockComputerInterface
+
+class MyCustomAIModel(AIModelInterface):
+    def __init__(self, model_name: str):
+        self.model_name = model_name
+    
+    async def generate_response(
+        self, 
+        messages: List[AgentMessage],
+        computer_interface: MockComputerInterface
+    ) -> AgentResponse:
+        # Your AI model logic here
+        # Take screenshot: await computer_interface.take_screenshot()
+        # Process messages and generate response
+        return AgentResponse(
+            content="Your response here",
+            tool_calls=[{"name": "click", "args": {"x": 100, "y": 200}}],
+            finished=False
+        )
+    
+    def get_model_name(self) -> str:
+        return self.model_name
 ```
 
-If the file doesn't exist, it creates a default macOS desktop with Safari icon.
+Then use it:
+
+```python
+from .agent_test import create_ai_model
+ai_model = create_ai_model("my-custom-model")
+```
+
+## ⚙️ Configuration Options
+
+### Command Line Arguments
+
+```bash
+python agent_test.py [options]
+
+Options:
+  --model MODEL           AI model to test (default: test-model)
+  --image PATH            Path to static image file (optional)
+  --max-iterations N      Maximum iterations (default: 5)
+  --message TEXT          Initial message to agent
+  -h, --help              Show help message
+```
+
+### Model Names
+
+- `test-model`: Simple test model (no external dependencies)
+- `anthropic/claude-sonnet-4-20250514`: Anthropic Claude via CUA
+- `openai/gpt-4o-mini`: OpenAI GPT-4o Mini via CUA
+- `custom-model-name`: Any custom model name
+
+### Image Sources
+
+1. **Provided image**: `--image /path/to/image.png`
+2. **Default image**: `test_images/image.png` (if exists)
+3. **Generated image**: Creates default macOS desktop if no image found
 
 ## 🚀 GitHub Actions Integration
 
-The framework includes a GitHub Actions workflow that runs:
+The framework works in CI/CD environments:
 
 ```yaml
-- name: Run agent loop test
+- name: Test AI models with agent loop
   run: |
     cd tests/agent_loop_testing
-    python agent_test.py
+    python agent_test.py --model test-model
+    python agent_test.py --model anthropic/claude-sonnet-4-20250514
 ```
 
-## 🎉 Ready for Use
+## 🎉 Key Benefits
 
-This agent testing framework is:
+### ✅ **Pluggable Architecture**
+- Test any AI model with the same interface
+- Easy to add new models
+- Consistent testing across different providers
 
-- ✅ **Agent**: Uses actual ComputerAgent with LLM
-- ✅ **Static VM**: Uses your screenshot as the "VM"
-- ✅ **Loop Testing**: Verifies agent loop doesn't break
-- ✅ **Timeout Protected**: Won't run forever
-- ✅ **CI/CD Ready**: Works in GitHub Actions
-- ✅ **Focused**: Tests only loop mechanics, not correctness
+### ✅ **Minimal Dependencies**
+- Test model works without external APIs
+- Mock computer only implements what's needed
+- Clean separation of concerns
 
-**Perfect for verifying that your agent and LLM provider work correctly!**
+### ✅ **Focused Testing**
+- Tests AI model capabilities, not computer functionality
+- Verifies agent loop mechanics
+- Consistent results with static images
+
+### ✅ **Easy to Use**
+- Simple command-line interface
+- Clear output and error messages
+- Works in CI/CD environments
+
+**Perfect for testing AI models with agent loops without the complexity of full computer implementations!**

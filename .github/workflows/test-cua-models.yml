@@ -1,17 +1,16 @@
 name: Test CUA Supporting Models
 
+# This workflow runs on:
+# 1. Pull requests to main/master/develop branches - runs basic functionality tests only
+# 2. Manual dispatch - allows full testing of all supported models with API keys
+
 on:
   pull_request:
     branches: [ main, master, develop ]
   workflow_dispatch:
     inputs:
-      test_cloud_models:
-        description: "Test cloud-based models (requires API keys)"
-        required: false
-        default: "false"
-        type: boolean
-      test_local_models:
-        description: "Test local models (requires GPU)"
+      test_models:
+        description: "Test all supported models (requires API keys)"
         required: false
         default: "false"
         type: boolean
@@ -22,8 +21,9 @@ on:
         type: string
 
 jobs:
-  test-cloud-models:
-    if: ${{ inputs.test_cloud_models == 'true' }}
+  # Test all CUA models - runs when manually triggered with test_models=true
+  test-all-models:
+    if: ${{ inputs.test_models == 'true' }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -46,6 +46,32 @@ jobs:
 
           # GLM-4.5V Models
           - openrouter/z-ai/glm-4.5v
+
+          # UI-TARS Models
+          - huggingface-local/ByteDance-Seed/UI-TARS-1.5-7B
+
+          # OpenCUA Models
+          - huggingface-local/xlangai/OpenCUA-7B
+          - huggingface-local/xlangai/OpenCUA-32B
+
+          # GTA1 Family Models
+          - huggingface-local/HelloKKMe/GTA1-7B
+          - huggingface-local/HelloKKMe/GTA1-32B
+          - huggingface-local/HelloKKMe/GTA1-72B
+
+          # Holo 1.5 Family Models
+          - huggingface-local/Hcompany/Holo1.5-3B
+          - huggingface-local/Hcompany/Holo1.5-7B
+          - huggingface-local/Hcompany/Holo1.5-72B
+
+          # InternVL 3.5 Family Models
+          - huggingface-local/OpenGVLab/InternVL3_5-1B
+          - huggingface-local/OpenGVLab/InternVL3_5-2B
+          - huggingface-local/OpenGVLab/InternVL3_5-4B
+          - huggingface-local/OpenGVLab/InternVL3_5-8B
+
+          # GLM-4.5V Local
+          - huggingface-local/zai-org/GLM-4.5V
 
           # Composed Models (Grounding + Planning)
           - omniparser+anthropic/claude-3-5-sonnet-20241022
@@ -72,6 +98,7 @@ jobs:
           pip install --upgrade pip
           pip install -e libs/python/agent -e libs/python/computer
           pip install -e libs/python/core
+          pip install "cua-agent[uitars-hf]"
           pip install pytest
 
       - name: Set up environment variables
@@ -99,79 +126,7 @@ jobs:
             *.log
           retention-days: 7
 
-  test-local-models:
-    if: ${{ inputs.test_local_models == 'true' }}
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        model:
-          # UI-TARS Models
-          - huggingface-local/ByteDance-Seed/UI-TARS-1.5-7B
-
-          # OpenCUA Models
-          - huggingface-local/xlangai/OpenCUA-7B
-          - huggingface-local/xlangai/OpenCUA-32B
-
-          # GTA1 Family Models
-          - huggingface-local/HelloKKMe/GTA1-7B
-          - huggingface-local/HelloKKMe/GTA1-32B
-          - huggingface-local/HelloKKMe/GTA1-72B
-
-          # Holo 1.5 Family Models
-          - huggingface-local/Hcompany/Holo1.5-3B
-          - huggingface-local/Hcompany/Holo1.5-7B
-          - huggingface-local/Hcompany/Holo1.5-72B
-
-          # InternVL 3.5 Family Models
-          - huggingface-local/OpenGVLab/InternVL3_5-1B
-          - huggingface-local/OpenGVLab/InternVL3_5-2B
-          - huggingface-local/OpenGVLab/InternVL3_5-4B
-          - huggingface-local/OpenGVLab/InternVL3_5-8B
-
-          # GLM-4.5V Local
-          - huggingface-local/zai-org/GLM-4.5V
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libgl1-mesa-glx libglib2.0-0
-
-      - name: Install CUA dependencies with local model support
-        run: |
-          pip install --upgrade pip
-          pip install -e libs/python/agent -e libs/python/computer
-          pip install -e libs/python/core
-          pip install "cua-agent[uitars-hf]"
-          pip install pytest
-
-      - name: Test model with agent loop
-        run: |
-          cd tests/agent_loop_testing
-          python agent_test.py \
-            --model "${{ matrix.model }}" \
-            --max-iterations ${{ inputs.max_iterations || '3' }} \
-            --message "Take a screenshot and describe what you see on the desktop"
-
-      - name: Upload test results
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: test-results-local-${{ matrix.model }}
-          path: |
-            tests/agent_loop_testing/test_images/
-            *.log
-          retention-days: 7
-
+  # Basic functionality test - always runs (both on PR and manual dispatch)
   test-basic-functionality:
     runs-on: ubuntu-latest
     steps:
@@ -213,66 +168,9 @@ jobs:
             *.log
           retention-days: 7
 
-  test-composed-models:
-    if: ${{ inputs.test_cloud_models == 'true' }}
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        grounding_model:
-          - omniparser
-          - moondream3
-        planning_model:
-          - anthropic/claude-3-5-sonnet-20241022
-          - openai/gpt-4o-mini
-          - openai/gpt-4o
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libgl1-mesa-glx libglib2.0-0
-
-      - name: Install CUA dependencies
-        run: |
-          pip install --upgrade pip
-          pip install -e libs/python/agent -e libs/python/computer
-          pip install -e libs/python/core
-          pip install pytest
-
-      - name: Set up environment variables
-        run: |
-          echo "ANTHROPIC_API_KEY=${{ secrets.ANTHROPIC_API_KEY }}" >> $GITHUB_ENV
-          echo "OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}" >> $GITHUB_ENV
-
-      - name: Test composed model
-        run: |
-          cd tests/agent_loop_testing
-          python agent_test.py \
-            --model "${{ matrix.grounding_model }}+${{ matrix.planning_model }}" \
-            --max-iterations ${{ inputs.max_iterations || '3' }} \
-            --message "Take a screenshot and click on the Safari icon"
-
-      - name: Upload composed test results
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: test-results-composed-${{ matrix.grounding_model }}-${{ matrix.planning_model }}
-          path: |
-            tests/agent_loop_testing/test_images/
-            *.log
-          retention-days: 7
-
+  # Generate test report - runs after all tests complete
   generate-test-report:
-    needs: [test-cloud-models, test-local-models, test-basic-functionality, test-composed-models]
+    needs: [test-all-models, test-basic-functionality]
     runs-on: ubuntu-latest
     if: always()
     steps:
@@ -287,32 +185,27 @@ jobs:
           echo "# CUA Model Test Results" > test-summary.md
           echo "" >> test-summary.md
           echo "## Test Summary" >> test-summary.md
-          echo "- **Cloud Models Tested**: ${{ needs.test-cloud-models.result }}" >> test-summary.md
-          echo "- **Local Models Tested**: ${{ needs.test-local-models.result }}" >> test-summary.md
+          echo "- **All Models Tested**: ${{ needs.test-all-models.result }}" >> test-summary.md
           echo "- **Basic Functionality**: ${{ needs.test-basic-functionality.result }}" >> test-summary.md
-          echo "- **Composed Models**: ${{ needs.test-composed-models.result }}" >> test-summary.md
           echo "" >> test-summary.md
           echo "## Test Configuration" >> test-summary.md
           echo "- **Max Iterations**: ${{ inputs.max_iterations || '3' }}" >> test-summary.md
-          echo "- **Test Cloud Models**: ${{ inputs.test_cloud_models || 'false' }}" >> test-summary.md
-          echo "- **Test Local Models**: ${{ inputs.test_local_models || 'false' }}" >> test-summary.md
+          echo "- **Test All Models**: ${{ inputs.test_models || 'false' }}" >> test-summary.md
           echo "" >> test-summary.md
           echo "## Models Tested" >> test-summary.md
           echo "" >> test-summary.md
-          echo "### Cloud Models" >> test-summary.md
+          echo "### All Supported Models" >> test-summary.md
           echo "- Anthropic Claude models (3.5, 3.7, 4.0, 4.1, 4.5)" >> test-summary.md
           echo "- OpenAI Computer Use Preview" >> test-summary.md
           echo "- Gemini 2.5 CUA" >> test-summary.md
           echo "- GLM-4.5V via OpenRouter" >> test-summary.md
-          echo "- Composed models (OmniParser + LLM, Moondream3 + LLM)" >> test-summary.md
-          echo "" >> test-summary.md
-          echo "### Local Models" >> test-summary.md
           echo "- UI-TARS 1.5" >> test-summary.md
           echo "- OpenCUA (7B, 32B)" >> test-summary.md
           echo "- GTA1 Family (7B, 32B, 72B)" >> test-summary.md
           echo "- Holo 1.5 Family (3B, 7B, 72B)" >> test-summary.md
           echo "- InternVL 3.5 Family (1B, 2B, 4B, 8B)" >> test-summary.md
           echo "- GLM-4.5V Local" >> test-summary.md
+          echo "- Composed models (OmniParser + LLM, Moondream3 + LLM)" >> test-summary.md
           echo "" >> test-summary.md
           echo "## Test Framework" >> test-summary.md
           echo "This workflow uses the CUA Agent Loop Testing Framework located in \`tests/agent_loop_testing/\`." >> test-summary.md

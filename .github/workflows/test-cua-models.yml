@@ -4,7 +4,7 @@ name: Test CUA Supporting Models
 # Run manually using workflow_dispatch with test_models=true
 
 on:
-  pull_request:
+  pull_request_target:
     branches: [main, master]
   workflow_dispatch:
     inputs:

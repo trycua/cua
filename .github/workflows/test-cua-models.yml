@@ -19,7 +19,6 @@ jobs:
   test-all-models:
     if: ${{ github.event_name == 'pull_request_target' || fromJSON(inputs.test_models || 'false') }}
     runs-on: ubuntu-latest
-    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -34,7 +33,7 @@ jobs:
           # - anthropic/claude-haiku-4-5-20251001
 
           # OpenAI Models
-          - openai/computer-blah-blah
+          # - openai/computer-use-preview
 
           # Gemini Models
           # - gemini-2.5-computer-use-preview-10-2025

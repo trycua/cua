@@ -595,6 +595,29 @@ class BaseComputerInterface(ABC):
         """
         pass
 
+    # Convenience aliases
+    async def get_window_title(self, window_id: int | str) -> str:
+        """Convenience alias for get_window_name().
+
+        Args:
+            window_id: The window identifier.
+
+        Returns:
+            The window's title or name string.
+        """
+        return await self.get_window_name(window_id)
+
+    async def window_size(self, window_id: int | str) -> tuple[int, int]:
+        """Convenience alias for get_window_size().
+
+        Args:
+            window_id: The window identifier.
+
+        Returns:
+            A tuple of (width, height) representing the window size in pixels.
+        """
+        return await self.get_window_size(window_id)
+
     # Shell actions
     @abstractmethod
     async def run_command(self, command: str) -> CommandResult:

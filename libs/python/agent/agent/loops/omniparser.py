@@ -336,38 +336,20 @@ class OmniparserConfig(AsyncAgentConfig):
                 # Replace the original screenshot with the annotated image
                 annotated_image_url = f"data:image/png;base64,{result.annotated_image_base64}"
                 last_computer_call_output["output"]["image_url"] = annotated_image_url
-                print(f"🔍 DEBUG: Replaced screenshot with annotated image ({len(id2xy)} elements)")
 
         xy2id = {v: k for k, v in id2xy.items()}
-        print(
-            f"\n🔍 INPUT CONVERSION: xy2id mapping has {len(xy2id)} elements: {list(xy2id.items())[:5]}"
-        )
         messages_with_element_ids = []
         for i, message in enumerate(messages):
             if not isinstance(message, dict):
                 message = message.__dict__
 
             msg_type = message.get("type")
-            print(f"🔍 INPUT MSG {i}: type={msg_type}")
 
             if msg_type == "computer_call" and "action" in message:
                 action = message.get("action", {})
-                print(f"  → computer_call action: {action}")
-                if "x" in action and "y" in action:
-                    print(f"  → Has x,y: ({action['x']}, {action['y']})")
-                    print("  → Looking up in xy2id...")
-                    if (action["x"], action["y"]) in xy2id:
-                        print(f"  → Found element_id: {xy2id[(action['x'], action['y'])]}")
-                    else:
-                        print("  → NOT FOUND in xy2id!")
 
             converted = await replace_computer_call_with_function(message, xy2id)  # type: ignore
-            print(f"  → After conversion: {[c.get('type') for c in converted]}")
-            if converted and converted[0].get("type") == "function_call":
-                print(f"  → function_call args: {converted[0].get('arguments')}")
             messages_with_element_ids += converted
-
-        print(f"🔍 INPUT CONVERSION COMPLETE: {len(messages_with_element_ids)} messages\n")
 
         completion_messages = convert_responses_items_to_completion_messages(
             messages_with_element_ids, allow_images_in_tool_results=False
@@ -410,14 +392,6 @@ class OmniparserConfig(AsyncAgentConfig):
         for choice_message in choice_messages:
             responses_items.extend(convert_completion_messages_to_responses_items([choice_message]))
 
-        print("🔍 DEBUG: responses_items after completion conversion:")
-        for item in responses_items:
-            print(
-                f"  - {item.get('type')}: {item.get('action') if item.get('type') == 'computer_call' else item}"
-            )
-
-        print(f"🔍 DEBUG: id2xy mapping has {len(id2xy)} elements: {list(id2xy.items())[:5]}")
-
         # Convert element_id → x,y (similar to moondream's convert_computer_calls_desc2xy)
         final_output = []
         for item in responses_items:
@@ -432,7 +406,6 @@ class OmniparserConfig(AsyncAgentConfig):
                         action["x"] = x
                         action["y"] = y
                         del action["element_id"]
-                        print(f"🔍 DEBUG: Converted element_id {element_id} → x={x}, y={y}")
 
                 # Handle start_element_id and end_element_id for drag operations
                 elif "start_element_id" in action and "end_element_id" in action:

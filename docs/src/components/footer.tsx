@@ -25,7 +25,7 @@ export function Footer() {
               </li>
               <li>
                 <a
-                  href="https://cua.ai/features"
+                  href="https://cua.ai/#features"
                   className="text-sm text-fd-muted-foreground hover:text-fd-foreground transition-colors"
                 >
                   Features

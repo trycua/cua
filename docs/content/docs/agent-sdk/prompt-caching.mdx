@@ -26,7 +26,7 @@ agent = ComputerAgent(
 When using Anthropic-based CUAs (Claude models), setting `use_prompt_caching=True` will automatically add `{ "cache_control": "ephemeral" }` to your messages. This enables prompt caching for the session and can speed up repeated runs with the same prompt.
 
 <Callout title="Note">
-This argument is only required for Anthropic CUAs. For other providers, it is ignored.
+  This argument is only required for Anthropic CUAs. For other providers, it is ignored.
 </Callout>
 
 ## OpenAI Provider
@@ -44,13 +44,16 @@ agent = ComputerAgent(
 ```
 
 ## Implementation Details
+
 - For Anthropic: Adds `{ "cache_control": "ephemeral" }` to messages when enabled.
 - For OpenAI: Caching is automatic for long prompts; the argument is ignored.
 
 ## When to Use
+
 - Enable for Anthropic CUAs if you want to avoid reprocessing the same prompt in repeated or iterative tasks.
 - Not needed for OpenAI models unless you want explicit ephemeral cache control (not required for most users).
 
 ## See Also
+
 - [Agent Loops](./agent-loops)
 - [Migration Guide](./migration-guide)

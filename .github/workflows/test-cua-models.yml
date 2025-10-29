@@ -1,0 +1,118 @@
+name: Test CUA Supporting Models
+
+# This workflow tests all supported CUA models with API keys
+# Run manually using workflow_dispatch with test_models=true
+
+on:
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+    inputs:
+      test_models:
+        description: "Test all supported models (requires API keys)"
+        required: false
+        default: "true"
+        type: boolean
+
+jobs:
+  # Test all CUA models - runs on PRs or when manually triggered
+  test-all-models:
+    if: ${{ github.event_name == 'pull_request' || inputs.test_models == 'true' }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        model:
+          # Anthropic Claude Models
+          # - anthropic/claude-3-5-sonnet-20241022
+          # - anthropic/claude-3-7-sonnet-20250219
+          # - anthropic/claude-opus-4-20250514
+          # - anthropic/claude-sonnet-4-20250514
+          # - anthropic/claude-opus-4-1-20250805
+          - anthropic/claude-sonnet-4-5-20250929
+          # - anthropic/claude-haiku-4-5-20251001
+
+          # OpenAI Models
+          # - openai/computer-use-preview
+
+          # Gemini Models
+          # - gemini-2.5-computer-use-preview-10-2025
+
+          # GLM-4.5V Models
+          # - openrouter/z-ai/glm-4.5v
+
+          # UI-TARS Models
+          # - huggingface-local/ByteDance-Seed/UI-TARS-1.5-7B
+
+          # OpenCUA Models
+          # - huggingface-local/xlangai/OpenCUA-7B
+          # - huggingface-local/xlangai/OpenCUA-32B
+
+          # GTA1 Family Models
+          # - huggingface-local/HelloKKMe/GTA1-7B
+          # - huggingface-local/HelloKKMe/GTA1-32B
+          # - huggingface-local/HelloKKMe/GTA1-72B
+
+          # Holo 1.5 Family Models
+          # - huggingface-local/Hcompany/Holo1.5-3B
+          # - huggingface-local/Hcompany/Holo1.5-7B
+          # - huggingface-local/Hcompany/Holo1.5-72B
+
+          # InternVL 3.5 Family Models
+          # - huggingface-local/OpenGVLab/InternVL3_5-1B
+          # - huggingface-local/OpenGVLab/InternVL3_5-2B
+          # - huggingface-local/OpenGVLab/InternVL3_5-4B
+          # - huggingface-local/OpenGVLab/InternVL3_5-8B
+
+          # GLM-4.5V Local
+          # - huggingface-local/zai-org/GLM-4.5V
+
+          # Composed Models (Grounding + Planning)
+          # - omniparser+anthropic/claude-3-5-sonnet-20241022
+          # - omniparser+openai/gpt-4o-mini
+          # - moondream3+anthropic/claude-3-5-sonnet-20241022
+          # - moondream3+openai/gpt-4o-mini
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgl1-mesa-dri libglib2.0-0
+
+      - name: Install CUA dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -e libs/python/agent -e libs/python/computer
+          pip install -e libs/python/core
+          pip install "cua-agent[uitars-hf]"
+          pip install pytest
+
+      - name: Set up environment variables
+        run: |
+          echo "ANTHROPIC_API_KEY=${{ secrets.ANTHROPIC_API_KEY }}" >> $GITHUB_ENV
+          echo "OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}" >> $GITHUB_ENV
+          echo "GOOGLE_API_KEY=${{ secrets.GOOGLE_API_KEY }}" >> $GITHUB_ENV
+          echo "OPENROUTER_API_KEY=${{ secrets.OPENROUTER_API_KEY }}" >> $GITHUB_ENV
+
+      - name: Test model with agent loop
+        run: |
+          cd tests/agent_loop_testing
+          python agent_test.py --model "${{ matrix.model }}"
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-${{ matrix.model }}
+          path: |
+            tests/agent_loop_testing/test_images/
+            *.log
+          retention-days: 7

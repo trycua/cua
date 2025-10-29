@@ -36,8 +36,12 @@ class cuaComputerHandler(AsyncComputerHandler):
         screen_size = await self.interface.get_screen_size()
         return screen_size["width"], screen_size["height"]
 
-    async def screenshot(self) -> str:
-        """Take a screenshot and return as base64 string."""
+    async def screenshot(self, text: Optional[str] = None) -> str:
+        """Take a screenshot and return as base64 string.
+
+        Args:
+            text: Optional descriptive text (for compatibility with GPT-4o models, ignored)
+        """
         assert self.interface is not None
         screenshot_bytes = await self.interface.screenshot()
         return base64.b64encode(screenshot_bytes).decode("utf-8")

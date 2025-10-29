@@ -35,7 +35,7 @@ You can run your Cua computer in the cloud (recommended for easiest setup), loca
   <Tab value="🍎 Lume">
 
     Lume containers are macOS virtual machines that run on a macOS host machine.
-    
+
     1. Install the Lume CLI:
 
     ```bash
@@ -51,8 +51,8 @@ You can run your Cua computer in the cloud (recommended for easiest setup), loca
   </Tab>
   <Tab value="🪟 Windows Sandbox">
 
-  Windows Sandbox provides Windows virtual environments that run on a Windows host machine.
-    
+Windows Sandbox provides Windows virtual environments that run on a Windows host machine.
+
     1. Enable [Windows Sandbox](https://learn.microsoft.com/en-us/windows/security/application-security/application-isolation/windows-sandbox/windows-sandbox-install) (requires Windows 10 Pro/Enterprise or Windows 11)
     2. Install the `pywinsandbox` dependency:
 
@@ -65,8 +65,8 @@ You can run your Cua computer in the cloud (recommended for easiest setup), loca
   </Tab>
   <Tab value="🐳 Docker">
 
-  Docker provides a way to run Ubuntu containers on any host machine.
-    
+Docker provides a way to run Ubuntu containers on any host machine.
+
     1. Install Docker Desktop or Docker Engine:
 
     2. Pull the CUA Ubuntu sandbox:
@@ -173,6 +173,7 @@ Connect to your Cua computer and perform basic interactions, such as taking scre
     finally:
         await computer.close()
     ```
+
   </Tab>
   <Tab value="TypeScript">
     Install the Cua computer TypeScript SDK:
@@ -260,6 +261,7 @@ Connect to your Cua computer and perform basic interactions, such as taking scre
       await computer.close();
     }
     ```
+
   </Tab>
 </Tabs>
 
@@ -274,11 +276,13 @@ Learn more about computers in the [Cua computers documentation](/computer-sdk/co
 Utilize an Agent to automate complex tasks by providing it with a goal and allowing it to interact with the computer environment.
 
 Install the Cua agent Python SDK:
+
 ```bash
 pip install "cua-agent[all]"
 ```
 
 Then, use the `ComputerAgent` object:
+
 ```python
 from agent import ComputerAgent
 

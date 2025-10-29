@@ -11,13 +11,13 @@ on:
       test_models:
         description: "Test all supported models (requires API keys)"
         required: false
-        default: "true"
+        default: true
         type: boolean
 
 jobs:
   # Test all CUA models - runs on PRs or when manually triggered
   test-all-models:
-    if: ${{ github.event_name == 'pull_request' || inputs.test_models == 'true' }}
+    if: ${{ github.event_name == 'pull_request' || fromJSON(inputs.test_models) }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false

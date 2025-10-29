@@ -436,6 +436,189 @@ class BaseComputerInterface(ABC):
         """
         pass
 
+    # Desktop actions
+    @abstractmethod
+    async def get_desktop_environment(self) -> str:
+        """Get the current desktop environment.
+
+        Returns:
+            The name of the current desktop environment.
+        """
+        pass
+
+    @abstractmethod
+    async def set_wallpaper(self, path: str) -> None:
+        """Set the desktop wallpaper to the specified path.
+
+        Args:
+            path: The file path to set as wallpaper
+        """
+        pass
+
+    # Window management
+    @abstractmethod
+    async def open(self, target: str) -> None:
+        """Open a target using the system's default handler.
+
+        Typically opens files, folders, or URLs with the associated application.
+
+        Args:
+            target: The file path, folder path, or URL to open.
+        """
+        pass
+
+    @abstractmethod
+    async def launch(self, app: str, args: List[str] | None = None) -> Optional[int]:
+        """Launch an application with optional arguments.
+
+        Args:
+            app: The application executable or bundle identifier.
+            args: Optional list of arguments to pass to the application.
+
+        Returns:
+            Optional process ID (PID) of the launched application if available, otherwise None.
+        """
+        pass
+
+    @abstractmethod
+    async def get_current_window_id(self) -> int | str:
+        """Get the identifier of the currently active/focused window.
+
+        Returns:
+            A window identifier that can be used with other window management methods.
+        """
+        pass
+
+    @abstractmethod
+    async def get_application_windows(self, app: str) -> List[int | str]:
+        """Get all window identifiers for a specific application.
+
+        Args:
+            app: The application name, executable, or identifier to query.
+
+        Returns:
+            A list of window identifiers belonging to the specified application.
+        """
+        pass
+
+    @abstractmethod
+    async def get_window_name(self, window_id: int | str) -> str:
+        """Get the title/name of a window.
+
+        Args:
+            window_id: The window identifier.
+
+        Returns:
+            The window's title or name string.
+        """
+        pass
+
+    @abstractmethod
+    async def get_window_size(self, window_id: int | str) -> tuple[int, int]:
+        """Get the size of a window in pixels.
+
+        Args:
+            window_id: The window identifier.
+
+        Returns:
+            A tuple of (width, height) representing the window size in pixels.
+        """
+        pass
+
+    @abstractmethod
+    async def get_window_position(self, window_id: int | str) -> tuple[int, int]:
+        """Get the screen position of a window.
+
+        Args:
+            window_id: The window identifier.
+
+        Returns:
+            A tuple of (x, y) representing the window's top-left corner in screen coordinates.
+        """
+        pass
+
+    @abstractmethod
+    async def set_window_size(self, window_id: int | str, width: int, height: int) -> None:
+        """Set the size of a window in pixels.
+
+        Args:
+            window_id: The window identifier.
+            width: Desired width in pixels.
+            height: Desired height in pixels.
+        """
+        pass
+
+    @abstractmethod
+    async def set_window_position(self, window_id: int | str, x: int, y: int) -> None:
+        """Move a window to a specific position on the screen.
+
+        Args:
+            window_id: The window identifier.
+            x: X coordinate for the window's top-left corner.
+            y: Y coordinate for the window's top-left corner.
+        """
+        pass
+
+    @abstractmethod
+    async def maximize_window(self, window_id: int | str) -> None:
+        """Maximize a window.
+
+        Args:
+            window_id: The window identifier.
+        """
+        pass
+
+    @abstractmethod
+    async def minimize_window(self, window_id: int | str) -> None:
+        """Minimize a window.
+
+        Args:
+            window_id: The window identifier.
+        """
+        pass
+
+    @abstractmethod
+    async def activate_window(self, window_id: int | str) -> None:
+        """Bring a window to the foreground and focus it.
+
+        Args:
+            window_id: The window identifier.
+        """
+        pass
+
+    @abstractmethod
+    async def close_window(self, window_id: int | str) -> None:
+        """Close a window.
+
+        Args:
+            window_id: The window identifier.
+        """
+        pass
+
+    # Convenience aliases
+    async def get_window_title(self, window_id: int | str) -> str:
+        """Convenience alias for get_window_name().
+
+        Args:
+            window_id: The window identifier.
+
+        Returns:
+            The window's title or name string.
+        """
+        return await self.get_window_name(window_id)
+
+    async def window_size(self, window_id: int | str) -> tuple[int, int]:
+        """Convenience alias for get_window_size().
+
+        Args:
+            window_id: The window identifier.
+
+        Returns:
+            A tuple of (width, height) representing the window size in pixels.
+        """
+        return await self.get_window_size(window_id)
+
+    # Shell actions
     @abstractmethod
     async def run_command(self, command: str) -> CommandResult:
         """Run shell command and return structured result.

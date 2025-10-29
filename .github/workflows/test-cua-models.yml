@@ -5,7 +5,7 @@ name: Test CUA Supporting Models
 
 on:
   pull_request:
-    branches: [ main, master ]
+    branches: [main, master]
   workflow_dispatch:
     inputs:
       test_models:

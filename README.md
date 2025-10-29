@@ -207,17 +207,17 @@ The following table shows which capabilities are supported by each model:
 
 | Model                                                                                                                            | Computer-Use | Grounding | Tools | VLM |
 | -------------------------------------------------------------------------------------------------------------------------------- | :----------: | :-------: | :---: | :-: |
-| [Claude Sonnet/Haiku](https://docs.claude.com/en/docs/agents-and-tools/tool-use/computer-use-tool#how-to-implement-computer-use) |      ✓       |     ✓     |   ✓   |  ✓  |
-| [OpenAI CU Preview](https://platform.openai.com/docs/models/computer-use-preview)                                                |      ✓       |     ✓     |       |  ✓  |
-| [GLM-V](https://huggingface.co/THUDM/glm-4v-9b)                                                                                  |      ✓       |     ✓     |   ✓   |  ✓  |
-| [Gemini CU Preview](https://ai.google.dev/gemini-api/docs/computer-use)                                                          |      ✓       |     ✓     |       |  ✓  |
-| [InternVL](https://huggingface.co/OpenGVLab/InternVL3_5-1B)                                                                      |      ✓       |     ✓     |   ✓   |  ✓  |
-| [UI-TARS](https://huggingface.co/ByteDance-Seed/UI-TARS-1.5-7B)                                                                  |      ✓       |     ✓     |   ✓   |  ✓  |
-| [OpenCUA](https://huggingface.co/xlangai/OpenCUA-7B)                                                                             |              |     ✓     |       |     |
-| [GTA](https://huggingface.co/HelloKKMe/GTA1-7B)                                                                                  |              |     ✓     |       |     |
-| [Holo](https://huggingface.co/Hcompany/Holo1.5-3B)                                                                               |              |     ✓     |       |     |
-| [Moondream](https://huggingface.co/moondream/moondream3-preview)                                                                 |              |     ✓     |       |     |
-| [OmniParser](https://github.com/microsoft/OmniParser)                                                                            |              |     ✓     |       |     |
+| [Claude Sonnet/Haiku](https://docs.claude.com/en/docs/agents-and-tools/tool-use/computer-use-tool#how-to-implement-computer-use) |      🖥️      |    🎯     |  🛠️   | 👁️  |
+| [OpenAI CU Preview](https://platform.openai.com/docs/models/computer-use-preview)                                                |      🖥️      |    🎯     |       | 👁️  |
+| [GLM-V](https://huggingface.co/THUDM/glm-4v-9b)                                                                                  |      🖥️      |    🎯     |  🛠️   | 👁️  |
+| [Gemini CU Preview](https://ai.google.dev/gemini-api/docs/computer-use)                                                          |      🖥️      |    🎯     |       | 👁️  |
+| [InternVL](https://huggingface.co/OpenGVLab/InternVL3_5-1B)                                                                      |      🖥️      |    🎯     |  🛠️   | 👁️  |
+| [UI-TARS](https://huggingface.co/ByteDance-Seed/UI-TARS-1.5-7B)                                                                  |      🖥️      |    🎯     |  🛠️   | 👁️  |
+| [OpenCUA](https://huggingface.co/xlangai/OpenCUA-7B)                                                                             |              |    🎯     |       |     |
+| [GTA](https://huggingface.co/HelloKKMe/GTA1-7B)                                                                                  |              |    🎯     |       |     |
+| [Holo](https://huggingface.co/Hcompany/Holo1.5-3B)                                                                               |              |    🎯     |       |     |
+| [Moondream](https://huggingface.co/moondream/moondream3-preview)                                                                 |              |    🎯     |       |     |
+| [OmniParser](https://github.com/microsoft/OmniParser)                                                                            |              |    🎯     |       |     |
 
 ### Model IDs
 

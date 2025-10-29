@@ -1,7 +1,7 @@
 {
   "scripts": {
-    "prettier:check": "prettier --check '**/*.{ts,tsx,js,jsx,json,md,yaml,yml}'",
-    "prettier:format": "prettier --write '**/*.{ts,tsx,js,jsx,json,md,yaml,yml}'"
+    "prettier:check": "prettier --check '**/*.{ts,tsx,js,jsx,json,md,mdx,yaml,yml}'",
+    "prettier:format": "prettier --write '**/*.{ts,tsx,js,jsx,json,md,mdx,yaml,yml}'"
   },
   "devDependencies": {
     "prettier": "^3.6.2"

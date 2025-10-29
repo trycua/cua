@@ -249,13 +249,15 @@ async def replace_computer_call_with_function(
                 "id": item.get("id"),
                 "call_id": item.get("call_id"),
                 "status": "completed",
-                # Fall back to string representation
-                "content": f"Used tool: {action_data.get("type")}({json.dumps(fn_args)})",
             }
         ]
 
     elif item_type == "computer_call_output":
-        # Simple conversion: computer_call_output -> function_call_output
+        output = item.get("output")
+
+        if isinstance(output, dict):
+            output = [output]
+
         return [
             {
                 "type": "function_call_output",

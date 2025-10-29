@@ -18,7 +18,7 @@ agent = ComputerAgent(
     tools=[computer],
     callbacks=[
         LoggingCallback(
-            logger=logging.getLogger("cua"), 
+            logger=logging.getLogger("cua"),
             level=logging.INFO
         )
     ]
@@ -47,7 +47,7 @@ class CustomLogger(AsyncCallbackHandler):
     def __init__(self, logger_name="agent"):
         self.logger = logging.getLogger(logger_name)
         self.logger.setLevel(logging.INFO)
-        
+
         # Add console handler
         handler = logging.StreamHandler()
         formatter = logging.Formatter(
@@ -55,18 +55,18 @@ class CustomLogger(AsyncCallbackHandler):
         )
         handler.setFormatter(formatter)
         self.logger.addHandler(handler)
-    
+
     async def on_run_start(self, kwargs, old_items):
         self.logger.info(f"Agent run started with model: {kwargs.get('model')}")
-    
+
     async def on_computer_call_start(self, item):
         action = item.get('action', {})
         self.logger.info(f"Computer action: {action.get('type')}")
-    
+
     async def on_usage(self, usage):
         cost = usage.get('response_cost', 0)
         self.logger.info(f"API call cost: ${cost:.4f}")
-    
+
     async def on_run_end(self, kwargs, old_items, new_items):
         self.logger.info("Agent run completed")
 
@@ -81,6 +81,7 @@ agent = ComputerAgent(
 ## Available Hooks
 
 Log any agent event using these callback methods:
+
 - `on_run_start/end` - Run lifecycle
 - `on_computer_call_start/end` - Computer actions
 - `on_api_start/end` - LLM API calls

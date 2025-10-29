@@ -5,7 +5,6 @@ description: Manage your Cua Cloud sandboxes (VMs) via Python SDK or HTTP API
 
 import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
 
-
 Using the Cua Cloud API, you can manage your Cua Cloud sandboxes (VMs) with Python or HTTP (curl).
 
 All examples require a CUA API key. You can obtain one from the [Dashboard](https://www.cua.ai/dashboard/keys).
@@ -17,107 +16,111 @@ All examples require a CUA API key. You can obtain one from the [Dashboard](http
 <Tabs items={["Python", "curl"]}>
   <Tab value="Python">
 
-  ```python
-  import os
-  import asyncio
-  from computer.providers.cloud.provider import CloudProvider
+```python
+import os
+import asyncio
+from computer.providers.cloud.provider import CloudProvider
 
-  async def main():
-      api_key = os.getenv("CUA_API_KEY") or "your-api-key"
-      # Optional: point to a different API base
-      # os.environ["CUA_API_BASE"] = "https://api.cua.ai"
+async def main():
+    api_key = os.getenv("CUA_API_KEY") or "your-api-key"
+    # Optional: point to a different API base
+    # os.environ["CUA_API_BASE"] = "https://api.cua.ai"
 
-      provider = CloudProvider(api_key=api_key, verbose=False)
-      async with provider:
-          vms = await provider.list_vms()
-          for vm in vms:
-              print({
-                  "name": vm["name"],
-                  "status": vm["status"],
-                  "api_url": vm.get("api_url"),
-                  "vnc_url": vm.get("vnc_url"),
-              })
+    provider = CloudProvider(api_key=api_key, verbose=False)
+    async with provider:
+        vms = await provider.list_vms()
+        for vm in vms:
+            print({
+                "name": vm["name"],
+                "status": vm["status"],
+                "api_url": vm.get("api_url"),
+                "vnc_url": vm.get("vnc_url"),
+            })
 
-  if __name__ == "__main__":
-      asyncio.run(main())
-  ```
+if __name__ == "__main__":
+    asyncio.run(main())
+```
 
   </Tab>
   <Tab value="curl">
 
-  ```bash
-  curl -H "Authorization: Bearer $CUA_API_KEY" \
-       "https://api.cua.ai/v1/vms"
-  ```
+```bash
+curl -H "Authorization: Bearer $CUA_API_KEY" \
+     "https://api.cua.ai/v1/vms"
+```
 
-  Responses:
-  - 200: Array of minimal VM objects with fields `{ name, password, status }`
-  - 401: Unauthorized (missing/invalid API key)
+Responses:
 
-  ```json
-  [
-    {
-      "name": "s-windows-x4snp46ebf",
-      "password": "49b8daa3",
-      "status": "running"
-    }
-  ]
-  ```
+- 200: Array of minimal VM objects with fields `{ name, password, status }`
+- 401: Unauthorized (missing/invalid API key)
 
-  Status values:
+```json
+[
+  {
+    "name": "s-windows-x4snp46ebf",
+    "password": "49b8daa3",
+    "status": "running"
+  }
+]
+```
 
-  - `pending`: VM deployment in progress
-  - `running`: VM is active and accessible
-  - `stopped`: VM is stopped but not terminated
-  - `terminated`: VM has been permanently destroyed
-  - `failed`: VM deployment or operation failed
+Status values:
 
-  </Tab>
-</Tabs>
+- `pending`: VM deployment in progress
+- `running`: VM is active and accessible
+- `stopped`: VM is stopped but not terminated
+- `terminated`: VM has been permanently destroyed
+- `failed`: VM deployment or operation failed
+
+      </Tab>
+
+  </Tabs>
 
 ---
 
 ## Start a VM
+
 Provide the VM name you want to start.
 
 <Tabs items={["Python", "curl"]}>
   <Tab value="Python">
 
-  ```python
-  import os
-  import asyncio
-  from computer.providers.cloud.provider import CloudProvider
+```python
+import os
+import asyncio
+from computer.providers.cloud.provider import CloudProvider
 
-  async def main():
-      api_key = os.getenv("CUA_API_KEY") or "your-api-key"
-      name = "my-vm-name"  # e.g., "m-linux-96lcxd2c2k"
+async def main():
+    api_key = os.getenv("CUA_API_KEY") or "your-api-key"
+    name = "my-vm-name"  # e.g., "m-linux-96lcxd2c2k"
 
-      provider = CloudProvider(api_key=api_key)
-      async with provider:
-          resp = await provider.run_vm(name)
-          print(resp)  # { "name": name, "status": "starting" }
+    provider = CloudProvider(api_key=api_key)
+    async with provider:
+        resp = await provider.run_vm(name)
+        print(resp)  # { "name": name, "status": "starting" }
 
-  if __name__ == "__main__":
-      asyncio.run(main())
-  ```
+if __name__ == "__main__":
+    asyncio.run(main())
+```
 
   </Tab>
   <Tab value="curl">
 
-  ```bash
-  curl -X POST \
-       -H "Authorization: Bearer $CUA_API_KEY" \
-       "https://api.cua.ai/v1/vms/my-vm-name/start" -i
-  ```
+```bash
+curl -X POST \
+     -H "Authorization: Bearer $CUA_API_KEY" \
+     "https://api.cua.ai/v1/vms/my-vm-name/start" -i
+```
 
-  Responses:
-  - 204: No Content (start accepted)
-  - 401: Unauthorized (missing/invalid API key)
-  - 404: VM not found or not owned by the user
+Responses:
 
-  ```text
-  HTTP/1.1 204 No Content
-  ```
+- 204: No Content (start accepted)
+- 401: Unauthorized (missing/invalid API key)
+- 404: VM not found or not owned by the user
+
+```text
+HTTP/1.1 204 No Content
+```
 
   </Tab>
 </Tabs>
@@ -125,46 +128,48 @@ Provide the VM name you want to start.
 ---
 
 ## Stop a VM
+
 Stops the VM asynchronously.
 
 <Tabs items={["Python", "curl"]}>
   <Tab value="Python">
 
-  ```python
-  import os
-  import asyncio
-  from computer.providers.cloud.provider import CloudProvider
+```python
+import os
+import asyncio
+from computer.providers.cloud.provider import CloudProvider
 
-  async def main():
-      api_key = os.getenv("CUA_API_KEY") or "your-api-key"
-      name = "my-vm-name"
+async def main():
+    api_key = os.getenv("CUA_API_KEY") or "your-api-key"
+    name = "my-vm-name"
 
-      provider = CloudProvider(api_key=api_key)
-      async with provider:
-          resp = await provider.stop_vm(name)
-          print(resp)  # { "name": name, "status": "stopping" }
+    provider = CloudProvider(api_key=api_key)
+    async with provider:
+        resp = await provider.stop_vm(name)
+        print(resp)  # { "name": name, "status": "stopping" }
 
-  if __name__ == "__main__":
-      asyncio.run(main())
-  ```
+if __name__ == "__main__":
+    asyncio.run(main())
+```
 
   </Tab>
   <Tab value="curl">
 
-  ```bash
-  curl -X POST \
-       -H "Authorization: Bearer $CUA_API_KEY" \
-       "https://api.cua.ai/v1/vms/my-vm-name/stop"
-  ```
+```bash
+curl -X POST \
+     -H "Authorization: Bearer $CUA_API_KEY" \
+     "https://api.cua.ai/v1/vms/my-vm-name/stop"
+```
 
-  Responses:
-  - 202: Accepted with `{ "status": "stopping" }`
-  - 401: Unauthorized (missing/invalid API key)
-  - 404: VM not found or not owned by the user
+Responses:
 
-  ```json
-  { "status": "stopping" }
-  ```
+- 202: Accepted with `{ "status": "stopping" }`
+- 401: Unauthorized (missing/invalid API key)
+- 404: VM not found or not owned by the user
+
+```json
+{ "status": "stopping" }
+```
 
   </Tab>
 </Tabs>
@@ -172,46 +177,48 @@ Stops the VM asynchronously.
 ---
 
 ## Restart a VM
+
 Restarts the VM asynchronously.
 
 <Tabs items={["Python", "curl"]}>
   <Tab value="Python">
 
-  ```python
-  import os
-  import asyncio
-  from computer.providers.cloud.provider import CloudProvider
+```python
+import os
+import asyncio
+from computer.providers.cloud.provider import CloudProvider
 
-  async def main():
-      api_key = os.getenv("CUA_API_KEY") or "your-api-key"
-      name = "my-vm-name"
+async def main():
+    api_key = os.getenv("CUA_API_KEY") or "your-api-key"
+    name = "my-vm-name"
 
-      provider = CloudProvider(api_key=api_key)
-      async with provider:
-          resp = await provider.restart_vm(name)
-          print(resp)  # { "name": name, "status": "restarting" }
+    provider = CloudProvider(api_key=api_key)
+    async with provider:
+        resp = await provider.restart_vm(name)
+        print(resp)  # { "name": name, "status": "restarting" }
 
-  if __name__ == "__main__":
-      asyncio.run(main())
-  ```
+if __name__ == "__main__":
+    asyncio.run(main())
+```
 
   </Tab>
   <Tab value="curl">
 
-  ```bash
-  curl -X POST \
-       -H "Authorization: Bearer $CUA_API_KEY" \
-       "https://api.cua.ai/v1/vms/my-vm-name/restart"
-  ```
+```bash
+curl -X POST \
+     -H "Authorization: Bearer $CUA_API_KEY" \
+     "https://api.cua.ai/v1/vms/my-vm-name/restart"
+```
 
-  Responses:
-  - 202: Accepted with `{ "status": "restarting" }`
-  - 401: Unauthorized (missing/invalid API key)
-  - 404: VM not found or not owned by the user
+Responses:
 
-  ```json
-  { "status": "restarting" }
-  ```
+- 202: Accepted with `{ "status": "restarting" }`
+- 401: Unauthorized (missing/invalid API key)
+- 404: VM not found or not owned by the user
+
+```json
+{ "status": "restarting" }
+```
 
   </Tab>
 </Tabs>
@@ -219,42 +226,44 @@ Restarts the VM asynchronously.
 ---
 
 ## Query a VM by name
+
 Query the computer-server running on the VM. Useful for checking details like status or OS type.
 
 <Tabs items={["Python", "curl"]}>
   <Tab value="Python">
 
-  ```python
-  import os
-  import asyncio
-  from computer.providers.cloud.provider import CloudProvider
+```python
+import os
+import asyncio
+from computer.providers.cloud.provider import CloudProvider
 
-  async def main():
-      api_key = os.getenv("CUA_API_KEY") or "your-api-key"
-      name = "my-vm-name"
+async def main():
+    api_key = os.getenv("CUA_API_KEY") or "your-api-key"
+    name = "my-vm-name"
 
-      provider = CloudProvider(api_key=api_key)
-      async with provider:
-          info = await provider.get_vm(name)
-          print(info)
+    provider = CloudProvider(api_key=api_key)
+    async with provider:
+        info = await provider.get_vm(name)
+        print(info)
 
-  if __name__ == "__main__":
-      asyncio.run(main())
-  ```
+if __name__ == "__main__":
+    asyncio.run(main())
+```
 
   </Tab>
   <Tab value="curl">
 
-  ```bash
-  curl "https://my-vm-name.containers.cloud.cua.ai:8443/status"
-  ```
+```bash
+curl "https://my-vm-name.containers.cloud.cua.ai:8443/status"
+```
 
-  Responses:
-  - 200: Server available
+Responses:
 
-  ```json
-  { "status": "ok", "os_type": "linux", "features": ["agent"] }
-  ```
+- 200: Server available
+
+```json
+{ "status": "ok", "os_type": "linux", "features": ["agent"] }
+```
 
   </Tab>
 </Tabs>

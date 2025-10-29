@@ -1,0 +1,93 @@
+name: Python Unit Tests
+
+on:
+  pull_request:
+    paths:
+      - "libs/python/**"
+      - ".github/workflows/python-tests.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "libs/python/**"
+      - ".github/workflows/python-tests.yml"
+  workflow_dispatch: # Allow manual trigger
+
+jobs:
+  test:
+    name: Test ${{ matrix.package }}
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false # Test all packages even if one fails
+      matrix:
+        package:
+          - core
+          - agent
+          - computer
+          - computer-server
+          - mcp-server
+          - pylume
+          - som
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        run: |
+          pip install uv
+
+      - name: Install package and dependencies
+        run: |
+          cd libs/python/${{ matrix.package }}
+          # Install the package in editable mode with dev dependencies
+          if [ -f pyproject.toml ]; then
+            uv pip install --system -e .
+            # Install test dependencies
+            uv pip install --system pytest pytest-asyncio pytest-mock pytest-cov
+          fi
+        shell: bash
+
+      - name: Run tests
+        run: |
+          cd libs/python/${{ matrix.package }}
+          if [ -d tests ]; then
+            python -m pytest tests/ -v --tb=short --cov --cov-report=term --cov-report=xml
+          else
+            echo "No tests directory found, skipping tests"
+          fi
+        shell: bash
+        env:
+          CUA_TELEMETRY_DISABLED: "1" # Disable telemetry during tests
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        if: always()
+        with:
+          file: ./libs/python/${{ matrix.package }}/coverage.xml
+          flags: ${{ matrix.package }}
+          name: codecov-${{ matrix.package }}
+          fail_ci_if_error: false
+        continue-on-error: true
+
+  summary:
+    name: Test Summary
+    runs-on: ubuntu-latest
+    needs: test
+    if: always()
+
+    steps:
+      - name: Check test results
+        run: |
+          if [ "${{ needs.test.result }}" == "failure" ]; then
+            echo "❌ Some tests failed. Please check the logs above."
+            exit 1
+          else
+            echo "✅ All tests passed!"
+          fi

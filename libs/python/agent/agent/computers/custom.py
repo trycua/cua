@@ -122,8 +122,12 @@ class CustomComputerHandler(AsyncComputerHandler):
 
         return self._last_screenshot_size
 
-    async def screenshot(self) -> str:
-        """Take a screenshot and return as base64 string."""
+    async def screenshot(self, text: Optional[str] = None) -> str:
+        """Take a screenshot and return as base64 string.
+
+        Args:
+            text: Optional descriptive text (for compatibility with GPT-4o models, ignored)
+        """
         result = await self._call_function(self.functions["screenshot"])
         b64_str = self._to_b64_str(result)  # type: ignore
 

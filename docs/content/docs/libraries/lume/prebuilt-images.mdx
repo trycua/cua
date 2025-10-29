@@ -5,24 +5,29 @@ title: Prebuilt Images
 Pre-built images are available in the registry [ghcr.io/trycua](https://github.com/orgs/trycua/packages). These images come with an SSH server pre-configured and auto-login enabled.
 
 <Callout>
-The default password on pre-built images is `lume`. For the security of your VM, change this password after your first login.
+  The default password on pre-built images is `lume`. For the security of your VM, change this
+  password after your first login.
 </Callout>
 
 ## Available Images
 
 The following pre-built images are available to download via `lume pull`:
 
-| Image | Tag | Description | Logical Size |
-|-------|------------|-------------|------|
-| `macos-sequoia-vanilla` | `latest`, `15.2` | macOS Sequoia 15.2 image | 20GB |
-| `macos-sequoia-xcode` | `latest`, `15.2` | macOS Sequoia 15.2 image with Xcode command line tools | 22GB |
-| `macos-sequoia-cua` | `latest`, `15.3` | macOS Sequoia 15.3 image compatible with the Computer interface | 24GB |
-| `ubuntu-noble-vanilla` | `latest`, `24.04.1` | [Ubuntu Server for ARM 24.04.1 LTS](https://ubuntu.com/download/server/arm) with Ubuntu Desktop | 20GB |
+| Image                   | Tag                 | Description                                                                                     | Logical Size |
+| ----------------------- | ------------------- | ----------------------------------------------------------------------------------------------- | ------------ |
+| `macos-sequoia-vanilla` | `latest`, `15.2`    | macOS Sequoia 15.2 image                                                                        | 20GB         |
+| `macos-sequoia-xcode`   | `latest`, `15.2`    | macOS Sequoia 15.2 image with Xcode command line tools                                          | 22GB         |
+| `macos-sequoia-cua`     | `latest`, `15.3`    | macOS Sequoia 15.3 image compatible with the Computer interface                                 | 24GB         |
+| `ubuntu-noble-vanilla`  | `latest`, `24.04.1` | [Ubuntu Server for ARM 24.04.1 LTS](https://ubuntu.com/download/server/arm) with Ubuntu Desktop | 20GB         |
 
 ## Disk Space
 
 For additional disk space, resize the VM disk after pulling the image using the `lume set <name> --disk-size <size>` command. Note that the actual disk space used by sparse images will be much lower than the logical size listed.
 
 <Callout>
-**Important Note (v0.2.0+):** Images are being re-uploaded with sparse file system optimizations enabled, resulting in significantly lower actual disk usage. Older images (without the `-sparse` suffix) are now **deprecated**. The last version of `lume` fully supporting the non-sparse images was `v0.1.x`. Starting from `v0.2.0`, lume will automatically pull images optimized with sparse file system support.
+  **Important Note (v0.2.0+):** Images are being re-uploaded with sparse file system optimizations
+  enabled, resulting in significantly lower actual disk usage. Older images (without the `-sparse`
+  suffix) are now **deprecated**. The last version of `lume` fully supporting the non-sparse images
+  was `v0.1.x`. Starting from `v0.2.0`, lume will automatically pull images optimized with sparse
+  file system support.
 </Callout>

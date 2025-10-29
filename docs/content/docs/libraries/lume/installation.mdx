@@ -15,10 +15,12 @@ lume run macos-sequoia-vanilla:latest
 ```
 
 <Callout title="Security Note">
-All prebuilt images use the default password `lume`. Change this immediately after your first login using the `passwd` command.
+  All prebuilt images use the default password `lume`. Change this immediately after your first
+  login using the `passwd` command.
 </Callout>
 
 **System Requirements**:
+
 - Apple Silicon Mac (M1, M2, M3, etc.)
 - macOS 13.0 or later
 - At least 8GB of RAM (16GB recommended)
@@ -33,6 +35,7 @@ Install with a single command:
 ```
 
 ### Manual Start (No Background Service)
+
 By default, Lume is installed as a background service that starts automatically on login. If you prefer to start the Lume API service manually when needed, you can use the `--no-background-service` option:
 
 ```bash
@@ -40,8 +43,11 @@ By default, Lume is installed as a background service that starts automatically 
 ```
 
 <Callout title="Note">
-With this option, you'll need to manually start the Lume API service by running `lume serve` in your terminal whenever you need to use tools or libraries that rely on the Lume API (such as the Computer-Use Agent).
+  With this option, you'll need to manually start the Lume API service by running `lume serve` in
+  your terminal whenever you need to use tools or libraries that rely on the Lume API (such as the
+  Computer-Use Agent).
 </Callout>
 
 ## Manual Download and Installation
+
 You can also download the `lume.pkg.tar.gz` archive from the [latest release](https://github.com/trycua/cua/releases?q=lume&expanded=true), extract it, and install the package manually.

@@ -77,8 +77,8 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - name: Set up uv and Python
+        uses: astral-sh/setup-uv@v4
         with:
           python-version: "3.12"
 
@@ -87,18 +87,18 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libgl1-mesa-dri libglib2.0-0
 
-      - name: Install CUA dependencies
+      - name: Install CUA dependencies (uv)
         run: |
-          pip install --upgrade pip
-          pip install -e libs/python/agent -e libs/python/computer
-          pip install -e libs/python/core
-          pip install "cua-agent[uitars-hf]"
-          pip install pytest
+          uv venv
+          uv pip install -e libs/python/agent -e libs/python/computer
+          uv pip install -e libs/python/core
+          uv pip install "cua-agent[uitars-hf]"
+          uv pip install pytest
 
       - name: Test model with agent loop
         run: |
           cd tests/agent_loop_testing
-          python agent_test.py --model "${{ matrix.model }}"
+          uv run python agent_test.py --model "${{ matrix.model }}"
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           # OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}

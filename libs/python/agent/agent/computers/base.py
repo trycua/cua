@@ -28,8 +28,12 @@ class AsyncComputerHandler(Protocol):
         """Get screen dimensions as (width, height)."""
         ...
 
-    async def screenshot(self) -> str:
-        """Take a screenshot and return as base64 string."""
+    async def screenshot(self, text: Optional[str] = None) -> str:
+        """Take a screenshot and return as base64 string.
+
+        Args:
+            text: Optional descriptive text (for compatibility with GPT-4o models, ignored)
+        """
         ...
 
     async def click(self, x: int, y: int, button: str = "left") -> None:

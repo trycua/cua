@@ -5,7 +5,7 @@ name: Test CUA Supporting Models
 
 on:
   pull_request:
-    branches: [ main, master ]
+    branches: [main, master]
   workflow_dispatch:
     inputs:
       test_models:
@@ -95,17 +95,15 @@ jobs:
           pip install "cua-agent[uitars-hf]"
           pip install pytest
 
-      - name: Set up environment variables
-        run: |
-          echo "ANTHROPIC_API_KEY=${{ secrets.ANTHROPIC_API_KEY }}" >> $GITHUB_ENV
-          echo "OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}" >> $GITHUB_ENV
-          echo "GOOGLE_API_KEY=${{ secrets.GOOGLE_API_KEY }}" >> $GITHUB_ENV
-          echo "OPENROUTER_API_KEY=${{ secrets.OPENROUTER_API_KEY }}" >> $GITHUB_ENV
-
       - name: Test model with agent loop
         run: |
           cd tests/agent_loop_testing
           python agent_test.py --model "${{ matrix.model }}"
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          # OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          # GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+          # OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
 
       - name: Upload test results
         if: always()

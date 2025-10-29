@@ -17,7 +17,7 @@ on:
 jobs:
   # Test all CUA models - runs on PRs or when manually triggered
   test-all-models:
-    if: ${{ github.event_name == 'pull_request' || fromJSON(inputs.test_models) }}
+    if: ${{ github.event_name == 'pull_request_target' || fromJSON(inputs.test_models || 'false') }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false

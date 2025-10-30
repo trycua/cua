@@ -158,104 +158,19 @@ jobs:
           WHEEL_FILE=$(ls dist/*.whl | head -1)
           echo "WHEEL_FILE=${WHEEL_FILE}" >> $GITHUB_ENV
 
-      - name: Prepare Simple Release Notes
+      - name: Generate Release Notes
         if: startsWith(github.ref, 'refs/tags/')
         run: |
-          # Create release notes based on package type
-          echo "# ${{ inputs.base_package_name }} v${VERSION}" > release_notes.md
-          echo "" >> release_notes.md
+          # Generate release notes using Python script (reads from source of truth)
+          python3 ${GITHUB_WORKSPACE}/.github/scripts/generate_release_notes.py \
+            ${{ inputs.base_package_name }} \
+            --version ${VERSION} \
+            --output release_notes.md
 
+          # For pylume, inject the actual LUME_VERSION from the binary download step
           if [ "${{ inputs.package_name }}" = "pylume" ]; then
-            echo "## Python SDK for lume - run macOS and Linux VMs on Apple Silicon" >> release_notes.md
-            echo "" >> release_notes.md
-            echo "This package provides Python bindings for the lume virtualization tool." >> release_notes.md
-            echo "" >> release_notes.md
-            echo "## Dependencies" >> release_notes.md
-            echo "* lume binary: v${LUME_VERSION}" >> release_notes.md
-          elif [ "${{ inputs.package_name }}" = "computer" ]; then
-            echo "## Computer control library for the Computer Universal Automation (CUA) project" >> release_notes.md
-            echo "" >> release_notes.md
-            echo "## Dependencies" >> release_notes.md
-            echo "* pylume: ${PYLUME_VERSION:-latest}" >> release_notes.md
-          elif [ "${{ inputs.package_name }}" = "agent" ]; then
-            echo "## Dependencies" >> release_notes.md
-            echo "* cua-computer: ${COMPUTER_VERSION:-latest}" >> release_notes.md
-            echo "* cua-som: ${SOM_VERSION:-latest}" >> release_notes.md
-            echo "" >> release_notes.md
-            echo "## Installation Options" >> release_notes.md
-            echo "" >> release_notes.md
-            echo "### Basic installation with Anthropic" >> release_notes.md
-            echo '```bash' >> release_notes.md
-            echo "pip install cua-agent[anthropic]==${VERSION}" >> release_notes.md
-            echo '```' >> release_notes.md
-            echo "" >> release_notes.md
-            echo "### With SOM (recommended)" >> release_notes.md
-            echo '```bash' >> release_notes.md
-            echo "pip install cua-agent[som]==${VERSION}" >> release_notes.md
-            echo '```' >> release_notes.md
-            echo "" >> release_notes.md
-            echo "### All features" >> release_notes.md
-            echo '```bash' >> release_notes.md
-            echo "pip install cua-agent[all]==${VERSION}" >> release_notes.md
-            echo '```' >> release_notes.md
-          elif [ "${{ inputs.package_name }}" = "som" ]; then
-            echo "## Computer Vision and OCR library for detecting and analyzing UI elements" >> release_notes.md
-            echo "" >> release_notes.md
-            echo "This package provides enhanced UI understanding capabilities through computer vision and OCR." >> release_notes.md
-          elif [ "${{ inputs.package_name }}" = "computer-server" ]; then
-            echo "## Computer Server for the Computer Universal Automation (CUA) project" >> release_notes.md
-            echo "" >> release_notes.md
-            echo "A FastAPI-based server implementation for computer control." >> release_notes.md
-            echo "" >> release_notes.md
-            echo "## Dependencies" >> release_notes.md
-            echo "* cua-computer: ${COMPUTER_VERSION:-latest}" >> release_notes.md
-            echo "" >> release_notes.md
-            echo "## Usage" >> release_notes.md
-            echo '```bash' >> release_notes.md
-            echo "# Run the server" >> release_notes.md
-            echo "cua-computer-server" >> release_notes.md
-            echo '```' >> release_notes.md
-          elif [ "${{ inputs.package_name }}" = "mcp-server" ]; then
-            echo "## MCP Server for the Computer-Use Agent (CUA)" >> release_notes.md
-            echo "" >> release_notes.md
-            echo "This package provides MCP (Model Context Protocol) integration for CUA agents, allowing them to be used with Claude Desktop, Cursor, and other MCP clients." >> release_notes.md
-            echo "" >> release_notes.md
-            echo "## Dependencies" >> release_notes.md
-            echo "* cua-computer: ${COMPUTER_VERSION:-latest}" >> release_notes.md
-            echo "* cua-agent: ${AGENT_VERSION:-latest}" >> release_notes.md
-            echo "" >> release_notes.md
-            echo "## Usage" >> release_notes.md
-            echo '```bash' >> release_notes.md
-            echo "# Run the MCP server directly" >> release_notes.md
-            echo "cua-mcp-server" >> release_notes.md
-            echo '```' >> release_notes.md
-            echo "" >> release_notes.md
-            echo "## Claude Desktop Integration" >> release_notes.md
-            echo "Add to your Claude Desktop configuration (~/.config/claude-desktop/claude_desktop_config.json or OS-specific location):" >> release_notes.md
-            echo '```json' >> release_notes.md
-            echo '"mcpServers": {' >> release_notes.md
-            echo '  "cua-agent": {' >> release_notes.md
-            echo '    "command": "cua-mcp-server",' >> release_notes.md
-            echo '    "args": [],' >> release_notes.md
-            echo '    "env": {' >> release_notes.md
-            echo '      "CUA_AGENT_LOOP": "OMNI",' >> release_notes.md
-            echo '      "CUA_MODEL_PROVIDER": "ANTHROPIC",' >> release_notes.md
-            echo '      "CUA_MODEL_NAME": "claude-3-opus-20240229",' >> release_notes.md
-            echo '      "ANTHROPIC_API_KEY": "your-api-key",' >> release_notes.md
-            echo '      "PYTHONIOENCODING": "utf-8"' >> release_notes.md
-            echo '    }' >> release_notes.md
-            echo '  }' >> release_notes.md
-            echo '}' >> release_notes.md
-            echo '```' >> release_notes.md
-          fi
-
-          # Add installation section if not agent (which has its own installation section)
-          if [ "${{ inputs.package_name }}" != "agent" ]; then
-            echo "" >> release_notes.md
-            echo "## Installation" >> release_notes.md
-            echo '```bash' >> release_notes.md
-            echo "pip install ${{ inputs.base_package_name }}==${VERSION}" >> release_notes.md
-            echo '```' >> release_notes.md
+            sed -i.bak "s/\${LUME_VERSION}/${LUME_VERSION}/g" release_notes.md
+            rm -f release_notes.md.bak
           fi
 
           echo "Release notes created:"

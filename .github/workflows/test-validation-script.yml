@@ -1,16 +1,14 @@
-name: Test valididation script
+name: Test validation scripts
 
 on:
   pull_request:
     paths:
       - ".github/scripts/**"
-      - ".github/workflows/test-scripts.yml"
+      - ".github/workflows/test-validation-script.yml"
   push:
-    branches:
-      - main
     paths:
       - ".github/scripts/**"
-      - ".github/workflows/test-scripts.yml"
+      - ".github/workflows/test-validation-script.yml"
 
 jobs:
   test:

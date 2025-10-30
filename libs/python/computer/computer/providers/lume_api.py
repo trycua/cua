@@ -10,6 +10,8 @@ import subprocess
 import urllib.parse
 from typing import Any, Dict, List, Optional
 
+from computer.utils import safe_join
+
 # Setup logging
 logger = logging.getLogger(__name__)
 
@@ -59,7 +61,7 @@ def lume_api_get(
     # --max-time: Maximum time for the whole operation (20 seconds)
     # -f: Fail silently (no output at all) on server errors
     # Add single quotes around URL to ensure special characters are handled correctly
-    cmd = ["curl", "--connect-timeout", "15", "--max-time", "20", "-s", "-f", f"'{api_url}'"]
+    cmd = ["curl", "--connect-timeout", "15", "--max-time", "20", "-s", "-f", api_url]
 
     # For logging and display, show the properly escaped URL
     display_cmd = ["curl", "--connect-timeout", "15", "--max-time", "20", "-s", "-f", api_url]
@@ -71,7 +73,7 @@ def lume_api_get(
     # Execute the command - for execution we need to use shell=True to handle URLs with special characters
     try:
         # Use a single string with shell=True for proper URL handling
-        shell_cmd = " ".join(cmd)
+        shell_cmd = safe_join(cmd)
         result = subprocess.run(shell_cmd, shell=True, capture_output=True, text=True)
 
         # Handle curl exit codes
@@ -514,7 +516,7 @@ def lume_api_delete(
         "-s",
         "-X",
         "DELETE",
-        f"'{api_url}'",
+        api_url,
     ]
 
     # For logging and display, show the properly escaped URL
@@ -537,7 +539,7 @@ def lume_api_delete(
     # Execute the command - for execution we need to use shell=True to handle URLs with special characters
     try:
         # Use a single string with shell=True for proper URL handling
-        shell_cmd = " ".join(cmd)
+        shell_cmd = safe_join(cmd)
         result = subprocess.run(shell_cmd, shell=True, capture_output=True, text=True)
 
         # Handle curl exit codes

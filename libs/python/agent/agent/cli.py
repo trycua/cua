@@ -305,8 +305,8 @@ Examples:
         help="API key override for the model provider (passed to ComputerAgent)",
     )
     parser.add_argument(
-        "--api-url",
-        dest="api_url",
+        "--api-base",
+        dest="api_base",
         type=str,
         help="API base URL override for the model provider (passed to ComputerAgent)",
     )
@@ -397,8 +397,8 @@ Examples:
         # Thread API credentials to agent if provided
         if args.api_key:
             agent_kwargs["api_key"] = args.api_key
-        if args.api_url:
-            agent_kwargs["api_url"] = args.api_url
+        if args.api_base:
+            agent_kwargs["api_base"] = args.api_base
 
         if args.images > 0:
             agent_kwargs["only_n_most_recent_images"] = args.images

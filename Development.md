@@ -346,3 +346,101 @@ For Swift code in the `libs/lume` directory:
 - Follow the [Swift API Design Guidelines](https://www.swift.org/documentation/api-design-guidelines/)
 - Use SwiftFormat for consistent formatting
 - Code will be automatically formatted on save when using the lume workspace
+
+## Releasing Packages
+
+Cua uses an automated GitHub Actions workflow to bump package versions.
+
+> **Note:** The main branch is currently not protected. If branch protection is enabled in the future, the github-actions bot must be added to the bypass list for these workflows to commit directly.
+
+### Version Bump Workflow
+
+All packages are managed through a single consolidated workflow: [Bump Version](https://github.com/trycua/cua/actions/workflows/bump-version.yml)
+
+**Supported packages:**
+
+- cua-agent
+- cua-computer
+- cua-computer-server
+- cua-core
+- cua-mcp-server
+- cua-som
+- pylume
+
+**How to use:**
+
+1. Navigate to the [Bump Version workflow](https://github.com/trycua/cua/actions/workflows/bump-version.yml)
+2. Click the "Run workflow" button in the GitHub UI
+3. Select the **service/package** you want to bump from the first dropdown
+4. Select the **bump type** (patch/minor/major) from the second dropdown
+5. Click "Run workflow" to start the version bump
+6. The workflow will automatically commit changes and push to main
+
+### Rolling Back a Version Bump
+
+If you need to revert a version bump, follow these steps:
+
+**Step 1: Find the version bump commit**
+
+```bash
+# List recent commits
+git log --oneline | grep "Bump"
+
+# Example output:
+# a1b2c3d Bump cua-core to v0.1.9
+```
+
+**Step 2: Revert the commit**
+
+```bash
+# Revert the specific commit
+git revert <commit-hash>
+
+# Example:
+# git revert a1b2c3d
+```
+
+**Step 3: Delete the git tag**
+
+```bash
+# List tags to find the version tag
+git tag -l
+
+# Delete the tag locally (use the correct package-specific format)
+git tag -d core-v0.1.9
+
+# Delete the tag remotely
+git push origin :refs/tags/core-v0.1.9
+```
+
+**Step 4: Push the revert**
+
+```bash
+git push origin main
+```
+
+**Per-package tag patterns:**
+
+Each package uses its own tag format defined in `.bumpversion.cfg`:
+
+- **cua-core**: `core-v{version}` (e.g., `core-v0.1.9`)
+- **cua-computer**: `computer-v{version}` (e.g., `computer-v0.4.7`)
+- **cua-agent**: `agent-v{version}` (e.g., `agent-v0.4.35`)
+- **cua-som**: `som-v{version}` (e.g., `som-v0.1.3`)
+- **pylume**: `pylume-v{version}` (e.g., `pylume-v0.2.1`)
+- **cua-computer-server**: `computer-server-v{version}` (e.g., `computer-server-v0.1.27`)
+- **cua-mcp-server**: `mcp-server-v{version}` (e.g., `mcp-server-v0.1.14`)
+
+### Local Testing (Advanced)
+
+The Makefile targets are kept for local testing only:
+
+```bash
+# Test version bump locally (dry run)
+make dry-run-patch-core
+
+# View current versions
+make show-versions
+```
+
+**Note:** For production releases, always use the GitHub Actions workflows above instead of running Makefile commands directly.

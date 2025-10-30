@@ -4,7 +4,7 @@ build-backend = "pdm.backend"
 
 [project]
 name = "cua-computer-server"
-version = "0.1.25"
+version = "0.1.28"
 
 description = "Server component for the Computer-Use Interface (CUI) framework powering Cua"
 authors = [
@@ -22,7 +22,15 @@ dependencies = [
     "pillow>=10.2.0",
     "aiohttp>=3.9.1",
     "pyperclip>=1.9.0",
-    "websockets>=12.0"
+    "websockets>=12.0",
+    "pywinctl>=0.4.1",
+    # OS-specific runtime deps
+    "pyobjc-framework-Cocoa>=10.1; sys_platform == 'darwin'",
+    "pyobjc-framework-Quartz>=10.1; sys_platform == 'darwin'",
+    "pyobjc-framework-ApplicationServices>=10.1; sys_platform == 'darwin'",
+    "python-xlib>=0.33; sys_platform == 'linux'",
+    "pywin32>=310; sys_platform == 'win32'",
+    "pip-system-certs; sys_platform == 'win32'",
 ]
 
 [project.optional-dependencies]

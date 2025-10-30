@@ -18,7 +18,8 @@ lume run ubuntu-noble-vanilla:latest
 ```
 
 <Callout>
-We provide [prebuilt VM images](../lume/prebuilt-images) in our [ghcr registry](https://github.com/orgs/trycua/packages).
+  We provide [prebuilt VM images](../lume/prebuilt-images) in our [ghcr
+  registry](https://github.com/orgs/trycua/packages).
 </Callout>
 
 ### Create a Custom VM
@@ -37,10 +38,11 @@ The actual disk space used by sparse images will be much lower than the logical 
 
 ## VM Management
 
- lume create &lt;name&gt;
+lume create &lt;name&gt;
 Create a new macOS or Linux virtual machine.
 
 **Options:**
+
 - `--os <os>` - Operating system to install (macOS or linux, default: macOS)
 - `--cpu <cores>` - Number of CPU cores (default: 4)
 - `--memory <size>` - Memory size, e.g., 8GB (default: 4GB)
@@ -50,6 +52,7 @@ Create a new macOS or Linux virtual machine.
 - `--storage <name>` - VM storage location to use
 
 **Examples:**
+
 ```bash
 # Create macOS VM with custom specs
 lume create my-mac --cpu 6 --memory 16GB --disk-size 100GB
@@ -61,10 +64,11 @@ lume create my-ubuntu --os linux --cpu 2 --memory 8GB
 lume create my-sequoia --ipsw latest
 ```
 
- lume run &lt;name&gt;
+lume run &lt;name&gt;
 Start and run a virtual machine.
 
 **Options:**
+
 - `--no-display` - Do not start the VNC client app
 - `--shared-dir <dir>` - Share directory with VM (format: path[:ro|rw])
 - `--mount <path>` - For Linux VMs only, attach a read-only disk image
@@ -75,6 +79,7 @@ Start and run a virtual machine.
 - `--storage <name>` - VM storage location to use
 
 **Examples:**
+
 ```bash
 # Run VM with shared directory
 lume run my-vm --shared-dir /path/to/share:rw
@@ -86,42 +91,52 @@ lume run my-vm --no-display
 lume run my-mac --recovery-mode true
 ```
 
- lume stop &lt;name&gt;
+lume stop &lt;name&gt;
 Stop a running virtual machine.
 
 **Options:**
+
 - `--storage <name>` - VM storage location to use
 
 ### lume delete &lt;name&gt;
+
 Delete a virtual machine and its associated files.
 
 **Options:**
+
 - `--force` - Force deletion without confirmation
 - `--storage <name>` - VM storage location to use
 
 ### lume clone &lt;name&gt; &lt;new-name&gt;
+
 Create a copy of an existing virtual machine.
 
 **Options:**
+
 - `--source-storage <name>` - Source VM storage location
 - `--dest-storage <name>` - Destination VM storage location
 
 ## VM Information and Configuration
 
 ### lume ls
+
 List all virtual machines and their status.
 
 ### lume get &lt;name&gt;
+
 Get detailed information about a specific virtual machine.
 
 **Options:**
+
 - `-f, --format <format>` - Output format (json|text)
 - `--storage <name>` - VM storage location to use
 
 ### lume set &lt;name&gt;
+
 Modify virtual machine configuration.
 
 **Options:**
+
 - `--cpu <cores>` - New number of CPU cores (e.g., 4)
 - `--memory <size>` - New memory size (e.g., 8192MB or 8GB)
 - `--disk-size <size>` - New disk size (e.g., 40960MB or 40GB)
@@ -129,6 +144,7 @@ Modify virtual machine configuration.
 - `--storage <name>` - VM storage location to use
 
 **Examples:**
+
 ```bash
 # Increase VM memory
 lume set my-vm --memory 16GB
@@ -143,20 +159,25 @@ lume set my-vm --cpu 8
 ## Image Management
 
 ### lume images
+
 List available macOS images in local cache.
 
 ### lume pull &lt;image&gt;
+
 Download a VM image from a container registry.
 
 **Options:**
+
 - `--registry <url>` - Container registry URL (default: ghcr.io)
 - `--organization <org>` - Organization to pull from (default: trycua)
 - `--storage <name>` - VM storage location to use
 
 ### lume push &lt;name&gt; &lt;image:tag&gt;
+
 Upload a VM image to a container registry.
 
 **Options:**
+
 - `--additional-tags <tags...>` - Additional tags to push the same image to
 - `--registry <url>` - Container registry URL (default: ghcr.io)
 - `--organization <org>` - Organization/user to push to (default: trycua)
@@ -167,38 +188,46 @@ Upload a VM image to a container registry.
 - `--reassemble` - Verify integrity by reassembling chunks (requires --dry-run)
 
 ### lume ipsw
+
 Get the latest macOS restore image URL.
 
 ### lume prune
+
 Remove cached images to free up disk space.
 
 ## Configuration
 
 ### lume config
+
 Manage Lume configuration settings.
 
 **Subcommands:**
 
 ##### Storage Management
+
 - `lume config storage add <name> <path>` - Add a new VM storage location
 - `lume config storage remove <name>` - Remove a VM storage location
 - `lume config storage list` - List all VM storage locations
 - `lume config storage default <name>` - Set the default VM storage location
 
 ##### Cache Management
+
 - `lume config cache get` - Get current cache directory
 - `lume config cache set <path>` - Set cache directory
 
 ##### Image Caching
+
 - `lume config caching get` - Show current caching status
 - `lume config caching set <boolean>` - Enable or disable image caching
 
 ## API Server
 
 ### lume serve
+
 Start the Lume API server for programmatic access.
 
 **Options:**
+
 - `--port <port>` - Port to listen on (default: 7777)
 
 ## Global Options

@@ -111,6 +111,9 @@ ENV/
 env.bak/
 venv.bak/
 
+# Git worktrees
+.worktrees/
+
 # Spyder project settings
 .spyderproject
 .spyproject

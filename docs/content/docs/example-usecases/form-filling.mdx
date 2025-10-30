@@ -15,6 +15,7 @@ This preset usecase uses [Cua Computer](/computer-sdk/computers) to interact wit
 ## Quickstart
 
 Create a `requirements.txt` file with the following dependencies:
+
 ```text
 cua-agent
 cua-computer
@@ -34,7 +35,7 @@ ANTHROPIC_API_KEY=your-api-key
 CUA_API_KEY=sk_cua-api01...
 ```
 
-Select the environment you want to run the code in (*click on the underlined values in the code to edit them directly!*):
+Select the environment you want to run the code in (_click on the underlined values in the code to edit them directly!_):
 
 <Tabs items={['☁️ Cloud', '🐳 Docker', '🍎 Lume', '🪟 Windows Sandbox']}>
   <Tab value="☁️ Cloud">
@@ -58,23 +59,21 @@ from computer import Computer, VMProviderType
 from dotenv import load_dotenv
 
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
+logger = logging.getLogger(**name**)
 
 def handle_sigint(sig, frame):
-    print("\\n\\nExecution interrupted by user. Exiting gracefully...")
-    exit(0)
-
+print("\\n\\nExecution interrupted by user. Exiting gracefully...")
+exit(0)
 
 async def fill_application():
-    try:
-        async with Computer(
-            os_type="linux",
-            provider_type=VMProviderType.CLOUD,
-            name="`}<EditableValue placeholder="container-name" />{`",
-            api_key="`}<EditableValue placeholder="api_key" />{`",
-            verbosity=logging.INFO,
-        ) as computer:
+try:
+async with Computer(
+os_type="linux",
+provider_type=VMProviderType.CLOUD,
+name="`}<EditableValue placeholder="container-name" />{`",
+api_key="`}<EditableValue placeholder="api_key" />{`",
+verbosity=logging.INFO,
+) as computer:
 
             agent = ComputerAgent(
                 model="anthropic/claude-3-5-sonnet-20241022",
@@ -124,10 +123,9 @@ async def fill_application():
         traceback.print_exc()
         raise
 
-
 def main():
-    try:
-        load_dotenv()
+try:
+load_dotenv()
 
         if "ANTHROPIC_API_KEY" not in os.environ:
             raise RuntimeError(
@@ -149,9 +147,9 @@ def main():
         logger.error(f"Error running automation: {e}")
         traceback.print_exc()
 
+if **name** == "**main**":
+main()`}
 
-if __name__ == "__main__":
-    main()`}
 </EditableCodeBlock>
 
   </Tab>
@@ -175,22 +173,20 @@ from computer import Computer, VMProviderType
 from dotenv import load_dotenv
 
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
+logger = logging.getLogger(**name**)
 
 def handle_sigint(sig, frame):
-    print("\\n\\nExecution interrupted by user. Exiting gracefully...")
-    exit(0)
-
+print("\\n\\nExecution interrupted by user. Exiting gracefully...")
+exit(0)
 
 async def fill_application():
-    try:
-        async with Computer(
-            os_type="macos",
-            provider_type=VMProviderType.LUME,
-            name="`}<EditableValue placeholder="container-name" />{`",
-            verbosity=logging.INFO,
-        ) as computer:
+try:
+async with Computer(
+os_type="macos",
+provider_type=VMProviderType.LUME,
+name="`}<EditableValue placeholder="container-name" />{`",
+verbosity=logging.INFO,
+) as computer:
 
             agent = ComputerAgent(
                 model="anthropic/claude-3-5-sonnet-20241022",
@@ -240,10 +236,9 @@ async def fill_application():
         traceback.print_exc()
         raise
 
-
 def main():
-    try:
-        load_dotenv()
+try:
+load_dotenv()
 
         if "ANTHROPIC_API_KEY" not in os.environ:
             raise RuntimeError(
@@ -259,9 +254,9 @@ def main():
         logger.error(f"Error running automation: {e}")
         traceback.print_exc()
 
+if **name** == "**main**":
+main()`}
 
-if __name__ == "__main__":
-    main()`}
 </EditableCodeBlock>
 
   </Tab>
@@ -283,21 +278,19 @@ from computer import Computer, VMProviderType
 from dotenv import load_dotenv
 
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
+logger = logging.getLogger(**name**)
 
 def handle_sigint(sig, frame):
-    print("\\n\\nExecution interrupted by user. Exiting gracefully...")
-    exit(0)
-
+print("\\n\\nExecution interrupted by user. Exiting gracefully...")
+exit(0)
 
 async def fill_application():
-    try:
-        async with Computer(
-            os_type="windows",
-            provider_type=VMProviderType.WINDOWS_SANDBOX,
-            verbosity=logging.INFO,
-        ) as computer:
+try:
+async with Computer(
+os_type="windows",
+provider_type=VMProviderType.WINDOWS_SANDBOX,
+verbosity=logging.INFO,
+) as computer:
 
             agent = ComputerAgent(
                 model="anthropic/claude-3-5-sonnet-20241022",
@@ -347,10 +340,9 @@ async def fill_application():
         traceback.print_exc()
         raise
 
-
 def main():
-    try:
-        load_dotenv()
+try:
+load_dotenv()
 
         if "ANTHROPIC_API_KEY" not in os.environ:
             raise RuntimeError(
@@ -366,9 +358,9 @@ def main():
         logger.error(f"Error running automation: {e}")
         traceback.print_exc()
 
+if **name** == "**main**":
+main()`}
 
-if __name__ == "__main__":
-    main()`}
 </EditableCodeBlock>
 
   </Tab>
@@ -392,22 +384,20 @@ from computer import Computer, VMProviderType
 from dotenv import load_dotenv
 
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
+logger = logging.getLogger(**name**)
 
 def handle_sigint(sig, frame):
-    print("\\n\\nExecution interrupted by user. Exiting gracefully...")
-    exit(0)
-
+print("\\n\\nExecution interrupted by user. Exiting gracefully...")
+exit(0)
 
 async def fill_application():
-    try:
-        async with Computer(
-            os_type="linux",
-            provider_type=VMProviderType.DOCKER,
-            name="`}<EditableValue placeholder="container-name" />{`",
-            verbosity=logging.INFO,
-        ) as computer:
+try:
+async with Computer(
+os_type="linux",
+provider_type=VMProviderType.DOCKER,
+name="`}<EditableValue placeholder="container-name" />{`",
+verbosity=logging.INFO,
+) as computer:
 
             agent = ComputerAgent(
                 model="anthropic/claude-3-5-sonnet-20241022",
@@ -457,10 +447,9 @@ async def fill_application():
         traceback.print_exc()
         raise
 
-
 def main():
-    try:
-        load_dotenv()
+try:
+load_dotenv()
 
         if "ANTHROPIC_API_KEY" not in os.environ:
             raise RuntimeError(
@@ -476,9 +465,9 @@ def main():
         logger.error(f"Error running automation: {e}")
         traceback.print_exc()
 
+if **name** == "**main**":
+main()`}
 
-if __name__ == "__main__":
-    main()`}
 </EditableCodeBlock>
 
   </Tab>
@@ -488,4 +477,4 @@ if __name__ == "__main__":
 
 - Learn more about [Cua computers](/computer-sdk/computers) and [computer commands](/computer-sdk/commands)
 - Read about [Agent loops](/agent-sdk/agent-loops), [tools](/agent-sdk/custom-tools), and [supported model providers](/agent-sdk/supported-model-providers/)
-- Experiment with different [Models and Providers](/agent-sdk/supported-model-providers/) 
+- Experiment with different [Models and Providers](/agent-sdk/supported-model-providers/)

@@ -13,9 +13,8 @@ http://localhost:7777
 ```
 
 <Callout type="info">
-  The HTTP API service runs on port `7777` by default. If you'd like to use a
-  different port, pass the `--port` option during installation or when running
-  `lume serve`.
+  The HTTP API service runs on port `7777` by default. If you'd like to use a different port, pass
+  the `--port` option during installation or when running `lume serve`.
 </Callout>
 
 ## Endpoints
@@ -726,15 +725,15 @@ Push a VM to a registry as an image (asynchronous operation).
 
 #### Parameters
 
-| Name         | Type         | Required | Description                                     |
-| ------------ | ------------ | -------- | ----------------------------------------------- |
-| name         | string       | Yes      | Local VM name to push                           |
-| imageName    | string       | Yes      | Image name in registry                          |
-| tags         | array        | Yes      | Image tags (e.g. `["latest", "v1"]`)           |
-| organization | string       | Yes      | Organization name                               |
-| registry     | string       | No       | Registry host (e.g. `ghcr.io`)                  |
-| chunkSizeMb  | integer      | No       | Chunk size in MB for upload                     |
-| storage      | string/null  | No       | Storage type (`ssd`, etc.)                      |
+| Name         | Type        | Required | Description                          |
+| ------------ | ----------- | -------- | ------------------------------------ |
+| name         | string      | Yes      | Local VM name to push                |
+| imageName    | string      | Yes      | Image name in registry               |
+| tags         | array       | Yes      | Image tags (e.g. `["latest", "v1"]`) |
+| organization | string      | Yes      | Organization name                    |
+| registry     | string      | No       | Registry host (e.g. `ghcr.io`)       |
+| chunkSizeMb  | integer     | No       | Chunk size in MB for upload          |
+| storage      | string/null | No       | Storage type (`ssd`, etc.)           |
 
 #### Example Request
 
@@ -747,13 +746,13 @@ curl --connect-timeout 6000 \
   -X POST \
   -H "Content-Type: application/json" \
   -d '{
-    "name": "my-local-vm", 
+    "name": "my-local-vm",
     "imageName": "my-image",
     "tags": ["latest", "v1"],
-    "organization": "my-org", 
+    "organization": "my-org",
     "registry": "ghcr.io",
     "chunkSizeMb": 512,
-    "storage": null 
+    "storage": null
   }' \
   http://localhost:7777/lume/vms/push
 ```
@@ -808,10 +807,7 @@ console.log(await res.json());
   "message": "Push initiated in background",
   "name": "my-local-vm",
   "imageName": "my-image",
-  "tags": [
-    "latest",
-    "v1"
-  ]
+  "tags": ["latest", "v1"]
 }
 ```
 
@@ -857,10 +853,7 @@ console.log(await res.json());
 
 ```json
 {
-  "local": [
-    "macos-sequoia-xcode:latest",
-    "macos-sequoia-vanilla:latest"
-  ]
+  "local": ["macos-sequoia-xcode:latest", "macos-sequoia-vanilla:latest"]
 }
 ```
 
@@ -1005,11 +998,11 @@ Update Lume configuration settings.
 
 #### Parameters
 
-| Name            | Type    | Required | Description                      |
-| --------------- | ------- | -------- | -------------------------------- |
-| homeDirectory   | string  | No       | Lume home directory path         |
-| cacheDirectory  | string  | No       | Cache directory path             |
-| cachingEnabled  | boolean | No       | Enable or disable caching        |
+| Name           | Type    | Required | Description               |
+| -------------- | ------- | -------- | ------------------------- |
+| homeDirectory  | string  | No       | Lume home directory path  |
+| cacheDirectory | string  | No       | Cache directory path      |
+| cachingEnabled | boolean | No       | Enable or disable caching |
 
 #### Example Request
 

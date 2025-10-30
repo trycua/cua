@@ -8,6 +8,7 @@ The Cua agent framework uses benchmarks to test the performance of supported mod
 ## Benchmark Types
 
 Computer-Agent benchmarks evaluate two key capabilities:
+
 - **Plan Generation**: Breaking down complex tasks into a sequence of actions
 - **Coordinate Generation**: Predicting precise click locations on GUI elements
 
@@ -31,7 +32,7 @@ agent.run("Open Firefox and go to github.com")
 
 ### Coordinate Generation Only
 
-**[GUI Agent Grounding Leaderboard](https://gui-agent.github.io/grounding-leaderboard/)** - Benchmark for click prediction accuracy  
+**[GUI Agent Grounding Leaderboard](https://gui-agent.github.io/grounding-leaderboard/)** - Benchmark for click prediction accuracy
 
 This leaderboard tests models that specialize in finding exactly where to click on screen elements, but needs to be told what specific action to take.
 
@@ -41,7 +42,7 @@ This leaderboard tests models that specialize in finding exactly where to click 
 agent = ComputerAgent("huggingface-local/HelloKKMe/GTA1-7B", tools=[computer])
 agent.predict_click("find the button to open the settings") # (27, 450)
 # This will raise an error:
-# agent.run("Open Firefox and go to github.com") 
+# agent.run("Open Firefox and go to github.com")
 ```
 
 ### Composed Agent

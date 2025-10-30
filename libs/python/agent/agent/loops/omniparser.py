@@ -14,67 +14,73 @@ import litellm
 
 from ..decorators import register_agent
 from ..loops.base import AsyncAgentConfig
+from ..responses import (
+    convert_completion_messages_to_responses_items,
+    convert_responses_items_to_completion_messages,
+)
 from ..types import AgentCapability, AgentResponse, Messages, Tools
 
 SOM_TOOL_SCHEMA = {
     "type": "function",
-    "name": "computer",
-    "description": "Control a computer by taking screenshots and interacting with UI elements. This tool shows screenshots with numbered elements overlaid on them. Each UI element has been assigned a unique ID number that you can see in the image. Use the element's ID number to interact with any element instead of pixel coordinates.",
-    "parameters": {
-        "type": "object",
-        "properties": {
-            "action": {
-                "type": "string",
-                "enum": [
-                    "screenshot",
-                    "click",
-                    "double_click",
-                    "drag",
-                    "type",
-                    "keypress",
-                    "scroll",
-                    "move",
-                    "wait",
-                    "get_current_url",
-                    "get_dimensions",
-                    "get_environment",
-                ],
-                "description": "The action to perform",
+    "function": {
+        "name": "computer",
+        "description": "Control a computer by taking screenshots and interacting with UI elements. This tool shows screenshots with numbered elements overlaid on them. Each UI element has been assigned a unique ID number that you can see in the image. Use the element's ID number to interact with any element instead of pixel coordinates.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": [
+                        "screenshot",
+                        "click",
+                        "double_click",
+                        "drag",
+                        "type",
+                        "keypress",
+                        "scroll",
+                        "move",
+                        "wait",
+                        "get_current_url",
+                        "get_dimensions",
+                        "get_environment",
+                    ],
+                    "description": "The action to perform",
+                },
+                "element_id": {
+                    "type": "integer",
+                    "description": "The ID of the element to interact with (required for click, double_click, move, scroll actions, and as start/end for drag)",
+                },
+                "start_element_id": {
+                    "type": "integer",
+                    "description": "The ID of the element to start dragging from (required for drag action)",
+                },
+                "end_element_id": {
+                    "type": "integer",
+                    "description": "The ID of the element to drag to (required for drag action)",
+                },
+                "text": {
+                    "type": "string",
+                    "description": "The text to type (required for type action)",
+                },
+                "keys": {
+                    "type": "string",
+                    "description": "Key combination to press (required for keypress action). Single key for individual key press, multiple keys for combinations (e.g., 'ctrl+c')",
+                },
+                "button": {
+                    "type": "string",
+                    "description": "The mouse button to use for click action (left, right, wheel, back, forward) Default: left",
+                },
+                "scroll_x": {
+                    "type": "integer",
+                    "description": "Horizontal scroll amount for scroll action (positive for right, negative for left)",
+                },
+                "scroll_y": {
+                    "type": "integer",
+                    "description": "Vertical scroll amount for scroll action (positive for down, negative for up)",
+                },
             },
-            "element_id": {
-                "type": "integer",
-                "description": "The ID of the element to interact with (required for click, double_click, move, scroll actions, and as start/end for drag)",
-            },
-            "start_element_id": {
-                "type": "integer",
-                "description": "The ID of the element to start dragging from (required for drag action)",
-            },
-            "end_element_id": {
-                "type": "integer",
-                "description": "The ID of the element to drag to (required for drag action)",
-            },
-            "text": {
-                "type": "string",
-                "description": "The text to type (required for type action)",
-            },
-            "keys": {
-                "type": "string",
-                "description": "Key combination to press (required for keypress action). Single key for individual key press, multiple keys for combinations (e.g., 'ctrl+c')",
-            },
-            "button": {
-                "type": "string",
-                "description": "The mouse button to use for click action (left, right, wheel, back, forward) Default: left",
-            },
-            "scroll_x": {
-                "type": "integer",
-                "description": "Horizontal scroll amount for scroll action (positive for right, negative for left)",
-            },
-            "scroll_y": {
-                "type": "integer",
-                "description": "Vertical scroll amount for scroll action (positive for down, negative for up)",
-            },
+            "required": ["action", "element_id"],
         },
-        "required": ["action"],
     },
 }
 
@@ -243,18 +249,20 @@ async def replace_computer_call_with_function(
                 "id": item.get("id"),
                 "call_id": item.get("call_id"),
                 "status": "completed",
-                # Fall back to string representation
-                "content": f"Used tool: {action_data.get("type")}({json.dumps(fn_args)})",
             }
         ]
 
     elif item_type == "computer_call_output":
-        # Simple conversion: computer_call_output -> function_call_output
+        output = item.get("output")
+
+        if isinstance(output, dict):
+            output = [output]
+
         return [
             {
                 "type": "function_call_output",
                 "call_id": item.get("call_id"),
-                "content": [item.get("output")],
+                "output": item.get("output"),
                 "id": item.get("id"),
                 "status": "completed",
             }
@@ -296,6 +304,13 @@ class OmniparserConfig(AsyncAgentConfig):
 
         llm_model = model.split("+")[-1]
 
+        # Get screen dimensions from computer handler
+        try:
+            width, height = await computer_handler.get_dimensions()
+        except Exception:
+            # Fallback to default dimensions if method fails
+            width, height = 1024, 768
+
         # Prepare tools for OpenAI API
         openai_tools, id2xy = _prepare_tools_for_omniparser(tools)
 
@@ -309,27 +324,43 @@ class OmniparserConfig(AsyncAgentConfig):
                 result = parser.parse(image_data)
                 if _on_screenshot:
                     await _on_screenshot(result.annotated_image_base64, "annotated_image")
-                for element in result.elements:
-                    id2xy[element.id] = (
-                        (element.bbox.x1 + element.bbox.x2) / 2,
-                        (element.bbox.y1 + element.bbox.y2) / 2,
-                    )
 
-        # handle computer calls -> function calls
-        new_messages = []
-        for message in messages:
+                # Convert OmniParser normalized coordinates (0-1) to absolute pixels, convert to pixels
+                for element in result.elements:
+                    norm_x = (element.bbox.x1 + element.bbox.x2) / 2
+                    norm_y = (element.bbox.y1 + element.bbox.y2) / 2
+                    pixel_x = int(norm_x * width)
+                    pixel_y = int(norm_y * height)
+                    id2xy[element.id] = (pixel_x, pixel_y)
+
+                # Replace the original screenshot with the annotated image
+                annotated_image_url = f"data:image/png;base64,{result.annotated_image_base64}"
+                last_computer_call_output["output"]["image_url"] = annotated_image_url
+
+        xy2id = {v: k for k, v in id2xy.items()}
+        messages_with_element_ids = []
+        for i, message in enumerate(messages):
             if not isinstance(message, dict):
                 message = message.__dict__
-            new_messages += await replace_computer_call_with_function(message, id2xy)  # type: ignore
-        messages = new_messages
+
+            msg_type = message.get("type")
+
+            if msg_type == "computer_call" and "action" in message:
+                action = message.get("action", {})
+
+            converted = await replace_computer_call_with_function(message, xy2id)  # type: ignore
+            messages_with_element_ids += converted
+
+        completion_messages = convert_responses_items_to_completion_messages(
+            messages_with_element_ids, allow_images_in_tool_results=False
+        )
 
         # Prepare API call kwargs
         api_kwargs = {
             "model": llm_model,
-            "input": messages,
+            "messages": completion_messages,
             "tools": openai_tools if openai_tools else None,
             "stream": stream,
-            "truncation": "auto",
             "num_retries": max_retries,
             **kwargs,
         }
@@ -340,8 +371,8 @@ class OmniparserConfig(AsyncAgentConfig):
 
         print(str(api_kwargs)[:1000])
 
-        # Use liteLLM responses
-        response = await litellm.aresponses(**api_kwargs)
+        # Use liteLLM completion
+        response = await litellm.acompletion(**api_kwargs)
 
         # Call API end hook
         if _on_api_end:
@@ -355,12 +386,45 @@ class OmniparserConfig(AsyncAgentConfig):
         if _on_usage:
             await _on_usage(usage)
 
-        # handle som function calls -> xy computer calls
-        new_output = []
-        for i in range(len(response.output)):  # type: ignore
-            new_output += await replace_function_with_computer_call(response.output[i].model_dump(), id2xy)  # type: ignore
+        response_dict = response.model_dump()  # type: ignore
+        choice_messages = [choice["message"] for choice in response_dict["choices"]]
+        responses_items = []
+        for choice_message in choice_messages:
+            responses_items.extend(convert_completion_messages_to_responses_items([choice_message]))
 
-        return {"output": new_output, "usage": usage}
+        # Convert element_id → x,y (similar to moondream's convert_computer_calls_desc2xy)
+        final_output = []
+        for item in responses_items:
+            if item.get("type") == "computer_call" and "action" in item:
+                action = item["action"].copy()
+
+                # Handle single element_id
+                if "element_id" in action:
+                    element_id = action["element_id"]
+                    if element_id in id2xy:
+                        x, y = id2xy[element_id]
+                        action["x"] = x
+                        action["y"] = y
+                        del action["element_id"]
+
+                # Handle start_element_id and end_element_id for drag operations
+                elif "start_element_id" in action and "end_element_id" in action:
+                    start_id = action["start_element_id"]
+                    end_id = action["end_element_id"]
+                    if start_id in id2xy and end_id in id2xy:
+                        start_x, start_y = id2xy[start_id]
+                        end_x, end_y = id2xy[end_id]
+                        action["path"] = [{"x": start_x, "y": start_y}, {"x": end_x, "y": end_y}]
+                        del action["start_element_id"]
+                        del action["end_element_id"]
+
+                converted_item = item.copy()
+                converted_item["action"] = action
+                final_output.append(converted_item)
+            else:
+                final_output.append(item)
+
+        return {"output": final_output, "usage": usage}
 
     async def predict_click(
         self, model: str, image_b64: str, instruction: str, **kwargs

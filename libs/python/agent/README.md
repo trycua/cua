@@ -73,8 +73,8 @@ if __name__ == "__main__":
 ## Docs
 
 - [Agent Loops](https://trycua.com/docs/agent-sdk/agent-loops)
-- [Supported Agents](https://trycua.com/docs/agent-sdk/supported-agents)
-- [Supported Models](https://trycua.com/docs/agent-sdk/supported-models)
+- [Supported Agents](https://trycua.com/docs/agent-sdk/supported-agents/computer-use-agents)
+- [Supported Models](https://trycua.com/docs/agent-sdk/supported-model-providers)
 - [Chat History](https://trycua.com/docs/agent-sdk/chat-history)
 - [Callbacks](https://trycua.com/docs/agent-sdk/callbacks)
 - [Custom Tools](https://trycua.com/docs/agent-sdk/custom-tools)

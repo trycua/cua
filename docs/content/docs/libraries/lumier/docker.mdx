@@ -5,6 +5,7 @@ title: Docker
 You can use Lumier through Docker:
 
 ### Run a macOS VM (ephemeral)
+
 ```bash
 # Run the container with temporary storage (using pre-built image from Docker Hub)
 docker run -it --rm \
@@ -16,12 +17,15 @@ docker run -it --rm \
     -e RAM_SIZE=8192 \
     trycua/lumier:latest
 ```
+
 Access the VM in your browser at **http://localhost:8006**.
 
 After running the command above, you can access your macOS VM through a web browser (e.g., http://localhost:8006).
 
 <Callout title="Note">
-With the basic setup above, your VM will be reset when you stop the container (ephemeral mode). This means any changes you make inside the macOS VM will be lost. See the section below for how to save your VM state.
+  With the basic setup above, your VM will be reset when you stop the container (ephemeral mode).
+  This means any changes you make inside the macOS VM will be lost. See the section below for how to
+  save your VM state.
 </Callout>
 
 ## Saving Your VM State

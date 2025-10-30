@@ -9,8 +9,9 @@ pip install cua-mcp-server
 ```
 
 This will install:
+
 - The MCP server
-- CUA agent and computer dependencies 
+- CUA agent and computer dependencies
 - An executable `cua-mcp-server` script in your PATH
 
 ## Easy Setup Script
@@ -22,6 +23,7 @@ curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/python/mcp-ser
 ```
 
 This script will:
+
 - Create the ~/.cua directory if it doesn't exist
 - Generate a startup script at ~/.cua/start_mcp_server.sh
 - Make the script executable
@@ -30,7 +32,7 @@ This script will:
 You can then use the script in your MCP configuration like this:
 
 ```json
-{ 
+{
   "mcpServers": {
     "cua-agent": {
       "command": "/bin/bash",
@@ -48,6 +50,7 @@ You can then use the script in your MCP configuration like this:
 If you get a `/bin/bash: ~/cua/libs/python/mcp-server/scripts/start_mcp_server.sh: No such file or directory` error, try changing the path to the script to be absolute instead of relative.
 
 To see the logs:
+
 ```
 tail -n 20 -f ~/Library/Logs/Claude/mcp*.log
 ```

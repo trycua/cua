@@ -75,9 +75,14 @@ except Exception:
     except Exception:
         package_version = "unknown"
 
-accessibility_handler, automation_handler, diorama_handler, file_handler = (
-    HandlerFactory.create_handlers()
-)
+(
+    accessibility_handler,
+    automation_handler,
+    diorama_handler,
+    file_handler,
+    desktop_handler,
+    window_handler,
+) = HandlerFactory.create_handlers()
 handlers = {
     "version": lambda: {"protocol": protocol_version, "package": package_version},
     # App-Use commands
@@ -99,6 +104,23 @@ handlers = {
     "delete_file": file_handler.delete_file,
     "create_dir": file_handler.create_dir,
     "delete_dir": file_handler.delete_dir,
+    # Desktop commands
+    "get_desktop_environment": desktop_handler.get_desktop_environment,
+    "set_wallpaper": desktop_handler.set_wallpaper,
+    # Window management
+    "open": window_handler.open,
+    "launch": window_handler.launch,
+    "get_current_window_id": window_handler.get_current_window_id,
+    "get_application_windows": window_handler.get_application_windows,
+    "get_window_name": window_handler.get_window_name,
+    "get_window_size": window_handler.get_window_size,
+    "get_window_position": window_handler.get_window_position,
+    "set_window_size": window_handler.set_window_size,
+    "set_window_position": window_handler.set_window_position,
+    "maximize_window": window_handler.maximize_window,
+    "minimize_window": window_handler.minimize_window,
+    "activate_window": window_handler.activate_window,
+    "close_window": window_handler.close_window,
     # Mouse commands
     "mouse_down": automation_handler.mouse_down,
     "mouse_up": automation_handler.mouse_up,

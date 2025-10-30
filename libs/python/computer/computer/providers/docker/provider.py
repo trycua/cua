@@ -258,14 +258,20 @@ class DockerProvider(BaseVMProvider):
                 logger.info(f"Container {name} is already running")
                 return existing_vm
             elif existing_vm["status"] in ["stopped", "paused"]:
-                # Start existing container
-                logger.info(f"Starting existing container {name}")
-                start_cmd = ["docker", "start", name]
-                result = subprocess.run(start_cmd, capture_output=True, text=True, check=True)
+                if self.ephemeral:
+                    # Delete existing container
+                    logger.info(f"Deleting existing container {name}")
+                    delete_cmd = ["docker", "rm", name]
+                    result = subprocess.run(delete_cmd, capture_output=True, text=True, check=True)
+                else:
+                    # Start existing container
+                    logger.info(f"Starting existing container {name}")
+                    start_cmd = ["docker", "start", name]
+                    result = subprocess.run(start_cmd, capture_output=True, text=True, check=True)
 
-                # Wait for container to be ready
-                await self._wait_for_container_ready(name)
-                return await self.get_vm(name, storage)
+                    # Wait for container to be ready
+                    await self._wait_for_container_ready(name)
+                    return await self.get_vm(name, storage)
 
             # Use provided image or default
             docker_image = image if image != "default" else self.image
@@ -306,6 +312,20 @@ class DockerProvider(BaseVMProvider):
             # Add environment variables
             cmd.extend(["-e", "VNC_PW=password"])  # Set VNC password
             cmd.extend(["-e", "VNCOPTIONS=-disableBasicAuth"])  # Disable VNC basic auth
+
+            # Apply display resolution if provided (e.g., "1024x768")
+            display_resolution = run_opts.get("display")
+            if (
+                isinstance(display_resolution, dict)
+                and "width" in display_resolution
+                and "height" in display_resolution
+            ):
+                cmd.extend(
+                    [
+                        "-e",
+                        f"VNC_RESOLUTION={display_resolution['width']}x{display_resolution['height']}",
+                    ]
+                )
 
             # Add the image
             cmd.append(docker_image)
@@ -387,6 +407,11 @@ class DockerProvider(BaseVMProvider):
                 del self._running_containers[name]
 
             logger.info(f"Container {name} stopped successfully")
+
+            # Delete container if ephemeral=True
+            if self.ephemeral:
+                cmd = ["docker", "rm", name]
+                result = subprocess.run(cmd, capture_output=True, text=True, check=True)
 
             return {
                 "name": name,

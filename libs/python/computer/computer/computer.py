@@ -1,4 +1,3 @@
-from typing import Optional, List, Literal, Dict, Any, Union, TYPE_CHECKING, cast
 import asyncio
 from .models import Computer as ComputerConfig, Display
 from .interface.factory import InterfaceFactory
@@ -7,15 +6,23 @@ from .tracing_wrapper import TracingInterfaceWrapper
 import time
 from PIL import Image
 import io
-import re
-from .logger import Logger, LogLevel
 import json
 import logging
-from core.telemetry import is_telemetry_enabled, record_event
 import os
-from . import helpers
-
 import platform
+import re
+import time
+import traceback
+from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Union, cast
+
+from core.telemetry import is_telemetry_enabled, record_event
+from PIL import Image
+
+from . import helpers
+from .interface.factory import InterfaceFactory
+from .logger import Logger, LogLevel
+from .models import Computer as ComputerConfig
+from .models import Display
 
 SYSTEM_INFO = {
     "os": platform.system().lower(),
@@ -28,6 +35,7 @@ from .providers.base import VMProviderType
 from .providers.factory import VMProviderFactory
 
 OSType = Literal["macos", "linux", "windows"]
+
 
 class Computer:
     """Computer is the main class for interacting with the computer."""
@@ -42,8 +50,11 @@ class Computer:
         Returns:
             DioramaComputer: A proxy object with the Diorama interface, but using diorama_cmds.
         """
-        assert "app-use" in self.experiments, "App Usage is an experimental feature. Enable it by passing experiments=['app-use'] to Computer()"
+        assert (
+            "app-use" in self.experiments
+        ), "App Usage is an experimental feature. Enable it by passing experiments=['app-use'] to Computer()"
         from .diorama_computer import DioramaComputer
+
         return DioramaComputer(self, apps)
 
     def __init__(
@@ -65,7 +76,7 @@ class Computer:
         storage: Optional[str] = None,
         ephemeral: bool = False,
         api_key: Optional[str] = None,
-        experiments: Optional[List[str]] = None
+        experiments: Optional[List[str]] = None,
     ):
         """Initialize a new Computer instance.
 
@@ -113,32 +124,36 @@ class Computer:
         self.os_type = os_type
         self.provider_type = provider_type
         self.ephemeral = ephemeral
-        
+
         self.api_key = api_key
         self.experiments = experiments or []
-        
+
         if "app-use" in self.experiments:
             assert self.os_type == "macos", "App use experiment is only supported on macOS"
 
         # The default is currently to use non-ephemeral storage
         if storage and ephemeral and storage != "ephemeral":
             raise ValueError("Storage path and ephemeral flag cannot be used together")
-        
+
         # Windows Sandbox always uses ephemeral storage
         if self.provider_type == VMProviderType.WINSANDBOX:
             if not ephemeral and storage != None and storage != "ephemeral":
-                self.logger.warning("Windows Sandbox storage is always ephemeral. Setting ephemeral=True.")
+                self.logger.warning(
+                    "Windows Sandbox storage is always ephemeral. Setting ephemeral=True."
+                )
             self.ephemeral = True
             self.storage = "ephemeral"
         else:
             self.storage = "ephemeral" if ephemeral else storage
-        
+
         # For Lumier provider, store the first shared directory path to use
         # for VM file sharing
         self.shared_path = None
         if shared_directories and len(shared_directories) > 0:
             self.shared_path = shared_directories[0]
-            self.logger.info(f"Using first shared directory for VM file sharing: {self.shared_path}")
+            self.logger.info(
+                f"Using first shared directory for VM file sharing: {self.shared_path}"
+            )
 
         # Store telemetry preference
         self._telemetry_enabled = telemetry_enabled
@@ -156,8 +171,8 @@ class Computer:
         self.interface_logger = Logger("computer.interface", verbosity)
 
         if not use_host_computer_server:
-            if ":" not in image or len(image.split(":")) != 2:
-                raise ValueError("Image must be in the format <image_name>:<tag>")
+            if ":" not in image:
+                image = f"{image}:latest"
 
             if not name:
                 # Normalize the name to be used for the VM
@@ -272,8 +287,14 @@ class Computer:
                 self.logger.info(f"Starting VM: {self.image}")
                 if not self._provider_context:
                     try:
-                        provider_type_name = self.provider_type.name if isinstance(self.provider_type, VMProviderType) else self.provider_type
-                        self.logger.verbose(f"Initializing {provider_type_name} provider context...")
+                        provider_type_name = (
+                            self.provider_type.name
+                            if isinstance(self.provider_type, VMProviderType)
+                            else self.provider_type
+                        )
+                        self.logger.verbose(
+                            f"Initializing {provider_type_name} provider context..."
+                        )
 
                         # Explicitly set provider parameters
                         storage = "ephemeral" if self.ephemeral else self.storage
@@ -290,9 +311,13 @@ class Computer:
                             if self.provider_type == VMProviderType.LUMIER:
                                 self.logger.info(f"Using VM image for Lumier provider: {image}")
                                 if shared_path:
-                                    self.logger.info(f"Using shared path for Lumier provider: {shared_path}")
+                                    self.logger.info(
+                                        f"Using shared path for Lumier provider: {shared_path}"
+                                    )
                                 if noVNC_port:
-                                    self.logger.info(f"Using noVNC port for Lumier provider: {noVNC_port}")
+                                    self.logger.info(
+                                        f"Using noVNC port for Lumier provider: {noVNC_port}"
+                                    )
                                 self.config.vm_provider = VMProviderFactory.create_provider(
                                     self.provider_type,
                                     port=port,
@@ -348,11 +373,17 @@ class Computer:
                         except ImportError as ie:
                             self.logger.error(f"Failed to import provider dependencies: {ie}")
                             if str(ie).find("lume") >= 0 and str(ie).find("lumier") < 0:
-                                self.logger.error("Please install with: pip install cua-computer[lume]")
+                                self.logger.error(
+                                    "Please install with: pip install cua-computer[lume]"
+                                )
                             elif str(ie).find("lumier") >= 0 or str(ie).find("docker") >= 0:
-                                self.logger.error("Please install with: pip install cua-computer[lumier] and make sure Docker is installed")
+                                self.logger.error(
+                                    "Please install with: pip install cua-computer[lumier] and make sure Docker is installed"
+                                )
                             elif str(ie).find("cloud") >= 0:
-                                self.logger.error("Please install with: pip install cua-computer[cloud]")
+                                self.logger.error(
+                                    "Please install with: pip install cua-computer[cloud]"
+                                )
                             raise
                     except Exception as e:
                         self.logger.error(f"Failed to initialize provider context: {e}")
@@ -363,16 +394,14 @@ class Computer:
                 try:
                     if self.config.vm_provider is None:
                         raise RuntimeError(f"VM provider not initialized for {self.config.name}")
-                        
+
                     vm = await self.config.vm_provider.get_vm(self.config.name)
                     self.logger.verbose(f"Found existing VM: {self.config.name}")
                     is_running = vm.get("status") == "running"
                 except Exception as e:
                     self.logger.error(f"VM not found: {self.config.name}")
                     self.logger.error(f"Error: {e}")
-                    raise RuntimeError(
-                        f"VM {self.config.name} could not be found or created."
-                    )
+                    raise RuntimeError(f"VM {self.config.name} could not be found or created.")
 
                 # Start the VM if it's not running
                 if not is_running:
@@ -385,13 +414,10 @@ class Computer:
                         path = os.path.abspath(os.path.expanduser(path))
                         if os.path.exists(path):
                             # Add path in format expected by Lume API
-                            shared_dirs.append({
-                                "hostPath": path,
-                                "readOnly": False
-                            })
+                            shared_dirs.append({"hostPath": path, "readOnly": False})
                         else:
                             self.logger.warning(f"Shared directory does not exist: {path}")
-                            
+
                     # Prepare run options to pass to the provider
                     run_opts = {}
 
@@ -401,11 +427,11 @@ class Computer:
                             "width": self.config.display.width,
                             "height": self.config.display.height,
                         }
-                        
+
                         # Check if scale_factor exists before adding it
                         if hasattr(self.config.display, "scale_factor"):
                             display_info["scale_factor"] = self.config.display.scale_factor
-                        
+
                         run_opts["display"] = display_info
 
                     # Add shared directories if available
@@ -415,21 +441,23 @@ class Computer:
                     # Run the VM with the provider
                     try:
                         if self.config.vm_provider is None:
-                            raise RuntimeError(f"VM provider not initialized for {self.config.name}")
-                            
+                            raise RuntimeError(
+                                f"VM provider not initialized for {self.config.name}"
+                            )
+
                         # Use the complete run_opts we prepared earlier
                         # Handle ephemeral storage for run_vm method too
                         storage_param = "ephemeral" if self.ephemeral else self.storage
-                        
+
                         # Log the image being used
                         self.logger.info(f"Running VM using image: {self.image}")
-                        
+
                         # Call provider.run_vm with explicit image parameter
                         response = await self.config.vm_provider.run_vm(
                             image=self.image,
                             name=self.config.name,
                             run_opts=run_opts,
-                            storage=storage_param
+                            storage=storage_param,
                         )
                         self.logger.info(f"VM run response: {response if response else 'None'}")
                     except Exception as run_error:
@@ -441,14 +469,16 @@ class Computer:
                 try:
                     if self.provider_type == VMProviderType.LUMIER:
                         max_retries = 60  # Increased for Lumier VM startup which takes longer
-                        retry_delay = 3    # 3 seconds between retries for Lumier
+                        retry_delay = 3  # 3 seconds between retries for Lumier
                     else:
                         max_retries = 30  # Default for other providers
-                        retry_delay = 2    # 2 seconds between retries
-                    
-                    self.logger.info(f"Waiting up to {max_retries * retry_delay} seconds for VM to be ready...")
+                        retry_delay = 2  # 2 seconds between retries
+
+                    self.logger.info(
+                        f"Waiting up to {max_retries * retry_delay} seconds for VM to be ready..."
+                    )
                     ip = await self.get_ip(max_retries=max_retries, retry_delay=retry_delay)
-                    
+
                     # If we get here, we have a valid IP
                     self.logger.info(f"VM is ready with IP: {ip}")
                     ip_address = ip
@@ -460,13 +490,16 @@ class Computer:
                     raise RuntimeError(f"VM failed to become ready: {wait_error}")
         except Exception as e:
             self.logger.error(f"Failed to initialize computer: {e}")
+            self.logger.error(traceback.format_exc())
             raise RuntimeError(f"Failed to initialize computer: {e}")
 
         try:
             # Verify we have a valid IP before initializing the interface
             if not ip_address or ip_address == "unknown" or ip_address == "0.0.0.0":
-                raise RuntimeError(f"Cannot initialize interface - invalid IP address: {ip_address}")
-                
+                raise RuntimeError(
+                    f"Cannot initialize interface - invalid IP address: {ip_address}"
+                )
+
             # Initialize the interface using the factory with the specified OS
             self.logger.info(f"Initializing interface for {self.os_type} at {ip_address}")
             from .interface.base import BaseComputerInterface
@@ -476,18 +509,17 @@ class Computer:
                 interface = cast(
                     BaseComputerInterface,
                     InterfaceFactory.create_interface_for_os(
-                        os=self.os_type, 
+                        os=self.os_type,
                         ip_address=ip_address,
                         api_key=self.api_key,
-                        vm_name=self.config.name
+                        vm_name=self.config.name,
                     ),
                 )
             else:
                 interface = cast(
                     BaseComputerInterface,
                     InterfaceFactory.create_interface_for_os(
-                        os=self.os_type, 
-                        ip_address=ip_address
+                        os=self.os_type, ip_address=ip_address
                     ),
                 )
                 
@@ -520,10 +552,10 @@ class Computer:
 
             # Set the initialization flag and clear the initializing flag
             self._initialized = True
-            
+
             # Set this instance as the default computer for remote decorators
             helpers.set_default_computer(self)
-            
+
             self.logger.info("Computer successfully initialized")
         except Exception as e:
             raise
@@ -532,7 +564,7 @@ class Computer:
             duration_ms = (time.time() - start_time) * 1000
             self.logger.debug(f"Computer initialization took {duration_ms:.2f}ms")
         return
-    
+
     async def disconnect(self) -> None:
         """Disconnect from the computer's WebSocket interface."""
         if self._interface:
@@ -546,13 +578,17 @@ class Computer:
             self.logger.info("Stopping Computer...")
 
             # In VM mode, first explicitly stop the VM, then exit the provider context
-            if not self.use_host_computer_server and self._provider_context and self.config.vm_provider is not None:
+            if (
+                not self.use_host_computer_server
+                and self._provider_context
+                and self.config.vm_provider is not None
+            ):
                 try:
                     self.logger.info(f"Stopping VM {self.config.name}...")
                     await self.config.vm_provider.stop_vm(
-                    name=self.config.name,
-                    storage=self.storage  # Pass storage explicitly for clarity
-                )
+                        name=self.config.name,
+                        storage=self.storage,  # Pass storage explicitly for clarity
+                    )
                 except Exception as e:
                     self.logger.error(f"Error stopping VM: {e}")
 
@@ -563,55 +599,156 @@ class Computer:
             await self.disconnect()
             self.logger.info("Computer stopped")
         except Exception as e:
-            self.logger.debug(f"Error during cleanup: {e}")  # Log as debug since this might be expected
+            self.logger.debug(
+                f"Error during cleanup: {e}"
+            )  # Log as debug since this might be expected
         finally:
             # Log stop time for performance monitoring
             duration_ms = (time.time() - start_time) * 1000
             self.logger.debug(f"Computer stop process took {duration_ms:.2f}ms")
         return
 
+    async def start(self) -> None:
+        """Start the computer."""
+        await self.run()
+
+    async def restart(self) -> None:
+        """Restart the computer.
+
+        If using a VM provider that supports restart, this will issue a restart
+        without tearing down the provider context, then reconnect the interface.
+        Falls back to stop()+run() when a provider restart is not available.
+        """
+        # Host computer server: just disconnect and run again
+        if self.use_host_computer_server:
+            try:
+                await self.disconnect()
+            finally:
+                await self.run()
+            return
+
+        # If no VM provider context yet, fall back to full run
+        if not getattr(self, "_provider_context", None) or self.config.vm_provider is None:
+            self.logger.info("No provider context active; performing full restart via run()")
+            await self.run()
+            return
+
+        # Gracefully close current interface connection if present
+        if self._interface:
+            try:
+                self._interface.close()
+            except Exception as e:
+                self.logger.debug(f"Error closing interface prior to restart: {e}")
+
+        # Attempt provider-level restart if implemented
+        try:
+            storage_param = "ephemeral" if self.ephemeral else self.storage
+            if hasattr(self.config.vm_provider, "restart_vm"):
+                self.logger.info(f"Restarting VM {self.config.name} via provider...")
+                await self.config.vm_provider.restart_vm(
+                    name=self.config.name, storage=storage_param
+                )
+            else:
+                # Fallback: stop then start without leaving provider context
+                self.logger.info(
+                    f"Provider has no restart_vm; performing stop+start for {self.config.name}..."
+                )
+                await self.config.vm_provider.stop_vm(name=self.config.name, storage=storage_param)
+                await self.config.vm_provider.run_vm(
+                    image=self.image, name=self.config.name, run_opts={}, storage=storage_param
+                )
+        except Exception as e:
+            self.logger.error(f"Failed to restart VM via provider: {e}")
+            # As a last resort, do a full stop (with provider context exit) and run
+            try:
+                await self.stop()
+            finally:
+                await self.run()
+            return
+
+        # Wait for VM to be ready and reconnect interface
+        try:
+            self.logger.info("Waiting for VM to be ready after restart...")
+            if self.provider_type == VMProviderType.LUMIER:
+                max_retries = 60
+                retry_delay = 3
+            else:
+                max_retries = 30
+                retry_delay = 2
+            ip_address = await self.get_ip(max_retries=max_retries, retry_delay=retry_delay)
+
+            self.logger.info(f"Re-initializing interface for {self.os_type} at {ip_address}")
+            from .interface.base import BaseComputerInterface
+
+            if self.provider_type == VMProviderType.CLOUD and self.api_key and self.config.name:
+                self._interface = cast(
+                    BaseComputerInterface,
+                    InterfaceFactory.create_interface_for_os(
+                        os=self.os_type,
+                        ip_address=ip_address,
+                        api_key=self.api_key,
+                        vm_name=self.config.name,
+                    ),
+                )
+            else:
+                self._interface = cast(
+                    BaseComputerInterface,
+                    InterfaceFactory.create_interface_for_os(
+                        os=self.os_type,
+                        ip_address=ip_address,
+                    ),
+                )
+
+            self.logger.info("Connecting to WebSocket interface after restart...")
+            await self._interface.wait_for_ready(timeout=30)
+            self.logger.info("Computer reconnected and ready after restart")
+        except Exception as e:
+            self.logger.error(f"Failed to reconnect after restart: {e}")
+            # Try a full reset if reconnection failed
+            try:
+                await self.stop()
+            finally:
+                await self.run()
+
     # @property
     async def get_ip(self, max_retries: int = 15, retry_delay: int = 3) -> str:
         """Get the IP address of the VM or localhost if using host computer server.
-        
-        This method delegates to the provider's get_ip method, which waits indefinitely 
+
+        This method delegates to the provider's get_ip method, which waits indefinitely
         until the VM has a valid IP address.
-        
+
         Args:
             max_retries: Unused parameter, kept for backward compatibility
             retry_delay: Delay between retries in seconds (default: 2)
-            
+
         Returns:
             IP address of the VM or localhost if using host computer server
         """
         # For host computer server, always return localhost immediately
         if self.use_host_computer_server:
             return "127.0.0.1"
-            
+
         # Get IP from the provider - each provider implements its own waiting logic
         if self.config.vm_provider is None:
             raise RuntimeError("VM provider is not initialized")
-        
+
         # Log that we're waiting for the IP
         self.logger.info(f"Waiting for VM {self.config.name} to get an IP address...")
-        
+
         # Call the provider's get_ip method which will wait indefinitely
         storage_param = "ephemeral" if self.ephemeral else self.storage
-        
+
         # Log the image being used
         self.logger.info(f"Running VM using image: {self.image}")
-        
+
         # Call provider.get_ip with explicit image parameter
         ip = await self.config.vm_provider.get_ip(
-            name=self.config.name,
-            storage=storage_param,
-            retry_delay=retry_delay
+            name=self.config.name, storage=storage_param, retry_delay=retry_delay
         )
-        
+
         # Log success
         self.logger.info(f"VM {self.config.name} has IP address: {ip}")
         return ip
-        
 
     async def wait_vm_ready(self) -> Optional[Dict[str, Any]]:
         """Wait for VM to be ready with an IP address.
@@ -699,8 +836,8 @@ class Computer:
             if self.config.vm_provider is not None:
                 vm = await self.config.vm_provider.get_vm(self.config.name)
                 # VM data is returned as a dictionary from the Lumier provider
-                status = vm.get('status', 'unknown') if vm else "unknown"
-                ip = vm.get('ip_address') if vm else None
+                status = vm.get("status", "unknown") if vm else "unknown"
+                ip = vm.get("ip_address") if vm else None
             else:
                 status = "unknown"
                 ip = None
@@ -717,16 +854,13 @@ class Computer:
         self.logger.info(
             f"Updating VM settings: CPU={cpu or self.config.cpu}, Memory={memory or self.config.memory}"
         )
-        update_opts = {
-            "cpu": cpu or int(self.config.cpu), 
-            "memory": memory or self.config.memory
-        }
+        update_opts = {"cpu": cpu or int(self.config.cpu), "memory": memory or self.config.memory}
         if self.config.vm_provider is not None:
-                await self.config.vm_provider.update_vm(
-                    name=self.config.name,
-                    update_opts=update_opts,
-                    storage=self.storage  # Pass storage explicitly for clarity
-                )
+            await self.config.vm_provider.update_vm(
+                name=self.config.name,
+                update_opts=update_opts,
+                storage=self.storage,  # Pass storage explicitly for clarity
+            )
         else:
             raise RuntimeError("VM provider not initialized")
 
@@ -813,65 +947,94 @@ class Computer:
         """
         return await self.interface.to_screenshot_coordinates(x, y)
 
-
     # Add virtual environment management functions to computer interface
     async def venv_install(self, venv_name: str, requirements: list[str]):
         """Install packages in a virtual environment.
-        
+
         Args:
             venv_name: Name of the virtual environment
             requirements: List of package requirements to install
-            
+
         Returns:
             Tuple of (stdout, stderr) from the installation command
         """
         requirements = requirements or []
+        # Windows vs POSIX handling
+        if self.os_type == "windows":
+            # Use %USERPROFILE% for home directory and cmd.exe semantics
+            venv_path = f"%USERPROFILE%\\.venvs\\{venv_name}"
+            ensure_dir_cmd = 'if not exist "%USERPROFILE%\\.venvs" mkdir "%USERPROFILE%\\.venvs"'
+            create_cmd = f'if not exist "{venv_path}" python -m venv "{venv_path}"'
+            requirements_str = " ".join(requirements)
+            # Activate via activate.bat and install
+            install_cmd = (
+                f'call "{venv_path}\\Scripts\\activate.bat" && pip install {requirements_str}'
+                if requirements_str
+                else "echo No requirements to install"
+            )
+            await self.interface.run_command(ensure_dir_cmd)
+            await self.interface.run_command(create_cmd)
+            return await self.interface.run_command(install_cmd)
+        else:
+            # POSIX (macOS/Linux)
+            venv_path = f"$HOME/.venvs/{venv_name}"
+            create_cmd = f'mkdir -p "$HOME/.venvs" && python3 -m venv "{venv_path}"'
+            # Check if venv exists, if not create it
+            check_cmd = f'test -d "{venv_path}" || ({create_cmd})'
+            _ = await self.interface.run_command(check_cmd)
+            # Install packages
+            requirements_str = " ".join(requirements)
+            install_cmd = (
+                f'. "{venv_path}/bin/activate" && pip install {requirements_str}'
+                if requirements_str
+                else "echo No requirements to install"
+            )
+            return await self.interface.run_command(install_cmd)
 
-        # Create virtual environment if it doesn't exist
-        venv_path = f"~/.venvs/{venv_name}"
-        create_cmd = f"mkdir -p ~/.venvs && python3 -m venv {venv_path}"
-        
-        # Check if venv exists, if not create it
-        check_cmd = f"test -d {venv_path} || ({create_cmd})"
-        _ = await self.interface.run_command(check_cmd)
-        
-        # Install packages
-        requirements_str = " ".join(requirements)
-        install_cmd = f". {venv_path}/bin/activate && pip install {requirements_str}"
-        return await self.interface.run_command(install_cmd)
-    
     async def venv_cmd(self, venv_name: str, command: str):
         """Execute a shell command in a virtual environment.
-        
+
         Args:
             venv_name: Name of the virtual environment
             command: Shell command to execute in the virtual environment
-            
+
         Returns:
             Tuple of (stdout, stderr) from the command execution
         """
-        venv_path = f"~/.venvs/{venv_name}"
-        
-        # Check if virtual environment exists
-        check_cmd = f"test -d {venv_path}"
-        result = await self.interface.run_command(check_cmd)
-        
-        if result.stderr or "test:" in result.stdout:  # venv doesn't exist
-            return "", f"Virtual environment '{venv_name}' does not exist. Create it first using venv_install."
-        
-        # Activate virtual environment and run command
-        full_command = f". {venv_path}/bin/activate && {command}"
-        return await self.interface.run_command(full_command)
-    
+        if self.os_type == "windows":
+            # Windows (cmd.exe)
+            venv_path = f"%USERPROFILE%\\.venvs\\{venv_name}"
+            # Check existence and signal if missing
+            check_cmd = f'if not exist "{venv_path}" (echo VENV_NOT_FOUND) else (echo VENV_FOUND)'
+            result = await self.interface.run_command(check_cmd)
+            if "VENV_NOT_FOUND" in getattr(result, "stdout", ""):
+                # Auto-create the venv with no requirements
+                await self.venv_install(venv_name, [])
+            # Activate and run the command
+            full_command = f'call "{venv_path}\\Scripts\\activate.bat" && {command}'
+            return await self.interface.run_command(full_command)
+        else:
+            # POSIX (macOS/Linux)
+            venv_path = f"$HOME/.venvs/{venv_name}"
+            # Check if virtual environment exists
+            check_cmd = f'test -d "{venv_path}"'
+            result = await self.interface.run_command(check_cmd)
+            if result.stderr or "test:" in result.stdout:  # venv doesn't exist
+                # Auto-create the venv with no requirements
+                await self.venv_install(venv_name, [])
+            # Activate virtual environment and run command
+            full_command = f'. "{venv_path}/bin/activate" && {command}'
+            return await self.interface.run_command(full_command)
+
     async def venv_exec(self, venv_name: str, python_func, *args, **kwargs):
         """Execute Python function in a virtual environment using source code extraction.
-        
+
         Args:
             venv_name: Name of the virtual environment
             python_func: A callable function to execute
             *args: Positional arguments to pass to the function
             **kwargs: Keyword arguments to pass to the function
-            
+
         Returns:
             The result of the function execution, or raises any exception that occurred
         """
@@ -879,29 +1042,29 @@ class Computer:
         import inspect
         import json
         import textwrap
-        
+
         try:
             # Get function source code using inspect.getsource
             source = inspect.getsource(python_func)
             # Remove common leading whitespace (dedent)
             func_source = textwrap.dedent(source).strip()
-            
+
             # Remove decorators
             while func_source.lstrip().startswith("@"):
                 func_source = func_source.split("\n", 1)[1].strip()
-            
+
             # Get function name for execution
             func_name = python_func.__name__
-            
+
             # Serialize args and kwargs as JSON (safer than dill for cross-version compatibility)
             args_json = json.dumps(args, default=str)
             kwargs_json = json.dumps(kwargs, default=str)
-            
+
         except OSError as e:
             raise Exception(f"Cannot retrieve source code for function {python_func.__name__}: {e}")
         except Exception as e:
             raise Exception(f"Failed to reconstruct function source: {e}")
-        
+
         # Create Python code that will define and execute the function
         python_code = f'''
 import json
@@ -946,25 +1109,27 @@ output_json = json.dumps(output_payload, default=str)
 # Print the JSON output with markers
 print(f"<<<VENV_EXEC_START>>>{{output_json}}<<<VENV_EXEC_END>>>")
 '''
-        
+
         # Encode the Python code in base64 to avoid shell escaping issues
-        encoded_code = base64.b64encode(python_code.encode('utf-8')).decode('ascii')
-        
+        encoded_code = base64.b64encode(python_code.encode("utf-8")).decode("ascii")
+
         # Execute the Python code in the virtual environment
-        python_command = f"python -c \"import base64; exec(base64.b64decode('{encoded_code}').decode('utf-8'))\""
+        python_command = (
+            f"python -c \"import base64; exec(base64.b64decode('{encoded_code}').decode('utf-8'))\""
+        )
         result = await self.venv_cmd(venv_name, python_command)
-        
+
         # Parse the output to extract the payload
         start_marker = "<<<VENV_EXEC_START>>>"
         end_marker = "<<<VENV_EXEC_END>>>"
 
         # Print original stdout
-        print(result.stdout[:result.stdout.find(start_marker)])
-        
+        print(result.stdout[: result.stdout.find(start_marker)])
+
         if start_marker in result.stdout and end_marker in result.stdout:
             start_idx = result.stdout.find(start_marker) + len(start_marker)
             end_idx = result.stdout.find(end_marker)
-            
+
             if start_idx < end_idx:
                 output_json = result.stdout[start_idx:end_idx]
 
@@ -973,7 +1138,7 @@ print(f"<<<VENV_EXEC_START>>>{{output_json}}<<<VENV_EXEC_END>>>")
                     output_payload = json.loads(output_json)
                 except Exception as e:
                     raise Exception(f"Failed to decode output payload: {e}")
-                
+
                 if output_payload["success"]:
                     return output_payload["result"]
                 else:
@@ -985,4 +1150,6 @@ print(f"<<<VENV_EXEC_START>>>{{output_json}}<<<VENV_EXEC_END>>>")
                 raise Exception("Invalid output format: markers found but no content between them")
         else:
             # Fallback: return stdout/stderr if no payload markers found
-            raise Exception(f"No output payload found. stdout: {result.stdout}, stderr: {result.stderr}")
+            raise Exception(
+                f"No output payload found. stdout: {result.stdout}, stderr: {result.stderr}"
+            )

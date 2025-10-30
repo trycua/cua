@@ -1,8 +1,8 @@
 # From Lume to Containerization: Our Journey Meets Apple's Vision
 
-*Published on June 10, 2025 by Francesco Bonacci*
+_Published on June 10, 2025 by Francesco Bonacci_
 
-Yesterday, Apple announced their new [Containerization framework](https://github.com/apple/containerization) at WWDC. Since then, our Discord and X users have been asking what this means for Cua virtualization capabilities on Apple Silicon. We've been working in this space for months - from [Lume](https://github.com/trycua/cua/tree/main/libs/lume) to [Lumier](https://github.com/trycua/cua/tree/main/libs/lumier) to [Cua Cloud Containers](./introducing-cua-cloud-containers). Here's our take on Apple's announcement.
+Yesterday, Apple announced their new [Containerization framework](https://github.com/apple/containerization) at WWDC. Since then, our Discord and X users have been asking what this means for Cua virtualization capabilities on Apple Silicon. We've been working in this space for months - from [Lume](https://github.com/trycua/cua/tree/main/libs/lume) to [Lumier](https://github.com/trycua/cua/tree/main/libs/lumier) to [Cua Cloud Sandbox](./introducing-cua-cloud-containers). Here's our take on Apple's announcement.
 
 ## Our Story
 
@@ -40,6 +40,7 @@ How Apple's Framework Works:
 ```
 
 Why is this better?
+
 - **Better security**: Each container is completely separate
 - **Better performance**: Each container gets its own resources
 - **Real isolation**: If one container has problems, others aren't affected
@@ -71,6 +72,7 @@ While Apple's new framework focuses on containers, we've been building VM manage
 [Lume](https://github.com/trycua/cua/tree/main/libs/lume) is our command-line tool for creating and managing VMs on Apple Silicon. We built it because setting up VMs on macOS was too complicated.
 
 What Lume does:
+
 - **Direct control**: Works directly with Apple's Virtualization framework
 - **Ready-to-use images**: Start a macOS or Linux VM with one command
 - **API server**: Control VMs from other programs (runs on port 7777)
@@ -91,6 +93,7 @@ lume run macos-sequoia-vanilla:latest
 [Lumier](https://github.com/trycua/lumier) works differently. It lets you use Docker commands to manage VMs. But here's the key: **Docker is just for packaging, not for isolation**.
 
 What makes Lumier useful:
+
 - **Familiar commands**: If you know Docker, you know Lumier
 - **Web access**: Connect to your VM through a browser
 - **Save your work**: VMs remember their state
@@ -127,6 +130,7 @@ Docker → Lume → Full VM → Mac Hardware
 ### When to Use What
 
 **Apple's Containerization**
+
 - ✅ Perfect for: Running containers with maximum security
 - ✅ Starts in under a second
 - ✅ Uses less memory and CPU
@@ -134,6 +138,7 @@ Docker → Lume → Full VM → Mac Hardware
 - ❌ Only for containers, not full VMs
 
 **Lume**
+
 - ✅ Perfect for: Development and testing
 - ✅ Full control over macOS/Linux VMs
 - ✅ Works on current macOS versions
@@ -141,6 +146,7 @@ Docker → Lume → Full VM → Mac Hardware
 - ❌ Uses more resources than containers
 
 **Lumier**
+
 - ✅ Perfect for: Teams already using Docker
 - ✅ Easy to share and deploy
 - ✅ Access through your browser
@@ -168,9 +174,9 @@ Apple's announcement confirms we're on the right path. Here's what we're looking
 - [Apple Containerization Framework](https://github.com/apple/containerization)
 - [Lume - Direct VM Management](https://github.com/trycua/cua/tree/main/libs/lume)
 - [Lumier - Docker Interface for VMs](https://github.com/trycua/cua/tree/main/libs/lumier)
-- [Cua Cloud Containers](https://trycua.com)
+- [Cua Cloud Sandbox](https://trycua.com)
 - [Join our Discord](https://discord.gg/cua-ai)
 
 ---
 
-*Questions about virtualization on Apple Silicon? Come chat with us on Discord!*
+_Questions about virtualization on Apple Silicon? Come chat with us on Discord!_

@@ -6,12 +6,13 @@ Required environment variables:
 - CUA_CONTAINER_NAME: Name of the container to use
 """
 
-import os
 import asyncio
-import pytest
-from pathlib import Path
+import os
 import sys
 import traceback
+from pathlib import Path
+
+import pytest
 
 # Load environment variables from .env file
 project_root = Path(__file__).parent.parent
@@ -30,6 +31,7 @@ for path in pythonpath.split(":"):
 
 from computer import Computer, VMProviderType
 
+
 @pytest.fixture(scope="session")
 async def computer():
     """Shared Computer instance for all test cases."""
@@ -40,7 +42,7 @@ async def computer():
         name=str(os.getenv("CUA_CONTAINER_NAME")),
         provider_type=VMProviderType.CLOUD,
     )
-    
+
     try:
         await computer.run()
         yield computer
@@ -53,7 +55,7 @@ async def computer():
 async def test_cmd_echo_command(computer):
     """Test basic echo command with cmd.exe."""
     result = await computer.interface.run_command("echo Hello World")
-    
+
     assert result.stdout.strip() == "Hello World"
     assert result.stderr == ""
     assert result.returncode == 0
@@ -63,7 +65,7 @@ async def test_cmd_echo_command(computer):
 async def test_cmd_dir_command(computer):
     """Test dir command to list directory contents."""
     result = await computer.interface.run_command("dir C:\\")
-    
+
     assert result.returncode == 0
     assert result.stderr == ""
     assert "Directory of C:\\" in result.stdout
@@ -74,12 +76,14 @@ async def test_cmd_dir_command(computer):
 async def test_cmd_command_with_error(computer):
     """Test command that produces an error."""
     result = await computer.interface.run_command("dir C:\\nonexistent_directory_12345")
-    
+
     assert result.returncode != 0
     assert result.stdout == ""
-    assert ("File Not Found" in result.stderr or 
-            "cannot find the path" in result.stderr or
-            "The system cannot find" in result.stderr)
+    assert (
+        "File Not Found" in result.stderr
+        or "cannot find the path" in result.stderr
+        or "The system cannot find" in result.stderr
+    )
 
 
 if __name__ == "__main__":

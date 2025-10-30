@@ -28,8 +28,8 @@
     "access": "public"
   },
   "scripts": {
-    "lint": "biome lint .",
-    "lint:fix": "biome lint --fix .",
+    "lint": "prettier --check .",
+    "lint:fix": "prettier --write .",
     "build": "tsdown",
     "dev": "tsdown --watch",
     "test": "vitest",
@@ -43,7 +43,6 @@
     "pino": "^9.7.0"
   },
   "devDependencies": {
-    "@biomejs/biome": "^1.9.4",
     "@types/node": "^22.15.17",
     "bumpp": "^10.1.0",
     "happy-dom": "^17.4.7",

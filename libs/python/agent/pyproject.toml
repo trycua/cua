@@ -4,7 +4,7 @@ build-backend = "pdm.backend"
 
 [project]
 name = "cua-agent"
-version = "0.4.0"
+version = "0.4.37"
 description = "CUA (Computer Use) Agent for AI-driven computer interaction"
 readme = "README.md"
 authors = [
@@ -29,6 +29,11 @@ requires-python = ">=3.12"
 [project.optional-dependencies]
 openai = []
 anthropic = []
+qwen = [
+    "qwen-vl-utils",
+    "qwen-agent",
+    "Pillow>=10.0.0",
+]
 omni = [
     "cua-som>=0.1.0,<0.2.0",
 ]
@@ -49,7 +54,7 @@ glm45v-hf = [
 opencua-hf = [
     "accelerate",
     "torch",
-    "transformers==4.53.0",
+    "transformers>=4.53.0",
     "tiktoken>=0.11.0",
     "blobfile>=3.0.0"
 ]
@@ -60,6 +65,11 @@ internvl-hf = [
     "einops",
     "timm"
 ]
+moondream3 = [
+    "accelerate",
+    "torch",
+    "transformers>=4.55.0"
+]
 ui = [
     "gradio>=5.23.3",
     "python-dotenv>=1.0.1",
@@ -68,7 +78,10 @@ cli = [
     "yaspin>=3.1.0",
 ]
 hud = [
-    "hud-python==0.4.26",
+    "hud-python==0.4.52",
+]
+gemini = [
+    "google-genai>=1.41.0",
 ]
 all = [
     # uitars requirements
@@ -88,7 +101,13 @@ all = [
     # cli requirements
     "yaspin>=3.1.0",
     # hud requirements
-    "hud-python==0.4.26",
+    "hud-python==0.4.52",
+    # gemini requirements
+    "google-genai>=1.41.0",
+    # qwen requirements
+    "qwen-vl-utils",
+    "qwen-agent",
+    "Pillow>=10.0.0",
 ]
 
 [tool.uv]

@@ -8,10 +8,11 @@
     </picture>
   </div>
 
-  [![TypeScript](https://img.shields.io/badge/TypeScript-333333?logo=typescript&logoColor=white&labelColor=333333)](#)
-  [![macOS](https://img.shields.io/badge/macOS-000000?logo=apple&logoColor=F0F0F0)](#)
-  [![Discord](https://img.shields.io/badge/Discord-%235865F2.svg?&logo=discord&logoColor=white)](https://discord.com/invite/mVnXXpdE85)
-  [![NPM](https://img.shields.io/npm/v/@trycua/computer?color=333333)](https://www.npmjs.com/package/@trycua/computer)
+[![TypeScript](https://img.shields.io/badge/TypeScript-333333?logo=typescript&logoColor=white&labelColor=333333)](#)
+[![macOS](https://img.shields.io/badge/macOS-000000?logo=apple&logoColor=F0F0F0)](#)
+[![Discord](https://img.shields.io/badge/Discord-%235865F2.svg?&logo=discord&logoColor=white)](https://discord.com/invite/mVnXXpdE85)
+[![NPM](https://img.shields.io/npm/v/@trycua/computer?color=333333)](https://www.npmjs.com/package/@trycua/computer)
+
 </h1>
 </div>
 
@@ -30,7 +31,7 @@ import { Computer, OSType } from '@trycua/computer';
 const computer = new Computer({
   osType: OSType.LINUX,
   name: 's-linux-vm_id',
-  apiKey: 'your-api-key'
+  apiKey: 'your-api-key',
 });
 
 // Start the computer

@@ -8,9 +8,10 @@
     </picture>
   </div>
 
-  [![Swift 6](https://img.shields.io/badge/Swift_6-F54A2A?logo=swift&logoColor=white&labelColor=F54A2A)](#)
-  [![macOS](https://img.shields.io/badge/macOS-000000?logo=apple&logoColor=F0F0F0)](#)
-  [![Discord](https://img.shields.io/badge/Discord-%235865F2.svg?&logo=discord&logoColor=white)](https://discord.com/invite/mVnXXpdE85)
+[![Swift 6](https://img.shields.io/badge/Swift_6-F54A2A?logo=swift&logoColor=white&labelColor=F54A2A)](#)
+[![macOS](https://img.shields.io/badge/macOS-000000?logo=apple&logoColor=F0F0F0)](#)
+[![Discord](https://img.shields.io/badge/Discord-%235865F2.svg?&logo=discord&logoColor=white)](https://discord.com/invite/mVnXXpdE85)
+
 </h1>
 </div>
 
@@ -21,6 +22,7 @@ macOS and Linux virtual machines in a Docker container.
 </div>
 
 ## What is Lumier?
+
 **Lumier** is an interface for running macOS virtual machines with minimal setup. It uses Docker as a packaging system to deliver a pre-configured environment that connects to the `lume` virtualization service running on your host machine. With Lumier, you get:
 
 - A ready-to-use macOS or Linux virtual machine in minutes
@@ -35,6 +37,7 @@ Before using Lumier, make sure you have:
 1. **Docker for Apple Silicon** - download it [here](https://desktop.docker.com/mac/main/arm64/Docker.dmg) and follow the installation instructions.
 
 2. **Lume** - This is the virtualization CLI that powers Lumier. Install it with this command:
+
 ```bash
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/lume/scripts/install.sh)"
 ```
@@ -69,6 +72,7 @@ After running the command above, you can access your macOS VM through a web brow
 This project was inspired by [dockur/windows](https://github.com/dockur/windows) and [dockur/macos](https://github.com/dockur/macos), which pioneered the approach of running Windows and macOS VMs in Docker containers.
 
 Main differences with dockur/macos:
+
 - Lumier is specifically designed for macOS virtualization
 - Lumier supports Apple Silicon (M1/M2/M3/M4) while dockur/macos only supports Intel
 - Lumier uses the Apple Virtualization Framework (Vz) through the `lume` CLI to create true virtual machines, while dockur relies on KVM.

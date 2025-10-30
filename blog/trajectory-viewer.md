@@ -1,6 +1,6 @@
 # Trajectory Viewer for Cua
 
-*Published on May 13, 2025 by Dillon DuPont*
+_Published on May 13, 2025 by Dillon DuPont_
 
 Don’t forget to check out [Part 1: Building your own Computer-Use Operator](build-your-own-operator-on-macos-1) and [Part 2: Using the Agent framework](build-your-own-operator-on-macos-2) for setting up your Cua environment and basic tips and tricks!
 
@@ -18,7 +18,7 @@ Think of a trajectory as a detailed video recording of your agent’s journey:
 - **Observations**: What did the agent see (the exact screen content) at each point in time?
 - **Actions**: What clicks, keystrokes, or commands did it perform in response?
 - **Decisions**: Which options did it choose, and why?
-Especially for longer and more complex tasks, your agent will make multiple steps, take multiple actions, and make multiple observations. By examining this record, you can pinpoint where things go right, and more importantly, where they go wrong.
+  Especially for longer and more complex tasks, your agent will make multiple steps, take multiple actions, and make multiple observations. By examining this record, you can pinpoint where things go right, and more importantly, where they go wrong.
 
 ## So, what’s Cua’s Trajectory Viewer and why use it?
 
@@ -39,10 +39,6 @@ The viewer allows you to see exactly what your agent observed and how it interac
 ![Trajectory Viewer Screenshot](./assets/trajectory-viewer.jpeg)
 
 ## Recording a Trajectory
-
-### Using the Gradio UI
-
-The simplest way to create agent trajectories is through the [Cua Agent Gradio UI](https://www.trycua.com/docs/quickstart-ui) by checking the "Save Trajectory" option.
 
 ### Using the ComputerAgent API
 

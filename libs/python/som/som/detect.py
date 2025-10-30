@@ -1,28 +1,35 @@
-from pathlib import Path
-from typing import Union, List, Dict, Any, Tuple, Optional, cast
+import argparse
+import base64
+import io
 import logging
-import torch
-import torchvision.ops
+import signal
+import time
+from contextlib import contextmanager
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple, Union, cast
+
 import cv2
 import numpy as np
-import time
-import torchvision.transforms as T
-from PIL import Image
-import io
-import base64
-import argparse
-import signal
-from contextlib import contextmanager
-
-from ultralytics import YOLO
-from huggingface_hub import hf_hub_download
 import supervision as sv
+import torch
+import torchvision.ops
+import torchvision.transforms as T
+from huggingface_hub import hf_hub_download
+from PIL import Image
 from supervision.detection.core import Detections
+from ultralytics import YOLO
 
 from .detection import DetectionProcessor
+from .models import (
+    BoundingBox,
+    IconElement,
+    ParseResult,
+    ParserMetadata,
+    TextElement,
+    UIElement,
+)
 from .ocr import OCRProcessor
 from .visualization import BoxAnnotator
-from .models import BoundingBox, UIElement, IconElement, TextElement, ParserMetadata, ParseResult
 
 logger = logging.getLogger(__name__)
 
@@ -50,8 +57,9 @@ def timeout(seconds: int):
 def process_text_box(box, image):
     """Process a single text box with OCR."""
     try:
+        from typing import Any, List, Sequence, Tuple
+
         import easyocr
-        from typing import List, Tuple, Any, Sequence
 
         x1 = int(min(point[0] for point in box))
         y1 = int(min(point[1] for point in box))
@@ -100,6 +108,7 @@ def check_ocr_box(image_path: Union[str, Path]) -> Tuple[List[str], List[List[fl
 
     # Use EasyOCR
     import ssl
+
     import easyocr
 
     # Create unverified SSL context for development
@@ -231,7 +240,7 @@ class OmniParser:
                         for i, det in enumerate(text_detections)
                     ],
                 )
-                
+
                 if elements and text_elements:
                     # Filter out non-OCR elements that have OCR elements with center points colliding with them
                     filtered_elements = []
@@ -241,17 +250,21 @@ class OmniParser:
                             # Calculate center point of the text element
                             center_x = (text_elem.bbox.x1 + text_elem.bbox.x2) / 2
                             center_y = (text_elem.bbox.y1 + text_elem.bbox.y2) / 2
-                            
+
                             # Check if this center point is inside the non-OCR element
-                            if (center_x >= elem.bbox.x1 and center_x <= elem.bbox.x2 and 
-                                center_y >= elem.bbox.y1 and center_y <= elem.bbox.y2):
+                            if (
+                                center_x >= elem.bbox.x1
+                                and center_x <= elem.bbox.x2
+                                and center_y >= elem.bbox.y1
+                                and center_y <= elem.bbox.y2
+                            ):
                                 should_keep = False
                                 break
-                        
+
                         if should_keep:
                             filtered_elements.append(elem)
                     elements = filtered_elements
-                    
+
                     # Merge detections using NMS
                     all_elements = elements + text_elements
                     boxes = torch.tensor([elem.bbox.coordinates for elem in all_elements])

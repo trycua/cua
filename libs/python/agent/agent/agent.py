@@ -3,76 +3,83 @@ ComputerAgent - Main agent class that selects and runs agent loops
 """
 
 import asyncio
-from pathlib import Path
-from typing import Dict, List, Any, Optional, AsyncGenerator, Union, cast, Callable, Set, Tuple
-
-from litellm.responses.utils import Usage
-
-from .types import (
-    Messages,
-    AgentCapability,
-    ToolError,
-    IllegalArgumentError
-)
-from .responses import make_tool_error_item, replace_failed_computer_calls_with_function_calls
-from .decorators import find_agent_config
+import inspect
 import json
+from pathlib import Path
+from typing import (
+    Any,
+    AsyncGenerator,
+    Callable,
+    Dict,
+    List,
+    Optional,
+    Set,
+    Tuple,
+    Union,
+    cast,
+)
+
 import litellm
 import litellm.utils
-import inspect
+from litellm.responses.utils import Usage
+
 from .adapters import (
     HuggingFaceLocalAdapter,
     HumanAdapter,
     MLXVLMAdapter,
 )
 from .callbacks import (
-    ImageRetentionCallback, 
-    LoggingCallback, 
-    TrajectorySaverCallback, 
     BudgetManagerCallback,
-    TelemetryCallback,
+    ImageRetentionCallback,
+    LoggingCallback,
     OperatorNormalizerCallback,
     PromptInstructionsCallback,
+    TelemetryCallback,
+    TrajectorySaverCallback,
 )
-from .computers import (
-    AsyncComputerHandler,
-    is_agent_computer,
-    make_computer_handler
+from .computers import AsyncComputerHandler, is_agent_computer, make_computer_handler
+from .decorators import find_agent_config
+from .responses import (
+    make_tool_error_item,
+    replace_failed_computer_calls_with_function_calls,
 )
+from .types import AgentCapability, IllegalArgumentError, Messages, ToolError
+
 
 def assert_callable_with(f, *args, **kwargs):
-   """Check if function can be called with given arguments."""
-   try:
-       inspect.signature(f).bind(*args, **kwargs)
-       return True
-   except TypeError as e:
-       sig = inspect.signature(f)
-       raise IllegalArgumentError(f"Expected {sig}, got args={args} kwargs={kwargs}") from e
+    """Check if function can be called with given arguments."""
+    try:
+        inspect.signature(f).bind(*args, **kwargs)
+        return True
+    except TypeError as e:
+        sig = inspect.signature(f)
+        raise IllegalArgumentError(f"Expected {sig}, got args={args} kwargs={kwargs}") from e
+
 
 def get_json(obj: Any, max_depth: int = 10) -> Any:
     def custom_serializer(o: Any, depth: int = 0, seen: Optional[Set[int]] = None) -> Any:
         if seen is None:
             seen = set()
-        
+
         # Use model_dump() if available
-        if hasattr(o, 'model_dump'):
+        if hasattr(o, "model_dump"):
             return o.model_dump()
-        
+
         # Check depth limit
         if depth > max_depth:
             return f"<max_depth_exceeded:{max_depth}>"
-        
+
         # Check for circular references using object id
         obj_id = id(o)
         if obj_id in seen:
             return f"<circular_reference:{type(o).__name__}>"
-        
+
         # Handle Computer objects
-        if hasattr(o, '__class__') and 'computer' in getattr(o, '__class__').__name__.lower():
+        if hasattr(o, "__class__") and "computer" in o.__class__.__name__.lower():
             return f"<computer:{o.__class__.__name__}>"
 
         # Handle objects with __dict__
-        if hasattr(o, '__dict__'):
+        if hasattr(o, "__dict__"):
             seen.add(obj_id)
             try:
                 result = {}
@@ -84,7 +91,7 @@ def get_json(obj: Any, max_depth: int = 10) -> Any:
                 return result
             finally:
                 seen.discard(obj_id)
-        
+
         # Handle common types that might contain nested objects
         elif isinstance(o, dict):
             seen.add(obj_id)
@@ -96,7 +103,7 @@ def get_json(obj: Any, max_depth: int = 10) -> Any:
                 }
             finally:
                 seen.discard(obj_id)
-        
+
         elif isinstance(o, (list, tuple, set)):
             seen.add(obj_id)
             try:
@@ -107,31 +114,32 @@ def get_json(obj: Any, max_depth: int = 10) -> Any:
                 ]
             finally:
                 seen.discard(obj_id)
-        
+
         # For basic types that json.dumps can handle
         elif isinstance(o, (str, int, float, bool)) or o is None:
             return o
-        
+
         # Fallback to string representation
         else:
             return str(o)
-    
+
     def remove_nones(obj: Any) -> Any:
         if isinstance(obj, dict):
             return {k: remove_nones(v) for k, v in obj.items() if v is not None}
         elif isinstance(obj, list):
             return [remove_nones(item) for item in obj if item is not None]
         return obj
-    
+
     # Serialize with circular reference and depth protection
     serialized = custom_serializer(obj)
-    
+
     # Convert to JSON string and back to ensure JSON compatibility
     json_str = json.dumps(serialized)
     parsed = json.loads(json_str)
-    
+
     # Final cleanup of any remaining None values
     return remove_nones(parsed)
+
 
 def sanitize_message(msg: Any) -> Any:
     """Return a copy of the message with image_url omitted for computer_call_output messages."""
@@ -143,19 +151,24 @@ def sanitize_message(msg: Any) -> Any:
             return sanitized
     return msg
 
+
 def get_output_call_ids(messages: List[Dict[str, Any]]) -> List[str]:
     call_ids = []
     for message in messages:
-        if message.get("type") == "computer_call_output" or message.get("type") == "function_call_output":
+        if (
+            message.get("type") == "computer_call_output"
+            or message.get("type") == "function_call_output"
+        ):
             call_ids.append(message.get("call_id"))
     return call_ids
+
 
 class ComputerAgent:
     """
     Main agent class that automatically selects the appropriate agent loop
     based on the model and executes tool calls.
     """
-    
+
     def __init__(
         self,
         model: str,
@@ -172,11 +185,11 @@ class ComputerAgent:
         max_trajectory_budget: Optional[float | dict] = None,
         telemetry_enabled: Optional[bool] = True,
         trust_remote_code: Optional[bool] = False,
-        **kwargs
+        **kwargs,
     ):
         """
         Initialize ComputerAgent.
-        
+
         Args:
             model: Model name (e.g., "claude-3-5-sonnet-20241022", "computer-use-preview", "omni+vertex_ai/gemini-pro")
             tools: List of tools (computer objects, decorated functions, etc.)
@@ -193,11 +206,11 @@ class ComputerAgent:
             telemetry_enabled: If set, adds TelemetryCallback to track anonymized usage data. Enabled by default.
             trust_remote_code: If set, trust remote code when loading local models. Disabled by default.
             **kwargs: Additional arguments passed to the agent loop
-        """        
+        """
         # If the loop is "human/human", we need to prefix a grounding model fallback
         if model in ["human/human", "human"]:
             model = "openai/computer-use-preview+human/human"
-        
+
         self.model = model
         self.tools = tools or []
         self.custom_loop = custom_loop
@@ -236,34 +249,33 @@ class ComputerAgent:
         # Add image retention callback if only_n_most_recent_images is set
         if self.only_n_most_recent_images:
             self.callbacks.append(ImageRetentionCallback(self.only_n_most_recent_images))
-        
+
         # Add trajectory saver callback if trajectory_dir is set
         if self.trajectory_dir:
             if isinstance(self.trajectory_dir, dict):
                 self.callbacks.append(TrajectorySaverCallback(**self.trajectory_dir))
             elif isinstance(self.trajectory_dir, (str, Path)):
                 self.callbacks.append(TrajectorySaverCallback(str(self.trajectory_dir)))
-        
+
         # Add budget manager if max_trajectory_budget is set
         if max_trajectory_budget:
             if isinstance(max_trajectory_budget, dict):
                 self.callbacks.append(BudgetManagerCallback(**max_trajectory_budget))
             else:
                 self.callbacks.append(BudgetManagerCallback(max_trajectory_budget))
-        
+
         # == Enable local model providers w/ LiteLLM ==
 
         # Register local model providers
         hf_adapter = HuggingFaceLocalAdapter(
-            device="auto",
-            trust_remote_code=self.trust_remote_code or False
+            device="auto", trust_remote_code=self.trust_remote_code or False
         )
         human_adapter = HumanAdapter()
         mlx_adapter = MLXVLMAdapter()
         litellm.custom_provider_map = [
             {"provider": "huggingface-local", "custom_handler": hf_adapter},
             {"provider": "human", "custom_handler": human_adapter},
-            {"provider": "mlx", "custom_handler": mlx_adapter}
+            {"provider": "mlx", "custom_handler": mlx_adapter},
         ]
         litellm.suppress_debug_info = True
 
@@ -280,16 +292,16 @@ class ComputerAgent:
             # Instantiate the agent config class
             self.agent_loop = config_info.agent_class()
             self.agent_config_info = config_info
-        
+
         self.tool_schemas = []
         self.computer_handler = None
-        
+
     async def _initialize_computers(self):
         """Initialize computer objects"""
         if not self.tool_schemas:
             # Process tools and create tool schemas
             self.tool_schemas = self._process_tools()
-            
+
             # Find computer tool and create interface adapter
             computer_handler = None
             for schema in self.tool_schemas:
@@ -297,7 +309,7 @@ class ComputerAgent:
                     computer_handler = await make_computer_handler(schema["computer"])
                     break
             self.computer_handler = computer_handler
-    
+
     def _process_input(self, input: Messages) -> List[Dict[str, Any]]:
         """Process input messages and create schemas for the agent loop"""
         if isinstance(input, str):
@@ -307,69 +319,73 @@ class ComputerAgent:
     def _process_tools(self) -> List[Dict[str, Any]]:
         """Process tools and create schemas for the agent loop"""
         schemas = []
-        
+
         for tool in self.tools:
             # Check if it's a computer object (has interface attribute)
             if is_agent_computer(tool):
                 # This is a computer tool - will be handled by agent loop
-                schemas.append({
-                    "type": "computer",
-                    "computer": tool
-                })
+                schemas.append({"type": "computer", "computer": tool})
             elif callable(tool):
                 # Use litellm.utils.function_to_dict to extract schema from docstring
                 try:
                     function_schema = litellm.utils.function_to_dict(tool)
-                    schemas.append({
-                        "type": "function",
-                        "function": function_schema
-                    })
+                    schemas.append({"type": "function", "function": function_schema})
                 except Exception as e:
                     print(f"Warning: Could not process tool {tool}: {e}")
             else:
                 print(f"Warning: Unknown tool type: {tool}")
-        
+
         return schemas
-    
+
     def _get_tool(self, name: str) -> Optional[Callable]:
         """Get a tool by name"""
         for tool in self.tools:
-            if hasattr(tool, '__name__') and tool.__name__ == name:
+            if hasattr(tool, "__name__") and tool.__name__ == name:
                 return tool
-            elif hasattr(tool, 'func') and tool.func.__name__ == name:
+            elif hasattr(tool, "func") and tool.func.__name__ == name:
                 return tool
         return None
-    
+
     # ============================================================================
     # AGENT RUN LOOP LIFECYCLE HOOKS
     # ============================================================================
-    
+
     async def _on_run_start(self, kwargs: Dict[str, Any], old_items: List[Dict[str, Any]]) -> None:
         """Initialize run tracking by calling callbacks."""
         for callback in self.callbacks:
-            if hasattr(callback, 'on_run_start'):
+            if hasattr(callback, "on_run_start"):
                 await callback.on_run_start(kwargs, old_items)
-    
-    async def _on_run_end(self, kwargs: Dict[str, Any], old_items: List[Dict[str, Any]], new_items: List[Dict[str, Any]]) -> None:
+
+    async def _on_run_end(
+        self,
+        kwargs: Dict[str, Any],
+        old_items: List[Dict[str, Any]],
+        new_items: List[Dict[str, Any]],
+    ) -> None:
         """Finalize run tracking by calling callbacks."""
         for callback in self.callbacks:
-            if hasattr(callback, 'on_run_end'):
+            if hasattr(callback, "on_run_end"):
                 await callback.on_run_end(kwargs, old_items, new_items)
-    
-    async def _on_run_continue(self, kwargs: Dict[str, Any], old_items: List[Dict[str, Any]], new_items: List[Dict[str, Any]]) -> bool:
+
+    async def _on_run_continue(
+        self,
+        kwargs: Dict[str, Any],
+        old_items: List[Dict[str, Any]],
+        new_items: List[Dict[str, Any]],
+    ) -> bool:
         """Check if run should continue by calling callbacks."""
         for callback in self.callbacks:
-            if hasattr(callback, 'on_run_continue'):
+            if hasattr(callback, "on_run_continue"):
                 should_continue = await callback.on_run_continue(kwargs, old_items, new_items)
                 if not should_continue:
                     return False
         return True
-    
+
     async def _on_llm_start(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Prepare messages for the LLM call by applying callbacks."""
         result = messages
         for callback in self.callbacks:
-            if hasattr(callback, 'on_llm_start'):
+            if hasattr(callback, "on_llm_start"):
                 result = await callback.on_llm_start(result)
         return result
 
@@ -377,82 +393,91 @@ class ComputerAgent:
         """Postprocess messages after the LLM call by applying callbacks."""
         result = messages
         for callback in self.callbacks:
-            if hasattr(callback, 'on_llm_end'):
+            if hasattr(callback, "on_llm_end"):
                 result = await callback.on_llm_end(result)
         return result
 
     async def _on_responses(self, kwargs: Dict[str, Any], responses: Dict[str, Any]) -> None:
         """Called when responses are received."""
         for callback in self.callbacks:
-            if hasattr(callback, 'on_responses'):
+            if hasattr(callback, "on_responses"):
                 await callback.on_responses(get_json(kwargs), get_json(responses))
-    
+
     async def _on_computer_call_start(self, item: Dict[str, Any]) -> None:
         """Called when a computer call is about to start."""
         for callback in self.callbacks:
-            if hasattr(callback, 'on_computer_call_start'):
+            if hasattr(callback, "on_computer_call_start"):
                 await callback.on_computer_call_start(get_json(item))
-    
-    async def _on_computer_call_end(self, item: Dict[str, Any], result: List[Dict[str, Any]]) -> None:
+
+    async def _on_computer_call_end(
+        self, item: Dict[str, Any], result: List[Dict[str, Any]]
+    ) -> None:
         """Called when a computer call has completed."""
         for callback in self.callbacks:
-            if hasattr(callback, 'on_computer_call_end'):
+            if hasattr(callback, "on_computer_call_end"):
                 await callback.on_computer_call_end(get_json(item), get_json(result))
-    
+
     async def _on_function_call_start(self, item: Dict[str, Any]) -> None:
         """Called when a function call is about to start."""
         for callback in self.callbacks:
-            if hasattr(callback, 'on_function_call_start'):
+            if hasattr(callback, "on_function_call_start"):
                 await callback.on_function_call_start(get_json(item))
-    
-    async def _on_function_call_end(self, item: Dict[str, Any], result: List[Dict[str, Any]]) -> None:
+
+    async def _on_function_call_end(
+        self, item: Dict[str, Any], result: List[Dict[str, Any]]
+    ) -> None:
         """Called when a function call has completed."""
         for callback in self.callbacks:
-            if hasattr(callback, 'on_function_call_end'):
+            if hasattr(callback, "on_function_call_end"):
                 await callback.on_function_call_end(get_json(item), get_json(result))
-    
+
     async def _on_text(self, item: Dict[str, Any]) -> None:
         """Called when a text message is encountered."""
         for callback in self.callbacks:
-            if hasattr(callback, 'on_text'):
+            if hasattr(callback, "on_text"):
                 await callback.on_text(get_json(item))
-    
+
     async def _on_api_start(self, kwargs: Dict[str, Any]) -> None:
         """Called when an LLM API call is about to start."""
         for callback in self.callbacks:
-            if hasattr(callback, 'on_api_start'):
+            if hasattr(callback, "on_api_start"):
                 await callback.on_api_start(get_json(kwargs))
-    
+
     async def _on_api_end(self, kwargs: Dict[str, Any], result: Any) -> None:
         """Called when an LLM API call has completed."""
         for callback in self.callbacks:
-            if hasattr(callback, 'on_api_end'):
+            if hasattr(callback, "on_api_end"):
                 await callback.on_api_end(get_json(kwargs), get_json(result))
 
     async def _on_usage(self, usage: Dict[str, Any]) -> None:
         """Called when usage information is received."""
         for callback in self.callbacks:
-            if hasattr(callback, 'on_usage'):
+            if hasattr(callback, "on_usage"):
                 await callback.on_usage(get_json(usage))
 
     async def _on_screenshot(self, screenshot: Union[str, bytes], name: str = "screenshot") -> None:
         """Called when a screenshot is taken."""
         for callback in self.callbacks:
-            if hasattr(callback, 'on_screenshot'):
+            if hasattr(callback, "on_screenshot"):
                 await callback.on_screenshot(screenshot, name)
 
     # ============================================================================
     # AGENT OUTPUT PROCESSING
     # ============================================================================
-    
-    async def _handle_item(self, item: Any, computer: Optional[AsyncComputerHandler] = None, ignore_call_ids: Optional[List[str]] = None) -> List[Dict[str, Any]]:
+
+    async def _handle_item(
+        self,
+        item: Any,
+        computer: Optional[AsyncComputerHandler] = None,
+        ignore_call_ids: Optional[List[str]] = None,
+    ) -> List[Dict[str, Any]]:
         """Handle each item; may cause a computer action + screenshot."""
         call_id = item.get("call_id")
         if ignore_call_ids and call_id and call_id in ignore_call_ids:
             return []
-        
+
         item_type = item.get("type", None)
-        
+
         if item_type == "message":
             await self._on_text(item)
             # # Print messages
@@ -461,7 +486,7 @@ class ComputerAgent:
             #         if content_item.get("text"):
             #             print(content_item.get("text"))
             return []
-        
+
         try:
             if item_type == "computer_call":
                 await self._on_computer_call_start(item)
@@ -472,14 +497,16 @@ class ComputerAgent:
                 action = item.get("action")
                 action_type = action.get("type")
                 if action_type is None:
-                    print(f"Action type cannot be `None`: action={action}, action_type={action_type}")
+                    print(
+                        f"Action type cannot be `None`: action={action}, action_type={action_type}"
+                    )
                     return []
-                
+
                 # Extract action arguments (all fields except 'type')
                 action_args = {k: v for k, v in action.items() if k != "type"}
-                
+
                 # print(f"{action_type}({action_args})")
-                
+
                 # Execute the computer action
                 computer_method = getattr(computer, action_type, None)
                 if computer_method:
@@ -487,13 +514,13 @@ class ComputerAgent:
                     await computer_method(**action_args)
                 else:
                     raise ToolError(f"Unknown computer action: {action_type}")
-                
+
                 # Take screenshot after action
                 if self.screenshot_delay and self.screenshot_delay > 0:
                     await asyncio.sleep(self.screenshot_delay)
                 screenshot_base64 = await computer.screenshot()
                 await self._on_screenshot(screenshot_base64, "screenshot_after")
-                
+
                 # Handle safety checks
                 pending_checks = item.get("pending_safety_checks", [])
                 acknowledged_checks = []
@@ -505,7 +532,7 @@ class ComputerAgent:
                     #     acknowledged_checks.append(check)
                     # else:
                     #     raise ValueError(f"Safety check failed: {check_message}")
-                
+
                 # Create call output
                 call_output = {
                     "type": "computer_call_output",
@@ -516,25 +543,25 @@ class ComputerAgent:
                         "image_url": f"data:image/png;base64,{screenshot_base64}",
                     },
                 }
-                
+
                 # # Additional URL safety checks for browser environments
                 # if await computer.get_environment() == "browser":
                 #     current_url = await computer.get_current_url()
                 #     call_output["output"]["current_url"] = current_url
                 #     # TODO: implement a callback for URL safety checks
                 #     # check_blocklisted_url(current_url)
-                
+
                 result = [call_output]
                 await self._on_computer_call_end(item, result)
                 return result
-            
+
             if item_type == "function_call":
                 await self._on_function_call_start(item)
                 # Perform function call
                 function = self._get_tool(item.get("name"))
                 if not function:
-                    raise ToolError(f"Function {item.get("name")} not found")
-            
+                    raise ToolError(f"Function {item.get('name')} not found")
+
                 args = json.loads(item.get("arguments"))
 
                 # Validate arguments before execution
@@ -545,14 +572,14 @@ class ComputerAgent:
                     result = await function(**args)
                 else:
                     result = await asyncio.to_thread(function, **args)
-            
+
                 # Create function call output
                 call_output = {
                     "type": "function_call_output",
                     "call_id": item.get("call_id"),
                     "output": str(result),
                 }
-            
+
                 result = [call_output]
                 await self._on_function_call_end(item, result)
                 return result
@@ -564,36 +591,35 @@ class ComputerAgent:
     # ============================================================================
     # MAIN AGENT LOOP
     # ============================================================================
-    
+
     async def run(
-        self,
-        messages: Messages,
-        stream: bool = False,
-        **kwargs
+        self, messages: Messages, stream: bool = False, **kwargs
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """
         Run the agent with the given messages using Computer protocol handler pattern.
-        
+
         Args:
             messages: List of message dictionaries
             stream: Whether to stream the response
             **kwargs: Additional arguments
-            
+
         Returns:
             AsyncGenerator that yields response chunks
         """
         if not self.agent_config_info:
             raise ValueError("Agent configuration not found")
-        
+
         capabilities = self.get_capabilities()
         if "step" not in capabilities:
-            raise ValueError(f"Agent loop {self.agent_config_info.agent_class.__name__} does not support step predictions")
+            raise ValueError(
+                f"Agent loop {self.agent_config_info.agent_class.__name__} does not support step predictions"
+            )
 
         await self._initialize_computers()
-        
+
         # Merge kwargs
         merged_kwargs = {**self.kwargs, **kwargs}
-        
+
         old_items = self._process_input(messages)
         new_items = []
 
@@ -603,7 +629,7 @@ class ComputerAgent:
             "stream": stream,
             "model": self.model,
             "agent_loop": self.agent_config_info.agent_class.__name__,
-            **merged_kwargs
+            **merged_kwargs,
         }
         await self._on_run_start(run_kwargs, old_items)
 
@@ -620,7 +646,7 @@ class ComputerAgent:
             combined_messages = old_items + new_items
             combined_messages = replace_failed_computer_calls_with_function_calls(combined_messages)
             preprocessed_messages = await self._on_llm_start(combined_messages)
-            
+
             loop_kwargs = {
                 "messages": preprocessed_messages,
                 "model": self.model,
@@ -629,7 +655,7 @@ class ComputerAgent:
                 "computer_handler": self.computer_handler,
                 "max_retries": self.max_retries,
                 "use_prompt_caching": self.use_prompt_caching,
-                **merged_kwargs
+                **merged_kwargs,
             }
 
             # Run agent loop iteration
@@ -641,13 +667,13 @@ class ComputerAgent:
                 _on_screenshot=self._on_screenshot,
             )
             result = get_json(result)
-            
+
             # Lifecycle hook: Postprocess messages after the LLM call
             # Use cases:
             # - PII deanonymization (if you want tool calls to see PII)
             result["output"] = await self._on_llm_end(result.get("output", []))
             await self._on_responses(loop_kwargs, result)
-            
+
             # Yield agent response
             yield result
 
@@ -659,7 +685,9 @@ class ComputerAgent:
 
             # Handle computer actions
             for item in result.get("output"):
-                partial_items = await self._handle_item(item, self.computer_handler, ignore_call_ids=output_call_ids)
+                partial_items = await self._handle_item(
+                    item, self.computer_handler, ignore_call_ids=output_call_ids
+                )
                 new_items += partial_items
 
                 # Yield partial response
@@ -669,54 +697,52 @@ class ComputerAgent:
                         prompt_tokens=0,
                         completion_tokens=0,
                         total_tokens=0,
-                    )
+                    ),
                 }
-        
+
         await self._on_run_end(loop_kwargs, old_items, new_items)
-    
+
     async def predict_click(
-        self,
-        instruction: str,
-        image_b64: Optional[str] = None
+        self, instruction: str, image_b64: Optional[str] = None
     ) -> Optional[Tuple[int, int]]:
         """
         Predict click coordinates based on image and instruction.
-        
+
         Args:
             instruction: Instruction for where to click
             image_b64: Base64 encoded image (optional, will take screenshot if not provided)
-            
+
         Returns:
             None or tuple with (x, y) coordinates
         """
         if not self.agent_config_info:
             raise ValueError("Agent configuration not found")
-        
+
         capabilities = self.get_capabilities()
         if "click" not in capabilities:
-            raise ValueError(f"Agent loop {self.agent_config_info.agent_class.__name__} does not support click predictions")
-        if hasattr(self.agent_loop, 'predict_click'):
+            raise ValueError(
+                f"Agent loop {self.agent_config_info.agent_class.__name__} does not support click predictions"
+            )
+        if hasattr(self.agent_loop, "predict_click"):
             if not image_b64:
                 if not self.computer_handler:
                     raise ValueError("Computer tool or image_b64 is required for predict_click")
                 image_b64 = await self.computer_handler.screenshot()
             return await self.agent_loop.predict_click(
-                model=self.model,
-                image_b64=image_b64,
-                instruction=instruction
+                model=self.model, image_b64=image_b64, instruction=instruction
             )
         return None
-    
+
     def get_capabilities(self) -> List[AgentCapability]:
         """
         Get list of capabilities supported by the current agent config.
-        
+
         Returns:
             List of capability strings (e.g., ["step", "click"])
         """
         if not self.agent_config_info:
             raise ValueError("Agent configuration not found")
-        
-        if hasattr(self.agent_loop, 'get_capabilities'):
+
+        if hasattr(self.agent_loop, "get_capabilities"):
             return self.agent_loop.get_capabilities()
         return ["step"]  # Default capability

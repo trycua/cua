@@ -7,30 +7,33 @@ OpenAI-like response blocks. We intentionally only support a single-step call
 by consuming the first yielded result from `ComputerAgent.run()`.
 """
 
-import traceback
 import time
+import traceback
 import uuid
 from typing import Any, Dict, List, Optional
 
 from agent.agent import ComputerAgent as BaseComputerAgent
 from agent.callbacks import PromptInstructionsCallback
-from hud.tools.computer.settings import computer_settings
-from PIL import Image
 from hud.agents import OperatorAgent
+from hud.tools.computer.settings import computer_settings
 
 # OpenAI Responses typed models (required)
 from openai.types.responses import (
     Response,
+    ResponseComputerToolCall,
     ResponseInputParam,
     ResponseOutputItem,
-    ResponseComputerToolCall,
     ResponseOutputMessage,
     ResponseOutputText,
     ResponseReasoningItem,
     ResponseUsage,
 )
+from PIL import Image
 
-def _map_agent_output_to_openai_blocks(output_items: List[Dict[str, Any]]) -> List[ResponseOutputItem]:
+
+def _map_agent_output_to_openai_blocks(
+    output_items: List[Dict[str, Any]],
+) -> List[ResponseOutputItem]:
     """Map our agent output items to OpenAI ResponseOutputItem typed models.
 
     Only a subset is supported: computer_call, assistant message (text), and reasoning.
@@ -40,14 +43,16 @@ def _map_agent_output_to_openai_blocks(output_items: List[Dict[str, Any]]) -> Li
     for item in output_items or []:
         t = item.get("type")
         if t == "computer_call":
-            comp = ResponseComputerToolCall.model_validate({
-                "id": item.get("id") or f"cu_{uuid.uuid4().hex}",
-                "type": "computer_call",
-                "call_id": item["call_id"],
-                "action": item["action"],
-                "pending_safety_checks": item.get("pending_safety_checks", []),
-                "status": "completed",
-            })
+            comp = ResponseComputerToolCall.model_validate(
+                {
+                    "id": item.get("id") or f"cu_{uuid.uuid4().hex}",
+                    "type": "computer_call",
+                    "call_id": item["call_id"],
+                    "action": item["action"],
+                    "pending_safety_checks": item.get("pending_safety_checks", []),
+                    "status": "completed",
+                }
+            )
             blocks.append(comp)
             # we will exit early here as the responses api only supports a single step
             break
@@ -55,30 +60,37 @@ def _map_agent_output_to_openai_blocks(output_items: List[Dict[str, Any]]) -> Li
             content_blocks: List[ResponseOutputText] = []
             for c in item.get("content", []) or []:
                 content_blocks.append(
-                    ResponseOutputText.model_validate({
-                        "type": "output_text",
-                        "text": c["text"],
-                        "annotations": [],
-                    })
+                    ResponseOutputText.model_validate(
+                        {
+                            "type": "output_text",
+                            "text": c["text"],
+                            "annotations": [],
+                        }
+                    )
                 )
             if content_blocks:
-                msg = ResponseOutputMessage.model_validate({
-                    "id": item.get("id") or f"msg_{uuid.uuid4()}",
-                    "type": "message",
-                    "role": "assistant",
-                    "status": "completed",
-                    "content": [ct.model_dump() for ct in content_blocks],
-                })
+                msg = ResponseOutputMessage.model_validate(
+                    {
+                        "id": item.get("id") or f"msg_{uuid.uuid4()}",
+                        "type": "message",
+                        "role": "assistant",
+                        "status": "completed",
+                        "content": [ct.model_dump() for ct in content_blocks],
+                    }
+                )
                 blocks.append(msg)
         elif t == "reasoning":
-            reasoning = ResponseReasoningItem.model_validate({
-                "id": item.get("id") or f"rsn_{uuid.uuid4()}",
-                "type": "reasoning",
-                "summary": item["summary"],
-            })
+            reasoning = ResponseReasoningItem.model_validate(
+                {
+                    "id": item.get("id") or f"rsn_{uuid.uuid4()}",
+                    "type": "reasoning",
+                    "summary": item["summary"],
+                }
+            )
             blocks.append(reasoning)
         # Unhandled types are ignored
     return blocks
+
 
 def _to_plain_dict_list(items: Any) -> List[Dict[str, Any]]:
     out: List[Dict[str, Any]] = []
@@ -91,6 +103,7 @@ def _to_plain_dict_list(items: Any) -> List[Dict[str, Any]]:
             # Strict: rely on default __dict__ if present
             out.append(dict(it))  # may raise if not mapping
     return out
+
 
 class FakeAsyncOpenAI:
     """Minimal fake OpenAI client with only `responses.create` implemented.
@@ -132,10 +145,12 @@ class FakeAsyncOpenAI:
                 # Pre-pend instructions message
                 effective_input = full_input
                 if instructions:
-                    effective_input = [{
-                        "role": "user",
-                        "content": instructions,
-                    }] + full_input
+                    effective_input = [
+                        {
+                            "role": "user",
+                            "content": instructions,
+                        }
+                    ] + full_input
 
                 # Run a single iteration of the ComputerAgent
                 agent_result: Optional[Dict[str, Any]] = None
@@ -152,32 +167,43 @@ class FakeAsyncOpenAI:
                 blocks_to_cache = full_input + output
                 for b in blocks_to_cache:
                     bid = getattr(b, "id", None) or f"tmp-{hash(repr(b))}"
-                    self.blocks_cache[bid] = b # type: ignore[assignment]
+                    self.blocks_cache[bid] = b  # type: ignore[assignment]
                     block_ids.append(bid)
                 response_id = agent_result.get("id") or f"fake-{int(time.time()*1000)}"
                 self.context_cache[response_id] = block_ids
 
                 try:
-                    return Response.model_validate({
-                        "id": response_id,
-                        "created_at": time.time(),
-                        "object": "response",
-                        "model": model,
-                        "output": output,
-                        "parallel_tool_calls": False,
-                        "tool_choice": "auto",
-                        "tools": [],
-                        "previous_response_id": previous_response_id,
-                        "usage": ResponseUsage.model_validate({
-                            "input_tokens": usage.get("input_tokens", 0),
-                            "output_tokens": usage.get("output_tokens", 0),
-                            "total_tokens": usage.get("total_tokens", 0),
-                            "input_tokens_details": usage.get("input_tokens_details", { "cached_tokens": 0 }),
-                            "output_tokens_details": usage.get("output_tokens_details", { "reasoning_tokens": 0 }),
-                        }),
-                    })
+                    return Response.model_validate(
+                        {
+                            "id": response_id,
+                            "created_at": time.time(),
+                            "object": "response",
+                            "model": model,
+                            "output": output,
+                            "parallel_tool_calls": False,
+                            "tool_choice": "auto",
+                            "tools": [],
+                            "previous_response_id": previous_response_id,
+                            "usage": ResponseUsage.model_validate(
+                                {
+                                    "input_tokens": usage.get("input_tokens", 0),
+                                    "output_tokens": usage.get("output_tokens", 0),
+                                    "total_tokens": usage.get("total_tokens", 0),
+                                    "input_tokens_details": usage.get(
+                                        "input_tokens_details", {"cached_tokens": 0}
+                                    ),
+                                    "output_tokens_details": usage.get(
+                                        "output_tokens_details", {"reasoning_tokens": 0}
+                                    ),
+                                }
+                            ),
+                        }
+                    )
                 except Exception as e:
-                    print(f"Error while validating agent response (attempt {attempt + 1}/{max_retries}): ", e)
+                    print(
+                        f"Error while validating agent response (attempt {attempt + 1}/{max_retries}): ",
+                        e,
+                    )
                     if attempt == max_retries - 1:
                         print(traceback.format_exc())
                         raise e
@@ -221,9 +247,15 @@ class ProxyOperatorAgent(OperatorAgent):
         allowed_tools = allowed_tools or ["openai_computer"]
 
         computer_shim = {
-            'screenshot': lambda: Image.new('RGB', (computer_settings.OPENAI_COMPUTER_WIDTH, computer_settings.OPENAI_COMPUTER_HEIGHT)),
-            'environment': 'linux',
-            'dimensions': (computer_settings.OPENAI_COMPUTER_WIDTH, computer_settings.OPENAI_COMPUTER_HEIGHT)
+            "screenshot": lambda: Image.new(
+                "RGB",
+                (computer_settings.OPENAI_COMPUTER_WIDTH, computer_settings.OPENAI_COMPUTER_HEIGHT),
+            ),
+            "environment": "linux",
+            "dimensions": (
+                computer_settings.OPENAI_COMPUTER_WIDTH,
+                computer_settings.OPENAI_COMPUTER_HEIGHT,
+            ),
         }
         # Build tools ensuring the computer_shim is included
         agent_tools: list[Any] = [computer_shim]
@@ -257,6 +289,7 @@ class ProxyOperatorAgent(OperatorAgent):
             allowed_tools=allowed_tools,
             **kwargs,
         )
+
 
 __all__ = [
     "FakeAsyncOpenAI",

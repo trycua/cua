@@ -5,11 +5,11 @@ __version__ = "0.1.0"
 from .detect import OmniParser
 from .models import (
     BoundingBox,
-    UIElement,
     IconElement,
-    TextElement,
+    ParseResult,
     ParserMetadata,
-    ParseResult
+    TextElement,
+    UIElement,
 )
 
 __all__ = [
@@ -19,5 +19,5 @@ __all__ = [
     "IconElement",
     "TextElement",
     "ParserMetadata",
-    "ParseResult"
-] 
+    "ParseResult",
+]

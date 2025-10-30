@@ -294,7 +294,7 @@ final class Server {
                     return try await self.handleSetDefaultLocation(name)
                 }),
             Route(
-                method: "POST", path: "/vms/push",
+                method: "POST", path: "/lume/vms/push",
                 handler: { [weak self] request in
                     guard let self else { throw HTTPError.internalError }
                     return try await self.handlePush(request.body)

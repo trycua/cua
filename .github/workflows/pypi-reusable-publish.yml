@@ -4,11 +4,11 @@ on:
   workflow_call:
     inputs:
       package_name:
-        description: "Name of the package (e.g. pylume, computer, agent)"
+        description: "Name of the package (e.g. computer, agent)"
         required: true
         type: string
       package_dir:
-        description: "Directory containing the package relative to workspace root (e.g. libs/python/pylume)"
+        description: "Directory containing the package relative to workspace root (e.g. libs/python/computer)"
         required: true
         type: string
       version:
@@ -21,7 +21,7 @@ on:
         type: boolean
         default: false
       base_package_name:
-        description: "PyPI package name (e.g. pylume, cua-agent)"
+        description: "PyPI package name (e.g. cua-agent)"
         required: true
         type: string
       make_latest:
@@ -71,6 +71,16 @@ jobs:
           echo "VERSION=${{ inputs.version }}" >> $GITHUB_ENV
           echo "version=${{ inputs.version }}" >> $GITHUB_OUTPUT
 
+      - name: Verify version consistency
+        run: |
+          # Install toml parser
+          pip install toml
+
+          # Verify version matches using script (exits with error if mismatch)
+          python ${GITHUB_WORKSPACE}/.github/scripts/get_pyproject_version.py \
+            ${{ inputs.package_dir }}/pyproject.toml \
+            ${{ inputs.version }}
+
       - name: Initialize PDM in package directory
         run: |
           # Make sure we're working with a properly initialized PDM project
@@ -81,21 +91,6 @@ jobs:
             echo "No pdm.lock found, initializing PDM project..."
             pdm lock
           fi
-
-      - name: Set version in package
-        run: |
-          cd ${{ inputs.package_dir }}
-          # Replace pdm bump with direct edit of pyproject.toml
-          if [[ "$OSTYPE" == "darwin"* ]]; then
-            # macOS version of sed needs an empty string for -i
-            sed -i '' "s/version = \".*\"/version = \"$VERSION\"/" pyproject.toml
-          else
-            # Linux version
-            sed -i "s/version = \".*\"/version = \"$VERSION\"/" pyproject.toml
-          fi
-          # Verify version was updated
-          echo "Updated version in pyproject.toml:"
-          grep "version =" pyproject.toml
 
       # Conditional step for lume binary download (only for pylume package)
       - name: Download and setup lume binary

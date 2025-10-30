@@ -18,13 +18,12 @@ import re
 from io import BytesIO
 from typing import Any, Dict, List, Optional, Tuple
 
-from PIL import Image
 import litellm
+from PIL import Image
 
 from ..decorators import register_agent
-from .composed_grounded import ComposedGroundedConfig
 from ..types import AgentCapability
-
+from .composed_grounded import ComposedGroundedConfig
 
 # Regex patterns for extracting coordinates
 # Accept optional whitespace and optional decimal fractions
@@ -91,7 +90,7 @@ class InternVLConfig(ComposedGroundedConfig):
         _on_api_end=None,
         _on_usage=None,
         _on_screenshot=None,
-        **kwargs
+        **kwargs,
     ) -> Dict[str, Any]:
         """Fallback to a self-composed model"""
         return await super().predict_step(
@@ -105,15 +104,11 @@ class InternVLConfig(ComposedGroundedConfig):
             _on_api_end=_on_api_end,
             _on_usage=_on_usage,
             _on_screenshot=_on_screenshot,
-            **kwargs
+            **kwargs,
         )
-    
+
     async def predict_click(
-        self,
-        model: str,
-        image_b64: str,
-        instruction: str,
-        **kwargs
+        self, model: str, image_b64: str, instruction: str, **kwargs
     ) -> Optional[Tuple[int, int]]:
         """
         Predict click coordinates using InternVL via litellm.acompletion.

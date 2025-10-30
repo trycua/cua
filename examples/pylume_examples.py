@@ -1,5 +1,6 @@
 import asyncio
-from pylume import PyLume, ImageRef, VMRunOpts, SharedDirectory, VMConfig, VMUpdateOpts
+
+from pylume import ImageRef, PyLume, SharedDirectory, VMConfig, VMRunOpts, VMUpdateOpts
 
 
 async def main():

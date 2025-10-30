@@ -4,14 +4,15 @@ build-backend = "pdm.backend"
 
 [project]
 name = "cua-computer-server"
-version = "0.1.0"
+version = "0.1.28"
+
 description = "Server component for the Computer-Use Interface (CUI) framework powering Cua"
 authors = [
     { name = "TryCua", email = "gh@trycua.com" }
 ]
 readme = "README.md"
 license = { text = "MIT" }
-requires-python = ">=3.9"
+requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.111.0",
     "uvicorn[standard]>=0.27.0",
@@ -21,7 +22,15 @@ dependencies = [
     "pillow>=10.2.0",
     "aiohttp>=3.9.1",
     "pyperclip>=1.9.0",
-    "websockets>=12.0"
+    "websockets>=12.0",
+    "pywinctl>=0.4.1",
+    # OS-specific runtime deps
+    "pyobjc-framework-Cocoa>=10.1; sys_platform == 'darwin'",
+    "pyobjc-framework-Quartz>=10.1; sys_platform == 'darwin'",
+    "pyobjc-framework-ApplicationServices>=10.1; sys_platform == 'darwin'",
+    "python-xlib>=0.33; sys_platform == 'linux'",
+    "pywin32>=310; sys_platform == 'win32'",
+    "pip-system-certs; sys_platform == 'win32'",
 ]
 
 [project.optional-dependencies]
@@ -67,22 +76,3 @@ dev = [
 
 [tool.pdm.scripts]
 api = "python -m computer_server"
-
-[tool.ruff]
-line-length = 100
-target-version = "py310"
-select = ["E", "F", "B", "I"]
-fix = true
-
-[tool.ruff.format]
-docstring-code-format = true
-
-[tool.mypy]
-strict = true
-python_version = "3.10"
-ignore_missing_imports = true
-disallow_untyped_defs = true
-check_untyped_defs = true
-warn_return_any = true
-show_error_codes = true
-warn_unused_ignores = false

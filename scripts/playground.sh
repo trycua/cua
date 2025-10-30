@@ -22,18 +22,18 @@ TMP_DIR=$(mktemp -d)
 cd "$TMP_DIR"
 trap cleanup EXIT
 
-# Ask user to choose between local macOS VMs or Cua Cloud Containers
+# Ask user to choose between local macOS VMs or Cua Cloud Sandbox
 echo ""
 echo "Choose your Cua setup:"
-echo "1) ☁️  Cua Cloud Containers (works on any system)"
+echo "1) ☁️  Cua Cloud Sandbox (works on any system)"
 echo "2) 🖥️  Local macOS VMs (requires Apple Silicon Mac + macOS 15+)"
 echo ""
 read -p "Enter your choice (1 or 2): " CHOICE
 
 if [[ "$CHOICE" == "1" ]]; then
-  # Cua Cloud Container setup
+  # Cua Cloud Sandbox setup
   echo ""
-  echo "☁️ Setting up Cua Cloud Containers..."
+  echo "☁️ Setting up Cua Cloud Sandbox..."
   echo ""
   
   # Check if existing .env.local already has CUA_API_KEY (check current dir and demo dir)
@@ -61,15 +61,15 @@ if [[ "$CHOICE" == "1" ]]; then
   
   # If no valid API key found, prompt for one
   if [[ -z "$CUA_API_KEY" ]]; then
-    echo "To use Cua Cloud Containers, you need to:"
+    echo "To use Cua Cloud Sandbox, you need to:"
     echo "1. Sign up at https://trycua.com"
-    echo "2. Create a Cloud Container"
+    echo "2. Create a Cloud Sandbox"
     echo "3. Generate an Api Key"
     echo ""
     read -p "Enter your Cua Api Key: " CUA_API_KEY
     
     if [[ -z "$CUA_API_KEY" ]]; then
-      echo "❌ Cua Api Key is required for Cloud Containers."
+      echo "❌ Cua Api Key is required for Cloud Sandbox."
       exit 1
     fi
   fi
@@ -84,7 +84,7 @@ elif [[ "$CHOICE" == "2" ]]; then
   # Check for Apple Silicon Mac
   if [[ $(uname -s) != "Darwin" || $(uname -m) != "arm64" ]]; then
     echo "❌ Local macOS VMs require an Apple Silicon Mac (M1/M2/M3/M4)."
-    echo "💡 Consider using Cua Cloud Containers instead (option 1)."
+    echo "💡 Consider using Cua Cloud Sandbox instead (option 1)."
     exit 1
   fi
 
@@ -92,7 +92,7 @@ elif [[ "$CHOICE" == "2" ]]; then
   OSVERSION=$(sw_vers -productVersion)
   if [[ $(echo "$OSVERSION 15.0" | tr " " "\n" | sort -V | head -n 1) != "15.0" ]]; then
     echo "❌ Local macOS VMs require macOS 15 (Sequoia) or newer. You have $OSVERSION."
-    echo "💡 Consider using Cua Cloud Containers instead (option 1)."
+    echo "💡 Consider using Cua Cloud Sandbox instead (option 1)."
     exit 1
   fi
 
@@ -249,7 +249,7 @@ chmod +x "$DEMO_DIR/start_ui.sh"
 echo "✅ Setup complete!"
 
 if [[ "$USE_CLOUD" == "true" ]]; then
-  # Create run_demo.py for cloud containers
+  # Create run_demo.py for cloud sandbox
   cat > "$DEMO_DIR/run_demo.py" << 'EOF'
 import asyncio
 import os
@@ -276,7 +276,7 @@ if not openai_key and not anthropic_key:
     print("\n⚠️  No OpenAI or Anthropic API keys found in .env.local.")
     print("Please add at least one API key to use AI agents.")
 
-print("🚀 Starting CUA playground with Cloud Containers...")
+print("🚀 Starting CUA playground with Cloud Sandbox...")
 print("📝 Edit .env.local to update your API keys")
 
 # Launch the Gradio UI and open it in the browser
@@ -314,7 +314,7 @@ app.launch(share=False, inbrowser=True)
 EOF
 fi
 
-echo "☁️  CUA Cloud Container setup complete!"
+echo "☁️  CUA Cloud Sandbox setup complete!"
 echo "📝 Edit $DEMO_DIR/.env.local to update your API keys"
 echo "🖥️  Start the playground by running: $DEMO_DIR/start_ui.sh"
 

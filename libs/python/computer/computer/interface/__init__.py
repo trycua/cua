@@ -2,8 +2,8 @@
 Interface package for Computer SDK.
 """
 
-from .factory import InterfaceFactory
 from .base import BaseComputerInterface
+from .factory import InterfaceFactory
 from .macos import MacOSComputerInterface
 
 __all__ = [

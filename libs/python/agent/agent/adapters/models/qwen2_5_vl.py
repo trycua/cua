@@ -1,9 +1,10 @@
-from typing import List, Dict, Any, Optional
+from typing import Any, Dict, List, Optional
 
 # Hugging Face imports are local to avoid hard dependency at module import
 try:
     import torch  # type: ignore
     from transformers import AutoModelForImageTextToText, AutoProcessor  # type: ignore
+
     HF_AVAILABLE = True
 except Exception:
     HF_AVAILABLE = False
@@ -14,10 +15,12 @@ class Qwen2_5_VLModel:
     Loads an AutoModelForImageTextToText and AutoProcessor and generates text.
     """
 
-    def __init__(self, model_name: str, device: str = "auto", trust_remote_code: bool = False) -> None:
+    def __init__(
+        self, model_name: str, device: str = "auto", trust_remote_code: bool = False
+    ) -> None:
         if not HF_AVAILABLE:
             raise ImportError(
-                "HuggingFace transformers dependencies not found. Install with: pip install \"cua-agent[uitars-hf]\""
+                'HuggingFace transformers dependencies not found. Install with: pip install "cua-agent[uitars-hf]"'
             )
         self.model_name = model_name
         self.device = device
@@ -64,7 +67,7 @@ class Qwen2_5_VLModel:
             generated_ids = self.model.generate(**inputs, max_new_tokens=max_new_tokens)
         # Trim prompt tokens from output
         generated_ids_trimmed = [
-            out_ids[len(in_ids):] for in_ids, out_ids in zip(inputs.input_ids, generated_ids)
+            out_ids[len(in_ids) :] for in_ids, out_ids in zip(inputs.input_ids, generated_ids)
         ]
         # Decode
         output_text = self.processor.batch_decode(

@@ -51,9 +51,7 @@ describe('MacOSComputerInterface', () => {
             case 'screenshot':
               ws.send(
                 JSON.stringify({
-                  image_data: Buffer.from('fake-screenshot-data').toString(
-                    'base64'
-                  ),
+                  image_data: Buffer.from('fake-screenshot-data').toString('base64'),
                   success: true,
                 })
               );
@@ -885,9 +883,7 @@ describe('MacOSComputerInterface', () => {
       await macosInterface.connect();
 
       // Command should throw error
-      await expect(macosInterface.leftClick(100, 100)).rejects.toThrow(
-        'Command failed'
-      );
+      await expect(macosInterface.leftClick(100, 100)).rejects.toThrow('Command failed');
 
       await macosInterface.disconnect();
       await new Promise<void>((resolve) => {

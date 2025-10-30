@@ -7,12 +7,25 @@ These models support complete computer-use agent functionality through `Computer
 
 All agent loops are compatible with any LLM provider supported by LiteLLM.
 
-See [Running Models Locally](../local-models) for how to use Hugging Face and MLX models on your own machine.
+See [Running Models Locally](/agent-sdk/supported-model-providers/local-models) for how to use Hugging Face and MLX models on your own machine.
+
+## Gemini CUA
+
+Gemini models with computer-use capabilities:
+
+- Gemini 2.5 CUA: `gemini-2.5-computer-use-preview-10-2025`
+
+```python
+agent = ComputerAgent("gemini-2.5-computer-use-preview-10-2025", tools=[computer])
+async for _ in agent.run("Open Firefox and navigate to github.com"):
+    pass
+```
 
 ## Anthropic CUAs
 
 Claude models with computer-use capabilities:
 
+- Claude 4.5: `claude-sonnet-4-5-20250929`, `claude-haiku-4-5-20251001`
 - Claude 4.1: `claude-opus-4-1-20250805`
 - Claude 4: `claude-opus-4-20250514`, `claude-sonnet-4-20250514`
 - Claude 3.7: `claude-3-7-sonnet-20250219`
@@ -52,10 +65,23 @@ async for _ in agent.run("Click on the search bar and type 'hello world'"):
 ## InternVL 3.5
 
 InternVL 3.5 family:
+
 - `huggingface-local/OpenGVLab/InternVL3_5-{1B,2B,4B,8B,...}`
 
 ```python
 agent = ComputerAgent("huggingface-local/OpenGVLab/InternVL3_5-1B", tools=[computer])
+async for _ in agent.run("Open Firefox and navigate to github.com"):
+    pass
+```
+
+## Qwen3 VL
+
+Qwen3 VL family:
+
+- `openrouter/qwen/qwen3-vl-235b-a22b-instruct`
+
+```python
+agent = ComputerAgent("openrouter/qwen/qwen3-vl-235b-a22b-instruct", tools=[computer])
 async for _ in agent.run("Open Firefox and navigate to github.com"):
     pass
 ```

@@ -6,18 +6,22 @@ This script tests both WebSocket (/ws) and REST (/cmd) connections to the Comput
 and keeps it alive, allowing you to verify the server is running correctly.
 """
 
+import argparse
 import asyncio
 import json
-import websockets
-import argparse
-import sys
-import aiohttp
 import os
+import sys
 
+import aiohttp
 import dotenv
+import websockets
+
 dotenv.load_dotenv()
 
-async def test_websocket_connection(host="localhost", port=8000, keep_alive=False, container_name=None, api_key=None):
+
+async def test_websocket_connection(
+    host="localhost", port=8000, keep_alive=False, container_name=None, api_key=None
+):
     """Test WebSocket connection to the Computer Server."""
     if container_name:
         # Container mode: use WSS with container domain and port 8443
@@ -37,19 +41,16 @@ async def test_websocket_connection(host="localhost", port=8000, keep_alive=Fals
                 if not api_key:
                     print("Error: API key required for container connections")
                     return False
-                
+
                 print("Sending authentication...")
                 auth_message = {
                     "command": "authenticate",
-                    "params": {
-                        "api_key": api_key,
-                        "container_name": container_name
-                    }
+                    "params": {"api_key": api_key, "container_name": container_name},
                 }
                 await websocket.send(json.dumps(auth_message))
                 auth_response = await websocket.recv()
                 print(f"Authentication response: {auth_response}")
-                
+
                 # Check if authentication was successful
                 auth_data = json.loads(auth_response)
                 if not auth_data.get("success", False):
@@ -90,7 +91,9 @@ async def test_websocket_connection(host="localhost", port=8000, keep_alive=Fals
     return True
 
 
-async def test_rest_connection(host="localhost", port=8000, keep_alive=False, container_name=None, api_key=None):
+async def test_rest_connection(
+    host="localhost", port=8000, keep_alive=False, container_name=None, api_key=None
+):
     """Test REST connection to the Computer Server."""
     if container_name:
         # Container mode: use HTTPS with container domain and port 8443
@@ -113,13 +116,11 @@ async def test_rest_connection(host="localhost", port=8000, keep_alive=False, co
                     return False
                 headers["X-Container-Name"] = container_name
                 headers["X-API-Key"] = api_key
-                print(f"Using container authentication headers")
+                print("Using container authentication headers")
 
             # Test screenshot endpoint
             async with session.post(
-                f"{base_url}/cmd",
-                json={"command": "screenshot", "params": {}},
-                headers=headers
+                f"{base_url}/cmd", json={"command": "screenshot", "params": {}}, headers=headers
             ) as response:
                 if response.status == 200:
                     text = await response.text()
@@ -133,7 +134,7 @@ async def test_rest_connection(host="localhost", port=8000, keep_alive=False, co
             async with session.post(
                 f"{base_url}/cmd",
                 json={"command": "get_screen_size", "params": {}},
-                headers=headers
+                headers=headers,
             ) as response:
                 if response.status == 200:
                     text = await response.text()
@@ -151,7 +152,7 @@ async def test_rest_connection(host="localhost", port=8000, keep_alive=False, co
                     async with session.post(
                         f"{base_url}/cmd",
                         json={"command": "get_cursor_position", "params": {}},
-                        headers=headers
+                        headers=headers,
                     ) as response:
                         if response.status == 200:
                             text = await response.text()
@@ -171,7 +172,9 @@ async def test_rest_connection(host="localhost", port=8000, keep_alive=False, co
     return True
 
 
-async def test_connection(host="localhost", port=8000, keep_alive=False, container_name=None, use_rest=False, api_key=None):
+async def test_connection(
+    host="localhost", port=8000, keep_alive=False, container_name=None, use_rest=False, api_key=None
+):
     """Test connection to the Computer Server using WebSocket or REST."""
     if use_rest:
         return await test_rest_connection(host, port, keep_alive, container_name, api_key)
@@ -183,40 +186,50 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Test connection to Computer Server")
     parser.add_argument("--host", default="localhost", help="Host address (default: localhost)")
     parser.add_argument("-p", "--port", type=int, default=8000, help="Port number (default: 8000)")
-    parser.add_argument("-c", "--container-name", help="Container name for cloud connection (uses WSS/HTTPS and port 8443)")
-    parser.add_argument("--api-key", help="API key for container authentication (can also use CUA_API_KEY env var)")
+    parser.add_argument(
+        "-c",
+        "--container-name",
+        help="Container name for cloud connection (uses WSS/HTTPS and port 8443)",
+    )
+    parser.add_argument(
+        "--api-key", help="API key for container authentication (can also use CUA_API_KEY env var)"
+    )
     parser.add_argument("--keep-alive", action="store_true", help="Keep connection alive")
-    parser.add_argument("--rest", action="store_true", help="Use REST endpoint (/cmd) instead of WebSocket (/ws)")
+    parser.add_argument(
+        "--rest", action="store_true", help="Use REST endpoint (/cmd) instead of WebSocket (/ws)"
+    )
     return parser.parse_args()
 
 
 async def main():
     args = parse_args()
-    
+
     # Convert hyphenated argument to underscore for function parameter
-    container_name = getattr(args, 'container_name', None)
-    
+    container_name = getattr(args, "container_name", None)
+
     # Get API key from argument or environment variable
-    api_key = getattr(args, 'api_key', None) or os.environ.get('CUA_API_KEY')
-    
+    api_key = getattr(args, "api_key", None) or os.environ.get("CUA_API_KEY")
+
     # Check if container name is provided but API key is missing
     if container_name and not api_key:
         print("Warning: Container name provided but no API key found.")
         print("Please provide --api-key argument or set CUA_API_KEY environment variable.")
         return 1
-    
+
     print(f"Testing {'REST' if args.rest else 'WebSocket'} connection...")
     if container_name:
         print(f"Container: {container_name}")
-        print(f"API Key: {'***' + api_key[-4:] if api_key and len(api_key) > 4 else 'Not provided'}")
-    
+        print(
+            f"API Key: {'***' + api_key[-4:] if api_key and len(api_key) > 4 else 'Not provided'}"
+        )
+
     success = await test_connection(
-        host=args.host, 
-        port=args.port, 
+        host=args.host,
+        port=args.port,
         keep_alive=args.keep_alive,
         container_name=container_name,
         use_rest=args.rest,
-        api_key=api_key
+        api_key=api_key,
     )
     return 0 if success else 1
 

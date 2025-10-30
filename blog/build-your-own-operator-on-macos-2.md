@@ -1,6 +1,6 @@
 # Build Your Own Operator on macOS - Part 2
 
-*Published on April 27, 2025 by Francesco Bonacci*
+_Published on April 27, 2025 by Francesco Bonacci_
 
 In our [previous post](build-your-own-operator-on-macos-1.md), we built a basic Computer-Use Operator from scratch using OpenAI's `computer-use-preview` model and our [cua-computer](https://pypi.org/project/cua-computer) package. While educational, implementing the control loop manually can be tedious and error-prone.
 
@@ -13,12 +13,14 @@ In this follow-up, we'll explore our [cua-agent](https://pypi.org/project/cua-ag
 ## What You'll Learn
 
 By the end of this tutorial, you'll be able to:
+
 - Set up the `cua-agent` framework with various agent loop types and model providers
 - Understand the different agent loop types and their capabilities
 - Work with local models for cost-effective workflows
 - Use a simple UI for your operator
 
 **Prerequisites:**
+
 - Completed setup from Part 1 ([lume CLI installed](https://github.com/trycua/cua?tab=readme-ov-file#option-2-full-computer-use-agent-capabilities), macOS CUA image already pulled)
 - Python 3.10+. We recommend using Conda (or Anaconda) to create an ad hoc Python environment.
 - API keys for OpenAI and/or Anthropic (optional for local models)
@@ -58,6 +60,7 @@ pip install "cua-agent[ui]"         # Gradio UI
 Before running any code examples, let's set up a proper environment:
 
 1. **Create a new directory** for your project:
+
    ```bash
    mkdir cua-agent-tutorial
    cd cua-agent-tutorial
@@ -66,12 +69,13 @@ Before running any code examples, let's set up a proper environment:
 2. **Set up a Python environment** using one of these methods:
 
    **Option A: Using conda command line**
+
    ```bash
    # Using conda
    conda create -n cua-agent python=3.10
    conda activate cua-agent
    ```
-   
+
    **Option B: Using Anaconda Navigator UI**
    - Open Anaconda Navigator
    - Click on "Environments" in the left sidebar
@@ -80,35 +84,39 @@ Before running any code examples, let's set up a proper environment:
    - Select Python 3.10
    - Click "Create"
    - Once created, select the environment and click "Open Terminal" to activate it
-   
+
    **Option C: Using venv**
+
    ```bash
    python -m venv cua-env
    source cua-env/bin/activate  # On macOS/Linux
    ```
 
 3. **Install the cua-agent package**:
+
    ```bash
    pip install "cua-agent[all]"
    ```
 
 4. **Set up your API keys as environment variables**:
+
    ```bash
    # For OpenAI models
    export OPENAI_API_KEY=your_openai_key_here
-   
+
    # For Anthropic models (if needed)
    export ANTHROPIC_API_KEY=your_anthropic_key_here
    ```
 
 5. **Create a Python file or notebook**:
-   
+
    **Option A: Create a Python script**
+
    ```bash
    # For a Python script
    touch cua_agent_example.py
    ```
-   
+
    **Option B: Use VS Code notebooks**
    - Open VS Code
    - Install the Python extension if you haven't already
@@ -120,9 +128,10 @@ Now you're ready to run the code examples!
 
 ## Understanding Agent Loops
 
-If you recall from Part 1, we had to implement a custom interaction loop to interact with the compute-use-preview model. 
+If you recall from Part 1, we had to implement a custom interaction loop to interact with the compute-use-preview model.
 
 In the `cua-agent` framework, an **Agent Loop** is the core abstraction that implements the continuous interaction cycle between an AI model and the computer environment. It manages the flow of:
+
 1. Capturing screenshots of the computer's state
 2. Processing these screenshots (with or without UI element detection)
 3. Sending this visual context to an AI model along with the task instructions
@@ -141,6 +150,7 @@ While the core concept remains the same across all agent loops, different AI mod
 | `AgentLoop.OMNI` | • `claude-3-5-sonnet-20240620`<br>• `claude-3-7-sonnet-20250219`<br>• `gpt-4.5-preview`<br>• `gpt-4o`<br>• `gpt-4`<br>• `phi4`<br>• `phi4-mini`<br>• `gemma3`<br>• `...`<br>• `Any Ollama or OpenAI-compatible model` | Use OmniParser for element pixel-detection (SoM) and any VLMs for UI Grounding and Reasoning | OmniParser |
 
 Each loop handles the same basic pattern we implemented manually in Part 1:
+
 1. Take a screenshot of the VM
 2. Send the screenshot and task to the AI model
 3. Receive an action to perform
@@ -169,13 +179,13 @@ Choosing the right agent loop depends not only on your API access and technical 
 
 The performance of different Computer-Use models varies significantly across tasks. These benchmark evaluations measure an agent's ability to follow instructions and complete real-world tasks in different computing environments.
 
-| Benchmark type | Benchmark                                                                                                                                       | UI-TARS-1.5 | OpenAI CUA | Claude 3.7 | Previous SOTA       | Human       |
-|----------------|--------------------------------------------------------------------------------------------------------------------------------------------------|-------------|-------------|-------------|----------------------|-------------|
-| **Computer Use** | [OSworld](https://arxiv.org/abs/2404.07972) (100 steps)                                                                                        | **42.5**     | 36.4        | 28          | 38.1 (200 step)      | 72.4        |
-|                | [Windows Agent Arena](https://arxiv.org/abs/2409.08264) (50 steps)                                                                              | **42.1**     | -           | -           | 29.8                 | -           |
-| **Browser Use**  | [WebVoyager](https://arxiv.org/abs/2401.13919)                                                                                                 | 84.8         | **87**      | 84.1        | 87                   | -           |
-|                | [Online-Mind2web](https://arxiv.org/abs/2504.01382)                                                                                              | **75.8**     | 71          | 62.9        | 71                   | -           |
-| **Phone Use**    | [Android World](https://arxiv.org/abs/2405.14573)                                                                                              | **64.2**     | -           | -           | 59.5                 | -           |
+| Benchmark type   | Benchmark                                                          | UI-TARS-1.5 | OpenAI CUA | Claude 3.7 | Previous SOTA   | Human |
+| ---------------- | ------------------------------------------------------------------ | ----------- | ---------- | ---------- | --------------- | ----- |
+| **Computer Use** | [OSworld](https://arxiv.org/abs/2404.07972) (100 steps)            | **42.5**    | 36.4       | 28         | 38.1 (200 step) | 72.4  |
+|                  | [Windows Agent Arena](https://arxiv.org/abs/2409.08264) (50 steps) | **42.1**    | -          | -          | 29.8            | -     |
+| **Browser Use**  | [WebVoyager](https://arxiv.org/abs/2401.13919)                     | 84.8        | **87**     | 84.1       | 87              | -     |
+|                  | [Online-Mind2web](https://arxiv.org/abs/2504.01382)                | **75.8**    | 71         | 62.9       | 71              | -     |
+| **Phone Use**    | [Android World](https://arxiv.org/abs/2405.14573)                  | **64.2**    | -          | -          | 59.5            | -     |
 
 ### When to Use Each Loop
 
@@ -210,10 +220,10 @@ async def run_simple_task():
             model="openai/computer-use-preview",
             tools=[macos_computer]
         )
-        
+
         # Define a simple task
         task = "Open Safari and search for 'Python tutorials'"
-        
+
         # Run the task and process responses
         async for result in agent.run(task):
             print(f"Action: {result.get('text')}")
@@ -225,6 +235,7 @@ if __name__ == "__main__":
 
 3. Save the file
 4. Open a terminal, navigate to your project directory, and run:
+
    ```bash
    python simple_task.py
    ```
@@ -232,6 +243,7 @@ if __name__ == "__main__":
 5. The code will initialize the macOS virtual machine, create an agent, and execute the task of opening Safari and searching for Python tutorials.
 
 You can also run this in a VS Code notebook:
+
 1. Create a new notebook in VS Code (.ipynb file)
 2. Copy the code into a cell (without the `if __name__ == "__main__":` part)
 3. Run the cell to execute the code
@@ -259,7 +271,7 @@ async def run_multi_task_workflow():
             model="anthropic/claude-3-5-sonnet-20241022",
             tools=[macos_computer]
         )
-        
+
         tasks = [
             "Open Safari and go to github.com",
             "Search for 'trycua/cua'",
@@ -267,7 +279,7 @@ async def run_multi_task_workflow():
             "Click on the 'Issues' tab",
             "Read the first open issue"
         ]
-        
+
         for i, task in enumerate(tasks):
             print(f"\nTask {i+1}/{len(tasks)}: {task}")
             async for result in agent.run(task):
@@ -301,13 +313,13 @@ async for result in agent.run(task):
     # Basic information
     print(f"Response ID: {result.get('id')}")
     print(f"Response Text: {result.get('text')}")
-    
+
     # Detailed token usage statistics
     usage = result.get('usage')
     if usage:
         print(f"Input Tokens: {usage.get('input_tokens')}")
         print(f"Output Tokens: {usage.get('output_tokens')}")
-    
+
     # Reasoning and actions
     for output in result.get('output', []):
         if output.get('type') == 'reasoning':
@@ -318,6 +330,7 @@ async for result in agent.run(task):
 ```
 
 This structured format allows you to:
+
 - Log detailed information about agent actions
 - Provide real-time feedback to users
 - Track token usage for cost monitoring
@@ -350,9 +363,9 @@ async def run_with_local_model():
             model="omniparser+ollama_chat/gemma3",
             tools=[macos_computer]
         )
-        
+
         task = "Open the Calculator app and perform a simple calculation"
-        
+
         async for result in agent.run(task):
             print(f"Action: {result.get('text')}")
 
@@ -379,12 +392,14 @@ agent = ComputerAgent(
 ```
 
 Common local endpoints include:
+
 - LM Studio: `http://localhost:1234/v1`
 - vLLM: `http://localhost:8000/v1`
 - LocalAI: `http://localhost:8080/v1`
 - Ollama with OpenAI compat: `http://localhost:11434/v1`
 
 This approach is perfect for:
+
 - Development and testing without incurring API costs
 - Offline or air-gapped environments where API access isn't possible
 - Privacy-sensitive applications where data can't leave your network
@@ -406,8 +421,8 @@ UI-TARS is ByteDance's Computer-Use model designed for navigating OS-level inter
 ```python
 agent = ComputerAgent(
     model=LLM(
-        provider=LLMProvider.OAICOMPAT, 
-        name="tgi", 
+        provider=LLMProvider.OAICOMPAT,
+        name="tgi",
         provider_base_url="https://**************.us-east-1.aws.endpoints.huggingface.cloud/v1"
     ),
     tools=[macos_computer]
@@ -475,11 +490,13 @@ if __name__ == "__main__":
 ```
 
 2. Install the UI dependencies if you haven't already:
+
    ```bash
    pip install "cua-agent[ui]"
    ```
 
 3. Run the script:
+
    ```bash
    python launch_ui.py
    ```
@@ -498,12 +515,14 @@ if __name__ == "__main__":
 ```
 
 When you run this, Gradio will display both a local URL and a public URL like:
+
 ```
 Running on local URL:  http://127.0.0.1:7860
 Running on public URL: https://abcd1234.gradio.live
 ```
 
 **Security Note:** Be cautious when sharing your Gradio UI publicly:
+
 - The public URL gives anyone with the link full access to your agent
 - Consider using basic authentication for additional protection:
   ```python
@@ -513,6 +532,7 @@ Running on public URL: https://abcd1234.gradio.live
 - The temporary link expires when you stop the Gradio application
 
 This provides:
+
 - Model provider selection
 - Agent loop selection
 - Task input field
@@ -566,7 +586,7 @@ async def github_workflow():
             verbosity=logging.INFO,
             tools=[macos_computer]
         )
-        
+
         tasks = [
             "Look for a repository named trycua/cua on GitHub.",
             "Check the open issues, open the most recent one and read it.",
@@ -575,7 +595,7 @@ async def github_workflow():
             "From Cursor, open Composer if not already open.",
             "Focus on the Composer text area, then write and submit a task to help resolve the GitHub issue.",
         ]
-        
+
         for i, task in enumerate(tasks):
             print(f"\nExecuting task {i+1}/{len(tasks)}: {task}")
             async for result in agent.run(task):
@@ -587,11 +607,13 @@ if __name__ == "__main__":
 ```
 
 2. Make sure your OpenAI API key is set:
+
    ```bash
    export OPENAI_API_KEY=your_openai_key_here
    ```
 
 3. Run the script:
+
    ```bash
    python github_workflow.py
    ```
@@ -604,6 +626,7 @@ if __name__ == "__main__":
    - Use Cursor's AI features to work on a solution
 
 This example:
+
 1. Searches GitHub for a repository
 2. Reads an issue
 3. Clones the repository
@@ -615,6 +638,7 @@ This example:
 Let's compare our manual implementation from Part 1 with the framework approach:
 
 ### Manual Implementation (Part 1)
+
 - Required writing custom code for the interaction loop
 - Needed explicit handling of different action types
 - Required direct management of the OpenAI API calls
@@ -622,6 +646,7 @@ Let's compare our manual implementation from Part 1 with the framework approach:
 - Limited to OpenAI's computer-use model
 
 ### Framework Implementation (Part 2)
+
 - Abstracts the interaction loop
 - Handles all action types automatically
 - Manages API calls internally
@@ -634,17 +659,21 @@ Let's compare our manual implementation from Part 1 with the framework approach:
 The `cua-agent` framework transforms what was a complex implementation task into a simple, high-level interface for building Computer-Use Agents. By abstracting away the technical details, it lets you focus on defining the tasks rather than the machinery.
 
 ### When to Use Each Approach
+
 - **Manual Implementation (Part 1)**: When you need complete control over the interaction loop or are implementing a custom solution
 - **Framework (Part 2)**: For most applications where you want to quickly build and deploy Computer-Use Agents
 
 ### Next Steps
+
 With the basics covered, you might want to explore:
+
 - Customizing the agent's behavior with additional parameters
 - Building more complex workflows spanning multiple applications
 - Integrating your agent into other applications
 - Contributing to the open-source project on GitHub
 
 ### Resources
+
 - [cua-agent GitHub repository](https://github.com/trycua/cua/tree/main/libs/agent)
 - [Agent Notebook Examples](https://github.com/trycua/cua/blob/main/notebooks/agent_nb.ipynb)
 - [OpenAI Agent SDK Specification](https://platform.openai.com/docs/api-reference/responses)

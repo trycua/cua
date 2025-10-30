@@ -1,19 +1,20 @@
 ---
 title: Introduction
-description: Overview of benchmarking in the c/ua agent framework
+description: Overview of benchmarking in the Cua agent framework
 ---
 
-The c/ua agent framework uses benchmarks to test the performance of supported models and providers at various agentic tasks.
+The Cua agent framework uses benchmarks to test the performance of supported models and providers at various agentic tasks.
 
 ## Benchmark Types
 
 Computer-Agent benchmarks evaluate two key capabilities:
+
 - **Plan Generation**: Breaking down complex tasks into a sequence of actions
 - **Coordinate Generation**: Predicting precise click locations on GUI elements
 
 ## Using State-of-the-Art Models
 
-Let's see how to use the SOTA vision-language models in the c/ua agent framework.
+Let's see how to use the SOTA vision-language models in the Cua agent framework.
 
 ### Plan Generation + Coordinate Generation
 
@@ -31,7 +32,7 @@ agent.run("Open Firefox and go to github.com")
 
 ### Coordinate Generation Only
 
-**[GUI Agent Grounding Leaderboard](https://gui-agent.github.io/grounding-leaderboard/)** - Benchmark for click prediction accuracy  
+**[GUI Agent Grounding Leaderboard](https://gui-agent.github.io/grounding-leaderboard/)** - Benchmark for click prediction accuracy
 
 This leaderboard tests models that specialize in finding exactly where to click on screen elements, but needs to be told what specific action to take.
 
@@ -41,12 +42,12 @@ This leaderboard tests models that specialize in finding exactly where to click 
 agent = ComputerAgent("huggingface-local/HelloKKMe/GTA1-7B", tools=[computer])
 agent.predict_click("find the button to open the settings") # (27, 450)
 # This will raise an error:
-# agent.run("Open Firefox and go to github.com") 
+# agent.run("Open Firefox and go to github.com")
 ```
 
 ### Composed Agent
 
-The c/ua agent framework also supports composed agents, which combine a planning model with a clicking model for the best of both worlds. Any liteLLM model can be used as the plan generation model.
+The Cua agent framework also supports composed agents, which combine a planning model with a clicking model for the best of both worlds. Any liteLLM model can be used as the plan generation model.
 
 ```python
 # It can be paired with any LLM to form a composed agent:

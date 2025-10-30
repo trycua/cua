@@ -1,6 +1,6 @@
 # Cua × HUD - Evaluate Any Computer-Use Agent
 
-*Published on August 27, 2025 by Dillon DuPont*
+_Published on August 27, 2025 by Dillon DuPont_
 
 You can now benchmark any GUI-capable agent on real computer-use tasks through our new integration with [HUD](https://hud.so), the evaluation platform for computer-use agents.
 
@@ -70,9 +70,9 @@ Watch your agent work in real-time. Example output:
 ```md
 Starting full dataset run...
 ╔═════════════════════════════════════════════════════════════════╗
-║                    🚀 See your agent live at:                   ║
+║ 🚀 See your agent live at: ║
 ╟─────────────────────────────────────────────────────────────────╢
-║  https://app.hud.so/jobs/fe05805d-4da9-4fc6-84b5-5c518528fd3c   ║
+║ https://app.hud.so/jobs/fe05805d-4da9-4fc6-84b5-5c518528fd3c ║
 ╚═════════════════════════════════════════════════════════════════╝
 ```
 

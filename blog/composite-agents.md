@@ -1,6 +1,6 @@
 # Announcing Cua Agent framework 0.4 and Composite Agents
 
-*Published on August 26, 2025 by Dillon DuPont*
+_Published on August 26, 2025 by Dillon DuPont_
 
 <img src="./assets/composite-agents.png" alt="Composite Agents">
 
@@ -12,7 +12,7 @@ This is the kind of problem that makes you wonder if we're building the future o
 
 ## What we fixed
 
-Agent framework 0.4 solves this by doing something radical: making all these different models speak the same language. 
+Agent framework 0.4 solves this by doing something radical: making all these different models speak the same language.
 
 Instead of writing separate code for each model's peculiarities, you now just pick a model with a string like `"anthropic/claude-3-5-sonnet-20241022"` or `"huggingface-local/ByteDance-Seed/UI-TARS-1.5-7B"`, and everything else Just Works™. Behind the scenes, we handle all the coordinate normalization, token parsing, and image preprocessing so you don't have to.
 
@@ -42,7 +42,7 @@ agent = ComputerAgent(
 
 This creates a composite agent where one model (the "grounding" model) handles the visual understanding and precise UI interactions, while the other (the "planning" model) handles the high-level reasoning and task orchestration. It's like having a pilot and a navigator, except they're both AI models and they're trying to help you star a GitHub repository.
 
-  You can even take a model that was never designed for computer use—like GPT-4o—and give it GUI capabilities by pairing it with a specialized vision model:
+You can even take a model that was never designed for computer use—like GPT-4o—and give it GUI capabilities by pairing it with a specialized vision model:
 
 ```python
 agent = ComputerAgent(
@@ -63,12 +63,11 @@ We're building integration with HUD evals, allowing us to curate and benchmark m
 
 If you try out version 0.4.x, we'd love to hear how it goes. Join us on Discord to share your results and let us know what model combinations work best for your projects.
 
-
 ---
 
 ## Links
 
-* **Composite Agent Docs:** [https://docs.trycua.com/docs/agent-sdk/supported-agents/composed-agents](https://docs.trycua.com/docs/agent-sdk/supported-agents/composed-agents)
-* **Discord:** [https://discord.gg/cua-ai](https://discord.gg/cua-ai)
+- **Composite Agent Docs:** [https://docs.trycua.com/docs/agent-sdk/supported-agents/composed-agents](https://docs.trycua.com/docs/agent-sdk/supported-agents/composed-agents)
+- **Discord:** [https://discord.gg/cua-ai](https://discord.gg/cua-ai)
 
 Questions or weird edge cases? Ping us on Discord—we’re curious to see what you build.

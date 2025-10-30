@@ -1,10 +1,10 @@
 {
-	"pages": [
-		"installation",
-		"configuration",
-		"usage",
-		"tools",
-		"client-integrations",
-		"llm-integrations"
-	]
+  "pages": [
+    "installation",
+    "configuration",
+    "usage",
+    "tools",
+    "client-integrations",
+    "llm-integrations"
+  ]
 }

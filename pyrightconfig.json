@@ -1,13 +1,11 @@
 {
-  "include": [
-    "**/*.py"
-  ],
+  "include": ["**/*.py"],
   "exclude": [
     "**/node_modules/**",
     "**/__pycache__/**",
     "**/.*/**",
     "**/venv/**",
-    "**/.venv/**", 
+    "**/.venv/**",
     "**/dist/**",
     "**/build/**",
     ".pdm-build/**",

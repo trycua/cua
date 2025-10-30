@@ -24,6 +24,7 @@ Basic performance metrics and system information that help us understand usage p
 ### Opt-In Telemetry (Disabled by Default)
 
 **Conversation Trajectory Logging**: Full conversation history including:
+
 - User messages and agent responses
 - Computer actions and their outputs
 - Reasoning traces from the agent
@@ -123,21 +124,21 @@ Note that telemetry settings must be configured during initialization and cannot
 
 ### Computer SDK Events
 
-| Event Name | Data Collected | Trigger Notes |
-|------------|----------------|---------------|
-| **computer_initialized** | • `os`: Operating system (e.g., 'windows', 'darwin', 'linux')<br />• `os_version`: OS version<br />• `python_version`: Python version | Triggered when a Computer instance is created |
-| **module_init** | • `module`: "computer"<br />• `version`: Package version<br />• `python_version`: Full Python version string | Triggered once when the computer package is imported for the first time |
+| Event Name               | Data Collected                                                                                                                        | Trigger Notes                                                           |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| **computer_initialized** | • `os`: Operating system (e.g., 'windows', 'darwin', 'linux')<br />• `os_version`: OS version<br />• `python_version`: Python version | Triggered when a Computer instance is created                           |
+| **module_init**          | • `module`: "computer"<br />• `version`: Package version<br />• `python_version`: Full Python version string                          | Triggered once when the computer package is imported for the first time |
 
 ### Agent SDK Events
 
-| Event Name | Data Collected | Trigger Notes |
-|------------|----------------|---------------|
-| **module_init** | • `module`: "agent"<br />• `version`: Package version<br />• `python_version`: Full Python version string | Triggered once when the agent package is imported for the first time |
-| **agent_session_start** | • `session_id`: Unique UUID for this agent instance<br />• `agent_type`: Class name (e.g., "ComputerAgent")<br />• `model`: Model name (e.g., "claude-3-5-sonnet")<br />• `os`: Operating system<br />• `os_version`: OS version<br />• `python_version`: Python version | Triggered when TelemetryCallback is initialized (agent instantiation) |
-| **agent_run_start** | • `session_id`: Agent session UUID<br />• `run_id`: Unique UUID for this run<br />• `start_time`: Unix timestamp<br />• `input_context_size`: Character count of input messages<br />• `num_existing_messages`: Count of existing messages<br />• `uploaded_trajectory`: Full conversation items (opt-in) | Triggered at the start of each agent.run() call |
-| **agent_run_end** | • `session_id`: Agent session UUID<br />• `run_id`: Run UUID<br />• `end_time`: Unix timestamp<br />• `duration_seconds`: Total run duration<br />• `num_steps`: Total steps taken in this run<br />• `total_usage`: Accumulated token usage and costs<br />• `uploaded_trajectory`: Full conversation items (opt-in) | Triggered at the end of each agent.run() call |
-| **agent_step** | • `session_id`: Agent session UUID<br />• `run_id`: Run UUID<br />• `step`: Step number (incremental)<br />• `timestamp`: Unix timestamp<br />• `duration_seconds`: Duration of previous step | Triggered on each agent response/step during a run |
-| **agent_usage** | • `session_id`: Agent session UUID<br />• `run_id`: Run UUID<br />• `step`: Current step number<br />• `prompt_tokens`: Tokens in prompt<br />• `completion_tokens`: Tokens in response<br />• `total_tokens`: Total tokens used<br />• `response_cost`: Cost of this API call | Triggered whenever usage information is received from LLM API |
+| Event Name              | Data Collected                                                                                                                                                                                                                                                                                                        | Trigger Notes                                                         |
+| ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| **module_init**         | • `module`: "agent"<br />• `version`: Package version<br />• `python_version`: Full Python version string                                                                                                                                                                                                             | Triggered once when the agent package is imported for the first time  |
+| **agent_session_start** | • `session_id`: Unique UUID for this agent instance<br />• `agent_type`: Class name (e.g., "ComputerAgent")<br />• `model`: Model name (e.g., "claude-3-5-sonnet")<br />• `os`: Operating system<br />• `os_version`: OS version<br />• `python_version`: Python version                                              | Triggered when TelemetryCallback is initialized (agent instantiation) |
+| **agent_run_start**     | • `session_id`: Agent session UUID<br />• `run_id`: Unique UUID for this run<br />• `start_time`: Unix timestamp<br />• `input_context_size`: Character count of input messages<br />• `num_existing_messages`: Count of existing messages<br />• `uploaded_trajectory`: Full conversation items (opt-in)             | Triggered at the start of each agent.run() call                       |
+| **agent_run_end**       | • `session_id`: Agent session UUID<br />• `run_id`: Run UUID<br />• `end_time`: Unix timestamp<br />• `duration_seconds`: Total run duration<br />• `num_steps`: Total steps taken in this run<br />• `total_usage`: Accumulated token usage and costs<br />• `uploaded_trajectory`: Full conversation items (opt-in) | Triggered at the end of each agent.run() call                         |
+| **agent_step**          | • `session_id`: Agent session UUID<br />• `run_id`: Run UUID<br />• `step`: Step number (incremental)<br />• `timestamp`: Unix timestamp<br />• `duration_seconds`: Duration of previous step                                                                                                                         | Triggered on each agent response/step during a run                    |
+| **agent_usage**         | • `session_id`: Agent session UUID<br />• `run_id`: Run UUID<br />• `step`: Current step number<br />• `prompt_tokens`: Tokens in prompt<br />• `completion_tokens`: Tokens in response<br />• `total_tokens`: Total tokens used<br />• `response_cost`: Cost of this API call                                        | Triggered whenever usage information is received from LLM API         |
 
 ## Transparency
 

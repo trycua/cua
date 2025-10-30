@@ -29,6 +29,7 @@ We're always looking for suggestions to make lume better. If you have an idea:
 ## Documentation
 
 Documentation improvements are always welcome. You can:
+
 - Fix typos or unclear explanations
 - Add examples and use cases
 - Improve API documentation
@@ -36,4 +37,4 @@ Documentation improvements are always welcome. You can:
 
 For detailed instructions on setting up your development environment and submitting code contributions, please see our [Development.md](docs/Development.md) guide.
 
-Feel free to join our [Discord community](https://discord.com/invite/mVnXXpdE85) to discuss ideas or get help with your contributions. 
+Feel free to join our [Discord community](https://discord.com/invite/mVnXXpdE85) to discuss ideas or get help with your contributions.

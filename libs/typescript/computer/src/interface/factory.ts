@@ -27,29 +27,11 @@ export const InterfaceFactory = {
   ): BaseComputerInterface {
     switch (os) {
       case 'macos':
-        return new MacOSComputerInterface(
-          ipAddress,
-          'lume',
-          'lume',
-          apiKey,
-          vmName
-        );
+        return new MacOSComputerInterface(ipAddress, 'lume', 'lume', apiKey, vmName);
       case 'linux':
-        return new LinuxComputerInterface(
-          ipAddress,
-          'lume',
-          'lume',
-          apiKey,
-          vmName
-        );
+        return new LinuxComputerInterface(ipAddress, 'lume', 'lume', apiKey, vmName);
       case 'windows':
-        return new WindowsComputerInterface(
-          ipAddress,
-          'lume',
-          'lume',
-          apiKey,
-          vmName
-        );
+        return new WindowsComputerInterface(ipAddress, 'lume', 'lume', apiKey, vmName);
       default:
         throw new Error(`Unsupported OS type: ${os}`);
     }

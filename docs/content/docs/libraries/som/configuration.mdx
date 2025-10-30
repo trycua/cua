@@ -5,18 +5,28 @@ title: Configuration
 ### Detection Parameters
 
 #### Box Threshold (0.3)
+
 Controls the confidence threshold for accepting detections:
-<img src="/docs/img/som_box_threshold.png" alt="Illustration of confidence thresholds in object detection, with a high-confidence detection accepted and a low-confidence detection rejected." width="500px" />
-- Higher values (0.3) yield more precise but fewer detections
-- Lower values (0.01) catch more potential icons but increase false positives
-- Default is 0.3 for optimal precision/recall balance
+
+<img
+  src="/docs/img/som_box_threshold.png"
+  alt="Illustration of confidence thresholds in object detection, with a high-confidence detection accepted and a low-confidence detection rejected."
+  width="500px"
+/>
+- Higher values (0.3) yield more precise but fewer detections - Lower values (0.01) catch more
+potential icons but increase false positives - Default is 0.3 for optimal precision/recall balance
 
 #### IOU Threshold (0.1)
+
 Controls how overlapping detections are merged:
-<img src="/docs/img/som_iou_threshold.png" alt="Diagram showing Intersection over Union (IOU) with low overlap between two boxes kept separate and high overlap leading to merging." width="500px" />
-- Lower values (0.1) more aggressively remove overlapping boxes
-- Higher values (0.5) allow more overlapping detections
-- Default is 0.1 to handle densely packed UI elements
+
+<img
+  src="/docs/img/som_iou_threshold.png"
+  alt="Diagram showing Intersection over Union (IOU) with low overlap between two boxes kept separate and high overlap leading to merging."
+  width="500px"
+/>
+- Lower values (0.1) more aggressively remove overlapping boxes - Higher values (0.5) allow more
+overlapping detections - Default is 0.1 to handle densely packed UI elements
 
 ### OCR Configuration
 
@@ -37,6 +47,7 @@ Controls how overlapping detections are merged:
 ### Hardware Acceleration
 
 #### MPS (Metal Performance Shaders)
+
 - Multi-scale detection (640px, 1280px, 1920px)
 - Test-time augmentation enabled
 - Half-precision (FP16)
@@ -44,6 +55,7 @@ Controls how overlapping detections are merged:
 - Best for production use when available
 
 #### CPU
+
 - Single-scale detection (1280px)
 - Full-precision (FP32)
 - Average detection time: ~1.3s

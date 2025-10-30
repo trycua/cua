@@ -1,6 +1,6 @@
 # Ubuntu Docker Support in Cua with Kasm
 
-*Published Aug 26, 2025 by Francesco Bonacci*
+_Published Aug 26, 2025 by Francesco Bonacci_
 
 Today we’re shipping **Ubuntu Docker support** in Cua. You get a full Linux desktop inside a Docker container, viewable right in your browser—no VM spin-up, no extra clients. It behaves the same on macOS, Windows, and Linux.
 
@@ -16,17 +16,17 @@ We wanted something lightweight, isolated, and identical across machines. So we 
 
 Short answer: **portability, startup time, and ops friction.**
 
-* **Runs everywhere, no hypervisor drama.** KVM needs Linux; Hyper-V/Virtualization.Framework setups vary by host and policy. Docker is ubiquitous across macOS/Windows/Linux and allowed in most CI runners—so your GUI env actually runs where your team works.
-* **Faster boot & smaller footprints.** Containers cold-start in seconds and images are GB-scale; VMs tend to be minutes and tens of GB. That matters for parallel agents, CI, and local iteration.
-* **Lower ops overhead.** No nested virt, kernel modules, or privileged host tweaks that many orgs (and cloud runners) block. Pull → run → browser.
-* **Same image, everywhere.** One Docker image gives you an identical desktop on every dev laptop and in CI.
-* **Web-first access out of the box.** KasmVNC serves the desktop over HTTP—no extra VNC/RDP clients or SPICE config.
+- **Runs everywhere, no hypervisor drama.** KVM needs Linux; Hyper-V/Virtualization.Framework setups vary by host and policy. Docker is ubiquitous across macOS/Windows/Linux and allowed in most CI runners—so your GUI env actually runs where your team works.
+- **Faster boot & smaller footprints.** Containers cold-start in seconds and images are GB-scale; VMs tend to be minutes and tens of GB. That matters for parallel agents, CI, and local iteration.
+- **Lower ops overhead.** No nested virt, kernel modules, or privileged host tweaks that many orgs (and cloud runners) block. Pull → run → browser.
+- **Same image, everywhere.** One Docker image gives you an identical desktop on every dev laptop and in CI.
+- **Web-first access out of the box.** KasmVNC serves the desktop over HTTP—no extra VNC/RDP clients or SPICE config.
 
-**When we *do* reach for QEMU/KVM:**
+**When we _do_ reach for QEMU/KVM:**
 
-* You need **true OS isolation** or to run **non-Linux** guests.
-* You want **kernel-level features** or **device/GPU passthrough** (VFIO).
-* You’re optimizing for **hardware realism** over startup speed and density.
+- You need **true OS isolation** or to run **non-Linux** guests.
+- You want **kernel-level features** or **device/GPU passthrough** (VFIO).
+- You’re optimizing for **hardware realism** over startup speed and density.
 
 For this release, the goal was a **cross-platform Linux desktop that feels instant and identical** across local dev and CI. Containers + KasmVNC hit that sweet spot.
 
@@ -174,10 +174,10 @@ await computer.run()
 
 ## Links
 
-* **Docker Provider Docs:** [https://docs.trycua.com/computers/docker](https://docs.trycua.com/computers/docker)
-* **KasmVNC:** [https://github.com/kasmtech/KasmVNC](https://github.com/kasmtech/KasmVNC)
-* **Container Source:** [https://github.com/trycua/cua/tree/main/libs/kasm](https://github.com/trycua/cua/tree/main/libs/kasm)
-* **Computer SDK:** [https://docs.trycua.com/docs/computer-sdk/computers](https://docs.trycua.com/docs/computer-sdk/computers)
-* **Discord:** [https://discord.gg/cua-ai](https://discord.gg/cua-ai)
+- **Docker Provider Docs:** [https://docs.trycua.com/computers/docker](https://docs.trycua.com/computers/docker)
+- **KasmVNC:** [https://github.com/kasmtech/KasmVNC](https://github.com/kasmtech/KasmVNC)
+- **Container Source:** [https://github.com/trycua/cua/tree/main/libs/kasm](https://github.com/trycua/cua/tree/main/libs/kasm)
+- **Computer SDK:** [https://docs.trycua.com/docs/computer-sdk/computers](https://docs.trycua.com/docs/computer-sdk/computers)
+- **Discord:** [https://discord.gg/cua-ai](https://discord.gg/cua-ai)
 
 Questions or weird edge cases? Ping us on Discord—we’re curious to see what you build.

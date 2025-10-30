@@ -34,9 +34,7 @@ export async function getApiVersions(
     ...versions.filter((v) => v.label === 'Current'),
     ...versions
       .filter((v) => v.label !== 'Current')
-      .sort((a, b) =>
-        b.label.localeCompare(a.label, undefined, { numeric: true })
-      ),
+      .sort((a, b) => b.label.localeCompare(a.label, undefined, { numeric: true })),
   ];
 }
 

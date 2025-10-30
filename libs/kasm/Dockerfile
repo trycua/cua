@@ -32,6 +32,11 @@ RUN sed -i 's/-sslOnly//g' /dockerstartup/vnc_startup.sh
 RUN echo "/usr/bin/python3 -m computer_server" > $STARTUPDIR/custom_startup.sh \
 && chmod +x $STARTUPDIR/custom_startup.sh
 
+# Enable sudo support for kasm-user
+RUN echo "kasm-user:password" | chpasswd
+RUN usermod -aG sudo kasm-user
+RUN echo "kasm-user ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
+
 ######### End Customizations ###########
 
 RUN chown 1000:0 $HOME

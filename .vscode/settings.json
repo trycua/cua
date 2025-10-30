@@ -1,0 +1,25 @@
+{
+  "python-envs.pythonProjects": [],
+  "python.defaultInterpreterPath": "${workspaceFolder}/.venv",
+  "editor.formatOnSave": true,
+  "editor.codeActionsOnSave": {
+    "source.organizeImports": "explicit",
+    "source.fixAll": "explicit"
+  },
+  "extensions.ignoreRecommendations": false,
+  "python.formatting.provider": "black",
+  "[python]": {
+    "editor.defaultFormatter": "ms-python.black-formatter",
+  },
+  "[javascript][typescript][typescriptreact][javascriptreact]": {
+    "editor.defaultFormatter": "esbenp.prettier-vscode"
+  },
+  "ruff.configuration": "${workspaceFolder}/pyproject.toml",
+  "mypy-type-checker.args": [
+    "--config-file",
+    "${workspaceFolder}/pyproject.toml"
+  ],
+  "mypy-type-checker.path": [
+    "${workspaceFolder}"
+  ]
+}

@@ -41,15 +41,15 @@ export const baseOptions: BaseLayoutProps = {
   githubUrl: 'https://github.com/trycua/cua',
   links: [
     {
-      url: 'https://trycua.com',
-      text: 'cua home',
+      url: 'https://cua.ai',
+      text: 'Cua Home',
       type: 'icon',
       icon: <HomeIcon />,
-      external: false,
+      external: true,
     },
     {
       url: 'https://discord.com/invite/mVnXXpdE85',
-      text: 'cua discord',
+      text: 'Discord',
       type: 'icon',
       icon: (
         <>
@@ -69,6 +69,7 @@ export const baseOptions: BaseLayoutProps = {
           />
         </>
       ),
+      external: true,
     },
   ],
 };

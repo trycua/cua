@@ -17,28 +17,27 @@ yarn add @trycua/agent
 ### Basic Usage
 
 ```typescript
-import AgentClient from "@trycua/agent";
+import AgentClient from '@trycua/agent';
 
 // Connect to local HTTP server
-const client = new AgentClient("https://localhost:8000");
+const client = new AgentClient('https://localhost:8000');
 
 // Connect to a cloud container (port 8443 over HTTPS)
-const cloud = new AgentClient(
-  "https://m-linux-96lcxd2c2k.containers.cloud.trycua.com:8443",
-  { apiKey: process.env.NEXT_PUBLIC_CUA_API_KEY || "" }
-);
+const cloud = new AgentClient('https://m-linux-96lcxd2c2k.containers.cloud.trycua.com:8443', {
+  apiKey: process.env.NEXT_PUBLIC_CUA_API_KEY || '',
+});
 
 // Connect to peer
-const peerClient = new AgentClient("peer://my-agent-proxy");
+const peerClient = new AgentClient('peer://my-agent-proxy');
 
 // Send a simple text request
 const response = await client.responses.create({
-  model: "anthropic/claude-3-5-sonnet-20241022",
-  input: "Write a one-sentence bedtime story about a unicorn.",
+  model: 'anthropic/claude-3-5-sonnet-20241022',
+  input: 'Write a one-sentence bedtime story about a unicorn.',
   // Optional per-request env overrides
   env: {
-    OPENAI_API_KEY: "sk-..."
-  }
+    OPENAI_API_KEY: 'sk-...',
+  },
 });
 
 console.log(response.output);
@@ -48,48 +47,48 @@ console.log(response.output);
 
 ```typescript
 const response = await client.responses.create({
-  model: "anthropic/claude-3-5-sonnet-20241022",
+  model: 'anthropic/claude-3-5-sonnet-20241022',
   input: [
     {
-      role: "user",
+      role: 'user',
       content: [
-        { type: "input_text", text: "What is in this image?" },
-        { 
-          type: "input_image", 
-          image_url: "https://example.com/image.jpg" 
-        }
-      ]
-    }
+        { type: 'input_text', text: 'What is in this image?' },
+        {
+          type: 'input_image',
+          image_url: 'https://example.com/image.jpg',
+        },
+      ],
+    },
   ],
-  env: { OPENROUTER_API_KEY: "sk-..." }
+  env: { OPENROUTER_API_KEY: 'sk-...' },
 });
 ```
 
 ### Advanced Configuration
 
 ```typescript
-const client = new AgentClient("https://localhost:8000", {
+const client = new AgentClient('https://localhost:8000', {
   timeout: 60000, // 60 second timeout
-  retries: 5,     // 5 retry attempts
-  apiKey: "cua_...", // sent as X-API-Key header when using HTTP/HTTPS
+  retries: 5, // 5 retry attempts
+  apiKey: 'cua_...', // sent as X-API-Key header when using HTTP/HTTPS
 });
 
 const response = await client.responses.create({
-  model: "anthropic/claude-3-5-sonnet-20241022",
-  input: "Hello, world!",
+  model: 'anthropic/claude-3-5-sonnet-20241022',
+  input: 'Hello, world!',
   agent_kwargs: {
     save_trajectory: true,
-    verbosity: 20
+    verbosity: 20,
   },
   computer_kwargs: {
-    os_type: "linux",
-    provider_type: "cloud"
+    os_type: 'linux',
+    provider_type: 'cloud',
   },
   // Per-request env overrides
   env: {
-    ANTHROPIC_API_KEY: "sk-...",
-    OPENROUTER_API_KEY: "sk-..."
-  }
+    ANTHROPIC_API_KEY: 'sk-...',
+    OPENROUTER_API_KEY: 'sk-...',
+  },
 });
 ```
 
@@ -174,6 +173,7 @@ interface Usage {
 ```
 
 The `output` array contains the conversation history including:
+
 - User messages
 - Agent reasoning/thinking
 - Computer actions and their results
@@ -189,16 +189,16 @@ Connect to a CUA agent proxy server:
 
 ```typescript
 // Local
-const client = new AgentClient("https://my-agent-server.com:8000", { apiKey: "cua_..." });
+const client = new AgentClient('https://my-agent-server.com:8000', { apiKey: 'cua_...' });
 
 // Cloud container (port 8443)
-const cloud = new AgentClient(
-  "https://m-linux-96lcxd2c2k.containers.cloud.trycua.com:8443",
-  { apiKey: "cua_..." }
-);
+const cloud = new AgentClient('https://m-linux-96lcxd2c2k.containers.cloud.trycua.com:8443', {
+  apiKey: 'cua_...',
+});
 ```
 
 Notes:
+
 - The client sends the API key as `X-API-Key` for HTTP/HTTPS connections.
 - Cloud containers listen on `:8443` with HTTPS.
 
@@ -207,7 +207,7 @@ Notes:
 Connect directly to another peer using WebRTC:
 
 ```typescript
-const client = new AgentClient("peer://agent-proxy-peer-id");
+const client = new AgentClient('peer://agent-proxy-peer-id');
 ```
 
 The client uses PeerJS with default configuration for peer connections.

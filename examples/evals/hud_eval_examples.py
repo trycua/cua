@@ -6,7 +6,7 @@ hud_eval_examples.py — minimal HUD evaluation runner
 - No Docker/local computer usage
 """
 
-#imports
+# imports
 import asyncio
 import logging
 import os
@@ -14,13 +14,15 @@ import uuid
 from pathlib import Path
 from pprint import pprint
 
-from dotenv import load_dotenv, find_dotenv
 from agent import ComputerAgent
 from agent.integrations.hud import run_full_dataset
+from dotenv import find_dotenv, load_dotenv
 
 """
 Loading env
 """
+
+
 def load_env_or_fail() -> None:
     # Walk up from CWD / file dir to find nearest .env
     env_path = find_dotenv(usecwd=False)
@@ -32,16 +34,18 @@ def load_env_or_fail() -> None:
     if not os.getenv("HUD_API_KEY"):
         raise EnvironmentError("❌ HUD_API_KEY is missing in the loaded environment")
 
+
 """
 Build Agent Config
 - customize agent behavior, tool integration, callbacks, resource management, and more
 - https://docs.trycua.com/docs/agent-sdk/agent-loops#parameters
 - https://docs.trycua.com/docs/agent-sdk/supported-model-providers
 """
+
+
 def build_agent_config() -> dict:
 
     instruction = "You are a computer-using agent graded by deterministic checkers."
-
 
     return {
         "model": "openai/computer-use-preview",
@@ -51,20 +55,24 @@ def build_agent_config() -> dict:
         "instruction": instruction,
     }
 
+
 """
 Hud Eval
 """
+
+
 async def run_hud_eval() -> None:
-    #load env and agent config
+    # load env and agent config
     load_env_or_fail()
     agent_config = build_agent_config()
 
     # Initialize to ensure config is valid (tools, verbosity, etc.)
     _ = ComputerAgent(**agent_config)
 
-    job_name = f"osworld-test-{str(uuid.uuid4())[:4]}" #job name (each run of your task is a job on hud)
+    job_name = (
+        f"osworld-test-{str(uuid.uuid4())[:4]}"  # job name (each run of your task is a job on hud)
+    )
     print(f"🚀 Running HUD eval: {job_name}")
-
 
     """
     Customize your hud eval below, check the doc for additional params

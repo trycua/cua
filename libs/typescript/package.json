@@ -1,28 +1,29 @@
 {
   "name": "cua-ts",
   "version": "1.0.0",
-  "description": "The cua typescript libs.",
+  "description": "The Cua typescript libs.",
   "keywords": [],
   "author": "cua",
   "license": "MIT",
   "scripts": {
-    "lint": "biome check",
-    "lint:fix": "biome check --fix",
+    "lint": "prettier --check .",
+    "lint:fix": "prettier --write .",
     "build:core": "pnpm --filter @trycua/core build",
     "build:computer": "pnpm --filter @trycua/computer build",
     "build": "pnpm build:core && pnpm build:computer",
     "test:core": "pnpm --filter @trycua/core test",
     "test:computer": "pnpm --filter @trycua/computer test",
     "test": "pnpm -r test",
-    "typecheck": "pnpm -r typecheck"
+    "typecheck": "pnpm -r typecheck",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
   },
   "packageManager": "pnpm@10.12.3",
   "devDependencies": {
-    "@biomejs/biome": "^1.9.4"
+    "prettier": "^3.6.2"
   },
   "pnpm": {
     "onlyBuiltDependencies": [
-      "@biomejs/biome",
       "esbuild",
       "protobufjs",
       "sharp",

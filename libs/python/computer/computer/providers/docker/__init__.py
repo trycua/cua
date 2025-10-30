@@ -5,6 +5,7 @@ from .provider import DockerProvider
 # Check if Docker is available
 try:
     import subprocess
+
     subprocess.run(["docker", "--version"], capture_output=True, check=True)
     HAS_DOCKER = True
 except (subprocess.SubprocessError, FileNotFoundError):

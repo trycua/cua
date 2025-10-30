@@ -23,6 +23,7 @@ Any model that supports `predict_click()` can be used as the grounding component
 - InternVL 3.5 family: `huggingface-local/OpenGVLab/InternVL3_5-{1B,2B,4B,8B,...}`
 - UI‑TARS 1.5: `huggingface-local/ByteDance-Seed/UI-TARS-1.5-7B` (also supports full CU)
 - OmniParser (OCR): `omniparser` (requires combination with a LiteLLM vision model)
+- Moondream3: `moondream3` (requires combination with a LiteLLM vision/text model)
 
 ## Supported Planning Models
 
@@ -58,7 +59,7 @@ Combine state-of-the-art grounding with powerful reasoning:
 
 ```python
 agent = ComputerAgent(
-    "huggingface-local/HelloKKMe/GTA1-7B+anthropic/claude-3-5-sonnet-20241022", 
+    "huggingface-local/HelloKKMe/GTA1-7B+anthropic/claude-3-5-sonnet-20241022",
     tools=[computer]
 )
 
@@ -80,6 +81,23 @@ agent = ComputerAgent(
 )
 
 async for _ in agent.run("Help me fill out this form with my personal information"):
+    pass
+```
+
+### Moondream3 + GPT-4o
+
+Use the built-in Moondream3 grounding with any planning model. Moondream3 will detect UI elements on the latest screenshot, label them, and provide a user message listing detected element names.
+
+```python
+from agent import ComputerAgent
+from computer import computer
+
+agent = ComputerAgent(
+    "moondream3+openai/gpt-4o",
+    tools=[computer]
+)
+
+async for _ in agent.run("Close the settings window, then open the Downloads folder"):
     pass
 ```
 

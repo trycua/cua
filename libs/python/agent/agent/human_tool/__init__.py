@@ -12,7 +12,7 @@ Components:
 Usage:
     # Run the server and UI
     python -m agent.human_tool
-    
+
     # Or run components separately
     python -m agent.human_tool.server  # API server only
     python -m agent.human_tool.ui      # UI only
@@ -21,9 +21,4 @@ Usage:
 from .server import CompletionQueue, completion_queue
 from .ui import HumanCompletionUI, create_ui
 
-__all__ = [
-    "CompletionQueue",
-    "completion_queue", 
-    "HumanCompletionUI",
-    "create_ui"
-]
+__all__ = ["CompletionQueue", "completion_queue", "HumanCompletionUI", "create_ui"]

@@ -79,23 +79,48 @@ try {
     $pythonVersion = & $pythonExe --version 2>&1
     Write-Host "Python version: $pythonVersion"
 
-    # Step 2: Install cua-computer-server directly
-    Write-Host "Step 2: Installing cua-computer-server..."
+    # Step 2: Create a dedicated virtual environment in mapped Desktop folder (persistent)
+    Write-Host "Step 2: Creating virtual environment (if needed)..."
+    $cachePath = "C:\Users\WDAGUtilityAccount\Desktop\wsb_cache"
+    $venvPath = "C:\Users\WDAGUtilityAccount\Desktop\wsb_cache\venv"
+    if (!(Test-Path $venvPath)) {
+        Write-Host "Creating venv at: $venvPath"
+        & $pythonExe -m venv $venvPath
+    } else {
+        Write-Host "Venv already exists at: $venvPath"
+    }
+    # Hide the folder to keep Desktop clean
+    try {
+        $item = Get-Item $cachePath -ErrorAction SilentlyContinue
+        if ($item) {
+            if (-not ($item.Attributes -band [IO.FileAttributes]::Hidden)) {
+                $item.Attributes = $item.Attributes -bor [IO.FileAttributes]::Hidden
+            }
+        }
+    } catch { }
+    $venvPython = Join-Path $venvPath "Scripts\python.exe"
+    if (!(Test-Path $venvPython)) {
+        throw "Virtual environment Python not found at $venvPython"
+    }
+    Write-Host "Using venv Python: $venvPython"
+
+    # Step 3: Install cua-computer-server into the venv
+    Write-Host "Step 3: Installing cua-computer-server..."
     
     Write-Host "Upgrading pip..."
-    & $pythonExe -m pip install --upgrade pip --quiet
+    & $venvPython -m pip install --upgrade pip --quiet
     
     Write-Host "Installing cua-computer-server..."
-    & $pythonExe -m pip install cua-computer-server --quiet
+    & $venvPython -m pip install cua-computer-server
     
     Write-Host "cua-computer-server installation completed."
 
-    # Step 3: Start computer server in background
-    Write-Host "Step 3: Starting computer server in background..."
-    Write-Host "Starting computer server with: $pythonExe"
+    # Step 4: Start computer server in background using the venv Python
+    Write-Host "Step 4: Starting computer server in background..."
+    Write-Host "Starting computer server with: $venvPython"
     
     # Start the computer server in the background
-    $serverProcess = Start-Process -FilePath $pythonExe -ArgumentList "-m", "computer_server.main" -WindowStyle Hidden -PassThru
+    $serverProcess = Start-Process -FilePath $venvPython -ArgumentList "-m", "computer_server.main" -WindowStyle Hidden -PassThru
     Write-Host "Computer server started in background with PID: $($serverProcess.Id)"
     
     # Give it a moment to start

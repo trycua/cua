@@ -15,7 +15,7 @@ Built-in callbacks can be used as follows:
 ```python
 from agent.callbacks import (
     ImageRetentionCallback,
-    TrajectorySaverCallback, 
+    TrajectorySaverCallback,
     BudgetManagerCallback,
     LoggingCallback
 )
@@ -52,12 +52,12 @@ class CustomCallback(AsyncCallbackHandler):
         """Preprocess messages before LLM call"""
         # Add custom preprocessing logic
         return messages
-    
+
     async def on_llm_end(self, messages):
         """Postprocess messages after LLM call"""
         # Add custom postprocessing logic
         return messages
-    
+
     async def on_usage(self, usage):
         """Track usage information"""
         print(f"Tokens used: {usage.total_tokens}")

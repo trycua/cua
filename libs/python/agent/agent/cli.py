@@ -297,6 +297,20 @@ Examples:
         help="Maximum number of retries for the LLM API calls",
     )
 
+    # Provider override credentials
+    parser.add_argument(
+        "--api-key",
+        dest="api_key",
+        type=str,
+        help="API key override for the model provider (passed to ComputerAgent)",
+    )
+    parser.add_argument(
+        "--api-base",
+        dest="api_base",
+        type=str,
+        help="API base URL override for the model provider (passed to ComputerAgent)",
+    )
+
     args = parser.parse_args()
 
     # Check for required environment variables
@@ -379,6 +393,12 @@ Examples:
             "verbosity": 20 if args.verbose else 30,  # DEBUG vs WARNING
             "max_retries": args.max_retries,
         }
+
+        # Thread API credentials to agent if provided
+        if args.api_key:
+            agent_kwargs["api_key"] = args.api_key
+        if args.api_base:
+            agent_kwargs["api_base"] = args.api_base
 
         if args.images > 0:
             agent_kwargs["only_n_most_recent_images"] = args.images

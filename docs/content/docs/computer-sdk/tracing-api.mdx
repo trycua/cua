@@ -8,7 +8,8 @@ description: Record computer interactions for debugging, training, and analysis
 The Computer tracing API provides a powerful way to record computer interactions for debugging, training, analysis, and compliance purposes. Inspired by Playwright's tracing functionality, it offers flexible recording options and standardized output formats.
 
 <Callout>
-The tracing API addresses GitHub issue #299 by providing a unified recording interface that works with any Computer usage pattern, not just ComputerAgent.
+  The tracing API addresses GitHub issue #299 by providing a unified recording interface that works
+  with any Computer usage pattern, not just ComputerAgent.
 </Callout>
 
 ## Overview
@@ -16,7 +17,7 @@ The tracing API addresses GitHub issue #299 by providing a unified recording int
 The tracing API allows you to:
 
 - Record screenshots at key moments
-- Log all API calls and their results  
+- Log all API calls and their results
 - Capture accessibility tree snapshots
 - Add custom metadata
 - Export recordings in standardized formats
@@ -52,7 +53,7 @@ print(f"Trace saved to: {trace_path}")
 await computer.tracing.start({
     'video': False,              # Record video frames
     'screenshots': True,         # Record screenshots (default: True)
-    'api_calls': True,          # Record API calls (default: True)  
+    'api_calls': True,          # Record API calls (default: True)
     'accessibility_tree': True, # Record accessibility snapshots
     'metadata': True,           # Allow custom metadata (default: True)
     'name': 'my_custom_trace',  # Custom trace name
@@ -74,22 +75,22 @@ trace_path = await computer.tracing.stop({
 
 ### Start Options
 
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `video` | bool | `False` | Record video frames (future feature) |
-| `screenshots` | bool | `True` | Capture screenshots after key actions |
-| `api_calls` | bool | `True` | Log all interface method calls |
-| `accessibility_tree` | bool | `False` | Record accessibility tree snapshots |
-| `metadata` | bool | `True` | Enable custom metadata recording |
-| `name` | str | auto-generated | Custom name for the trace |
-| `path` | str | auto-generated | Custom directory for trace files |
+| Option               | Type | Default        | Description                           |
+| -------------------- | ---- | -------------- | ------------------------------------- |
+| `video`              | bool | `False`        | Record video frames (future feature)  |
+| `screenshots`        | bool | `True`         | Capture screenshots after key actions |
+| `api_calls`          | bool | `True`         | Log all interface method calls        |
+| `accessibility_tree` | bool | `False`        | Record accessibility tree snapshots   |
+| `metadata`           | bool | `True`         | Enable custom metadata recording      |
+| `name`               | str  | auto-generated | Custom name for the trace             |
+| `path`               | str  | auto-generated | Custom directory for trace files      |
 
 ### Stop Options
 
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `path` | str | auto-generated | Custom output path for final trace |
-| `format` | str | `'zip'` | Output format: `'zip'` or `'dir'` |
+| Option   | Type | Default        | Description                        |
+| -------- | ---- | -------------- | ---------------------------------- |
+| `path`   | str  | auto-generated | Custom output path for final trace |
+| `format` | str  | `'zip'`        | Output format: `'zip'` or `'dir'`  |
 
 ## Use Cases
 
@@ -101,23 +102,23 @@ from computer import Computer
 async def test_custom_agent():
     computer = Computer(os_type="linux")
     await computer.run()
-    
+
     # Start tracing for this test session
     await computer.tracing.start({
         'name': 'custom_agent_test',
         'screenshots': True,
         'accessibility_tree': True
     })
-    
+
     # Your custom agent logic here
     screenshot = await computer.interface.screenshot()
     await computer.interface.left_click(500, 300)
     await computer.interface.type_text("test input")
-    
+
     # Add context about what the agent is doing
     await computer.tracing.add_metadata('action', 'filling_form')
     await computer.tracing.add_metadata('confidence', 0.95)
-    
+
     # Save the trace
     trace_path = await computer.tracing.stop()
     return trace_path
@@ -129,13 +130,13 @@ async def test_custom_agent():
 async def collect_training_data():
     computer = Computer(os_type="macos")
     await computer.run()
-    
+
     tasks = [
         "open_browser_and_search",
-        "create_document", 
+        "create_document",
         "send_email"
     ]
-    
+
     for task in tasks:
         # Start a new trace for each task
         await computer.tracing.start({
@@ -144,14 +145,14 @@ async def collect_training_data():
             'accessibility_tree': True,
             'metadata': True
         })
-        
+
         # Add task metadata
         await computer.tracing.add_metadata('task_type', task)
         await computer.tracing.add_metadata('difficulty', 'beginner')
-        
+
         # Perform the task (automated or human-guided)
         await perform_task(computer, task)
-        
+
         # Save this training example
         await computer.tracing.stop({
             'path': f'./training_data/{task}.zip'
@@ -164,7 +165,7 @@ async def collect_training_data():
 async def record_human_demonstration():
     computer = Computer(os_type="windows")
     await computer.run()
-    
+
     # Start recording human demonstration
     await computer.tracing.start({
         'name': 'human_demo_excel_workflow',
@@ -172,19 +173,19 @@ async def record_human_demonstration():
         'api_calls': True,  # Will capture any programmatic actions
         'metadata': True
     })
-    
+
     print("Trace recording started. Perform your demonstration...")
     print("The system will record all computer interactions.")
-    
+
     # Add metadata about the demonstration
     await computer.tracing.add_metadata('demonstrator', 'expert_user')
     await computer.tracing.add_metadata('workflow', 'excel_data_analysis')
-    
+
     # Human performs actions manually or through other tools
     # Tracing will still capture any programmatic interactions
-    
+
     input("Press Enter when demonstration is complete...")
-    
+
     # Stop and save the demonstration
     trace_path = await computer.tracing.stop()
     print(f"Human demonstration saved to: {trace_path}")
@@ -196,7 +197,7 @@ async def record_human_demonstration():
 async def debug_rpa_workflow():
     computer = Computer(os_type="linux")
     await computer.run()
-    
+
     # Start tracing with full debugging info
     await computer.tracing.start({
         'name': 'rpa_debug_session',
@@ -204,15 +205,15 @@ async def debug_rpa_workflow():
         'accessibility_tree': True,
         'api_calls': True
     })
-    
+
     try:
         # Your RPA workflow
         await rpa_login_sequence(computer)
-        await rpa_data_entry(computer) 
+        await rpa_data_entry(computer)
         await rpa_generate_report(computer)
-        
+
         await computer.tracing.add_metadata('status', 'success')
-        
+
     except Exception as e:
         # Record the error in the trace
         await computer.tracing.add_metadata('error', str(e))
@@ -275,7 +276,7 @@ Individual events follow this structure:
   "relative_time": 3.666,
   "data": {
     "method": "left_click",
-    "args": {"x": 100, "y": 200, "delay": null},
+    "args": { "x": 100, "y": 200, "delay": null },
     "result": null,
     "error": null,
     "screenshot": "000002_after_left_click.png",
@@ -312,7 +313,7 @@ agent = ComputerAgent(
 async for _ in agent.run("open trycua.com and navigate to docs"):
     pass
 
-# Save the combined trace  
+# Save the combined trace
 trace_path = await computer.tracing.stop()
 ```
 
@@ -327,15 +328,15 @@ The tracing API is designed with privacy in mind:
 
 ## Comparison with ComputerAgent Trajectories
 
-| Feature | ComputerAgent Trajectories | Computer.tracing |
-|---------|---------------------------|------------------|
-| **Scope** | ComputerAgent only | Any Computer usage |
-| **Flexibility** | Fixed format | Configurable options |
-| **Custom Agents** | Not supported | Fully supported |
-| **Human-in-the-loop** | Limited | Full support |
-| **Real-time Control** | No | Start/stop anytime |
-| **Output Format** | Agent-specific | Standardized |
-| **Accessibility Data** | No | Optional |
+| Feature                | ComputerAgent Trajectories | Computer.tracing     |
+| ---------------------- | -------------------------- | -------------------- |
+| **Scope**              | ComputerAgent only         | Any Computer usage   |
+| **Flexibility**        | Fixed format               | Configurable options |
+| **Custom Agents**      | Not supported              | Fully supported      |
+| **Human-in-the-loop**  | Limited                    | Full support         |
+| **Real-time Control**  | No                         | Start/stop anytime   |
+| **Output Format**      | Agent-specific             | Standardized         |
+| **Accessibility Data** | No                         | Optional             |
 
 ## Best Practices
 

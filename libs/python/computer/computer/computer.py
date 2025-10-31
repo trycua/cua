@@ -1,10 +1,4 @@
 import asyncio
-from .models import Computer as ComputerConfig, Display
-from .interface.factory import InterfaceFactory
-from .tracing import ComputerTracing
-from .tracing_wrapper import TracingInterfaceWrapper
-import time
-from PIL import Image
 import io
 import json
 import logging
@@ -23,6 +17,8 @@ from .interface.factory import InterfaceFactory
 from .logger import Logger, LogLevel
 from .models import Computer as ComputerConfig
 from .models import Display
+from .tracing import ComputerTracing
+from .tracing_wrapper import TracingInterfaceWrapper
 
 SYSTEM_INFO = {
     "os": platform.system().lower(),
@@ -217,7 +213,7 @@ class Computer:
         self._original_interface = None  # Keep reference to original interface
         self._tracing_wrapper = None  # Tracing wrapper for interface
         self.use_host_computer_server = use_host_computer_server
-        
+
         # Initialize tracing
         self._tracing = ComputerTracing(self)
 
@@ -522,7 +518,7 @@ class Computer:
                         os=self.os_type, ip_address=ip_address
                     ),
                 )
-                
+
             self._interface = interface
             self._original_interface = interface
 
@@ -893,16 +889,22 @@ class Computer:
             raise RuntimeError(error_msg)
 
         # Return tracing wrapper if tracing is active and we have an original interface
-        if (self._tracing.is_tracing and 
-            hasattr(self, "_original_interface") and 
-            self._original_interface is not None):
+        if (
+            self._tracing.is_tracing
+            and hasattr(self, "_original_interface")
+            and self._original_interface is not None
+        ):
             # Create wrapper if it doesn't exist or if the original interface changed
-            if (not hasattr(self, "_tracing_wrapper") or 
-                self._tracing_wrapper is None or
-                self._tracing_wrapper._original_interface != self._original_interface):
-                self._tracing_wrapper = TracingInterfaceWrapper(self._original_interface, self._tracing)
+            if (
+                not hasattr(self, "_tracing_wrapper")
+                or self._tracing_wrapper is None
+                or self._tracing_wrapper._original_interface != self._original_interface
+            ):
+                self._tracing_wrapper = TracingInterfaceWrapper(
+                    self._original_interface, self._tracing
+                )
             return self._tracing_wrapper
-        
+
         return self._interface
 
     @property

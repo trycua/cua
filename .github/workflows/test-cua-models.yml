@@ -13,39 +13,44 @@ on:
         required: false
         default: true
         type: boolean
+  schedule:
+    # Runs at 4 PM UTC (8 AM PST) from November to March
+    - cron: "0 16 * * *"
+    # Runs at 3 PM UTC (8 AM PDT) from March to November
+    - cron: "0 15 * * *"
 
 jobs:
-  # Test all CUA models - runs on PRs or when manually triggered
+  # Test all CUA models - runs on PRs, schedules, or when manually triggered
   test-all-models:
-    if: ${{ github.event_name == 'pull_request_target' || fromJSON(inputs.test_models || 'false') }}
+    if: ${{ github.event_name == 'pull_request_target' || github.event_name == 'schedule' || fromJSON(inputs.test_models || 'false') }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         model:
           # Claude Sonnet/Haiku
-          # - anthropic/claude-sonnet-4-5-20250929
+          - anthropic/claude-sonnet-4-5-20250929
           - anthropic/claude-haiku-4-5-20251001
-          # - anthropic/claude-opus-4-1-20250805
+          - anthropic/claude-opus-4-1-20250805
 
           # OpenAI CU Preview
           - openai/computer-use-preview
 
           # GLM-V
-          # - openrouter/z-ai/glm-4.5v
+          - openrouter/z-ai/glm-4.5v
           # - huggingface-local/zai-org/GLM-4.5V  # Requires local model setup
 
           # Gemini CU Preview
           # - gemini-2.5-computer-use-preview-10-2025
 
           # InternVL
-          # - huggingface-local/OpenGVLab/InternVL3_5-1B
+          - huggingface-local/OpenGVLab/InternVL3_5-1B
           # - huggingface-local/OpenGVLab/InternVL3_5-2B
           # - huggingface-local/OpenGVLab/InternVL3_5-4B
           # - huggingface-local/OpenGVLab/InternVL3_5-8B
 
           # UI-TARS (supports full computer-use, can run standalone)
-          # - huggingface-local/ByteDance-Seed/UI-TARS-1.5-7B
+          - huggingface-local/ByteDance-Seed/UI-TARS-1.5-7B
 
           # Note: OpenCUA, GTA, and Holo are grounding-only models
           # They only support predict_click(), not agent.run()
@@ -53,21 +58,21 @@ jobs:
 
           # Moondream (typically used in composed agents)
           # Format: moondream3+{any-llm-with-tools}
-          # - moondream3+anthropic/claude-sonnet-4-5-20250929  # Claude has VLM + Tools
+          - moondream3+anthropic/claude-sonnet-4-5-20250929 # Claude has VLM + Tools
           # - moondream3+openai/gpt-4o  # GPT-4o has VLM + Tools
 
           # OmniParser (typically used in composed agents)
           # Format: omniparser+{any-vlm-with-tools}
-          # - omniparser+anthropic/claude-sonnet-4-5-20250929  # Claude has VLM + Tools
+          - omniparser+anthropic/claude-sonnet-4-5-20250929 # Claude has VLM + Tools
           # - omniparser+openai/gpt-4o  # GPT-4o has VLM + Tools
 
           # Other grounding models + VLM with tools
           # Format: {grounding-model}+{any-vlm-with-tools}
           # These grounding-only models (OpenCUA, GTA, Holo) must be used in composed form
           # since they only support predict_click(), not full agent.run()
-          # - huggingface-local/HelloKKMe/GTA1-7B+anthropic/claude-sonnet-4-5-20250929
-          # - huggingface-local/xlangai/OpenCUA-7B+anthropic/claude-sonnet-4-5-20250929
-          # - huggingface-local/Hcompany/Holo1.5-3B+anthropic/claude-sonnet-4-5-20250929
+          - huggingface-local/HelloKKMe/GTA1-7B+anthropic/claude-sonnet-4-5-20250929
+          - huggingface-local/xlangai/OpenCUA-7B+anthropic/claude-sonnet-4-5-20250929
+          - huggingface-local/Hcompany/Holo1.5-3B+anthropic/claude-sonnet-4-5-20250929
 
     steps:
       - name: Checkout repository
@@ -109,7 +114,7 @@ jobs:
           uv venv --python 3.12
           uv pip install -e libs/python/agent -e libs/python/computer
           uv pip install -e libs/python/core
-          uv pip install "cua-agent[uitars-hf]"
+          uv pip install "cua-agent[uitars-hf,internvl-hf,opencua-hf,moondream3,omni]"
           uv pip install pytest
 
       - name: Cache HuggingFace models
@@ -139,6 +144,7 @@ jobs:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
 
       - name: Calculate test duration and prepare message
         if: always()
@@ -244,7 +250,7 @@ jobs:
 
   # Summary job that aggregates all model test results
   test-summary:
-    if: ${{ always() && (github.event_name == 'pull_request_target' || fromJSON(inputs.test_models || 'false')) }}
+    if: ${{ always() && (github.event_name == 'pull_request_target' || github.event_name == 'schedule' || fromJSON(inputs.test_models || 'false')) }}
     needs: test-all-models
     runs-on: ubuntu-latest
     steps:

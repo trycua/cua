@@ -321,7 +321,7 @@ Examples:
     if not container_name:
         if args.provider == "cloud":
             print_colored("CUA_CONTAINER_NAME not set.", dim=True)
-            print_colored("You can get a CUA container at https://www.trycua.com/", dim=True)
+            print_colored("You can get a CUA container at https://cua.ai/", dim=True)
             container_name = input("Enter your CUA container name: ").strip()
             if not container_name:
                 print_colored("❌ Container name is required.")

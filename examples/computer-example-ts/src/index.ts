@@ -6,7 +6,7 @@ import 'dotenv/config';
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-const COMPUTER_USE_PROMPT = 'Open firefox and go to trycua.com';
+const COMPUTER_USE_PROMPT = 'Open firefox and go to cua.ai';
 
 // Initialize the Computer Connection
 const computer = new Computer({

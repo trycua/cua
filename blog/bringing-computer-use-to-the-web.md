@@ -30,7 +30,7 @@ By the end of this tutorial, you'll be able to:
 - Node.js 16+ and npm/yarn/pnpm
 - Basic JavaScript or TypeScript knowledge
 - OpenAI API access (Tier 3+ for computer-use-preview)
-- Cua cloud container credits ([get started here](https://trycua.com/pricing))
+- Cua cloud container credits ([get started here](https://cua.ai/pricing))
 
 **Estimated Time:** 45-60 minutes
 
@@ -51,7 +51,7 @@ Luckily, the `@trycua/computer` library can be used in conjunction with other mo
 
 To follow this guide, you’ll need access to a Cua cloud container.
 
-Getting access is simple: purchase credits from our [pricing page](https://trycua.com/pricing), then create and provision a new container instance from the [dashboard](https://trycua.com/dashboard/containers). With your container running, you'll be ready to leverage the web SDK and bring automation to your JavaScript or TypeScript applications.
+Getting access is simple: purchase credits from our [pricing page](https://cua.ai/pricing), then create and provision a new container instance from the [dashboard](https://cua.ai/dashboard/containers). With your container running, you'll be ready to leverage the web SDK and bring automation to your JavaScript or TypeScript applications.
 
 ## Understanding the Flow
 
@@ -86,7 +86,7 @@ const res = await openai.responses.create({
       role: 'user',
       content: [
         // what we want the ai to do
-        { type: 'input_text', text: 'Open firefox and go to trycua.com' },
+        { type: 'input_text', text: 'Open firefox and go to cua.ai' },
         // first screenshot of the vm
         {
           type: 'input_image',
@@ -144,7 +144,7 @@ Each response contains:
 
 ### Provision a Cua Cloud Container
 
-1. Visit [trycua.com](https://trycua.com), sign up, purchase [credits](https://trycua.com/pricing), and create a new container instance from the [dashboard](https://trycua.com/dashboard).
+1. Visit [cua.ai](https://cua.ai), sign up, purchase [credits](https://cua.ai/pricing), and create a new container instance from the [dashboard](https://cua.ai/dashboard).
 2. Create an API key from the dashboard — be sure to save it in a secure location before continuing.
 3. Start the cloud container from the dashboard.
 
@@ -281,7 +281,7 @@ let res = await openai.responses.create({
       role: 'user',
       content: [
         // what we want the ai to do
-        { type: 'input_text', text: 'open firefox and go to trycua.com' },
+        { type: 'input_text', text: 'open firefox and go to cua.ai' },
         // current screenshot of the vm
         {
           type: 'input_image',

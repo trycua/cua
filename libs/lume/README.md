@@ -55,11 +55,11 @@ To get set up with Lume for development, read [these instructions](Development.m
 
 ## Docs
 
-- [Installation](https://trycua.com/docs/libraries/lume/installation)
-- [Prebuilt Images](https://trycua.com/docs/libraries/lume/prebuilt-images)
-- [CLI Reference](https://trycua.com/docs/libraries/lume/cli-reference)
-- [HTTP API](https://trycua.com/docs/libraries/lume/http-api)
-- [FAQ](https://trycua.com/docs/libraries/lume/faq)
+- [Installation](https://cua.ai/docs/libraries/lume/installation)
+- [Prebuilt Images](https://cua.ai/docs/libraries/lume/prebuilt-images)
+- [CLI Reference](https://cua.ai/docs/libraries/lume/cli-reference)
+- [HTTP API](https://cuai.ai/docs/libraries/lume/http-api)
+- [FAQ](https://cua.ai/docs/libraries/lume/faq)
 
 ## Contributing
 

@@ -117,7 +117,7 @@ if [[ "$CHOICE" == "1" ]]; then
   # If no valid API key found, prompt for one
   if [[ -z "$CUA_API_KEY" ]]; then
     echo "To use Cua Cloud Sandbox, you need to:"
-    echo "1. Sign up at https://trycua.com"
+    echo "1. Sign up at https://cua.ai"
     echo "2. Create a Cloud Sandbox"
     echo "3. Generate an Api Key"
     echo ""
@@ -167,7 +167,7 @@ elif [[ "$CHOICE" == "3" ]]; then
     print_error "Local Windows VMs require Windows 10 or 11."
     echo "💡 Consider using Cua Cloud Sandbox instead (option 1)."
     echo ""
-    echo "🔗 If you are using WSL, refer to the blog post to get started: https://www.trycua.com/blog/windows-sandbox"
+    echo "🔗 If you are using WSL, refer to the blog post to get started: https://cua.ai/blog/windows-sandbox"
     exit 1
   fi
 

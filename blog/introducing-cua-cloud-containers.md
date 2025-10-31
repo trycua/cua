@@ -32,7 +32,7 @@ The result? **Instant deployment** in seconds instead of hours, with no infrastr
 
 ### Step 1: Get Your API Key
 
-Sign up at [**trycua.com**](https://trycua.com) to get your API key.
+Sign up at [**cua.ai**](https://cua.ai) to get your API key.
 
 ```bash
 # Set your API key in environment variables
@@ -226,6 +226,6 @@ Stay tuned for updates and join our [**Discord**](https://discord.gg/cua-ai) to 
 
 Ready to deploy your Computer-Use Agents in the cloud?
 
-Visit [**trycua.com**](https://trycua.com) to sign up and get your API key. Join our [**Discord community**](https://discord.gg/cua-ai) for support and explore more examples on [**GitHub**](https://github.com/trycua/cua).
+Visit [**cua.ai**](https://cua.ai) to sign up and get your API key. Join our [**Discord community**](https://discord.gg/cua-ai) for support and explore more examples on [**GitHub**](https://github.com/trycua/cua).
 
 Happy RPA 2.0! 🚀

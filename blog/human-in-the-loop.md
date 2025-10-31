@@ -216,4 +216,4 @@ Ready to put humans back in the loop? The most sophisticated AI system knows whe
 
 ---
 
-_Questions about human-in-the-loop agents? Join the conversation in our [Discord community](https://discord.gg/cua-ai) or check out our [documentation](https://docs.trycua.com/docs/agent-sdk/supported-agents/human-in-the-loop)._
+_Questions about human-in-the-loop agents? Join the conversation in our [Discord community](https://discord.gg/cua-ai) or check out our [documentation](https://cua.ai/docs/agent-sdk/supported-agents/human-in-the-loop)._

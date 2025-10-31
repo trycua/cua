@@ -67,7 +67,7 @@ If you try out version 0.4.x, we'd love to hear how it goes. Join us on Discord 
 
 ## Links
 
-- **Composite Agent Docs:** [https://docs.trycua.com/docs/agent-sdk/supported-agents/composed-agents](https://docs.trycua.com/docs/agent-sdk/supported-agents/composed-agents)
+- **Composite Agent Docs:** [https://cua.ai/docs/agent-sdk/supported-agents/composed-agents](https://cua.ai/docs/agent-sdk/supported-agents/composed-agents)
 - **Discord:** [https://discord.gg/cua-ai](https://discord.gg/cua-ai)
 
 Questions or weird edge cases? Ping us on Discord—we’re curious to see what you build.

@@ -30,7 +30,7 @@ dependencies = [
     "pyobjc-framework-ApplicationServices>=10.1; sys_platform == 'darwin'",
     "python-xlib>=0.33; sys_platform == 'linux'",
     "pywin32>=310; sys_platform == 'win32'",
-    "pip-system-certs; sys_platform == 'win32'",
+    "python-certifi-win32; sys_platform == 'win32'",
 ]
 
 [project.optional-dependencies]

@@ -17,7 +17,7 @@
   "homepage": "https://trycua.com",
   "documentation": "https://docs.trycua.com",
   "support": "https://github.com/trycua/cua/issues",
-  "icon": "logo_black.png",
+  "icon": "desktop_extension.png",
   "server": {
     "type": "python",
     "entry_point": "server.py",

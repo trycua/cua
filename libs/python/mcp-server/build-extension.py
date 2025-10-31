@@ -15,6 +15,7 @@ Usage:
 
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
 import zipfile
@@ -37,7 +38,7 @@ def main():
     # Required files to copy
     files_to_copy = {
         "manifest.json": output_dir / "manifest.json",
-        "logo_black.png": output_dir / "logo_black.png",
+        "desktop_extension.png": output_dir / "desktop_extension.png",
         "requirements.txt": output_dir / "requirements.txt",
         "run_server.sh": output_dir / "run_server.sh",
         "setup.py": output_dir / "setup.py",
@@ -105,6 +106,59 @@ def main():
 
         print(f"✓ Build complete: {output_file}")
         print(f"  Archive size: {output_file.stat().st_size / 1024:.1f} KB")
+
+        # Set custom file icon based on platform
+        icon_file = output_dir / "desktop_extension.png"
+        if sys.platform == "darwin":
+            _set_icon_macos(output_file, icon_file)
+        elif sys.platform == "win32":
+            _set_icon_windows(output_file, icon_file)
+        elif sys.platform.startswith("linux"):
+            _set_icon_linux(output_file, icon_file)
+
+
+def _set_icon_macos(output_file: Path, icon_file: Path):
+    """Set custom file icon on macOS."""
+    try:
+        # Check if fileicon is installed
+        result = subprocess.run(["which", "fileicon"], capture_output=True, text=True)
+        if result.returncode == 0:
+            # Use the logo as the file icon
+            if icon_file.exists():
+                print("  Setting custom file icon (macOS)...")
+                subprocess.run(
+                    ["fileicon", "set", str(output_file), str(icon_file)],
+                    check=False,
+                    capture_output=True,
+                )
+                print("    ✓ File icon set")
+            else:
+                print(f"    ⚠ Icon file not found: {icon_file}")
+        else:
+            print("  ⚠ fileicon not installed (optional - for custom file icon)")
+            print("    Install with: brew install fileicon")
+    except Exception as e:
+        print(f"  ⚠ Could not set file icon: {e}")
+
+
+def _set_icon_windows(output_file: Path, icon_file: Path):
+    """Set custom file icon on Windows."""
+    try:
+        # Windows uses a desktop.ini approach, which is complex
+        # For simplicity, we'll skip this for now
+        print("  ⚠ Custom file icons not supported on Windows yet")
+    except Exception as e:
+        print(f"  ⚠ Could not set file icon: {e}")
+
+
+def _set_icon_linux(output_file: Path, icon_file: Path):
+    """Set custom file icon on Linux."""
+    try:
+        # Linux uses .desktop files and thumbnail generation
+        # This is complex and depends on the desktop environment
+        print("  ⚠ Custom file icons not supported on Linux yet")
+    except Exception as e:
+        print(f"  ⚠ Could not set file icon: {e}")
 
 
 if __name__ == "__main__":

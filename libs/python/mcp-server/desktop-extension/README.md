@@ -16,6 +16,9 @@ This will:
 1. Copy the MCP server code from `mcp_server/` directory
 2. Copy static files (manifest, icons, scripts)
 3. Create a `.mcpb` zip archive in `desktop-extension/cua-extension.mcpb`
+4. Set custom file icon (platform-specific):
+   - macOS: Uses `fileicon` (install with `brew install fileicon`)
+   - Windows/Linux: Not yet supported
 
 ## Directory Structure
 
@@ -23,11 +26,11 @@ This will:
 desktop-extension/
 ├── README.md              # This file
 ├── manifest.json          # Extension manifest
-├── logo_black.png         # Extension icon
+├── desktop_extension.png  # Extension icon
 ├── requirements.txt       # Python dependencies
 ├── run_server.sh          # Server launcher script
 ├── setup.py               # Dependency installer
-└── cua-extension.mcpb     # Generated extension archive (gitignored)
+└── cua-extension.mcpb     # Generated extension archive
 ```
 
 ## Source Files
@@ -42,7 +45,7 @@ The actual MCP server code lives in `../mcp_server/`:
 These files are maintained in this directory:
 
 - `manifest.json` - Extension metadata and configuration
-- `logo_black.png` - Extension icon
+- `desktop_extension.png` - Extension icon
 - `requirements.txt` - Python package dependencies
 - `run_server.sh` - Shell script to launch the server
 - `setup.py` - Python script to install dependencies

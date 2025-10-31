@@ -174,7 +174,7 @@ Apple's announcement confirms we're on the right path. Here's what we're looking
 - [Apple Containerization Framework](https://github.com/apple/containerization)
 - [Lume - Direct VM Management](https://github.com/trycua/cua/tree/main/libs/lume)
 - [Lumier - Docker Interface for VMs](https://github.com/trycua/cua/tree/main/libs/lumier)
-- [Cua Cloud Sandbox](https://trycua.com)
+- [Cua Cloud Sandbox](https://cua.ai)
 - [Join our Discord](https://discord.gg/cua-ai)
 
 ---

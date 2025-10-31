@@ -32,7 +32,7 @@ The viewer allows you to see exactly what your agent observed and how it interac
 
 ## Opening Trajectory Viewer in 3 Simple Steps
 
-1. **Visit**: Open your browser and go to [https://www.trycua.com/trajectory-viewer](https://www.trycua.com/trajectory-viewer).
+1. **Visit**: Open your browser and go to [https://cua.ai/trajectory-viewer](https://cua.ai/trajectory-viewer).
 2. **Upload**: Drag and drop a trajectories folder or click Select Folder.
 3. **Explore**: View your agent’s trajectories! All data stays in your browser unless you give permission otherwise.
 

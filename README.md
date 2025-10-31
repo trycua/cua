@@ -22,14 +22,14 @@
 
 With the [Computer SDK](#computer-sdk), you can:
 
-- automate Windows, Linux, and macOS VMs with a consistent, [pyautogui-like API](https://docs.trycua.com/docs/libraries/computer#interface-actions)
-- create & manage VMs [locally](https://docs.trycua.com/docs/computer-sdk/computers#cua-local-containers) or using [Cua cloud](https://www.trycua.com/)
+- automate Windows, Linux, and macOS VMs with a consistent, [pyautogui-like API](https://cua.ai/docs/docs/libraries/computer#interface-actions)
+- create & manage VMs [locally](https://cua.ai/docs/docs/computer-sdk/computers#cua-local-containers) or using [Cua cloud](https://www.cua.ai/)
 
 With the [Agent SDK](#agent-sdk), you can:
 
-- run computer-use models with a [consistent schema](https://docs.trycua.com/docs/agent-sdk/message-format)
-- benchmark on OSWorld-Verified, SheetBench-V2, and more [with a single line of code using HUD](https://docs.trycua.com/docs/agent-sdk/integrations/hud) ([Notebook](https://github.com/trycua/cua/blob/main/notebooks/eval_osworld.ipynb))
-- combine UI grounding models with any LLM using [composed agents](https://docs.trycua.com/docs/agent-sdk/supported-agents/composed-agents)
+- run computer-use models with a [consistent schema](https://cua.ai/docs/docs/agent-sdk/message-format)
+- benchmark on OSWorld-Verified, SheetBench-V2, and more [with a single line of code using HUD](https://cua.ai/docs/docs/agent-sdk/integrations/hud) ([Notebook](https://github.com/trycua/cua/blob/main/notebooks/eval_osworld.ipynb))
+- combine UI grounding models with any LLM using [composed agents](https://cua.ai/docs/docs/agent-sdk/supported-agents/composed-agents)
 - use new UI agent models and UI grounding models from the Model Zoo below with just a model string (e.g., `ComputerAgent(model="openai/computer-use-preview")`)
 - use API or local inference by changing a prefix (e.g., `openai/`, `openrouter/`, `ollama/`, `huggingface-local/`, `mlx/`, [etc.](https://docs.litellm.ai/docs/providers))
 
@@ -96,8 +96,8 @@ Core utilities for Cua
 # Quick Start
 
 - [Clone a starter template and run the code in <1 min](https://github.com/trycua/agent-template)
-- [Get started with the Cua SDKs](https://docs.trycua.com/docs/quickstart-devs)
-- [Get started with the Cua CLI](https://docs.trycua.com/docs/quickstart-cli)
+- [Get started with the Cua SDKs](https://cua.ai/docs/docs/quickstart-devs)
+- [Get started with the Cua CLI](https://cua.ai/docs/docs/quickstart-cli)
 
 # Agent SDK
 
@@ -197,9 +197,9 @@ These are the valid model configurations for `ComputerAgent(model="...")`:
 | Configuration                            | Description                                                                                                                                         |
 | ---------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `{computer-use-model}`                   | A single model to perform all computer-use tasks                                                                                                    |
-| `{grounding-model}+{any-vlm-with-tools}` | [Composed](https://docs.trycua.com/docs/agent-sdk/supported-agents/composed-agents) with VLM for captioning and grounding LLM for element detection |
-| `moondream3+{any-llm-with-tools}`        | [Composed](https://docs.trycua.com/docs/agent-sdk/supported-agents/composed-agents) with Moondream3 for captioning and UI element detection         |
-| `human/human`                            | A [human-in-the-loop](https://docs.trycua.com/docs/agent-sdk/supported-agents/human-in-the-loop) in place of a model                                |
+| `{grounding-model}+{any-vlm-with-tools}` | [Composed](https://cua.ai/docs/docs/agent-sdk/supported-agents/composed-agents) with VLM for captioning and grounding LLM for element detection |
+| `moondream3+{any-llm-with-tools}`        | [Composed](https://cua.ai/docs/docs/agent-sdk/supported-agents/composed-agents) with Moondream3 for captioning and UI element detection         |
+| `human/human`                            | A [human-in-the-loop](https://cua.ai/docs/docs/agent-sdk/supported-agents/human-in-the-loop) in place of a model                                |
 
 ### Model Capabilities
 
@@ -333,8 +333,8 @@ Learn more in the [SOM documentation](./libs/python/som/README.md).
 
 # Resources
 
-- [Cua Blog](https://www.trycua.com/blog)
-- [Cua Docs](https://docs.trycua.com)
+- [Cua Blog](https://www.cua.ai/blog)
+- [Cua Docs](https://cua.ai/docs)
 
 # Community and Contributions
 

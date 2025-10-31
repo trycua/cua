@@ -58,14 +58,14 @@ docker run -it --rm \
 
 After running the command above, you can access your macOS VM through a web browser (e.g., http://localhost:8006).
 
-> **Note:** With the basic setup above, your VM will be reset when you stop the container (ephemeral mode). This means any changes you make inside the macOS VM will be lost. See [the documentation](https://trycua.com/docs/libraries/lumier/docker) for how to save your VM state.
+> **Note:** With the basic setup above, your VM will be reset when you stop the container (ephemeral mode). This means any changes you make inside the macOS VM will be lost. See [the documentation](https://cua.ai/docs/libraries/lumier/docker) for how to save your VM state.
 
 ## Docs
 
-- [Installation](https://trycua.com/docs/libraries/lumier/installation)
-- [Docker](https://trycua.com/docs/libraries/lumier/docker)
-- [Docker Compose](https://trycua.com/docs/libraries/lumier/docker-compose)
-- [Building Lumier](https://trycua.com/docs/libraries/lumier/building-lumier)
+- [Installation](https://cua.ai/docs/libraries/lumier/installation)
+- [Docker](https://cua.ai/docs/libraries/lumier/docker)
+- [Docker Compose](https://cua.ai/docs/libraries/lumier/docker-compose)
+- [Building Lumier](https://cua.ai/docs/libraries/lumier/building-lumier)
 
 ## Credits
 

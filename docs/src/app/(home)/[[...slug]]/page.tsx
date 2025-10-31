@@ -10,6 +10,7 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound, redirect } from 'next/navigation';
 import { PageFeedback } from '@/components/page-feedback';
+import { DocActionsMenu } from '@/components/doc-actions-menu';
 
 export default async function Page(props: { params: Promise<{ slug?: string[] }> }) {
   const params = await props.params;
@@ -177,14 +178,26 @@ export default async function Page(props: { params: Promise<{ slug?: string[] }>
     );
   };
 
+  const tocFooter = () => {
+    return (
+      <div className="mt-4">
+        <DocActionsMenu pageUrl={page.url} pageTitle={page.data.title} filePath={page.file.path} />
+      </div>
+    );
+  };
+
   return (
-    <DocsPage toc={page.data.toc} tableOfContent={{ header: tocHeader() }} full={page.data.full}>
+    <DocsPage
+      toc={page.data.toc}
+      tableOfContent={{ header: tocHeader(), footer: tocFooter() }}
+      full={page.data.full}
+    >
       <div className="flex flex-row w-full items-start">
         <div className="flex-1">
           <div className="flex flex-row w-full">
             <DocsTitle>{page.data.title}</DocsTitle>
 
-            <div className="ml-auto">
+            <div className="ml-auto flex items-center gap-2">
               {apiSection && versionItems.length > 1 && (
                 <Popover>
                   <PopoverTrigger

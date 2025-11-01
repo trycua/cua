@@ -209,6 +209,7 @@ The following table shows which capabilities are supported by each model:
 | -------------------------------------------------------------------------------------------------------------------------------- | :----------: | :-------: | :---: | :-: |
 | [Claude Sonnet/Haiku](https://docs.claude.com/en/docs/agents-and-tools/tool-use/computer-use-tool#how-to-implement-computer-use) |      🖥️      |    🎯     |  🛠️   | 👁️  |
 | [OpenAI CU Preview](https://platform.openai.com/docs/models/computer-use-preview)                                                |      🖥️      |    🎯     |       | 👁️  |
+| [Qwen3 VL](https://huggingface.co/collections/Qwen/qwen3-vl)                                                                     |      🖥️      |    🎯     |  🛠️   | 👁️  |
 | [GLM-V](https://huggingface.co/THUDM/glm-4v-9b)                                                                                  |      🖥️      |    🎯     |  🛠️   | 👁️  |
 | [Gemini CU Preview](https://ai.google.dev/gemini-api/docs/computer-use)                                                          |      🖥️      |    🎯     |       | 👁️  |
 | [InternVL](https://huggingface.co/OpenGVLab/InternVL3_5-1B)                                                                      |      🖥️      |    🎯     |  🛠️   | 👁️  |
@@ -229,6 +230,7 @@ The following table shows which capabilities are supported by each model:
 | [Claude Sonnet/Haiku](https://docs.claude.com/en/docs/agents-and-tools/tool-use/computer-use-tool#how-to-implement-computer-use) | `anthropic/claude-sonnet-4-5`, `anthropic/claude-haiku-4-5`      |
 | [OpenAI CU Preview](https://platform.openai.com/docs/models/computer-use-preview)                                                | `openai/computer-use-preview`                                    |
 | [GLM-V](https://huggingface.co/THUDM/glm-4v-9b)                                                                                  | `openrouter/z-ai/glm-4.5v`, `huggingface-local/zai-org/GLM-4.5V` |
+| [Qwen3 VL](https://huggingface.co/collections/Qwen/qwen3-vl)                                                                     | `openrouter/qwen/qwen3-vl-235b-a22b-instruct`                    |
 | [Gemini CU Preview](https://ai.google.dev/gemini-api/docs/computer-use)                                                          | `gemini-2.5-computer-use-preview`                                |
 | [InternVL](https://huggingface.co/OpenGVLab/InternVL3_5-1B)                                                                      | `huggingface-local/OpenGVLab/InternVL3_5-{1B,2B,4B,8B,...}`      |
 | [UI-TARS](https://huggingface.co/ByteDance-Seed/UI-TARS-1.5-7B)                                                                  | `huggingface-local/ByteDance-Seed/UI-TARS-1.5-7B`                |

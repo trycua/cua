@@ -773,7 +773,7 @@ class UITARSConfig:
         return agent_response
 
     async def predict_click(
-        self, model: str, image_b64: str, instruction: str
+        self, model: str, image_b64: str, instruction: str, **kwargs
     ) -> Optional[Tuple[int, int]]:
         """
         Predict click coordinates based on image and instruction.
@@ -819,6 +819,7 @@ class UITARSConfig:
                 "temperature": 0.0,
                 "do_sample": False,
             }
+            api_kwargs.update({k: v for k, v in (kwargs or {}).items()})
 
             # Call liteLLM with UITARS model
             response = await litellm.acompletion(**api_kwargs)

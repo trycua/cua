@@ -40,7 +40,7 @@ Refer to this notebook for a step-by-step guide on how to use the Computer-Use S
 
 ## Docs
 
-- [Commands](https://trycua.com/docs/libraries/computer-server/Commands)
-- [REST-API](https://trycua.com/docs/libraries/computer-server/REST-API)
-- [WebSocket-API](https://trycua.com/docs/libraries/computer-server/WebSocket-API)
-- [Index](https://trycua.com/docs/libraries/computer-server/index)
+- [Commands](https://cua.ai/docs/libraries/computer-server/Commands)
+- [REST-API](https://cua.ai/docs/libraries/computer-server/REST-API)
+- [WebSocket-API](https://cua.ai/docs/libraries/computer-server/WebSocket-API)
+- [Index](https://cua.ai/docs/libraries/computer-server/index)

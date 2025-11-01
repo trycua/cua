@@ -129,12 +129,12 @@ See [desktop-extension/README.md](desktop-extension/README.md) for more details.
 
 ## Documentation
 
-- Installation: https://trycua.com/docs/libraries/mcp-server/installation
-- Configuration: https://trycua.com/docs/libraries/mcp-server/configuration
-- Usage: https://trycua.com/docs/libraries/mcp-server/usage
-- Tools: https://trycua.com/docs/libraries/mcp-server/tools
-- Client Integrations: https://trycua.com/docs/libraries/mcp-server/client-integrations
-- LLM Integrations: https://trycua.com/docs/libraries/mcp-server/llm-integrations
+- Installation: https://cua.ai/docs/libraries/mcp-server/installation
+- Configuration: https://cua.ai/docs/libraries/mcp-server/configuration
+- Usage: https://cua.ai/docs/libraries/mcp-server/usage
+- Tools: https://cua.ai/docs/libraries/mcp-server/tools
+- Client Integrations: https://cua.ai/docs/libraries/mcp-server/client-integrations
+- LLM Integrations: https://cua.ai/docs/libraries/mcp-server/llm-integrations
 
 ## Troubleshooting
 

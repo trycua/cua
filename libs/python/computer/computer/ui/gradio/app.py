@@ -1207,7 +1207,7 @@ def create_gradio_ui():
                             label="Container Name",
                             placeholder="Enter your container name",
                             visible=False,
-                            info="Get your container from [trycua.com](https://trycua.com/)",
+                            info="Get your container from [cua.ai](https://cua.ai/)",
                         )
 
                         # Check if CUA_API_KEY is set in environment

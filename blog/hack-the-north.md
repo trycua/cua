@@ -22,7 +22,7 @@ From day one, though, we knew we’d have to fight for sign-ups. This was a nich
 
 Unfortunately, Hack the North (HTN) didn’t offer an interest form to help us estimate demand, which made capacity planning tricky—especially with early-stage infra. Stress-testing takes foresight, and multimodal language model usage is still costly (~1.5× to 3–4× the price of comparable text-only models).
 
-On top of that, we were discouraged from external promotion on [lu.ma](http://lu.ma). So we spun up our own sign-up page at **trycua.com/hackathon** and built ad-hoc Discord channels to share track details. We emphasized—repeatedly—that only students already accepted to Hack the North should register.
+On top of that, we were discouraged from external promotion on [lu.ma](http://lu.ma). So we spun up our own sign-up page at **cua.ai/hackathon** and built ad-hoc Discord channels to share track details. We emphasized—repeatedly—that only students already accepted to Hack the North should register.
 
 _(Moral: the “measure-zero effect”—no matter how many times you say it, some people won’t see it. Plenty of invalid sign-ups still slipped through.)_
 

@@ -21,10 +21,6 @@
             "path": "../libs/python/computer-server"
         },
         {
-            "name": "pylume",
-            "path": "../libs/python/pylume"
-        },
-        {
             "name": "core",
             "path": "../libs/python/core"
         }
@@ -51,7 +47,6 @@
             "${workspaceFolder:cua-root}/libs/python/computer",
             "${workspaceFolder:cua-root}/libs/python/agent",
             "${workspaceFolder:cua-root}/libs/python/som",
-            "${workspaceFolder:cua-root}/libs/python/pylume",
             "${workspaceFolder:cua-root}/.vscode/typings"
         ],
         "python.envFile": "${workspaceFolder:cua-root}/.env",
@@ -90,10 +85,6 @@
                 "depth": 2
             },
             {
-                "name": "pylume",
-                "depth": 2
-            },
-            {
                 "name": "core",
                 "depth": 2
             }
@@ -103,7 +94,6 @@
             "${workspaceFolder:cua-root}/libs/python/computer",
             "${workspaceFolder:cua-root}/libs/python/agent",
             "${workspaceFolder:cua-root}/libs/python/som",
-            "${workspaceFolder:cua-root}/libs/python/pylume"
         ],
         "python.languageServer": "None",
         "[python]": {

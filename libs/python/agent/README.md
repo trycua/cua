@@ -72,16 +72,16 @@ if __name__ == "__main__":
 
 ## Docs
 
-- [Agent Loops](https://trycua.com/docs/agent-sdk/agent-loops)
-- [Supported Agents](https://trycua.com/docs/agent-sdk/supported-agents)
-- [Supported Models](https://trycua.com/docs/agent-sdk/supported-models)
-- [Chat History](https://trycua.com/docs/agent-sdk/chat-history)
-- [Callbacks](https://trycua.com/docs/agent-sdk/callbacks)
-- [Custom Tools](https://trycua.com/docs/agent-sdk/custom-tools)
-- [Custom Computer Handlers](https://trycua.com/docs/agent-sdk/custom-computer-handlers)
-- [Prompt Caching](https://trycua.com/docs/agent-sdk/prompt-caching)
-- [Usage Tracking](https://trycua.com/docs/agent-sdk/usage-tracking)
-- [Benchmarks](https://trycua.com/docs/agent-sdk/benchmarks)
+- [Agent Loops](https://cua.ai/docs/agent-sdk/agent-loops)
+- [Supported Agents](https://cua.ai/docs/agent-sdk/supported-agents/computer-use-agents)
+- [Supported Models](https://cua.ai/docs/agent-sdk/supported-model-providers)
+- [Chat History](https://cua.ai/docs/agent-sdk/chat-history)
+- [Callbacks](https://cua.ai/docs/agent-sdk/callbacks)
+- [Custom Tools](https://cua.ai/docs/agent-sdk/custom-tools)
+- [Custom Computer Handlers](https://cua.ai/docs/agent-sdk/custom-computer-handlers)
+- [Prompt Caching](https://cua.ai/docs/agent-sdk/prompt-caching)
+- [Usage Tracking](https://cua.ai/docs/agent-sdk/usage-tracking)
+- [Benchmarks](https://cua.ai/docs/agent-sdk/benchmarks)
 
 ## License
 

@@ -4,11 +4,11 @@ on:
   workflow_call:
     inputs:
       package_name:
-        description: "Name of the package (e.g. pylume, computer, agent)"
+        description: "Name of the package (e.g. computer, agent)"
         required: true
         type: string
       package_dir:
-        description: "Directory containing the package relative to workspace root (e.g. libs/python/pylume)"
+        description: "Directory containing the package relative to workspace root (e.g. libs/python/computer)"
         required: true
         type: string
       version:
@@ -21,7 +21,7 @@ on:
         type: boolean
         default: false
       base_package_name:
-        description: "PyPI package name (e.g. pylume, cua-agent)"
+        description: "PyPI package name (e.g. cua-agent)"
         required: true
         type: string
       make_latest:

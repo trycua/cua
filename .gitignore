@@ -203,3 +203,5 @@ storage/
 .Trashes
 .Trash-1000/
 post-provision
+# Local secrets for act
+.secrets

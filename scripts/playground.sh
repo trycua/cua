@@ -62,7 +62,7 @@ if [[ "$CHOICE" == "1" ]]; then
   # If no valid API key found, prompt for one
   if [[ -z "$CUA_API_KEY" ]]; then
     echo "To use Cua Cloud Sandbox, you need to:"
-    echo "1. Sign up at https://trycua.com"
+    echo "1. Sign up at https://cua.ai"
     echo "2. Create a Cloud Sandbox"
     echo "3. Generate an Api Key"
     echo ""

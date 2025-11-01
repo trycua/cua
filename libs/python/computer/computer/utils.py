@@ -1,7 +1,10 @@
 import base64
 import io
+import os
+import shlex
 from typing import Any, Dict, Optional, Tuple
 
+import mslex
 from PIL import Image, ImageDraw
 
 
@@ -104,3 +107,25 @@ def parse_vm_info(vm_info: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     """Parse VM info from pylume response."""
     if not vm_info:
         return None
+
+
+def safe_join(argv: list[str]) -> str:
+    """
+    Return a platform-correct string that safely quotes `argv` for shell execution.
+
+    - On POSIX: uses `shlex.join`.
+    - On Windows: uses `shlex.join`.
+
+    Args:
+        argv: iterable of argument strings (will be coerced to str).
+
+    Returns:
+        A safely quoted command-line string appropriate for the current platform that protects against
+        shell injection vulnerabilities.
+    """
+    if os.name == "nt":
+        # On Windows, use mslex for proper quoting
+        return mslex.join(argv)
+    else:
+        # On POSIX systems, use shlex
+        return shlex.join(argv)

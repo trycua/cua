@@ -38,8 +38,8 @@ def load_env_or_fail() -> None:
 """
 Build Agent Config
 - customize agent behavior, tool integration, callbacks, resource management, and more
-- https://docs.trycua.com/docs/agent-sdk/agent-loops#parameters
-- https://docs.trycua.com/docs/agent-sdk/supported-model-providers
+- https://cua.ai/docs/agent-sdk/agent-loops#parameters
+- https://cua.ai/docs/agent-sdk/supported-model-providers
 """
 
 
@@ -76,7 +76,7 @@ async def run_hud_eval() -> None:
 
     """
     Customize your hud eval below, check the doc for additional params
-    - https://docs.trycua.com/docs/agent-sdk/integrations/hud#parameters-1
+    - https://cua.ai/docs/agent-sdk/integrations/hud#parameters-1
     - recommend low max steps (5-10) for testing, then max 100 for benchmarking
     - also select specific tasks to run by using splitting the dataset
     """

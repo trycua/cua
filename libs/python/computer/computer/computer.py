@@ -17,6 +17,8 @@ from .interface.factory import InterfaceFactory
 from .logger import Logger, LogLevel
 from .models import Computer as ComputerConfig
 from .models import Display
+from .tracing import ComputerTracing
+from .tracing_wrapper import TracingInterfaceWrapper
 
 SYSTEM_INFO = {
     "os": platform.system().lower(),
@@ -208,7 +210,12 @@ class Computer:
 
         # Initialize with proper typing - None at first, will be set in run()
         self._interface = None
+        self._original_interface = None  # Keep reference to original interface
+        self._tracing_wrapper = None  # Tracing wrapper for interface
         self.use_host_computer_server = use_host_computer_server
+
+        # Initialize tracing
+        self._tracing = ComputerTracing(self)
 
         # Record initialization in telemetry (if enabled)
         if telemetry_enabled and is_telemetry_enabled():
@@ -259,12 +266,14 @@ class Computer:
                 # Create the interface with explicit type annotation
                 from .interface.base import BaseComputerInterface
 
-                self._interface = cast(
+                interface = cast(
                     BaseComputerInterface,
                     InterfaceFactory.create_interface_for_os(
                         os=self.os_type, ip_address=ip_address  # type: ignore[arg-type]
                     ),
                 )
+                self._interface = interface
+                self._original_interface = interface
 
                 self.logger.info("Waiting for host computer server to be ready...")
                 await self._interface.wait_for_ready()
@@ -493,7 +502,7 @@ class Computer:
 
             # Pass authentication credentials if using cloud provider
             if self.provider_type == VMProviderType.CLOUD and self.api_key and self.config.name:
-                self._interface = cast(
+                interface = cast(
                     BaseComputerInterface,
                     InterfaceFactory.create_interface_for_os(
                         os=self.os_type,
@@ -503,12 +512,15 @@ class Computer:
                     ),
                 )
             else:
-                self._interface = cast(
+                interface = cast(
                     BaseComputerInterface,
                     InterfaceFactory.create_interface_for_os(
                         os=self.os_type, ip_address=ip_address
                     ),
                 )
+
+            self._interface = interface
+            self._original_interface = interface
 
             # Wait for the WebSocket interface to be ready
             self.logger.info("Connecting to WebSocket interface...")
@@ -866,7 +878,7 @@ class Computer:
         """Get the computer interface for interacting with the VM.
 
         Returns:
-            The computer interface
+            The computer interface (wrapped with tracing if tracing is active)
         """
         if not hasattr(self, "_interface") or self._interface is None:
             error_msg = "Computer interface not initialized. Call run() first."
@@ -876,7 +888,33 @@ class Computer:
             )
             raise RuntimeError(error_msg)
 
+        # Return tracing wrapper if tracing is active and we have an original interface
+        if (
+            self._tracing.is_tracing
+            and hasattr(self, "_original_interface")
+            and self._original_interface is not None
+        ):
+            # Create wrapper if it doesn't exist or if the original interface changed
+            if (
+                not hasattr(self, "_tracing_wrapper")
+                or self._tracing_wrapper is None
+                or self._tracing_wrapper._original_interface != self._original_interface
+            ):
+                self._tracing_wrapper = TracingInterfaceWrapper(
+                    self._original_interface, self._tracing
+                )
+            return self._tracing_wrapper
+
         return self._interface
+
+    @property
+    def tracing(self) -> ComputerTracing:
+        """Get the computer tracing instance for recording sessions.
+
+        Returns:
+            ComputerTracing: The tracing instance
+        """
+        return self._tracing
 
     @property
     def telemetry_enabled(self) -> bool:

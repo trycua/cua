@@ -84,4 +84,4 @@ Bring a team, pick a model stack, and push what agents can do on real computers.
 **Contact**  
 Questions on Hack the North? Email **hackthenorth@trycua.com**.
 
-_P.S. If you’re planning ahead, start with the Cua Agent Framework and OSWorld-Verified docs at docs.trycua.com; we’ll share office-hour times in both Discord channels._
+_P.S. If you’re planning ahead, start with the Cua Agent Framework and OSWorld-Verified docs at cua.ai/docs; we’ll share office-hour times in both Discord channels._

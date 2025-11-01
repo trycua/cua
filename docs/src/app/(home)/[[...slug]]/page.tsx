@@ -10,6 +10,7 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound, redirect } from 'next/navigation';
 import { PageFeedback } from '@/components/page-feedback';
+import { DocActionsMenu } from '@/components/doc-actions-menu';
 
 export default async function Page(props: { params: Promise<{ slug?: string[] }> }) {
   const params = await props.params;
@@ -177,14 +178,26 @@ export default async function Page(props: { params: Promise<{ slug?: string[] }>
     );
   };
 
+  const tocFooter = () => {
+    return (
+      <div className="mt-4">
+        <DocActionsMenu pageUrl={page.url} pageTitle={page.data.title} filePath={page.file.path} />
+      </div>
+    );
+  };
+
   return (
-    <DocsPage toc={page.data.toc} tableOfContent={{ header: tocHeader() }} full={page.data.full}>
+    <DocsPage
+      toc={page.data.toc}
+      tableOfContent={{ header: tocHeader(), footer: tocFooter() }}
+      full={page.data.full}
+    >
       <div className="flex flex-row w-full items-start">
         <div className="flex-1">
           <div className="flex flex-row w-full">
             <DocsTitle>{page.data.title}</DocsTitle>
 
-            <div className="ml-auto">
+            <div className="ml-auto flex items-center gap-2">
               {apiSection && versionItems.length > 1 && (
                 <Popover>
                   <PopoverTrigger
@@ -273,15 +286,99 @@ export async function generateMetadata(props: {
   if (page.url.includes('api')) title = `${page.data.title} | Cua API Docs`;
   if (page.url.includes('guide')) title = ` Guide: ${page.data.title} | Cua Docs`;
 
+  // Canonical URL points to cua.ai to consolidate all SEO authority on main domain
+  const canonicalUrl = `https://cua.ai${page.url}`;
+
+  // Extract keywords from the page for SEO
+  const keywords = [
+    'computer use agent',
+    'computer use',
+    'AI automation',
+    'visual automation',
+    page.data.title,
+  ];
+
+  // Structured data for better Google indexing (TechArticle schema)
+  const structuredData = {
+    '@context': 'https://schema.org',
+    '@type': 'TechArticle',
+    headline: page.data.title,
+    description: page.data.description,
+    url: canonicalUrl,
+    publisher: {
+      '@type': 'Organization',
+      name: 'Cua',
+      url: 'https://cua.ai',
+      logo: {
+        '@type': 'ImageObject',
+        url: 'https://cua.ai/cua_logo_black.svg',
+      },
+    },
+    mainEntityOfPage: {
+      '@type': 'WebPage',
+      '@id': canonicalUrl,
+    },
+  };
+
+  // Breadcrumb schema for better site structure understanding
+  const breadcrumbSchema = {
+    '@context': 'https://schema.org',
+    '@type': 'BreadcrumbList',
+    itemListElement: [
+      {
+        '@type': 'ListItem',
+        position: 1,
+        name: 'Cua',
+        item: 'https://cua.ai',
+      },
+      {
+        '@type': 'ListItem',
+        position: 2,
+        name: 'Documentation',
+        item: 'https://cua.ai/docs',
+      },
+      {
+        '@type': 'ListItem',
+        position: 3,
+        name: page.data.title,
+        item: canonicalUrl,
+      },
+    ],
+  };
+
   return {
     title,
     description: page.data.description,
+    keywords,
+    authors: [{ name: 'Cua', url: 'https://cua.ai' }],
+    robots: {
+      index: true,
+      follow: true,
+      googleBot: {
+        index: true,
+        follow: true,
+        'max-image-preview': 'large',
+        'max-snippet': -1,
+      },
+    },
+    alternates: {
+      canonical: canonicalUrl,
+    },
     openGraph: {
       title,
       description: page.data.description,
       type: 'article',
       siteName: 'Cua Docs',
-      url: 'https://trycua.com/docs',
+      url: canonicalUrl,
+    },
+    twitter: {
+      card: 'summary',
+      title,
+      description: page.data.description,
+      creator: '@trycua',
+    },
+    other: {
+      'script:ld+json': JSON.stringify([structuredData, breadcrumbSchema]),
     },
   };
 }

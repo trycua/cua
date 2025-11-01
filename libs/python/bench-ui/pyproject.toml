@@ -1,0 +1,24 @@
+[build-system]
+requires = ["pdm-backend"]
+build-backend = "pdm.backend"
+
+[project]
+name = "cua-bench-ui"
+version = "0.1.0"
+description = "Lightweight webUI window launcher for CUA bench using pywebview"
+readme = "README.md"
+authors = [
+    { name = "TryCua", email = "gh@trycua.com" }
+]
+dependencies = [
+    "pywebview>=5.3",
+    "aiohttp>=3.9.0",
+]
+requires-python = ">=3.12"
+
+[tool.pdm]
+distribution = true
+
+[tool.pdm.build]
+includes = ["bench_ui/"]
+source-includes = ["README.md"]

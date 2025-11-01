@@ -39,7 +39,7 @@ jobs:
           # - huggingface-local/zai-org/GLM-4.5V  # Requires local model setup
 
           # Gemini CU Preview
-          # - gemini-2.5-computer-use-preview-10-2025
+          - gemini-2.5-computer-use-preview-10-2025
 
           # InternVL
           - huggingface-local/OpenGVLab/InternVL3_5-1B

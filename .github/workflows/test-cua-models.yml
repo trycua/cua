@@ -14,9 +14,7 @@ on:
         default: true
         type: boolean
   schedule:
-    # Runs at 4 PM UTC (8 AM PST) from November to March
-    - cron: "0 16 * * *"
-    # Runs at 3 PM UTC (8 AM PDT) from March to November
+    # Runs at 3 PM UTC (8 AM PDT) daily
     - cron: "0 15 * * *"
 
 jobs:

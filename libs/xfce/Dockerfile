@@ -19,6 +19,9 @@ ENV VNC_COL_DEPTH=24
 RUN apt-get update && apt-get install -y \
     # System utilities
     sudo \
+    unzip \
+    zip \
+    xdg-utils \
     # Desktop environment
     xfce4 \
     xfce4-terminal \

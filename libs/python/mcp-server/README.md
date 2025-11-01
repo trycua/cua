@@ -102,6 +102,31 @@ Expected results:
 - Assistant messages streamed during execution
 - A final screenshot image
 
+## Desktop Extension
+
+CUA also provides a Claude Desktop Extension (`.mcpb` file) for easy one-click installation.
+
+### Building the Desktop Extension
+
+To build the desktop extension from source:
+
+```bash
+cd libs/python/mcp-server
+python3 build-extension.py
+```
+
+This creates `desktop-extension/cua-extension.mcpb` which can be installed directly in Claude Desktop.
+
+### Installing the Desktop Extension
+
+1. Build the extension (see above)
+2. Open Claude Desktop Settings
+3. Go to Extensions
+4. Drop the `cua-extension.mcpb` file into the window
+5. Follow the installation prompts
+
+See [desktop-extension/README.md](desktop-extension/README.md) for more details.
+
 ## Documentation
 
 - Installation: https://cua.ai/docs/libraries/mcp-server/installation

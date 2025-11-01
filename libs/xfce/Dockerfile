@@ -63,6 +63,9 @@ RUN add-apt-repository -y ppa:deadsnakes/ppa && \
     python3.12 -m pip install --upgrade pip setuptools wheel && \
     rm -rf /var/lib/apt/lists/*
 
+# Ensure 'python' points to Python 3.12
+RUN update-alternatives --install /usr/bin/python python /usr/bin/python3.12 2
+
 # Remove screensavers and power manager to avoid popups and lock screens
 RUN apt-get remove -y \
     xfce4-power-manager \

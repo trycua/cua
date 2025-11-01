@@ -10,6 +10,7 @@ This module provides:
 
 import asyncio
 import logging
+import os
 import time
 import uuid
 import weakref
@@ -57,7 +58,14 @@ class ComputerPool:
                 logger.debug("Creating new computer instance")
                 from computer import Computer
 
-                computer = Computer(verbosity=logging.INFO)
+                # Check if we should use host computer server
+                use_host = os.getenv("CUA_USE_HOST_COMPUTER_SERVER", "false").lower() in (
+                    "true",
+                    "1",
+                    "yes",
+                )
+
+                computer = Computer(verbosity=logging.INFO, use_host_computer_server=use_host)
                 await computer.run()
                 self._in_use.add(computer)
                 return computer

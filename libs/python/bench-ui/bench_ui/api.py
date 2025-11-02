@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Optional, Dict, Any
 from urllib import request
 from urllib.error import HTTPError, URLError
+import psutil
 
 # Map child PID -> listening port
 _pid_to_port: Dict[int, int] = {}
@@ -28,6 +29,31 @@ def _post_json(url: str, payload: Dict[str, Any]) -> Dict[str, Any]:
             return {"error": "http_error", "status": getattr(e, 'code', None)}
     except URLError as e:
         return {"error": "url_error", "reason": str(e.reason)}
+
+
+def _detect_port_for_pid(pid: int) -> int:
+    """Detect a listening local TCP port for the given PID using psutil.
+
+    Fails fast if psutil is unavailable or if no suitable port is found.
+    """
+    if psutil is None:
+        raise RuntimeError("psutil is required for PID->port detection. Please install psutil.")
+
+    # Scan system-wide connections and filter by PID
+    for c in psutil.net_connections(kind="tcp"):
+        if getattr(c, "pid", None) != pid:
+            continue
+        laddr = getattr(c, "laddr", None)
+        status = str(getattr(c, "status", ""))
+        if not laddr or not isinstance(laddr, tuple) or len(laddr) < 2:
+            continue
+        lip, lport = laddr[0], int(laddr[1])
+        if status.upper() != "LISTEN":
+            continue
+        if lip in ("127.0.0.1", "::1", "0.0.0.0", "::"):
+            return lport
+
+    raise RuntimeError(f"Could not detect listening port for pid {pid}")
 
 
 def launch_window(
@@ -101,7 +127,7 @@ def get_element_rect(pid: int, selector: str, *, space: str = "window"):
     Returns a dict like {"x": float, "y": float, "width": float, "height": float} or None if not found.
     """
     if pid not in _pid_to_port:
-        raise RuntimeError(f"Unknown pid {pid}; no registered bench-ui window")
+        _pid_to_port[pid] = _detect_port_for_pid(pid)
     port = _pid_to_port[pid]
     url = f"http://127.0.0.1:{port}/rect"
     last: Dict[str, Any] = {}
@@ -129,7 +155,7 @@ def execute_javascript(pid: int, javascript: str):
     Retries briefly while the window is still becoming ready.
     """
     if pid not in _pid_to_port:
-        raise RuntimeError(f"Unknown pid {pid}; no registered bench-ui window")
+        _pid_to_port[pid] = _detect_port_for_pid(pid)
     port = _pid_to_port[pid]
     url = f"http://127.0.0.1:{port}/eval"
     last: Dict[str, Any] = {}

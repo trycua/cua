@@ -4,8 +4,8 @@ build-backend = "pdm.backend"
 
 [project]
 name = "cua-bench-ui"
-version = "0.1.0"
-description = "Lightweight webUI window launcher for CUA bench using pywebview"
+version = "0.3.0"
+description = "Lightweight webUI window controller for CUA bench using pywebview"
 readme = "README.md"
 authors = [
     { name = "TryCua", email = "gh@trycua.com" }
@@ -13,6 +13,7 @@ authors = [
 dependencies = [
     "pywebview>=5.3",
     "aiohttp>=3.9.0",
+    "psutil>=5.9",
 ]
 requires-python = ">=3.12"
 

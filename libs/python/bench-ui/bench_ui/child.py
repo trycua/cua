@@ -18,7 +18,7 @@ def _get_free_port() -> int:
         return s.getsockname()[1]
 
 
-def _start_http_server(window: webview.Window, port: int, ready_event: threading.Event):
+def _start_http_server(window: webview.Window, port: int, ready_event: threading.Event, html_content: str | None = None):
     async def rect_handler(request: web.Request):
         try:
             data = await request.json()
@@ -90,7 +90,13 @@ def _start_http_server(window: webview.Window, port: int, ready_event: threading
             return web.json_response({"error": str(e)}, status=500)
         return web.json_response({"result": result})
 
+    async def index_handler(request: web.Request):
+        if html_content is None:
+            return web.json_response({"status": "ok", "message": "bench-ui control server"})
+        return web.Response(text=html_content, content_type="text/html")
+
     app = web.Application()
+    app.router.add_get("/", index_handler)
     app.router.add_post("/rect", rect_handler)
     app.router.add_post("/eval", eval_handler)
 
@@ -127,6 +133,9 @@ def main():
     use_inner_size: bool = bool(cfg.get("use_inner_size", False))
     title_bar_style: str = cfg.get("title_bar_style", "default")
 
+    # Choose port early so we can point the window to it when serving inline HTML
+    port = _get_free_port()
+
     # Create window
     if url:
         window = webview.create_window(
@@ -140,10 +149,13 @@ def main():
             text_select=True,
             background_color="#FFFFFF",
         )
+        html_for_server = None
     else:
+        # Serve inline HTML at control server root and point window to it
+        resolved_url = f"http://127.0.0.1:{port}/"
         window = webview.create_window(
             title,
-            html=html,
+            url=resolved_url,
             width=width,
             height=height,
             x=x,
@@ -152,6 +164,7 @@ def main():
             text_select=True,
             background_color="#FFFFFF",
         )
+        html_for_server = html
 
     # Track when the page is loaded so JS execution succeeds
     window_ready = threading.Event()
@@ -159,9 +172,8 @@ def main():
         window_ready.set()
     window.events.loaded += _on_loaded  # type: ignore[attr-defined]
 
-    # Start HTTP server for control
-    port = _get_free_port()
-    _start_http_server(window, port, window_ready)
+    # Start HTTP server for control (and optionally serve inline HTML)
+    _start_http_server(window, port, window_ready, html_content=html_for_server)
 
     # Print startup info for parent to read
     print(json.dumps({"pid": os.getpid(), "port": port}), flush=True)

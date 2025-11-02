@@ -2,6 +2,7 @@ from __future__ import annotations
 import time
 from bench_ui import launch_window, get_element_rect, execute_javascript
 from pathlib import Path
+import os
 
 HTML = """
 <!doctype html>
@@ -17,11 +18,25 @@ HTML = """
   <body>
     <h1>Bench UI Example</h1>
     <div id="target">Hello from pywebview</div>
+
+    
+    <h1>Click the button</h1>
+    <button id="submit" class="btn" data-instruction="the button">Submit</button>
+    <script>
+        window.__submitted = false;
+        document.getElementById('submit').addEventListener('click', function() {
+            window.__submitted = true;
+            this.textContent = 'Submitted!';
+            this.disabled = true;
+        });
+    </script>
   </body>
 </html>
 """
 
 def main():
+    os.environ["CUA_BENCH_UI_DEBUG"] = "1"
+
     # Launch a window with inline HTML content
     pid = launch_window(
         html=HTML,
@@ -54,7 +69,7 @@ def main():
         print(f"Failed to capture/annotate screenshot: {e}")
 
     # Execute arbitrary JavaScript
-    text = execute_javascript(pid, "document.querySelector('#t')?.textContent")
+    text = execute_javascript(pid, "window.__submitted")
     print("text:", text)
 
 

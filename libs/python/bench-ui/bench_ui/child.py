@@ -167,7 +167,7 @@ def main():
     print(json.dumps({"pid": os.getpid(), "port": port}), flush=True)
 
     # Start GUI (blocking)
-    webview.start()
+    webview.start(debug=os.environ.get("CUA_BENCH_UI_DEBUG", "false").lower() in ("true", "1"))
 
 
 if __name__ == "__main__":

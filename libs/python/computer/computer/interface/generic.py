@@ -942,12 +942,46 @@ class GenericComputerInterface(BaseComputerInterface):
         return result
 
     async def wait_for_ready(self, timeout: int = 60, interval: float = 1.0):
-        """Wait for Computer API Server to be ready by testing version command."""
+        """Wait for Computer API Server to be ready and verify version compatibility."""
 
-        # Check if REST API is available
+        # Expected protocol version (must match computer-server)
+        EXPECTED_PROTOCOL_VERSION = 1
+
+        # Check if REST API is available and verify version compatibility
         try:
             result = await self._send_command_rest("version", {})
             assert result.get("success", True)
+
+            # Verify version compatibility
+            protocol_version = result.get("protocol")
+            package_version = result.get("package", "unknown")
+
+            if protocol_version is not None:
+                self.logger.info(
+                    f"Computer Server version: {package_version} (protocol: {protocol_version})"
+                )
+
+                if protocol_version != EXPECTED_PROTOCOL_VERSION:
+                    error_msg = (
+                        f"Version mismatch detected!\n"
+                        f"Computer SDK expects protocol version {EXPECTED_PROTOCOL_VERSION}, "
+                        f"but Computer Server is running protocol version {protocol_version}.\n"
+                        f"Computer Server package version: {package_version}\n\n"
+                        f"This typically happens when:\n"
+                        f"  1. Your VM image has an outdated Computer Server\n"
+                        f"  2. Your Computer SDK is outdated\n\n"
+                        f"To fix this:\n"
+                        f"  - Update Computer SDK: pip install --upgrade cua-computer\n"
+                        f"  - Pull latest VM image: lume pull <image>:latest\n"
+                        f"  - Or update Computer Server in VM: pip install --upgrade cua-computer-server"
+                    )
+                    self.logger.error(error_msg)
+                    raise RuntimeError(error_msg)
+            else:
+                self.logger.warning(
+                    "Could not determine Computer Server protocol version. "
+                    "This may indicate an outdated server version."
+                )
         except Exception as e:
             self.logger.debug(
                 f"REST API failed for command 'version', trying WebSocket fallback: {e}"
@@ -1053,8 +1087,39 @@ class GenericComputerInterface(BaseComputerInterface):
 
                     # Check if we have a connection
                     if self._ws and self._ws.state == websockets.protocol.State.OPEN:
-                        # Test the connection with a simple command
+                        # Test the connection and verify version compatibility
                         try:
+                            # First check version compatibility
+                            EXPECTED_PROTOCOL_VERSION = 1
+                            version_result = await self._send_command_ws("version")
+
+                            if version_result.get("success", True):
+                                protocol_version = version_result.get("protocol")
+                                package_version = version_result.get("package", "unknown")
+
+                                if protocol_version is not None:
+                                    self.logger.info(
+                                        f"Computer Server version: {package_version} (protocol: {protocol_version})"
+                                    )
+
+                                    if protocol_version != EXPECTED_PROTOCOL_VERSION:
+                                        error_msg = (
+                                            f"Version mismatch detected!\n"
+                                            f"Computer SDK expects protocol version {EXPECTED_PROTOCOL_VERSION}, "
+                                            f"but Computer Server is running protocol version {protocol_version}.\n"
+                                            f"Computer Server package version: {package_version}\n\n"
+                                            f"This typically happens when:\n"
+                                            f"  1. Your VM image has an outdated Computer Server\n"
+                                            f"  2. Your Computer SDK is outdated\n\n"
+                                            f"To fix this:\n"
+                                            f"  - Update Computer SDK: pip install --upgrade cua-computer\n"
+                                            f"  - Pull latest VM image: lume pull <image>:latest\n"
+                                            f"  - Or update Computer Server in VM: pip install --upgrade cua-computer-server"
+                                        )
+                                        self.logger.error(error_msg)
+                                        raise RuntimeError(error_msg)
+
+                            # Now test with a simple command to ensure everything works
                             await self._send_command_ws("get_screen_size")
                             elapsed = time.time() - start_time
                             self.logger.info(

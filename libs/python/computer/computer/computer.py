@@ -262,7 +262,11 @@ class Computer:
             if self.use_host_computer_server:
                 self.logger.info("Using host computer server")
                 # Set ip_address for host computer server mode
-                ip_address = "localhost"
+                ip_address = (
+                    self.host
+                    if (self.host and self.host.strip() and self.host != "localhost")
+                    else "localhost"
+                )
                 # Create the interface with explicit type annotation
                 from .interface.base import BaseComputerInterface
 
@@ -1075,13 +1079,13 @@ import traceback
 try:
     # Define the function from source
 {textwrap.indent(func_source, "    ")}
-    
+
     # Deserialize args and kwargs from JSON
     args_json = """{args_json}"""
     kwargs_json = """{kwargs_json}"""
     args = json.loads(args_json)
     kwargs = json.loads(kwargs_json)
-    
+
     # Execute the function
     result = {func_name}(*args, **kwargs)
 
@@ -1091,7 +1095,7 @@ try:
         "result": result,
         "error": None
     }}
-    
+
 except Exception as e:
     # Create error output payload
     output_payload = {{

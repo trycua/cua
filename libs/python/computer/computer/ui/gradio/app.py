@@ -617,7 +617,7 @@ async def execute(name, action, arguments):
 
 
 async def handle_init_computer(
-    os_choice: str, app_list=None, provider="lume", container_name=None, api_key=None
+    os_choice: str, app_list=None, provider="lume", container_name=None, api_key=None, host_ip=None
 ):
     """Initialize the computer instance and tools for macOS or Ubuntu or Windows
 
@@ -627,6 +627,7 @@ async def handle_init_computer(
         provider: The provider to use ("lume" or "self" or "cloud")
         container_name: The container name to use for cloud provider
         api_key: The API key to use for cloud provider
+        host_ip: The host IP address to use for self provider (defaults to "localhost" if not provided)
     """
     global computer, tool_call_logs, tools
 
@@ -649,8 +650,13 @@ async def handle_init_computer(
 
     # Create computer instance with appropriate configuration
     if use_host_computer_server:
+        # Use provided host IP or default to "localhost"
+        host_address = host_ip.strip() if host_ip and host_ip.strip() else "localhost"
         computer = Computer(
-            os_type=os_type_str, use_host_computer_server=True, experiments=experiments
+            os_type=os_type_str,
+            use_host_computer_server=True,
+            host=host_address,
+            experiments=experiments,
         )
     elif provider == "cloud":
         # Use API key from environment variable or field input
@@ -698,6 +704,11 @@ async def handle_init_computer(
     # Add container name to the log if using cloud provider
     if provider == "cloud":
         init_params["container_name"] = container_name
+
+    # Add host IP address to the log if using self provider
+    if provider == "self":
+        host_address = host_ip.strip() if host_ip and host_ip.strip() else "localhost"
+        init_params["host_ip"] = host_address
 
     result = await execute("computer", "initialize", init_params)
 
@@ -1222,6 +1233,14 @@ def create_gradio_ui():
                             info="Required for cloud provider. Set CUA_API_KEY environment variable to hide this field.",
                         )
 
+                        # Host IP address field for self provider (initially hidden)
+                        host_ip = gr.Textbox(
+                            label="Host IP Address",
+                            placeholder="Enter host IP address (e.g., 192.168.1.100 or localhost)",
+                            visible=False,
+                            info="Enter the IP address of the host computer server. Defaults to 'localhost' if left empty.",
+                        )
+
                         # App filtering dropdown for app-use experiment
                         app_filter = gr.Dropdown(
                             label="Filter by apps (App-Use)",
@@ -1230,20 +1249,22 @@ def create_gradio_ui():
                             info="When apps are selected, the computer will focus on those apps using the app-use experiment",
                         )
 
-                        # Function to show/hide container name and API key fields based on provider selection
-                        def update_cloud_fields_visibility(provider):
+                        # Function to show/hide container name, API key, and host IP fields based on provider selection
+                        def update_provider_fields_visibility(provider):
                             show_container = provider == "cloud"
                             show_api_key = provider == "cloud" and not has_cua_key
+                            show_host_ip = provider == "self"
                             return (
                                 gr.update(visible=show_container),
                                 gr.update(visible=show_api_key),
+                                gr.update(visible=show_host_ip),
                             )
 
                         # Connect provider choice to field visibility
                         provider_choice.change(
-                            update_cloud_fields_visibility,
+                            update_provider_fields_visibility,
                             inputs=provider_choice,
-                            outputs=[container_name, api_key_field],
+                            outputs=[container_name, api_key_field, host_ip],
                         )
 
                     start_btn = gr.Button("Initialize Computer")
@@ -1392,7 +1413,7 @@ def create_gradio_ui():
         img.select(handle_click, inputs=[img, click_type], outputs=[img, action_log])
         start_btn.click(
             handle_init_computer,
-            inputs=[os_choice, app_filter, provider_choice, container_name, api_key_field],
+            inputs=[os_choice, app_filter, provider_choice, container_name, api_key_field, host_ip],
             outputs=[img, action_log],
         )
         wait_btn.click(handle_wait, outputs=[img, action_log])

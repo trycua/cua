@@ -1,0 +1,33 @@
+# Trading Agent Requirements
+# Install with: pip install -r requirements-trading.txt
+
+# Core Cua packages (install from main repo)
+# pip install -e ".[all]" from cua root directory
+
+# Market Data & Trading APIs
+alpaca-trade-api>=3.0.0        # Alpaca broker API
+yfinance>=0.2.0                # Yahoo Finance data (free)
+pandas>=2.0.0                  # Data manipulation
+numpy>=1.24.0                  # Numerical computing
+
+# Technical Analysis
+ta-lib>=0.4.0                  # Technical indicators (requires system install)
+pandas-ta>=0.3.14              # Alternative TA library (pure Python)
+
+# AI/ML (optional, for advanced features)
+anthropic>=0.18.0              # Claude API (already in Cua)
+
+# Utilities
+python-dotenv>=1.0.0           # Environment variables
+aiohttp>=3.9.0                 # Async HTTP
+websockets>=12.0               # Real-time data streams
+requests>=2.31.0               # HTTP requests
+
+# Monitoring & Logging (optional)
+prometheus-client>=0.19.0      # Metrics
+streamlit>=1.30.0              # Dashboard (optional)
+plotly>=5.18.0                 # Charting (optional)
+
+# Development
+pytest>=7.4.0                  # Testing
+pytest-asyncio>=0.21.0         # Async testing

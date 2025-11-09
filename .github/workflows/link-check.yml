@@ -42,64 +42,21 @@ jobs:
         id: parse-results
         if: always()
         run: |
-          # Initialize defaults
-          BROKEN="0"
-          TOTAL="0"
+          # Use lychee exit code: 0 = success, >0 = errors found
+          EXIT_CODE="${{ steps.lychee.outputs.exit_code }}"
 
-          # Parse lychee output for statistics
-          if [ -f "lychee-output.md" ]; then
-            # Extract statistics from lychee output
-            TOTAL=$(grep -oP 'Total\s+\|\s+\K\d+' lychee-output.md || echo "0")
-            BROKEN=$(grep -oP 'Errors\s+\|\s+\K\d+' lychee-output.md || echo "0")
-
-            # If stats not found in that format, try alternate parsing
-            if [ "$TOTAL" = "0" ] && [ "$BROKEN" = "0" ]; then
-              BROKEN=$(grep -c "❌\|✗\|ERROR" lychee-output.md || echo "0")
-            fi
-          fi
-
-          # Set status based on results
-          if [ "$BROKEN" = "0" ]; then
-            STATUS_ICON="✅"
-            STATUS_TEXT="All links are working!"
-            COLOR="#36a64f"
+          # Set status based on exit code
+          if [ "$EXIT_CODE" = "0" ]; then
+            echo "STATUS_ICON=✅" >> $GITHUB_ENV
+            echo "STATUS_TEXT=All links are working" >> $GITHUB_ENV
+            echo "COLOR=#36a64f" >> $GITHUB_ENV
+            echo "BROKEN_COUNT=0" >> $GITHUB_ENV
           else
-            STATUS_ICON="⚠️"
-            STATUS_TEXT="Found ${BROKEN} broken links"
-            COLOR="#ffa500"
+            echo "STATUS_ICON=⚠️" >> $GITHUB_ENV
+            echo "STATUS_TEXT=Some links may be broken" >> $GITHUB_ENV
+            echo "COLOR=#ffa500" >> $GITHUB_ENV
+            echo "BROKEN_COUNT=Check workflow logs" >> $GITHUB_ENV
           fi
-
-          # Extract broken links for summary (limit to first 15 lines)
-          BROKEN_LINKS=""
-          if [ -f "lychee-output.md" ] && [ "$BROKEN" != "0" ]; then
-            # Get the errors section from lychee output
-            BROKEN_LINKS=$(awk '/## Errors/,/^$/' lychee-output.md | grep -E "^\*|http|^  " | head -15 || echo "")
-
-            # If no errors section found, try to extract failed URLs
-            if [ -z "$BROKEN_LINKS" ]; then
-              BROKEN_LINKS=$(grep -B 1 "❌\|✗\|ERROR" lychee-output.md | head -15 || echo "")
-            fi
-          fi
-
-          # Export for Slack notification
-          echo "STATUS_ICON=${STATUS_ICON}" >> $GITHUB_ENV
-          echo "COLOR=${COLOR}" >> $GITHUB_ENV
-          echo "BROKEN_COUNT=${BROKEN}" >> $GITHUB_ENV
-          echo "TOTAL_COUNT=${TOTAL}" >> $GITHUB_ENV
-
-          # Use heredoc for STATUS_TEXT to handle special characters safely
-          {
-            echo "STATUS_TEXT<<EOF"
-            echo "${STATUS_TEXT}"
-            echo "EOF"
-          } >> $GITHUB_ENV
-
-          # Save broken links to multiline env var
-          {
-            echo 'BROKEN_LINKS<<EOF'
-            echo "${BROKEN_LINKS}"
-            echo 'EOF'
-          } >> $GITHUB_ENV
 
       - name: Send results to Slack
         if: always()
@@ -111,9 +68,8 @@ jobs:
           SLACK_COLOR: ${{ env.COLOR }}
           SLACK_MESSAGE: |
             *Status:* ${{ env.STATUS_ICON }} ${{ env.STATUS_TEXT }}
-            *Total Links Checked:* ${{ env.TOTAL_COUNT }}
-            *Broken Links Found:* ${{ env.BROKEN_COUNT }}
 
-            ${{ env.BROKEN_COUNT != '0' && format('*Sample Broken Links:*\n```\n{0}\n```\n\n_See full details in the workflow run_', env.BROKEN_LINKS) || '' }}
+            *Branch:* ${{ github.ref_name }}
+            *Commit:* ${{ github.event.head_commit.message || 'See PR description' }}
 
             *Run Details:* ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}

@@ -28,8 +28,8 @@ Computer-Use Agents (CUAs) are AI systems that can autonomously interact with co
 
 With the [Computer SDK](#computer-sdk), you can:
 
-- automate Windows, Linux, and macOS VMs with a consistent, [pyautogui-like API](https://cua.ai/docs/docs/libraries/computer#interface-actions)
-- create & manage VMs [locally](https://cua.ai/docs/docs/computer-sdk/computers#cua-local-containers) or using [Cua cloud](https://www.cua.ai/)
+- automate Windows, Linux, and macOS VMs with a consistent, [pyautogui-like API](https://cua.ai/docs/computer-sdk/commands)
+- create & manage VMs [locally](https://cua.ai/docs/quickstart-devs#using-computer) or using [Cua cloud](https://www.cua.ai/)
 
 With the [Agent SDK](#agent-sdk), you can:
 
@@ -102,8 +102,8 @@ Core utilities for Cua
 # Quick Start
 
 - [Clone a starter template and run the code in <1 min](https://github.com/trycua/agent-template)
-- [Get started with the Cua SDKs](https://cua.ai/docs/docs/quickstart-devs)
-- [Get started with the Cua CLI](https://cua.ai/docs/docs/quickstart-cli)
+- [Get started with the Cua SDKs](https://cua.ai/docs/quickstart-devs)
+- [Get started with the Cua CLI](https://cua.ai/docs/quickstart-cli)
 
 # Agent SDK
 
@@ -203,9 +203,9 @@ These are the valid model configurations for `ComputerAgent(model="...")`:
 | Configuration                            | Description                                                                                                                                     |
 | ---------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
 | `{computer-use-model}`                   | A single model to perform all computer-use tasks                                                                                                |
-| `{grounding-model}+{any-vlm-with-tools}` | [Composed](https://cua.ai/docs/docs/agent-sdk/supported-agents/composed-agents) with VLM for captioning and grounding LLM for element detection |
-| `moondream3+{any-llm-with-tools}`        | [Composed](https://cua.ai/docs/docs/agent-sdk/supported-agents/composed-agents) with Moondream3 for captioning and UI element detection         |
-| `human/human`                            | A [human-in-the-loop](https://cua.ai/docs/docs/agent-sdk/supported-agents/human-in-the-loop) in place of a model                                |
+| `{grounding-model}+{any-vlm-with-tools}` | [Composed](https://cua.ai/docs/agent-sdk/supported-agents/composed-agents) with VLM for captioning and grounding LLM for element detection |
+| `moondream3+{any-llm-with-tools}`        | [Composed](https://cua.ai/docs/agent-sdk/supported-agents/composed-agents) with Moondream3 for captioning and UI element detection         |
+| `human/human`                            | A [human-in-the-loop](https://cua.ai/docs/agent-sdk/supported-agents/human-in-the-loop) in place of a model                                |
 
 ### Model Capabilities
 

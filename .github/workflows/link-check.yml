@@ -102,7 +102,7 @@ jobs:
           } >> $GITHUB_ENV
 
       - name: Send results to Slack
-        if: always() && secrets.SLACK_WEBHOOK != ''
+        if: ${{ always() && secrets.SLACK_WEBHOOK != '' }}
         uses: rtCamp/action-slack-notify@v2
         env:
           SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}

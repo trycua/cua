@@ -1,11 +1,11 @@
 name: Link Checker
 
 on:
-  pull_request_target:
+  pull_request:
     branches: [main, master]
   push:
     branches:
-      # (empty; removed branch filter to run on all PRs)
+      - main
   workflow_dispatch:
 
 jobs:
@@ -105,7 +105,7 @@ jobs:
           } >> $GITHUB_ENV
 
       - name: Send results to Slack
-        if: always()
+        if: always() && secrets.SLACK_WEBHOOK != ''
         uses: rtCamp/action-slack-notify@v2
         env:
           SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}

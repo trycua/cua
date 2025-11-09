@@ -377,40 +377,38 @@ if (Test-Path $caddyProxyExecutablePath) {
     }
 }
 
-# - CUA Computer Server Setup
-
-$pythonServerPort = 5000
-$onLogonTaskName = "WindowsArena_OnLogon"
-
-# Ensure pip is updated to the latest version
-Install-PythonPackages -Package "pip" -Arguments "--upgrade"
-
-Install-PythonPackages -Package "wheel"
-
-# Install CUA computer-server
-Write-Host "Installing cua-computer-server..."
-Install-PythonPackages -Package "cua-computer-server"
-
-# Add a firewall rule to allow incoming connections on the specified port for the Python executable
-$pythonServerRuleName = "PythonHTTPServer-$pythonServerPort"
-if (-not (Get-NetFirewallRule -Name $pythonServerRuleName -ErrorAction SilentlyContinue)) {
-    New-NetFirewallRule -DisplayName $pythonServerRuleName -Direction Inbound -Program $pythonExecutablePath -Protocol TCP -LocalPort $pythonServerPort -Action Allow -Profile Any
-    Write-Host "Firewall rule added to allow traffic on port $pythonServerPort for Python"
+# - Caddy Reverse Proxy Setup
+Write-Host "Setting up Caddy Reverse Proxy..."
+$caddySetupScript = Join-Path $scriptFolder -ChildPath "setup-caddy-proxy.ps1"
+if (Test-Path $caddySetupScript) {
+    & $caddySetupScript
+    Write-Host "Caddy Reverse Proxy setup completed."
 } else {
-    Write-Host "Firewall rule already exists. $pythonServerRuleName "
+    Write-Host "ERROR: setup-caddy-proxy.ps1 not found at $caddySetupScript"
 }
 
-# Add a firewall rule to allow incoming connections on the specified port for the Python executable
+# Add a firewall rule for Caddy Proxy if needed
 $caddyProxyRuleName = "Allow-Caddy-Proxy"
 if (-not (Get-NetFirewallRule -Name $caddyProxyRuleName -ErrorAction SilentlyContinue)) {
     New-NetFirewallRule -DisplayName $caddyProxyRuleName -Direction Inbound -Program $caddyProxyExecutablePath -Action Allow -Profile Any
-    Write-Host "Firewall rule added to allow traffic on port $caddyProxyRuleName"
+    Write-Host "Firewall rule added to allow traffic for $caddyProxyRuleName"
 } else {
-    Write-Host "Firewall rule already exists. $caddyProxyRuleName "
+    Write-Host "Firewall rule already exists. $caddyProxyRuleName"
 }
 
+# - CUA Computer Server Setup
+Write-Host "Setting up CUA Computer Server..."
+$cuaServerSetupScript = Join-Path $scriptFolder -ChildPath "setup-cua-server.ps1"
+if (Test-Path $cuaServerSetupScript) {
+    & $cuaServerSetupScript
+    Write-Host "CUA Computer Server setup completed."
+} else {
+    Write-Host "ERROR: setup-cua-server.ps1 not found at $cuaServerSetupScript"
+}
+
+# Register on-logon task (required for base image shutdown detection)
+$onLogonTaskName = "WindowsArena_OnLogon"
 $onLogonScriptPath = "$scriptFolder\on-logon.ps1"
-# Check if the scheduled task exists before unregistering it
 if (Get-ScheduledTask -TaskName $onLogonTaskName -ErrorAction SilentlyContinue) {
     Write-Host "Scheduled task $onLogonTaskName already exists."
 } else {
@@ -419,4 +417,7 @@ if (Get-ScheduledTask -TaskName $onLogonTaskName -ErrorAction SilentlyContinue) 
 }
 
 Start-Sleep -Seconds 10
-Start-ScheduledTask -TaskName $onLogonTaskName
+
+# Start the on-logon task asynchronously (non-blocking) so setup can complete
+Write-Host "Starting $onLogonTaskName task in background..."
+Start-Process -WindowStyle Hidden -FilePath "powershell.exe" -ArgumentList "-Command", "Start-ScheduledTask -TaskName '$onLogonTaskName'"

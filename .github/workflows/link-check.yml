@@ -24,13 +24,7 @@ jobs:
         id: lychee
         with:
           # Check all markdown files
-          args: |
-            --cache
-            --max-cache-age 1d
-            --verbose
-            --no-progress
-            --exclude-mail
-            '**/*.md'
+          args: --verbose --no-progress --cache --max-cache-age 1d '**/*.md'
           # Output results to file for parsing
           output: lychee-output.md
           # Don't fail the build on broken links (warning mode)
@@ -45,17 +39,27 @@ jobs:
           # Use lychee exit code: 0 = success, >0 = errors found
           EXIT_CODE="${{ steps.lychee.outputs.exit_code }}"
 
+          echo "Exit code: $EXIT_CODE"
+
+          # Show summary if output file exists
+          if [ -f "lychee-output.md" ]; then
+            echo "=== Link Check Summary ==="
+            cat lychee-output.md
+          fi
+
           # Set status based on exit code
           if [ "$EXIT_CODE" = "0" ]; then
             echo "STATUS_ICON=✅" >> $GITHUB_ENV
             echo "STATUS_TEXT=All links are working" >> $GITHUB_ENV
             echo "COLOR=#36a64f" >> $GITHUB_ENV
-            echo "BROKEN_COUNT=0" >> $GITHUB_ENV
+          elif [ "$EXIT_CODE" = "2" ]; then
+            echo "STATUS_ICON=❌" >> $GITHUB_ENV
+            echo "STATUS_TEXT=Link checker failed to run" >> $GITHUB_ENV
+            echo "COLOR=#dc3545" >> $GITHUB_ENV
           else
             echo "STATUS_ICON=⚠️" >> $GITHUB_ENV
-            echo "STATUS_TEXT=Some links may be broken" >> $GITHUB_ENV
+            echo "STATUS_TEXT=Found broken links" >> $GITHUB_ENV
             echo "COLOR=#ffa500" >> $GITHUB_ENV
-            echo "BROKEN_COUNT=Check workflow logs" >> $GITHUB_ENV
           fi
 
       - name: Send results to Slack

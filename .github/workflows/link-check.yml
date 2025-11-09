@@ -1,8 +1,11 @@
 name: Link Checker
 
 on:
-  pull_request:
+  pull_request_target:
+    branches: [main, master]
   push:
+    branches:
+      - main
   workflow_dispatch:
 
 jobs:
@@ -73,7 +76,6 @@ jobs:
           SLACK_MESSAGE: |
             *Status:* ${{ env.STATUS_ICON }} ${{ env.STATUS_TEXT }}
 
-            *Branch:* ${{ github.ref_name }}
-            *Commit:* ${{ github.event.head_commit.message || 'See PR description' }}
+            *Branch:* `${{ github.ref_name }}`
 
-            *Run Details:* ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+            <${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}${{ github.event.pull_request.number && format('?pr={0}', github.event.pull_request.number) || '' }}|View broken links>

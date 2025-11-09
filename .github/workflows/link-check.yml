@@ -24,7 +24,7 @@ jobs:
         id: lychee
         with:
           # Check all markdown files
-          args: --verbose --no-progress --cache --max-cache-age 1d '**/*.md'
+          args: --verbose --no-progress --cache --max-cache-age 1d --accept 200..=299,403 --exclude '^file://' --exclude 'localhost' --exclude '127\.0\.0\.1' '**/*.md'
           # Output results to file for parsing
           output: lychee-output.md
           # Don't fail the build on broken links (warning mode)

@@ -204,6 +204,9 @@ storage/
 .Trash-1000/
 post-provision
 # Local secrets for act
-.secretsexamples/demo_audit/
+.secrets
+
+# Trading agent runtime directories (logs and trajectories)
+examples/demo_audit/
 examples/trading_audit_tv/
 examples/trading_trajectories_tv/

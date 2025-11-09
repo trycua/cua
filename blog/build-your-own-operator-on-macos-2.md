@@ -171,7 +171,7 @@ The `cua-agent` framework provides multiple agent loop implementations to abstra
 
 - **AgentLoop.OMNI**: The most flexible option that works with virtually any vision-language model including local and open-source ones. Perfect for cost-effective development or when you need to use models without native computer-use capabilities.
 
-These abstractions allow you to easily switch between providers without changing your application code. All loop implementations are available in the [cua-agent GitHub repository](https://github.com/trycua/cua/tree/main/libs/agent/agent/providers).
+These abstractions allow you to easily switch between providers without changing your application code. All loop implementations are available in the [cua-agent GitHub repository](https://github.com/trycua/cua/tree/main/libs/python/agent).
 
 Choosing the right agent loop depends not only on your API access and technical requirements but also on the specific tasks you need to accomplish. To make an informed decision, it's helpful to understand how these underlying models perform across different computing environments – from desktop operating systems to web browsers and mobile interfaces.
 
@@ -674,7 +674,7 @@ With the basics covered, you might want to explore:
 
 ### Resources
 
-- [cua-agent GitHub repository](https://github.com/trycua/cua/tree/main/libs/agent)
+- [cua-agent GitHub repository](https://github.com/trycua/cua/tree/main/libs/python/agent)
 - [Agent Notebook Examples](https://github.com/trycua/cua/blob/main/notebooks/agent_nb.ipynb)
 - [OpenAI Agent SDK Specification](https://platform.openai.com/docs/api-reference/responses)
 - [Anthropic API Documentation](https://docs.anthropic.com/en/api/getting-started)

@@ -1,8 +1,11 @@
 name: Link Checker
 
 on:
-  pull_request:
-    types: [opened, synchronize, reopened]
+  pull_request_target:
+    branches: [main, master]
+  push:
+    branches:
+      - main
   workflow_dispatch:
 
 jobs:
@@ -65,7 +68,7 @@ jobs:
             COLOR="#36a64f"
           else
             STATUS_ICON="⚠️"
-            STATUS_TEXT="Found $BROKEN broken link(s)"
+            STATUS_TEXT="Found ${BROKEN} broken links"
             COLOR="#ffa500"
           fi
 
@@ -82,16 +85,22 @@ jobs:
           fi
 
           # Export for Slack notification
-          echo "STATUS_ICON=$STATUS_ICON" >> $GITHUB_ENV
-          echo "STATUS_TEXT=$STATUS_TEXT" >> $GITHUB_ENV
-          echo "COLOR=$COLOR" >> $GITHUB_ENV
-          echo "BROKEN_COUNT=$BROKEN" >> $GITHUB_ENV
-          echo "TOTAL_COUNT=$TOTAL" >> $GITHUB_ENV
+          echo "STATUS_ICON=${STATUS_ICON}" >> $GITHUB_ENV
+          echo "COLOR=${COLOR}" >> $GITHUB_ENV
+          echo "BROKEN_COUNT=${BROKEN}" >> $GITHUB_ENV
+          echo "TOTAL_COUNT=${TOTAL}" >> $GITHUB_ENV
+
+          # Use heredoc for STATUS_TEXT to handle special characters safely
+          {
+            echo "STATUS_TEXT<<EOF"
+            echo "${STATUS_TEXT}"
+            echo "EOF"
+          } >> $GITHUB_ENV
 
           # Save broken links to multiline env var
           {
             echo 'BROKEN_LINKS<<EOF'
-            echo "$BROKEN_LINKS"
+            echo "${BROKEN_LINKS}"
             echo 'EOF'
           } >> $GITHUB_ENV
 

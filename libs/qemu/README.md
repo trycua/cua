@@ -6,10 +6,12 @@ Containerized Windows 11 virtual desktop for Computer-Using Agents (CUA). Utiliz
 
 - Windows 11 Enterprise running in QEMU/KVM
 - Pre-installed CUA computer-server for remote computer control
+- Caddy reverse proxy (port 9222 → 1337) for browser automation
 - noVNC access for visual desktop interaction
 - Automated setup via unattended installation
 - Support for both dev (shared folder) and azure (OEM folder) deployment modes
-- Python 3.10 with CUA computer-server
+- Python 3.12 with isolated virtual environment for CUA computer-server
+- Services run hidden in background via Windows scheduled tasks
 - Essential tools pre-installed (Chrome, LibreOffice, VLC, GIMP, VSCode, Thunderbird)
 
 ## Quick Start
@@ -38,7 +40,7 @@ docker build --build-arg DEPLOY_MODE=azure -t cua-windows:azure .
 
 ### 3. First Run - Create Golden Image
 
-On first run, the container will install Windows from scratch and create a golden image. This takes 15-20 minutes.
+On first run, the container will install Windows from scratch and create a golden image. This takes 15-30 minutes.
 
 ```bash
 # Create storage directory
@@ -50,10 +52,11 @@ docker run -it --rm \
     --platform linux/amd64 \
     --name cua-windows \
     --mount type=bind,source=$(pwd)/src/vm/image/setup.iso,target=/custom.iso \
+    --cap-add NET_ADMIN \
     -v $(pwd)/storage:/storage \
     -p 8006:8006 \
     -p 5000:5000 \
-    -e RAM_SIZE=4G \
+    -e RAM_SIZE=8G \
     -e CPU_CORES=4 \
     -e DISK_SIZE=20G \
     cua-windows:dev
@@ -62,13 +65,14 @@ docker run -it --rm \
 **What happens during first run:**
 
 1. Windows 11 installs automatically using unattended configuration
-2. Setup scripts run to install Python, tools, and CUA computer-server
-3. Golden image is saved to `/storage` directory
-4. On-logon task starts CUA computer-server on boot
+2. Setup scripts install Python 3.12 (via Chocolatey), essential tools, and CUA computer-server in isolated venv
+3. Windows scheduled tasks created for CUA server and Caddy proxy (run hidden in background)
+4. Golden image is saved to `/storage` directory
+5. Container exits after setup completes
 
 ### 4. Subsequent Runs - Use Golden Image
 
-After the golden image is created, subsequent runs boot much faster (2-5 minutes):
+After the golden image is created, subsequent runs boot much faster (30 sec - 2 min):
 
 ```bash
 # Run without setup.iso - uses existing golden image
@@ -76,10 +80,11 @@ docker run -it --rm \
     --device=/dev/kvm \
     --platform linux/amd64 \
     --name cua-windows \
+    --cap-add NET_ADMIN \
     -v $(pwd)/storage:/storage \
     -p 8006:8006 \
     -p 5000:5000 \
-    -e RAM_SIZE=4G \
+    -e RAM_SIZE=8G \
     -e CPU_CORES=4 \
     cua-windows:dev
 ```
@@ -98,7 +103,7 @@ docker run -it --rm \
 
 ### Environment Variables
 
-- `RAM_SIZE`: RAM allocated to Windows VM (default: "8G", recommended: "4G" for WSL2)
+- `RAM_SIZE`: RAM allocated to Windows VM (default: "8G", recommended: "8G" for WSL2)
 - `CPU_CORES`: CPU cores allocated to VM (default: "8")
 - `DISK_SIZE`: VM disk size (default: "30G", minimum: "20G")
 - `YRES`: Screen height (default: "900")
@@ -157,9 +162,12 @@ docker run -it --rm \
 
 Setup scripts are in `src/vm/setup/`:
 
-- `setup.ps1`: Main setup script (installs software, configures Windows)
-- `on-logon.ps1`: Runs on user logon (starts computer-server)
 - `install.bat`: Entry point called by Windows setup
+- `setup.ps1`: Main setup orchestration (installs software, configures Windows)
+- `setup-cua-server.ps1`: CUA server installation with isolated venv
+- `setup-caddy-proxy.ps1`: Caddy reverse proxy configuration
+- `on-logon.ps1`: Runs on user logon (starts scheduled tasks)
+- `setup-tools.psm1`: PowerShell helper functions
 
 After modifying, rebuild the image:
 

@@ -5,7 +5,8 @@
 # pip install -e ".[all]" from cua root directory
 
 # Market Data & Trading APIs
-alpaca-trade-api>=3.0.0        # Alpaca broker API
+alpaca-trade-api>=3.0.0        # Alpaca broker API (legacy)
+alpaca-py>=0.14.0              # Alpaca Python SDK (WebSocket support)
 yfinance>=0.2.0                # Yahoo Finance data (free)
 pandas>=2.0.0                  # Data manipulation
 numpy>=1.24.0                  # Numerical computing

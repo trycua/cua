@@ -5,7 +5,7 @@ on:
     branches: [main, master]
   push:
     branches:
-      - main
+      # (empty; removed branch filter to run on all PRs)
   workflow_dispatch:
 
 jobs:

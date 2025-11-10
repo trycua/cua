@@ -1,12 +1,3 @@
-# CUA Windows Container Dockerfile
-#
-# Uses windowsarena/windows-local:latest instead of windowsarena/winarena-base:latest
-# to avoid unnecessary bloat from ML dependencies:
-# - Removes Python 3.9 and ML client dependencies (easyocr, onnxruntime, etc.)
-# - Removes CUDA 11.8 libraries
-# - Removes ML model weights (GroundingDINO, OmniParser)
-# This results in a significantly smaller image focused purely on QEMU/Windows with CUA computer-server.
-
 # Define build argument for deployment mode (default is dev, can also be azure)
 ARG DEPLOY_MODE="dev"
 

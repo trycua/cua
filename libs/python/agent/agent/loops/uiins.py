@@ -24,14 +24,18 @@ SYSTEM_PROMPT = """You are a GUI agent. You are given a task and your action his
 
 
 def parse_coordinates(raw_string: str) -> tuple[int, int]:
-    matches = re.findall(r'\[(\d+),\s*(\d+)\]', raw_string)
+    matches = re.findall(r"\[(\d+),\s*(\d+)\]", raw_string)
     if matches:
         return tuple(map(int, matches[0]))
     return -1, -1
 
 
 def smart_resize(
-    height: int, width: int, factor: int = 28, min_pixels: int = 3136, max_pixels: int = 8847360
+    height: int,
+    width: int,
+    factor: int = 28,
+    min_pixels: int = 3136,
+    max_pixels: int = 8847360,
 ) -> Tuple[int, int]:
     """Smart resize function similar to qwen_vl_utils."""
     # Calculate the total pixels
@@ -127,15 +131,9 @@ class UIInsConfig(AsyncAgentConfig):
         # Prepare system and user messages
         system_message = {
             "role": "system",
-            "content":  [
-            {
-                "type": "text",
-                "text": "You are a helpful assistant."
-            },
-            {
-                "type": "text",
-                "text": SYSTEM_PROMPT
-            }
+            "content": [
+                {"type": "text", "text": "You are a helpful assistant."},
+                {"type": "text", "text": SYSTEM_PROMPT},
             ],
         }
 

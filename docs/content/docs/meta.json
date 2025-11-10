@@ -4,10 +4,8 @@
   "root": true,
   "defaultOpen": true,
   "pages": [
-    "index",
-    "quickstart-devs",
-    "quickstart-cli",
-    "telemetry",
+    "---[Rocket]Get Started---",
+    "...get-started",
     "---[ChefHat]Cookbook---",
     "...example-usecases",
     "---[BookCopy]Computer Playbook---",

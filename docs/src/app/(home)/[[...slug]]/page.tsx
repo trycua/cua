@@ -15,8 +15,14 @@ import { DocActionsMenu } from '@/components/doc-actions-menu';
 export default async function Page(props: { params: Promise<{ slug?: string[] }> }) {
   const params = await props.params;
   const slug = params.slug || [];
+
+  // Redirect root to get-started/introduction
+  if (slug.length === 0) {
+    redirect('/get-started/introduction');
+  }
+
   const page = source.getPage(slug);
-  if (!page) notFound(); //redirect('/docs');
+  if (!page) notFound();
 
   // Detect if this is an API reference page: /api/[section] or /api/[section]/[version]
   let apiSection: string | null = null;
@@ -181,7 +187,7 @@ export default async function Page(props: { params: Promise<{ slug?: string[] }>
   const tocFooter = () => {
     return (
       <div className="mt-4">
-        <DocActionsMenu pageUrl={page.url} pageTitle={page.data.title} filePath={page.file.path} />
+        <DocActionsMenu pageUrl={page.url} pageTitle={page.data.title} filePath={page.file?.path} />
       </div>
     );
   };
@@ -282,9 +288,9 @@ export async function generateMetadata(props: {
   const page = source.getPage(params.slug);
   if (!page) notFound();
 
-  let title = `${page.data.title} | Cua Docs`;
-  if (page.url.includes('api')) title = `${page.data.title} | Cua API Docs`;
-  if (page.url.includes('guide')) title = ` Guide: ${page.data.title} | Cua Docs`;
+  let title = `${page.data.title} | Cua`;
+  if (page.url.includes('api')) title = `${page.data.title} | Cua API`;
+  if (page.url.includes('guide')) title = ` Guide: ${page.data.title} | Cua`;
 
   // Canonical URL points to cua.ai to consolidate all SEO authority on main domain
   const canonicalUrl = `https://cua.ai${page.url}`;
@@ -368,7 +374,7 @@ export async function generateMetadata(props: {
       title,
       description: page.data.description,
       type: 'article',
-      siteName: 'Cua Docs',
+      siteName: 'Cua',
       url: canonicalUrl,
     },
     twitter: {

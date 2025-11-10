@@ -16,8 +16,8 @@ from . import (
     openai,
     opencua,
     qwen,
-    uitars,
     uiins,
+    uitars, 
 )
 
 __all__ = [

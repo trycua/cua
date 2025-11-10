@@ -4,28 +4,25 @@ Model: https://huggingface.co/mlfoundations/Gelato-30B-A3B
 Code: https://github.com/mlfoundations/Gelato/tree/main
 """
 
-import asyncio
 import base64
-import json
 import math
 import re
-import uuid
 from io import BytesIO
-from typing import Any, AsyncGenerator, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple
 
 import litellm
 from PIL import Image
 
 from ..decorators import register_agent
 from ..loops.base import AsyncAgentConfig
-from ..types import AgentCapability, AgentResponse, Messages, Tools
+from ..types import AgentCapability
 
-SYSTEM_PROMPT = '''
+SYSTEM_PROMPT = """
 You are an expert UI element locator. Given a GUI image and a user's element description, provide the coordinates of the specified element as a single (x,y) point. For elements with area, return the center point.
 
 Output the coordinate pair exactly:
 (x,y)
-'''
+"""
 
 
 def extract_coordinates(raw_string):
@@ -41,12 +38,15 @@ def extract_coordinates(raw_string):
         matches = re.findall(r"\((-?\d*\.?\d+),\s*(-?\d*\.?\d+)\)", raw_string)
         return [tuple(map(int, match)) for match in matches][0]
     except:
-        return 0,0
-
+        return 0, 0
 
 
 def smart_resize(
-    height: int, width: int, factor: int = 28, min_pixels: int = 3136, max_pixels: int = 8847360
+    height: int,
+    width: int,
+    factor: int = 28,
+    min_pixels: int = 3136,
+    max_pixels: int = 8847360,
 ) -> Tuple[int, int]:
     """Smart resize function similar to qwen_vl_utils."""
     # Calculate the total pixels
@@ -142,12 +142,7 @@ class GelatoConfig(AsyncAgentConfig):
         # Prepare system and user messages
         system_message = {
             "role": "system",
-            "content":  [
-            {
-                "type": "text",
-                "text": SYSTEM_PROMPT.strip()
-            }
-            ],
+            "content": [{"type": "text", "text": SYSTEM_PROMPT.strip()}],
         }
 
         user_message = {

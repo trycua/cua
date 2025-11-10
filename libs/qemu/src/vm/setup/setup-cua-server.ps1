@@ -4,19 +4,17 @@
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Continue'
 
+# Import shared utilities
+$scriptFolder = "\\host.lan\Data"
+Import-Module (Join-Path $scriptFolder -ChildPath "setup-tools.psm1")
+
 # --- Logging ---
 $LogDir = "C:\Windows\Temp"
 if (!(Test-Path $LogDir)) { New-Item -ItemType Directory -Force -Path $LogDir | Out-Null }
 $RunId = (Get-Date -Format 'yyyyMMdd_HHmmss') + "_" + $PID
 $script:LogFile = Join-Path $LogDir ("setup_cua_server_" + $RunId + ".log")
-function Write-CuaSetupLog {
-    param([string]$Message)
-    $ts = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
-    "$ts`t$Message" | Tee-Object -FilePath $script:LogFile -Append
-    Write-Host "$ts`t$Message"
-}
 
-Write-CuaSetupLog "=== Installing CUA Computer Server ==="
+Write-Log -LogFile $script:LogFile -Message "=== Installing CUA Computer Server ==="
 
 function Resolve-ChocoPath {
   $inst = [Environment]::GetEnvironmentVariable('ChocolateyInstall','Machine')
@@ -37,24 +35,24 @@ function Resolve-ChocoPath {
 try {
   $ChocoExe = Resolve-ChocoPath
   if (-not $ChocoExe) {
-    Write-CuaSetupLog "Installing Chocolatey"
+    Write-Log -LogFile $script:LogFile -Message "Installing Chocolatey"
     Set-ExecutionPolicy Bypass -Scope Process -Force
     [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12
     Invoke-Expression ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
     $ChocoExe = Resolve-ChocoPath
   }
   if ($ChocoExe) {
-    Write-CuaSetupLog "Installing Python 3.12 via Chocolatey"
+    Write-Log -LogFile $script:LogFile -Message "Installing Python 3.12 via Chocolatey"
     try {
       & $ChocoExe install -y python312 | Out-Null
     } catch {
-      Write-CuaSetupLog "Python 3.12 install warning: $($_.Exception.Message)"
+      Write-Log -LogFile $script:LogFile -Message "Python 3.12 install warning: $($_.Exception.Message)"
     }
   } else {
-    Write-CuaSetupLog "Chocolatey not available; skipping python312 install"
+    Write-Log -LogFile $script:LogFile -Message "Chocolatey not available; skipping python312 install"
   }
 } catch {
-  Write-CuaSetupLog "Chocolatey bootstrap warning: $($_.Exception.Message)"
+  Write-Log -LogFile $script:LogFile -Message "Chocolatey bootstrap warning: $($_.Exception.Message)"
 }
 
 # Create venv
@@ -63,16 +61,16 @@ $CuaDir  = Join-Path $HomeDir '.cua-server'
 $VenvDir = Join-Path $CuaDir 'venv'
 New-Item -ItemType Directory -Force -Path $CuaDir | Out-Null
 
-Write-CuaSetupLog "Creating Python virtual environment at $VenvDir"
+Write-Log -LogFile $script:LogFile -Message "Creating Python virtual environment at $VenvDir"
 $ExistingVenvPython = Join-Path $VenvDir 'Scripts\python.exe'
 if (Test-Path -LiteralPath $ExistingVenvPython) {
-  Write-CuaSetupLog "Existing venv detected; skipping creation"
+  Write-Log -LogFile $script:LogFile -Message "Existing venv detected; skipping creation"
 } else {
   try {
     & py -m venv $VenvDir
-    Write-CuaSetupLog "Virtual environment created successfully"
+    Write-Log -LogFile $script:LogFile -Message "Virtual environment created successfully"
   } catch {
-    Write-CuaSetupLog "venv creation error: $($_.Exception.Message)"
+    Write-Log -LogFile $script:LogFile -Message "venv creation error: $($_.Exception.Message)"
     throw
   }
 }
@@ -81,32 +79,32 @@ $PyExe  = Join-Path $VenvDir 'Scripts\python.exe'
 $PipExe = Join-Path $VenvDir 'Scripts\pip.exe'
 $ActivateScript = Join-Path $VenvDir 'Scripts\Activate.ps1'
 
-Write-CuaSetupLog "Activating virtual environment"
+Write-Log -LogFile $script:LogFile -Message "Activating virtual environment"
 & $ActivateScript
 
-Write-CuaSetupLog "Upgrading pip, setuptools, and wheel"
+Write-Log -LogFile $script:LogFile -Message "Upgrading pip, setuptools, and wheel"
 try {
   & $PipExe install --upgrade pip setuptools wheel 2>&1 | Tee-Object -FilePath $script:LogFile -Append | Out-Null
 } catch {
-  Write-CuaSetupLog "pip bootstrap warning: $($_.Exception.Message)"
+  Write-Log -LogFile $script:LogFile -Message "pip bootstrap warning: $($_.Exception.Message)"
 }
 
-Write-CuaSetupLog "Installing cua-computer-server"
+Write-Log -LogFile $script:LogFile -Message "Installing cua-computer-server"
 try {
   & $PipExe install --upgrade cua-computer-server 2>&1 | Tee-Object -FilePath $script:LogFile -Append | Out-Null
-  Write-CuaSetupLog "cua-computer-server installed successfully"
+  Write-Log -LogFile $script:LogFile -Message "cua-computer-server installed successfully"
 } catch {
-  Write-CuaSetupLog "Server install error: $($_.Exception.Message)"
+  Write-Log -LogFile $script:LogFile -Message "Server install error: $($_.Exception.Message)"
   throw
 }
 
 # Open firewall for port 5000
-Write-CuaSetupLog "Opening firewall for port 5000"
+Write-Log -LogFile $script:LogFile -Message "Opening firewall for port 5000"
 try {
   netsh advfirewall firewall add rule name="CUA Computer Server 5000" dir=in action=allow protocol=TCP localport=5000 | Out-Null
-  Write-CuaSetupLog "Firewall rule added successfully"
+  Write-Log -LogFile $script:LogFile -Message "Firewall rule added successfully"
 } catch {
-  Write-CuaSetupLog "Firewall rule warning: $($_.Exception.Message)"
+  Write-Log -LogFile $script:LogFile -Message "Firewall rule warning: $($_.Exception.Message)"
 }
 
 # Create start script with auto-restart
@@ -140,7 +138,7 @@ while (`$true) {
 "@
 
 Set-Content -Path $StartScript -Value $StartScriptContent -Encoding UTF8
-Write-CuaSetupLog "Start script created at $StartScript"
+Write-Log -LogFile $script:LogFile -Message "Start script created at $StartScript"
 
 # Create VBScript wrapper to launch PowerShell hidden
 $VbsWrapper = Join-Path $CuaDir 'start-server-hidden.vbs'
@@ -149,7 +147,7 @@ Set objShell = CreateObject("WScript.Shell")
 objShell.Run "powershell.exe -NoProfile -ExecutionPolicy Bypass -File ""$StartScript""", 0, False
 "@
 Set-Content -Path $VbsWrapper -Value $VbsContent -Encoding ASCII
-Write-CuaSetupLog "VBScript wrapper created at $VbsWrapper"
+Write-Log -LogFile $script:LogFile -Message "VBScript wrapper created at $VbsWrapper"
 
 # Create scheduled task to run at logon
 try {
@@ -159,7 +157,7 @@ try {
   # Remove existing task if present
   $existingTask = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
   if ($existingTask) {
-    Write-CuaSetupLog "Removing existing scheduled task: $TaskName"
+    Write-Log -LogFile $script:LogFile -Message "Removing existing scheduled task: $TaskName"
     Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false
   }
 
@@ -184,7 +182,7 @@ try {
     -Hidden
 
   # Register the task
-  Write-CuaSetupLog "Registering scheduled task '$TaskName' to run as $Username at logon (hidden)"
+  Write-Log -LogFile $script:LogFile -Message "Registering scheduled task '$TaskName' to run as $Username at logon (hidden)"
   Register-ScheduledTask `
     -TaskName $TaskName `
     -Action $Action `
@@ -193,12 +191,12 @@ try {
     -Settings $Settings `
     -Force | Out-Null
 
-  Write-CuaSetupLog "Scheduled task '$TaskName' registered successfully (runs hidden in background)"
+  Write-Log -LogFile $script:LogFile -Message "Scheduled task '$TaskName' registered successfully (runs hidden in background)"
 
 } catch {
-  Write-CuaSetupLog "Scheduled task setup error: $($_.Exception.Message)"
+  Write-Log -LogFile $script:LogFile -Message "Scheduled task setup error: $($_.Exception.Message)"
   throw
 }
 
-Write-CuaSetupLog "=== CUA Computer Server setup completed ==="
+Write-Log -LogFile $script:LogFile -Message "=== CUA Computer Server setup completed ==="
 exit 0

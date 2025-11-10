@@ -4,19 +4,17 @@
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Continue'
 
+# Import shared utilities
+$scriptFolder = "\\host.lan\Data"
+Import-Module (Join-Path $scriptFolder -ChildPath "setup-tools.psm1")
+
 # --- Logging ---
 $LogDir = "C:\Windows\Temp"
 if (!(Test-Path $LogDir)) { New-Item -ItemType Directory -Force -Path $LogDir | Out-Null }
 $RunId = (Get-Date -Format 'yyyyMMdd_HHmmss') + "_" + $PID
 $script:LogFile = Join-Path $LogDir ("setup_caddy_proxy_" + $RunId + ".log")
-function Write-CaddySetupLog {
-    param([string]$Message)
-    $ts = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
-    "$ts`t$Message" | Tee-Object -FilePath $script:LogFile -Append
-    Write-Host "$ts`t$Message"
-}
 
-Write-CaddySetupLog "=== Setting up Caddy Reverse Proxy ==="
+Write-Log -LogFile $script:LogFile -Message "=== Setting up Caddy Reverse Proxy ==="
 
 # Create directory for Caddy
 $HomeDir = $env:USERPROFILE
@@ -42,7 +40,7 @@ while (`$true) {
 "@
 
 Set-Content -Path $StartScript -Value $StartScriptContent -Encoding UTF8
-Write-CaddySetupLog "Start script created at $StartScript"
+Write-Log -LogFile $script:LogFile -Message "Start script created at $StartScript"
 
 # Create VBScript wrapper to launch PowerShell hidden
 $VbsWrapper = Join-Path $CaddyDir 'start-caddy-hidden.vbs'
@@ -51,7 +49,7 @@ Set objShell = CreateObject("WScript.Shell")
 objShell.Run "powershell.exe -NoProfile -ExecutionPolicy Bypass -File ""$StartScript""", 0, False
 "@
 Set-Content -Path $VbsWrapper -Value $VbsContent -Encoding ASCII
-Write-CaddySetupLog "VBScript wrapper created at $VbsWrapper"
+Write-Log -LogFile $script:LogFile -Message "VBScript wrapper created at $VbsWrapper"
 
 # Create scheduled task to run at logon
 try {
@@ -61,7 +59,7 @@ try {
   # Remove existing task if present
   $existingTask = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
   if ($existingTask) {
-    Write-CaddySetupLog "Removing existing scheduled task: $TaskName"
+    Write-Log -LogFile $script:LogFile -Message "Removing existing scheduled task: $TaskName"
     Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false
   }
 
@@ -86,7 +84,7 @@ try {
     -Hidden
 
   # Register the task
-  Write-CaddySetupLog "Registering scheduled task '$TaskName' to run as $Username at logon (hidden)"
+  Write-Log -LogFile $script:LogFile -Message "Registering scheduled task '$TaskName' to run as $Username at logon (hidden)"
   Register-ScheduledTask `
     -TaskName $TaskName `
     -Action $Action `
@@ -95,12 +93,12 @@ try {
     -Settings $Settings `
     -Force | Out-Null
 
-  Write-CaddySetupLog "Scheduled task '$TaskName' registered successfully (runs hidden in background)"
+  Write-Log -LogFile $script:LogFile -Message "Scheduled task '$TaskName' registered successfully (runs hidden in background)"
 
 } catch {
-  Write-CaddySetupLog "Scheduled task setup error: $($_.Exception.Message)"
+  Write-Log -LogFile $script:LogFile -Message "Scheduled task setup error: $($_.Exception.Message)"
   throw
 }
 
-Write-CaddySetupLog "=== Caddy Reverse Proxy setup completed ==="
+Write-Log -LogFile $script:LogFile -Message "=== Caddy Reverse Proxy setup completed ==="
 exit 0

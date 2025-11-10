@@ -1,3 +1,17 @@
+function Write-Log {
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$LogFile,
+
+        [Parameter(Mandatory=$true)]
+        [string]$Message
+    )
+
+    $timestamp = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
+    "$timestamp`t$Message" | Tee-Object -FilePath $LogFile -Append
+    Write-Host "$timestamp`t$Message"
+}
+
 function Get-Tools {
     param(
         [string]$toolsConfigJson
@@ -166,32 +180,4 @@ function Register-LogonTask {
 
     Write-Host "Registering scheduled task '$TaskName' to run 'powershell.exe $taskActionArgument'..."
     Register-ScheduledTask @params
-}
-
-# Function to attempt pip install and handle failures
-function Install-PythonPackages {
-    param (
-        [string]$Package = "",
-        [string]$Arguments = "",
-        [string]$RequirementsPath = ""
-    )
-    $RetryCount = 3
-    $currentAttempt = 0
-    while ($currentAttempt -lt $RetryCount) {
-        if (-not [string]::IsNullOrWhiteSpace($RequirementsPath)) {
-            & python -m pip install --no-cache-dir -r $RequirementsPath $Arguments
-        } else {
-            & python -m pip install --no-cache-dir $Package $Arguments
-        }
-        if ($LASTEXITCODE -eq 0) {
-            Write-Host "Installation successful."
-            return
-        } else {
-            Write-Host "Attempt $($currentAttempt + 1) failed. Retrying..."
-            Start-Sleep -Seconds 10
-            $currentAttempt++
-        }
-    }
-    Write-Error "Failed to install after $RetryCount attempts."
-    exit
 }

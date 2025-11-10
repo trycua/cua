@@ -17,6 +17,7 @@ from . import (
     opencua,
     qwen,
     uitars,
+    gelato,
 )
 
 __all__ = [
@@ -33,4 +34,5 @@ __all__ = [
     "moondream3",
     "gemini",
     "qwen",
+    "gelato",
 ]

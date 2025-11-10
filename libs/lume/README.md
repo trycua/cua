@@ -58,7 +58,7 @@ To get set up with Lume for development, read [these instructions](Development.m
 - [Installation](https://cua.ai/docs/libraries/lume/installation)
 - [Prebuilt Images](https://cua.ai/docs/libraries/lume/prebuilt-images)
 - [CLI Reference](https://cua.ai/docs/libraries/lume/cli-reference)
-- [HTTP API](https://cuai.ai/docs/libraries/lume/http-api)
+- [HTTP API](https://cua.ai/docs/libraries/lume/http-api)
 - [FAQ](https://cua.ai/docs/libraries/lume/faq)
 
 ## Contributing

@@ -239,7 +239,7 @@ But for development, prototyping, and learning Windows RPA workflows, **Windows 
 
 - [Windows Sandbox Documentation](https://learn.microsoft.com/en-us/windows/security/application-security/application-isolation/windows-sandbox/)
 - [Cua GitHub Repository](https://github.com/trycua/cua)
-- [Agent UI Documentation](https://github.com/trycua/cua/tree/main/libs/agent)
+- [Agent UI Documentation](https://github.com/trycua/cua/tree/main/libs/python/agent)
 - [Join our Discord Community](https://discord.gg/cua-ai)
 
 ---

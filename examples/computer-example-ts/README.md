@@ -34,14 +34,6 @@ This example demonstrates how to control a Cua Cloud Sandbox using the OpenAI `c
 - `src/index.ts` — Main example script
 - `src/helpers.ts` — Helper for executing actions on the container
 
-## Further Reading
-
-For a step-by-step tutorial and more detailed explanation, see the accompanying blog post:
-
-➡️ [Controlling a Cua Cloud Sandbox with JavaScript](https://placeholder-url-to-blog-post.com)
-
-_(This link will be updated once the article is published.)_
-
 ---
 
 If you have questions or issues, please open an issue or contact the maintainers.

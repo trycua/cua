@@ -24,6 +24,20 @@ const config = {
         basePath: false, // Important: this bypasses the basePath
         permanent: false,
       },
+      // Redirect old docs.cua.ai URLs to cua.ai/docs with 301 for SEO
+      // This handles URLs that Google has indexed from the old domain
+      {
+        source: '/:path*',
+        has: [
+          {
+            type: 'host',
+            value: 'docs.cua.ai',
+          },
+        ],
+        destination: 'https://cua.ai/docs/:path*',
+        permanent: true, // 301 redirect to preserve SEO authority
+        basePath: false,
+      },
     ];
   },
   images: {

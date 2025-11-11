@@ -174,7 +174,7 @@ await computer.run()
 
 ## Links
 
-- **Docker Provider Docs:** [https://cua.ai/docs/computers/docker](https://cua.ai/docs/computers/docker)
+- **Docker Provider Docs:** [https://cua.ai/docs/computers/docker](https://cua.ai/docs/computer-sdk/computers#linux-on-docker)
 - **KasmVNC:** [https://github.com/kasmtech/KasmVNC](https://github.com/kasmtech/KasmVNC)
 - **Container Source:** [https://github.com/trycua/cua/tree/main/libs/kasm](https://github.com/trycua/cua/tree/main/libs/kasm)
 - **Computer SDK:** [https://cua.ai/docs/computer-sdk/computers](https://cua.ai/docs/computer-sdk/computers)

@@ -4,8 +4,6 @@ name: Test CUA Supporting Models
 # Run manually using workflow_dispatch with test_models=true
 
 on:
-  pull_request_target:
-    branches: [main, master]
   workflow_dispatch:
     inputs:
       test_models:
@@ -20,7 +18,7 @@ on:
 jobs:
   # Test all CUA models - runs on PRs, schedules, or when manually triggered
   test-all-models:
-    if: ${{ github.event_name == 'pull_request_target' || github.event_name == 'schedule' || fromJSON(inputs.test_models || 'false') }}
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || fromJSON(inputs.test_models || 'false') }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -248,7 +246,7 @@ jobs:
 
   # Summary job that aggregates all model test results
   test-summary:
-    if: ${{ always() && (github.event_name == 'pull_request_target' || github.event_name == 'schedule' || fromJSON(inputs.test_models || 'false')) }}
+    if: ${{ always() && (github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || fromJSON(inputs.test_models || 'false')) }}
     needs: test-all-models
     runs-on: ubuntu-latest
     steps:

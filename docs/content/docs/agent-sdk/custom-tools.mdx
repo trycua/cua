@@ -16,7 +16,7 @@ def calculate(a: int, b: int) -> int:
 
 # Use with agent
 agent = ComputerAgent(
-    model="anthropic/claude-3-5-sonnet-20241022",
+    model="anthropic/claude-sonnet-4-5-20250929",
     tools=[computer, calculate]
 )
 ```
@@ -43,7 +43,7 @@ from computer import Computer
 
 computer = Computer(...)
 agent = ComputerAgent(
-    model="anthropic/claude-3-5-sonnet-20241022",
+    model="anthropic/claude-sonnet-4-5-20250929",
     tools=[computer, read_file],
 )
 ```

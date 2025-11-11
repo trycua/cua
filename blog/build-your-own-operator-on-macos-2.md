@@ -268,7 +268,7 @@ from agent import ComputerAgent
 async def run_multi_task_workflow():
     async with Computer() as macos_computer:
         agent = ComputerAgent(
-            model="anthropic/claude-3-5-sonnet-20241022",
+            model="anthropic/claude-sonnet-4-5-20250929",
             tools=[macos_computer]
         )
 

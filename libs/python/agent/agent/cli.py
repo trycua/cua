@@ -6,7 +6,7 @@ Usage:
 
 Examples:
     python -m agent.cli openai/computer-use-preview
-    python -m agent.cli anthropic/claude-3-5-sonnet-20241022
+    python -m agent.cli anthropic/claude-sonnet-4-5-20250929
     python -m agent.cli omniparser+anthropic/claude-3-5-sonnet-20241022
 """
 
@@ -232,7 +232,7 @@ async def main():
         epilog="""
 Examples:
   python -m agent.cli openai/computer-use-preview
-  python -m agent.cli anthropic/claude-3-5-sonnet-20241022
+  python -m agent.cli anthropic/claude-sonnet-4-5-20250929
   python -m agent.cli omniparser+anthropic/claude-3-5-sonnet-20241022
   python -m agent.cli huggingface-local/ByteDance-Seed/UI-TARS-1.5-7B
         """,
@@ -240,7 +240,7 @@ Examples:
 
     parser.add_argument(
         "model",
-        help="Model string (e.g., 'openai/computer-use-preview', 'anthropic/claude-3-5-sonnet-20241022')",
+        help="Model string (e.g., 'openai/computer-use-preview', 'anthropic/claude-sonnet-4-5-20250929')",
     )
 
     parser.add_argument(

@@ -65,16 +65,31 @@ computer = Computer(telemetry_enabled=False)
 
 ```python
 from agent import ComputerAgent
+import os
+
+# Basic telemetry - performance metrics only (opt-out, enabled by default)
+agent = ComputerAgent(
+    model="claude-sonnet-4-5-20250929",
+    telemetry_enabled=True  # Default is True
+)
+
+# Enable telemetry with full conversation trajectory logging (opt-in)
+agent = ComputerAgent(
+    model="claude-sonnet-4-5-20250929",
+    telemetry_enabled={
+        "log_trajectory": True  # Logs full conversation items
+    }
+)
 
 # Disable completely
 agent = ComputerAgent(
-    model="claude-3-5-sonnet-20241022",
+    model="claude-sonnet-4-5-20250929",
     telemetry_enabled=False
 )
 
 # Enable trajectory logging (opt-in)
 agent = ComputerAgent(
-    model="claude-3-5-sonnet-20241022",
+    model="claude-sonnet-4-5-20250929",
     telemetry_enabled={"log_trajectory": True}
 )
 ```

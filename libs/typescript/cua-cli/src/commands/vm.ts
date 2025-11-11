@@ -251,7 +251,9 @@ export function registerVmCommands(y: Argv) {
             console.error('VM not found');
             process.exit(1);
           }
-          const url = `https://${vm.name}.containers.cloud.trycua.com/vnc.html?autoconnect=true&password=${encodeURIComponent(vm.password)}`;
+          const host =
+            vm.host && vm.host.length ? vm.host : `${vm.name}.containers.cloud.trycua.com`;
+          const url = `https://${host}/vnc.html?autoconnect=true&password=${encodeURIComponent(vm.password)}`;
           console.log(`Opening NoVNC: ${url}`);
           await openInBrowser(url);
         }
@@ -279,7 +281,8 @@ export function registerVmCommands(y: Argv) {
             console.error('VM not found');
             process.exit(1);
           }
-          const host = `${vm.name}.containers.cloud.trycua.com`;
+          const host =
+            vm.host && vm.host.length ? vm.host : `${vm.name}.containers.cloud.trycua.com`;
           const base = WEBSITE_URL.replace(/\/$/, '');
           const url = `${base}/dashboard/playground?host=${encodeURIComponent(host)}&id=${encodeURIComponent(vm.name)}&name=${encodeURIComponent(vm.name)}&vnc_password=${encodeURIComponent(vm.password)}&fullscreen=true`;
           console.log(`Opening Playground: ${url}`);

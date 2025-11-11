@@ -5,7 +5,7 @@ export const CALLBACK_HOST = "127.0.0.1";
 
 export function getConfigDir(): string {
   const home = Bun.env.HOME || Bun.env.USERPROFILE || ".";
-  const dir = `${home}/.config/cua`;
+  const dir = `${home}/.cua`;
   try {
     Bun.spawnSync(["mkdir", "-p", dir]);
   } catch {}

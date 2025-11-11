@@ -58,6 +58,7 @@ members = [
     "libs/python/computer-server",
     "libs/python/som",
     "libs/python/mcp-server",
+    "libs/python/bench-ui",
 ]
 
 [tool.uv.sources]
@@ -67,6 +68,7 @@ cua-computer = { workspace = true }
 cua-computer-server = { workspace = true }
 cua-som = { workspace = true }
 cua-mcp-server = { workspace = true }
+cua-bench-ui = { workspace = true }
 
 [tool.black]
 line-length = 100

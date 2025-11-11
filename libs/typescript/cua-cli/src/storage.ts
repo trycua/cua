@@ -1,17 +1,19 @@
-import { Database } from "bun:sqlite";
-import { getDbPath } from "./config";
+import { Database } from 'bun:sqlite';
+import { getDbPath } from './config';
 
 function getDb(): Database {
   const db = new Database(getDbPath());
-  db.exec("PRAGMA journal_mode = WAL;");
-  db.exec("CREATE TABLE IF NOT EXISTS kv (k TEXT PRIMARY KEY, v TEXT NOT NULL);");
+  db.exec('PRAGMA journal_mode = WAL;');
+  db.exec('CREATE TABLE IF NOT EXISTS kv (k TEXT PRIMARY KEY, v TEXT NOT NULL);');
   return db;
 }
 
 export function setApiKey(token: string) {
   const db = getDb();
   try {
-    const stmt = db.query("INSERT INTO kv (k, v) VALUES ('api_key', ?) ON CONFLICT(k) DO UPDATE SET v=excluded.v");
+    const stmt = db.query(
+      "INSERT INTO kv (k, v) VALUES ('api_key', ?) ON CONFLICT(k) DO UPDATE SET v=excluded.v"
+    );
     stmt.run(token);
   } finally {
     db.close();

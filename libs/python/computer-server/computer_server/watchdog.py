@@ -77,10 +77,10 @@ class Watchdog:
         """
         if not self.container_name:
             return "ws://localhost:8000/ws"
-        
+
         # Try .sandbox.cua.ai first, fallback to .containers.cloud.trycua.com
         return f"wss://{self.container_name}.sandbox.cua.ai:8443/ws"
-    
+
     @property
     def ws_uri_fallback(self) -> str:
         """Get the fallback WebSocket URI using legacy hostname.
@@ -90,7 +90,7 @@ class Watchdog:
         """
         if not self.container_name:
             return "ws://localhost:8000/ws"
-        
+
         return f"wss://{self.container_name}.containers.cloud.trycua.com:8443/ws"
 
     async def ping(self) -> bool:
@@ -102,7 +102,7 @@ class Watchdog:
         """
         # Create a simple ping message
         ping_message = {"command": "get_screen_size", "params": {}}
-        
+
         # Try primary URI first (.sandbox.cua.ai)
         try:
             async with websockets.connect(
@@ -120,12 +120,13 @@ class Watchdog:
                     return False
         except Exception as e:
             logger.debug(f"Primary URI ping failed: {e}")
-            
+
             # Try fallback URI (.containers.cloud.trycua.com)
             if self.container_name:
                 try:
                     async with websockets.connect(
-                        self.ws_uri_fallback, max_size=1024 * 1024 * 10  # 10MB limit to match server
+                        self.ws_uri_fallback,
+                        max_size=1024 * 1024 * 10,  # 10MB limit to match server
                     ) as websocket:
                         # Send ping message
                         await websocket.send(json.dumps(ping_message))
@@ -133,12 +134,16 @@ class Watchdog:
                         # Wait for any response or just close
                         try:
                             response = await asyncio.wait_for(websocket.recv(), timeout=5)
-                            logger.debug(f"Ping response received from fallback URI: {response[:100]}...")
+                            logger.debug(
+                                f"Ping response received from fallback URI: {response[:100]}..."
+                            )
                             return True
                         except asyncio.TimeoutError:
                             return False
                 except Exception as fallback_e:
-                    logger.warning(f"Both primary and fallback ping failed. Primary: {e}, Fallback: {fallback_e}")
+                    logger.warning(
+                        f"Both primary and fallback ping failed. Primary: {e}, Fallback: {fallback_e}"
+                    )
                     return False
             else:
                 logger.warning(f"Ping failed: {e}")

@@ -1,5 +1,5 @@
 #! /usr/bin/env bun
-import { runCli } from "./src/cli";
+import { runCli } from './src/cli';
 
 runCli().catch((err) => {
   console.error(err);

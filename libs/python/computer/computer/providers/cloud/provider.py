@@ -121,7 +121,7 @@ class CloudProvider(BaseVMProvider):
                             name = vm.get("name")
                             password = vm.get("password")
                             api_host = vm.get("host")  # Read host from API response
-                            
+
                             if isinstance(name, str) and name:
                                 # Use host from API if available, otherwise fallback to legacy format
                                 if isinstance(api_host, str) and api_host:
@@ -133,7 +133,7 @@ class CloudProvider(BaseVMProvider):
                                     host = f"{name}.containers.cloud.trycua.com"
                                     # Cache the legacy host
                                     self._host_cache[name] = host
-                                
+
                                 # api_url: always set if missing
                                 if not vm.get("api_url"):
                                     vm["api_url"] = f"https://{host}:8443"
@@ -248,17 +248,17 @@ class CloudProvider(BaseVMProvider):
         2. Try to refresh cache by calling list_vms
         3. Try .sandbox.cua.ai format
         4. Fallback to legacy .containers.cloud.trycua.com format
-        
+
         Args:
             name: VM name
-            
+
         Returns:
             Host string for the VM
         """
         # Check cache first
         if name in self._host_cache:
             return self._host_cache[name]
-        
+
         # Try to refresh cache by calling list_vms
         try:
             await self.list_vms()
@@ -267,26 +267,26 @@ class CloudProvider(BaseVMProvider):
                 return self._host_cache[name]
         except Exception as e:
             logger.warning(f"Failed to refresh VM list for host lookup: {e}")
-        
+
         # Try .sandbox.cua.ai format first
         sandbox_host = f"{name}.sandbox.cua.ai"
         if await self._test_host_connectivity(sandbox_host):
             self._host_cache[name] = sandbox_host
             return sandbox_host
-        
+
         # Fallback to legacy format
         legacy_host = f"{name}.containers.cloud.trycua.com"
         # Cache the legacy host
         self._host_cache[name] = legacy_host
         return legacy_host
-    
+
     async def _test_host_connectivity(self, hostname: str) -> bool:
         """
         Test if a host is reachable by trying to connect to its status endpoint.
-        
+
         Args:
             hostname: Host to test
-            
+
         Returns:
             True if host is reachable, False otherwise
         """
@@ -309,5 +309,5 @@ class CloudProvider(BaseVMProvider):
         """
         if name is None:
             raise ValueError("VM name is required for CloudProvider.get_ip")
-        
+
         return await self._get_host_for_vm(name)

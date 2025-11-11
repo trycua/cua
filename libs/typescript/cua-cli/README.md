@@ -72,5 +72,5 @@ export CUA_API_BASE=https://api.staging.cua.ai
 export CUA_WEBSITE_URL=https://staging.cua.ai
 
 cua auth login
-cua vm chat my-vm    # opens https://staging.cua.ai/dashboard/playground?...  
+cua vm chat my-vm    # opens https://staging.cua.ai/dashboard/playground?...
 ```

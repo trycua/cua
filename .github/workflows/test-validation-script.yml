@@ -3,14 +3,14 @@ name: Test valididation script
 on:
   pull_request:
     paths:
-      - '.github/scripts/**'
-      - '.github/workflows/test-scripts.yml'
+      - ".github/scripts/**"
+      - ".github/workflows/test-scripts.yml"
   push:
     branches:
       - main
     paths:
-      - '.github/scripts/**'
-      - '.github/workflows/test-scripts.yml'
+      - ".github/scripts/**"
+      - ".github/workflows/test-scripts.yml"
 
 jobs:
   test:
@@ -23,7 +23,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: "3.11"
 
       - name: Install dependencies
         run: |

@@ -55,14 +55,17 @@ export function EditableCodeBlock({
   const [values, setValues] = useState<Record<string, string>>(defaultValues);
 
   const updateValue = (key: string, value: string) => {
-    setValues(prev => ({ ...prev, [key]: value }));
+    setValues((prev) => ({ ...prev, [key]: value }));
   };
 
   return (
     <EditableCodeContext.Provider value={{ values, updateValue }}>
       <Base.CodeBlock title={title} className={cn('my-4', className)}>
-        <Base.Pre className={cn(`language-${lang}`, "px-3")}>
-          <code className={cn(`language-${lang}`)} style={{ display: 'block', whiteSpace: 'pre-wrap' }}>
+        <Base.Pre className={cn(`language-${lang}`, 'px-3')}>
+          <code
+            className={cn(`language-${lang}`)}
+            style={{ display: 'block', whiteSpace: 'pre-wrap' }}
+          >
             {children}
           </code>
         </Base.Pre>
@@ -219,9 +222,7 @@ export function EditableValue({
         value={value}
         onChange={(e) => updateValue(placeholder, e.target.value)}
         placeholder={placeholder}
-        className={cn(
-          type === 'password' && value && 'text-security-disc'
-        )}
+        className={cn(type === 'password' && value && 'text-security-disc')}
         style={{
           display: 'inline',
           width: inputWidth,

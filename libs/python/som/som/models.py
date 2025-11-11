@@ -1,4 +1,5 @@
-from typing import List, Tuple, Optional, Literal, Dict, Any, Union
+from typing import Any, Dict, List, Literal, Optional, Tuple, Union
+
 from pydantic import BaseModel, Field, validator
 
 

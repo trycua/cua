@@ -1,10 +1,10 @@
 # Your Windows PC is Already the Perfect Development Environment for Computer-Use Agents
 
-*Published on June 18, 2025 by Dillon DuPont*
+_Published on June 18, 2025 by Dillon DuPont_
 
-Over the last few months, our enterprise users kept asking the same type of question: *"When are you adding support for AutoCAD?"* *"What about SAP integration?"* *"Can you automate our MES system?"* - each request was for different enterprise applications we'd never heard of.
+Over the last few months, our enterprise users kept asking the same type of question: _"When are you adding support for AutoCAD?"_ _"What about SAP integration?"_ _"Can you automate our MES system?"_ - each request was for different enterprise applications we'd never heard of.
 
-At first, we deflected. We've been building Cua to work across different environments - from [Lume for macOS VMs](./lume-to-containerization) to cloud containers. But these requests kept piling up. AutoCAD automation. SAP integration. Specialized manufacturing systems. 
+At first, we deflected. We've been building Cua to work across different environments - from [Lume for macOS VMs](./lume-to-containerization) to cloud containers. But these requests kept piling up. AutoCAD automation. SAP integration. Specialized manufacturing systems.
 
 Then it hit us: **they all ran exclusively on Windows**.
 
@@ -80,6 +80,7 @@ python -m agent.ui
 ```
 
 **What you get**:
+
 - Visual interface in your browser
 - Real-time agent action viewing
 - Natural language task instructions
@@ -101,21 +102,21 @@ async def test_windows_agent():
         os_type="windows",
         memory="4GB",
     )
-    
+
     # Start the VM (~35s)
     await computer.run()
-    
+
     # Create agent with your preferred model
     agent = ComputerAgent(
         model="openai/computer-use-preview",
         save_trajectory=True,
         tools=[computer]
     )
-    
+
     # Give it a task
     async for result in agent.run("Open Calculator and compute 15% tip on $47.50"):
         print(f"Agent action: {result}")
-    
+
     # Shutdown the VM
     await computer.stop()
 
@@ -123,6 +124,7 @@ asyncio.run(test_windows_agent())
 ```
 
 **What you get**:
+
 - Full programmatic control
 - Custom agent workflows
 - Integration with your existing code
@@ -141,6 +143,7 @@ asyncio.run(test_windows_agent())
 Let's see how different testing approaches stack up:
 
 ### Windows Sandbox + Cua
+
 - **Perfect for**: Quick testing and development
 - **Cost**: Free (built into Windows)
 - **Setup time**: Under 5 minutes
@@ -149,6 +152,7 @@ Let's see how different testing approaches stack up:
 - **Requires**: Windows 10/11 with 4GB+ RAM
 
 ### Traditional VMs
+
 - **Perfect for**: Complex testing scenarios
 - **Full customization**: Any Windows version
 - **Heavy resource usage**: Slow to start/stop
@@ -160,6 +164,7 @@ Let's see how different testing approaches stack up:
 Here's what our enterprise users are building with Windows Sandbox:
 
 ### CAD and Engineering Automation
+
 ```python
 # Example: AutoCAD drawing automation
 task = """
@@ -172,6 +177,7 @@ task = """
 ```
 
 ### Manufacturing and ERP Integration
+
 ```python
 # Example: SAP workflow automation
 task = """
@@ -184,6 +190,7 @@ task = """
 ```
 
 ### Financial Software Automation
+
 ```python
 # Example: Trading platform automation
 task = """
@@ -196,6 +203,7 @@ task = """
 ```
 
 ### Legacy Windows Application Integration
+
 ```python
 # Example: Custom Windows application automation
 task = """
@@ -210,12 +218,14 @@ task = """
 ## System Requirements and Performance
 
 ### What You Need
+
 - **Windows 10/11**: Any edition that supports Windows Sandbox
 - **Memory**: 4GB minimum (8GB recommended for CAD/professional software)
 - **CPU**: Virtualization support (enabled by default on modern systems)
 - **Storage**: A few GB free space
 
 ### Performance Tips
+
 - **Close unnecessary applications** before starting Windows Sandbox
 - **Allocate appropriate memory** based on your RPA workflow complexity
 - **Use SSD storage** for faster sandbox startup
@@ -234,4 +244,4 @@ But for development, prototyping, and learning Windows RPA workflows, **Windows 
 
 ---
 
-*Ready to see AI agents control your Windows applications? Come share your testing experiences on Discord!*
+_Ready to see AI agents control your Windows applications? Come share your testing experiences on Discord!_

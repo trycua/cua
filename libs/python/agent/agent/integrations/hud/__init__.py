@@ -8,20 +8,21 @@ Exports:
 - run_full_dataset(dataset, ...)
 - MCPComputerAgent
 """
+
 import time
 from typing import Any, Optional
 
 from agent.computers import is_agent_computer
-from datasets import load_dataset, Dataset
-from hud.datasets import Task, run_dataset
+from datasets import Dataset, load_dataset
 from hud import trace
+from hud.datasets import Task, run_dataset
 
 from .agent import MCPComputerAgent
-
 
 # ---------------------------------------------------------------------------
 # Single-task runner
 # ---------------------------------------------------------------------------
+
 
 async def run_single_task(
     dataset: str | Dataset | list[dict[str, Any]],
@@ -47,24 +48,20 @@ async def run_single_task(
 
     # Load dataset and pick a sample
     if isinstance(dataset, str):
-        dataset = load_dataset(dataset, split="train") # type: ignore[arg-type]
+        dataset = load_dataset(dataset, split="train")  # type: ignore[arg-type]
     elif isinstance(dataset, list):
         dataset = dataset
     else:
         dataset = dataset["train"]
-    
+
     sample_task = dataset[task_id]  # type: ignore[index]
     task_prompt = sample_task.get("prompt", f"Task {sample_task.get('id', 0)}")  # type: ignore[attr-defined]
 
     # Filter any existing Computer tools
     # The eval framework will add its own Computer tool per task
     if tools:
-        tools = [
-            tool 
-            for tool in tools 
-            if not is_agent_computer(tool)
-        ]
-    
+        tools = [tool for tool in tools if not is_agent_computer(tool)]
+
     with trace(name=task_prompt):
         task = Task(**sample_task)  # type: ignore[arg-type]
 
@@ -87,12 +84,13 @@ async def run_single_task(
         )
         print(f"Running: {task_prompt}")
         result = await agent.run(task, max_steps=10)
-        print(f"✅ Reward: {getattr(result, 'reward')}")
+        print(f"✅ Reward: {result.reward}")
 
 
 # ---------------------------------------------------------------------------
 # Full-dataset runner
 # ---------------------------------------------------------------------------
+
 
 async def run_full_dataset(
     dataset: str | Dataset | list[dict[str, Any]],
@@ -121,9 +119,9 @@ async def run_full_dataset(
 
     # Run with our MCP-based agent class.
     if isinstance(dataset, str):
-        dataset_name = dataset.split('/')[-1]
+        dataset_name = dataset.split("/")[-1]
         job_name = job_name or f"Evaluation {dataset_name}"
-        dataset = load_dataset(dataset, split=split) # type: ignore[arg-type]
+        dataset = load_dataset(dataset, split=split)  # type: ignore[arg-type]
     else:
         dataset_name = "custom"
         job_name = job_name or f"Evaluation {time.strftime('%H:%M %Y-%m-%d')}"
@@ -131,12 +129,8 @@ async def run_full_dataset(
     # Filter any existing Computer tools
     # The eval framework will add its own Computer tool per task
     if tools:
-        tools = [
-            tool 
-            for tool in tools 
-            if not is_agent_computer(tool)
-        ]
-    
+        tools = [tool for tool in tools if not is_agent_computer(tool)]
+
     # Execute evaluation
     return await run_dataset(
         name=job_name,

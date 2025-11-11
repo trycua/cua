@@ -28,7 +28,6 @@ export interface AgentRequest {
 }
 // #endregion
 
-
 // #region Response
 // Response types
 export interface AgentResponse {
@@ -46,11 +45,9 @@ export interface Usage {
 }
 // #endregion
 
-
-
 // #region Messages
 // Agent message types - can be one of several different message types
-export type AgentMessage = 
+export type AgentMessage =
   | UserMessage
   | AssistantMessage
   | ReasoningMessage
@@ -104,8 +101,6 @@ export interface FunctionCallOutputMessage {
 }
 // #endregion
 
-
-
 // #region Message Content
 export interface InputContent {
   type: 'input_image' | 'input_text';
@@ -126,14 +121,10 @@ export interface ComputerResultContent {
 }
 // #endregion
 
-
-
 // #region Actions
-export type ComputerAction = 
-  | ComputerActionOpenAI
-  | ComputerActionAnthropic;
+export type ComputerAction = ComputerActionOpenAI | ComputerActionAnthropic;
 // OpenAI Computer Actions
-export type ComputerActionOpenAI = 
+export type ComputerActionOpenAI =
   | ClickAction
   | DoubleClickAction
   | DragAction
@@ -187,9 +178,7 @@ export interface WaitAction {
   type: 'wait';
 }
 // Anthropic Computer Actions
-export type ComputerActionAnthropic = 
-  | LeftMouseDownAction
-  | LeftMouseUpAction;
+export type ComputerActionAnthropic = LeftMouseDownAction | LeftMouseUpAction;
 export interface LeftMouseDownAction {
   type: 'left_mouse_down';
   x: number;

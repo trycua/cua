@@ -15,8 +15,7 @@ export const TELEMETRY_SAMPLE_RATE = 100; // 100% sampling rate
 // Public PostHog config for anonymous telemetry
 // These values are intentionally public and meant for anonymous telemetry only
 // https://posthog.com/docs/product-analytics/troubleshooting#is-it-ok-for-my-api-key-to-be-exposed-and-public
-export const PUBLIC_POSTHOG_API_KEY =
-  'phc_eSkLnbLxsnYFaXksif1ksbrNzYlJShr35miFLDppF14';
+export const PUBLIC_POSTHOG_API_KEY = 'phc_eSkLnbLxsnYFaXksif1ksbrNzYlJShr35miFLDppF14';
 export const PUBLIC_POSTHOG_HOST = 'https://eu.i.posthog.com';
 
 export class PostHogTelemetryClient {
@@ -50,9 +49,7 @@ export class PostHogTelemetryClient {
     // CUA_TELEMETRY_DISABLED=1 to disable telemetry (new, more explicit way)
     const telemetryDisabled =
       process.env.CUA_TELEMETRY?.toLowerCase() === 'off' ||
-      ['1', 'true', 'yes', 'on'].includes(
-        process.env.CUA_TELEMETRY_DISABLED?.toLowerCase() || ''
-      );
+      ['1', 'true', 'yes', 'on'].includes(process.env.CUA_TELEMETRY_DISABLED?.toLowerCase() || '');
 
     this.config.enabled = !telemetryDisabled;
     this.config.sampleRate = Number.parseFloat(
@@ -64,9 +61,7 @@ export class PostHogTelemetryClient {
 
     // Log telemetry status on startup
     if (this.config.enabled) {
-      this.logger.info(
-        `Telemetry enabled (sampling at ${this.config.sampleRate}%)`
-      );
+      this.logger.info(`Telemetry enabled (sampling at ${this.config.sampleRate}%)`);
       // Initialize PostHog client if config is available
       this._initializePosthog();
     } else {
@@ -150,10 +145,7 @@ export class PostHogTelemetryClient {
   /**
    * Capture an event with PostHog.
    */
-  private _captureEvent(
-    eventName: string,
-    properties?: Record<string, unknown>
-  ): void {
+  private _captureEvent(eventName: string, properties?: Record<string, unknown>): void {
     if (!this.posthogClient) {
       return;
     }

@@ -1,10 +1,11 @@
-from typing import List, Dict, Any, Tuple
-import numpy as np
-from PIL import Image, ImageDraw, ImageFont
-import supervision as sv
-import platform
-import os
 import logging
+import os
+import platform
+from typing import Any, Dict, List, Tuple
+
+import numpy as np
+import supervision as sv
+from PIL import Image, ImageDraw, ImageFont
 
 logger = logging.getLogger(__name__)
 
@@ -184,7 +185,7 @@ class BoxAnnotator:
                 new_box = (x, y, x + box_width, y + box_height)
                 label_width = new_box[2] - new_box[0]
                 label_height = new_box[3] - new_box[1]
-                
+
                 for used_box in used_areas:
                     if not (
                         new_box[2] < used_box[0]  # new box is left of used box
@@ -195,9 +196,11 @@ class BoxAnnotator:
                         # Calculate dimensions of the used box
                         used_box_width = used_box[2] - used_box[0]
                         used_box_height = used_box[3] - used_box[1]
-                        
+
                         # Only consider as collision if used box is NOT more than 5x bigger in both dimensions
-                        if not (used_box_width > 5 * label_width and used_box_height > 5 * label_height):
+                        if not (
+                            used_box_width > 5 * label_width and used_box_height > 5 * label_height
+                        ):
                             return True
                 return False
 

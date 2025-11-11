@@ -21,8 +21,8 @@ import litellm
 from PIL import Image
 
 from ..decorators import register_agent
-from .base import AsyncAgentConfig
 from ..types import AgentCapability
+from .base import AsyncAgentConfig
 
 
 def _strip_hf_prefix(model: str) -> str:
@@ -53,7 +53,9 @@ def _maybe_smart_resize(image: Image.Image, model: str) -> Tuple[Image.Image, Tu
         if image_processor is None:
             return image, (orig_w, orig_h)
 
-        factor = getattr(image_processor, "patch_size", 14) * getattr(image_processor, "merge_size", 1)
+        factor = getattr(image_processor, "patch_size", 14) * getattr(
+            image_processor, "merge_size", 1
+        )
         min_pixels = getattr(image_processor, "min_pixels", 256 * 256)
         max_pixels = getattr(image_processor, "max_pixels", 1536 * 1536)
 

@@ -1,8 +1,8 @@
-import os
 import asyncio
-from pathlib import Path
+import os
 import sys
 import traceback
+from pathlib import Path
 
 # Load environment variables from .env file
 project_root = Path(__file__).parent.parent
@@ -20,8 +20,9 @@ for path in pythonpath.split(":"):
         print(f"Added to sys.path: {path}")
 
 from computer.computer import Computer
-from computer.providers.base import VMProviderType
 from computer.logger import LogLevel
+from computer.providers.base import VMProviderType
+
 
 async def main():
     try:
@@ -29,17 +30,15 @@ async def main():
 
         # Create a local macOS computer
         computer = Computer(
-            display="1024x768", 
-            memory="8GB", 
-            cpu="4", 
+            display="1024x768",
+            memory="8GB",
+            cpu="4",
             os_type="macos",
             name="macos",
             verbosity=LogLevel.VERBOSE,
             provider_type=VMProviderType.LUME,
             storage="/Users/<USER>/repos/trycua/computer/examples/storage",
-            shared_directories=[
-                "/Users/<USER>/repos/trycua/computer/examples/shared"
-            ],
+            shared_directories=["/Users/<USER>/repos/trycua/computer/examples/shared"],
             ephemeral=False,
         )
 
@@ -50,22 +49,22 @@ async def main():
         #     name=os.getenv("CONTAINER_NAME"),
         #     provider_type=VMProviderType.CLOUD,
         # )
-        
+
         try:
             # Run the computer with default parameters
             await computer.run()
-            
+
             screenshot = await computer.interface.screenshot()
-            
+
             # Create output directory if it doesn't exist
             output_dir = Path("./output")
             output_dir.mkdir(exist_ok=True)
-            
+
             screenshot_path = output_dir / "screenshot.png"
             with open(screenshot_path, "wb") as f:
                 f.write(screenshot)
             print(f"Screenshot saved to: {screenshot_path.absolute()}")
-            
+
             # await computer.interface.hotkey("command", "space")
 
             # res = await computer.interface.run_command("touch ./Downloads/empty_file")

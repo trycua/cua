@@ -24,9 +24,7 @@ export default function Layout({ children }: { children: ReactNode }) {
             <PostHogPageView />
           </Suspense>
           <AnalyticsTracker />
-          <RootProvider search={{ options: { api: '/docs/api/search' } }}>
-            {children}
-          </RootProvider>
+          <RootProvider search={{ options: { api: '/docs/api/search' } }}>{children}</RootProvider>
           <Footer />
           <CookieConsent />
         </PHProvider>

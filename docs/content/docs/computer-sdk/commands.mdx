@@ -13,16 +13,77 @@ Execute shell commands and get detailed results:
 
 <Tabs items={['Python', 'TypeScript']}>
   <Tab value="Python">
+
     ```python
-    # Run shell command result = await
-    computer.interface.run_command(cmd) # result.stdout, result.stderr, result.returncode
+    # Run shell command
+    result = await computer.interface.run_command(cmd) # result.stdout, result.stderr, result.returncode
     ```
+    
   </Tab>
   <Tab value="TypeScript">
+
     ```typescript
-    // Run shell command const result = await
-    computer.interface.runCommand(cmd); // result.stdout, result.stderr, result.returncode
+    // Run shell command
+    const result = await computer.interface.runCommand(cmd); // result.stdout, result.stderr, result.returncode
     ```
+
+  </Tab>
+</Tabs>
+
+## Window Management
+
+Control application launching and windows:
+
+<Tabs items={['Python', 'TypeScript']}>
+  <Tab value="Python">
+
+    ```python
+    # Launch applications
+    await computer.interface.launch("xfce4-terminal")
+    await computer.interface.launch("libreoffice --writer")
+    await computer.interface.open("https://www.google.com")
+
+    # Window management
+    windows = await computer.interface.get_application_windows("xfce4-terminal")
+    window_id = windows[0]
+    await computer.interface.activate_window(window_id)
+
+    window_id = await computer.interface.get_current_window_id()  # get the current active window id
+    await computer.interface.window_size(window_id)
+    await computer.interface.get_window_title(window_id)
+    await computer.interface.get_window_position(window_id)
+    await computer.interface.set_window_size(window_id, 1200, 800)
+    await computer.interface.set_window_position(window_id, 100, 100)
+    await computer.interface.maximize_window(window_id)
+    await computer.interface.minimize_window(window_id)
+    await computer.interface.close_window(window_id)
+    ```
+
+  </Tab>
+  <Tab value="TypeScript">
+
+    ```typescript
+    // Launch applications
+    await computer.interface.launch("xfce4-terminal");
+    await computer.interface.launch("libreoffice --writer");
+    await computer.interface.open("https://www.google.com");
+
+    // Window management
+    const windows = await computer.interface.getApplicationWindows("xfce4-terminal");
+    let windowId = windows[0];
+    await computer.interface.activateWindow(windowId);
+
+    windowId = await computer.interface.getCurrentWindowId(); // current active window id
+    await computer.interface.getWindowSize(windowId);
+    await computer.interface.getWindowName(windowId);
+    await computer.interface.getWindowPosition(windowId);
+    await computer.interface.setWindowSize(windowId, 1200, 800);
+    await computer.interface.setWindowPosition(windowId, 100, 100);
+    await computer.interface.maximizeWindow(windowId);
+    await computer.interface.minimizeWindow(windowId);
+    await computer.interface.closeWindow(windowId);
+    ```
+
   </Tab>
 </Tabs>
 
@@ -32,6 +93,7 @@ Precise mouse control and interaction:
 
 <Tabs items={['Python', 'TypeScript']}>
   <Tab value="Python">
+
     ```python
     # Basic clicks
     await computer.interface.left_click(x, y)       # Left click at coordinates
@@ -50,6 +112,7 @@ Precise mouse control and interaction:
 
   </Tab>
   <Tab value="TypeScript">
+
     ```typescript
     // Basic clicks
     await computer.interface.leftClick(x, y);       // Left click at coordinates
@@ -75,6 +138,7 @@ Text input and key combinations:
 
 <Tabs items={['Python', 'TypeScript']}>
   <Tab value="Python">
+
     ```python
     # Text input
     await computer.interface.type_text("Hello")     # Type text
@@ -88,6 +152,7 @@ Text input and key combinations:
 
   </Tab>
   <Tab value="TypeScript">
+
     ```typescript
     // Text input
     await computer.interface.typeText("Hello");     // Type text
@@ -108,20 +173,24 @@ Mouse wheel and scrolling control:
 
 <Tabs items={['Python', 'TypeScript']}>
   <Tab value="Python">
+
     ```python
     # Scrolling
     await computer.interface.scroll(x, y) # Scroll the mouse wheel
-    await computer.interface.scroll_down(clicks) # Scroll down await
-    computer.interface.scroll_up(clicks) # Scroll up
+    await computer.interface.scroll_down(clicks) # Scroll down
+    await computer.interface.scroll_up(clicks) # Scroll up
     ```
+
   </Tab>
   <Tab value="TypeScript">
-    ```typescript 
-    // Scrolling 
-    await computer.interface.scroll(x, y); // Scroll the mouse wheel 
+
+    ```typescript
+    // Scrolling
+    await computer.interface.scroll(x, y); // Scroll the mouse wheel
     await computer.interface.scrollDown(clicks); // Scroll down
-    await computer.interface.scrollUp(clicks); // Scroll up 
+    await computer.interface.scrollUp(clicks); // Scroll up
     ```
+
   </Tab>
 </Tabs>
 
@@ -131,21 +200,51 @@ Screen capture and display information:
 
 <Tabs items={['Python', 'TypeScript']}>
   <Tab value="Python">
-    ```python 
-    # Screen operations 
-    await computer.interface.screenshot() # Take a screenshot 
-    await computer.interface.get_screen_size() # Get screen dimensions
 
+    ```python
+    # Screen operations
+    await computer.interface.screenshot() # Take a screenshot
+    await computer.interface.get_screen_size() # Get screen dimensions
+    ```
+
+  </Tab>
+  <Tab value="TypeScript">
+
+    ```typescript
+    // Screen operations
+    await computer.interface.screenshot(); // Take a screenshot
+    await computer.interface.getScreenSize(); // Get screen dimensions
+    ```
+
+  </Tab>
+</Tabs>
+
+## Desktop Actions
+
+Control desktop environment features like wallpaper:
+
+<Tabs items={['Python', 'TypeScript']}>
+  <Tab value="Python">
+    ```python 
+    # Get current desktop environment (e.g., 'xfce4', 'gnome', 'kde', 'mac', 'windows')
+    env = await computer.interface.get_desktop_environment()
+    print(env) # "xfce4"
+
+    # Set desktop wallpaper to an image file accessible on the VM
+    await computer.interface.set_wallpaper("/home/cua/shared/wallpaper.png")
     ```
 
   </Tab>
   <Tab value="TypeScript">
     ```typescript 
-    // Screen operations 
-    await computer.interface.screenshot(); // Take a screenshot 
-    await computer.interface.getScreenSize(); // Get screen dimensions 
-    
+    // Get current desktop environment
+    const env = await computer.interface.getDesktopEnvironment();
+    print(env) # "xfce4"
+
+    // Set desktop wallpaper to an image file accessible on the VM
+    await computer.interface.setWallpaper('/home/cua/shared/wallpaper.png');
     ```
+
   </Tab>
 </Tabs>
 
@@ -155,20 +254,20 @@ System clipboard management:
 
 <Tabs items={['Python', 'TypeScript']}>
   <Tab value="Python">
-    ```python 
-    # Clipboard operations await
-    computer.interface.set_clipboard(text) # Set clipboard content await
-    computer.interface.copy_to_clipboard() # Get clipboard content
 
+    ```python
+    # Clipboard operations
+    await computer.interface.set_clipboard(text) # Set clipboard content
+    await computer.interface.copy_to_clipboard() # Get clipboard content
     ```
 
   </Tab>
   <Tab value="TypeScript">
-    ```typescript 
-    // Clipboard operations 
+
+    ```typescript
+    // Clipboard operations
     await computer.interface.setClipboard(text); // Set clipboard content
     await computer.interface.copyToClipboard(); // Get clipboard content
-
     ```
 
   </Tab>
@@ -201,18 +300,19 @@ Direct file and directory manipulation:
 
   </Tab>
   <Tab value="TypeScript">
+
     ```typescript
-    # File existence checks
+    // File existence checks
     await computer.interface.fileExists(path);      // Check if file exists
     await computer.interface.directoryExists(path); // Check if directory exists
 
-    # File content operations
+    // File content operations
     await computer.interface.readText(path, "utf-8");        // Read file content
     await computer.interface.writeText(path, content, "utf-8"); // Write file content
     await computer.interface.readBytes(path);       // Read file content as bytes
     await computer.interface.writeBytes(path, content); // Write file content as bytes
 
-    # File and directory management
+    // File and directory management
     await computer.interface.deleteFile(path);      // Delete file
     await computer.interface.createDir(path);       // Create directory
     await computer.interface.deleteDir(path);       // Delete directory
@@ -228,20 +328,21 @@ Access system accessibility information:
 
 <Tabs items={['Python', 'TypeScript']}>
   <Tab value="Python">
-    ```python 
-    # Get accessibility tree 
-    await computer.interface.get_accessibility_tree()
 
+    ```python
+    # Get accessibility tree
+    await computer.interface.get_accessibility_tree()
     ```
 
   </Tab>
   <Tab value="TypeScript">
-    ```typescript 
-    // Get accessibility tree 
-   await computer.interface.getAccessibilityTree();
 
-```
-</Tab>
+    ```typescript
+    // Get accessibility tree
+    await computer.interface.getAccessibilityTree();
+    ```
+
+  </Tab>
 </Tabs>
 
 ## Delay Configuration
@@ -250,6 +351,7 @@ Control timing between actions:
 
 <Tabs items={['Python']}>
   <Tab value="Python">
+
     ```python
     # Set default delay between all actions (in seconds)
     computer.interface.delay = 0.5  # 500ms delay between actions
@@ -269,6 +371,7 @@ Manage Python environments:
 
 <Tabs items={['Python']}>
   <Tab value="Python">
+
     ```python
     # Virtual environment management
     await computer.venv_install("demo_venv", ["requests", "macos-pyxa"]) # Install packages in a virtual environment

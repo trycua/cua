@@ -1,6 +1,6 @@
 # Sandboxed Python Execution: Run Code Safely in Cua Containers
 
-*Published on June 23, 2025 by Dillon DuPont*
+_Published on June 23, 2025 by Dillon DuPont_
 
 Cua's computer-use capabilities that we touched on in [Building your own Operator on macOS - Part 2](build-your-own-operator-on-macos-2.md) – your AI agents can click, scroll, type, and interact with any desktop application. But what if your agent needs to do more than just UI automation? What if it needs to process data, make API calls, analyze images, or run complex logic alongside those UI interactions, within the same virtual environment?
 
@@ -49,15 +49,19 @@ What's happening here? When you call `greet_and_print()`, Cua extracts the funct
 Cua's sandboxed execution system employs several key architectural components:
 
 ### 1. Source Code Extraction
+
 Cua uses Python's `inspect.getsource()` to extract your function's source code and reconstruct the function definition in the remote environment.
 
 ### 2. Virtual Environment Isolation
+
 Each sandboxed function runs in a named virtual environment within the container. This provides complete dependency isolation between different functions and their respective environments.
 
 ### 3. Data Serialization and Transport
+
 Arguments and return values are serialized as JSON and transported between the host and container. This ensures compatibility across different Python versions and execution environments.
 
 ### 4. Comprehensive Error Handling
+
 The system captures both successful results and exceptions, preserving stack traces and error information for debugging purposes.
 
 ## Getting your sandbox ready
@@ -73,10 +77,10 @@ async def main():
     # Fire up the computer
     computer = Computer()
     await computer.run()
-    
+
     # Make it the default for all sandboxed functions
     set_default_computer(computer)
-    
+
     # Install some packages in a virtual environment
     await computer.venv_install("demo_venv", ["requests", "beautifulsoup4"])
 ```
@@ -104,7 +108,7 @@ def automate_browser_with_playwright():
     import time
     import base64
     from datetime import datetime
-    
+
     try:
         with sync_playwright() as p:
             # Launch browser (visible, because why not?)
@@ -112,68 +116,68 @@ def automate_browser_with_playwright():
                 headless=False,
                 args=['--no-sandbox', '--disable-dev-shm-usage']
             )
-            
+
             page = browser.new_page()
             page.set_viewport_size({"width": 1280, "height": 720})
-            
+
             actions = []
             screenshots = {}
-            
+
             # Let's visit example.com and poke around
             page.goto("https://example.com")
             actions.append("Navigated to example.com")
-            
+
             # Grab a screenshot because screenshots are cool
             screenshot_bytes = page.screenshot(full_page=True)
             screenshots["initial"] = base64.b64encode(screenshot_bytes).decode()
-            
+
             # Get some basic info
             title = page.title()
             actions.append(f"Page title: {title}")
-            
+
             # Find links and headings
             try:
                 links = page.locator("a").all()
                 link_texts = [link.text_content() for link in links[:5]]
                 actions.append(f"Found {len(links)} links: {link_texts}")
-                
+
                 headings = page.locator("h1, h2, h3").all()
                 heading_texts = [h.text_content() for h in headings[:3]]
                 actions.append(f"Found headings: {heading_texts}")
-                
+
             except Exception as e:
                 actions.append(f"Element interaction error: {str(e)}")
-            
+
             # Let's try a form for good measure
             try:
                 page.goto("https://httpbin.org/forms/post")
                 actions.append("Navigated to form page")
-                
+
                 # Fill out the form
                 page.fill('input[name="custname"]', "Test User from Sandboxed Environment")
                 page.fill('input[name="custtel"]', "555-0123")
                 page.fill('input[name="custemail"]', "test@example.com")
                 page.select_option('select[name="size"]', "large")
-                
+
                 actions.append("Filled out form fields")
-                
+
                 # Submit and see what happens
                 page.click('input[type="submit"]')
                 page.wait_for_load_state("networkidle")
-                
+
                 actions.append("Submitted form")
-                
+
             except Exception as e:
                 actions.append(f"Form interaction error: {str(e)}")
-            
+
             browser.close()
-            
+
             return {
                 "actions_performed": actions,
                 "screenshots": screenshots,
                 "success": True
             }
-            
+
     except Exception as e:
         return {"error": f"Browser automation failed: {str(e)}"}
 
@@ -196,9 +200,9 @@ def security_audit_tool(code_snippet):
     """Analyze code for potential security issues"""
     import ast
     import re
-    
+
     issues = []
-    
+
     # Check for the usual suspects
     dangerous_patterns = [
         (r'eval\s*\(', "Use of eval() function"),
@@ -207,11 +211,11 @@ def security_audit_tool(code_snippet):
         (r'subprocess\.', "Subprocess usage"),
         (r'os\.system\s*\(', "OS system call"),
     ]
-    
+
     for pattern, description in dangerous_patterns:
         if re.search(pattern, code_snippet):
             issues.append(description)
-    
+
     # Get fancy with AST analysis
     try:
         tree = ast.parse(code_snippet)
@@ -222,7 +226,7 @@ def security_audit_tool(code_snippet):
                         issues.append(f"Dangerous function call: {node.func.id}")
     except SyntaxError:
         issues.append("Syntax error in code")
-    
+
     return {
         "security_issues": issues,
         "risk_level": "HIGH" if len(issues) > 2 else "MEDIUM" if issues else "LOW"
@@ -245,34 +249,34 @@ def take_screenshot_and_analyze():
     import base64
     from PIL import ImageGrab
     from datetime import datetime
-    
+
     try:
         # Grab the screen
         screenshot = ImageGrab.grab()
-        
+
         # Convert to base64 for easy transport
         buffer = io.BytesIO()
         screenshot.save(buffer, format='PNG')
         screenshot_data = base64.b64encode(buffer.getvalue()).decode()
-        
+
         # Get some basic info
         screen_info = {
             "size": screenshot.size,
             "mode": screenshot.mode,
             "timestamp": datetime.now().isoformat()
         }
-        
+
         # Analyze the colors (because why not?)
         colors = screenshot.getcolors(maxcolors=256*256*256)
         dominant_color = max(colors, key=lambda x: x[0])[1] if colors else None
-        
+
         return {
             "screenshot_base64": screenshot_data,
             "screen_info": screen_info,
             "dominant_color": dominant_color,
             "unique_colors": len(colors) if colors else 0
         }
-        
+
     except Exception as e:
         return {"error": f"Screenshot failed: {str(e)}"}
 
@@ -287,6 +291,7 @@ print("Desktop analysis complete!")
 ## Pro tips for sandboxed success
 
 ### Keep it self-contained
+
 Always put your imports inside the function. Trust us on this one:
 
 ```python
@@ -294,12 +299,13 @@ Always put your imports inside the function. Trust us on this one:
 def good_function():
     import os  # Import inside the function
     import json
-    
+
     # Your code here
     return {"result": "success"}
 ```
 
 ### Install dependencies first
+
 Don't forget to install packages before using them:
 
 ```python
@@ -314,13 +320,14 @@ def data_analysis():
 ```
 
 ### Use descriptive environment names
+
 Future you will thank you:
 
 ```python
 @sandboxed("data_processing_env")
 def process_data(): pass
 
-@sandboxed("web_scraping_env") 
+@sandboxed("web_scraping_env")
 def scrape_site(): pass
 
 @sandboxed("ml_training_env")
@@ -328,6 +335,7 @@ def train_model(): pass
 ```
 
 ### Always handle errors gracefully
+
 Things break. Plan for it:
 
 ```python
@@ -345,6 +353,7 @@ def robust_function(data):
 Let's be honest – there's some overhead here. Code needs to be serialized, sent over the network, and executed remotely. But for most use cases, the benefits far outweigh the costs.
 
 If you're building something performance-critical, consider:
+
 - Batching multiple operations into a single sandboxed function
 - Minimizing data transfer between host and container
 - Using persistent virtual environments
@@ -369,4 +378,4 @@ Happy coding (safely)!
 
 ---
 
-*Want to dive deeper? Check out our [sandboxed functions examples](https://github.com/trycua/cua/blob/main/examples/sandboxed_functions_examples.py) and [virtual environment tests](https://github.com/trycua/cua/blob/main/tests/venv.py) on GitHub. Questions? Come chat with us on Discord!*
+_Want to dive deeper? Check out our [sandboxed functions examples](https://github.com/trycua/cua/blob/main/examples/sandboxed_functions_examples.py) and [virtual environment tests](https://github.com/trycua/cua/blob/main/tests/venv.py) on GitHub. Questions? Come chat with us on Discord!_

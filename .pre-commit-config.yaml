@@ -1,0 +1,48 @@
+repos:
+  - repo: https://github.com/pre-commit/mirrors-prettier
+    rev: v3.0.0
+    hooks:
+      - id: prettier
+        name: Prettier (TS/JS/JSON/Markdown/YAML)
+        entry: prettier --write
+        language: node
+        additional_dependencies: ["prettier@3.6.2"]
+        files: \.(ts|tsx|js|jsx|json|md|mdx|yaml|yml)$
+
+  - repo: local
+    hooks:
+      - id: tsc
+        name: TypeScript type check
+        entry: node ./scripts/typescript-typecheck.js
+        language: node
+
+  - repo: https://github.com/PyCQA/isort
+    rev: 7.0.0
+    hooks:
+      - id: isort
+        name: isort code formatter
+        args: ["--profile", "black"]
+        files: \.(py)$
+
+  - repo: https://github.com/psf/black
+    rev: 25.9.0
+    hooks:
+      - id: black
+        name: Black code formatter
+        files: \.(py)$
+
+  - repo: https://github.com/charliermarsh/ruff-pre-commit
+    rev: v0.14.1
+    hooks:
+      - id: ruff
+        name: ruff linter
+        args: ["--fix"]
+        files: \.(py)$
+
+  # Temporarily disabled due to untyped codebase
+  # - repo: https://github.com/pre-commit/mirrors-mypy
+  #   rev: v1.5.1
+  #   hooks:
+  #     - id: mypy
+  #       name: mypy type checker
+  #       files: \.(py)$

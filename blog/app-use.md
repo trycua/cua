@@ -1,6 +1,6 @@
 # App-Use: Control Individual Applications with Cua Agents
 
-*Published on May 31, 2025 by The Cua Team*
+_Published on May 31, 2025 by The Cua Team_
 
 Today, we are excited to introduce a new experimental feature landing in the [Cua GitHub repository](https://github.com/trycua/cua): **App-Use**. App-Use allows you to create lightweight virtual desktops that limit agent access to specific applications, improving precision of your agent's trajectory. Perfect for parallel workflows, and focused task execution.
 
@@ -33,9 +33,11 @@ agent = ComputerAgent(
 ## Key Benefits
 
 ### 1. Lightweight and Fast
+
 App-Use creates visual filters, not new processes. Your apps continue running normally - we just control what the agent can see and click on. The virtual desktops are composited views that require no additional compute resources beyond the existing window manager operations.
 
 ### 2. Run Multiple Agents in Parallel
+
 Deploy a team of specialized agents, each focused on their own apps:
 
 ```python
@@ -46,7 +48,7 @@ computer = Computer(experiments=["app-use"])
 research_desktop = computer.create_desktop_from_apps(["Safari"])
 research_agent = ComputerAgent(tools=[research_desktop], ...)
 
-# Writing agent focuses on documents  
+# Writing agent focuses on documents
 writing_desktop = computer.create_desktop_from_apps(["Pages", "Notes"])
 writing_agent = ComputerAgent(tools=[writing_desktop], ...)
 
@@ -66,6 +68,7 @@ await asyncio.gather(
 ### Requirements
 
 To get started with App-Use, you'll need:
+
 - Python 3.11+
 - macOS Sequoia (15.0) or later
 
@@ -85,21 +88,21 @@ from agent import ComputerAgent
 async def main():
     computer = Computer()
     await computer.run()
-    
+
     # Create app-specific desktop sessions
     desktop = computer.create_desktop_from_apps(["Notes"])
-    
+
     # Initialize an agent
     agent = ComputerAgent(
         model="anthropic/claude-3-5-sonnet-20241022",
         tools=[desktop]
     )
-    
+
     # Take a screenshot (returns bytes by default)
     screenshot = await desktop.interface.screenshot()
     with open("app_screenshot.png", "wb") as f:
         f.write(screenshot)
-    
+
     # Run an agent task
     async for result in agent.run("Create a new note titled 'Meeting Notes' and add today's agenda items"):
         print(f"Agent: {result.get('text', '')}")
@@ -113,6 +116,7 @@ if __name__ == "__main__":
 ### ⚠️ Important Warning
 
 Computer-use agents are powerful tools that can interact with your devices. This guide involves using your own macOS and iPhone instead of a VM. **Proceed at your own risk.** Always:
+
 - Review agent actions before running
 - Start with non-critical tasks
 - Monitor agent behavior closely
@@ -150,20 +154,20 @@ async def automate_iphone():
     # Connect to your local computer server
     my_mac = Computer(use_host_computer_server=True, os_type="macos", experiments=["app-use"])
     await my_mac.run()
-    
+
     # Create a desktop focused on iPhone Mirroring
     my_iphone = my_mac.create_desktop_from_apps(["iPhone Mirroring"])
-    
+
     # Initialize an agent for iPhone automation
     agent = ComputerAgent(
         model="anthropic/claude-3-5-sonnet-20241022",
         tools=[my_iphone]
     )
-    
+
     # Example: Send a message
     async for result in agent.run("Open Messages and send 'Hello from Cua!' to John"):
         print(f"Agent: {result.get('text', '')}")
-    
+
     # Example: Set a reminder
     async for result in agent.run("Create a reminder to call mom at 5 PM today"):
         print(f"Agent: {result.get('text', '')}")
@@ -175,6 +179,7 @@ if __name__ == "__main__":
 ### iPhone Automation Use Cases
 
 With Cua's iPhone automation, you can:
+
 - **Automate messaging**: Send texts, respond to messages, manage conversations
 - **Control apps**: Navigate any iPhone app using natural language
 - **Manage settings**: Adjust iPhone settings programmatically
@@ -191,6 +196,7 @@ With Cua's iPhone automation, you can:
 ## When to Use What: App-Use vs Multiple Cua Containers
 
 ### Use App-Use within the same macOS Cua Container:
+
 - ✅ You need lightweight, fast agent focusing (macOS only)
 - ✅ You want to run multiple agents on one desktop
 - ✅ You're automating personal devices like iPhones
@@ -198,6 +204,7 @@ With Cua's iPhone automation, you can:
 - ✅ You want low computational overhead
 
 ### Use Multiple Cua Containers:
+
 - ✅ You need maximum isolation between agents
 - ✅ You require cross-platform support (Mac/Linux/Windows)
 - ✅ You need guaranteed resource allocation
@@ -215,6 +222,7 @@ With Cua's iPhone automation, you can:
 ### How It Works
 
 When you create a desktop session with `create_desktop_from_apps()`, App Use:
+
 - Filters the visual output to show only specified application windows
 - Routes input events only to those applications
 - Maintains window layout isolation between different sessions

@@ -1,12 +1,13 @@
-from typing import List, Dict, Any, Tuple, Optional
 import logging
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
+
+import numpy as np
 import torch
 import torchvision
-from PIL import Image
-import numpy as np
-from ultralytics import YOLO
 from huggingface_hub import hf_hub_download
-from pathlib import Path
+from PIL import Image
+from ultralytics import YOLO
 
 logger = logging.getLogger(__name__)
 

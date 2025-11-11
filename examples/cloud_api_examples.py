@@ -1,10 +1,12 @@
 import asyncio
 import os
+
 from utils import load_dotenv_files
 
 load_dotenv_files()
 
 from computer.providers.cloud.provider import CloudProvider
+
 
 async def main() -> None:
     api_key = os.getenv("CUA_API_KEY")
@@ -13,7 +15,7 @@ async def main() -> None:
     api_base = os.getenv("CUA_API_BASE")
     if api_base:
         print(f"Using API base: {api_base}")
-    
+
     provider = CloudProvider(api_key=api_key, verbose=True)
     async with provider:
 
@@ -23,7 +25,7 @@ async def main() -> None:
         for vm in vms:
             print(
                 f"name: {vm['name']}\n",
-                f"status: {vm['status']}\n", # pending, running, stopped, terminated, failed
+                f"status: {vm['status']}\n",  # pending, running, stopped, terminated, failed
                 f"api_url: {vm.get('api_url')}\n",
                 f"vnc_url: {vm.get('vnc_url')}\n",
             )
@@ -59,12 +61,13 @@ async def main() -> None:
         # # To probe a VM's status via its public hostname (if you know the name):
         # name = "m-linux-96lcxd2c2k"
         # info = await provider.get_vm(name)
-        # print("get_vm info:\n", 
+        # print("get_vm info:\n",
         #     f"name: {info['name']}\n",
         #     f"status: {info['status']}\n", # running
         #     f"api_url: {info.get('api_url')}\n",
         #     f"os_type: {info.get('os_type')}\n",
         # )
+
 
 if __name__ == "__main__":
     asyncio.run(main())

@@ -4,33 +4,36 @@ Supports vision-language models for computer control with bounding box parsing.
 """
 
 import asyncio
-import json
 import base64
+import json
 import re
-from typing import Dict, List, Any, Optional, Tuple
 from io import BytesIO
-from PIL import Image
+from typing import Any, Dict, List, Optional, Tuple
+
 import litellm
+from litellm.responses.litellm_completion_transformation.transformation import (
+    LiteLLMCompletionResponsesConfig,
+)
 from litellm.types.utils import ModelResponse
-from litellm.responses.litellm_completion_transformation.transformation import LiteLLMCompletionResponsesConfig
+from PIL import Image
 
 from ..decorators import register_agent
-from ..types import Messages, AgentResponse, Tools, AgentCapability
 from ..loops.base import AsyncAgentConfig
 from ..responses import (
-    convert_responses_items_to_completion_messages,
     convert_completion_messages_to_responses_items,
-    make_reasoning_item,
-    make_output_text_item,
+    convert_responses_items_to_completion_messages,
     make_click_item,
     make_double_click_item,
     make_drag_item,
+    make_input_image_item,
     make_keypress_item,
+    make_output_text_item,
+    make_reasoning_item,
     make_scroll_item,
     make_type_item,
     make_wait_item,
-    make_input_image_item
 )
+from ..types import AgentCapability, AgentResponse, Messages, Tools
 
 # GLM-4.5V specific constants
 GLM_ACTION_SPACE = """
@@ -251,16 +254,18 @@ Call rule: `FAIL()`
     }
 }"""
 
+
 def encode_image_to_base64(image_path: str) -> str:
     """Encode image file to base64 string with data URI."""
     with open(image_path, "rb") as image_file:
         encoded_string = base64.b64encode(image_file.read()).decode("utf-8")
         return f"data:image/png;base64,{encoded_string}"
 
+
 def parse_glm_response(response: str) -> Dict[str, Any]:
     """
     Parse GLM-4.5V response to extract action and memory.
-    
+
     The special tokens <|begin_of_box|> and <|end_of_box|> mark bounding boxes.
     Coordinates are normalized values between 0 and 1000.
     """
@@ -274,26 +279,23 @@ def parse_glm_response(response: str) -> Dict[str, Any]:
         action_pattern = r"[\w_]+\([^)]*\)"
         matches = re.findall(action_pattern, response)
         action = matches[0] if matches else None
-    
+
     # Extract memory section
     memory_pattern = r"Memory:(.*?)$"
     memory_match = re.search(memory_pattern, response, re.DOTALL)
     memory = memory_match.group(1).strip() if memory_match else "[]"
-    
+
     # Extract action text (everything before Memory:)
-    action_text_pattern = r'^(.*?)Memory:'
+    action_text_pattern = r"^(.*?)Memory:"
     action_text_match = re.search(action_text_pattern, response, re.DOTALL)
     action_text = action_text_match.group(1).strip() if action_text_match else response
-    
+
     # Clean up action text by removing special tokens
     if action_text:
         action_text = action_text.replace("<|begin_of_box|>", "").replace("<|end_of_box|>", "")
-    
-    return {
-        "action": action,
-        "action_text": action_text,
-        "memory": memory
-    }
+
+    return {"action": action, "action_text": action_text, "memory": memory}
+
 
 def get_last_image_from_messages(messages: Messages) -> Optional[str]:
     """Extract the last image from messages for processing."""
@@ -314,23 +316,28 @@ def get_last_image_from_messages(messages: Messages) -> Optional[str]:
                             image_url_obj = item.get("image_url", {})
                             if isinstance(image_url_obj, dict):
                                 image_url = image_url_obj.get("url", "")
-                                if isinstance(image_url, str) and image_url.startswith("data:image/"):
+                                if isinstance(image_url, str) and image_url.startswith(
+                                    "data:image/"
+                                ):
                                     return image_url.split(",", 1)[1]
     return None
 
-def convert_responses_items_to_glm45v_pc_prompt(messages: Messages, task: str, memory: str = "") -> List[Dict[str, Any]]:
+
+def convert_responses_items_to_glm45v_pc_prompt(
+    messages: Messages, task: str, memory: str = ""
+) -> List[Dict[str, Any]]:
     """Convert responses items to GLM-4.5V PC prompt format with historical actions.
-    
+
     Args:
         messages: List of message items from the conversation
         task: The task description
         memory: Current memory state
-        
+
     Returns:
         List of content items for the prompt (text and image_url items)
     """
     action_space = GLM_ACTION_SPACE
-    
+
     # Template head
     head_text = f"""You are a GUI Agent, and your primary task is to respond accurately to user requests or questions. In addition to directly answering the user's queries, you can also use tools or perform GUI operations directly until you fulfill the user's request or provide a correct answer. You should carefully read and understand the images and questions provided by the user, and engage in thinking and reflection when appropriate. The coordinates involved are all represented in thousandths (0-999).
 
@@ -345,7 +352,7 @@ Ubuntu
 
 # Historical Actions and Current Memory
 History:"""
-    
+
     # Template tail
     tail_text = f"""
 Memory:
@@ -363,18 +370,18 @@ Memory:
 
 Current Screenshot:
 """
-    
+
     # Build history from messages
     history = []
     history_images = []
-    
+
     # Group messages into steps
     current_step = []
     step_num = 0
-    
+
     for message in messages:
         msg_type = message.get("type")
-        
+
         if msg_type == "reasoning":
             current_step.append(message)
         elif msg_type == "message" and message.get("role") == "assistant":
@@ -386,7 +393,7 @@ Current Screenshot:
             # End of step - process it
             if current_step:
                 step_num += 1
-                
+
                 # Extract bot thought from message content
                 bot_thought = ""
                 for item in current_step:
@@ -397,14 +404,14 @@ Current Screenshot:
                                 bot_thought = content_item.get("text", "")
                                 break
                         break
-                
+
                 # Extract action from computer_call
                 action_text = ""
                 for item in current_step:
                     if item.get("type") == "computer_call":
                         action = item.get("action", {})
                         action_type = action.get("type", "")
-                        
+
                         if action_type == "click":
                             x, y = action.get("x", 0), action.get("y", 0)
                             # Convert to 0-999 range (assuming screen dimensions)
@@ -436,7 +443,7 @@ Current Screenshot:
                         elif action_type == "wait":
                             action_text = "WAIT()"
                         break
-                
+
                 # Extract screenshot from computer_call_output
                 screenshot_url = None
                 for item in current_step:
@@ -445,34 +452,34 @@ Current Screenshot:
                         if output.get("type") == "input_image":
                             screenshot_url = output.get("image_url", "")
                             break
-                
+
                 # Store step info
                 step_info = {
                     "step_num": step_num,
                     "bot_thought": bot_thought,
                     "action_text": action_text,
-                    "screenshot_url": screenshot_url
+                    "screenshot_url": screenshot_url,
                 }
                 history.append(step_info)
-                
+
                 # Store screenshot for last 4 steps
                 if screenshot_url:
                     history_images.append(screenshot_url)
-                
+
                 current_step = []
-    
+
     # Build content array with head, history, and tail
     content = []
     current_text = head_text
-    
+
     total_history_steps = len(history)
     history_image_count = min(4, len(history_images))  # Last 4 images
-    
+
     for step_idx, step_info in enumerate(history):
         step_num = step_info["step_num"]
         bot_thought = step_info["bot_thought"]
         action_text = step_info["action_text"]
-        
+
         if step_idx < total_history_steps - history_image_count:
             # For steps beyond the last 4, use text placeholder
             current_text += f"\nstep {step_num}: Screenshot:(Omitted in context.) Thought: {bot_thought}\nAction: {action_text}"
@@ -480,19 +487,20 @@ Current Screenshot:
             # For the last 4 steps, insert images
             current_text += f"\nstep {step_num}: Screenshot:"
             content.append({"type": "text", "text": current_text})
-            
+
             # Add image
             img_idx = step_idx - (total_history_steps - history_image_count)
             if img_idx < len(history_images):
                 content.append({"type": "image_url", "image_url": {"url": history_images[img_idx]}})
-            
+
             current_text = f" Thought: {bot_thought}\nAction: {action_text}"
-    
+
     # Add tail
     current_text += tail_text
     content.append({"type": "text", "text": current_text})
-    
+
     return content
+
 
 def model_dump(obj) -> Dict[str, Any]:
     if isinstance(obj, dict):
@@ -502,58 +510,61 @@ def model_dump(obj) -> Dict[str, Any]:
     else:
         return obj
 
-def convert_glm_completion_to_responses_items(response: ModelResponse, image_width: int, image_height: int) -> List[Dict[str, Any]]:
+
+def convert_glm_completion_to_responses_items(
+    response: ModelResponse, image_width: int, image_height: int
+) -> List[Dict[str, Any]]:
     """
     Convert GLM-4.5V completion response to responses items format.
-    
+
     Args:
         response: LiteLLM ModelResponse from GLM-4.5V
         image_width: Original image width for coordinate scaling
         image_height: Original image height for coordinate scaling
-        
+
     Returns:
         List of response items in the proper format
     """
     import uuid
-    
+
     response_items = []
-    
+
     if not response.choices or not response.choices[0].message:
         return response_items
-    
+
     message = response.choices[0].message
     content = message.content or ""
-    reasoning_content = getattr(message, 'reasoning_content', None)
-    
+    reasoning_content = getattr(message, "reasoning_content", None)
+
     # Add reasoning item if present
     if reasoning_content:
         reasoning_item = model_dump(make_reasoning_item(reasoning_content))
         response_items.append(reasoning_item)
-    
+
     # Parse the content to extract action and text
     parsed_response = parse_glm_response(content)
     action = parsed_response.get("action", "")
     action_text = parsed_response.get("action_text", "")
-    
+
     # Add message item with text content (excluding action and memory)
     if action_text:
         # Remove action from action_text if it's there
         clean_text = action_text
         if action and action in clean_text:
             clean_text = clean_text.replace(action, "").strip()
-        
+
         # Remove memory section
         memory_pattern = r"Memory:\s*\[.*?\]\s*$"
         clean_text = re.sub(memory_pattern, "", clean_text, flags=re.DOTALL).strip()
-        
+
         if clean_text:
             message_item = model_dump(make_output_text_item(clean_text))
             response_items.append(message_item)
-    
+
     # Convert action to computer call if present
     if action:
         call_id = f"call_{uuid.uuid4().hex[:8]}"
-        
+
         # Parse different action types and create appropriate computer calls
         if action.startswith("left_click"):
             coord_match = re.search(r"start_box='?\[(\d+),\s*(\d+)\]'?", action)
@@ -566,7 +577,7 @@ def convert_glm_completion_to_responses_items(response: ModelResponse, image_wid
                 computer_call["call_id"] = call_id
                 computer_call["status"] = "completed"
                 response_items.append(computer_call)
-        
+
         elif action.startswith("right_click"):
             coord_match = re.search(r"start_box='?\[(\d+),\s*(\d+)\]'?", action)
             if coord_match:
@@ -577,7 +588,7 @@ def convert_glm_completion_to_responses_items(response: ModelResponse, image_wid
                 computer_call["call_id"] = call_id
                 computer_call["status"] = "completed"
                 response_items.append(computer_call)
-        
+
         elif action.startswith("left_double_click"):
             coord_match = re.search(r"start_box='?\[(\d+),\s*(\d+)\]'?", action)
             if coord_match:
@@ -588,7 +599,7 @@ def convert_glm_completion_to_responses_items(response: ModelResponse, image_wid
                 computer_call["call_id"] = call_id
                 computer_call["status"] = "completed"
                 response_items.append(computer_call)
-        
+
         elif action.startswith("left_drag"):
             start_match = re.search(r"start_box='?\[(\d+),\s*(\d+)\]'?", action)
             end_match = re.search(r"end_box='?\[(\d+),\s*(\d+)\]'?", action)
@@ -605,18 +616,18 @@ def convert_glm_completion_to_responses_items(response: ModelResponse, image_wid
                 computer_call["call_id"] = call_id
                 computer_call["status"] = "completed"
                 response_items.append(computer_call)
-        
+
         elif action.startswith("key"):
             key_match = re.search(r"keys='([^']+)'", action)
             if key_match:
                 keys = key_match.group(1)
                 # Split keys by '+' for key combinations, or use as single key
-                key_list = keys.split('+') if '+' in keys else [keys]
+                key_list = keys.split("+") if "+" in keys else [keys]
                 computer_call = model_dump(make_keypress_item(key_list))
                 computer_call["call_id"] = call_id
                 computer_call["status"] = "completed"
                 response_items.append(computer_call)
-        
+
         elif action.startswith("type"):
             content_match = re.search(r"content='([^']*)'", action)
             if content_match:
@@ -625,7 +636,7 @@ def convert_glm_completion_to_responses_items(response: ModelResponse, image_wid
                 computer_call["call_id"] = call_id
                 computer_call["status"] = "completed"
                 response_items.append(computer_call)
-        
+
         elif action.startswith("scroll"):
             coord_match = re.search(r"start_box='?\[(\d+),\s*(\d+)\]'?", action)
             direction_match = re.search(r"direction='([^']+)'", action)
@@ -648,14 +659,15 @@ def convert_glm_completion_to_responses_items(response: ModelResponse, image_wid
                 computer_call["call_id"] = call_id
                 computer_call["status"] = "completed"
                 response_items.append(computer_call)
-        
+
         elif action == "WAIT()":
             computer_call = model_dump(make_wait_item())
             computer_call["call_id"] = call_id
             computer_call["status"] = "completed"
             response_items.append(computer_call)
-    
+
     return response_items
+
 
 @register_agent(models=r"(?i).*GLM-4\.5V.*")
 class Glm4vConfig(AsyncAgentConfig):
@@ -674,11 +686,11 @@ class Glm4vConfig(AsyncAgentConfig):
         _on_api_end=None,
         _on_usage=None,
         _on_screenshot=None,
-        **kwargs
+        **kwargs,
     ) -> Dict[str, Any]:
         """
         Predict the next step using GLM-4.5V model.
-        
+
         Args:
             messages: Input messages following Responses format
             model: Model name to use
@@ -691,7 +703,7 @@ class Glm4vConfig(AsyncAgentConfig):
             _on_api_end: Callback for API end
             _on_usage: Callback for usage tracking
             _on_screenshot: Callback for screenshot events
-            
+
         Returns:
             Dict with "output" and "usage" keys
         """
@@ -708,7 +720,7 @@ class Glm4vConfig(AsyncAgentConfig):
                             user_instruction = item.get("text", "")
                             break
                 break
-        
+
         # Get the last image for processing
         last_image_b64 = get_last_image_from_messages(messages)
         if not last_image_b64 and computer_handler:
@@ -718,35 +730,28 @@ class Glm4vConfig(AsyncAgentConfig):
                 last_image_b64 = screenshot_b64
                 if _on_screenshot:
                     await _on_screenshot(screenshot_b64)
-        
+
         if not last_image_b64:
             raise ValueError("No image available for GLM-4.5V processing")
-        
+
         # Convert responses items to GLM-4.5V PC prompt format with historical actions
         prompt_content = convert_responses_items_to_glm45v_pc_prompt(
             messages=messages,
             task=user_instruction,
-            memory="[]"  # Initialize with empty memory for now
+            memory="[]",  # Initialize with empty memory for now
         )
-        
+
         # Add the current screenshot to the end
-        prompt_content.append({
-            "type": "image_url",
-            "image_url": {"url": f"data:image/png;base64,{last_image_b64}"}
-        })
-        
+        prompt_content.append(
+            {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{last_image_b64}"}}
+        )
+
         # Prepare messages for liteLLM
         litellm_messages = [
-            {
-                "role": "system",
-                "content": "You are a helpful GUI agent assistant."
-            },
-            {
-                "role": "user", 
-                "content": prompt_content
-            }
+            {"role": "system", "content": "You are a helpful GUI agent assistant."},
+            {"role": "user", "content": prompt_content},
         ]
-        
+
         # Prepare API call kwargs
         api_kwargs = {
             "model": model,
@@ -757,20 +762,21 @@ class Glm4vConfig(AsyncAgentConfig):
             #     "skip_special_tokens": False,
             # }
         }
-        
+        api_kwargs.update({k: v for k, v in (kwargs or {}).items()})
+
         # Add API callbacks
         if _on_api_start:
             await _on_api_start(api_kwargs)
-        
+
         # Call liteLLM
         response = await litellm.acompletion(**api_kwargs)
-        
+
         if _on_api_end:
             await _on_api_end(api_kwargs, response)
-        
+
         # Get image dimensions for coordinate scaling
         image_width, image_height = 1920, 1080  # Default dimensions
-        
+
         # Try to get actual dimensions from the image
         try:
             image_data = base64.b64decode(last_image_b64)
@@ -778,41 +784,38 @@ class Glm4vConfig(AsyncAgentConfig):
             image_width, image_height = image.size
         except Exception:
             pass  # Use default dimensions
-        
+
         # Convert GLM completion response to responses items
-        response_items = convert_glm_completion_to_responses_items(response, image_width, image_height)
-        
+        response_items = convert_glm_completion_to_responses_items(
+            response, image_width, image_height
+        )
+
         # Extract usage information
         response_usage = {
-            **LiteLLMCompletionResponsesConfig._transform_chat_completion_usage_to_responses_usage(response.usage).model_dump(),
+            **LiteLLMCompletionResponsesConfig._transform_chat_completion_usage_to_responses_usage(
+                response.usage
+            ).model_dump(),
             "response_cost": response._hidden_params.get("response_cost", 0.0),
         }
         if _on_usage:
             await _on_usage(response_usage)
-        
+
         # Create agent response
-        agent_response = {
-            "output": response_items,
-            "usage": response_usage
-        }
-        
+        agent_response = {"output": response_items, "usage": response_usage}
+
         return agent_response
 
     async def predict_click(
-        self,
-        model: str,
-        image_b64: str,
-        instruction: str,
-        **kwargs
+        self, model: str, image_b64: str, instruction: str, **kwargs
     ) -> Optional[Tuple[int, int]]:
         """
         Predict click coordinates using GLM-4.5V model.
-        
+
         Args:
             model: Model name to use
             image_b64: Base64 encoded image
             instruction: Instruction for where to click
-            
+
         Returns:
             Tuple with (x, y) coordinates or None
         """
@@ -824,22 +827,22 @@ Respond with a single click action in this format:
 left_click(start_box='[x,y]')
 
 Where x,y are coordinates normalized to 0-999 range."""
-            
+
             # Prepare messages for liteLLM
             litellm_messages = [
-                {
-                    "role": "system",
-                    "content": "You are a helpful GUI agent assistant."
-                },
+                {"role": "system", "content": "You are a helpful GUI agent assistant."},
                 {
                     "role": "user",
                     "content": [
                         {"type": "text", "text": click_prompt},
-                        {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{image_b64}"}}
-                    ]
-                }
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": f"data:image/png;base64,{image_b64}"},
+                        },
+                    ],
+                },
             ]
-            
+
             # Prepare API call kwargs
             api_kwargs = {
                 "model": model,
@@ -848,21 +851,22 @@ Where x,y are coordinates normalized to 0-999 range."""
                 "temperature": 0.001,
                 "extra_body": {
                     "skip_special_tokens": False,
-                }
+                },
             }
-            
+            api_kwargs.update({k: v for k, v in (kwargs or {}).items()})
+
             # Call liteLLM
             response = await litellm.acompletion(**api_kwargs)
-            
+
             # Extract response content
             response_content = response.choices[0].message.content.strip()
             print(response)
-            
+
             # Parse response for click coordinates
             # Look for coordinates in the response, handling special tokens
             coord_pattern = r"<\|begin_of_box\|>.*?left_click\(start_box='?\[(\d+),(\d+)\]'?\).*?<\|end_of_box\|>"
             match = re.search(coord_pattern, response_content)
-            
+
             if not match:
                 # Fallback: look for coordinates without special tokens
                 coord_pattern = r"left_click\(start_box='?\[(\d+),(\d+)\]'?\)"
@@ -870,7 +874,7 @@ Where x,y are coordinates normalized to 0-999 range."""
 
             if match:
                 x, y = int(match.group(1)), int(match.group(2))
-                
+
                 # Get actual image dimensions for scaling
                 try:
                     image_data = base64.b64decode(image_b64)
@@ -879,15 +883,15 @@ Where x,y are coordinates normalized to 0-999 range."""
                 except Exception:
                     # Use default dimensions
                     image_width, image_height = 1920, 1080
-                
+
                 # Convert from 0-999 normalized coordinates to actual pixel coordinates
                 actual_x = int((x / 999.0) * image_width)
                 actual_y = int((y / 999.0) * image_height)
-                
+
                 return (actual_x, actual_y)
-            
+
             return None
-            
+
         except Exception as e:
             # Log error and return None
             print(f"Error in predict_click: {e}")
@@ -896,7 +900,7 @@ Where x,y are coordinates normalized to 0-999 range."""
     def get_capabilities(self) -> List[AgentCapability]:
         """
         Get list of capabilities supported by this agent config.
-        
+
         Returns:
             List of capability strings
         """

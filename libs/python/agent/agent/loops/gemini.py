@@ -29,6 +29,7 @@ def _lazy_import_genai():
     try:
         from google import genai  # type: ignore
         from google.genai import types  # type: ignore
+
         return genai, types
     except Exception as e:  # pragma: no cover
         raise RuntimeError(
@@ -134,7 +135,13 @@ def _map_gemini_fc_to_computer_call(
             dx = magnitude
         elif direction == "left":
             dx = -magnitude
-        action = {"type": "scroll", "scroll_x": dx, "scroll_y": dy, "x": int(screen_w / 2), "y": int(screen_h / 2)}
+        action = {
+            "type": "scroll",
+            "scroll_x": dx,
+            "scroll_y": dy,
+            "x": int(screen_w / 2),
+            "y": int(screen_h / 2),
+        }
     elif name == "scroll_at":
         x = _denormalize(int(args.get("x", 500)), screen_w)
         y = _denormalize(int(args.get("y", 500)), screen_h)
@@ -155,7 +162,14 @@ def _map_gemini_fc_to_computer_call(
         y = _denormalize(int(args.get("y", 0)), screen_h)
         dx = _denormalize(int(args.get("destination_x", x)), screen_w)
         dy = _denormalize(int(args.get("destination_y", y)), screen_h)
-        action = {"type": "drag", "start_x": x, "start_y": y, "end_x": dx, "end_y": dy, "button": "left"}
+        action = {
+            "type": "drag",
+            "start_x": x,
+            "start_y": y,
+            "end_x": dx,
+            "end_y": dy,
+            "button": "left",
+        }
     elif name == "wait_5_seconds":
         action = {"type": "wait"}
     else:
@@ -242,20 +256,25 @@ class GeminiComputerUseConfig(AsyncAgentConfig):
         }
 
         if _on_api_start:
-            await _on_api_start({
-                "model": api_kwargs["model"],
-                # "contents": api_kwargs["contents"], # Disabled for now
-                "config": api_kwargs["config"],
-            })
+            await _on_api_start(
+                {
+                    "model": api_kwargs["model"],
+                    # "contents": api_kwargs["contents"], # Disabled for now
+                    "config": api_kwargs["config"],
+                }
+            )
 
         response = client.models.generate_content(**api_kwargs)
 
         if _on_api_end:
-            await _on_api_end({
-                "model": api_kwargs["model"],
-                # "contents": api_kwargs["contents"], # Disabled for now
-                "config": api_kwargs["config"],
-            }, response)
+            await _on_api_end(
+                {
+                    "model": api_kwargs["model"],
+                    # "contents": api_kwargs["contents"], # Disabled for now
+                    "config": api_kwargs["config"],
+                },
+                response,
+            )
 
         # Usage (Gemini SDK may not always provide token usage; populate when available)
         usage: Dict[str, Any] = {}

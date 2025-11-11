@@ -2,6 +2,7 @@
 
 try:
     from .provider import LumeProvider
+
     HAS_LUME = True
     __all__ = ["LumeProvider"]
 except ImportError:

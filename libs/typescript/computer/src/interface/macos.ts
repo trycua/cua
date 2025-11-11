@@ -3,8 +3,8 @@
  */
 
 import type { ScreenSize } from '../types';
-import { BaseComputerInterface } from './base';
 import type { AccessibilityNode, CursorPosition, MouseButton } from './base';
+import { BaseComputerInterface } from './base';
 
 export class MacOSComputerInterface extends BaseComputerInterface {
   // Mouse Actions
@@ -15,11 +15,7 @@ export class MacOSComputerInterface extends BaseComputerInterface {
    * @param {MouseButton} [button='left'] - Mouse button to press down
    * @returns {Promise<void>}
    */
-  async mouseDown(
-    x?: number,
-    y?: number,
-    button: MouseButton = 'left'
-  ): Promise<void> {
+  async mouseDown(x?: number, y?: number, button: MouseButton = 'left'): Promise<void> {
     await this.sendCommand('mouse_down', { x, y, button });
   }
 
@@ -30,11 +26,7 @@ export class MacOSComputerInterface extends BaseComputerInterface {
    * @param {MouseButton} [button='left'] - Mouse button to release
    * @returns {Promise<void>}
    */
-  async mouseUp(
-    x?: number,
-    y?: number,
-    button: MouseButton = 'left'
-  ): Promise<void> {
+  async mouseUp(x?: number, y?: number, button: MouseButton = 'left'): Promise<void> {
     await this.sendCommand('mouse_up', { x, y, button });
   }
 
@@ -86,12 +78,7 @@ export class MacOSComputerInterface extends BaseComputerInterface {
    * @param {number} [duration=0.5] - Duration of the drag operation in seconds
    * @returns {Promise<void>}
    */
-  async dragTo(
-    x: number,
-    y: number,
-    button: MouseButton = 'left',
-    duration = 0.5
-  ): Promise<void> {
+  async dragTo(x: number, y: number, button: MouseButton = 'left', duration = 0.5): Promise<void> {
     await this.sendCommand('drag_to', { x, y, button, duration });
   }
 
@@ -225,6 +212,148 @@ export class MacOSComputerInterface extends BaseComputerInterface {
     return response.position as CursorPosition;
   }
 
+  // Window Management
+  /** Open a file path or URL with the default handler. */
+  async open(target: string): Promise<void> {
+    const response = await this.sendCommand('open', { target });
+    if (!response.success) {
+      throw new Error((response.error as string) || 'Failed to open target');
+    }
+  }
+
+  /** Launch an application (string may include args). Returns pid if available. */
+  async launch(app: string, args?: string[]): Promise<number | undefined> {
+    const response = await this.sendCommand('launch', args ? { app, args } : { app });
+    if (!response.success) {
+      throw new Error((response.error as string) || 'Failed to launch application');
+    }
+    return (response.pid as number) || undefined;
+  }
+
+  /** Get the current active window id. */
+  async getCurrentWindowId(): Promise<number | string> {
+    const response = await this.sendCommand('get_current_window_id');
+    if (!response.success || response.window_id === undefined) {
+      throw new Error((response.error as string) || 'Failed to get current window id');
+    }
+    return response.window_id as number | string;
+  }
+
+  /** Get windows belonging to an application (by name). */
+  async getApplicationWindows(app: string): Promise<Array<number | string>> {
+    const response = await this.sendCommand('get_application_windows', { app });
+    if (!response.success) {
+      throw new Error((response.error as string) || 'Failed to get application windows');
+    }
+    return (response.windows as Array<number | string>) || [];
+  }
+
+  /** Get window title/name by id. */
+  async getWindowName(windowId: number | string): Promise<string> {
+    const response = await this.sendCommand('get_window_name', { window_id: windowId });
+    if (!response.success) {
+      throw new Error((response.error as string) || 'Failed to get window name');
+    }
+    return (response.name as string) || '';
+  }
+
+  /** Get window size as [width, height]. */
+  async getWindowSize(windowId: number | string): Promise<[number, number]> {
+    const response = await this.sendCommand('get_window_size', { window_id: windowId });
+    if (!response.success) {
+      throw new Error((response.error as string) || 'Failed to get window size');
+    }
+    return [Number(response.width) || 0, Number(response.height) || 0];
+  }
+
+  /** Get window position as [x, y]. */
+  async getWindowPosition(windowId: number | string): Promise<[number, number]> {
+    const response = await this.sendCommand('get_window_position', { window_id: windowId });
+    if (!response.success) {
+      throw new Error((response.error as string) || 'Failed to get window position');
+    }
+    return [Number(response.x) || 0, Number(response.y) || 0];
+  }
+
+  /** Set window size. */
+  async setWindowSize(windowId: number | string, width: number, height: number): Promise<void> {
+    const response = await this.sendCommand('set_window_size', {
+      window_id: windowId,
+      width,
+      height,
+    });
+    if (!response.success) {
+      throw new Error((response.error as string) || 'Failed to set window size');
+    }
+  }
+
+  /** Set window position. */
+  async setWindowPosition(windowId: number | string, x: number, y: number): Promise<void> {
+    const response = await this.sendCommand('set_window_position', {
+      window_id: windowId,
+      x,
+      y,
+    });
+    if (!response.success) {
+      throw new Error((response.error as string) || 'Failed to set window position');
+    }
+  }
+
+  /** Maximize a window. */
+  async maximizeWindow(windowId: number | string): Promise<void> {
+    const response = await this.sendCommand('maximize_window', { window_id: windowId });
+    if (!response.success) {
+      throw new Error((response.error as string) || 'Failed to maximize window');
+    }
+  }
+
+  /** Minimize a window. */
+  async minimizeWindow(windowId: number | string): Promise<void> {
+    const response = await this.sendCommand('minimize_window', { window_id: windowId });
+    if (!response.success) {
+      throw new Error((response.error as string) || 'Failed to minimize window');
+    }
+  }
+
+  /** Activate a window by id. */
+  async activateWindow(windowId: number | string): Promise<void> {
+    const response = await this.sendCommand('activate_window', { window_id: windowId });
+    if (!response.success) {
+      throw new Error((response.error as string) || 'Failed to activate window');
+    }
+  }
+
+  /** Close a window by id. */
+  async closeWindow(windowId: number | string): Promise<void> {
+    const response = await this.sendCommand('close_window', { window_id: windowId });
+    if (!response.success) {
+      throw new Error((response.error as string) || 'Failed to close window');
+    }
+  }
+
+  // Desktop Actions
+  /**
+   * Get the current desktop environment string (e.g., 'xfce4', 'gnome', 'kde', 'mac', 'windows').
+   */
+  async getDesktopEnvironment(): Promise<string> {
+    const response = await this.sendCommand('get_desktop_environment');
+    if (!response.success) {
+      throw new Error((response.error as string) || 'Failed to get desktop environment');
+    }
+    return (response.environment as string) || 'unknown';
+  }
+
+  /**
+   * Set the desktop wallpaper image.
+   * @param path Absolute path to the image file on the VM
+   */
+  async setWallpaper(path: string): Promise<void> {
+    const response = await this.sendCommand('set_wallpaper', { path });
+    if (!response.success) {
+      throw new Error((response.error as string) || 'Failed to set wallpaper');
+    }
+  }
+
   // Clipboard Actions
   /**
    * Copy current selection to clipboard and return the content.
@@ -326,9 +455,7 @@ export class MacOSComputerInterface extends BaseComputerInterface {
       });
 
       if (!response.success) {
-        throw new Error(
-          (response.error as string) || 'Failed to read file chunk'
-        );
+        throw new Error((response.error as string) || 'Failed to read file chunk');
       }
 
       const chunkData = Buffer.from(response.content_b64 as string, 'base64');
@@ -374,9 +501,7 @@ export class MacOSComputerInterface extends BaseComputerInterface {
       });
 
       if (!response.success) {
-        throw new Error(
-          (response.error as string) || 'Failed to write file chunk'
-        );
+        throw new Error((response.error as string) || 'Failed to write file chunk');
       }
 
       currentOffset = chunkEnd;
@@ -491,9 +616,7 @@ export class MacOSComputerInterface extends BaseComputerInterface {
   async createDir(path: string): Promise<void> {
     const response = await this.sendCommand('create_dir', { path });
     if (!response.success) {
-      throw new Error(
-        (response.error as string) || 'Failed to create directory'
-      );
+      throw new Error((response.error as string) || 'Failed to create directory');
     }
   }
 
@@ -506,9 +629,7 @@ export class MacOSComputerInterface extends BaseComputerInterface {
   async deleteDir(path: string): Promise<void> {
     const response = await this.sendCommand('delete_dir', { path });
     if (!response.success) {
-      throw new Error(
-        (response.error as string) || 'Failed to delete directory'
-      );
+      throw new Error((response.error as string) || 'Failed to delete directory');
     }
   }
 
@@ -523,10 +644,7 @@ export class MacOSComputerInterface extends BaseComputerInterface {
     if (!response.success) {
       throw new Error((response.error as string) || 'Failed to run command');
     }
-    return [
-      (response.stdout as string) || '',
-      (response.stderr as string) || '',
-    ];
+    return [(response.stdout as string) || '', (response.stderr as string) || ''];
   }
 
   // Accessibility Actions
@@ -538,9 +656,7 @@ export class MacOSComputerInterface extends BaseComputerInterface {
   async getAccessibilityTree(): Promise<AccessibilityNode> {
     const response = await this.sendCommand('get_accessibility_tree');
     if (!response.success) {
-      throw new Error(
-        (response.error as string) || 'Failed to get accessibility tree'
-      );
+      throw new Error((response.error as string) || 'Failed to get accessibility tree');
     }
     return response as unknown as AccessibilityNode;
   }
@@ -567,10 +683,7 @@ export class MacOSComputerInterface extends BaseComputerInterface {
    * @returns {Promise<[number, number]>} Converted screenshot coordinates as [x, y]
    * @throws {Error} If coordinate conversion fails
    */
-  async toScreenshotCoordinates(
-    x: number,
-    y: number
-  ): Promise<[number, number]> {
+  async toScreenshotCoordinates(x: number, y: number): Promise<[number, number]> {
     const response = await this.sendCommand('to_screenshot_coordinates', {
       x,
       y,

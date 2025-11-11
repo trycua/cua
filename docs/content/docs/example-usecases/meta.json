@@ -1,7 +1,5 @@
 {
-	"title": "Example Use Cases",
-	"description": "Real-world examples of building with Cua",
-	"pages": [
-		"form-filling"
-	]
+  "title": "Example Use Cases",
+  "description": "Real-world examples of building with Cua",
+  "pages": ["form-filling"]
 }

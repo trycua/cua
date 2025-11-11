@@ -36,7 +36,7 @@ def parse_args(args: Optional[List[str]] = None) -> argparse.Namespace:
         help="Path to SSL private key file (enables HTTPS)",
     )
     parser.add_argument(
-        "--ssl-certfile", 
+        "--ssl-certfile",
         type=str,
         help="Path to SSL certificate file (enables HTTPS)",
     )
@@ -73,16 +73,18 @@ def main() -> None:
     # Check if watchdog should be enabled
     container_name = os.environ.get("CONTAINER_NAME")
     enable_watchdog = (args.watchdog or bool(container_name)) and not sys.platform.startswith("win")
-    
+
     if container_name:
-        logger.info(f"Container environment detected (CONTAINER_NAME={container_name}), enabling watchdog")
+        logger.info(
+            f"Container environment detected (CONTAINER_NAME={container_name}), enabling watchdog"
+        )
     elif args.watchdog:
         logger.info("Watchdog explicitly enabled via --watchdog flag")
-    
+
     # Start watchdog if enabled
     if enable_watchdog:
         logger.info(f"Starting watchdog monitoring with {args.watchdog_interval}s interval")
-        
+
         def run_watchdog_thread():
             """Run watchdog in a separate thread."""
             loop = asyncio.new_event_loop()
@@ -90,38 +92,32 @@ def main() -> None:
             try:
                 # Create CLI args dict for watchdog
                 cli_args = {
-                    'host': args.host,
-                    'port': args.port,
-                    'log_level': args.log_level,
-                    'ssl_keyfile': args.ssl_keyfile,
-                    'ssl_certfile': args.ssl_certfile
+                    "host": args.host,
+                    "port": args.port,
+                    "log_level": args.log_level,
+                    "ssl_keyfile": args.ssl_keyfile,
+                    "ssl_certfile": args.ssl_certfile,
                 }
-                
+
                 # Create watchdog with restart settings
                 from .watchdog import Watchdog
-                watchdog = Watchdog(
-                    cli_args=cli_args,
-                    ping_interval=args.watchdog_interval
-                )
+
+                watchdog = Watchdog(cli_args=cli_args, ping_interval=args.watchdog_interval)
                 watchdog.restart_enabled = not args.no_restart
-                
+
                 loop.run_until_complete(watchdog.start_monitoring())
             except Exception as e:
                 logger.error(f"Watchdog error: {e}")
             finally:
                 loop.close()
-        
+
         # Start watchdog in background thread
-        watchdog_thread = threading.Thread(
-            target=run_watchdog_thread,
-            daemon=True,
-            name="watchdog"
-        )
+        watchdog_thread = threading.Thread(target=run_watchdog_thread, daemon=True, name="watchdog")
         watchdog_thread.start()
 
     # Create and start the server
     logger.info(f"Starting CUA Computer API server on {args.host}:{args.port}...")
-    
+
     # Handle SSL configuration
     ssl_args = {}
     if args.ssl_keyfile and args.ssl_certfile:
@@ -131,10 +127,12 @@ def main() -> None:
         }
         logger.info("HTTPS mode enabled with SSL certificates")
     elif args.ssl_keyfile or args.ssl_certfile:
-        logger.warning("Both --ssl-keyfile and --ssl-certfile are required for HTTPS. Running in HTTP mode.")
+        logger.warning(
+            "Both --ssl-keyfile and --ssl-certfile are required for HTTPS. Running in HTTP mode."
+        )
     else:
         logger.info("HTTP mode (no SSL certificates provided)")
-    
+
     server = Server(host=args.host, port=args.port, log_level=args.log_level, **ssl_args)
 
     try:

@@ -14,26 +14,27 @@ Differences from composed_grounded:
 
 from __future__ import annotations
 
-import uuid
 import base64
 import io
-from typing import Dict, List, Any, Optional, Tuple, Any
+import uuid
+from typing import Any, Dict, List, Optional, Tuple
 
-from PIL import Image, ImageDraw, ImageFont
 import litellm
+from PIL import Image, ImageDraw, ImageFont
 
 from ..decorators import register_agent
-from ..types import AgentCapability
 from ..loops.base import AsyncAgentConfig
 from ..responses import (
-    convert_computer_calls_xy2desc,
-    convert_responses_items_to_completion_messages,
     convert_completion_messages_to_responses_items,
     convert_computer_calls_desc2xy,
+    convert_computer_calls_xy2desc,
+    convert_responses_items_to_completion_messages,
     get_all_element_descriptions,
 )
+from ..types import AgentCapability
 
 _MOONDREAM_SINGLETON = None
+
 
 def get_moondream_model() -> Any:
     """Get a singleton instance of the Moondream3 preview model."""
@@ -42,6 +43,7 @@ def get_moondream_model() -> Any:
         try:
             import torch
             from transformers import AutoModelForCausalLM
+
             _MOONDREAM_SINGLETON = AutoModelForCausalLM.from_pretrained(
                 "moondream/moondream3-preview",
                 trust_remote_code=True,
@@ -95,6 +97,7 @@ def _filter_images_from_completion_messages(messages: List[Dict[str, Any]]) -> L
         filtered.append(msg_copy)
     return filtered
 
+
 def _annotate_detect_and_label_ui(base_img: Image.Image, model_md) -> Tuple[str, List[str]]:
     """Detect UI elements with Moondream, caption each, draw labels with backgrounds.
 
@@ -132,7 +135,12 @@ def _annotate_detect_and_label_ui(base_img: Image.Image, model_md) -> Tuple[str,
             y_min = max(0.0, min(1.0, float(obj.get("y_min", 0.0))))
             x_max = max(0.0, min(1.0, float(obj.get("x_max", 0.0))))
             y_max = max(0.0, min(1.0, float(obj.get("y_max", 0.0))))
-            left, top, right, bottom = int(x_min * W), int(y_min * H), int(x_max * W), int(y_max * H)
+            left, top, right, bottom = (
+                int(x_min * W),
+                int(y_min * H),
+                int(x_max * W),
+                int(y_max * H),
+            )
             left, top = max(0, left), max(0, top)
             right, bottom = min(W - 1, right), min(H - 1, bottom)
             crop = base_img.crop((left, top, right, bottom))
@@ -199,6 +207,7 @@ def _annotate_detect_and_label_ui(base_img: Image.Image, model_md) -> Tuple[str,
         annotated = annotated.convert("RGBA")
     annotated_b64 = _image_to_b64(annotated)
     return annotated_b64, detected_names
+
 
 GROUNDED_COMPUTER_TOOL_SCHEMA = {
     "type": "function",
@@ -270,6 +279,7 @@ GROUNDED_COMPUTER_TOOL_SCHEMA = {
     },
 }
 
+
 @register_agent(r"moondream3\+.*", priority=2)
 class Moondream3PlusConfig(AsyncAgentConfig):
     def __init__(self):
@@ -321,14 +331,25 @@ class Moondream3PlusConfig(AsyncAgentConfig):
                         "type": "message",
                         "role": "assistant",
                         "content": [
-                            {"type": "output_text", "text": "Taking a screenshot to analyze the current screen."}
+                            {
+                                "type": "output_text",
+                                "text": "Taking a screenshot to analyze the current screen.",
+                            }
                         ],
                     },
-                    {"type": "computer_call", "call_id": call_id, "status": "completed", "action": {"type": "screenshot"}},
+                    {
+                        "type": "computer_call",
+                        "call_id": call_id,
+                        "status": "completed",
+                        "action": {"type": "screenshot"},
+                    },
                     {
                         "type": "computer_call_output",
                         "call_id": call_id,
-                        "output": {"type": "input_image", "image_url": f"data:image/png;base64,{screenshot_b64}"},
+                        "output": {
+                            "type": "input_image",
+                            "image_url": f"data:image/png;base64,{screenshot_b64}",
+                        },
                     },
                 ]
                 last_image_b64 = screenshot_b64
@@ -354,13 +375,16 @@ class Moondream3PlusConfig(AsyncAgentConfig):
                         "content": [
                             {"type": "input_text", "text": "Detected form UI elements on screen:"},
                             {"type": "input_text", "text": names_text},
-                            {"type": "input_text", "text": "Please continue with the next action needed to perform your task."}
+                            {
+                                "type": "input_text",
+                                "text": "Please continue with the next action needed to perform your task.",
+                            },
                         ],
                     }
                 )
 
         tool_schemas = []
-        for schema in (tools or []):
+        for schema in tools or []:
             if schema.get("type") == "computer":
                 tool_schemas.append(GROUNDED_COMPUTER_TOOL_SCHEMA)
             else:

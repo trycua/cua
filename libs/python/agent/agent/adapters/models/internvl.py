@@ -1,19 +1,22 @@
 from __future__ import annotations
-from typing import List, Dict, Any, Optional
+
+from typing import Any, Dict, List, Optional
 
 # Hugging Face imports are local to avoid hard dependency at module import
 try:
-    import torch  # type: ignore
-    from transformers import AutoModel, AutoTokenizer  # type: ignore
-    # Attempt to import InternVL's model dependencies
-    import einops as _  # type: ignore
-    import timm as _  # type: ignore
-    from PIL import Image  # type: ignore
-    import torchvision.transforms as T  # type: ignore
-    from torchvision.transforms.functional import InterpolationMode  # type: ignore
     import base64  # type: ignore
     from io import BytesIO  # type: ignore
+
+    # Attempt to import InternVL's model dependencies
+    import einops as _  # type: ignore
     import requests  # type: ignore
+    import timm as _  # type: ignore
+    import torch  # type: ignore
+    import torchvision.transforms as T  # type: ignore
+    from PIL import Image  # type: ignore
+    from torchvision.transforms.functional import InterpolationMode  # type: ignore
+    from transformers import AutoModel, AutoTokenizer  # type: ignore
+
     HF_AVAILABLE = True
 except Exception:
     HF_AVAILABLE = False
@@ -25,10 +28,12 @@ class InternVLModel:
     Provides preprocessing to support multi-turn conversations with multiple images.
     """
 
-    def __init__(self, model_name: str, device: str = "auto", trust_remote_code: bool = False) -> None:
+    def __init__(
+        self, model_name: str, device: str = "auto", trust_remote_code: bool = False
+    ) -> None:
         if not HF_AVAILABLE:
             raise ImportError(
-                "InternVL dependencies not found. Install with: pip install \"cua-agent[internvl-hf]\""
+                'InternVL dependencies not found. Install with: pip install "cua-agent[internvl-hf]"'
             )
         self.model_name = model_name
         self.device = device
@@ -60,16 +65,25 @@ class InternVLModel:
 
     def _build_transform(self, input_size: int) -> T.Compose:
         MEAN, STD = self.IMAGENET_MEAN, self.IMAGENET_STD
-        transform = T.Compose([
-            T.Lambda(lambda img: img.convert('RGB') if img.mode != 'RGB' else img),
-            T.Resize((input_size, input_size), interpolation=InterpolationMode.BICUBIC),
-            T.ToTensor(),
-            T.Normalize(mean=MEAN, std=STD)
-        ])
+        transform = T.Compose(
+            [
+                T.Lambda(lambda img: img.convert("RGB") if img.mode != "RGB" else img),
+                T.Resize((input_size, input_size), interpolation=InterpolationMode.BICUBIC),
+                T.ToTensor(),
+                T.Normalize(mean=MEAN, std=STD),
+            ]
+        )
         return transform
 
-    def _find_closest_aspect_ratio(self, aspect_ratio: float, target_ratios: List[tuple], width: int, height: int, image_size: int):
-        best_ratio_diff = float('inf')
+    def _find_closest_aspect_ratio(
+        self,
+        aspect_ratio: float,
+        target_ratios: List[tuple],
+        width: int,
+        height: int,
+        image_size: int,
+    ):
+        best_ratio_diff = float("inf")
         best_ratio = (1, 1)
         area = width * height
         for ratio in target_ratios:
@@ -83,17 +97,29 @@ class InternVLModel:
                     best_ratio = ratio
         return best_ratio
 
-    def _dynamic_preprocess(self, image: Image.Image, min_num: int = 1, max_num: int = 12, image_size: int = 448, use_thumbnail: bool = True) -> List[Image.Image]:
+    def _dynamic_preprocess(
+        self,
+        image: Image.Image,
+        min_num: int = 1,
+        max_num: int = 12,
+        image_size: int = 448,
+        use_thumbnail: bool = True,
+    ) -> List[Image.Image]:
         orig_width, orig_height = image.size
         aspect_ratio = orig_width / orig_height
 
         target_ratios = set(
-            (i, j) for n in range(min_num, max_num + 1) for i in range(1, n + 1) for j in range(1, n + 1) if
-            i * j <= max_num and i * j >= min_num)
+            (i, j)
+            for n in range(min_num, max_num + 1)
+            for i in range(1, n + 1)
+            for j in range(1, n + 1)
+            if i * j <= max_num and i * j >= min_num
+        )
         target_ratios = sorted(target_ratios, key=lambda x: x[0] * x[1])
 
         target_aspect_ratio = self._find_closest_aspect_ratio(
-            aspect_ratio, target_ratios, orig_width, orig_height, image_size)
+            aspect_ratio, target_ratios, orig_width, orig_height, image_size
+        )
 
         target_width = image_size * target_aspect_ratio[0]
         target_height = image_size * target_aspect_ratio[1]
@@ -106,7 +132,7 @@ class InternVLModel:
                 (i % (target_width // image_size)) * image_size,
                 (i // (target_width // image_size)) * image_size,
                 ((i % (target_width // image_size)) + 1) * image_size,
-                ((i // (target_width // image_size)) + 1) * image_size
+                ((i // (target_width // image_size)) + 1) * image_size,
             )
             split_img = resized_img.crop(box)
             processed_images.append(split_img)
@@ -122,20 +148,24 @@ class InternVLModel:
             # data URL base64
             header, b64data = src.split(",", 1)
             img_bytes = base64.b64decode(b64data)
-            return Image.open(BytesIO(img_bytes)).convert('RGB')
+            return Image.open(BytesIO(img_bytes)).convert("RGB")
         if src.startswith("http://") or src.startswith("https://"):
             resp = requests.get(src, timeout=10)
             resp.raise_for_status()
-            return Image.open(BytesIO(resp.content)).convert('RGB')
+            return Image.open(BytesIO(resp.content)).convert("RGB")
         # Assume local file path
-        return Image.open(src).convert('RGB')
+        return Image.open(src).convert("RGB")
 
-    def _images_to_pixel_values(self, images: List[Image.Image], input_size: int = 448, max_num: int = 12):
+    def _images_to_pixel_values(
+        self, images: List[Image.Image], input_size: int = 448, max_num: int = 12
+    ):
         transform = self._build_transform(input_size=input_size)
         pixel_values_list = []
         num_patches_list: List[int] = []
         for img in images:
-            tiles = self._dynamic_preprocess(img, image_size=input_size, use_thumbnail=True, max_num=max_num)
+            tiles = self._dynamic_preprocess(
+                img, image_size=input_size, use_thumbnail=True, max_num=max_num
+            )
             pv = [transform(tile) for tile in tiles]
             pv = torch.stack(pv)
             num_patches_list.append(pv.shape[0])
@@ -191,7 +221,9 @@ class InternVLModel:
                 last_user_text_parts = parts_text or last_user_text_parts
             elif role == "assistant":
                 # Only keep text content for history
-                parts_text = [item.get("text", "") for item in content_items if item.get("type") == "text"]
+                parts_text = [
+                    item.get("text", "") for item in content_items if item.get("type") == "text"
+                ]
                 text = "\n".join(parts_text).strip()
                 if text:
                     context_lines.append(f"Assistant: {text}")
@@ -200,7 +232,9 @@ class InternVLModel:
         pixel_values = None
         num_patches_list: List[int] = []
         if all_images:
-            pixel_values, num_patches_list = self._images_to_pixel_values(all_images, input_size=448, max_num=12)
+            pixel_values, num_patches_list = self._images_to_pixel_values(
+                all_images, input_size=448, max_num=12
+            )
             if pixel_values is not None:
                 # Convert dtype/device as in docs
                 pixel_values = pixel_values.to(torch.bfloat16)
@@ -246,7 +280,9 @@ class InternVLModel:
                         num_patches_list=num_patches_list,
                     )
                 else:
-                    response = self.model.chat(self.tokenizer, pixel_values, question, generation_config)
+                    response = self.model.chat(
+                        self.tokenizer, pixel_values, question, generation_config
+                    )
         except Exception as e:
             # Fallback: return empty string to avoid crashing the adapter
             return ""

@@ -1,17 +1,13 @@
 {
   "compilerOptions": {
     "target": "esnext",
-    "lib": [
-      "es2023"
-    ],
+    "lib": ["es2023"],
     "moduleDetection": "force",
     "module": "preserve",
     "moduleResolution": "bundler",
     "allowImportingTsExtensions": true,
     "resolveJsonModule": true,
-    "types": [
-      "node"
-    ],
+    "types": ["node"],
     "allowSyntheticDefaultImports": true,
     "strict": true,
     "noUnusedLocals": true,
@@ -21,9 +17,7 @@
     "isolatedModules": true,
     "verbatimModuleSyntax": true,
     "skipLibCheck": true,
-    "outDir": "build",
+    "outDir": "build"
   },
-  "include": [
-    "src"
-  ]
+  "include": ["src"]
 }

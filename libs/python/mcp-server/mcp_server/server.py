@@ -7,7 +7,7 @@ import signal
 import sys
 import traceback
 import uuid
-from typing import Any, Dict, List, Optional, Union, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import anyio
 
@@ -24,6 +24,7 @@ logger.debug("MCP Server module loading...")
 
 try:
     from mcp.server.fastmcp import Context, FastMCP
+
     # Use the canonical Image type
     from mcp.server.fastmcp.utilities.types import Image
 
@@ -34,8 +35,8 @@ except ImportError as e:
     sys.exit(1)
 
 try:
-    from computer import Computer
     from agent import ComputerAgent
+    from computer import Computer
 
     logger.debug("Successfully imported Computer and Agent modules")
 except ImportError as e:
@@ -44,16 +45,23 @@ except ImportError as e:
     sys.exit(1)
 
 try:
-    from .session_manager import get_session_manager, initialize_session_manager, shutdown_session_manager
+    from .session_manager import (
+        get_session_manager,
+        initialize_session_manager,
+        shutdown_session_manager,
+    )
+
     logger.debug("Successfully imported session manager")
 except ImportError as e:
     logger.error(f"Failed to import session manager: {e}")
     traceback.print_exc(file=sys.stderr)
     sys.exit(1)
 
+
 def get_env_bool(key: str, default: bool = False) -> bool:
     """Get boolean value from environment variable."""
     return os.getenv(key, str(default)).lower() in ("true", "1", "yes")
+
 
 async def _maybe_call_ctx_method(ctx: Context, method_name: str, *args, **kwargs) -> None:
     """Call a context helper if it exists, awaiting the result when necessary."""
@@ -64,6 +72,7 @@ async def _maybe_call_ctx_method(ctx: Context, method_name: str, *args, **kwargs
     if inspect.isawaitable(result):
         await result
 
+
 def _normalise_message_content(content: Union[str, List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
     """Normalise message content to a list of structured parts."""
     if isinstance(content, list):
@@ -71,6 +80,7 @@ def _normalise_message_content(content: Union[str, List[Dict[str, Any]]]) -> Lis
     if content is None:
         return []
     return [{"type": "output_text", "text": str(content)}]
+
 
 def _extract_text_from_content(content: Union[str, List[Dict[str, Any]]]) -> str:
     """Extract textual content for inclusion in the aggregated result string."""
@@ -84,6 +94,7 @@ def _extract_text_from_content(content: Union[str, List[Dict[str, Any]]]) -> str
             texts.append(str(part["text"]))
     return "\n".join(texts)
 
+
 def _serialise_tool_content(content: Any) -> str:
     """Convert tool outputs into a string for aggregation."""
     if isinstance(content, str):
@@ -91,13 +102,18 @@ def _serialise_tool_content(content: Any) -> str:
     if isinstance(content, list):
         texts: List[str] = []
         for part in content:
-            if isinstance(part, dict) and part.get("type") in {"output_text", "text"} and part.get("text"):
+            if (
+                isinstance(part, dict)
+                and part.get("type") in {"output_text", "text"}
+                and part.get("text")
+            ):
                 texts.append(str(part["text"]))
         if texts:
             return "\n".join(texts)
     if content is None:
         return ""
     return str(content)
+
 
 def serve() -> FastMCP:
     """Create and configure the MCP server."""
@@ -108,12 +124,12 @@ def serve() -> FastMCP:
     async def screenshot_cua(ctx: Context, session_id: Optional[str] = None) -> Any:
         """
         Take a screenshot of the current MacOS VM screen and return the image.
-        
+
         Args:
             session_id: Optional session ID for multi-client support. If not provided, a new session will be created.
         """
         session_manager = get_session_manager()
-        
+
         async with session_manager.get_session(session_id) as session:
             screenshot = await session.computer.interface.screenshot()
             # Returning Image object is fine when structured_output=False
@@ -123,21 +139,21 @@ def serve() -> FastMCP:
     async def run_cua_task(ctx: Context, task: str, session_id: Optional[str] = None) -> Any:
         """
         Run a Computer-Use Agent (CUA) task in a MacOS VM and return (combined text, final screenshot).
-        
+
         Args:
             task: The task description for the agent to execute
             session_id: Optional session ID for multi-client support. If not provided, a new session will be created.
         """
         session_manager = get_session_manager()
         task_id = str(uuid.uuid4())
-        
+
         try:
             logger.info(f"Starting CUA task: {task} (task_id: {task_id})")
 
             async with session_manager.get_session(session_id) as session:
                 # Register this task with the session
                 await session_manager.register_task(session.session_id, task_id)
-                
+
                 try:
                     # Get model name
                     model_name = os.getenv("CUA_MODEL_NAME", "anthropic/claude-3-5-sonnet-20241022")
@@ -179,8 +195,14 @@ def serve() -> FastMCP:
                             elif output_type in {"tool_use", "computer_call", "function_call"}:
                                 logger.debug("Streaming tool call: %s", output)
                                 call_id = output.get("id") or output.get("call_id")
-                                tool_name = output.get("name") or output.get("action", {}).get("type")
-                                tool_input = output.get("input") or output.get("arguments") or output.get("action")
+                                tool_name = output.get("name") or output.get("action", {}).get(
+                                    "type"
+                                )
+                                tool_input = (
+                                    output.get("input")
+                                    or output.get("arguments")
+                                    or output.get("action")
+                                )
                                 if call_id:
                                     await _maybe_call_ctx_method(
                                         ctx,
@@ -190,7 +212,11 @@ def serve() -> FastMCP:
                                         input=tool_input,
                                     )
 
-                            elif output_type in {"tool_result", "computer_call_output", "function_call_output"}:
+                            elif output_type in {
+                                "tool_result",
+                                "computer_call_output",
+                                "function_call_output",
+                            }:
                                 logger.debug("Streaming tool output: %s", output)
                                 call_id = output.get("call_id") or output.get("id")
                                 content = output.get("content") or output.get("output")
@@ -203,7 +229,8 @@ def serve() -> FastMCP:
                                         "yield_tool_output",
                                         call_id=call_id,
                                         output=content,
-                                        is_error=output.get("status") == "failed" or output.get("is_error", False),
+                                        is_error=output.get("status") == "failed"
+                                        or output.get("is_error", False),
                                     )
 
                     logger.info("CUA task completed successfully")
@@ -215,10 +242,11 @@ def serve() -> FastMCP:
                     )
 
                     return (
-                        "\n".join(aggregated_messages).strip() or "Task completed with no text output.",
+                        "\n".join(aggregated_messages).strip()
+                        or "Task completed with no text output.",
                         screenshot_image,
                     )
-                    
+
                 finally:
                     # Unregister the task from the session
                     await session_manager.unregister_task(session.session_id, task_id)
@@ -227,7 +255,7 @@ def serve() -> FastMCP:
             error_msg = f"Error running CUA task: {str(e)}\n{traceback.format_exc()}"
             logger.error(error_msg)
             ctx.error(error_msg)
-            
+
             # Try to get a screenshot from the session if available
             try:
                 if session_id:
@@ -239,7 +267,7 @@ def serve() -> FastMCP:
                         )
             except Exception:
                 pass
-                
+
             # If we can't get a screenshot, return a placeholder
             return (
                 f"Error during task execution: {str(e)}",
@@ -247,10 +275,12 @@ def serve() -> FastMCP:
             )
 
     @server.tool(structured_output=False)
-    async def run_multi_cua_tasks(ctx: Context, tasks: List[str], session_id: Optional[str] = None, concurrent: bool = False) -> Any:
+    async def run_multi_cua_tasks(
+        ctx: Context, tasks: List[str], session_id: Optional[str] = None, concurrent: bool = False
+    ) -> Any:
         """
         Run multiple CUA tasks and return a list of (combined text, screenshot).
-        
+
         Args:
             tasks: List of task descriptions to execute
             session_id: Optional session ID for multi-client support. If not provided, a new session will be created.
@@ -262,25 +292,27 @@ def serve() -> FastMCP:
             return []
 
         session_manager = get_session_manager()
-        
+
         if concurrent and total_tasks > 1:
             # Run tasks concurrently
             logger.info(f"Running {total_tasks} tasks concurrently")
             ctx.info(f"Running {total_tasks} tasks concurrently")
-            
+
             # Create tasks with progress tracking
-            async def run_task_with_progress(task_index: int, task: str) -> Tuple[int, Tuple[str, Image]]:
+            async def run_task_with_progress(
+                task_index: int, task: str
+            ) -> Tuple[int, Tuple[str, Image]]:
                 ctx.report_progress(task_index / total_tasks)
                 result = await run_cua_task(ctx, task, session_id)
                 ctx.report_progress((task_index + 1) / total_tasks)
                 return task_index, result
-            
+
             # Create all task coroutines
             task_coroutines = [run_task_with_progress(i, task) for i, task in enumerate(tasks)]
-            
+
             # Wait for all tasks to complete
             results_with_indices = await asyncio.gather(*task_coroutines, return_exceptions=True)
-            
+
             # Sort results by original task order and handle exceptions
             results: List[Tuple[str, Image]] = []
             for result in results_with_indices:
@@ -291,13 +323,13 @@ def serve() -> FastMCP:
                 else:
                     _, task_result = result
                     results.append(task_result)
-            
+
             return results
         else:
             # Run tasks sequentially (original behavior)
             logger.info(f"Running {total_tasks} tasks sequentially")
             ctx.info(f"Running {total_tasks} tasks sequentially")
-            
+
             results: List[Tuple[str, Image]] = []
             for i, task in enumerate(tasks):
                 logger.info(f"Running task {i+1}/{total_tasks}: {task}")
@@ -322,7 +354,7 @@ def serve() -> FastMCP:
     async def cleanup_session(ctx: Context, session_id: str) -> str:
         """
         Cleanup a specific session and release its resources.
-        
+
         Args:
             session_id: The session ID to cleanup
         """
@@ -335,30 +367,31 @@ def serve() -> FastMCP:
 
 server = serve()
 
+
 async def run_server():
     """Run the MCP server with proper lifecycle management."""
     session_manager = None
     try:
         logger.debug("Starting MCP server...")
-        
+
         # Initialize session manager
         session_manager = await initialize_session_manager()
         logger.info("Session manager initialized")
-        
+
         # Set up signal handlers for graceful shutdown
         def signal_handler(signum, frame):
             logger.info(f"Received signal {signum}, initiating graceful shutdown...")
             # Create a task to shutdown gracefully
             asyncio.create_task(graceful_shutdown())
-        
+
         signal.signal(signal.SIGINT, signal_handler)
         signal.signal(signal.SIGTERM, signal_handler)
-        
+
         # Start the server
         logger.info("Starting FastMCP server...")
         # Use run_stdio_async directly instead of server.run() to avoid nested event loops
         await server.run_stdio_async()
-        
+
     except Exception as e:
         logger.error(f"Error starting server: {e}")
         traceback.print_exc(file=sys.stderr)
@@ -368,6 +401,7 @@ async def run_server():
         if session_manager:
             logger.info("Shutting down session manager...")
             await shutdown_session_manager()
+
 
 async def graceful_shutdown():
     """Gracefully shutdown the server and all sessions."""
@@ -380,7 +414,9 @@ async def graceful_shutdown():
     finally:
         # Exit the process
         import os
+
         os._exit(0)
+
 
 def main():
     """Run the MCP server with proper async lifecycle management."""
@@ -393,6 +429,7 @@ def main():
         logger.error(f"Error starting server: {e}")
         traceback.print_exc(file=sys.stderr)
         sys.exit(1)
+
 
 if __name__ == "__main__":
     main()

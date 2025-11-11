@@ -9,6 +9,7 @@ Ensures agent output actions conform to expected schemas by fixing common issues
 This runs in on_llm_end, which receives the output array (AgentMessage[] as dicts).
 The purpose is to avoid spending another LLM call to fix broken computer call syntax when possible.
 """
+
 from __future__ import annotations
 
 from typing import Any, Dict, List
@@ -48,6 +49,7 @@ class OperatorNormalizerCallback(AsyncCallbackHandler):
                 action["type"] = "type"
 
             action_type = action.get("type")
+
             def _keep_keys(action: Dict[str, Any], keys_to_keep: List[str]):
                 """Keep only the provided keys on action; delete everything else.
                 Always ensures required 'type' is present if listed in keys_to_keep.
@@ -55,6 +57,7 @@ class OperatorNormalizerCallback(AsyncCallbackHandler):
                 for key in list(action.keys()):
                     if key not in keys_to_keep:
                         del action[key]
+
             # rename "coordinate" to "x", "y"
             if "coordinate" in action:
                 action["x"] = action["coordinate"][0]
@@ -100,7 +103,6 @@ class OperatorNormalizerCallback(AsyncCallbackHandler):
             keep = required_keys_by_type.get(action_type or "")
             if keep:
                 _keep_keys(action, keep)
-            
 
         # # Second pass: if an assistant message is immediately followed by a computer_call,
         # # replace the assistant message itself with a reasoning message with summary text.

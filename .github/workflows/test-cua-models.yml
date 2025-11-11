@@ -1,0 +1,376 @@
+name: Test CUA Supporting Models
+
+# This workflow tests all supported CUA models with API keys
+# Run manually using workflow_dispatch with test_models=true
+
+on:
+  pull_request_target:
+    branches: [main, master]
+  workflow_dispatch:
+    inputs:
+      test_models:
+        description: "Test all supported models (requires API keys)"
+        required: false
+        default: true
+        type: boolean
+  schedule:
+    # Runs at 3 PM UTC (8 AM PDT) daily
+    - cron: "0 15 * * *"
+
+jobs:
+  # Test all CUA models - runs on PRs, schedules, or when manually triggered
+  test-all-models:
+    if: ${{ github.event_name == 'pull_request_target' || github.event_name == 'schedule' || fromJSON(inputs.test_models || 'false') }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        model:
+          # Claude Sonnet/Haiku
+          - anthropic/claude-sonnet-4-5-20250929
+          - anthropic/claude-haiku-4-5-20251001
+          - anthropic/claude-opus-4-1-20250805
+
+          # OpenAI CU Preview
+          - openai/computer-use-preview
+
+          # GLM-V
+          - openrouter/z-ai/glm-4.5v
+          # - huggingface-local/zai-org/GLM-4.5V  # Requires local model setup
+
+          # Gemini CU Preview
+          - gemini-2.5-computer-use-preview-10-2025
+
+          # InternVL
+          - huggingface-local/OpenGVLab/InternVL3_5-1B
+          # - huggingface-local/OpenGVLab/InternVL3_5-2B
+          # - huggingface-local/OpenGVLab/InternVL3_5-4B
+          # - huggingface-local/OpenGVLab/InternVL3_5-8B
+
+          # UI-TARS (supports full computer-use, can run standalone)
+          - huggingface-local/ByteDance-Seed/UI-TARS-1.5-7B
+
+          # Note: OpenCUA, GTA, and Holo are grounding-only models
+          # They only support predict_click(), not agent.run()
+          # See composed agents section below for testing them
+
+          # Moondream (typically used in composed agents)
+          # Format: moondream3+{any-llm-with-tools}
+          - moondream3+anthropic/claude-sonnet-4-5-20250929 # Claude has VLM + Tools
+          # - moondream3+openai/gpt-4o  # GPT-4o has VLM + Tools
+
+          # OmniParser (typically used in composed agents)
+          # Format: omniparser+{any-vlm-with-tools}
+          - omniparser+anthropic/claude-sonnet-4-5-20250929 # Claude has VLM + Tools
+          # - omniparser+openai/gpt-4o  # GPT-4o has VLM + Tools
+
+          # Other grounding models + VLM with tools
+          # Format: {grounding-model}+{any-vlm-with-tools}
+          # These grounding-only models (OpenCUA, GTA, Holo) must be used in composed form
+          # since they only support predict_click(), not full agent.run()
+          - huggingface-local/HelloKKMe/GTA1-7B+anthropic/claude-sonnet-4-5-20250929
+          - huggingface-local/xlangai/OpenCUA-7B+anthropic/claude-sonnet-4-5-20250929
+          - huggingface-local/Hcompany/Holo1.5-3B+anthropic/claude-sonnet-4-5-20250929
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up uv and Python
+        uses: astral-sh/setup-uv@v4
+        with:
+          python-version: "3.12"
+
+      - name: Cache system packages
+        uses: actions/cache@v4
+        with:
+          path: /var/cache/apt
+          key: ${{ runner.os }}-apt-${{ hashFiles('**/Dockerfile') }}
+          restore-keys: |
+            ${{ runner.os }}-apt-
+
+      - name: Install system dependencies
+        timeout-minutes: 20
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgl1-mesa-dri libglib2.0-0
+
+      - name: Cache Python dependencies (uv)
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/uv
+            .venv
+          key: ${{ runner.os }}-uv-${{ hashFiles('pyproject.toml', 'uv.lock', 'libs/python/**/pyproject.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-uv-
+
+      - name: Install CUA dependencies (uv)
+        run: |
+          # Remove existing venv if it exists (from cache restore) to avoid interactive prompt
+          rm -rf .venv
+          uv venv --python 3.12
+          uv pip install -e libs/python/agent -e libs/python/computer
+          uv pip install -e libs/python/core
+          uv pip install "cua-agent[uitars-hf,internvl-hf,opencua-hf,moondream3,omni]"
+          uv pip install pytest
+
+      - name: Cache HuggingFace models
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: ${{ runner.os }}-hf-models-v1
+          restore-keys: |
+            ${{ runner.os }}-hf-models-
+          # Large cache - models can be several GB each and are reused across runs
+
+      - name: Record test start time
+        run: echo "TEST_START_TIME=$(date +%s)" >> $GITHUB_ENV
+        env:
+          # Ensure HuggingFace uses consistent cache location
+          HF_HOME: ~/.cache/huggingface
+
+      - name: Test model with agent loop
+        id: test_model
+        timeout-minutes: 20
+        continue-on-error: true
+        run: |
+          cd tests/agent_loop_testing
+          uv run python agent_test.py --model "${{ matrix.model }}"
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+
+      - name: Calculate test duration and prepare message
+        if: always()
+        run: |
+          TEST_END_TIME=$(date +%s)
+
+          # Handle case where TEST_START_TIME might not be set
+          if [ -z "$TEST_START_TIME" ]; then
+            TEST_START_TIME=$TEST_END_TIME
+          fi
+
+          TEST_DURATION=$((TEST_END_TIME - TEST_START_TIME))
+
+          # Convert seconds to minutes and seconds
+          MINUTES=$((TEST_DURATION / 60))
+          SECONDS=$((TEST_DURATION % 60))
+
+          # Format duration
+          if [ $MINUTES -gt 0 ]; then
+            DURATION_STR="${MINUTES}m ${SECONDS}s"
+          else
+            DURATION_STR="${SECONDS}s"
+          fi
+
+          # Determine status icon based on test step outcome
+          if [ "${{ steps.test_model.outcome }}" == "success" ]; then
+            STATUS_ICON="✅"
+            STATUS_TEXT="PASSED"
+            SLACK_COLOR="#36a64f"
+          else
+            STATUS_ICON="❌"
+            STATUS_TEXT="FAILED"
+            SLACK_COLOR="#dc3545"
+          fi
+
+          # Prepare Slack message
+          echo "TESTS_CONTENT<<EOF" >> $GITHUB_ENV
+          echo "*CUA Model Test Results*" >> $GITHUB_ENV
+          echo "" >> $GITHUB_ENV
+          echo "*Model:* ${{ matrix.model }}" >> $GITHUB_ENV
+          echo "*Status:* ${STATUS_ICON} ${STATUS_TEXT}" >> $GITHUB_ENV
+          echo "*Duration:* ${DURATION_STR}" >> $GITHUB_ENV
+          echo "*Run:* ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" >> $GITHUB_ENV
+          echo "EOF" >> $GITHUB_ENV
+
+          # Set color based on outcome
+          echo "SLACK_COLOR=${SLACK_COLOR}" >> $GITHUB_ENV
+
+          # Save result to JSON file for summary
+          mkdir -p test_summary
+          MODEL_NAME="${{ matrix.model }}"
+          # Sanitize model name for filename
+          SAFE_MODEL_NAME=$(echo "$MODEL_NAME" | sed 's/[^a-zA-Z0-9]/_/g')
+
+          # Determine pass status
+          if [ "${{ steps.test_model.outcome }}" == "success" ]; then
+            PASSED_VAL="true"
+          else
+            PASSED_VAL="false"
+          fi
+
+          # Create JSON file using printf to avoid YAML parsing issues
+          printf '{\n  "model": "%s",\n  "status": "%s",\n  "status_icon": "%s",\n  "duration": "%s",\n  "duration_seconds": %d,\n  "passed": %s\n}' \
+            "${MODEL_NAME}" "${STATUS_TEXT}" "${STATUS_ICON}" "${DURATION_STR}" "${TEST_DURATION}" "${PASSED_VAL}" \
+            > "test_summary/${SAFE_MODEL_NAME}.json"
+          # Expose safe model name for subsequent steps (artifact naming)
+          echo "SAFE_MODEL_NAME=${SAFE_MODEL_NAME}" >> $GITHUB_ENV
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-${{ matrix.model }}
+          path: |
+            tests/agent_loop_testing/test_images/
+            *.log
+          retention-days: 7
+
+      - name: Upload test summary data
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          # Unique, slash-free artifact name per matrix entry
+          name: test-summary-${{ env.SAFE_MODEL_NAME }}
+          path: test_summary/
+          retention-days: 1
+
+      - name: Set default Slack color
+        if: always() && env.SLACK_COLOR == ''
+        run: echo "SLACK_COLOR=#36a64f" >> $GITHUB_ENV
+
+      # Individual model notifications disabled - only summary is sent
+      # - name: Notify Slack with test results
+      #   if: always()
+      #   uses: rtCamp/action-slack-notify@v2
+      #   env:
+      #     SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+      #     SLACK_CHANNEL: ${{ vars.SLACK_CHANNEL }}
+      #     SLACK_TITLE: CUA Model Test Update
+      #     SLACK_COLOR: ${{ env.SLACK_COLOR }}
+      #     SLACK_MESSAGE: |
+      #       ${{ env.TESTS_CONTENT }}
+
+  # Summary job that aggregates all model test results
+  test-summary:
+    if: ${{ always() && (github.event_name == 'pull_request_target' || github.event_name == 'schedule' || fromJSON(inputs.test_models || 'false')) }}
+    needs: test-all-models
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install jq
+        run: sudo apt-get update && sudo apt-get install -y jq
+
+      - name: Download all test summary artifacts
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          pattern: test-summary-*
+          merge-multiple: true
+          path: all_summaries
+
+      - name: Generate and send summary
+        if: always()
+        shell: bash
+        run: |
+          # Create directory if it doesn't exist
+          mkdir -p all_summaries
+
+          # Get list of models being tested in this run from the matrix
+          # This helps filter out artifacts from previous runs when testing locally
+          EXPECTED_MODELS="${{ join(matrix.model, ' ') }}"
+
+          # Aggregate all results
+          PASSED_COUNT=0
+          FAILED_COUNT=0
+          TOTAL_DURATION=0
+          SUMMARY_MESSAGE="*🚀 Model Summaries*\n\n"
+
+          # Process each JSON file (find all JSON files recursively)
+          # Save to temp file first to avoid subshell issues
+          find all_summaries -name "*.json" -type f 2>/dev/null > /tmp/json_files.txt || true
+
+          # Use associative array to deduplicate by model name
+          declare -A processed_models
+
+          while IFS= read -r json_file; do
+            if [ -f "$json_file" ]; then
+              MODEL=$(jq -r '.model' "$json_file")
+              
+              # Skip if we've already processed this model
+              if [ "${processed_models[$MODEL]}" = "1" ]; then
+                echo "Skipping duplicate model: $MODEL"
+                continue
+              fi
+              
+              # Filter: Only include models that are in the current matrix
+              # This prevents including artifacts from previous workflow runs
+              if [ -n "$EXPECTED_MODELS" ]; then
+                if ! echo "$EXPECTED_MODELS" | grep -q "$MODEL"; then
+                  echo "Skipping model from previous run: $MODEL"
+                  continue
+                fi
+              fi
+              
+              # Mark as processed
+              processed_models[$MODEL]="1"
+              
+              STATUS_ICON=$(jq -r '.status_icon' "$json_file")
+              STATUS=$(jq -r '.status' "$json_file")
+              DURATION=$(jq -r '.duration' "$json_file")
+              DURATION_SEC=$(jq -r '.duration_seconds' "$json_file")
+              PASSED=$(jq -r '.passed' "$json_file")
+              
+              # Add to summary as clean line format
+              SUMMARY_MESSAGE="${SUMMARY_MESSAGE}${STATUS_ICON} ${STATUS} - \`${MODEL}\` - ${DURATION}\n"
+              
+              if [ "$PASSED" = "true" ]; then
+                PASSED_COUNT=$((PASSED_COUNT + 1))
+              else
+                FAILED_COUNT=$((FAILED_COUNT + 1))
+              fi
+              TOTAL_DURATION=$((TOTAL_DURATION + DURATION_SEC))
+            fi
+          done < /tmp/json_files.txt
+
+          # Check if we found any results
+          TOTAL_COUNT=$((PASSED_COUNT + FAILED_COUNT))
+          if [ $TOTAL_COUNT -eq 0 ]; then
+            SUMMARY_MESSAGE="${SUMMARY_MESSAGE}⚠️ No test results found (workflow may have been canceled)\n"
+            SLACK_COLOR="#ffa500"
+          else
+            # Add summary stats
+            SUMMARY_MESSAGE="${SUMMARY_MESSAGE}\n*Results:* ${PASSED_COUNT} passed, ${FAILED_COUNT} failed out of ${TOTAL_COUNT} models\n"
+            
+            # Calculate total duration
+            TOTAL_MIN=$((TOTAL_DURATION / 60))
+            TOTAL_SEC=$((TOTAL_DURATION % 60))
+            if [ $TOTAL_MIN -gt 0 ]; then
+              TOTAL_DURATION_STR="${TOTAL_MIN}m ${TOTAL_SEC}s"
+            else
+              TOTAL_DURATION_STR="${TOTAL_SEC}s"
+            fi
+            SUMMARY_MESSAGE="${SUMMARY_MESSAGE}*Total Duration:* ${TOTAL_DURATION_STR}\n"
+            
+            # Determine color based on results
+            if [ $FAILED_COUNT -eq 0 ]; then
+              SLACK_COLOR="#36a64f"
+            elif [ $PASSED_COUNT -eq 0 ]; then
+              SLACK_COLOR="#dc3545"
+            else
+              SLACK_COLOR="#ffa500"
+            fi
+          fi
+
+          SUMMARY_MESSAGE="${SUMMARY_MESSAGE}*Run:* ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+          # Export for use in next step
+          echo "SUMMARY_MESSAGE<<EOF" >> $GITHUB_ENV
+          echo -e "${SUMMARY_MESSAGE}" >> $GITHUB_ENV
+          echo "EOF" >> $GITHUB_ENV
+          echo "SLACK_COLOR=${SLACK_COLOR}" >> $GITHUB_ENV
+
+      - name: Send summary to Slack
+        if: always()
+        uses: rtCamp/action-slack-notify@v2
+        env:
+          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+          SLACK_CHANNEL: ${{ vars.SLACK_CHANNEL }}
+          SLACK_TITLE: CUA Models Test Summary
+          SLACK_COLOR: ${{ env.SLACK_COLOR }}
+          SLACK_MESSAGE: |
+            ${{ env.SUMMARY_MESSAGE }}

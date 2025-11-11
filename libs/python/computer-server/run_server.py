@@ -10,6 +10,7 @@ Usage:
 """
 
 import sys
+
 from computer_server.cli import main
 
 if __name__ == "__main__":

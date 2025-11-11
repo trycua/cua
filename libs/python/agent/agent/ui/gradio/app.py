@@ -18,21 +18,21 @@ Requirements:
     - OpenAI or Anthropic API key
 """
 
-import os
 import asyncio
-import logging
 import json
+import logging
+import os
 import platform
 from pathlib import Path
-from typing import Dict, List, Optional, AsyncGenerator, Any, Tuple, Union
+from typing import Any, AsyncGenerator, Dict, List, Optional, Tuple, Union, cast
+
 import gradio as gr
-from gradio.components.chatbot import MetadataDict
-from typing import cast
 
 # Import from agent package
 from agent import ComputerAgent
-from agent.types import Messages, AgentResponse
+from agent.types import AgentResponse, Messages
 from computer import Computer
+from gradio.components.chatbot import MetadataDict
 
 # Global variables
 global_agent = None
@@ -42,10 +42,12 @@ SETTINGS_FILE = Path(".gradio_settings.json")
 logging.basicConfig(level=logging.INFO)
 
 import dotenv
+
 if dotenv.load_dotenv():
     print(f"DEBUG - Loaded environment variables from {dotenv.find_dotenv()}")
 else:
     print("DEBUG - No .env file found")
+
 
 # --- Settings Load/Save Functions ---
 def load_settings() -> Dict[str, Any]:
@@ -84,7 +86,7 @@ def save_settings(settings: Dict[str, Any]):
 #     async def on_screenshot(self, screenshot_base64: str, action_type: str = "") -> None:
 #         """Add screenshot to chatbot when a screenshot is taken."""
 #         image_markdown = f"![Screenshot after {action_type}](data:image/png;base64,{screenshot_base64})"
-        
+
 #         if self.chatbot_history is not None:
 #             self.chatbot_history.append(
 #                 gr.ChatMessage(
@@ -141,7 +143,7 @@ def get_model_string(model_name: str, loop_provider: str) -> str:
             ollama_model = model_name.split("OMNI: Ollama ", 1)[1]
             return f"omniparser+ollama_chat/{ollama_model}"
         return "omniparser+ollama_chat/llama3"
-    
+
     # Map based on loop provider
     mapping = MODEL_MAPPINGS.get(loop_provider.lower(), MODEL_MAPPINGS["openai"])
     return mapping.get(model_name, mapping["default"])
@@ -151,6 +153,7 @@ def get_ollama_models() -> List[str]:
     """Get available models from Ollama if installed."""
     try:
         import subprocess
+
         result = subprocess.run(["ollama", "list"], capture_output=True, text=True)
         if result.returncode == 0:
             lines = result.stdout.strip().split("\n")
@@ -174,16 +177,14 @@ def create_computer_instance(
     os_type: str = "macos",
     provider_type: str = "lume",
     name: Optional[str] = None,
-    api_key: Optional[str] = None
+    api_key: Optional[str] = None,
 ) -> Computer:
     """Create or get the global Computer instance."""
     global global_computer
     if global_computer is None:
         if provider_type == "localhost":
             global_computer = Computer(
-                verbosity=verbosity,
-                os_type=os_type,
-                use_host_computer_server=True
+                verbosity=verbosity, os_type=os_type, use_host_computer_server=True
             )
         else:
             global_computer = Computer(
@@ -191,7 +192,7 @@ def create_computer_instance(
                 os_type=os_type,
                 provider_type=provider_type,
                 name=name if name else "",
-                api_key=api_key
+                api_key=api_key,
             )
     return global_computer
 
@@ -217,7 +218,7 @@ def create_agent(
         os_type=computer_os,
         provider_type=computer_provider,
         name=computer_name,
-        api_key=computer_api_key
+        api_key=computer_api_key,
     )
 
     # Handle custom models
@@ -233,12 +234,15 @@ def create_agent(
         "only_n_most_recent_images": only_n_most_recent_images,
         "verbosity": verbosity,
     }
-    
+
     if save_trajectory:
         agent_kwargs["trajectory_dir"] = "trajectories"
-    
+
     if max_trajectory_budget:
-        agent_kwargs["max_trajectory_budget"] = {"max_budget": max_trajectory_budget, "raise_error": True}
+        agent_kwargs["max_trajectory_budget"] = {
+            "max_budget": max_trajectory_budget,
+            "raise_error": True,
+        }
 
     global_agent = ComputerAgent(**agent_kwargs)
     return global_agent
@@ -247,7 +251,8 @@ def create_agent(
 def launch_ui():
     """Standalone function to launch the Gradio app."""
     from agent.ui.gradio.ui_components import create_gradio_ui
-    print(f"Starting Gradio app for CUA Agent...")
+
+    print("Starting Gradio app for CUA Agent...")
     demo = create_gradio_ui()
     demo.launch(share=False, inbrowser=True)
 

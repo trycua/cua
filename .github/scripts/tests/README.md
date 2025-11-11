@@ -7,6 +7,7 @@ This directory contains comprehensive tests for the GitHub workflow scripts usin
 **No external dependencies required!**
 
 This test suite uses:
+
 - `unittest` - Python's built-in testing framework
 - `tomllib` - Python 3.11+ built-in TOML parser
 
@@ -15,27 +16,32 @@ For Python < 3.11, the `toml` package is used as a fallback.
 ## Running Tests
 
 ### Run all tests
+
 ```bash
 cd .github/scripts/tests
 python3 -m unittest discover -v
 ```
 
 ### Run a specific test file
+
 ```bash
 python3 -m unittest test_get_pyproject_version -v
 ```
 
 ### Run a specific test class
+
 ```bash
 python3 -m unittest test_get_pyproject_version.TestGetPyprojectVersion -v
 ```
 
 ### Run a specific test method
+
 ```bash
 python3 -m unittest test_get_pyproject_version.TestGetPyprojectVersion.test_matching_versions -v
 ```
 
 ### Run tests directly from the test file
+
 ```bash
 python3 test_get_pyproject_version.py
 ```

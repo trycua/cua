@@ -9,7 +9,7 @@ Implements the following public API endpoints:
 """
 
 import logging
-from typing import Dict, List, Optional, Any
+from typing import Any, Dict, List, Optional
 
 from ..base import BaseVMProvider, VMProviderType
 from ..types import ListVMsResponse, MinimalVM
@@ -18,15 +18,17 @@ from ..types import ListVMsResponse, MinimalVM
 logger = logging.getLogger(__name__)
 
 import asyncio
-import aiohttp
-from urllib.parse import urlparse
 import os
+from urllib.parse import urlparse
 
+import aiohttp
 
 DEFAULT_API_BASE = os.getenv("CUA_API_BASE", "https://api.cua.ai")
 
+
 class CloudProvider(BaseVMProvider):
     """Cloud VM Provider implementation."""
+
     def __init__(
         self,
         api_key: str,
@@ -123,9 +125,9 @@ class CloudProvider(BaseVMProvider):
                                     vm["api_url"] = f"https://{host}:8443"
                                 # vnc_url: only when password available
                                 if not vm.get("vnc_url") and isinstance(password, str) and password:
-                                    vm[
-                                        "vnc_url"
-                                    ] = f"https://{host}/vnc.html?autoconnect=true&password={password}"
+                                    vm["vnc_url"] = (
+                                        f"https://{host}/vnc.html?autoconnect=true&password={password}"
+                                    )
                             enriched.append(vm)
                         return enriched  # type: ignore[return-value]
                     logger.warning("Unexpected response for list_vms; expected list")
@@ -138,7 +140,13 @@ class CloudProvider(BaseVMProvider):
                     logger.error(f"list_vms failed: HTTP {resp.status} - {text}")
                     return []
 
-    async def run_vm(self, name: str, image: Optional[str] = None, run_opts: Optional[Dict[str, Any]] = None, storage: Optional[str] = None) -> Dict[str, Any]:
+    async def run_vm(
+        self,
+        name: str,
+        image: Optional[str] = None,
+        run_opts: Optional[Dict[str, Any]] = None,
+        storage: Optional[str] = None,
+    ) -> Dict[str, Any]:
         """Start a VM via public API. Returns a minimal status."""
         url = f"{self.api_base}/v1/vms/{name}/start"
         headers = {
@@ -209,11 +217,19 @@ class CloudProvider(BaseVMProvider):
                     text = await resp.text()
                     return {"name": name, "status": "error", "message": text}
 
-    async def update_vm(self, name: str, update_opts: Dict[str, Any], storage: Optional[str] = None) -> Dict[str, Any]:
+    async def update_vm(
+        self, name: str, update_opts: Dict[str, Any], storage: Optional[str] = None
+    ) -> Dict[str, Any]:
         logger.warning("CloudProvider.update_vm is not implemented via public API")
-        return {"name": name, "status": "unchanged", "message": "update_vm not supported by public API"}
+        return {
+            "name": name,
+            "status": "unchanged",
+            "message": "update_vm not supported by public API",
+        }
 
-    async def get_ip(self, name: Optional[str] = None, storage: Optional[str] = None, retry_delay: int = 2) -> str:
+    async def get_ip(
+        self, name: Optional[str] = None, storage: Optional[str] = None, retry_delay: int = 2
+    ) -> str:
         """
         Return the VM's IP address as '{container_name}.containers.cloud.trycua.com'.
         Uses the provided 'name' argument (the VM name requested by the caller),

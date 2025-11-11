@@ -13,10 +13,10 @@ services:
     container_name: lumier-vm
     restart: unless-stopped
     ports:
-      - "8006:8006"  # Port for VNC access
+      - '8006:8006' # Port for VNC access
     volumes:
-      - ./storage:/storage  # VM persistent storage
-      - ./shared:/shared    # Shared folder accessible in the VM
+      - ./storage:/storage # VM persistent storage
+      - ./shared:/shared # Shared folder accessible in the VM
     environment:
       - VM_NAME=lumier-vm
       - VERSION=ghcr.io/trycua/macos-sequoia-cua:latest

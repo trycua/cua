@@ -1,7 +1,9 @@
 import asyncio
-from computer.providers.factory import VMProviderFactory
-from computer import Computer, VMProviderType
 import os
+
+from computer import Computer, VMProviderType
+from computer.providers.factory import VMProviderFactory
+
 
 async def main():
     # # Create docker provider
@@ -38,6 +40,7 @@ async def main():
     screenshot = await computer.interface.screenshot()
     with open("screenshot_docker.png", "wb") as f:
         f.write(screenshot)
+
 
 if __name__ == "__main__":
     asyncio.run(main())

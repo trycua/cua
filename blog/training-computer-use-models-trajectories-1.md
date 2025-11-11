@@ -1,6 +1,6 @@
 # Training Computer-Use Models: Creating Human Trajectories with Cua
 
-*Published on May 1, 2025 by Dillon DuPont*
+_Published on May 1, 2025 by Dillon DuPont_
 
 In our previous posts, we covered [building your own Computer-Use Operator](build-your-own-operator-on-macos-1) and [using the Agent framework](build-your-own-operator-on-macos-2) to simplify development. Today, we'll focus on a critical aspect of improving computer-use agents and models: gathering high-quality demonstration data using Cua's Computer-Use Interface (CUI) and its Gradio UI to create and share human-generated trajectories.
 
@@ -8,10 +8,10 @@ Why is this important? Underlying models used by Computer-use agents need exampl
 
 <video src="https://github.com/user-attachments/assets/c586d460-3877-4b5f-a736-3248886d2134" controls width="600"></video>
 
-
 ## What You'll Learn
 
 By the end of this tutorial, you'll be able to:
+
 - Set up the Computer-Use Interface (CUI) with Gradio UI support
 - Record your own computer interaction trajectories
 - Organize and tag your demonstrations
@@ -19,6 +19,7 @@ By the end of this tutorial, you'll be able to:
 - Contribute to improving computer-use AI for everyone
 
 **Prerequisites:**
+
 - macOS Sonoma (14.0) or later
 - Python 3.10+
 - Basic familiarity with Python and terminal commands
@@ -38,6 +39,7 @@ Human trajectories, in the context of Computer-use AI Agents, are recordings of 
 - Time spent on different elements
 
 These trajectories serve as examples for AI models to learn from, helping them understand the relationship between:
+
 1. The visual state of the screen
 2. The user's goal or task
 3. The most appropriate action to take
@@ -59,17 +61,19 @@ By contributing high-quality demonstrations, you're helping to create more capab
 The Computer-Use Interface includes an optional Gradio UI specifically designed to make recording and sharing demonstrations easy. Let's set it up:
 
 1. **Create a Python environment** (optional but recommended):
+
    ```bash
    # Using conda
    conda create -n cua-trajectories python=3.10
    conda activate cua-trajectories
-   
+
    # Using venv
    python -m venv cua-trajectories
    source cua-trajectories/bin/activate  # On macOS/Linux
    ```
 
 2. **Install the CUI package with UI support**:
+
    ```bash
    pip install "cua-computer[ui]"
    ```
@@ -145,6 +149,7 @@ Effective tagging and organization make your demonstrations more valuable to res
 ### Task-Based Tags
 
 Describe what the demonstration accomplishes:
+
 - `web-browsing`
 - `document-editing`
 - `file-management`
@@ -154,6 +159,7 @@ Describe what the demonstration accomplishes:
 ### Application Tags
 
 Identify the applications used:
+
 - `finder`
 - `safari`
 - `notes`
@@ -163,6 +169,7 @@ Identify the applications used:
 ### Complexity Tags
 
 Indicate the difficulty level:
+
 - `beginner`
 - `intermediate`
 - `advanced`
@@ -171,6 +178,7 @@ Indicate the difficulty level:
 ### UI Element Tags
 
 Highlight specific UI interactions:
+
 - `drag-and-drop`
 - `menu-navigation`
 - `form-filling`
@@ -229,11 +237,11 @@ from computer import Computer
 computer = Computer(os_type="macos", display="1024x768", memory="8GB", cpu="4")
 try:
     await computer.run()
-    
+
     screenshot = await computer.interface.screenshot()
     with open("screenshot.png", "wb") as f:
         f.write(screenshot)
-    
+
     await computer.interface.move_cursor(100, 100)
     await computer.interface.left_click()
     await computer.interface.right_click(300, 300)
@@ -280,6 +288,7 @@ You can also learn from existing trajectory datasets contributed by the communit
 ### Summary
 
 In this guide, we've covered how to:
+
 - Set up the Computer-Use Interface with Gradio UI
 - Record high-quality human demonstrations
 - Organize and tag your trajectories

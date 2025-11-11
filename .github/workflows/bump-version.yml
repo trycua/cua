@@ -1,0 +1,91 @@
+name: Bump Version
+
+on:
+  workflow_dispatch:
+    inputs:
+      service:
+        description: "Service/Package to bump"
+        required: true
+        type: choice
+        options:
+          - cua-agent
+          - cua-computer
+          - cua-computer-server
+          - cua-core
+          - cua-mcp-server
+          - cua-som
+          - pylume
+      bump_type:
+        description: "Version bump type"
+        required: true
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+
+permissions:
+  contents: write
+
+jobs:
+  bump-version:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Set package directory
+        id: package
+        run: |
+          case "${{ inputs.service }}" in
+            "cua-agent")
+              echo "directory=libs/python/agent" >> $GITHUB_OUTPUT
+              ;;
+            "cua-computer")
+              echo "directory=libs/python/computer" >> $GITHUB_OUTPUT
+              ;;
+            "cua-computer-server")
+              echo "directory=libs/python/computer-server" >> $GITHUB_OUTPUT
+              ;;
+            "cua-core")
+              echo "directory=libs/python/core" >> $GITHUB_OUTPUT
+              ;;
+            "cua-mcp-server")
+              echo "directory=libs/python/mcp-server" >> $GITHUB_OUTPUT
+              ;;
+            "cua-som")
+              echo "directory=libs/python/som" >> $GITHUB_OUTPUT
+              ;;
+            "pylume")
+              echo "directory=libs/python/pylume" >> $GITHUB_OUTPUT
+              ;;
+            *)
+              echo "Unknown service: ${{ inputs.service }}"
+              exit 1
+              ;;
+          esac
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install bump2version
+        run: pip install bump2version
+
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Run bump2version
+        run: |
+          cd ${{ steps.package.outputs.directory }}
+          bump2version ${{ inputs.bump_type }}
+
+      - name: Push changes
+        run: |
+          git push origin main --follow-tags

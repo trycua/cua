@@ -24,7 +24,7 @@ dependencies = [
     "typing-extensions>=4.9.0",
     "pydantic>=2.6.3"
 ]
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 readme = "README.md"
 license = {text = "AGPL-3.0-or-later"}
 keywords = ["computer-vision", "ocr", "ui-analysis", "icon-detection"]
@@ -51,29 +51,6 @@ src-layout = false
 [tool.pdm.build]
 includes = ["som/"]
 source-includes = ["tests/", "README.md", "LICENSE"]
-
-[tool.black]
-line-length = 100
-target-version = ["py311"]
-
-[tool.ruff]
-line-length = 100
-target-version = "py311"
-select = ["E", "F", "B", "I"]
-fix = true
-
-[tool.ruff.format]
-docstring-code-format = true
-
-[tool.mypy]
-strict = true
-python_version = "3.11"
-ignore_missing_imports = true
-disallow_untyped_defs = true
-check_untyped_defs = true
-warn_return_any = true
-show_error_codes = true
-warn_unused_ignores = false
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

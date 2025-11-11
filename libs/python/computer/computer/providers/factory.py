@@ -1,7 +1,7 @@
 """Factory for creating VM providers."""
 
 import logging
-from typing import Dict, Optional, Any, Type, Union
+from typing import Any, Dict, Optional, Type, Union
 
 from .base import BaseVMProvider, VMProviderType
 
@@ -26,7 +26,7 @@ class VMProviderFactory:
         **kwargs,
     ) -> BaseVMProvider:
         """Create a VM provider of the specified type.
-        
+
         Args:
             provider_type: Type of VM provider to create
             port: Port for the API server
@@ -38,10 +38,10 @@ class VMProviderFactory:
             verbose: Enable verbose logging
             ephemeral: Use ephemeral (temporary) storage
             noVNC_port: Specific port for noVNC interface (for Lumier provider)
-            
+
         Returns:
             An instance of the requested VM provider
-            
+
         Raises:
             ImportError: If the required dependencies for the provider are not installed
             ValueError: If the provider type is not supported
@@ -52,21 +52,18 @@ class VMProviderFactory:
                 provider_type = VMProviderType(provider_type.lower())
             except ValueError:
                 provider_type = VMProviderType.UNKNOWN
-        
+
         if provider_type == VMProviderType.LUME:
             try:
-                from .lume import LumeProvider, HAS_LUME
+                from .lume import HAS_LUME, LumeProvider
+
                 if not HAS_LUME:
                     raise ImportError(
                         "The pylume package is required for LumeProvider. "
                         "Please install it with 'pip install cua-computer[lume]'"
                     )
                 return LumeProvider(
-                    port=port,
-                    host=host,
-                    storage=storage,
-                    verbose=verbose,
-                    ephemeral=ephemeral
+                    port=port, host=host, storage=storage, verbose=verbose, ephemeral=ephemeral
                 )
             except ImportError as e:
                 logger.error(f"Failed to import LumeProvider: {e}")
@@ -76,7 +73,8 @@ class VMProviderFactory:
                 ) from e
         elif provider_type == VMProviderType.LUMIER:
             try:
-                from .lumier import LumierProvider, HAS_LUMIER
+                from .lumier import HAS_LUMIER, LumierProvider
+
                 if not HAS_LUMIER:
                     raise ImportError(
                         "Docker is required for LumierProvider. "
@@ -90,7 +88,7 @@ class VMProviderFactory:
                     image=image or "macos-sequoia-cua:latest",
                     verbose=verbose,
                     ephemeral=ephemeral,
-                    noVNC_port=noVNC_port
+                    noVNC_port=noVNC_port,
                 )
             except ImportError as e:
                 logger.error(f"Failed to import LumierProvider: {e}")
@@ -102,6 +100,7 @@ class VMProviderFactory:
         elif provider_type == VMProviderType.CLOUD:
             try:
                 from .cloud import CloudProvider
+
                 return CloudProvider(
                     verbose=verbose,
                     **kwargs,
@@ -114,7 +113,8 @@ class VMProviderFactory:
                 ) from e
         elif provider_type == VMProviderType.WINSANDBOX:
             try:
-                from .winsandbox import WinSandboxProvider, HAS_WINSANDBOX
+                from .winsandbox import HAS_WINSANDBOX, WinSandboxProvider
+
                 if not HAS_WINSANDBOX:
                     raise ImportError(
                         "pywinsandbox is required for WinSandboxProvider. "
@@ -126,7 +126,7 @@ class VMProviderFactory:
                     storage=storage,
                     verbose=verbose,
                     ephemeral=ephemeral,
-                    **kwargs
+                    **kwargs,
                 )
             except ImportError as e:
                 logger.error(f"Failed to import WinSandboxProvider: {e}")
@@ -136,7 +136,8 @@ class VMProviderFactory:
                 ) from e
         elif provider_type == VMProviderType.DOCKER:
             try:
-                from .docker import DockerProvider, HAS_DOCKER
+                from .docker import HAS_DOCKER, DockerProvider
+
                 if not HAS_DOCKER:
                     raise ImportError(
                         "Docker is required for DockerProvider. "
@@ -150,7 +151,7 @@ class VMProviderFactory:
                     image=image or "trycua/cua-ubuntu:latest",
                     verbose=verbose,
                     ephemeral=ephemeral,
-                    vnc_port=noVNC_port
+                    vnc_port=noVNC_port,
                 )
             except ImportError as e:
                 logger.error(f"Failed to import DockerProvider: {e}")

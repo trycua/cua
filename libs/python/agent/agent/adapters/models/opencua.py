@@ -1,13 +1,18 @@
-from typing import List, Dict, Any
-import re
 import base64
+import re
 from io import BytesIO
+from typing import Any, Dict, List
 
 try:
+    import blobfile as _  # assert blobfile is installed
     import torch  # type: ignore
-    from transformers import AutoTokenizer, AutoModel, AutoImageProcessor  # type: ignore
     from PIL import Image  # type: ignore
-    import blobfile as _ # assert blobfile is installed
+    from transformers import (  # type: ignore
+        AutoImageProcessor,
+        AutoModel,
+        AutoTokenizer,
+    )
+
     OPENCUA_AVAILABLE = True
 except Exception:
     OPENCUA_AVAILABLE = False
@@ -16,10 +21,12 @@ except Exception:
 class OpenCUAModel:
     """OpenCUA model handler using AutoTokenizer, AutoModel and AutoImageProcessor."""
 
-    def __init__(self, model_name: str, device: str = "auto", trust_remote_code: bool = False) -> None:
+    def __init__(
+        self, model_name: str, device: str = "auto", trust_remote_code: bool = False
+    ) -> None:
         if not OPENCUA_AVAILABLE:
             raise ImportError(
-                "OpenCUA requirements not found. Install with: pip install \"cua-agent[opencua-hf]\""
+                'OpenCUA requirements not found. Install with: pip install "cua-agent[opencua-hf]"'
             )
         self.model_name = model_name
         self.device = device
@@ -56,7 +63,11 @@ class OpenCUAModel:
         return ""
 
     def generate(self, messages: List[Dict[str, Any]], max_new_tokens: int = 512) -> str:
-        assert self.model is not None and self.tokenizer is not None and self.image_processor is not None
+        assert (
+            self.model is not None
+            and self.tokenizer is not None
+            and self.image_processor is not None
+        )
 
         # Tokenize text side using chat template
         input_ids = self.tokenizer.apply_chat_template(
@@ -74,7 +85,11 @@ class OpenCUAModel:
             pixel_values = torch.tensor(image_info["pixel_values"]).to(
                 dtype=torch.bfloat16, device=self.model.device
             )
-            grid_thws = torch.tensor(image_info["image_grid_thw"]) if "image_grid_thw" in image_info else None
+            grid_thws = (
+                torch.tensor(image_info["image_grid_thw"])
+                if "image_grid_thw" in image_info
+                else None
+            )
 
         gen_kwargs: Dict[str, Any] = {
             "max_new_tokens": max_new_tokens,

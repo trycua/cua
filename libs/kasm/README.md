@@ -70,14 +70,17 @@ async with provider:
 ## Container Configuration
 
 ### Ports
+
 - **6901**: VNC web interface (noVNC)
 - **8080**: Computer-server API endpoint
 
 ### Environment Variables
+
 - `VNC_PW`: VNC password (default: "password")
 - `DISPLAY`: X11 display (set to ":0")
 
 ### Volumes
+
 - `/home/kasm-user/storage`: Persistent storage mount point
 - `/home/kasm-user/shared`: Shared folder mount point
 

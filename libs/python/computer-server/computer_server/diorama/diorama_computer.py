@@ -1,14 +1,16 @@
 import asyncio
 
+
 class DioramaComputer:
     """
     A minimal Computer-like interface for Diorama, compatible with ComputerAgent.
     Implements _initialized, run(), and __aenter__ for agent compatibility.
     """
+
     def __init__(self, diorama):
         """
         Initialize the DioramaComputer with a diorama instance.
-        
+
         Args:
             diorama: The diorama instance to wrap with a computer-like interface.
         """
@@ -19,10 +21,10 @@ class DioramaComputer:
     async def __aenter__(self):
         """
         Async context manager entry method for compatibility with ComputerAgent.
-        
+
         Ensures an event loop is running and marks the instance as initialized.
         Creates a new event loop if none is currently running.
-        
+
         Returns:
             DioramaComputer: The initialized instance.
         """
@@ -37,10 +39,10 @@ class DioramaComputer:
     async def run(self):
         """
         Run method stub for compatibility with ComputerAgent interface.
-        
+
         Ensures the instance is initialized before returning. If not already
         initialized, calls __aenter__ to perform initialization.
-        
+
         Returns:
             DioramaComputer: The initialized instance.
         """

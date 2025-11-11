@@ -17,10 +17,12 @@ Lume follows the XDG Base Directory specification for the configuration file:
 - Configuration is stored in `$XDG_CONFIG_HOME/lume/config.yaml` (defaults to `~/.config/lume/config.yaml`)
 
 By default, other data is stored in:
+
 - VM data: `~/.lume`
 - Cache files: `~/.lume/cache`
 
 The config file contains settings for:
+
 - VM storage locations and the default location
 - Cache directory location
 - Whether caching is enabled
@@ -88,6 +90,7 @@ lume delete <name>
 ### How to Install macOS from an IPSW Image
 
 #### Create a new macOS VM using the latest supported IPSW image:
+
 Run the following command to create a new macOS virtual machine using the latest available IPSW image:
 
 ```bash
@@ -95,6 +98,7 @@ lume create <name> --os macos --ipsw latest
 ```
 
 #### Create a new macOS VM using a specific IPSW image:
+
 To create a macOS virtual machine from an older or specific IPSW file, first download the desired IPSW (UniversalMac) from a trusted source.
 
 Then, use the downloaded IPSW path:

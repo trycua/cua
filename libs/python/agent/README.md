@@ -8,10 +8,11 @@
     </picture>
   </div>
 
-  [![Python](https://img.shields.io/badge/Python-333333?logo=python&logoColor=white&labelColor=333333)](#)
-  [![macOS](https://img.shields.io/badge/macOS-000000?logo=apple&logoColor=F0F0F0)](#)
-  [![Discord](https://img.shields.io/badge/Discord-%235865F2.svg?&logo=discord&logoColor=white)](https://discord.com/invite/mVnXXpdE85)
-  [![PyPI](https://img.shields.io/pypi/v/cua-computer?color=333333)](https://pypi.org/project/cua-computer/)
+[![Python](https://img.shields.io/badge/Python-333333?logo=python&logoColor=white&labelColor=333333)](#)
+[![macOS](https://img.shields.io/badge/macOS-000000?logo=apple&logoColor=F0F0F0)](#)
+[![Discord](https://img.shields.io/badge/Discord-%235865F2.svg?&logo=discord&logoColor=white)](https://discord.com/invite/mVnXXpdE85)
+[![PyPI](https://img.shields.io/pypi/v/cua-computer?color=333333)](https://pypi.org/project/cua-computer/)
+
 </h1>
 </div>
 
@@ -47,7 +48,7 @@ async def main():
         name=os.getenv("CUA_CONTAINER_NAME"),
         api_key=os.getenv("CUA_API_KEY")
     ) as computer:
-        
+
         # Create agent
         agent = ComputerAgent(
             model="anthropic/claude-3-5-sonnet-20241022",
@@ -56,10 +57,10 @@ async def main():
             trajectory_dir="trajectories",
             max_trajectory_budget=5.0  # $5 budget limit
         )
-        
+
         # Run agent
         messages = [{"role": "user", "content": "Take a screenshot and tell me what you see"}]
-        
+
         async for result in agent.run(messages):
             for item in result["output"]:
                 if item["type"] == "message":
@@ -71,16 +72,16 @@ if __name__ == "__main__":
 
 ## Docs
 
-- [Agent Loops](https://trycua.com/docs/agent-sdk/agent-loops)
-- [Supported Agents](https://trycua.com/docs/agent-sdk/supported-agents)
-- [Supported Models](https://trycua.com/docs/agent-sdk/supported-models)
-- [Chat History](https://trycua.com/docs/agent-sdk/chat-history)
-- [Callbacks](https://trycua.com/docs/agent-sdk/callbacks)
-- [Custom Tools](https://trycua.com/docs/agent-sdk/custom-tools)
-- [Custom Computer Handlers](https://trycua.com/docs/agent-sdk/custom-computer-handlers)
-- [Prompt Caching](https://trycua.com/docs/agent-sdk/prompt-caching)
-- [Usage Tracking](https://trycua.com/docs/agent-sdk/usage-tracking)
-- [Benchmarks](https://trycua.com/docs/agent-sdk/benchmarks)
+- [Agent Loops](https://cua.ai/docs/agent-sdk/agent-loops)
+- [Supported Agents](https://cua.ai/docs/agent-sdk/supported-agents/computer-use-agents)
+- [Supported Models](https://cua.ai/docs/agent-sdk/supported-model-providers)
+- [Chat History](https://cua.ai/docs/agent-sdk/chat-history)
+- [Callbacks](https://cua.ai/docs/agent-sdk/callbacks)
+- [Custom Tools](https://cua.ai/docs/agent-sdk/custom-tools)
+- [Custom Computer Handlers](https://cua.ai/docs/agent-sdk/custom-computer-handlers)
+- [Prompt Caching](https://cua.ai/docs/agent-sdk/prompt-caching)
+- [Usage Tracking](https://cua.ai/docs/agent-sdk/usage-tracking)
+- [Benchmarks](https://cua.ai/docs/agent-sdk/benchmarks)
 
 ## License
 

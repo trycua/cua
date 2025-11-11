@@ -1,19 +1,19 @@
 {
-	"title": "Home",
-	"description": "Documentation Home",
-	"root": true,
-	"defaultOpen": true,
-	"pages": [
-		"index",
-		"quickstart-devs",
-		"quickstart-cli",
-		"telemetry",
-		"example-usecases",
-        "---[BookCopy]Computer Playbook---",
-        "...computer-sdk",
-		"---[BookCopy]Agent Playbook---",
-        "...agent-sdk",
-		"---[CodeXml]API Reference---",
-		"...libraries"
-	]
+  "title": "Home",
+  "description": "Documentation Home",
+  "root": true,
+  "defaultOpen": true,
+  "pages": [
+    "index",
+    "quickstart-devs",
+    "quickstart-cli",
+    "telemetry",
+    "example-usecases",
+    "---[BookCopy]Computer Playbook---",
+    "...computer-sdk",
+    "---[BookCopy]Agent Playbook---",
+    "...agent-sdk",
+    "---[CodeXml]API Reference---",
+    "...libraries"
+  ]
 }

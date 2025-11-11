@@ -8,10 +8,11 @@
     </picture>
   </div>
 
-  [![Python](https://img.shields.io/badge/Python-333333?logo=python&logoColor=white&labelColor=333333)](#)
-  [![macOS](https://img.shields.io/badge/macOS-000000?logo=apple&logoColor=F0F0F0)](#)
-  [![Discord](https://img.shields.io/badge/Discord-%235865F2.svg?&logo=discord&logoColor=white)](https://discord.com/invite/mVnXXpdE85)
-  [![PyPI](https://img.shields.io/pypi/v/cua-computer-server?color=333333)](https://pypi.org/project/cua-computer-server/)
+[![Python](https://img.shields.io/badge/Python-333333?logo=python&logoColor=white&labelColor=333333)](#)
+[![macOS](https://img.shields.io/badge/macOS-000000?logo=apple&logoColor=F0F0F0)](#)
+[![Discord](https://img.shields.io/badge/Discord-%235865F2.svg?&logo=discord&logoColor=white)](https://discord.com/invite/mVnXXpdE85)
+[![PyPI](https://img.shields.io/pypi/v/cua-computer-server?color=333333)](https://pypi.org/project/cua-computer-server/)
+
 </h1>
 </div>
 
@@ -39,7 +40,7 @@ Refer to this notebook for a step-by-step guide on how to use the Computer-Use S
 
 ## Docs
 
-- [Commands](https://trycua.com/docs/libraries/computer-server/Commands)
-- [REST-API](https://trycua.com/docs/libraries/computer-server/REST-API)
-- [WebSocket-API](https://trycua.com/docs/libraries/computer-server/WebSocket-API)
-- [Index](https://trycua.com/docs/libraries/computer-server/index)
+- [Commands](https://cua.ai/docs/libraries/computer-server/Commands)
+- [REST-API](https://cua.ai/docs/libraries/computer-server/REST-API)
+- [WebSocket-API](https://cua.ai/docs/libraries/computer-server/WebSocket-API)
+- [Index](https://cua.ai/docs/libraries/computer-server/index)

@@ -45,7 +45,7 @@ export function PageFeedback() {
         <p className="text-sm text-fd-muted-foreground text-left">
           {feedback === 'helpful'
             ? 'Thanks for your feedback!'
-            : 'Thanks for your feedback. We\'ll work on improving this page.'}
+            : "Thanks for your feedback. We'll work on improving this page."}
         </p>
       )}
     </div>

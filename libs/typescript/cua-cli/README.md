@@ -24,6 +24,11 @@ bun run ./index.ts -- --help
 
 - **VMs**
   - `cua vm list`
+  - `cua vm create --os OS --configuration SIZE --region REGION` – creates a new VM
+    - OS: `linux`, `windows`, `macos`
+    - SIZE: `small`, `medium`, `large`
+    - REGION: `north-america`, `europe`, `asia-pacific`, `south-america`
+  - `cua vm delete NAME` – deletes a VM
   - `cua vm start NAME`
   - `cua vm stop NAME`
   - `cua vm restart NAME`

@@ -10,12 +10,12 @@ export async function writeEnvFile(cwd: string, key: string) {
 }
 
 export type VmStatus = "pending" | "running" | "stopped" | "terminated" | "failed";
-export type VmItem = { name: string; password: string; status: VmStatus };
+export type VmItem = { name: string; password: string; status: VmStatus; host?: string };
 
 export function printVmList(items: VmItem[]) {
-  const rows: string[][] = [["NAME", "STATUS", "PASSWORD"], ...items.map(v => [v.name, String(v.status), v.password])];
-  const widths: number[] = [0, 0, 0];
-  for (const r of rows) for (let i = 0; i < 3; i++) widths[i] = Math.max(widths[i] ?? 0, (r[i] ?? "").length);
+  const rows: string[][] = [["NAME", "STATUS", "PASSWORD", "HOST"], ...items.map(v => [v.name, String(v.status), v.password, v.host || ""])];
+  const widths: number[] = [0, 0, 0, 0];
+  for (const r of rows) for (let i = 0; i < 4; i++) widths[i] = Math.max(widths[i] ?? 0, (r[i] ?? "").length);
   for (const r of rows) console.log(r.map((c, i) => (c ?? "").padEnd(widths[i] ?? 0)).join("  "));
   if (items.length === 0) console.log("No VMs found");
 }

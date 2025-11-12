@@ -11,6 +11,11 @@ on:
         required: false
         default: true
         type: boolean
+      include_local_models:
+        description: "Also run huggingface-local models (requires large disk / self-hosted runner)"
+        required: false
+        default: false
+        type: boolean
   schedule:
     # Runs at 3 PM UTC (8 AM PDT) daily
     - cron: "0 15 * * *"
@@ -18,35 +23,47 @@ on:
 jobs:
   # Test all CUA models - runs on PRs, schedules, or when manually triggered
   test-all-models:
-    if: ${{ github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || fromJSON(inputs.test_models || 'false') }}
+    if: ${{ (github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || fromJSON(inputs.test_models || 'false')) && (!matrix.requires_local_weights || fromJSON(inputs.include_local_models || 'false') || vars.RUN_LOCAL_MODELS == 'true') }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        model:
+        include:
           # Claude Sonnet/Haiku
-          - anthropic/claude-sonnet-4-5-20250929
-          - anthropic/claude-haiku-4-5-20251001
-          - anthropic/claude-opus-4-1-20250805
+          - model: anthropic/claude-sonnet-4-5-20250929
+            requires_local_weights: false
+          - model: anthropic/claude-haiku-4-5-20251001
+            requires_local_weights: false
+          - model: anthropic/claude-opus-4-1-20250805
+            requires_local_weights: false
 
           # OpenAI CU Preview
-          - openai/computer-use-preview
+          - model: openai/computer-use-preview
+            requires_local_weights: false
 
           # GLM-V
-          - openrouter/z-ai/glm-4.5v
-          # - huggingface-local/zai-org/GLM-4.5V  # Requires local model setup
+          - model: openrouter/z-ai/glm-4.5v
+            requires_local_weights: false
+          # - model: huggingface-local/zai-org/GLM-4.5V  # Requires local model setup
+          #   requires_local_weights: true
 
           # Gemini CU Preview
-          - gemini-2.5-computer-use-preview-10-2025
+          - model: gemini-2.5-computer-use-preview-10-2025
+            requires_local_weights: false
 
           # InternVL
-          - huggingface-local/OpenGVLab/InternVL3_5-1B
-          # - huggingface-local/OpenGVLab/InternVL3_5-2B
-          # - huggingface-local/OpenGVLab/InternVL3_5-4B
-          # - huggingface-local/OpenGVLab/InternVL3_5-8B
+          - model: huggingface-local/OpenGVLab/InternVL3_5-1B
+            requires_local_weights: true
+          # - model: huggingface-local/OpenGVLab/InternVL3_5-2B
+          #   requires_local_weights: true
+          # - model: huggingface-local/OpenGVLab/InternVL3_5-4B
+          #   requires_local_weights: true
+          # - model: huggingface-local/OpenGVLab/InternVL3_5-8B
+          #   requires_local_weights: true
 
           # UI-TARS (supports full computer-use, can run standalone)
-          - huggingface-local/ByteDance-Seed/UI-TARS-1.5-7B
+          - model: huggingface-local/ByteDance-Seed/UI-TARS-1.5-7B
+            requires_local_weights: true
 
           # Note: OpenCUA, GTA, and Holo are grounding-only models
           # They only support predict_click(), not agent.run()
@@ -54,21 +71,28 @@ jobs:
 
           # Moondream (typically used in composed agents)
           # Format: moondream3+{any-llm-with-tools}
-          - moondream3+anthropic/claude-sonnet-4-5-20250929 # Claude has VLM + Tools
-          # - moondream3+openai/gpt-4o  # GPT-4o has VLM + Tools
+          - model: moondream3+anthropic/claude-sonnet-4-5-20250929 # Claude has VLM + Tools
+            requires_local_weights: false
+          # - model: moondream3+openai/gpt-4o  # GPT-4o has VLM + Tools
+          #   requires_local_weights: false
 
           # OmniParser (typically used in composed agents)
           # Format: omniparser+{any-vlm-with-tools}
-          - omniparser+anthropic/claude-sonnet-4-5-20250929 # Claude has VLM + Tools
-          # - omniparser+openai/gpt-4o  # GPT-4o has VLM + Tools
+          - model: omniparser+anthropic/claude-sonnet-4-5-20250929 # Claude has VLM + Tools
+            requires_local_weights: false
+          # - model: omniparser+openai/gpt-4o  # GPT-4o has VLM + Tools
+          #   requires_local_weights: false
 
           # Other grounding models + VLM with tools
           # Format: {grounding-model}+{any-vlm-with-tools}
           # These grounding-only models (OpenCUA, GTA, Holo) must be used in composed form
           # since they only support predict_click(), not full agent.run()
-          - huggingface-local/HelloKKMe/GTA1-7B+anthropic/claude-sonnet-4-5-20250929
-          - huggingface-local/xlangai/OpenCUA-7B+anthropic/claude-sonnet-4-5-20250929
-          - huggingface-local/Hcompany/Holo1.5-3B+anthropic/claude-sonnet-4-5-20250929
+          - model: huggingface-local/HelloKKMe/GTA1-7B+anthropic/claude-sonnet-4-5-20250929
+            requires_local_weights: true
+          - model: huggingface-local/xlangai/OpenCUA-7B+anthropic/claude-sonnet-4-5-20250929
+            requires_local_weights: true
+          - model: huggingface-local/Hcompany/Holo1.5-3B+anthropic/claude-sonnet-4-5-20250929
+            requires_local_weights: true
 
     steps:
       - name: Checkout repository
@@ -218,6 +242,7 @@ jobs:
             tests/agent_loop_testing/test_images/
             *.log
           retention-days: 7
+          if-no-files-found: ignore
 
       - name: Upload test summary data
         if: always()
@@ -227,6 +252,7 @@ jobs:
           name: test-summary-${{ env.SAFE_MODEL_NAME }}
           path: test_summary/
           retention-days: 1
+          if-no-files-found: ignore
 
       - name: Set default Slack color
         if: always() && env.SLACK_COLOR == ''
@@ -268,10 +294,6 @@ jobs:
           # Create directory if it doesn't exist
           mkdir -p all_summaries
 
-          # Get list of models being tested in this run from the matrix
-          # This helps filter out artifacts from previous runs when testing locally
-          EXPECTED_MODELS="${{ join(matrix.model, ' ') }}"
-
           # Aggregate all results
           PASSED_COUNT=0
           FAILED_COUNT=0
@@ -293,15 +315,6 @@ jobs:
               if [ "${processed_models[$MODEL]}" = "1" ]; then
                 echo "Skipping duplicate model: $MODEL"
                 continue
-              fi
-              
-              # Filter: Only include models that are in the current matrix
-              # This prevents including artifacts from previous workflow runs
-              if [ -n "$EXPECTED_MODELS" ]; then
-                if ! echo "$EXPECTED_MODELS" | grep -q "$MODEL"; then
-                  echo "Skipping model from previous run: $MODEL"
-                  continue
-                fi
               fi
               
               # Mark as processed

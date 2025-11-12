@@ -1,8 +1,5 @@
 #!/bin/bash
 
-# Fix for Azure ML Job not using the correct root path
-cd /
-
 # Create windows.boot file if it doesn't exist (required for proper boot)
 if [ -d "/storage" -a ! -f "/storage/windows.boot" ]; then
   echo "Creating windows.boot file in /storage..."
@@ -15,9 +12,23 @@ echo "Starting Windows VM..."
 echo "Live stream accessible at localhost:8006"
 
 echo "Waiting for Windows to boot and CUA computer-server to start..."
+
+VM_IP=""
 while true; do
+  # Wait from VM and get the IP
+  if [ -z "$VM_IP" ]; then
+    VM_IP=$(ps aux | grep dnsmasq | grep -oP '(?<=--dhcp-range=)[0-9.]+' | head -1)
+    if [ -n "$VM_IP" ]; then
+      echo "Detected VM IP: $VM_IP"
+    else
+      echo "Waiting for VM to start..."
+      sleep 5
+      continue
+    fi
+  fi
+
   # Check if server is ready
-  response=$(curl --write-out '%{http_code}' --silent --output /dev/null 20.20.20.21:5000/status)
+  response=$(curl --write-out '%{http_code}' --silent --output /dev/null $VM_IP:5000/status)
 
   if [ "${response:-0}" -eq 200 ]; then
     break
@@ -28,10 +39,6 @@ while true; do
 done
 
 echo "VM is up and running, and the CUA Computer Server is ready!"
-
-# Set up port forwarding from localhost:5000 to VM emulator IP
-echo "Setting up port forwarding: localhost:5000 -> 20.20.20.21:5000"
-socat TCP-LISTEN:5000,fork,reuseaddr TCP:20.20.20.21:5000 &
 
 echo "Computer server accessible at localhost:5000"
 

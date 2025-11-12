@@ -5,8 +5,8 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Continue'
 
 # Import shared utilities
-$scriptFolder = "\\host.lan\Data"
-Import-Module (Join-Path $scriptFolder -ChildPath "setup-tools.psm1")
+$scriptFolder = "C:\OEM"
+Import-Module (Join-Path $scriptFolder -ChildPath "setup-utils.psm1")
 
 # --- Logging ---
 $LogDir = "C:\Windows\Temp"
@@ -16,31 +16,9 @@ $script:LogFile = Join-Path $LogDir ("setup_cua_server_" + $RunId + ".log")
 
 Write-Log -LogFile $script:LogFile -Message "=== Installing CUA Computer Server ==="
 
-function Resolve-ChocoPath {
-  $inst = [Environment]::GetEnvironmentVariable('ChocolateyInstall','Machine')
-  if ($inst) {
-    $exe = Join-Path $inst 'bin\choco.exe'
-    if (Test-Path $exe) { return $exe }
-  }
-  $fallback = 'C:\ProgramData\chocolatey\bin\choco.exe'
-  if (Test-Path $fallback) { return $fallback }
-  try {
-    $cmd = (Get-Command choco -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source)
-    if ($cmd) { return $cmd }
-  } catch {}
-  return $null
-}
-
 # Ensure Chocolatey and Python 3.12 are present
 try {
   $ChocoExe = Resolve-ChocoPath
-  if (-not $ChocoExe) {
-    Write-Log -LogFile $script:LogFile -Message "Installing Chocolatey"
-    Set-ExecutionPolicy Bypass -Scope Process -Force
-    [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12
-    Invoke-Expression ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
-    $ChocoExe = Resolve-ChocoPath
-  }
   if ($ChocoExe) {
     Write-Log -LogFile $script:LogFile -Message "Installing Python 3.12 via Chocolatey"
     try {

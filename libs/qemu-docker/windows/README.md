@@ -31,11 +31,7 @@ This ISO is used for automated Windows installation on first run.
 ### 2. Build the Image
 
 ```bash
-# Build for dev mode (uses shared folder)
-docker build --build-arg DEPLOY_MODE=dev -t cua-windows:dev .
-
-# Or build for azure mode (uses OEM folder)
-docker build --build-arg DEPLOY_MODE=azure -t cua-windows:azure .
+docker build -t cua-windows:dev .
 ```
 
 ### 3. First Run - Create Golden Image
@@ -65,7 +61,7 @@ docker run -it --rm \
 **What happens during first run:**
 
 1. Windows 11 installs automatically using unattended configuration
-2. Setup scripts install Python 3.12 (via Chocolatey), essential tools, and CUA computer-server in isolated venv
+2. Setup scripts install Python 3.12, Git, and CUA computer-server in isolated venv
 3. Windows scheduled tasks created for CUA server and Caddy proxy (run hidden in background)
 4. Golden image is saved to `/storage` directory
 5. Container exits after setup completes
@@ -109,26 +105,11 @@ docker run -it --rm \
 - `YRES`: Screen height (default: "900")
 - `XRES`: Screen width (default: "1440")
 - `VERSION`: Windows version (default: "win11x64-enterprise-eval")
-- `DEPLOY_MODE`: Deployment mode - "dev" or "azure" (set during build)
 
 ### Volumes
 
 - `/storage`: Persistent VM storage (golden image, disk, firmware)
 - `/custom.iso`: Mount point for setup.iso (only needed for first run)
-
-### Deployment Modes
-
-**Dev Mode (`DEPLOY_MODE=dev`):**
-
-- Setup files mounted at `/shared` in container
-- Accessible to Windows VM via `\\host.lan\Data`
-- Useful for development and testing
-
-**Azure Mode (`DEPLOY_MODE=azure`):**
-
-- Setup files copied to `/oem` in container
-- Accessible to Windows VM via `C:\oem`
-- Used for production deployment on Azure ML
 
 ## Architecture
 
@@ -165,29 +146,14 @@ Setup scripts are in `src/vm/setup/`:
 - `install.bat`: Entry point called by Windows setup
 - `setup.ps1`: Main setup orchestration (installs software, configures Windows)
 - `setup-cua-server.ps1`: CUA server installation with isolated venv
-- `setup-caddy-proxy.ps1`: Caddy reverse proxy configuration
 - `on-logon.ps1`: Runs on user logon (starts scheduled tasks)
-- `setup-tools.psm1`: PowerShell helper functions
+- `setup-utils.psm1`: Helpers functions for setup
 
 After modifying, rebuild the image:
 
 ```bash
-docker build --build-arg DEPLOY_MODE=dev -t cua-windows:dev .
+docker build -t cua-windows:dev .
 ```
-
-### Customizing Windows Configuration
-
-Unattended installation files are in `src/vm/unattend-files/`:
-
-- `dev_win11x64-enterprise-eval.xml`: For dev mode
-- `azure_win11x64-enterprise-eval.xml`: For Azure mode
-
-These XML files control:
-
-- User account creation
-- Auto-logon settings
-- First-run commands
-- Timezone and locale
 
 ## Credits
 

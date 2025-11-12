@@ -1,6 +1,6 @@
 @echo off
 
-SET ScriptFolder=\\host.lan\Data
+SET ScriptFolder=C:\OEM
 SET LogFile=%ScriptFolder%\ps_script_log.txt
 
 echo Running PowerShell script... > %LogFile%

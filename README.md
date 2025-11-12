@@ -6,11 +6,7 @@
   </picture>
 
 [![Python](https://img.shields.io/badge/Python-333333?logo=python&logoColor=white&labelColor=333333)](#)
-[![Swift](https://img.shields.io/badge/Swift-F05138?logo=swift&logoColor=white)](#)
-[![macOS](https://img.shields.io/badge/macOS-000000?logo=apple&logoColor=F0F0F0)](#)
 [![Discord](https://img.shields.io/badge/Discord-%235865F2.svg?&logo=discord&logoColor=white)](https://discord.com/invite/mVnXXpdE85)
-[![OSWorld](https://img.shields.io/badge/OSWorld-Benchmark-blue)](https://os-world.github.io/)
-[![HUD](https://img.shields.io/badge/HUD-Integration-green)](https://hud.so)
 <br>
 <a href="https://trendshift.io/repositories/13685" target="_blank"><img src="https://trendshift.io/api/badge/repositories/13685" alt="trycua%2Fcua | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/></a>
 
@@ -200,9 +196,9 @@ Cua uses the OpenAI Agent response format.
 
 These are the valid model configurations for `ComputerAgent(model="...")`:
 
-| Configuration                            | Description                                                                                                                                     |
-| ---------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| `{computer-use-model}`                   | A single model to perform all computer-use tasks                                                                                                |
+| Configuration                            | Description                                                                                                                                |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `{computer-use-model}`                   | A single model to perform all computer-use tasks                                                                                           |
 | `{grounding-model}+{any-vlm-with-tools}` | [Composed](https://cua.ai/docs/agent-sdk/supported-agents/composed-agents) with VLM for captioning and grounding LLM for element detection |
 | `moondream3+{any-llm-with-tools}`        | [Composed](https://cua.ai/docs/agent-sdk/supported-agents/composed-agents) with Moondream3 for captioning and UI element detection         |
 | `human/human`                            | A [human-in-the-loop](https://cua.ai/docs/agent-sdk/supported-agents/human-in-the-loop) in place of a model                                |
@@ -372,32 +368,38 @@ Learn more in the [SOM documentation](./libs/python/som/README.md).
 ## 2025
 
 ### September 2025
+
 - **Hack the North Competition**: First benchmark-driven hackathon track with guaranteed YC interview prize. Winner achieved 68.3% on OSWorld-Tiny ([Blog Post](https://www.cua.ai/blog/hack-the-north))
 - **Global Hackathon Launch**: Ollama × Cua global online competition for creative local/hybrid agents
 
 ### August 2025
+
 - **v0.4 Release - Composite Agents**: Mix grounding + planning models with `+` operator (e.g., `"GTA-7B+GPT-4o"`) ([Blog Post](https://www.cua.ai/blog/composite-agents))
 - **HUD Integration**: One-line benchmarking on OSWorld-Verified with live trace visualization ([Blog Post](https://www.cua.ai/blog/hud-agent-evals))
 - **Human-in-the-Loop**: Interactive agent mode with `human/human` model string
 - **Web-Based Computer Use**: Browser-based agent execution ([Blog Post](https://www.cua.ai/blog/bringing-computer-use-to-the-web))
 
 ### June 2025
+
 - **Windows Sandbox Support**: Native Windows agent execution ([Blog Post](https://www.cua.ai/blog/windows-sandbox))
 - **Containerization Evolution**: From Lume to full Docker support ([Blog Post](https://www.cua.ai/blog/lume-to-containerization))
 - **Sandboxed Python Execution**: Secure code execution in agent workflows
 
 ### May 2025
+
 - **Cua Cloud Containers**: Production-ready cloud deployment with elastic scaling ([Blog Post](https://www.cua.ai/blog/introducing-cua-cloud-containers))
 - **Trajectory Viewer**: Visual debugging tool for agent actions ([Blog Post](https://www.cua.ai/blog/trajectory-viewer))
 - **Training Data Collection**: Tools for creating computer-use training datasets ([Blog Post](https://www.cua.ai/blog/training-computer-use-models-trajectories-1))
 - **App-Use Framework**: Mobile and desktop app automation capabilities
 
 ### April 2025
+
 - **Agent Framework v0.4**: Unified API for 100+ model configurations
 - **UI-TARS Integration**: Local inference support for ByteDance's desktop-optimized model
 - **Blog Series**: "Build Your Own Operator" tutorials ([Part 1](https://www.cua.ai/blog/build-your-own-operator-on-macos-1) | [Part 2](https://www.cua.ai/blog/build-your-own-operator-on-macos-2))
 
 ### March 2025
+
 - **Initial Public Release**: Core Agent SDK and Computer SDK
 - **Lume VM Manager**: macOS VM management tool for local development
 

@@ -25,6 +25,8 @@ jobs:
   test-all-models:
     if: ${{ (github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || fromJSON(inputs.test_models || 'false')) && (!matrix.requires_local_weights || fromJSON(inputs.include_local_models || 'false') || vars.RUN_LOCAL_MODELS == 'true') }}
     runs-on: ubuntu-latest
+    env:
+      ALLOW_LOCAL_MODELS: ${{ (github.event_name == 'workflow_dispatch' && fromJSON(inputs.include_local_models || 'false')) || vars.RUN_LOCAL_MODELS == 'true' }}
     strategy:
       fail-fast: false
       matrix:
@@ -95,15 +97,23 @@ jobs:
             requires_local_weights: true
 
     steps:
+      - name: Skip local model on hosted runner
+        if: ${{ matrix.requires_local_weights && env.ALLOW_LOCAL_MODELS != 'true' }}
+        run: |
+          echo "Skipping ${{ matrix.model }} because local weights are disabled. Set include_local_models=true or vars.RUN_LOCAL_MODELS to run this entry."
+
       - name: Checkout repository
+        if: ${{ !matrix.requires_local_weights || env.ALLOW_LOCAL_MODELS == 'true' }}
         uses: actions/checkout@v4
 
       - name: Set up uv and Python
+        if: ${{ !matrix.requires_local_weights || env.ALLOW_LOCAL_MODELS == 'true' }}
         uses: astral-sh/setup-uv@v4
         with:
           python-version: "3.12"
 
       - name: Cache system packages
+        if: ${{ !matrix.requires_local_weights || env.ALLOW_LOCAL_MODELS == 'true' }}
         uses: actions/cache@v4
         with:
           path: /var/cache/apt
@@ -112,12 +122,14 @@ jobs:
             ${{ runner.os }}-apt-
 
       - name: Install system dependencies
+        if: ${{ !matrix.requires_local_weights || env.ALLOW_LOCAL_MODELS == 'true' }}
         timeout-minutes: 20
         run: |
           sudo apt-get update
           sudo apt-get install -y libgl1-mesa-dri libglib2.0-0
 
       - name: Cache Python dependencies (uv)
+        if: ${{ !matrix.requires_local_weights || env.ALLOW_LOCAL_MODELS == 'true' }}
         uses: actions/cache@v4
         with:
           path: |
@@ -128,6 +140,7 @@ jobs:
             ${{ runner.os }}-uv-
 
       - name: Install CUA dependencies (uv)
+        if: ${{ !matrix.requires_local_weights || env.ALLOW_LOCAL_MODELS == 'true' }}
         run: |
           # Remove existing venv if it exists (from cache restore) to avoid interactive prompt
           rm -rf .venv
@@ -138,6 +151,7 @@ jobs:
           uv pip install pytest
 
       - name: Cache HuggingFace models
+        if: ${{ !matrix.requires_local_weights || env.ALLOW_LOCAL_MODELS == 'true' }}
         uses: actions/cache@v4
         with:
           path: ~/.cache/huggingface
@@ -147,12 +161,14 @@ jobs:
           # Large cache - models can be several GB each and are reused across runs
 
       - name: Record test start time
+        if: ${{ !matrix.requires_local_weights || env.ALLOW_LOCAL_MODELS == 'true' }}
         run: echo "TEST_START_TIME=$(date +%s)" >> $GITHUB_ENV
         env:
           # Ensure HuggingFace uses consistent cache location
           HF_HOME: ~/.cache/huggingface
 
       - name: Test model with agent loop
+        if: ${{ !matrix.requires_local_weights || env.ALLOW_LOCAL_MODELS == 'true' }}
         id: test_model
         timeout-minutes: 20
         continue-on-error: true
@@ -167,7 +183,7 @@ jobs:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
 
       - name: Calculate test duration and prepare message
-        if: always()
+        if: ${{ always() && (!matrix.requires_local_weights || env.ALLOW_LOCAL_MODELS == 'true') }}
         run: |
           TEST_END_TIME=$(date +%s)
 
@@ -234,7 +250,7 @@ jobs:
           echo "SAFE_MODEL_NAME=${SAFE_MODEL_NAME}" >> $GITHUB_ENV
 
       - name: Upload test results
-        if: always()
+        if: ${{ always() && (!matrix.requires_local_weights || env.ALLOW_LOCAL_MODELS == 'true') }}
         uses: actions/upload-artifact@v4
         with:
           name: test-results-${{ matrix.model }}
@@ -245,7 +261,7 @@ jobs:
           if-no-files-found: ignore
 
       - name: Upload test summary data
-        if: always()
+        if: ${{ always() && (!matrix.requires_local_weights || env.ALLOW_LOCAL_MODELS == 'true') }}
         uses: actions/upload-artifact@v4
         with:
           # Unique, slash-free artifact name per matrix entry
@@ -255,7 +271,7 @@ jobs:
           if-no-files-found: ignore
 
       - name: Set default Slack color
-        if: always() && env.SLACK_COLOR == ''
+        if: ${{ always() && (!matrix.requires_local_weights || env.ALLOW_LOCAL_MODELS == 'true') && env.SLACK_COLOR == '' }}
         run: echo "SLACK_COLOR=#36a64f" >> $GITHUB_ENV
 
       # Individual model notifications disabled - only summary is sent

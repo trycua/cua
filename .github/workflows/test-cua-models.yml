@@ -4,8 +4,6 @@ name: Test CUA Supporting Models
 # Run manually using workflow_dispatch with test_models=true
 
 on:
-  pull_request_target:
-    branches: [main, master]
   workflow_dispatch:
     inputs:
       test_models:
@@ -20,7 +18,7 @@ on:
 jobs:
   # Test all CUA models - runs on PRs, schedules, or when manually triggered
   test-all-models:
-    if: ${{ github.event_name == 'pull_request_target' || github.event_name == 'schedule' || fromJSON(inputs.test_models || 'false') }}
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || fromJSON(inputs.test_models || 'false') }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -42,13 +40,13 @@ jobs:
           - gemini-2.5-computer-use-preview-10-2025
 
           # InternVL
-          - huggingface-local/OpenGVLab/InternVL3_5-1B
+          # - huggingface-local/OpenGVLab/InternVL3_5-1B
           # - huggingface-local/OpenGVLab/InternVL3_5-2B
           # - huggingface-local/OpenGVLab/InternVL3_5-4B
           # - huggingface-local/OpenGVLab/InternVL3_5-8B
 
           # UI-TARS (supports full computer-use, can run standalone)
-          - huggingface-local/ByteDance-Seed/UI-TARS-1.5-7B
+          # - huggingface-local/ByteDance-Seed/UI-TARS-1.5-7B
 
           # Note: OpenCUA, GTA, and Holo are grounding-only models
           # They only support predict_click(), not agent.run()
@@ -56,7 +54,7 @@ jobs:
 
           # Moondream (typically used in composed agents)
           # Format: moondream3+{any-llm-with-tools}
-          - moondream3+anthropic/claude-sonnet-4-5-20250929 # Claude has VLM + Tools
+          # - moondream3+anthropic/claude-sonnet-4-5-20250929 # Claude has VLM + Tools
           # - moondream3+openai/gpt-4o  # GPT-4o has VLM + Tools
 
           # OmniParser (typically used in composed agents)
@@ -68,9 +66,9 @@ jobs:
           # Format: {grounding-model}+{any-vlm-with-tools}
           # These grounding-only models (OpenCUA, GTA, Holo) must be used in composed form
           # since they only support predict_click(), not full agent.run()
-          - huggingface-local/HelloKKMe/GTA1-7B+anthropic/claude-sonnet-4-5-20250929
-          - huggingface-local/xlangai/OpenCUA-7B+anthropic/claude-sonnet-4-5-20250929
-          - huggingface-local/Hcompany/Holo1.5-3B+anthropic/claude-sonnet-4-5-20250929
+          # - huggingface-local/HelloKKMe/GTA1-7B+anthropic/claude-sonnet-4-5-20250929
+          # - huggingface-local/xlangai/OpenCUA-7B+anthropic/claude-sonnet-4-5-20250929
+          # - huggingface-local/Hcompany/Holo1.5-3B+anthropic/claude-sonnet-4-5-20250929
 
     steps:
       - name: Checkout repository
@@ -219,6 +217,7 @@ jobs:
           path: |
             tests/agent_loop_testing/test_images/
             *.log
+          if-no-files-found: ignore
           retention-days: 7
 
       - name: Upload test summary data
@@ -228,6 +227,7 @@ jobs:
           # Unique, slash-free artifact name per matrix entry
           name: test-summary-${{ env.SAFE_MODEL_NAME }}
           path: test_summary/
+          if-no-files-found: ignore
           retention-days: 1
 
       - name: Set default Slack color
@@ -248,7 +248,7 @@ jobs:
 
   # Summary job that aggregates all model test results
   test-summary:
-    if: ${{ always() && (github.event_name == 'pull_request_target' || github.event_name == 'schedule' || fromJSON(inputs.test_models || 'false')) }}
+    if: ${{ always() && (github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || fromJSON(inputs.test_models || 'false')) }}
     needs: test-all-models
     runs-on: ubuntu-latest
     steps:

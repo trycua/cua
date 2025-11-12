@@ -13,6 +13,7 @@
     "custom-computer-handlers",
     "prompt-caching",
     "usage-tracking",
+    "telemetry",
     "benchmarks",
     "migration-guide",
     "integrations"

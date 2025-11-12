@@ -1,0 +1,9 @@
+{
+  "title": "CLI",
+  "description": "Command-line interface for CUA",
+  "pages": [
+    "index",
+    "installation",
+    "commands"
+  ]
+}

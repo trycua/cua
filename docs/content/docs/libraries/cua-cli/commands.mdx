@@ -1,0 +1,320 @@
+---
+title: Commands
+description: Complete reference for all CUA CLI commands
+---
+
+import { Tabs, Tab } from 'fumadocs-ui/components/tabs';
+import { Callout } from 'fumadocs-ui/components/callout';
+
+## Overview
+
+The CUA CLI provides two main command groups:
+
+- **`cua auth`** - Authentication and API key management
+- **`cua vm`** - Virtual machine lifecycle management
+
+## Authentication Commands
+
+### `cua auth login`
+
+Authenticate with your CUA account using browser-based OAuth flow.
+
+```bash
+# Interactive browser login
+cua auth login
+
+# Direct API key login
+cua auth login --api-key sk-your-api-key-here
+```
+
+**Options:**
+- `--api-key <key>` - Provide API key directly instead of browser flow
+
+**Example:**
+```bash
+$ cua auth login
+Opening browser for CLI auth...
+API key saved
+```
+
+### `cua auth pull`
+
+Create or update a `.env` file in the current directory with your CUA API key.
+
+```bash
+cua auth pull
+```
+
+**Example:**
+```bash
+$ cua auth pull
+Wrote /path/to/your/project/.env
+```
+
+The generated `.env` file will contain:
+```
+CUA_API_KEY=sk-your-api-key-here
+```
+
+### `cua auth logout`
+
+Remove the stored API key from your system.
+
+```bash
+cua auth logout
+```
+
+**Example:**
+```bash
+$ cua auth logout
+Logged out
+```
+
+## Virtual Machine Commands
+
+### `cua vm list`
+
+List all your virtual machines with their current status.
+
+```bash
+cua vm list
+```
+
+**Example Output:**
+```
+┌─────────────────┬──────────┬────────┬─────────────────┬──────────────────────────────────────┐
+│ Name            │ Status   │ OS     │ Configuration   │ Host                                 │
+├─────────────────┼──────────┼────────┼─────────────────┼──────────────────────────────────────┤
+│ my-dev-vm       │ running  │ linux  │ small          │ my-dev-vm.containers.cloud.trycua.com │
+│ test-windows    │ stopped  │ windows│ medium         │ test-windows.containers.cloud.trycua.com │
+└─────────────────┴──────────┴────────┴─────────────────┴──────────────────────────────────────┘
+```
+
+### `cua vm create`
+
+Create a new virtual machine.
+
+```bash
+cua vm create --os <OS> --configuration <SIZE> --region <REGION>
+```
+
+**Required Options:**
+- `--os` - Operating system: `linux`, `windows`, `macos`
+- `--configuration` - VM size: `small`, `medium`, `large`
+- `--region` - Region: `north-america`, `europe`, `asia-pacific`, `south-america`
+
+**Examples:**
+```bash
+# Create a small Linux VM in North America
+cua vm create --os linux --configuration small --region north-america
+
+# Create a medium Windows VM in Europe
+cua vm create --os windows --configuration medium --region europe
+
+# Create a large macOS VM in Asia Pacific
+cua vm create --os macos --configuration large --region asia-pacific
+```
+
+**Response Types:**
+
+**Immediate (Status 200):**
+```bash
+VM created and ready: my-new-vm-abc123
+Password: secure-password-here
+Host: my-new-vm-abc123.containers.cloud.trycua.com
+```
+
+**Provisioning (Status 202):**
+```bash
+VM provisioning started: my-new-vm-abc123
+Job ID: job-xyz789
+Use 'cua vm list' to monitor provisioning progress
+```
+
+### `cua vm start`
+
+Start a stopped virtual machine.
+
+```bash
+cua vm start <name>
+```
+
+**Example:**
+```bash
+$ cua vm start my-dev-vm
+Start accepted
+```
+
+### `cua vm stop`
+
+Stop a running virtual machine.
+
+```bash
+cua vm stop <name>
+```
+
+**Example:**
+```bash
+$ cua vm stop my-dev-vm
+stopping
+```
+
+### `cua vm restart`
+
+Restart a virtual machine.
+
+```bash
+cua vm restart <name>
+```
+
+**Example:**
+```bash
+$ cua vm restart my-dev-vm
+restarting
+```
+
+### `cua vm delete`
+
+Delete a virtual machine permanently.
+
+```bash
+cua vm delete <name>
+```
+
+**Example:**
+```bash
+$ cua vm delete old-test-vm
+VM deletion initiated: deleting
+```
+
+<Callout type="warn">
+  This action is irreversible. All data on the VM will be permanently lost.
+</Callout>
+
+### `cua vm vnc`
+
+Open the VNC interface for a VM in your browser.
+
+```bash
+cua vm vnc <name>
+```
+
+**Example:**
+```bash
+$ cua vm vnc my-dev-vm
+Opening NoVNC: https://my-dev-vm.containers.cloud.trycua.com/vnc.html?autoconnect=true&password=...
+```
+
+This command automatically opens your default browser to the VNC interface with the correct password pre-filled.
+
+### `cua vm chat`
+
+Open the CUA Dashboard Playground for a VM in your browser.
+
+```bash
+cua vm chat <name>
+```
+
+**Example:**
+```bash
+$ cua vm chat my-dev-vm
+Opening Playground: https://cua.ai/dashboard/playground?host=...
+```
+
+This opens the full CUA playground interface where you can interact with your VM using AI agents.
+
+## Global Options
+
+### Help
+
+Get help for any command:
+
+```bash
+cua --help
+cua auth --help
+cua vm --help
+cua vm create --help
+```
+
+### Environment Variables
+
+You can override default endpoints using environment variables:
+
+```bash
+# Use staging environment
+export CUA_API_BASE=https://api.staging.cua.ai
+export CUA_WEBSITE_URL=https://staging.cua.ai
+
+cua vm list  # Uses staging API
+```
+
+**Available Variables:**
+- `CUA_API_BASE` - API endpoint (default: `https://api.cua.ai`)
+- `CUA_WEBSITE_URL` - Website URL (default: `https://cua.ai`)
+
+## Error Handling
+
+The CLI provides clear error messages for common issues:
+
+### Authentication Errors
+```bash
+$ cua vm list
+Unauthorized. Try 'cua auth login' again.
+```
+
+### VM Not Found
+```bash
+$ cua vm start nonexistent-vm
+VM not found
+```
+
+### Invalid Configuration
+```bash
+$ cua vm create --os invalid --configuration small --region north-america
+Invalid request or unsupported configuration
+```
+
+## Tips and Best Practices
+
+### 1. Use Descriptive VM Names
+```bash
+# Good
+cua vm create --os linux --configuration small --region north-america
+# Then rename or use meaningful names in the dashboard
+
+# Better workflow
+cua vm list  # Check the generated name
+# Use that name consistently
+```
+
+### 2. Environment Management
+```bash
+# Set up your project with API key
+cd my-project
+cua auth pull
+# Now your project has CUA_API_KEY in .env
+```
+
+### 3. Quick VM Access
+```bash
+# Create aliases for frequently used VMs
+alias dev-vm="cua vm chat my-development-vm"
+alias prod-vm="cua vm vnc my-production-vm"
+```
+
+### 4. Monitoring Provisioning
+```bash
+# For VMs that need provisioning time
+cua vm create --os windows --configuration large --region europe
+# VM provisioning started: my-vm-abc123
+# Job ID: job-xyz789
+
+# Check status periodically
+watch -n 5 cua vm list
+```
+
+## Next Steps
+
+- [Get started with the quickstart guide](/get-started/quickstart#cli-quickstart)
+- [Learn about CUA computers](/computer-sdk/computers)
+- [Explore agent automation](/agent-sdk/agent-loops)

@@ -122,6 +122,12 @@ class CloudProvider(BaseVMProvider):
                             password = vm.get("password")
                             api_host = vm.get("host")  # Read host from API response
 
+                            # Strip whitespace from name and api_host to prevent invalid hostnames
+                            if isinstance(name, str):
+                                name = name.strip()
+                            if isinstance(api_host, str):
+                                api_host = api_host.strip()
+
                             if isinstance(name, str) and name:
                                 # Use host from API if available, otherwise fallback to legacy format
                                 if isinstance(api_host, str) and api_host:
@@ -255,6 +261,9 @@ class CloudProvider(BaseVMProvider):
         Returns:
             Host string for the VM
         """
+        # Strip whitespace from name to prevent invalid hostnames
+        name = name.strip()
+
         # Check cache first
         if name in self._host_cache:
             return self._host_cache[name]

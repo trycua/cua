@@ -5,7 +5,9 @@ export async function http(
   opts: { method?: string; token: string; body?: any }
 ): Promise<Response> {
   const url = `${API_BASE}${path}`;
-  const headers: Record<string, string> = { Authorization: `Bearer ${opts.token}` };
+  const headers: Record<string, string> = {
+    Authorization: `Bearer ${opts.token}`,
+  };
   if (opts.body) headers['content-type'] = 'application/json';
   return fetch(url, {
     method: opts.method || 'GET',

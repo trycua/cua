@@ -1,5 +1,7 @@
-export const WEBSITE_URL = Bun.env.CUA_WEBSITE_URL?.replace(/\/$/, '') || 'https://cua.ai';
-export const API_BASE = Bun.env.CUA_API_BASE?.replace(/\/$/, '') || 'https://api.cua.ai';
+export const WEBSITE_URL =
+  Bun.env.CUA_WEBSITE_URL?.replace(/\/$/, '') || 'https://cua.ai';
+export const API_BASE =
+  Bun.env.CUA_API_BASE?.replace(/\/$/, '') || 'https://api.cua.ai';
 export const AUTH_PAGE = `${WEBSITE_URL}/cli-auth`;
 export const CALLBACK_HOST = '127.0.0.1';
 

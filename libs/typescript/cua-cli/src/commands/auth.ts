@@ -9,7 +9,11 @@ export function registerAuthCommands(y: Argv) {
       .command(
         'login',
         'Open browser to authorize and store API key',
-        (y) => y.option('api-key', { type: 'string', describe: 'API key to store directly' }),
+        (y) =>
+          y.option('api-key', {
+            type: 'string',
+            describe: 'API key to store directly',
+          }),
         async (argv: Record<string, unknown>) => {
           if (argv['api-key']) {
             setApiKey(String(argv['api-key']));

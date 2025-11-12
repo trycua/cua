@@ -4,7 +4,9 @@ import { getDbPath } from './config';
 function getDb(): Database {
   const db = new Database(getDbPath());
   db.exec('PRAGMA journal_mode = WAL;');
-  db.exec('CREATE TABLE IF NOT EXISTS kv (k TEXT PRIMARY KEY, v TEXT NOT NULL);');
+  db.exec(
+    'CREATE TABLE IF NOT EXISTS kv (k TEXT PRIMARY KEY, v TEXT NOT NULL);'
+  );
   return db;
 }
 
@@ -23,7 +25,9 @@ export function setApiKey(token: string) {
 export function getApiKey(): string | null {
   const db = getDb();
   try {
-    const row = db.query("SELECT v FROM kv WHERE k='api_key'").get() as { v: string } | undefined;
+    const row = db.query("SELECT v FROM kv WHERE k='api_key'").get() as
+      | { v: string }
+      | undefined;
     return row?.v ?? null;
   } finally {
     db.close();

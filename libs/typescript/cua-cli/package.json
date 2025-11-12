@@ -1,19 +1,45 @@
 {
-  "name": "cua-cli",
-  "module": "index.ts",
+  "name": "@trycua/cli",
+  "version": "0.1.0",
+  "packageManager": "bun@1.1.38",
+  "description": "Command-line interface for CUA cloud VMs and authentication",
   "type": "module",
-  "private": true,
-  "devDependencies": {
-    "@types/bun": "latest",
-    "@types/yargs": "^17.0.33"
+  "license": "MIT",
+  "homepage": "https://github.com/trycua/cua/tree/main/libs/typescript/cua-cli",
+  "bugs": {
+    "url": "https://github.com/trycua/cua/issues"
   },
-  "peerDependencies": {
-    "typescript": "^5"
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/trycua/cua.git"
   },
+  "author": "cua",
+  "files": [
+    "index.ts",
+    "src",
+    "README.md"
+  ],
   "bin": {
     "cua": "./index.ts"
   },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "lint": "prettier --check .",
+    "lint:fix": "prettier --write .",
+    "typecheck": "tsc --noEmit",
+    "release": "bumpp && bun publish",
+    "prepublishOnly": "bun run typecheck"
+  },
   "dependencies": {
     "yargs": "^18.0.0"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "@types/yargs": "^17.0.33",
+    "bumpp": "^10.1.0",
+    "prettier": "^3.0.0",
+    "typescript": "^5"
   }
 }

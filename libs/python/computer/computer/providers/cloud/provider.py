@@ -129,16 +129,19 @@ class CloudProvider(BaseVMProvider):
                                 api_host = api_host.strip()
 
                             if isinstance(name, str) and name:
-                                # Use host from API if available, otherwise fallback to legacy format
+                                # Use host from API if available
                                 if isinstance(api_host, str) and api_host:
                                     host = api_host
                                     # Cache the host for this VM
                                     self._host_cache[name] = host
+                                    logger.debug(f"Using API-provided host for {name}: {host}")
                                 else:
-                                    # Legacy fallback
-                                    host = f"{name}.containers.cloud.trycua.com"
-                                    # Cache the legacy host
-                                    self._host_cache[name] = host
+                                    # If API doesn't provide host, use .sandbox.cua.ai format
+                                    # Don't cache yet - let _get_host_for_vm test connectivity
+                                    host = f"{name}.sandbox.cua.ai"
+                                    logger.debug(
+                                        f"API did not provide host for {name}, using default: {host}"
+                                    )
 
                                 # api_url: always set if missing
                                 if not vm.get("api_url"):

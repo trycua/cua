@@ -5,7 +5,14 @@ import { z } from 'zod';
 // see https://fumadocs.vercel.app/docs/mdx/collections#define-docs
 export const docs = defineDocs({
   docs: {
-    schema: frontmatterSchema,
+    schema: frontmatterSchema.extend({
+      macos: z.boolean().optional(),
+      windows: z.boolean().optional(),
+      linux: z.boolean().optional(),
+      pypi: z.string().optional(),
+      npm: z.string().optional(),
+      github: z.array(z.string()).optional(),
+    }),
   },
   meta: {
     schema: metaSchema,

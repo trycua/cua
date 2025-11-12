@@ -187,7 +187,7 @@ export default async function Page(props: { params: Promise<{ slug?: string[] }>
   const tocFooter = () => {
     return (
       <div className="mt-4">
-        <DocActionsMenu pageUrl={page.url} pageTitle={page.data.title} filePath={page.file?.path} />
+        <DocActionsMenu pageUrl={page.url} pageTitle={page.data.title} filePath={undefined} />
       </div>
     );
   };

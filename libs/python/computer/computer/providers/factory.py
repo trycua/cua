@@ -14,7 +14,7 @@ class VMProviderFactory:
     @staticmethod
     def create_provider(
         provider_type: Union[str, VMProviderType],
-        port: int = 7777,
+        provider_port: int = 7777,
         host: str = "localhost",
         bin_path: Optional[str] = None,
         storage: Optional[str] = None,
@@ -23,13 +23,14 @@ class VMProviderFactory:
         verbose: bool = False,
         ephemeral: bool = False,
         noVNC_port: Optional[int] = None,
+        api_port: Optional[int] = None,
         **kwargs,
     ) -> BaseVMProvider:
         """Create a VM provider of the specified type.
 
         Args:
             provider_type: Type of VM provider to create
-            port: Port for the API server
+            provider_port: Port for the provider's API server
             host: Hostname for the API server
             bin_path: Path to provider binary if needed
             storage: Path for persistent VM storage
@@ -37,7 +38,8 @@ class VMProviderFactory:
             image: VM image to use (for Lumier provider)
             verbose: Enable verbose logging
             ephemeral: Use ephemeral (temporary) storage
-            noVNC_port: Specific port for noVNC interface (for Lumier provider)
+            noVNC_port: Specific port for noVNC interface (for Lumier and Docker provider)
+            api_port: Specific port for Computer API server (for Docker provider)
 
         Returns:
             An instance of the requested VM provider
@@ -63,7 +65,7 @@ class VMProviderFactory:
                         "Please install it with 'pip install cua-computer[lume]'"
                     )
                 return LumeProvider(
-                    port=port, host=host, storage=storage, verbose=verbose, ephemeral=ephemeral
+                    provider_port=provider_port, host=host, storage=storage, verbose=verbose, ephemeral=ephemeral
                 )
             except ImportError as e:
                 logger.error(f"Failed to import LumeProvider: {e}")
@@ -81,7 +83,7 @@ class VMProviderFactory:
                         "Please install Docker for Apple Silicon and Lume CLI before using this provider."
                     )
                 return LumierProvider(
-                    port=port,
+                    provider_port=provider_port,
                     host=host,
                     storage=storage,
                     shared_path=shared_path,
@@ -121,7 +123,6 @@ class VMProviderFactory:
                         "Please install it with 'pip install -U git+https://github.com/karkason/pywinsandbox.git'"
                     )
                 return WinSandboxProvider(
-                    port=port,
                     host=host,
                     storage=storage,
                     verbose=verbose,
@@ -144,7 +145,6 @@ class VMProviderFactory:
                         "Please install Docker and ensure it is running."
                     )
                 return DockerProvider(
-                    port=port,
                     host=host,
                     storage=storage,
                     shared_path=shared_path,
@@ -152,6 +152,7 @@ class VMProviderFactory:
                     verbose=verbose,
                     ephemeral=ephemeral,
                     vnc_port=noVNC_port,
+                    api_port=api_port,
                 )
             except ImportError as e:
                 logger.error(f"Failed to import DockerProvider: {e}")

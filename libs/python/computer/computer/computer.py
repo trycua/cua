@@ -74,8 +74,9 @@ class Computer:
         verbosity: Union[int, LogLevel] = logging.INFO,
         telemetry_enabled: bool = True,
         provider_type: Union[str, VMProviderType] = VMProviderType.LUME,
-        port: Optional[int] = 7777,
+        provider_port: Optional[int] = 7777,
         noVNC_port: Optional[int] = 8006,
+        api_port: Optional[int] = None,
         host: str = os.environ.get("PYLUME_HOST", "localhost"),
         storage: Optional[str] = None,
         ephemeral: bool = False,
@@ -122,14 +123,19 @@ class Computer:
 
         # Store original parameters
         self.image = image
-        self.port = port
+        self.provider_port = provider_port
         self.noVNC_port = noVNC_port
+        self.api_port = api_port
         self.host = host
         self.os_type = os_type
         self.provider_type = provider_type
         self.ephemeral = ephemeral
+        self.api_key = api_key if self.provider_type == VMProviderType.CLOUD else None
+        
+        # Set default API port if not specified
+        if self.api_port is None:
+            self.api_port = 8443 if self.api_key else 8000
 
-        self.api_key = api_key
         self.experiments = experiments or []
 
         if "app-use" in self.experiments:
@@ -277,7 +283,7 @@ class Computer:
                 interface = cast(
                     BaseComputerInterface,
                     InterfaceFactory.create_interface_for_os(
-                        os=self.os_type, ip_address=ip_address  # type: ignore[arg-type]
+                        os=self.os_type, ip_address=ip_address, api_port=self.api_port  # type: ignore[arg-type]
                     ),
                 )
                 self._interface = interface
@@ -304,7 +310,7 @@ class Computer:
                         storage = "ephemeral" if self.ephemeral else self.storage
                         verbose = self.verbosity >= LogLevel.DEBUG
                         ephemeral = self.ephemeral
-                        port = self.port if self.port is not None else 7777
+                        port = self.provider_port if self.provider_port is not None else 7777
                         host = self.host if self.host else "localhost"
                         image = self.image
                         shared_path = self.shared_path
@@ -517,13 +523,14 @@ class Computer:
                         ip_address=ip_address,
                         api_key=self.api_key,
                         vm_name=self.config.name,
+                        api_port=self.api_port,
                     ),
                 )
             else:
                 interface = cast(
                     BaseComputerInterface,
                     InterfaceFactory.create_interface_for_os(
-                        os=self.os_type, ip_address=ip_address
+                        os=self.os_type, ip_address=ip_address, api_port=self.api_port
                     ),
                 )
 
@@ -692,6 +699,7 @@ class Computer:
                         ip_address=ip_address,
                         api_key=self.api_key,
                         vm_name=self.config.name,
+                        api_port=self.api_port,
                     ),
                 )
             else:
@@ -700,6 +708,7 @@ class Computer:
                     InterfaceFactory.create_interface_for_os(
                         os=self.os_type,
                         ip_address=ip_address,
+                        api_port=self.api_port,
                     ),
                 )
 

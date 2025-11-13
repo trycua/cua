@@ -375,6 +375,7 @@ class Computer:
                                     verbose=verbose,
                                     ephemeral=ephemeral,
                                     noVNC_port=noVNC_port,
+                                    api_port=self.api_port,
                                 )
                             else:
                                 raise ValueError(f"Unsupported provider type: {self.provider_type}")

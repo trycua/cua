@@ -1,0 +1,58 @@
+---
+title: Cua CLI
+description: Command-line interface for managing Cua cloud VMs and authentication
+---
+
+import { Tabs, Tab } from 'fumadocs-ui/components/tabs';
+
+The Cua CLI is a command-line tool that provides an intuitive interface for managing your Cua cloud virtual machines and authentication. It offers a streamlined workflow for creating, managing, and connecting to cloud sandboxes.
+
+## Key Features
+
+- **Authentication Management**: Secure login with browser-based OAuth flow
+- **VM Lifecycle**: Create, start, stop, restart, and delete cloud VMs
+- **Quick Access**: Direct links to VNC and playground interfaces
+- **Cross-Platform**: Works on macOS, Linux, and Windows
+- **Environment Integration**: Automatic `.env` file generation
+
+## Quick Example
+
+```bash
+# Install the CLI (installs Bun + CUA CLI)
+curl -LsSf https://cua.ai/cli/install.sh | sh
+
+# Login to your CUA account
+cua auth login
+
+# Create a new Linux VM
+cua vm create --os linux --configuration small --region north-america
+
+# List your VMs
+cua vm list
+
+# Open the playground for your VM
+cua vm chat my-vm-name
+```
+
+## Use Cases
+
+### Development Workflow
+- Quickly spin up cloud sandboxes for testing
+- Manage multiple VMs across different regions
+- Integrate with CI/CD pipelines
+
+### Team Collaboration
+- Share VM configurations and access
+- Standardize development environments
+- Quick onboarding for new team members
+
+### Automation
+- Script VM provisioning and management
+- Integrate with deployment workflows
+- Automate environment setup
+
+## Next Steps
+
+- [Install the CLI](/libraries/cua-cli/installation)
+- [Learn about available commands](/libraries/cua-cli/commands)
+- [Get started with the quickstart guide](/get-started/quickstart#cli-quickstart)

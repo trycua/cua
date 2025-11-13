@@ -7,7 +7,7 @@ import posthog from 'posthog-js';
 interface DocActionsMenuProps {
   pageUrl: string;
   pageTitle: string;
-  filePath: string;
+  filePath?: string;
 }
 
 export function DocActionsMenu({ pageUrl, pageTitle, filePath }: DocActionsMenuProps) {
@@ -15,6 +15,9 @@ export function DocActionsMenu({ pageUrl, pageTitle, filePath }: DocActionsMenuP
 
   const handleCopyMarkdown = async () => {
     try {
+      if (!filePath) {
+        throw new Error('No file path available');
+      }
       const githubRawUrl = `https://raw.githubusercontent.com/trycua/cua/refs/heads/main/docs/content/docs/${filePath}`;
 
       const response = await fetch(githubRawUrl);
@@ -55,6 +58,9 @@ export function DocActionsMenu({ pageUrl, pageTitle, filePath }: DocActionsMenuP
   };
 
   const handleEditGithub = () => {
+    if (!filePath) {
+      return;
+    }
     posthog.capture('docs_edit_github_clicked', {
       page: pageUrl,
       page_title: pageTitle,

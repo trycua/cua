@@ -12,8 +12,18 @@ export async function writeEnvFile(cwd: string, key: string) {
   return path;
 }
 
-export type VmStatus = 'pending' | 'running' | 'stopped' | 'terminated' | 'failed';
-export type VmItem = { name: string; password: string; status: VmStatus; host?: string };
+export type VmStatus =
+  | 'pending'
+  | 'running'
+  | 'stopped'
+  | 'terminated'
+  | 'failed';
+export type VmItem = {
+  name: string;
+  password: string;
+  status: VmStatus;
+  host?: string;
+};
 
 export function printVmList(items: VmItem[]) {
   const rows: string[][] = [
@@ -22,8 +32,10 @@ export function printVmList(items: VmItem[]) {
   ];
   const widths: number[] = [0, 0, 0, 0];
   for (const r of rows)
-    for (let i = 0; i < 4; i++) widths[i] = Math.max(widths[i] ?? 0, (r[i] ?? '').length);
-  for (const r of rows) console.log(r.map((c, i) => (c ?? '').padEnd(widths[i] ?? 0)).join('  '));
+    for (let i = 0; i < 4; i++)
+      widths[i] = Math.max(widths[i] ?? 0, (r[i] ?? '').length);
+  for (const r of rows)
+    console.log(r.map((c, i) => (c ?? '').padEnd(widths[i] ?? 0)).join('  '));
   if (items.length === 0) console.log('No VMs found');
 }
 

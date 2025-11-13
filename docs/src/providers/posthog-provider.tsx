@@ -6,13 +6,19 @@ import { useEffect } from 'react';
 import { usePathname, useSearchParams } from 'next/navigation';
 
 if (typeof window !== 'undefined') {
-  posthog.init(process.env.NEXT_PUBLIC_POSTHOG_API_KEY!, {
-    api_host: '/docs/api/posthog',
-    ui_host: process.env.NEXT_PUBLIC_POSTHOG_HOST,
-    person_profiles: 'always',
-    capture_pageview: false,
-    capture_pageleave: true,
-  });
+  const apiKey = process.env.NEXT_PUBLIC_POSTHOG_API_KEY;
+
+  if (apiKey) {
+    posthog.init(apiKey, {
+      api_host: '/docs/api/posthog',
+      ui_host: process.env.NEXT_PUBLIC_POSTHOG_HOST,
+      person_profiles: 'always',
+      capture_pageview: false,
+      capture_pageleave: true,
+    });
+  } else {
+    console.warn('[PostHog] API key not configured. Analytics will be disabled.');
+  }
 }
 
 export function PHProvider({ children }: { children: React.ReactNode }) {

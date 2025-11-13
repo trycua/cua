@@ -48,7 +48,12 @@ export function registerVmCommands(y: Argv) {
             })
             .option('region', {
               type: 'string',
-              choices: ['north-america', 'europe', 'asia-pacific', 'south-america'],
+              choices: [
+                'north-america',
+                'europe',
+                'asia-pacific',
+                'south-america',
+              ],
               demandOption: true,
               describe: 'VM region',
             }),
@@ -98,7 +103,11 @@ export function registerVmCommands(y: Argv) {
 
           if (res.status === 202) {
             // VM provisioning started
-            const data = (await res.json()) as { status: string; name: string; job_id: string };
+            const data = (await res.json()) as {
+              status: string;
+              name: string;
+              job_id: string;
+            };
             console.log(`VM provisioning started: ${data.name}`);
             console.log(`Job ID: ${data.job_id}`);
             console.log("Use 'cua vm list' to monitor provisioning progress");
@@ -122,7 +131,9 @@ export function registerVmCommands(y: Argv) {
           });
 
           if (res.status === 202) {
-            const body = (await res.json().catch(() => ({}))) as { status?: string };
+            const body = (await res.json().catch(() => ({}))) as {
+              status?: string;
+            };
             console.log(`VM deletion initiated: ${body.status ?? 'deleting'}`);
             return;
           }
@@ -182,7 +193,9 @@ export function registerVmCommands(y: Argv) {
             method: 'POST',
           });
           if (res.status === 202) {
-            const body = (await res.json().catch(() => ({}))) as { status?: string };
+            const body = (await res.json().catch(() => ({}))) as {
+              status?: string;
+            };
             console.log(body.status ?? 'stopping');
             return;
           }
@@ -206,12 +219,17 @@ export function registerVmCommands(y: Argv) {
         async (argv: Record<string, unknown>) => {
           const token = await ensureApiKeyInteractive();
           const name = String((argv as any).name);
-          const res = await http(`/v1/vms/${encodeURIComponent(name)}/restart`, {
-            token,
-            method: 'POST',
-          });
+          const res = await http(
+            `/v1/vms/${encodeURIComponent(name)}/restart`,
+            {
+              token,
+              method: 'POST',
+            }
+          );
           if (res.status === 202) {
-            const body = (await res.json().catch(() => ({}))) as { status?: string };
+            const body = (await res.json().catch(() => ({}))) as {
+              status?: string;
+            };
             console.log(body.status ?? 'restarting');
             return;
           }
@@ -252,7 +270,9 @@ export function registerVmCommands(y: Argv) {
             process.exit(1);
           }
           const host =
-            vm.host && vm.host.length ? vm.host : `${vm.name}.containers.cloud.trycua.com`;
+            vm.host && vm.host.length
+              ? vm.host
+              : `${vm.name}.containers.cloud.trycua.com`;
           const url = `https://${host}/vnc.html?autoconnect=true&password=${encodeURIComponent(vm.password)}`;
           console.log(`Opening NoVNC: ${url}`);
           await openInBrowser(url);
@@ -282,7 +302,9 @@ export function registerVmCommands(y: Argv) {
             process.exit(1);
           }
           const host =
-            vm.host && vm.host.length ? vm.host : `${vm.name}.containers.cloud.trycua.com`;
+            vm.host && vm.host.length
+              ? vm.host
+              : `${vm.name}.containers.cloud.trycua.com`;
           const base = WEBSITE_URL.replace(/\/$/, '');
           const url = `${base}/dashboard/playground?host=${encodeURIComponent(host)}&id=${encodeURIComponent(vm.name)}&name=${encodeURIComponent(vm.name)}&vnc_password=${encodeURIComponent(vm.password)}&fullscreen=true`;
           console.log(`Opening Playground: ${url}`);

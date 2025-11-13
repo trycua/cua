@@ -1,0 +1,487 @@
+---
+title: Quickstart
+description: Get started with Cua
+---
+
+import { Step, Steps } from 'fumadocs-ui/components/steps';
+import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
+import { Accordion, Accordions } from 'fumadocs-ui/components/accordion';
+import { Code, Terminal } from 'lucide-react';
+
+Choose your quickstart path:
+
+<div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-8 mb-8">
+  <Card icon={<Code />} href="#developer-quickstart" title="Developer Quickstart">
+    Build with Python or TypeScript SDKs - full programmatic control
+  </Card>
+  <Card icon={<Terminal />} href="#cli-quickstart" title="CLI Quickstart">
+    Get started quickly with the command-line interface
+  </Card>
+</div>
+
+---
+
+## Set Up Your Computer Environment
+
+Choose how you want to run your Cua computer. This will be the environment where your automated tasks will execute.
+
+You can run your Cua computer in the cloud (recommended for easiest setup), locally on macOS with Lume, locally on Windows with a Windows Sandbox, or in a Docker container on any platform. Choose the option that matches your system and needs.
+
+<Tabs items={['Cloud Sandbox', 'Linux on Docker', 'macOS Sandbox', 'Windows Sandbox']}>
+  <Tab value="Cloud Sandbox">
+
+    Cua Cloud Sandbox provides sandboxes that run Linux (Ubuntu) or Windows.
+
+    1. Go to [cua.ai/signin](https://cua.ai/signin)
+    2. Navigate to **Dashboard > Containers > Create Instance**
+    3. Create a **Small** sandbox, choosing either **Linux** or **Windows**
+    4. Note your sandbox name and API key
+
+    Your Cloud Sandbox will be automatically configured and ready to use.
+
+  </Tab>
+  <Tab value="Linux on Docker">
+
+    Run Linux desktop locally on macOS, Windows, or Linux hosts.
+
+    1. Install Docker Desktop or Docker Engine
+
+    2. Pull a CUA Docker image:
+
+    ```bash
+    # XFCE (Lightweight) - recommended for most use cases
+    docker pull --platform=linux/amd64 trycua/cua-xfce:latest
+
+    # OR KASM (Full-Featured) - full Ubuntu desktop
+    docker pull --platform=linux/amd64 trycua/cua-ubuntu:latest
+    ```
+
+  </Tab>
+  <Tab value="macOS Sandbox">
+
+    macOS hosts only - requires Lume CLI.
+
+    1. Install the Lume CLI:
+
+    ```bash
+    /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/lume/scripts/install.sh)"
+    ```
+
+    2. Start a local Cua sandbox:
+
+    ```bash
+    lume run macos-sequoia-cua:latest
+    ```
+
+  </Tab>
+  <Tab value="Windows Sandbox">
+
+    Windows hosts only - requires Windows 10 Pro/Enterprise or Windows 11.
+
+    1. Enable [Windows Sandbox](https://learn.microsoft.com/en-us/windows/security/application-security/application-isolation/windows-sandbox/windows-sandbox-install)
+    2. Install the `pywinsandbox` dependency:
+
+    ```bash
+    pip install -U git+git://github.com/karkason/pywinsandbox.git
+    ```
+
+    3. Windows Sandbox will be automatically configured when you run the CLI
+
+  </Tab>
+</Tabs>
+
+---
+
+## Developer Quickstart
+
+<Steps>
+
+<Step>
+
+### Using Computer
+
+Connect to your Cua computer and perform basic interactions, such as taking screenshots or simulating user input.
+
+<Tabs items={['Python', 'TypeScript']}>
+  <Tab value="Python">
+    Install the Cua computer Python SDK:
+    ```bash
+    pip install cua-computer
+    ```
+
+    Then, connect to your desired computer environment:
+
+    <Tabs items={['Cloud Sandbox', 'Linux on Docker', 'macOS Sandbox', 'Windows Sandbox', 'Your host desktop']}>
+      <Tab value="Cloud Sandbox">
+        ```python
+        from computer import Computer
+
+        computer = Computer(
+            os_type="linux",
+            provider_type="cloud",
+            name="your-sandbox-name",
+            api_key="your-api-key"
+        )
+        await computer.run() # Connect to the sandbox
+        ```
+      </Tab>
+      <Tab value="Linux on Docker">
+        ```python
+        from computer import Computer
+
+        computer = Computer(
+            os_type="linux",
+            provider_type="docker",
+            image="trycua/cua-xfce:latest"  # or "trycua/cua-ubuntu:latest"
+        )
+        await computer.run() # Launch & connect to the sandbox
+        ```
+      </Tab>
+      <Tab value="macOS Sandbox">
+        ```python
+        from computer import Computer
+
+        computer = Computer(
+            os_type="macos",
+            provider_type="lume",
+            name="macos-sequoia-cua:latest"
+        )
+        await computer.run() # Launch & connect to the sandbox
+        ```
+      </Tab>
+      <Tab value="Windows Sandbox">
+        ```python
+        from computer import Computer
+
+        computer = Computer(
+            os_type="windows",
+            provider_type="windows_sandbox"
+        )
+        await computer.run() # Launch & connect to the sandbox
+        ```
+      </Tab>
+      <Tab value="Your host desktop">
+        Install and run `cua-computer-server`:
+        ```bash
+        pip install cua-computer-server
+        python -m computer_server
+        ```
+
+        Then, use the `Computer` object to connect:
+        ```python
+        from computer import Computer
+
+        computer = Computer(use_host_computer_server=True)
+        await computer.run() # Connect to the host desktop
+        ```
+      </Tab>
+    </Tabs>
+
+    Once connected, you can perform interactions:
+    ```python
+    try:
+        # Take a screenshot of the computer's current display
+        screenshot = await computer.interface.screenshot()
+        # Simulate a left-click at coordinates (100, 100)
+        await computer.interface.left_click(100, 100)
+        # Type "Hello!" into the active application
+        await computer.interface.type("Hello!")
+    finally:
+        await computer.close()
+    ```
+
+  </Tab>
+  <Tab value="TypeScript">
+    Install the Cua computer TypeScript SDK:
+    ```bash
+    npm install @trycua/computer
+    ```
+
+    Then, connect to your desired computer environment:
+
+    <Tabs items={['Cloud Sandbox', 'Linux on Docker', 'macOS Sandbox', 'Windows Sandbox', 'Your host desktop']}>
+      <Tab value="Cloud Sandbox">
+        ```typescript
+        import { Computer, OSType } from '@trycua/computer';
+
+        const computer = new Computer({
+          osType: OSType.LINUX,
+          name: "your-sandbox-name",
+          apiKey: "your-api-key"
+        });
+        await computer.run(); // Connect to the sandbox
+        ```
+      </Tab>
+      <Tab value="Linux on Docker">
+        ```typescript
+        import { Computer, OSType, ProviderType } from '@trycua/computer';
+
+        const computer = new Computer({
+          osType: OSType.LINUX,
+          providerType: ProviderType.DOCKER,
+          image: "trycua/cua-xfce:latest"  // or "trycua/cua-ubuntu:latest"
+        });
+        await computer.run(); // Launch & connect to the sandbox
+        ```
+      </Tab>
+      <Tab value="macOS Sandbox">
+        ```typescript
+        import { Computer, OSType, ProviderType } from '@trycua/computer';
+
+        const computer = new Computer({
+          osType: OSType.MACOS,
+          providerType: ProviderType.LUME,
+          name: "macos-sequoia-cua:latest"
+        });
+        await computer.run(); // Launch & connect to the sandbox
+        ```
+      </Tab>
+      <Tab value="Windows Sandbox">
+        ```typescript
+        import { Computer, OSType, ProviderType } from '@trycua/computer';
+
+        const computer = new Computer({
+          osType: OSType.WINDOWS,
+          providerType: ProviderType.WINDOWS_SANDBOX
+        });
+        await computer.run(); // Launch & connect to the sandbox
+        ```
+      </Tab>
+      <Tab value="Your host desktop">
+        First, install and run `cua-computer-server`:
+        ```bash
+        pip install cua-computer-server
+        python -m computer_server
+        ```
+
+        Then, use the `Computer` object to connect:
+        ```typescript
+        import { Computer } from '@trycua/computer';
+
+        const computer = new Computer({ useHostComputerServer: true });
+        await computer.run(); // Connect to the host desktop
+        ```
+      </Tab>
+    </Tabs>
+
+    Once connected, you can perform interactions:
+    ```typescript
+    try {
+      // Take a screenshot of the computer's current display
+      const screenshot = await computer.interface.screenshot();
+      // Simulate a left-click at coordinates (100, 100)
+      await computer.interface.leftClick(100, 100);
+      // Type "Hello!" into the active application
+      await computer.interface.typeText("Hello!");
+    } finally {
+      await computer.close();
+    }
+    ```
+
+  </Tab>
+</Tabs>
+
+Learn more about computers in the [Cua computers documentation](/computer-sdk/computers). You will see how to automate computers with agents in the next step.
+
+</Step>
+
+<Step>
+
+### Using Agent
+
+Utilize an Agent to automate complex tasks by providing it with a goal and allowing it to interact with the computer environment.
+
+Install the Cua agent Python SDK:
+
+```bash
+pip install "cua-agent[all]"
+```
+
+Then, use the `ComputerAgent` object:
+
+```python
+from agent import ComputerAgent
+
+agent = ComputerAgent(
+    model="anthropic/claude-sonnet-4-5-20250929",
+    tools=[computer],
+    max_trajectory_budget=5.0
+)
+
+messages = [{"role": "user", "content": "Take a screenshot and tell me what you see"}]
+
+async for result in agent.run(messages):
+    for item in result["output"]:
+        if item["type"] == "message":
+            print(item["content"][0]["text"])
+```
+
+Learn more about agents in [Agent Loops](/agent-sdk/agent-loops) and available models in [Supported Models](/agent-sdk/supported-model-providers/).
+
+</Step>
+</Steps>
+
+### Next Steps
+
+- Learn more about [Cua computers](/computer-sdk/computers) and [computer commands](/computer-sdk/commands)
+- Read about [Agent loops](/agent-sdk/agent-loops), [tools](/agent-sdk/custom-tools), and [supported model providers](/agent-sdk/supported-model-providers/)
+- Join our [Discord community](https://discord.com/invite/mVnXXpdE85) for help
+- Try out [Form Filling](/example-usecases/form-filling) preset usecase
+
+---
+
+## CLI Quickstart
+
+Get started quickly with the CUA CLI - the easiest way to manage cloud VMs and run AI agents.
+
+<Steps>
+<Step>
+
+### Install the CUA CLI
+
+<Tabs items={['macOS / Linux', 'Windows', 'npm (Alternative)', 'From Source']}>
+  <Tab value="macOS / Linux">
+    ```bash
+    curl -LsSf https://cua.ai/cli/install.sh | sh
+    ```
+  </Tab>
+  <Tab value="Windows">
+    ```powershell
+    powershell -ExecutionPolicy ByPass -c "irm https://cua.ai/cli/install.ps1 | iex"
+    ```
+  </Tab>
+  <Tab value="npm (Alternative)">
+    ```bash
+    npm install -g @trycua/cli
+    ```
+  </Tab>
+  <Tab value="From Source">
+    ```bash
+    # Install Bun (macOS/Linux)
+    curl -fsSL https://bun.sh/install | bash
+
+    # Install Bun (Windows)
+    # powershell -c "irm bun.sh/install.ps1|iex"
+
+    # Clone the repo
+    git clone https://github.com/trycua/cua
+    cd cua/libs/typescript/cua-cli
+
+    # Install the CLI
+    bun install
+    bun link
+    bun link cua-cli
+    ```
+
+  </Tab>
+</Tabs>
+
+</Step>
+
+<Step>
+
+### Authenticate with CUA
+
+Login to your CUA account:
+
+```bash
+# Interactive browser login (recommended)
+cua auth login
+
+# Or provide your API key directly
+cua auth login --api-key sk-your-api-key-here
+```
+
+If you don't have a CUA account yet, sign up at [cua.ai/signin](https://cua.ai/signin).
+
+</Step>
+
+<Step>
+
+### Create Your First Sandbox
+
+Create a cloud sandbox where your AI agents will run:
+
+```bash
+# Create a Linux sandbox (recommended for most use cases)
+cua vm create --os linux --configuration small --region north-america
+
+# Or create a Windows sandbox
+cua vm create --os windows --configuration small --region north-america
+
+```
+
+Your sandbox will be created and you'll see output like:
+
+```
+Sandbox created and ready: my-vm-abc123
+Password: secure-password-here
+Host: my-vm-abc123.containers.cloud.trycua.com
+```
+
+</Step>
+
+<Step>
+
+### Start Using Your Sandbox
+
+You can now interact with your sandbox in multiple ways:
+
+#### Option 1: Open the AI Playground (Recommended)
+
+```bash
+cua vm chat my-vm-abc123
+```
+
+This opens the full CUA playground in your browser where you can chat with AI agents that control your sandbox.
+
+#### Option 2: Access VNC Desktop
+
+```bash
+cua vm vnc my-vm-abc123
+```
+
+This opens a remote desktop connection to your sandbox.
+
+#### Option 3: List and Manage Sandboxes
+
+```bash
+# List all your sandboxes
+cua vm list
+
+# Start/stop sandboxes as needed
+cua vm stop my-vm-abc123
+cua vm start my-vm-abc123
+
+# Delete sandboxes when done
+cua vm delete my-vm-abc123
+```
+
+</Step>
+
+<Step>
+
+### Try Some AI Tasks
+
+Once you have the playground open (`cua vm chat`), try asking the AI to:
+
+- "Take a screenshot and tell me what's on the screen"
+- "Open Firefox and navigate to github.com"
+- "Create a new text file and write 'Hello World' in it"
+- "Install Python and run a simple script"
+- "Take a screenshot of the desktop"
+
+The AI agent will automatically control your sandbox to complete these tasks!
+
+</Step>
+</Steps>
+
+### What's Next?
+
+- **Explore more commands**: Check out the [complete CLI reference](/libraries/cua-cli/commands)
+- **Learn about programming**: Try the [Developer Quickstart](#developer-quickstart) to build custom automations
+- **Join the community**: Get help in our [Discord community](https://discord.com/invite/mVnXXpdE85)
+
+---
+
+For running models locally, see [Running Models Locally](/agent-sdk/supported-model-providers/local-models).

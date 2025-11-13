@@ -34,7 +34,7 @@ export const baseOptions: BaseLayoutProps = {
           className="hidden dark:block"
           alt="Logo"
         />
-        Cua Documentation
+        Cua
       </>
     ),
   },

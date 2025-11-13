@@ -24,7 +24,8 @@ export async function loginViaBrowser(): Promise<string> {
     port: 0,
     fetch(req) {
       const u = new URL(req.url);
-      if (u.pathname !== '/callback') return new Response('Not found', { status: 404 });
+      if (u.pathname !== '/callback')
+        return new Response('Not found', { status: 404 });
       const token = u.searchParams.get('token');
       if (!token) return new Response('Missing token', { status: 400 });
       resolveToken(token);
@@ -38,8 +39,12 @@ export async function loginViaBrowser(): Promise<string> {
 
   const callbackURL = `http://${CALLBACK_HOST}:${server.port}/callback`;
   const url = `${AUTH_PAGE}?callback_url=${encodeURIComponent(callbackURL)}`;
-  console.log(`${c.cyan}${c.bold}Opening your default browser to authorize the CLI...${c.reset}`);
-  console.log(`${c.dim}If the browser does not open automatically, copy/paste this URL:${c.reset}`);
+  console.log(
+    `${c.cyan}${c.bold}Opening your default browser to authorize the CLI...${c.reset}`
+  );
+  console.log(
+    `${c.dim}If the browser does not open automatically, copy/paste this URL:${c.reset}`
+  );
   console.log(`${c.yellow}${c.underline}${url}${c.reset}`);
   await openInBrowser(url);
 

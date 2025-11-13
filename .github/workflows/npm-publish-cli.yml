@@ -1,0 +1,43 @@
+name: Publish @trycua/cli to npm
+
+on:
+  push:
+    branches: main
+
+jobs:
+  publish:
+    permissions:
+      id-token: write
+      contents: read
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Check if version changed
+        id: check-version
+        uses: EndBug/version-check@v2
+        with:
+          file-name: libs/typescript/cua-cli/package.json
+          diff-search: true
+
+      - name: Install dependencies
+        if: steps.check-version.outputs.changed == 'true'
+        working-directory: ./libs/typescript/cua-cli
+        run: bun install --frozen-lockfile
+
+      - name: Build package
+        if: steps.check-version.outputs.changed == 'true'
+        working-directory: ./libs/typescript/cua-cli
+        run: bun run build --if-present
+
+      - name: Publish to npm
+        if: steps.check-version.outputs.changed == 'true'
+        working-directory: ./libs/typescript/cua-cli
+        run: bun publish --access public
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}

@@ -44,7 +44,7 @@ Select the environment you want to run the code in (_click on the underlined val
   key="cloud-tab"
   lang="python"
   defaultValues={{
-    "container-name": "m-linux-...",
+    "sandbox-name": "m-linux-...",
     "api_key": "sk_cua-api01..."
   }}
 >
@@ -70,13 +70,13 @@ try:
 async with Computer(
 os_type="linux",
 provider_type=VMProviderType.CLOUD,
-name="`}<EditableValue placeholder="container-name" />{`",
+name="`}<EditableValue placeholder="sandbox-name" />{`",
 api_key="`}<EditableValue placeholder="api_key" />{`",
 verbosity=logging.INFO,
 ) as computer:
 
             agent = ComputerAgent(
-                model="anthropic/claude-3-5-sonnet-20241022",
+                model="anthropic/claude-sonnet-4-5-20250929",
                 tools=[computer],
                 only_n_most_recent_images=3,
                 verbosity=logging.INFO,
@@ -159,7 +159,7 @@ main()`}
   key="lume-tab"
   lang="python"
   defaultValues={{
-    "container-name": "macos-sequoia-cua:latest"
+    "sandbox-name": "macos-sequoia-cua:latest"
   }}
 >
 {`import asyncio
@@ -184,12 +184,12 @@ try:
 async with Computer(
 os_type="macos",
 provider_type=VMProviderType.LUME,
-name="`}<EditableValue placeholder="container-name" />{`",
+name="`}<EditableValue placeholder="sandbox-name" />{`",
 verbosity=logging.INFO,
 ) as computer:
 
             agent = ComputerAgent(
-                model="anthropic/claude-3-5-sonnet-20241022",
+                model="anthropic/claude-sonnet-4-5-20250929",
                 tools=[computer],
                 only_n_most_recent_images=3,
                 verbosity=logging.INFO,
@@ -293,7 +293,7 @@ verbosity=logging.INFO,
 ) as computer:
 
             agent = ComputerAgent(
-                model="anthropic/claude-3-5-sonnet-20241022",
+                model="anthropic/claude-sonnet-4-5-20250929",
                 tools=[computer],
                 only_n_most_recent_images=3,
                 verbosity=logging.INFO,
@@ -370,7 +370,7 @@ main()`}
   key="docker-tab"
   lang="python"
   defaultValues={{
-    "container-name": "trycua/cua-ubuntu:latest"
+    "sandbox-name": "trycua/cua-ubuntu:latest"
   }}
 >
 {`import asyncio
@@ -395,12 +395,12 @@ try:
 async with Computer(
 os_type="linux",
 provider_type=VMProviderType.DOCKER,
-name="`}<EditableValue placeholder="container-name" />{`",
+name="`}<EditableValue placeholder="sandbox-name" />{`",
 verbosity=logging.INFO,
 ) as computer:
 
             agent = ComputerAgent(
-                model="anthropic/claude-3-5-sonnet-20241022",
+                model="anthropic/claude-sonnet-4-5-20250929",
                 tools=[computer],
                 only_n_most_recent_images=3,
                 verbosity=logging.INFO,

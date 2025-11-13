@@ -49,7 +49,9 @@ jobs:
           # Install the package in editable mode with dev dependencies
           if [ -f pyproject.toml ]; then
             uv pip install --system -e .
-            # Install test dependencies
+          fi
+          # Install test dependencies if tests directory exists
+          if [ -d tests ]; then
             uv pip install --system pytest pytest-asyncio pytest-mock pytest-cov
           fi
         shell: bash

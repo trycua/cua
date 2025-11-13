@@ -8,18 +8,13 @@ import { cn } from 'fumadocs-ui/utils/cn';
 import { ChevronDown, CodeXml, ExternalLink } from 'lucide-react';
 import type { Metadata } from 'next';
 import Link from 'next/link';
-import { notFound, redirect } from 'next/navigation';
+import { notFound } from 'next/navigation';
 import { PageFeedback } from '@/components/page-feedback';
 import { DocActionsMenu } from '@/components/doc-actions-menu';
 
 export default async function Page(props: { params: Promise<{ slug?: string[] }> }) {
   const params = await props.params;
   const slug = params.slug || [];
-
-  // Redirect root to get-started/introduction
-  if (slug.length === 0) {
-    redirect('/get-started/introduction');
-  }
 
   const page = source.getPage(slug);
   if (!page) notFound();
@@ -185,9 +180,13 @@ export default async function Page(props: { params: Promise<{ slug?: string[] }>
   };
 
   const tocFooter = () => {
+    // Construct file path from slug
+    // For root index, use 'index.mdx', otherwise join slug parts
+    const filePath = slug.length === 0 ? 'index.mdx' : `${slug.join('/')}.mdx`;
+
     return (
       <div className="mt-4">
-        <DocActionsMenu pageUrl={page.url} pageTitle={page.data.title} filePath={undefined} />
+        <DocActionsMenu pageUrl={page.url} pageTitle={page.data.title} filePath={filePath} />
       </div>
     );
   };

@@ -3,5 +3,5 @@
   "description": "Get started with Cua",
   "defaultOpen": true,
   "icon": "Rocket",
-  "pages": ["introduction", "quickstart"]
+  "pages": ["quickstart"]
 }

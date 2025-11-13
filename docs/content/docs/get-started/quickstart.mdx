@@ -27,10 +27,10 @@ Choose how you want to run your Cua computer. This will be the environment where
 
 You can run your Cua computer in the cloud (recommended for easiest setup), locally on macOS with Lume, locally on Windows with a Windows Sandbox, or in a Docker container on any platform. Choose the option that matches your system and needs.
 
-<Tabs items={['Cloud Sandbox', 'Linux on Docker', 'macOS VM', 'Windows Sandbox']}>
+<Tabs items={['Cloud Sandbox', 'Linux on Docker', 'macOS Sandbox', 'Windows Sandbox']}>
   <Tab value="Cloud Sandbox">
 
-    Cua Cloud Sandbox provides virtual machines that run Linux (Ubuntu) or Windows.
+    Cua Cloud Sandbox provides sandboxes that run Linux (Ubuntu) or Windows.
 
     1. Go to [cua.ai/signin](https://cua.ai/signin)
     2. Navigate to **Dashboard > Containers > Create Instance**
@@ -57,7 +57,7 @@ You can run your Cua computer in the cloud (recommended for easiest setup), loca
     ```
 
   </Tab>
-  <Tab value="macOS VM">
+  <Tab value="macOS Sandbox">
 
     macOS hosts only - requires Lume CLI.
 
@@ -111,7 +111,7 @@ Connect to your Cua computer and perform basic interactions, such as taking scre
 
     Then, connect to your desired computer environment:
 
-    <Tabs items={['Cloud Sandbox', 'Linux on Docker', 'macOS VM', 'Windows Sandbox', 'Your host desktop']}>
+    <Tabs items={['Cloud Sandbox', 'Linux on Docker', 'macOS Sandbox', 'Windows Sandbox', 'Your host desktop']}>
       <Tab value="Cloud Sandbox">
         ```python
         from computer import Computer
@@ -134,10 +134,10 @@ Connect to your Cua computer and perform basic interactions, such as taking scre
             provider_type="docker",
             image="trycua/cua-xfce:latest"  # or "trycua/cua-ubuntu:latest"
         )
-        await computer.run() # Launch & connect to the container
+        await computer.run() # Launch & connect to the sandbox
         ```
       </Tab>
-      <Tab value="macOS VM">
+      <Tab value="macOS Sandbox">
         ```python
         from computer import Computer
 
@@ -146,7 +146,7 @@ Connect to your Cua computer and perform basic interactions, such as taking scre
             provider_type="lume",
             name="macos-sequoia-cua:latest"
         )
-        await computer.run() # Launch & connect to the container
+        await computer.run() # Launch & connect to the sandbox
         ```
       </Tab>
       <Tab value="Windows Sandbox">
@@ -157,7 +157,7 @@ Connect to your Cua computer and perform basic interactions, such as taking scre
             os_type="windows",
             provider_type="windows_sandbox"
         )
-        await computer.run() # Launch & connect to the container
+        await computer.run() # Launch & connect to the sandbox
         ```
       </Tab>
       <Tab value="Your host desktop">
@@ -199,7 +199,7 @@ Connect to your Cua computer and perform basic interactions, such as taking scre
 
     Then, connect to your desired computer environment:
 
-    <Tabs items={['Cloud Sandbox', 'Linux on Docker', 'macOS VM', 'Windows Sandbox', 'Your host desktop']}>
+    <Tabs items={['Cloud Sandbox', 'Linux on Docker', 'macOS Sandbox', 'Windows Sandbox', 'Your host desktop']}>
       <Tab value="Cloud Sandbox">
         ```typescript
         import { Computer, OSType } from '@trycua/computer';
@@ -221,10 +221,10 @@ Connect to your Cua computer and perform basic interactions, such as taking scre
           providerType: ProviderType.DOCKER,
           image: "trycua/cua-xfce:latest"  // or "trycua/cua-ubuntu:latest"
         });
-        await computer.run(); // Launch & connect to the container
+        await computer.run(); // Launch & connect to the sandbox
         ```
       </Tab>
-      <Tab value="macOS VM">
+      <Tab value="macOS Sandbox">
         ```typescript
         import { Computer, OSType, ProviderType } from '@trycua/computer';
 
@@ -233,7 +233,7 @@ Connect to your Cua computer and perform basic interactions, such as taking scre
           providerType: ProviderType.LUME,
           name: "macos-sequoia-cua:latest"
         });
-        await computer.run(); // Launch & connect to the container
+        await computer.run(); // Launch & connect to the sandbox
         ```
       </Tab>
       <Tab value="Windows Sandbox">
@@ -244,7 +244,7 @@ Connect to your Cua computer and perform basic interactions, such as taking scre
           osType: OSType.WINDOWS,
           providerType: ProviderType.WINDOWS_SANDBOX
         });
-        await computer.run(); // Launch & connect to the container
+        await computer.run(); // Launch & connect to the sandbox
         ```
       </Tab>
       <Tab value="Your host desktop">
@@ -359,19 +359,20 @@ Get started quickly with the CUA CLI - the easiest way to manage cloud VMs and r
     ```bash
     # Install Bun (macOS/Linux)
     curl -fsSL https://bun.sh/install | bash
-    
+
     # Install Bun (Windows)
     # powershell -c "irm bun.sh/install.ps1|iex"
-    
+
     # Clone the repo
     git clone https://github.com/trycua/cua
     cd cua/libs/typescript/cua-cli
-    
+
     # Install the CLI
     bun install
     bun link
     bun link cua-cli
     ```
+
   </Tab>
 </Tabs>
 
@@ -397,22 +398,23 @@ If you don't have a CUA account yet, sign up at [cua.ai/signin](https://cua.ai/s
 
 <Step>
 
-### Create Your First VM
+### Create Your First Sandbox
 
 Create a cloud sandbox where your AI agents will run:
 
 ```bash
-# Create a Linux VM (recommended for most use cases)
+# Create a Linux sandbox (recommended for most use cases)
 cua vm create --os linux --configuration small --region north-america
 
-# Or create a Windows VM
+# Or create a Windows sandbox
 cua vm create --os windows --configuration small --region north-america
 
 ```
 
-Your VM will be created and you'll see output like:
+Your sandbox will be created and you'll see output like:
+
 ```
-VM created and ready: my-vm-abc123
+Sandbox created and ready: my-vm-abc123
 Password: secure-password-here
 Host: my-vm-abc123.containers.cloud.trycua.com
 ```
@@ -421,32 +423,37 @@ Host: my-vm-abc123.containers.cloud.trycua.com
 
 <Step>
 
-### Start Using Your VM
+### Start Using Your Sandbox
 
-You can now interact with your VM in multiple ways:
+You can now interact with your sandbox in multiple ways:
 
 #### Option 1: Open the AI Playground (Recommended)
+
 ```bash
 cua vm chat my-vm-abc123
 ```
-This opens the full CUA playground in your browser where you can chat with AI agents that control your VM.
+
+This opens the full CUA playground in your browser where you can chat with AI agents that control your sandbox.
 
 #### Option 2: Access VNC Desktop
+
 ```bash
 cua vm vnc my-vm-abc123
 ```
-This opens a remote desktop connection to your VM.
 
-#### Option 3: List and Manage VMs
+This opens a remote desktop connection to your sandbox.
+
+#### Option 3: List and Manage Sandboxes
+
 ```bash
-# List all your VMs
+# List all your sandboxes
 cua vm list
 
-# Start/stop VMs as needed
+# Start/stop sandboxes as needed
 cua vm stop my-vm-abc123
 cua vm start my-vm-abc123
 
-# Delete VMs when done
+# Delete sandboxes when done
 cua vm delete my-vm-abc123
 ```
 
@@ -464,7 +471,7 @@ Once you have the playground open (`cua vm chat`), try asking the AI to:
 - "Install Python and run a simple script"
 - "Take a screenshot of the desktop"
 
-The AI agent will automatically control your VM to complete these tasks!
+The AI agent will automatically control your sandbox to complete these tasks!
 
 </Step>
 </Steps>

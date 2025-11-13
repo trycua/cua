@@ -30,3 +30,6 @@ venv/
 *.sqlite
 pnpm-lock.yaml
 uv.lock
+
+# Docs with complex JSX formatting
+docs/content/docs/get-started/quickstart.mdx

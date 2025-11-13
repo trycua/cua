@@ -544,15 +544,13 @@ class Computer:
                 # Use a single timeout for the entire connection process
                 # The VM should already be ready at this point, so we're just establishing the connection
                 await self._interface.wait_for_ready(timeout=30)
-                self.logger.info("WebSocket interface connected successfully")
+                self.logger.info("Sandbox interface connected successfully")
             except TimeoutError as e:
-                self.logger.error(f"Failed to connect to WebSocket interface at {ip_address}")
+                port = getattr(self._interface, '_api_port', 8000)  # Default to 8000 if not set
+                self.logger.error(f"Failed to connect to sandbox interface at {ip_address}:{port}")
                 raise TimeoutError(
-                    f"Could not connect to WebSocket interface at {ip_address}:8000/ws: {str(e)}"
+                    f"Could not connect to sandbox interface at {ip_address}:{port}: {str(e)}"
                 )
-                # self.logger.warning(
-                #     f"Could not connect to WebSocket interface at {ip_address}:8000/ws: {str(e)}, expect missing functionality"
-                # )
 
             # Create an event to keep the VM running in background if needed
             if not self.use_host_computer_server:

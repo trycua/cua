@@ -23,11 +23,7 @@ import litellm
 import litellm.utils
 from litellm.responses.utils import Usage
 
-from .adapters import (
-    HuggingFaceLocalAdapter,
-    HumanAdapter,
-    MLXVLMAdapter,
-)
+from .adapters import CUAAdapter, HuggingFaceLocalAdapter, HumanAdapter, MLXVLMAdapter
 from .callbacks import (
     BudgetManagerCallback,
     ImageRetentionCallback,
@@ -278,10 +274,12 @@ class ComputerAgent:
         )
         human_adapter = HumanAdapter()
         mlx_adapter = MLXVLMAdapter()
+        cua_adapter = CUAAdapter()
         litellm.custom_provider_map = [
             {"provider": "huggingface-local", "custom_handler": hf_adapter},
             {"provider": "human", "custom_handler": human_adapter},
             {"provider": "mlx", "custom_handler": mlx_adapter},
+            {"provider": "cua", "custom_handler": cua_adapter},
         ]
         litellm.suppress_debug_info = True
 

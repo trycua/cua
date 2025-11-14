@@ -44,13 +44,6 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: 'bun'
-          cache-dependency-path: 'libs/typescript/cua-cli/bun.lockb'
-
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
@@ -62,7 +55,7 @@ jobs:
           if [ -n "${{ github.event.inputs.version }}" ]; then
             echo "version=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
           else
-            VERSION=$(node -p "require('./libs/typescript/cua-cli/package.json').version")
+            VERSION=$(bun -p "require('./libs/typescript/cua-cli/package.json').version")
             echo "version=${VERSION}" >> $GITHUB_OUTPUT
           fi
 
@@ -93,14 +86,6 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          registry-url: 'https://registry.npmjs.org'
-          cache: 'bun'
-          cache-dependency-path: 'libs/typescript/cua-cli/bun.lockb'
-
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
@@ -116,10 +101,18 @@ jobs:
     needs: [build-and-publish, publish-npm]
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
       - name: Get version
         id: version
         run: |
-          VERSION=$(node -p "require('./libs/typescript/cua-cli/package.json').version")
+          VERSION=$(bun -p "require('./libs/typescript/cua-cli/package.json').version")
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
           echo "tag=cua-v${VERSION}" >> $GITHUB_OUTPUT
 

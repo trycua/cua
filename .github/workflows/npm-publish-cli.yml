@@ -66,7 +66,7 @@ jobs:
       - name: Build binary
         working-directory: ./libs/typescript/cua-cli
         run: |
-          bun build --compile --minify --sourcemap --target=${{ matrix.target }} dist/index.js --outfile ${{ matrix.binary_name }}
+          bun build --compile --minify --sourcemap --target=${{ matrix.target }} index.ts --outfile ${{ matrix.binary_name }}
           mkdir -p ../../../dist
           mv ${{ matrix.binary_name }}${{ matrix.ext }}* ../../../dist/
 

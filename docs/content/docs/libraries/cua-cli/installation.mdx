@@ -31,16 +31,21 @@ These scripts will automatically:
   The installation scripts will automatically detect your system and install the appropriate binary to your PATH.
 </Callout>
 
-## Alternative: npm Install
+## Alternative: Install with Bun
 
-You can also install the CLI via npm if you prefer:
+You can also install the CLI directly using Bun:
 
 ```bash
-npm install -g @trycua/cli
+# Install Bun if you don't have it
+curl -fsSL https://bun.sh/install | bash
+
+# Install CUA CLI
+bun add -g @trycua/cli
 ```
 
-<Callout type="warn">
-  The npm package requires Node.js 18+ to be installed on your system.
+<Callout type="info">
+  Using Bun provides faster installation and better performance compared to npm.
+  If you don't have Bun installed, the first command will install it for you.
 </Callout>
 
 ## Verify Installation

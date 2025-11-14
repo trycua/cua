@@ -1,16 +1,16 @@
 ---
 title: Cua CLI
-description: Command-line interface for managing Cua cloud VMs and authentication
+description: Command-line interface for managing Cua cloud sandboxes and authentication
 ---
 
 import { Tabs, Tab } from 'fumadocs-ui/components/tabs';
 
-The Cua CLI is a command-line tool that provides an intuitive interface for managing your Cua cloud virtual machines and authentication. It offers a streamlined workflow for creating, managing, and connecting to cloud sandboxes.
+The Cua CLI is a command-line tool that provides an intuitive interface for managing your Cua cloud sandboxes and authentication. It offers a streamlined workflow for creating, managing, and connecting to cloud sandboxes.
 
 ## Key Features
 
 - **Authentication Management**: Secure login with browser-based OAuth flow
-- **VM Lifecycle**: Create, start, stop, restart, and delete cloud VMs
+- **Sandbox Lifecycle**: Create, start, stop, restart, and delete cloud sandboxes
 - **Quick Access**: Direct links to VNC and playground interfaces
 - **Cross-Platform**: Works on macOS, Linux, and Windows
 - **Environment Integration**: Automatic `.env` file generation
@@ -22,32 +22,32 @@ The Cua CLI is a command-line tool that provides an intuitive interface for mana
 curl -LsSf https://cua.ai/cli/install.sh | sh
 
 # Login to your CUA account
-cua auth login
+cua login
 
-# Create a new Linux VM
-cua vm create --os linux --configuration small --region north-america
+# Create a new Linux sandbox
+cua create --os linux --configuration small --region north-america
 
-# List your VMs
-cua vm list
+# List your sandboxes
+cua list
 
-# Open the playground for your VM
-cua vm chat my-vm-name
+# Open the playground for your sandbox
+cua chat my-sandbox-name
 ```
 
 ## Use Cases
 
 ### Development Workflow
 - Quickly spin up cloud sandboxes for testing
-- Manage multiple VMs across different regions
+- Manage multiple sandboxes across different regions
 - Integrate with CI/CD pipelines
 
 ### Team Collaboration
-- Share VM configurations and access
+- Share sandbox configurations and access
 - Standardize development environments
 - Quick onboarding for new team members
 
 ### Automation
-- Script VM provisioning and management
+- Script sandbox provisioning and management
 - Integrate with deployment workflows
 - Automate environment setup
 

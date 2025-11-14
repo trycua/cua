@@ -4,21 +4,43 @@ import { useEffect } from 'react';
 
 export function TocFix() {
   useEffect(() => {
-    // Fix TOC overflow on mount and when content changes
     const fixTocOverflow = () => {
       const tocContainer = document.querySelector('#nd-toc > div');
       if (tocContainer) {
-        (tocContainer as HTMLElement).style.overflowY = 'auto';
-        (tocContainer as HTMLElement).style.overflowX = 'hidden';
+        (tocContainer as HTMLElement).style.setProperty('overflow-y', 'auto', 'important');
+        (tocContainer as HTMLElement).style.setProperty('overflow-x', 'hidden', 'important');
       }
     };
 
+    // Apply fix immediately
     fixTocOverflow();
 
-    // Also fix after a small delay to ensure DOM is ready
-    const timer = setTimeout(fixTocOverflow, 100);
+    // Apply fix after delays to catch any async rendering
+    const timers = [
+      setTimeout(fixTocOverflow, 50),
+      setTimeout(fixTocOverflow, 200),
+      setTimeout(fixTocOverflow, 500),
+    ];
 
-    return () => clearTimeout(timer);
+    // Watch for DOM changes and reapply fix
+    const observer = new MutationObserver(() => {
+      fixTocOverflow();
+    });
+
+    const toc = document.querySelector('#nd-toc');
+    if (toc) {
+      observer.observe(toc, {
+        childList: true,
+        subtree: true,
+        attributes: true,
+        attributeFilter: ['class', 'style'],
+      });
+    }
+
+    return () => {
+      timers.forEach(clearTimeout);
+      observer.disconnect();
+    };
   }, []);
 
   return null;

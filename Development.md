@@ -395,6 +395,7 @@ To release a new version of the CUA CLI, follow these steps:
 5. Click "Run workflow"
 
 The workflow will:
+
 - Build single-file executables for all supported platforms
 - Publish the package to npm
 - Create a GitHub release with the version tag (format: `cua-vX.Y.Z`)
@@ -409,7 +410,7 @@ The workflow will:
    ```bash
    # Test Linux/macOS installation
    curl -fsSL https://cua.ai/install.sh | sh
-   
+
    # Test Windows installation (PowerShell)
    irm https://cua.ai/install.ps1 | iex
    ```
@@ -417,6 +418,7 @@ The workflow will:
 ### 4. Update Documentation
 
 Update any relevant documentation with the new version number, including:
+
 - Example code in documentation
 - Any version-specific instructions
 - Compatibility matrices

@@ -139,10 +139,10 @@ jobs:
             ### Using install script (recommended)
             ```bash
             # For Linux/macOS
-            curl -fsSL https://cua.ai/install.sh | sh
+            curl -fsSL https://cua.ai/cli/install.sh | sh
             
             # For Windows (PowerShell)
-            irm https://cua.ai/install.ps1 | iex
+            irm https://cua.ai/cli/install.ps1 | iex
             ```
 
             ### Using npm/bun

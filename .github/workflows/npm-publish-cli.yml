@@ -1,43 +1,186 @@
-name: Publish @trycua/cli to npm
+name: Publish @trycua/cli
 
 on:
-  push:
-    branches: main
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to publish (default: from package.json)'
+        required: false
+        default: ''
 
 jobs:
-  publish:
+  build-and-publish:
     permissions:
       id-token: write
-      contents: read
-    runs-on: ubuntu-latest
+      contents: write
+      packages: write
+    
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        include:
+          - os: ubuntu-latest
+            target: bun-linux-x64
+            ext: ''
+            binary_name: cua-linux-x64
+          - os: macos-latest
+            target: bun-darwin-x64
+            ext: ''
+            binary_name: cua-darwin-x64
+          - os: macos-latest
+            target: bun-darwin-arm64
+            ext: ''
+            binary_name: cua-darwin-arm64
+          - os: windows-latest
+            target: bun-windows-x64
+            ext: '.exe'
+            binary_name: cua-windows-x64.exe
+    
+    runs-on: ${{ matrix.os }}
+    
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'bun'
+          cache-dependency-path: 'libs/typescript/cua-cli/bun.lockb'
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
 
-      - name: Check if version changed
-        id: check-version
-        uses: EndBug/version-check@v2
-        with:
-          file-name: libs/typescript/cua-cli/package.json
-          diff-search: true
+      - name: Get version
+        id: version
+        run: |
+          if [ -n "${{ github.event.inputs.version }}" ]; then
+            echo "version=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+          else
+            VERSION=$(node -p "require('./libs/typescript/cua-cli/package.json').version")
+            echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          fi
 
       - name: Install dependencies
-        if: steps.check-version.outputs.changed == 'true'
         working-directory: ./libs/typescript/cua-cli
         run: bun install --frozen-lockfile
 
-      - name: Build package
-        if: steps.check-version.outputs.changed == 'true'
+      - name: Build binary
         working-directory: ./libs/typescript/cua-cli
-        run: bun run build --if-present
+        run: |
+          bun build --compile --minify --sourcemap --target=${{ matrix.target }} dist/index.js --outfile ${{ matrix.binary_name }}
+          mkdir -p ../../../dist
+          mv ${{ matrix.binary_name }}${{ matrix.ext }}* ../../../dist/
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: cua-binaries
+          path: dist/
+          if-no-files-found: error
+          retention-days: 1
+
+  publish-npm:
+    needs: build-and-publish
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/cua-v')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
+          cache: 'bun'
+          cache-dependency-path: 'libs/typescript/cua-cli/bun.lockb'
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
 
       - name: Publish to npm
-        if: steps.check-version.outputs.changed == 'true'
         working-directory: ./libs/typescript/cua-cli
-        run: bun publish --access public
+        run: |
+          npm config set //registry.npmjs.org/:_authToken=${{ secrets.NPM_TOKEN }}
+          npm publish --access public
+
+  create-release:
+    needs: [build-and-publish, publish-npm]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Get version
+        id: version
+        run: |
+          VERSION=$(node -p "require('./libs/typescript/cua-cli/package.json').version")
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "tag=cua-v${VERSION}" >> $GITHUB_OUTPUT
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: cua-binaries
+          path: dist
+
+      - name: Create Release
+        id: create_release
+        uses: actions/create-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          release_name: CUA CLI ${{ steps.version.outputs.version }}
+          body: |
+            # CUA CLI ${{ steps.version.outputs.version }}
+
+            ## Installation
+
+            ### Using install script (recommended)
+            ```bash
+            # For Linux/macOS
+            curl -fsSL https://cua.ai/install.sh | sh
+            
+            # For Windows (PowerShell)
+            irm https://cua.ai/install.ps1 | iex
+            ```
+
+            ### Using npm/bun
+            ```bash
+            # Using bun
+            bun add -g @trycua/cli
+            
+            # Or using npm
+            npm install -g @trycua/cli
+            ```
+
+            ### From source
+            ```bash
+            git clone -b ${{ steps.version.outputs.tag }} https://github.com/trycua/cua.git
+            cd cua/libs/typescript/cua-cli
+            bun install
+            bun link
+            bun link cua-cli
+            ```
+
+            ## Release Assets
+            - `cua-darwin-arm64`: macOS (Apple Silicon)
+            - `cua-darwin-x64`: macOS (Intel)
+            - `cua-linux-x64`: Linux (x86_64)
+            - `cua-windows-x64.exe`: Windows (x86_64)
+          draft: false
+          prerelease: false
+
+      - name: Upload Release Assets
+        uses: actions/upload-release-asset@v2
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./dist/${{ matrix.binary_name }}
+          asset_name: ${{ matrix.binary_name }}
+          asset_content_type: application/octet-stream
         env:
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

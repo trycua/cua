@@ -62,7 +62,7 @@ jobs:
           if [ -n "${{ github.event.inputs.version }}" ]; then
             echo "version=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
           else
-            VERSION=$(node -p "require('./libs/typescript/cua-cli/package.json').version")
+            VERSION=$(bun -p "require('./libs/typescript/cua-cli/package.json').version")
             echo "version=${VERSION}" >> $GITHUB_OUTPUT
           fi
 
@@ -73,14 +73,14 @@ jobs:
       - name: Build binary
         working-directory: ./libs/typescript/cua-cli
         run: |
-          bun build --compile --minify --sourcemap --target=${{ matrix.target }} dist/index.js --outfile ${{ matrix.binary_name }}
+          bun build --compile --minify --sourcemap --target=${{ matrix.target }} index.ts --outfile ${{ matrix.binary_name }}
           mkdir -p ../../../dist
           mv ${{ matrix.binary_name }}${{ matrix.ext }}* ../../../dist/
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: cua-binaries
+          name: cua-binary-${{ matrix.os }}
           path: dist/
           if-no-files-found: error
           retention-days: 1
@@ -116,18 +116,26 @@ jobs:
     needs: [build-and-publish, publish-npm]
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
       - name: Get version
         id: version
         run: |
-          VERSION=$(node -p "require('./libs/typescript/cua-cli/package.json').version")
+          VERSION=$(bun -p "require('./libs/typescript/cua-cli/package.json').version")
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
           echo "tag=cua-v${VERSION}" >> $GITHUB_OUTPUT
 
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
-          name: cua-binaries
           path: dist
+          merge-multiple: true
 
       - name: Create Release
         id: create_release

@@ -1,37 +1,40 @@
 import type { Argv } from 'yargs';
 import { ensureApiKeyInteractive } from '../auth';
-import { http } from '../http';
-import { printVmList, openInBrowser } from '../util';
 import { WEBSITE_URL } from '../config';
-import type { VmItem } from '../util';
+import { http } from '../http';
 import { clearApiKey } from '../storage';
+import type { VmItem } from '../util';
+import { openInBrowser, printVmList } from '../util';
 
 export function registerVmCommands(y: Argv) {
-  return y.command('vm', 'VM commands', (yv) =>
-    yv
-      .command(
-        'list',
-        'List VMs',
-        () => {},
-        async (_argv: Record<string, unknown>) => {
-          const token = await ensureApiKeyInteractive();
-          const res = await http('/v1/vms', { token });
-          if (res.status === 401) {
-            clearApiKey();
-            console.error("Unauthorized. Try 'cua auth login' again.");
-            process.exit(1);
-          }
-          if (!res.ok) {
-            console.error(`Request failed: ${res.status}`);
-            process.exit(1);
-          }
-          const data = (await res.json()) as VmItem[];
-          printVmList(data);
+  return y
+    .command(
+      ['list', 'ls', 'ps'],
+      'List sandboxes',
+      (y) => y.option('show-passwords', {
+        type: 'boolean',
+        default: false,
+        describe: 'Show sandbox passwords in output'
+      }),
+      async (argv: Record<string, unknown>) => {
+        const token = await ensureApiKeyInteractive();
+        const res = await http('/v1/vms', { token });
+        if (res.status === 401) {
+          clearApiKey();
+          console.error("Unauthorized. Try 'cua login' again.");
+          process.exit(1);
         }
-      )
-      .command(
-        'create',
-        'Create a new VM',
+        if (!res.ok) {
+          console.error(`Request failed: ${res.status}`);
+          process.exit(1);
+        }
+        const data = (await res.json()) as VmItem[];
+        printVmList(data, Boolean(argv['show-passwords']));
+      }
+    )
+    .command(
+      'create',
+        'Create a new sandbox',
         (y) =>
           y
             .option('os', {
@@ -44,7 +47,7 @@ export function registerVmCommands(y: Argv) {
               type: 'string',
               choices: ['small', 'medium', 'large'],
               demandOption: true,
-              describe: 'VM size configuration',
+              describe: 'Sandbox size configuration',
             })
             .option('region', {
               type: 'string',
@@ -55,7 +58,7 @@ export function registerVmCommands(y: Argv) {
                 'south-america',
               ],
               demandOption: true,
-              describe: 'VM region',
+              describe: 'Sandbox region',
             }),
         async (argv: Record<string, unknown>) => {
           const token = await ensureApiKeyInteractive();
@@ -73,7 +76,7 @@ export function registerVmCommands(y: Argv) {
 
           if (res.status === 401) {
             clearApiKey();
-            console.error("Unauthorized. Try 'cua auth login' again.");
+            console.error("Unauthorized. Try 'cua login' again.");
             process.exit(1);
           }
 
@@ -88,29 +91,29 @@ export function registerVmCommands(y: Argv) {
           }
 
           if (res.status === 200) {
-            // VM ready immediately
+            // Sandbox ready immediately
             const data = (await res.json()) as {
               status: string;
               name: string;
               password: string;
               host: string;
             };
-            console.log(`VM created and ready: ${data.name}`);
+            console.log(`Sandbox created and ready: ${data.name}`);
             console.log(`Password: ${data.password}`);
             console.log(`Host: ${data.host}`);
             return;
           }
 
           if (res.status === 202) {
-            // VM provisioning started
+            // Sandbox provisioning started
             const data = (await res.json()) as {
               status: string;
               name: string;
               job_id: string;
             };
-            console.log(`VM provisioning started: ${data.name}`);
+            console.log(`Sandbox provisioning started: ${data.name}`);
             console.log(`Job ID: ${data.job_id}`);
-            console.log("Use 'cua vm list' to monitor provisioning progress");
+            console.log("Use 'cua list' to monitor provisioning progress");
             return;
           }
 
@@ -118,10 +121,10 @@ export function registerVmCommands(y: Argv) {
           process.exit(1);
         }
       )
-      .command(
-        'delete <name>',
-        'Delete a VM',
-        (y) => y.positional('name', { type: 'string', describe: 'VM name' }),
+    .command(
+      'delete <name>',
+        'Delete a sandbox',
+        (y) => y.positional('name', { type: 'string', describe: 'Sandbox name' }),
         async (argv: Record<string, unknown>) => {
           const token = await ensureApiKeyInteractive();
           const name = String((argv as any).name);
@@ -134,18 +137,18 @@ export function registerVmCommands(y: Argv) {
             const body = (await res.json().catch(() => ({}))) as {
               status?: string;
             };
-            console.log(`VM deletion initiated: ${body.status ?? 'deleting'}`);
+            console.log(`Sandbox deletion initiated: ${body.status ?? 'deleting'}`);
             return;
           }
 
           if (res.status === 404) {
-            console.error('VM not found or not owned by you');
+            console.error('Sandbox not found or not owned by you');
             process.exit(1);
           }
 
           if (res.status === 401) {
             clearApiKey();
-            console.error("Unauthorized. Try 'cua auth login' again.");
+            console.error("Unauthorized. Try 'cua login' again.");
             process.exit(1);
           }
 
@@ -153,10 +156,10 @@ export function registerVmCommands(y: Argv) {
           process.exit(1);
         }
       )
-      .command(
-        'start <name>',
-        'Start a VM',
-        (y) => y.positional('name', { type: 'string', describe: 'VM name' }),
+    .command(
+      'start <name>',
+        'Start a sandbox',
+        (y) => y.positional('name', { type: 'string', describe: 'Sandbox name' }),
         async (argv: Record<string, unknown>) => {
           const token = await ensureApiKeyInteractive();
           const name = String((argv as any).name);
@@ -169,22 +172,22 @@ export function registerVmCommands(y: Argv) {
             return;
           }
           if (res.status === 404) {
-            console.error('VM not found');
+            console.error('Sandbox not found');
             process.exit(1);
           }
           if (res.status === 401) {
             clearApiKey();
-            console.error("Unauthorized. Try 'cua auth login' again.");
+            console.error("Unauthorized. Try 'cua login' again.");
             process.exit(1);
           }
           console.error(`Unexpected status: ${res.status}`);
           process.exit(1);
         }
       )
-      .command(
-        'stop <name>',
-        'Stop a VM',
-        (y) => y.positional('name', { type: 'string', describe: 'VM name' }),
+    .command(
+      'stop <name>',
+        'Stop a sandbox',
+        (y) => y.positional('name', { type: 'string', describe: 'Sandbox name' }),
         async (argv: Record<string, unknown>) => {
           const token = await ensureApiKeyInteractive();
           const name = String((argv as any).name);
@@ -200,22 +203,22 @@ export function registerVmCommands(y: Argv) {
             return;
           }
           if (res.status === 404) {
-            console.error('VM not found');
+            console.error('Sandbox not found');
             process.exit(1);
           }
           if (res.status === 401) {
             clearApiKey();
-            console.error("Unauthorized. Try 'cua auth login' again.");
+            console.error("Unauthorized. Try 'cua login' again.");
             process.exit(1);
           }
           console.error(`Unexpected status: ${res.status}`);
           process.exit(1);
         }
       )
-      .command(
-        'restart <name>',
-        'Restart a VM',
-        (y) => y.positional('name', { type: 'string', describe: 'VM name' }),
+    .command(
+      'restart <name>',
+        'Restart a sandbox',
+        (y) => y.positional('name', { type: 'string', describe: 'Sandbox name' }),
         async (argv: Record<string, unknown>) => {
           const token = await ensureApiKeyInteractive();
           const name = String((argv as any).name);
@@ -234,29 +237,29 @@ export function registerVmCommands(y: Argv) {
             return;
           }
           if (res.status === 404) {
-            console.error('VM not found');
+            console.error('Sandbox not found');
             process.exit(1);
           }
           if (res.status === 401) {
             clearApiKey();
-            console.error("Unauthorized. Try 'cua auth login' again.");
+            console.error("Unauthorized. Try 'cua login' again.");
             process.exit(1);
           }
           console.error(`Unexpected status: ${res.status}`);
           process.exit(1);
         }
       )
-      .command(
-        'vnc <name>',
-        'Open NoVNC for a VM in your browser',
-        (y) => y.positional('name', { type: 'string', describe: 'VM name' }),
+    .command(
+      'open <name>',
+      'Open NoVNC for a sandbox in your browser',
+        (y) => y.positional('name', { type: 'string', describe: 'Sandbox name' }),
         async (argv: Record<string, unknown>) => {
           const token = await ensureApiKeyInteractive();
           const name = String((argv as any).name);
           const listRes = await http('/v1/vms', { token });
           if (listRes.status === 401) {
             clearApiKey();
-            console.error("Unauthorized. Try 'cua auth login' again.");
+            console.error("Unauthorized. Try 'cua login' again.");
             process.exit(1);
           }
           if (!listRes.ok) {
@@ -266,7 +269,7 @@ export function registerVmCommands(y: Argv) {
           const vms = (await listRes.json()) as VmItem[];
           const vm = vms.find((v) => v.name === name);
           if (!vm) {
-            console.error('VM not found');
+            console.error('Sandbox not found');
             process.exit(1);
           }
           const host =
@@ -278,17 +281,17 @@ export function registerVmCommands(y: Argv) {
           await openInBrowser(url);
         }
       )
-      .command(
-        'chat <name>',
-        'Open CUA dashboard playground for a VM',
-        (y) => y.positional('name', { type: 'string', describe: 'VM name' }),
+    .command(
+      'chat <name>',
+        'Open CUA playground for a sandbox',
+        (y) => y.positional('name', { type: 'string', describe: 'Sandbox name' }),
         async (argv: Record<string, unknown>) => {
           const token = await ensureApiKeyInteractive();
           const name = String((argv as any).name);
           const listRes = await http('/v1/vms', { token });
           if (listRes.status === 401) {
             clearApiKey();
-            console.error("Unauthorized. Try 'cua auth login' again.");
+            console.error("Unauthorized. Try 'cua login' again.");
             process.exit(1);
           }
           if (!listRes.ok) {
@@ -298,7 +301,7 @@ export function registerVmCommands(y: Argv) {
           const vms = (await listRes.json()) as VmItem[];
           const vm = vms.find((v) => v.name === name);
           if (!vm) {
-            console.error('VM not found');
+            console.error('Sandbox not found');
             process.exit(1);
           }
           const host =
@@ -310,7 +313,5 @@ export function registerVmCommands(y: Argv) {
           console.log(`Opening Playground: ${url}`);
           await openInBrowser(url);
         }
-      )
-      .demandCommand(1, 'Specify a vm subcommand')
-  );
+      );
 }

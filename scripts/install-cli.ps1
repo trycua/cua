@@ -119,8 +119,8 @@ if (Test-Path $binaryPath) {
     Write-Host "Success: CUA CLI $version installed successfully to $binaryPath" -ForegroundColor Green
     Write-Host ""
     Write-Host "Get started with:" -ForegroundColor Cyan
-    Write-Host "   cua auth login"
-    Write-Host "   cua vm create --os linux --configuration small --region north-america"
+    Write-Host "   cua login"
+    Write-Host "   cua create --os linux --configuration small --region north-america"
     Write-Host ""
     Write-Host "For more help, visit: https://docs.cua.ai/libraries/cua-cli" -ForegroundColor Cyan
     

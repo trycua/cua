@@ -3,15 +3,9 @@
 @import 'fumadocs-ui/css/preset.css';
 
 @layer base {
-  /* Fix TOC overflow on production builds */
-  #nd-toc {
-    overflow-y: auto !important;
-    overflow-x: hidden !important;
-  }
-
+  /* Make entire TOC sidebar scrollable */
   #nd-toc > div {
     overflow-y: auto !important;
     overflow-x: hidden !important;
-    max-height: 100% !important;
   }
 }

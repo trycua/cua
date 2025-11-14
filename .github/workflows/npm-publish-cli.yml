@@ -70,10 +70,6 @@ jobs:
         working-directory: ./libs/typescript/cua-cli
         run: bun install --frozen-lockfile
 
-      - name: Build package
-        working-directory: ./libs/typescript/cua-cli
-        run: bun run build
-
       - name: Build binary
         working-directory: ./libs/typescript/cua-cli
         run: |

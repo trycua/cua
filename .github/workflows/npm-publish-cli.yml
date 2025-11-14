@@ -29,7 +29,7 @@ jobs:
             binary_name: cua-darwin-arm64
           - target: bun-windows-x64
             ext: '.exe'
-            binary_name: cua-windows-x64.exe
+            binary_name: cua-windows-x64
     
     runs-on: ubuntu-latest
     
@@ -61,7 +61,7 @@ jobs:
       - name: Build binary
         working-directory: ./libs/typescript/cua-cli
         run: |
-          bun build --compile --minify --sourcemap --target=${{ matrix.target }} index.ts --outfile ${{ matrix.binary_name }}
+          bun build --compile --minify --sourcemap --target=${{ matrix.target }} index.ts --outfile ${{ matrix.binary_name }}${{ matrix.ext }}
           mkdir -p ../../../dist
           mv ${{ matrix.binary_name }}${{ matrix.ext }}* ../../../dist/
 

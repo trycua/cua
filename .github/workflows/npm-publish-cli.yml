@@ -90,7 +90,7 @@ jobs:
         working-directory: ./libs/typescript/cua-cli
         run: |
           npm config set //registry.npmjs.org/:_authToken=${{ secrets.NPM_TOKEN }}
-          npm publish --access public
+          bun publish
 
   create-release:
     needs: [build-and-publish, publish-npm]

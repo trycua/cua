@@ -281,37 +281,37 @@ export function registerVmCommands(y: Argv) {
           await openInBrowser(url);
         }
       )
-    .command(
-      'chat <name>',
-        'Open CUA playground for a sandbox',
-        (y) => y.positional('name', { type: 'string', describe: 'Sandbox name' }),
-        async (argv: Record<string, unknown>) => {
-          const token = await ensureApiKeyInteractive();
-          const name = String((argv as any).name);
-          const listRes = await http('/v1/vms', { token });
-          if (listRes.status === 401) {
-            clearApiKey();
-            console.error("Unauthorized. Try 'cua login' again.");
-            process.exit(1);
-          }
-          if (!listRes.ok) {
-            console.error(`Request failed: ${listRes.status}`);
-            process.exit(1);
-          }
-          const vms = (await listRes.json()) as VmItem[];
-          const vm = vms.find((v) => v.name === name);
-          if (!vm) {
-            console.error('Sandbox not found');
-            process.exit(1);
-          }
-          const host =
-            vm.host && vm.host.length
-              ? vm.host
-              : `${vm.name}.containers.cloud.trycua.com`;
-          const base = WEBSITE_URL.replace(/\/$/, '');
-          const url = `${base}/dashboard/playground?host=${encodeURIComponent(host)}&id=${encodeURIComponent(vm.name)}&name=${encodeURIComponent(vm.name)}&vnc_password=${encodeURIComponent(vm.password)}&fullscreen=true`;
-          console.log(`Opening Playground: ${url}`);
-          await openInBrowser(url);
-        }
-      );
+    // .command(
+    //   'chat <name>',
+    //     'Open CUA playground for a sandbox',
+    //     (y) => y.positional('name', { type: 'string', describe: 'Sandbox name' }),
+    //     async (argv: Record<string, unknown>) => {
+    //       const token = await ensureApiKeyInteractive();
+    //       const name = String((argv as any).name);
+    //       const listRes = await http('/v1/vms', { token });
+    //       if (listRes.status === 401) {
+    //         clearApiKey();
+    //         console.error("Unauthorized. Try 'cua login' again.");
+    //         process.exit(1);
+    //       }
+    //       if (!listRes.ok) {
+    //         console.error(`Request failed: ${listRes.status}`);
+    //         process.exit(1);
+    //       }
+    //       const vms = (await listRes.json()) as VmItem[];
+    //       const vm = vms.find((v) => v.name === name);
+    //       if (!vm) {
+    //         console.error('Sandbox not found');
+    //         process.exit(1);
+    //       }
+    //       const host =
+    //         vm.host && vm.host.length
+    //           ? vm.host
+    //           : `${vm.name}.containers.cloud.trycua.com`;
+    //       const base = WEBSITE_URL.replace(/\/$/, '');
+    //       const url = `${base}/dashboard/playground?host=${encodeURIComponent(host)}&id=${encodeURIComponent(vm.name)}&name=${encodeURIComponent(vm.name)}&vnc_password=${encodeURIComponent(vm.password)}&fullscreen=true`;
+    //       console.log(`Opening Playground: ${url}`);
+    //       await openInBrowser(url);
+    //     }
+    //   );
 }

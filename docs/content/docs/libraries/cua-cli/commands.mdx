@@ -11,7 +11,7 @@ import { Callout } from 'fumadocs-ui/components/callout';
 The CUA CLI provides commands for authentication and sandbox management:
 
 - **Authentication** - `cua login`, `cua env`, `cua logout`
-- **Sandbox Management** - `cua list`, `cua create`, `cua start`, `cua stop`, `cua restart`, `cua delete`, `cua open`, `cua chat`
+- **Sandbox Management** - `cua list`, `cua create`, `cua start`, `cua stop`, `cua restart`, `cua delete`, `cua open`
 
 ## Authentication Commands
 
@@ -219,21 +219,6 @@ Opening NoVNC: https://my-dev-sandbox.containers.cloud.trycua.com/vnc.html?autoc
 
 This command automatically opens your default browser to the VNC interface with the correct password pre-filled.
 
-### `cua chat`
-
-Open the CUA playground for a sandbox in your browser.
-
-```bash
-cua chat <name>
-```
-
-**Example:**
-```bash
-$ cua chat my-dev-sandbox
-Opening Playground: https://cua.ai/dashboard/playground?host=...
-```
-
-This opens the full CUA playground interface where you can interact with your sandbox using AI agents.
 
 ## Global Options
 
@@ -310,7 +295,7 @@ cua env
 ### 3. Quick Sandbox Access
 ```bash
 # Create aliases for frequently used sandboxes
-alias dev-sandbox="cua chat my-development-sandbox"
+alias dev-sandbox="cua open my-development-sandbox"
 alias prod-sandbox="cua open my-production-sandbox"
 ```
 

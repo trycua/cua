@@ -20,11 +20,11 @@ print_success() {
 
 # Function to install with bun as fallback
 install_with_bun() {
-    echo "\033[90m📦 Installing CUA CLI using Bun...\033[0m"
+    echo "📦 Installing CUA CLI using Bun..."
     
     # Check if bun is already installed
     if ! command -v bun &> /dev/null; then
-        echo "\033[90m📦 Installing Bun...\033[0m"
+        echo "📦 Installing Bun..."
         curl -fsSL https://bun.sh/install | bash
         
         # Source the shell profile to make bun available
@@ -40,15 +40,15 @@ install_with_bun() {
 
     # Verify bun installation
     if ! command -v bun &> /dev/null; then
-        echo "\033[90m❌ Failed to install Bun. Please install manually from https://bun.sh\033[0m"
+        echo "❌ Failed to install Bun. Please install manually from https://bun.sh"
         exit 1
     fi
 
-    echo "\033[90m📦 Installing CUA CLI...\033[0m"
+    echo "📦 Installing CUA CLI..."
     if ! bun add -g @trycua/cli; then
-        echo "\033[90m❌ Failed to install with Bun, trying npm...\033[0m"
+        echo "❌ Failed to install with Bun, trying npm..."
         if ! npm install -g @trycua/cli; then
-            echo "\033[90m❌ Installation failed. Please try installing manually:"
+            echo "❌ Installation failed. Please try installing manually:"
             echo "   npm install -g @trycua/cli"
             exit 1
         fi
@@ -67,7 +67,7 @@ install_with_bun() {
         print_success "cua" "$VERSION" "$config_file"
         exit 0
     else
-        echo "\033[90m❌ Installation failed. Please try installing manually:"
+        echo "❌ Installation failed. Please try installing manually:"
         echo "   npm install -g @trycua/cli"
         exit 1
     fi
@@ -94,7 +94,7 @@ elif [ "$OS" = "darwin" ] && [ "$ARCH" = "x86_64" ]; then
 elif [ "$OS" = "linux" ] && [ "$ARCH" = "x86_64" ]; then
     BINARY_NAME="cua-linux-x64"
 else
-    echo "\033[90m⚠️  Pre-built binary not available for ${OS}-${ARCH}, falling back to Bun installation\033[0m"
+    echo "⚠️  Pre-built binary not available for ${OS}-${ARCH}, falling back to Bun installation"
     install_with_bun
     exit 0
 fi
@@ -102,7 +102,7 @@ fi
 # Get the latest release version
 LATEST_RELEASE=$(curl -s https://api.github.com/repos/trycua/cua/releases/latest)
 if [ -z "$LATEST_RELEASE" ]; then
-    echo "\033[90m⚠️  Could not fetch latest release, falling back to Bun installation\033[0m"
+    echo "⚠️  Could not fetch latest release, falling back to Bun installation"
     install_with_bun
     exit 0
 fi
@@ -115,7 +115,7 @@ VERSION=${TAG_NAME#cua-v}
 BINARY_URL=$(echo "$LATEST_RELEASE" | grep -o 'https://.*/download/[^"]*/'${BINARY_NAME}'"' | head -1)
 
 if [ -z "$BINARY_URL" ]; then
-    echo "\033[90m⚠️  Could not find ${BINARY_NAME} in release assets, falling back to Bun installation\033[0m"
+    echo "⚠️  Could not find ${BINARY_NAME} in release assets, falling back to Bun installation"
     install_with_bun
     exit 0
 fi
@@ -125,9 +125,9 @@ INSTALL_DIR="$HOME/.cua/bin"
 mkdir -p "$INSTALL_DIR"
 
 # Download the binary
-echo "\033[90m📥 Downloading CUA CLI $VERSION for ${OS}-${ARCH}...\033[0m"
+echo "📥 Downloading CUA CLI $VERSION for ${OS}-${ARCH}..."
 if ! curl -L "$BINARY_URL" -o "$INSTALL_DIR/cua" 2>/dev/null; then
-    echo "\033[90m⚠️  Failed to download pre-built binary, falling back to Bun installation\033[0m"
+    echo "⚠️  Failed to download pre-built binary, falling back to Bun installation"
     install_with_bun
     exit 0
 fi
@@ -140,17 +140,17 @@ if [[ ":$PATH:" != *":$INSTALL_DIR:"* ]]; then
     # Add to .bashrc, .zshrc, or .profile
     if [ -f "$HOME/.bashrc" ]; then
         echo "export PATH=\"$INSTALL_DIR:\$PATH\"" >> "$HOME/.bashrc"
-        echo "\033[90mAdded $INSTALL_DIR to PATH in ~/.bashrc\033[0m"
+        echo "Added $INSTALL_DIR to PATH in ~/.bashrc"
     fi
     
     if [ -f "$HOME/.zshrc" ]; then
         echo "export PATH=\"$INSTALL_DIR:\$PATH\"" >> "$HOME/.zshrc"
-        echo "\033[90mAdded $INSTALL_DIR to PATH in ~/.zshrc\033[0m"
+        echo "Added $INSTALL_DIR to PATH in ~/.zshrc"
     fi
     
     if [ -f "$HOME/.profile" ] && [ ! -f "$HOME/.bashrc" ] && [ ! -f "$HOME/.zshrc" ]; then
         echo "export PATH=\"$INSTALL_DIR:\$PATH\"" >> "$HOME/.profile"
-        echo "\033[90mAdded $INSTALL_DIR to PATH in ~/.profile\033[0m"
+        echo "Added $INSTALL_DIR to PATH in ~/.profile"
     fi
     
     # Add to current session
@@ -170,7 +170,7 @@ if command -v cua &> /dev/null; then
     print_success "$(which cua)" "$VERSION" "$config_file"
     exit 0
 else
-    echo "\033[90m❌ Installation failed. Please try installing manually:"
+    echo "❌ Installation failed. Please try installing manually:"
     echo "   curl -fsSL https://cua.ai/install.sh | sh"
     exit 1
 fi

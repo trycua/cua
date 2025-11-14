@@ -332,7 +332,7 @@ Learn more about agents in [Agent Loops](/agent-sdk/agent-loops) and available m
 
 ## CLI Quickstart
 
-Get started quickly with the CUA CLI - the easiest way to manage cloud VMs and run AI agents.
+Get started quickly with the CUA CLI - the easiest way to manage cloud sandboxes and run AI agents.
 
 <Steps>
 <Step>
@@ -386,10 +386,10 @@ Login to your CUA account:
 
 ```bash
 # Interactive browser login (recommended)
-cua auth login
+cua login
 
 # Or provide your API key directly
-cua auth login --api-key sk-your-api-key-here
+cua login --api-key sk-your-api-key-here
 ```
 
 If you don't have a CUA account yet, sign up at [cua.ai/signin](https://cua.ai/signin).
@@ -404,10 +404,10 @@ Create a cloud sandbox where your AI agents will run:
 
 ```bash
 # Create a Linux sandbox (recommended for most use cases)
-cua vm create --os linux --configuration small --region north-america
+cua create --os linux --configuration small --region north-america
 
 # Or create a Windows sandbox
-cua vm create --os windows --configuration small --region north-america
+cua create --os windows --configuration small --region north-america
 
 ```
 
@@ -430,7 +430,7 @@ You can now interact with your sandbox in multiple ways:
 #### Option 1: Open the AI Playground (Recommended)
 
 ```bash
-cua vm chat my-vm-abc123
+cua chat my-vm-abc123
 ```
 
 This opens the full CUA playground in your browser where you can chat with AI agents that control your sandbox.
@@ -438,7 +438,7 @@ This opens the full CUA playground in your browser where you can chat with AI ag
 #### Option 2: Access VNC Desktop
 
 ```bash
-cua vm vnc my-vm-abc123
+cua open my-vm-abc123
 ```
 
 This opens a remote desktop connection to your sandbox.
@@ -447,14 +447,14 @@ This opens a remote desktop connection to your sandbox.
 
 ```bash
 # List all your sandboxes
-cua vm list
+cua list
 
 # Start/stop sandboxes as needed
-cua vm stop my-vm-abc123
-cua vm start my-vm-abc123
+cua stop my-vm-abc123
+cua start my-vm-abc123
 
 # Delete sandboxes when done
-cua vm delete my-vm-abc123
+cua delete my-vm-abc123
 ```
 
 </Step>
@@ -463,7 +463,7 @@ cua vm delete my-vm-abc123
 
 ### Try Some AI Tasks
 
-Once you have the playground open (`cua vm chat`), try asking the AI to:
+Once you have the playground open (`cua chat`), try asking the AI to:
 
 - "Take a screenshot and tell me what's on the screen"
 - "Open Firefox and navigate to github.com"

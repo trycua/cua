@@ -86,6 +86,12 @@ jobs:
           cd ${{ steps.package.outputs.directory }}
           bump2version ${{ inputs.bump_type }}
 
+      - name: Also bump cua-agent
+        if: ${{ inputs.service == 'cua-computer' }}
+        run: |
+          cd libs/python/agent
+          bump2version ${{ inputs.bump_type }}
+
       - name: Push changes
         run: |
           git push origin main --follow-tags

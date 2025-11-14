@@ -2,14 +2,16 @@
 @import 'fumadocs-ui/css/neutral.css';
 @import 'fumadocs-ui/css/preset.css';
 
-/* Fix TOC overflow on production builds */
-#nd-toc {
-  overflow-y: auto !important;
-  overflow-x: hidden !important;
-}
+@layer base {
+  /* Fix TOC overflow on production builds */
+  #nd-toc {
+    overflow-y: auto !important;
+    overflow-x: hidden !important;
+  }
 
-#nd-toc > div {
-  overflow-y: auto !important;
-  overflow-x: hidden !important;
-  max-height: 100% !important;
+  #nd-toc > div {
+    overflow-y: auto !important;
+    overflow-x: hidden !important;
+    max-height: 100% !important;
+  }
 }

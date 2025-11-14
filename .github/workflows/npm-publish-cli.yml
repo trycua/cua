@@ -123,7 +123,7 @@ jobs:
 
       - name: Create Release
         id: create_release
-        uses: actions/create-release@v2
+        uses: actions/create-release@v1
         with:
           tag_name: ${{ steps.version.outputs.tag }}
           release_name: CUA CLI ${{ steps.version.outputs.version }}

@@ -17,26 +17,21 @@ jobs:
     
     strategy:
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
         include:
-          - os: ubuntu-latest
-            target: bun-linux-x64
+          - target: bun-linux-x64
             ext: ''
             binary_name: cua-linux-x64
-          - os: macos-latest
-            target: bun-darwin-x64
+          - target: bun-darwin-x64
             ext: ''
             binary_name: cua-darwin-x64
-          - os: macos-latest
-            target: bun-darwin-arm64
+          - target: bun-darwin-arm64
             ext: ''
             binary_name: cua-darwin-arm64
-          - os: windows-latest
-            target: bun-windows-x64
+          - target: bun-windows-x64
             ext: '.exe'
             binary_name: cua-windows-x64.exe
     
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-latest
     
     steps:
       - name: Checkout code
@@ -73,7 +68,7 @@ jobs:
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: cua-binary-${{ matrix.os }}
+          name: cua-binary-${{ matrix.target }}
           path: dist/
           if-no-files-found: error
           retention-days: 1

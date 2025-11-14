@@ -64,7 +64,14 @@ if (-not $is64Bit) {
 try {
     $release = Invoke-RestMethod -Uri "https://api.github.com/repos/trycua/cua/releases/latest" -ErrorAction Stop
     $version = $release.tag_name -replace '^cua-v', ''
-    $binaryUrl = "https://github.com/trycua/cua/releases/download/$($release.tag_name)/cua-windows-x64.exe"
+    # Look for the windows binary in the release assets
+    $windowsAsset = $release.assets | Where-Object { $_.name -eq 'cua-windows-x64.exe' }
+    
+    if (-not $windowsAsset) {
+        throw "Windows binary not found in release assets"
+    }
+    
+    $binaryUrl = $windowsAsset.browser_download_url
 } catch {
     Write-Host "Warning: Could not fetch latest release, falling back to Bun installation" -ForegroundColor Yellow
     if (Install-WithBun) {

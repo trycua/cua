@@ -31,7 +31,7 @@ else
 fi
 
 # Get the latest release version
-LATEST_RELEASE=$(curl -s https://api.github.com/repos/trycua/cua/releases/latest | grep 'tag_name' | cut -d '"' -f 4)
+LATEST_RELEASE=$(curl -s https://api.github.com/repos/trycua/cua/releases/latest)
 if [ -z "$LATEST_RELEASE" ]; then
     echo "⚠️  Could not fetch latest release, falling back to Bun installation"
     install_with_bun
@@ -39,8 +39,17 @@ if [ -z "$LATEST_RELEASE" ]; then
 fi
 
 # Extract version number (remove 'cua-v' prefix)
-VERSION=${LATEST_RELEASE#cua-v}
-BINARY_URL="https://github.com/trycua/cua/releases/download/cua-v${VERSION}/${BINARY_NAME}"
+TAG_NAME=$(echo "$LATEST_RELEASE" | grep 'tag_name' | cut -d '"' -f 4)
+VERSION=${TAG_NAME#cua-v}
+
+# Find the binary URL in the release assets
+BINARY_URL=$(echo "$LATEST_RELEASE" | grep -o "https://.*/download/[^"]*/${BINARY_NAME}" | head -1)
+
+if [ -z "$BINARY_URL" ]; then
+    echo "⚠️  Could not find ${BINARY_NAME} in release assets, falling back to Bun installation"
+    install_with_bun
+    exit 0
+fi
 
 # Create ~/.cua/bin directory if it doesn't exist
 INSTALL_DIR="$HOME/.cua/bin"

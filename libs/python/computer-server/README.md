@@ -36,7 +36,7 @@ pip install cua-computer-server
 
 Refer to this notebook for a step-by-step guide on how to use the Computer-Use Server on the host system or VM:
 
-- [Computer-Use Server](../../notebooks/computer_server_nb.ipynb)
+- [Computer-Use Server](../../../notebooks/computer_server_nb.ipynb)
 
 ## Docs
 

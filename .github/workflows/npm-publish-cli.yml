@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Version to publish (default: from package.json)"
+        description: 'Version to publish (default: from package.json)'
         required: false
-        default: ""
+        default: ''
 
 jobs:
   build-and-publish:
@@ -14,7 +14,7 @@ jobs:
       id-token: write
       contents: write
       packages: write
-
+    
     strategy:
       matrix:
         include:
@@ -38,13 +38,6 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-          cache: "bun"
-          cache-dependency-path: "libs/typescript/cua-cli/bun.lockb"
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
@@ -87,14 +80,6 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-          registry-url: "https://registry.npmjs.org"
-          cache: "bun"
-          cache-dependency-path: "libs/typescript/cua-cli/bun.lockb"
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
@@ -164,7 +149,7 @@ jobs:
             ```bash
             # Using bun
             bun add -g @trycua/cli
-
+            
             # Or using npm
             npm install -g @trycua/cli
             ```

@@ -17,27 +17,22 @@ jobs:
 
     strategy:
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
         include:
-          - os: ubuntu-latest
-            target: bun-linux-x64
-            ext: ""
+          - target: bun-linux-x64
+            ext: ''
             binary_name: cua-linux-x64
-          - os: macos-latest
-            target: bun-darwin-x64
-            ext: ""
+          - target: bun-darwin-x64
+            ext: ''
             binary_name: cua-darwin-x64
-          - os: macos-latest
-            target: bun-darwin-arm64
-            ext: ""
+          - target: bun-darwin-arm64
+            ext: ''
             binary_name: cua-darwin-arm64
-          - os: windows-latest
-            target: bun-windows-x64
-            ext: ".exe"
-            binary_name: cua-windows-x64.exe
-
-    runs-on: ${{ matrix.os }}
-
+          - target: bun-windows-x64
+            ext: '.exe'
+            binary_name: cua-windows-x64
+    
+    runs-on: ubuntu-latest
+    
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -73,14 +68,14 @@ jobs:
       - name: Build binary
         working-directory: ./libs/typescript/cua-cli
         run: |
-          bun build --compile --minify --sourcemap --target=${{ matrix.target }} index.ts --outfile ${{ matrix.binary_name }}
+          bun build --compile --minify --sourcemap --target=${{ matrix.target }} index.ts --outfile ${{ matrix.binary_name }}${{ matrix.ext }}
           mkdir -p ../../../dist
           mv ${{ matrix.binary_name }}${{ matrix.ext }}* ../../../dist/
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: cua-binary-${{ matrix.os }}
+          name: cua-binary-${{ matrix.target }}
           path: dist/
           if-no-files-found: error
           retention-days: 1
@@ -106,15 +101,21 @@ jobs:
         with:
           bun-version: latest
 
+      - name: Install dependencies
+        working-directory: ./libs/typescript/cua-cli
+        run: bun install --frozen-lockfile
+
       - name: Publish to npm
         working-directory: ./libs/typescript/cua-cli
-        run: |
-          npm config set //registry.npmjs.org/:_authToken=${{ secrets.NPM_TOKEN }}
-          npm publish --access public
+        env:
+          NPM_CONFIG_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: bun publish --production --access public --tolerate-republish
 
   create-release:
     needs: [build-and-publish, publish-npm]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -139,22 +140,24 @@ jobs:
 
       - name: Create Release
         id: create_release
-        uses: actions/create-release@v2
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           tag_name: ${{ steps.version.outputs.tag }}
-          release_name: CUA CLI ${{ steps.version.outputs.version }}
+          release_name: cua-cli v${{ steps.version.outputs.version }}
           body: |
-            # CUA CLI ${{ steps.version.outputs.version }}
+            # cua-cli v${{ steps.version.outputs.version }}
 
             ## Installation
 
             ### Using install script (recommended)
             ```bash
             # For Linux/macOS
-            curl -fsSL https://cua.ai/install.sh | sh
-
+            curl -fsSL https://cua.ai/cli/install.sh | sh
+            
             # For Windows (PowerShell)
-            irm https://cua.ai/install.ps1 | iex
+            irm https://cua.ai/cli/install.ps1 | iex
             ```
 
             ### Using npm/bun
@@ -183,12 +186,42 @@ jobs:
           draft: false
           prerelease: false
 
-      - name: Upload Release Assets
-        uses: actions/upload-release-asset@v2
+      - name: Upload Linux Binary
+        uses: actions/upload-release-asset@v1
         with:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ./dist/${{ matrix.binary_name }}
-          asset_name: ${{ matrix.binary_name }}
+          asset_path: ./dist/cua-linux-x64
+          asset_name: cua-linux-x64
+          asset_content_type: application/octet-stream
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload macOS Intel Binary
+        uses: actions/upload-release-asset@v1
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./dist/cua-darwin-x64
+          asset_name: cua-darwin-x64
+          asset_content_type: application/octet-stream
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload macOS Apple Silicon Binary
+        uses: actions/upload-release-asset@v1
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./dist/cua-darwin-arm64
+          asset_name: cua-darwin-arm64
+          asset_content_type: application/octet-stream
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload Windows Binary
+        uses: actions/upload-release-asset@v1
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./dist/cua-windows-x64.exe
+          asset_name: cua-windows-x64.exe
           asset_content_type: application/octet-stream
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

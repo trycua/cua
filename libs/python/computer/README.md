@@ -40,7 +40,7 @@ try:
     await computer.interface.right_click(300, 300)
     await computer.interface.double_click(400, 400)
 
-    await computer.interface.type("Hello, World!")
+    await computer.interface.type_text("Hello, World!")
     await computer.interface.press_key("enter")
 
     await computer.interface.set_clipboard("Test clipboard")

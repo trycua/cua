@@ -185,7 +185,7 @@ Connect to your Cua computer and perform basic interactions, such as taking scre
         # Simulate a left-click at coordinates (100, 100)
         await computer.interface.left_click(100, 100)
         # Type "Hello!" into the active application
-        await computer.interface.type("Hello!")
+        await computer.interface.type_text("Hello!")
     finally:
         await computer.close()
     ```

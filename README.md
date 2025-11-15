@@ -305,7 +305,7 @@ try:
 
     # Click and type
     await computer.interface.left_click(100, 100)
-    await computer.interface.type("Hello!")
+    await computer.interface.type_text("Hello!")
 finally:
     await computer.close()
 ```

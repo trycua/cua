@@ -1,5 +1,17 @@
 #!/bin/bash
 
+cleanup() {
+  echo "Received signal, shutting down gracefully..."
+  if [ -n "$VM_PID" ]; then
+    kill -TERM "$VM_PID" 2>/dev/null
+    wait "$VM_PID" 2>/dev/null
+  fi
+  exit 0
+}
+
+# Install trap for signals
+trap cleanup SIGTERM SIGINT SIGHUP SIGQUIT
+
 # Create windows.boot file if it doesn't exist (required for proper boot)
 if [ -d "/storage" -a ! -f "/storage/windows.boot" ]; then
   echo "Creating windows.boot file in /storage..."
@@ -9,6 +21,7 @@ fi
 # Start the VM in the background
 echo "Starting Windows VM..."
 /usr/bin/tini -s /run/entry.sh &
+VM_PID=$!
 echo "Live stream accessible at localhost:8006"
 
 echo "Waiting for Windows to boot and CUA computer-server to start..."

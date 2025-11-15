@@ -19,6 +19,9 @@ ENV VNC_COL_DEPTH=24
 RUN apt-get update && apt-get install -y \
     # System utilities
     sudo \
+    unzip \
+    zip \
+    xdg-utils \
     # Desktop environment
     xfce4 \
     xfce4-terminal \
@@ -27,16 +30,13 @@ RUN apt-get update && apt-get install -y \
     tigervnc-standalone-server \
     tigervnc-common \
     # noVNC dependencies
-    python3 \
-    python3-pip \
-    python3-numpy \
+    # python will be installed via deadsnakes as 3.12 \
     git \
     net-tools \
     netcat \
     supervisor \
     # Computer-server dependencies
-    python3-tk \
-    python3-dev \
+    # python-tk/dev for 3.12 will be installed later \
     gnome-screenshot \
     wmctrl \
     ffmpeg \
@@ -57,6 +57,17 @@ RUN apt-get update && apt-get install -y \
     libffi-dev \
     zlib1g-dev \
     && rm -rf /var/lib/apt/lists/*
+
+# Install Python 3.12 from deadsnakes (keep system python3 for apt)
+RUN add-apt-repository -y ppa:deadsnakes/ppa && \
+    apt-get update && apt-get install -y \
+    python3.12 python3.12-venv python3.12-dev python3.12-tk && \
+    python3.12 -m ensurepip --upgrade && \
+    python3.12 -m pip install --upgrade pip setuptools wheel && \
+    rm -rf /var/lib/apt/lists/*
+
+# Ensure 'python' points to Python 3.12
+RUN update-alternatives --install /usr/bin/python python /usr/bin/python3.12 2
 
 # Remove screensavers and power manager to avoid popups and lock screens
 RUN apt-get remove -y \
@@ -93,8 +104,8 @@ RUN git clone https://github.com/novnc/noVNC.git /opt/noVNC && \
 RUN mkdir -p /home/cua/.cache && \
     chown -R cua:cua /home/cua/.cache
 
-# Install computer-server
-RUN pip3 install cua-computer-server
+# Install computer-server using Python 3.12 pip
+RUN python3.12 -m pip install cua-computer-server
 
 # Fix any cache files created by pip
 RUN chown -R cua:cua /home/cua/.cache
@@ -107,6 +118,7 @@ COPY src/scripts/ /usr/local/bin/
 RUN chmod +x /usr/local/bin/*.sh
 
 # Setup VNC
+RUN chown -R cua:cua /home/cua
 USER cua
 WORKDIR /home/cua
 

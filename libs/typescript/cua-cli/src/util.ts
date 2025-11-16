@@ -26,28 +26,29 @@ export type VmItem = {
 };
 
 export function printVmList(items: VmItem[], showPasswords: boolean = false) {
-  const headers = showPasswords 
+  const headers = showPasswords
     ? ['NAME', 'STATUS', 'PASSWORD', 'HOST']
     : ['NAME', 'STATUS', 'HOST'];
-  
+
   const rows: string[][] = [
     headers,
-    ...items.map((v) => showPasswords 
-      ? [v.name, String(v.status), v.password, v.host || '']
-      : [v.name, String(v.status), v.host || '']
+    ...items.map((v) =>
+      showPasswords
+        ? [v.name, String(v.status), v.password, v.host || '']
+        : [v.name, String(v.status), v.host || '']
     ),
   ];
-  
+
   const numCols = headers.length;
   const widths: number[] = new Array(numCols).fill(0);
-  
+
   for (const r of rows)
     for (let i = 0; i < numCols; i++)
       widths[i] = Math.max(widths[i] ?? 0, (r[i] ?? '').length);
-  
+
   for (const r of rows)
     console.log(r.map((c, i) => (c ?? '').padEnd(widths[i] ?? 0)).join('  '));
-  
+
   if (items.length === 0) console.log('No VMs found');
 }
 

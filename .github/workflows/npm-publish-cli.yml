@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version to publish (default: from package.json)'
+        description: "Version to publish (default: from package.json)"
         required: false
-        default: ''
+        default: ""
 
 jobs:
   build-and-publish:
@@ -14,25 +14,25 @@ jobs:
       id-token: write
       contents: write
       packages: write
-    
+
     strategy:
       matrix:
         include:
           - target: bun-linux-x64
-            ext: ''
+            ext: ""
             binary_name: cua-linux-x64
           - target: bun-darwin-x64
-            ext: ''
+            ext: ""
             binary_name: cua-darwin-x64
           - target: bun-darwin-arm64
-            ext: ''
+            ext: ""
             binary_name: cua-darwin-arm64
           - target: bun-windows-x64
-            ext: '.exe'
+            ext: ".exe"
             binary_name: cua-windows-x64
-    
+
     runs-on: ubuntu-latest
-    
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -140,7 +140,7 @@ jobs:
             ```bash
             # For Linux/macOS
             curl -fsSL https://cua.ai/cli/install.sh | sh
-            
+
             # For Windows (PowerShell)
             irm https://cua.ai/cli/install.ps1 | iex
             ```
@@ -149,7 +149,7 @@ jobs:
             ```bash
             # Using bun
             bun add -g @trycua/cli
-            
+
             # Or using npm
             npm install -g @trycua/cli
             ```

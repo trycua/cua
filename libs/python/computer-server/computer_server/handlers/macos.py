@@ -1287,7 +1287,15 @@ class MacOSAutomationHandler(BaseAutomationHandler):
             if not isinstance(screenshot, Image.Image):
                 return {"success": False, "error": "Failed to capture screenshot"}
 
+            # Resize image to reduce size (max width 1920, maintain aspect ratio)
+            max_width = 1920
+            if screenshot.width > max_width:
+                ratio = max_width / screenshot.width
+                new_height = int(screenshot.height * ratio)
+                screenshot = screenshot.resize((max_width, new_height), Image.Resampling.LANCZOS)
+
             buffered = BytesIO()
+            # Use PNG format with optimization to reduce file size
             screenshot.save(buffered, format="PNG", optimize=True)
             buffered.seek(0)
             image_data = base64.b64encode(buffered.getvalue()).decode()

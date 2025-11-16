@@ -6,7 +6,7 @@ _Published on January 16, 2025 by Sarina Li_
 
 Growing a developer-focused product is hard. Traditional marketing doesn't work. Booth rentals cost thousands. Sponsorships cost tens of thousands.
 
-So we tried something different at Google DevFest Toronto: show up with backpacks full of cute koala keychains and see what happens.
+So we tried something different at Google DevFest Toronto: show up with backpacks full of cute cua-la keychains and see what happens.
 
 This is the story of how two new hires—a growth engineer and a designer/artist—guerrilla marketed their way through a major tech conference with $200 worth of merch and a post-event automation pipeline.
 
@@ -14,31 +14,31 @@ This is the story of how two new hires—a growth engineer and a designer/artist
 
 **Sarina** (Growth Engineering): Built the post-event automation pipeline that extracts LinkedIn connections and generates personalized messages while you sleep.
 
-**Esther** (Design + Art): Hand-crafted every piece of artwork, giving life to CUA through illustrations, branding, and yes, extremely cute koala keychains.
+**Esther** (Design + Art): Hand-crafted every piece of artwork, giving life to CUA through illustrations, branding, and yes, extremely cute cua-la keychains.
 
 The thesis: what if we could draw people in with irresistible physical merch, then use computer use agents to handle all the tedious follow-up work?
 
-## The Koala Strategy
+## The cua-la Strategy
 
 <img src="./assets/cua-at-devfest.JPG" alt="Guerrilla marketing at DevFest Toronto">
 
-Google DevFest Toronto brought together hundreds of developers and AI enthusiasts. We didn't have a booth. We didn't have demos. We showed up with backpacks full of koala keychains with the cua.ai logo and started handing them out.
+Google DevFest Toronto brought together hundreds of developers and AI enthusiasts. We didn't have a booth. We didn't have demos. We showed up with backpacks full of cua-la keychains with the cua.ai logo and started handing them out.
 
 That's it. Pure guerrilla marketing.
 
-The koalas were absurdly effective.
+The cua-las were absurdly effective.
 
-People would literally crowd around us—not because they were interested in computer use (at first), but because they wanted a koala. We'd pitch CUA while handing out keychains, and suddenly we had an engaged audience. No booth required.
+People would literally crowd around us—not because they were interested in computer use (at first), but because they wanted a cua-la. We'd pitch CUA while handing out keychains, and suddenly we had an engaged audience. No booth required.
 
 <img src="./assets/devfest-image.JPG" alt="DevFest crowd">
 
 ### The Magic Moment
 
-A few people stuck the koalas on their bags immediately. Then, throughout the event, we started getting approached:
+A few people stuck the cua-las on their bags immediately. Then, throughout the event, we started getting approached:
 
 "Wait, are you the CUA girls?"
 
-They'd seen the koalas on someone's bag, asked about it, and tracked us down. The keychains became walking advertisements.
+They'd seen the cua-las on someone's bag, asked about it, and tracked us down. The keychains became walking advertisements.
 
 <img src="./assets/htn-at-devfest.JPG" alt="Hack the North recognition at DevFest">
 
@@ -90,13 +90,13 @@ Then use that data to craft personalized messages. Sarina wrote unique follow-up
 
 - Booth rental: $0 (didn't have one)
 - Sponsorship: $0 (didn't buy one)
-- Koala keychains: ~$200
+- cua-la keychains: ~$200
 - Automation: Built by Sarina in a few hours post-event
 - **Total spend: $200**
 
 **What We Got**
 
-- People crowding around us for koalas
+- People crowding around us for cua-las
 - Walking advertisements on bags throughout the event
 - Instant brand recognition ("Are you the CUA girls?")
 - Two people who remembered us from Hack the North
@@ -108,11 +108,11 @@ Traditional event marketing at this scale: $5-10K minimum for booth + sponsorshi
 
 Our approach: $200 + scrappy execution.
 
-The automation is reuseable and will save hours of manual work, and the koalas created more organic conversations than any booth could have.
+The automation is reuseable and will save hours of manual work, and the cua-las created more organic conversations than any booth could have.
 
 ## What Didn't Work (Yet)
 
-**Koala Distribution**
+**cua-la Distribution**
 We ran out faster than expected! Next time: bigger bag, or limit to one per person.
 
 **Automation Setup**
@@ -125,13 +125,13 @@ While the extraction was automated, Sarina still wrote each follow-up message ma
 
 NeurIPS is the biggest AI conference of the year. Thousands of researchers, hundreds of companies, and endless networking opportunities.
 
-**The good news**: We still have one giant bag of koalas left. They're already packed and ready.
+**The good news**: We still have one giant bag of cua-las left. They're already packed and ready.
 
 **The better news**: We're upgrading the automation.
 
 ### The Hypothesis
 
-The koalas get people interested. The automation ensures we actually follow through.
+The cua-las get people interested. The automation ensures we actually follow through.
 
 Most event marketing fails at the follow-up stage. You collect business cards, connect on LinkedIn, and then... nothing. The moment passes. People forget.
 
@@ -158,7 +158,7 @@ Our approach: combine two forces that shouldn't work together but do.
 - Actually close the loop before the moment passes
 
 **Why It Works**
-The koalas get you in the door. The automation ensures you don't waste the opportunity.
+The cua-las get you in the door. The automation ensures you don't waste the opportunity.
 
 Most companies nail one or the other:
 
@@ -178,8 +178,8 @@ We built CUA to build CUA. Every automation we create for growth becomes:
 
 Esther hand-draws artwork that makes people smile. Sarina builds automations that save time. Together, they're proving that developer tools can be both powerful and delightful.
 
-See you at NeurIPS 2025. We'll be the ones with the koalas.
+See you at NeurIPS 2025. We'll be the ones with the cua-las.
 
 ---
 
-_Want to build your own growth hacking automations? Check out [CUA on GitHub](https://github.com/trycua/cua) or join our [Discord](https://discord.gg/cua) to share your experiments. Koalas not included (yet)._
+_Want to build your own growth hacking automations? Check out [CUA on GitHub](https://github.com/trycua/cua) or join our [Discord](https://discord.gg/cua) to share your experiments. cua-las not included (yet)._

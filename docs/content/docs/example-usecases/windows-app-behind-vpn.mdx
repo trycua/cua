@@ -1,0 +1,615 @@
+---
+title: Windows App behind VPN
+description: Automate legacy Windows desktop applications behind VPN with Cua
+---
+
+import { Step, Steps } from 'fumadocs-ui/components/steps';
+import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
+
+## Overview
+
+This guide demonstrates how to automate Windows desktop applications (like eGecko HR/payroll systems) that run behind corporate VPN. This is a common enterprise scenario where legacy desktop applications require manual data entry, report generation, or workflow execution.
+
+**Use cases:**
+- HR/payroll processing (employee onboarding, payroll runs, benefits administration)
+- Desktop ERP systems behind corporate networks
+- Legacy financial applications requiring VPN access
+- Compliance reporting from on-premise systems
+
+**Architecture:**
+- Client-side Cua agent (Python SDK or Playground UI)
+- Windows VM/Sandbox with VPN client configured
+- RDP/remote desktop connection to target environment
+- Desktop application automation via computer vision and UI control
+
+<Callout type="info">
+  **Production Deployment**: For production use, consider workflow mining and custom finetuning to create vertical-specific actions (e.g., "Run payroll", "Onboard employee") instead of generic UI automation. This provides better audit trails and higher success rates.
+</Callout>
+
+---
+
+## Video Demo
+
+<div className="rounded-lg border bg-card text-card-foreground shadow-sm p-4 mb-6">
+  <video src="https://github.com/user-attachments/assets/7abbdaf4-054f-4965-8260-81dab497c6ba" controls className="w-full rounded">
+    Your browser does not support the video tag.
+  </video>
+  <div className="text-sm text-muted-foreground mt-2">
+    Demo showing Cua automating an eGecko-like desktop application on Windows behind AWS VPN
+  </div>
+</div>
+
+---
+
+<Steps>
+
+<Step>
+
+### Set Up Your Environment
+
+Install the required dependencies:
+
+Create a `requirements.txt` file:
+
+```text
+cua-agent
+cua-computer
+python-dotenv>=1.0.0
+```
+
+Install the dependencies:
+
+```bash
+pip install -r requirements.txt
+```
+
+Create a `.env` file with your API keys:
+
+```text
+ANTHROPIC_API_KEY=your-anthropic-api-key
+CUA_API_KEY=sk_cua-api01...
+CUA_SANDBOX_NAME=your-windows-sandbox
+```
+
+</Step>
+
+<Step>
+
+### Configure Windows Sandbox with VPN
+
+<Tabs items={['Cloud Sandbox (Recommended)', 'Windows Sandbox', 'Self-Hosted VM']}>
+  <Tab value="Cloud Sandbox (Recommended)">
+
+For enterprise deployments, use Cua Cloud Sandbox with pre-configured VPN:
+
+1. Go to [cua.ai/signin](https://cua.ai/signin)
+2. Navigate to **Dashboard > Containers > Create Instance**
+3. Create a **Windows** sandbox (Medium or Large for desktop apps)
+4. Configure VPN settings:
+   - Upload your AWS VPN Client configuration (`.ovpn` file)
+   - Or configure VPN credentials directly in the dashboard
+5. Note your sandbox name and API key
+
+Your Windows sandbox will launch with VPN automatically connected.
+
+  </Tab>
+  <Tab value="Windows Sandbox">
+
+For local development on Windows 10 Pro/Enterprise or Windows 11:
+
+1. Enable [Windows Sandbox](https://learn.microsoft.com/en-us/windows/security/application-security/application-isolation/windows-sandbox/windows-sandbox-install)
+2. Install the `pywinsandbox` dependency:
+   ```bash
+   pip install -U git+git://github.com/karkason/pywinsandbox.git
+   ```
+3. Create a VPN setup script that runs on sandbox startup
+4. Configure your desktop application installation within the sandbox
+
+<Callout type="warn">
+  **Manual VPN Setup**: Windows Sandbox requires manual VPN configuration each time it starts. For production use, consider Cloud Sandbox or self-hosted VMs with persistent VPN connections.
+</Callout>
+
+  </Tab>
+  <Tab value="Self-Hosted VM">
+
+For self-managed infrastructure:
+
+1. Deploy Windows VM on your preferred cloud (AWS, Azure, GCP)
+2. Install and configure VPN client (AWS VPN Client, OpenVPN, etc.)
+3. Install target desktop application and any dependencies
+4. Install `cua-computer-server`:
+   ```bash
+   pip install cua-computer-server
+   python -m computer_server
+   ```
+5. Configure firewall rules to allow Cua agent connections
+
+  </Tab>
+</Tabs>
+
+</Step>
+
+<Step>
+
+### Create Your Automation Script
+
+Create a Python file (e.g., `hr_automation.py`):
+
+<Tabs items={['Cloud Sandbox', 'Windows Sandbox', 'Self-Hosted']}>
+  <Tab value="Cloud Sandbox">
+
+```python
+import asyncio
+import logging
+import os
+from agent import ComputerAgent
+from computer import Computer, VMProviderType
+from dotenv import load_dotenv
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+load_dotenv()
+
+async def automate_hr_workflow():
+    """
+    Automate HR/payroll desktop application workflow.
+
+    This example demonstrates:
+    - Launching Windows desktop application
+    - Navigating complex desktop UI
+    - Data entry and form filling
+    - Report generation and export
+    """
+    try:
+        # Connect to Windows Cloud Sandbox with VPN
+        async with Computer(
+            os_type="windows",
+            provider_type=VMProviderType.CLOUD,
+            name=os.environ["CUA_SANDBOX_NAME"],
+            api_key=os.environ["CUA_API_KEY"],
+            verbosity=logging.INFO,
+        ) as computer:
+
+            # Configure agent with specialized instructions
+            agent = ComputerAgent(
+                model="anthropic/claude-sonnet-4-5-20250929",
+                tools=[computer],
+                only_n_most_recent_images=3,
+                verbosity=logging.INFO,
+                trajectory_dir="trajectories",
+                use_prompt_caching=True,
+                max_trajectory_budget=10.0,
+                instructions="""
+You are automating a Windows desktop HR/payroll application.
+
+IMPORTANT GUIDELINES:
+- Always wait for windows and dialogs to fully load before interacting
+- Look for loading indicators and wait for them to disappear
+- Verify each action by checking on-screen confirmation messages
+- If a button or field is not visible, try scrolling or navigating tabs
+- Desktop apps often have nested menus - explore systematically
+- Save work frequently using File > Save or Ctrl+S
+- Before closing, always verify changes were saved
+
+COMMON UI PATTERNS:
+- Menu bar navigation (File, Edit, View, etc.)
+- Ribbon interfaces with tabs
+- Modal dialogs that block interaction
+- Data grids/tables for viewing records
+- Form fields with validation
+- Status bars showing operation progress
+                """.strip()
+            )
+
+            # Define workflow tasks
+            tasks = [
+                "Launch the HR application from the desktop or start menu",
+                "Log in with the credentials shown in credentials.txt on the desktop",
+                "Navigate to Employee Management section",
+                "Create a new employee record with information from new_hire.xlsx on desktop",
+                "Verify the employee was created successfully by searching for their name",
+                "Generate an onboarding report for the new employee",
+                "Export the report as PDF to the desktop",
+                "Log out of the application"
+            ]
+
+            history = []
+
+            for task in tasks:
+                logger.info(f"\n{'='*60}")
+                logger.info(f"Task: {task}")
+                logger.info(f"{'='*60}\n")
+
+                history.append({"role": "user", "content": task})
+
+                async for result in agent.run(history):
+                    for item in result.get("output", []):
+                        if item.get("type") == "message":
+                            content = item.get("content", [])
+                            for block in content:
+                                if block.get("type") == "text":
+                                    response = block.get("text", "")
+                                    logger.info(f"Agent: {response}")
+                                    history.append({"role": "assistant", "content": response})
+
+                logger.info("\nTask completed. Moving to next task...\n")
+
+            logger.info("\n" + "="*60)
+            logger.info("All tasks completed successfully!")
+            logger.info("="*60)
+
+    except Exception as e:
+        logger.error(f"Error during automation: {e}")
+        import traceback
+        traceback.print_exc()
+
+if __name__ == "__main__":
+    asyncio.run(automate_hr_workflow())
+```
+
+  </Tab>
+  <Tab value="Windows Sandbox">
+
+```python
+import asyncio
+import logging
+import os
+from agent import ComputerAgent
+from computer import Computer, VMProviderType
+from dotenv import load_dotenv
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+load_dotenv()
+
+async def automate_hr_workflow():
+    try:
+        # Connect to Windows Sandbox
+        async with Computer(
+            os_type="windows",
+            provider_type=VMProviderType.WINDOWS_SANDBOX,
+            verbosity=logging.INFO,
+        ) as computer:
+
+            agent = ComputerAgent(
+                model="anthropic/claude-sonnet-4-5-20250929",
+                tools=[computer],
+                only_n_most_recent_images=3,
+                verbosity=logging.INFO,
+                trajectory_dir="trajectories",
+                use_prompt_caching=True,
+                max_trajectory_budget=10.0,
+                instructions="""
+You are automating a Windows desktop HR/payroll application.
+
+IMPORTANT GUIDELINES:
+- Always wait for windows and dialogs to fully load before interacting
+- Verify each action by checking on-screen confirmation messages
+- Desktop apps often have nested menus - explore systematically
+- Save work frequently using File > Save or Ctrl+S
+                """.strip()
+            )
+
+            tasks = [
+                "Launch the HR application from the desktop",
+                "Log in with credentials from credentials.txt on desktop",
+                "Navigate to Employee Management and create new employee from new_hire.xlsx",
+                "Generate and export onboarding report as PDF",
+                "Log out of the application"
+            ]
+
+            history = []
+
+            for task in tasks:
+                logger.info(f"\nTask: {task}")
+                history.append({"role": "user", "content": task})
+
+                async for result in agent.run(history):
+                    for item in result.get("output", []):
+                        if item.get("type") == "message":
+                            content = item.get("content", [])
+                            for block in content:
+                                if block.get("type") == "text":
+                                    response = block.get("text", "")
+                                    logger.info(f"Agent: {response}")
+                                    history.append({"role": "assistant", "content": response})
+
+            logger.info("\nAll tasks completed!")
+
+    except Exception as e:
+        logger.error(f"Error: {e}")
+        import traceback
+        traceback.print_exc()
+
+if __name__ == "__main__":
+    asyncio.run(automate_hr_workflow())
+```
+
+  </Tab>
+  <Tab value="Self-Hosted">
+
+```python
+import asyncio
+import logging
+import os
+from agent import ComputerAgent
+from computer import Computer
+from dotenv import load_dotenv
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+load_dotenv()
+
+async def automate_hr_workflow():
+    try:
+        # Connect to self-hosted Windows VM running computer-server
+        async with Computer(
+            use_host_computer_server=True,
+            base_url="http://your-windows-vm-ip:5757",  # Update with your VM IP
+            verbosity=logging.INFO,
+        ) as computer:
+
+            agent = ComputerAgent(
+                model="anthropic/claude-sonnet-4-5-20250929",
+                tools=[computer],
+                only_n_most_recent_images=3,
+                verbosity=logging.INFO,
+                trajectory_dir="trajectories",
+                use_prompt_caching=True,
+                max_trajectory_budget=10.0,
+                instructions="""
+You are automating a Windows desktop HR/payroll application.
+
+IMPORTANT GUIDELINES:
+- Always wait for windows and dialogs to fully load before interacting
+- Verify each action by checking on-screen confirmation messages
+- Save work frequently using File > Save or Ctrl+S
+                """.strip()
+            )
+
+            tasks = [
+                "Launch the HR application",
+                "Log in with provided credentials",
+                "Complete the required HR workflow",
+                "Generate and export report",
+                "Log out"
+            ]
+
+            history = []
+
+            for task in tasks:
+                logger.info(f"\nTask: {task}")
+                history.append({"role": "user", "content": task})
+
+                async for result in agent.run(history):
+                    for item in result.get("output", []):
+                        if item.get("type") == "message":
+                            content = item.get("content", [])
+                            for block in content:
+                                if block.get("type") == "text":
+                                    response = block.get("text", "")
+                                    logger.info(f"Agent: {response}")
+                                    history.append({"role": "assistant", "content": response})
+
+            logger.info("\nAll tasks completed!")
+
+    except Exception as e:
+        logger.error(f"Error: {e}")
+        import traceback
+        traceback.print_exc()
+
+if __name__ == "__main__":
+    asyncio.run(automate_hr_workflow())
+```
+
+  </Tab>
+</Tabs>
+
+</Step>
+
+<Step>
+
+### Run Your Automation
+
+Execute the script:
+
+```bash
+python hr_automation.py
+```
+
+The agent will:
+1. Connect to your Windows environment (with VPN if configured)
+2. Launch and navigate the desktop application
+3. Execute each workflow step sequentially
+4. Verify actions and handle errors
+5. Save trajectory logs for audit and debugging
+
+Monitor the console output to see the agent's progress through each task.
+
+</Step>
+
+</Steps>
+
+---
+
+## Key Configuration Options
+
+### Agent Instructions
+
+The `instructions` parameter is critical for reliable desktop automation:
+
+```python
+instructions="""
+You are automating a Windows desktop HR/payroll application.
+
+IMPORTANT GUIDELINES:
+- Always wait for windows and dialogs to fully load before interacting
+- Look for loading indicators and wait for them to disappear
+- Verify each action by checking on-screen confirmation messages
+- If a button or field is not visible, try scrolling or navigating tabs
+- Desktop apps often have nested menus - explore systematically
+- Save work frequently using File > Save or Ctrl+S
+- Before closing, always verify changes were saved
+
+COMMON UI PATTERNS:
+- Menu bar navigation (File, Edit, View, etc.)
+- Ribbon interfaces with tabs
+- Modal dialogs that block interaction
+- Data grids/tables for viewing records
+- Form fields with validation
+- Status bars showing operation progress
+
+APPLICATION-SPECIFIC:
+- Login is at top-left corner
+- Employee records are under "HR Management" > "Employees"
+- Reports are generated via "Tools" > "Reports" > "Generate"
+- Always click "Save" before navigating away from a form
+""".strip()
+```
+
+### Budget Management
+
+For long-running workflows, adjust budget limits:
+
+```python
+agent = ComputerAgent(
+    model="anthropic/claude-sonnet-4-5-20250929",
+    tools=[computer],
+    max_trajectory_budget=20.0,  # Increase for complex workflows
+    # ... other params
+)
+```
+
+### Image Retention
+
+Balance context and cost by retaining only recent screenshots:
+
+```python
+agent = ComputerAgent(
+    # ...
+    only_n_most_recent_images=3,  # Keep last 3 screenshots
+    # ...
+)
+```
+
+---
+
+## Production Considerations
+
+<Callout type="warn" title="Production Deployment">
+  For enterprise production deployments, consider these additional steps:
+</Callout>
+
+### 1. Workflow Mining
+
+Before deploying, analyze your actual workflows:
+- Record user interactions with the application
+- Identify common patterns and edge cases
+- Map out decision trees and validation requirements
+- Document application-specific quirks and timing issues
+
+### 2. Custom Finetuning
+
+Create vertical-specific actions instead of generic UI automation:
+
+```python
+# Instead of generic steps:
+tasks = ["Click login", "Type username", "Type password", "Click submit"]
+
+# Create semantic actions:
+tasks = ["onboard_employee", "run_payroll", "generate_compliance_report"]
+```
+
+This provides:
+- Better audit trails
+- Approval gates at business logic level
+- Higher success rates
+- Easier maintenance and updates
+
+### 3. Human-in-the-Loop
+
+Add approval gates for critical operations:
+
+```python
+agent = ComputerAgent(
+    model="anthropic/claude-sonnet-4-5-20250929",
+    tools=[computer],
+    # Add human approval callback for sensitive operations
+    callbacks=[ApprovalCallback(require_approval_for=["payroll", "termination"])]
+)
+```
+
+### 4. Deployment Options
+
+Choose your deployment model:
+
+**Managed (Recommended)**
+- Cua hosts Windows sandboxes, VPN/RDP stack, and agent runtime
+- You get UI/API endpoints for triggering workflows
+- Automatic scaling, monitoring, and maintenance
+- SLA guarantees and enterprise support
+
+**Self-Hosted**
+- You manage Windows VMs, VPN infrastructure, and agent deployment
+- Full control over data and security
+- Custom network configurations
+- On-premise or your preferred cloud
+
+---
+
+## Troubleshooting
+
+### VPN Connection Issues
+
+If the agent cannot reach the application:
+
+1. Verify VPN is connected: Check VPN client status in the Windows sandbox
+2. Test network connectivity: Try pinging internal resources
+3. Check firewall rules: Ensure RDP and application ports are open
+4. Review VPN logs: Look for authentication or routing errors
+
+### Application Not Launching
+
+If the desktop application fails to start:
+
+1. Verify installation: Check the application is installed in the sandbox
+2. Check dependencies: Ensure all required DLLs and frameworks are present
+3. Review permissions: Application may require admin rights
+4. Check logs: Look for error messages in Windows Event Viewer
+
+### UI Element Not Found
+
+If the agent cannot find buttons or fields:
+
+1. Increase wait times: Some applications load slowly
+2. Check screen resolution: UI elements may be off-screen
+3. Verify DPI scaling: High DPI settings can affect element positions
+4. Update instructions: Provide more specific navigation guidance
+
+### Cost Management
+
+If costs are higher than expected:
+
+1. Reduce `max_trajectory_budget`
+2. Decrease `only_n_most_recent_images`
+3. Use prompt caching: Set `use_prompt_caching=True`
+4. Optimize task descriptions: Be more specific to reduce retry attempts
+
+---
+
+## Next Steps
+
+- **Explore custom tools**: Learn how to create [custom tools](/agent-sdk/custom-tools) for application-specific actions
+- **Implement callbacks**: Add [monitoring and logging](/agent-sdk/callbacks) for production workflows
+- **Join community**: Get help in our [Discord](https://discord.com/invite/mVnXXpdE85)
+
+---
+
+## Related Examples
+
+- [Form Filling](/example-usecases/form-filling) - Web form automation
+- [Post-Event Contact Export](/example-usecases/post-event-contact-export) - Data extraction workflows
+- [Custom Tools](/agent-sdk/custom-tools) - Building application-specific functions

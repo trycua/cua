@@ -3,7 +3,7 @@ title: Form Filling
 description: Enhance and Automate Interactions Between Form Filling and Local File Systems
 ---
 
-import { EditableCodeBlock, EditableValue, S } from '@/components/editable-code-block';
+import { Step, Steps } from 'fumadocs-ui/components/steps';
 import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
 
 ## Overview
@@ -12,9 +12,17 @@ Cua can be used to automate interactions between form filling and local file sys
 
 This preset usecase uses [Cua Computer](/computer-sdk/computers) to interact with a web page and local file systems along with [Agent Loops](/agent-sdk/agent-loops) to run the agent in a loop with message history.
 
-## Quickstart
+---
 
-Create a `requirements.txt` file with the following dependencies:
+<Steps>
+
+<Step>
+
+### Set Up Your Environment
+
+First, install the required dependencies:
+
+Create a `requirements.txt` file:
 
 ```text
 cua-agent
@@ -22,33 +30,32 @@ cua-computer
 python-dotenv>=1.0.0
 ```
 
-And install:
+Install the dependencies:
 
 ```bash
 pip install -r requirements.txt
 ```
 
-Create a `.env` file with the following environment variables:
+Create a `.env` file with your API keys:
 
 ```text
-ANTHROPIC_API_KEY=your-api-key
+ANTHROPIC_API_KEY=your-anthropic-api-key
 CUA_API_KEY=sk_cua-api01...
 ```
 
-Select the environment you want to run the code in (_click on the underlined values in the code to edit them directly!_):
+</Step>
 
-<Tabs items={['☁️ Cloud', '🐳 Docker', '🍎 Lume', '🪟 Windows Sandbox']}>
-  <Tab value="☁️ Cloud">
+<Step>
 
-<EditableCodeBlock
-  key="cloud-tab"
-  lang="python"
-  defaultValues={{
-    "sandbox-name": "m-linux-...",
-    "api_key": "sk_cua-api01..."
-  }}
->
-{`import asyncio
+### Create Your Form Filling Script
+
+Create a Python file (e.g., `form_filling.py`) and select your environment:
+
+<Tabs items={['Cloud Sandbox', 'Linux on Docker', 'macOS Sandbox', 'Windows Sandbox']}>
+  <Tab value="Cloud Sandbox">
+
+```python
+import asyncio
 import logging
 import os
 import signal
@@ -59,21 +66,21 @@ from computer import Computer, VMProviderType
 from dotenv import load_dotenv
 
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(**name**)
+logger = logging.getLogger(__name__)
 
 def handle_sigint(sig, frame):
-print("\\n\\nExecution interrupted by user. Exiting gracefully...")
-exit(0)
+    print("\n\nExecution interrupted by user. Exiting gracefully...")
+    exit(0)
 
 async def fill_application():
-try:
-async with Computer(
-os_type="linux",
-provider_type=VMProviderType.CLOUD,
-name="`}<EditableValue placeholder="sandbox-name" />{`",
-api_key="`}<EditableValue placeholder="api_key" />{`",
-verbosity=logging.INFO,
-) as computer:
+    try:
+        async with Computer(
+            os_type="linux",
+            provider_type=VMProviderType.CLOUD,
+            name="your-sandbox-name",  # Replace with your sandbox name
+            api_key=os.environ["CUA_API_KEY"],
+            verbosity=logging.INFO,
+        ) as computer:
 
             agent = ComputerAgent(
                 model="anthropic/claude-sonnet-4-5-20250929",
@@ -93,7 +100,7 @@ verbosity=logging.INFO,
             history = []
 
             for i, task in enumerate(tasks, 1):
-                print(f"\\n[Task {i}/{len(tasks)}] {task}")
+                print(f"\n[Task {i}/{len(tasks)}] {task}")
 
                 # Add user message to history
                 history.append({"role": "user", "content": task})
@@ -116,7 +123,7 @@ verbosity=logging.INFO,
 
                 print(f"✅ Task {i}/{len(tasks)} completed")
 
-            print("\\n🎉 All tasks completed successfully!")
+            print("\n🎉 All tasks completed successfully!")
 
     except Exception as e:
         logger.error(f"Error in fill_application: {e}")
@@ -124,18 +131,18 @@ verbosity=logging.INFO,
         raise
 
 def main():
-try:
-load_dotenv()
+    try:
+        load_dotenv()
 
         if "ANTHROPIC_API_KEY" not in os.environ:
             raise RuntimeError(
-                "Please set the ANTHROPIC_API_KEY environment variable.\\n"
+                "Please set the ANTHROPIC_API_KEY environment variable.\n"
                 "You can add it to a .env file in the project root."
             )
 
         if "CUA_API_KEY" not in os.environ:
             raise RuntimeError(
-                "Please set the CUA_API_KEY environment variable.\\n"
+                "Please set the CUA_API_KEY environment variable.\n"
                 "You can add it to a .env file in the project root."
             )
 
@@ -147,22 +154,15 @@ load_dotenv()
         logger.error(f"Error running automation: {e}")
         traceback.print_exc()
 
-if **name** == "**main**":
-main()`}
-
-</EditableCodeBlock>
+if __name__ == "__main__":
+    main()
+```
 
   </Tab>
-  <Tab value="🍎 Lume">
+  <Tab value="Linux on Docker">
 
-<EditableCodeBlock
-  key="lume-tab"
-  lang="python"
-  defaultValues={{
-    "sandbox-name": "macos-sequoia-cua:latest"
-  }}
->
-{`import asyncio
+```python
+import asyncio
 import logging
 import os
 import signal
@@ -173,20 +173,20 @@ from computer import Computer, VMProviderType
 from dotenv import load_dotenv
 
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(**name**)
+logger = logging.getLogger(__name__)
 
 def handle_sigint(sig, frame):
-print("\\n\\nExecution interrupted by user. Exiting gracefully...")
-exit(0)
+    print("\n\nExecution interrupted by user. Exiting gracefully...")
+    exit(0)
 
 async def fill_application():
-try:
-async with Computer(
-os_type="macos",
-provider_type=VMProviderType.LUME,
-name="`}<EditableValue placeholder="sandbox-name" />{`",
-verbosity=logging.INFO,
-) as computer:
+    try:
+        async with Computer(
+            os_type="linux",
+            provider_type=VMProviderType.DOCKER,
+            image="trycua/cua-xfce:latest",  # or "trycua/cua-ubuntu:latest"
+            verbosity=logging.INFO,
+        ) as computer:
 
             agent = ComputerAgent(
                 model="anthropic/claude-sonnet-4-5-20250929",
@@ -206,7 +206,7 @@ verbosity=logging.INFO,
             history = []
 
             for i, task in enumerate(tasks, 1):
-                print(f"\\n[Task {i}/{len(tasks)}] {task}")
+                print(f"\n[Task {i}/{len(tasks)}] {task}")
 
                 # Add user message to history
                 history.append({"role": "user", "content": task})
@@ -229,7 +229,7 @@ verbosity=logging.INFO,
 
                 print(f"✅ Task {i}/{len(tasks)} completed")
 
-            print("\\n🎉 All tasks completed successfully!")
+            print("\n🎉 All tasks completed successfully!")
 
     except Exception as e:
         logger.error(f"Error in fill_application: {e}")
@@ -237,12 +237,12 @@ verbosity=logging.INFO,
         raise
 
 def main():
-try:
-load_dotenv()
+    try:
+        load_dotenv()
 
         if "ANTHROPIC_API_KEY" not in os.environ:
             raise RuntimeError(
-                "Please set the ANTHROPIC_API_KEY environment variable.\\n"
+                "Please set the ANTHROPIC_API_KEY environment variable.\n"
                 "You can add it to a .env file in the project root."
             )
 
@@ -254,20 +254,15 @@ load_dotenv()
         logger.error(f"Error running automation: {e}")
         traceback.print_exc()
 
-if **name** == "**main**":
-main()`}
-
-</EditableCodeBlock>
+if __name__ == "__main__":
+    main()
+```
 
   </Tab>
-  <Tab value="🪟 Windows Sandbox">
+  <Tab value="macOS Sandbox">
 
-<EditableCodeBlock
-  key="windows-tab"
-  lang="python"
-  defaultValues={{}}
->
-{`import asyncio
+```python
+import asyncio
 import logging
 import os
 import signal
@@ -278,19 +273,20 @@ from computer import Computer, VMProviderType
 from dotenv import load_dotenv
 
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(**name**)
+logger = logging.getLogger(__name__)
 
 def handle_sigint(sig, frame):
-print("\\n\\nExecution interrupted by user. Exiting gracefully...")
-exit(0)
+    print("\n\nExecution interrupted by user. Exiting gracefully...")
+    exit(0)
 
 async def fill_application():
-try:
-async with Computer(
-os_type="windows",
-provider_type=VMProviderType.WINDOWS_SANDBOX,
-verbosity=logging.INFO,
-) as computer:
+    try:
+        async with Computer(
+            os_type="macos",
+            provider_type=VMProviderType.LUME,
+            name="macos-sequoia-cua:latest",
+            verbosity=logging.INFO,
+        ) as computer:
 
             agent = ComputerAgent(
                 model="anthropic/claude-sonnet-4-5-20250929",
@@ -310,7 +306,7 @@ verbosity=logging.INFO,
             history = []
 
             for i, task in enumerate(tasks, 1):
-                print(f"\\n[Task {i}/{len(tasks)}] {task}")
+                print(f"\n[Task {i}/{len(tasks)}] {task}")
 
                 # Add user message to history
                 history.append({"role": "user", "content": task})
@@ -333,7 +329,7 @@ verbosity=logging.INFO,
 
                 print(f"✅ Task {i}/{len(tasks)} completed")
 
-            print("\\n🎉 All tasks completed successfully!")
+            print("\n🎉 All tasks completed successfully!")
 
     except Exception as e:
         logger.error(f"Error in fill_application: {e}")
@@ -341,12 +337,12 @@ verbosity=logging.INFO,
         raise
 
 def main():
-try:
-load_dotenv()
+    try:
+        load_dotenv()
 
         if "ANTHROPIC_API_KEY" not in os.environ:
             raise RuntimeError(
-                "Please set the ANTHROPIC_API_KEY environment variable.\\n"
+                "Please set the ANTHROPIC_API_KEY environment variable.\n"
                 "You can add it to a .env file in the project root."
             )
 
@@ -358,22 +354,15 @@ load_dotenv()
         logger.error(f"Error running automation: {e}")
         traceback.print_exc()
 
-if **name** == "**main**":
-main()`}
-
-</EditableCodeBlock>
+if __name__ == "__main__":
+    main()
+```
 
   </Tab>
-  <Tab value="🐳 Docker">
+  <Tab value="Windows Sandbox">
 
-<EditableCodeBlock
-  key="docker-tab"
-  lang="python"
-  defaultValues={{
-    "sandbox-name": "trycua/cua-ubuntu:latest"
-  }}
->
-{`import asyncio
+```python
+import asyncio
 import logging
 import os
 import signal
@@ -384,20 +373,19 @@ from computer import Computer, VMProviderType
 from dotenv import load_dotenv
 
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(**name**)
+logger = logging.getLogger(__name__)
 
 def handle_sigint(sig, frame):
-print("\\n\\nExecution interrupted by user. Exiting gracefully...")
-exit(0)
+    print("\n\nExecution interrupted by user. Exiting gracefully...")
+    exit(0)
 
 async def fill_application():
-try:
-async with Computer(
-os_type="linux",
-provider_type=VMProviderType.DOCKER,
-name="`}<EditableValue placeholder="sandbox-name" />{`",
-verbosity=logging.INFO,
-) as computer:
+    try:
+        async with Computer(
+            os_type="windows",
+            provider_type=VMProviderType.WINDOWS_SANDBOX,
+            verbosity=logging.INFO,
+        ) as computer:
 
             agent = ComputerAgent(
                 model="anthropic/claude-sonnet-4-5-20250929",
@@ -417,7 +405,7 @@ verbosity=logging.INFO,
             history = []
 
             for i, task in enumerate(tasks, 1):
-                print(f"\\n[Task {i}/{len(tasks)}] {task}")
+                print(f"\n[Task {i}/{len(tasks)}] {task}")
 
                 # Add user message to history
                 history.append({"role": "user", "content": task})
@@ -440,7 +428,7 @@ verbosity=logging.INFO,
 
                 print(f"✅ Task {i}/{len(tasks)} completed")
 
-            print("\\n🎉 All tasks completed successfully!")
+            print("\n🎉 All tasks completed successfully!")
 
     except Exception as e:
         logger.error(f"Error in fill_application: {e}")
@@ -448,12 +436,12 @@ verbosity=logging.INFO,
         raise
 
 def main():
-try:
-load_dotenv()
+    try:
+        load_dotenv()
 
         if "ANTHROPIC_API_KEY" not in os.environ:
             raise RuntimeError(
-                "Please set the ANTHROPIC_API_KEY environment variable.\\n"
+                "Please set the ANTHROPIC_API_KEY environment variable.\n"
                 "You can add it to a .env file in the project root."
             )
 
@@ -465,16 +453,41 @@ load_dotenv()
         logger.error(f"Error running automation: {e}")
         traceback.print_exc()
 
-if **name** == "**main**":
-main()`}
-
-</EditableCodeBlock>
+if __name__ == "__main__":
+    main()
+```
 
   </Tab>
 </Tabs>
+
+</Step>
+
+<Step>
+
+### Run Your Script
+
+Execute your form filling automation:
+
+```bash
+python form_filling.py
+```
+
+The agent will:
+1. Download the PDF resume from Overleaf
+2. Extract information from the PDF
+3. Fill out the JotForm with the extracted information
+
+Monitor the output to see the agent's progress through each task.
+
+</Step>
+
+</Steps>
+
+---
 
 ## Next Steps
 
 - Learn more about [Cua computers](/computer-sdk/computers) and [computer commands](/computer-sdk/commands)
 - Read about [Agent loops](/agent-sdk/agent-loops), [tools](/agent-sdk/custom-tools), and [supported model providers](/agent-sdk/supported-model-providers/)
 - Experiment with different [Models and Providers](/agent-sdk/supported-model-providers/)
+- Join our [Discord community](https://discord.com/invite/mVnXXpdE85) for help

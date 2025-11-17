@@ -8,7 +8,7 @@ import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
 import { Accordion, Accordions } from 'fumadocs-ui/components/accordion';
 import { Code, Terminal } from 'lucide-react';
 
-Choose your quickstart path:
+{/* Choose your quickstart path:
 
 <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-8 mb-8">
   <Card icon={<Code />} href="#developer-quickstart" title="Developer Quickstart">
@@ -17,7 +17,7 @@ Choose your quickstart path:
   <Card icon={<Terminal />} href="#cli-quickstart" title="CLI Quickstart">
     Get started quickly with the command-line interface
   </Card>
-</div>
+</div> */}
 
 ---
 
@@ -30,11 +30,11 @@ You can run your Cua computer in the cloud (recommended for easiest setup), loca
 <Tabs items={['Cloud Sandbox', 'Linux on Docker', 'macOS Sandbox', 'Windows Sandbox']}>
   <Tab value="Cloud Sandbox">
 
-    Cua Cloud Sandbox provides sandboxes that run Linux (Ubuntu) or Windows.
+    Cua Cloud Sandbox provides sandboxes that run Linux (Ubuntu), Windows, or macOS.
 
     1. Go to [cua.ai/signin](https://cua.ai/signin)
     2. Navigate to **Dashboard > Containers > Create Instance**
-    3. Create a **Small** sandbox, choosing either **Linux** or **Windows**
+    3. Create a **Small** sandbox, choosing **Linux**, **Windows**, or **macOS**
     4. Note your sandbox name and API key
 
     Your Cloud Sandbox will be automatically configured and ready to use.
@@ -117,7 +117,7 @@ Connect to your Cua computer and perform basic interactions, such as taking scre
         from computer import Computer
 
         computer = Computer(
-            os_type="linux",
+            os_type="linux",  # or "windows" or "macos"
             provider_type="cloud",
             name="your-sandbox-name",
             api_key="your-api-key"
@@ -192,6 +192,10 @@ Connect to your Cua computer and perform basic interactions, such as taking scre
 
   </Tab>
   <Tab value="TypeScript">
+    <Callout type="warn" title="TypeScript SDK Deprecated">
+      The TypeScript interface is currently deprecated. We're working on version 0.2.0 with improved TypeScript support. In the meantime, please use the Python SDK.
+    </Callout>
+
     Install the Cua computer TypeScript SDK:
     ```bash
     npm install @trycua/computer
@@ -205,7 +209,7 @@ Connect to your Cua computer and perform basic interactions, such as taking scre
         import { Computer, OSType } from '@trycua/computer';
 
         const computer = new Computer({
-          osType: OSType.LINUX,
+          osType: OSType.LINUX,  // or OSType.WINDOWS or OSType.MACOS
           name: "your-sandbox-name",
           apiKey: "your-api-key"
         });
@@ -328,7 +332,7 @@ Learn more about agents in [Agent Loops](/agent-sdk/agent-loops) and available m
 - Join our [Discord community](https://discord.com/invite/mVnXXpdE85) for help
 - Try out [Form Filling](/example-usecases/form-filling) preset usecase
 
----
+{/* ---
 
 ## CLI Quickstart
 
@@ -354,7 +358,7 @@ Get started quickly with the CUA CLI - the easiest way to manage cloud sandboxes
     ```bash
     # Install Bun if you don't have it
     curl -fsSL https://bun.sh/install | bash
-    
+
     # Install CUA CLI
     bun add -g @trycua/cli
     ```
@@ -467,4 +471,4 @@ cua delete my-vm-abc123
 
 ---
 
-For running models locally, see [Running Models Locally](/agent-sdk/supported-model-providers/local-models).
+For running models locally, see [Running Models Locally](/agent-sdk/supported-model-providers/local-models). */}

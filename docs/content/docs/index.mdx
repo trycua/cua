@@ -4,15 +4,9 @@ title: Introduction
 
 import { Monitor, Code, BookOpen, Zap, Bot, Boxes, Rocket } from 'lucide-react';
 
-<Hero>
-
+<div className="rounded-lg border bg-card text-card-foreground shadow-sm px-4 py-2 mb-6">
 Cua is an open-source framework for building **Computer-Use Agents** - AI systems that see, understand, and interact with desktop applications through vision and action, just like humans do.
-
-<br />
-
-Go from prototype to production with everything you need: multi-provider LLM support, cross-platform sandboxes, and trajectory tracing. Whether you're running locally or deploying to the cloud, Cua gives you the tools to build reliable computer-use agents.
-
-</Hero>
+</div>
 
 ## Why Cua?
 
@@ -46,14 +40,14 @@ Follow the [Quickstart guide](/docs/get-started/quickstart) for step-by-step set
 If you're new to computer-use agents, check out our [tutorials](https://cua.ai/blog), [examples](https://github.com/trycua/cua/tree/main/examples), and [notebooks](https://github.com/trycua/cua/tree/main/notebooks) to start building with Cua today.
 
 <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-8">
-  <Card icon={<Rocket />} href="/docs/get-started/quickstart" title="Quickstart">
+  <Card icon={<Rocket />} href="/get-started/quickstart" title="Quickstart">
     Get up and running in 3 steps with Python or TypeScript.
   </Card>
-  <Card icon={<BookOpen />} href="/agent-sdk/agent-loops" title="Learn Core Concepts">
-    Understand agent loops, callbacks, and model composition.
+  <Card icon={<Zap />} href="/agent-sdk/agent-loops" title="Agent Loops">
+    Learn how agents work and how to build your own.
   </Card>
-  <Card icon={<Code />} href="/libraries/agent" title="API Reference">
-    Explore the full Agent SDK and Computer SDK APIs.
+  <Card icon={<BookOpen />} href="/computer-sdk/computers" title="Computer SDK">
+    Control desktop applications with the Computer SDK.
   </Card>
   <Card icon={<Monitor />} href="/example-usecases/form-filling" title="Example Use Cases">
     See Cua in action with real-world examples.

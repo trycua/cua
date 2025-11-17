@@ -37,6 +37,7 @@ export const baseOptions: BaseLayoutProps = {
         Cua
       </>
     ),
+    url: 'https://cua.ai',
   },
   githubUrl: 'https://github.com/trycua/cua',
   links: [

@@ -4,7 +4,6 @@
   "root": true,
   "defaultOpen": true,
   "pages": [
-    "index",
     "---[Rocket]Get Started---",
     "...get-started",
     "---[ChefHat]Cookbook---",

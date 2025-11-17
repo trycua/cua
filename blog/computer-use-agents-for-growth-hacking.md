@@ -55,7 +55,7 @@ After DevFest, we had 20+ new LinkedIn connections. Normally, this means hours o
 
 Sarina had a better idea: build the automation we wish existed, then open source it.
 
-**The automation is live**: [Post-Event Contact Export cookbook](https://code.cua.dev/docs/example-usecases/post-event-contact-export)
+**The automation is live**: [Post-Event Contact Export cookbook](https://cua.ai/docs/example-usecases/post-event-contact-export)
 
 ### How It Works
 

@@ -1,12 +1,12 @@
 # Cloud Windows Sandboxes GA + macOS Preview
 
-If you've been building with our `cua` libraries, you might've hit a limitation with local computer-use sandboxes: to run agents on Windows or macOS, you need to be on that OS—Windows Sandbox for Windows, Apple Virtualization for macOS. The only cross-platform option is Linux on Docker, which limits you to virtualizing Linux environments ([see all local options here](https://cua.ai/docs/computer-sdk/computers)).
+If you've been building with our `cua` libraries, you might've hit a limitation with local computer-use sandboxes: to run agents on Windows or macOS, you need to be on that OS - Windows Sandbox for Windows, Apple Virtualization for macOS. The only cross-platform option is Linux on Docker, which limits you to virtualizing Linux environments ([see all local options here](https://cua.ai/docs/computer-sdk/computers)).
 
 Today the story changes - we're announcing general availability of **Cloud Windows Sandboxes** and opening early preview access for **Cloud macOS Sandboxes**.
 
 ## Cloud Windows Sandboxes: Now GA
 
-![Cloud Windows Sandboxes](./assets/cloud-windows-ga.png)
+![Cloud Windows Sandboxes](https://github.com/user-attachments/assets/db15f4c4-70a4-425a-a264-82e629074de7)
 
 Cloud Windows Sandboxes are now generally available. You get a full Windows 11 desktop in your browser with Edge and Python pre-installed, working seamlessly with all our [Computer-Use libraries](https://github.com/trycua/cua) for RPA, UI automation, code execution, and agent development.
 
@@ -22,7 +22,7 @@ Cloud Windows Sandboxes are now generally available. You get a full Windows 11 d
 | Large | 8 cores | 32 GB | 256 GB SSD |
 
 <div align="center">
-  <video src="./assets/demo_wsb.mp4" width="600" controls></video>
+  <video src="https://github.com/user-attachments/assets/8ab07646-6018-4128-87ce-53180cfea696" width="600" controls></video>
 </div>
 
 **Pricing:** Windows Sandboxes start at 8 credits/hour (Small), 15 credits/hour (Medium), or 31 credits/hour (Large).
@@ -31,7 +31,7 @@ Cloud Windows Sandboxes are now generally available. You get a full Windows 11 d
 
 Running macOS locally comes with challenges: 30GB golden images, a maximum of 2 sandboxes per host, and unpredictable compatibility issues. With Cloud macOS Sandboxes, we provision bare-metal macOS hosts (M1, M2, M4) on-demand—giving you full desktop access without the overhead of managing local sandboxes.
 
-![macOS Preview Waitlist](./assets/macOS-waitlist.png)
+![macOS Preview Waitlist](https://github.com/user-attachments/assets/343c9a3f-59d8-4b1a-bba8-6af91e8a9cf0)
 
 **Preview access:** Invite-only. [Join the waitlist](https://cua.ai/macos-waitlist) if you're building agents for macOS workflows.
 

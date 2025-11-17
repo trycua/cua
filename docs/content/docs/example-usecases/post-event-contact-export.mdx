@@ -3,7 +3,7 @@ title: Post-Event Contact Export
 description: Run overnight contact extraction from LinkedIn, X, or other social platforms after networking events
 ---
 
-import { EditableCodeBlock, EditableValue, S } from '@/components/editable-code-block';
+import { Step, Steps } from 'fumadocs-ui/components/steps';
 import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
 
 ## Overview
@@ -26,7 +26,7 @@ This example focuses on LinkedIn but works across platforms. It uses [Cua Comput
 
 Traditional web scraping triggers anti-bot measures immediately. Cua's approach works across all platforms.
 
-## What You Get
+### What You Get
 
 The script generates two files with your extracted connections:
 
@@ -36,10 +36,6 @@ The script generates two files with your extracted connections:
 first,last,role,company,met_at,linkedin
 John,Smith,Software Engineer,Acme Corp,Google Devfest Toronto,https://www.linkedin.com/in/johnsmith
 Sarah,Johnson,Product Manager,Tech Inc,Google Devfest Toronto,https://www.linkedin.com/in/sarahjohnson
-Michael,Chen,Data Scientist,StartupXYZ,Google Devfest Toronto,https://www.linkedin.com/in/michaelchen
-Emily,Rodriguez,UX Designer,Design Co,Google Devfest Toronto,https://www.linkedin.com/in/emilyrodriguez
-David,Kim,Engineering Lead,BigTech,Google Devfest Toronto,https://www.linkedin.com/in/davidkim
-...
 ```
 
 **Messaging Links** (`linkedin_messaging_links_20250116_143022.txt`):
@@ -50,15 +46,19 @@ LinkedIn Messaging Compose Links
 
 1. https://www.linkedin.com/messaging/compose/?recipient=johnsmith
 2. https://www.linkedin.com/messaging/compose/?recipient=sarahjohnson
-3. https://www.linkedin.com/messaging/compose/?recipient=michaelchen
-4. https://www.linkedin.com/messaging/compose/?recipient=emilyrodriguez
-5. https://www.linkedin.com/messaging/compose/?recipient=davidkim
-...
 ```
 
-## Quickstart
+---
 
-Create a `requirements.txt` file with the following dependencies:
+<Steps>
+
+<Step>
+
+### Set Up Your Environment
+
+First, install the required dependencies:
+
+Create a `requirements.txt` file:
 
 ```text
 cua-agent
@@ -66,19 +66,25 @@ cua-computer
 python-dotenv>=1.0.0
 ```
 
-And install:
+Install the dependencies:
 
 ```bash
 pip install -r requirements.txt
 ```
 
-Create a `.env` file with the following environment variables:
+Create a `.env` file with your API keys:
 
 ```text
-ANTHROPIC_API_KEY=your-api-key
+ANTHROPIC_API_KEY=your-anthropic-api-key
 CUA_API_KEY=sk_cua-api01...
 CUA_CONTAINER_NAME=m-linux-...
 ```
+
+</Step>
+
+<Step>
+
+### Log Into LinkedIn Manually
 
 **Important**: Before running the script, manually log into LinkedIn through your VM:
 
@@ -88,31 +94,31 @@ CUA_CONTAINER_NAME=m-linux-...
 4. Close the browser but leave the VM running
 5. Your session is now saved and ready for automation!
 
-**Configuration**: Customize the script by editing these variables:
+This one-time manual login bypasses all bot detection.
+
+</Step>
+
+<Step>
+
+### Configure and Create Your Script
+
+Create a Python file (e.g., `contact_export.py`). You can customize:
 
 ```python
 # Where you met these connections (automatically added to CSV)
 MET_AT_REASON = "Google Devfest Toronto"
 
-# Number of contacts to extract (line 134)
+# Number of contacts to extract (in the main loop)
 for contact_num in range(1, 21):  # Change 21 to extract more/fewer contacts
 ```
 
-Select the environment you want to run the code in (_click on the underlined values in the code to edit them directly!_):
+Select your environment:
 
-<Tabs items={['☁️ Cloud', '🐳 Docker', '🍎 Lume', '🪟 Windows Sandbox']}>
-  <Tab value="☁️ Cloud">
+<Tabs items={['Cloud Sandbox', 'Linux on Docker', 'macOS Sandbox', 'Windows Sandbox']}>
+  <Tab value="Cloud Sandbox">
 
-<EditableCodeBlock
-  key="cloud-tab"
-  lang="python"
-  defaultValues={{
-    "sandbox-name": "m-linux-...",
-    "api_key": "sk_cua-api01...",
-    "met-at": "Google Devfest Toronto"
-  }}
->
-{`import asyncio
+```python
+import asyncio
 import csv
 import logging
 import os
@@ -125,28 +131,22 @@ from computer import Computer, VMProviderType
 from dotenv import load_dotenv
 
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(**name**)
+logger = logging.getLogger(__name__)
 
 # Configuration: Define where you met these connections
-
-MET_AT_REASON = "`}<EditableValue placeholder="met-at" />{`"
+MET_AT_REASON = "Google Devfest Toronto"
 
 def handle_sigint(sig, frame):
-print("\\n\\nExecution interrupted by user. Exiting gracefully...")
-exit(0)
+    print("\n\nExecution interrupted by user. Exiting gracefully...")
+    exit(0)
 
 def extract_public_id_from_linkedin_url(linkedin_url):
-"""
-Extract public ID from LinkedIn profile URL.
-Example: https://www.linkedin.com/in/taylor-r-devries/?lipi=... -> taylor-r-devries
-"""
-if not linkedin_url:
-return None
+    """Extract public ID from LinkedIn profile URL."""
+    if not linkedin_url:
+        return None
 
-    # Remove query parameters and trailing slashes
     url = linkedin_url.split('?')[0].rstrip('/')
 
-    # Extract the part after /in/
     if '/in/' in url:
         public_id = url.split('/in/')[-1]
         return public_id
@@ -154,28 +154,23 @@ return None
     return None
 
 def extract_contact_from_response(result_output):
-"""
-Extract contact information from agent's response.
-Expects the agent to return data in format:
-FIRST: value
-LAST: value
-ROLE: value
-COMPANY: value
-LINKEDIN: value
-
-    Note: met_at is auto-filled from MET_AT_REASON constant.
+    """
+    Extract contact information from agent's response.
+    Expects format:
+    FIRST: value
+    LAST: value
+    ROLE: value
+    COMPANY: value
+    LINKEDIN: value
     """
     contact = {
         'first': '',
         'last': '',
         'role': '',
         'company': '',
-        'met_at': MET_AT_REASON,  # Auto-fill from constant
+        'met_at': MET_AT_REASON,
         'linkedin': ''
     }
-
-    # Collect all text from messages for debugging
-    all_text = []
 
     for item in result_output:
         if item.get("type") == "message":
@@ -183,59 +178,46 @@ LINKEDIN: value
             for content_part in content:
                 text = content_part.get("text", "")
                 if text:
-                    all_text.append(text)
-                    # Parse structured output - look for the exact format
-                    for line in text.split('\\n'):
+                    for line in text.split('\n'):
                         line = line.strip()
-                        # Use case-insensitive matching and handle extra whitespace
                         line_upper = line.upper()
 
                         if line_upper.startswith("FIRST:"):
-                            value = line[6:].strip()  # Skip "FIRST:" prefix
+                            value = line[6:].strip()
                             if value and value.upper() != "N/A":
                                 contact['first'] = value
                         elif line_upper.startswith("LAST:"):
-                            value = line[5:].strip()  # Skip "LAST:" prefix
+                            value = line[5:].strip()
                             if value and value.upper() != "N/A":
                                 contact['last'] = value
                         elif line_upper.startswith("ROLE:"):
-                            value = line[5:].strip()  # Skip "ROLE:" prefix
+                            value = line[5:].strip()
                             if value and value.upper() != "N/A":
                                 contact['role'] = value
                         elif line_upper.startswith("COMPANY:"):
-                            value = line[8:].strip()  # Skip "COMPANY:" prefix
+                            value = line[8:].strip()
                             if value and value.upper() != "N/A":
                                 contact['company'] = value
                         elif line_upper.startswith("LINKEDIN:"):
-                            value = line[9:].strip()  # Skip "LINKEDIN:" prefix
+                            value = line[9:].strip()
                             if value and value.upper() != "N/A":
                                 contact['linkedin'] = value
-
-    # Debug logging
-    if not (contact['first'] or contact['last'] or contact['linkedin']):
-        logger.debug(f"Failed to extract. Full text content ({len(all_text)} messages):")
-        for i, text in enumerate(all_text[-3:]):  # Show last 3 messages
-            logger.debug(f"  Message {i}: {text[:200]}")
 
     return contact
 
 async def scrape_linkedin_connections():
-"""
-Scrape the first 20 connections from LinkedIn and export to CSV.
-The agent extracts data, and Python handles CSV writing programmatically.
-"""
+    """Scrape LinkedIn connections and export to CSV."""
 
-    # Generate output filename with timestamp
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     csv_filename = f"linkedin_connections_{timestamp}.csv"
     csv_path = os.path.join(os.getcwd(), csv_filename)
 
-    # Initialize CSV file with headers
+    # Initialize CSV file
     with open(csv_path, 'w', newline='', encoding='utf-8') as csvfile:
         writer = csv.DictWriter(csvfile, fieldnames=['first', 'last', 'role', 'company', 'met_at', 'linkedin'])
         writer.writeheader()
 
-    print(f"\\n🚀 Starting LinkedIn connections scraper")
+    print(f"\n🚀 Starting LinkedIn connections scraper")
     print(f"📁 Output file: {csv_path}")
     print(f"📍 Met at: {MET_AT_REASON}")
     print("=" * 80)
@@ -244,8 +226,8 @@ The agent extracts data, and Python handles CSV writing programmatically.
         async with Computer(
             os_type="linux",
             provider_type=VMProviderType.CLOUD,
-            name="`}<EditableValue placeholder="sandbox-name" />{`",
-            api_key="`}<EditableValue placeholder="api_key" />{`",
+            name=os.environ["CUA_CONTAINER_NAME"],  # Your sandbox name
+            api_key=os.environ["CUA_API_KEY"],
             verbosity=logging.INFO,
         ) as computer:
 
@@ -263,1257 +245,224 @@ The agent extracts data, and Python handles CSV writing programmatically.
 
             # Task 1: Navigate to LinkedIn connections page
             navigation_task = (
-                "STEP 1 - NAVIGATE TO LINKEDIN CONNECTIONS PAGE:\\n"
-                "1. Open a web browser (Chrome or Firefox)\\n"
-                "2. Navigate to https://www.linkedin.com/mynetwork/invite-connect/connections/\\n"
-                "3. Wait for the page to fully load (look for the connection list to appear)\\n"
-                "4. If prompted to log in, handle the authentication\\n"
-                "5. Confirm you can see the list of connections displayed on the page\\n"
-                "6. Ready to start extracting contacts one by one"
+                "STEP 1 - NAVIGATE TO LINKEDIN CONNECTIONS PAGE:\n"
+                "1. Open a web browser (Chrome or Firefox)\n"
+                "2. Navigate to https://www.linkedin.com/mynetwork/invite-connect/connections/\n"
+                "3. Wait for the page to fully load\n"
+                "4. Confirm you can see the list of connections\n"
+                "5. Ready to start extracting contacts"
             )
 
-            print(f"\\n[Task 1/21] Navigating to LinkedIn connections page...")
+            print(f"\n[Task 1/21] Navigating to LinkedIn...")
             history.append({"role": "user", "content": navigation_task})
 
             async for result in agent.run(history, stream=False):
                 history += result.get("output", [])
-                for item in result.get("output", []):
-                    if item.get("type") == "message":
-                        content = item.get("content", [])
-                        for content_part in content:
-                            if content_part.get("text"):
-                                logger.debug(f"Agent: {content_part.get('text')}")
 
-            print(f"✅ Navigation completed\\n")
+            print(f"✅ Navigation completed\n")
 
-            # Tasks 2-21: Extract each of the 20 contacts
+            # Extract 20 contacts
             contacts_extracted = 0
-            linkedin_urls = []  # Track LinkedIn URLs for bonus messaging links
-            previous_contact_name = None  # Track the previous contact's name for easy navigation
+            linkedin_urls = []
+            previous_contact_name = None
 
             for contact_num in range(1, 21):
-                # Build extraction task based on whether this is the first contact or not
+                # Build extraction task
                 if contact_num == 1:
-                    # First contact - start from the top
                     extraction_task = (
-                        f"STEP {contact_num + 1} - EXTRACT CONTACT {contact_num} OF 20:\\n"
-                        f"1. Look at the very first connection at the top of the list\\n"
-                        f"2. Click on their name/profile link to open their LinkedIn profile page\\n"
-                        f"3. Wait for their profile page to load completely\\n"
-                        f"4. Extract the following information from their profile:\\n"
-                        f"   - First name: Extract from their display name at the top (just the first name)\\n"
-                        f"   - Last name: Extract from their display name at the top (just the last name)\\n"
-                        f"   - Current role/title: Extract from the HEADLINE directly under their name (e.g., 'Software Engineer')\\n"
-                        f"   - Company name: Extract from the HEADLINE (typically after 'at' or '@', e.g., 'Software Engineer at Google' → 'Google')\\n"
-                        f"   - LinkedIn profile URL: Copy the FULL URL from the browser address bar (must start with https://www.linkedin.com/in/)\\n"
-                        f"5. CRITICAL: You MUST return ALL 5 fields in this EXACT format with each field on its own line:\\n"
-                        f"FIRST: [first name]\\n"
-                        f"LAST: [last name]\\n"
-                        f"ROLE: [role/title from headline]\\n"
-                        f"COMPANY: [company from headline]\\n"
-                        f"LINKEDIN: [full profile URL]\\n"
-                        f"\\n"
-                        f"6. If any field is not available, write 'N/A' instead of leaving it blank\\n"
-                        f"7. Do NOT add any extra text before or after these 5 lines\\n"
-                        f"8. Navigate back to the connections list page"
+                        f"STEP {contact_num + 1} - EXTRACT CONTACT {contact_num} OF 20:\n"
+                        f"1. Click on the first connection's profile\n"
+                        f"2. Extract: FIRST, LAST, ROLE, COMPANY, LINKEDIN URL\n"
+                        f"3. Return in exact format:\n"
+                        f"FIRST: [value]\n"
+                        f"LAST: [value]\n"
+                        f"ROLE: [value]\n"
+                        f"COMPANY: [value]\n"
+                        f"LINKEDIN: [value]\n"
+                        f"4. Navigate back to connections list"
                     )
                 else:
-                    # Subsequent contacts - reference the previous contact
                     extraction_task = (
-                        f"STEP {contact_num + 1} - EXTRACT CONTACT {contact_num} OF 20:\\n"
-                        f"1. Find the contact named '{previous_contact_name}' in the list\\n"
-                        f"2. If you don't see '{previous_contact_name}' on the screen, scroll down slowly until you find them\\n"
-                        f"3. Once you find '{previous_contact_name}', look at the contact directly BELOW them\\n"
-                        f"4. Click on that contact's name/profile link (the one below '{previous_contact_name}') to open their profile page\\n"
-                        f"5. Wait for their profile page to load completely\\n"
-                        f"6. Extract the following information from their profile:\\n"
-                        f"   - First name: Extract from their display name at the top (just the first name)\\n"
-                        f"   - Last name: Extract from their display name at the top (just the last name)\\n"
-                        f"   - Current role/title: Extract from the HEADLINE directly under their name (e.g., 'Software Engineer')\\n"
-                        f"   - Company name: Extract from the HEADLINE (typically after 'at' or '@', e.g., 'Software Engineer at Google' → 'Google')\\n"
-                        f"   - LinkedIn profile URL: Copy the FULL URL from the browser address bar (must start with https://www.linkedin.com/in/)\\n"
-                        f"7. CRITICAL: You MUST return ALL 5 fields in this EXACT format with each field on its own line:\\n"
-                        f"FIRST: [first name]\\n"
-                        f"LAST: [last name]\\n"
-                        f"ROLE: [role/title from headline]\\n"
-                        f"COMPANY: [company from headline]\\n"
-                        f"LINKEDIN: [full profile URL]\\n"
-                        f"\\n"
-                        f"8. If any field is not available, write 'N/A' instead of leaving it blank\\n"
-                        f"9. Do NOT add any extra text before or after these 5 lines\\n"
-                        f"10. Navigate back to the connections list page"
+                        f"STEP {contact_num + 1} - EXTRACT CONTACT {contact_num} OF 20:\n"
+                        f"1. Find '{previous_contact_name}' in the list\n"
+                        f"2. Click on the contact BELOW them\n"
+                        f"3. Extract: FIRST, LAST, ROLE, COMPANY, LINKEDIN URL\n"
+                        f"4. Return in exact format:\n"
+                        f"FIRST: [value]\n"
+                        f"LAST: [value]\n"
+                        f"ROLE: [value]\n"
+                        f"COMPANY: [value]\n"
+                        f"LINKEDIN: [value]\n"
+                        f"5. Navigate back"
                     )
 
                 print(f"[Task {contact_num + 1}/21] Extracting contact {contact_num}/20...")
                 history.append({"role": "user", "content": extraction_task})
 
-                # Collect all output from the agent
                 all_output = []
                 async for result in agent.run(history, stream=False):
                     output = result.get("output", [])
                     history += output
                     all_output.extend(output)
 
-                    # Log agent output at debug level (only shown if verbosity increased)
-                    for item in output:
-                        if item.get("type") == "message":
-                            content = item.get("content", [])
-                            for content_part in content:
-                                if content_part.get("text"):
-                                    logger.debug(f"Agent: {content_part.get('text')}")
-
-                # Now extract contact information from ALL collected output (not just partial results)
                 contact_data = extract_contact_from_response(all_output)
 
-                # Validate we got at least the critical fields (name or LinkedIn URL)
                 has_name = bool(contact_data['first'] and contact_data['last'])
                 has_linkedin = bool(contact_data['linkedin'] and 'linkedin.com' in contact_data['linkedin'])
 
-                # Write to CSV if we got at least name OR linkedin
                 if has_name or has_linkedin:
                     with open(csv_path, 'a', newline='', encoding='utf-8') as csvfile:
                         writer = csv.DictWriter(csvfile, fieldnames=['first', 'last', 'role', 'company', 'met_at', 'linkedin'])
                         writer.writerow(contact_data)
                     contacts_extracted += 1
 
-                    # Track LinkedIn URL for messaging links
                     if contact_data['linkedin']:
                         linkedin_urls.append(contact_data['linkedin'])
 
-                    # Remember this contact's name for the next iteration
                     if has_name:
                         previous_contact_name = f"{contact_data['first']} {contact_data['last']}".strip()
 
-                    # Success message with what we got
                     name_str = f"{contact_data['first']} {contact_data['last']}" if has_name else "[No name]"
-                    linkedin_str = "✓ LinkedIn" if has_linkedin else "✗ No LinkedIn"
-                    role_str = f"({contact_data['role']})" if contact_data['role'] else "(No role)"
-                    print(f"✅ Contact {contact_num}/20 saved: {name_str} {role_str} | {linkedin_str}")
+                    print(f"✅ Contact {contact_num}/20 saved: {name_str}")
                 else:
                     print(f"⚠️  Could not extract valid data for contact {contact_num}")
-                    print(f"    Got: first='{contact_data['first']}', last='{contact_data['last']}', linkedin='{contact_data['linkedin'][:50] if contact_data['linkedin'] else 'None'}'")
-                    print(f"    Check the agent's output above to see what was returned")
-                    print(f"    Total output items: {len(all_output)}")
 
-                # Progress update every 5 contacts
                 if contact_num % 5 == 0:
-                    print(f"\\n📈 Progress: {contacts_extracted}/{contact_num} contacts extracted so far...\\n")
+                    print(f"\n📈 Progress: {contacts_extracted}/{contact_num} contacts extracted\n")
 
-            # BONUS: Create messaging compose links file
+            # Create messaging links file
             messaging_filename = f"linkedin_messaging_links_{timestamp}.txt"
             messaging_path = os.path.join(os.getcwd(), messaging_filename)
 
             with open(messaging_path, 'w', encoding='utf-8') as txtfile:
-                txtfile.write("LinkedIn Messaging Compose Links\\n")
-                txtfile.write("=" * 80 + "\\n\\n")
+                txtfile.write("LinkedIn Messaging Compose Links\n")
+                txtfile.write("=" * 80 + "\n\n")
 
                 for i, linkedin_url in enumerate(linkedin_urls, 1):
                     public_id = extract_public_id_from_linkedin_url(linkedin_url)
                     if public_id:
                         messaging_url = f"https://www.linkedin.com/messaging/compose/?recipient={public_id}"
-                        txtfile.write(f"{i}. {messaging_url}\\n")
-                    else:
-                        txtfile.write(f"{i}. [Could not extract public ID from: {linkedin_url}]\\n")
+                        txtfile.write(f"{i}. {messaging_url}\n")
 
-            print("\\n" + "="*80)
+            print("\n" + "="*80)
             print("🎉 All tasks completed!")
             print(f"📁 CSV file saved to: {csv_path}")
             print(f"📊 Total contacts extracted: {contacts_extracted}/20")
-            print(f"💬 Bonus: Messaging links saved to: {messaging_path}")
-            print(f"📝 Total messaging links: {len(linkedin_urls)}")
+            print(f"💬 Messaging links saved to: {messaging_path}")
             print("="*80)
 
     except Exception as e:
-        print(f"\\n❌ Error during scraping: {e}")
+        print(f"\n❌ Error: {e}")
         traceback.print_exc()
         raise
 
 def main():
-try:
-load_dotenv()
+    try:
+        load_dotenv()
 
         if "ANTHROPIC_API_KEY" not in os.environ:
-            raise RuntimeError(
-                "Please set the ANTHROPIC_API_KEY environment variable.\\n"
-                "You can add it to a .env file in the project root."
-            )
+            raise RuntimeError("Please set ANTHROPIC_API_KEY in .env")
 
         if "CUA_API_KEY" not in os.environ:
-            raise RuntimeError(
-                "Please set the CUA_API_KEY environment variable.\\n"
-                "You can add it to a .env file in the project root."
-            )
+            raise RuntimeError("Please set CUA_API_KEY in .env")
+
+        if "CUA_CONTAINER_NAME" not in os.environ:
+            raise RuntimeError("Please set CUA_CONTAINER_NAME in .env")
 
         signal.signal(signal.SIGINT, handle_sigint)
 
         asyncio.run(scrape_linkedin_connections())
 
     except Exception as e:
-        print(f"\\n❌ Error running automation: {e}")
+        print(f"\n❌ Error: {e}")
         traceback.print_exc()
 
-if **name** == "**main**":
-main()`}
-
-</EditableCodeBlock>
+if __name__ == "__main__":
+    main()
+```
 
   </Tab>
-  <Tab value="🐳 Docker">
+  <Tab value="Linux on Docker">
 
-<EditableCodeBlock
-  key="docker-tab"
-  lang="python"
-  defaultValues={{
-    "sandbox-name": "trycua/cua-ubuntu:latest",
-    "met-at": "Google Devfest Toronto"
-  }}
->
-{`import asyncio
-import csv
-import logging
-import os
-import signal
-import traceback
-from datetime import datetime
+```python
+# Same code as Cloud Sandbox, but change Computer initialization to:
+async with Computer(
+    os_type="linux",
+    provider_type=VMProviderType.DOCKER,
+    image="trycua/cua-xfce:latest",
+    verbosity=logging.INFO,
+) as computer:
+```
 
-from agent import ComputerAgent
-from computer import Computer, VMProviderType
-from dotenv import load_dotenv
-
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(**name**)
-
-# Configuration: Define where you met these connections
-
-MET_AT_REASON = "`}<EditableValue placeholder="met-at" />{`"
-
-def handle_sigint(sig, frame):
-print("\\n\\nExecution interrupted by user. Exiting gracefully...")
-exit(0)
-
-def extract_public_id_from_linkedin_url(linkedin_url):
-"""
-Extract public ID from LinkedIn profile URL.
-Example: https://www.linkedin.com/in/taylor-r-devries/?lipi=... -> taylor-r-devries
-"""
-if not linkedin_url:
-return None
-
-    # Remove query parameters and trailing slashes
-    url = linkedin_url.split('?')[0].rstrip('/')
-
-    # Extract the part after /in/
-    if '/in/' in url:
-        public_id = url.split('/in/')[-1]
-        return public_id
-
-    return None
-
-def extract_contact_from_response(result_output):
-"""
-Extract contact information from agent's response.
-Expects the agent to return data in format:
-FIRST: value
-LAST: value
-ROLE: value
-COMPANY: value
-LINKEDIN: value
-
-    Note: met_at is auto-filled from MET_AT_REASON constant.
-    """
-    contact = {
-        'first': '',
-        'last': '',
-        'role': '',
-        'company': '',
-        'met_at': MET_AT_REASON,  # Auto-fill from constant
-        'linkedin': ''
-    }
-
-    # Collect all text from messages for debugging
-    all_text = []
-
-    for item in result_output:
-        if item.get("type") == "message":
-            content = item.get("content", [])
-            for content_part in content:
-                text = content_part.get("text", "")
-                if text:
-                    all_text.append(text)
-                    # Parse structured output - look for the exact format
-                    for line in text.split('\\n'):
-                        line = line.strip()
-                        # Use case-insensitive matching and handle extra whitespace
-                        line_upper = line.upper()
-
-                        if line_upper.startswith("FIRST:"):
-                            value = line[6:].strip()  # Skip "FIRST:" prefix
-                            if value and value.upper() != "N/A":
-                                contact['first'] = value
-                        elif line_upper.startswith("LAST:"):
-                            value = line[5:].strip()  # Skip "LAST:" prefix
-                            if value and value.upper() != "N/A":
-                                contact['last'] = value
-                        elif line_upper.startswith("ROLE:"):
-                            value = line[5:].strip()  # Skip "ROLE:" prefix
-                            if value and value.upper() != "N/A":
-                                contact['role'] = value
-                        elif line_upper.startswith("COMPANY:"):
-                            value = line[8:].strip()  # Skip "COMPANY:" prefix
-                            if value and value.upper() != "N/A":
-                                contact['company'] = value
-                        elif line_upper.startswith("LINKEDIN:"):
-                            value = line[9:].strip()  # Skip "LINKEDIN:" prefix
-                            if value and value.upper() != "N/A":
-                                contact['linkedin'] = value
-
-    # Debug logging
-    if not (contact['first'] or contact['last'] or contact['linkedin']):
-        logger.debug(f"Failed to extract. Full text content ({len(all_text)} messages):")
-        for i, text in enumerate(all_text[-3:]):  # Show last 3 messages
-            logger.debug(f"  Message {i}: {text[:200]}")
-
-    return contact
-
-async def scrape_linkedin_connections():
-"""
-Scrape the first 20 connections from LinkedIn and export to CSV.
-The agent extracts data, and Python handles CSV writing programmatically.
-"""
-
-    # Generate output filename with timestamp
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    csv_filename = f"linkedin_connections_{timestamp}.csv"
-    csv_path = os.path.join(os.getcwd(), csv_filename)
-
-    # Initialize CSV file with headers
-    with open(csv_path, 'w', newline='', encoding='utf-8') as csvfile:
-        writer = csv.DictWriter(csvfile, fieldnames=['first', 'last', 'role', 'company', 'met_at', 'linkedin'])
-        writer.writeheader()
-
-    print(f"\\n🚀 Starting LinkedIn connections scraper")
-    print(f"📁 Output file: {csv_path}")
-    print(f"📍 Met at: {MET_AT_REASON}")
-    print("=" * 80)
-
-    try:
-        async with Computer(
-            os_type="linux",
-            provider_type=VMProviderType.DOCKER,
-            name="`}<EditableValue placeholder="sandbox-name" />{`",
-            verbosity=logging.INFO,
-        ) as computer:
-
-            agent = ComputerAgent(
-                model="anthropic/claude-sonnet-4-5-20250929",
-                tools=[computer],
-                only_n_most_recent_images=3,
-                verbosity=logging.INFO,
-                trajectory_dir="trajectories",
-                use_prompt_caching=True,
-                max_trajectory_budget=10.0,
-            )
-
-            history = []
-
-            # Task 1: Navigate to LinkedIn connections page
-            navigation_task = (
-                "STEP 1 - NAVIGATE TO LINKEDIN CONNECTIONS PAGE:\\n"
-                "1. Open a web browser (Chrome or Firefox)\\n"
-                "2. Navigate to https://www.linkedin.com/mynetwork/invite-connect/connections/\\n"
-                "3. Wait for the page to fully load (look for the connection list to appear)\\n"
-                "4. If prompted to log in, handle the authentication\\n"
-                "5. Confirm you can see the list of connections displayed on the page\\n"
-                "6. Ready to start extracting contacts one by one"
-            )
-
-            print(f"\\n[Task 1/21] Navigating to LinkedIn connections page...")
-            history.append({"role": "user", "content": navigation_task})
-
-            async for result in agent.run(history, stream=False):
-                history += result.get("output", [])
-                for item in result.get("output", []):
-                    if item.get("type") == "message":
-                        content = item.get("content", [])
-                        for content_part in content:
-                            if content_part.get("text"):
-                                logger.debug(f"Agent: {content_part.get('text')}")
-
-            print(f"✅ Navigation completed\\n")
-
-            # Tasks 2-21: Extract each of the 20 contacts
-            contacts_extracted = 0
-            linkedin_urls = []  # Track LinkedIn URLs for bonus messaging links
-            previous_contact_name = None  # Track the previous contact's name for easy navigation
-
-            for contact_num in range(1, 21):
-                # Build extraction task based on whether this is the first contact or not
-                if contact_num == 1:
-                    # First contact - start from the top
-                    extraction_task = (
-                        f"STEP {contact_num + 1} - EXTRACT CONTACT {contact_num} OF 20:\\n"
-                        f"1. Look at the very first connection at the top of the list\\n"
-                        f"2. Click on their name/profile link to open their LinkedIn profile page\\n"
-                        f"3. Wait for their profile page to load completely\\n"
-                        f"4. Extract the following information from their profile:\\n"
-                        f"   - First name: Extract from their display name at the top (just the first name)\\n"
-                        f"   - Last name: Extract from their display name at the top (just the last name)\\n"
-                        f"   - Current role/title: Extract from the HEADLINE directly under their name (e.g., 'Software Engineer')\\n"
-                        f"   - Company name: Extract from the HEADLINE (typically after 'at' or '@', e.g., 'Software Engineer at Google' → 'Google')\\n"
-                        f"   - LinkedIn profile URL: Copy the FULL URL from the browser address bar (must start with https://www.linkedin.com/in/)\\n"
-                        f"5. CRITICAL: You MUST return ALL 5 fields in this EXACT format with each field on its own line:\\n"
-                        f"FIRST: [first name]\\n"
-                        f"LAST: [last name]\\n"
-                        f"ROLE: [role/title from headline]\\n"
-                        f"COMPANY: [company from headline]\\n"
-                        f"LINKEDIN: [full profile URL]\\n"
-                        f"\\n"
-                        f"6. If any field is not available, write 'N/A' instead of leaving it blank\\n"
-                        f"7. Do NOT add any extra text before or after these 5 lines\\n"
-                        f"8. Navigate back to the connections list page"
-                    )
-                else:
-                    # Subsequent contacts - reference the previous contact
-                    extraction_task = (
-                        f"STEP {contact_num + 1} - EXTRACT CONTACT {contact_num} OF 20:\\n"
-                        f"1. Find the contact named '{previous_contact_name}' in the list\\n"
-                        f"2. If you don't see '{previous_contact_name}' on the screen, scroll down slowly until you find them\\n"
-                        f"3. Once you find '{previous_contact_name}', look at the contact directly BELOW them\\n"
-                        f"4. Click on that contact's name/profile link (the one below '{previous_contact_name}') to open their profile page\\n"
-                        f"5. Wait for their profile page to load completely\\n"
-                        f"6. Extract the following information from their profile:\\n"
-                        f"   - First name: Extract from their display name at the top (just the first name)\\n"
-                        f"   - Last name: Extract from their display name at the top (just the last name)\\n"
-                        f"   - Current role/title: Extract from the HEADLINE directly under their name (e.g., 'Software Engineer')\\n"
-                        f"   - Company name: Extract from the HEADLINE (typically after 'at' or '@', e.g., 'Software Engineer at Google' → 'Google')\\n"
-                        f"   - LinkedIn profile URL: Copy the FULL URL from the browser address bar (must start with https://www.linkedin.com/in/)\\n"
-                        f"7. CRITICAL: You MUST return ALL 5 fields in this EXACT format with each field on its own line:\\n"
-                        f"FIRST: [first name]\\n"
-                        f"LAST: [last name]\\n"
-                        f"ROLE: [role/title from headline]\\n"
-                        f"COMPANY: [company from headline]\\n"
-                        f"LINKEDIN: [full profile URL]\\n"
-                        f"\\n"
-                        f"8. If any field is not available, write 'N/A' instead of leaving it blank\\n"
-                        f"9. Do NOT add any extra text before or after these 5 lines\\n"
-                        f"10. Navigate back to the connections list page"
-                    )
-
-                print(f"[Task {contact_num + 1}/21] Extracting contact {contact_num}/20...")
-                history.append({"role": "user", "content": extraction_task})
-
-                # Collect all output from the agent
-                all_output = []
-                async for result in agent.run(history, stream=False):
-                    output = result.get("output", [])
-                    history += output
-                    all_output.extend(output)
-
-                    # Log agent output at debug level (only shown if verbosity increased)
-                    for item in output:
-                        if item.get("type") == "message":
-                            content = item.get("content", [])
-                            for content_part in content:
-                                if content_part.get("text"):
-                                    logger.debug(f"Agent: {content_part.get('text')}")
-
-                # Now extract contact information from ALL collected output (not just partial results)
-                contact_data = extract_contact_from_response(all_output)
-
-                # Validate we got at least the critical fields (name or LinkedIn URL)
-                has_name = bool(contact_data['first'] and contact_data['last'])
-                has_linkedin = bool(contact_data['linkedin'] and 'linkedin.com' in contact_data['linkedin'])
-
-                # Write to CSV if we got at least name OR linkedin
-                if has_name or has_linkedin:
-                    with open(csv_path, 'a', newline='', encoding='utf-8') as csvfile:
-                        writer = csv.DictWriter(csvfile, fieldnames=['first', 'last', 'role', 'company', 'met_at', 'linkedin'])
-                        writer.writerow(contact_data)
-                    contacts_extracted += 1
-
-                    # Track LinkedIn URL for messaging links
-                    if contact_data['linkedin']:
-                        linkedin_urls.append(contact_data['linkedin'])
-
-                    # Remember this contact's name for the next iteration
-                    if has_name:
-                        previous_contact_name = f"{contact_data['first']} {contact_data['last']}".strip()
-
-                    # Success message with what we got
-                    name_str = f"{contact_data['first']} {contact_data['last']}" if has_name else "[No name]"
-                    linkedin_str = "✓ LinkedIn" if has_linkedin else "✗ No LinkedIn"
-                    role_str = f"({contact_data['role']})" if contact_data['role'] else "(No role)"
-                    print(f"✅ Contact {contact_num}/20 saved: {name_str} {role_str} | {linkedin_str}")
-                else:
-                    print(f"⚠️  Could not extract valid data for contact {contact_num}")
-                    print(f"    Got: first='{contact_data['first']}', last='{contact_data['last']}', linkedin='{contact_data['linkedin'][:50] if contact_data['linkedin'] else 'None'}'")
-                    print(f"    Check the agent's output above to see what was returned")
-                    print(f"    Total output items: {len(all_output)}")
-
-                # Progress update every 5 contacts
-                if contact_num % 5 == 0:
-                    print(f"\\n📈 Progress: {contacts_extracted}/{contact_num} contacts extracted so far...\\n")
-
-            # BONUS: Create messaging compose links file
-            messaging_filename = f"linkedin_messaging_links_{timestamp}.txt"
-            messaging_path = os.path.join(os.getcwd(), messaging_filename)
-
-            with open(messaging_path, 'w', encoding='utf-8') as txtfile:
-                txtfile.write("LinkedIn Messaging Compose Links\\n")
-                txtfile.write("=" * 80 + "\\n\\n")
-
-                for i, linkedin_url in enumerate(linkedin_urls, 1):
-                    public_id = extract_public_id_from_linkedin_url(linkedin_url)
-                    if public_id:
-                        messaging_url = f"https://www.linkedin.com/messaging/compose/?recipient={public_id}"
-                        txtfile.write(f"{i}. {messaging_url}\\n")
-                    else:
-                        txtfile.write(f"{i}. [Could not extract public ID from: {linkedin_url}]\\n")
-
-            print("\\n" + "="*80)
-            print("🎉 All tasks completed!")
-            print(f"📁 CSV file saved to: {csv_path}")
-            print(f"📊 Total contacts extracted: {contacts_extracted}/20")
-            print(f"💬 Bonus: Messaging links saved to: {messaging_path}")
-            print(f"📝 Total messaging links: {len(linkedin_urls)}")
-            print("="*80)
-
-    except Exception as e:
-        print(f"\\n❌ Error during scraping: {e}")
-        traceback.print_exc()
-        raise
-
-def main():
-try:
-load_dotenv()
-
-        if "ANTHROPIC_API_KEY" not in os.environ:
-            raise RuntimeError(
-                "Please set the ANTHROPIC_API_KEY environment variable.\\n"
-                "You can add it to a .env file in the project root."
-            )
-
-        signal.signal(signal.SIGINT, handle_sigint)
-
-        asyncio.run(scrape_linkedin_connections())
-
-    except Exception as e:
-        print(f"\\n❌ Error running automation: {e}")
-        traceback.print_exc()
-
-if **name** == "**main**":
-main()`}
-
-</EditableCodeBlock>
+And remove the `CUA_API_KEY` and `CUA_CONTAINER_NAME` requirements from `.env` and the validation checks.
 
   </Tab>
-  <Tab value="🍎 Lume">
+  <Tab value="macOS Sandbox">
 
-<EditableCodeBlock
-  key="lume-tab"
-  lang="python"
-  defaultValues={{
-    "sandbox-name": "macos-sequoia-cua:latest",
-    "met-at": "Google Devfest Toronto"
-  }}
->
-{`import asyncio
-import csv
-import logging
-import os
-import signal
-import traceback
-from datetime import datetime
+```python
+# Same code as Cloud Sandbox, but change Computer initialization to:
+async with Computer(
+    os_type="macos",
+    provider_type=VMProviderType.LUME,
+    name="macos-sequoia-cua:latest",
+    verbosity=logging.INFO,
+) as computer:
+```
 
-from agent import ComputerAgent
-from computer import Computer, VMProviderType
-from dotenv import load_dotenv
-
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(**name**)
-
-# Configuration: Define where you met these connections
-
-MET_AT_REASON = "`}<EditableValue placeholder="met-at" />{`"
-
-def handle_sigint(sig, frame):
-print("\\n\\nExecution interrupted by user. Exiting gracefully...")
-exit(0)
-
-def extract_public_id_from_linkedin_url(linkedin_url):
-"""
-Extract public ID from LinkedIn profile URL.
-Example: https://www.linkedin.com/in/taylor-r-devries/?lipi=... -> taylor-r-devries
-"""
-if not linkedin_url:
-return None
-
-    # Remove query parameters and trailing slashes
-    url = linkedin_url.split('?')[0].rstrip('/')
-
-    # Extract the part after /in/
-    if '/in/' in url:
-        public_id = url.split('/in/')[-1]
-        return public_id
-
-    return None
-
-def extract_contact_from_response(result_output):
-"""
-Extract contact information from agent's response.
-Expects the agent to return data in format:
-FIRST: value
-LAST: value
-ROLE: value
-COMPANY: value
-LINKEDIN: value
-
-    Note: met_at is auto-filled from MET_AT_REASON constant.
-    """
-    contact = {
-        'first': '',
-        'last': '',
-        'role': '',
-        'company': '',
-        'met_at': MET_AT_REASON,  # Auto-fill from constant
-        'linkedin': ''
-    }
-
-    # Collect all text from messages for debugging
-    all_text = []
-
-    for item in result_output:
-        if item.get("type") == "message":
-            content = item.get("content", [])
-            for content_part in content:
-                text = content_part.get("text", "")
-                if text:
-                    all_text.append(text)
-                    # Parse structured output - look for the exact format
-                    for line in text.split('\\n'):
-                        line = line.strip()
-                        # Use case-insensitive matching and handle extra whitespace
-                        line_upper = line.upper()
-
-                        if line_upper.startswith("FIRST:"):
-                            value = line[6:].strip()  # Skip "FIRST:" prefix
-                            if value and value.upper() != "N/A":
-                                contact['first'] = value
-                        elif line_upper.startswith("LAST:"):
-                            value = line[5:].strip()  # Skip "LAST:" prefix
-                            if value and value.upper() != "N/A":
-                                contact['last'] = value
-                        elif line_upper.startswith("ROLE:"):
-                            value = line[5:].strip()  # Skip "ROLE:" prefix
-                            if value and value.upper() != "N/A":
-                                contact['role'] = value
-                        elif line_upper.startswith("COMPANY:"):
-                            value = line[8:].strip()  # Skip "COMPANY:" prefix
-                            if value and value.upper() != "N/A":
-                                contact['company'] = value
-                        elif line_upper.startswith("LINKEDIN:"):
-                            value = line[9:].strip()  # Skip "LINKEDIN:" prefix
-                            if value and value.upper() != "N/A":
-                                contact['linkedin'] = value
-
-    # Debug logging
-    if not (contact['first'] or contact['last'] or contact['linkedin']):
-        logger.debug(f"Failed to extract. Full text content ({len(all_text)} messages):")
-        for i, text in enumerate(all_text[-3:]):  # Show last 3 messages
-            logger.debug(f"  Message {i}: {text[:200]}")
-
-    return contact
-
-async def scrape_linkedin_connections():
-"""
-Scrape the first 20 connections from LinkedIn and export to CSV.
-The agent extracts data, and Python handles CSV writing programmatically.
-"""
-
-    # Generate output filename with timestamp
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    csv_filename = f"linkedin_connections_{timestamp}.csv"
-    csv_path = os.path.join(os.getcwd(), csv_filename)
-
-    # Initialize CSV file with headers
-    with open(csv_path, 'w', newline='', encoding='utf-8') as csvfile:
-        writer = csv.DictWriter(csvfile, fieldnames=['first', 'last', 'role', 'company', 'met_at', 'linkedin'])
-        writer.writeheader()
-
-    print(f"\\n🚀 Starting LinkedIn connections scraper")
-    print(f"📁 Output file: {csv_path}")
-    print(f"📍 Met at: {MET_AT_REASON}")
-    print("=" * 80)
-
-    try:
-        async with Computer(
-            os_type="macos",
-            provider_type=VMProviderType.LUME,
-            name="`}<EditableValue placeholder="sandbox-name" />{`",
-            verbosity=logging.INFO,
-        ) as computer:
-
-            agent = ComputerAgent(
-                model="anthropic/claude-sonnet-4-5-20250929",
-                tools=[computer],
-                only_n_most_recent_images=3,
-                verbosity=logging.INFO,
-                trajectory_dir="trajectories",
-                use_prompt_caching=True,
-                max_trajectory_budget=10.0,
-            )
-
-            history = []
-
-            # Task 1: Navigate to LinkedIn connections page
-            navigation_task = (
-                "STEP 1 - NAVIGATE TO LINKEDIN CONNECTIONS PAGE:\\n"
-                "1. Open a web browser (Chrome or Firefox)\\n"
-                "2. Navigate to https://www.linkedin.com/mynetwork/invite-connect/connections/\\n"
-                "3. Wait for the page to fully load (look for the connection list to appear)\\n"
-                "4. If prompted to log in, handle the authentication\\n"
-                "5. Confirm you can see the list of connections displayed on the page\\n"
-                "6. Ready to start extracting contacts one by one"
-            )
-
-            print(f"\\n[Task 1/21] Navigating to LinkedIn connections page...")
-            history.append({"role": "user", "content": navigation_task})
-
-            async for result in agent.run(history, stream=False):
-                history += result.get("output", [])
-                for item in result.get("output", []):
-                    if item.get("type") == "message":
-                        content = item.get("content", [])
-                        for content_part in content:
-                            if content_part.get("text"):
-                                logger.debug(f"Agent: {content_part.get('text')}")
-
-            print(f"✅ Navigation completed\\n")
-
-            # Tasks 2-21: Extract each of the 20 contacts
-            contacts_extracted = 0
-            linkedin_urls = []  # Track LinkedIn URLs for bonus messaging links
-            previous_contact_name = None  # Track the previous contact's name for easy navigation
-
-            for contact_num in range(1, 21):
-                # Build extraction task based on whether this is the first contact or not
-                if contact_num == 1:
-                    # First contact - start from the top
-                    extraction_task = (
-                        f"STEP {contact_num + 1} - EXTRACT CONTACT {contact_num} OF 20:\\n"
-                        f"1. Look at the very first connection at the top of the list\\n"
-                        f"2. Click on their name/profile link to open their LinkedIn profile page\\n"
-                        f"3. Wait for their profile page to load completely\\n"
-                        f"4. Extract the following information from their profile:\\n"
-                        f"   - First name: Extract from their display name at the top (just the first name)\\n"
-                        f"   - Last name: Extract from their display name at the top (just the last name)\\n"
-                        f"   - Current role/title: Extract from the HEADLINE directly under their name (e.g., 'Software Engineer')\\n"
-                        f"   - Company name: Extract from the HEADLINE (typically after 'at' or '@', e.g., 'Software Engineer at Google' → 'Google')\\n"
-                        f"   - LinkedIn profile URL: Copy the FULL URL from the browser address bar (must start with https://www.linkedin.com/in/)\\n"
-                        f"5. CRITICAL: You MUST return ALL 5 fields in this EXACT format with each field on its own line:\\n"
-                        f"FIRST: [first name]\\n"
-                        f"LAST: [last name]\\n"
-                        f"ROLE: [role/title from headline]\\n"
-                        f"COMPANY: [company from headline]\\n"
-                        f"LINKEDIN: [full profile URL]\\n"
-                        f"\\n"
-                        f"6. If any field is not available, write 'N/A' instead of leaving it blank\\n"
-                        f"7. Do NOT add any extra text before or after these 5 lines\\n"
-                        f"8. Navigate back to the connections list page"
-                    )
-                else:
-                    # Subsequent contacts - reference the previous contact
-                    extraction_task = (
-                        f"STEP {contact_num + 1} - EXTRACT CONTACT {contact_num} OF 20:\\n"
-                        f"1. Find the contact named '{previous_contact_name}' in the list\\n"
-                        f"2. If you don't see '{previous_contact_name}' on the screen, scroll down slowly until you find them\\n"
-                        f"3. Once you find '{previous_contact_name}', look at the contact directly BELOW them\\n"
-                        f"4. Click on that contact's name/profile link (the one below '{previous_contact_name}') to open their profile page\\n"
-                        f"5. Wait for their profile page to load completely\\n"
-                        f"6. Extract the following information from their profile:\\n"
-                        f"   - First name: Extract from their display name at the top (just the first name)\\n"
-                        f"   - Last name: Extract from their display name at the top (just the last name)\\n"
-                        f"   - Current role/title: Extract from the HEADLINE directly under their name (e.g., 'Software Engineer')\\n"
-                        f"   - Company name: Extract from the HEADLINE (typically after 'at' or '@', e.g., 'Software Engineer at Google' → 'Google')\\n"
-                        f"   - LinkedIn profile URL: Copy the FULL URL from the browser address bar (must start with https://www.linkedin.com/in/)\\n"
-                        f"7. CRITICAL: You MUST return ALL 5 fields in this EXACT format with each field on its own line:\\n"
-                        f"FIRST: [first name]\\n"
-                        f"LAST: [last name]\\n"
-                        f"ROLE: [role/title from headline]\\n"
-                        f"COMPANY: [company from headline]\\n"
-                        f"LINKEDIN: [full profile URL]\\n"
-                        f"\\n"
-                        f"8. If any field is not available, write 'N/A' instead of leaving it blank\\n"
-                        f"9. Do NOT add any extra text before or after these 5 lines\\n"
-                        f"10. Navigate back to the connections list page"
-                    )
-
-                print(f"[Task {contact_num + 1}/21] Extracting contact {contact_num}/20...")
-                history.append({"role": "user", "content": extraction_task})
-
-                # Collect all output from the agent
-                all_output = []
-                async for result in agent.run(history, stream=False):
-                    output = result.get("output", [])
-                    history += output
-                    all_output.extend(output)
-
-                    # Log agent output at debug level (only shown if verbosity increased)
-                    for item in output:
-                        if item.get("type") == "message":
-                            content = item.get("content", [])
-                            for content_part in content:
-                                if content_part.get("text"):
-                                    logger.debug(f"Agent: {content_part.get('text')}")
-
-                # Now extract contact information from ALL collected output (not just partial results)
-                contact_data = extract_contact_from_response(all_output)
-
-                # Validate we got at least the critical fields (name or LinkedIn URL)
-                has_name = bool(contact_data['first'] and contact_data['last'])
-                has_linkedin = bool(contact_data['linkedin'] and 'linkedin.com' in contact_data['linkedin'])
-
-                # Write to CSV if we got at least name OR linkedin
-                if has_name or has_linkedin:
-                    with open(csv_path, 'a', newline='', encoding='utf-8') as csvfile:
-                        writer = csv.DictWriter(csvfile, fieldnames=['first', 'last', 'role', 'company', 'met_at', 'linkedin'])
-                        writer.writerow(contact_data)
-                    contacts_extracted += 1
-
-                    # Track LinkedIn URL for messaging links
-                    if contact_data['linkedin']:
-                        linkedin_urls.append(contact_data['linkedin'])
-
-                    # Remember this contact's name for the next iteration
-                    if has_name:
-                        previous_contact_name = f"{contact_data['first']} {contact_data['last']}".strip()
-
-                    # Success message with what we got
-                    name_str = f"{contact_data['first']} {contact_data['last']}" if has_name else "[No name]"
-                    linkedin_str = "✓ LinkedIn" if has_linkedin else "✗ No LinkedIn"
-                    role_str = f"({contact_data['role']})" if contact_data['role'] else "(No role)"
-                    print(f"✅ Contact {contact_num}/20 saved: {name_str} {role_str} | {linkedin_str}")
-                else:
-                    print(f"⚠️  Could not extract valid data for contact {contact_num}")
-                    print(f"    Got: first='{contact_data['first']}', last='{contact_data['last']}', linkedin='{contact_data['linkedin'][:50] if contact_data['linkedin'] else 'None'}'")
-                    print(f"    Check the agent's output above to see what was returned")
-                    print(f"    Total output items: {len(all_output)}")
-
-                # Progress update every 5 contacts
-                if contact_num % 5 == 0:
-                    print(f"\\n📈 Progress: {contacts_extracted}/{contact_num} contacts extracted so far...\\n")
-
-            # BONUS: Create messaging compose links file
-            messaging_filename = f"linkedin_messaging_links_{timestamp}.txt"
-            messaging_path = os.path.join(os.getcwd(), messaging_filename)
-
-            with open(messaging_path, 'w', encoding='utf-8') as txtfile:
-                txtfile.write("LinkedIn Messaging Compose Links\\n")
-                txtfile.write("=" * 80 + "\\n\\n")
-
-                for i, linkedin_url in enumerate(linkedin_urls, 1):
-                    public_id = extract_public_id_from_linkedin_url(linkedin_url)
-                    if public_id:
-                        messaging_url = f"https://www.linkedin.com/messaging/compose/?recipient={public_id}"
-                        txtfile.write(f"{i}. {messaging_url}\\n")
-                    else:
-                        txtfile.write(f"{i}. [Could not extract public ID from: {linkedin_url}]\\n")
-
-            print("\\n" + "="*80)
-            print("🎉 All tasks completed!")
-            print(f"📁 CSV file saved to: {csv_path}")
-            print(f"📊 Total contacts extracted: {contacts_extracted}/20")
-            print(f"💬 Bonus: Messaging links saved to: {messaging_path}")
-            print(f"📝 Total messaging links: {len(linkedin_urls)}")
-            print("="*80)
-
-    except Exception as e:
-        print(f"\\n❌ Error during scraping: {e}")
-        traceback.print_exc()
-        raise
-
-def main():
-try:
-load_dotenv()
-
-        if "ANTHROPIC_API_KEY" not in os.environ:
-            raise RuntimeError(
-                "Please set the ANTHROPIC_API_KEY environment variable.\\n"
-                "You can add it to a .env file in the project root."
-            )
-
-        signal.signal(signal.SIGINT, handle_sigint)
-
-        asyncio.run(scrape_linkedin_connections())
-
-    except Exception as e:
-        print(f"\\n❌ Error running automation: {e}")
-        traceback.print_exc()
-
-if **name** == "**main**":
-main()`}
-
-</EditableCodeBlock>
+And remove the `CUA_API_KEY` and `CUA_CONTAINER_NAME` requirements from `.env` and the validation checks.
 
   </Tab>
-  <Tab value="🪟 Windows Sandbox">
+  <Tab value="Windows Sandbox">
 
-<EditableCodeBlock
-  key="windows-tab"
-  lang="python"
-  defaultValues={{
-    "met-at": "Google Devfest Toronto"
-  }}
->
-{`import asyncio
-import csv
-import logging
-import os
-import signal
-import traceback
-from datetime import datetime
+```python
+# Same code as Cloud Sandbox, but change Computer initialization to:
+async with Computer(
+    os_type="windows",
+    provider_type=VMProviderType.WINDOWS_SANDBOX,
+    verbosity=logging.INFO,
+) as computer:
+```
 
-from agent import ComputerAgent
-from computer import Computer, VMProviderType
-from dotenv import load_dotenv
-
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(**name**)
-
-# Configuration: Define where you met these connections
-
-MET_AT_REASON = "`}<EditableValue placeholder="met-at" />{`"
-
-def handle_sigint(sig, frame):
-print("\\n\\nExecution interrupted by user. Exiting gracefully...")
-exit(0)
-
-def extract_public_id_from_linkedin_url(linkedin_url):
-"""
-Extract public ID from LinkedIn profile URL.
-Example: https://www.linkedin.com/in/taylor-r-devries/?lipi=... -> taylor-r-devries
-"""
-if not linkedin_url:
-return None
-
-    # Remove query parameters and trailing slashes
-    url = linkedin_url.split('?')[0].rstrip('/')
-
-    # Extract the part after /in/
-    if '/in/' in url:
-        public_id = url.split('/in/')[-1]
-        return public_id
-
-    return None
-
-def extract_contact_from_response(result_output):
-"""
-Extract contact information from agent's response.
-Expects the agent to return data in format:
-FIRST: value
-LAST: value
-ROLE: value
-COMPANY: value
-LINKEDIN: value
-
-    Note: met_at is auto-filled from MET_AT_REASON constant.
-    """
-    contact = {
-        'first': '',
-        'last': '',
-        'role': '',
-        'company': '',
-        'met_at': MET_AT_REASON,  # Auto-fill from constant
-        'linkedin': ''
-    }
-
-    # Collect all text from messages for debugging
-    all_text = []
-
-    for item in result_output:
-        if item.get("type") == "message":
-            content = item.get("content", [])
-            for content_part in content:
-                text = content_part.get("text", "")
-                if text:
-                    all_text.append(text)
-                    # Parse structured output - look for the exact format
-                    for line in text.split('\\n'):
-                        line = line.strip()
-                        # Use case-insensitive matching and handle extra whitespace
-                        line_upper = line.upper()
-
-                        if line_upper.startswith("FIRST:"):
-                            value = line[6:].strip()  # Skip "FIRST:" prefix
-                            if value and value.upper() != "N/A":
-                                contact['first'] = value
-                        elif line_upper.startswith("LAST:"):
-                            value = line[5:].strip()  # Skip "LAST:" prefix
-                            if value and value.upper() != "N/A":
-                                contact['last'] = value
-                        elif line_upper.startswith("ROLE:"):
-                            value = line[5:].strip()  # Skip "ROLE:" prefix
-                            if value and value.upper() != "N/A":
-                                contact['role'] = value
-                        elif line_upper.startswith("COMPANY:"):
-                            value = line[8:].strip()  # Skip "COMPANY:" prefix
-                            if value and value.upper() != "N/A":
-                                contact['company'] = value
-                        elif line_upper.startswith("LINKEDIN:"):
-                            value = line[9:].strip()  # Skip "LINKEDIN:" prefix
-                            if value and value.upper() != "N/A":
-                                contact['linkedin'] = value
-
-    # Debug logging
-    if not (contact['first'] or contact['last'] or contact['linkedin']):
-        logger.debug(f"Failed to extract. Full text content ({len(all_text)} messages):")
-        for i, text in enumerate(all_text[-3:]):  # Show last 3 messages
-            logger.debug(f"  Message {i}: {text[:200]}")
-
-    return contact
-
-async def scrape_linkedin_connections():
-"""
-Scrape the first 20 connections from LinkedIn and export to CSV.
-The agent extracts data, and Python handles CSV writing programmatically.
-"""
-
-    # Generate output filename with timestamp
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    csv_filename = f"linkedin_connections_{timestamp}.csv"
-    csv_path = os.path.join(os.getcwd(), csv_filename)
-
-    # Initialize CSV file with headers
-    with open(csv_path, 'w', newline='', encoding='utf-8') as csvfile:
-        writer = csv.DictWriter(csvfile, fieldnames=['first', 'last', 'role', 'company', 'met_at', 'linkedin'])
-        writer.writeheader()
-
-    print(f"\\n🚀 Starting LinkedIn connections scraper")
-    print(f"📁 Output file: {csv_path}")
-    print(f"📍 Met at: {MET_AT_REASON}")
-    print("=" * 80)
-
-    try:
-        async with Computer(
-            os_type="windows",
-            provider_type=VMProviderType.WINDOWS_SANDBOX,
-            verbosity=logging.INFO,
-        ) as computer:
-
-            agent = ComputerAgent(
-                model="anthropic/claude-sonnet-4-5-20250929",
-                tools=[computer],
-                only_n_most_recent_images=3,
-                verbosity=logging.INFO,
-                trajectory_dir="trajectories",
-                use_prompt_caching=True,
-                max_trajectory_budget=10.0,
-            )
-
-            history = []
-
-            # Task 1: Navigate to LinkedIn connections page
-            navigation_task = (
-                "STEP 1 - NAVIGATE TO LINKEDIN CONNECTIONS PAGE:\\n"
-                "1. Open a web browser (Chrome or Firefox)\\n"
-                "2. Navigate to https://www.linkedin.com/mynetwork/invite-connect/connections/\\n"
-                "3. Wait for the page to fully load (look for the connection list to appear)\\n"
-                "4. If prompted to log in, handle the authentication\\n"
-                "5. Confirm you can see the list of connections displayed on the page\\n"
-                "6. Ready to start extracting contacts one by one"
-            )
-
-            print(f"\\n[Task 1/21] Navigating to LinkedIn connections page...")
-            history.append({"role": "user", "content": navigation_task})
-
-            async for result in agent.run(history, stream=False):
-                history += result.get("output", [])
-                for item in result.get("output", []):
-                    if item.get("type") == "message":
-                        content = item.get("content", [])
-                        for content_part in content:
-                            if content_part.get("text"):
-                                logger.debug(f"Agent: {content_part.get('text')}")
-
-            print(f"✅ Navigation completed\\n")
-
-            # Tasks 2-21: Extract each of the 20 contacts
-            contacts_extracted = 0
-            linkedin_urls = []  # Track LinkedIn URLs for bonus messaging links
-            previous_contact_name = None  # Track the previous contact's name for easy navigation
-
-            for contact_num in range(1, 21):
-                # Build extraction task based on whether this is the first contact or not
-                if contact_num == 1:
-                    # First contact - start from the top
-                    extraction_task = (
-                        f"STEP {contact_num + 1} - EXTRACT CONTACT {contact_num} OF 20:\\n"
-                        f"1. Look at the very first connection at the top of the list\\n"
-                        f"2. Click on their name/profile link to open their LinkedIn profile page\\n"
-                        f"3. Wait for their profile page to load completely\\n"
-                        f"4. Extract the following information from their profile:\\n"
-                        f"   - First name: Extract from their display name at the top (just the first name)\\n"
-                        f"   - Last name: Extract from their display name at the top (just the last name)\\n"
-                        f"   - Current role/title: Extract from the HEADLINE directly under their name (e.g., 'Software Engineer')\\n"
-                        f"   - Company name: Extract from the HEADLINE (typically after 'at' or '@', e.g., 'Software Engineer at Google' → 'Google')\\n"
-                        f"   - LinkedIn profile URL: Copy the FULL URL from the browser address bar (must start with https://www.linkedin.com/in/)\\n"
-                        f"5. CRITICAL: You MUST return ALL 5 fields in this EXACT format with each field on its own line:\\n"
-                        f"FIRST: [first name]\\n"
-                        f"LAST: [last name]\\n"
-                        f"ROLE: [role/title from headline]\\n"
-                        f"COMPANY: [company from headline]\\n"
-                        f"LINKEDIN: [full profile URL]\\n"
-                        f"\\n"
-                        f"6. If any field is not available, write 'N/A' instead of leaving it blank\\n"
-                        f"7. Do NOT add any extra text before or after these 5 lines\\n"
-                        f"8. Navigate back to the connections list page"
-                    )
-                else:
-                    # Subsequent contacts - reference the previous contact
-                    extraction_task = (
-                        f"STEP {contact_num + 1} - EXTRACT CONTACT {contact_num} OF 20:\\n"
-                        f"1. Find the contact named '{previous_contact_name}' in the list\\n"
-                        f"2. If you don't see '{previous_contact_name}' on the screen, scroll down slowly until you find them\\n"
-                        f"3. Once you find '{previous_contact_name}', look at the contact directly BELOW them\\n"
-                        f"4. Click on that contact's name/profile link (the one below '{previous_contact_name}') to open their profile page\\n"
-                        f"5. Wait for their profile page to load completely\\n"
-                        f"6. Extract the following information from their profile:\\n"
-                        f"   - First name: Extract from their display name at the top (just the first name)\\n"
-                        f"   - Last name: Extract from their display name at the top (just the last name)\\n"
-                        f"   - Current role/title: Extract from the HEADLINE directly under their name (e.g., 'Software Engineer')\\n"
-                        f"   - Company name: Extract from the HEADLINE (typically after 'at' or '@', e.g., 'Software Engineer at Google' → 'Google')\\n"
-                        f"   - LinkedIn profile URL: Copy the FULL URL from the browser address bar (must start with https://www.linkedin.com/in/)\\n"
-                        f"7. CRITICAL: You MUST return ALL 5 fields in this EXACT format with each field on its own line:\\n"
-                        f"FIRST: [first name]\\n"
-                        f"LAST: [last name]\\n"
-                        f"ROLE: [role/title from headline]\\n"
-                        f"COMPANY: [company from headline]\\n"
-                        f"LINKEDIN: [full profile URL]\\n"
-                        f"\\n"
-                        f"8. If any field is not available, write 'N/A' instead of leaving it blank\\n"
-                        f"9. Do NOT add any extra text before or after these 5 lines\\n"
-                        f"10. Navigate back to the connections list page"
-                    )
-
-                print(f"[Task {contact_num + 1}/21] Extracting contact {contact_num}/20...")
-                history.append({"role": "user", "content": extraction_task})
-
-                # Collect all output from the agent
-                all_output = []
-                async for result in agent.run(history, stream=False):
-                    output = result.get("output", [])
-                    history += output
-                    all_output.extend(output)
-
-                    # Log agent output at debug level (only shown if verbosity increased)
-                    for item in output:
-                        if item.get("type") == "message":
-                            content = item.get("content", [])
-                            for content_part in content:
-                                if content_part.get("text"):
-                                    logger.debug(f"Agent: {content_part.get('text')}")
-
-                # Now extract contact information from ALL collected output (not just partial results)
-                contact_data = extract_contact_from_response(all_output)
-
-                # Validate we got at least the critical fields (name or LinkedIn URL)
-                has_name = bool(contact_data['first'] and contact_data['last'])
-                has_linkedin = bool(contact_data['linkedin'] and 'linkedin.com' in contact_data['linkedin'])
-
-                # Write to CSV if we got at least name OR linkedin
-                if has_name or has_linkedin:
-                    with open(csv_path, 'a', newline='', encoding='utf-8') as csvfile:
-                        writer = csv.DictWriter(csvfile, fieldnames=['first', 'last', 'role', 'company', 'met_at', 'linkedin'])
-                        writer.writerow(contact_data)
-                    contacts_extracted += 1
-
-                    # Track LinkedIn URL for messaging links
-                    if contact_data['linkedin']:
-                        linkedin_urls.append(contact_data['linkedin'])
-
-                    # Remember this contact's name for the next iteration
-                    if has_name:
-                        previous_contact_name = f"{contact_data['first']} {contact_data['last']}".strip()
-
-                    # Success message with what we got
-                    name_str = f"{contact_data['first']} {contact_data['last']}" if has_name else "[No name]"
-                    linkedin_str = "✓ LinkedIn" if has_linkedin else "✗ No LinkedIn"
-                    role_str = f"({contact_data['role']})" if contact_data['role'] else "(No role)"
-                    print(f"✅ Contact {contact_num}/20 saved: {name_str} {role_str} | {linkedin_str}")
-                else:
-                    print(f"⚠️  Could not extract valid data for contact {contact_num}")
-                    print(f"    Got: first='{contact_data['first']}', last='{contact_data['last']}', linkedin='{contact_data['linkedin'][:50] if contact_data['linkedin'] else 'None'}'")
-                    print(f"    Check the agent's output above to see what was returned")
-                    print(f"    Total output items: {len(all_output)}")
-
-                # Progress update every 5 contacts
-                if contact_num % 5 == 0:
-                    print(f"\\n📈 Progress: {contacts_extracted}/{contact_num} contacts extracted so far...\\n")
-
-            # BONUS: Create messaging compose links file
-            messaging_filename = f"linkedin_messaging_links_{timestamp}.txt"
-            messaging_path = os.path.join(os.getcwd(), messaging_filename)
-
-            with open(messaging_path, 'w', encoding='utf-8') as txtfile:
-                txtfile.write("LinkedIn Messaging Compose Links\\n")
-                txtfile.write("=" * 80 + "\\n\\n")
-
-                for i, linkedin_url in enumerate(linkedin_urls, 1):
-                    public_id = extract_public_id_from_linkedin_url(linkedin_url)
-                    if public_id:
-                        messaging_url = f"https://www.linkedin.com/messaging/compose/?recipient={public_id}"
-                        txtfile.write(f"{i}. {messaging_url}\\n")
-                    else:
-                        txtfile.write(f"{i}. [Could not extract public ID from: {linkedin_url}]\\n")
-
-            print("\\n" + "="*80)
-            print("🎉 All tasks completed!")
-            print(f"📁 CSV file saved to: {csv_path}")
-            print(f"📊 Total contacts extracted: {contacts_extracted}/20")
-            print(f"💬 Bonus: Messaging links saved to: {messaging_path}")
-            print(f"📝 Total messaging links: {len(linkedin_urls)}")
-            print("="*80)
-
-    except Exception as e:
-        print(f"\\n❌ Error during scraping: {e}")
-        traceback.print_exc()
-        raise
-
-def main():
-try:
-load_dotenv()
-
-        if "ANTHROPIC_API_KEY" not in os.environ:
-            raise RuntimeError(
-                "Please set the ANTHROPIC_API_KEY environment variable.\\n"
-                "You can add it to a .env file in the project root."
-            )
-
-        signal.signal(signal.SIGINT, handle_sigint)
-
-        asyncio.run(scrape_linkedin_connections())
-
-    except Exception as e:
-        print(f"\\n❌ Error running automation: {e}")
-        traceback.print_exc()
-
-if **name** == "**main**":
-main()`}
-
-</EditableCodeBlock>
+And remove the `CUA_API_KEY` and `CUA_CONTAINER_NAME` requirements from `.env` and the validation checks.
 
   </Tab>
 </Tabs>
+
+</Step>
+
+<Step>
+
+### Run Your Script
+
+Execute your contact extraction automation:
+
+```bash
+python contact_export.py
+```
+
+The agent will:
+1. Navigate to your LinkedIn connections page
+2. Extract data from 20 contacts (first name, last name, role, company, LinkedIn URL)
+3. Save contacts to a timestamped CSV file
+4. Generate messaging compose links for easy follow-up
+
+Monitor the output to see the agent's progress. The script will show a progress update every 5 contacts.
+
+</Step>
+
+</Steps>
+
+---
 
 ## How It Works
 
 This script demonstrates a practical workflow for extracting LinkedIn connection data:
 
-1. **Session Persistence** - Manually log into LinkedIn through the VM once, and the VM saves your session so the agent appears as your regular browsing.
-2. **Navigation** - The script navigates to your LinkedIn connections page using your saved authenticated session.
-3. **Data Extraction** - For each contact, the agent clicks their profile, extracts name/role/company/URL, and navigates back to repeat.
-4. **Python Processing** - Python parses the agent's responses, validates data, and writes to CSV incrementally to preserve progress.
-5. **Output Files** - Generates a CSV with contact data and a text file with direct messaging URLs.
+1. **Session Persistence** - Manually log into LinkedIn through the VM once, and the VM saves your session
+2. **Navigation** - The script navigates to your connections page using your saved authenticated session
+3. **Data Extraction** - For each contact, the agent clicks their profile, extracts data, and navigates back
+4. **Python Processing** - Python parses responses, validates data, and writes to CSV incrementally
+5. **Output Files** - Generates a CSV with contact data and a text file with messaging URLs
 
 ## Next Steps
 
@@ -1521,3 +470,4 @@ This script demonstrates a practical workflow for extracting LinkedIn connection
 - Read about [Agent loops](/agent-sdk/agent-loops), [tools](/agent-sdk/custom-tools), and [supported model providers](/agent-sdk/supported-model-providers/)
 - Experiment with different [Models and Providers](/agent-sdk/supported-model-providers/)
 - Adapt this script for other platforms (Twitter/X, email extraction, etc.)
+- Join our [Discord community](https://discord.com/invite/mVnXXpdE85) for help

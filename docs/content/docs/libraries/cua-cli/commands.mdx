@@ -8,22 +8,48 @@ import { Callout } from 'fumadocs-ui/components/callout';
 
 ## Overview
 
-The CUA CLI provides commands for authentication and sandbox management:
+The CUA CLI provides commands for authentication and sandbox management.
 
-- **Authentication** - `cua login`, `cua env`, `cua logout`
-- **Sandbox Management** - `cua list`, `cua create`, `cua start`, `cua stop`, `cua restart`, `cua delete`, `cua open`
+### Command Styles
+
+The CLI supports **two command styles** for flexibility:
+
+**Flat style** (quick & concise):
+```bash
+cua list
+cua create --os linux --size small --region north-america
+cua start my-sandbox
+```
+
+**Grouped style** (explicit & clear):
+```bash
+cua sb list         # or: cua sandbox list
+cua sb create       # or: cua sandbox create
+cua sb start        # or: cua sandbox start
+```
+
+Both styles work identically - use whichever you prefer!
+
+### Available Commands
+
+- **Authentication** - `cua auth login`, `cua auth env`, `cua auth logout` (also available as flat commands: `cua login`, `cua env`, `cua logout`)
+- **Sandbox Management** - `cua list`, `cua create`, `cua start`, `cua stop`, `cua restart`, `cua delete`, `cua vnc`
 
 ## Authentication Commands
 
-### `cua login`
+### `cua auth login`
 
 Authenticate with your CUA account using browser-based OAuth flow.
 
 ```bash
 # Interactive browser login
-cua login
+cua auth login
 
 # Direct API key login
+cua auth login --api-key sk-your-api-key-here
+
+# Alternative flat style
+cua login
 cua login --api-key sk-your-api-key-here
 ```
 
@@ -32,22 +58,25 @@ cua login --api-key sk-your-api-key-here
 
 **Example:**
 ```bash
-$ cua login
+$ cua auth login
 Opening browser for CLI auth...
 API key saved
 ```
 
-### `cua env`
+### `cua auth env`
 
 Create or update a `.env` file in the current directory with your CUA API key.
 
 ```bash
+cua auth env
+
+# Alternative flat style
 cua env
 ```
 
 **Example:**
 ```bash
-$ cua env
+$ cua auth env
 Wrote /path/to/your/project/.env
 ```
 
@@ -56,17 +85,20 @@ The generated `.env` file will contain:
 CUA_API_KEY=sk-your-api-key-here
 ```
 
-### `cua logout`
+### `cua auth logout`
 
 Remove the stored API key from your system.
 
 ```bash
+cua auth logout
+
+# Alternative flat style
 cua logout
 ```
 
 **Example:**
 ```bash
-$ cua logout
+$ cua auth logout
 Logged out
 ```
 
@@ -107,24 +139,24 @@ test-windows      stopped   another-pass-456   test-windows.containers.cloud.try
 Create a new sandbox.
 
 ```bash
-cua create --os <OS> --configuration <SIZE> --region <REGION>
+cua create --os <OS> --size <SIZE> --region <REGION>
 ```
 
 **Required Options:**
 - `--os` - Operating system: `linux`, `windows`, `macos`
-- `--configuration` - Sandbox size: `small`, `medium`, `large`
+- `--size` - Sandbox size: `small`, `medium`, `large`
 - `--region` - Region: `north-america`, `europe`, `asia-pacific`, `south-america`
 
 **Examples:**
 ```bash
 # Create a small Linux sandbox in North America
-cua create --os linux --configuration small --region north-america
+cua create --os linux --size small --region north-america
 
 # Create a medium Windows sandbox in Europe
-cua create --os windows --configuration medium --region europe
+cua create --os windows --size medium --region europe
 
 # Create a large macOS sandbox in Asia Pacific
-cua create --os macos --configuration large --region asia-pacific
+cua create --os macos --size large --region asia-pacific
 ```
 
 **Response Types:**
@@ -203,17 +235,20 @@ Sandbox deletion initiated: deleting
   This action is irreversible. All data on the sandbox will be permanently lost.
 </Callout>
 
-### `cua open`
+### `cua vnc`
 
 Open the VNC interface for a sandbox in your browser.
 
 ```bash
+cua vnc <name>
+
+# Alternative alias
 cua open <name>
 ```
 
 **Example:**
 ```bash
-$ cua open my-dev-sandbox
+$ cua vnc my-dev-sandbox
 Opening NoVNC: https://my-dev-sandbox.containers.cloud.trycua.com/vnc.html?autoconnect=true&password=...
 ```
 
@@ -228,26 +263,10 @@ Get help for any command:
 
 ```bash
 cua --help
-cua login --help
+cua auth login --help
 cua create --help
 cua list --help
 ```
-
-### Environment Variables
-
-You can override default endpoints using environment variables:
-
-```bash
-# Use staging environment
-export CUA_API_BASE=https://api.staging.cua.ai
-export CUA_WEBSITE_URL=https://staging.cua.ai
-
-cua vm list  # Uses staging API
-```
-
-**Available Variables:**
-- `CUA_API_BASE` - API endpoint (default: `https://api.cua.ai`)
-- `CUA_WEBSITE_URL` - Website URL (default: `https://cua.ai`)
 
 ## Error Handling
 
@@ -256,7 +275,7 @@ The CLI provides clear error messages for common issues:
 ### Authentication Errors
 ```bash
 $ cua list
-Unauthorized. Try 'cua login' again.
+Unauthorized. Try 'cua auth login' again.
 ```
 
 ### Sandbox Not Found
@@ -276,7 +295,7 @@ Invalid request or unsupported configuration
 ### 1. Use Descriptive Sandbox Names
 ```bash
 # Good
-cua create --os linux --configuration small --region north-america
+cua create --os linux --size small --region north-america
 # Then rename or use meaningful names in the dashboard
 
 # Better workflow
@@ -288,21 +307,21 @@ cua list  # Check the generated name
 ```bash
 # Set up your project with API key
 cd my-project
-cua env
+cua auth env
 # Now your project has CUA_API_KEY in .env
 ```
 
 ### 3. Quick Sandbox Access
 ```bash
 # Create aliases for frequently used sandboxes
-alias dev-sandbox="cua open my-development-sandbox"
-alias prod-sandbox="cua open my-production-sandbox"
+alias dev-sandbox="cua vnc my-development-sandbox"
+alias prod-sandbox="cua vnc my-production-sandbox"
 ```
 
 ### 4. Monitoring Provisioning
 ```bash
 # For sandboxes that need provisioning time
-cua create --os windows --configuration large --region europe
+cua create --os windows --size large --region europe
 # Sandbox provisioning started: my-sandbox-abc123
 # Job ID: job-xyz789
 

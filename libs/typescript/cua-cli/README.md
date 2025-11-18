@@ -17,23 +17,56 @@ bun run ./index.ts -- --help
 ## Commands
 
 - **Auth**
-  - `cua auth login` – opens browser to authorize; stores API key locally
-  - `cua auth login --api-key sk-...` – stores provided key directly
-  - `cua auth pull` – writes/updates `.env` with `CUA_API_KEY`
-  - `cua auth logout` – clears stored API key
 
-- **VMs**
-  - `cua vm list`
-  - `cua vm create --os OS --configuration SIZE --region REGION` – creates a new VM
-    - OS: `linux`, `windows`, `macos`
-    - SIZE: `small`, `medium`, `large`
-    - REGION: `north-america`, `europe`, `asia-pacific`, `south-america`
-  - `cua vm delete NAME` – deletes a VM
-  - `cua vm start NAME`
-  - `cua vm stop NAME`
-  - `cua vm restart NAME`
-  - `cua vm vnc NAME` – opens NoVNC URL in your browser
-  - `cua vm chat NAME` – opens Dashboard Playground for the VM
+  The CLI supports both **flat** and **grouped** command styles:
+
+  ```bash
+  # Grouped style (explicit)
+  cua auth login
+  cua auth env
+  cua auth logout
+
+  # Flat style (quick)
+  cua login
+  cua env
+  cua logout
+  ```
+
+  **Available Commands:**
+  - `login` – opens browser to authorize; stores API key locally
+    - `--api-key sk-...` – stores provided key directly
+  - `env` – writes/updates `.env` with `CUA_API_KEY`
+  - `logout` – clears stored API key
+
+- **Sandboxes**
+
+  The CLI supports both **flat** and **grouped** command styles:
+
+  ```bash
+  # Flat style (quick & concise)
+  cua list
+  cua create --os linux --size small --region north-america
+  cua start <name>
+  cua stop <name>
+
+  # Grouped style (explicit & clear)
+  cua sb list         # or: cua sandbox list
+  cua sb create       # or: cua sandbox create
+  cua sb start        # or: cua sandbox start
+  cua sb stop         # or: cua sandbox stop
+  ```
+
+  **Available Commands:**
+  - `list` (aliases: `ls`, `ps`) – list all sandboxes
+  - `create` – create a new sandbox
+    - `--os`: `linux`, `windows`, `macos`
+    - `--size`: `small`, `medium`, `large`
+    - `--region`: `north-america`, `europe`, `asia-pacific`, `south-america`
+  - `delete <name>` – delete a sandbox
+  - `start <name>` – start a stopped sandbox
+  - `stop <name>` – stop a running sandbox
+  - `restart <name>` – restart a sandbox
+  - `vnc <name>` (alias: `open`) – open VNC desktop in your browser
 
 ## Auth Flow (Dynamic Callback Port)
 
@@ -49,7 +82,7 @@ bun run ./index.ts -- --help
 - `index.ts` – entry point (shebang + start CLI)
 - `src/cli.ts` – yargs bootstrapping
 - `src/commands/auth.ts` – auth/login/pull/logout commands
-- `src/commands/vm.ts` – vm list/start/stop/restart commands
+- `src/commands/sandbox.ts` – sandbox list/start/stop/restart commands
 - `src/auth.ts` – browser flow + local callback server (dynamic port)
 - `src/http.ts` – HTTP helper
 - `src/storage.ts` – SQLite-backed key-value storage
@@ -59,18 +92,6 @@ bun run ./index.ts -- --help
 ## Notes
 
 - Stored API key lives at `~/.config/cua/cli.sqlite` under `kv(api_key)`.
-- Public API base defaults to `https://api.cua.ai` (override via `CUA_API_BASE`).
-- Website base defaults to `https://cua.ai` (override via `CUA_WEBSITE_URL`).
+- Public API base defaults to `https://api.cua.ai`.
+- Website base defaults to `https://cua.ai`.
 - Authorization header: `Authorization: Bearer <api_key>`.
-
-### Environment overrides
-
-You can point the CLI to alternate deployments:
-
-```bash
-export CUA_API_BASE=https://api.staging.cua.ai
-export CUA_WEBSITE_URL=https://staging.cua.ai
-
-cua auth login
-cua vm chat my-vm    # opens https://staging.cua.ai/dashboard/playground?...
-```

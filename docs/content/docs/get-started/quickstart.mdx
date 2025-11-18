@@ -30,14 +30,35 @@ You can run your Cua computer in the cloud (recommended for easiest setup), loca
 <Tabs items={['Cloud Sandbox', 'Linux on Docker', 'macOS Sandbox', 'Windows Sandbox']}>
   <Tab value="Cloud Sandbox">
 
-    Cua Cloud Sandbox provides sandboxes that run Linux (Ubuntu), Windows, or macOS.
+    Create and manage cloud sandboxes that run Linux (Ubuntu), Windows, or macOS using either the website or CLI.
+
+    **Option 1: Via CLI (Recommended)**
+
+    1. Install the CUA CLI:
+    ```bash
+    # macOS/Linux
+    curl -LsSf https://cua.ai/cli/install.sh | sh
+
+    # Windows
+    powershell -ExecutionPolicy ByPass -c "irm https://cua.ai/cli/install.ps1 | iex"
+    ```
+
+    2. Login and create a sandbox:
+    ```bash
+    cua auth login
+    cua sb create --os linux --size small --region north-america
+    ```
+
+    3. Note your sandbox name and password from the output
+
+    **Option 2: Via Website**
 
     1. Go to [cua.ai/signin](https://cua.ai/signin)
     2. Navigate to **Dashboard > Containers > Create Instance**
     3. Create a **Small** sandbox, choosing **Linux**, **Windows**, or **macOS**
     4. Note your sandbox name and API key
 
-    Your Cloud Sandbox will be automatically configured and ready to use.
+    Your Cloud Sandbox will be automatically configured and ready to use with either method.
 
   </Tab>
   <Tab value="Linux on Docker">
@@ -119,7 +140,7 @@ Connect to your Cua computer and perform basic interactions, such as taking scre
         computer = Computer(
             os_type="linux",  # or "windows" or "macos"
             provider_type="cloud",
-            name="your-sandbox-name",
+            name="your-sandbox-name",  # from CLI or website
             api_key="your-api-key"
         )
         await computer.run() # Connect to the sandbox
@@ -210,7 +231,7 @@ Connect to your Cua computer and perform basic interactions, such as taking scre
 
         const computer = new Computer({
           osType: OSType.LINUX,  // or OSType.WINDOWS or OSType.MACOS
-          name: "your-sandbox-name",
+          name: "your-sandbox-name",  // from CLI or website
           apiKey: "your-api-key"
         });
         await computer.run(); // Connect to the sandbox
@@ -394,10 +415,10 @@ Login to your CUA account:
 
 ```bash
 # Interactive browser login (recommended)
-cua login
+cua auth login
 
 # Or provide your API key directly
-cua login --api-key sk-your-api-key-here
+cua auth login --api-key sk-your-api-key-here
 ```
 
 If you don't have a CUA account yet, sign up at [cua.ai/signin](https://cua.ai/signin).
@@ -412,19 +433,19 @@ Create a cloud sandbox where your AI agents will run:
 
 ```bash
 # Create a Linux sandbox (recommended for most use cases)
-cua create --os linux --configuration small --region north-america
+cua sb create --os linux --size small --region north-america
 
 # Or create a Windows sandbox
-cua create --os windows --configuration small --region north-america
+cua sb create --os windows --size small --region north-america
 
 ```
 
 Your sandbox will be created and you'll see output like:
 
 ```
-Sandbox created and ready: my-vm-abc123
+Sandbox created and ready: my-sandbox-abc123
 Password: secure-password-here
-Host: my-vm-abc123.containers.cloud.trycua.com
+Host: my-sandbox-abc123.containers.cloud.trycua.com
 ```
 
 </Step>
@@ -440,7 +461,7 @@ You can now interact with your sandbox in multiple ways:
 #### Option 1: Access VNC Desktop
 
 ```bash
-cua open my-vm-abc123
+cua sb vnc my-sandbox-abc123
 ```
 
 This opens a remote desktop connection to your sandbox.
@@ -449,14 +470,14 @@ This opens a remote desktop connection to your sandbox.
 
 ```bash
 # List all your sandboxes
-cua list
+cua sb list
 
 # Start/stop sandboxes as needed
-cua stop my-vm-abc123
-cua start my-vm-abc123
+cua sb stop my-sandbox-abc123
+cua sb start my-sandbox-abc123
 
 # Delete sandboxes when done
-cua delete my-vm-abc123
+cua sb delete my-sandbox-abc123
 ```
 
 </Step>

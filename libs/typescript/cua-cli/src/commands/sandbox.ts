@@ -306,12 +306,12 @@ export function registerSandboxCommands(y: Argv) {
   // Grouped structure: cua sandbox <command> or cua sb <command>
   y.command(
     ['sandbox', 'sb'],
-    'Manage sandboxes',
+    'Create and manage cloud sandboxes (Linux, Windows, or macOS)',
     (y) => {
       return y
         .command(
           ['list', 'ls', 'ps'],
-          'List sandboxes',
+          'List all your sandboxes with status and connection details',
           (y) =>
             y.option('show-passwords', {
               type: 'boolean',
@@ -322,7 +322,7 @@ export function registerSandboxCommands(y: Argv) {
         )
         .command(
           'create',
-          'Create a new sandbox',
+          'Provision a new cloud sandbox in your chosen OS, size, and region',
           (y) =>
             y
               .option('os', {
@@ -352,31 +352,31 @@ export function registerSandboxCommands(y: Argv) {
         )
         .command(
           'delete <name>',
-          'Delete a sandbox',
+          'Permanently delete a sandbox and all its data',
           (y) => y.positional('name', { type: 'string', describe: 'Sandbox name' }),
           deleteHandler
         )
         .command(
           'start <name>',
-          'Start a sandbox',
+          'Start a stopped sandbox',
           (y) => y.positional('name', { type: 'string', describe: 'Sandbox name' }),
           startHandler
         )
         .command(
           'stop <name>',
-          'Stop a sandbox',
+          'Stop a running sandbox (data is preserved)',
           (y) => y.positional('name', { type: 'string', describe: 'Sandbox name' }),
           stopHandler
         )
         .command(
           'restart <name>',
-          'Restart a sandbox',
+          'Restart a sandbox (reboot the system)',
           (y) => y.positional('name', { type: 'string', describe: 'Sandbox name' }),
           restartHandler
         )
         .command(
           ['vnc <name>', 'open <name>'],
-          'Open VNC desktop for a sandbox',
+          'Open remote desktop (VNC) connection in your browser',
           (y) => y.positional('name', { type: 'string', describe: 'Sandbox name' }),
           openHandler
         )

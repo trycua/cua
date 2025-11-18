@@ -58,12 +58,12 @@ export function registerAuthCommands(y: Argv) {
   // Grouped structure: cua auth <command>
   y.command(
     'auth',
-    'Manage authentication',
+    'Authenticate with CUA (login, logout, or export credentials)',
     (y) => {
       return y
         .command(
           'login',
-          'Open browser to authorize and store API key',
+          'Authenticate via browser or API key and save credentials locally',
           (y) =>
             y.option('api-key', {
               type: 'string',
@@ -73,11 +73,11 @@ export function registerAuthCommands(y: Argv) {
         )
         .command(
           'env',
-          'Create or update .env with CUA_API_KEY (login if needed)',
+          'Export your API key to a .env file in the current directory',
           () => {},
           envHandler
         )
-        .command('logout', 'Remove stored API key', () => {}, logoutHandler)
+        .command('logout', 'Clear stored API credentials from this machine', () => {}, logoutHandler)
         .demandCommand(1, 'You must provide an auth command');
     },
     () => {}

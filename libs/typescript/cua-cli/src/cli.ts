@@ -8,11 +8,19 @@ export async function runCli() {
     .scriptName('cua')
     .usage('Usage: $0 <command> [options]')
     .epilogue(
-      'Grouped Commands (recommended):\n' +
-        '  cua auth <command>   Manage authentication (login, env, logout)\n' +
-        '  cua sb <command>     Manage sandboxes (list, create, start, stop, etc.)\n' +
+      'Recommended Command Structure:\n' +
+        '  cua auth <command>     Authenticate and manage credentials\n' +
+        '    login              Login via browser or with API key\n' +
+        '    env                Export API key to .env file\n' +
+        '    logout             Clear stored credentials\n' +
         '\n' +
-        'For more information: https://docs.cua.ai/libraries/cua-cli/commands'
+        '  cua sb <command>       Create and manage cloud sandboxes\n' +
+        '    list               View all your sandboxes\n' +
+        '    create             Provision a new sandbox\n' +
+        '    start/stop         Control sandbox state\n' +
+        '    vnc                Open remote desktop\n' +
+        '\n' +
+        'Documentation: https://docs.cua.ai/libraries/cua-cli/commands'
     );
   argv = registerAuthCommands(argv);
   argv = registerSandboxCommands(argv);

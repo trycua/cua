@@ -33,6 +33,14 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: main
+          fetch-depth: 0
+
+      - name: Ensure latest main branch
+        run: |
+          git fetch origin main
+          git reset --hard origin/main
+          echo "Current HEAD commit:"
+          git log -1 --oneline
 
       - name: Determine version
         id: get-version

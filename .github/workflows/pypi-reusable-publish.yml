@@ -50,6 +50,13 @@ jobs:
           ref: main
           fetch-depth: 0 # Full history for release creation
 
+      - name: Ensure latest main branch
+        run: |
+          git fetch origin main
+          git reset --hard origin/main
+          echo "Current HEAD commit:"
+          git log -1 --oneline
+
       - name: Set up Python
         uses: actions/setup-python@v4
         with:

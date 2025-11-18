@@ -89,9 +89,9 @@ esac
 BINARY_NAME="cua-${OS}-${ARCH}"
 if [ "$OS" = "darwin" ] && [ "$ARCH" = "arm64" ]; then
     BINARY_NAME="cua-darwin-arm64"
-elif [ "$OS" = "darwin" ] && [ "$ARCH" = "x86_64" ]; then
+elif [ "$OS" = "darwin" ] && [ "$ARCH" = "x64" ]; then
     BINARY_NAME="cua-darwin-x64"
-elif [ "$OS" = "linux" ] && [ "$ARCH" = "x86_64" ]; then
+elif [ "$OS" = "linux" ] && [ "$ARCH" = "x64" ]; then
     BINARY_NAME="cua-linux-x64"
 else
     echo "⚠️  Pre-built binary not available for ${OS}-${ARCH}, falling back to Bun installation"
@@ -113,6 +113,7 @@ VERSION=${TAG_NAME#cua-v}
 
 # Find the binary URL in the release assets
 BINARY_URL=$(echo "$LATEST_RELEASE" | grep -o 'https://.*/download/[^"]*/'${BINARY_NAME}'"' | head -1)
+BINARY_URL="${BINARY_URL%\"}"
 
 if [ -z "$BINARY_URL" ]; then
     echo "⚠️  Could not find ${BINARY_NAME} in release assets, falling back to Bun installation"

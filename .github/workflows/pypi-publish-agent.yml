@@ -45,40 +45,25 @@ jobs:
       - name: Determine version
         id: get-version
         run: |
-          echo "=== Version Determination Debug ==="
-          echo "Event name: ${{ github.event_name }}"
-          echo "Input version: ${{ inputs.version }}"
-          echo "Workflow dispatch version: ${{ github.event.inputs.version }}"
-          echo "GitHub ref: ${{ github.ref }}"
-
           # Check inputs.version first (works for workflow_call regardless of event_name)
           if [ -n "${{ inputs.version }}" ]; then
-            # Version provided via workflow_call or workflow_dispatch with version input
             VERSION=${{ inputs.version }}
-            echo "Using inputs.version: $VERSION"
           elif [ "${{ github.event_name }}" == "push" ]; then
             # Extract version from tag (for package-specific tags)
             if [[ "${{ github.ref }}" =~ ^refs/tags/agent-v([0-9]+\.[0-9]+\.[0-9]+) ]]; then
               VERSION=${BASH_REMATCH[1]}
-              echo "Extracted from tag: $VERSION"
             else
-              echo "Invalid tag format for agent"
+              echo "ERROR: Invalid tag format for agent"
               exit 1
             fi
           elif [ -n "${{ github.event.inputs.version }}" ]; then
-            # Use version from workflow_dispatch event inputs
             VERSION=${{ github.event.inputs.version }}
-            echo "Using event.inputs.version: $VERSION"
           else
-            echo "ERROR: No version found!"
-            echo "  - inputs.version is empty"
-            echo "  - event.inputs.version is empty"
-            echo "  - Not a tag push event"
+            echo "ERROR: No version found (inputs.version, event.inputs.version, and tag all empty)"
             exit 1
           fi
 
-          echo "=== Final Version ==="
-          echo "VERSION=$VERSION"
+          echo "Agent version: $VERSION"
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
       - name: Set up Python
@@ -166,14 +151,6 @@ jobs:
           # Display the updated dependencies
           echo "Updated dependencies in pyproject.toml:"
           grep -E "cua-computer|cua-som|cua-core" pyproject.toml
-
-      - name: Verify prepare job outputs
-        run: |
-          echo "=== Prepare Job Outputs ==="
-          echo "Version output: ${{ steps.get-version.outputs.version }}"
-          echo "Computer version output: ${{ steps.update-deps.outputs.computer_version }}"
-          echo "SOM version output: ${{ steps.update-deps.outputs.som_version }}"
-          echo "Core version output: ${{ steps.update-deps.outputs.core_version }}"
 
   publish:
     needs: prepare

@@ -59,7 +59,7 @@ jobs:
           fi
 
       - name: Send results to Slack
-        if: always()
+        if: always() && github.ref == 'refs/heads/main'
         uses: rtCamp/action-slack-notify@v2
         env:
           SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}

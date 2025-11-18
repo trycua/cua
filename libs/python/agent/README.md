@@ -78,7 +78,7 @@ if __name__ == "__main__":
 - [Chat History](https://cua.ai/docs/agent-sdk/chat-history)
 - [Callbacks](https://cua.ai/docs/agent-sdk/callbacks)
 - [Custom Tools](https://cua.ai/docs/agent-sdk/custom-tools)
-- [Custom Computer Handlers](https://cua.ai/docs/agent-sdk/custom-computer-handlers)
+- [Custom Computer Handlers](https://cua.ai/docs/computer-sdk/custom-computer-handlers)
 - [Prompt Caching](https://cua.ai/docs/agent-sdk/prompt-caching)
 - [Usage Tracking](https://cua.ai/docs/agent-sdk/usage-tracking)
 - [Benchmarks](https://cua.ai/docs/agent-sdk/benchmarks)

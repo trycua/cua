@@ -1,5 +1,12 @@
 {
   "title": "Computer SDK",
   "description": "Build computer-using agents with the Computer SDK",
-  "pages": ["computers", "commands", "tracing-api", "sandboxed-python", "custom-computer-handlers", "computer-ui"]
+  "pages": [
+    "computers",
+    "commands",
+    "tracing-api",
+    "sandboxed-python",
+    "custom-computer-handlers",
+    "computer-ui"
+  ]
 }

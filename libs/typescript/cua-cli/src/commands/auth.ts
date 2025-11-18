@@ -50,7 +50,12 @@ export function registerAuthCommands(y: Argv) {
           () => {},
           envHandler
         )
-        .command('logout', 'Clear stored API credentials from this machine', () => {}, logoutHandler)
+        .command(
+          'logout',
+          'Clear stored API credentials from this machine',
+          () => {},
+          logoutHandler
+        )
         .demandCommand(1, 'You must provide an auth command');
     },
     () => {}

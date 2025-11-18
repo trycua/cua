@@ -107,12 +107,9 @@ async def _prepare_tools_for_anthropic(tool_schemas: List[Dict[str, Any]], model
             function_schema = schema["function"]
             anthropic_tools.append(
                 {
-                    "type": "function",
-                    "function": {
-                        "name": function_schema["name"],
-                        "description": function_schema.get("description", ""),
-                        "parameters": function_schema.get("parameters", {}),
-                    },
+                    "name": function_schema["name"],
+                    "description": function_schema.get("description", ""),
+                    "input_schema": function_schema.get("parameters", {}),
                 }
             )
 
@@ -666,10 +663,23 @@ def _convert_completion_to_responses_items(response: Any) -> List[Dict[str, Any]
                     if content_item.get("type") == "text":
                         responses_items.append(make_output_text_item(content_item.get("text", "")))
                     elif content_item.get("type") == "tool_use":
-                        # Convert tool use to computer call
+                        # Check if this is a custom function tool or computer tool
+                        tool_name = content_item.get("name", "computer")
                         tool_input = content_item.get("input", {})
-                        action_type = tool_input.get("action")
                         call_id = content_item.get("id")
+
+                        # Handle custom function tools (not computer tools)
+                        if tool_name != "computer":
+                            from ..responses import make_function_call_item
+                            responses_items.append(make_function_call_item(
+                                function_name=tool_name,
+                                arguments=tool_input,
+                                call_id=call_id
+                            ))
+                            continue
+
+                        # Computer tool - process actions
+                        action_type = tool_input.get("action")
 
                         # Action reference:
                         # https://docs.anthropic.com/en/docs/agents-and-tools/tool-use/computer-use-tool#available-actions
@@ -868,6 +878,24 @@ def _convert_completion_to_responses_items(response: Any) -> List[Dict[str, Any]
     # Handle tool calls (alternative format)
     if hasattr(message, "tool_calls") and message.tool_calls:
         for tool_call in message.tool_calls:
+            tool_name = tool_call.function.name
+
+            # Handle custom function tools
+            if tool_name != "computer":
+                from ..responses import make_function_call_item
+                # tool_call.function.arguments is a JSON string, need to parse it
+                try:
+                    args_dict = json.loads(tool_call.function.arguments)
+                except json.JSONDecodeError:
+                    args_dict = {}
+                responses_items.append(make_function_call_item(
+                    function_name=tool_name,
+                    arguments=args_dict,
+                    call_id=tool_call.id
+                ))
+                continue
+
+            # Handle computer tool
             if tool_call.function.name == "computer":
                 try:
                     try:

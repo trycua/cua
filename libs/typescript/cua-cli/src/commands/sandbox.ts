@@ -223,22 +223,24 @@ const openHandler = async (argv: Record<string, unknown>) => {
 
 // Register commands in both flat and grouped structures
 export function registerSandboxCommands(y: Argv) {
-  // Flat structure (backwards compatible)
-  y.command(
-    ['list', 'ls', 'ps'],
-    'List sandboxes',
-    (y) =>
+  // Flat structure (backwards compatible, hidden from help)
+  y.command({
+    command: ['list', 'ls', 'ps'],
+    describe: 'List sandboxes',
+    hidden: true,
+    builder: (y: Argv) =>
       y.option('show-passwords', {
         type: 'boolean',
         default: false,
         describe: 'Show sandbox passwords in output',
       }),
-    listHandler
-  )
-    .command(
-      'create',
-      'Create a new sandbox',
-      (y) =>
+    handler: listHandler,
+  } as any)
+    .command({
+      command: 'create',
+      describe: 'Create a new sandbox',
+      hidden: true,
+      builder: (y: Argv) =>
         y
           .option('os', {
             type: 'string',
@@ -263,38 +265,43 @@ export function registerSandboxCommands(y: Argv) {
             demandOption: true,
             describe: 'Sandbox region',
           }),
-      createHandler
-    )
-    .command(
-      'delete <name>',
-      'Delete a sandbox',
-      (y) => y.positional('name', { type: 'string', describe: 'Sandbox name' }),
-      deleteHandler
-    )
-    .command(
-      'start <name>',
-      'Start a sandbox',
-      (y) => y.positional('name', { type: 'string', describe: 'Sandbox name' }),
-      startHandler
-    )
-    .command(
-      'stop <name>',
-      'Stop a sandbox',
-      (y) => y.positional('name', { type: 'string', describe: 'Sandbox name' }),
-      stopHandler
-    )
-    .command(
-      'restart <name>',
-      'Restart a sandbox',
-      (y) => y.positional('name', { type: 'string', describe: 'Sandbox name' }),
-      restartHandler
-    )
-    .command(
-      ['vnc <name>', 'open <name>'],
-      'Open VNC desktop for a sandbox',
-      (y) => y.positional('name', { type: 'string', describe: 'Sandbox name' }),
-      openHandler
-    );
+      handler: createHandler,
+    } as any)
+    .command({
+      command: 'delete <name>',
+      describe: 'Delete a sandbox',
+      hidden: true,
+      builder: (y: Argv) => y.positional('name', { type: 'string', describe: 'Sandbox name' }),
+      handler: deleteHandler,
+    } as any)
+    .command({
+      command: 'start <name>',
+      describe: 'Start a sandbox',
+      hidden: true,
+      builder: (y: Argv) => y.positional('name', { type: 'string', describe: 'Sandbox name' }),
+      handler: startHandler,
+    } as any)
+    .command({
+      command: 'stop <name>',
+      describe: 'Stop a sandbox',
+      hidden: true,
+      builder: (y: Argv) => y.positional('name', { type: 'string', describe: 'Sandbox name' }),
+      handler: stopHandler,
+    } as any)
+    .command({
+      command: 'restart <name>',
+      describe: 'Restart a sandbox',
+      hidden: true,
+      builder: (y: Argv) => y.positional('name', { type: 'string', describe: 'Sandbox name' }),
+      handler: restartHandler,
+    } as any)
+    .command({
+      command: ['vnc <name>', 'open <name>'],
+      describe: 'Open VNC desktop for a sandbox',
+      hidden: true,
+      builder: (y: Argv) => y.positional('name', { type: 'string', describe: 'Sandbox name' }),
+      handler: openHandler,
+    } as any);
 
   // Grouped structure: cua sandbox <command> or cua sb <command>
   y.command(

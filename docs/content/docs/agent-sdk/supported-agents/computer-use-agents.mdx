@@ -9,6 +9,18 @@ All agent loops are compatible with any LLM provider supported by LiteLLM.
 
 See [Running Models Locally](/agent-sdk/supported-model-providers/local-models) for how to use Hugging Face and MLX models on your own machine.
 
+## UI-TARS-2
+
+Next‑generation UI‑TARS via Cua Router:
+
+- `cua/bytedance/ui-tars-2`
+
+```python
+agent = ComputerAgent("cua/bytedance/ui-tars-2", tools=[computer])
+async for _ in agent.run("Open a browser and search for Python tutorials"):
+    pass
+```
+
 ## Gemini CUA
 
 Gemini models with computer-use capabilities:
@@ -96,18 +108,6 @@ Unified vision-language model for computer-use:
 ```python
 agent = ComputerAgent("huggingface-local/ByteDance-Seed/UI-TARS-1.5-7B", tools=[computer])
 async for _ in agent.run("Open the settings menu and change the theme to dark mode"):
-    pass
-```
-
-## UI-TARS-2
-
-Next‑generation UI‑TARS via Cua Router:
-
-- `cua/bytedance/ui-tars-2`
-
-```python
-agent = ComputerAgent("cua/bytedance/ui-tars-2", tools=[computer])
-async for _ in agent.run("Open a browser and search for Python tutorials"):
     pass
 ```
 

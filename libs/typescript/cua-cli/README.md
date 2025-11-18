@@ -33,11 +33,11 @@ bun run ./index.ts -- --help
   cua start <name>
   cua stop <name>
 
-  # Grouped style (explicit & organized)
-  cua sandbox list    # or: cua sb list
-  cua sandbox create  # or: cua sb create
-  cua sandbox start   # or: cua sb start
-  cua sandbox stop    # or: cua sb stop
+  # Grouped style (explicit & clear)
+  cua sb list         # or: cua sandbox list
+  cua sb create       # or: cua sandbox create
+  cua sb start        # or: cua sandbox start
+  cua sb stop         # or: cua sandbox stop
   ```
 
   **Available Commands:**

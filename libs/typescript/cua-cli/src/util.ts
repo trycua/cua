@@ -25,7 +25,10 @@ export type SandboxItem = {
   host?: string;
 };
 
-export function printSandboxList(items: SandboxItem[], showPasswords: boolean = false) {
+export function printSandboxList(
+  items: SandboxItem[],
+  showPasswords: boolean = false
+) {
   const headers = showPasswords
     ? ['NAME', 'STATUS', 'PASSWORD', 'HOST']
     : ['NAME', 'STATUS', 'HOST'];

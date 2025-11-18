@@ -94,9 +94,7 @@ const deleteHandler = async (argv: Record<string, unknown>) => {
     const body = (await res.json().catch(() => ({}))) as {
       status?: string;
     };
-    console.log(
-      `Sandbox deletion initiated: ${body.status ?? 'deleting'}`
-    );
+    console.log(`Sandbox deletion initiated: ${body.status ?? 'deleting'}`);
     return;
   }
 
@@ -273,31 +271,36 @@ export function registerSandboxCommands(y: Argv) {
         .command(
           'delete <name>',
           'Permanently delete a sandbox and all its data',
-          (y) => y.positional('name', { type: 'string', describe: 'Sandbox name' }),
+          (y) =>
+            y.positional('name', { type: 'string', describe: 'Sandbox name' }),
           deleteHandler
         )
         .command(
           'start <name>',
           'Start a stopped sandbox',
-          (y) => y.positional('name', { type: 'string', describe: 'Sandbox name' }),
+          (y) =>
+            y.positional('name', { type: 'string', describe: 'Sandbox name' }),
           startHandler
         )
         .command(
           'stop <name>',
           'Stop a running sandbox (data is preserved)',
-          (y) => y.positional('name', { type: 'string', describe: 'Sandbox name' }),
+          (y) =>
+            y.positional('name', { type: 'string', describe: 'Sandbox name' }),
           stopHandler
         )
         .command(
           'restart <name>',
           'Restart a sandbox (reboot the system)',
-          (y) => y.positional('name', { type: 'string', describe: 'Sandbox name' }),
+          (y) =>
+            y.positional('name', { type: 'string', describe: 'Sandbox name' }),
           restartHandler
         )
         .command(
           ['vnc <name>', 'open <name>'],
           'Open remote desktop (VNC) connection in your browser',
-          (y) => y.positional('name', { type: 'string', describe: 'Sandbox name' }),
+          (y) =>
+            y.positional('name', { type: 'string', describe: 'Sandbox name' }),
           openHandler
         )
         .demandCommand(1, 'You must provide a sandbox command');
@@ -350,31 +353,36 @@ export function registerSandboxCommands(y: Argv) {
     .command({
       command: 'delete <name>',
       describe: false as any, // Hide from help
-      builder: (y: Argv) => y.positional('name', { type: 'string', describe: 'Sandbox name' }),
+      builder: (y: Argv) =>
+        y.positional('name', { type: 'string', describe: 'Sandbox name' }),
       handler: deleteHandler,
     } as any)
     .command({
       command: 'start <name>',
       describe: false as any, // Hide from help
-      builder: (y: Argv) => y.positional('name', { type: 'string', describe: 'Sandbox name' }),
+      builder: (y: Argv) =>
+        y.positional('name', { type: 'string', describe: 'Sandbox name' }),
       handler: startHandler,
     } as any)
     .command({
       command: 'stop <name>',
       describe: false as any, // Hide from help
-      builder: (y: Argv) => y.positional('name', { type: 'string', describe: 'Sandbox name' }),
+      builder: (y: Argv) =>
+        y.positional('name', { type: 'string', describe: 'Sandbox name' }),
       handler: stopHandler,
     } as any)
     .command({
       command: 'restart <name>',
       describe: false as any, // Hide from help
-      builder: (y: Argv) => y.positional('name', { type: 'string', describe: 'Sandbox name' }),
+      builder: (y: Argv) =>
+        y.positional('name', { type: 'string', describe: 'Sandbox name' }),
       handler: restartHandler,
     } as any)
     .command({
       command: ['vnc <name>', 'open <name>'],
       describe: false as any, // Hide from help
-      builder: (y: Argv) => y.positional('name', { type: 'string', describe: 'Sandbox name' }),
+      builder: (y: Argv) =>
+        y.positional('name', { type: 'string', describe: 'Sandbox name' }),
       handler: openHandler,
     } as any);
 

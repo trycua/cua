@@ -11,15 +11,16 @@ Today the story changes - we're announcing general availability of **Cloud Windo
 Cloud Windows Sandboxes are now generally available. You get a full Windows 11 desktop in your browser with Edge and Python pre-installed, working seamlessly with all our [Computer-Use libraries](https://github.com/trycua/cua) for RPA, UI automation, code execution, and agent development.
 
 **What's new with this release:**
+
 - Hot-start under 1 second
 - Direct noVNC over HTTPS under our sandbox.cua.ai domain
 - 3 sandbox sizes available:
 
-| Size | CPU | RAM | Storage |
-|------|-----|-----|---------|
-| Small | 2 cores | 8 GB | 128 GB SSD |
+| Size   | CPU     | RAM   | Storage    |
+| ------ | ------- | ----- | ---------- |
+| Small  | 2 cores | 8 GB  | 128 GB SSD |
 | Medium | 4 cores | 16 GB | 128 GB SSD |
-| Large | 8 cores | 32 GB | 256 GB SSD |
+| Large  | 8 cores | 32 GB | 256 GB SSD |
 
 <div align="center">
   <video src="https://github.com/user-attachments/assets/8ab07646-6018-4128-87ce-53180cfea696" width="600" controls></video>

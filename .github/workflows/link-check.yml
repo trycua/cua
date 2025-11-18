@@ -15,19 +15,12 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Restore lychee cache
-        uses: actions/cache@v4
-        with:
-          path: .lycheecache
-          key: cache-lychee-${{ github.sha }}
-          restore-keys: cache-lychee-
-
       - name: Run Lychee link checker
         uses: lycheeverse/lychee-action@v2
         id: lychee
         with:
           # Check all markdown files
-          args: --verbose --no-progress --cache --max-cache-age 1d --accept 200..=299,403 --exclude '^file://' --exclude 'localhost' --exclude '127\.0\.0\.1' '**/*.md'
+          args: --verbose --no-progress --max-cache-age 1d --accept 200..=299,403 --exclude '^file://' --exclude 'localhost' --exclude '127\.0\.0\.1' '**/*.md'
           # Output results to file for parsing
           output: lychee-output.md
           # Don't fail the build on broken links (warning mode)
@@ -66,7 +59,7 @@ jobs:
           fi
 
       - name: Send results to Slack
-        if: always()
+        if: always() && github.ref == 'refs/heads/main'
         uses: rtCamp/action-slack-notify@v2
         env:
           SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}

@@ -45,6 +45,12 @@ jobs:
       - name: Determine version
         id: get-version
         run: |
+          echo "=== Version Determination Debug ==="
+          echo "Event name: ${{ github.event_name }}"
+          echo "Input version: ${{ inputs.version }}"
+          echo "Workflow dispatch version: ${{ github.event.inputs.version }}"
+          echo "GitHub ref: ${{ github.ref }}"
+
           if [ "${{ github.event_name }}" == "push" ]; then
             # Extract version from tag (for package-specific tags)
             if [[ "${{ github.ref }}" =~ ^refs/tags/agent-v([0-9]+\.[0-9]+\.[0-9]+) ]]; then
@@ -60,6 +66,8 @@ jobs:
             # Use version from workflow_call
             VERSION=${{ inputs.version }}
           fi
+
+          echo "=== Final Version ==="
           echo "VERSION=$VERSION"
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
@@ -148,6 +156,14 @@ jobs:
           # Display the updated dependencies
           echo "Updated dependencies in pyproject.toml:"
           grep -E "cua-computer|cua-som|cua-core" pyproject.toml
+
+      - name: Verify prepare job outputs
+        run: |
+          echo "=== Prepare Job Outputs ==="
+          echo "Version output: ${{ steps.get-version.outputs.version }}"
+          echo "Computer version output: ${{ steps.update-deps.outputs.computer_version }}"
+          echo "SOM version output: ${{ steps.update-deps.outputs.som_version }}"
+          echo "Core version output: ${{ steps.update-deps.outputs.core_version }}"
 
   publish:
     needs: prepare

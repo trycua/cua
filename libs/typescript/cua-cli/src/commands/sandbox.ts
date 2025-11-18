@@ -25,16 +25,16 @@ const listHandler = async (argv: Record<string, unknown>) => {
 
 const createHandler = async (argv: Record<string, unknown>) => {
   const token = await ensureApiKeyInteractive();
-  const { os, configuration, region } = argv as {
+  const { os, size, region } = argv as {
     os: string;
-    configuration: string;
+    size: string;
     region: string;
   };
 
   const res = await http('/v1/vms', {
     token,
     method: 'POST',
-    body: { os, configuration, region },
+    body: { os, configuration: size, region },
   });
 
   if (res.status === 401) {
@@ -246,11 +246,11 @@ export function registerSandboxCommands(y: Argv) {
             demandOption: true,
             describe: 'Operating system',
           })
-          .option('configuration', {
+          .option('size', {
             type: 'string',
             choices: ['small', 'medium', 'large'],
             demandOption: true,
-            describe: 'Sandbox size configuration',
+            describe: 'Sandbox size',
           })
           .option('region', {
             type: 'string',
@@ -324,11 +324,11 @@ export function registerSandboxCommands(y: Argv) {
                 demandOption: true,
                 describe: 'Operating system',
               })
-              .option('configuration', {
+              .option('size', {
                 type: 'string',
                 choices: ['small', 'medium', 'large'],
                 demandOption: true,
-                describe: 'Sandbox size configuration',
+                describe: 'Sandbox size',
               })
               .option('region', {
                 type: 'string',

@@ -17,7 +17,7 @@ The CLI supports **two command styles** for flexibility:
 **Flat style** (quick & concise):
 ```bash
 cua list
-cua create --os linux --configuration small --region north-america
+cua create --os linux --size small --region north-america
 cua start my-sandbox
 ```
 
@@ -129,24 +129,24 @@ test-windows      stopped   another-pass-456   test-windows.containers.cloud.try
 Create a new sandbox.
 
 ```bash
-cua create --os <OS> --configuration <SIZE> --region <REGION>
+cua create --os <OS> --size <SIZE> --region <REGION>
 ```
 
 **Required Options:**
 - `--os` - Operating system: `linux`, `windows`, `macos`
-- `--configuration` - Sandbox size: `small`, `medium`, `large`
+- `--size` - Sandbox size: `small`, `medium`, `large`
 - `--region` - Region: `north-america`, `europe`, `asia-pacific`, `south-america`
 
 **Examples:**
 ```bash
 # Create a small Linux sandbox in North America
-cua create --os linux --configuration small --region north-america
+cua create --os linux --size small --region north-america
 
 # Create a medium Windows sandbox in Europe
-cua create --os windows --configuration medium --region europe
+cua create --os windows --size medium --region europe
 
 # Create a large macOS sandbox in Asia Pacific
-cua create --os macos --configuration large --region asia-pacific
+cua create --os macos --size large --region asia-pacific
 ```
 
 **Response Types:**

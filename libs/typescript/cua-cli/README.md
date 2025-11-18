@@ -29,7 +29,7 @@ bun run ./index.ts -- --help
   ```bash
   # Flat style (quick & concise)
   cua list
-  cua create --os linux --configuration small --region north-america
+  cua create --os linux --size small --region north-america
   cua start <name>
   cua stop <name>
 
@@ -44,7 +44,7 @@ bun run ./index.ts -- --help
   - `list` (aliases: `ls`, `ps`) – list all sandboxes
   - `create` – create a new sandbox
     - `--os`: `linux`, `windows`, `macos`
-    - `--configuration`: `small`, `medium`, `large`
+    - `--size`: `small`, `medium`, `large`
     - `--region`: `north-america`, `europe`, `asia-pacific`, `south-america`
   - `delete <name>` – delete a sandbox
   - `start <name>` – start a stopped sandbox

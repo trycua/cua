@@ -32,11 +32,29 @@ function Install-WithBun {
 
     try {
         bun add -g @trycua/cli
+        # Determine installed version from npm registry
+        try {
+            $bunVersion = (npm view @trycua/cli version) 2>$null
+            if (-not $bunVersion) { $bunVersion = "unknown" }
+        } catch { $bunVersion = "unknown" }
+        # Ensure install dir and write version file
+        $installDir = "$env:USERPROFILE\.cua\bin"
+        if (-not (Test-Path $installDir)) { New-Item -ItemType Directory -Path $installDir -Force | Out-Null }
+        Set-Content -Path (Join-Path $installDir ".version") -Value $bunVersion -NoNewline
         return $true
     } catch {
         Write-Host "Warning: Failed to install with Bun, trying npm..." -ForegroundColor Yellow
         try {
             npm install -g @trycua/cli
+            # Determine installed version from npm registry
+            try {
+                $npmVersion = (npm view @trycua/cli version) 2>$null
+                if (-not $npmVersion) { $npmVersion = "unknown" }
+            } catch { $npmVersion = "unknown" }
+            # Ensure install dir and write version file
+            $installDir = "$env:USERPROFILE\.cua\bin"
+            if (-not (Test-Path $installDir)) { New-Item -ItemType Directory -Path $installDir -Force | Out-Null }
+            Set-Content -Path (Join-Path $installDir ".version") -Value $npmVersion -NoNewline
             return $true
         } catch {
             Write-Host "Error: Installation failed with npm as well." -ForegroundColor Red
@@ -104,6 +122,13 @@ try {
         Write-Host "   irm https://cua.ai/install.ps1 | iex"
         exit 1
     }
+}
+
+# Write version file for binary install
+try {
+    Set-Content -Path (Join-Path $installDir ".version") -Value $version -NoNewline
+} catch {
+    # Non-fatal
 }
 
 # Add to PATH if not already there

@@ -63,8 +63,15 @@ install_with_bun() {
         elif [ -f "$HOME/.profile" ]; then
             config_file="$HOME/.profile"
         fi
-        
-        print_success "cua" "$VERSION" "$config_file"
+        # Determine installed version via npm registry (fallback to unknown)
+        local VERSION_BUN
+        VERSION_BUN=$(npm view @trycua/cli version 2>/dev/null || echo "unknown")
+        # Write version file to ~/.cua/bin/.version
+        local INSTALL_DIR="$HOME/.cua/bin"
+        mkdir -p "$INSTALL_DIR"
+        echo "$VERSION_BUN" > "$INSTALL_DIR/.version"
+        # Print success and exit
+        print_success "$(command -v cua)" "$VERSION_BUN" "$config_file"
         exit 0
     else
         echo "❌ Installation failed. Please try installing manually:"
@@ -114,6 +121,7 @@ VERSION=${TAG_NAME#cua-v}
 # Find the binary URL in the release assets
 BINARY_URL=$(echo "$LATEST_RELEASE" | grep -o 'https://.*/download/[^"]*/'${BINARY_NAME}'"' | head -1)
 BINARY_URL="${BINARY_URL%\"}"
+printf "\033[90mBINARY_URL: %s\033[0m\n" "$BINARY_URL"
 
 if [ -z "$BINARY_URL" ]; then
     echo "⚠️  Could not find ${BINARY_NAME} in release assets, falling back to Bun installation"
@@ -135,6 +143,9 @@ fi
 
 # Make the binary executable
 chmod +x "$INSTALL_DIR/cua"
+
+# Write version file
+echo "$VERSION" > "$INSTALL_DIR/.version"
 
 # Add ~/.cua/bin to PATH if not already in PATH
 if [[ ":$PATH:" != *":$INSTALL_DIR:"* ]]; then

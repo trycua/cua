@@ -12,20 +12,20 @@ export async function writeEnvFile(cwd: string, key: string) {
   return path;
 }
 
-export type VmStatus =
+export type SandboxStatus =
   | 'pending'
   | 'running'
   | 'stopped'
   | 'terminated'
   | 'failed';
-export type VmItem = {
+export type SandboxItem = {
   name: string;
   password: string;
-  status: VmStatus;
+  status: SandboxStatus;
   host?: string;
 };
 
-export function printVmList(items: VmItem[], showPasswords: boolean = false) {
+export function printSandboxList(items: SandboxItem[], showPasswords: boolean = false) {
   const headers = showPasswords
     ? ['NAME', 'STATUS', 'PASSWORD', 'HOST']
     : ['NAME', 'STATUS', 'HOST'];
@@ -49,7 +49,7 @@ export function printVmList(items: VmItem[], showPasswords: boolean = false) {
   for (const r of rows)
     console.log(r.map((c, i) => (c ?? '').padEnd(widths[i] ?? 0)).join('  '));
 
-  if (items.length === 0) console.log('No VMs found');
+  if (items.length === 0) console.log('No sandboxes found');
 }
 
 export async function openInBrowser(url: string) {

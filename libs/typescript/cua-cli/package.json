@@ -2,7 +2,7 @@
   "name": "@trycua/cli",
   "version": "0.1.2",
   "packageManager": "bun@1.1.38",
-  "description": "Command-line interface for CUA cloud VMs and authentication",
+  "description": "Command-line interface for CUA cloud sandboxes and authentication",
   "type": "module",
   "license": "MIT",
   "homepage": "https://github.com/trycua/cua/tree/main/libs/typescript/cua-cli",

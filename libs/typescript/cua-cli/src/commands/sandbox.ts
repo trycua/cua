@@ -3,10 +3,10 @@ import { ensureApiKeyInteractive } from '../auth';
 import { WEBSITE_URL } from '../config';
 import { http } from '../http';
 import { clearApiKey } from '../storage';
-import type { VmItem } from '../util';
-import { openInBrowser, printVmList } from '../util';
+import type { SandboxItem } from '../util';
+import { openInBrowser, printSandboxList } from '../util';
 
-export function registerVmCommands(y: Argv) {
+export function registerSandboxCommands(y: Argv) {
   return y
     .command(
       ['list', 'ls', 'ps'],
@@ -29,8 +29,8 @@ export function registerVmCommands(y: Argv) {
           console.error(`Request failed: ${res.status}`);
           process.exit(1);
         }
-        const data = (await res.json()) as VmItem[];
-        printVmList(data, Boolean(argv['show-passwords']));
+        const data = (await res.json()) as SandboxItem[];
+        printSandboxList(data, Boolean(argv['show-passwords']));
       }
     )
     .command(
@@ -266,17 +266,17 @@ export function registerVmCommands(y: Argv) {
           console.error(`Request failed: ${listRes.status}`);
           process.exit(1);
         }
-        const vms = (await listRes.json()) as VmItem[];
-        const vm = vms.find((v) => v.name === name);
-        if (!vm) {
+        const sandboxes = (await listRes.json()) as SandboxItem[];
+        const sandbox = sandboxes.find((s) => s.name === name);
+        if (!sandbox) {
           console.error('Sandbox not found');
           process.exit(1);
         }
         const host =
-          vm.host && vm.host.length
-            ? vm.host
-            : `${vm.name}.containers.cloud.trycua.com`;
-        const url = `https://${host}/vnc.html?autoconnect=true&password=${encodeURIComponent(vm.password)}`;
+          sandbox.host && sandbox.host.length
+            ? sandbox.host
+            : `${sandbox.name}.containers.cloud.trycua.com`;
+        const url = `https://${host}/vnc.html?autoconnect=true&password=${encodeURIComponent(sandbox.password)}`;
         console.log(`Opening NoVNC: ${url}`);
         await openInBrowser(url);
       }
@@ -298,18 +298,18 @@ export function registerVmCommands(y: Argv) {
   //         console.error(`Request failed: ${listRes.status}`);
   //         process.exit(1);
   //       }
-  //       const vms = (await listRes.json()) as VmItem[];
-  //       const vm = vms.find((v) => v.name === name);
-  //       if (!vm) {
+  //       const sandboxes = (await listRes.json()) as SandboxItem[];
+  //       const sandbox = sandboxes.find((s) => s.name === name);
+  //       if (!sandbox) {
   //         console.error('Sandbox not found');
   //         process.exit(1);
   //       }
   //       const host =
-  //         vm.host && vm.host.length
-  //           ? vm.host
-  //           : `${vm.name}.containers.cloud.trycua.com`;
+  //         sandbox.host && sandbox.host.length
+  //           ? sandbox.host
+  //           : `${sandbox.name}.containers.cloud.trycua.com`;
   //       const base = WEBSITE_URL.replace(/\/$/, '');
-  //       const url = `${base}/dashboard/playground?host=${encodeURIComponent(host)}&id=${encodeURIComponent(vm.name)}&name=${encodeURIComponent(vm.name)}&vnc_password=${encodeURIComponent(vm.password)}&fullscreen=true`;
+  //       const url = `${base}/dashboard/playground?host=${encodeURIComponent(host)}&id=${encodeURIComponent(sandbox.name)}&name=${encodeURIComponent(sandbox.name)}&vnc_password=${encodeURIComponent(sandbox.password)}&fullscreen=true`;
   //       console.log(`Opening Playground: ${url}`);
   //       await openInBrowser(url);
   //     }

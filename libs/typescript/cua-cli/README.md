@@ -22,18 +22,17 @@ bun run ./index.ts -- --help
   - `cua auth pull` – writes/updates `.env` with `CUA_API_KEY`
   - `cua auth logout` – clears stored API key
 
-- **VMs**
-  - `cua vm list`
-  - `cua vm create --os OS --configuration SIZE --region REGION` – creates a new VM
+- **Sandboxes**
+  - `cua sandbox list` (aliases: `ls`, `ps`)
+  - `cua sandbox create --os OS --configuration SIZE --region REGION` – creates a new sandbox
     - OS: `linux`, `windows`, `macos`
     - SIZE: `small`, `medium`, `large`
     - REGION: `north-america`, `europe`, `asia-pacific`, `south-america`
-  - `cua vm delete NAME` – deletes a VM
-  - `cua vm start NAME`
-  - `cua vm stop NAME`
-  - `cua vm restart NAME`
-  - `cua vm vnc NAME` – opens NoVNC URL in your browser
-  - `cua vm chat NAME` – opens Dashboard Playground for the VM
+  - `cua sandbox delete NAME` – deletes a sandbox
+  - `cua sandbox start NAME`
+  - `cua sandbox stop NAME`
+  - `cua sandbox restart NAME`
+  - `cua sandbox open NAME` – opens NoVNC URL in your browser
 
 ## Auth Flow (Dynamic Callback Port)
 
@@ -49,7 +48,7 @@ bun run ./index.ts -- --help
 - `index.ts` – entry point (shebang + start CLI)
 - `src/cli.ts` – yargs bootstrapping
 - `src/commands/auth.ts` – auth/login/pull/logout commands
-- `src/commands/vm.ts` – vm list/start/stop/restart commands
+- `src/commands/sandbox.ts` – sandbox list/start/stop/restart commands
 - `src/auth.ts` – browser flow + local callback server (dynamic port)
 - `src/http.ts` – HTTP helper
 - `src/storage.ts` – SQLite-backed key-value storage
@@ -72,5 +71,5 @@ export CUA_API_BASE=https://api.staging.cua.ai
 export CUA_WEBSITE_URL=https://staging.cua.ai
 
 cua auth login
-cua vm chat my-vm    # opens https://staging.cua.ai/dashboard/playground?...
+cua sandbox open my-sandbox    # opens NoVNC for the sandbox
 ```

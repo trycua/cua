@@ -135,8 +135,30 @@ mkdir -p "$INSTALL_DIR"
 
 # Download the binary
 echo "📥 Downloading CUA CLI $VERSION for ${OS}-${ARCH}..."
-if ! curl -L "$BINARY_URL" -o "$INSTALL_DIR/cua" 2>/dev/null; then
-    echo "⚠️  Failed to download pre-built binary, falling back to Bun installation"
+echo "📍 Downloading from: $BINARY_URL"
+
+# Download with progress bar and proper error handling
+if ! curl -L --progress-bar --fail "$BINARY_URL" -o "$INSTALL_DIR/cua"; then
+    echo "❌ Failed to download pre-built binary from $BINARY_URL"
+    echo "⚠️  Falling back to Bun installation"
+    install_with_bun
+    exit 0
+fi
+
+# Verify the downloaded file exists and has content
+if [ ! -f "$INSTALL_DIR/cua" ] || [ ! -s "$INSTALL_DIR/cua" ]; then
+    echo "❌ Downloaded file is missing or empty"
+    echo "⚠️  Falling back to Bun installation"
+    rm -f "$INSTALL_DIR/cua"
+    install_with_bun
+    exit 0
+fi
+
+# Check if the downloaded file looks like a binary (not HTML error page)
+if file "$INSTALL_DIR/cua" | grep -q "HTML\|text"; then
+    echo "❌ Downloaded file appears to be corrupted (HTML/text instead of binary)"
+    echo "⚠️  Falling back to Bun installation"
+    rm -f "$INSTALL_DIR/cua"
     install_with_bun
     exit 0
 fi

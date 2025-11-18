@@ -19,30 +19,28 @@ class CUAAdapter(CustomLLM):
         return model.split("/", 1)[1] if model and model.startswith("cua/") else model
 
     def completion(self, *args, **kwargs) -> ModelResponse:
-        params = dict(kwargs)
-        inner_model = self._normalize_model(params.get("model", ""))
-        params.update(
-            {
-                "model": f"openai/{inner_model}",
-                "api_base": self.base_url,
-                "api_key": self.api_key,
-                "stream": False,
-            }
-        )
+        params = {
+            "model": f"openai/{self._normalize_model(kwargs.get("model", ""))}",
+            "messages": kwargs.get("messages", []),
+            "api_base": self.base_url,
+            "api_key": self.api_key,
+            "stream": False,
+        }
+        
         return completion(**params)  # type: ignore
 
     async def acompletion(self, *args, **kwargs) -> ModelResponse:
-        params = dict(kwargs)
-        inner_model = self._normalize_model(params.get("model", ""))
-        params.update(
-            {
-                "model": f"openai/{inner_model}",
-                "api_base": self.base_url,
-                "api_key": self.api_key,
-                "stream": False,
-            }
-        )
-        return await acompletion(**params)  # type: ignore
+        params = {
+            "model": f"openai/{self._normalize_model(kwargs.get("model", ""))}",
+            "messages": kwargs.get("messages", []),
+            "api_base": self.base_url,
+            "api_key": self.api_key,
+            "stream": False,
+        }
+        
+        response = await acompletion(**params)  # type: ignore
+
+        return response
 
     def streaming(self, *args, **kwargs) -> Iterator[GenericStreamingChunk]:
         params = dict(kwargs)

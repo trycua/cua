@@ -99,6 +99,18 @@ async for _ in agent.run("Open the settings menu and change the theme to dark mo
     pass
 ```
 
+## UI-TARS-2
+
+Next‑generation UI‑TARS via Cua Router:
+
+- `cua/bytedance/ui-tars-2`
+
+```python
+agent = ComputerAgent("cua/bytedance/ui-tars-2", tools=[computer])
+async for _ in agent.run("Open a browser and search for Python tutorials"):
+    pass
+```
+
 ---
 
 CUAs also support direct click prediction. See [Grounding Models](./grounding-models) for details on `predict_click()`.

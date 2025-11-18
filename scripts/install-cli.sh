@@ -10,12 +10,12 @@ print_success() {
     local version="$2"
     local config_file="$3"
     
-    echo -e "\033[32m✅  CUA CLI $version was installed successfully to $bin_path\033[0m"
-    echo -e "\033[90mAdded \"$bin_path\" to \$PATH in \"$config_file\"\033[0m"
-    echo -e "\n\033[90mTo get started, run:\033[0m"
-    echo -e "  source $config_file"
-    echo -e "  cua --help\n"
-    echo -e "\033[90m📚 For more help, visit: https://docs.cua.ai/libraries/cua-cli"
+    printf "\033[32m✅  CUA CLI %s was installed successfully to %s\033[0m\n" "$version" "$bin_path"
+    printf "\033[90mAdded \"%s\" to \$PATH in \"%s\"\033[0m\n" "$bin_path" "$config_file"
+    printf "\n\033[90mTo get started, run:\033[0m\n"
+    printf "  source %s\n" "$config_file"
+    printf "  cua --help\n"
+    printf "\033[90m📚 For more help, visit: https://docs.cua.ai/libraries/cua-cli\033[0m\n"
 }
 
 # Function to install with bun as fallback

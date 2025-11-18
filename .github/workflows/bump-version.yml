@@ -99,15 +99,7 @@ jobs:
         id: agent_version
         run: |
           cd libs/python/agent
-          VERSION=$(
-            python - <<'EOF'
-            import tomllib
-            from pathlib import Path
-
-            data = tomllib.loads(Path("pyproject.toml").read_text())
-            print(data["project"]["version"])
-            EOF
-          )
+          VERSION=$(python -c "import tomllib; from pathlib import Path; data = tomllib.loads(Path('pyproject.toml').read_text()); print(data['project']['version'])")
           echo "Agent version: $VERSION"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 

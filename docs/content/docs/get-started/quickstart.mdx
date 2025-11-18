@@ -482,9 +482,9 @@ cua create --os windows --configuration small --region north-america
 Your sandbox will be created and you'll see output like:
 
 ```
-Sandbox created and ready: my-vm-abc123
+Sandbox created and ready: my-sandbox-abc123
 Password: secure-password-here
-Host: my-vm-abc123.containers.cloud.trycua.com
+Host: my-sandbox-abc123.containers.cloud.trycua.com
 ```
 
 </Step>
@@ -500,7 +500,7 @@ You can now interact with your sandbox in multiple ways:
 #### Option 1: Access VNC Desktop
 
 ```bash
-cua open my-vm-abc123
+cua open my-sandbox-abc123
 ```
 
 This opens a remote desktop connection to your sandbox.
@@ -512,11 +512,11 @@ This opens a remote desktop connection to your sandbox.
 cua list
 
 # Start/stop sandboxes as needed
-cua stop my-vm-abc123
-cua start my-vm-abc123
+cua stop my-sandbox-abc123
+cua start my-sandbox-abc123
 
 # Delete sandboxes when done
-cua delete my-vm-abc123
+cua delete my-sandbox-abc123
 ```
 
 </Step>

@@ -103,12 +103,6 @@ jobs:
           echo "Agent version: $VERSION"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
-      - name: Verify agent version output
-        if: ${{ inputs.service == 'cua-agent' || inputs.service == 'cua-computer' }}
-        run: |
-          echo "=== Bump Version Job Outputs ==="
-          echo "Agent version output: ${{ steps.agent_version.outputs.version }}"
-
       - name: Push changes
         run: |
           git push origin main --follow-tags

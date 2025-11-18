@@ -4,9 +4,9 @@ If you've been using our Cloud Sandboxes, you've probably been managing them thr
 
 Today we're launching the **Cua CLI**: a command-line interface that brings the full power of our Cloud Sandbox platform to your terminal. Create, manage, and connect to Linux, Windows, or macOS sandboxes in seconds—all from a single command.
 
-## What You Can Do
+![Cua CLI Banner](https://github.com/user-attachments/assets/f8358acf-9194-46ee-b9e3-50cfcff5e489)
 
-![Cua CLI in action](https://github.com/user-attachments/assets/placeholder-cli-demo.gif)
+## What You Can Do
 
 The Cua CLI handles everything you need to work with Cloud Sandboxes:
 

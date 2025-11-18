@@ -19,6 +19,7 @@ from . import (
     qwen,
     uiins,
     uitars,
+    uitars2,
 )
 
 __all__ = [
@@ -37,4 +38,5 @@ __all__ = [
     "qwen",
     "uiins",
     "gelato",
+    "uitars2",
 ]

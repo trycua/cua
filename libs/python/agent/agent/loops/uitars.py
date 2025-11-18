@@ -563,7 +563,7 @@ def convert_uitars_messages_to_litellm(messages: Messages) -> List[Dict[str, Any
     return litellm_messages
 
 
-@register_agent(models=r"(?i).*ui-?tars.*")
+@register_agent(models=r"(?i).*ui-?tars.*", priority=-1)
 class UITARSConfig:
     """
     UITARS agent configuration using liteLLM for ByteDance-Seed/UI-TARS-1.5-7B model.

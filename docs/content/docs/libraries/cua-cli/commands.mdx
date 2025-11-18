@@ -8,7 +8,29 @@ import { Callout } from 'fumadocs-ui/components/callout';
 
 ## Overview
 
-The CUA CLI provides commands for authentication and sandbox management:
+The CUA CLI provides commands for authentication and sandbox management.
+
+### Command Styles
+
+The CLI supports **two command styles** for flexibility:
+
+**Flat style** (quick & concise):
+```bash
+cua list
+cua create --os linux --configuration small --region north-america
+cua start my-sandbox
+```
+
+**Grouped style** (explicit & organized):
+```bash
+cua sandbox list    # or: cua sb list
+cua sandbox create  # or: cua sb create
+cua sandbox start   # or: cua sb start
+```
+
+Both styles work identically - use whichever you prefer!
+
+### Available Commands
 
 - **Authentication** - `cua login`, `cua env`, `cua logout`
 - **Sandbox Management** - `cua list`, `cua create`, `cua start`, `cua stop`, `cua restart`, `cua delete`, `cua open`

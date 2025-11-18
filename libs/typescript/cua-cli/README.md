@@ -17,22 +17,40 @@ bun run ./index.ts -- --help
 ## Commands
 
 - **Auth**
-  - `cua auth login` – opens browser to authorize; stores API key locally
-  - `cua auth login --api-key sk-...` – stores provided key directly
-  - `cua auth pull` – writes/updates `.env` with `CUA_API_KEY`
-  - `cua auth logout` – clears stored API key
+  - `cua login` – opens browser to authorize; stores API key locally
+  - `cua login --api-key sk-...` – stores provided key directly
+  - `cua env` – writes/updates `.env` with `CUA_API_KEY`
+  - `cua logout` – clears stored API key
 
 - **Sandboxes**
-  - `cua sandbox list` (aliases: `ls`, `ps`)
-  - `cua sandbox create --os OS --configuration SIZE --region REGION` – creates a new sandbox
-    - OS: `linux`, `windows`, `macos`
-    - SIZE: `small`, `medium`, `large`
-    - REGION: `north-america`, `europe`, `asia-pacific`, `south-america`
-  - `cua sandbox delete NAME` – deletes a sandbox
-  - `cua sandbox start NAME`
-  - `cua sandbox stop NAME`
-  - `cua sandbox restart NAME`
-  - `cua sandbox open NAME` – opens NoVNC URL in your browser
+
+  The CLI supports both **flat** and **grouped** command styles:
+
+  ```bash
+  # Flat style (quick & concise)
+  cua list
+  cua create --os linux --configuration small --region north-america
+  cua start <name>
+  cua stop <name>
+
+  # Grouped style (explicit & organized)
+  cua sandbox list    # or: cua sb list
+  cua sandbox create  # or: cua sb create
+  cua sandbox start   # or: cua sb start
+  cua sandbox stop    # or: cua sb stop
+  ```
+
+  **Available Commands:**
+  - `list` (aliases: `ls`, `ps`) – list all sandboxes
+  - `create` – create a new sandbox
+    - `--os`: `linux`, `windows`, `macos`
+    - `--configuration`: `small`, `medium`, `large`
+    - `--region`: `north-america`, `europe`, `asia-pacific`, `south-america`
+  - `delete <name>` – delete a sandbox
+  - `start <name>` – start a stopped sandbox
+  - `stop <name>` – stop a running sandbox
+  - `restart <name>` – restart a sandbox
+  - `open <name>` – open NoVNC URL in your browser
 
 ## Auth Flow (Dynamic Callback Port)
 

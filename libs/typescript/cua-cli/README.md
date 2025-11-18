@@ -58,18 +58,6 @@ bun run ./index.ts -- --help
 ## Notes
 
 - Stored API key lives at `~/.config/cua/cli.sqlite` under `kv(api_key)`.
-- Public API base defaults to `https://api.cua.ai` (override via `CUA_API_BASE`).
-- Website base defaults to `https://cua.ai` (override via `CUA_WEBSITE_URL`).
+- Public API base defaults to `https://api.cua.ai`.
+- Website base defaults to `https://cua.ai`.
 - Authorization header: `Authorization: Bearer <api_key>`.
-
-### Environment overrides
-
-You can point the CLI to alternate deployments:
-
-```bash
-export CUA_API_BASE=https://api.staging.cua.ai
-export CUA_WEBSITE_URL=https://staging.cua.ai
-
-cua auth login
-cua sandbox open my-sandbox    # opens NoVNC for the sandbox
-```

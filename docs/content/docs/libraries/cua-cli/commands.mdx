@@ -233,22 +233,6 @@ cua create --help
 cua list --help
 ```
 
-### Environment Variables
-
-You can override default endpoints using environment variables:
-
-```bash
-# Use staging environment
-export CUA_API_BASE=https://api.staging.cua.ai
-export CUA_WEBSITE_URL=https://staging.cua.ai
-
-cua list  # Uses staging API
-```
-
-**Available Variables:**
-- `CUA_API_BASE` - API endpoint (default: `https://api.cua.ai`)
-- `CUA_WEBSITE_URL` - Website URL (default: `https://cua.ai`)
-
 ## Error Handling
 
 The CLI provides clear error messages for common issues:

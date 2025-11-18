@@ -294,7 +294,7 @@ This design keeps everything organized and safe. The AI can only interact with t
 ### Prerequisites
 
 1. **Lume CLI Setup**
-   For installing the standalone lume binary, run the following command from a terminal, or download the [latest pkg](https://github.com/trycua/cua/releases/latest/download/lume.pkg.tar.gz).
+   For installing the standalone lume binary, run the following command from a terminal, or download the [latest pkg](https://github.com/trycua/cua/releases/download/lume-v0.2.22/lume-darwin.pkg.tar.gz).
 
    ```bash
    sudo /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/lume/scripts/install.sh)"

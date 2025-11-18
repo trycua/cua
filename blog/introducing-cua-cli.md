@@ -199,7 +199,7 @@ Yes. All commands support non-interactive mode with `--api-key` flags, and the C
 <details>
 <summary><strong>Where are my credentials stored?</strong></summary>
 
-API keys are stored in `~/.config/cua/cli.sqlite` using a local SQLite database. They never leave your machine. Use `cua auth logout` to clear stored credentials.
+API keys are stored in `~/.cua/cli.sqlite` using a local SQLite database. They never leave your machine. Use `cua auth logout` to clear stored credentials.
 
 </details>
 

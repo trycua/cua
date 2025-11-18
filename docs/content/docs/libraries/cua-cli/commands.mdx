@@ -295,7 +295,7 @@ Invalid request or unsupported configuration
 ### 1. Use Descriptive Sandbox Names
 ```bash
 # Good
-cua create --os linux --configuration small --region north-america
+cua create --os linux --size small --region north-america
 # Then rename or use meaningful names in the dashboard
 
 # Better workflow
@@ -321,7 +321,7 @@ alias prod-sandbox="cua vnc my-production-sandbox"
 ### 4. Monitoring Provisioning
 ```bash
 # For sandboxes that need provisioning time
-cua create --os windows --configuration large --region europe
+cua create --os windows --size large --region europe
 # Sandbox provisioning started: my-sandbox-abc123
 # Job ID: job-xyz789
 

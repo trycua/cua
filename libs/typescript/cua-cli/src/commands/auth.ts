@@ -28,34 +28,7 @@ const logoutHandler = async (_argv: Record<string, unknown>) => {
 };
 
 export function registerAuthCommands(y: Argv) {
-  // Flat structure (backwards compatible, hidden from help)
-  y.command({
-    command: 'login',
-    describe: 'Open browser to authorize and store API key',
-    hidden: true,
-    builder: (y: Argv) =>
-      y.option('api-key', {
-        type: 'string',
-        describe: 'API key to store directly',
-      }),
-    handler: loginHandler,
-  } as any)
-    .command({
-      command: 'env',
-      describe: 'Create or update .env with CUA_API_KEY (login if needed)',
-      hidden: true,
-      builder: (y: Argv) => y,
-      handler: envHandler,
-    } as any)
-    .command({
-      command: 'logout',
-      describe: 'Remove stored API key',
-      hidden: true,
-      builder: (y: Argv) => y,
-      handler: logoutHandler,
-    } as any);
-
-  // Grouped structure: cua auth <command>
+  // Grouped structure: cua auth <command> (register first to appear first in help)
   y.command(
     'auth',
     'Authenticate with CUA (login, logout, or export credentials)',
@@ -82,6 +55,30 @@ export function registerAuthCommands(y: Argv) {
     },
     () => {}
   );
+
+  // Flat structure (backwards compatible, hidden from help)
+  y.command({
+    command: 'login',
+    describe: false as any, // Hide from help
+    builder: (y: Argv) =>
+      y.option('api-key', {
+        type: 'string',
+        describe: 'API key to store directly',
+      }),
+    handler: loginHandler,
+  } as any)
+    .command({
+      command: 'env',
+      describe: false as any, // Hide from help
+      builder: (y: Argv) => y,
+      handler: envHandler,
+    } as any)
+    .command({
+      command: 'logout',
+      describe: false as any, // Hide from help
+      builder: (y: Argv) => y,
+      handler: logoutHandler,
+    } as any);
 
   return y;
 }

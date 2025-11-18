@@ -1,14 +1,14 @@
-# Introducing the CUA CLI: Manage Cloud Sandboxes from Your Terminal
+# Introducing the Cua CLI: Manage Cloud Sandboxes from Your Terminal
 
-If you've been using our Cloud Sandboxes, you've probably been managing them through the web dashboard—clicking through forms to create instances, copying credentials, manually starting and stopping sandboxes. It works, but it's not exactly built for speed.
+If you've been using our Cloud Sandboxes, you've probably been managing them through the web dashboard - clicking through forms to create instances, copying credentials, manually starting and stopping sandboxes. It works, but it's not exactly built for power users like yourself.
 
-Today we're launching the **CUA CLI**: a command-line tool that brings the full power of our Cloud Sandbox platform to your terminal. Create, manage, and connect to Linux, Windows, or macOS sandboxes in seconds—all from a single command.
+Today we're launching the **Cua CLI**: a command-line interface that brings the full power of our Cloud Sandbox platform to your terminal. Create, manage, and connect to Linux, Windows, or macOS sandboxes in seconds—all from a single command.
 
 ## What You Can Do
 
-![CUA CLI in action](https://github.com/user-attachments/assets/placeholder-cli-demo.gif)
+![Cua CLI in action](https://github.com/user-attachments/assets/placeholder-cli-demo.gif)
 
-The CUA CLI handles everything you need to work with Cloud Sandboxes:
+The Cua CLI handles everything you need to work with Cloud Sandboxes:
 
 **Authentication**
 - Browser-based OAuth login with automatic credential storage
@@ -25,22 +25,22 @@ The CUA CLI handles everything you need to work with Cloud Sandboxes:
 The CLI supports both flat and grouped command structures—use whichever fits your workflow:
 
 ```bash
-# Flat style (quick & concise)
-cua list
-cua create --os linux --size small --region north-america
-cua vnc my-sandbox
-
 # Grouped style (explicit & clear)
-cua sb list
+cua sb ls
 cua sb create --os linux --size small --region north-america
 cua sb vnc my-sandbox
+
+# Flat style (quick & concise)
+cua ls
+cua create --os linux --size small --region north-america
+cua vnc my-sandbox
 ```
 
 Both styles work identically. The CLI shows grouped commands in help by default, but all flat commands remain available for backwards compatibility.
 
 ## Installation
 
-One command installs everything (includes Bun runtime + CUA CLI):
+One command installs everything (includes Bun runtime + Cua CLI):
 
 ```bash
 # macOS/Linux
@@ -58,7 +58,7 @@ npm install -g @trycua/cli
 
 ## Getting Started
 
-Authenticate with your CUA account:
+Authenticate with your Cua account:
 
 ```bash
 # Interactive browser login (recommended)
@@ -161,13 +161,14 @@ cua sb start my-sandbox-abc123
 ```
 
 **CI/CD Integration**
+
 ```bash
 # Provision sandboxes in your pipeline
 export CUA_API_KEY="sk-your-api-key"
 cua auth login --api-key "$CUA_API_KEY"
 cua sb create --os linux --size large --region north-america
 
-# Run your tests with the CUA Computer SDK
+# Run your tests with the Cua Computer SDK
 python run_tests.py
 
 # Clean up
@@ -250,4 +251,4 @@ If there's a feature you need, let us know in [Discord](https://discord.gg/cua-a
 
 ---
 
-Get started at [cua.ai](https://cua.ai) or check out the [quickstart guide](https://cua.ai/docs/get-started/quickstart#cli-quickstart).
+Get started at [cua.ai](https://cua.ai) or check out the [quickstart guide](https://cua.ai/docs/get-started/quickstart).

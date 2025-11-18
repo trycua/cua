@@ -27,22 +27,12 @@ Choose how you want to run your Cua computer. This will be the environment where
 
 You can run your Cua computer in the cloud (recommended for easiest setup), locally on macOS with Lume, locally on Windows with a Windows Sandbox, or in a Docker container on any platform. Choose the option that matches your system and needs.
 
-<Tabs items={['Cloud Sandbox (Website)', 'Cloud Sandbox (CLI)', 'Linux on Docker', 'macOS Sandbox', 'Windows Sandbox']}>
-  <Tab value="Cloud Sandbox (Website)">
+<Tabs items={['Cloud Sandbox', 'Linux on Docker', 'macOS Sandbox', 'Windows Sandbox']}>
+  <Tab value="Cloud Sandbox">
 
-    Use the CUA website dashboard to create and manage cloud sandboxes that run Linux (Ubuntu), Windows, or macOS.
+    Create and manage cloud sandboxes that run Linux (Ubuntu), Windows, or macOS using either the website or CLI.
 
-    1. Go to [cua.ai/signin](https://cua.ai/signin)
-    2. Navigate to **Dashboard > Containers > Create Instance**
-    3. Create a **Small** sandbox, choosing **Linux**, **Windows**, or **macOS**
-    4. Note your sandbox name and API key
-
-    Your Cloud Sandbox will be automatically configured and ready to use.
-
-  </Tab>
-  <Tab value="Cloud Sandbox (CLI)">
-
-    Use the CUA CLI to quickly create and manage cloud sandboxes that run Linux (Ubuntu), Windows, or macOS.
+    **Option 1: Via CLI (Recommended)**
 
     1. Install the CUA CLI:
     ```bash
@@ -53,26 +43,22 @@ You can run your Cua computer in the cloud (recommended for easiest setup), loca
     powershell -ExecutionPolicy ByPass -c "irm https://cua.ai/cli/install.ps1 | iex"
     ```
 
-    2. Login to your CUA account:
+    2. Login and create a sandbox:
     ```bash
     cua login
-    ```
-
-    3. Create a cloud sandbox:
-    ```bash
-    # Linux sandbox (recommended)
     cua sb create --os linux --size small --region north-america
-
-    # Or Windows sandbox
-    cua sb create --os windows --size small --region north-america
-
-    # Or macOS sandbox
-    cua sb create --os macos --size small --region north-america
     ```
 
-    4. Note your sandbox name and password from the output
+    3. Note your sandbox name and password from the output
 
-    Your Cloud Sandbox will be automatically configured and ready to use.
+    **Option 2: Via Website**
+
+    1. Go to [cua.ai/signin](https://cua.ai/signin)
+    2. Navigate to **Dashboard > Containers > Create Instance**
+    3. Create a **Small** sandbox, choosing **Linux**, **Windows**, or **macOS**
+    4. Note your sandbox name and API key
+
+    Your Cloud Sandbox will be automatically configured and ready to use with either method.
 
   </Tab>
   <Tab value="Linux on Docker">
@@ -146,28 +132,15 @@ Connect to your Cua computer and perform basic interactions, such as taking scre
 
     Then, connect to your desired computer environment:
 
-    <Tabs items={['Cloud Sandbox (CLI)', 'Cloud Sandbox (Website)', 'Linux on Docker', 'macOS Sandbox', 'Windows Sandbox', 'Your host desktop']}>
-      <Tab value="Cloud Sandbox (CLI)">
+    <Tabs items={['Cloud Sandbox', 'Linux on Docker', 'macOS Sandbox', 'Windows Sandbox', 'Your host desktop']}>
+      <Tab value="Cloud Sandbox">
         ```python
         from computer import Computer
 
         computer = Computer(
             os_type="linux",  # or "windows" or "macos"
             provider_type="cloud",
-            name="your-sandbox-name",  # from CLI output
-            api_key="your-api-key"
-        )
-        await computer.run() # Connect to the sandbox
-        ```
-      </Tab>
-      <Tab value="Cloud Sandbox (Website)">
-        ```python
-        from computer import Computer
-
-        computer = Computer(
-            os_type="linux",  # or "windows" or "macos"
-            provider_type="cloud",
-            name="your-sandbox-name",
+            name="your-sandbox-name",  # from CLI or website
             api_key="your-api-key"
         )
         await computer.run() # Connect to the sandbox
@@ -251,26 +224,14 @@ Connect to your Cua computer and perform basic interactions, such as taking scre
 
     Then, connect to your desired computer environment:
 
-    <Tabs items={['Cloud Sandbox (CLI)', 'Cloud Sandbox (Website)', 'Linux on Docker', 'macOS Sandbox', 'Windows Sandbox', 'Your host desktop']}>
-      <Tab value="Cloud Sandbox (CLI)">
+    <Tabs items={['Cloud Sandbox', 'Linux on Docker', 'macOS Sandbox', 'Windows Sandbox', 'Your host desktop']}>
+      <Tab value="Cloud Sandbox">
         ```typescript
         import { Computer, OSType } from '@trycua/computer';
 
         const computer = new Computer({
           osType: OSType.LINUX,  // or OSType.WINDOWS or OSType.MACOS
-          name: "your-sandbox-name",  // from CLI output
-          apiKey: "your-api-key"
-        });
-        await computer.run(); // Connect to the sandbox
-        ```
-      </Tab>
-      <Tab value="Cloud Sandbox (Website)">
-        ```typescript
-        import { Computer, OSType } from '@trycua/computer';
-
-        const computer = new Computer({
-          osType: OSType.LINUX,  // or OSType.WINDOWS or OSType.MACOS
-          name: "your-sandbox-name",
+          name: "your-sandbox-name",  // from CLI or website
           apiKey: "your-api-key"
         });
         await computer.run(); // Connect to the sandbox

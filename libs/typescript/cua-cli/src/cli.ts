@@ -22,6 +22,27 @@ export async function runCli() {
         '\n' +
         'Documentation: https://docs.cua.ai/libraries/cua-cli/commands'
     );
+  // version command
+  argv = argv.command(
+    'version',
+    'Show CUA CLI version',
+    (y) => y,
+    async () => {
+      try {
+        const home = process.env.HOME || process.env.USERPROFILE || '';
+        const path = `${home}/.cua/bin/.version`;
+        const version = await Bun.file(path).text();
+        const v = version.trim();
+        if (v) {
+          console.log(v);
+        } else {
+          console.log('unknown');
+        }
+      } catch {
+        console.log('unknown');
+      }
+    }
+  );
   argv = registerAuthCommands(argv);
   argv = registerSandboxCommands(argv);
   await argv.demandCommand(1).strict().help().parseAsync();

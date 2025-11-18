@@ -31,6 +31,8 @@ jobs:
       core_version: ${{ steps.update-deps.outputs.core_version }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: main
 
       - name: Determine version
         id: get-version

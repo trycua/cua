@@ -84,9 +84,21 @@ jobs:
           # Install toml parser
           pip install toml
 
+          # Debug: Show current directory and paths
+          echo "Current directory: $(pwd)"
+          echo "GITHUB_WORKSPACE: ${GITHUB_WORKSPACE}"
+          echo "Package dir: ${{ inputs.package_dir }}"
+          echo "Expected version: ${{ inputs.version }}"
+          echo "Script path: ${GITHUB_WORKSPACE}/.github/scripts/get_pyproject_version.py"
+          echo "Pyproject path: ${GITHUB_WORKSPACE}/${{ inputs.package_dir }}/pyproject.toml"
+
+          # Check if files exist
+          ls -la ${GITHUB_WORKSPACE}/.github/scripts/get_pyproject_version.py
+          ls -la ${GITHUB_WORKSPACE}/${{ inputs.package_dir }}/pyproject.toml
+
           # Verify version matches using script (exits with error if mismatch)
           python ${GITHUB_WORKSPACE}/.github/scripts/get_pyproject_version.py \
-            ${{ inputs.package_dir }}/pyproject.toml \
+            ${GITHUB_WORKSPACE}/${{ inputs.package_dir }}/pyproject.toml \
             ${{ inputs.version }}
 
       - name: Initialize PDM in package directory

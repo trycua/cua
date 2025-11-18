@@ -45,7 +45,7 @@ You can run your Cua computer in the cloud (recommended for easiest setup), loca
 
     2. Login and create a sandbox:
     ```bash
-    cua login
+    cua auth login
     cua sb create --os linux --size small --region north-america
     ```
 
@@ -415,10 +415,10 @@ Login to your CUA account:
 
 ```bash
 # Interactive browser login (recommended)
-cua login
+cua auth login
 
 # Or provide your API key directly
-cua login --api-key sk-your-api-key-here
+cua auth login --api-key sk-your-api-key-here
 ```
 
 If you don't have a CUA account yet, sign up at [cua.ai/signin](https://cua.ai/signin).

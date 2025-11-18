@@ -32,20 +32,24 @@ Both styles work identically - use whichever you prefer!
 
 ### Available Commands
 
-- **Authentication** - `cua login`, `cua env`, `cua logout`
+- **Authentication** - `cua auth login`, `cua auth env`, `cua auth logout` (also available as flat commands: `cua login`, `cua env`, `cua logout`)
 - **Sandbox Management** - `cua list`, `cua create`, `cua start`, `cua stop`, `cua restart`, `cua delete`, `cua vnc`
 
 ## Authentication Commands
 
-### `cua login`
+### `cua auth login`
 
 Authenticate with your CUA account using browser-based OAuth flow.
 
 ```bash
 # Interactive browser login
-cua login
+cua auth login
 
 # Direct API key login
+cua auth login --api-key sk-your-api-key-here
+
+# Alternative flat style
+cua login
 cua login --api-key sk-your-api-key-here
 ```
 
@@ -54,22 +58,25 @@ cua login --api-key sk-your-api-key-here
 
 **Example:**
 ```bash
-$ cua login
+$ cua auth login
 Opening browser for CLI auth...
 API key saved
 ```
 
-### `cua env`
+### `cua auth env`
 
 Create or update a `.env` file in the current directory with your CUA API key.
 
 ```bash
+cua auth env
+
+# Alternative flat style
 cua env
 ```
 
 **Example:**
 ```bash
-$ cua env
+$ cua auth env
 Wrote /path/to/your/project/.env
 ```
 
@@ -78,17 +85,20 @@ The generated `.env` file will contain:
 CUA_API_KEY=sk-your-api-key-here
 ```
 
-### `cua logout`
+### `cua auth logout`
 
 Remove the stored API key from your system.
 
 ```bash
+cua auth logout
+
+# Alternative flat style
 cua logout
 ```
 
 **Example:**
 ```bash
-$ cua logout
+$ cua auth logout
 Logged out
 ```
 
@@ -253,7 +263,7 @@ Get help for any command:
 
 ```bash
 cua --help
-cua login --help
+cua auth login --help
 cua create --help
 cua list --help
 ```
@@ -265,7 +275,7 @@ The CLI provides clear error messages for common issues:
 ### Authentication Errors
 ```bash
 $ cua list
-Unauthorized. Try 'cua login' again.
+Unauthorized. Try 'cua auth login' again.
 ```
 
 ### Sandbox Not Found
@@ -297,7 +307,7 @@ cua list  # Check the generated name
 ```bash
 # Set up your project with API key
 cd my-project
-cua env
+cua auth env
 # Now your project has CUA_API_KEY in .env
 ```
 

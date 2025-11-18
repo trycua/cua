@@ -17,10 +17,26 @@ bun run ./index.ts -- --help
 ## Commands
 
 - **Auth**
-  - `cua login` – opens browser to authorize; stores API key locally
-  - `cua login --api-key sk-...` – stores provided key directly
-  - `cua env` – writes/updates `.env` with `CUA_API_KEY`
-  - `cua logout` – clears stored API key
+
+  The CLI supports both **flat** and **grouped** command styles:
+
+  ```bash
+  # Grouped style (explicit)
+  cua auth login
+  cua auth env
+  cua auth logout
+
+  # Flat style (quick)
+  cua login
+  cua env
+  cua logout
+  ```
+
+  **Available Commands:**
+  - `login` – opens browser to authorize; stores API key locally
+    - `--api-key sk-...` – stores provided key directly
+  - `env` – writes/updates `.env` with `CUA_API_KEY`
+  - `logout` – clears stored API key
 
 - **Sandboxes**
 

@@ -123,15 +123,15 @@ cua ps
 **Example Output (default, passwords hidden):**
 ```
 NAME              STATUS    HOST
-my-dev-sandbox    running   my-dev-sandbox.containers.cloud.trycua.com
-test-windows      stopped   test-windows.containers.cloud.trycua.com
+my-dev-sandbox    running   my-dev-sandbox.sandbox.cua.ai
+test-windows      stopped   test-windows.sandbox.cua.ai
 ```
 
 **Example Output (with --show-passwords):**
 ```
 NAME              STATUS    PASSWORD           HOST
-my-dev-sandbox    running   secure-pass-123    my-dev-sandbox.containers.cloud.trycua.com
-test-windows      stopped   another-pass-456   test-windows.containers.cloud.trycua.com
+my-dev-sandbox    running   secure-pass-123    my-dev-sandbox.sandbox.cua.ai
+test-windows      stopped   another-pass-456   test-windows.sandbox.cua.ai
 ```
 
 ### `cua create`
@@ -165,7 +165,7 @@ cua create --os macos --size large --region asia-pacific
 ```bash
 Sandbox created and ready: my-new-sandbox-abc123
 Password: secure-password-here
-Host: my-new-sandbox-abc123.containers.cloud.trycua.com
+Host: my-new-sandbox-abc123.sandbox.cua.ai
 ```
 
 **Provisioning (Status 202):**
@@ -249,7 +249,7 @@ cua open <name>
 **Example:**
 ```bash
 $ cua vnc my-dev-sandbox
-Opening NoVNC: https://my-dev-sandbox.containers.cloud.trycua.com/vnc.html?autoconnect=true&password=...
+Opening NoVNC: https://my-dev-sandbox.sandbox.cua.ai/vnc.html?autoconnect=true&password=...
 ```
 
 This command automatically opens your default browser to the VNC interface with the correct password pre-filled.

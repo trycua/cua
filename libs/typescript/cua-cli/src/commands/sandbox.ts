@@ -215,7 +215,7 @@ const openHandler = async (argv: Record<string, unknown>) => {
   const host =
     sandbox.host && sandbox.host.length
       ? sandbox.host
-      : `${sandbox.name}.containers.cloud.trycua.com`;
+      : `${sandbox.name}.sandbox.cua.ai`;
   const url = `https://${host}/vnc.html?autoconnect=true&password=${encodeURIComponent(sandbox.password)}`;
   console.log(`Opening NoVNC: ${url}`);
   await openInBrowser(url);

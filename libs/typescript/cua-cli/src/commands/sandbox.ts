@@ -290,8 +290,8 @@ export function registerSandboxCommands(y: Argv) {
       restartHandler
     )
     .command(
-      'open <name>',
-      'Open NoVNC for a sandbox in your browser',
+      ['vnc <name>', 'open <name>'],
+      'Open VNC desktop for a sandbox',
       (y) => y.positional('name', { type: 'string', describe: 'Sandbox name' }),
       openHandler
     );
@@ -368,8 +368,8 @@ export function registerSandboxCommands(y: Argv) {
           restartHandler
         )
         .command(
-          'open <name>',
-          'Open NoVNC for a sandbox in your browser',
+          ['vnc <name>', 'open <name>'],
+          'Open VNC desktop for a sandbox',
           (y) => y.positional('name', { type: 'string', describe: 'Sandbox name' }),
           openHandler
         )

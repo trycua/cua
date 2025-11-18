@@ -33,7 +33,7 @@ Both styles work identically - use whichever you prefer!
 ### Available Commands
 
 - **Authentication** - `cua login`, `cua env`, `cua logout`
-- **Sandbox Management** - `cua list`, `cua create`, `cua start`, `cua stop`, `cua restart`, `cua delete`, `cua open`
+- **Sandbox Management** - `cua list`, `cua create`, `cua start`, `cua stop`, `cua restart`, `cua delete`, `cua vnc`
 
 ## Authentication Commands
 
@@ -225,17 +225,20 @@ Sandbox deletion initiated: deleting
   This action is irreversible. All data on the sandbox will be permanently lost.
 </Callout>
 
-### `cua open`
+### `cua vnc`
 
 Open the VNC interface for a sandbox in your browser.
 
 ```bash
+cua vnc <name>
+
+# Alternative alias
 cua open <name>
 ```
 
 **Example:**
 ```bash
-$ cua open my-dev-sandbox
+$ cua vnc my-dev-sandbox
 Opening NoVNC: https://my-dev-sandbox.containers.cloud.trycua.com/vnc.html?autoconnect=true&password=...
 ```
 
@@ -301,8 +304,8 @@ cua env
 ### 3. Quick Sandbox Access
 ```bash
 # Create aliases for frequently used sandboxes
-alias dev-sandbox="cua open my-development-sandbox"
-alias prod-sandbox="cua open my-production-sandbox"
+alias dev-sandbox="cua vnc my-development-sandbox"
+alias prod-sandbox="cua vnc my-production-sandbox"
 ```
 
 ### 4. Monitoring Provisioning

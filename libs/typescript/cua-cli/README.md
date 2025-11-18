@@ -50,7 +50,7 @@ bun run ./index.ts -- --help
   - `start <name>` – start a stopped sandbox
   - `stop <name>` – stop a running sandbox
   - `restart <name>` – restart a sandbox
-  - `open <name>` – open NoVNC URL in your browser
+  - `vnc <name>` (alias: `open`) – open VNC desktop in your browser
 
 ## Auth Flow (Dynamic Callback Port)
 

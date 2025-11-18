@@ -51,20 +51,30 @@ jobs:
           echo "Workflow dispatch version: ${{ github.event.inputs.version }}"
           echo "GitHub ref: ${{ github.ref }}"
 
-          if [ "${{ github.event_name }}" == "push" ]; then
+          # Check inputs.version first (works for workflow_call regardless of event_name)
+          if [ -n "${{ inputs.version }}" ]; then
+            # Version provided via workflow_call or workflow_dispatch with version input
+            VERSION=${{ inputs.version }}
+            echo "Using inputs.version: $VERSION"
+          elif [ "${{ github.event_name }}" == "push" ]; then
             # Extract version from tag (for package-specific tags)
             if [[ "${{ github.ref }}" =~ ^refs/tags/agent-v([0-9]+\.[0-9]+\.[0-9]+) ]]; then
               VERSION=${BASH_REMATCH[1]}
+              echo "Extracted from tag: $VERSION"
             else
               echo "Invalid tag format for agent"
               exit 1
             fi
-          elif [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
-            # Use version from workflow dispatch
+          elif [ -n "${{ github.event.inputs.version }}" ]; then
+            # Use version from workflow_dispatch event inputs
             VERSION=${{ github.event.inputs.version }}
+            echo "Using event.inputs.version: $VERSION"
           else
-            # Use version from workflow_call
-            VERSION=${{ inputs.version }}
+            echo "ERROR: No version found!"
+            echo "  - inputs.version is empty"
+            echo "  - event.inputs.version is empty"
+            echo "  - Not a tag push event"
+            exit 1
           fi
 
           echo "=== Final Version ==="

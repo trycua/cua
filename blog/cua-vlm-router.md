@@ -2,7 +2,8 @@
 
 If you've been building computer-use agents, you know the reality: every model provider has its own specification and deployment process. Anthropic has one API format, OpenAI another, Google something else entirely. Want to try a Hugging Face model? That's a completely different setup. Self-hosting? Even more complexity. Each provider requires learning their specific API, managing their credentials, and adapting your code to their particular requirements.
 
-Today we're launching the **Cua VLM Router**: a managed inference API that gives you unified access to multiple vision-language model providers through a single API key. We're starting with Anthropic's Claude models (Sonnet 4.5 and Haiku 4.5)—some of the most loved and widely-used computer-use models in the Cua ecosystem—with more providers coming soon.
+Today we're launching the **Cua VLM Router**: a managed inference API that gives you unified access to multiple vision-language model providers through a single API key. We're starting with Anthropic's Claude models (Sonnet 4.5 and Haiku 4.5)—some of the most loved and widely-used computer-use models in the Cua ecosystem - with more providers coming soon.
+
 
 ![Cua VLM Router Banner](https://github.com/user-attachments/assets/f8358acf-9194-46ee-b9e3-50cfcff5e489)
 
@@ -38,8 +39,6 @@ We're starting with Anthropic's latest Claude models:
 |-------|----------|
 | `cua/anthropic/claude-sonnet-4.5` | General-purpose tasks, recommended |
 | `cua/anthropic/claude-haiku-4.5` | Fast responses, cost-effective |
-
-More providers (ByteDance, Google, local models) coming based on demand.
 
 ## How It Works
 
@@ -157,7 +156,7 @@ Yes. Set `"stream": true` in your request to receive Server-Sent Events. Works i
 
 This is just the beginning. We're actively iterating based on feedback:
 
-- Additional model providers (ByteDance UI-TARS, Google Gemini, etc.)
+- Additional model providers
 - Custom model routing rules
 - Usage alerts and budget controls
 - Team collaboration features

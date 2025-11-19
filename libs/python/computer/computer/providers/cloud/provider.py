@@ -31,18 +31,21 @@ class CloudProvider(BaseVMProvider):
 
     def __init__(
         self,
-        api_key: str,
+        api_key: Optional[str] = None,
         verbose: bool = False,
         api_base: Optional[str] = None,
         **kwargs,
     ):
         """
         Args:
-            api_key: API key for authentication
+            api_key: API key for authentication (defaults to CUA_API_KEY environment variable)
             name: Name of the VM
             verbose: Enable verbose logging
         """
-        assert api_key, "api_key required for CloudProvider"
+        # Fall back to environment variable if api_key not provided
+        if api_key is None:
+            api_key = os.getenv("CUA_API_KEY")
+        assert api_key, "api_key required for CloudProvider (provide via parameter or CUA_API_KEY environment variable)"
         self.api_key = api_key
         self.verbose = verbose
         self.api_base = (api_base or DEFAULT_API_BASE).rstrip("/")

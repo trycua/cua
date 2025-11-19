@@ -71,7 +71,6 @@ class CUAAdapter(CustomLLM):
         if "anthropic/" in model:
             model = f"anthropic/{self._normalize_model(model)}"
             api_base = api_base.removesuffix("/v1")
-            api_base = "http://127.0.0.1:5001"
         else:
             model = f"openai/{self._normalize_model(model)}"
 

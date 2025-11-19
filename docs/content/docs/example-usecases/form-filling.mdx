@@ -1,5 +1,5 @@
 ---
-title: Form Filling
+title: PDF to Form Automation
 description: Enhance and Automate Interactions Between Form Filling and Local File Systems
 ---
 
@@ -83,7 +83,7 @@ async def fill_application():
         ) as computer:
 
             agent = ComputerAgent(
-                model="anthropic/claude-sonnet-4-5-20250929",
+                model="cua/anthropic/claude-sonnet-4.5",
                 tools=[computer],
                 only_n_most_recent_images=3,
                 verbosity=logging.INFO,
@@ -189,7 +189,7 @@ async def fill_application():
         ) as computer:
 
             agent = ComputerAgent(
-                model="anthropic/claude-sonnet-4-5-20250929",
+                model="cua/anthropic/claude-sonnet-4.5",
                 tools=[computer],
                 only_n_most_recent_images=3,
                 verbosity=logging.INFO,
@@ -289,7 +289,7 @@ async def fill_application():
         ) as computer:
 
             agent = ComputerAgent(
-                model="anthropic/claude-sonnet-4-5-20250929",
+                model="cua/anthropic/claude-sonnet-4.5",
                 tools=[computer],
                 only_n_most_recent_images=3,
                 verbosity=logging.INFO,
@@ -388,7 +388,7 @@ async def fill_application():
         ) as computer:
 
             agent = ComputerAgent(
-                model="anthropic/claude-sonnet-4-5-20250929",
+                model="cua/anthropic/claude-sonnet-4.5",
                 tools=[computer],
                 only_n_most_recent_images=3,
                 verbosity=logging.INFO,

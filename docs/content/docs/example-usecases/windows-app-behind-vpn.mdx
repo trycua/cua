@@ -173,7 +173,7 @@ async def automate_hr_workflow():
 
             # Configure agent with specialized instructions
             agent = ComputerAgent(
-                model="anthropic/claude-sonnet-4-5-20250929",
+                model="cua/anthropic/claude-sonnet-4.5",
                 tools=[computer],
                 only_n_most_recent_images=3,
                 verbosity=logging.INFO,
@@ -274,7 +274,7 @@ async def automate_hr_workflow():
         ) as computer:
 
             agent = ComputerAgent(
-                model="anthropic/claude-sonnet-4-5-20250929",
+                model="cua/anthropic/claude-sonnet-4.5",
                 tools=[computer],
                 only_n_most_recent_images=3,
                 verbosity=logging.INFO,
@@ -353,7 +353,7 @@ async def automate_hr_workflow():
         ) as computer:
 
             agent = ComputerAgent(
-                model="anthropic/claude-sonnet-4-5-20250929",
+                model="cua/anthropic/claude-sonnet-4.5",
                 tools=[computer],
                 only_n_most_recent_images=3,
                 verbosity=logging.INFO,
@@ -476,7 +476,7 @@ For long-running workflows, adjust budget limits:
 
 ```python
 agent = ComputerAgent(
-    model="anthropic/claude-sonnet-4-5-20250929",
+    model="cua/anthropic/claude-sonnet-4.5",
     tools=[computer],
     max_trajectory_budget=20.0,  # Increase for complex workflows
     # ... other params
@@ -535,7 +535,7 @@ Add approval gates for critical operations:
 
 ```python
 agent = ComputerAgent(
-    model="anthropic/claude-sonnet-4-5-20250929",
+    model="cua/anthropic/claude-sonnet-4.5",
     tools=[computer],
     # Add human approval callback for sensitive operations
     callbacks=[ApprovalCallback(require_approval_for=["payroll", "termination"])]

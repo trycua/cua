@@ -5,7 +5,7 @@ If you've been building computer-use agents, you know the reality: every model p
 Today we're launching the **Cua VLM Router**: a managed inference API that gives you unified access to multiple vision-language model providers through a single API key. We're starting with Anthropic's Claude models (Sonnet 4.5 and Haiku 4.5)—some of the most loved and widely-used computer-use models in the Cua ecosystem - with more providers coming soon.
 
 
-![Cua VLM Router Banner](https://github.com/user-attachments/assets/f8358acf-9194-46ee-b9e3-50cfcff5e489)
+![Cua VLM Router Banner](https://github.com/user-attachments/assets/1b978f62-2cae-4cf7-932a-55ac8c8f2e06)
 
 ## What You Get
 

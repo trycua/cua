@@ -4,7 +4,27 @@ title: Supported Model Providers
 
 ## Supported Models
 
-### Anthropic Claude (Computer Use API)
+### CUA VLM Router (Recommended)
+
+Use CUA's cloud inference API for intelligent routing and cost optimization with a single API key. CUA manages all provider infrastructure and credentials for you.
+
+```python
+model="cua/anthropic/claude-sonnet-4.5"   # Claude Sonnet 4.5 (recommended)
+model="cua/anthropic/claude-haiku-4.5"    # Claude Haiku 4.5 (faster)
+```
+
+**Benefits:**
+- Single API key for multiple providers
+- Cost tracking and optimization
+- Fully managed infrastructure (no provider keys to manage)
+
+[Learn more about CUA VLM Router →](/agent-sdk/supported-model-providers/cua-vlm-router)
+
+---
+
+### Anthropic Claude (Computer Use API - BYOK)
+
+Direct access to Anthropic's Claude models using your own Anthropic API key (BYOK - Bring Your Own Key).
 
 ```python
 model="anthropic/claude-3-5-sonnet-20241022"
@@ -13,13 +33,21 @@ model="anthropic/claude-opus-4-20250514"
 model="anthropic/claude-sonnet-4-20250514"
 ```
 
-### OpenAI Computer Use Preview
+**Setup:** Set `ANTHROPIC_API_KEY` environment variable with your Anthropic API key.
+
+### OpenAI Computer Use Preview (BYOK)
+
+Direct access to OpenAI's computer use models using your own OpenAI API key (BYOK).
 
 ```python
 model="openai/computer-use-preview"
 ```
 
+**Setup:** Set `OPENAI_API_KEY` environment variable with your OpenAI API key.
+
 ### UI-TARS (Local or Huggingface Inference)
+
+Run UI-TARS models locally for privacy and offline use.
 
 ```python
 model="huggingface-local/ByteDance-Seed/UI-TARS-1.5-7B"
@@ -27,6 +55,8 @@ model="ollama_chat/0000/ui-tars-1.5-7b"
 ```
 
 ### Omniparser + Any LLM
+
+Combine Omniparser for UI understanding with any LLM provider.
 
 ```python
 model="omniparser+ollama_chat/mistral-small3.2"

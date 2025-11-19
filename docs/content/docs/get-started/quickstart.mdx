@@ -30,9 +30,23 @@ You can run your Cua computer in the cloud (recommended for easiest setup), loca
 <Tabs items={['Cloud Sandbox', 'Linux on Docker', 'macOS Sandbox', 'Windows Sandbox']}>
   <Tab value="Cloud Sandbox">
 
-    Create and manage cloud sandboxes that run Linux (Ubuntu), Windows, or macOS using either the website or CLI.
+    Create and manage cloud sandboxes that run Linux (Ubuntu), Windows, or macOS.
 
-    **Option 1: Via CLI (Recommended)**
+    **First, create your API key:**
+
+    1. Go to [cua.ai/signin](https://cua.ai/signin)
+    2. Navigate to **Dashboard > API Keys > New API Key** to create your API key
+    3. **Important:** Copy and save your API key immediately - you won't be able to see it again (you'll need to regenerate if lost)
+
+    **Then, create your sandbox using either option:**
+
+    **Option 1: Via Website**
+
+    1. Navigate to **Dashboard > Sandboxes > Create Sandbox**
+    2. Create a **Small** sandbox, choosing **Linux**, **Windows**, or **macOS**
+    3. Note your sandbox name
+
+    **Option 2: Via CLI**
 
     1. Install the CUA CLI:
     ```bash
@@ -51,14 +65,7 @@ You can run your Cua computer in the cloud (recommended for easiest setup), loca
 
     3. Note your sandbox name and password from the output
 
-    **Option 2: Via Website**
-
-    1. Go to [cua.ai/signin](https://cua.ai/signin)
-    2. Navigate to **Dashboard > Containers > Create Instance**
-    3. Create a **Small** sandbox, choosing **Linux**, **Windows**, or **macOS**
-    4. Note your sandbox name and API key
-
-    Your Cloud Sandbox will be automatically configured and ready to use with either method.
+    Your Cloud Sandbox will be automatically configured and ready to use.
 
   </Tab>
   <Tab value="Linux on Docker">
@@ -134,14 +141,19 @@ Connect to your Cua computer and perform basic interactions, such as taking scre
 
     <Tabs items={['Cloud Sandbox', 'Linux on Docker', 'macOS Sandbox', 'Windows Sandbox', 'Your host desktop']}>
       <Tab value="Cloud Sandbox">
+        Set your CUA API key (same key used for model inference):
+        ```bash
+        export CUA_API_KEY="sk_cua-api01_..."
+        ```
+
+        Then connect to your sandbox:
         ```python
         from computer import Computer
 
         computer = Computer(
             os_type="linux",  # or "windows" or "macos"
             provider_type="cloud",
-            name="your-sandbox-name",  # from CLI or website
-            api_key="your-api-key"
+            name="your-sandbox-name"  # from CLI or website
         )
         await computer.run() # Connect to the sandbox
         ```
@@ -226,13 +238,18 @@ Connect to your Cua computer and perform basic interactions, such as taking scre
 
     <Tabs items={['Cloud Sandbox', 'Linux on Docker', 'macOS Sandbox', 'Windows Sandbox', 'Your host desktop']}>
       <Tab value="Cloud Sandbox">
+        Set your CUA API key (same key used for model inference):
+        ```bash
+        export CUA_API_KEY="sk_cua-api01_..."
+        ```
+
+        Then connect to your sandbox:
         ```typescript
         import { Computer, OSType } from '@trycua/computer';
 
         const computer = new Computer({
           osType: OSType.LINUX,  // or OSType.WINDOWS or OSType.MACOS
-          name: "your-sandbox-name",  // from CLI or website
-          apiKey: "your-api-key"
+          name: "your-sandbox-name"  // from CLI or website
         });
         await computer.run(); // Connect to the sandbox
         ```
@@ -322,24 +339,88 @@ Install the Cua agent Python SDK:
 pip install "cua-agent[all]"
 ```
 
-Then, use the `ComputerAgent` object:
+Choose how you want to access vision-language models for your agent:
 
-```python
-from agent import ComputerAgent
+<Tabs items={['CUA VLM Router', 'BYOK (Bring Your Own Key)']}>
+  <Tab value="CUA VLM Router">
 
-agent = ComputerAgent(
-    model="anthropic/claude-sonnet-4-5-20250929",
-    tools=[computer],
-    max_trajectory_budget=5.0
-)
+    Use CUA's inference API to access multiple model providers with a single API key (same key used for sandbox access). CUA VLM Router provides intelligent routing and cost optimization.
 
-messages = [{"role": "user", "content": "Take a screenshot and tell me what you see"}]
+    **Set your CUA API key:**
+    ```bash
+    export CUA_API_KEY="sk_cua-api01_..."
+    ```
 
-async for result in agent.run(messages):
-    for item in result["output"]:
-        if item["type"] == "message":
-            print(item["content"][0]["text"])
-```
+    **Use the agent with CUA models:**
+    ```python
+    from agent import ComputerAgent
+
+    agent = ComputerAgent(
+        model="cua/anthropic/claude-sonnet-4.5",  # CUA-routed model
+        tools=[computer],
+        max_trajectory_budget=5.0
+    )
+
+    messages = [{"role": "user", "content": "Take a screenshot and tell me what you see"}]
+
+    async for result in agent.run(messages):
+        for item in result["output"]:
+            if item["type"] == "message":
+                print(item["content"][0]["text"])
+    ```
+
+    **Available CUA models:**
+    - `cua/anthropic/claude-sonnet-4.5` - Claude Sonnet 4.5 (recommended)
+    - `cua/anthropic/claude-haiku-4.5` - Claude Haiku 4.5 (faster)
+
+    **Benefits:**
+    - Single API key for multiple providers
+    - Cost tracking and optimization
+    - No need to manage multiple provider keys
+
+  </Tab>
+  <Tab value="BYOK (Bring Your Own Key)">
+
+    Use your own API keys from model providers like Anthropic, OpenAI, or others.
+
+    **Set your provider API key:**
+    ```bash
+    # For Anthropic
+    export ANTHROPIC_API_KEY="sk-ant-..."
+
+    # For OpenAI
+    export OPENAI_API_KEY="sk-..."
+    ```
+
+    **Use the agent with your provider:**
+    ```python
+    from agent import ComputerAgent
+
+    agent = ComputerAgent(
+        model="anthropic/claude-sonnet-4-5-20250929",  # Direct provider model
+        tools=[computer],
+        max_trajectory_budget=5.0
+    )
+
+    messages = [{"role": "user", "content": "Take a screenshot and tell me what you see"}]
+
+    async for result in agent.run(messages):
+        for item in result["output"]:
+            if item["type"] == "message":
+                print(item["content"][0]["text"])
+    ```
+
+    **Supported providers:**
+    - `anthropic/claude-*` - Anthropic Claude models
+    - `openai/gpt-*` - OpenAI GPT models
+    - `openai/o1-*` - OpenAI o1 models
+    - `huggingface-local/*` - Local HuggingFace models
+    - And many more via LiteLLM
+
+    See [Supported Models](/agent-sdk/supported-model-providers/) for the complete list.
+
+  </Tab>
+</Tabs>
 
 Learn more about agents in [Agent Loops](/agent-sdk/agent-loops) and available models in [Supported Models](/agent-sdk/supported-model-providers/).
 

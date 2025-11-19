@@ -232,7 +232,7 @@ async def scrape_linkedin_connections():
         ) as computer:
 
             agent = ComputerAgent(
-                model="anthropic/claude-sonnet-4-5-20250929",
+                model="cua/anthropic/claude-sonnet-4.5",
                 tools=[computer],
                 only_n_most_recent_images=3,
                 verbosity=logging.INFO,

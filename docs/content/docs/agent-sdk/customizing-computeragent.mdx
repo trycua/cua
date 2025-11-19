@@ -67,7 +67,7 @@ Callbacks provide lifecycle hooks to preprocess messages, postprocess outputs, r
 from agent.callbacks import ImageRetentionCallback, TrajectorySaverCallback, BudgetManagerCallback
 
 agent = ComputerAgent(
-    model="anthropic/claude-3-5-sonnet-20241022",
+    model="cua/anthropic/claude-sonnet-4.5",
     tools=[computer],
     callbacks=[
         ImageRetentionCallback(only_n_most_recent_images=3),

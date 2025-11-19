@@ -34,7 +34,7 @@ You can then use this as a tool for your agent:
 from agent import ComputerAgent
 
 agent = ComputerAgent(
-    model="anthropic/claude-sonnet-4-5-20250929",
+    model="cua/anthropic/claude-sonnet-4.5",
     tools=[custom_computer],
 )
 
@@ -122,7 +122,7 @@ class MyCustomComputer(AsyncComputerHandler):
 custom_computer = MyCustomComputer()
 
 agent = ComputerAgent(
-    model="anthropic/claude-sonnet-4-5-20250929",
+    model="cua/anthropic/claude-sonnet-4.5",
     tools=[custom_computer],
 )
 

@@ -15,6 +15,7 @@ The CUA CLI provides commands for authentication and sandbox management.
 The CLI supports **two command styles** for flexibility:
 
 **Flat style** (quick & concise):
+
 ```bash
 cua list
 cua create --os linux --size small --region north-america
@@ -22,6 +23,7 @@ cua start my-sandbox
 ```
 
 **Grouped style** (explicit & clear):
+
 ```bash
 cua sb list         # or: cua sandbox list
 cua sb create       # or: cua sandbox create
@@ -54,9 +56,11 @@ cua login --api-key sk-your-api-key-here
 ```
 
 **Options:**
+
 - `--api-key <key>` - Provide API key directly instead of browser flow
 
 **Example:**
+
 ```bash
 $ cua auth login
 Opening browser for CLI auth...
@@ -75,12 +79,14 @@ cua env
 ```
 
 **Example:**
+
 ```bash
 $ cua auth env
 Wrote /path/to/your/project/.env
 ```
 
 The generated `.env` file will contain:
+
 ```
 CUA_API_KEY=sk-your-api-key-here
 ```
@@ -97,6 +103,7 @@ cua logout
 ```
 
 **Example:**
+
 ```bash
 $ cua auth logout
 Logged out
@@ -121,6 +128,7 @@ cua ps
 ```
 
 **Example Output (default, passwords hidden):**
+
 ```
 NAME              STATUS    HOST
 my-dev-sandbox    running   my-dev-sandbox.sandbox.cua.ai
@@ -128,6 +136,7 @@ test-windows      stopped   test-windows.sandbox.cua.ai
 ```
 
 **Example Output (with --show-passwords):**
+
 ```
 NAME              STATUS    PASSWORD           HOST
 my-dev-sandbox    running   secure-pass-123    my-dev-sandbox.sandbox.cua.ai
@@ -143,11 +152,13 @@ cua create --os <OS> --size <SIZE> --region <REGION>
 ```
 
 **Required Options:**
+
 - `--os` - Operating system: `linux`, `windows`, `macos`
 - `--size` - Sandbox size: `small`, `medium`, `large`
 - `--region` - Region: `north-america`, `europe`, `asia-pacific`, `south-america`
 
 **Examples:**
+
 ```bash
 # Create a small Linux sandbox in North America
 cua create --os linux --size small --region north-america
@@ -162,6 +173,7 @@ cua create --os macos --size large --region asia-pacific
 **Response Types:**
 
 **Immediate (Status 200):**
+
 ```bash
 Sandbox created and ready: my-new-sandbox-abc123
 Password: secure-password-here
@@ -169,6 +181,7 @@ Host: my-new-sandbox-abc123.sandbox.cua.ai
 ```
 
 **Provisioning (Status 202):**
+
 ```bash
 Sandbox provisioning started: my-new-sandbox-abc123
 Job ID: job-xyz789
@@ -184,6 +197,7 @@ cua start <name>
 ```
 
 **Example:**
+
 ```bash
 $ cua start my-dev-sandbox
 Start accepted
@@ -198,6 +212,7 @@ cua stop <name>
 ```
 
 **Example:**
+
 ```bash
 $ cua stop my-dev-sandbox
 stopping
@@ -212,6 +227,7 @@ cua restart <name>
 ```
 
 **Example:**
+
 ```bash
 $ cua restart my-dev-sandbox
 restarting
@@ -226,6 +242,7 @@ cua delete <name>
 ```
 
 **Example:**
+
 ```bash
 $ cua delete old-test-sandbox
 Sandbox deletion initiated: deleting
@@ -247,13 +264,13 @@ cua open <name>
 ```
 
 **Example:**
+
 ```bash
 $ cua vnc my-dev-sandbox
 Opening NoVNC: https://my-dev-sandbox.sandbox.cua.ai/vnc.html?autoconnect=true&password=...
 ```
 
 This command automatically opens your default browser to the VNC interface with the correct password pre-filled.
-
 
 ## Global Options
 
@@ -273,18 +290,21 @@ cua list --help
 The CLI provides clear error messages for common issues:
 
 ### Authentication Errors
+
 ```bash
 $ cua list
 Unauthorized. Try 'cua auth login' again.
 ```
 
 ### Sandbox Not Found
+
 ```bash
 $ cua start nonexistent-sandbox
 Sandbox not found
 ```
 
 ### Invalid Configuration
+
 ```bash
 $ cua create --os invalid --configuration small --region north-america
 Invalid request or unsupported configuration
@@ -293,6 +313,7 @@ Invalid request or unsupported configuration
 ## Tips and Best Practices
 
 ### 1. Use Descriptive Sandbox Names
+
 ```bash
 # Good
 cua create --os linux --size small --region north-america
@@ -304,6 +325,7 @@ cua list  # Check the generated name
 ```
 
 ### 2. Environment Management
+
 ```bash
 # Set up your project with API key
 cd my-project
@@ -312,6 +334,7 @@ cua auth env
 ```
 
 ### 3. Quick Sandbox Access
+
 ```bash
 # Create aliases for frequently used sandboxes
 alias dev-sandbox="cua vnc my-development-sandbox"
@@ -319,6 +342,7 @@ alias prod-sandbox="cua vnc my-production-sandbox"
 ```
 
 ### 4. Monitoring Provisioning
+
 ```bash
 # For sandboxes that need provisioning time
 cua create --os windows --size large --region europe

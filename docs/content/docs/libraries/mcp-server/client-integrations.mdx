@@ -30,13 +30,15 @@ To use with Claude Desktop, add an entry to your Claude Desktop configuration (`
 If you're working with the CUA source code:
 
 **Standard VM Mode:**
+
 ```json
 {
   "mcpServers": {
     "cua-agent": {
       "command": "/usr/bin/env",
       "args": [
-        "bash", "-lc",
+        "bash",
+        "-lc",
         "export CUA_MODEL_NAME='anthropic/claude-sonnet-4-20250514'; export ANTHROPIC_API_KEY='your-anthropic-api-key-here'; /path/to/cua/libs/python/mcp-server/scripts/start_mcp_server.sh"
       ]
     }
@@ -45,13 +47,15 @@ If you're working with the CUA source code:
 ```
 
 **Host Computer Control Mode:**
+
 ```json
 {
   "mcpServers": {
     "cua-agent": {
       "command": "/usr/bin/env",
       "args": [
-        "bash", "-lc",
+        "bash",
+        "-lc",
         "export CUA_MODEL_NAME='anthropic/claude-sonnet-4-20250514'; export ANTHROPIC_API_KEY='your-anthropic-api-key-here'; export CUA_USE_HOST_COMPUTER_SERVER='true'; export CUA_MAX_IMAGES='1'; /path/to/cua/libs/python/mcp-server/scripts/start_mcp_server.sh"
       ]
     }
@@ -62,6 +66,7 @@ If you're working with the CUA source code:
 **Note**: Replace `/path/to/cua` with the absolute path to your CUA repository directory.
 
 **⚠️ Host Computer Control Setup**: When using `CUA_USE_HOST_COMPUTER_SERVER='true'`, you must also:
+
 1. Install computer server dependencies: `python3 -m pip install uvicorn fastapi`
 2. Install the computer server: `python3 -m pip install -e libs/python/computer-server --break-system-packages`
 3. Start the computer server: `python -m computer_server --log-level debug`

@@ -11,19 +11,23 @@ import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
 This guide demonstrates how to automate Windows desktop applications (like eGecko HR/payroll systems) that run behind corporate VPN. This is a common enterprise scenario where legacy desktop applications require manual data entry, report generation, or workflow execution.
 
 **Use cases:**
+
 - HR/payroll processing (employee onboarding, payroll runs, benefits administration)
 - Desktop ERP systems behind corporate networks
 - Legacy financial applications requiring VPN access
 - Compliance reporting from on-premise systems
 
 **Architecture:**
+
 - Client-side Cua agent (Python SDK or Playground UI)
 - Windows VM/Sandbox with VPN client configured
 - RDP/remote desktop connection to target environment
 - Desktop application automation via computer vision and UI control
 
 <Callout type="info">
-  **Production Deployment**: For production use, consider workflow mining and custom finetuning to create vertical-specific actions (e.g., "Run payroll", "Onboard employee") instead of generic UI automation. This provides better audit trails and higher success rates.
+  **Production Deployment**: For production use, consider workflow mining and custom finetuning to
+  create vertical-specific actions (e.g., "Run payroll", "Onboard employee") instead of generic UI
+  automation. This provides better audit trails and higher success rates.
 </Callout>
 
 ---
@@ -31,7 +35,11 @@ This guide demonstrates how to automate Windows desktop applications (like eGeck
 ## Video Demo
 
 <div className="rounded-lg border bg-card text-card-foreground shadow-sm p-4 mb-6">
-  <video src="https://github.com/user-attachments/assets/8ab07646-6018-4128-87ce-53180cfea696" controls className="w-full rounded">
+  <video
+    src="https://github.com/user-attachments/assets/8ab07646-6018-4128-87ce-53180cfea696"
+    controls
+    className="w-full rounded"
+  >
     Your browser does not support the video tag.
   </video>
   <div className="text-sm text-muted-foreground mt-2">
@@ -106,7 +114,8 @@ For local development on Windows 10 Pro/Enterprise or Windows 11:
 4. Configure your desktop application installation within the sandbox
 
 <Callout type="warn">
-  **Manual VPN Setup**: Windows Sandbox requires manual VPN configuration each time it starts. For production use, consider Cloud Sandbox or self-hosted VMs with persistent VPN connections.
+  **Manual VPN Setup**: Windows Sandbox requires manual VPN configuration each time it starts. For
+  production use, consider Cloud Sandbox or self-hosted VMs with persistent VPN connections.
 </Callout>
 
   </Tab>
@@ -421,6 +430,7 @@ python hr_automation.py
 ```
 
 The agent will:
+
 1. Connect to your Windows environment (with VPN if configured)
 2. Launch and navigate the desktop application
 3. Execute each workflow step sequentially
@@ -506,6 +516,7 @@ agent = ComputerAgent(
 ### 1. Workflow Mining
 
 Before deploying, analyze your actual workflows:
+
 - Record user interactions with the application
 - Identify common patterns and edge cases
 - Map out decision trees and validation requirements
@@ -524,6 +535,7 @@ tasks = ["onboard_employee", "run_payroll", "generate_compliance_report"]
 ```
 
 This provides:
+
 - Better audit trails
 - Approval gates at business logic level
 - Higher success rates
@@ -547,12 +559,14 @@ agent = ComputerAgent(
 Choose your deployment model:
 
 **Managed (Recommended)**
+
 - Cua hosts Windows sandboxes, VPN/RDP stack, and agent runtime
 - You get UI/API endpoints for triggering workflows
 - Automatic scaling, monitoring, and maintenance
 - SLA guarantees and enterprise support
 
 **Self-Hosted**
+
 - You manage Windows VMs, VPN infrastructure, and agent deployment
 - Full control over data and security
 - Custom network configurations

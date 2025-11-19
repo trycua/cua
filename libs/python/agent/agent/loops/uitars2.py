@@ -5,13 +5,14 @@ UITARS-2 agent loop implementation using LiteLLM.
 - Calls litellm.acompletion
 - Parses <seed:tool_call> ... </seed:tool_call> outputs back into Responses items (computer actions)
 """
+
 from __future__ import annotations
 
-import re
-from typing import Any, Dict, List, Optional, Tuple
 import base64
 import io
 import json
+import re
+from typing import Any, Dict, List, Optional, Tuple
 
 import litellm
 from litellm.responses.litellm_completion_transformation.transformation import (
@@ -20,37 +21,45 @@ from litellm.responses.litellm_completion_transformation.transformation import (
 
 from ..decorators import register_agent
 from .omniparser import get_last_computer_call_output  # type: ignore
+
 try:
     from PIL import Image  # type: ignore
 except Exception:  # pragma: no cover
     Image = None  # type: ignore
 from ..responses import (
+    convert_responses_items_to_completion_messages,
     make_click_item,
     make_double_click_item,
     make_drag_item,
     make_function_call_item,
     make_keypress_item,
-    make_screenshot_item,
     make_move_item,
     make_output_text_item,
     make_reasoning_item,
+    make_screenshot_item,
     make_scroll_item,
     make_type_item,
     make_wait_item,
-    convert_responses_items_to_completion_messages,
 )
 from ..types import AgentCapability
 
-
 TOOL_SCHEMAS: List[Dict[str, Any]] = [
-    {"type": "function", "name": "open_computer", "parameters": {}, "description": "Open computer."},
+    {
+        "type": "function",
+        "name": "open_computer",
+        "parameters": {},
+        "description": "Open computer.",
+    },
     {
         "type": "function",
         "name": "click",
         "parameters": {
             "type": "object",
             "properties": {
-                "point": {"type": "string", "description": "Click coordinates. The format is: <point>x y</point>"}
+                "point": {
+                    "type": "string",
+                    "description": "Click coordinates. The format is: <point>x y</point>",
+                }
             },
             "required": ["point"],
         },
@@ -62,7 +71,10 @@ TOOL_SCHEMAS: List[Dict[str, Any]] = [
         "parameters": {
             "type": "object",
             "properties": {
-                "point": {"type": "string", "description": "Click coordinates. The format is: <point>x y</point>"}
+                "point": {
+                    "type": "string",
+                    "description": "Click coordinates. The format is: <point>x y</point>",
+                }
             },
             "required": ["point"],
         },
@@ -74,7 +86,10 @@ TOOL_SCHEMAS: List[Dict[str, Any]] = [
         "parameters": {
             "type": "object",
             "properties": {
-                "point": {"type": "string", "description": "Click coordinates. The format is: <point>x y</point>"}
+                "point": {
+                    "type": "string",
+                    "description": "Click coordinates. The format is: <point>x y</point>",
+                }
             },
             "required": ["point"],
         },
@@ -106,7 +121,10 @@ TOOL_SCHEMAS: List[Dict[str, Any]] = [
         "parameters": {
             "type": "object",
             "properties": {
-                "point": {"type": "string", "description": "Target coordinates. The format is: <point>x y</point>"}
+                "point": {
+                    "type": "string",
+                    "description": "Target coordinates. The format is: <point>x y</point>",
+                }
             },
             "required": ["point"],
         },
@@ -117,7 +135,12 @@ TOOL_SCHEMAS: List[Dict[str, Any]] = [
         "name": "hotkey",
         "parameters": {
             "type": "object",
-            "properties": {"key": {"type": "string", "description": "Hotkeys you want to press. Split keys with a space and use lowercase."}},
+            "properties": {
+                "key": {
+                    "type": "string",
+                    "description": "Hotkeys you want to press. Split keys with a space and use lowercase.",
+                }
+            },
             "required": ["key"],
         },
         "description": "Press hotkey.",
@@ -227,9 +250,7 @@ TOOL_SCHEMAS: List[Dict[str, Any]] = [
         "name": "wait",
         "parameters": {
             "type": "object",
-            "properties": {
-                "time": {"type": "integer", "description": "Wait time in seconds."}
-            },
+            "properties": {"time": {"type": "integer", "description": "Wait time in seconds."}},
             "required": [],
         },
         "description": "Wait for a while.",
@@ -268,7 +289,12 @@ TOOL_SCHEMAS: List[Dict[str, Any]] = [
         },
         "description": "Type content.",
     },
-    {"type": "function", "name": "take_screenshot", "parameters": {}, "description": "Take screenshot."},
+    {
+        "type": "function",
+        "name": "take_screenshot",
+        "parameters": {},
+        "description": "Take screenshot.",
+    },
 ]
 
 
@@ -319,7 +345,9 @@ _PROMPT_SUFFIX = (
 SYSTEM_PROMPT = _PROMPT_PREFIX + _format_tool_schemas_json_lines(TOOL_SCHEMAS) + _PROMPT_SUFFIX
 
 
-def _extract_function_schemas_from_tools(tools: Optional[List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
+def _extract_function_schemas_from_tools(
+    tools: Optional[List[Dict[str, Any]]],
+) -> List[Dict[str, Any]]:
     schemas: List[Dict[str, Any]] = []
     if not tools:
         return schemas
@@ -330,12 +358,14 @@ def _extract_function_schemas_from_tools(tools: Optional[List[Dict[str, Any]]]) 
             params = fn.get("parameters", {})
             desc = fn.get("description", "")
             if name:
-                schemas.append({
-                    "type": "function",
-                    "name": name,
-                    "parameters": params if isinstance(params, dict) else {},
-                    "description": desc,
-                })
+                schemas.append(
+                    {
+                        "type": "function",
+                        "name": name,
+                        "parameters": params if isinstance(params, dict) else {},
+                        "description": desc,
+                    }
+                )
     return schemas
 
 
@@ -392,7 +422,9 @@ def _denormalize_xy_from_uitars(nx: float, ny: float, width: int, height: int) -
     return x, y
 
 
-def _map_computer_action_to_function(action: Dict[str, Any], width: int, height: int) -> Optional[Dict[str, Any]]:
+def _map_computer_action_to_function(
+    action: Dict[str, Any], width: int, height: int
+) -> Optional[Dict[str, Any]]:
     """Map a computer action item to a UITARS function + parameters dict of strings.
     Returns dict like {"function": name, "parameters": {..}} or None if unknown.
     """
@@ -404,7 +436,10 @@ def _map_computer_action_to_function(action: Dict[str, Any], width: int, height:
             return None
         nx, ny = _normalize_xy_to_uitars(int(x), int(y), width, height)
         if btn == "right":
-            return {"function": "right_single", "parameters": {"point": f"<point>{nx} {ny}</point>"}}
+            return {
+                "function": "right_single",
+                "parameters": {"point": f"<point>{nx} {ny}</point>"},
+            }
         return {"function": "click", "parameters": {"point": f"<point>{nx} {ny}</point>"}}
     if atype == "double_click":
         x, y = action.get("x"), action.get("y")
@@ -434,8 +469,19 @@ def _map_computer_action_to_function(action: Dict[str, Any], width: int, height:
         nx, ny = _normalize_xy_to_uitars(int(x), int(y), width, height)
         sx, sy = action.get("scroll_x", 0), action.get("scroll_y", 0)
         # Our parser used positive sy for up
-        direction = "up" if sy and sy > 0 else ("down" if sy and sy < 0 else ("right" if sx and sx > 0 else ("left" if sx and sx < 0 else "down")))
-        return {"function": "scroll", "parameters": {"direction": direction, "point": f"<point>{nx} {ny}</point>"}}
+        direction = (
+            "up"
+            if sy and sy > 0
+            else (
+                "down"
+                if sy and sy < 0
+                else ("right" if sx and sx > 0 else ("left" if sx and sx < 0 else "down"))
+            )
+        )
+        return {
+            "function": "scroll",
+            "parameters": {"direction": direction, "point": f"<point>{nx} {ny}</point>"},
+        }
     if atype == "drag":
         path = action.get("path", [])
         if isinstance(path, list) and len(path) >= 2:
@@ -461,7 +507,9 @@ def _map_computer_action_to_function(action: Dict[str, Any], width: int, height:
     return None
 
 
-def _to_uitars_messages(messages: List[Dict[str, Any]], width: int, height: int) -> List[Dict[str, Any]]:
+def _to_uitars_messages(
+    messages: List[Dict[str, Any]], width: int, height: int
+) -> List[Dict[str, Any]]:
     """Convert responses items into completion messages tailored for UI-TARS.
 
     - User content is passed through similar to convert_responses_items_to_completion_messages
@@ -505,7 +553,9 @@ def _to_uitars_messages(messages: List[Dict[str, Any]], width: int, height: int)
                 completion_content = []
                 for item in content:
                     if item.get("type") == "input_image":
-                        completion_content.append({"type": "image_url", "image_url": {"url": item.get("image_url")}})
+                        completion_content.append(
+                            {"type": "image_url", "image_url": {"url": item.get("image_url")}}
+                        )
                     elif item.get("type") in ("input_text", "text"):
                         completion_content.append({"type": "text", "text": item.get("text")})
                 uitars_messages.append({"role": "user", "content": completion_content})
@@ -517,7 +567,11 @@ def _to_uitars_messages(messages: List[Dict[str, Any]], width: int, height: int)
         if mtype == "reasoning":
             # Responses reasoning stores summary list
             summary = msg.get("summary", [])
-            texts = [s.get("text", "") for s in summary if isinstance(s, dict) and s.get("type") == "summary_text"]
+            texts = [
+                s.get("text", "")
+                for s in summary
+                if isinstance(s, dict) and s.get("type") == "summary_text"
+            ]
             if texts:
                 pending_think = "\n".join([t for t in texts if t])
             continue
@@ -546,9 +600,15 @@ def _to_uitars_messages(messages: List[Dict[str, Any]], width: int, height: int)
             pending_think, pending_functions = None, []
             content = msg.get("content", [])
             if isinstance(content, list):
-                texts = [c.get("text", "") for c in content if isinstance(c, dict) and c.get("type") in ("output_text", "text")]
+                texts = [
+                    c.get("text", "")
+                    for c in content
+                    if isinstance(c, dict) and c.get("type") in ("output_text", "text")
+                ]
                 if texts:
-                    uitars_messages.append({"role": "assistant", "content": "\n".join([t for t in texts if t])})
+                    uitars_messages.append(
+                        {"role": "assistant", "content": "\n".join([t for t in texts if t])}
+                    )
             elif isinstance(content, str) and content:
                 uitars_messages.append({"role": "assistant", "content": content})
             continue
@@ -581,8 +641,12 @@ def _to_uitars_messages(messages: List[Dict[str, Any]], width: int, height: int)
 
     return uitars_messages
 
+
 def _to_response_items(
-    actions: List[Dict[str, Any]], tool_names: Optional[set[str]] = None, width: Optional[int] = None, height: Optional[int] = None
+    actions: List[Dict[str, Any]],
+    tool_names: Optional[set[str]] = None,
+    width: Optional[int] = None,
+    height: Optional[int] = None,
 ) -> List[Any]:
     """Map parsed actions into Responses items (computer actions + optional reasoning)."""
     items: List[Any] = []
@@ -736,8 +800,12 @@ class UITARS2Config:
 
         # Build dynamic system prompt by concatenating built-in schemas and provided function tools
         provided_fn_schemas = _extract_function_schemas_from_tools(tools)
-        combined_schemas = TOOL_SCHEMAS + provided_fn_schemas if provided_fn_schemas else TOOL_SCHEMAS
-        dynamic_system_prompt = _PROMPT_PREFIX + _format_tool_schemas_json_lines(combined_schemas) + _PROMPT_SUFFIX
+        combined_schemas = (
+            TOOL_SCHEMAS + provided_fn_schemas if provided_fn_schemas else TOOL_SCHEMAS
+        )
+        dynamic_system_prompt = (
+            _PROMPT_PREFIX + _format_tool_schemas_json_lines(combined_schemas) + _PROMPT_SUFFIX
+        )
 
         # Prepend system prompt (based on training prompts + provided tools)
         litellm_messages: List[Dict[str, Any]] = [
@@ -829,7 +897,10 @@ class UITARS2Config:
                 "role": "user",
                 "content": [
                     {"type": "text", "text": "Please return a single click action."},
-                    {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{image_b64}"}},
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:image/png;base64,{image_b64}"},
+                    },
                 ],
             },
         ]
@@ -841,7 +912,9 @@ class UITARS2Config:
             "temperature": kwargs.get("temperature", 0.0),
             "do_sample": kwargs.get("temperature", 0.0) > 0.0,
         }
-        api_kwargs.update({k: v for k, v in (kwargs or {}).items() if k not in ["max_tokens", "temperature"]})
+        api_kwargs.update(
+            {k: v for k, v in (kwargs or {}).items() if k not in ["max_tokens", "temperature"]}
+        )
 
         response = await litellm.acompletion(**api_kwargs)
         # Extract response content
@@ -852,7 +925,11 @@ class UITARS2Config:
         msg = choices[0].get("message", {})
         content_text = msg.get("content", "")
         if isinstance(content_text, list):
-            text_parts = [p.get("text", "") for p in content_text if isinstance(p, dict) and p.get("type") == "text"]
+            text_parts = [
+                p.get("text", "")
+                for p in content_text
+                if isinstance(p, dict) and p.get("type") == "text"
+            ]
             content_text = "\n".join([t for t in text_parts if t])
         if not isinstance(content_text, str):
             return None

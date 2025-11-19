@@ -671,11 +671,12 @@ def _convert_completion_to_responses_items(response: Any) -> List[Dict[str, Any]
                         # Handle custom function tools (not computer tools)
                         if tool_name != "computer":
                             from ..responses import make_function_call_item
-                            responses_items.append(make_function_call_item(
-                                function_name=tool_name,
-                                arguments=tool_input,
-                                call_id=call_id
-                            ))
+
+                            responses_items.append(
+                                make_function_call_item(
+                                    function_name=tool_name, arguments=tool_input, call_id=call_id
+                                )
+                            )
                             continue
 
                         # Computer tool - process actions
@@ -883,16 +884,17 @@ def _convert_completion_to_responses_items(response: Any) -> List[Dict[str, Any]
             # Handle custom function tools
             if tool_name != "computer":
                 from ..responses import make_function_call_item
+
                 # tool_call.function.arguments is a JSON string, need to parse it
                 try:
                     args_dict = json.loads(tool_call.function.arguments)
                 except json.JSONDecodeError:
                     args_dict = {}
-                responses_items.append(make_function_call_item(
-                    function_name=tool_name,
-                    arguments=args_dict,
-                    call_id=tool_call.id
-                ))
+                responses_items.append(
+                    make_function_call_item(
+                        function_name=tool_name, arguments=args_dict, call_id=tool_call.id
+                    )
+                )
                 continue
 
             # Handle computer tool

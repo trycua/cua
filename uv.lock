@@ -861,7 +861,7 @@ wheels = [
 
 [[package]]
 name = "cua-agent"
-version = "0.4.39"
+version = "0.4.53"
 source = { editable = "libs/python/agent" }
 dependencies = [
     { name = "aiohttp" },
@@ -885,7 +885,6 @@ all = [
     { name = "einops" },
     { name = "google-genai" },
     { name = "gradio" },
-    { name = "hud-python" },
     { name = "mlx-vlm", marker = "sys_platform == 'darwin'" },
     { name = "pillow" },
     { name = "python-dotenv" },
@@ -975,7 +974,6 @@ requires-dist = [
     { name = "gradio", marker = "extra == 'all'", specifier = ">=5.23.3" },
     { name = "gradio", marker = "extra == 'ui'", specifier = ">=5.23.3" },
     { name = "httpx", specifier = ">=0.27.0" },
-    { name = "hud-python", marker = "extra == 'all'", specifier = "==0.4.52" },
     { name = "hud-python", marker = "extra == 'hud'", specifier = "==0.4.52" },
     { name = "litellm", specifier = ">=1.74.12" },
     { name = "mlx-vlm", marker = "sys_platform == 'darwin' and extra == 'all'", specifier = ">=0.1.27" },
@@ -1015,7 +1013,7 @@ provides-extras = ["openai", "anthropic", "qwen", "omni", "uitars", "uitars-mlx"
 
 [[package]]
 name = "cua-computer"
-version = "0.4.12"
+version = "0.4.17"
 source = { editable = "libs/python/computer" }
 dependencies = [
     { name = "aiohttp" },

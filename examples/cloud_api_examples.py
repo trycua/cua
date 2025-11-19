@@ -9,14 +9,13 @@ from computer.providers.cloud.provider import CloudProvider
 
 
 async def main() -> None:
-    api_key = os.getenv("CUA_API_KEY")
-    if not api_key:
-        raise RuntimeError("CUA_API_KEY environment variable is not set")
+    # CloudProvider will automatically read CUA_API_KEY from environment if not provided
+    # You can still pass api_key explicitly if needed: CloudProvider(api_key="your_key")
     api_base = os.getenv("CUA_API_BASE")
     if api_base:
         print(f"Using API base: {api_base}")
 
-    provider = CloudProvider(api_key=api_key, verbose=True)
+    provider = CloudProvider(verbose=True)
     async with provider:
 
         # List all VMs

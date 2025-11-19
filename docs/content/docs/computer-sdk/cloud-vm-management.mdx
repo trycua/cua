@@ -17,16 +17,16 @@ All examples require a CUA API key. You can obtain one from the [Dashboard](http
   <Tab value="Python">
 
 ```python
-import os
 import asyncio
 from computer.providers.cloud.provider import CloudProvider
 
 async def main():
-    api_key = os.getenv("CUA_API_KEY") or "your-api-key"
+    # CloudProvider automatically reads CUA_API_KEY from environment
+    # You can also pass api_key explicitly: CloudProvider(api_key="your-api-key")
     # Optional: point to a different API base
     # os.environ["CUA_API_BASE"] = "https://api.cua.ai"
 
-    provider = CloudProvider(api_key=api_key, verbose=False)
+    provider = CloudProvider(verbose=False)
     async with provider:
         vms = await provider.list_vms()
         for vm in vms:
@@ -88,15 +88,14 @@ Provide the sandbox name you want to start.
   <Tab value="Python">
 
 ```python
-import os
 import asyncio
 from computer.providers.cloud.provider import CloudProvider
 
 async def main():
-    api_key = os.getenv("CUA_API_KEY") or "your-api-key"
+    # CloudProvider automatically reads CUA_API_KEY from environment
     name = "my-vm-name"  # e.g., "m-linux-96lcxd2c2k"
 
-    provider = CloudProvider(api_key=api_key)
+    provider = CloudProvider()
     async with provider:
         resp = await provider.run_vm(name)
         print(resp)  # { "name": name, "status": "starting" }
@@ -137,15 +136,14 @@ Stops the sandbox asynchronously.
   <Tab value="Python">
 
 ```python
-import os
 import asyncio
 from computer.providers.cloud.provider import CloudProvider
 
 async def main():
-    api_key = os.getenv("CUA_API_KEY") or "your-api-key"
+    # CloudProvider automatically reads CUA_API_KEY from environment
     name = "my-vm-name"
 
-    provider = CloudProvider(api_key=api_key)
+    provider = CloudProvider()
     async with provider:
         resp = await provider.stop_vm(name)
         print(resp)  # { "name": name, "status": "stopping" }
@@ -186,15 +184,14 @@ Restarts the sandbox asynchronously.
   <Tab value="Python">
 
 ```python
-import os
 import asyncio
 from computer.providers.cloud.provider import CloudProvider
 
 async def main():
-    api_key = os.getenv("CUA_API_KEY") or "your-api-key"
+    # CloudProvider automatically reads CUA_API_KEY from environment
     name = "my-vm-name"
 
-    provider = CloudProvider(api_key=api_key)
+    provider = CloudProvider()
     async with provider:
         resp = await provider.restart_vm(name)
         print(resp)  # { "name": name, "status": "restarting" }
@@ -235,15 +232,14 @@ Query the computer-server running on the sandbox. Useful for checking details li
   <Tab value="Python">
 
 ```python
-import os
 import asyncio
 from computer.providers.cloud.provider import CloudProvider
 
 async def main():
-    api_key = os.getenv("CUA_API_KEY") or "your-api-key"
+    # CloudProvider automatically reads CUA_API_KEY from environment
     name = "my-vm-name"
 
-    provider = CloudProvider(api_key=api_key)
+    provider = CloudProvider()
     async with provider:
         info = await provider.get_vm(name)
         print(info)

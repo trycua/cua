@@ -98,12 +98,16 @@ class Computer:
             host: Host to use for VM provider connections (e.g. "localhost", "host.docker.internal")
             storage: Optional path for persistent VM storage (Lumier provider)
             ephemeral: Whether to use ephemeral storage
-            api_key: Optional API key for cloud providers
+            api_key: Optional API key for cloud providers (defaults to CUA_API_KEY environment variable)
             experiments: Optional list of experimental features to enable (e.g. ["app-use"])
         """
 
         self.logger = Logger("computer", verbosity)
         self.logger.info("Initializing Computer...")
+
+        # Fall back to environment variable for api_key if not provided
+        if api_key is None:
+            api_key = os.environ.get("CUA_API_KEY")
 
         if not image:
             if os_type == "macos":

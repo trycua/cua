@@ -119,7 +119,7 @@ jobs:
 
   publish-agent:
     needs: bump-version
-    if: ${{ inputs.service == 'cua-agent' }}
+    if: ${{ inputs.service == 'cua-agent' || inputs.service == 'cua-computer' }}
     uses: ./.github/workflows/pypi-publish-agent.yml
     with:
       version: ${{ needs.bump-version.outputs.agent_version }}

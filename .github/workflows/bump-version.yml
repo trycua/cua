@@ -117,18 +117,18 @@ jobs:
         run: |
           git push origin main --follow-tags
 
-  publish-agent:
-    needs: bump-version
-    if: ${{ inputs.service == 'cua-agent' || inputs.service == 'cua-computer' }}
-    uses: ./.github/workflows/pypi-publish-agent.yml
-    with:
-      version: ${{ needs.bump-version.outputs.agent_version }}
-    secrets: inherit
-
   publish-computer:
     needs: bump-version
     if: ${{ inputs.service == 'cua-computer' }}
     uses: ./.github/workflows/pypi-publish-computer.yml
     with:
       version: ${{ needs.bump-version.outputs.computer_version }}
+    secrets: inherit
+
+  publish-agent:
+    needs: [bump-version, publish-computer]
+    if: ${{ always() && (inputs.service == 'cua-agent' || inputs.service == 'cua-computer') && needs.bump-version.result == 'success' && (inputs.service == 'cua-agent' || needs.publish-computer.result == 'success') }}
+    uses: ./.github/workflows/pypi-publish-agent.yml
+    with:
+      version: ${{ needs.bump-version.outputs.agent_version }}
     secrets: inherit

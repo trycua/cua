@@ -141,14 +141,12 @@ Connect to your Cua computer and perform basic interactions, such as taking scre
 
     <Tabs items={['Cloud Sandbox', 'Linux on Docker', 'macOS Sandbox', 'Windows Sandbox', 'Your host desktop']}>
       <Tab value="Cloud Sandbox">
-        Set your CUA API key (same key used for model inference):
-        ```bash
-        export CUA_API_KEY="sk_cua-api01_..."
-        ```
-
-        Then connect to your sandbox:
+        Set your CUA API key (same key used for model inference) and connect to your sandbox:
         ```python
+        import os
         from computer import Computer
+
+        os.environ["CUA_API_KEY"] = "sk_cua-api01_..."
 
         computer = Computer(
             os_type="linux",  # or "windows" or "macos"
@@ -346,14 +344,12 @@ Choose how you want to access vision-language models for your agent:
 
     Use CUA's inference API to access multiple model providers with a single API key (same key used for sandbox access). CUA VLM Router provides intelligent routing and cost optimization.
 
-    **Set your CUA API key:**
-    ```bash
-    export CUA_API_KEY="sk_cua-api01_..."
-    ```
-
     **Use the agent with CUA models:**
     ```python
+    import os
     from agent import ComputerAgent
+
+    os.environ["CUA_API_KEY"] = "sk_cua-api01_..."
 
     agent = ComputerAgent(
         model="cua/anthropic/claude-sonnet-4.5",  # CUA-routed model
@@ -383,18 +379,15 @@ Choose how you want to access vision-language models for your agent:
 
     Use your own API keys from model providers like Anthropic, OpenAI, or others.
 
-    **Set your provider API key:**
-    ```bash
-    # For Anthropic
-    export ANTHROPIC_API_KEY="sk-ant-..."
-
-    # For OpenAI
-    export OPENAI_API_KEY="sk-..."
-    ```
-
     **Use the agent with your provider:**
     ```python
+    import os
     from agent import ComputerAgent
+
+    # Set your provider API key
+    os.environ["ANTHROPIC_API_KEY"] = "sk-ant-..."  # For Anthropic
+    # OR
+    os.environ["OPENAI_API_KEY"] = "sk-..."  # For OpenAI
 
     agent = ComputerAgent(
         model="anthropic/claude-sonnet-4-5-20250929",  # Direct provider model

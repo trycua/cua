@@ -344,8 +344,9 @@ Switching from direct provider access (BYOK) to CUA VLM Router is simple:
 
 **Before (Direct Provider Access with BYOK):**
 ```python
+import os
 # Required: Provider-specific API key
-export ANTHROPIC_API_KEY="sk-ant-..."
+os.environ["ANTHROPIC_API_KEY"] = "sk-ant-..."
 
 agent = ComputerAgent(
     model="anthropic/claude-sonnet-4-5-20250929",
@@ -355,8 +356,9 @@ agent = ComputerAgent(
 
 **After (CUA VLM Router - Cloud Service):**
 ```python
+import os
 # Required: CUA API key only (no provider keys needed)
-export CUA_API_KEY="sk_cua-api01_..."
+os.environ["CUA_API_KEY"] = "sk_cua-api01_..."
 
 agent = ComputerAgent(
     model="cua/anthropic/claude-sonnet-4.5",  # Add "cua/" prefix

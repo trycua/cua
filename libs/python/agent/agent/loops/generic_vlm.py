@@ -233,8 +233,8 @@ def convert_qwen_tool_args_to_computer_action(args: Dict[str, Any]) -> Optional[
     return None
 
 
-@register_agent(models=r"(?i).*qwen.*", priority=-1)
-class Qwen3VlConfig(AsyncAgentConfig):
+@register_agent(models=r"(?i).*", priority=-100)
+class GenericVlmConfig(AsyncAgentConfig):
     async def predict_step(
         self,
         messages: List[Dict[str, Any]],

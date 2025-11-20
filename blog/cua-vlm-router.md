@@ -51,36 +51,38 @@ When you request an Anthropic model through Cua, we automatically route to the b
 
 Sign up at [cua.ai/signin](https://cua.ai/signin) and create your API key from **Dashboard > API Keys > New API Key** (save it immediately—you won't see it again).
 
-Set your environment variable:
 
-```bash
-export CUA_API_KEY="sk_cua-api01_..."
-```
-
-Use it with the Agent SDK:
+Use it with the Agent SDK (make sure to set your environment variable):
 
 ```python
+import asyncio
 from agent import ComputerAgent
 from computer import Computer
 
-computer = Computer(
+async def main():
+  # Initialize cloud computer
+  computer = Computer(
     os_type="linux",
     provider_type="cloud",
-    name="your-sandbox-name"
-)
+    name="your-container-name",
+    api_key="your-cua-api-key"
+  )
 
-agent = ComputerAgent(
-    model="cua/anthropic/claude-sonnet-4.5",  # Cua-routed model
+  # Initialize agent with Claude Sonnet 4.5
+  agent = ComputerAgent(
     tools=[computer],
-    max_trajectory_budget=5.0
-)
+    model="cua/anthropic/claude-sonnet-4.5",
+    api_key="your-cua-api-key",
+    instructions="You are a helpful assistant that can control computers",
+    only_n_most_recent_images=3
+  )
 
-messages = [{"role": "user", "content": "Take a screenshot and analyze what's on screen"}]
+  # Run a task
+  async for result in agent.run("Open a browser and search for Python tutorials"):
+    print(result)
 
-async for result in agent.run(messages):
-    for item in result["output"]:
-        if item["type"] == "message":
-            print(item["content"][0]["text"])
+if __name__ == "__main__":
+  asyncio.run(main())
 ```
 
 ## Migration is Simple

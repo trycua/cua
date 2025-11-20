@@ -1,10 +1,10 @@
-# Preview: Cua Playground—Agents + Sandboxes in Your Browser
+# Cua Playground: Agents + Sandboxes in Your Browser
 
 Building computer-use agents means constant iteration—writing code, deploying to a sandbox, testing behavior, debugging issues, then repeating the cycle. Every test requires switching between your code editor, terminal, and VNC viewer. Want to try a different prompt? Edit your code, redeploy, and wait for the agent to restart. It works, but it's slow.
 
 Today we're launching the **Cua Playground**: a browser-based environment for testing computer-use agents without writing code. Send messages to your sandboxes, watch them execute in real-time, and iterate on prompts instantly—all from your dashboard at cua.ai.
 
-![Cloud Windows Sandboxes](https://github.com/user-attachments/assets/db15f4c4-70a4-425a-a264-82e629074de7)
+![Cua Playground](https://github.com/user-attachments/assets/af1071ba-3df3-4e4b-aafb-df8c3d00b0a5)
 
 **What's new with this release:**
 
@@ -13,13 +13,14 @@ Today we're launching the **Cua Playground**: a browser-based environment for te
 - Multi-model support—test with Claude Sonnet 4.5, Haiku 4.5, and more
 - Persistent chat history—conversations save automatically to local storage
 
-<div align="center">
-  <video src="https://github.com/user-attachments/assets/8ab07646-6018-4128-87ce-53180cfea696" width="600" controls></video>
-</div>
-
 The Playground connects to your existing Cua sandboxes—the same ones you use with the Agent SDK. Select a running sandbox and a model, then start chatting. The agent uses computer-use tools (mouse, keyboard, bash, editor) to complete your tasks, and you see every action it takes.
 
 ## Getting Started Today
+
+<div align="center">
+  <video src="https://github.com/user-attachments/assets/9fef0f30-1024-4833-8b7a-6a2c02d8eb99" width="600" controls></video>
+</div>
+
 
 Sign up at [cua.ai/signin](https://cua.ai/signin) and grab your API key from the dashboard. Then navigate to the Playground:
 

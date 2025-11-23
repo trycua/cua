@@ -21,7 +21,7 @@ from agent.callbacks import (
 )
 
 agent = ComputerAgent(
-    model="anthropic/claude-3-5-sonnet-20241022",
+    model="anthropic/claude-sonnet-4-5-20250929",
     tools=[computer],
     callbacks=[
         ImageRetentionCallback(only_n_most_recent_images=3),

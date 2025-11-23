@@ -184,7 +184,7 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="Test CUA Agent with mock computer")
     parser.add_argument(
-        "--model", default="anthropic/claude-sonnet-4-20250514", help="CUA model to test"
+        "--model", default="anthropic/claude-sonnet-4-5-20250929", help="CUA model to test"
     )
     args = parser.parse_args()
 

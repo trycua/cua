@@ -58,7 +58,7 @@ await run_full_dataset(
 # Or test on SheetBench (50 spreadsheet tasks)
 await run_full_dataset(
     dataset="hud-evals/SheetBench-V2",
-    model="anthropic/claude-3-5-sonnet-20241022",
+    model="anthropic/claude-sonnet-4-5-20250929",
     split="train[:2]"
 )
 ```

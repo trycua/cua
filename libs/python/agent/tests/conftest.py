@@ -24,7 +24,7 @@ def mock_litellm():
                 "id": "chatcmpl-test123",
                 "object": "chat.completion",
                 "created": 1234567890,
-                "model": kwargs.get("model", "anthropic/claude-3-5-sonnet-20241022"),
+                "model": kwargs.get("model", "anthropic/claude-sonnet-4-5-20250929"),
                 "choices": [
                     {
                         "index": 0,

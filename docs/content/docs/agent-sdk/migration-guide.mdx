@@ -7,7 +7,7 @@ This guide lists **breaking changes** when migrating from the original `Computer
 ## Breaking Changes
 
 - **Initialization:**
-  - `ComputerAgent` (v0.4.x) uses `model` as a string (e.g. "anthropic/claude-3-5-sonnet-20241022") instead of `LLM` and `AgentLoop` objects.
+  - `ComputerAgent` (v0.4.x) uses `model` as a string (e.g. "anthropic/claude-sonnet-4-5-20250929") instead of `LLM` and `AgentLoop` objects.
   - `tools` is a list (can include multiple computers and decorated functions).
   - `callbacks` are now first-class for extensibility (image retention, budget, trajectory, logging, etc).
 - **No explicit `loop` parameter:**
@@ -39,7 +39,7 @@ async with Computer() as computer:
 ```python
 async with Computer() as computer:
     agent = ComputerAgent(
-        model="anthropic/claude-3-5-sonnet-20241022",
+        model="anthropic/claude-sonnet-4-5-20250929",
         tools=[computer]
     )
     messages = [{"role": "user", "content": "Take a screenshot"}]

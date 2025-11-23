@@ -189,7 +189,7 @@ class ComputerAgent:
         Initialize ComputerAgent.
 
         Args:
-            model: Model name (e.g., "claude-3-5-sonnet-20241022", "computer-use-preview", "omni+vertex_ai/gemini-pro")
+            model: Model name (e.g., "claude-sonnet-4-5-20250929", "computer-use-preview", "omni+vertex_ai/gemini-pro")
             tools: List of tools (computer objects, decorated functions, etc.)
             custom_loop: Custom agent loop function to use instead of auto-selection
             only_n_most_recent_images: If set, only keep the N most recent images in message history. Adds ImageRetentionCallback automatically.

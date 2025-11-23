@@ -156,7 +156,7 @@ def serve() -> FastMCP:
 
                 try:
                     # Get model name
-                    model_name = os.getenv("CUA_MODEL_NAME", "anthropic/claude-3-5-sonnet-20241022")
+                    model_name = os.getenv("CUA_MODEL_NAME", "anthropic/claude-sonnet-4-5-20250929")
                     logger.info(f"Using model: {model_name}")
 
                     # Create agent with the new v0.4.x API

@@ -42,7 +42,7 @@ A simple HTML page that demonstrates using the CUA Agent Client in a browser env
 
 4. **Configure and test:**
    - Enter an agent URL (e.g., `https://localhost:8000` or `peer://some-peer-id`)
-   - Enter a model name (e.g., `anthropic/claude-3-5-sonnet-20241022`)
+   - Enter a model name (e.g., `anthropic/claude-sonnet-4-5-20250929`)
    - Type a message and click "Send Message" or press Enter
    - View the response in the output textarea
 
@@ -53,7 +53,7 @@ A simple HTML page that demonstrates using the CUA Agent Client in a browser env
 
 **Example Models:**
 
-- `anthropic/claude-3-5-sonnet-20241022`
+- `anthropic/claude-sonnet-4-5-20250929`
 - `openai/gpt-4`
 - `huggingface-local/microsoft/UI-TARS-7B`
 

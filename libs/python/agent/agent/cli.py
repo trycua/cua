@@ -7,7 +7,7 @@ Usage:
 Examples:
     python -m agent.cli openai/computer-use-preview
     python -m agent.cli anthropic/claude-sonnet-4-5-20250929
-    python -m agent.cli omniparser+anthropic/claude-3-5-sonnet-20241022
+    python -m agent.cli omniparser+anthropic/claude-sonnet-4-5-20250929
 """
 
 try:
@@ -233,7 +233,7 @@ async def main():
 Examples:
   python -m agent.cli openai/computer-use-preview
   python -m agent.cli anthropic/claude-sonnet-4-5-20250929
-  python -m agent.cli omniparser+anthropic/claude-3-5-sonnet-20241022
+  python -m agent.cli omniparser+anthropic/claude-sonnet-4-5-20250929
   python -m agent.cli huggingface-local/ByteDance-Seed/UI-TARS-1.5-7B
         """,
     )

@@ -6,7 +6,7 @@ The server is configured using environment variables (can be set in the Claude D
 
 | Variable                       | Description                                                                                                                                                                                                                                       | Default                            |
 | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------- |
-| `CUA_MODEL_NAME`               | Model string (e.g., "anthropic/claude-sonnet-4-20250514", "anthropic/claude-3-5-sonnet-20240620", "openai/computer-use-preview", "huggingface-local/ByteDance-Seed/UI-TARS-1.5-7B", "omniparser+litellm/gpt-4o", "omniparser+ollama_chat/gemma3") | anthropic/claude-sonnet-4-20250514 |
+| `CUA_MODEL_NAME`               | Model string (e.g., "anthropic/claude-sonnet-4-20250514", "openai/computer-use-preview", "huggingface-local/ByteDance-Seed/UI-TARS-1.5-7B", "omniparser+litellm/gpt-4o", "omniparser+ollama_chat/gemma3") | anthropic/claude-sonnet-4-20250514 |
 | `ANTHROPIC_API_KEY`            | Your Anthropic API key (required for Anthropic models)                                                                                                                                                                                            | None                               |
 | `CUA_MAX_IMAGES`               | Maximum number of images to keep in context                                                                                                                                                                                                       | 3                                  |
 | `CUA_USE_HOST_COMPUTER_SERVER` | Target your local desktop instead of a VM. Set to "true" to use your host system. **Warning:** AI models may perform risky actions.                                                                                                               | false                              |
@@ -17,7 +17,7 @@ The `CUA_MODEL_NAME` environment variable supports various model providers throu
 
 ### Supported Providers
 
-- **Anthropic**: `anthropic/claude-sonnet-4-20250514`, `anthropic/claude-3-5-sonnet-20240620`, `anthropic/claude-3-haiku-20240307`
+- **Anthropic**: `anthropic/claude-sonnet-4-20250514`, `anthropic/claude-3-haiku-20240307`
 - **OpenAI**: `openai/computer-use-preview`, `openai/gpt-4o`
 - **Local Models**: `huggingface-local/ByteDance-Seed/UI-TARS-1.5-7B`
 - **Omni + LiteLLM**: `omniparser+litellm/gpt-4o`, `omniparser+litellm/claude-3-haiku`

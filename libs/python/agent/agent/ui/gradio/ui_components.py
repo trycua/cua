@@ -44,13 +44,11 @@ def create_gradio_ui() -> gr.Blocks:
         "Anthropic: Claude 4 Opus (20250514)",
         "Anthropic: Claude 4 Sonnet (20250514)",
         "Anthropic: Claude 3.7 Sonnet (20250219)",
-        "Anthropic: Claude 3.5 Sonnet (20241022)",
     ]
     omni_models = [
         "OMNI: OpenAI GPT-4o",
         "OMNI: OpenAI GPT-4o mini",
         "OMNI: Claude 3.7 Sonnet (20250219)",
-        "OMNI: Claude 3.5 Sonnet (20241022)",
     ]
 
     # Check if API keys are available

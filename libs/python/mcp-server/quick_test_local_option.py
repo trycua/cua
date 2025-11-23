@@ -168,7 +168,7 @@ def print_usage_examples():
       "command": "/bin/bash",
       "args": ["~/.cua/start_mcp_server.sh"],
       "env": {
-        "CUA_MODEL_NAME": "anthropic/claude-3-5-sonnet-20241022"
+        "CUA_MODEL_NAME": "anthropic/claude-sonnet-4-5-20250929"
       }
     }
   }
@@ -192,7 +192,7 @@ Step 2: Configure MCP client:
       "command": "/bin/bash",
       "args": ["~/.cua/start_mcp_server.sh"],
       "env": {
-        "CUA_MODEL_NAME": "anthropic/claude-3-5-sonnet-20241022",
+        "CUA_MODEL_NAME": "anthropic/claude-sonnet-4-5-20250929",
         "CUA_USE_HOST_COMPUTER_SERVER": "true"
       }
     }

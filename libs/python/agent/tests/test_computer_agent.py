@@ -18,18 +18,18 @@ class TestComputerAgentInitialization:
         """Test that agent can be initialized with a model string."""
         from agent import ComputerAgent
 
-        agent = ComputerAgent(model="anthropic/claude-3-5-sonnet-20241022")
+        agent = ComputerAgent(model="anthropic/claude-sonnet-4-5-20250929")
 
         assert agent is not None
         assert hasattr(agent, "model")
-        assert agent.model == "anthropic/claude-3-5-sonnet-20241022"
+        assert agent.model == "anthropic/claude-sonnet-4-5-20250929"
 
     @patch("agent.agent.litellm")
     def test_agent_initialization_with_tools(self, mock_litellm, disable_telemetry, mock_computer):
         """Test that agent can be initialized with tools."""
         from agent import ComputerAgent
 
-        agent = ComputerAgent(model="anthropic/claude-3-5-sonnet-20241022", tools=[mock_computer])
+        agent = ComputerAgent(model="anthropic/claude-sonnet-4-5-20250929", tools=[mock_computer])
 
         assert agent is not None
         assert hasattr(agent, "tools")
@@ -41,7 +41,7 @@ class TestComputerAgentInitialization:
 
         budget = 5.0
         agent = ComputerAgent(
-            model="anthropic/claude-3-5-sonnet-20241022", max_trajectory_budget=budget
+            model="anthropic/claude-sonnet-4-5-20250929", max_trajectory_budget=budget
         )
 
         assert agent is not None
@@ -79,7 +79,7 @@ class TestComputerAgentRun:
 
         mock_litellm.acompletion = AsyncMock(return_value=mock_response)
 
-        agent = ComputerAgent(model="anthropic/claude-3-5-sonnet-20241022")
+        agent = ComputerAgent(model="anthropic/claude-sonnet-4-5-20250929")
 
         # Run should return an async generator
         result_generator = agent.run(sample_messages)
@@ -92,7 +92,7 @@ class TestComputerAgentRun:
         """Test that agent has run method available."""
         from agent import ComputerAgent
 
-        agent = ComputerAgent(model="anthropic/claude-3-5-sonnet-20241022")
+        agent = ComputerAgent(model="anthropic/claude-sonnet-4-5-20250929")
 
         # Verify run method exists
         assert hasattr(agent, "run")
@@ -102,7 +102,7 @@ class TestComputerAgentRun:
         """Test that agent has agent_loop initialized."""
         from agent import ComputerAgent
 
-        agent = ComputerAgent(model="anthropic/claude-3-5-sonnet-20241022")
+        agent = ComputerAgent(model="anthropic/claude-sonnet-4-5-20250929")
 
         # Verify agent_loop is initialized
         assert hasattr(agent, "agent_loop")
@@ -132,7 +132,7 @@ class TestComputerAgentIntegration:
         """Test that agent can be initialized with Computer tool."""
         from agent import ComputerAgent
 
-        agent = ComputerAgent(model="anthropic/claude-3-5-sonnet-20241022", tools=[mock_computer])
+        agent = ComputerAgent(model="anthropic/claude-sonnet-4-5-20250929", tools=[mock_computer])
 
         # Verify agent accepted the tool
         assert agent is not None

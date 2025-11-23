@@ -102,7 +102,7 @@ async def main():
             # model="anthropic/claude-opus-4-20250514",
             # model="anthropic/claude-sonnet-4-20250514",
             # model="anthropic/claude-3-7-sonnet-20250219",
-            # model="anthropic/claude-3-5-sonnet-20241022",
+            # model="anthropic/claude-sonnet-4-5-20250929",
             # == UI-TARS ==
             # model="huggingface-local/ByteDance-Seed/UI-TARS-1.5-7B",
             # TODO: add local mlx provider

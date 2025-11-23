@@ -51,7 +51,7 @@ async def main():
 
         # Create agent
         agent = ComputerAgent(
-            model="anthropic/claude-3-5-sonnet-20241022",
+            model="anthropic/claude-sonnet-4-5-20250929",
             tools=[computer],
             only_n_most_recent_images=3,
             trajectory_dir="trajectories",

@@ -16,6 +16,8 @@ export type SandboxStatus =
   | 'pending'
   | 'running'
   | 'stopped'
+  | 'suspended'
+  | 'suspending'
   | 'terminated'
   | 'failed';
 export type SandboxItem = {

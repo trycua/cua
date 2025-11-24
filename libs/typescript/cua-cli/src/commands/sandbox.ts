@@ -191,6 +191,41 @@ const restartHandler = async (argv: Record<string, unknown>) => {
   process.exit(1);
 };
 
+const suspendHandler = async (argv: Record<string, unknown>) => {
+  const token = await ensureApiKeyInteractive();
+  const name = String((argv as any).name);
+  const res = await http(`/v1/vms/${encodeURIComponent(name)}/suspend`, {
+    token,
+    method: 'POST',
+  });
+  if (res.status === 202) {
+    const body = (await res.json().catch(() => ({}))) as {
+      status?: string;
+    };
+    console.log(body.status ?? 'suspending');
+    return;
+  }
+  if (res.status === 404) {
+    console.error('Sandbox not found');
+    process.exit(1);
+  }
+  if (res.status === 401) {
+    clearApiKey();
+    console.error("Unauthorized. Try 'cua login' again.");
+    process.exit(1);
+  }
+  if (res.status === 400 || res.status === 500) {
+    const body = (await res.json().catch(() => ({}))) as { error?: string };
+    console.error(
+      body.error ??
+        "Suspend not supported for this VM. Use 'cua sb stop' instead."
+    );
+    process.exit(1);
+  }
+  console.error(`Unexpected status: ${res.status}`);
+  process.exit(1);
+};
+
 const openHandler = async (argv: Record<string, unknown>) => {
   const token = await ensureApiKeyInteractive();
   const name = String((argv as any).name);
@@ -297,6 +332,13 @@ export function registerSandboxCommands(y: Argv) {
           restartHandler
         )
         .command(
+          'suspend <name>',
+          'Suspend a sandbox, preserving memory state (use start to resume)',
+          (y) =>
+            y.positional('name', { type: 'string', describe: 'Sandbox name' }),
+          suspendHandler
+        )
+        .command(
           ['vnc <name>', 'open <name>'],
           'Open remote desktop (VNC) connection in your browser',
           (y) =>
@@ -377,6 +419,13 @@ export function registerSandboxCommands(y: Argv) {
       builder: (y: Argv) =>
         y.positional('name', { type: 'string', describe: 'Sandbox name' }),
       handler: restartHandler,
+    } as any)
+    .command({
+      command: 'suspend <name>',
+      describe: false as any, // Hide from help
+      builder: (y: Argv) =>
+        y.positional('name', { type: 'string', describe: 'Sandbox name' }),
+      handler: suspendHandler,
     } as any)
     .command({
       command: ['vnc <name>', 'open <name>'],

@@ -77,10 +77,10 @@ async for _ in agent.run("Open Firefox and navigate to github.com"):
 
 Qwen3 VL family:
 
-- `openrouter/qwen/qwen3-vl-235b-a22b-instruct`
+- `cua/qwen/qwen3-vl-235b` (via CUA VLM Router - recommended)
 
 ```python
-agent = ComputerAgent("openrouter/qwen/qwen3-vl-235b-a22b-instruct", tools=[computer])
+agent = ComputerAgent("cua/qwen/qwen3-vl-235b", tools=[computer])
 async for _ in agent.run("Open Firefox and navigate to github.com"):
     pass
 ```

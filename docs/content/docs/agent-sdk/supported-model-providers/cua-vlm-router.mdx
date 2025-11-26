@@ -55,10 +55,12 @@ async for result in agent.run(messages):
 
 The CUA VLM Router currently supports these models:
 
-| Model ID                          | Provider  | Description       | Best For                           |
-| --------------------------------- | --------- | ----------------- | ---------------------------------- |
-| `cua/anthropic/claude-sonnet-4.5` | Anthropic | Claude Sonnet 4.5 | General-purpose tasks, recommended |
-| `cua/anthropic/claude-haiku-4.5`  | Anthropic | Claude Haiku 4.5  | Fast responses, cost-effective     |
+| Model ID                          | Provider  | Description       | Best For                                |
+| --------------------------------- | --------- | ----------------- | --------------------------------------- |
+| `cua/anthropic/claude-sonnet-4.5` | Anthropic | Claude Sonnet 4.5 | General-purpose tasks, recommended      |
+| `cua/anthropic/claude-opus-4.5`   | Anthropic | Claude Opus 4.5   | Enhanced agentic and computer-use tasks |
+| `cua/anthropic/claude-haiku-4.5`  | Anthropic | Claude Haiku 4.5  | Fast responses, cost-effective          |
+| `cua/qwen/qwen3-vl-235b`          | Qwen      | Qwen3 VL 235B     | Large-scale vision-language tasks       |
 
 ## How It Works
 
@@ -345,6 +347,52 @@ agent = ComputerAgent(
     max_trajectory_budget=10.0,
     temperature=0.7
 )
+```
+
+### Using Qwen3 VL 235B
+
+```python
+from agent import ComputerAgent
+from computer import Computer
+
+computer = Computer(os_type="linux", provider_type="docker")
+
+agent = ComputerAgent(
+    model="cua/qwen/qwen3-vl-235b",
+    tools=[computer],
+    only_n_most_recent_images=3
+)
+
+messages = [{"role": "user", "content": "Open a browser and search for Python tutorials"}]
+
+async for result in agent.run(messages):
+    print(result)
+```
+
+### Using Claude Opus 4.5
+
+```python
+from agent import ComputerAgent
+from computer import Computer
+
+computer = Computer(
+    os_type="linux",
+    provider_type="cloud",
+    name="your-container-name",
+    api_key="your-cua-api-key"
+)
+
+agent = ComputerAgent(
+    model="cua/anthropic/claude-opus-4.5",
+    tools=[computer],
+    instructions="You are a helpful assistant that can control computers",
+    only_n_most_recent_images=3
+)
+
+messages = [{"role": "user", "content": "Open a browser and search for Python tutorials"}]
+
+async for result in agent.run(messages):
+    print(result)
 ```
 
 ## Migration from Direct Provider Access

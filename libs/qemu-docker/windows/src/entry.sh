@@ -55,8 +55,13 @@ echo "VM is up and running, and the CUA Computer Server is ready!"
 
 echo "Computer server accessible at localhost:5000"
 
-# Detect initial setup by presence of /custom.iso (setup ISO mount)
-if [ ! -f "/custom.iso" ]; then # Keep container alive
-  echo "Container running. Press Ctrl+C to stop."
-  tail -f /dev/null
+# Detect initial setup by presence of custom ISO
+CUSTOM_ISO=$(find / -maxdepth 1 -type f -iname "*.iso" -print -quit 2>/dev/null || true)
+if [ -n "$CUSTOM_ISO" ]; then
+  echo "Preparation complete. Shutting down gracefully..."
+  cleanup
 fi
+
+# Keep container alive for golden image boots
+echo "Container running. Press Ctrl+C to stop."
+tail -f /dev/null

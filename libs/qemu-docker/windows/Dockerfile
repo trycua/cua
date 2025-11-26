@@ -1,11 +1,9 @@
-FROM trycua/windows-local:latest
+FROM windows-local:latest
 
 COPY src/vm/setup/. /oem/
 
 COPY --chmod=755 src/entry.sh /entry.sh
 
-ENV YRES="900"
-ENV XRES="1440"
 ENV RAM_SIZE="8G"
 ENV CPU_CORES="8"
 ENV VERSION="win11x64-enterprise-eval"

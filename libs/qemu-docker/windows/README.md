@@ -102,8 +102,6 @@ docker run -it --rm \
 - `RAM_SIZE`: RAM allocated to Windows VM (default: "8G", recommended: "8G" for WSL2)
 - `CPU_CORES`: CPU cores allocated to VM (default: "8")
 - `DISK_SIZE`: VM disk size (default: "30G", minimum: "20G")
-- `YRES`: Screen height (default: "900")
-- `XRES`: Screen width (default: "1440")
 - `VERSION`: Windows version (default: "win11x64-enterprise-eval")
 
 ### Volumes

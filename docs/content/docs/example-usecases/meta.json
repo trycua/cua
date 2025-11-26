@@ -1,5 +1,10 @@
 {
   "title": "Cookbook",
   "description": "Real-world examples of building with Cua",
-  "pages": ["windows-app-behind-vpn", "form-filling", "post-event-contact-export"]
+  "pages": [
+    "windows-app-behind-vpn",
+    "form-filling",
+    "post-event-contact-export",
+    "gemini-complex-ui-navigation"
+  ]
 }

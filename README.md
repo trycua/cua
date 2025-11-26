@@ -242,7 +242,7 @@ agent = ComputerAgent(model="huggingface-local/HelloKKMe/GTA1-7B+openai/gpt-5")
 agent = ComputerAgent(model="omniparser+openai/gpt-4o")
 
 # Combine state-of-the-art grounding with powerful reasoning
-agent = ComputerAgent(model="huggingface-local/HelloKKMe/GTA1-7B+anthropic/claude-3-5-sonnet-20241022")
+agent = ComputerAgent(model="huggingface-local/HelloKKMe/GTA1-7B+anthropic/claude-sonnet-4-5-20250929")
 
 # Combine two different vision models for enhanced capabilities
 agent = ComputerAgent(model="huggingface-local/ByteDance-Seed/UI-TARS-1.5-7B+openai/gpt-4o")

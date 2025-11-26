@@ -145,9 +145,9 @@ While the core concept remains the same across all agent loops, different AI mod
 | Agent Loop | Supported Models | Description | Set-Of-Marks |
 |:-----------|:-----------------|:------------|:-------------|
 | `AgentLoop.OPENAI` | • `computer_use_preview` | Use OpenAI Operator CUA Preview model | Not Required |
-| `AgentLoop.ANTHROPIC` | • `claude-3-5-sonnet-20240620`<br>• `claude-3-7-sonnet-20250219` | Use Anthropic Computer-Use Beta Tools | Not Required |
+| `AgentLoop.ANTHROPIC` | • `claude-sonnet-4-5-20250929`<br>• `claude-3-7-sonnet-20250219` | Use Anthropic Computer-Use Beta Tools | Not Required |
 | `AgentLoop.UITARS` | • `ByteDance-Seed/UI-TARS-1.5-7B` | Uses ByteDance's UI-TARS 1.5 model | Not Required |
-| `AgentLoop.OMNI` | • `claude-3-5-sonnet-20240620`<br>• `claude-3-7-sonnet-20250219`<br>• `gpt-4.5-preview`<br>• `gpt-4o`<br>• `gpt-4`<br>• `phi4`<br>• `phi4-mini`<br>• `gemma3`<br>• `...`<br>• `Any Ollama or OpenAI-compatible model` | Use OmniParser for element pixel-detection (SoM) and any VLMs for UI Grounding and Reasoning | OmniParser |
+| `AgentLoop.OMNI` | • `claude-sonnet-4-5-20250929`<br>• `claude-3-7-sonnet-20250219`<br>• `gpt-4.5-preview`<br>• `gpt-4o`<br>• `gpt-4`<br>• `phi4`<br>• `phi4-mini`<br>• `gemma3`<br>• `...`<br>• `Any Ollama or OpenAI-compatible model` | Use OmniParser for element pixel-detection (SoM) and any VLMs for UI Grounding and Reasoning | OmniParser |
 
 Each loop handles the same basic pattern we implemented manually in Part 1:
 
@@ -191,7 +191,7 @@ The performance of different Computer-Use models varies significantly across tas
 
 - **AgentLoop.OPENAI**: Choose when you have OpenAI Tier 3 access and need the most capable computer-use agent for web-based tasks. Uses the same [OpenAI Computer-Use Loop](https://platform.openai.com/docs/guides/tools-computer-use) as Part 1, delivering strong performance on browser-based benchmarks.
 
-- **AgentLoop.ANTHROPIC**: Ideal for users with Anthropic API access who need strong reasoning capabilities with computer-use abilities. Works with `claude-3-5-sonnet-20240620` and `claude-3-7-sonnet-20250219` models following [Anthropic's Computer-Use tools](https://docs.anthropic.com/en/docs/agents-and-tools/computer-use#understanding-the-multi-agent-loop).
+- **AgentLoop.ANTHROPIC**: Ideal for users with Anthropic API access who need strong reasoning capabilities with computer-use abilities. Works with `claude-sonnet-4-5-20250929` and `claude-3-7-sonnet-20250219` models following [Anthropic's Computer-Use tools](https://docs.anthropic.com/en/docs/agents-and-tools/computer-use#understanding-the-multi-agent-loop).
 
 - **AgentLoop.UITARS**: Best for scenarios requiring more powerful OS/desktop, and latency-sensitive automation, as UI-TARS-1.5 leads in OS capabilities benchmarks. Requires running the model locally or accessing it through compatible endpoints (e.g. on Hugging Face).
 

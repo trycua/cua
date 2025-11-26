@@ -365,6 +365,22 @@ class OmniparserConfig(AsyncAgentConfig):
             **kwargs,
         }
 
+        # Add Vertex AI specific parameters if using vertex_ai models
+        if llm_model.startswith("vertex_ai/"):
+            import os
+
+            # Pass vertex_project and vertex_location to liteLLM
+            if "vertex_project" not in api_kwargs:
+                api_kwargs["vertex_project"] = os.getenv("GOOGLE_CLOUD_PROJECT")
+            if "vertex_location" not in api_kwargs:
+                api_kwargs["vertex_location"] = "global"
+
+            # Pass through Gemini 3-specific parameters if provided
+            if "thinking_level" in kwargs:
+                api_kwargs["thinking_level"] = kwargs["thinking_level"]
+            if "media_resolution" in kwargs:
+                api_kwargs["media_resolution"] = kwargs["media_resolution"]
+
         # Call API start hook
         if _on_api_start:
             await _on_api_start(api_kwargs)

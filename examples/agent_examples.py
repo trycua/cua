@@ -53,6 +53,10 @@ async def run_agent_example():
             # == Omniparser + Any LLM ==
             # model="omniparser+anthropic/claude-opus-4-20250514",
             # model="omniparser+ollama_chat/gemma3:12b-it-q4_K_M",
+            # == Omniparser + Vertex AI Gemini 3 (with thinking_level) ==
+            # model="omni+vertex_ai/gemini-3-flash",
+            # thinking_level="high",  # or "low"
+            # media_resolution="medium",  # or "low" or "high"
             tools=[computer],
             only_n_most_recent_images=3,
             verbosity=logging.DEBUG,

@@ -133,7 +133,7 @@ await cleanup_session(ctx, "session-to-cleanup")
 
 ### Environment Variables
 
-- `CUA_MODEL_NAME`: Model to use (default: `anthropic/claude-3-5-sonnet-20241022`)
+- `CUA_MODEL_NAME`: Model to use (default: `anthropic/claude-sonnet-4-5-20250929`)
 - `CUA_MAX_IMAGES`: Maximum images to keep (default: `3`)
 
 ### Session Manager Configuration

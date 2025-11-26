@@ -11,24 +11,21 @@ import { Callout } from 'fumadocs-ui/components/callout';
 The fastest way to install the CUA CLI is using our installation scripts:
 
 <Tabs items={['macOS / Linux', 'Windows']}>
-  <Tab value="macOS / Linux">
-    ```bash
-    curl -LsSf https://cua.ai/cli/install.sh | sh
-    ```
-  </Tab>
+  <Tab value="macOS / Linux">```bash curl -LsSf https://cua.ai/cli/install.sh | sh ```</Tab>
   <Tab value="Windows">
-    ```powershell
-    powershell -ExecutionPolicy ByPass -c "irm https://cua.ai/cli/install.ps1 | iex"
+    ```powershell powershell -ExecutionPolicy ByPass -c "irm https://cua.ai/cli/install.ps1 | iex"
     ```
   </Tab>
 </Tabs>
 
 These scripts will automatically:
+
 1. Install [Bun](https://bun.sh) (a fast JavaScript runtime)
 2. Install the CUA CLI via `bun add -g @trycua/cli`
 
 <Callout type="info">
-  The installation scripts will automatically detect your system and install the appropriate binary to your PATH.
+  The installation scripts will automatically detect your system and install the appropriate binary
+  to your PATH.
 </Callout>
 
 ## Alternative: Install with Bun
@@ -44,8 +41,8 @@ bun add -g @trycua/cli
 ```
 
 <Callout type="info">
-  Using Bun provides faster installation and better performance compared to npm.
-  If you don't have Bun installed, the first command will install it for you.
+  Using Bun provides faster installation and better performance compared to npm. If you don't have
+  Bun installed, the first command will install it for you.
 </Callout>
 
 ## Verify Installation
@@ -76,40 +73,21 @@ To update to the latest version:
 
 <Tabs items={['Script Install', 'npm Install']}>
   <Tab value="Script Install">
-    Re-run the installation script:
-    ```bash
-    # macOS/Linux
-    curl -LsSf https://cua.ai/cli/install.sh | sh
-    
-    # Windows
-    powershell -ExecutionPolicy ByPass -c "irm https://cua.ai/cli/install.ps1 | iex"
+    Re-run the installation script: ```bash # macOS/Linux curl -LsSf https://cua.ai/cli/install.sh |
+    sh # Windows powershell -ExecutionPolicy ByPass -c "irm https://cua.ai/cli/install.ps1 | iex"
     ```
   </Tab>
-  <Tab value="npm Install">
-    ```bash
-    npm update -g @trycua/cli
-    ```
-  </Tab>
+  <Tab value="npm Install">```bash npm update -g @trycua/cli ```</Tab>
 </Tabs>
 
 ## Uninstalling
 
 <Tabs items={['Script Install', 'npm Install']}>
   <Tab value="Script Install">
-    Remove the binary from your PATH:
-    ```bash
-    # macOS/Linux
-    rm $(which cua)
-    
-    # Windows
-    # Remove from your PATH or delete the executable
-    ```
+    Remove the binary from your PATH: ```bash # macOS/Linux rm $(which cua) # Windows # Remove from
+    your PATH or delete the executable ```
   </Tab>
-  <Tab value="npm Install">
-    ```bash
-    npm uninstall -g @trycua/cli
-    ```
-  </Tab>
+  <Tab value="npm Install">```bash npm uninstall -g @trycua/cli ```</Tab>
 </Tabs>
 
 ## Troubleshooting
@@ -128,17 +106,12 @@ If you encounter permission issues during installation:
 
 <Tabs items={['macOS / Linux', 'Windows']}>
   <Tab value="macOS / Linux">
-    Try running with sudo (not recommended for the curl method):
-    ```bash
-    # If using npm
-    sudo npm install -g @trycua/cli
-    ```
+    Try running with sudo (not recommended for the curl method): ```bash # If using npm sudo npm
+    install -g @trycua/cli ```
   </Tab>
   <Tab value="Windows">
-    Run PowerShell as Administrator:
-    ```powershell
-    # Right-click PowerShell and "Run as Administrator"
-    powershell -ExecutionPolicy ByPass -c "irm https://cua.ai/cli/install.ps1 | iex"
+    Run PowerShell as Administrator: ```powershell # Right-click PowerShell and "Run as
+    Administrator" powershell -ExecutionPolicy ByPass -c "irm https://cua.ai/cli/install.ps1 | iex"
     ```
   </Tab>
 </Tabs>

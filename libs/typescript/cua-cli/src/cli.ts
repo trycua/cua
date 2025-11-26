@@ -17,7 +17,9 @@ export async function runCli() {
         '  cua sb <command>       Create and manage cloud sandboxes\n' +
         '    list               View all your sandboxes\n' +
         '    create             Provision a new sandbox\n' +
-        '    start/stop         Control sandbox state\n' +
+        '    start              Start or resume a sandbox\n' +
+        '    stop               Stop a sandbox (preserves disk)\n' +
+        '    suspend            Suspend a sandbox (preserves memory)\n' +
         '    vnc                Open remote desktop\n' +
         '\n' +
         'Documentation: https://docs.cua.ai/libraries/cua-cli/commands'

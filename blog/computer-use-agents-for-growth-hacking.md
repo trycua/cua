@@ -8,13 +8,13 @@ Growing a developer-focused product is hard. Traditional marketing doesn't work.
 
 So we tried something different at Google DevFest Toronto: show up with backpacks full of cute cua-la keychains and see what happens.
 
-This is the story of how two new hires—a growth engineer and a designer/artist—guerrilla marketed their way through a major tech conference with $200 worth of merch and a post-event automation pipeline.
+This is the story of how two new hires, a growth engineer and a designer/artist, guerrilla marketed their way through a major tech conference with $200 worth of merch and a post-event automation pipeline.
 
 ## Meet the Team
 
 **Sarina** (Growth Engineering): Built the post-event automation pipeline that extracts LinkedIn connections and generates personalized messages while you sleep.
 
-**Esther** (Design + Art): Hand-crafted every piece of artwork, giving life to CUA through illustrations, branding, and yes, extremely cute cua-la keychains.
+**Esther** (Design + Art): Hand-crafted every piece of artwork, giving life to Cua through illustrations, branding, and yes, extremely cute cua-la keychains.
 
 The thesis: what if we could draw people in with irresistible physical merch, then use computer use agents to handle all the tedious follow-up work?
 
@@ -24,11 +24,9 @@ The thesis: what if we could draw people in with irresistible physical merch, th
 
 Google DevFest Toronto brought together hundreds of developers and AI enthusiasts. We didn't have a booth. We didn't have demos. We showed up with backpacks full of cua-la keychains with the cua.ai logo and started handing them out.
 
-That's it. Pure guerrilla marketing.
+That's it. Pure guerrilla marketing, the cua-las were absurdly effective.
 
-The cua-las were absurdly effective.
-
-People would literally crowd around us—not because they were interested in computer use (at first), but because they wanted a cua-la. We'd pitch CUA while handing out keychains, and suddenly we had an engaged audience. No booth required.
+People would literally crowd around us, not because they were interested in computer use (at first), but because they wanted a cua-la. We'd pitch Cua while handing out keychains, and suddenly we had an engaged audience!
 
 <img src="./assets/devfest-image.JPG" alt="DevFest crowd">
 
@@ -36,13 +34,13 @@ People would literally crowd around us—not because they were interested in com
 
 A few people stuck the cua-las on their bags immediately. Then, throughout the event, we started getting approached:
 
-"Wait, are you the CUA girls?"
+"Wait, are you the Cua girls?"
 
-They'd seen the cua-las on someone's bag, asked about it, and tracked us down. The keychains became walking advertisements.
+They'd seen the cua-las on someone's bag, asked about it, and tracked us down! The keychains became walking advertisements.
 
 <img src="./assets/htn-at-devfest.JPG" alt="Hack the North recognition at DevFest">
 
-Even better: two attendees recognized CUA from Hack the North. Our previous event marketing was actually working. People remembered us.
+Even better: two attendees recognized Cua from Hack the North. Our previous event marketing was actually working. People remembered us.
 
 ## Part 2: The Automation (Try It Yourself)
 
@@ -64,9 +62,9 @@ Sarina had a better idea: build the automation we wish existed, then open source
   LinkedIn scraping automation in action
 </video>
 
-The agent navigates LinkedIn like a human would—click profile, extract info, navigate back, repeat. But it does it overnight while you sleep.
+The agent navigates LinkedIn like a human would: click profile, extract info, navigate back, repeat. But it does it overnight while you sleep.
 
-The secret sauce: **VM session persistence**. By logging into LinkedIn once through CUA's VM, the session stays alive. No captchas, no bot detection, just smooth automation.
+The secret sauce: **VM session persistence**. By logging into LinkedIn once through Cua's VM, the session stays alive. No captchas, no bot detection, just smooth automation.
 
 <video controls width="100%">
   <source src="./assets/adding-row-csv.mp4" type="video/mp4">
@@ -98,7 +96,7 @@ Then use that data to craft personalized messages. Sarina wrote unique follow-up
 
 - People crowding around us for cua-las
 - Walking advertisements on bags throughout the event
-- Instant brand recognition ("Are you the CUA girls?")
+- Instant brand recognition ("Are you the Cua girls?")
 - Two people who remembered us from Hack the North
 - 20+ quality connections extracted and messaged within 24 hours
 - Several demo requests from personalized follow-ups
@@ -119,11 +117,11 @@ We ran out faster than expected! Next time: bigger bag, or limit to one per pers
 The VM login step added friction. "Log in manually first, then run the script" confused some people who wanted to try it themselves. Need better first-run UX.
 
 **Message Personalization**
-While the extraction was automated, Sarina still wrote each follow-up message manually. The automation saved the data collection part, but not the creative writing part. (Though this probably led to better messages.)
+While the extraction was automated, I still wrote each follow-up message manually, I think we are looking for ways to better enrich messages with context from the event, which is hard to automate.
 
 ## What's Next: NeurIPS 2025
 
-NeurIPS is the biggest AI conference of the year. Thousands of researchers, hundreds of companies, and endless networking opportunities.
+NeurIPS is the biggest AI conference of the year. Thousands of researchers, hundreds of companies.
 
 **The good news**: We still have one giant bag of cua-las left. They're already packed and ready.
 
@@ -135,11 +133,11 @@ The cua-las get people interested. The automation ensures we actually follow thr
 
 Most event marketing fails at the follow-up stage. You collect business cards, connect on LinkedIn, and then... nothing. The moment passes. People forget.
 
-With CUA handling the mechanical work (data organization, connection tracking, follow-up scheduling), we can focus on the human part: genuine conversations, valuable introductions, and actually helping people.
+With Cua handling the mechanical work (data organization, connection tracking, follow-up scheduling), we can focus on the human part: genuine conversations, valuable introductions, and actually helping people.
 
 ## The Framework: Cute Merch + Smart Automation
 
-Traditional event marketing: show up, pitch, collect cards, never follow up.
+Traditional event marketing: show up, pitch, collect cards.
 
 Our approach: combine two forces that shouldn't work together but do.
 
@@ -167,19 +165,8 @@ Most companies nail one or the other:
 
 Do both, and you create a flywheel: each event builds brand recognition for the next, while automation ensures maximum value from every connection.
 
-## The Meta Lesson
-
-We built CUA to build CUA. Every automation we create for growth becomes:
-
-1. A real-world test of the product
-2. Documentation of what works (and what doesn't)
-3. An example for others to copy
-4. Marketing material that's actually useful
-
-Esther hand-draws artwork that makes people smile. Sarina builds automations that save time. Together, they're proving that developer tools can be both powerful and delightful.
-
-See you at NeurIPS 2025. We'll be the ones with the cua-las.
+See you at NeurIPS 2025!
 
 ---
 
-_Want to build your own growth hacking automations? Check out [CUA on GitHub](https://github.com/trycua/cua) or join our [Discord](https://discord.gg/cua) to share your experiments. cua-las not included (yet)._
+_Want to build your own growth hacking automations? Check out [Cua on GitHub](https://github.com/trycua/cua) or join our [Discord](https://discord.gg/cua) to share your experiments. cua-las not included (yet)._

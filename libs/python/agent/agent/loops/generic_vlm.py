@@ -20,6 +20,7 @@ from ..loops.base import AsyncAgentConfig
 from ..responses import (
     convert_completion_messages_to_responses_items,
     convert_responses_items_to_completion_messages,
+    make_reasoning_item,
 )
 from ..types import AgentCapability
 
@@ -373,13 +374,23 @@ class GenericVlmConfig(AsyncAgentConfig):
         if _on_usage:
             await _on_usage(usage)
 
-        # Parse tool call from text; then convert to responses items via fake tool_calls
+        # Extract response data
         resp_dict = response.model_dump()  # type: ignore
         choice = (resp_dict.get("choices") or [{}])[0]
-        content_text = ((choice.get("message") or {}).get("content")) or ""
-        tool_call = _parse_tool_call_from_text(content_text)
+        message = choice.get("message") or {}
+        content_text = message.get("content") or ""
+        tool_calls_array = message.get("tool_calls") or []
+        reasoning_text = message.get("reasoning") or ""
 
         output_items: List[Dict[str, Any]] = []
+
+        # Add reasoning if present (Ollama Cloud format)
+        if reasoning_text:
+            output_items.append(make_reasoning_item(reasoning_text))
+
+        # Priority 1: Try to parse tool call from content text (OpenRouter format)
+        tool_call = _parse_tool_call_from_text(content_text)
+
         if tool_call and isinstance(tool_call, dict):
             fn_name = tool_call.get("name") or "computer"
             raw_args = tool_call.get("arguments") or {}
@@ -405,8 +416,50 @@ class GenericVlmConfig(AsyncAgentConfig):
                 ],
             }
             output_items.extend(convert_completion_messages_to_responses_items([fake_cm]))
+        elif tool_calls_array:
+            # Priority 2: Use tool_calls field if present (Ollama Cloud format)
+            # Process and unnormalize coordinates in tool calls
+            processed_tool_calls = []
+            for tc in tool_calls_array:
+                function = tc.get("function", {})
+                fn_name = function.get("name", "computer")
+                args_str = function.get("arguments", "{}")
+
+                try:
+                    args = json.loads(args_str)
+
+                    # Unnormalize coordinates if present
+                    if "coordinate" in args and last_rw is not None and last_rh is not None:
+                        args = await _unnormalize_coordinate(args, (last_rw, last_rh))
+
+                    # Convert Qwen format to Computer Calls format if this is a computer tool
+                    if fn_name == "computer":
+                        converted_action = convert_qwen_tool_args_to_computer_action(args)
+                        if converted_action:
+                            args = converted_action
+
+                    processed_tool_calls.append(
+                        {
+                            "type": tc.get("type", "function"),
+                            "id": tc.get("id", "call_0"),
+                            "function": {
+                                "name": fn_name,
+                                "arguments": json.dumps(args),
+                            },
+                        }
+                    )
+                except json.JSONDecodeError:
+                    # Keep original if parsing fails
+                    processed_tool_calls.append(tc)
+
+            fake_cm = {
+                "role": "assistant",
+                "content": content_text if content_text else "",
+                "tool_calls": processed_tool_calls,
+            }
+            output_items.extend(convert_completion_messages_to_responses_items([fake_cm]))
         else:
-            # Fallback: just return assistant text
+            # No tool calls found in either format, return text response
             fake_cm = {"role": "assistant", "content": content_text}
             output_items.extend(convert_completion_messages_to_responses_items([fake_cm]))
 

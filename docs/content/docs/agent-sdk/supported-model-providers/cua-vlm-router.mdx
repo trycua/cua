@@ -55,10 +55,10 @@ async for result in agent.run(messages):
 
 The CUA VLM Router currently supports these models:
 
-| Model ID | Provider | Description | Best For |
-|----------|----------|-------------|----------|
+| Model ID                          | Provider  | Description       | Best For                           |
+| --------------------------------- | --------- | ----------------- | ---------------------------------- |
 | `cua/anthropic/claude-sonnet-4.5` | Anthropic | Claude Sonnet 4.5 | General-purpose tasks, recommended |
-| `cua/anthropic/claude-haiku-4.5` | Anthropic | Claude Haiku 4.5 | Fast responses, cost-effective |
+| `cua/anthropic/claude-haiku-4.5`  | Anthropic | Claude Haiku 4.5  | Fast responses, cost-effective     |
 
 ## How It Works
 
@@ -95,6 +95,7 @@ GET /v1/models
 ```
 
 **Response:**
+
 ```json
 {
   "data": [
@@ -117,12 +118,11 @@ Content-Type: application/json
 ```
 
 **Request:**
+
 ```json
 {
   "model": "anthropic/claude-sonnet-4.5",
-  "messages": [
-    {"role": "user", "content": "Hello!"}
-  ],
+  "messages": [{ "role": "user", "content": "Hello!" }],
   "max_tokens": 100,
   "temperature": 0.7,
   "stream": false
@@ -130,20 +130,23 @@ Content-Type: application/json
 ```
 
 **Response:**
+
 ```json
 {
   "id": "gen_...",
   "object": "chat.completion",
   "created": 1763554838,
   "model": "anthropic/claude-sonnet-4.5",
-  "choices": [{
-    "index": 0,
-    "message": {
-      "role": "assistant",
-      "content": "Hello! How can I help you today?"
-    },
-    "finish_reason": "stop"
-  }],
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "Hello! How can I help you today?"
+      },
+      "finish_reason": "stop"
+    }
+  ],
   "usage": {
     "prompt_tokens": 10,
     "completion_tokens": 12,
@@ -170,6 +173,7 @@ curl -X POST https://inference.cua.ai/v1/chat/completions \
 ```
 
 **Response (SSE format):**
+
 ```
 data: {"id":"gen_...","choices":[{"delta":{"content":"1"}}],"object":"chat.completion.chunk"}
 
@@ -187,6 +191,7 @@ GET /v1/balance
 ```
 
 **Response:**
+
 ```json
 {
   "balance": 211689.85,
@@ -201,6 +206,7 @@ CUA VLM Router provides detailed cost information in every response:
 ### Credit System
 
 Requests are billed in **credits**:
+
 - Credits are deducted from your CUA account balance
 - Prices vary by model and usage
 - CUA manages all provider API keys and infrastructure
@@ -210,8 +216,8 @@ Requests are billed in **credits**:
 ```json
 {
   "usage": {
-    "cost": 0.01,                    // CUA gateway cost in credits
-    "market_cost": 0.000065          // Actual upstream API cost
+    "cost": 0.01, // CUA gateway cost in credits
+    "market_cost": 0.000065 // Actual upstream API cost
   }
 }
 ```
@@ -251,19 +257,20 @@ agent = ComputerAgent(
 
 ## Benefits Over Direct Provider Access
 
-| Feature | CUA VLM Router | Direct Provider (BYOK) |
-|---------|---------------|------------------------|
-| **Single API Key** | ✅ One key for all providers | ❌ Multiple keys to manage |
-| **Managed Infrastructure** | ✅ No API key management | ❌ Manage multiple provider keys |
-| **Usage Tracking** | ✅ Unified dashboard | ❌ Per-provider tracking |
-| **Model Switching** | ✅ Change model string only | ❌ Change code + keys |
-| **Setup Complexity** | ✅ One environment variable | ❌ Multiple environment variables |
+| Feature                    | CUA VLM Router               | Direct Provider (BYOK)            |
+| -------------------------- | ---------------------------- | --------------------------------- |
+| **Single API Key**         | ✅ One key for all providers | ❌ Multiple keys to manage        |
+| **Managed Infrastructure** | ✅ No API key management     | ❌ Manage multiple provider keys  |
+| **Usage Tracking**         | ✅ Unified dashboard         | ❌ Per-provider tracking          |
+| **Model Switching**        | ✅ Change model string only  | ❌ Change code + keys             |
+| **Setup Complexity**       | ✅ One environment variable  | ❌ Multiple environment variables |
 
 ## Error Handling
 
 ### Common Error Responses
 
 #### Invalid API Key
+
 ```json
 {
   "detail": "Insufficient credits. Current balance: 0.00 credits"
@@ -271,6 +278,7 @@ agent = ComputerAgent(
 ```
 
 #### Missing Authorization
+
 ```json
 {
   "detail": "Missing Authorization: Bearer token"
@@ -278,6 +286,7 @@ agent = ComputerAgent(
 ```
 
 #### Invalid Model
+
 ```json
 {
   "detail": "Invalid or unavailable model"
@@ -343,6 +352,7 @@ agent = ComputerAgent(
 Switching from direct provider access (BYOK) to CUA VLM Router is simple:
 
 **Before (Direct Provider Access with BYOK):**
+
 ```python
 import os
 # Required: Provider-specific API key
@@ -355,6 +365,7 @@ agent = ComputerAgent(
 ```
 
 **After (CUA VLM Router - Cloud Service):**
+
 ```python
 import os
 # Required: CUA API key only (no provider keys needed)

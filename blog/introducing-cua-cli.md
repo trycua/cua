@@ -11,11 +11,13 @@ Today we're launching the **Cua CLI**: a command-line interface that brings the 
 The Cua CLI handles everything you need to work with Cloud Sandboxes:
 
 **Authentication**
+
 - Browser-based OAuth login with automatic credential storage
 - Direct API key support for CI/CD pipelines
 - Export credentials to `.env` files for SDK integration
 
 **Sandbox Management**
+
 - Create sandboxes with your choice of OS, size, and region
 - List all your sandboxes with status and connection details
 - Start, stop, restart, and delete sandboxes
@@ -123,17 +125,20 @@ await computer.run()
 Create sandboxes in the size and region that fits your needs:
 
 **Sizes:**
+
 - `small` - 2 cores, 8 GB RAM, 128 GB SSD
 - `medium` - 4 cores, 16 GB RAM, 128 GB SSD
 - `large` - 8 cores, 32 GB RAM, 256 GB SSD
 
 **Regions:**
+
 - `north-america`
 - `europe`
 - `asia-pacific`
 - `south-america`
 
 **OS Options:**
+
 - `linux` - Ubuntu with XFCE desktop
 - `windows` - Windows 11 with Edge and Python
 - `macos` - macOS (preview access)
@@ -141,6 +146,7 @@ Create sandboxes in the size and region that fits your needs:
 ## Example Workflows
 
 **Quick Testing Environment**
+
 ```bash
 # Spin up a sandbox, test something, tear it down
 cua sb create --os linux --size small --region north-america
@@ -149,6 +155,7 @@ cua sb delete my-sandbox-abc123
 ```
 
 **Persistent Development Sandbox**
+
 ```bash
 # Create a sandbox for long-term use
 cua sb create --os linux --size medium --region north-america
@@ -221,11 +228,13 @@ Yes. The CLI and dashboard share the same API. Any sandbox you create in the das
 <summary><strong>How do I update the CLI?</strong></summary>
 
 If you installed via script:
+
 ```bash
 curl -LsSf https://cua.ai/cli/install.sh | sh
 ```
 
 If you installed via npm:
+
 ```bash
 npm install -g @trycua/cli@latest
 ```
@@ -235,6 +244,7 @@ npm install -g @trycua/cli@latest
 ## What's Next
 
 We're actively iterating based on feedback. Planned features include:
+
 - SSH key management for secure sandbox access
 - Template-based sandbox creation
 - Batch operations (start/stop multiple sandboxes)

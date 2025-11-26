@@ -32,7 +32,7 @@ const peerClient = new AgentClient('peer://my-agent-proxy');
 
 // Send a simple text request
 const response = await client.responses.create({
-  model: 'anthropic/claude-3-5-sonnet-20241022',
+  model: 'anthropic/claude-sonnet-4-5-20250929',
   input: 'Write a one-sentence bedtime story about a unicorn.',
   // Optional per-request env overrides
   env: {
@@ -47,7 +47,7 @@ console.log(response.output);
 
 ```typescript
 const response = await client.responses.create({
-  model: 'anthropic/claude-3-5-sonnet-20241022',
+  model: 'anthropic/claude-sonnet-4-5-20250929',
   input: [
     {
       role: 'user',
@@ -74,7 +74,7 @@ const client = new AgentClient('https://localhost:8000', {
 });
 
 const response = await client.responses.create({
-  model: 'anthropic/claude-3-5-sonnet-20241022',
+  model: 'anthropic/claude-sonnet-4-5-20250929',
   input: 'Hello, world!',
   agent_kwargs: {
     save_trajectory: true,

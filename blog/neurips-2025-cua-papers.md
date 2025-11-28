@@ -1,5 +1,7 @@
 # NeurIPS 2025: 45 Computer-Use Agent Papers You Should Know About
 
+<img alt="neurips" src="https://github.com/user-attachments/assets/bd649067-bb2c-45f4-827b-087021ec3ad7" />
+
 If you're following the computer-use agent space, you already know that NeurIPS is where the most important work gets presented. But with thousands of papers across every area of machine learning, finding the ones relevant to CUAs means hours of filtering through proceedings, skimming abstracts, and hoping you don't miss something important.
 
 We did that work for you. We're excited to announce that **Cua will be at NeurIPS 2025**, and we've compiled a curated list of **45 papers** focused specifically on Computer-Use Agents—covering benchmarks, safety, grounding, visual reasoning, and agent architectures.
@@ -41,8 +43,9 @@ A few papers stand out for their immediate relevance to anyone building or deplo
 
 We'll be at NeurIPS in San Diego. If you're working on computer-use agents, building applications on top of CUA infrastructure, or just curious about where this space is heading, we'd love to connect.
 
-- **Discord**: [discord.gg/cua-ai](https://discord.gg/cua-ai)
+- **Book a Meeting**: [cal.com/cua/neurips-slot](https://cal.com/cua/neurips-slot)
 - **X/Twitter**: [@trycua](https://x.com/trycua)
+- **Discord**: [discord.gg/cua-ai](https://discord.gg/cua-ai)
 
 ---
 

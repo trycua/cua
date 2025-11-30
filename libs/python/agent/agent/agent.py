@@ -237,13 +237,6 @@ class ComputerAgent:
         if self.instructions:
             self.callbacks.append(PromptInstructionsCallback(self.instructions))
 
-        # Add telemetry callback if telemetry_enabled is set
-        if self.telemetry_enabled:
-            if isinstance(self.telemetry_enabled, bool):
-                self.callbacks.append(TelemetryCallback(self))
-            else:
-                self.callbacks.append(TelemetryCallback(self, **self.telemetry_enabled))
-
         # Add logging callback if verbosity is set
         if self.verbosity is not None:
             self.callbacks.append(LoggingCallback(level=self.verbosity))
@@ -296,6 +289,13 @@ class ComputerAgent:
             # Instantiate the agent config class
             self.agent_loop = config_info.agent_class()
             self.agent_config_info = config_info
+
+        # Add telemetry callback AFTER agent_loop is set so it can capture the correct agent_type
+        if self.telemetry_enabled:
+            if isinstance(self.telemetry_enabled, bool):
+                self.callbacks.append(TelemetryCallback(self))
+            else:
+                self.callbacks.append(TelemetryCallback(self, **self.telemetry_enabled))
 
         self.tool_schemas = []
         self.computer_handler = None

@@ -44,13 +44,12 @@ class PostHogTelemetryClient:
     @classmethod
     def is_telemetry_enabled(cls) -> bool:
         """True if telemetry is currently active for this process."""
-        return (
-            # Legacy opt-out flag
-            os.environ.get("CUA_TELEMETRY", "").lower() != "off"
-            # Opt-in flag (defaults to enabled)
-            and os.environ.get("CUA_TELEMETRY_ENABLED", "true").lower()
-            in {"1", "true", "yes", "on"}
-        )
+        return os.environ.get("CUA_TELEMETRY_ENABLED", "true").lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
 
     def _get_or_create_installation_id(self) -> str:
         """Get or create a unique installation ID that persists across runs.

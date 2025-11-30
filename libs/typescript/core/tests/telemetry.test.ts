@@ -4,27 +4,38 @@ import { Telemetry } from '../src/';
 describe('Telemetry', () => {
   let telemetry: Telemetry;
   beforeEach(() => {
-    process.env.CUA_TELEMETRY = '';
-    process.env.CUA_TELEMETRY_DISABLED = '';
+    process.env.CUA_TELEMETRY_ENABLED = '';
     telemetry = new Telemetry();
   });
   describe('telemetry.enabled', () => {
-    it('should return false when CUA_TELEMETRY is off', () => {
-      process.env.CUA_TELEMETRY = 'off';
+    it('should return false when CUA_TELEMETRY_ENABLED is false', () => {
+      process.env.CUA_TELEMETRY_ENABLED = 'false';
       telemetry = new Telemetry();
       expect(telemetry.enabled).toBe(false);
     });
 
-    it('should return true when CUA_TELEMETRY is not set', () => {
-      process.env.CUA_TELEMETRY = '';
+    it('should return false when CUA_TELEMETRY_ENABLED is 0', () => {
+      process.env.CUA_TELEMETRY_ENABLED = '0';
+      telemetry = new Telemetry();
+      expect(telemetry.enabled).toBe(false);
+    });
+
+    it('should return true when CUA_TELEMETRY_ENABLED is not set (default)', () => {
+      delete process.env.CUA_TELEMETRY_ENABLED;
       telemetry = new Telemetry();
       expect(telemetry.enabled).toBe(true);
     });
 
-    it('should return false if CUA_TELEMETRY_DISABLED is 1', () => {
-      process.env.CUA_TELEMETRY_DISABLED = '1';
+    it('should return true when CUA_TELEMETRY_ENABLED is true', () => {
+      process.env.CUA_TELEMETRY_ENABLED = 'true';
       telemetry = new Telemetry();
-      expect(telemetry.enabled).toBe(false);
+      expect(telemetry.enabled).toBe(true);
+    });
+
+    it('should return true when CUA_TELEMETRY_ENABLED is 1', () => {
+      process.env.CUA_TELEMETRY_ENABLED = '1';
+      telemetry = new Telemetry();
+      expect(telemetry.enabled).toBe(true);
     });
   });
 });

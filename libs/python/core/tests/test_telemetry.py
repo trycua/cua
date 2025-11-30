@@ -24,15 +24,7 @@ class TestTelemetryEnabled:
 
         assert is_telemetry_enabled() is True
 
-    def test_telemetry_disabled_with_legacy_flag(self, monkeypatch):
-        """Test that telemetry can be disabled with legacy CUA_TELEMETRY=off."""
-        monkeypatch.setenv("CUA_TELEMETRY", "off")
-
-        from core.telemetry import is_telemetry_enabled
-
-        assert is_telemetry_enabled() is False
-
-    def test_telemetry_disabled_with_new_flag(self, monkeypatch):
+    def test_telemetry_disabled_with_flag(self, monkeypatch):
         """Test that telemetry can be disabled with CUA_TELEMETRY_ENABLED=false."""
         monkeypatch.setenv("CUA_TELEMETRY_ENABLED", "false")
 

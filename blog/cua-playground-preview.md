@@ -21,7 +21,6 @@ The Playground connects to your existing Cua sandboxes—the same ones you use w
   <video src="https://github.com/user-attachments/assets/9fef0f30-1024-4833-8b7a-6a2c02d8eb99" width="600" controls></video>
 </div>
 
-
 Sign up at [cua.ai/signin](https://cua.ai/signin) and grab your API key from the dashboard. Then navigate to the Playground:
 
 1. Navigate to Dashboard > Playground
@@ -33,6 +32,7 @@ Sign up at [cua.ai/signin](https://cua.ai/signin) and grab your API key from the
 Example use cases:
 
 **Prompt Testing**
+
 ```
 ❌ "Check the website"
 ✅ "Navigate to example.com in Firefox and take a screenshot of the homepage"
@@ -42,6 +42,7 @@ Example use cases:
 Run the same task with different models to compare quality, speed, and cost.
 
 **Debugging Agent Behavior**
+
 1. Send: "Find the login button and click it"
 2. View tool calls to see each mouse movement
 3. Check screenshots to verify the agent found the right element

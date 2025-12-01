@@ -24,7 +24,7 @@ dependencies = [
     "typing-extensions>=4.9.0",
     "pydantic>=2.6.3"
 ]
-requires-python = ">=3.12"
+requires-python = ">=3.12,<3.14"
 readme = "README.md"
 license = {text = "AGPL-3.0-or-later"}
 keywords = ["computer-vision", "ocr", "ui-analysis", "icon-detection"]

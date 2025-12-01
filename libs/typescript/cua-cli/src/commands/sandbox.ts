@@ -29,7 +29,7 @@ async function fetchSandboxDetails(
 
   const sandboxes = (await listRes.json()) as SandboxItem[];
   const sandbox = sandboxes.find((s) => s.name === name);
-  
+
   if (!sandbox) {
     console.error('Sandbox not found');
     process.exit(1);
@@ -53,24 +53,32 @@ async function fetchSandboxDetails(
   }
 
   // Probe computer-server if requested and sandbox is running
-  if (options.probeComputerServer && sandbox.status === 'running' && sandbox.host) {
+  if (
+    options.probeComputerServer &&
+    sandbox.status === 'running' &&
+    sandbox.host
+  ) {
     let statusProbeSuccess = false;
     let versionProbeSuccess = false;
-    
+
     try {
       // Probe OS type
       const statusUrl = `https://${sandbox.host}:8443/status`;
       const statusController = new AbortController();
       const statusTimeout = setTimeout(() => statusController.abort(), 3000);
-      
+
       try {
         const statusRes = await fetch(statusUrl, {
           signal: statusController.signal,
         });
         clearTimeout(statusTimeout);
-        
+
         if (statusRes.ok) {
-          const statusData = await statusRes.json() as { status: string; os_type: string; features?: string[] };
+          const statusData = (await statusRes.json()) as {
+            status: string;
+            os_type: string;
+            features?: string[];
+          };
           result.os_type = statusData.os_type;
           statusProbeSuccess = true;
         }
@@ -82,7 +90,7 @@ async function fetchSandboxDetails(
       const versionUrl = `https://${sandbox.host}:8443/cmd`;
       const versionController = new AbortController();
       const versionTimeout = setTimeout(() => versionController.abort(), 3000);
-      
+
       try {
         const versionRes = await fetch(versionUrl, {
           method: 'POST',
@@ -98,12 +106,16 @@ async function fetchSandboxDetails(
           signal: versionController.signal,
         });
         clearTimeout(versionTimeout);
-        
+
         if (versionRes.ok) {
           const versionDataRaw = await versionRes.text();
           if (versionDataRaw.startsWith('data: ')) {
             const jsonStr = versionDataRaw.slice(6);
-            const versionData = JSON.parse(jsonStr) as { success: boolean; protocol: number; package: string };
+            const versionData = JSON.parse(jsonStr) as {
+              success: boolean;
+              protocol: number;
+              package: string;
+            };
             if (versionData.package) {
               result.computer_server_version = versionData.package;
               versionProbeSuccess = true;
@@ -116,7 +128,7 @@ async function fetchSandboxDetails(
     } catch (err) {
       // General error - skip probing
     }
-    
+
     // Set computer server status based on probe results
     if (statusProbeSuccess && versionProbeSuccess) {
       result.computer_server_status = 'healthy';
@@ -394,23 +406,25 @@ const getHandler = async (argv: Record<string, unknown>) => {
     console.log(`Name: ${details.name}`);
     console.log(`Status: ${details.status}`);
     console.log(`Host: ${details.host}`);
-    
+
     if (showPasswords) {
       console.log(`Password: ${details.password}`);
     }
-    
+
     if (details.os_type) {
       console.log(`OS Type: ${details.os_type}`);
     }
-    
+
     if (details.computer_server_version) {
-      console.log(`Computer Server Version: ${details.computer_server_version}`);
+      console.log(
+        `Computer Server Version: ${details.computer_server_version}`
+      );
     }
-    
+
     if (details.computer_server_status) {
       console.log(`Computer Server Status: ${details.computer_server_status}`);
     }
-    
+
     if (showVncUrl) {
       console.log(`VNC URL: ${details.vnc_url}`);
     }

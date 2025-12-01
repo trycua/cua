@@ -51,7 +51,6 @@ When you request an Anthropic model through Cua, we automatically route to the b
 
 Sign up at [cua.ai/signin](https://cua.ai/signin) and create your API key from **Dashboard > API Keys > New API Key** (save it immediately—you won't see it again).
 
-
 Use it with the Agent SDK (make sure to set your environment variable):
 
 ```python

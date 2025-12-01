@@ -14,9 +14,10 @@ export async function runCli() {
         '    env                Export API key to .env file\n' +
         '    logout             Clear stored credentials\n' +
         '\n' +
-        '  cua sb <command>       Create and manage cloud sandboxes\n' +
+      '  cua sb <command>       Create and manage cloud sandboxes\n' +
         '    list               View all your sandboxes\n' +
         '    create             Provision a new sandbox\n' +
+        '    get                Get detailed info about a sandbox\n' +
         '    start              Start or resume a sandbox\n' +
         '    stop               Stop a sandbox (preserves disk)\n' +
         '    suspend            Suspend a sandbox (preserves memory)\n' +

@@ -35,7 +35,7 @@ Both styles work identically - use whichever you prefer!
 ### Available Commands
 
 - **Authentication** - `cua auth login`, `cua auth env`, `cua auth logout` (also available as flat commands: `cua login`, `cua env`, `cua logout`)
-- **Sandbox Management** - `cua list`, `cua create`, `cua start`, `cua stop`, `cua restart`, `cua delete`, `cua vnc`
+- **Sandbox Management** - `cua list`, `cua create`, `cua get`, `cua start`, `cua stop`, `cua restart`, `cua delete`, `cua vnc`
 
 ## Authentication Commands
 
@@ -187,6 +187,77 @@ Sandbox provisioning started: my-new-sandbox-abc123
 Job ID: job-xyz789
 Use 'cua list' to monitor provisioning progress
 ```
+
+### `cua get`
+
+Get detailed information about a specific sandbox, including computer-server health status.
+
+```bash
+cua get <name>
+
+# With additional options
+cua get <name> --json
+cua get <name> --show-passwords
+cua get <name> --show-vnc-url
+```
+
+**Options:**
+
+- `--json` - Output all details in JSON format
+- `--show-passwords` - Include password in output
+- `--show-vnc-url` - Include computed NoVNC URL
+
+**Example Output (default):**
+
+```bash
+$ cua get my-dev-sandbox
+Name: my-dev-sandbox
+Status: running
+Host: my-dev-sandbox.containers.cloud.trycua.com
+OS Type: linux
+Computer Server Version: 0.1.30
+Computer Server Status: healthy
+```
+
+**Example Output (with --show-passwords and --show-vnc-url):**
+
+```bash
+$ cua get my-dev-sandbox --show-passwords --show-vnc-url
+Name: my-dev-sandbox
+Status: running
+Host: my-dev-sandbox.containers.cloud.trycua.com
+Password: secure-pass-123
+OS Type: linux
+Computer Server Version: 0.1.30
+Computer Server Status: healthy
+VNC URL: https://my-dev-sandbox.containers.cloud.trycua.com/vnc.html?autoconnect=true&password=secure-pass-123
+```
+
+**Example Output (JSON format):**
+
+```bash
+$ cua get my-dev-sandbox --json
+{
+  "name": "my-dev-sandbox",
+  "status": "running",
+  "host": "my-dev-sandbox.containers.cloud.trycua.com",
+  "os_type": "linux",
+  "computer_server_version": "0.1.30",
+  "computer_server_status": "healthy"
+}
+```
+
+**Computer Server Health Check:**
+
+The `cua get` command automatically probes the computer-server when the sandbox is running:
+- Checks OS type via `https://{host}:8443/status`
+- Checks version via `https://{host}:8443/cmd`
+- Shows "Computer Server Status: healthy" when both probes succeed
+- Uses a 3-second timeout for each probe
+
+<Callout type="info">
+  The computer server status is only checked for running sandboxes. Stopped or suspended sandboxes will not show computer server information.
+</Callout>
 
 ### `cua start`
 

@@ -107,6 +107,16 @@ RUN mkdir -p /home/cua/.cache && \
 # Install computer-server using Python 3.12 pip
 RUN python3.12 -m pip install cua-computer-server
 
+# Copy browser.py and updated main.py from local source (to include browser tool)
+# These files need to be in the same directory as the Dockerfile when building
+COPY browser.py /tmp/browser.py
+COPY main.py /tmp/main.py
+RUN python3.12 -c "import shutil; import os; cs_dir = '/usr/local/lib/python3.12/dist-packages/computer_server'; shutil.copy('/tmp/browser.py', f'{cs_dir}/browser.py'); shutil.copy('/tmp/main.py', f'{cs_dir}/main.py'); print('Copied browser.py and main.py')" && rm /tmp/browser.py /tmp/main.py
+
+# Install playwright and Firefox dependencies
+RUN python3.12 -m pip install playwright && \
+    python3.12 -m playwright install --with-deps firefox
+
 # Fix any cache files created by pip
 RUN chown -R cua:cua /home/cua/.cache
 

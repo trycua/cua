@@ -1,3 +1,3 @@
-from . import wallpaper
+from . import helpers, wallpaper
 
-__all__ = ["wallpaper"]
+__all__ = ["helpers", "wallpaper"]

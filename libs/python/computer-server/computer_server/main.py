@@ -24,7 +24,7 @@ from fastapi import (
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 
-from .handlers.factory import HandlerFactory
+from .handlers.factory import OS_TYPE, HandlerFactory
 
 # Authentication session TTL (in seconds). Override via env var CUA_AUTH_TTL_SECONDS. Default: 60s
 AUTH_SESSION_TTL_SECONDS: int = int(os.environ.get("CUA_AUTH_TTL_SECONDS", "60"))
@@ -261,19 +261,11 @@ auth_manager = AuthenticationManager()
 
 @app.get("/status")
 async def status():
-    sys = platform.system().lower()
-    # get os type
-    if "darwin" in sys or sys == "macos" or sys == "mac":
-        os_type = "macos"
-    elif "windows" in sys:
-        os_type = "windows"
-    else:
-        os_type = "linux"
     # get computer-server features
     features = []
     if HAS_AGENT:
         features.append("agent")
-    return {"status": "ok", "os_type": os_type, "features": features}
+    return {"status": "ok", "os_type": OS_TYPE, "features": features}
 
 
 @app.websocket("/ws", name="websocket_endpoint")

@@ -279,28 +279,6 @@ class LinuxAutomationHandler(BaseAutomationHandler):
             return {"success": False, "error": str(e)}
 
     async def drag(
-        self, start_x: int, start_y: int, end_x: int, end_y: int, button: str = "left"
-    ) -> Dict[str, Any]:
-        """Drag from start coordinates to end coordinates.
-
-        Args:
-            start_x: The starting x coordinate.
-            start_y: The starting y coordinate.
-            end_x: The ending x coordinate.
-            end_y: The ending y coordinate.
-            button: The mouse button to use for dragging.
-
-        Returns:
-            Dict[str, Any]: A dictionary with success status and error message if failed.
-        """
-        try:
-            pyautogui.moveTo(start_x, start_y)
-            pyautogui.dragTo(end_x, end_y, duration=0.5, button=button)
-            return {"success": True}
-        except Exception as e:
-            return {"success": False, "error": str(e)}
-
-    async def drag_path(
         self, path: List[Tuple[int, int]], button: str = "left", duration: float = 0.5
     ) -> Dict[str, Any]:
         """Drag along a path defined by a list of coordinates.

@@ -2,7 +2,7 @@ import asyncio
 import base64
 from typing import Any, Dict, List, Optional, Tuple
 
-from ..utils.helpers import CommandExecuctor
+from ..utils.helpers import CommandExecutor
 from .base import (
     BaseAccessibilityHandler,
     BaseAutomationHandler,
@@ -29,7 +29,7 @@ ANDROID_KEY_MAP = {
     "right": "22",
 }
 
-adb_exec = CommandExecuctor("adb", "-s", "emulator-5554")
+adb_exec = CommandExecutor("adb", "-s", "emulator-5554")
 
 
 class AndroidAccessibilityHandler(BaseAccessibilityHandler):

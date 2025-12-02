@@ -48,7 +48,7 @@ def get_current_os() -> str:
         raise RuntimeError(f"Failed to determine current OS: {str(e)}")
 
 
-class CommandExecuctor:
+class CommandExecutor:
     def __init__(self, *base_cmd: str) -> None:
         """Initialize with a base command.
 

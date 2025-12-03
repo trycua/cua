@@ -15,6 +15,8 @@ repos:
         name: TypeScript type check
         entry: node ./scripts/typescript-typecheck.js
         language: node
+        files: \.(ts|tsx)$
+        pass_filenames: false
 
   - repo: https://github.com/PyCQA/isort
     rev: 7.0.0

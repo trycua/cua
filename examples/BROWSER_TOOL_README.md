@@ -40,10 +40,31 @@ python examples/browser_tool_example.py
 - **Auto-Recovery**: Automatically reopens browser if closed manually
 - **Persistent Context**: Maintains cookies and sessions across commands
 - **Fara/Magentic-One Interface**: Compatible with Microsoft agent interfaces
+- **Computer SDK Integration**: Uses the Computer SDK's interface for unified control
+
+## Usage
+
+The BrowserTool uses the Computer SDK's interface to communicate with the server:
+
+```python
+from computer import Computer
+from agent.tools.browser_tool import BrowserTool
+
+# Initialize computer interface
+computer = Computer(ip_address="localhost")
+
+# Create browser tool with the interface
+browser = BrowserTool(interface=computer)
+
+# Use the browser
+await browser.visit_url("https://www.example.com")
+await browser.click(x=500, y=300)
+await browser.type("Hello, world!")
+```
 
 ## API Endpoint
 
-The browser tool is accessible via the `/playwright_exec` endpoint:
+The browser tool is also accessible via the `/playwright_exec` endpoint:
 
 ```bash
 curl -X POST http://localhost:8000/playwright_exec \
@@ -66,4 +87,3 @@ curl -X POST http://localhost:8000/playwright_exec \
 **Connection errors**: Make sure the server is running (`curl http://localhost:8000/status`).
 
 **Playwright not found**: Install with `pip install playwright && playwright install --with-deps firefox`.
-

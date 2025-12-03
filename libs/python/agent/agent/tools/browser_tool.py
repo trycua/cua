@@ -4,54 +4,36 @@ Allows agents to control a browser programmatically via Playwright.
 """
 
 import logging
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
-import aiohttp
+if TYPE_CHECKING:
+    from computer.interface import GenericComputerInterface
 
 logger = logging.getLogger(__name__)
 
 
 class BrowserTool:
     """
-    Browser tool that connects to the computer server's Playwright endpoint.
+    Browser tool that uses the computer SDK's interface to control a browser.
     Implements the Fara/Magentic-One agent interface for browser control.
     """
 
     def __init__(
         self,
-        base_url: str = "http://localhost:8000",
-        api_key: Optional[str] = None,
-        container_name: Optional[str] = None,
+        interface: "GenericComputerInterface",
     ):
         """
         Initialize the BrowserTool.
 
         Args:
-            base_url: Base URL of the computer server (default: http://localhost:8000)
-            api_key: Optional API key for cloud authentication
-            container_name: Optional container name for cloud authentication
+            interface: A GenericComputerInterface instance that provides playwright_exec
         """
-        self.base_url = base_url.rstrip("/")
-        self.api_key = api_key
-        self.container_name = container_name
+        self.interface = interface
         self.logger = logger
-
-    def _get_endpoint_url(self) -> str:
-        """Get the full URL for the playwright_exec endpoint."""
-        return f"{self.base_url}/playwright_exec"
-
-    def _get_headers(self) -> dict:
-        """Get headers for the HTTP request."""
-        headers = {"Content-Type": "application/json"}
-        if self.api_key:
-            headers["X-API-Key"] = self.api_key
-        if self.container_name:
-            headers["X-Container-Name"] = self.container_name
-        return headers
 
     async def _execute_command(self, command: str, params: dict) -> dict:
         """
-        Execute a browser command via HTTP POST.
+        Execute a browser command via the computer interface.
 
         Args:
             command: Command name
@@ -60,23 +42,15 @@ class BrowserTool:
         Returns:
             Response dictionary
         """
-        url = self._get_endpoint_url()
-        payload = {"command": command, "params": params}
-        headers = self._get_headers()
-
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(url, json=payload, headers=headers) as response:
-                    if response.status == 200:
-                        return await response.json()
-                    else:
-                        error_text = await response.text()
-                        self.logger.error(
-                            f"Browser command failed with status {response.status}: {error_text}"
-                        )
-                        return {"success": False, "error": error_text}
+            result = await self.interface.playwright_exec(command, params)
+            if not result.get("success"):
+                self.logger.error(
+                    f"Browser command '{command}' failed: {result.get('error', 'Unknown error')}"
+                )
+            return result
         except Exception as e:
-            self.logger.error(f"Error executing browser command: {e}")
+            self.logger.error(f"Error executing browser command '{command}': {e}")
             return {"success": False, "error": str(e)}
 
     async def visit_url(self, url: str) -> dict:
@@ -140,4 +114,3 @@ class BrowserTool:
             Response dictionary with success status and current URL
         """
         return await self._execute_command("web_search", {"query": query})
-

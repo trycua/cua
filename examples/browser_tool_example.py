@@ -39,7 +39,8 @@ async def test_browser_tool():
     # Initialize the computer interface
     # For local testing, use provider_type="docker"
     # For provider_type="cloud", provide name and api_key
-    computer = Computer(provider_type="docker")
+    computer = Computer(provider_type="docker", os_type="linux", image="cua-xfce:dev")
+    await computer.run()
 
     # Initialize the browser tool with the computer interface
     browser = BrowserTool(interface=computer)

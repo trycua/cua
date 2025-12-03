@@ -1,5 +1,5 @@
-# CUA Docker XFCE Container
-# Vanilla XFCE desktop with noVNC and computer-server
+# CUA Docker XFCE Container - Development Version
+# Vanilla XFCE desktop with noVNC and computer-server (from local source)
 
 FROM ubuntu:22.04
 
@@ -104,8 +104,10 @@ RUN git clone https://github.com/novnc/noVNC.git /opt/noVNC && \
 RUN mkdir -p /home/cua/.cache && \
     chown -R cua:cua /home/cua/.cache
 
-# Install computer-server using Python 3.12 pip
-RUN python3.12 -m pip install cua-computer-server
+# Copy local computer-server source and install it
+COPY python/computer-server /tmp/computer-server
+RUN python3.12 -m pip install /tmp/computer-server && \
+    rm -rf /tmp/computer-server
 
 # Install playwright and Firefox dependencies
 RUN python3.12 -m pip install playwright && \
@@ -115,8 +117,8 @@ RUN python3.12 -m pip install playwright && \
 RUN chown -R cua:cua /home/cua/.cache
 
 # Copy startup scripts
-COPY src/supervisor/ /etc/supervisor/conf.d/
-COPY src/scripts/ /usr/local/bin/
+COPY xfce/src/supervisor/ /etc/supervisor/conf.d/
+COPY xfce/src/scripts/ /usr/local/bin/
 
 # Make scripts executable
 RUN chmod +x /usr/local/bin/*.sh
@@ -133,9 +135,9 @@ RUN mkdir -p $HOME/.vnc
 RUN mkdir -p $HOME/.config/xfce4/xfconf/xfce-perchannel-xml $HOME/.config/xfce4 $HOME/.config/autostart
 
 # Copy XFCE config to disable browser launching and welcome screens
-COPY --chown=cua:cua src/xfce-config/helpers.rc $HOME/.config/xfce4/helpers.rc
-COPY --chown=cua:cua src/xfce-config/xfce4-session.xml $HOME/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-session.xml
-COPY --chown=cua:cua src/xfce-config/xfce4-power-manager.xml $HOME/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-power-manager.xml
+COPY --chown=cua:cua xfce/src/xfce-config/helpers.rc $HOME/.config/xfce4/helpers.rc
+COPY --chown=cua:cua xfce/src/xfce-config/xfce4-session.xml $HOME/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-session.xml
+COPY --chown=cua:cua xfce/src/xfce-config/xfce4-power-manager.xml $HOME/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-power-manager.xml
 
 # Disable autostart for screensaver, lock screen, and power manager
 RUN echo "[Desktop Entry]\nHidden=true" > $HOME/.config/autostart/xfce4-tips-autostart.desktop && \

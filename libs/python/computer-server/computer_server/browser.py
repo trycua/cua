@@ -109,6 +109,33 @@ class BrowserManager:
                     # Removed --kiosk to allow desktop visibility
                 )
 
+                # Add init script to make the browser less detectable
+                await self.context.add_init_script(
+                    """const defaultGetter = Object.getOwnPropertyDescriptor(
+      Navigator.prototype,
+      "webdriver"
+    ).get;
+    defaultGetter.apply(navigator);
+    defaultGetter.toString();
+    Object.defineProperty(Navigator.prototype, "webdriver", {
+      set: undefined,
+      enumerable: true,
+      configurable: true,
+      get: new Proxy(defaultGetter, {
+        apply: (target, thisArg, args) => {
+          Reflect.apply(target, thisArg, args);
+          return false;
+        },
+      }),
+    });
+    const patchedGetter = Object.getOwnPropertyDescriptor(
+      Navigator.prototype,
+      "webdriver"
+    ).get;
+    patchedGetter.apply(navigator);
+    patchedGetter.toString();"""
+                )
+
                 # Get the first page or create one
                 pages = self.context.pages
                 if pages:
@@ -166,6 +193,14 @@ class BrowserManager:
             search_url = f"https://www.google.com/search?q={query}"
             await self.page.goto(search_url, wait_until="domcontentloaded", timeout=30000)
             return {"success": True, "url": self.page.url}
+
+        elif cmd == "screenshot":
+            # Take a screenshot and return as base64
+            import base64
+
+            screenshot_bytes = await self.page.screenshot(type="png")
+            screenshot_b64 = base64.b64encode(screenshot_bytes).decode("utf-8")
+            return {"success": True, "screenshot": screenshot_b64}
 
         else:
             return {"success": False, "error": f"Unknown command: {cmd}"}

@@ -48,6 +48,14 @@ async def test_browser_tool():
     logger.info("Testing Browser Tool...")
 
     try:
+        # Test 0: Take a screenshot (pre-init)
+        logger.info("Test 0: Taking a screenshot...")
+        screenshot_bytes = await browser.screenshot()
+        screenshot_path = Path(__file__).parent / "browser_screenshot_init.png"
+        with open(screenshot_path, "wb") as f:
+            f.write(screenshot_bytes)
+        logger.info(f"Screenshot captured: {len(screenshot_bytes)} bytes")
+
         # Test 1: Visit a URL
         logger.info("Test 1: Visiting a URL...")
         result = await browser.visit_url("https://www.trycua.com")
@@ -55,6 +63,22 @@ async def test_browser_tool():
 
         # Wait a bit for the page to load
         await asyncio.sleep(2)
+
+        # Test 2: Take a screenshot
+        logger.info("Test 2: Taking a screenshot...")
+        screenshot_bytes = await browser.screenshot()
+        screenshot_path = Path(__file__).parent / "browser_screenshot.png"
+        with open(screenshot_path, "wb") as f:
+            f.write(screenshot_bytes)
+        logger.info(f"Screenshot captured: {len(screenshot_bytes)} bytes")
+
+        # Wait a bit
+        await asyncio.sleep(1)
+
+        # Test 3: Visit bot detector
+        logger.info("Test 3: Visiting bot detector...")
+        result = await browser.visit_url("https://bot-detector.rebrowser.net/")
+        logger.info(f"Visit URL result: {result}")
 
         # Test 2: Web search
         logger.info("Test 2: Performing a web search...")

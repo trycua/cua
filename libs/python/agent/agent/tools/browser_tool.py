@@ -114,3 +114,22 @@ class BrowserTool:
             Response dictionary with success status and current URL
         """
         return await self._execute_command("web_search", {"query": query})
+
+    async def screenshot(self) -> bytes:
+        """
+        Take a screenshot of the current browser page.
+
+        Returns:
+            Screenshot image data as bytes (PNG format)
+        """
+        import base64
+
+        result = await self._execute_command("screenshot", {})
+        if result.get("success") and result.get("screenshot"):
+            # Decode base64 screenshot to bytes
+            screenshot_b64 = result["screenshot"]
+            screenshot_bytes = base64.b64decode(screenshot_b64)
+            return screenshot_bytes
+        else:
+            error = result.get("error", "Unknown error")
+            raise RuntimeError(f"Failed to take screenshot: {error}")

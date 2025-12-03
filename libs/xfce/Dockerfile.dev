@@ -110,7 +110,7 @@ RUN python3.12 -m pip install /tmp/computer-server && \
     rm -rf /tmp/computer-server
 
 # Install playwright and Firefox dependencies
-RUN python3.12 -m pip install playwright && \
+RUN python3.12 -m pip install rebrowser-playwright && \
     python3.12 -m playwright install --with-deps firefox
 
 # Fix any cache files created by pip

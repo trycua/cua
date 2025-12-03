@@ -442,7 +442,7 @@ def get_all_element_descriptions(responses_items: List[Dict[str, Any]]) -> List[
 
 # Conversion functions between responses_items and completion messages formats
 def convert_responses_items_to_completion_messages(
-    messages: List[Dict[str, Any]], 
+    messages: List[Dict[str, Any]],
     allow_images_in_tool_results: bool = True,
     send_multiple_user_images_per_parallel_tool_results: bool = False,
 ) -> List[Dict[str, Any]]:
@@ -573,25 +573,33 @@ def convert_responses_items_to_completion_messages(
                         "computer_call_output",
                     ]
                     # Send tool message + separate user message with image (OpenAI compatible)
-                    completion_messages += [
-                        {
-                            "role": "tool",
-                            "tool_call_id": call_id,
-                            "content": "[Execution completed. See screenshot below]",
-                        },
-                        {
-                            "role": "user",
-                            "content": [
-                                {"type": "image_url", "image_url": {"url": output.get("image_url")}}
-                            ],
-                        },
-                    ] if send_multiple_user_images_per_parallel_tool_results or (not is_next_message_image_result) else [
-                        {
-                            "role": "tool",
-                            "tool_call_id": call_id,
-                            "content": "[Execution completed. See screenshot below]",
-                        },
-                    ]
+                    completion_messages += (
+                        [
+                            {
+                                "role": "tool",
+                                "tool_call_id": call_id,
+                                "content": "[Execution completed. See screenshot below]",
+                            },
+                            {
+                                "role": "user",
+                                "content": [
+                                    {
+                                        "type": "image_url",
+                                        "image_url": {"url": output.get("image_url")},
+                                    }
+                                ],
+                            },
+                        ]
+                        if send_multiple_user_images_per_parallel_tool_results
+                        or (not is_next_message_image_result)
+                        else [
+                            {
+                                "role": "tool",
+                                "tool_call_id": call_id,
+                                "content": "[Execution completed. See screenshot below]",
+                            },
+                        ]
+                    )
             else:
                 # Handle text output as tool response
                 completion_messages.append(

@@ -250,13 +250,15 @@ $ cua get my-dev-sandbox --json
 **Computer Server Health Check:**
 
 The `cua get` command automatically probes the computer-server when the sandbox is running:
+
 - Checks OS type via `https://{host}:8443/status`
 - Checks version via `https://{host}:8443/cmd`
 - Shows "Computer Server Status: healthy" when both probes succeed
 - Uses a 3-second timeout for each probe
 
 <Callout type="info">
-  The computer server status is only checked for running sandboxes. Stopped or suspended sandboxes will not show computer server information.
+  The computer server status is only checked for running sandboxes. Stopped or suspended sandboxes
+  will not show computer server information.
 </Callout>
 
 ### `cua start`

@@ -11,6 +11,14 @@ docker build -f Dockerfile.dev -t cua-xfce:dev ..
 
 The build context is set to the parent directory to allow copying the local `computer-server` source.
 
+## Tagging the Image
+
+To tag the dev image as latest:
+
+```bash
+docker tag cua-xfce:dev cua-xfce:latest
+```
+
 ## Running the Development Container
 
 ```bash

@@ -17,6 +17,7 @@ export async function runCli() {
         '  cua sb <command>       Create and manage cloud sandboxes\n' +
         '    list               View all your sandboxes\n' +
         '    create             Provision a new sandbox\n' +
+        '    get                Get detailed info about a sandbox\n' +
         '    start              Start or resume a sandbox\n' +
         '    stop               Stop a sandbox (preserves disk)\n' +
         '    suspend            Suspend a sandbox (preserves memory)\n' +

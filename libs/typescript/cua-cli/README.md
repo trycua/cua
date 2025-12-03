@@ -58,14 +58,20 @@ bun run ./index.ts -- --help
 
   **Available Commands:**
   - `list` (aliases: `ls`, `ps`) – list all sandboxes
+    - `--show-passwords` – include passwords in output
   - `create` – create a new sandbox
     - `--os`: `linux`, `windows`, `macos`
     - `--size`: `small`, `medium`, `large`
     - `--region`: `north-america`, `europe`, `asia-pacific`, `south-america`
+  - `get <name>` – get detailed information about a specific sandbox
+    - `--json` – output in JSON format
+    - `--show-passwords` – include password in output
+    - `--show-vnc-url` – include computed NoVNC URL
   - `delete <name>` – delete a sandbox
   - `start <name>` – start a stopped sandbox
   - `stop <name>` – stop a running sandbox
   - `restart <name>` – restart a sandbox
+  - `suspend <name>` – suspend a sandbox (preserves memory state)
   - `vnc <name>` (alias: `open`) – open VNC desktop in your browser
 
 ## Auth Flow (Dynamic Callback Port)

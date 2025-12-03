@@ -101,6 +101,10 @@ Core utilities for Cua
 - [Get started with the Cua SDKs](https://cua.ai/docs/quickstart-devs)
 - [Get started with the Cua CLI](https://cua.ai/docs/quickstart-cli)
 
+## Python Version Compatibility
+
+Cua packages require **Python 3.12 or 3.13**. Python 3.14 is not currently supported due to dependency compatibility issues (pydantic-core/PyO3 compatibility). If you encounter build errors on Python 3.14, please use Python 3.13 or earlier.
+
 # Agent SDK
 
 Install the agent SDK:

@@ -45,7 +45,9 @@ class CloudProvider(BaseVMProvider):
         # Fall back to environment variable if api_key not provided
         if api_key is None:
             api_key = os.getenv("CUA_API_KEY")
-        assert api_key, "api_key required for CloudProvider (provide via parameter or CUA_API_KEY environment variable)"
+        assert (
+            api_key
+        ), "api_key required for CloudProvider (provide via parameter or CUA_API_KEY environment variable)"
         self.api_key = api_key
         self.verbose = verbose
         self.api_base = (api_base or DEFAULT_API_BASE).rstrip("/")

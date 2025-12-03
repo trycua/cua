@@ -108,7 +108,7 @@ RUN mkdir -p /home/cua/.cache && \
 RUN python3.12 -m pip install cua-computer-server
 
 # Install playwright and Firefox dependencies
-RUN python3.12 -m pip install rebrowser-playwright && \
+RUN python3.12 -m pip install playwright && \
     python3.12 -m playwright install --with-deps firefox
 
 # Fix any cache files created by pip

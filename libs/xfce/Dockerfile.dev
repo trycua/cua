@@ -1,5 +1,5 @@
-# CUA Docker XFCE Container
-# Vanilla XFCE desktop with noVNC and computer-server
+# CUA Docker XFCE Container - Development Version
+# Vanilla XFCE desktop with noVNC and computer-server (from local source)
 
 FROM ubuntu:22.04
 
@@ -104,8 +104,10 @@ RUN git clone https://github.com/novnc/noVNC.git /opt/noVNC && \
 RUN mkdir -p /home/cua/.cache && \
     chown -R cua:cua /home/cua/.cache
 
-# Install computer-server using Python 3.12 pip
-RUN python3.12 -m pip install cua-computer-server
+# Copy local computer-server source and install it
+COPY ../python/computer-server /tmp/computer-server
+RUN python3.12 -m pip install /tmp/computer-server && \
+    rm -rf /tmp/computer-server
 
 # Install playwright and Firefox dependencies
 RUN python3.12 -m pip install playwright && \

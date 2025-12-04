@@ -49,7 +49,7 @@ async function fetchSandboxDetails(
   // Compute VNC URL if requested
   if (options.showVncUrl) {
     const host = sandbox.host || `${sandbox.name}.sandbox.cua.ai`;
-    result.vnc_url = `https://${host}/vnc.html?autoconnect=true&password=${encodeURIComponent(sandbox.password)}`;
+    result.vnc_url = `https://${host}/vnc.html?autoconnect=true&password=${encodeURIComponent(sandbox.password)}&show_dot=true`;
   }
 
   // Probe computer-server if requested and sandbox is running
@@ -381,7 +381,7 @@ const openHandler = async (argv: Record<string, unknown>) => {
     sandbox.host && sandbox.host.length
       ? sandbox.host
       : `${sandbox.name}.sandbox.cua.ai`;
-  const url = `https://${host}/vnc.html?autoconnect=true&password=${encodeURIComponent(sandbox.password)}`;
+  const url = `https://${host}/vnc.html?autoconnect=true&password=${encodeURIComponent(sandbox.password)}&show_dot=true`;
   console.log(`Opening NoVNC: ${url}`);
   await openInBrowser(url);
 };

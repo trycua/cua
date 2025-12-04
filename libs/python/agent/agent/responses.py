@@ -517,13 +517,18 @@ def convert_responses_items_to_completion_messages(
             if "tool_calls" not in completion_messages[-1]:
                 completion_messages[-1]["tool_calls"] = []
 
+            # Ensure arguments is a JSON string (not a dict)
+            arguments = message.get("arguments")
+            if isinstance(arguments, dict):
+                arguments = json.dumps(arguments)
+
             completion_messages[-1]["tool_calls"].append(
                 {
                     "id": message.get("call_id"),
                     "type": "function",
                     "function": {
                         "name": message.get("name"),
-                        "arguments": message.get("arguments"),
+                        "arguments": arguments,
                     },
                 }
             )

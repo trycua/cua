@@ -202,6 +202,11 @@ class BrowserManager:
             screenshot_b64 = base64.b64encode(screenshot_bytes).decode("utf-8")
             return {"success": True, "screenshot": screenshot_b64}
 
+        elif cmd == "get_current_url":
+            # Get the current URL
+            current_url = self.page.url
+            return {"success": True, "url": current_url}
+
         else:
             return {"success": False, "error": f"Unknown command: {cmd}"}
 

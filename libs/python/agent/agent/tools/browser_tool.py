@@ -32,17 +32,97 @@ class BrowserTool(BaseComputerTool):
             cfg: Optional configuration dictionary
         """
         self.interface = interface
-        self.display_width = 1024
-        self.display_height = 768
         self._facts = []  # Store memorized facts
+
+        # Get initial screenshot to determine dimensions
+        self.viewport_width = None
+        self.viewport_height = None
+        self.resized_width = None
+        self.resized_height = None
+
+        # Try to initialize dimensions synchronously
+        try:
+            import asyncio
+
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                # If we're in an async context, dimensions will be lazy-loaded
+                pass
+            else:
+                loop.run_until_complete(self._initialize_dimensions())
+        except Exception:
+            # Dimensions will be lazy-loaded on first use
+            pass
+
         super().__init__(cfg)
+
+    async def _initialize_dimensions(self):
+        """Initialize viewport and resized dimensions from screenshot."""
+        try:
+            import base64
+            import io
+
+            from PIL import Image
+            from qwen_vl_utils import smart_resize
+
+            # Take a screenshot to get actual dimensions
+            screenshot_b64 = await self.screenshot()
+            img_bytes = base64.b64decode(screenshot_b64)
+            im = Image.open(io.BytesIO(img_bytes))
+
+            # Store actual viewport size
+            self.viewport_width = im.width
+            self.viewport_height = im.height
+
+            # Calculate resized dimensions using smart_resize with factor=28
+            MIN_PIXELS = 3136
+            MAX_PIXELS = 12845056
+            rh, rw = smart_resize(
+                im.height, im.width, factor=28, min_pixels=MIN_PIXELS, max_pixels=MAX_PIXELS
+            )
+            self.resized_width = rw
+            self.resized_height = rh
+
+        except Exception as e:
+            # Fall back to defaults if initialization fails
+            logger.warning(f"Failed to initialize dimensions: {e}")
+            self.viewport_width = 1024
+            self.viewport_height = 768
+            self.resized_width = 1024
+            self.resized_height = 768
+
+    async def _proc_coords(self, x: float, y: float) -> tuple:
+        """
+        Process coordinates by converting from resized space to viewport space.
+
+        Args:
+            x: X coordinate in resized space (0 to resized_width)
+            y: Y coordinate in resized space (0 to resized_height)
+
+        Returns:
+            Tuple of (viewport_x, viewport_y) in actual viewport pixels
+        """
+        # Ensure dimensions are initialized
+        if self.resized_width is None or self.resized_height is None:
+            await self._initialize_dimensions()
+
+        # Convert from resized space to viewport space
+        # Normalize by resized dimensions, then scale to viewport dimensions
+        viewport_x = (x / self.resized_width) * self.viewport_width
+        viewport_y = (y / self.resized_height) * self.viewport_height
+
+        return int(round(viewport_x)), int(round(viewport_y))
 
     @property
     def description(self) -> str:
+        # Use resized dimensions if available, otherwise use defaults
+        width = self.resized_width if self.resized_width is not None else 1024
+        height = self.resized_height if self.resized_height is not None else 768
+
         return f"Use a mouse and keyboard to interact with a computer, and take screenshots.\
 * This is an interface to a desktop GUI. You do not have access to a terminal or applications menu. You must click on desktop icons to start applications.\
 * Some applications may take time to start or process actions, so you may need to wait and take successive screenshots to see the results of your actions. E.g. if you click on Firefox and a window doesn't open, try wait and taking another screenshot.\
-* The screen's resolution is {self.display_width}x{self.display_height}.\
+* The screen's resolution is {width}x{height}.\
 * Whenever you intend to move the cursor to click on an element like an icon, you should consult a screenshot to determine the coordinates of the element before moving the cursor.\
 * If you tried clicking on a program or link but it failed to load, even after waiting, try adjusting your cursor position so that the tip of the cursor visually falls on the element that you want to click.\
 * Make sure to click any buttons, links, icons, etc with the cursor tip in the center of the element. Don't click boxes on their edges unless asked.\
@@ -332,3 +412,12 @@ class BrowserTool(BaseComputerTool):
         else:
             error = result.get("error", "Unknown error")
             raise RuntimeError(f"Failed to take screenshot: {error}")
+
+    async def get_current_url(self) -> str:
+        """Get the current URL of the browser page."""
+        result = await self.interface.playwright_exec("get_current_url", {})
+        if result.get("success") and result.get("url"):
+            return result["url"]
+        else:
+            error = result.get("error", "Unknown error")
+            raise RuntimeError(f"Failed to get current URL: {error}")

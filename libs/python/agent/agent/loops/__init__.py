@@ -6,6 +6,7 @@ Agent loops for agent
 from . import (
     anthropic,
     composed_grounded,
+    fara,
     gelato,
     gemini,
     generic_vlm,
@@ -28,6 +29,7 @@ __all__ = [
     "gelato",
     "gemini",
     "generic_vlm",
+    "fara",
     "glm45v",
     "gta1",
     "holo",

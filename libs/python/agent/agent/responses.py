@@ -445,6 +445,7 @@ def convert_responses_items_to_completion_messages(
     messages: List[Dict[str, Any]],
     allow_images_in_tool_results: bool = True,
     send_multiple_user_images_per_parallel_tool_results: bool = False,
+    use_xml_tools: bool = False,
 ) -> List[Dict[str, Any]]:
     """Convert responses_items message format to liteLLM completion format.
 
@@ -453,7 +454,14 @@ def convert_responses_items_to_completion_messages(
         allow_images_in_tool_results: If True, include images in tool role messages.
                                     If False, send tool message + separate user message with image.
         send_multiple_user_images_per_parallel_tool_results: If True, send multiple user images in parallel tool results.
+        use_xml_tools: If True, use XML-style <tool_call> tags instead of tool_calls array.
+                      Also sends tool results as user messages instead of tool role.
     """
+    # Assert that allow_images_in_tool_results is False when use_xml_tools is True
+    if use_xml_tools:
+        assert (
+            not allow_images_in_tool_results
+        ), "allow_images_in_tool_results must be False when use_xml_tools is True"
     completion_messages = []
 
     for i, message in enumerate(messages):
@@ -510,101 +518,168 @@ def convert_responses_items_to_completion_messages(
 
         # Handle function calls
         elif msg_type == "function_call":
-            # Add tool call to last assistant message or create new one
-            if not completion_messages or completion_messages[-1]["role"] != "assistant":
-                completion_messages.append({"role": "assistant", "content": "", "tool_calls": []})
+            if use_xml_tools:
+                # Use XML format instead of tool_calls array
+                if not completion_messages or completion_messages[-1]["role"] != "assistant":
+                    completion_messages.append({"role": "assistant", "content": ""})
 
-            if "tool_calls" not in completion_messages[-1]:
-                completion_messages[-1]["tool_calls"] = []
+                # Ensure arguments is a JSON string (not a dict)
+                arguments = message.get("arguments")
+                if isinstance(arguments, dict):
+                    arguments = json.dumps(arguments)
 
-            completion_messages[-1]["tool_calls"].append(
-                {
-                    "id": message.get("call_id"),
-                    "type": "function",
-                    "function": {
-                        "name": message.get("name"),
-                        "arguments": message.get("arguments"),
-                    },
-                }
-            )
+                # Format as XML tool call
+                tool_call_xml = f'<tool_call>{{"name": "{message.get("name")}", "arguments": {arguments}}}</tool_call>'
+                if completion_messages[-1]["content"]:
+                    completion_messages[-1]["content"] += "\n" + tool_call_xml
+                else:
+                    completion_messages[-1]["content"] = tool_call_xml
+            else:
+                # Add tool call to last assistant message or create new one
+                if not completion_messages or completion_messages[-1]["role"] != "assistant":
+                    completion_messages.append(
+                        {"role": "assistant", "content": "", "tool_calls": []}
+                    )
+
+                if "tool_calls" not in completion_messages[-1]:
+                    completion_messages[-1]["tool_calls"] = []
+
+                # Ensure arguments is a JSON string (not a dict)
+                arguments = message.get("arguments")
+                if isinstance(arguments, dict):
+                    arguments = json.dumps(arguments)
+
+                completion_messages[-1]["tool_calls"].append(
+                    {
+                        "id": message.get("call_id"),
+                        "type": "function",
+                        "function": {
+                            "name": message.get("name"),
+                            "arguments": arguments,
+                        },
+                    }
+                )
 
         # Handle computer calls
         elif msg_type == "computer_call":
-            # Add tool call to last assistant message or create new one
-            if not completion_messages or completion_messages[-1]["role"] != "assistant":
-                completion_messages.append({"role": "assistant", "content": "", "tool_calls": []})
+            if use_xml_tools:
+                # Use XML format instead of tool_calls array
+                if not completion_messages or completion_messages[-1]["role"] != "assistant":
+                    completion_messages.append({"role": "assistant", "content": ""})
 
-            if "tool_calls" not in completion_messages[-1]:
-                completion_messages[-1]["tool_calls"] = []
+                action = message.get("action", {})
+                # Format as XML tool call
+                tool_call_xml = f'<tool_call>{{"name": "computer", "arguments": {json.dumps(action)}}}</tool_call>'
+                if completion_messages[-1]["content"]:
+                    completion_messages[-1]["content"] += "\n" + tool_call_xml
+                else:
+                    completion_messages[-1]["content"] = tool_call_xml
+            else:
+                # Add tool call to last assistant message or create new one
+                if not completion_messages or completion_messages[-1]["role"] != "assistant":
+                    completion_messages.append(
+                        {"role": "assistant", "content": "", "tool_calls": []}
+                    )
 
-            action = message.get("action", {})
-            completion_messages[-1]["tool_calls"].append(
-                {
-                    "id": message.get("call_id"),
-                    "type": "function",
-                    "function": {"name": "computer", "arguments": json.dumps(action)},
-                }
-            )
+                if "tool_calls" not in completion_messages[-1]:
+                    completion_messages[-1]["tool_calls"] = []
+
+                action = message.get("action", {})
+                completion_messages[-1]["tool_calls"].append(
+                    {
+                        "id": message.get("call_id"),
+                        "type": "function",
+                        "function": {"name": "computer", "arguments": json.dumps(action)},
+                    }
+                )
 
         # Handle function/computer call outputs
         elif msg_type in ["function_call_output", "computer_call_output"]:
             output = message.get("output")
             call_id = message.get("call_id")
 
-            if isinstance(output, dict) and output.get("type") == "input_image":
-                if allow_images_in_tool_results:
-                    # Handle image output as tool response (may not work with all APIs)
+            if use_xml_tools:
+                # When using XML tools, send all results as user messages
+                if isinstance(output, dict) and output.get("type") == "input_image":
+                    # Send image as user message
                     completion_messages.append(
                         {
-                            "role": "tool",
-                            "tool_call_id": call_id,
+                            "role": "user",
                             "content": [
-                                {"type": "image_url", "image_url": {"url": output.get("image_url")}}
+                                {
+                                    "type": "image_url",
+                                    "image_url": {"url": output.get("image_url")},
+                                }
                             ],
                         }
                     )
                 else:
-                    # Determine if the next message is also a tool call output
-                    next_type = None
-                    if i + 1 < len(messages):
-                        next_msg = messages[i + 1]
-                        next_type = next_msg.get("type")
-                    is_next_message_image_result = next_type in [
-                        "computer_call_output",
-                    ]
-                    # Send tool message + separate user message with image (OpenAI compatible)
-                    completion_messages += (
-                        [
+                    # Send text result as user message
+                    completion_messages.append(
+                        {
+                            "role": "user",
+                            "content": str(output),
+                        }
+                    )
+            else:
+                # Standard tool message handling
+                if isinstance(output, dict) and output.get("type") == "input_image":
+                    if allow_images_in_tool_results:
+                        # Handle image output as tool response (may not work with all APIs)
+                        completion_messages.append(
                             {
                                 "role": "tool",
                                 "tool_call_id": call_id,
-                                "content": "[Execution completed. See screenshot below]",
-                            },
-                            {
-                                "role": "user",
                                 "content": [
                                     {
                                         "type": "image_url",
                                         "image_url": {"url": output.get("image_url")},
                                     }
                                 ],
-                            },
+                            }
+                        )
+                    else:
+                        # Determine if the next message is also a tool call output
+                        next_type = None
+                        if i + 1 < len(messages):
+                            next_msg = messages[i + 1]
+                            next_type = next_msg.get("type")
+                        is_next_message_image_result = next_type in [
+                            "computer_call_output",
                         ]
-                        if send_multiple_user_images_per_parallel_tool_results
-                        or (not is_next_message_image_result)
-                        else [
-                            {
-                                "role": "tool",
-                                "tool_call_id": call_id,
-                                "content": "[Execution completed. See screenshot below]",
-                            },
-                        ]
+                        # Send tool message + separate user message with image (OpenAI compatible)
+                        completion_messages += (
+                            [
+                                {
+                                    "role": "tool",
+                                    "tool_call_id": call_id,
+                                    "content": "[Execution completed. See screenshot below]",
+                                },
+                                {
+                                    "role": "user",
+                                    "content": [
+                                        {
+                                            "type": "image_url",
+                                            "image_url": {"url": output.get("image_url")},
+                                        }
+                                    ],
+                                },
+                            ]
+                            if send_multiple_user_images_per_parallel_tool_results
+                            or (not is_next_message_image_result)
+                            else [
+                                {
+                                    "role": "tool",
+                                    "tool_call_id": call_id,
+                                    "content": "[Execution completed. See screenshot below]",
+                                },
+                            ]
+                        )
+                else:
+                    # Handle text output as tool response
+                    completion_messages.append(
+                        {"role": "tool", "tool_call_id": call_id, "content": str(output)}
                     )
-            else:
-                # Handle text output as tool response
-                completion_messages.append(
-                    {"role": "tool", "tool_call_id": call_id, "content": str(output)}
-                )
 
     return completion_messages
 

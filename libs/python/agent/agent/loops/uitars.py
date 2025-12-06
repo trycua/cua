@@ -309,7 +309,7 @@ def convert_to_computer_actions(
 
                 computer_actions.append(make_click_item(x, y, "left"))
 
-        elif action_type == "double_click":
+        elif action_type in ["double_click", "left_double"]:
             start_box = action_inputs.get("start_box")
             if start_box:
                 coords = eval(start_box)
@@ -318,7 +318,7 @@ def convert_to_computer_actions(
 
                 computer_actions.append(make_double_click_item(x, y))
 
-        elif action_type == "right_click":
+        elif action_type in ["right_click", "right_single"]:
             start_box = action_inputs.get("start_box")
             if start_box:
                 coords = eval(start_box)
@@ -558,7 +558,12 @@ def convert_uitars_messages_to_litellm(messages: Messages) -> List[Dict[str, Any
 
     # Add any remaining assistant content
     if current_assistant_content:
-        litellm_messages.append({"role": "assistant", "content": current_assistant_content})
+        litellm_messages.append(
+            {
+                "role": "assistant",
+                "content": [{"type": "text", "text": "\n".join(current_assistant_content)}],
+            }
+        )
 
     return litellm_messages
 

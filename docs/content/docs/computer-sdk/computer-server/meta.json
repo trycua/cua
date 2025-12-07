@@ -1,0 +1,4 @@
+{
+  "title": "Computer Server",
+  "pages": ["index", "Commands", "REST-API", "WebSocket-API"]
+}

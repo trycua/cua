@@ -4,35 +4,26 @@ title: Introduction
 
 import { Monitor, Code, BookOpen, Zap, Bot, Boxes, Rocket } from 'lucide-react';
 
-<div className="rounded-lg border bg-card text-card-foreground shadow-sm px-4 py-2 mb-6">
-  Cua is an open-source framework for building **Computer-Use Agents** - AI systems that see,
-  understand, and interact with desktop applications through vision and action, just like humans do.
+<div className="relative rounded-xl overflow-hidden mb-8">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcSet="/img/bg-dark.jpg" />
+    <source media="(prefers-color-scheme: light)" srcSet="/img/bg-light.jpg" />
+    <img src="/img/bg-light.jpg" alt="Cua" className="w-full h-48 object-cover" />
+  </picture>
+  <div className="absolute inset-0 flex items-center justify-center bg-black/30">
+    <p className="text-white text-xl font-medium text-center px-4">
+      Build AI agents that see, understand, and control any computer
+    </p>
+  </div>
 </div>
 
-## Why Cua?
+**Cua** is an open-source framework for Computer-Use Agents. Automate any desktop application without brittle selectors or APIs.
 
-Cua gives you everything you need to automate any desktop application without brittle selectors or APIs.
+## Highlights
 
-Some highlights include:
-
-- **Model flexibility** - Connect to 100+ LLM providers through liteLLM's standard interface. Use models from Anthropic, OpenAI, Google, and more - or run them locally with Ollama, Hugging Face, or MLX.
-- **Composed agents** - Mix and match grounding models with planning models for optimal performance. Use specialized models like GTA, OpenCUA, or OmniParser for UI element detection paired with powerful reasoning models like Claude or GPT-4.
-- **Cross-platform sandboxes** - Run agents safely in isolated environments. Choose from Docker containers, macOS VMs with Lume, Windows Sandbox, or deploy to Cua Cloud with production-ready infrastructure.
-- **Computer SDK** - Control any application with a PyAutoGUI-like API. Click, type, scroll, take screenshots, manage windows, read/write files - everything you need for desktop automation.
-- **Agent SDK** - Build autonomous agents with trajectory tracing, prompt caching, cost tracking, and budget controls. Test agents on industry-standard benchmarks like OSWorld-Verified with one line of code.
-- **Human-in-the-loop** - Pause agent execution and await user input or approval before continuing. Use the `human/human` model string to let humans control the agent directly.
-- **Production essentials** - Ship reliable agents with built-in PII anonymization, cost tracking, trajectory logging, and integration with observability platforms like Laminar and HUD.
-
-## What can you build?
-
-- RPA automation that works with any application - even legacy software without APIs.
-- Form-filling agents that handle complex multi-step web workflows.
-- Testing automation that adapts to UI changes without brittle selectors.
-- Data extraction from desktop applications and document processing.
-- Cross-application workflows that combine multiple tools and services.
-- Research agents that browse, read, and synthesize information from the web.
-
-Explore real-world examples in our [blog posts](https://cua.ai/blog).
+- **100+ models** - Use Claude, GPT-4, Gemini, or run locally with Ollama and MLX
+- **Cross-platform** - Docker, macOS VMs, Windows Sandbox, or Cua Cloud
+- **Production-ready** - Cost tracking, PII anonymization, and observability built-in
 
 ## Get started
 

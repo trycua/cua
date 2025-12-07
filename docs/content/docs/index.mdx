@@ -4,22 +4,20 @@ title: Introduction
 
 import { Monitor, Code, BookOpen, Zap, Bot, Boxes, Rocket } from 'lucide-react';
 
-<div style={{position: 'relative', borderRadius: '0.75rem', overflow: 'hidden', marginBottom: '2rem', width: '100%', height: '10rem'}}>
+<div className="relative rounded-xl overflow-hidden mb-8 w-full h-40 -mt-4">
   <img
     src="/docs/img/bg-light.jpg"
     alt="Cua"
-    className="block dark:hidden"
-    style={{width: '100%', height: '100%', objectFit: 'cover'}}
+    className="w-full h-full object-cover block dark:hidden rounded-xl"
   />
   <img
     src="/docs/img/bg-dark.jpg"
     alt="Cua"
-    className="hidden dark:block"
-    style={{width: '100%', height: '100%', objectFit: 'cover'}}
+    className="w-full h-full object-cover hidden dark:block rounded-xl"
   />
-  <div style={{position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem'}}>
-    <div style={{backgroundColor: 'rgba(0,0,0,0.5)', backdropFilter: 'blur(4px)', borderRadius: '0.5rem', padding: '0.5rem 1rem'}}>
-      <span style={{color: 'white', fontSize: '1.125rem', fontWeight: 500, display: 'block', textAlign: 'center'}}>Build AI agents that see, understand, and control any computer</span>
+  <div className="absolute inset-0 flex items-center justify-center p-4">
+    <div className="bg-black/50 backdrop-blur-sm rounded-lg px-4 py-2">
+      <span className="text-white text-lg font-medium">Build AI agents that see, understand, and control any computer</span>
     </div>
   </div>
 </div>

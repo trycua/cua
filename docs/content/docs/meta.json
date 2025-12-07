@@ -10,9 +10,11 @@
     "...example-usecases",
     "---[BookCopy]Computer Playbook---",
     "...computer-sdk",
-    "---[BookCopy]Agent Playbook---",
+    "---[Bot]Agent Playbook---",
     "...agent-sdk",
-    "---[CodeXml]API Reference---",
-    "...libraries"
+    "---[Terminal]Cloud CLI Playbook---",
+    "...cli-playbook",
+    "---[Terminal]macOS VM CLI Playbook---",
+    "...macos-vm-cli-playbook"
   ]
 }

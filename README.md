@@ -1,8 +1,8 @@
 <div align="center">
   <a href="https://cua.ai" target="_blank" rel="noopener noreferrer">
     <picture>
-      <source media="(prefers-color-scheme: dark)" alt="Cua logo" width="500" srcset="img/logo_white.png">
-      <source media="(prefers-color-scheme: light)" alt="Cua logo" width="500" srcset="img/logo_black.png">
+      <source media="(prefers-color-scheme: dark)" alt="Cua logo" width="150" srcset="img/logo_white.png">
+      <source media="(prefers-color-scheme: light)" alt="Cua logo" width="150" srcset="img/logo_black.png">
       <img alt="Cua logo" width="500" src="img/logo_black.png">
     </picture>
   </a>

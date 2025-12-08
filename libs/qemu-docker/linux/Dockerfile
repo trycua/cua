@@ -1,4 +1,4 @@
-FROM qemu-local:latest
+FROM trycua/qemu-local:latest
 
 COPY src/vm/setup/. /oem/
 

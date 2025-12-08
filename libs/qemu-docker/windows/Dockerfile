@@ -1,4 +1,4 @@
-FROM windows-local:latest
+FROM trycua/windows-local:latest
 
 COPY src/vm/setup/. /oem/
 

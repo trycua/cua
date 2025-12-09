@@ -29,10 +29,9 @@ Claude models with computer-use capabilities:
 - Claude 4.1: `claude-opus-4-1-20250805`
 - Claude 4: `claude-opus-4-20250514`, `claude-sonnet-4-20250514`
 - Claude 3.7: `claude-3-7-sonnet-20250219`
-- Claude 3.5: `claude-3-5-sonnet-20241022`
 
 ```python
-agent = ComputerAgent("claude-3-5-sonnet-20241022", tools=[computer])
+agent = ComputerAgent("claude-sonnet-4-5-20250929", tools=[computer])
 async for _ in agent.run("Open Firefox and navigate to github.com"):
     pass
 ```
@@ -78,10 +77,10 @@ async for _ in agent.run("Open Firefox and navigate to github.com"):
 
 Qwen3 VL family:
 
-- `openrouter/qwen/qwen3-vl-235b-a22b-instruct`
+- `cua/qwen/qwen3-vl-235b` (via CUA VLM Router - recommended)
 
 ```python
-agent = ComputerAgent("openrouter/qwen/qwen3-vl-235b-a22b-instruct", tools=[computer])
+agent = ComputerAgent("cua/qwen/qwen3-vl-235b", tools=[computer])
 async for _ in agent.run("Open Firefox and navigate to github.com"):
     pass
 ```

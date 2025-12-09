@@ -6,12 +6,12 @@ import { z } from 'zod';
 export const docs = defineDocs({
   docs: {
     schema: frontmatterSchema.extend({
+      macos: z.boolean().optional(),
+      windows: z.boolean().optional(),
+      linux: z.boolean().optional(),
       pypi: z.string().optional(),
       npm: z.string().optional(),
       github: z.array(z.string()).optional(),
-      macos: z.boolean().default(false),
-      windows: z.boolean().default(false),
-      linux: z.boolean().default(false),
     }),
   },
   meta: {

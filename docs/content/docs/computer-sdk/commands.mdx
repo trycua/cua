@@ -18,7 +18,7 @@ Execute shell commands and get detailed results:
     # Run shell command
     result = await computer.interface.run_command(cmd) # result.stdout, result.stderr, result.returncode
     ```
-    
+
   </Tab>
   <Tab value="TypeScript">
 
@@ -230,7 +230,7 @@ Control desktop environment features like wallpaper:
     env = await computer.interface.get_desktop_environment()
     print(env) # "xfce4"
 
-    # Set desktop wallpaper to an image file accessible on the VM
+    # Set desktop wallpaper to an image file accessible on the sandbox
     await computer.interface.set_wallpaper("/home/cua/shared/wallpaper.png")
     ```
 
@@ -241,7 +241,7 @@ Control desktop environment features like wallpaper:
     const env = await computer.interface.getDesktopEnvironment();
     print(env) # "xfce4"
 
-    // Set desktop wallpaper to an image file accessible on the VM
+    // Set desktop wallpaper to an image file accessible on the sandbox
     await computer.interface.setWallpaper('/home/cua/shared/wallpaper.png');
     ```
 

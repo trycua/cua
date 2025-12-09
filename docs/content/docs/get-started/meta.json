@@ -1,0 +1,7 @@
+{
+  "title": "Get Started",
+  "description": "Get started with Cua",
+  "defaultOpen": true,
+  "icon": "Rocket",
+  "pages": ["../index", "quickstart"]
+}

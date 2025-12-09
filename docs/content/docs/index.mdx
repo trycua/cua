@@ -1,25 +1,58 @@
 ---
-title: Home
-icon: House
+title: Introduction
 ---
 
-import { Monitor, Code, BookOpen } from 'lucide-react';
+import { Monitor, Code, BookOpen, Zap, Bot, Boxes, Rocket } from 'lucide-react';
 
-# Welcome!
+<div className="rounded-lg border bg-card text-card-foreground shadow-sm px-4 py-2 mb-6">
+  Cua is an open-source framework for building **Computer-Use Agents** - AI systems that see,
+  understand, and interact with desktop applications through vision and action, just like humans do.
+</div>
 
-Cua is a framework for automating Windows, Mac, and Linux apps powered by computer-using agents (CUAs).
+## Why Cua?
 
-Cua makes every stage of computer-using agent development simple:
+Cua gives you everything you need to automate any desktop application without brittle selectors or APIs.
 
-- **Development**: Use any LLM provider with liteLLM. The agent SDK makes multiple agent loop providers, trajectory tracing, caching, and budget management easy
-- **Containerization**: Cua offers Docker containers pre-installed with everything needed for AI-powered RPA
-- **Deployment**: Cua cloud gives you a production-ready cloud environment for your assistants
+Some highlights include:
+
+- **Model flexibility** - Connect to 100+ LLM providers through liteLLM's standard interface. Use models from Anthropic, OpenAI, Google, and more - or run them locally with Ollama, Hugging Face, or MLX.
+- **Composed agents** - Mix and match grounding models with planning models for optimal performance. Use specialized models like GTA, OpenCUA, or OmniParser for UI element detection paired with powerful reasoning models like Claude or GPT-4.
+- **Cross-platform sandboxes** - Run agents safely in isolated environments. Choose from Docker containers, macOS VMs with Lume, Windows Sandbox, or deploy to Cua Cloud with production-ready infrastructure.
+- **Computer SDK** - Control any application with a PyAutoGUI-like API. Click, type, scroll, take screenshots, manage windows, read/write files - everything you need for desktop automation.
+- **Agent SDK** - Build autonomous agents with trajectory tracing, prompt caching, cost tracking, and budget controls. Test agents on industry-standard benchmarks like OSWorld-Verified with one line of code.
+- **Human-in-the-loop** - Pause agent execution and await user input or approval before continuing. Use the `human/human` model string to let humans control the agent directly.
+- **Production essentials** - Ship reliable agents with built-in PII anonymization, cost tracking, trajectory logging, and integration with observability platforms like Laminar and HUD.
+
+## What can you build?
+
+- RPA automation that works with any application - even legacy software without APIs.
+- Form-filling agents that handle complex multi-step web workflows.
+- Testing automation that adapts to UI changes without brittle selectors.
+- Data extraction from desktop applications and document processing.
+- Cross-application workflows that combine multiple tools and services.
+- Research agents that browse, read, and synthesize information from the web.
+
+Explore real-world examples in our [blog posts](https://cua.ai/blog).
+
+## Get started
+
+Follow the [Quickstart guide](/docs/get-started/quickstart) for step-by-step setup with Python or TypeScript.
+
+If you're new to computer-use agents, check out our [tutorials](https://cua.ai/blog), [examples](https://github.com/trycua/cua/tree/main/examples), and [notebooks](https://github.com/trycua/cua/tree/main/notebooks) to start building with Cua today.
 
 <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-8">
-  <Card icon={<Monitor />} href="/quickstart-devs" title="Quickstart (Developers)">
-    Build with Python—full SDK and agent code examples.
+  <Card icon={<Rocket />} href="/get-started/quickstart" title="Quickstart">
+    Get up and running in 3 steps with Python or TypeScript.
   </Card>
-  <Card icon={<BookOpen />} href="/libraries/agent" title="API Reference">
-    Explore the agent SDK and APIs
+  <Card icon={<Zap />} href="/agent-sdk/agent-loops" title="Agent Loops">
+    Learn how agents work and how to build your own.
+  </Card>
+  <Card icon={<BookOpen />} href="/computer-sdk/computers" title="Computer SDK">
+    Control desktop applications with the Computer SDK.
+  </Card>
+  <Card icon={<Monitor />} href="/example-usecases/form-filling" title="Example Use Cases">
+    See Cua in action with real-world examples.
   </Card>
 </div>
+
+We can't wait to see what you build with Cua ✨

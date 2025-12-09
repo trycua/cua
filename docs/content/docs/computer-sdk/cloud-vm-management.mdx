@@ -1,32 +1,32 @@
 ---
-title: Cloud VM Management
-description: Manage your Cua Cloud sandboxes (VMs) via Python SDK or HTTP API
+title: Cloud Sandbox Management
+description: Manage your Cua Cloud sandboxes via Python SDK or HTTP API
 ---
 
 import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
 
-Using the Cua Cloud API, you can manage your Cua Cloud sandboxes (VMs) with Python or HTTP (curl).
+Using the Cua Cloud API, you can manage your Cua Cloud sandboxes with Python or HTTP (curl).
 
 All examples require a CUA API key. You can obtain one from the [Dashboard](https://www.cua.ai/dashboard/keys).
 
 ---
 
-## List VMs
+## List Sandboxes
 
 <Tabs items={['Python', 'curl']}>
   <Tab value="Python">
 
 ```python
-import os
 import asyncio
 from computer.providers.cloud.provider import CloudProvider
 
 async def main():
-    api_key = os.getenv("CUA_API_KEY") or "your-api-key"
+    # CloudProvider automatically reads CUA_API_KEY from environment
+    # You can also pass api_key explicitly: CloudProvider(api_key="your-api-key")
     # Optional: point to a different API base
     # os.environ["CUA_API_BASE"] = "https://api.cua.ai"
 
-    provider = CloudProvider(api_key=api_key, verbose=False)
+    provider = CloudProvider(verbose=False)
     async with provider:
         vms = await provider.list_vms()
         for vm in vms:
@@ -51,7 +51,7 @@ curl -H "Authorization: Bearer $CUA_API_KEY" \
 
 Responses:
 
-- 200: Array of minimal VM objects with fields `{ name, password, status }`
+- 200: Array of minimal sandbox objects with fields `{ name, password, status }`
 - 401: Unauthorized (missing/invalid API key)
 
 ```json
@@ -66,11 +66,11 @@ Responses:
 
 Status values:
 
-- `pending`: VM deployment in progress
-- `running`: VM is active and accessible
-- `stopped`: VM is stopped but not terminated
-- `terminated`: VM has been permanently destroyed
-- `failed`: VM deployment or operation failed
+- `pending`: Sandbox deployment in progress
+- `running`: Sandbox is active and accessible
+- `stopped`: Sandbox is stopped but not terminated
+- `terminated`: Sandbox has been permanently destroyed
+- `failed`: Sandbox deployment or operation failed
 
 ---
 
@@ -80,23 +80,22 @@ Status values:
 
 ---
 
-## Start a VM
+## Start a Sandbox
 
-Provide the VM name you want to start.
+Provide the sandbox name you want to start.
 
 <Tabs items={["Python", "curl"]}>
   <Tab value="Python">
 
 ```python
-import os
 import asyncio
 from computer.providers.cloud.provider import CloudProvider
 
 async def main():
-    api_key = os.getenv("CUA_API_KEY") or "your-api-key"
+    # CloudProvider automatically reads CUA_API_KEY from environment
     name = "my-vm-name"  # e.g., "m-linux-96lcxd2c2k"
 
-    provider = CloudProvider(api_key=api_key)
+    provider = CloudProvider()
     async with provider:
         resp = await provider.run_vm(name)
         print(resp)  # { "name": name, "status": "starting" }
@@ -118,7 +117,7 @@ Responses:
 
 - 204: No Content (start accepted)
 - 401: Unauthorized (missing/invalid API key)
-- 404: VM not found or not owned by the user
+- 404: Sandbox not found or not owned by the user
 
 ```text
 HTTP/1.1 204 No Content
@@ -129,23 +128,22 @@ HTTP/1.1 204 No Content
 
 ---
 
-## Stop a VM
+## Stop a Sandbox
 
-Stops the VM asynchronously.
+Stops the sandbox asynchronously.
 
 <Tabs items={["Python", "curl"]}>
   <Tab value="Python">
 
 ```python
-import os
 import asyncio
 from computer.providers.cloud.provider import CloudProvider
 
 async def main():
-    api_key = os.getenv("CUA_API_KEY") or "your-api-key"
+    # CloudProvider automatically reads CUA_API_KEY from environment
     name = "my-vm-name"
 
-    provider = CloudProvider(api_key=api_key)
+    provider = CloudProvider()
     async with provider:
         resp = await provider.stop_vm(name)
         print(resp)  # { "name": name, "status": "stopping" }
@@ -167,7 +165,7 @@ Responses:
 
 - 202: Accepted with `{ "status": "stopping" }`
 - 401: Unauthorized (missing/invalid API key)
-- 404: VM not found or not owned by the user
+- 404: Sandbox not found or not owned by the user
 
 ```json
 { "status": "stopping" }
@@ -178,23 +176,22 @@ Responses:
 
 ---
 
-## Restart a VM
+## Restart a Sandbox
 
-Restarts the VM asynchronously.
+Restarts the sandbox asynchronously.
 
 <Tabs items={["Python", "curl"]}>
   <Tab value="Python">
 
 ```python
-import os
 import asyncio
 from computer.providers.cloud.provider import CloudProvider
 
 async def main():
-    api_key = os.getenv("CUA_API_KEY") or "your-api-key"
+    # CloudProvider automatically reads CUA_API_KEY from environment
     name = "my-vm-name"
 
-    provider = CloudProvider(api_key=api_key)
+    provider = CloudProvider()
     async with provider:
         resp = await provider.restart_vm(name)
         print(resp)  # { "name": name, "status": "restarting" }
@@ -216,7 +213,7 @@ Responses:
 
 - 202: Accepted with `{ "status": "restarting" }`
 - 401: Unauthorized (missing/invalid API key)
-- 404: VM not found or not owned by the user
+- 404: Sandbox not found or not owned by the user
 
 ```json
 { "status": "restarting" }
@@ -227,23 +224,22 @@ Responses:
 
 ---
 
-## Query a VM by name
+## Query a Sandbox by name
 
-Query the computer-server running on the VM. Useful for checking details like status or OS type.
+Query the computer-server running on the sandbox. Useful for checking details like status or OS type.
 
 <Tabs items={["Python", "curl"]}>
   <Tab value="Python">
 
 ```python
-import os
 import asyncio
 from computer.providers.cloud.provider import CloudProvider
 
 async def main():
-    api_key = os.getenv("CUA_API_KEY") or "your-api-key"
+    # CloudProvider automatically reads CUA_API_KEY from environment
     name = "my-vm-name"
 
-    provider = CloudProvider(api_key=api_key)
+    provider = CloudProvider()
     async with provider:
         info = await provider.get_vm(name)
         print(info)

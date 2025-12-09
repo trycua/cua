@@ -44,14 +44,12 @@ export class PostHogTelemetryClient {
       sampleRate: TELEMETRY_SAMPLE_RATE,
       posthog: { apiKey: PUBLIC_POSTHOG_API_KEY, host: PUBLIC_POSTHOG_HOST },
     };
-    // Check for multiple environment variables that can disable telemetry:
-    // CUA_TELEMETRY=off to disable telemetry (legacy way)
-    // CUA_TELEMETRY_DISABLED=1 to disable telemetry (new, more explicit way)
-    const telemetryDisabled =
-      process.env.CUA_TELEMETRY?.toLowerCase() === 'off' ||
-      ['1', 'true', 'yes', 'on'].includes(process.env.CUA_TELEMETRY_DISABLED?.toLowerCase() || '');
+    // Check CUA_TELEMETRY_ENABLED environment variable (defaults to enabled)
+    const telemetryEnabled = ['1', 'true', 'yes', 'on'].includes(
+      process.env.CUA_TELEMETRY_ENABLED?.toLowerCase() || 'true'
+    );
 
-    this.config.enabled = !telemetryDisabled;
+    this.config.enabled = telemetryEnabled;
     this.config.sampleRate = Number.parseFloat(
       process.env.CUA_TELEMETRY_SAMPLE_RATE || String(TELEMETRY_SAMPLE_RATE)
     );

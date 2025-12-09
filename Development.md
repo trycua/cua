@@ -376,6 +376,61 @@ All packages are managed through a single consolidated workflow: [Bump Version](
 5. Click "Run workflow" to start the version bump
 6. The workflow will automatically commit changes and push to main
 
+## Releasing a New CLI Version
+
+To release a new version of the CUA CLI, follow these steps:
+
+### 1. Update the Version
+
+1. Update the version in `libs/typescript/cua-cli/package.json`
+2. Commit the version change with a message like "Bump version to x.y.z"
+3. Push the changes to the main branch
+
+### 2. Trigger the Release Workflow
+
+1. Go to the GitHub Actions tab in the repository
+2. Select the "Publish @trycua/cli" workflow
+3. Click "Run workflow"
+4. Optionally, specify a version (e.g., "1.2.3") or leave empty to use the version from package.json
+5. Click "Run workflow"
+
+The workflow will:
+
+- Build single-file executables for all supported platforms
+- Publish the package to npm
+- Create a GitHub release with the version tag (format: `cua-vX.Y.Z`)
+- Attach all platform-specific binaries to the release
+
+### 3. Verify the Release
+
+1. Check the GitHub Releases page to ensure the new version is published
+2. Verify the npm package was published to the registry
+3. Test installation on different platforms:
+
+   ```bash
+   # Test Linux/macOS installation
+   curl -fsSL https://cua.ai/install.sh | sh
+
+   # Test Windows installation (PowerShell)
+   irm https://cua.ai/install.ps1 | iex
+   ```
+
+### 4. Update Documentation
+
+Update any relevant documentation with the new version number, including:
+
+- Example code in documentation
+- Any version-specific instructions
+- Compatibility matrices
+
+### 5. Announce the Release
+
+- Create a new GitHub release with release notes
+- Update the changelog if maintained separately
+- Announce in relevant channels (Slack, Discord, etc.)
+
+---
+
 ### Rolling Back a Version Bump
 
 If you need to revert a version bump, follow these steps:

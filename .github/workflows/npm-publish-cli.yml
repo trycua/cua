@@ -1,0 +1,212 @@
+name: Publish @trycua/cli
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to publish (default: from package.json)"
+        required: false
+        default: ""
+
+jobs:
+  build-and-publish:
+    permissions:
+      id-token: write
+      contents: write
+      packages: write
+
+    strategy:
+      matrix:
+        include:
+          - target: bun-linux-x64
+            ext: ""
+            binary_name: cua-linux-x64
+          - target: bun-darwin-x64
+            ext: ""
+            binary_name: cua-darwin-x64
+          - target: bun-darwin-arm64
+            ext: ""
+            binary_name: cua-darwin-arm64
+          - target: bun-windows-x64
+            ext: ".exe"
+            binary_name: cua-windows-x64
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Get version
+        id: version
+        run: |
+          if [ -n "${{ github.event.inputs.version }}" ]; then
+            echo "version=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+          else
+            VERSION=$(bun -p "require('./libs/typescript/cua-cli/package.json').version")
+            echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Install dependencies
+        working-directory: ./libs/typescript/cua-cli
+        run: bun install --frozen-lockfile
+
+      - name: Build binary
+        working-directory: ./libs/typescript/cua-cli
+        run: |
+          bun build --compile --minify --sourcemap --target=${{ matrix.target }} index.ts --outfile ${{ matrix.binary_name }}${{ matrix.ext }}
+          mkdir -p ../../../dist
+          mv ${{ matrix.binary_name }}${{ matrix.ext }}* ../../../dist/
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: cua-binary-${{ matrix.target }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 1
+
+  publish-npm:
+    needs: build-and-publish
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/cua-v')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        working-directory: ./libs/typescript/cua-cli
+        run: bun install --frozen-lockfile
+
+      - name: Publish to npm
+        working-directory: ./libs/typescript/cua-cli
+        env:
+          NPM_CONFIG_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: bun publish --production --access public --tolerate-republish
+
+  create-release:
+    needs: [build-and-publish, publish-npm]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Get version
+        id: version
+        run: |
+          VERSION=$(bun -p "require('./libs/typescript/cua-cli/package.json').version")
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "tag=cua-v${VERSION}" >> $GITHUB_OUTPUT
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Create Release
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          release_name: cua-cli v${{ steps.version.outputs.version }}
+          body: |
+            # cua-cli v${{ steps.version.outputs.version }}
+
+            ## Installation
+
+            ### Using install script (recommended)
+            ```bash
+            # For Linux/macOS
+            curl -fsSL https://cua.ai/cli/install.sh | sh
+
+            # For Windows (PowerShell)
+            irm https://cua.ai/cli/install.ps1 | iex
+            ```
+
+            ### Using npm/bun
+            ```bash
+            # Using bun
+            bun add -g @trycua/cli
+
+            # Or using npm
+            npm install -g @trycua/cli
+            ```
+
+            ### From source
+            ```bash
+            git clone -b ${{ steps.version.outputs.tag }} https://github.com/trycua/cua.git
+            cd cua/libs/typescript/cua-cli
+            bun install
+            bun link
+            bun link cua-cli
+            ```
+
+            ## Release Assets
+            - `cua-darwin-arm64`: macOS (Apple Silicon)
+            - `cua-darwin-x64`: macOS (Intel)
+            - `cua-linux-x64`: Linux (x86_64)
+            - `cua-windows-x64.exe`: Windows (x86_64)
+          draft: false
+          prerelease: false
+
+      - name: Upload Linux Binary
+        uses: actions/upload-release-asset@v1
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./dist/cua-linux-x64
+          asset_name: cua-linux-x64
+          asset_content_type: application/octet-stream
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload macOS Intel Binary
+        uses: actions/upload-release-asset@v1
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./dist/cua-darwin-x64
+          asset_name: cua-darwin-x64
+          asset_content_type: application/octet-stream
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload macOS Apple Silicon Binary
+        uses: actions/upload-release-asset@v1
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./dist/cua-darwin-arm64
+          asset_name: cua-darwin-arm64
+          asset_content_type: application/octet-stream
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload Windows Binary
+        uses: actions/upload-release-asset@v1
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./dist/cua-windows-x64.exe
+          asset_name: cua-windows-x64.exe
+          asset_content_type: application/octet-stream
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

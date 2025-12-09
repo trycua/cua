@@ -31,21 +31,26 @@ class CloudProvider(BaseVMProvider):
 
     def __init__(
         self,
-        api_key: str,
+        api_key: Optional[str] = None,
         verbose: bool = False,
         api_base: Optional[str] = None,
         **kwargs,
     ):
         """
         Args:
-            api_key: API key for authentication
+            api_key: API key for authentication (defaults to CUA_API_KEY environment variable)
             name: Name of the VM
             verbose: Enable verbose logging
         """
-        assert api_key, "api_key required for CloudProvider"
+        # Fall back to environment variable if api_key not provided
+        if api_key is None:
+            api_key = os.getenv("CUA_API_KEY")
+        assert api_key, "api_key required for CloudProvider (provide via parameter or CUA_API_KEY environment variable)"
         self.api_key = api_key
         self.verbose = verbose
         self.api_base = (api_base or DEFAULT_API_BASE).rstrip("/")
+        # Host caching dictionary: {vm_name: host_string}
+        self._host_cache: Dict[str, str] = {}
 
     @property
     def provider_type(self) -> VMProviderType:
@@ -60,12 +65,12 @@ class CloudProvider(BaseVMProvider):
     async def get_vm(self, name: str, storage: Optional[str] = None) -> Dict[str, Any]:
         """Get VM information by querying the VM status endpoint.
 
-        - Build hostname via get_ip(name) → "{name}.containers.cloud.trycua.com"
+        - Build hostname via _get_host_for_vm(name) using cached host or fallback
         - Probe https://{hostname}:8443/status with a short timeout
         - If JSON contains a "status" field, return it; otherwise infer
         - Fallback to DNS resolve check to distinguish unknown vs not_found
         """
-        hostname = await self.get_ip(name=name)
+        hostname = await self._get_host_for_vm(name)
 
         # Try HTTPS probe to the computer-server status endpoint (8443)
         try:
@@ -118,8 +123,20 @@ class CloudProvider(BaseVMProvider):
                             vm = dict(item) if isinstance(item, dict) else {}
                             name = vm.get("name")
                             password = vm.get("password")
+                            api_host = vm.get("host")  # Read host from API response
+
                             if isinstance(name, str) and name:
-                                host = f"{name}.containers.cloud.trycua.com"
+                                # Use host from API if available, otherwise fallback to legacy format
+                                if isinstance(api_host, str) and api_host:
+                                    host = api_host
+                                    # Cache the host for this VM
+                                    self._host_cache[name] = host
+                                else:
+                                    # Legacy fallback
+                                    host = f"{name}.containers.cloud.trycua.com"
+                                    # Cache the legacy host
+                                    self._host_cache[name] = host
+
                                 # api_url: always set if missing
                                 if not vm.get("api_url"):
                                     vm["api_url"] = f"https://{host}:8443"
@@ -227,15 +244,73 @@ class CloudProvider(BaseVMProvider):
             "message": "update_vm not supported by public API",
         }
 
+    async def _get_host_for_vm(self, name: str) -> str:
+        """
+        Get the host for a VM, trying multiple approaches:
+        1. Check cache first
+        2. Try to refresh cache by calling list_vms
+        3. Try .sandbox.cua.ai format
+        4. Fallback to legacy .containers.cloud.trycua.com format
+
+        Args:
+            name: VM name
+
+        Returns:
+            Host string for the VM
+        """
+        # Check cache first
+        if name in self._host_cache:
+            return self._host_cache[name]
+
+        # Try to refresh cache by calling list_vms
+        try:
+            await self.list_vms()
+            # Check cache again after refresh
+            if name in self._host_cache:
+                return self._host_cache[name]
+        except Exception as e:
+            logger.warning(f"Failed to refresh VM list for host lookup: {e}")
+
+        # Try .sandbox.cua.ai format first
+        sandbox_host = f"{name}.sandbox.cua.ai"
+        if await self._test_host_connectivity(sandbox_host):
+            self._host_cache[name] = sandbox_host
+            return sandbox_host
+
+        # Fallback to legacy format
+        legacy_host = f"{name}.containers.cloud.trycua.com"
+        # Cache the legacy host
+        self._host_cache[name] = legacy_host
+        return legacy_host
+
+    async def _test_host_connectivity(self, hostname: str) -> bool:
+        """
+        Test if a host is reachable by trying to connect to its status endpoint.
+
+        Args:
+            hostname: Host to test
+
+        Returns:
+            True if host is reachable, False otherwise
+        """
+        try:
+            timeout = aiohttp.ClientTimeout(total=2)  # Short timeout for connectivity test
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                url = f"https://{hostname}:8443/status"
+                async with session.get(url, allow_redirects=False) as resp:
+                    # Any response (even error) means the host is reachable
+                    return True
+        except Exception:
+            return False
+
     async def get_ip(
         self, name: Optional[str] = None, storage: Optional[str] = None, retry_delay: int = 2
     ) -> str:
         """
-        Return the VM's IP address as '{container_name}.containers.cloud.trycua.com'.
-        Uses the provided 'name' argument (the VM name requested by the caller),
-        falling back to self.name only if 'name' is None.
-        Retries up to 3 times with retry_delay seconds if hostname is not available.
+        Return the VM's host address, trying to use cached host from API or falling back to legacy format.
+        Uses the provided 'name' argument (the VM name requested by the caller).
         """
         if name is None:
             raise ValueError("VM name is required for CloudProvider.get_ip")
-        return f"{name}.containers.cloud.trycua.com"
+
+        return await self._get_host_for_vm(name)

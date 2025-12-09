@@ -1,0 +1,441 @@
+---
+title: CUA VLM Router
+description: Intelligent vision-language model routing with cost optimization and unified access
+---
+
+# CUA VLM Router
+
+The **CUA VLM Router** is an intelligent inference API that provides unified access to multiple vision-language model providers through a single API key. It offers cost optimization and detailed observability for production AI applications.
+
+## Overview
+
+Instead of managing multiple API keys and provider-specific code, CUA VLM Router acts as a smart cloud gateway that:
+
+- **Unifies access** to multiple model providers
+- **Optimizes costs** through intelligent routing and provider selection
+- **Tracks usage** and costs with detailed metadata
+- **Provides observability** with routing decisions and attempt logs
+- **Managed infrastructure** - no need to manage provider API keys yourself
+
+## Quick Start
+
+### 1. Get Your API Key
+
+Sign up at [cua.ai](https://cua.ai/signin) and get your CUA API key from the dashboard.
+
+### 2. Set Environment Variable
+
+```bash
+export CUA_API_KEY="sk_cua-api01_..."
+```
+
+### 3. Use with Agent SDK
+
+```python
+from agent import ComputerAgent
+from computer import Computer
+
+computer = Computer(os_type="linux", provider_type="docker")
+
+agent = ComputerAgent(
+    model="cua/anthropic/claude-sonnet-4.5",
+    tools=[computer],
+    max_trajectory_budget=5.0
+)
+
+messages = [{"role": "user", "content": "Take a screenshot and tell me what's on screen"}]
+
+async for result in agent.run(messages):
+    for item in result["output"]:
+        if item["type"] == "message":
+            print(item["content"][0]["text"])
+```
+
+## Available Models
+
+The CUA VLM Router currently supports these models:
+
+| Model ID                          | Provider  | Description       | Best For                                |
+| --------------------------------- | --------- | ----------------- | --------------------------------------- |
+| `cua/anthropic/claude-sonnet-4.5` | Anthropic | Claude Sonnet 4.5 | General-purpose tasks, recommended      |
+| `cua/anthropic/claude-opus-4.5`   | Anthropic | Claude Opus 4.5   | Enhanced agentic and computer-use tasks |
+| `cua/anthropic/claude-haiku-4.5`  | Anthropic | Claude Haiku 4.5  | Fast responses, cost-effective          |
+| `cua/qwen/qwen3-vl-235b`          | Qwen      | Qwen3 VL 235B     | Large-scale vision-language tasks       |
+
+## How It Works
+
+### Intelligent Routing
+
+When you make a request to CUA VLM Router:
+
+1. **Model Resolution**: Your model ID (e.g., `cua/anthropic/claude-sonnet-4.5`) is resolved to the appropriate provider
+2. **Provider Selection**: CUA routes your request to the appropriate model provider
+3. **Response**: You receive an OpenAI-compatible response with metadata
+
+## API Reference
+
+### Base URL
+
+```
+https://inference.cua.ai/v1
+```
+
+### Authentication
+
+All requests require an API key in the Authorization header:
+
+```bash
+Authorization: Bearer sk_cua-api01_...
+```
+
+### Endpoints
+
+#### List Available Models
+
+```bash
+GET /v1/models
+```
+
+**Response:**
+
+```json
+{
+  "data": [
+    {
+      "id": "anthropic/claude-sonnet-4.5",
+      "name": "Claude Sonnet 4.5",
+      "object": "model",
+      "owned_by": "cua"
+    }
+  ],
+  "object": "list"
+}
+```
+
+#### Chat Completions
+
+```bash
+POST /v1/chat/completions
+Content-Type: application/json
+```
+
+**Request:**
+
+```json
+{
+  "model": "anthropic/claude-sonnet-4.5",
+  "messages": [{ "role": "user", "content": "Hello!" }],
+  "max_tokens": 100,
+  "temperature": 0.7,
+  "stream": false
+}
+```
+
+**Response:**
+
+```json
+{
+  "id": "gen_...",
+  "object": "chat.completion",
+  "created": 1763554838,
+  "model": "anthropic/claude-sonnet-4.5",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "Hello! How can I help you today?"
+      },
+      "finish_reason": "stop"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 10,
+    "completion_tokens": 12,
+    "total_tokens": 22,
+    "cost": 0.01,
+    "is_byok": true
+  }
+}
+```
+
+#### Streaming
+
+Set `"stream": true` to receive server-sent events:
+
+```bash
+curl -X POST https://inference.cua.ai/v1/chat/completions \
+  -H "Authorization: Bearer sk_cua-api01_..." \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "anthropic/claude-sonnet-4.5",
+    "messages": [{"role": "user", "content": "Count to 5"}],
+    "stream": true
+  }'
+```
+
+**Response (SSE format):**
+
+```
+data: {"id":"gen_...","choices":[{"delta":{"content":"1"}}],"object":"chat.completion.chunk"}
+
+data: {"id":"gen_...","choices":[{"delta":{"content":"\n2"}}],"object":"chat.completion.chunk"}
+
+data: {"id":"gen_...","choices":[{"delta":{"content":"\n3\n4\n5"}}],"object":"chat.completion.chunk"}
+
+data: {"id":"gen_...","choices":[{"delta":{},"finish_reason":"stop"}],"usage":{...}}
+```
+
+#### Check Balance
+
+```bash
+GET /v1/balance
+```
+
+**Response:**
+
+```json
+{
+  "balance": 211689.85,
+  "currency": "credits"
+}
+```
+
+## Cost Tracking
+
+CUA VLM Router provides detailed cost information in every response:
+
+### Credit System
+
+Requests are billed in **credits**:
+
+- Credits are deducted from your CUA account balance
+- Prices vary by model and usage
+- CUA manages all provider API keys and infrastructure
+
+### Response Cost Fields
+
+```json
+{
+  "usage": {
+    "cost": 0.01, // CUA gateway cost in credits
+    "market_cost": 0.000065 // Actual upstream API cost
+  }
+}
+```
+
+**Note:** CUA VLM Router is a fully managed cloud service. If you want to use your own provider API keys directly (BYOK), see the [Supported Model Providers](/agent-sdk/supported-model-providers/) page for direct provider access via the agent SDK.
+
+## Response Metadata
+
+CUA VLM Router includes metadata about routing decisions and costs in the response. This information helps with debugging and monitoring your application's model usage.
+
+## Configuration
+
+### Environment Variables
+
+```bash
+# Required: Your CUA API key
+export CUA_API_KEY="sk_cua-api01_..."
+
+# Optional: Custom endpoint (defaults to https://inference.cua.ai/v1)
+export CUA_BASE_URL="https://custom-endpoint.cua.ai/v1"
+```
+
+### Python SDK Configuration
+
+```python
+from agent import ComputerAgent
+
+# Using environment variables (recommended)
+agent = ComputerAgent(model="cua/anthropic/claude-sonnet-4.5")
+
+# Or explicit configuration
+agent = ComputerAgent(
+    model="cua/anthropic/claude-sonnet-4.5",
+    # CUA adapter automatically loads from CUA_API_KEY
+)
+```
+
+## Benefits Over Direct Provider Access
+
+| Feature                    | CUA VLM Router               | Direct Provider (BYOK)            |
+| -------------------------- | ---------------------------- | --------------------------------- |
+| **Single API Key**         | ✅ One key for all providers | ❌ Multiple keys to manage        |
+| **Managed Infrastructure** | ✅ No API key management     | ❌ Manage multiple provider keys  |
+| **Usage Tracking**         | ✅ Unified dashboard         | ❌ Per-provider tracking          |
+| **Model Switching**        | ✅ Change model string only  | ❌ Change code + keys             |
+| **Setup Complexity**       | ✅ One environment variable  | ❌ Multiple environment variables |
+
+## Error Handling
+
+### Common Error Responses
+
+#### Invalid API Key
+
+```json
+{
+  "detail": "Insufficient credits. Current balance: 0.00 credits"
+}
+```
+
+#### Missing Authorization
+
+```json
+{
+  "detail": "Missing Authorization: Bearer token"
+}
+```
+
+#### Invalid Model
+
+```json
+{
+  "detail": "Invalid or unavailable model"
+}
+```
+
+### Best Practices
+
+1. **Check balance periodically** using `/v1/balance`
+2. **Handle rate limits** with exponential backoff
+3. **Log generation IDs** for debugging
+4. **Set up usage alerts** in your CUA dashboard
+
+## Examples
+
+### Basic Usage
+
+```python
+from agent import ComputerAgent
+from computer import Computer
+
+computer = Computer(os_type="linux", provider_type="docker")
+
+agent = ComputerAgent(
+    model="cua/anthropic/claude-sonnet-4.5",
+    tools=[computer]
+)
+
+messages = [{"role": "user", "content": "Open Firefox"}]
+
+async for result in agent.run(messages):
+    print(result)
+```
+
+### Direct API Call (curl)
+
+```bash
+curl -X POST https://inference.cua.ai/v1/chat/completions \
+  -H "Authorization: Bearer ${CUA_API_KEY}" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "anthropic/claude-sonnet-4.5",
+    "messages": [
+      {"role": "user", "content": "Explain quantum computing"}
+    ],
+    "max_tokens": 200
+  }'
+```
+
+### With Custom Parameters
+
+```python
+agent = ComputerAgent(
+    model="cua/anthropic/claude-haiku-4.5",
+    tools=[computer],
+    max_trajectory_budget=10.0,
+    temperature=0.7
+)
+```
+
+### Using Qwen3 VL 235B
+
+```python
+from agent import ComputerAgent
+from computer import Computer
+
+computer = Computer(os_type="linux", provider_type="docker")
+
+agent = ComputerAgent(
+    model="cua/qwen/qwen3-vl-235b",
+    tools=[computer],
+    only_n_most_recent_images=3
+)
+
+messages = [{"role": "user", "content": "Open a browser and search for Python tutorials"}]
+
+async for result in agent.run(messages):
+    print(result)
+```
+
+### Using Claude Opus 4.5
+
+```python
+from agent import ComputerAgent
+from computer import Computer
+
+computer = Computer(
+    os_type="linux",
+    provider_type="cloud",
+    name="your-container-name",
+    api_key="your-cua-api-key"
+)
+
+agent = ComputerAgent(
+    model="cua/anthropic/claude-opus-4.5",
+    tools=[computer],
+    instructions="You are a helpful assistant that can control computers",
+    only_n_most_recent_images=3
+)
+
+messages = [{"role": "user", "content": "Open a browser and search for Python tutorials"}]
+
+async for result in agent.run(messages):
+    print(result)
+```
+
+## Migration from Direct Provider Access
+
+Switching from direct provider access (BYOK) to CUA VLM Router is simple:
+
+**Before (Direct Provider Access with BYOK):**
+
+```python
+import os
+# Required: Provider-specific API key
+os.environ["ANTHROPIC_API_KEY"] = "sk-ant-..."
+
+agent = ComputerAgent(
+    model="anthropic/claude-sonnet-4-5-20250929",
+    tools=[computer]
+)
+```
+
+**After (CUA VLM Router - Cloud Service):**
+
+```python
+import os
+# Required: CUA API key only (no provider keys needed)
+os.environ["CUA_API_KEY"] = "sk_cua-api01_..."
+
+agent = ComputerAgent(
+    model="cua/anthropic/claude-sonnet-4.5",  # Add "cua/" prefix
+    tools=[computer]
+)
+```
+
+That's it! Same code structure, just different model format. CUA manages all provider infrastructure and credentials for you.
+
+## Support
+
+- **Documentation**: [cua.ai/docs](https://cua.ai/docs)
+- **Discord**: [Join our community](https://discord.com/invite/mVnXXpdE85)
+- **Issues**: [GitHub Issues](https://github.com/trycua/cua/issues)
+
+## Next Steps
+
+- Explore [Agent Loops](/agent-sdk/agent-loops) to customize agent behavior
+- Learn about [Cost Saving Callbacks](/agent-sdk/callbacks/cost-saving)
+- Try [Example Use Cases](/example-usecases/form-filling)
+- Review [Supported Model Providers](/agent-sdk/supported-model-providers/) for all options

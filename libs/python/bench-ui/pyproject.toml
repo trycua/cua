@@ -4,7 +4,7 @@ build-backend = "pdm.backend"
 
 [project]
 name = "cua-bench-ui"
-version = "0.6.0"
+version = "0.7.0"
 description = "Lightweight webUI window controller for CUA bench using pywebview"
 readme = "README.md"
 authors = [

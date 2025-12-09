@@ -18,7 +18,7 @@ def _get_free_port() -> int:
         return s.getsockname()[1]
 
 
-def _start_http_server(window: webview.Window, port: int, ready_event: threading.Event, html_content: str | None = None):
+def _start_http_server(window: webview.Window, port: int, ready_event: threading.Event, html_content: str | None = None, folder_path: str | None = None):
     async def rect_handler(request: web.Request):
         try:
             data = await request.json()
@@ -96,7 +96,13 @@ def _start_http_server(window: webview.Window, port: int, ready_event: threading
         return web.Response(text=html_content, content_type="text/html")
 
     app = web.Application()
-    app.router.add_get("/", index_handler)
+    
+    # If serving a folder, add static file routes
+    if folder_path:
+        app.router.add_static("/", folder_path, show_index=True)
+    else:
+        app.router.add_get("/", index_handler)
+    
     app.router.add_post("/rect", rect_handler)
     app.router.add_post("/eval", eval_handler)
 
@@ -124,6 +130,7 @@ def main():
 
     html: Optional[str] = cfg.get("html") or ""
     url: Optional[str] = cfg.get("url")
+    folder: Optional[str] = cfg.get("folder")
     title: str = cfg.get("title", "Window")
     x: Optional[int] = cfg.get("x")
     y: Optional[int] = cfg.get("y")
@@ -133,7 +140,7 @@ def main():
     use_inner_size: bool = bool(cfg.get("use_inner_size", False))
     title_bar_style: str = cfg.get("title_bar_style", "default")
 
-    # Choose port early so we can point the window to it when serving inline HTML
+    # Choose port early so we can point the window to it when serving inline HTML or folder
     port = _get_free_port()
 
     # Create window
@@ -150,6 +157,23 @@ def main():
             background_color="#FFFFFF",
         )
         html_for_server = None
+        folder_for_server = None
+    elif folder:
+        # Serve static folder at control server root and point window to index.html
+        resolved_url = f"http://127.0.0.1:{port}/index.html"
+        window = webview.create_window(
+            title,
+            url=resolved_url,
+            width=width,
+            height=height,
+            x=x,
+            y=y,
+            confirm_close=False,
+            text_select=True,
+            background_color="#FFFFFF",
+        )
+        html_for_server = None
+        folder_for_server = folder
     else:
         # Serve inline HTML at control server root and point window to it
         resolved_url = f"http://127.0.0.1:{port}/"
@@ -165,6 +189,7 @@ def main():
             background_color="#FFFFFF",
         )
         html_for_server = html
+        folder_for_server = None
 
     # Track when the page is loaded so JS execution succeeds
     window_ready = threading.Event()
@@ -172,8 +197,8 @@ def main():
         window_ready.set()
     window.events.loaded += _on_loaded  # type: ignore[attr-defined]
 
-    # Start HTTP server for control (and optionally serve inline HTML)
-    _start_http_server(window, port, window_ready, html_content=html_for_server)
+    # Start HTTP server for control (and optionally serve inline HTML or static folder)
+    _start_http_server(window, port, window_ready, html_content=html_for_server, folder_path=folder_for_server)
 
     # Print startup info for parent to read
     print(json.dumps({"pid": os.getpid(), "port": port}), flush=True)

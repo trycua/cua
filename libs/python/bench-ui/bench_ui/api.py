@@ -60,6 +60,7 @@ def launch_window(
     url: Optional[str] = None,
     *,
     html: Optional[str] = None,
+    folder: Optional[str] = None,
     title: str = "Window",
     x: Optional[int] = None,
     y: Optional[int] = None,
@@ -73,17 +74,19 @@ def launch_window(
 
     Preferred input is a URL via the positional `url` parameter.
     To load inline HTML instead, pass `html=...`.
+    To serve a static folder, pass `folder=...` (path to directory).
 
     Spawns `python -m bench_ui.child` with a JSON config passed via a temp file.
     The child prints a single JSON line: {"pid": <pid>, "port": <port>}.
     We cache pid->port for subsequent control calls like get_element_rect.
     """
-    if not url and not html:
-        raise ValueError("launch_window requires either a url or html")
+    if not url and not html and not folder:
+        raise ValueError("launch_window requires either a url, html, or folder")
 
     config = {
         "url": url,
         "html": html,
+        "folder": folder,
         "title": title,
         "x": x,
         "y": y,

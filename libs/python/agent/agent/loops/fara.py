@@ -234,8 +234,8 @@ def convert_qwen_tool_args_to_computer_action(args: Dict[str, Any]) -> Optional[
     return None
 
 
-@register_agent(models=r"(?i).*", priority=-100)
-class GenericVlmConfig(AsyncAgentConfig):
+@register_agent(models=r"(?i).*fara-7b.*")
+class FaraVlmConfig(AsyncAgentConfig):
     async def predict_step(
         self,
         messages: List[Dict[str, Any]],
@@ -254,8 +254,7 @@ class GenericVlmConfig(AsyncAgentConfig):
         # Build messages using NousFnCallPrompt system with tool schema in text
         # Start with converted conversation (images/text preserved)
         converted_msgs = convert_responses_items_to_completion_messages(
-            messages,
-            allow_images_in_tool_results=False,
+            messages, allow_images_in_tool_results=False, use_xml_tools=True
         )
 
         # Build function schemas from tools array
@@ -296,20 +295,6 @@ class GenericVlmConfig(AsyncAgentConfig):
                             return True
             return False
 
-        def _has_screenshot_message(msgs: List[Dict[str, Any]]) -> bool:
-            """Check if messages already contain the 'Taking a screenshot' text."""
-            screenshot_text = "Taking a screenshot to see the current computer screen."
-            for m in msgs:
-                content = m.get("content")
-                if isinstance(content, str) and screenshot_text in content:
-                    return True
-                if isinstance(content, list):
-                    for p in content:
-                        if isinstance(p, dict) and p.get("type") == "text":
-                            if screenshot_text in (p.get("text") or ""):
-                                return True
-            return False
-
         pre_output_items: List[Dict[str, Any]] = []
         if not _has_any_image(completion_messages):
             if computer_handler is None or not hasattr(computer_handler, "screenshot"):
@@ -319,6 +304,21 @@ class GenericVlmConfig(AsyncAgentConfig):
             screenshot_b64 = await computer_handler.screenshot()
             if not screenshot_b64:
                 raise RuntimeError("Failed to capture screenshot from computer_handler.")
+            await _on_screenshot(screenshot_b64, "screenshot_before")
+
+            # Check if computer_handler has get_current_url method
+            screenshot_text = "Here is the next screenshot. Think about what to do next."
+            if hasattr(computer_handler, "get_current_url"):
+                try:
+                    current_url = await computer_handler.get_current_url()
+                    screenshot_text = f"Current URL: {current_url[:100]}\nHere is the next screenshot. Think about what to do next."
+                except Exception:
+                    # If get_current_url fails, fall back to default text
+                    pass
+            else:
+                print(computer_handler)
+                print("HAS ATTR get_current_url", hasattr(computer_handler, "get_current_url"))
+
             # Inject a user message with the screenshot so the model can see current context
             completion_messages.append(
                 {
@@ -328,24 +328,10 @@ class GenericVlmConfig(AsyncAgentConfig):
                             "type": "image_url",
                             "image_url": {"url": f"data:image/png;base64,{screenshot_b64}"},
                         },
-                        {"type": "text", "text": "Current screen"},
+                        {"type": "text", "text": screenshot_text},
                     ],
                 }
             )
-            # Add assistant message to outputs to reflect the action, only if not already present
-            if not _has_screenshot_message(messages):
-                pre_output_items.append(
-                    {
-                        "type": "message",
-                        "role": "assistant",
-                        "content": [
-                            {
-                                "type": "text",
-                                "text": "Taking a screenshot to see the current computer screen.",
-                            }
-                        ],
-                    }
-                )
 
         # Smart-resize all screenshots and attach min/max pixel hints. Fail fast if deps missing.
         # Also record the last resized width/height to unnormalize coordinates later.
@@ -378,7 +364,7 @@ class GenericVlmConfig(AsyncAgentConfig):
                         im = Image.open(io.BytesIO(img_bytes))
                         h, w = im.height, im.width
                         rh, rw = smart_resize(
-                            h, w, factor=32, min_pixels=MIN_PIXELS, max_pixels=MAX_PIXELS
+                            h, w, factor=28, min_pixels=MIN_PIXELS, max_pixels=MAX_PIXELS
                         )
                         # Attach hints on this image block
                         part["min_pixels"] = MIN_PIXELS
@@ -556,8 +542,7 @@ class GenericVlmConfig(AsyncAgentConfig):
             img_bytes = base64.b64decode(image_b64)
             im = Image.open(io.BytesIO(img_bytes))
             h, w = im.height, im.width
-            # Qwen notebook suggests factor=32 and a wide min/max range
-            rh, rw = smart_resize(h, w, factor=32, min_pixels=min_pixels, max_pixels=max_pixels)
+            rh, rw = smart_resize(h, w, factor=28, min_pixels=min_pixels, max_pixels=max_pixels)
         except Exception:
             raise ImportError(
                 "qwen-vl-utils not installed. Please install it with `pip install cua-agent[qwen]`."

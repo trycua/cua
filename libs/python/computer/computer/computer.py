@@ -7,8 +7,21 @@ import platform
 import re
 import time
 import traceback
-from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, List, Literal, Optional, Union, cast, TypeVar
 from functools import wraps
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Awaitable,
+    Callable,
+    Dict,
+    List,
+    Literal,
+    Optional,
+    TypeVar,
+    Union,
+    cast,
+)
+
 try:
     from typing import ParamSpec
 except Exception:  # pragma: no cover
@@ -135,7 +148,7 @@ class Computer:
         self.provider_type = provider_type
         self.ephemeral = ephemeral
         self.api_key = api_key if self.provider_type == VMProviderType.CLOUD else None
-        
+
         # Set default API port if not specified
         if self.api_port is None:
             self.api_port = 8443 if self.api_key else 8000
@@ -551,7 +564,7 @@ class Computer:
                 await self._interface.wait_for_ready(timeout=30)
                 self.logger.info("Sandbox interface connected successfully")
             except TimeoutError as e:
-                port = getattr(self._interface, '_api_port', 8000)  # Default to 8000 if not set
+                port = getattr(self._interface, "_api_port", 8000)  # Default to 8000 if not set
                 self.logger.error(f"Failed to connect to sandbox interface at {ip_address}:{port}")
                 raise TimeoutError(
                     f"Could not connect to sandbox interface at {ip_address}:{port}: {str(e)}"
@@ -1041,7 +1054,7 @@ class Computer:
                 else "echo No requirements to install"
             )
         return await self.interface.run_command(install_cmd)
-    
+
     async def pip_install(self, requirements: list[str]):
         """Install packages using the system Python/pip (no venv).
 
@@ -1059,7 +1072,7 @@ class Computer:
         reqs = " ".join(requirements)
         install_cmd = f"python -m pip install {reqs}"
         return await self.interface.run_command(install_cmd)
-    
+
     async def venv_cmd(self, venv_name: str, command: str):
         """Execute a shell command in a virtual environment.
 
@@ -1216,7 +1229,7 @@ print(f"<<<VENV_EXEC_START>>>{{output_json}}<<<VENV_EXEC_END>>>")
                     return output_payload["result"]
                 else:
                     import builtins
-                    
+
                     # Recreate and raise the original exception
                     error_info = output_payload.get("error", {}) or {}
                     err_type = error_info.get("type") or "Exception"
@@ -1238,7 +1251,9 @@ print(f"<<<VENV_EXEC_START>>>{{output_json}}<<<VENV_EXEC_END>>>")
                 f"No output payload found. stdout: {result.stdout}, stderr: {result.stderr}"
             )
 
-    async def venv_exec_background(self, venv_name: str, python_func, *args, requirements: Optional[List[str]] = None, **kwargs) -> int:
+    async def venv_exec_background(
+        self, venv_name: str, python_func, *args, requirements: Optional[List[str]] = None, **kwargs
+    ) -> int:
         """Run the Python function in the venv in the background and return the PID.
 
         Uses a short launcher Python that spawns a detached child and exits immediately.
@@ -1269,7 +1284,8 @@ print(f"<<<VENV_EXEC_START>>>{{output_json}}<<<VENV_EXEC_END>>>")
         args_b64 = base64.b64encode(args_json.encode("utf-8")).decode("ascii")
         kwargs_b64 = base64.b64encode(kwargs_json.encode("utf-8")).decode("ascii")
 
-        payload_code = f'''
+        payload_code = (
+            f'''
 import json
 import traceback
 import base64
@@ -1285,7 +1301,9 @@ try:
     kwargs = json.loads(base64.b64decode(_kwargs_b64).decode('utf-8'))
     
     # Ensure requirements inside the active venv
-    for pkg in json.loads(''' + repr(reqs_json) + '''):
+    for pkg in json.loads('''
+            + repr(reqs_json)
+            + """):
         if pkg:
             import subprocess, sys
             subprocess.run([sys.executable, '-m', 'pip', 'install', pkg], check=False)
@@ -1293,12 +1311,13 @@ try:
 except Exception:
     import sys
     sys.stderr.write(traceback.format_exc())
-'''
+"""
+        )
         payload_b64 = base64.b64encode(payload_code.encode("utf-8")).decode("ascii")
 
         if self.os_type == "windows":
             # Launcher spawns detached child and prints its PID
-            launcher_code = f'''
+            launcher_code = f"""
 import base64, subprocess, os, sys
 DETACHED_PROCESS = 0x00000008
 CREATE_NEW_PROCESS_GROUP = 0x00000200
@@ -1306,13 +1325,13 @@ creationflags = DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
 code = base64.b64decode("{payload_b64}").decode("utf-8")
 p = subprocess.Popen(["python", "-c", code], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=creationflags)
 print(p.pid)
-'''
+"""
             launcher_b64 = base64.b64encode(launcher_code.encode("utf-8")).decode("ascii")
             venv_path = f"%USERPROFILE%\\.venvs\\{venv_name}"
             cmd = (
                 'cmd /c "'
                 f'call "{venv_path}\\Scripts\\activate.bat" && '
-                f'python -c "import base64; exec(base64.b64decode(\'{launcher_b64}\').decode(\'utf-8\'))"'
+                f"python -c \"import base64; exec(base64.b64decode('{launcher_b64}').decode('utf-8'))\""
                 '"'
             )
             result = await self.interface.run_command(cmd)
@@ -1320,18 +1339,18 @@ print(p.pid)
             return int(pid_str)
         else:
             log = f"/tmp/cua_bg_{int(_time.time())}.log"
-            launcher_code = f'''
+            launcher_code = f"""
 import base64, subprocess, os, sys
 code = base64.b64decode("{payload_b64}").decode("utf-8")
 with open("{log}", "ab", buffering=0) as f:
     p = subprocess.Popen(["python", "-c", code], stdout=f, stderr=subprocess.STDOUT, preexec_fn=getattr(os, "setsid", None))
 print(p.pid)
-'''
+"""
             launcher_b64 = base64.b64encode(launcher_code.encode("utf-8")).decode("ascii")
             venv_path = f"$HOME/.venvs/{venv_name}"
             shell = (
                 f'. "{venv_path}/bin/activate" && '
-                f'python -c "import base64; exec(base64.b64decode(\'{launcher_b64}\').decode(\'utf-8\'))"'
+                f"python -c \"import base64; exec(base64.b64decode('{launcher_b64}').decode('utf-8'))\""
             )
             result = await self.interface.run_command(shell)
             pid_str = (result.stdout or "").strip().splitlines()[-1].strip()
@@ -1438,6 +1457,7 @@ print(f"<<<VENV_EXEC_START>>>{{output_json}}<<<VENV_EXEC_END>>>")
                     return output_payload["result"]
                 else:
                     import builtins
+
                     error_info = output_payload.get("error", {}) or {}
                     err_type = error_info.get("type") or "Exception"
                     err_msg = error_info.get("message") or ""
@@ -1454,7 +1474,9 @@ print(f"<<<VENV_EXEC_START>>>{{output_json}}<<<VENV_EXEC_END>>>")
                 f"No output payload found. stdout: {result.stdout}, stderr: {result.stderr}"
             )
 
-    async def python_exec_background(self, python_func, *args, requirements: Optional[List[str]] = None, **kwargs) -> int:
+    async def python_exec_background(
+        self, python_func, *args, requirements: Optional[List[str]] = None, **kwargs
+    ) -> int:
         """Run a Python function with the system interpreter in the background and return PID.
 
         Uses a short launcher Python that spawns a detached child and exits immediately.
@@ -1505,7 +1527,7 @@ except Exception:
         payload_b64 = base64.b64encode(payload_code.encode("utf-8")).decode("ascii")
 
         if self.os_type == "windows":
-            launcher_code = f'''
+            launcher_code = f"""
 import base64, subprocess, os, sys
 DETACHED_PROCESS = 0x00000008
 CREATE_NEW_PROCESS_GROUP = 0x00000200
@@ -1513,7 +1535,7 @@ creationflags = DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
 code = base64.b64decode("{payload_b64}").decode("utf-8")
 p = subprocess.Popen(["python", "-c", code], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=creationflags)
 print(p.pid)
-'''
+"""
             launcher_b64 = base64.b64encode(launcher_code.encode("utf-8")).decode("ascii")
             cmd = f"python -c \"import base64; exec(base64.b64decode('{launcher_b64}').decode('utf-8'))\""
             result = await self.interface.run_command(cmd)
@@ -1521,13 +1543,13 @@ print(p.pid)
             return int(pid_str)
         else:
             log = f"/tmp/cua_bg_{int(_time.time())}.log"
-            launcher_code = f'''
+            launcher_code = f"""
 import base64, subprocess, os, sys
 code = base64.b64decode("{payload_b64}").decode("utf-8")
 with open("{log}", "ab", buffering=0) as f:
     p = subprocess.Popen(["python", "-c", code], stdout=f, stderr=subprocess.STDOUT, preexec_fn=getattr(os, "setsid", None))
 print(p.pid)
-'''
+"""
             launcher_b64 = base64.b64encode(launcher_code.encode("utf-8")).decode("ascii")
             cmd = f"python -c \"import base64; exec(base64.b64decode('{launcher_b64}').decode('utf-8'))\""
             result = await self.interface.run_command(cmd)

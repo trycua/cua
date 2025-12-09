@@ -1,8 +1,10 @@
 from __future__ import annotations
-import time
-from bench_ui import launch_window, get_element_rect, execute_javascript
-from pathlib import Path
+
 import os
+import time
+from pathlib import Path
+
+from bench_ui import execute_javascript, get_element_rect, launch_window
 
 HTML = """
 <!doctype html>
@@ -34,6 +36,7 @@ HTML = """
 </html>
 """
 
+
 def main():
     os.environ["CUA_BENCH_UI_DEBUG"] = "1"
 
@@ -55,7 +58,7 @@ def main():
 
     # Take a screenshot and overlay the bbox
     try:
-        from PIL import ImageGrab, ImageDraw
+        from PIL import ImageDraw, ImageGrab
 
         img = ImageGrab.grab()  # full screen
         draw = ImageDraw.Draw(img)

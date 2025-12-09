@@ -5,9 +5,10 @@ import sys
 import tempfile
 import time
 from pathlib import Path
-from typing import Optional, Dict, Any
+from typing import Any, Dict, Optional
 from urllib import request
 from urllib.error import HTTPError, URLError
+
 import psutil
 
 # Map child PID -> listening port
@@ -16,7 +17,9 @@ _pid_to_port: Dict[int, int] = {}
 
 def _post_json(url: str, payload: Dict[str, Any]) -> Dict[str, Any]:
     data = json.dumps(payload).encode("utf-8")
-    req = request.Request(url, data=data, headers={"Content-Type": "application/json"}, method="POST")
+    req = request.Request(
+        url, data=data, headers={"Content-Type": "application/json"}, method="POST"
+    )
     try:
         with request.urlopen(req, timeout=5) as resp:
             text = resp.read().decode("utf-8")
@@ -26,7 +29,7 @@ def _post_json(url: str, payload: Dict[str, Any]) -> Dict[str, Any]:
             body = (e.read() or b"").decode("utf-8", errors="ignore")
             return json.loads(body)
         except Exception:
-            return {"error": "http_error", "status": getattr(e, 'code', None)}
+            return {"error": "http_error", "status": getattr(e, "code", None)}
     except URLError as e:
         return {"error": "url_error", "reason": str(e.reason)}
 

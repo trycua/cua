@@ -37,10 +37,16 @@ class InterfaceFactory:
         from .windows import WindowsComputerInterface
 
         if os == "macos":
-            return MacOSComputerInterface(ip_address, api_key=api_key, vm_name=vm_name, api_port=api_port)
+            return MacOSComputerInterface(
+                ip_address, api_key=api_key, vm_name=vm_name, api_port=api_port
+            )
         elif os == "linux":
-            return LinuxComputerInterface(ip_address, api_key=api_key, vm_name=vm_name, api_port=api_port)
+            return LinuxComputerInterface(
+                ip_address, api_key=api_key, vm_name=vm_name, api_port=api_port
+            )
         elif os == "windows":
-            return WindowsComputerInterface(ip_address, api_key=api_key, vm_name=vm_name, api_port=api_port)
+            return WindowsComputerInterface(
+                ip_address, api_key=api_key, vm_name=vm_name, api_port=api_port
+            )
         else:
             raise ValueError(f"Unsupported OS type: {os}")

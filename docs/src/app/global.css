@@ -9,6 +9,8 @@
   --color-fd-ring: hsl(199, 89%, 48%); /* sky-500 */
   --color-fd-muted: hsl(160, 84%, 95%); /* emerald-50 */
   --color-fd-accent: hsl(152, 76%, 92%); /* emerald-100 */
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
 }
 
 .dark {

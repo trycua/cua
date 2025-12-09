@@ -20,7 +20,11 @@ const geistMono = Geist_Mono({
 
 export default function Layout({ children }: { children: ReactNode }) {
   return (
-    <html lang="en" className={`${geist.variable} ${geistMono.variable} font-sans`} suppressHydrationWarning>
+    <html
+      lang="en"
+      className={`${geist.variable} ${geistMono.variable} font-sans`}
+      suppressHydrationWarning
+    >
       <head>
         <link rel="icon" href="/docs/favicon.ico" sizes="any" />
       </head>

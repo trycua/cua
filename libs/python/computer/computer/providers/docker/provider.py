@@ -37,7 +37,6 @@ class DockerProvider(BaseVMProvider):
 
     def __init__(
         self,
-        port: Optional[int] = 8000,
         host: str = "localhost",
         storage: Optional[str] = None,
         shared_path: Optional[str] = None,
@@ -45,11 +44,11 @@ class DockerProvider(BaseVMProvider):
         verbose: bool = False,
         ephemeral: bool = False,
         vnc_port: Optional[int] = 6901,
+        api_port: Optional[int] = None,
     ):
         """Initialize the Docker VM Provider.
 
         Args:
-            port: Currently unused (VM provider port)
             host: Hostname for the API server (default: localhost)
             storage: Path for persistent VM storage
             shared_path: Path for shared folder between host and container
@@ -60,9 +59,10 @@ class DockerProvider(BaseVMProvider):
             verbose: Enable verbose logging
             ephemeral: Use ephemeral (temporary) storage
             vnc_port: Port for VNC interface (default: 6901)
+            api_port: Port for API server (default: 8000)
         """
         self.host = host
-        self.api_port = 8000
+        self.api_port = api_port if api_port is not None else 8000
         self.vnc_port = vnc_port
         self.ephemeral = ephemeral
 
@@ -296,6 +296,7 @@ class DockerProvider(BaseVMProvider):
             if vnc_port:
                 cmd.extend(["-p", f"{vnc_port}:6901"])  # VNC port
             if api_port:
+                # Map the API port to container port 8000 (computer-server default)
                 cmd.extend(["-p", f"{api_port}:8000"])  # computer-server API port
 
             # Add volume mounts if storage is specified

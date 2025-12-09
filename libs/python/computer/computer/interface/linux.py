@@ -13,7 +13,8 @@ class LinuxComputerInterface(GenericComputerInterface):
         password: str = "lume",
         api_key: Optional[str] = None,
         vm_name: Optional[str] = None,
+        api_port: Optional[int] = None,
     ):
         super().__init__(
-            ip_address, username, password, api_key, vm_name, "computer.interface.linux"
+            ip_address, username, password, api_key, vm_name, "computer.interface.linux", api_port
         )

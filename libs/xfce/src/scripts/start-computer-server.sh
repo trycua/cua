@@ -10,4 +10,4 @@ echo "X server is ready"
 
 # Start computer-server
 export DISPLAY=:1
-python -m computer_server --port ${API_PORT:-8000}
+python3.12 -m computer_server --port ${API_PORT:-8000}

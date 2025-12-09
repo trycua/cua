@@ -22,6 +22,20 @@ RUN apt-get update && apt-get install -y \
     unzip \
     zip \
     xdg-utils \
+    gcc \
+    # Qt/XCB runtime deps for PyQt5 (libqxcb.so)
+    libxcb-icccm4 \
+    libxcb-image0 \
+    libxcb-keysyms1 \
+    libxcb-render-util0 \
+    libxcb-xinerama0 \
+    libxcb-shape0 \
+    libxcb-randr0 \
+    libxcb-xfixes0 \
+    libxcb-sync1 \
+    libxcb-util1 \
+    libxcb-cursor0 \
+    libxkbcommon-x11-0 \
     # Desktop environment
     xfce4 \
     xfce4-terminal \
@@ -51,6 +65,7 @@ RUN apt-get update && apt-get install -y \
     libssl-dev \
     libsqlite3-dev \
     tk-dev \
+    libgl1-mesa-dev \
     libgdbm-dev \
     libc6-dev \
     libbz2-dev \
@@ -61,7 +76,8 @@ RUN apt-get update && apt-get install -y \
 # Install Python 3.12 from deadsnakes (keep system python3 for apt)
 RUN add-apt-repository -y ppa:deadsnakes/ppa && \
     apt-get update && apt-get install -y \
-    python3.12 python3.12-venv python3.12-dev python3.12-tk && \
+    python3.12 python3.12-venv python3.12-dev python3.12-tk \
+    && \
     python3.12 -m ensurepip --upgrade && \
     python3.12 -m pip install --upgrade pip setuptools wheel && \
     rm -rf /var/lib/apt/lists/*
@@ -106,6 +122,10 @@ RUN mkdir -p /home/cua/.cache && \
 
 # Install computer-server using Python 3.12 pip
 RUN python3.12 -m pip install cua-computer-server
+
+# Install PyQt6 and pywebview, used by cua-bench for web UIs
+RUN python3.12 -m pip install "pywebview[qt]"
+RUN python3.12 -m pip install cua-bench-ui>=0.6.0 --no-cache-dir
 
 # Install playwright and Firefox dependencies
 RUN python3.12 -m pip install playwright && \

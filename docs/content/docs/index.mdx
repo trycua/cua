@@ -4,23 +4,30 @@ title: Introduction
 
 import { Monitor, Code, BookOpen, Zap, Bot, Boxes, Rocket } from 'lucide-react';
 
-<div className="not-prose relative rounded-xl overflow-hidden mb-8 w-full h-40 -mt-4">
-  <img src="/docs/img/bg-light.jpg" alt="Cua" className="w-full h-full object-cover block dark:hidden rounded-xl" />
-  <img src="/docs/img/bg-dark.jpg" alt="Cua" className="w-full h-full object-cover hidden dark:block rounded-xl" />
-  <div className="absolute inset-0 flex items-center justify-center"><div className="bg-black/50 backdrop-blur-sm rounded-lg py-3 px-5 [&_p]:m-0 [&_p]:p-0"><span className="text-white text-lg font-medium" style={{display: 'block', margin: 0, padding: 0, lineHeight: '1.2'}}>Build AI agents that see, understand, and control any computer</span></div></div>
+<div className="not-prose -mt-2 mb-6">
+  <p className="text-fd-primary font-semibold text-sm mb-1">Welcome</p>
+  <h1 className="text-3xl font-bold tracking-tight md:text-4xl">Welcome to Cua</h1>
 </div>
 
-**Cua** ("koo-ah") is an open-source framework for Computer-Use Agents - enabling AI systems to autonomously operate computers through visual understanding and action execution. Used for research, evaluation, and production deployment of desktop, browser, and mobile automation agents.
+**Cua** is an open-source framework for building, deploying and evaluating Computer-Use Agents - AI systems that autonomously interact with computer interfaces by understanding visual elements and executing actions. Cua provides SDKs for easy integration with 100+ vision-language models (VLMs), supporting everything from simple task automation to complex multi-step workflows across Windows, Linux, and macOS environments.
 
-## What are Computer-Use Agents?
+<div className="not-prose relative rounded-xl overflow-hidden my-8 w-full">
+  <img src="/docs/img/hero.png" alt="Cua" className="w-full h-auto rounded-xl" />
+</div>
 
-Computer-Use Agents (CUAs) are AI systems that can autonomously interact with computer interfaces through visual understanding and action execution. Unlike traditional automation tools that rely on brittle selectors or APIs, CUAs use vision-language models to perceive screen content and reason about interface interactions - enabling them to adapt to UI changes and handle complex, multi-step workflows across applications.
+## What is a Computer-Use Agent?
+
+Computer-Use Agents (CUAs) are AI systems that can autonomously interact with computer interfaces through visual understanding and action execution.
+
+## What is a Computer-Use Sandbox?
+
+Computer-Use Sandboxes are isolated, controlled environments where AI agents can safely interact with computer interfaces. They provide a secure execution space for agents to perform actions such as clicking, typing, and running code, test automation workflows, and learn from interactions without affecting production systems.
 
 ## Key Features
 
 With the **Computer SDK**, you can:
-- Automate **Windows, Linux, and macOS** VMs with a consistent, pyautogui-like API
-- Create & manage VMs locally or using **Cua Cloud**
+- Automate **Windows, Linux, and macOS** sandboxes with a consistent, pyautogui-like API
+- Create & manage sandboxes locally or using **Cua Cloud**
 
 With the **Agent SDK**, you can:
 - Run computer-use models with a consistent schema

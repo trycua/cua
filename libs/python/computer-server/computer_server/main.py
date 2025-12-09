@@ -25,6 +25,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from .handlers.factory import HandlerFactory
+from .browser import get_browser_manager
 
 # Authentication session TTL (in seconds). Override via env var CUA_AUTH_TTL_SECONDS. Default: 60s
 AUTH_SESSION_TTL_SECONDS: int = int(os.environ.get("CUA_AUTH_TTL_SECONDS", "60"))
@@ -747,6 +748,72 @@ async def agent_response_endpoint(
     }
 
     return JSONResponse(content=payload, headers=headers)
+
+
+@app.post("/playwright_exec")
+async def playwright_exec_endpoint(
+    request: Request,
+    container_name: Optional[str] = Header(None, alias="X-Container-Name"),
+    api_key: Optional[str] = Header(None, alias="X-API-Key"),
+):
+    """
+    Execute Playwright browser commands.
+
+    Headers:
+    - X-Container-Name: Container name for cloud authentication
+    - X-API-Key: API key for cloud authentication
+
+    Body:
+    {
+        "command": "visit_url|click|type|scroll|web_search",
+        "params": {...}
+    }
+    """
+    # Parse request body
+    try:
+        body = await request.json()
+        command = body.get("command")
+        params = body.get("params", {})
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid JSON body: {str(e)}")
+
+    if not command:
+        raise HTTPException(status_code=400, detail="Command is required")
+
+    # Check if CONTAINER_NAME is set (indicating cloud provider)
+    server_container_name = os.environ.get("CONTAINER_NAME")
+
+    # If cloud provider, perform authentication
+    if server_container_name:
+        logger.info(
+            f"Cloud provider detected. CONTAINER_NAME: {server_container_name}. Performing authentication..."
+        )
+
+        # Validate required headers
+        if not container_name:
+            raise HTTPException(status_code=401, detail="Container name required")
+
+        if not api_key:
+            raise HTTPException(status_code=401, detail="API key required")
+
+        # Validate with AuthenticationManager
+        is_authenticated = await auth_manager.auth(container_name, api_key)
+        if not is_authenticated:
+            raise HTTPException(status_code=401, detail="Authentication failed")
+
+    # Get browser manager and execute command
+    try:
+        browser_manager = get_browser_manager()
+        result = await browser_manager.execute_command(command, params)
+        
+        if result.get("success"):
+            return JSONResponse(content=result)
+        else:
+            raise HTTPException(status_code=400, detail=result.get("error", "Command failed"))
+    except Exception as e:
+        logger.error(f"Error executing playwright command: {str(e)}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 if __name__ == "__main__":

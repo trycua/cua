@@ -969,6 +969,35 @@ class Computer:
         """
         return await self.interface.to_screenshot_coordinates(x, y)
 
+    async def playwright_exec(self, command: str, params: Optional[Dict] = None) -> Dict[str, Any]:
+        """
+        Execute a Playwright browser command.
+
+        Args:
+            command: The browser command to execute (visit_url, click, type, scroll, web_search)
+            params: Command parameters
+
+        Returns:
+            Dict containing the command result
+
+        Examples:
+            # Navigate to a URL
+            await computer.playwright_exec("visit_url", {"url": "https://example.com"})
+
+            # Click at coordinates
+            await computer.playwright_exec("click", {"x": 100, "y": 200})
+
+            # Type text
+            await computer.playwright_exec("type", {"text": "Hello, world!"})
+
+            # Scroll
+            await computer.playwright_exec("scroll", {"delta_x": 0, "delta_y": -100})
+
+            # Web search
+            await computer.playwright_exec("web_search", {"query": "computer use agent"})
+        """
+        return await self.interface.playwright_exec(command, params)
+
     # Add virtual environment management functions to computer interface
     async def venv_install(self, venv_name: str, requirements: list[str]):
         """Install packages in a virtual environment.

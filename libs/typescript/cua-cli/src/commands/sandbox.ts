@@ -1,10 +1,142 @@
 import type { Argv } from 'yargs';
 import { ensureApiKeyInteractive } from '../auth';
-import { WEBSITE_URL } from '../config';
 import { http } from '../http';
 import { clearApiKey } from '../storage';
 import type { SandboxItem } from '../util';
 import { openInBrowser, printSandboxList } from '../util';
+
+// Helper function to fetch sandbox details with computer-server probes
+async function fetchSandboxDetails(
+  name: string,
+  token: string,
+  options: {
+    showPasswords?: boolean;
+    showVncUrl?: boolean;
+    probeComputerServer?: boolean;
+  } = {}
+) {
+  // Fetch sandbox list
+  const listRes = await http('/v1/vms', { token });
+  if (listRes.status === 401) {
+    clearApiKey();
+    console.error("Unauthorized. Try 'cua login' again.");
+    process.exit(1);
+  }
+  if (!listRes.ok) {
+    console.error(`Request failed: ${listRes.status}`);
+    process.exit(1);
+  }
+
+  const sandboxes = (await listRes.json()) as SandboxItem[];
+  const sandbox = sandboxes.find((s) => s.name === name);
+
+  if (!sandbox) {
+    console.error('Sandbox not found');
+    process.exit(1);
+  }
+
+  // Build result object
+  const result: any = {
+    name: sandbox.name,
+    status: sandbox.status,
+    host: sandbox.host || `${sandbox.name}.sandbox.cua.ai`,
+  };
+
+  if (options.showPasswords) {
+    result.password = sandbox.password;
+  }
+
+  // Compute VNC URL if requested
+  if (options.showVncUrl) {
+    const host = sandbox.host || `${sandbox.name}.sandbox.cua.ai`;
+    result.vnc_url = `https://${host}/vnc.html?autoconnect=true&password=${encodeURIComponent(sandbox.password)}&show_dot=true`;
+  }
+
+  // Probe computer-server if requested and sandbox is running
+  if (
+    options.probeComputerServer &&
+    sandbox.status === 'running' &&
+    sandbox.host
+  ) {
+    let statusProbeSuccess = false;
+    let versionProbeSuccess = false;
+
+    try {
+      // Probe OS type
+      const statusUrl = `https://${sandbox.host}:8443/status`;
+      const statusController = new AbortController();
+      const statusTimeout = setTimeout(() => statusController.abort(), 3000);
+
+      try {
+        const statusRes = await fetch(statusUrl, {
+          signal: statusController.signal,
+        });
+        clearTimeout(statusTimeout);
+
+        if (statusRes.ok) {
+          const statusData = (await statusRes.json()) as {
+            status: string;
+            os_type: string;
+            features?: string[];
+          };
+          result.os_type = statusData.os_type;
+          statusProbeSuccess = true;
+        }
+      } catch (err) {
+        // Timeout or connection error - skip
+      }
+
+      // Probe computer-server version
+      const versionUrl = `https://${sandbox.host}:8443/cmd`;
+      const versionController = new AbortController();
+      const versionTimeout = setTimeout(() => versionController.abort(), 3000);
+
+      try {
+        const versionRes = await fetch(versionUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Container-Name': sandbox.name,
+            'X-API-Key': token,
+          },
+          body: JSON.stringify({
+            command: 'version',
+            params: {},
+          }),
+          signal: versionController.signal,
+        });
+        clearTimeout(versionTimeout);
+
+        if (versionRes.ok) {
+          const versionDataRaw = await versionRes.text();
+          if (versionDataRaw.startsWith('data: ')) {
+            const jsonStr = versionDataRaw.slice(6);
+            const versionData = JSON.parse(jsonStr) as {
+              success: boolean;
+              protocol: number;
+              package: string;
+            };
+            if (versionData.package) {
+              result.computer_server_version = versionData.package;
+              versionProbeSuccess = true;
+            }
+          }
+        }
+      } catch (err) {
+        // Timeout or connection error - skip
+      }
+    } catch (err) {
+      // General error - skip probing
+    }
+
+    // Set computer server status based on probe results
+    if (statusProbeSuccess && versionProbeSuccess) {
+      result.computer_server_status = 'healthy';
+    }
+  }
+
+  return result;
+}
 
 // Command handlers
 const listHandler = async (argv: Record<string, unknown>) => {
@@ -249,9 +381,54 @@ const openHandler = async (argv: Record<string, unknown>) => {
     sandbox.host && sandbox.host.length
       ? sandbox.host
       : `${sandbox.name}.sandbox.cua.ai`;
-  const url = `https://${host}/vnc.html?autoconnect=true&password=${encodeURIComponent(sandbox.password)}`;
+  const url = `https://${host}/vnc.html?autoconnect=true&password=${encodeURIComponent(sandbox.password)}&show_dot=true`;
   console.log(`Opening NoVNC: ${url}`);
   await openInBrowser(url);
+};
+
+const getHandler = async (argv: Record<string, unknown>) => {
+  const token = await ensureApiKeyInteractive();
+  const name = String((argv as any).name);
+  const showPasswords = Boolean(argv['show-passwords']);
+  const showVncUrl = Boolean(argv['show-vnc-url']);
+  const json = Boolean(argv.json);
+
+  const details = await fetchSandboxDetails(name, token, {
+    showPasswords,
+    showVncUrl,
+    probeComputerServer: true,
+  });
+
+  if (json) {
+    console.log(JSON.stringify(details, null, 2));
+  } else {
+    // Pretty print the details
+    console.log(`Name: ${details.name}`);
+    console.log(`Status: ${details.status}`);
+    console.log(`Host: ${details.host}`);
+
+    if (showPasswords) {
+      console.log(`Password: ${details.password}`);
+    }
+
+    if (details.os_type) {
+      console.log(`OS Type: ${details.os_type}`);
+    }
+
+    if (details.computer_server_version) {
+      console.log(
+        `Computer Server Version: ${details.computer_server_version}`
+      );
+    }
+
+    if (details.computer_server_status) {
+      console.log(`Computer Server Status: ${details.computer_server_status}`);
+    }
+
+    if (showVncUrl) {
+      console.log(`VNC URL: ${details.vnc_url}`);
+    }
+  }
 };
 
 // Register commands in both flat and grouped structures
@@ -345,6 +522,29 @@ export function registerSandboxCommands(y: Argv) {
             y.positional('name', { type: 'string', describe: 'Sandbox name' }),
           openHandler
         )
+        .command(
+          'get <name>',
+          'Get detailed information about a specific sandbox',
+          (y) =>
+            y
+              .positional('name', { type: 'string', describe: 'Sandbox name' })
+              .option('json', {
+                type: 'boolean',
+                default: false,
+                describe: 'Output in JSON format',
+              })
+              .option('show-passwords', {
+                type: 'boolean',
+                default: false,
+                describe: 'Include password in output',
+              })
+              .option('show-vnc-url', {
+                type: 'boolean',
+                default: false,
+                describe: 'Include computed NoVNC URL in output',
+              }),
+          getHandler
+        )
         .demandCommand(1, 'You must provide a sandbox command');
     },
     () => {}
@@ -433,6 +633,29 @@ export function registerSandboxCommands(y: Argv) {
       builder: (y: Argv) =>
         y.positional('name', { type: 'string', describe: 'Sandbox name' }),
       handler: openHandler,
+    } as any)
+    .command({
+      command: 'get <name>',
+      describe: false as any, // Hide from help
+      builder: (y: Argv) =>
+        y
+          .positional('name', { type: 'string', describe: 'Sandbox name' })
+          .option('json', {
+            type: 'boolean',
+            default: false,
+            describe: 'Output in JSON format',
+          })
+          .option('show-passwords', {
+            type: 'boolean',
+            default: false,
+            describe: 'Include password in output',
+          })
+          .option('show-vnc-url', {
+            type: 'boolean',
+            default: false,
+            describe: 'Include computed NoVNC URL in output',
+          }),
+      handler: getHandler,
     } as any);
 
   return y;

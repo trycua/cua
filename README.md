@@ -1,14 +1,22 @@
 <div align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" alt="Cua logo" height="150" srcset="img/logo_white.png">
-    <source media="(prefers-color-scheme: light)" alt="Cua logo" height="150" srcset="img/logo_black.png">
-    <img alt="Cua logo" height="150" src="img/logo_black.png">
-  </picture>
+  <a href="https://cua.ai" target="_blank" rel="noopener noreferrer">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" alt="Cua logo" width="150" srcset="img/logo_white.png">
+      <source media="(prefers-color-scheme: light)" alt="Cua logo" width="150" srcset="img/logo_black.png">
+      <img alt="Cua logo" width="500" src="img/logo_black.png">
+    </picture>
+  </a>
 
-[![Python](https://img.shields.io/badge/Python-333333?logo=python&logoColor=white&labelColor=333333)](#)
-[![Discord](https://img.shields.io/badge/Discord-%235865F2.svg?&logo=discord&logoColor=white)](https://discord.com/invite/mVnXXpdE85)
-<br>
+  <p align="center">Build and deploy AI agents that can reason, plan and act on any Computers</p>
+
+  <p align="center">
+    <a href="https://cua.ai" target="_blank" rel="noopener noreferrer"><img src="https://img.shields.io/badge/cua.ai-0ea5e9" alt="cua.ai"></a>
+    <a href="https://discord.com/invite/cua-ai" target="_blank" rel="noopener noreferrer"><img src="https://img.shields.io/badge/Discord-Join%20Server-10b981?logo=discord&logoColor=white" alt="Discord"></a>
+    <a href="https://x.com/trycua" target="_blank" rel="noopener noreferrer"><img src="https://img.shields.io/twitter/follow/trycua?style=social" alt="Twitter"></a>
+    <a href="https://cua.ai/docs" target="_blank" rel="noopener noreferrer"><img src="https://img.shields.io/badge/Docs-0ea5e9.svg" alt="Documentation"></a>
+    <br>
 <a href="https://trendshift.io/repositories/13685" target="_blank"><img src="https://trendshift.io/api/badge/repositories/13685" alt="trycua%2Fcua | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/></a>
+  </p>
 
 </div>
 
@@ -100,6 +108,10 @@ Core utilities for Cua
 - [Clone a starter template and run the code in <1 min](https://github.com/trycua/agent-template)
 - [Get started with the Cua SDKs](https://cua.ai/docs/quickstart-devs)
 - [Get started with the Cua CLI](https://cua.ai/docs/quickstart-cli)
+
+## Python Version Compatibility
+
+Cua packages require **Python 3.12 or 3.13**. Python 3.14 is not currently supported due to dependency compatibility issues (pydantic-core/PyO3 compatibility). If you encounter build errors on Python 3.14, please use Python 3.13 or earlier.
 
 # Agent SDK
 

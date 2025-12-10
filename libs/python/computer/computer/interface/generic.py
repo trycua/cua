@@ -47,7 +47,7 @@ class GenericComputerInterface(BaseComputerInterface):
 
         # Set logger name for the interface
         self.logger = Logger(logger_name, LogLevel.NORMAL)
-        
+
         # Store custom ports
         self._api_port = api_port
 
@@ -75,7 +75,11 @@ class GenericComputerInterface(BaseComputerInterface):
         """
         protocol = "wss" if self.api_key else "ws"
         # Use custom API port if provided, otherwise use defaults based on API key
-        port = str(self._api_port) if self._api_port is not None else ("8443" if self.api_key else "8000")
+        port = (
+            str(self._api_port)
+            if self._api_port is not None
+            else ("8443" if self.api_key else "8000")
+        )
         return f"{protocol}://{self.ip_address}:{port}/ws"
 
     @property
@@ -87,7 +91,11 @@ class GenericComputerInterface(BaseComputerInterface):
         """
         protocol = "https" if self.api_key else "http"
         # Use custom API port if provided, otherwise use defaults based on API key
-        port = str(self._api_port) if self._api_port is not None else ("8443" if self.api_key else "8000")
+        port = (
+            str(self._api_port)
+            if self._api_port is not None
+            else ("8443" if self.api_key else "8000")
+        )
         return f"{protocol}://{self.ip_address}:{port}/cmd"
 
     # Mouse actions

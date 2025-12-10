@@ -124,8 +124,8 @@ RUN mkdir -p /home/cua/.cache && \
 RUN python3.12 -m pip install cua-computer-server
 
 # Install PyQt6 and pywebview, used by cua-bench for web UIs
-RUN python3.12 -m pip install "pywebview[qt]"
-RUN python3.12 -m pip install cua-bench-ui>=0.6.0 --no-cache-dir
+RUN python3.12 -m pip install "pywebview[pyside6]"
+RUN python3.12 -m pip install cua-bench-ui>=0.7.0 --no-cache-dir
 
 # Install playwright and Firefox dependencies
 RUN python3.12 -m pip install playwright && \

@@ -65,7 +65,11 @@ class VMProviderFactory:
                         "Please install it with 'pip install cua-computer[lume]'"
                     )
                 return LumeProvider(
-                    provider_port=provider_port, host=host, storage=storage, verbose=verbose, ephemeral=ephemeral
+                    provider_port=provider_port,
+                    host=host,
+                    storage=storage,
+                    verbose=verbose,
+                    ephemeral=ephemeral,
                 )
             except ImportError as e:
                 logger.error(f"Failed to import LumeProvider: {e}")

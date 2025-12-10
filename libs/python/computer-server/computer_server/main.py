@@ -24,8 +24,8 @@ from fastapi import (
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 
-from .handlers.factory import HandlerFactory
 from .browser import get_browser_manager
+from .handlers.factory import HandlerFactory
 
 # Authentication session TTL (in seconds). Override via env var CUA_AUTH_TTL_SECONDS. Default: 60s
 AUTH_SESSION_TTL_SECONDS: int = int(os.environ.get("CUA_AUTH_TTL_SECONDS", "60"))
@@ -805,7 +805,7 @@ async def playwright_exec_endpoint(
     try:
         browser_manager = get_browser_manager()
         result = await browser_manager.execute_command(command, params)
-        
+
         if result.get("success"):
             return JSONResponse(content=result)
         else:

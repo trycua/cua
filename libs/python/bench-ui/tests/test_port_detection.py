@@ -1,8 +1,8 @@
 import time
+
 import psutil
 import pytest
-
-from bench_ui import launch_window, execute_javascript
+from bench_ui import execute_javascript, launch_window
 from bench_ui.api import _pid_to_port
 
 HTML = """

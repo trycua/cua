@@ -124,8 +124,20 @@ COPY python/computer-server /tmp/computer-server
 RUN python3.12 -m pip install /tmp/computer-server && \
     rm -rf /tmp/computer-server
 
-# Install PyQt6 and pywebview, used by cua-bench for web UIs
-RUN python3.12 -m pip install "pywebview[pyside6]"
+# Install GTK and WebKit dependencies for pywebview
+RUN apt-get update && apt-get install -y \
+    python3-gi \
+    python3-gi-cairo \
+    gir1.2-gtk-3.0 \
+    gir1.2-webkit2-4.1 \
+    libgirepository1.0-dev \
+    libcairo2-dev \
+    pkg-config \
+    gobject-introspection \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install pywebview with GTK backend, used by cua-bench for web UIs
+RUN python3.12 -m pip install "pywebview[gtk]"
 RUN python3.12 -m pip install cua-bench-ui>=0.7.0 --no-cache-dir
 
 # Install playwright and Firefox dependencies

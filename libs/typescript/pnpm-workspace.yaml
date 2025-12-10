@@ -2,3 +2,5 @@ packages:
   - "computer"
   - "core"
   - "agent"
+
+minimumReleaseAge: 46080

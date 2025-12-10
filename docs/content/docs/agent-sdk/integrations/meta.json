@@ -1,7 +1,4 @@
 {
   "title": "Integrations",
-  "pages": [
-    "hud",
-    "observability"
-  ]
+  "pages": ["hud", "observability"]
 }

@@ -22,14 +22,14 @@ async def test_http_endpoint():
 
     # Example 1: Simple text request
     simple_request = {
-        "model": "anthropic/claude-3-5-sonnet-20241022",
+        "model": "anthropic/claude-sonnet-4-5-20250929",
         "input": "Tell me a three sentence bedtime story about a unicorn.",
         "env": {"ANTHROPIC_API_KEY": anthropic_api_key},
     }
 
     # Example 2: Multi-modal request with image
     multimodal_request = {
-        "model": "anthropic/claude-3-5-sonnet-20241022",
+        "model": "anthropic/claude-sonnet-4-5-20250929",
         "input": [
             {
                 "role": "user",
@@ -47,7 +47,7 @@ async def test_http_endpoint():
 
     # Example 3: Request with custom agent and computer kwargs
     custom_request = {
-        "model": "anthropic/claude-3-5-sonnet-20241022",
+        "model": "anthropic/claude-sonnet-4-5-20250929",
         "input": "Take a screenshot and tell me what you see",
         "env": {"ANTHROPIC_API_KEY": anthropic_api_key},
     }
@@ -95,7 +95,7 @@ def curl_examples():
         """curl http://localhost:8000/responses \\
   -H "Content-Type: application/json" \\
   -d '{
-    "model": "anthropic/claude-3-5-sonnet-20241022",
+    "model": "anthropic/claude-sonnet-4-5-20250929",
     "input": "Tell me a three sentence bedtime story about a unicorn."
   }'"""
     )
@@ -105,7 +105,7 @@ def curl_examples():
         """curl http://localhost:8000/responses \\
   -H "Content-Type: application/json" \\
   -d '{
-    "model": "anthropic/claude-3-5-sonnet-20241022",
+    "model": "anthropic/claude-sonnet-4-5-20250929",
     "input": [
       {
         "role": "user",
@@ -126,7 +126,7 @@ def curl_examples():
         """curl http://localhost:8000/responses \\
   -H "Content-Type: application/json" \\
   -d '{
-    "model": "anthropic/claude-3-5-sonnet-20241022",
+    "model": "anthropic/claude-sonnet-4-5-20250929",
     "input": "Take a screenshot and tell me what you see",
     "agent_kwargs": {
       "save_trajectory": true,
@@ -166,7 +166,7 @@ async def test_p2p_client():
 
             # Send a test request
             request = {
-                "model": "anthropic/claude-3-5-sonnet-20241022",
+                "model": "anthropic/claude-sonnet-4-5-20250929",
                 "input": "Hello from P2P client!",
             }
             await connection.send(json.dumps(request))

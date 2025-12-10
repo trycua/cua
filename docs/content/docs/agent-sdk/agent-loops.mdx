@@ -4,11 +4,7 @@ description: Supported computer-using agent loops and models
 ---
 
 <Callout>
-  A corresponding{' '}
-  <a href="https://github.com/trycua/cua/blob/main/notebooks/agent_nb.ipynb" target="_blank">
-    Jupyter Notebook
-  </a>{' '}
-  is available for this documentation.
+  A corresponding <a href="https://github.com/trycua/cua/blob/main/notebooks/agent_nb.ipynb" target="_blank">Jupyter Notebook</a> is available for this documentation.
 </Callout>
 
 An agent can be thought of as a loop - it generates actions, executes them, and repeats until done:
@@ -34,7 +30,7 @@ async def take_screenshot():
     ) as computer:
 
         agent = ComputerAgent(
-            model="anthropic/claude-3-5-sonnet-20241022",
+            model="anthropic/claude-sonnet-4-5-20250929",
             tools=[computer],
             max_trajectory_budget=5.0
         )
@@ -89,7 +85,7 @@ Use the following environment variables to configure the agent and its access to
 
 ```bash
 # Computer instance (cloud)
-export CUA_CONTAINER_NAME="your-container-name"
+export CUA_SANDBOX_NAME="your-sandbox-name"
 export CUA_API_KEY="your-cua-api-key"
 
 # LLM API keys
@@ -121,7 +117,7 @@ The output is an AsyncGenerator that yields response chunks.
 The `ComputerAgent` constructor provides a wide range of options for customizing agent behavior, tool integration, callbacks, resource management, and more.
 
 - `model` (`str`): Default: **required**
-  The LLM or agent model to use. Determines which agent loop is selected unless `custom_loop` is provided. (e.g., "claude-3-5-sonnet-20241022", "computer-use-preview", "omni+vertex_ai/gemini-pro")
+  The LLM or agent model to use. Determines which agent loop is selected unless `custom_loop` is provided. (e.g., "claude-sonnet-4-5-20250929", "computer-use-preview", "omni+vertex_ai/gemini-pro")
 - `tools` (`List[Any]`):
   List of tools the agent can use (e.g., `Computer`, sandboxed Python functions, etc.).
 - `custom_loop` (`Callable`):
@@ -159,7 +155,7 @@ from computer import Computer
 from agent.callbacks import ImageRetentionCallback
 
 agent = ComputerAgent(
-    model="anthropic/claude-3-5-sonnet-20241022",
+    model="anthropic/claude-sonnet-4-5-20250929",
     tools=[Computer(...)],
     only_n_most_recent_images=3,
     callbacks=[ImageRetentionCallback(only_n_most_recent_images=3)],

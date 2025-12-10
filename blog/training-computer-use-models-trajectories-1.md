@@ -247,7 +247,7 @@ try:
     await computer.interface.right_click(300, 300)
     await computer.interface.double_click(400, 400)
 
-    await computer.interface.type("Hello, World!")
+    await computer.interface.type_text("Hello, World!")
     await computer.interface.press_key("enter")
 
     await computer.interface.set_clipboard("Test clipboard")
@@ -306,6 +306,6 @@ Now that you know how to create and share trajectories, consider these advanced 
 
 ### Resources
 
-- [Computer-Use Interface GitHub](https://github.com/trycua/cua/tree/main/libs/computer)
+- [Computer-Use Interface GitHub](https://github.com/trycua/cua/tree/main/libs/python/computer)
 - [Hugging Face Datasets Documentation](https://huggingface.co/docs/datasets)
 - [Example Dataset: ddupont/test-dataset](https://huggingface.co/datasets/ddupont/test-dataset)

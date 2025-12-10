@@ -8,7 +8,7 @@ In this first blogpost, we'll learn how to build our own Computer-Use Operator u
 - **computer-use-preview** is OpenAI's specialized language model trained to understand and interact with computer interfaces through screenshots.
 - A **Computer-Use Agent** is an AI agent that can control a computer just like a human would - clicking buttons, typing text, and interacting with applications.
 
-Our Operator will run in an isolated macOS VM, by making use of our [cua-computer](https://github.com/trycua/cua/tree/main/libs/computer) package and [lume virtualization CLI](https://github.com/trycua/cua/tree/main/libs/lume).
+Our Operator will run in an isolated macOS VM, by making use of our [cua-computer](https://github.com/trycua/cua/tree/main/libs/python/computer) package and [lume virtualization CLI](https://github.com/trycua/cua/tree/main/libs/lume).
 
 Check out what it looks like to use your own Operator from a Gradio app:
 
@@ -294,7 +294,7 @@ This design keeps everything organized and safe. The AI can only interact with t
 ### Prerequisites
 
 1. **Lume CLI Setup**
-   For installing the standalone lume binary, run the following command from a terminal, or download the [latest pkg](https://github.com/trycua/cua/releases/latest/download/lume.pkg.tar.gz).
+   For installing the standalone lume binary, run the following command from a terminal, or download the [latest pkg](https://github.com/trycua/cua/releases/download/lume-v0.2.22/lume-darwin.pkg.tar.gz).
 
    ```bash
    sudo /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/lume/scripts/install.sh)"
@@ -567,10 +567,10 @@ In a production setting, you would wrap the action-response cycle in a loop, han
 
 ### Next Steps
 
-In the next blogpost, we'll introduce our Agent framework which abstracts away all these tedious implementation steps. This framework provides a higher-level API that handles the interaction loop between OpenAI's computer-use model and the macOS sandbox, allowing you to focus on building sophisticated applications rather than managing the low-level details we've explored here. Can't wait? Check out the [cua-agent](https://github.com/trycua/cua/tree/main/libs/agent) package!
+In the next blogpost, we'll introduce our Agent framework which abstracts away all these tedious implementation steps. This framework provides a higher-level API that handles the interaction loop between OpenAI's computer-use model and the macOS sandbox, allowing you to focus on building sophisticated applications rather than managing the low-level details we've explored here. Can't wait? Check out the [cua-agent](https://github.com/trycua/cua/tree/main/libs/python/agent) package!
 
 ### Resources
 
 - [OpenAI Computer-Use docs](https://platform.openai.com/docs/guides/tools-computer-use)
-- [cua-computer](https://github.com/trycua/cua/tree/main/libs/computer)
+- [cua-computer](https://github.com/trycua/cua/tree/main/libs/python/computer)
 - [lume](https://github.com/trycua/cua/tree/main/libs/lume)

@@ -34,9 +34,10 @@ export const baseOptions: BaseLayoutProps = {
           className="hidden dark:block"
           alt="Logo"
         />
-        Cua Documentation
+        Cua
       </>
     ),
+    url: 'https://cua.ai',
   },
   githubUrl: 'https://github.com/trycua/cua',
   links: [

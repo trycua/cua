@@ -4,7 +4,7 @@ build-backend = "pdm.backend"
 
 [project]
 name = "cua-computer-server"
-version = "0.1.29"
+version = "0.1.31"
 
 description = "Server component for the Computer-Use Interface (CUI) framework powering Cua"
 authors = [
@@ -12,7 +12,7 @@ authors = [
 ]
 readme = "README.md"
 license = { text = "MIT" }
-requires-python = ">=3.12"
+requires-python = ">=3.12,<3.14"
 dependencies = [
     "fastapi>=0.111.0",
     "uvicorn[standard]>=0.27.0",
@@ -24,6 +24,7 @@ dependencies = [
     "pyperclip>=1.9.0",
     "websockets>=12.0",
     "pywinctl>=0.4.1",
+    "playwright>=1.40.0",
     # OS-specific runtime deps
     "pyobjc-framework-Cocoa>=10.1; sys_platform == 'darwin'",
     "pyobjc-framework-Quartz>=10.1; sys_platform == 'darwin'",

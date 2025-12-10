@@ -56,7 +56,7 @@ export function Footer() {
               </li>
               <li>
                 <a
-                  href="/docs/quickstart-devs"
+                  href="/docs/get-started/quickstart"
                   className="text-sm text-fd-muted-foreground hover:text-fd-foreground transition-colors"
                 >
                   Quick Start

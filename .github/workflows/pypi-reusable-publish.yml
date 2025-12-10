@@ -47,7 +47,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: main
           fetch-depth: 0 # Full history for release creation
+
+      - name: Ensure latest main branch
+        run: |
+          git fetch origin main
+          git reset --hard origin/main
+          echo "Current HEAD commit:"
+          git log -1 --oneline
 
       - name: Set up Python
         uses: actions/setup-python@v4
@@ -78,7 +86,7 @@ jobs:
 
           # Verify version matches using script (exits with error if mismatch)
           python ${GITHUB_WORKSPACE}/.github/scripts/get_pyproject_version.py \
-            ${{ inputs.package_dir }}/pyproject.toml \
+            ${GITHUB_WORKSPACE}/${{ inputs.package_dir }}/pyproject.toml \
             ${{ inputs.version }}
 
       - name: Initialize PDM in package directory

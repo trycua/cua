@@ -23,11 +23,7 @@ import litellm
 import litellm.utils
 from litellm.responses.utils import Usage
 
-from .adapters import (
-    HuggingFaceLocalAdapter,
-    HumanAdapter,
-    MLXVLMAdapter,
-)
+from .adapters import CUAAdapter, HuggingFaceLocalAdapter, HumanAdapter, MLXVLMAdapter
 from .callbacks import (
     BudgetManagerCallback,
     ImageRetentionCallback,
@@ -193,7 +189,7 @@ class ComputerAgent:
         Initialize ComputerAgent.
 
         Args:
-            model: Model name (e.g., "claude-3-5-sonnet-20241022", "computer-use-preview", "omni+vertex_ai/gemini-pro")
+            model: Model name (e.g., "claude-sonnet-4-5-20250929", "computer-use-preview", "omni+vertex_ai/gemini-pro")
             tools: List of tools (computer objects, decorated functions, etc.)
             custom_loop: Custom agent loop function to use instead of auto-selection
             only_n_most_recent_images: If set, only keep the N most recent images in message history. Adds ImageRetentionCallback automatically.
@@ -241,13 +237,6 @@ class ComputerAgent:
         if self.instructions:
             self.callbacks.append(PromptInstructionsCallback(self.instructions))
 
-        # Add telemetry callback if telemetry_enabled is set
-        if self.telemetry_enabled:
-            if isinstance(self.telemetry_enabled, bool):
-                self.callbacks.append(TelemetryCallback(self))
-            else:
-                self.callbacks.append(TelemetryCallback(self, **self.telemetry_enabled))
-
         # Add logging callback if verbosity is set
         if self.verbosity is not None:
             self.callbacks.append(LoggingCallback(level=self.verbosity))
@@ -278,10 +267,12 @@ class ComputerAgent:
         )
         human_adapter = HumanAdapter()
         mlx_adapter = MLXVLMAdapter()
+        cua_adapter = CUAAdapter()
         litellm.custom_provider_map = [
             {"provider": "huggingface-local", "custom_handler": hf_adapter},
             {"provider": "human", "custom_handler": human_adapter},
             {"provider": "mlx", "custom_handler": mlx_adapter},
+            {"provider": "cua", "custom_handler": cua_adapter},
         ]
         litellm.suppress_debug_info = True
 
@@ -298,6 +289,13 @@ class ComputerAgent:
             # Instantiate the agent config class
             self.agent_loop = config_info.agent_class()
             self.agent_config_info = config_info
+
+        # Add telemetry callback AFTER agent_loop is set so it can capture the correct agent_type
+        if self.telemetry_enabled:
+            if isinstance(self.telemetry_enabled, bool):
+                self.callbacks.append(TelemetryCallback(self))
+            else:
+                self.callbacks.append(TelemetryCallback(self, **self.telemetry_enabled))
 
         self.tool_schemas = []
         self.computer_handler = None

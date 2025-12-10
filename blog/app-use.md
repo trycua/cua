@@ -25,7 +25,7 @@ desktop = computer.create_desktop_from_apps(["Safari", "Notes"])
 
 # Your agent can now only see and interact with these apps
 agent = ComputerAgent(
-    model="anthropic/claude-3-5-sonnet-20241022",
+    model="anthropic/claude-sonnet-4-5-20250929",
     tools=[desktop]
 )
 ```
@@ -94,7 +94,7 @@ async def main():
 
     # Initialize an agent
     agent = ComputerAgent(
-        model="anthropic/claude-3-5-sonnet-20241022",
+        model="anthropic/claude-sonnet-4-5-20250929",
         tools=[desktop]
     )
 
@@ -160,7 +160,7 @@ async def automate_iphone():
 
     # Initialize an agent for iPhone automation
     agent = ComputerAgent(
-        model="anthropic/claude-3-5-sonnet-20241022",
+        model="anthropic/claude-sonnet-4-5-20250929",
         tools=[my_iphone]
     )
 

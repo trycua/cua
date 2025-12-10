@@ -1,4 +1,4 @@
-name: Bump Version
+name: Bump Version & Publish
 
 on:
   workflow_dispatch:
@@ -30,6 +30,9 @@ permissions:
 jobs:
   bump-version:
     runs-on: ubuntu-latest
+    outputs:
+      agent_version: ${{ steps.agent_version.outputs.version }}
+      computer_version: ${{ steps.computer_version.outputs.version }}
     steps:
       - name: Set package directory
         id: package
@@ -86,6 +89,46 @@ jobs:
           cd ${{ steps.package.outputs.directory }}
           bump2version ${{ inputs.bump_type }}
 
+      - name: Also bump cua-agent
+        if: ${{ inputs.service == 'cua-computer' }}
+        run: |
+          cd libs/python/agent
+          bump2version ${{ inputs.bump_type }}
+
+      - name: Capture bumped agent version
+        if: ${{ inputs.service == 'cua-agent' || inputs.service == 'cua-computer' }}
+        id: agent_version
+        run: |
+          cd libs/python/agent
+          VERSION=$(python -c "import tomllib; from pathlib import Path; data = tomllib.loads(Path('pyproject.toml').read_text()); print(data['project']['version'])")
+          echo "Agent version: $VERSION"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Capture bumped computer version
+        if: ${{ inputs.service == 'cua-computer' }}
+        id: computer_version
+        run: |
+          cd libs/python/computer
+          VERSION=$(python -c "import tomllib; from pathlib import Path; data = tomllib.loads(Path('pyproject.toml').read_text()); print(data['project']['version'])")
+          echo "Computer version: $VERSION"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
       - name: Push changes
         run: |
           git push origin main --follow-tags
+
+  publish-computer:
+    needs: bump-version
+    if: ${{ inputs.service == 'cua-computer' }}
+    uses: ./.github/workflows/pypi-publish-computer.yml
+    with:
+      version: ${{ needs.bump-version.outputs.computer_version }}
+    secrets: inherit
+
+  publish-agent:
+    needs: [bump-version, publish-computer]
+    if: ${{ always() && (inputs.service == 'cua-agent' || inputs.service == 'cua-computer') && needs.bump-version.result == 'success' && (inputs.service == 'cua-agent' || needs.publish-computer.result == 'success') }}
+    uses: ./.github/workflows/pypi-publish-agent.yml
+    with:
+      version: ${{ needs.bump-version.outputs.agent_version }}
+    secrets: inherit

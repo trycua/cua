@@ -49,8 +49,15 @@ jobs:
           # Install the package in editable mode with dev dependencies
           if [ -f pyproject.toml ]; then
             uv pip install --system -e .
-            # Install test dependencies
-            uv pip install --system pytest pytest-asyncio pytest-mock pytest-cov
+          fi
+        shell: bash
+
+      - name: Install test dependencies
+        run: |
+          # Install test dependencies from root pyproject.toml if tests directory exists
+          # The root pyproject.toml has package=false, so we install just the dependency group
+          if [ -d "libs/python/${{ matrix.package }}/tests" ]; then
+            uv pip install --system --group test
           fi
         shell: bash
 

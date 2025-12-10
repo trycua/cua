@@ -45,7 +45,7 @@ async def run_agent_example():
             # model="anthropic/claude-opus-4-20250514",
             # model="anthropic/claude-sonnet-4-20250514",
             # model="anthropic/claude-3-7-sonnet-20250219",
-            # model="anthropic/claude-3-5-sonnet-20241022",
+            # model="anthropic/claude-sonnet-4-5-20250929",
             # == UI-TARS ==
             # model="huggingface-local/ByteDance-Seed/UI-TARS-1.5-7B",
             # model="mlx/mlx-community/UI-TARS-1.5-7B-6bit",
@@ -53,6 +53,10 @@ async def run_agent_example():
             # == Omniparser + Any LLM ==
             # model="omniparser+anthropic/claude-opus-4-20250514",
             # model="omniparser+ollama_chat/gemma3:12b-it-q4_K_M",
+            # == Omniparser + Vertex AI Gemini 3 (with thinking_level) ==
+            # model="omni+vertex_ai/gemini-3-flash",
+            # thinking_level="high",  # or "low"
+            # media_resolution="medium",  # or "low" or "high"
             tools=[computer],
             only_n_most_recent_images=3,
             verbosity=logging.DEBUG,

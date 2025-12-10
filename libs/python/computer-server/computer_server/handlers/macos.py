@@ -55,6 +55,34 @@ from .base import BaseAccessibilityHandler, BaseAutomationHandler
 
 logger = logging.getLogger(__name__)
 
+# Trigger accessibility permissions prompt on macOS
+try:
+    # Source - https://stackoverflow.com/a/17134
+    # Posted by Andreas
+    # Retrieved 2025-12-03, License - CC BY-SA 4.0
+    # Attempt to create and post a mouse event to trigger the permissions prompt
+    # This will cause macOS to show "Python would like to control this computer using accessibility features"
+    current_pos = CGEventGetLocation(CGEventCreate(None))
+    p = CGPoint()
+    p.x = current_pos.x
+    p.y = current_pos.y
+
+    me = CGEventCreateMouseEvent(None, kCGEventMouseMoved, p, 0)
+    if me:
+        CGEventPost(kCGHIDEventTap, me)
+        CFRelease(me)
+except Exception as e:
+    logger.debug(f"Failed to trigger accessibility permissions prompt: {e}")
+
+# Trigger screen recording prompt on macOS
+try:
+    import pyautogui
+
+    pyautogui.screenshot()
+except Exception as e:
+    logger.debug(f"Failed to trigger screenshot permissions prompt: {e}")
+
+
 # Constants for accessibility API
 kAXErrorSuccess = 0
 kAXRoleAttribute = "AXRole"
@@ -1287,7 +1315,15 @@ class MacOSAutomationHandler(BaseAutomationHandler):
             if not isinstance(screenshot, Image.Image):
                 return {"success": False, "error": "Failed to capture screenshot"}
 
+            # Resize image to reduce size (max width 1920, maintain aspect ratio)
+            max_width = 1920
+            if screenshot.width > max_width:
+                ratio = max_width / screenshot.width
+                new_height = int(screenshot.height * ratio)
+                screenshot = screenshot.resize((max_width, new_height), Image.Resampling.LANCZOS)
+
             buffered = BytesIO()
+            # Use PNG format with optimization to reduce file size
             screenshot.save(buffered, format="PNG", optimize=True)
             buffered.seek(0)
             image_data = base64.b64encode(buffered.getvalue()).decode()

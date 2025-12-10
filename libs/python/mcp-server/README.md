@@ -44,7 +44,7 @@ Add this to your MCP client configuration:
       "args": [
         "bash",
         "-lc",
-        "export CUA_MODEL_NAME='anthropic/claude-3-5-sonnet-20241022'; ~/.cua/start_mcp_server.sh"
+        "export CUA_MODEL_NAME='anthropic/claude-sonnet-4-5-20250929'; ~/.cua/start_mcp_server.sh"
       ]
     }
   }

@@ -442,7 +442,9 @@ def get_all_element_descriptions(responses_items: List[Dict[str, Any]]) -> List[
 
 # Conversion functions between responses_items and completion messages formats
 def convert_responses_items_to_completion_messages(
-    messages: List[Dict[str, Any]], allow_images_in_tool_results: bool = True
+    messages: List[Dict[str, Any]],
+    allow_images_in_tool_results: bool = True,
+    send_multiple_user_images_per_parallel_tool_results: bool = False,
 ) -> List[Dict[str, Any]]:
     """Convert responses_items message format to liteLLM completion format.
 
@@ -450,10 +452,11 @@ def convert_responses_items_to_completion_messages(
         messages: List of responses_items format messages
         allow_images_in_tool_results: If True, include images in tool role messages.
                                     If False, send tool message + separate user message with image.
+        send_multiple_user_images_per_parallel_tool_results: If True, send multiple user images in parallel tool results.
     """
     completion_messages = []
 
-    for message in messages:
+    for i, message in enumerate(messages):
         msg_type = message.get("type")
         role = message.get("role")
 
@@ -561,20 +564,42 @@ def convert_responses_items_to_completion_messages(
                         }
                     )
                 else:
-                    # Send tool message + separate user message with image (OpenAI compatible)
-                    completion_messages += [
-                        {
-                            "role": "tool",
-                            "tool_call_id": call_id,
-                            "content": "[Execution completed. See screenshot below]",
-                        },
-                        {
-                            "role": "user",
-                            "content": [
-                                {"type": "image_url", "image_url": {"url": output.get("image_url")}}
-                            ],
-                        },
+                    # Determine if the next message is also a tool call output
+                    next_type = None
+                    if i + 1 < len(messages):
+                        next_msg = messages[i + 1]
+                        next_type = next_msg.get("type")
+                    is_next_message_image_result = next_type in [
+                        "computer_call_output",
                     ]
+                    # Send tool message + separate user message with image (OpenAI compatible)
+                    completion_messages += (
+                        [
+                            {
+                                "role": "tool",
+                                "tool_call_id": call_id,
+                                "content": "[Execution completed. See screenshot below]",
+                            },
+                            {
+                                "role": "user",
+                                "content": [
+                                    {
+                                        "type": "image_url",
+                                        "image_url": {"url": output.get("image_url")},
+                                    }
+                                ],
+                            },
+                        ]
+                        if send_multiple_user_images_per_parallel_tool_results
+                        or (not is_next_message_image_result)
+                        else [
+                            {
+                                "role": "tool",
+                                "tool_call_id": call_id,
+                                "content": "[Execution completed. See screenshot below]",
+                            },
+                        ]
+                    )
             else:
                 # Handle text output as tool response
                 completion_messages.append(

@@ -90,7 +90,7 @@ lume run macos-sequoia-vanilla:latest
 
 ### Lumier: Docker-Style VM Management
 
-[Lumier](https://github.com/trycua/lumier) works differently. It lets you use Docker commands to manage VMs. But here's the key: **Docker is just for packaging, not for isolation**.
+[Lumier](https://github.com/trycua/cua/tree/main/libs/lumier) works differently. It lets you use Docker commands to manage VMs. But here's the key: **Docker is just for packaging, not for isolation**.
 
 What makes Lumier useful:
 

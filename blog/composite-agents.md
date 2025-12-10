@@ -14,12 +14,12 @@ This is the kind of problem that makes you wonder if we're building the future o
 
 Agent framework 0.4 solves this by doing something radical: making all these different models speak the same language.
 
-Instead of writing separate code for each model's peculiarities, you now just pick a model with a string like `"anthropic/claude-3-5-sonnet-20241022"` or `"huggingface-local/ByteDance-Seed/UI-TARS-1.5-7B"`, and everything else Just Works™. Behind the scenes, we handle all the coordinate normalization, token parsing, and image preprocessing so you don't have to.
+Instead of writing separate code for each model's peculiarities, you now just pick a model with a string like `"anthropic/claude-sonnet-4-5-20250929"` or `"huggingface-local/ByteDance-Seed/UI-TARS-1.5-7B"`, and everything else Just Works™. Behind the scenes, we handle all the coordinate normalization, token parsing, and image preprocessing so you don't have to.
 
 ```python
 # This works the same whether you're using Anthropic, OpenAI, or that new model you found on Hugging Face
 agent = ComputerAgent(
-    model="anthropic/claude-3-5-sonnet-20241022",  # or any other supported model
+    model="anthropic/claude-sonnet-4-5-20250929",  # or any other supported model
     tools=[computer]
 )
 ```

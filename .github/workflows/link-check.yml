@@ -1,0 +1,74 @@
+name: Link Checker
+
+on:
+  pull_request_target:
+    branches: [main, master]
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  link-check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Run Lychee link checker
+        uses: lycheeverse/lychee-action@v2
+        id: lychee
+        with:
+          # Check all markdown files
+          args: --verbose --no-progress --max-cache-age 1d --accept 200..=299,403 --exclude '^file://' --exclude 'localhost' --exclude '127\.0\.0\.1' '**/*.md'
+          # Output results to file for parsing
+          output: lychee-output.md
+          # Don't fail the build on broken links (warning mode)
+          fail: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Parse link check results
+        id: parse-results
+        if: always()
+        run: |
+          # Use lychee exit code: 0 = success, >0 = errors found
+          EXIT_CODE="${{ steps.lychee.outputs.exit_code }}"
+
+          echo "Exit code: $EXIT_CODE"
+
+          # Show summary if output file exists
+          if [ -f "lychee-output.md" ]; then
+            echo "=== Link Check Summary ==="
+            cat lychee-output.md
+          fi
+
+          # Set status based on exit code
+          if [ "$EXIT_CODE" = "0" ]; then
+            echo "STATUS_ICON=✅" >> $GITHUB_ENV
+            echo "STATUS_TEXT=All links are working" >> $GITHUB_ENV
+            echo "COLOR=#36a64f" >> $GITHUB_ENV
+          elif [ "$EXIT_CODE" = "2" ]; then
+            echo "STATUS_ICON=❌" >> $GITHUB_ENV
+            echo "STATUS_TEXT=Link checker failed to run" >> $GITHUB_ENV
+            echo "COLOR=#dc3545" >> $GITHUB_ENV
+          else
+            echo "STATUS_ICON=⚠️" >> $GITHUB_ENV
+            echo "STATUS_TEXT=Found broken links" >> $GITHUB_ENV
+            echo "COLOR=#ffa500" >> $GITHUB_ENV
+          fi
+
+      - name: Send results to Slack
+        if: always() && github.ref == 'refs/heads/main'
+        uses: rtCamp/action-slack-notify@v2
+        env:
+          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+          SLACK_CHANNEL: ${{ vars.SLACK_CHANNEL }}
+          SLACK_TITLE: "🔗 Link Check Results"
+          SLACK_COLOR: ${{ env.COLOR }}
+          SLACK_MESSAGE: |
+            *Status:* ${{ env.STATUS_ICON }} ${{ env.STATUS_TEXT }}
+
+            *Branch:* `${{ github.ref_name }}`
+
+            <${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}${{ github.event.pull_request.number && format('?pr={0}', github.event.pull_request.number) || '' }}|View broken links>

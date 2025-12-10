@@ -9,6 +9,7 @@ import {
   EditableForm,
   EditableInput,
 } from './components/editable-code-block';
+import { Hero } from './components/hero';
 
 // use this function to get MDX components, you will need it for rendering MDX
 export function getMDXComponents(components?: MDXComponents): MDXComponents {
@@ -20,6 +21,7 @@ export function getMDXComponents(components?: MDXComponents): MDXComponents {
     EditableValue,
     EditableForm,
     EditableInput,
+    Hero,
     ...TabsComponents,
     ...components,
   };

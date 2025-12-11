@@ -261,7 +261,7 @@ class Computer:
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Stop the computer."""
-        await self.disconnect()
+        await self.stop()
 
     def __enter__(self):
         """Start the computer."""

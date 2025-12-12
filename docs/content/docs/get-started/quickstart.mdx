@@ -159,6 +159,8 @@ Connect to your Cua computer and perform basic interactions, such as taking scre
 
         async def main():
             await computer.run()  # Connect to the sandbox
+            # Alternative: If your VM is not running, use start() instead:
+            # await computer.start()  # Start and connect to the sandbox
 
             try:
                 # Take a screenshot of the computer's current display
@@ -169,6 +171,8 @@ Connect to your Cua computer and perform basic interactions, such as taking scre
                 await computer.interface.type_text("Hello!")
             finally:
                 await computer.disconnect()
+                # Alternative: If you want to fully stop the VM, use stop() instead:
+                # await computer.stop()  # Fully stop VM and disconnect
 
         asyncio.run(main())
         ```
@@ -186,6 +190,8 @@ Connect to your Cua computer and perform basic interactions, such as taking scre
 
         async def main():
             await computer.run()  # Launch & connect to the sandbox
+            # Alternative: If your VM is not running, use start() instead:
+            # await computer.start()  # Start and connect to the sandbox
 
             try:
                 # Take a screenshot of the computer's current display
@@ -196,6 +202,8 @@ Connect to your Cua computer and perform basic interactions, such as taking scre
                 await computer.interface.type_text("Hello!")
             finally:
                 await computer.disconnect()
+                # Alternative: If you want to fully stop the VM, use stop() instead:
+                # await computer.stop()  # Fully stop VM and disconnect
 
         asyncio.run(main())
         ```
@@ -213,6 +221,8 @@ Connect to your Cua computer and perform basic interactions, such as taking scre
 
         async def main():
             await computer.run()  # Launch & connect to the sandbox
+            # Alternative: If your VM is not running, use start() instead:
+            # await computer.start()  # Start and connect to the sandbox
 
             try:
                 # Take a screenshot of the computer's current display
@@ -223,6 +233,8 @@ Connect to your Cua computer and perform basic interactions, such as taking scre
                 await computer.interface.type_text("Hello!")
             finally:
                 await computer.disconnect()
+                # Alternative: If you want to fully stop the VM, use stop() instead:
+                # await computer.stop()  # Fully stop VM and disconnect
 
         asyncio.run(main())
         ```
@@ -239,6 +251,8 @@ Connect to your Cua computer and perform basic interactions, such as taking scre
 
         async def main():
             await computer.run()  # Launch & connect to the sandbox
+            # Alternative: If your VM is not running, use start() instead:
+            # await computer.start()  # Start and connect to the sandbox
 
             try:
                 # Take a screenshot of the computer's current display
@@ -249,6 +263,8 @@ Connect to your Cua computer and perform basic interactions, such as taking scre
                 await computer.interface.type_text("Hello!")
             finally:
                 await computer.disconnect()
+                # Alternative: If you want to fully stop the VM, use stop() instead:
+                # await computer.stop()  # Fully stop VM and disconnect
 
         asyncio.run(main())
         ```
@@ -269,6 +285,8 @@ Connect to your Cua computer and perform basic interactions, such as taking scre
 
         async def main():
             await computer.run()  # Connect to the host desktop
+            # Alternative: If your computer server is not running, use start() instead:
+            # await computer.start()  # Start and connect to the host desktop
 
             try:
                 # Take a screenshot of the computer's current display
@@ -279,6 +297,8 @@ Connect to your Cua computer and perform basic interactions, such as taking scre
                 await computer.interface.type_text("Hello!")
             finally:
                 await computer.disconnect()
+                # Alternative: If you want to fully stop everything, use stop() instead:
+                # await computer.stop()  # Fully stop and disconnect
 
         asyncio.run(main())
         ```
@@ -425,6 +445,8 @@ Choose how you want to access vision-language models for your agent:
 
     async def main():
         await computer.run()  # Connect to the sandbox
+        # Alternative: If your VM is not running, use start() instead:
+        # await computer.start()  # Start and connect to the sandbox
 
         try:
             agent = ComputerAgent(
@@ -441,6 +463,8 @@ Choose how you want to access vision-language models for your agent:
                         print(item["content"][0]["text"])
         finally:
             await computer.disconnect()
+            # Alternative: If you want to fully stop the VM, use stop() instead:
+            # await computer.stop()  # Fully stop VM and disconnect
 
     asyncio.run(main())
     ```
@@ -481,6 +505,8 @@ Choose how you want to access vision-language models for your agent:
 
     async def main():
         await computer.run()  # Launch & connect to the sandbox
+        # Alternative: If your VM is not running, use start() instead:
+        # await computer.start()  # Start and connect to the sandbox
 
         try:
             agent = ComputerAgent(
@@ -497,6 +523,8 @@ Choose how you want to access vision-language models for your agent:
                         print(item["content"][0]["text"])
         finally:
             await computer.disconnect()
+            # Alternative: If you want to fully stop the VM, use stop() instead:
+            # await computer.stop()  # Fully stop VM and disconnect
 
     asyncio.run(main())
     ```

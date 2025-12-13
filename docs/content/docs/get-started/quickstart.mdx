@@ -183,9 +183,9 @@ Connect to your Cua computer and perform basic interactions, such as taking scre
         import asyncio
 
         computer = Computer(
-            os_type="linux",  # or "windows" or "macos"
-            provider_type="cloud",
-            name="your-sandbox-name"  # from CLI or website
+            os_type="linux",
+            provider_type="docker",
+            image="trycua/cua-xfce:latest"  # or "trycua/cua-ubuntu:latest"
         )
 
         async def main():
@@ -499,8 +499,8 @@ Choose how you want to access vision-language models for your agent:
 
     computer = Computer(
         os_type="linux",  # or "windows" or "macos"
-        provider_type="docker",
-        image="trycua/cua-xfce:latest"  # or "trycua/cua-ubuntu:latest"
+        provider_type="cloud",
+        name="your-sandbox-name"  # from CLI or website
     )
 
     async def main():

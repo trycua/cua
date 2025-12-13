@@ -197,9 +197,9 @@ jobs:
           echo "$DIGEST_ARGS"
 
           # Create manifest for each tag produced by metadata-action
-          echo "${DOCKER_METADATA_OUTPUT_JSON}" | jq -r '.tags[]' | while read TAG; do
-            echo "Creating manifest: $IMAGE:$TAG"
-            docker buildx imagetools create --tag "$IMAGE:$TAG" $DIGEST_ARGS
+          echo "${DOCKER_METADATA_OUTPUT_JSON}" | jq -r '.tags[]' | while read FULL_TAG; do
+            echo "Creating manifest: $FULL_TAG"
+            docker buildx imagetools create --tag "$FULL_TAG" $DIGEST_ARGS
           done
 
       - name: Inspect pushed manifests
@@ -207,8 +207,8 @@ jobs:
           IMAGE="${{ inputs.docker_hub_org }}/${{ inputs.image_name }}"
           echo "Inspecting manifests:"
 
-          echo "${DOCKER_METADATA_OUTPUT_JSON}" | jq -r '.tags[]' | while read TAG; do
+          echo "${DOCKER_METADATA_OUTPUT_JSON}" | jq -r '.tags[]' | while read FULL_TAG; do
             echo ""
-            echo "Inspecting: $IMAGE:$TAG"
-            docker buildx imagetools inspect "$IMAGE:$TAG"
+            echo "Inspecting: $FULL_TAG"
+            docker buildx imagetools inspect "$FULL_TAG"
           done

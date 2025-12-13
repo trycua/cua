@@ -25,7 +25,9 @@ model="cua/anthropic/claude-haiku-4.5"    # Claude Haiku 4.5 (faster)
 
 ### Anthropic Claude (Computer Use API - BYOK)
 
-Direct access to Anthropic's Claude models using your own Anthropic API key (BYOK - Bring Your Own Key).
+Access Anthropic's Claude models directly or through Azure AI Foundry using your own API key (BYOK - Bring Your Own Key).
+
+#### Via Anthropic API
 
 ```python
 model="anthropic/claude-3-7-sonnet-20250219"
@@ -34,6 +36,19 @@ model="anthropic/claude-sonnet-4-20250514"
 ```
 
 **Setup:** Set `ANTHROPIC_API_KEY` environment variable with your Anthropic API key.
+
+#### Via Azure AI Foundry
+
+```python
+model="anthropic/claude-haiku-4-5"
+model="anthropic/claude-sonnet-4-5"
+model="anthropic/claude-opus-4-5"
+```
+
+**Setup:**
+
+- Set `ANTHROPIC_API_KEY` environment variable with your Azure AI Foundry key
+- Set `ANTHROPIC_API_BASE` to your Azure endpoint (e.g., `https://<your-resource>.services.ai.azure.com/anthropic`)
 
 ### OpenAI Computer Use Preview (BYOK)
 

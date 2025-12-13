@@ -39,20 +39,19 @@ jobs:
           - linux/amd64
           - linux/arm64
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
 
       - name: Prepare platform tag
         id: platform
         run: |
-          # Convert platform (e.g., linux/amd64) to a valid tag suffix (e.g., linux-amd64)
-          PLATFORM_TAG=$(echo "${{ matrix.platform }}" | sed 's/\//-/g')
-          echo "tag=${PLATFORM_TAG}" >> $GITHUB_OUTPUT
+          TAG=$(echo "${{ matrix.platform }}" | sed 's/\//-/g')
+          echo "tag=${TAG}" >> $GITHUB_OUTPUT
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Log in to Docker Hub
+      - name: Login to Docker Hub
         uses: docker/login-action@v3
         with:
           username: ${{ inputs.docker_hub_org }}
@@ -67,7 +66,22 @@ jobs:
           tags: |
             type=raw,value=${{ github.sha }}
 
-      - name: Extract metadata (main branch)
+      - name: Build & push digest (PR)
+        if: github.event_name == 'pull_request'
+        id: build-pr
+        uses: docker/build-push-action@v5
+        with:
+          context: ./${{ inputs.context_dir }}
+          file: ./${{ inputs.context_dir }}/${{ inputs.dockerfile_path }}
+          push: true
+          platforms: ${{ matrix.platform }}
+          outputs: type=registry,name=${{ inputs.docker_hub_org }}/${{ inputs.image_name }},push-by-digest=true
+          labels: ${{ steps.meta-pr.outputs.labels }}
+          cache-from: |
+            type=registry,ref=${{ inputs.docker_hub_org }}/${{ inputs.image_name }}:buildcache-${{ steps.platform.outputs.tag }}
+          cache-to: type=registry,ref=${{ inputs.docker_hub_org }}/${{ inputs.image_name }}:buildcache-${{ steps.platform.outputs.tag }},mode=max
+
+      - name: Extract metadata (main)
         if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         id: meta-main
         uses: docker/metadata-action@v5
@@ -76,7 +90,22 @@ jobs:
           tags: |
             type=raw,value=latest
 
-      - name: Extract metadata (semantic version tag)
+      - name: Build & push digest (main)
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        id: build-main
+        uses: docker/build-push-action@v5
+        with:
+          context: ./${{ inputs.context_dir }}
+          file: ./${{ inputs.context_dir }}/${{ inputs.dockerfile_path }}
+          push: true
+          platforms: ${{ matrix.platform }}
+          outputs: type=registry,name=${{ inputs.docker_hub_org }}/${{ inputs.image_name }},push-by-digest=true
+          labels: ${{ steps.meta-main.outputs.labels }}
+          cache-from: |
+            type=registry,ref=${{ inputs.docker_hub_org }}/${{ inputs.image_name }}:buildcache-${{ steps.platform.outputs.tag }}
+          cache-to: type=registry,ref=${{ inputs.docker_hub_org }}/${{ inputs.image_name }}:buildcache-${{ steps.platform.outputs.tag }},mode=max
+
+      - name: Extract metadata (semver)
         if: startsWith(github.ref, format('refs/tags/{0}', inputs.tag_prefix))
         id: meta-semver
         uses: docker/metadata-action@v5
@@ -88,68 +117,98 @@ jobs:
             type=semver,pattern={{major}},prefix=${{ inputs.tag_prefix }}
             type=raw,value=latest
 
-      - name: Build and push Docker image (PR)
-        if: github.event_name == 'pull_request'
-        uses: docker/build-push-action@v5
-        with:
-          context: ./${{ inputs.context_dir }}
-          file: ./${{ inputs.context_dir }}/${{ inputs.dockerfile_path }}
-          push: true
-          tags: ${{ steps.meta-pr.outputs.tags }}
-          labels: ${{ steps.meta-pr.outputs.labels }}
-          platforms: ${{ matrix.platform }}
-          cache-from: |
-            type=registry,ref=${{ inputs.docker_hub_org }}/${{ inputs.image_name }}:buildcache-${{ steps.platform.outputs.tag }}
-            type=registry,ref=${{ inputs.docker_hub_org }}/${{ inputs.image_name }}:latest
-          cache-to: type=registry,ref=${{ inputs.docker_hub_org }}/${{ inputs.image_name }}:buildcache-${{ steps.platform.outputs.tag }},mode=max
-
-      - name: Build and push Docker image (main branch)
-        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
-        uses: docker/build-push-action@v5
-        with:
-          context: ./${{ inputs.context_dir }}
-          file: ./${{ inputs.context_dir }}/${{ inputs.dockerfile_path }}
-          push: true
-          tags: ${{ steps.meta-main.outputs.tags }}
-          labels: ${{ steps.meta-main.outputs.labels }}
-          platforms: ${{ matrix.platform }}
-          cache-from: |
-            type=registry,ref=${{ inputs.docker_hub_org }}/${{ inputs.image_name }}:buildcache-${{ steps.platform.outputs.tag }}
-            type=registry,ref=${{ inputs.docker_hub_org }}/${{ inputs.image_name }}:latest
-          cache-to: type=registry,ref=${{ inputs.docker_hub_org }}/${{ inputs.image_name }}:buildcache-${{ steps.platform.outputs.tag }},mode=max
-
-      - name: Build and push Docker image (semantic version tag)
+      - name: Build & push digest (semver)
         if: startsWith(github.ref, format('refs/tags/{0}', inputs.tag_prefix))
+        id: build-semver
         uses: docker/build-push-action@v5
         with:
           context: ./${{ inputs.context_dir }}
           file: ./${{ inputs.context_dir }}/${{ inputs.dockerfile_path }}
           push: true
-          tags: ${{ steps.meta-semver.outputs.tags }}
-          labels: ${{ steps.meta-semver.outputs.labels }}
           platforms: ${{ matrix.platform }}
+          outputs: type=registry,name=${{ inputs.docker_hub_org }}/${{ inputs.image_name }},push-by-digest=true
+          labels: ${{ steps.meta-semver.outputs.labels }}
           cache-from: |
             type=registry,ref=${{ inputs.docker_hub_org }}/${{ inputs.image_name }}:buildcache-${{ steps.platform.outputs.tag }}
-            type=registry,ref=${{ inputs.docker_hub_org }}/${{ inputs.image_name }}:latest
           cache-to: type=registry,ref=${{ inputs.docker_hub_org }}/${{ inputs.image_name }}:buildcache-${{ steps.platform.outputs.tag }},mode=max
 
-      - name: Image digest
-        if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main' || startsWith(github.ref, format('refs/tags/{0}', inputs.tag_prefix))
+      - name: Export digest
+        id: export-digest
         run: |
-          if [ "${{ github.event_name }}" == "pull_request" ]; then
-            echo "Image pushed with digest ${{ steps.meta-pr.outputs.digest }}"
-          elif [[ "${{ github.ref }}" == refs/tags/${{ inputs.tag_prefix }}* ]]; then
-            echo "Image pushed with digest ${{ steps.meta-semver.outputs.digest }}"
-          else
-            echo "Image pushed with digest ${{ steps.meta-main.outputs.digest }}"
-          fi
+          mkdir -p /tmp/digests
+          digest="${{ steps.build-pr.outputs.digest || steps.build-main.outputs.digest || steps.build-semver.outputs.digest }}"
+          echo "$digest" > "/tmp/digests/${{ steps.platform.outputs.tag }}.txt"
 
-      - name: print image tags
+      - name: Upload digest artifact (unique per platform)
+        uses: actions/upload-artifact@v4
+        with:
+          name: digests-${{ steps.platform.outputs.tag }}
+          path: /tmp/digests/*.txt
+          retention-days: 1
+
+  publish-manifest-list:
+    runs-on: ubuntu-latest
+    needs:
+      - build-and-push
+
+    steps:
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ inputs.docker_hub_org }}
+          password: ${{ secrets.DOCKER_HUB_TOKEN }}
+
+      - name: Extract final metadata
+        id: metadata
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ inputs.docker_hub_org }}/${{ inputs.image_name }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=sha
+            type=semver,pattern={{version}},prefix=${{ inputs.tag_prefix }}
+            type=semver,pattern={{major}}.{{minor}},prefix=${{ inputs.tag_prefix }}
+            type=semver,pattern={{major}},prefix=${{ inputs.tag_prefix }}
+          flavor: |
+            latest=true
+
+      - name: Download all digest artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: digests-*
+          path: /tmp/digests
+          merge-multiple: true
+
+      - name: Create & push multi-arch manifest
         run: |
-          if [ "${{ github.event_name }}" == "pull_request" ]; then
-            echo "Image tags: ${{ steps.meta-pr.outputs.tags }}"
-          elif [[ "${{ github.ref }}" == refs/tags/${{ inputs.tag_prefix }}* ]]; then
-            echo "Image tags: ${{ steps.meta-semver.outputs.tags }}"
-          else
-            echo "Image tags: ${{ steps.meta-main.outputs.tags }}"
-          fi
+          IMAGE="${{ inputs.docker_hub_org }}/${{ inputs.image_name }}"
+
+          DIGEST_ARGS=""
+          for f in $(find /tmp/digests -type f -name "*.txt"); do
+            d=$(cat "$f")
+            DIGEST_ARGS="$DIGEST_ARGS ${IMAGE}@${d}"
+          done
+
+          echo "Using digests:"
+          echo "$DIGEST_ARGS"
+
+          # Create manifest for each tag produced by metadata-action
+          echo "${DOCKER_METADATA_OUTPUT_JSON}" | jq -r '.tags[]' | while read TAG; do
+            echo "Creating manifest: $IMAGE:$TAG"
+            docker buildx imagetools create --tag "$IMAGE:$TAG" $DIGEST_ARGS
+          done
+
+      - name: Inspect pushed manifests
+        run: |
+          IMAGE="${{ inputs.docker_hub_org }}/${{ inputs.image_name }}"
+          echo "Inspecting manifests:"
+
+          echo "${DOCKER_METADATA_OUTPUT_JSON}" | jq -r '.tags[]' | while read TAG; do
+            echo ""
+            echo "Inspecting: $IMAGE:$TAG"
+            docker buildx imagetools inspect "$IMAGE:$TAG"
+          done

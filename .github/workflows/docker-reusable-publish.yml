@@ -161,20 +161,33 @@ jobs:
           username: ${{ inputs.docker_hub_org }}
           password: ${{ secrets.DOCKER_HUB_TOKEN }}
 
-      - name: Extract final metadata
-        id: metadata
+      - name: Extract final metadata (PR)
+        if: github.event_name == 'pull_request'
         uses: docker/metadata-action@v5
         with:
           images: ${{ inputs.docker_hub_org }}/${{ inputs.image_name }}
           tags: |
-            type=ref,event=branch
             type=ref,event=pr
             type=sha
+
+      - name: Extract final metadata (main)
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ inputs.docker_hub_org }}/${{ inputs.image_name }}
+          tags: |
+            type=raw,value=latest
+
+      - name: Extract final metadata (semver)
+        if: startsWith(github.ref, format('refs/tags/{0}', inputs.tag_prefix))
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ inputs.docker_hub_org }}/${{ inputs.image_name }}
+          tags: |
             type=semver,pattern={{version}},prefix=${{ inputs.tag_prefix }}
             type=semver,pattern={{major}}.{{minor}},prefix=${{ inputs.tag_prefix }}
             type=semver,pattern={{major}},prefix=${{ inputs.tag_prefix }}
-          flavor: |
-            latest=true
+            type=raw,value=latest
 
       - name: Download all digest artifacts
         uses: actions/download-artifact@v4

@@ -30,6 +30,7 @@ class GenericComputerInterface(BaseComputerInterface):
         api_key: Optional[str] = None,
         vm_name: Optional[str] = None,
         logger_name: str = "computer.interface.generic",
+        api_port: Optional[int] = None,
     ):
         super().__init__(ip_address, username, password, api_key, vm_name)
         self._ws = None
@@ -46,6 +47,9 @@ class GenericComputerInterface(BaseComputerInterface):
 
         # Set logger name for the interface
         self.logger = Logger(logger_name, LogLevel.NORMAL)
+
+        # Store custom ports
+        self._api_port = api_port
 
         # Optional default delay time between commands (in seconds)
         self.delay = 0.0
@@ -70,7 +74,12 @@ class GenericComputerInterface(BaseComputerInterface):
             WebSocket URI for the Computer API Server
         """
         protocol = "wss" if self.api_key else "ws"
-        port = "8443" if self.api_key else "8000"
+        # Use custom API port if provided, otherwise use defaults based on API key
+        port = (
+            str(self._api_port)
+            if self._api_port is not None
+            else ("8443" if self.api_key else "8000")
+        )
         return f"{protocol}://{self.ip_address}:{port}/ws"
 
     @property
@@ -81,7 +90,12 @@ class GenericComputerInterface(BaseComputerInterface):
             REST URI for the Computer API Server
         """
         protocol = "https" if self.api_key else "http"
-        port = "8443" if self.api_key else "8000"
+        # Use custom API port if provided, otherwise use defaults based on API key
+        port = (
+            str(self._api_port)
+            if self._api_port is not None
+            else ("8443" if self.api_key else "8000")
+        )
         return f"{protocol}://{self.ip_address}:{port}/cmd"
 
     # Mouse actions
@@ -660,6 +674,56 @@ class GenericComputerInterface(BaseComputerInterface):
         screenshot_y = y * height_scale
 
         return screenshot_x, screenshot_y
+
+    # Playwright browser control
+    async def playwright_exec(self, command: str, params: Optional[Dict] = None) -> Dict[str, Any]:
+        """
+        Execute a Playwright browser command.
+
+        Args:
+            command: The browser command to execute (visit_url, click, type, scroll, web_search)
+            params: Command parameters
+
+        Returns:
+            Dict containing the command result
+
+        Examples:
+            # Navigate to a URL
+            await interface.playwright_exec("visit_url", {"url": "https://example.com"})
+
+            # Click at coordinates
+            await interface.playwright_exec("click", {"x": 100, "y": 200})
+
+            # Type text
+            await interface.playwright_exec("type", {"text": "Hello, world!"})
+
+            # Scroll
+            await interface.playwright_exec("scroll", {"delta_x": 0, "delta_y": -100})
+
+            # Web search
+            await interface.playwright_exec("web_search", {"query": "computer use agent"})
+        """
+        protocol = "https" if self.api_key else "http"
+        port = "8443" if self.api_key else "8000"
+        url = f"{protocol}://{self.ip_address}:{port}/playwright_exec"
+
+        payload = {"command": command, "params": params or {}}
+        headers = {"Content-Type": "application/json"}
+        if self.api_key:
+            headers["X-API-Key"] = self.api_key
+        if self.vm_name:
+            headers["X-Container-Name"] = self.vm_name
+
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(url, json=payload, headers=headers) as response:
+                    if response.status == 200:
+                        return await response.json()
+                    else:
+                        error_text = await response.text()
+                        return {"success": False, "error": error_text}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
 
     # Websocket Methods
     async def _keep_alive(self):

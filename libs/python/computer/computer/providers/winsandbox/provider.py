@@ -29,7 +29,6 @@ class WinSandboxProvider(BaseVMProvider):
 
     def __init__(
         self,
-        port: int = 7777,
         host: str = "localhost",
         storage: Optional[str] = None,
         verbose: bool = False,
@@ -41,7 +40,6 @@ class WinSandboxProvider(BaseVMProvider):
         """Initialize the Windows Sandbox provider.
 
         Args:
-            port: Port for the computer server (default: 7777)
             host: Host to use for connections (default: localhost)
             storage: Storage path (ignored - Windows Sandbox is always ephemeral)
             verbose: Enable verbose logging
@@ -56,7 +54,6 @@ class WinSandboxProvider(BaseVMProvider):
             )
 
         self.host = host
-        self.port = port
         self.verbose = verbose
         self.memory_mb = memory_mb
         self.networking = networking

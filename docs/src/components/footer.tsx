@@ -141,16 +141,16 @@ export function Footer() {
           </p>
           <div className="flex gap-4">
             <a
-              href="https://cua.ai/privacy"
+              href="https://cua.ai/privacy-policy"
               className="text-sm text-fd-muted-foreground hover:text-fd-foreground transition-colors"
             >
               Privacy Policy
             </a>
             <a
-              href="https://cua.ai/terms"
+              href="https://cua.ai/cookie-policy"
               className="text-sm text-fd-muted-foreground hover:text-fd-foreground transition-colors"
             >
-              Terms of Service
+              Cookie Policy
             </a>
           </div>
         </div>

@@ -39,7 +39,7 @@ class LumierProvider(BaseVMProvider):
 
     def __init__(
         self,
-        port: Optional[int] = 7777,
+        provider_port: Optional[int] = 7777,
         host: str = "localhost",
         storage: Optional[str] = None,  # Can be a path or 'ephemeral'
         shared_path: Optional[str] = None,
@@ -51,7 +51,7 @@ class LumierProvider(BaseVMProvider):
         """Initialize the Lumier VM Provider.
 
         Args:
-            port: Port for the API server (default: 7777)
+            provider_port: Port for the API server (default: 7777)
             host: Hostname for the API server (default: localhost)
             storage: Path for persistent VM storage
             shared_path: Path for shared folder between host and VM
@@ -61,8 +61,8 @@ class LumierProvider(BaseVMProvider):
             noVNC_port: Specific port for noVNC interface (default: 8006)
         """
         self.host = host
-        # Always ensure api_port has a valid value (7777 is the default)
-        self.api_port = 7777 if port is None else port
+        # Always ensure lume_port has a valid value (7777 is the default)
+        self.lume_port = 7777 if provider_port is None else provider_port
         self.vnc_port = noVNC_port  # User-specified noVNC port, will be set in run_vm if provided
         self.ephemeral = ephemeral
 
@@ -198,7 +198,7 @@ class LumierProvider(BaseVMProvider):
             vm_info = lume_api_get(
                 vm_name=name,
                 host=self.host,
-                port=self.api_port,
+                port=self.lume_port,
                 storage=storage if storage is not None else self.storage,
                 debug=self.verbose,
                 verbose=self.verbose,
@@ -320,7 +320,7 @@ class LumierProvider(BaseVMProvider):
             logger.debug(f"Using specified noVNC_port: {self.vnc_port}")
 
             # Set API URL using the API port
-            self._api_url = f"http://{self.host}:{self.api_port}"
+            self._api_url = f"http://{self.host}:{self.lume_port}"
 
             # Parse memory setting
             memory_mb = self._parse_memory(run_opts.get("memory", "8GB"))
@@ -671,7 +671,7 @@ class LumierProvider(BaseVMProvider):
             # Container is running, check if API is responsive
             try:
                 # First check the health endpoint
-                api_url = f"http://{self.host}:{self.api_port}/health"
+                api_url = f"http://{self.host}:{self.lume_port}/health"
                 logger.info(f"Checking API health at: {api_url}")
 
                 # Use longer timeout for API health check since it may still be initializing
@@ -685,7 +685,7 @@ class LumierProvider(BaseVMProvider):
                 else:
                     # API health check failed, now let's check if the VM status endpoint is responsive
                     # This covers cases where the health endpoint isn't implemented but the VM API is working
-                    vm_api_url = f"http://{self.host}:{self.api_port}/lume/vms/{container_name}"
+                    vm_api_url = f"http://{self.host}:{self.lume_port}/lume/vms/{container_name}"
                     if self.storage:
                         import urllib.parse
 
@@ -1026,7 +1026,7 @@ class LumierProvider(BaseVMProvider):
         # Initialize the API URL with the default value if not already set
         # This ensures get_vm can work before run_vm is called
         if not hasattr(self, "_api_url") or not self._api_url:
-            self._api_url = f"http://{self.host}:{self.api_port}"
+            self._api_url = f"http://{self.host}:{self.lume_port}"
             logger.info(f"Initialized default Lumier API URL: {self._api_url}")
 
         return self

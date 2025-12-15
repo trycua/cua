@@ -806,7 +806,8 @@ class GenericComputerInterface(BaseComputerInterface):
                         # Only log the first error at WARNING level, then every Nth attempt
                         if retry_count == 1:
                             self.logger.warning(
-                                "Computer API Server not ready yet. Will retry automatically."
+                                "Computer API Server not ready yet. Will retry automatically. "
+                                "This is normal if your VM is still provisioning."
                             )
                         elif retry_count % log_interval == 0:
                             self.logger.warning(
@@ -854,7 +855,8 @@ class GenericComputerInterface(BaseComputerInterface):
                 # Only log connection lost warnings at most once every min_warning_interval seconds
                 if current_time - last_warning_time >= min_warning_interval:
                     self.logger.warning(
-                        "Computer API Server connection lost. Will retry automatically."
+                        "Computer API Server connection lost. Will retry automatically. "
+                        "If your VM is still provisioning, please wait for it to be ready."
                     )
                     last_warning_time = current_time
                 else:

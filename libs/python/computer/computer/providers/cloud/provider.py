@@ -152,7 +152,25 @@ class CloudProvider(BaseVMProvider):
                     logger.warning("Unexpected response for list_vms; expected list")
                     return []
                 elif resp.status == 401:
-                    logger.error("Unauthorized: invalid CUA API key for list_vms")
+                    # Try to parse response body for more context
+                    error_detail = ""
+                    try:
+                        error_body = await resp.json(content_type=None)
+                        if isinstance(error_body, dict):
+                            error_detail = error_body.get("error", error_body.get("message", ""))
+                    except Exception:
+                        try:
+                            error_detail = await resp.text()
+                        except Exception:
+                            pass
+
+                    if error_detail:
+                        logger.error(f"Unauthorized: {error_detail}")
+                    else:
+                        logger.error(
+                            "Unauthorized: Unable to list VMs. This could be due to an invalid API key "
+                            "or the VM may still be provisioning. Please verify your API key and VM status."
+                        )
                     return []
                 else:
                     text = await resp.text()
@@ -179,7 +197,12 @@ class CloudProvider(BaseVMProvider):
                 elif resp.status == 404:
                     return {"name": name, "status": "not_found"}
                 elif resp.status == 401:
-                    return {"name": name, "status": "unauthorized"}
+                    error_detail = await self._parse_error_response(resp)
+                    return {
+                        "name": name,
+                        "status": "unauthorized",
+                        "message": error_detail or "Invalid API key or VM may still be provisioning",
+                    }
                 else:
                     text = await resp.text()
                     return {"name": name, "status": "error", "message": text}
@@ -205,7 +228,12 @@ class CloudProvider(BaseVMProvider):
                 elif resp.status == 404:
                     return {"name": name, "status": "not_found"}
                 elif resp.status == 401:
-                    return {"name": name, "status": "unauthorized"}
+                    error_detail = await self._parse_error_response(resp)
+                    return {
+                        "name": name,
+                        "status": "unauthorized",
+                        "message": error_detail or "Invalid API key or VM may still be provisioning",
+                    }
                 else:
                     text = await resp.text()
                     return {"name": name, "status": "error", "message": text}
@@ -231,7 +259,12 @@ class CloudProvider(BaseVMProvider):
                 elif resp.status == 404:
                     return {"name": name, "status": "not_found"}
                 elif resp.status == 401:
-                    return {"name": name, "status": "unauthorized"}
+                    error_detail = await self._parse_error_response(resp)
+                    return {
+                        "name": name,
+                        "status": "unauthorized",
+                        "message": error_detail or "Invalid API key or VM may still be provisioning",
+                    }
                 else:
                     text = await resp.text()
                     return {"name": name, "status": "error", "message": text}
@@ -245,6 +278,26 @@ class CloudProvider(BaseVMProvider):
             "status": "unchanged",
             "message": "update_vm not supported by public API",
         }
+
+    async def _parse_error_response(self, resp: aiohttp.ClientResponse) -> str:
+        """Parse error response body for additional context.
+
+        Args:
+            resp: The aiohttp response object
+
+        Returns:
+            Error detail string if found, empty string otherwise
+        """
+        try:
+            error_body = await resp.json(content_type=None)
+            if isinstance(error_body, dict):
+                return str(error_body.get("error", error_body.get("message", "")))
+        except Exception:
+            try:
+                return await resp.text()
+            except Exception:
+                pass
+        return ""
 
     async def _get_host_for_vm(self, name: str) -> str:
         """

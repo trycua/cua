@@ -1121,19 +1121,11 @@ class Computer:
             The result of the function execution, or raises any exception that occurred
         """
         import base64
-        import inspect
         import json
         import textwrap
 
         try:
-            # Get function source code using inspect.getsource
-            source = inspect.getsource(python_func)
-            # Remove common leading whitespace (dedent)
-            func_source = textwrap.dedent(source).strip()
-
-            # Remove decorators
-            while func_source.lstrip().startswith("@"):
-                func_source = func_source.split("\n", 1)[1].strip()
+            func_source = helpers.generate_source_code(python_func)
 
             # Get function name for execution
             func_name = python_func.__name__
@@ -1259,16 +1251,12 @@ print(f"<<<VENV_EXEC_START>>>{{output_json}}<<<VENV_EXEC_END>>>")
         Uses a short launcher Python that spawns a detached child and exits immediately.
         """
         import base64
-        import inspect
         import json
         import textwrap
         import time as _time
 
         try:
-            source = inspect.getsource(python_func)
-            func_source = textwrap.dedent(source).strip()
-            while func_source.lstrip().startswith("@"):
-                func_source = func_source.split("\n", 1)[1].strip()
+            func_source = helpers.generate_source_code(python_func)
             func_name = python_func.__name__
             args_json = json.dumps(args, default=str)
             kwargs_json = json.dumps(kwargs, default=str)
@@ -1366,15 +1354,11 @@ print(p.pid)
         remote traceback context appended.
         """
         import base64
-        import inspect
         import json
         import textwrap
 
         try:
-            source = inspect.getsource(python_func)
-            func_source = textwrap.dedent(source).strip()
-            while func_source.lstrip().startswith("@"):
-                func_source = func_source.split("\n", 1)[1].strip()
+            func_source = helpers.generate_source_code(python_func)
             func_name = python_func.__name__
             args_json = json.dumps(args, default=str)
             kwargs_json = json.dumps(kwargs, default=str)
@@ -1482,16 +1466,12 @@ print(f"<<<VENV_EXEC_START>>>{{output_json}}<<<VENV_EXEC_END>>>")
         Uses a short launcher Python that spawns a detached child and exits immediately.
         """
         import base64
-        import inspect
         import json
         import textwrap
         import time as _time
 
         try:
-            source = inspect.getsource(python_func)
-            func_source = textwrap.dedent(source).strip()
-            while func_source.lstrip().startswith("@"):
-                func_source = func_source.split("\n", 1)[1].strip()
+            func_source = helpers.generate_source_code(python_func)
             func_name = python_func.__name__
             args_json = json.dumps(args, default=str)
             kwargs_json = json.dumps(kwargs, default=str)

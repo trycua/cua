@@ -65,6 +65,32 @@ def _bytes_image_size(img_bytes: bytes) -> Tuple[int, int]:
         return (1024, 768)
 
 
+def _sanitize_for_json(obj: Any) -> Any:
+    """
+    Recursively sanitize an object for JSON serialization.
+    Handles bytes fields (like thought_signature in Gemini 3 responses).
+    """
+    if obj is None:
+        return None
+    if isinstance(obj, bytes):
+        # Convert bytes to base64 string for JSON serialization
+        return f"<bytes:{base64.b64encode(obj).decode('ascii')}>"
+    if isinstance(obj, (str, int, float, bool)):
+        return obj
+    if isinstance(obj, dict):
+        return {k: _sanitize_for_json(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_sanitize_for_json(item) for item in obj]
+    # Handle objects with __dict__ (like Gemini SDK response objects)
+    if hasattr(obj, "__dict__"):
+        return {k: _sanitize_for_json(v) for k, v in obj.__dict__.items() if not k.startswith("_")}
+    # Handle objects with model_dump (Pydantic models)
+    if hasattr(obj, "model_dump"):
+        return _sanitize_for_json(obj.model_dump())
+    # Fallback to string representation
+    return str(obj)
+
+
 def _find_last_user_text(messages: List[Dict[str, Any]]) -> List[str]:
     texts: List[str] = []
     for msg in reversed(messages):
@@ -208,8 +234,19 @@ class GeminiComputerUseConfig(AsyncAgentConfig):
         **kwargs,
     ) -> Dict[str, Any]:
         genai, types = _lazy_import_genai()
+        import os
 
-        client = genai.Client()
+        # Authentication follows two modes based on environment variables:
+        # 1. Google AI Studio: Set GOOGLE_API_KEY
+        # 2. Vertex AI: Set GOOGLE_CLOUD_PROJECT, GOOGLE_CLOUD_LOCATION, GOOGLE_GENAI_USE_VERTEXAI=True
+        api_key = os.getenv("GOOGLE_API_KEY")
+
+        if api_key:
+            client = genai.Client(api_key=api_key)
+        else:
+            # Vertex AI mode - requires GOOGLE_CLOUD_PROJECT, GOOGLE_CLOUD_LOCATION env vars
+            # and Application Default Credentials (ADC)
+            client = genai.Client()
 
         # Extract Gemini 3-specific parameters
         # thinking_level: Use types.ThinkingLevel enum values (e.g., "LOW", "HIGH", "MEDIUM", "MINIMAL")
@@ -277,6 +314,8 @@ class GeminiComputerUseConfig(AsyncAgentConfig):
             media_resolution=resolved_media_resolution,
         )
 
+        print(generate_content_config)
+
         # Prepare contents: last user text + latest screenshot
         user_texts = _find_last_user_text(messages)
         screenshot_bytes = _find_last_screenshot(messages)
@@ -314,13 +353,14 @@ class GeminiComputerUseConfig(AsyncAgentConfig):
         response = client.models.generate_content(**api_kwargs)
 
         if _on_api_end:
+            # Sanitize response to handle bytes fields (e.g., thought_signature in Gemini 3)
             await _on_api_end(
                 {
                     "model": api_kwargs["model"],
                     # "contents": api_kwargs["contents"], # Disabled for now
                     "config": api_kwargs["config"],
                 },
-                response,
+                _sanitize_for_json(response),
             )
 
         # Usage (Gemini SDK may not always provide token usage; populate when available)
@@ -369,9 +409,12 @@ class GeminiComputerUseConfig(AsyncAgentConfig):
 
         # Map function calls to internal computer_call actions
         for fc in function_calls:
+            print(f"[DEBUG] Model returned function_call: {fc}")
             item = _map_gemini_fc_to_computer_call(fc, screen_w, screen_h)
             if item is not None:
                 output_items.append(item)
+            else:
+                print(f"[DEBUG] Function '{fc.get('name')}' not mapped (excluded or unsupported)")
 
         return {"output": output_items, "usage": usage}
 
@@ -388,8 +431,14 @@ class GeminiComputerUseConfig(AsyncAgentConfig):
         Returns pixel (x, y) if a click is proposed, else None.
         """
         genai, types = _lazy_import_genai()
+        import os
 
-        client = genai.Client()
+        # Authentication: GOOGLE_API_KEY for AI Studio, or Vertex AI env vars
+        api_key = os.getenv("GOOGLE_API_KEY")
+        if api_key:
+            client = genai.Client(api_key=api_key)
+        else:
+            client = genai.Client()
 
         # Exclude all but click_at
         exclude_all_but_click = [

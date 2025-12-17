@@ -345,6 +345,43 @@ Access system accessibility information:
   </Tab>
 </Tabs>
 
+## Browser Actions
+
+Control a browser programmatically using Playwright:
+
+<Tabs items={['Python']}>
+  <Tab value="Python">
+
+    ```python
+    # Navigate to a URL
+    result = await computer.interface.playwright_exec("visit_url", {"url": "https://example.com"})
+
+    # Click at coordinates in the browser
+    result = await computer.interface.playwright_exec("click", {"x": 500, "y": 300})
+
+    # Type text into the focused element
+    result = await computer.interface.playwright_exec("type", {"text": "Hello, world!"})
+
+    # Scroll the page
+    result = await computer.interface.playwright_exec("scroll", {"delta_x": 0, "delta_y": 500})
+
+    # Perform a web search
+    result = await computer.interface.playwright_exec("web_search", {"query": "Python programming"})
+
+    # Take a browser screenshot (returns base64-encoded PNG)
+    result = await computer.interface.playwright_exec("screenshot", {})
+    if result.get("success") and result.get("screenshot"):
+        import base64
+        screenshot_bytes = base64.b64decode(result["screenshot"])
+    ```
+
+  </Tab>
+</Tabs>
+
+<Callout type="info">
+Browser actions require browser tool support in the Docker container or computer server. The browser runs visibly on the desktop, allowing visual agents to see and interact with web content.
+</Callout>
+
 ## Delay Configuration
 
 Control timing between actions:

@@ -38,8 +38,26 @@ from .interface.factory import InterfaceFactory
 from .logger import Logger, LogLevel
 from .models import Computer as ComputerConfig
 from .models import Display
+from .otel_wrapper import OtelInterfaceWrapper, wrap_interface_with_otel
 from .tracing import ComputerTracing
 from .tracing_wrapper import TracingInterfaceWrapper
+
+# Import OTEL functions for session-level metrics
+try:
+    from core.telemetry import (
+        add_breadcrumb,
+        capture_exception,
+        is_otel_enabled,
+        record_operation,
+        track_concurrent,
+    )
+
+    OTEL_AVAILABLE = True
+except ImportError:
+    OTEL_AVAILABLE = False
+
+    def is_otel_enabled() -> bool:
+        return False
 
 SYSTEM_INFO = {
     "os": platform.system().lower(),
@@ -584,7 +602,44 @@ class Computer:
             helpers.set_default_computer(self)
 
             self.logger.info("Computer successfully initialized")
+
+            # Record session start in OTEL
+            if OTEL_AVAILABLE and is_otel_enabled() and self._telemetry_enabled:
+                duration_seconds = time.time() - start_time
+                record_operation(
+                    operation="computer.session.start",
+                    duration_seconds=duration_seconds,
+                    status="success",
+                    os_type=self.os_type,
+                    provider=str(self.provider_type),
+                )
+                add_breadcrumb(
+                    category="computer",
+                    message=f"Computer session started ({self.os_type})",
+                    level="info",
+                    data={
+                        "os_type": self.os_type,
+                        "provider": str(self.provider_type),
+                        "duration_seconds": duration_seconds,
+                    },
+                )
         except Exception as e:
+            # Record failed session start
+            if OTEL_AVAILABLE and is_otel_enabled() and self._telemetry_enabled:
+                duration_seconds = time.time() - start_time
+                record_operation(
+                    operation="computer.session.start",
+                    duration_seconds=duration_seconds,
+                    status="error",
+                    os_type=self.os_type,
+                )
+                capture_exception(
+                    e,
+                    context={
+                        "operation": "computer.session.start",
+                        "os_type": self.os_type,
+                    },
+                )
             raise
         finally:
             # Log initialization time for performance monitoring
@@ -625,6 +680,25 @@ class Computer:
 
             await self.disconnect()
             self.logger.info("Computer stopped")
+
+            # Record session stop in OTEL
+            if OTEL_AVAILABLE and is_otel_enabled() and self._telemetry_enabled:
+                duration_seconds = time.time() - start_time
+                record_operation(
+                    operation="computer.session.stop",
+                    duration_seconds=duration_seconds,
+                    status="success",
+                    os_type=self.os_type,
+                )
+                add_breadcrumb(
+                    category="computer",
+                    message=f"Computer session stopped ({self.os_type})",
+                    level="info",
+                    data={
+                        "os_type": self.os_type,
+                        "duration_seconds": duration_seconds,
+                    },
+                )
         except Exception as e:
             self.logger.debug(
                 f"Error during cleanup: {e}"
@@ -911,7 +985,7 @@ class Computer:
         """Get the computer interface for interacting with the VM.
 
         Returns:
-            The computer interface (wrapped with tracing if tracing is active)
+            The computer interface (wrapped with OTEL and/or tracing if enabled)
         """
         if not hasattr(self, "_interface") or self._interface is None:
             error_msg = "Computer interface not initialized. Call run() first."
@@ -920,6 +994,27 @@ class Computer:
                 "Make sure to call await computer.run() before using any interface methods."
             )
             raise RuntimeError(error_msg)
+
+        # Start with the base interface
+        result_interface = self._interface
+
+        # Apply OTEL wrapper if enabled and telemetry is on
+        if (
+            OTEL_AVAILABLE
+            and is_otel_enabled()
+            and self._telemetry_enabled
+            and hasattr(self, "_original_interface")
+            and self._original_interface is not None
+        ):
+            # Create OTEL wrapper if it doesn't exist
+            if (
+                not hasattr(self, "_otel_wrapper")
+                or self._otel_wrapper is None
+            ):
+                self._otel_wrapper = OtelInterfaceWrapper(
+                    self._original_interface, self.os_type
+                )
+            result_interface = self._otel_wrapper
 
         # Return tracing wrapper if tracing is active and we have an original interface
         if (
@@ -938,7 +1033,7 @@ class Computer:
                 )
             return self._tracing_wrapper
 
-        return self._interface
+        return result_interface
 
     @property
     def tracing(self) -> ComputerTracing:

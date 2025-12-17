@@ -6,6 +6,7 @@ from .base import AsyncCallbackHandler
 from .budget_manager import BudgetManagerCallback
 from .image_retention import ImageRetentionCallback
 from .logging import LoggingCallback
+from .otel import OtelCallback, OtelErrorCallback
 from .operator_validator import OperatorNormalizerCallback
 from .prompt_instructions import PromptInstructionsCallback
 from .telemetry import TelemetryCallback
@@ -18,6 +19,8 @@ __all__ = [
     "TrajectorySaverCallback",
     "BudgetManagerCallback",
     "TelemetryCallback",
+    "OtelCallback",
+    "OtelErrorCallback",
     "OperatorNormalizerCallback",
     "PromptInstructionsCallback",
 ]

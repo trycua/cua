@@ -1,13 +1,18 @@
 """
-Gemini 2.5 Computer Use agent loop
+Gemini Computer Use agent loop
 
 Maps internal Agent SDK message format to Google's Gemini Computer Use API and back.
+
+Supported models:
+- gemini-2.5-computer-use-preview-10-2025
+- gemini-3-flash-preview (and variants)
 
 Key features:
 - Lazy import of google.genai
 - Configure Computer Use tool with excluded browser-specific predefined functions
 - Optional custom function declarations hook for computer-call specific functions
 - Convert Gemini function_call parts into internal computer_call actions
+- Gemini 3-specific: thinking_level and media_resolution parameters
 """
 
 from __future__ import annotations
@@ -184,7 +189,8 @@ def _map_gemini_fc_to_computer_call(
     }
 
 
-@register_agent(models=r"^gemini-2\.5-computer-use-preview-10-2025$")
+# Note: gemini-3-pro-preview does NOT support ComputerUse
+@register_agent(models=r"^(gemini-2\.5-computer-use-preview-10-2025|gemini-3-flash-preview)$")
 class GeminiComputerUseConfig(AsyncAgentConfig):
     async def predict_step(
         self,
@@ -205,6 +211,12 @@ class GeminiComputerUseConfig(AsyncAgentConfig):
 
         client = genai.Client()
 
+        # Extract Gemini 3-specific parameters
+        # thinking_level: Use types.ThinkingLevel enum values (e.g., "LOW", "HIGH", "MEDIUM", "MINIMAL")
+        # media_resolution: Use types.MediaResolution enum values (e.g., "MEDIA_RESOLUTION_LOW", "MEDIA_RESOLUTION_HIGH")
+        thinking_level = kwargs.pop("thinking_level", None)
+        media_resolution = kwargs.pop("media_resolution", None)
+
         # Build excluded predefined functions for browser-specific behavior
         excluded = [
             "open_web_browser",
@@ -214,8 +226,41 @@ class GeminiComputerUseConfig(AsyncAgentConfig):
             "go_back",
             "scroll_document",
         ]
+
         # Optional custom functions: can be extended by host code via `tools` parameter later if desired
         CUSTOM_FUNCTION_DECLARATIONS: List[Any] = []
+        # Build thinking_config for Gemini 3 models if specified
+        thinking_config = None
+        if thinking_level:
+            # Accept string values and map to SDK enum
+            level_map = {
+                "minimal": types.ThinkingLevel.MINIMAL,
+                "low": types.ThinkingLevel.LOW,
+                "medium": types.ThinkingLevel.MEDIUM,
+                "high": types.ThinkingLevel.HIGH,
+            }
+            # Handle both lowercase strings and SDK enum values
+            if isinstance(thinking_level, str) and thinking_level.lower() in level_map:
+                thinking_config = types.ThinkingConfig(
+                    thinking_level=level_map[thinking_level.lower()]
+                )
+            else:
+                # Assume it's already an SDK enum value
+                thinking_config = types.ThinkingConfig(thinking_level=thinking_level)
+
+        # Build media_resolution for Gemini 3 models if specified
+        resolved_media_resolution = None
+        if media_resolution:
+            resolution_map = {
+                "low": types.MediaResolution.MEDIA_RESOLUTION_LOW,
+                "medium": types.MediaResolution.MEDIA_RESOLUTION_MEDIUM,
+                "high": types.MediaResolution.MEDIA_RESOLUTION_HIGH,
+            }
+            if isinstance(media_resolution, str) and media_resolution.lower() in resolution_map:
+                resolved_media_resolution = resolution_map[media_resolution.lower()]
+            else:
+                # Assume it's already an SDK enum value
+                resolved_media_resolution = media_resolution
 
         # Compose tools config
         generate_content_config = types.GenerateContentConfig(
@@ -227,7 +272,9 @@ class GeminiComputerUseConfig(AsyncAgentConfig):
                     )
                 ),
                 # types.Tool(function_declarations=CUSTOM_FUNCTION_DECLARATIONS),  # enable when custom functions needed
-            ]
+            ],
+            thinking_config=thinking_config,
+            media_resolution=resolved_media_resolution,
         )
 
         # Prepare contents: last user text + latest screenshot

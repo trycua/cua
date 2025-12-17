@@ -1,14 +1,22 @@
 <div align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" alt="Cua logo" height="150" srcset="img/logo_white.png">
-    <source media="(prefers-color-scheme: light)" alt="Cua logo" height="150" srcset="img/logo_black.png">
-    <img alt="Cua logo" height="150" src="img/logo_black.png">
-  </picture>
+  <a href="https://cua.ai" target="_blank" rel="noopener noreferrer">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" alt="Cua logo" width="150" srcset="img/logo_white.png">
+      <source media="(prefers-color-scheme: light)" alt="Cua logo" width="150" srcset="img/logo_black.png">
+      <img alt="Cua logo" width="500" src="img/logo_black.png">
+    </picture>
+  </a>
 
-[![Python](https://img.shields.io/badge/Python-333333?logo=python&logoColor=white&labelColor=333333)](#)
-[![Discord](https://img.shields.io/badge/Discord-%235865F2.svg?&logo=discord&logoColor=white)](https://discord.com/invite/mVnXXpdE85)
-<br>
+  <p align="center">Build and deploy AI agents that can reason, plan and act on any Computers</p>
+
+  <p align="center">
+    <a href="https://cua.ai" target="_blank" rel="noopener noreferrer"><img src="https://img.shields.io/badge/cua.ai-0ea5e9" alt="cua.ai"></a>
+    <a href="https://discord.com/invite/cua-ai" target="_blank" rel="noopener noreferrer"><img src="https://img.shields.io/badge/Discord-Join%20Server-10b981?logo=discord&logoColor=white" alt="Discord"></a>
+    <a href="https://x.com/trycua" target="_blank" rel="noopener noreferrer"><img src="https://img.shields.io/twitter/follow/trycua?style=social" alt="Twitter"></a>
+    <a href="https://cua.ai/docs" target="_blank" rel="noopener noreferrer"><img src="https://img.shields.io/badge/Docs-0ea5e9.svg" alt="Documentation"></a>
+    <br>
 <a href="https://trendshift.io/repositories/13685" target="_blank"><img src="https://trendshift.io/api/badge/repositories/13685" alt="trycua%2Fcua | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/></a>
+  </p>
 
 </div>
 
@@ -211,21 +219,22 @@ These are the valid model configurations for `ComputerAgent(model="...")`:
 
 The following table shows which capabilities are supported by each model:
 
-| Model                                                                                                                            | Computer-Use | Grounding | Tools | VLM |
-| -------------------------------------------------------------------------------------------------------------------------------- | :----------: | :-------: | :---: | :-: |
-| [Claude Sonnet/Haiku](https://docs.claude.com/en/docs/agents-and-tools/tool-use/computer-use-tool#how-to-implement-computer-use) |      🖥️      |    🎯     |  🛠️   | 👁️  |
-| [OpenAI CU Preview](https://platform.openai.com/docs/models/computer-use-preview)                                                |      🖥️      |    🎯     |       | 👁️  |
-| [Qwen3 VL](https://huggingface.co/collections/Qwen/qwen3-vl)                                                                     |      🖥️      |    🎯     |  🛠️   | 👁️  |
-| [GLM-V](https://huggingface.co/THUDM/glm-4v-9b)                                                                                  |      🖥️      |    🎯     |  🛠️   | 👁️  |
-| [Gemini CU Preview](https://ai.google.dev/gemini-api/docs/computer-use)                                                          |      🖥️      |    🎯     |       | 👁️  |
-| [InternVL](https://huggingface.co/OpenGVLab/InternVL3_5-1B)                                                                      |      🖥️      |    🎯     |  🛠️   | 👁️  |
-| [UI-TARS](https://huggingface.co/ByteDance-Seed/UI-TARS-1.5-7B)                                                                  |      🖥️      |    🎯     |  🛠️   | 👁️  |
-| [UI-TARS-2](https://cua.ai/dashboard/vlm-router)                                                                                 |      🖥️      |    🎯     |  🛠️   | 👁️  |
-| [OpenCUA](https://huggingface.co/xlangai/OpenCUA-7B)                                                                             |              |    🎯     |       |     |
-| [GTA](https://huggingface.co/HelloKKMe/GTA1-7B)                                                                                  |              |    🎯     |       |     |
-| [Holo](https://huggingface.co/Hcompany/Holo1.5-3B)                                                                               |              |    🎯     |       |     |
-| [Moondream](https://huggingface.co/moondream/moondream3-preview)                                                                 |              |    🎯     |       |     |
-| [OmniParser](https://github.com/microsoft/OmniParser)                                                                            |              |    🎯     |       |     |
+| Model                                                                                                                            | Computer-Use | Grounding | Tools | VLM | Cloud |
+| -------------------------------------------------------------------------------------------------------------------------------- | :----------: | :-------: | :---: | :-: | :---: |
+| [Claude Sonnet/Haiku](https://docs.claude.com/en/docs/agents-and-tools/tool-use/computer-use-tool#how-to-implement-computer-use) |      🖥️      |    🎯     |  🛠️   | 👁️  |  ☁️   |
+| [Claude Opus](https://docs.claude.com/en/docs/agents-and-tools/tool-use/computer-use-tool#how-to-implement-computer-use)         |      🖥️      |    🎯     |  🛠️   | 👁️  |  ☁️   |
+| [OpenAI CU Preview](https://platform.openai.com/docs/models/computer-use-preview)                                                |      🖥️      |    🎯     |       | 👁️  |       |
+| [Qwen3 VL](https://huggingface.co/collections/Qwen/qwen3-vl)                                                                     |      🖥️      |    🎯     |  🛠️   | 👁️  |  ☁️   |
+| [GLM-V](https://huggingface.co/THUDM/glm-4v-9b)                                                                                  |      🖥️      |    🎯     |  🛠️   | 👁️  |       |
+| [Gemini CU Preview](https://ai.google.dev/gemini-api/docs/computer-use)                                                          |      🖥️      |    🎯     |       | 👁️  |       |
+| [InternVL](https://huggingface.co/OpenGVLab/InternVL3_5-1B)                                                                      |      🖥️      |    🎯     |  🛠️   | 👁️  |       |
+| [UI-TARS](https://huggingface.co/ByteDance-Seed/UI-TARS-1.5-7B)                                                                  |      🖥️      |    🎯     |  🛠️   | 👁️  |       |
+| [UI-TARS-2](https://cua.ai/dashboard/vlm-router)                                                                                 |      🖥️      |    🎯     |  🛠️   | 👁️  |  ☁️   |
+| [OpenCUA](https://huggingface.co/xlangai/OpenCUA-7B)                                                                             |              |    🎯     |       |     |       |
+| [GTA](https://huggingface.co/HelloKKMe/GTA1-7B)                                                                                  |              |    🎯     |       |     |       |
+| [Holo](https://huggingface.co/Hcompany/Holo1.5-3B)                                                                               |              |    🎯     |       |     |       |
+| [Moondream](https://huggingface.co/moondream/moondream3-preview)                                                                 |              |    🎯     |       |     |       |
+| [OmniParser](https://github.com/microsoft/OmniParser)                                                                            |              |    🎯     |       |     |       |
 
 **Legend:**
 
@@ -233,6 +242,7 @@ The following table shows which capabilities are supported by each model:
 - 🎯 **Grounding**: UI element detection and click coordinate prediction
 - 🛠️ **Tools**: Support for function calling beyond screen interaction
 - 👁️ **VLM**: Vision-language understanding
+- ☁️ **Cloud**: Supported on Cua VLM
 
 **Composition Examples:**
 
@@ -372,6 +382,20 @@ Learn more in the [SOM documentation](./libs/python/som/README.md).
 # Recent Updates
 
 ## 2025
+
+### December 2025
+
+- **Cloud VLM Platform**: Support for Claude Opus, Qwen3 VL 235B, and UI-TARS-2 on Cua VLM cloud infrastructure
+- **QEMU Container Support**: Native Linux and Windows container execution via QEMU virtualization
+
+### November 2025
+
+- **Generic VLM Provider**: Expanded support for custom VLM providers and model configurations
+- **NeurIPS 2025**: Coverage of computer-use agent research papers and developments ([Blog Post](https://cua.ai/blog/neurips-2025-cua-papers))
+
+### October 2025
+
+- **Agent SDK Improvements**: Enhanced model support and configuration options
 
 ### September 2025
 

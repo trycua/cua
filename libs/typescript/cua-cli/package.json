@@ -1,6 +1,6 @@
 {
   "name": "@trycua/cli",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "packageManager": "bun@1.1.38",
   "description": "Command-line interface for CUA cloud sandboxes and authentication",
   "type": "module",

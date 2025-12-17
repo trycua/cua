@@ -38,7 +38,7 @@ class LumeProvider(BaseVMProvider):
 
     def __init__(
         self,
-        port: int = 7777,
+        provider_port: int = 7777,
         host: str = "localhost",
         storage: Optional[str] = None,
         verbose: bool = False,
@@ -47,7 +47,7 @@ class LumeProvider(BaseVMProvider):
         """Initialize the Lume provider.
 
         Args:
-            port: Port for the Lume API server (default: 7777)
+            provider_port: Port for the Lume API server (default: 7777)
             host: Host to use for API connections (default: localhost)
             storage: Path to store VM data
             verbose: Enable verbose logging
@@ -59,7 +59,7 @@ class LumeProvider(BaseVMProvider):
             )
 
         self.host = host
-        self.port = port  # Default port for Lume API
+        self.port = provider_port  # Default port for Lume API
         self.storage = storage
         self.verbose = verbose
         self.ephemeral = ephemeral  # If True, VMs will be deleted after stopping

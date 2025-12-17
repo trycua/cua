@@ -30,6 +30,7 @@ class GenericComputerInterface(BaseComputerInterface):
         api_key: Optional[str] = None,
         vm_name: Optional[str] = None,
         logger_name: str = "computer.interface.generic",
+        api_port: Optional[int] = None,
     ):
         super().__init__(ip_address, username, password, api_key, vm_name)
         self._ws = None
@@ -46,6 +47,9 @@ class GenericComputerInterface(BaseComputerInterface):
 
         # Set logger name for the interface
         self.logger = Logger(logger_name, LogLevel.NORMAL)
+
+        # Store custom ports
+        self._api_port = api_port
 
         # Optional default delay time between commands (in seconds)
         self.delay = 0.0
@@ -70,7 +74,12 @@ class GenericComputerInterface(BaseComputerInterface):
             WebSocket URI for the Computer API Server
         """
         protocol = "wss" if self.api_key else "ws"
-        port = "8443" if self.api_key else "8000"
+        # Use custom API port if provided, otherwise use defaults based on API key
+        port = (
+            str(self._api_port)
+            if self._api_port is not None
+            else ("8443" if self.api_key else "8000")
+        )
         return f"{protocol}://{self.ip_address}:{port}/ws"
 
     @property
@@ -81,7 +90,12 @@ class GenericComputerInterface(BaseComputerInterface):
             REST URI for the Computer API Server
         """
         protocol = "https" if self.api_key else "http"
-        port = "8443" if self.api_key else "8000"
+        # Use custom API port if provided, otherwise use defaults based on API key
+        port = (
+            str(self._api_port)
+            if self._api_port is not None
+            else ("8443" if self.api_key else "8000")
+        )
         return f"{protocol}://{self.ip_address}:{port}/cmd"
 
     # Mouse actions

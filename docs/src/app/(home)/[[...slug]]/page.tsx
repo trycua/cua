@@ -200,7 +200,7 @@ export default async function Page(props: { params: Promise<{ slug?: string[] }>
       <div className="flex flex-row w-full items-start">
         <div className="flex-1">
           <div className="flex flex-row w-full">
-            <DocsTitle>{page.data.title}</DocsTitle>
+            {slug.length > 0 && <DocsTitle>{page.data.title}</DocsTitle>}
 
             <div className="ml-auto flex items-center gap-2">
               {apiSection && versionItems.length > 1 && (

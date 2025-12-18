@@ -120,6 +120,163 @@ def _find_last_screenshot(messages: List[Dict[str, Any]]) -> Optional[bytes]:
     return None
 
 
+def _convert_messages_to_gemini_contents(
+    messages: List[Dict[str, Any]],
+    types: Any,
+) -> Tuple[List[Any], Tuple[int, int]]:
+    """
+    Convert internal message format to Gemini's Content format with full conversation history.
+
+    Similar to how Anthropic loop uses _convert_responses_items_to_completion_messages,
+    this converts ALL messages to Gemini's format.
+
+    Gemini requires:
+    - role: "user" or "model"
+    - parts: list of Part objects (text, image, function_call, function_response)
+
+    Returns:
+        Tuple of (list of Content objects, (screen_width, screen_height))
+    """
+    contents: List[Any] = []
+    screen_w, screen_h = 1024, 768  # Default dimensions
+
+    for msg in messages:
+        msg_type = msg.get("type")
+        role = msg.get("role")
+
+        # User messages
+        if role == "user" or (msg_type in (None, "message") and role == "user"):
+            parts: List[Any] = []
+            content = msg.get("content")
+
+            if isinstance(content, str):
+                parts.append(types.Part(text=content))
+            elif isinstance(content, list):
+                for c in content:
+                    if c.get("type") in ("input_text", "text") and c.get("text"):
+                        parts.append(types.Part(text=c["text"]))
+                    elif c.get("type") == "input_image" and c.get("image_url"):
+                        img_bytes, _ = _data_url_to_bytes(c["image_url"])
+                        if img_bytes:
+                            w, h = _bytes_image_size(img_bytes)
+                            screen_w, screen_h = w, h
+                            parts.append(
+                                types.Part.from_bytes(data=img_bytes, mime_type="image/png")
+                            )
+
+            if parts:
+                contents.append(types.Content(role="user", parts=parts))
+
+        # Assistant messages
+        elif role == "assistant" or (msg_type == "message" and role == "assistant"):
+            parts = []
+            content = msg.get("content")
+
+            if isinstance(content, str):
+                parts.append(types.Part(text=content))
+            elif isinstance(content, list):
+                for c in content:
+                    if c.get("type") in ("output_text", "text") and c.get("text"):
+                        parts.append(types.Part(text=c["text"]))
+
+            if parts:
+                contents.append(types.Content(role="model", parts=parts))
+
+        # Reasoning (treat as model output)
+        elif msg_type == "reasoning":
+            summary = msg.get("summary", [])
+            for s in summary:
+                if s.get("type") == "summary_text" and s.get("text"):
+                    contents.append(
+                        types.Content(
+                            role="model", parts=[types.Part(text=f"[Thinking: {s['text']}]")]
+                        )
+                    )
+                    break
+
+        # Computer call (model action) - represent as text description for context
+        elif msg_type == "computer_call":
+            action = msg.get("action", {})
+            action_type = action.get("type", "unknown")
+            action_desc = f"[Action: {action_type}"
+            for k, v in action.items():
+                if k != "type":
+                    action_desc += f", {k}={v}"
+            action_desc += "]"
+            contents.append(types.Content(role="model", parts=[types.Part(text=action_desc)]))
+
+        # Computer call output (screenshot result) - this is the key part!
+        elif msg_type == "computer_call_output":
+            out = msg.get("output", {})
+            if isinstance(out, dict) and out.get("type") in ("input_image", "computer_screenshot"):
+                image_url = out.get("image_url", "")
+                if image_url and image_url != "[omitted]":
+                    img_bytes, _ = _data_url_to_bytes(image_url)
+                    if img_bytes:
+                        w, h = _bytes_image_size(img_bytes)
+                        screen_w, screen_h = w, h
+                        contents.append(
+                            types.Content(
+                                role="user",
+                                parts=[
+                                    types.Part.from_bytes(data=img_bytes, mime_type="image/png")
+                                ],
+                            )
+                        )
+                else:
+                    # Image was omitted (by ImageRetentionCallback)
+                    contents.append(
+                        types.Content(
+                            role="user",
+                            parts=[
+                                types.Part(
+                                    text="[Screenshot taken - image omitted for context limit]"
+                                )
+                            ],
+                        )
+                    )
+
+        # Function call (model action)
+        elif msg_type == "function_call":
+            fn_name = msg.get("name", "unknown")
+            fn_args = msg.get("arguments", "{}")
+            contents.append(
+                types.Content(
+                    role="model", parts=[types.Part(text=f"[Function call: {fn_name}({fn_args})]")]
+                )
+            )
+
+        # Function call output
+        elif msg_type == "function_call_output":
+            output = msg.get("output", "")
+            contents.append(
+                types.Content(role="user", parts=[types.Part(text=f"[Function result: {output}]")])
+            )
+
+    # Gemini requires alternating user/model turns - merge consecutive same-role contents
+    merged: List[Any] = []
+    for content in contents:
+        if merged and merged[-1].role == content.role:
+            # Merge parts into the previous content of same role
+            merged[-1] = types.Content(
+                role=content.role, parts=list(merged[-1].parts) + list(content.parts)
+            )
+        else:
+            merged.append(content)
+
+    # Gemini requires conversation to start with user
+    if merged and merged[0].role == "model":
+        merged.insert(0, types.Content(role="user", parts=[types.Part(text="Begin the task.")]))
+
+    # Ensure we have at least one message
+    if not merged:
+        merged = [
+            types.Content(role="user", parts=[types.Part(text="Proceed to the next action.")])
+        ]
+
+    return merged, (screen_w, screen_h)
+
+
 def _denormalize(v: int, size: int) -> int:
     # Gemini returns 0-999 normalized
     try:
@@ -577,26 +734,8 @@ class GeminiComputerUseConfig(AsyncAgentConfig):
                 media_resolution=resolved_media_resolution,
             )
 
-        print(generate_content_config)
-
-        # Prepare contents: last user text + latest screenshot
-        user_texts = _find_last_user_text(messages)
-        screenshot_bytes = _find_last_screenshot(messages)
-
-        parts: List[Any] = []
-        for t in user_texts:
-            parts.append(types.Part(text=t))
-
-        screen_w, screen_h = 1024, 768
-        if screenshot_bytes:
-            screen_w, screen_h = _bytes_image_size(screenshot_bytes)
-            parts.append(types.Part.from_bytes(data=screenshot_bytes, mime_type="image/png"))
-
-        # If we don't have any content, at least pass an empty user part to prompt reasoning
-        if not parts:
-            parts = [types.Part(text="Proceed to the next action.")]
-
-        contents = [types.Content(role="user", parts=parts)]
+        # Convert full message history to Gemini Contents format
+        contents, (screen_w, screen_h) = _convert_messages_to_gemini_contents(messages, types)
 
         api_kwargs = {
             "model": model,

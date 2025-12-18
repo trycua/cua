@@ -130,3 +130,22 @@ class cuaComputerHandler(AsyncComputerHandler):
         """Left mouse up at coordinates."""
         assert self.interface is not None
         await self.interface.mouse_up(x, y, button="left")
+
+    # ==== Browser Control Methods (via Playwright) ====
+    async def playwright_exec(
+        self, command: str, params: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """Execute a Playwright browser command.
+
+        Supports: visit_url, click, type, scroll, web_search, screenshot,
+                  get_current_url, go_back, go_forward
+
+        Args:
+            command: The browser command to execute
+            params: Command parameters
+
+        Returns:
+            Dict containing the command result
+        """
+        assert self.interface is not None
+        return await self.interface.playwright_exec(command, params or {})

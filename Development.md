@@ -296,7 +296,6 @@ All packages are managed through a single consolidated workflow: [Bump Version](
 - `cua-core`
 - `cua-mcp-server`
 - `cua-som`
-- `pylume`
 
 **How to use:**
 
@@ -437,7 +436,6 @@ Each package uses its own tag format defined in `.bumpversion.cfg`:
 - **cua-computer**: `computer-v{version}` (e.g., `computer-v0.4.7`)
 - **cua-agent**: `agent-v{version}` (e.g., `agent-v0.4.35`)
 - **cua-som**: `som-v{version}` (e.g., `som-v0.1.3`)
-- **pylume**: `pylume-v{version}` (e.g., `pylume-v0.2.1`)
 - **cua-computer-server**: `computer-server-v{version}` (e.g., `computer-server-v0.1.27`)
 - **cua-mcp-server**: `mcp-server-v{version}` (e.g., `mcp-server-v0.1.14`)
 

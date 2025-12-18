@@ -1,80 +1,73 @@
-# Getting Started
+# Development Guide
+
+This guide covers setting up and developing the CUA (Computer Use Agent) monorepo.
 
 ## Project Structure
 
 The project is organized as a monorepo with these main packages:
 
-- `libs/core/` - Base package with telemetry support
-- `libs/computer/` - Computer-use interface (CUI) library
-- `libs/agent/` - AI agent library with multi-provider support
-- `libs/som/` - Set-of-Mark parser
-- `libs/computer-server/` - Server component for VM
-- `libs/lume/` - Lume CLI
+**Python Packages** (located in `libs/python/`):
+- `core/` - Base package with telemetry support
+- `computer/` - Computer-use interface (CUI) library
+- `agent/` - AI agent library with multi-provider support
+- `som/` - Set-of-Mark parser
+- `computer-server/` - Server component for VM
+- `mcp-server/` - MCP server implementation
+- `bench-ui/` - Benchmark UI utilities
 
-These packages are part of a uv workspace which manages a shared virtual environment and dependencies.
+**Other Packages**:
+- `libs/lume/` - Lume CLI (Swift)
+- `libs/typescript/` - TypeScript packages including `cua-cli`
 
-## Local Development Setup
+All Python packages are part of a [uv workspace](https://docs.astral.sh/uv/workspaces/) which manages a shared virtual environment and dependencies.
 
-1. Install Lume CLI:
+## Quick Start
 
+1. **Install Lume CLI** (required for local VM management):
    ```bash
    /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/lume/scripts/install.sh)"
    ```
 
-2. Clone the repository:
-
+2. **Clone the repository**:
    ```bash
    git clone https://github.com/trycua/cua.git
    cd cua
    ```
 
-3. Create a `.env.local` file in the root directory with your API keys:
-
+3. **Create `.env.local`** in the root directory with your API keys:
    ```bash
-   # Required for Anthropic provider
    ANTHROPIC_API_KEY=your_anthropic_key_here
-
-   # Required for OpenAI provider
    OPENAI_API_KEY=your_openai_key_here
    ```
 
-4. Install Node.js dependencies for Prettier and other scripts:
-
+4. **Install Node.js dependencies**:
    ```bash
-   # Install pnpm if you don't have it
-   npm install -g pnpm
-
-   # Install all JS/TS dependencies
+   npm install -g pnpm  # if not already installed
    pnpm install
    ```
 
-5. Install Python dependencies and workspace packages:
-
+5. **Install Python dependencies**:
    ```bash
-   # First install uv if you don't have it
-   pip install uv
-
-    # Then install all Python dependencies
+   pip install uv  # if not already installed
    uv sync
    ```
 
-6. Open the workspace in VSCode or Cursor:
-
+6. **Open workspace in VS Code/Cursor**:
    ```bash
-   # For Cua Python development
+   # For Python development
    code .vscode/py.code-workspace
-
+   
    # For Lume (Swift) development
    code .vscode/lume.code-workspace
    ```
 
-7. Install Pre-commit hooks:
-
-   This ensures code formatting and validation run automatically on each commit.
-
+7. **Install pre-commit hooks**:
    ```bash
    uv run pre-commit install
    ```
+
+<details>
+<summary>Why use workspace files?</summary>
 
 Using the workspace file is strongly recommended as it:
 
@@ -83,159 +76,100 @@ Using the workspace file is strongly recommended as it:
 - Enables debugging configurations
 - Maintains consistent settings across packages
 
-## Lume Development
-
-Refer to the [Lume README](./libs/lume/Development.md) for instructions on how to develop the Lume CLI.
+</details>
 
 ## Python Development
 
+### Requirements
+
+- **Python 3.12+** (see [`pyproject.toml`](./pyproject.toml) for exact requirements)
+- **uv** - Python package manager
+- **pnpm** - Node.js package manager
+
 ### Setup
 
-Install all of workspace dependencies with a single command:
+Install all workspace dependencies with a single command:
 
 ```bash
 uv sync
 ```
 
-This installs all dependencies in the virtual environment `.venv`.
+This installs all dependencies in the virtual environment `.venv`. Each Cua package is installed in editable mode, so changes to source code are immediately reflected.
 
-Each Cua package is installed in editable mode, which means changes to the source code are immediately reflected in the installed package.
-
-The `.venv` environment is also configured as the default VS Code Python interpreter in `.vscode/settings.json`.
+The `.venv` environment is configured as the default VS Code Python interpreter in [`.vscode/settings.json`](.vscode/settings.json).
 
 ### Running Python Scripts
 
-To run Python scripts in the workspace, use the `uv run` command:
+Use `uv run` to execute Python scripts:
 
 ```bash
 uv run python examples/agent_examples.py
 ```
 
-Or activate the virtual environment manually:
+Alternatively, activate the virtual environment manually:
 
 ```bash
-source .venv/bin/activate
+source .venv/bin/activate  # On Windows: .venv\Scripts\activate
 python examples/agent_examples.py
 ```
 
-## Running Examples
+### Running Examples
 
-The Python workspace includes launch configurations for all packages:
+The Python workspace includes launch configurations for running examples:
 
 - "Run Computer Examples" - Runs computer examples
 - "Run Agent Examples" - Runs agent examples
 - "SOM" configurations - Various settings for running SOM
+- "Run Computer Examples + Server" - Runs both Computer Examples and Server simultaneously
 
-To run examples from VSCode / Cursor:
+To run examples from VS Code/Cursor:
 
 1. Press F5 or use the Run/Debug view
 2. Select the desired configuration
 
-The workspace also includes compound launch configurations:
-
-- "Run Computer Examples + Server" - Runs both the Computer Examples and Server simultaneously
-
-## Code Formatting Standards
+## Code Formatting
 
 The Cua project follows strict code formatting standards to ensure consistency across all packages.
 
-### Python Code Formatting
+### Python Formatting
 
 #### Tools
 
-The project uses the following tools for code formatting and linting:
+- **[Black](https://black.readthedocs.io/)** - Code formatter
+- **[isort](https://pycqa.github.io/isort/)** - Import sorter
+- **[Ruff](https://beta.ruff.rs/docs/)** - Fast linter and formatter
+- **[MyPy](https://mypy.readthedocs.io/)** - Static type checker (configured but not enforced in pre-commit)
 
-- **[Black](https://black.readthedocs.io/)**: Code formatter
-- **[isort](https://pycqa.github.io/isort/)**: Import sorter
-- **[Ruff](https://beta.ruff.rs/docs/)**: Fast linter and formatter
-- **[MyPy](https://mypy.readthedocs.io/)**: Static type checker
-
-These tools are automatically installed when you set up the development environment.
+All tools are automatically installed when you run `uv sync`.
 
 #### Configuration
 
-The formatting configuration is defined in the root `pyproject.toml` file:
+Formatting configuration is defined in [`pyproject.toml`](./pyproject.toml). See the `[tool.black]`, `[tool.ruff]`, `[tool.mypy]`, and `[tool.isort]` sections for all settings.
 
-```toml
-[tool.black]
-line-length = 100
-target-version = ["py311"]
-
-[tool.ruff]
-fix = true
-line-length = 100
-target-version = "py311"
-
-[tool.ruff.lint]
-select = ["E", "F", "B", "I"]
-ignore = [
-    "E501", "E402", "I001", "I002", "B007", "B023", "B024", "B027", "B028",
-    "B904", "B905", "E711", "E712", "E722", "E731", "F401", "F403", "F405",
-    "F811", "F821", "F841"
-]
-fix = true
-
-[tool.ruff.format]
-docstring-code-format = true
-
-[tool.mypy]
-check_untyped_defs = true
-disallow_untyped_defs = true
-ignore_missing_imports = true
-python_version = "3.11"
-show_error_codes = true
-strict = true
-warn_return_any = true
-warn_unused_ignores = false
-
-[tool.isort]
-profile = "black"
-```
-
-#### Key Formatting Rules
+#### Key Rules
 
 - **Line Length**: Maximum of 100 characters
-- **Python Version**: Code should be compatible with Python 3.11+
+- **Python Version**: Code must be compatible with Python 3.12+
 - **Imports**: Automatically sorted (using Ruff's "I" rule)
 - **Type Hints**: Required for all function definitions (strict mypy mode)
 
-#### IDE Integration
-
-The repository includes VSCode workspace configurations that enable automatic formatting. When you open the workspace files (as recommended in the setup instructions), the correct formatting settings are automatically applied.
+<details>
+<summary>IDE configuration details</summary>
 
 ##### Python-specific settings
 
-These are configured in `.vscode/settings.json`:
+Python-specific IDE settings are configured in [`.vscode/settings.json`](.vscode/settings.json), including:
+- Python interpreter path
+- Format on save
+- Code actions on save
+- Black formatter configuration
+- Ruff and MyPy integration
 
-```json
-{
-  "python.defaultInterpreterPath": "${workspaceFolder}/.venv/bin/python",
-  "editor.formatOnSave": true,
-  "editor.codeActionsOnSave": {
-    "source.organizeImports": "explicit",
-    "source.fixAll": "explicit"
-  },
-  "[python]": {
-    "editor.defaultFormatter": "ms-python.black-formatter"
-  },
-  "python.formatting.provider": "black",
-  "ruff.configuration": "${workspaceFolder}/pyproject.toml",
-  "mypy-type-checker.args": ["--config-file", "${workspaceFolder}/pyproject.toml"],
-  "mypy-type-checker.path": ["${workspaceFolder}"]
-}
-```
+##### JS/TS-specific settings
 
-##### **JS/TS-specific settings**
+JavaScript/TypeScript formatting settings are also in [`.vscode/settings.json`](.vscode/settings.json), ensuring Prettier is used for all JS/TS files.
 
-```json
-"[javascript][typescript][typescriptreact][javascriptreact]": {
-  "editor.defaultFormatter": "esbenp.prettier-vscode"
-}
-```
-
-- Ensures Prettier is used for all JS/TS files for consistent formatting.
-
-Recommended VS Code Extensions
+##### Recommended VS Code Extensions
 
 - **Black Formatter** – `ms-python.black-formatter`
 - **Ruff** – `charliermarsh.ruff`
@@ -244,9 +178,12 @@ Recommended VS Code Extensions
 - **Prettier** – `esbenp.prettier-vscode`
 - **Mypy Type Checker** – `ms-python.mypy-type-checker`
 
-> VSCode will automatically suggest installing the recommended extensions when you open the workspace.
+> VS Code will automatically suggest installing the recommended extensions when you open the workspace.
 
-#### Manual Formatting
+</details>
+
+<details>
+<summary>Manual formatting commands</summary>
 
 To manually format code:
 
@@ -264,20 +201,24 @@ uv run ruff check .
 uv run mypy .
 ```
 
+</details>
+
 #### Pre-commit Validation
 
-Before submitting a pull request, ensure your code passes all formatting checks:
+Before submitting a pull request, ensure your code passes all formatting checks.
 
-**Option 1: Run all hooks via pre-commit (all in a single command)**
+**Recommended: Run all hooks via pre-commit**
 
 ```bash
-# Run hooks on staged files (recommended for quick checks)
 uv run pre-commit run
 ```
 
-- Automatically runs Black, Ruff, isort, Mypy, Prettier, and any other configured hooks.
+This automatically runs Black, Ruff, isort, Prettier, TypeScript type checking, and other configured hooks. See [`.pre-commit-config.yaml`](.pre-commit-config.yaml) for the complete list.
 
-**Option 2: Run individual tools manually**
+> **Note:** MyPy is currently disabled in pre-commit hooks due to untyped codebase, but it's still configured and can be run manually.
+
+<details>
+<summary>Run individual tools manually</summary>
 
 ```bash
 # Python checks
@@ -287,57 +228,45 @@ uv run ruff check .
 uv run mypy .
 
 # JavaScript/TypeScript checks
-uv run prettier --check "**/*.{ts,tsx,js,jsx,json,md,yaml,yml}"
-
-# TypeScript typecheck
+pnpm prettier:check
 node ./scripts/typescript-typecheck.js
 ```
 
-### JavaScript / TypeScript Formatting (Prettier)
+</details>
+
+### JavaScript / TypeScript Formatting
 
 The project uses **Prettier** to ensure consistent formatting across all JS/TS/JSON/Markdown/YAML files.
 
 #### Installation
 
-All Node.js dependencies are managed via `pnpm`. Make sure you have run:
+All Node.js dependencies are managed via `pnpm`:
 
 ```bash
-# Install pnpm if you don't have it
-npm install -g pnpm
-
-# Install project dependencies
+npm install -g pnpm  # if not already installed
 pnpm install
 ```
-
-This installs Prettier and other JS/TS dependencies defined in `package.json`.
 
 #### Usage
 
 - **Check formatting** (without making changes):
-
-```bash
-pnpm prettier:check
-```
+  ```bash
+  pnpm prettier:check
+  ```
 
 - **Automatically format files**:
+  ```bash
+  pnpm prettier:format
+  ```
 
-```bash
-pnpm prettier:format
-```
+- **TypeScript type checking**:
+  ```bash
+  node ./scripts/typescript-typecheck.js
+  ```
 
-#### Type Checking (TypeScript)
+#### VS Code Integration
 
-- Run the TypeScript type checker:
-
-```bash
-node ./scripts/typescript-typecheck.js
-```
-
-#### VSCode Integration
-
-- The workspace config ensures Prettier is used automatically for JS/TS/JSON/Markdown/YAML files.
-- Recommended extension: Prettier – Code Formatter
-- Ensure `editor.formatOnSave` is enabled in VSCode for automatic formatting.
+The workspace config ensures Prettier is used automatically for JS/TS/JSON/Markdown/YAML files. Ensure `editor.formatOnSave` is enabled in VS Code.
 
 ### Swift Code (Lume)
 
@@ -346,6 +275,8 @@ For Swift code in the `libs/lume` directory:
 - Follow the [Swift API Design Guidelines](https://www.swift.org/documentation/api-design-guidelines/)
 - Use SwiftFormat for consistent formatting
 - Code will be automatically formatted on save when using the lume workspace
+
+Refer to [`libs/lume/Development.md`](./libs/lume/Development.md) for detailed Lume development instructions.
 
 ## Releasing Packages
 
@@ -359,13 +290,12 @@ All packages are managed through a single consolidated workflow: [Bump Version](
 
 **Supported packages:**
 
-- cua-agent
-- cua-computer
-- cua-computer-server
-- cua-core
-- cua-mcp-server
-- cua-som
-- pylume
+- `cua-agent`
+- `cua-computer`
+- `cua-computer-server`
+- `cua-core`
+- `cua-mcp-server`
+- `cua-som`
 
 **How to use:**
 
@@ -376,9 +306,26 @@ All packages are managed through a single consolidated workflow: [Bump Version](
 5. Click "Run workflow" to start the version bump
 6. The workflow will automatically commit changes and push to main
 
+<details>
+<summary>Local Testing (Advanced)</summary>
+
+The Makefile provides utility targets for local testing only:
+
+```bash
+# Test version bump locally (dry run)
+make dry-run-patch-core
+
+# View current versions
+make show-versions
+```
+
+**Note:** For production releases, always use the GitHub Actions workflows above instead of running Makefile commands directly.
+
+</details>
+
 ## Releasing a New CLI Version
 
-To release a new version of the CUA CLI, follow these steps:
+To release a new version of the CUA CLI (`@trycua/cli`):
 
 ### 1. Update the Version
 
@@ -395,11 +342,13 @@ To release a new version of the CUA CLI, follow these steps:
 5. Click "Run workflow"
 
 The workflow will:
-
 - Build single-file executables for all supported platforms
 - Publish the package to npm
 - Create a GitHub release with the version tag (format: `cua-vX.Y.Z`)
 - Attach all platform-specific binaries to the release
+
+<details>
+<summary>3-5. Verify, update docs, and announce</summary>
 
 ### 3. Verify the Release
 
@@ -418,7 +367,6 @@ The workflow will:
 ### 4. Update Documentation
 
 Update any relevant documentation with the new version number, including:
-
 - Example code in documentation
 - Any version-specific instructions
 - Compatibility matrices
@@ -429,7 +377,12 @@ Update any relevant documentation with the new version number, including:
 - Update the changelog if maintained separately
 - Announce in relevant channels (Slack, Discord, etc.)
 
+</details>
+
 ---
+
+<details>
+<summary>Rolling Back a Version Bump</summary>
 
 ### Rolling Back a Version Bump
 
@@ -474,7 +427,8 @@ git push origin :refs/tags/core-v0.1.9
 git push origin main
 ```
 
-**Per-package tag patterns:**
+<details>
+<summary>Per-package tag patterns</summary>
 
 Each package uses its own tag format defined in `.bumpversion.cfg`:
 
@@ -482,20 +436,9 @@ Each package uses its own tag format defined in `.bumpversion.cfg`:
 - **cua-computer**: `computer-v{version}` (e.g., `computer-v0.4.7`)
 - **cua-agent**: `agent-v{version}` (e.g., `agent-v0.4.35`)
 - **cua-som**: `som-v{version}` (e.g., `som-v0.1.3`)
-- **pylume**: `pylume-v{version}` (e.g., `pylume-v0.2.1`)
 - **cua-computer-server**: `computer-server-v{version}` (e.g., `computer-server-v0.1.27`)
 - **cua-mcp-server**: `mcp-server-v{version}` (e.g., `mcp-server-v0.1.14`)
 
-### Local Testing (Advanced)
+</details>
 
-The Makefile targets are kept for local testing only:
-
-```bash
-# Test version bump locally (dry run)
-make dry-run-patch-core
-
-# View current versions
-make show-versions
-```
-
-**Note:** For production releases, always use the GitHub Actions workflows above instead of running Makefile commands directly.
+</details>

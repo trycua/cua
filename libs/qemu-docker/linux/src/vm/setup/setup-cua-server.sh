@@ -20,7 +20,7 @@ log "=== Installing CUA Computer Server ==="
 
 # Install Python 3 and venv
 log "Installing Python 3 and dependencies..."
-sudo apt-get install -y python3 python3-venv python3-pip python3-tk python3-dev
+sudo apt-get install -y python3 python3-venv python3-pip python3-tk python3-dev gnome-screenshot
 
 # Create CUA directory
 log "Creating CUA directory at $CUA_DIR..."
@@ -41,7 +41,7 @@ log "Upgrading pip, setuptools, and wheel..."
 "$VENV_DIR/bin/pip" install --upgrade pip setuptools wheel
 
 log "Installing cua-computer-server..."
-"$VENV_DIR/bin/pip" install --upgrade cua-computer-server
+"$VENV_DIR/bin/pip" install --upgrade cua-computer-server "Pillow>=9.2.0"
 log "cua-computer-server installed successfully"
 
 # Open firewall for port 5000 (if ufw is available)

@@ -1,0 +1,76 @@
+---
+title: Introduction
+---
+
+import { Eye, Zap, Cpu } from 'lucide-react';
+
+<div className="not-prose -mt-2 mb-6">
+  <p className="text-fd-primary font-semibold text-sm mb-1">Set-of-Mark</p>
+  <h1 className="text-3xl font-bold tracking-tight md:text-4xl">Set-of-Mark (SOM)</h1>
+</div>
+
+**Set-of-Mark (SOM)** is a visual grounding component for the Computer-Use Agent (CUA) framework, designed for detecting and analyzing UI elements in screenshots. Optimized for macOS Silicon with Metal Performance Shaders (MPS), it combines YOLO-based icon detection with EasyOCR text recognition to provide comprehensive UI element analysis.
+
+## Features
+
+<div className="grid grid-cols-1 md:grid-cols-3 gap-4 my-6">
+  <div className="p-4 border rounded-lg">
+    <Zap className="w-6 h-6 mb-2 text-fd-primary" />
+    <h3 className="font-semibold mb-2">Apple Silicon Optimized</h3>
+    <p className="text-sm text-muted-foreground">Uses Metal Performance Shaders (MPS) for accelerated processing on Apple Silicon devices</p>
+  </div>
+  <div className="p-4 border rounded-lg">
+    <Eye className="w-6 h-6 mb-2 text-fd-primary" />
+    <h3 className="font-semibold mb-2">Multi-Modal Detection</h3>
+    <p className="text-sm text-muted-foreground">Combines YOLO-based icon detection with EasyOCR text recognition for comprehensive UI analysis</p>
+  </div>
+  <div className="p-4 border rounded-lg">
+    <Cpu className="w-6 h-6 mb-2 text-fd-primary" />
+    <h3 className="font-semibold mb-2">Automatic Hardware Detection</h3>
+    <p className="text-sm text-muted-foreground">Automatically detects and uses the best available hardware (MPS → CUDA → CPU)</p>
+  </div>
+</div>
+
+## System Requirements
+
+- **Recommended**: macOS with Apple Silicon
+  - Uses Metal Performance Shaders (MPS)
+  - Multi-scale detection enabled
+  - ~0.4s average detection time
+- **Supported**: Any Python 3.11+ environment
+  - Falls back to CPU if no GPU available
+  - Single-scale detection on CPU
+  - ~1.3s average detection time
+
+## Quick Start
+
+```python
+from som import OmniParser
+from PIL import Image
+
+# Initialize parser
+parser = OmniParser()
+
+# Process an image
+image = Image.open("screenshot.png")
+result = parser.parse(
+    image,
+    box_threshold=0.3,    # Confidence threshold
+    iou_threshold=0.1,    # Overlap threshold
+    use_ocr=True         # Enable text detection
+)
+
+# Access results
+for elem in result.elements:
+    if elem.type == "icon":
+        print(f"Icon: confidence={elem.confidence:.3f}, bbox={elem.bbox.coordinates}")
+    else:  # text
+        print(f"Text: '{elem.content}', confidence={elem.confidence:.3f}")
+```
+
+## What's Next?
+
+- [Installation](/set-of-mark/installation) - Install SOM
+- [Quickstart](/set-of-mark/quickstart) - Get started with SOM
+- [Configuration](/set-of-mark/configuration) - Configure detection parameters
+

@@ -1,0 +1,86 @@
+---
+title: Configuration
+---
+
+## Configuration Parameters
+
+Set-of-Mark provides several configuration options to fine-tune detection performance.
+
+### Detection Thresholds
+
+```python
+result = parser.parse(
+    image,
+    box_threshold=0.3,    # Minimum confidence for detections (0.0-1.0)
+    iou_threshold=0.1,    # Intersection over Union threshold for NMS (0.0-1.0)
+    use_ocr=True          # Enable/disable text recognition
+)
+```
+
+### Threshold Guidelines
+
+- **box_threshold**: Controls the minimum confidence score for detections
+  - Lower values (0.1-0.3): More detections, may include false positives
+  - Higher values (0.5-0.7): Fewer but more confident detections
+  - Default: 0.3
+
+- **iou_threshold**: Controls non-maximum suppression (NMS) overlap
+  - Lower values (0.1-0.2): More aggressive suppression, fewer overlapping boxes
+  - Higher values (0.3-0.5): Less suppression, more overlapping detections
+  - Default: 0.1
+
+### Hardware Configuration
+
+SOM automatically detects and uses the best available hardware:
+
+1. **Metal Performance Shaders (MPS)** - Apple Silicon (recommended)
+2. **CUDA** - NVIDIA GPUs
+3. **CPU** - Fallback option
+
+No manual configuration needed - SOM handles this automatically.
+
+### Performance Tuning
+
+For optimal performance on Apple Silicon:
+
+```python
+# Multi-scale detection (enabled by default on Apple Silicon)
+parser = OmniParser()
+result = parser.parse(image, use_ocr=True)
+```
+
+For CPU-only environments:
+
+```python
+# Single-scale detection (automatic fallback)
+parser = OmniParser()
+result = parser.parse(image, use_ocr=False)  # Disable OCR for faster processing
+```
+
+## Advanced Configuration
+
+### Custom Model Paths
+
+```python
+from som import OmniParser
+
+# Initialize with custom paths (if needed)
+parser = OmniParser(
+    model_path="/path/to/custom/model"
+)
+```
+
+### Batch Processing
+
+```python
+images = [Image.open(f"img_{i}.png") for i in range(10)]
+results = [parser.parse(img) for img in images]
+```
+
+## Best Practices
+
+1. **Use appropriate thresholds** for your use case
+2. **Enable OCR** only when text detection is needed (slower)
+3. **Use Apple Silicon** for best performance
+4. **Adjust thresholds** based on your UI complexity
+

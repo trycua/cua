@@ -1,6 +1,6 @@
 {
-  "title": "Computer SDK",
-  "description": "Build computer-using agents with the Computer SDK",
+  "title": "Computer",
+  "description": "Automate Windows, Linux, and macOS sandboxes with a consistent API",
   "pages": [
     "computers",
     "commands",

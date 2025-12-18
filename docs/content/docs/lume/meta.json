@@ -1,0 +1,5 @@
+{
+  "title": "Lume",
+  "description": "macOS virtualization CLI tool",
+  "pages": ["index", "installation", "prebuilt-images", "cli-reference", "http-api", "faq"]
+}

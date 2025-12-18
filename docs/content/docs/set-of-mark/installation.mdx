@@ -1,0 +1,38 @@
+---
+title: Installation
+---
+
+## Installation
+
+Install Set-of-Mark using pip:
+
+```bash
+pip install cua-som
+```
+
+Or install from source:
+
+```bash
+# Using PDM (recommended)
+pdm install
+
+# Using pip
+pip install -e .
+```
+
+## Requirements
+
+- Python 3.11+
+- PyTorch (automatically installed)
+- PIL/Pillow for image handling
+- EasyOCR for text recognition (optional, for OCR features)
+
+## Verify Installation
+
+```python
+from som import OmniParser
+
+parser = OmniParser()
+print("SOM installed successfully!")
+```
+

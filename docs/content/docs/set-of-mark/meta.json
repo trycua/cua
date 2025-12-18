@@ -1,0 +1,11 @@
+{
+  "title": "Set-of-Mark",
+  "description": "Visual grounding component for detecting and analyzing UI elements",
+  "pages": [
+    "index",
+    "installation",
+    "quickstart",
+    "configuration"
+  ]
+}
+

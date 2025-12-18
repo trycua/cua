@@ -45,10 +45,10 @@ const config = {
         destination: '/get-started/quickstart',
         permanent: true,
       },
-      // Moved telemetry to agent-sdk section
+      // Moved telemetry to agent section
       {
         source: '/telemetry',
-        destination: '/agent-sdk/telemetry',
+        destination: '/agent/telemetry',
         permanent: true,
       },
       // Removed quickstart-cli, consolidated into main quickstart

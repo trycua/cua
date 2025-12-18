@@ -1,5 +1,8 @@
 {
+  "title": "MCP",
+  "description": "MCP server for Computer-Use Agents",
   "pages": [
+    "index",
     "installation",
     "configuration",
     "usage",

@@ -1,0 +1,72 @@
+---
+title: Quickstart
+---
+
+## Quickstart Guide
+
+Get started with Set-of-Mark in minutes.
+
+### Basic Usage
+
+```python
+from som import OmniParser
+from PIL import Image
+
+# Initialize parser
+parser = OmniParser()
+
+# Load an image
+image = Image.open("screenshot.png")
+
+# Parse the image
+result = parser.parse(
+    image,
+    box_threshold=0.3,    # Confidence threshold for detections
+    iou_threshold=0.1,    # Overlap threshold for NMS
+    use_ocr=True          # Enable text detection
+)
+
+# Access detected elements
+for elem in result.elements:
+    if elem.type == "icon":
+        print(f"Icon detected:")
+        print(f"  Confidence: {elem.confidence:.3f}")
+        print(f"  Bounding box: {elem.bbox.coordinates}")
+    elif elem.type == "text":
+        print(f"Text detected: '{elem.content}'")
+        print(f"  Confidence: {elem.confidence:.3f}")
+        print(f"  Bounding box: {elem.bbox.coordinates}")
+```
+
+### Working with Results
+
+```python
+# Get all icons
+icons = [elem for elem in result.elements if elem.type == "icon"]
+
+# Get all text elements
+text_elements = [elem for elem in result.elements if elem.type == "text"]
+
+# Get elements in a specific region
+from som.models import BoundingBox
+
+region = BoundingBox(x=100, y=100, width=200, height=200)
+elements_in_region = [
+    elem for elem in result.elements
+    if elem.bbox.intersects(region)
+]
+```
+
+### Visualization
+
+```python
+# Visualize results with numbered annotations
+visualized = parser.visualize(result, image)
+visualized.save("annotated_screenshot.png")
+```
+
+## Next Steps
+
+- Learn about [configuration options](/set-of-mark/configuration)
+- Explore advanced features in the [API reference](/set-of-mark/configuration)
+

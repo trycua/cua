@@ -91,6 +91,7 @@ class Computer:
         noVNC_port: Optional[int] = 8006,
         api_port: Optional[int] = None,
         host: str = os.environ.get("PYLUME_HOST", "localhost"),
+        api_host: Optional[str] = None,
         storage: Optional[str] = None,
         ephemeral: bool = False,
         api_key: Optional[str] = None,
@@ -115,9 +116,11 @@ class Computer:
                       LogLevel enum values are still accepted for backward compatibility
             telemetry_enabled: Whether to enable telemetry tracking. Defaults to True.
             provider_type: The VM provider type to use (lume, qemu, cloud)
-            port: Optional port to use for the VM provider server
+            provider_port: Optional port to use for the VM provider server
             noVNC_port: Optional port for the noVNC web interface (Lumier provider)
+            api_port: Optional port for the computer API server
             host: Host to use for VM provider connections (e.g. "localhost", "host.docker.internal")
+            api_host: Optional host IP address to use when use_host_computer_server is True (defaults to "localhost")
             storage: Optional path for persistent VM storage (Lumier provider)
             ephemeral: Whether to use ephemeral storage
             api_key: Optional API key for cloud providers (defaults to CUA_API_KEY environment variable)
@@ -140,10 +143,11 @@ class Computer:
 
         # Store original parameters
         self.image = image
+        self.host = host
         self.provider_port = provider_port
         self.noVNC_port = noVNC_port
         self.api_port = api_port
-        self.host = host
+        self.api_host = api_host
         self.os_type = os_type
         self.provider_type = provider_type
         self.ephemeral = ephemeral
@@ -293,7 +297,7 @@ class Computer:
             if self.use_host_computer_server:
                 self.logger.info("Using host computer server")
                 # Set ip_address for host computer server mode
-                ip_address = "localhost"
+                ip_address = self.api_host if self.api_host else "localhost"
                 # Create the interface with explicit type annotation
                 from .interface.base import BaseComputerInterface
 
@@ -755,7 +759,7 @@ class Computer:
         """
         # For host computer server, always return localhost immediately
         if self.use_host_computer_server:
-            return "127.0.0.1"
+            return "127.0.0.1" if not self.api_host else self.api_host
 
         # Get IP from the provider - each provider implements its own waiting logic
         if self.config.vm_provider is None:

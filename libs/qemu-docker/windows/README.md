@@ -31,7 +31,7 @@ This ISO is used for automated Windows installation on first run.
 ### 2. Build the Image
 
 ```bash
-docker build -t cua-windows:dev .
+docker build -t trycua/cua-windows:dev .
 ```
 
 ### 3. First Run - Create Golden Image
@@ -55,7 +55,7 @@ docker run -it --rm \
     -e RAM_SIZE=8G \
     -e CPU_CORES=4 \
     -e DISK_SIZE=20G \
-    cua-windows:dev
+    trycua/cua-windows:dev
 ```
 
 **What happens during first run:**
@@ -82,7 +82,7 @@ docker run -it --rm \
     -p 5000:5000 \
     -e RAM_SIZE=8G \
     -e CPU_CORES=4 \
-    cua-windows:dev
+    trycua/cua-windows:dev
 ```
 
 **Access points:**
@@ -150,7 +150,7 @@ Setup scripts are in `src/vm/setup/`:
 After modifying, rebuild the image:
 
 ```bash
-docker build -t cua-windows:dev .
+docker build -t trycua/cua-windows:dev .
 ```
 
 ## Credits

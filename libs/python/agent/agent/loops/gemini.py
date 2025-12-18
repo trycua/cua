@@ -4,13 +4,14 @@ Gemini Computer Use agent loop
 Maps internal Agent SDK message format to Google's Gemini Computer Use API and back.
 
 Supported models:
-- gemini-2.5-computer-use-preview-10-2025
-- gemini-3-flash-preview (and variants)
+- gemini-2.5-computer-use-preview-10-2025 (uses built-in ComputerUse tool)
+- gemini-3-flash-preview (and variants) (uses custom function declarations)
+- gemini-3-pro-preview (and variants) (uses custom function declarations)
 
 Key features:
 - Lazy import of google.genai
-- Configure Computer Use tool with excluded browser-specific predefined functions
-- Optional custom function declarations hook for computer-call specific functions
+- Configure Computer Use tool with excluded browser-specific predefined functions (Gemini 2.5)
+- Custom function declarations for computer use actions (Gemini 3 models)
 - Convert Gemini function_call parts into internal computer_call actions
 - Gemini 3-specific: thinking_level and media_resolution parameters
 """
@@ -127,6 +128,197 @@ def _denormalize(v: int, size: int) -> int:
         return 0
 
 
+def _is_gemini_3_model(model: str) -> bool:
+    """Check if the model is a Gemini 3 model (Flash or Pro Preview)."""
+    return "gemini-3" in model.lower() or "gemini-2.0" in model.lower()
+
+
+def _build_custom_function_declarations(types: Any) -> List[Any]:
+    """
+    Build custom function declarations for Gemini 3 models.
+
+    These function declarations replicate the built-in ComputerUse tool actions
+    that are available in Gemini 2.5 Computer Use Preview, but using the standard
+    function calling interface.
+
+    Note: Coordinates use 0-999 normalized range for both x and y.
+    """
+    return [
+        types.FunctionDeclaration(
+            name="click_at",
+            description="Click at the specified x,y coordinates on the screen. Coordinates are normalized 0-999.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "x": {"type": "integer", "description": "X coordinate (0-999 normalized)"},
+                    "y": {"type": "integer", "description": "Y coordinate (0-999 normalized)"},
+                },
+                "required": ["x", "y"],
+            },
+        ),
+        types.FunctionDeclaration(
+            name="type_text_at",
+            description="Type text at the specified x,y coordinates. First clicks at the location, then types the text.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "x": {"type": "integer", "description": "X coordinate (0-999 normalized)"},
+                    "y": {"type": "integer", "description": "Y coordinate (0-999 normalized)"},
+                    "text": {"type": "string", "description": "Text to type"},
+                    "press_enter": {
+                        "type": "boolean",
+                        "description": "Whether to press Enter after typing",
+                    },
+                },
+                "required": ["x", "y", "text"],
+            },
+        ),
+        types.FunctionDeclaration(
+            name="hover_at",
+            description="Move the mouse cursor to the specified x,y coordinates without clicking.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "x": {"type": "integer", "description": "X coordinate (0-999 normalized)"},
+                    "y": {"type": "integer", "description": "Y coordinate (0-999 normalized)"},
+                },
+                "required": ["x", "y"],
+            },
+        ),
+        types.FunctionDeclaration(
+            name="key_combination",
+            description="Press a key combination (e.g., 'ctrl+c', 'alt+tab', 'enter').",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "keys": {
+                        "type": "string",
+                        "description": "Key combination to press (e.g., 'ctrl+c', 'enter', 'alt+tab')",
+                    },
+                },
+                "required": ["keys"],
+            },
+        ),
+        types.FunctionDeclaration(
+            name="scroll_at",
+            description="Scroll at the specified x,y coordinates in a given direction.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "x": {"type": "integer", "description": "X coordinate (0-999 normalized)"},
+                    "y": {"type": "integer", "description": "Y coordinate (0-999 normalized)"},
+                    "direction": {
+                        "type": "string",
+                        "enum": ["up", "down", "left", "right"],
+                        "description": "Direction to scroll",
+                    },
+                    "magnitude": {
+                        "type": "integer",
+                        "description": "Amount to scroll in pixels (default 800)",
+                    },
+                },
+                "required": ["x", "y", "direction"],
+            },
+        ),
+        types.FunctionDeclaration(
+            name="scroll_document",
+            description="Scroll the entire document/page in a given direction.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "direction": {
+                        "type": "string",
+                        "enum": ["up", "down", "left", "right"],
+                        "description": "Direction to scroll",
+                    },
+                },
+                "required": ["direction"],
+            },
+        ),
+        types.FunctionDeclaration(
+            name="drag_and_drop",
+            description="Drag from one coordinate to another.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "x": {
+                        "type": "integer",
+                        "description": "Starting X coordinate (0-999 normalized)",
+                    },
+                    "y": {
+                        "type": "integer",
+                        "description": "Starting Y coordinate (0-999 normalized)",
+                    },
+                    "destination_x": {
+                        "type": "integer",
+                        "description": "Destination X coordinate (0-999 normalized)",
+                    },
+                    "destination_y": {
+                        "type": "integer",
+                        "description": "Destination Y coordinate (0-999 normalized)",
+                    },
+                },
+                "required": ["x", "y", "destination_x", "destination_y"],
+            },
+        ),
+        types.FunctionDeclaration(
+            name="wait_5_seconds",
+            description="Wait for 5 seconds before the next action. Use this when waiting for page loads or animations.",
+            parameters={
+                "type": "object",
+                "properties": {},
+            },
+        ),
+        # # Browser-specific functions -> commented out for future support of browser exposed functions
+        # types.FunctionDeclaration(
+        #     name="navigate",
+        #     description="Navigate the browser to a specific URL.",
+        #     parameters={
+        #         "type": "object",
+        #         "properties": {
+        #             "url": {"type": "string", "description": "URL to navigate to"},
+        #         },
+        #         "required": ["url"],
+        #     },
+        # ),
+        # types.FunctionDeclaration(
+        #     name="open_web_browser",
+        #     description="Open a web browser.",
+        #     parameters={
+        #         "type": "object",
+        #         "properties": {},
+        #     },
+        # ),
+        # types.FunctionDeclaration(
+        #     name="search",
+        #     description="Perform a web search with the given query.",
+        #     parameters={
+        #         "type": "object",
+        #         "properties": {
+        #             "query": {"type": "string", "description": "Search query"},
+        #         },
+        #         "required": ["query"],
+        #     },
+        # ),
+        # types.FunctionDeclaration(
+        #     name="go_back",
+        #     description="Go back to the previous page in the browser.",
+        #     parameters={
+        #         "type": "object",
+        #         "properties": {},
+        #     },
+        # ),
+        # types.FunctionDeclaration(
+        #     name="go_forward",
+        #     description="Go forward to the next page in the browser.",
+        #     parameters={
+        #         "type": "object",
+        #         "properties": {},
+        #     },
+        # ),
+    ]
+
+
 def _map_gemini_fc_to_computer_call(
     fc: Dict[str, Any],
     screen_w: int,
@@ -134,6 +326,11 @@ def _map_gemini_fc_to_computer_call(
 ) -> Optional[Dict[str, Any]]:
     name = fc.get("name")
     args = fc.get("args", {}) or {}
+
+    # Gemini 3 Flash uses "web_agent_api:" prefix for browser functions
+    # Strip the prefix to normalize function names
+    if name and name.startswith("web_agent_api:"):
+        name = name[len("web_agent_api:") :]
 
     action: Dict[str, Any] = {}
     if name == "click_at":
@@ -203,8 +400,40 @@ def _map_gemini_fc_to_computer_call(
         }
     elif name == "wait_5_seconds":
         action = {"type": "wait"}
+    # Browser-specific functions - use playwright_exec for browser control
+    # (Note: Gemini API does not respect exclusions, so we implement these)
+    elif name == "navigate":
+        url = args.get("url", "")
+        if url:
+            action = {"type": "playwright_exec", "command": "visit_url", "params": {"url": url}}
+        else:
+            return None
+    elif name == "open_web_browser":
+        # Open browser with blank page or google
+        action = {
+            "type": "playwright_exec",
+            "command": "visit_url",
+            "params": {"url": "https://www.google.com"},
+        }
+    elif name == "search":
+        query = args.get("query", "")
+        if query:
+            action = {
+                "type": "playwright_exec",
+                "command": "web_search",
+                "params": {"query": query},
+            }
+        else:
+            return None
+    elif name == "go_back":
+        # Browser back via Playwright's native navigation
+        action = {"type": "playwright_exec", "command": "go_back", "params": {}}
+    elif name == "go_forward":
+        # Browser forward via Playwright's native navigation
+        action = {"type": "playwright_exec", "command": "go_forward", "params": {}}
     else:
-        # Unsupported / excluded browser-specific or custom function; ignore
+        # Unsupported / unknown function
+        print(f"[WARN] Unsupported Gemini function: {name}")
         return None
 
     return {
@@ -215,8 +444,13 @@ def _map_gemini_fc_to_computer_call(
     }
 
 
-# Note: gemini-3-pro-preview does NOT support ComputerUse
-@register_agent(models=r"^(gemini-2\.5-computer-use-preview-10-2025|gemini-3-flash-preview)$")
+# Supported models:
+# - gemini-2.5-computer-use-preview-* : Uses built-in ComputerUse tool
+# - gemini-3-flash-preview-* / gemini-2.0-flash-* : Uses custom function declarations
+# - gemini-3-pro-preview-* : Uses custom function declarations
+@register_agent(
+    models=r"^(gemini-2\.5-computer-use-preview.*|gemini-3-flash-preview.*|gemini-3-pro-preview.*)$"
+)
 class GeminiComputerUseConfig(AsyncAgentConfig):
     async def predict_step(
         self,
@@ -254,18 +488,6 @@ class GeminiComputerUseConfig(AsyncAgentConfig):
         thinking_level = kwargs.pop("thinking_level", None)
         media_resolution = kwargs.pop("media_resolution", None)
 
-        # Build excluded predefined functions for browser-specific behavior
-        excluded = [
-            "open_web_browser",
-            "search",
-            "navigate",
-            "go_forward",
-            "go_back",
-            "scroll_document",
-        ]
-
-        # Optional custom functions: can be extended by host code via `tools` parameter later if desired
-        CUSTOM_FUNCTION_DECLARATIONS: List[Any] = []
         # Build thinking_config for Gemini 3 models if specified
         thinking_config = None
         if thinking_level:
@@ -299,20 +521,61 @@ class GeminiComputerUseConfig(AsyncAgentConfig):
                 # Assume it's already an SDK enum value
                 resolved_media_resolution = media_resolution
 
-        # Compose tools config
-        generate_content_config = types.GenerateContentConfig(
-            tools=[
-                types.Tool(
-                    computer_use=types.ComputerUse(
-                        environment=types.Environment.ENVIRONMENT_BROWSER,
-                        excluded_predefined_functions=excluded,
-                    )
-                ),
-                # types.Tool(function_declarations=CUSTOM_FUNCTION_DECLARATIONS),  # enable when custom functions needed
-            ],
-            thinking_config=thinking_config,
-            media_resolution=resolved_media_resolution,
-        )
+        # Compose tools config based on model type
+        # Gemini 2.5 Computer Use Preview uses built-in ComputerUse tool
+        # Gemini 3 Flash/Pro Preview uses custom function declarations
+        is_gemini_3 = _is_gemini_3_model(model)
+
+        if is_gemini_3:
+            # Use custom function declarations for Gemini 3 models
+            custom_functions = _build_custom_function_declarations(types)
+            print(f"[DEBUG] Using custom function declarations for Gemini 3 model: {model}")
+            print(f"[DEBUG] Number of custom functions: {len(custom_functions)}")
+
+            generate_content_config = types.GenerateContentConfig(
+                tools=[
+                    types.Tool(function_declarations=custom_functions),
+                ],
+                thinking_config=thinking_config,
+                media_resolution=resolved_media_resolution,
+            )
+        else:
+            excluded = [
+                "open_web_browser",
+                "search",
+                "navigate",
+                "go_forward",
+                "go_back",
+                "scroll_document",
+            ]
+
+            # Note: ENVIRONMENT_BROWSER biases model towards browser actions
+            # Use ENVIRONMENT_UNSPECIFIED for general desktop tasks
+            computer_environment = kwargs.pop("computer_environment", "browser")
+            env_map = {
+                "browser": types.Environment.ENVIRONMENT_BROWSER,
+                "unspecified": types.Environment.ENVIRONMENT_UNSPECIFIED,
+            }
+            resolved_environment = env_map.get(
+                computer_environment.lower(), types.Environment.ENVIRONMENT_BROWSER
+            )
+
+            print(f"[DEBUG] Using built-in ComputerUse tool for Gemini 2.5 model: {model}")
+            print(f"[DEBUG] Environment: {resolved_environment}")
+            print(f"[DEBUG] Excluded functions: {excluded}")
+
+            generate_content_config = types.GenerateContentConfig(
+                tools=[
+                    types.Tool(
+                        computer_use=types.ComputerUse(
+                            environment=resolved_environment,
+                            excluded_predefined_functions=excluded,
+                        )
+                    ),
+                ],
+                thinking_config=thinking_config,
+                media_resolution=resolved_media_resolution,
+            )
 
         print(generate_content_config)
 
@@ -351,6 +614,16 @@ class GeminiComputerUseConfig(AsyncAgentConfig):
             )
 
         response = client.models.generate_content(**api_kwargs)
+
+        # Debug: print raw function calls from response
+        try:
+            for p in response.candidates[0].content.parts:
+                if hasattr(p, "function_call") and p.function_call:
+                    print(
+                        f"[DEBUG] Raw function_call from model: name={p.function_call.name}, args={dict(p.function_call.args or {})}"
+                    )
+        except Exception as e:
+            print(f"[DEBUG] Error printing function calls: {e}")
 
         if _on_api_end:
             # Sanitize response to handle bytes fields (e.g., thought_signature in Gemini 3)
@@ -427,7 +700,8 @@ class GeminiComputerUseConfig(AsyncAgentConfig):
     ) -> Optional[Tuple[float, float]]:
         """Ask Gemini CUA to output a single click action for the given instruction.
 
-        Excludes all predefined tools except `click_at` and sends the screenshot.
+        For Gemini 2.5: Excludes all predefined tools except `click_at` and sends the screenshot.
+        For Gemini 3: Uses only the click_at function declaration.
         Returns pixel (x, y) if a click is proposed, else None.
         """
         genai, types = _lazy_import_genai()
@@ -440,32 +714,48 @@ class GeminiComputerUseConfig(AsyncAgentConfig):
         else:
             client = genai.Client()
 
-        # Exclude all but click_at
-        exclude_all_but_click = [
-            "open_web_browser",
-            "wait_5_seconds",
-            "go_back",
-            "go_forward",
-            "search",
-            "navigate",
-            "hover_at",
-            "type_text_at",
-            "key_combination",
-            "scroll_document",
-            "scroll_at",
-            "drag_and_drop",
-        ]
+        # Build tools config based on model type
+        is_gemini_3 = _is_gemini_3_model(model)
 
-        config = types.GenerateContentConfig(
-            tools=[
-                types.Tool(
-                    computer_use=types.ComputerUse(
-                        environment=types.Environment.ENVIRONMENT_BROWSER,
-                        excluded_predefined_functions=exclude_all_but_click,
-                    )
-                )
+        if is_gemini_3:
+            # For Gemini 3 models, use only click_at function declaration
+            click_function = types.FunctionDeclaration(
+                name="click_at",
+                description="Click at the specified x,y coordinates on the screen. Coordinates are normalized 0-999.",
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "x": {"type": "integer", "description": "X coordinate (0-999 normalized)"},
+                        "y": {"type": "integer", "description": "Y coordinate (0-999 normalized)"},
+                    },
+                    "required": ["x", "y"],
+                },
+            )
+            config = types.GenerateContentConfig(
+                tools=[
+                    types.Tool(function_declarations=[click_function]),
+                ]
+            )
+        else:
+            exclude_all_but_click = [
+                "open_web_browser",
+                "search",
+                "navigate",
+                "go_forward",
+                "go_back",
+                "scroll_document",
             ]
-        )
+
+            config = types.GenerateContentConfig(
+                tools=[
+                    types.Tool(
+                        computer_use=types.ComputerUse(
+                            environment=types.Environment.ENVIRONMENT_BROWSER,
+                            excluded_predefined_functions=exclude_all_but_click,
+                        )
+                    )
+                ]
+            )
 
         # Prepare prompt parts
         try:

@@ -207,6 +207,14 @@ class BrowserManager:
             current_url = self.page.url
             return {"success": True, "url": current_url}
 
+        elif cmd == "go_back":
+            await self.page.go_back()
+            return {"success": True, "url": self.page.url}
+
+        elif cmd == "go_forward":
+            await self.page.go_forward()
+            return {"success": True, "url": self.page.url}
+
         else:
             return {"success": False, "error": f"Unknown command: {cmd}"}
 

@@ -603,7 +603,7 @@ def _map_gemini_fc_to_computer_call(
 
 # Supported models:
 # - gemini-2.5-computer-use-preview-* : Uses built-in ComputerUse tool
-# - gemini-3-flash-preview-* / gemini-2.0-flash-* : Uses custom function declarations
+# - gemini-3-flash-preview-* : Uses custom function declarations
 # - gemini-3-pro-preview-* : Uses custom function declarations
 @register_agent(
     models=r"^(gemini-2\.5-computer-use-preview.*|gemini-3-flash-preview.*|gemini-3-pro-preview.*)$"

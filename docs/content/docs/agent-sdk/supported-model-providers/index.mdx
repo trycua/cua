@@ -60,6 +60,37 @@ model="openai/computer-use-preview"
 
 **Setup:** Set `OPENAI_API_KEY` environment variable with your OpenAI API key.
 
+### Google Gemini (BYOK)
+
+Access Google's Gemini models with native computer use capabilities using your own credentials (BYOK).
+
+```python
+model="google/gemini-2.5-flash-preview-05-20"  # Gemini 2.5 Flash (fastest)
+model="google/gemini-2.5-pro-preview-05-06"    # Gemini 2.5 Pro (most capable)
+```
+
+**Setup Options:**
+
+#### Option 1: Google AI Studio (Recommended for quick start)
+
+Set the `GOOGLE_API_KEY` environment variable with your Google AI Studio API key.
+
+```bash
+export GOOGLE_API_KEY="your-google-ai-studio-key"
+```
+
+#### Option 2: Google Cloud Vertex AI
+
+For production deployments or enterprise use, configure Vertex AI credentials:
+
+```bash
+export GOOGLE_CLOUD_PROJECT="your-gcp-project-id"
+export GOOGLE_APPLICATION_CREDENTIALS="/path/to/service-account.json"
+export GOOGLE_CLOUD_LOCATION="us-central1"  # or your preferred region
+```
+
+**Note:** When `GOOGLE_API_KEY` is set, it takes precedence. If not set, the SDK will automatically use Vertex AI with the configured Google Cloud credentials.
+
 ### UI-TARS (Local or Huggingface Inference)
 
 Run UI-TARS models locally for privacy and offline use.

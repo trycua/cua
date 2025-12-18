@@ -630,7 +630,7 @@ class GeminiComputerUseConfig(AsyncAgentConfig):
         # Authentication follows two modes based on environment variables:
         # 1. Google AI Studio: Set GOOGLE_API_KEY
         # 2. Vertex AI: Set GOOGLE_CLOUD_PROJECT, GOOGLE_CLOUD_LOCATION, GOOGLE_GENAI_USE_VERTEXAI=True
-        api_key = os.getenv("GOOGLE_API_KEY")
+        api_key = kwargs.get("api_key", os.getenv("GOOGLE_API_KEY"))
 
         if api_key:
             client = genai.Client(api_key=api_key)
@@ -847,7 +847,7 @@ class GeminiComputerUseConfig(AsyncAgentConfig):
         import os
 
         # Authentication: GOOGLE_API_KEY for AI Studio, or Vertex AI env vars
-        api_key = os.getenv("GOOGLE_API_KEY")
+        api_key = kwargs.get("api_key", os.getenv("GOOGLE_API_KEY"))
         if api_key:
             client = genai.Client(api_key=api_key)
         else:

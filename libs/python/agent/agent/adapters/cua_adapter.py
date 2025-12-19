@@ -24,6 +24,10 @@ class CUAAdapter(CustomLLM):
         if "anthropic/" in model:
             model = f"anthropic/{self._normalize_model(model)}"
             api_base = api_base.removesuffix("/v1")
+        elif "gemini/" in model or "google/" in model:
+            # Route to Gemini pass-through endpoint
+            model = f"gemini/{self._normalize_model(model)}"
+            api_base = api_base.removesuffix("/v1") + "/gemini"
         else:
             model = f"openai/{self._normalize_model(model)}"
 
@@ -34,6 +38,10 @@ class CUAAdapter(CustomLLM):
             "api_key": kwargs.get("api_key") or self.api_key,
             "stream": False,
         }
+
+        # Forward tools if provided
+        if "tools" in kwargs:
+            params["tools"] = kwargs["tools"]
 
         if "optional_params" in kwargs:
             params.update(kwargs["optional_params"])
@@ -71,6 +79,10 @@ class CUAAdapter(CustomLLM):
         if "anthropic/" in model:
             model = f"anthropic/{self._normalize_model(model)}"
             api_base = api_base.removesuffix("/v1")
+        elif "gemini/" in model or "google/" in model:
+            # Route to Gemini pass-through endpoint
+            model = f"gemini/{self._normalize_model(model)}"
+            api_base = api_base.removesuffix("/v1") + "/gemini"
         else:
             model = f"openai/{self._normalize_model(model)}"
 
@@ -81,6 +93,10 @@ class CUAAdapter(CustomLLM):
             "api_key": kwargs.get("api_key") or self.api_key,
             "stream": False,
         }
+
+        # Forward tools if provided
+        if "tools" in kwargs:
+            params["tools"] = kwargs["tools"]
 
         if "optional_params" in kwargs:
             params.update(kwargs["optional_params"])

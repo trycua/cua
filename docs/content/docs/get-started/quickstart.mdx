@@ -99,7 +99,7 @@ You can run your Cua computer in the cloud (recommended for easiest setup), loca
         **2. Pull the QEMU Linux image:**
 
         ```bash
-        docker pull trycua/cua-linux:latest
+        docker pull trycua/cua-qemu-linux:latest
         ```
 
         **3. Download Ubuntu 22.04 LTS Server ISO:**
@@ -119,7 +119,7 @@ You can run your Cua computer in the cloud (recommended for easiest setup), loca
             -e RAM_SIZE=8G \
             -e CPU_CORES=4 \
             -e DISK_SIZE=64G \
-            trycua/cua-linux:latest
+            trycua/cua-qemu-linux:latest
         ```
 
         The container will install Ubuntu Desktop from the ISO and shut down when complete. Monitor progress at [http://localhost:8006](http://localhost:8006).
@@ -298,7 +298,7 @@ Connect to your Cua computer and perform basic interactions, such as taking scre
             computer = Computer(
                 os_type="linux",
                 provider_type="docker",
-                image="trycua/cua-linux:latest",
+                image="trycua/cua-qemu-linux:latest",
                 storage="~/cua-storage/linux",
                 run_opts={
                     "devices": ["/dev/kvm"],  # Optional but recommended

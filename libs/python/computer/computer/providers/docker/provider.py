@@ -57,7 +57,7 @@ class DockerProvider(BaseVMProvider):
                    Supported images:
                    - "trycua/cua-ubuntu:latest" (Kasm-based)
                    - "trycua/cua-xfce:latest" (vanilla XFCE)
-                   - "trycua/cua-linux:latest" (QEMU-based, only supports Ubuntu for now)
+                   - "trycua/cua-qemu-linux:latest" (QEMU-based, only supports Ubuntu for now)
                    - "trycua/cua-windows:latest" (QEMU-based, only supports Windows 11 Enterprise for now)
             verbose: Enable verbose logging
             ephemeral: Use ephemeral (temporary) storage
@@ -96,10 +96,7 @@ class DockerProvider(BaseVMProvider):
             self._home_dir = "/home/cua"
             self._image_type = "docker-xfce"
             logger.info(f"Detected docker-xfce image: using {self._home_dir}")
-        elif any(
-            x in self.image.lower()
-            for x in ("cua-linux", "cua-windows", "qemu-linux", "qemu-windows")
-        ):
+        elif any(x in self.image.lower() for x in ("qemu-linux", "qemu-windows")):
             # QEMU-based images
             self._home_dir = ""
             self._image_type = "qemu"

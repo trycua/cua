@@ -12,6 +12,7 @@ import logging
 import re
 import subprocess
 import time
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from ..base import BaseVMProvider, VMProviderType
@@ -56,6 +57,8 @@ class DockerProvider(BaseVMProvider):
                    Supported images:
                    - "trycua/cua-ubuntu:latest" (Kasm-based)
                    - "trycua/cua-xfce:latest" (vanilla XFCE)
+                   - "trycua/cua-linux:latest" (QEMU-based, only supports Ubuntu for now)
+                   - "trycua/cua-windows:latest" (QEMU-based, only supports Windows 11 Enterprise for now)
             verbose: Enable verbose logging
             ephemeral: Use ephemeral (temporary) storage
             vnc_port: Port for VNC interface (default: 6901)
@@ -66,12 +69,6 @@ class DockerProvider(BaseVMProvider):
         self.vnc_port = vnc_port
         self.ephemeral = ephemeral
 
-        # Handle ephemeral storage (temporary directory)
-        if ephemeral:
-            self.storage = "ephemeral"
-        else:
-            self.storage = storage
-
         self.shared_path = shared_path
         self.image = image
         self.verbose = verbose
@@ -81,13 +78,32 @@ class DockerProvider(BaseVMProvider):
         # Detect image type and configure user directory accordingly
         self._detect_image_config()
 
+        if self._image_type == "qemu":
+            if not storage or Path(storage).is_dir() is False:
+                raise ValueError(
+                    "Golden image storage path must be provided for QEMU-based images."
+                )
+            self.storage = storage
+        elif ephemeral:
+            self.storage = "ephemeral"  # Handle ephemeral storage (temporary directory)
+        else:
+            self.storage = storage
+
     def _detect_image_config(self):
         """Detect image type and configure paths accordingly."""
-        # Detect if this is a docker-xfce image or Kasm image
+        # Detect if this is a XFCE, Kasm or QEMU image
         if "docker-xfce" in self.image.lower() or "xfce" in self.image.lower():
             self._home_dir = "/home/cua"
             self._image_type = "docker-xfce"
             logger.info(f"Detected docker-xfce image: using {self._home_dir}")
+        elif any(
+            x in self.image.lower()
+            for x in ("cua-linux", "cua-windows", "qemu-linux", "qemu-windows")
+        ):
+            # QEMU-based images
+            self._home_dir = ""
+            self._image_type = "qemu"
+            logger.info("Detected QEMU image: using /")
         else:
             # Default to Kasm configuration
             self._home_dir = "/home/kasm-user"
@@ -279,25 +295,49 @@ class DockerProvider(BaseVMProvider):
             # Build docker run command
             cmd = ["docker", "run", "-d", "--name", name]
 
-            # Add memory limit if specified
-            if "memory" in run_opts:
-                memory_limit = self._parse_memory(run_opts["memory"])
-                cmd.extend(["--memory", memory_limit])
+            if self._image_type != "qemu":
+                # Add memory limit if specified
+                if "memory" in run_opts:
+                    memory_limit = self._parse_memory(run_opts["memory"])
+                    cmd.extend(["--memory", memory_limit])
 
-            # Add CPU limit if specified
-            if "cpu" in run_opts:
-                cpu_count = str(run_opts["cpu"])
-                cmd.extend(["--cpus", cpu_count])
+                # Add CPU limit if specified
+                if "cpu" in run_opts:
+                    cpu_count = str(run_opts["cpu"])
+                    cmd.extend(["--cpus", cpu_count])
+
+            # Add devices if specified (e.g., /dev/kvm for QEMU)
+            warn_no_kvm = False
+            if "devices" in run_opts:
+                devices = run_opts["devices"]
+                warn_no_kvm = self._image_type == "qemu" and "/dev/kvm" not in devices
+                for device in devices:
+                    cmd.extend(["--device", device])
+            elif "device" in run_opts:
+                warn_no_kvm = self._image_type == "qemu" and run_opts["device"] != "/dev/kvm"
+                cmd.extend(["--device", run_opts["device"]])
+
+            if warn_no_kvm:
+                logger.warning(
+                    "/dev/kvm device is recommended for QEMU images for better performance."
+                )
+
+            # Add NET_ADMIN capability for QEMU images
+            if self._image_type == "qemu":
+                cmd.extend(["--cap-add", "NET_ADMIN"])
 
             # Add port mappings
             vnc_port = run_opts.get("vnc_port", self.vnc_port)
             api_port = run_opts.get("api_port", self.api_port)
 
+            # Port mappings differ for QEMU vs Kasm/XFCE images
+            internal_vnc_port = 8006 if self._image_type == "qemu" else 6901
+            internal_api_port = 5000 if self._image_type == "qemu" else 8000
+
             if vnc_port:
-                cmd.extend(["-p", f"{vnc_port}:6901"])  # VNC port
+                cmd.extend(["-p", f"{vnc_port}:{internal_vnc_port}"])  # VNC port
             if api_port:
-                # Map the API port to container port 8000 (computer-server default)
-                cmd.extend(["-p", f"{api_port}:8000"])  # computer-server API port
+                cmd.extend(["-p", f"{api_port}:{internal_api_port}"])  # computer-server API port
 
             # Add volume mounts if storage is specified
             storage_path = storage or self.storage
@@ -313,6 +353,11 @@ class DockerProvider(BaseVMProvider):
             # Add environment variables
             cmd.extend(["-e", "VNC_PW=password"])  # Set VNC password
             cmd.extend(["-e", "VNCOPTIONS=-disableBasicAuth"])  # Disable VNC basic auth
+
+            # Add custom environment variables from run_opts
+            if "env" in run_opts and isinstance(run_opts["env"], dict):
+                for key, value in run_opts["env"].items():
+                    cmd.extend(["-e", f"{key}={value}"])
 
             # Apply display resolution if provided (e.g., "1024x768")
             display_resolution = run_opts.get("display")

@@ -27,7 +27,7 @@ class CUAAdapter(CustomLLM):
         elif "gemini/" in model or "google/" in model:
             # Route to Gemini pass-through endpoint
             model = f"gemini/{self._normalize_model(model)}"
-            api_base = api_base.removesuffix("/v1") + "/gemini"
+            api_base = api_base + "/gemini"
         else:
             model = f"openai/{self._normalize_model(model)}"
 
@@ -82,7 +82,7 @@ class CUAAdapter(CustomLLM):
         elif "gemini/" in model or "google/" in model:
             # Route to Gemini pass-through endpoint
             model = f"gemini/{self._normalize_model(model)}"
-            api_base = api_base.removesuffix("/v1") + "/gemini"
+            api_base = api_base + "/gemini"
         else:
             model = f"openai/{self._normalize_model(model)}"
 

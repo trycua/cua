@@ -25,7 +25,7 @@ Choose how you want to run your Cua computer. This will be the environment where
 
 You can run your Cua computer in the cloud (recommended for easiest setup), locally on macOS with Lume, locally on Windows with a Windows Sandbox, or in a Docker container on any platform. Choose the option that matches your system and needs.
 
-<Tabs items={['Cloud Sandbox', 'Linux on Docker', 'macOS Sandbox', 'Windows Sandbox']}>
+<Tabs items={['Cloud Sandbox', 'Linux on Docker', 'QEMU on Docker', 'macOS Sandbox', 'Windows Sandbox']}>
   <Tab value="Cloud Sandbox">
 
     Create and manage cloud sandboxes that run Linux (Ubuntu), Windows, or macOS.
@@ -81,6 +81,86 @@ You can run your Cua computer in the cloud (recommended for easiest setup), loca
     # OR KASM (Full-Featured) - full Ubuntu desktop
     docker pull --platform=linux/amd64 trycua/cua-ubuntu:latest
     ```
+
+  </Tab>
+  <Tab value="QEMU on Docker">
+
+    Run full Linux (Ubuntu Desktop) or Windows 11 VMs inside Docker containers using QEMU virtualization.
+
+    <Callout type="warn">
+      QEMU images require a **golden image preparation step** on first use. This involves downloading an ISO and running a one-time installation.
+    </Callout>
+
+    <Tabs items={['Linux', 'Windows']}>
+      <Tab value="Linux">
+
+        **1. Install Docker Desktop or Docker Engine**
+
+        **2. Pull the QEMU Linux image:**
+
+        ```bash
+        docker pull trycua/cua-linux:latest
+        ```
+
+        **3. Download Ubuntu 22.04 LTS Server ISO:**
+
+        - Download the [Ubuntu 22.04 Server ISO](https://releases.ubuntu.com/22.04/ubuntu-22.04.5-live-server-amd64.iso) (~2GB)
+
+        **4. Create golden image:**
+
+        ```bash
+        docker run -it --rm \
+            --device=/dev/kvm \
+            --cap-add NET_ADMIN \
+            --mount type=bind,source=/path/to/ubuntu-22.04.5-live-server-amd64.iso,target=/custom.iso \
+            -v ~/cua-storage/linux:/storage \
+            -p 8006:8006 \
+            -p 5000:5000 \
+            -e RAM_SIZE=8G \
+            -e CPU_CORES=4 \
+            -e DISK_SIZE=64G \
+            trycua/cua-linux:latest
+        ```
+
+        The container will install Ubuntu Desktop from the ISO and shut down when complete. Monitor progress at [http://localhost:8006](http://localhost:8006).
+
+      </Tab>
+      <Tab value="Windows">
+
+        **1. Install Docker Desktop or Docker Engine**
+
+        **2. Pull the QEMU Windows image:**
+
+        ```bash
+        docker pull trycua/cua-windows:latest
+        ```
+
+        **3. Download Windows 11 Enterprise Evaluation ISO:**
+
+        - Visit [Microsoft Evaluation Center](https://info.microsoft.com/ww-landing-windows-11-enterprise.html)
+        - Accept the Terms of Service
+        - Download **Windows 11 Enterprise Evaluation (90-day trial, English, United States)** ISO (~6GB)
+
+        **4. Create golden image:**
+
+        ```bash
+        docker run -it --rm \
+            --device=/dev/kvm \
+            --cap-add NET_ADMIN \
+            --mount type=bind,source=/path/to/windows-11-enterprise-eval.iso,target=/custom.iso \
+            -v ~/cua-storage/windows:/storage \
+            -p 8006:8006 \
+            -p 5000:5000 \
+            -e RAM_SIZE=8G \
+            -e CPU_CORES=4 \
+            -e DISK_SIZE=64G \
+            trycua/cua-windows:latest
+        ```
+
+        The container will install Windows 11 from the ISO and shut down when complete. Monitor progress at [http://localhost:8006](http://localhost:8006).
+
+      </Tab>
+    </Tabs>
 
   </Tab>
   <Tab value="macOS Sandbox">
@@ -141,7 +221,7 @@ Connect to your Cua computer and perform basic interactions, such as taking scre
 
     Then, connect to your desired computer environment:
 
-    <Tabs items={['Cloud Sandbox', 'Linux on Docker', 'macOS Sandbox', 'Windows Sandbox', 'Your host desktop']}>
+    <Tabs items={['Cloud Sandbox', 'Linux on Docker', 'QEMU on Docker', 'macOS Sandbox', 'Windows Sandbox', 'Your host desktop']}>
       <Tab value="Cloud Sandbox">
         Set your CUA API key (same key used for model inference) and connect to your sandbox:
         ```python
@@ -207,6 +287,80 @@ Connect to your Cua computer and perform basic interactions, such as taking scre
 
         asyncio.run(main())
         ```
+      </Tab>
+      <Tab value="QEMU on Docker">
+        <Tabs items={['Linux', 'Windows']}>
+          <Tab value="Linux">
+            ```python
+            from computer import Computer
+            import asyncio
+
+            computer = Computer(
+                os_type="linux",
+                provider_type="docker",
+                image="trycua/cua-linux:latest",
+                storage="~/cua-storage/linux",
+                run_opts={
+                    "devices": ["/dev/kvm"],  # Optional but recommended
+                },
+            )
+
+            async def main():
+                await computer.run()  # Boot from golden image
+                # Alternative: If your VM is not running, use start() instead:
+                # await computer.start()  # Start and connect
+
+                try:
+                    # Take a screenshot of the computer's current display
+                    screenshot = await computer.interface.screenshot()
+                    # Simulate a left-click at coordinates (100, 100)
+                    await computer.interface.left_click(100, 100)
+                    # Type "Hello!" into the active application
+                    await computer.interface.type_text("Hello!")
+                finally:
+                    await computer.disconnect()
+                    # Alternative: If you want to fully stop the VM, use stop() instead:
+                    # await computer.stop()  # Fully stop VM and disconnect
+
+            asyncio.run(main())
+            ```
+          </Tab>
+          <Tab value="Windows">
+            ```python
+            from computer import Computer
+            import asyncio
+
+            computer = Computer(
+                os_type="windows",
+                provider_type="docker",
+                image="trycua/cua-windows:latest",
+                storage="~/cua-storage/windows",
+                run_opts={
+                    "devices": ["/dev/kvm"],  # Optional but recommended
+                },
+            )
+
+            async def main():
+                await computer.run()  # Boot from golden image
+                # Alternative: If your VM is not running, use start() instead:
+                # await computer.start()  # Start and connect
+
+                try:
+                    # Take a screenshot of the computer's current display
+                    screenshot = await computer.interface.screenshot()
+                    # Simulate a left-click at coordinates (100, 100)
+                    await computer.interface.left_click(100, 100)
+                    # Type "Hello!" into the active application
+                    await computer.interface.type_text("Hello!")
+                finally:
+                    await computer.disconnect()
+                    # Alternative: If you want to fully stop the VM, use stop() instead:
+                    # await computer.stop()  # Fully stop VM and disconnect
+
+            asyncio.run(main())
+            ```
+          </Tab>
+        </Tabs>
       </Tab>
       <Tab value="macOS Sandbox">
         ```python

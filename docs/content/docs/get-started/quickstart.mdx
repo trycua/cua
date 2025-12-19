@@ -25,7 +25,7 @@ Choose how you want to run your Cua computer. This will be the environment where
 
 You can run your Cua computer in the cloud (recommended for easiest setup), locally on macOS with Lume, locally on Windows with a Windows Sandbox, or in a Docker container on any platform. Choose the option that matches your system and needs.
 
-<Tabs items={['Cloud Sandbox', 'Linux on Docker', 'QEMU on Docker', 'macOS Sandbox', 'Windows Sandbox']}>
+<Tabs items={['Cloud Sandbox', 'Linux on Docker', 'QEMU Docker', 'macOS Sandbox', 'Windows Sandbox']}>
   <Tab value="Cloud Sandbox">
 
     Create and manage cloud sandboxes that run Linux (Ubuntu), Windows, or macOS.
@@ -83,7 +83,7 @@ You can run your Cua computer in the cloud (recommended for easiest setup), loca
     ```
 
   </Tab>
-  <Tab value="QEMU on Docker">
+  <Tab value="QEMU Docker">
 
     Run full Linux (Ubuntu Desktop) or Windows 11 VMs inside Docker containers using QEMU virtualization.
 
@@ -221,7 +221,7 @@ Connect to your Cua computer and perform basic interactions, such as taking scre
 
     Then, connect to your desired computer environment:
 
-    <Tabs items={['Cloud Sandbox', 'Linux on Docker', 'QEMU on Docker', 'macOS Sandbox', 'Windows Sandbox', 'Your host desktop']}>
+    <Tabs items={['Cloud Sandbox', 'Linux on Docker', 'QEMU Docker', 'macOS Sandbox', 'Windows Sandbox', 'Your host desktop']}>
       <Tab value="Cloud Sandbox">
         Set your CUA API key (same key used for model inference) and connect to your sandbox:
         ```python
@@ -288,7 +288,7 @@ Connect to your Cua computer and perform basic interactions, such as taking scre
         asyncio.run(main())
         ```
       </Tab>
-      <Tab value="QEMU on Docker">
+      <Tab value="QEMU Docker">
         <Tabs items={['Linux', 'Windows']}>
           <Tab value="Linux">
             ```python

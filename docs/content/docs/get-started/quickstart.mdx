@@ -132,7 +132,7 @@ You can run your Cua computer in the cloud (recommended for easiest setup), loca
         **2. Pull the QEMU Windows image:**
 
         ```bash
-        docker pull trycua/cua-windows:latest
+        docker pull trycua/cua-qemu-windows:latest
         ```
 
         **3. Download Windows 11 Enterprise Evaluation ISO:**
@@ -154,7 +154,7 @@ You can run your Cua computer in the cloud (recommended for easiest setup), loca
             -e RAM_SIZE=8G \
             -e CPU_CORES=4 \
             -e DISK_SIZE=64G \
-            trycua/cua-windows:latest
+            trycua/cua-qemu-windows:latest
         ```
 
         The container will install Windows 11 from the ISO and shut down when complete. Monitor progress at [http://localhost:8006](http://localhost:8006).
@@ -333,7 +333,7 @@ Connect to your Cua computer and perform basic interactions, such as taking scre
             computer = Computer(
                 os_type="windows",
                 provider_type="docker",
-                image="trycua/cua-windows:latest",
+                image="trycua/cua-qemu-windows:latest",
                 storage="~/cua-storage/windows",
                 run_opts={
                     "devices": ["/dev/kvm"],  # Optional but recommended

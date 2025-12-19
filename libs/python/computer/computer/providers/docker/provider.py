@@ -58,7 +58,7 @@ class DockerProvider(BaseVMProvider):
                    - "trycua/cua-ubuntu:latest" (Kasm-based)
                    - "trycua/cua-xfce:latest" (vanilla XFCE)
                    - "trycua/cua-qemu-linux:latest" (QEMU-based, only supports Ubuntu for now)
-                   - "trycua/cua-windows:latest" (QEMU-based, only supports Windows 11 Enterprise for now)
+                   - "trycua/cua-qemu-windows:latest" (QEMU-based, only supports Windows 11 Enterprise for now)
             verbose: Enable verbose logging
             ephemeral: Use ephemeral (temporary) storage
             vnc_port: Port for VNC interface (default: 6901)

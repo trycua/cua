@@ -9,8 +9,13 @@ title: Supported Model Providers
 Use CUA's cloud inference API for intelligent routing and cost optimization with a single API key. CUA manages all provider infrastructure and credentials for you.
 
 ```python
+# Anthropic Claude models
 model="cua/anthropic/claude-sonnet-4.5"   # Claude Sonnet 4.5 (recommended)
 model="cua/anthropic/claude-haiku-4.5"    # Claude Haiku 4.5 (faster)
+
+# Google Gemini models
+model="cua/google/gemini-3-pro-preview"   # Gemini 3 Pro Preview (most powerful)
+model="cua/google/gemini-3-flash-preview" # Gemini 3 Flash Preview (fastest and cheapest, recommended for balance)
 ```
 
 **Benefits:**

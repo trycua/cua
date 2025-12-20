@@ -1,0 +1,29 @@
+name: Build and Publish CUA Android Container
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - "docker-cua-droid-v*.*.*"
+    paths:
+      - "libs/android-docker/**"
+      - ".github/workflows/docker-publish-cua-droid.yml"
+      - ".github/workflows/docker-reusable-publish.yml"
+  pull_request:
+    paths:
+      - "libs/android-docker/**"
+      - ".github/workflows/docker-publish-cua-droid.yml"
+      - ".github/workflows/docker-reusable-publish.yml"
+
+jobs:
+  publish:
+    uses: ./.github/workflows/docker-reusable-publish.yml
+    with:
+      image_name: cua-droid
+      context_dir: libs/android-docker
+      dockerfile_path: Dockerfile
+      tag_prefix: docker-cua-droid-v
+      docker_hub_org: trycua
+    secrets:
+      DOCKER_HUB_TOKEN: ${{ secrets.DOCKER_HUB_TOKEN }}

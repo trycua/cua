@@ -22,26 +22,26 @@ Docker image that runs an Android emulator with CUA Computer Server integration,
 
 ```bash
 cd android-docker
-docker build -t cua-android .
+docker build -t trycua/cua-droid .
 docker run -d -p 6080:6080 -p 8000:8000 \
   -e EMULATOR_DEVICE="Samsung Galaxy S10" \
   -e WEB_VNC=true \
   --device /dev/kvm \
   --name android-container \
-  cua-android
+  trycua/cua-droid
 ```
 
 ### Development Build
 
 ```bash
 cd ..  # Go to libs/ directory
-docker build -f android-docker/dev.Dockerfile -t cua-android:dev .
+docker build -f android-docker/dev.Dockerfile -t trycua/cua-droid:dev .
 docker run -d -p 6080:6080 -p 8000:8000 \
   -e EMULATOR_DEVICE="Samsung Galaxy S10" \
   -e WEB_VNC=true \
   --device /dev/kvm \
   --name android-container \
-  cua-android:dev
+  trycua/cua-droid:dev
 ```
 
 ## Access Points

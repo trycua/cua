@@ -25,7 +25,7 @@ This ISO is used for automated Ubuntu installation with cloud-init on first run.
 ### 2. Build the Image
 
 ```bash
-docker build -t trycua/cua-linux:dev .
+docker build -t trycua/cua-qemu-linux:dev .
 ```
 
 ### 3. First Run - Create Golden Image
@@ -39,7 +39,7 @@ mkdir -p ./storage
 # Run with setup.iso to create golden image
 docker run -it --rm \
     --device=/dev/kvm \
-    --name cua-linux \
+    --name cua-qemu-linux \
     --mount type=bind,source=src/vm/image/setup.iso,target=/custom.iso \
     --cap-add NET_ADMIN \
     -v $(pwd)/storage:/storage \
@@ -48,7 +48,7 @@ docker run -it --rm \
     -e RAM_SIZE=8G \
     -e CPU_CORES=4 \
     -e DISK_SIZE=64G \
-    trycua/cua-linux:dev
+    trycua/cua-qemu-linux:dev
 ```
 
 **What happens during first run:**
@@ -69,14 +69,14 @@ After the golden image is created, subsequent runs boot much faster (30 sec - 2 
 # Run without setup.iso - uses existing golden image
 docker run -it --rm \
     --device=/dev/kvm \
-    --name cua-linux \
+    --name cua-qemu-linux \
     --cap-add NET_ADMIN \
     -v $(pwd)/storage:/storage \
     -p 8006:8006 \
     -p 5000:5000 \
     -e RAM_SIZE=8G \
     -e CPU_CORES=4 \
-    trycua/cua-linux:dev
+    trycua/cua-qemu-linux:dev
 ```
 
 **Access points:**
@@ -142,5 +142,5 @@ Setup scripts are in `src/vm/setup/`:
 After modifying, rebuild the image:
 
 ```bash
-docker build -t trycua/cua-linux:dev .
+docker build -t trycua/cua-qemu-linux:dev .
 ```

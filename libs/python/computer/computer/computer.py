@@ -96,6 +96,8 @@ class Computer:
         ephemeral: bool = False,
         api_key: Optional[str] = None,
         experiments: Optional[List[str]] = None,
+        timeout: int = 100,
+        run_opts: Optional[Dict[str, Any]] = None,
     ):
         """Initialize a new Computer instance.
 
@@ -125,6 +127,8 @@ class Computer:
             ephemeral: Whether to use ephemeral storage
             api_key: Optional API key for cloud providers (defaults to CUA_API_KEY environment variable)
             experiments: Optional list of experimental features to enable (e.g. ["app-use"])
+            timeout: Timeout in seconds for connecting to the computer interface
+            run_opts: Optional dictionary of provider-specific run options.
         """
 
         self.logger = Logger("computer", verbosity)
@@ -152,6 +156,7 @@ class Computer:
         self.provider_type = provider_type
         self.ephemeral = ephemeral
         self.api_key = api_key if self.provider_type == VMProviderType.CLOUD else None
+        self.timeout = timeout
 
         # Set default API port if not specified
         if self.api_port is None:
@@ -161,6 +166,9 @@ class Computer:
 
         if "app-use" in self.experiments:
             assert self.os_type == "macos", "App use experiment is only supported on macOS"
+
+        # Store custom run options
+        self.custom_run_opts = run_opts or {}
 
         # The default is currently to use non-ephemeral storage
         if storage and ephemeral and storage != "ephemeral":
@@ -453,6 +461,12 @@ class Computer:
                     # Prepare run options to pass to the provider
                     run_opts = {}
 
+                    # Add memory and CPU from config
+                    if self.config.memory:
+                        run_opts["memory"] = self.config.memory
+                    if self.config.cpu:
+                        run_opts["cpu"] = self.config.cpu
+
                     # Add display information if available
                     if self.config.display is not None:
                         display_info = {
@@ -469,6 +483,9 @@ class Computer:
                     # Add shared directories if available
                     if self.shared_directories:
                         run_opts["shared_directories"] = shared_dirs.copy()
+
+                    # Merge custom run_opts
+                    run_opts.update(self.custom_run_opts)
 
                     # Run the VM with the provider
                     try:
@@ -565,7 +582,7 @@ class Computer:
             try:
                 # Use a single timeout for the entire connection process
                 # The VM should already be ready at this point, so we're just establishing the connection
-                await self._interface.wait_for_ready(timeout=30)
+                await self._interface.wait_for_ready(timeout=self.timeout)
                 self.logger.info("Sandbox interface connected successfully")
             except TimeoutError as e:
                 port = getattr(self._interface, "_api_port", 8000)  # Default to 8000 if not set
@@ -733,7 +750,7 @@ class Computer:
                 )
 
             self.logger.info("Connecting to WebSocket interface after restart...")
-            await self._interface.wait_for_ready(timeout=30)
+            await self._interface.wait_for_ready(timeout=self.timeout)
             self.logger.info("Computer reconnected and ready after restart")
         except Exception as e:
             self.logger.error(f"Failed to reconnect after restart: {e}")

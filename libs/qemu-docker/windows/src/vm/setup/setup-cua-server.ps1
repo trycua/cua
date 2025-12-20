@@ -146,8 +146,8 @@ try {
   $UserId = "$env:COMPUTERNAME\$Username"
   $Trigger = New-ScheduledTaskTrigger -AtLogOn -User $UserId
 
-  # Principal: Run in background without window (S4U = Service For User)
-  $Principal = New-ScheduledTaskPrincipal -UserId $UserId -LogonType S4U -RunLevel Highest
+  # Principal: Run in user's interactive session (required for screen capture)
+  $Principal = New-ScheduledTaskPrincipal -UserId $UserId -LogonType Interactive -RunLevel Highest
 
   # Task settings - hide window
   $Settings = New-ScheduledTaskSettingsSet `

@@ -2,6 +2,8 @@
 
 This folder contains Jupyter notebooks that demonstrate the core functionality of the CUA (Computer Use Automation) system. These notebooks serve as interactive examples and quickstart guides for different components of the CUA platform.
 
+> **For development setup and contributing**, see the [Development Guide](../Development.md).
+
 ## Available Notebooks
 
 ### Core Components

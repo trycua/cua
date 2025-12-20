@@ -91,10 +91,13 @@ class Computer:
         noVNC_port: Optional[int] = 8006,
         api_port: Optional[int] = None,
         host: str = os.environ.get("PYLUME_HOST", "localhost"),
+        api_host: Optional[str] = None,
         storage: Optional[str] = None,
         ephemeral: bool = False,
         api_key: Optional[str] = None,
         experiments: Optional[List[str]] = None,
+        timeout: int = 100,
+        run_opts: Optional[Dict[str, Any]] = None,
     ):
         """Initialize a new Computer instance.
 
@@ -115,13 +118,17 @@ class Computer:
                       LogLevel enum values are still accepted for backward compatibility
             telemetry_enabled: Whether to enable telemetry tracking. Defaults to True.
             provider_type: The VM provider type to use (lume, qemu, cloud)
-            port: Optional port to use for the VM provider server
+            provider_port: Optional port to use for the VM provider server
             noVNC_port: Optional port for the noVNC web interface (Lumier provider)
+            api_port: Optional port for the computer API server
             host: Host to use for VM provider connections (e.g. "localhost", "host.docker.internal")
+            api_host: Optional host IP address to use when use_host_computer_server is True (defaults to "localhost")
             storage: Optional path for persistent VM storage (Lumier provider)
             ephemeral: Whether to use ephemeral storage
             api_key: Optional API key for cloud providers (defaults to CUA_API_KEY environment variable)
             experiments: Optional list of experimental features to enable (e.g. ["app-use"])
+            timeout: Timeout in seconds for connecting to the computer interface
+            run_opts: Optional dictionary of provider-specific run options.
         """
 
         self.logger = Logger("computer", verbosity)
@@ -140,14 +147,16 @@ class Computer:
 
         # Store original parameters
         self.image = image
+        self.host = host
         self.provider_port = provider_port
         self.noVNC_port = noVNC_port
         self.api_port = api_port
-        self.host = host
+        self.api_host = api_host
         self.os_type = os_type
         self.provider_type = provider_type
         self.ephemeral = ephemeral
         self.api_key = api_key if self.provider_type == VMProviderType.CLOUD else None
+        self.timeout = timeout
 
         # Set default API port if not specified
         if self.api_port is None:
@@ -157,6 +166,9 @@ class Computer:
 
         if "app-use" in self.experiments:
             assert self.os_type == "macos", "App use experiment is only supported on macOS"
+
+        # Store custom run options
+        self.custom_run_opts = run_opts or {}
 
         # The default is currently to use non-ephemeral storage
         if storage and ephemeral and storage != "ephemeral":
@@ -293,7 +305,7 @@ class Computer:
             if self.use_host_computer_server:
                 self.logger.info("Using host computer server")
                 # Set ip_address for host computer server mode
-                ip_address = "localhost"
+                ip_address = self.api_host if self.api_host else "localhost"
                 # Create the interface with explicit type annotation
                 from .interface.base import BaseComputerInterface
 
@@ -449,6 +461,12 @@ class Computer:
                     # Prepare run options to pass to the provider
                     run_opts = {}
 
+                    # Add memory and CPU from config
+                    if self.config.memory:
+                        run_opts["memory"] = self.config.memory
+                    if self.config.cpu:
+                        run_opts["cpu"] = self.config.cpu
+
                     # Add display information if available
                     if self.config.display is not None:
                         display_info = {
@@ -465,6 +483,9 @@ class Computer:
                     # Add shared directories if available
                     if self.shared_directories:
                         run_opts["shared_directories"] = shared_dirs.copy()
+
+                    # Merge custom run_opts
+                    run_opts.update(self.custom_run_opts)
 
                     # Run the VM with the provider
                     try:
@@ -561,7 +582,7 @@ class Computer:
             try:
                 # Use a single timeout for the entire connection process
                 # The VM should already be ready at this point, so we're just establishing the connection
-                await self._interface.wait_for_ready(timeout=30)
+                await self._interface.wait_for_ready(timeout=self.timeout)
                 self.logger.info("Sandbox interface connected successfully")
             except TimeoutError as e:
                 port = getattr(self._interface, "_api_port", 8000)  # Default to 8000 if not set
@@ -729,7 +750,7 @@ class Computer:
                 )
 
             self.logger.info("Connecting to WebSocket interface after restart...")
-            await self._interface.wait_for_ready(timeout=30)
+            await self._interface.wait_for_ready(timeout=self.timeout)
             self.logger.info("Computer reconnected and ready after restart")
         except Exception as e:
             self.logger.error(f"Failed to reconnect after restart: {e}")
@@ -755,7 +776,7 @@ class Computer:
         """
         # For host computer server, always return localhost immediately
         if self.use_host_computer_server:
-            return "127.0.0.1"
+            return "127.0.0.1" if not self.api_host else self.api_host
 
         # Get IP from the provider - each provider implements its own waiting logic
         if self.config.vm_provider is None:
@@ -1121,19 +1142,11 @@ class Computer:
             The result of the function execution, or raises any exception that occurred
         """
         import base64
-        import inspect
         import json
         import textwrap
 
         try:
-            # Get function source code using inspect.getsource
-            source = inspect.getsource(python_func)
-            # Remove common leading whitespace (dedent)
-            func_source = textwrap.dedent(source).strip()
-
-            # Remove decorators
-            while func_source.lstrip().startswith("@"):
-                func_source = func_source.split("\n", 1)[1].strip()
+            func_source = helpers.generate_source_code(python_func)
 
             # Get function name for execution
             func_name = python_func.__name__
@@ -1259,16 +1272,12 @@ print(f"<<<VENV_EXEC_START>>>{{output_json}}<<<VENV_EXEC_END>>>")
         Uses a short launcher Python that spawns a detached child and exits immediately.
         """
         import base64
-        import inspect
         import json
         import textwrap
         import time as _time
 
         try:
-            source = inspect.getsource(python_func)
-            func_source = textwrap.dedent(source).strip()
-            while func_source.lstrip().startswith("@"):
-                func_source = func_source.split("\n", 1)[1].strip()
+            func_source = helpers.generate_source_code(python_func)
             func_name = python_func.__name__
             args_json = json.dumps(args, default=str)
             kwargs_json = json.dumps(kwargs, default=str)
@@ -1366,15 +1375,11 @@ print(p.pid)
         remote traceback context appended.
         """
         import base64
-        import inspect
         import json
         import textwrap
 
         try:
-            source = inspect.getsource(python_func)
-            func_source = textwrap.dedent(source).strip()
-            while func_source.lstrip().startswith("@"):
-                func_source = func_source.split("\n", 1)[1].strip()
+            func_source = helpers.generate_source_code(python_func)
             func_name = python_func.__name__
             args_json = json.dumps(args, default=str)
             kwargs_json = json.dumps(kwargs, default=str)
@@ -1482,16 +1487,12 @@ print(f"<<<VENV_EXEC_START>>>{{output_json}}<<<VENV_EXEC_END>>>")
         Uses a short launcher Python that spawns a detached child and exits immediately.
         """
         import base64
-        import inspect
         import json
         import textwrap
         import time as _time
 
         try:
-            source = inspect.getsource(python_func)
-            func_source = textwrap.dedent(source).strip()
-            while func_source.lstrip().startswith("@"):
-                func_source = func_source.split("\n", 1)[1].strip()
+            func_source = helpers.generate_source_code(python_func)
             func_name = python_func.__name__
             args_json = json.dumps(args, default=str)
             kwargs_json = json.dumps(kwargs, default=str)

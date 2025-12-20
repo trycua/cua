@@ -8,7 +8,7 @@
 # ============================================================================
 FROM eclipse-temurin:17-jdk AS builder
 
-RUN apt-get update && apt-get install -y wget unzip && \
+RUN apt-get update && apt-get install -y wget unzip dos2unix && \
     mkdir -p /opt/android-sdk/cmdline-tools && \
     cd /opt/android-sdk/cmdline-tools && \
     wget -q https://dl.google.com/android/repository/commandlinetools-linux-9477386_latest.zip && \
@@ -27,6 +27,7 @@ WORKDIR /build/wallpaper-manager
 
 RUN curl -fsSL -o gradle/wrapper/gradle-wrapper.jar \
     https://raw.githubusercontent.com/gradle/gradle/v7.6.0/gradle/wrapper/gradle-wrapper.jar && \
+    dos2unix gradlew && \
     chmod +x gradlew
 
 RUN ./gradlew assembleDebug --no-daemon

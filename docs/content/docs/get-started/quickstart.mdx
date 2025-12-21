@@ -19,11 +19,11 @@ import { Code, Terminal } from 'lucide-react';
   </Card>
 </div> */}
 
-## Set Up Your Computer Environment
+## Set Up Your Computer Sanbox
 
-Choose how you want to run your Cua computer. This will be the environment where your automated tasks will execute.
+Choose how you want to run your Cua sandbox. This will be the isolated environment where your automated tasks will execute.
 
-You can run your Cua computer in the cloud (recommended for easiest setup), locally on macOS with Lume, locally on Windows with a Windows Sandbox, or in a Docker container on any platform. Choose the option that matches your system and needs.
+You can run your Cua sandbox in the cloud (recommended for easiest setup), locally in a Docker container on any platform, on a macOS VM with Lume, or on Windows with a Windows Sandbox. Choose the option that matches your system and needs.
 
 <Tabs items={['Cloud Sandbox', 'Linux on Docker', 'QEMU Docker', 'macOS Sandbox', 'Windows Sandbox']}>
   <Tab value="Cloud Sandbox">
@@ -42,11 +42,14 @@ You can run your Cua computer in the cloud (recommended for easiest setup), loca
 
     1. Navigate to **Dashboard > Sandboxes > Create Sandbox**
     2. Create a sandbox, choosing **Linux**, **Windows**, or **macOS**
+
+    ![Create Sandbox Instance](/img/sandbox-create.png)
+
     3. Note your sandbox name
 
     **Option 2: Via CLI**
 
-    1. Install the CUA CLI:
+    1. Install the Cua CLI:
     ```bash
     # macOS/Linux
     curl -LsSf https://cua.ai/cli/install.sh | sh
@@ -198,23 +201,37 @@ You can run your Cua computer in the cloud (recommended for easiest setup), loca
 
 ---
 
-## Developer Quickstart
+## Automate Your Sandbox
 
 <Callout type="warn" title="Python Version Compatibility">
   Cua packages require **Python 3.12 or 3.13**. Python 3.14 is not currently supported due to dependency compatibility issues (pydantic-core/PyO3 compatibility). If you encounter build errors on Python 3.14, please use Python 3.13 or earlier.
 </Callout>
 
+This section guides you through building automation in layers:
+
+1. **Cua Computer Framework** - Direct sandbox control for manual automation and testing
+2. **Cua Agent Framework** - Adds AI automation on top, using vision-language models to understand and interact with the UI
+
+Start by setting up Cua Computer Framework to verify your sandbox works, then add Cua Agent Framework on top to enable intelligent, autonomous automation.
+
 <Steps>
 
 <Step>
 
-### Using Computer
+### Step 1: Connect with Cua Computer Framework
 
-Connect to your Cua computer and perform basic interactions, such as taking screenshots or simulating user input.
+Install Cua Computer Framework and verify your sandbox is working by performing basic interactions such as taking screenshots or simulating user input. This is an important verification step before adding AI agents.
 
 <Tabs items={['Python', 'TypeScript']}>
   <Tab value="Python">
     Install the Cua computer Python SDK:
+
+    **Using uv (recommended):**
+    ```bash
+    uv pip install cua-computer
+    ```
+
+    **Or with pip:**
     ```bash
     pip install cua-computer
     ```
@@ -223,7 +240,7 @@ Connect to your Cua computer and perform basic interactions, such as taking scre
 
     <Tabs items={['Cloud Sandbox', 'Linux on Docker', 'QEMU Docker', 'macOS Sandbox', 'Windows Sandbox', 'Your host desktop']}>
       <Tab value="Cloud Sandbox">
-        Set your CUA API key (same key used for model inference) and connect to your sandbox:
+        Set your Cua API key (same key used for model inference) and connect to your sandbox:
         ```python
         import os
         from computer import Computer
@@ -461,10 +478,6 @@ Connect to your Cua computer and perform basic interactions, such as taking scre
 
   </Tab>
   <Tab value="TypeScript">
-    <Callout type="warn" title="TypeScript SDK Deprecated">
-      The TypeScript interface is currently deprecated. We're working on version 0.2.0 with improved TypeScript support. In the meantime, please use the Python SDK.
-    </Callout>
-
     Install the Cua computer TypeScript SDK:
     ```bash
     npm install @trycua/computer
@@ -474,7 +487,7 @@ Connect to your Cua computer and perform basic interactions, such as taking scre
 
     <Tabs items={['Cloud Sandbox', 'Linux on Docker', 'macOS Sandbox', 'Windows Sandbox', 'Your host desktop']}>
       <Tab value="Cloud Sandbox">
-        Set your CUA API key (same key used for model inference):
+        Set your Cua API key (same key used for model inference):
         ```bash
         export CUA_API_KEY="sk_cua-api01_..."
         ```
@@ -559,30 +572,43 @@ Connect to your Cua computer and perform basic interactions, such as taking scre
   </Tab>
 </Tabs>
 
-Learn more about computers in the [Cua computers documentation](/computer-sdk/computers). You will see how to automate computers with agents in the next step.
+Learn more about computers in the [Cua computers documentation](/computer-sdk/computers).
 
 </Step>
 
 <Step>
 
-### Using Agent
+### Step 2: Add AI Automation with Cua Agent Framework
 
-Utilize an Agent to automate complex tasks by providing it with a goal and allowing it to interact with the computer environment.
+Now that you've verified your sandbox works, use an Agent to automate complex tasks by providing it with a goal. The agent will interact with the computer environment using a vision-language model to understand the UI and execute actions.
 
-Install the Cua agent Python SDK:
+While you can build your own agent loop with any LLM, Cua Agent Framework is the recommended approach as it provides:
+- **100+ VLM options** through Cua VLM Router and direct provider access
+- **Built-in optimizations** for computer-use tasks
+- **Structured agent loops** for consistent behavior
 
-```bash
-pip install "cua-agent[all]"
-```
+<Tabs items={['Python', 'TypeScript']}>
+  <Tab value="Python">
+    Install the Cua agent Python SDK:
 
-Choose how you want to access vision-language models for your agent:
+    **Using uv (recommended):**
+    ```bash
+    uv pip install "cua-agent[all]"
+    ```
 
-<Tabs items={['CUA VLM Router', 'BYOK (Bring Your Own Key)']}>
-  <Tab value="CUA VLM Router">
+    **Or with pip:**
+    ```bash
+    pip install "cua-agent[all]"
+    ```
 
-    Use CUA's inference API to access multiple model providers with a single API key (same key used for sandbox access). CUA VLM Router provides intelligent routing and cost optimization.
+    Choose how you want to access vision-language models for your agent:
 
-    **Use the agent with CUA models:**
+<Tabs items={['Cua VLM Router', 'BYOK (Bring Your Own Key)']}>
+  <Tab value="Cua VLM Router">
+
+    Use Cua's inference API to access multiple model providers with a single API key (same key used for sandbox access). Cua VLM Router provides intelligent routing and cost optimization.
+
+    **Use the agent with Cua models:**
     ```python
     import os
     import asyncio
@@ -623,7 +649,7 @@ Choose how you want to access vision-language models for your agent:
     asyncio.run(main())
     ```
 
-    **Available CUA models:**
+    **Available Cua models:**
     - `cua/anthropic/claude-sonnet-4.5` - Claude Sonnet 4.5 (recommended)
     - `cua/anthropic/claude-opus-4.5` - Claude Opus 4.5 (enhanced agentic capabilities)
     - `cua/anthropic/claude-haiku-4.5` - Claude Haiku 4.5 (faster, cost-effective)
@@ -701,6 +727,156 @@ Choose how you want to access vision-language models for your agent:
 
     See [Supported Models](/agent-sdk/supported-model-providers/) for the complete list.
 
+    </Tab>
+  </Tabs>
+
+  </Tab>
+  <Tab value="TypeScript">
+    For TypeScript, you can build agent loops using the [Vercel AI SDK](https://ai-sdk.dev/) with the Cua Computer Framework TypeScript library. The Vercel AI SDK provides a unified interface for building multi-step agent workflows with language models.
+
+    Install the required packages:
+
+    ```bash
+    npm install @trycua/computer ai
+    ```
+
+    Here's an example of building an agent loop with the Vercel AI SDK:
+
+    ```typescript
+    import Anthropic from "@anthropic-ai/sdk";
+    import { Computer, OSType } from "@trycua/computer";
+    import { generateText } from "ai";
+    import { anthropic } from "@ai-sdk/anthropic";
+
+    const client = new Anthropic();
+    let computer: Computer;
+
+    const computerTool = {
+      type: "tool" as const,
+      name: "computer",
+      description: "Control the computer with actions like screenshot, click, type, etc.",
+      inputSchema: {
+        type: "object" as const,
+        properties: {
+          action: {
+            type: "string" as const,
+            description: "Action to perform (screenshot, click, type, key_press, etc.)",
+          },
+          coordinate: {
+            type: "array" as const,
+            items: { type: "number" as const },
+            description: "x, y coordinates for click actions",
+          },
+          text: {
+            type: "string" as const,
+            description: "Text to type",
+          },
+        },
+        required: ["action"],
+      },
+    };
+
+    async function runAgentLoop(goal: string) {
+      // Initialize computer
+      computer = new Computer({
+        osType: OSType.LINUX,
+        provider_type: "cloud",
+        name: "your-sandbox-name",
+        apiKey: process.env.CUA_API_KEY!,
+      });
+
+      await computer.run();
+
+      const messages: any[] = [];
+
+      // First message with goal
+      messages.push({
+        role: "user",
+        content: goal,
+      });
+
+      // Agent loop
+      for (let i = 0; i < 10; i++) {
+        // Get model response with tool use
+        const response = await client.messages.create({
+          model: "claude-opus-4-1-20250805",
+          max_tokens: 4096,
+          tools: [computerTool],
+          messages: messages,
+        });
+
+        // Check if we're done
+        if (response.stop_reason === "end_turn") {
+          console.log("Task completed!");
+          break;
+        }
+
+        // Add assistant response to history
+        messages.push({
+          role: "assistant",
+          content: response.content,
+        });
+
+        // Process tool calls
+        const toolResults = [];
+        for (const block of response.content) {
+          if (block.type === "tool_use") {
+            try {
+              let result: any;
+              switch (block.input.action) {
+                case "screenshot":
+                  result = await computer.interface.screenshot();
+                  break;
+                case "click":
+                  result = await computer.interface.click(
+                    block.input.coordinate[0],
+                    block.input.coordinate[1]
+                  );
+                  break;
+                case "type":
+                  result = await computer.interface.type(block.input.text);
+                  break;
+                case "key_press":
+                  result = await computer.interface.key_press(block.input.text);
+                  break;
+                default:
+                  result = { error: "Unknown action" };
+              }
+
+              toolResults.push({
+                type: "tool_result",
+                tool_use_id: block.id,
+                content: JSON.stringify(result),
+              });
+            } catch (error) {
+              toolResults.push({
+                type: "tool_result",
+                tool_use_id: block.id,
+                content: `Error: ${error}`,
+                is_error: true,
+              });
+            }
+          }
+        }
+
+        // Add tool results to messages
+        if (toolResults.length > 0) {
+          messages.push({
+            role: "user",
+            content: toolResults,
+          });
+        }
+      }
+
+      await computer.disconnect();
+    }
+
+    // Run the agent
+    runAgentLoop("Take a screenshot and tell me what you see");
+    ```
+
+    For more details and examples, see the [Vercel AI SDK Computer Use Cookbook](https://ai-sdk.dev/cookbook/guides/computer-use).
+
   </Tab>
 </Tabs>
 
@@ -711,21 +887,23 @@ Learn more about agents in [Agent Loops](/agent-sdk/agent-loops) and available m
 
 ### Next Steps
 
-- Learn more about [Cua computers](/computer-sdk/computers) and [computer commands](/computer-sdk/commands)
-- Read about [Agent loops](/agent-sdk/agent-loops), [tools](/agent-sdk/custom-tools), and [supported model providers](/agent-sdk/supported-model-providers/)
-- Join our [Discord community](https://discord.com/invite/mVnXXpdE85) for help
-- Try out [Form Filling](/example-usecases/form-filling) preset usecase
+- Explore [Cua Computer Framework Commands](/computer-sdk/commands) for more sandbox interactions
+- Learn about [Agent Loops](/agent-sdk/agent-loops) and advanced agent configuration
+- Check out [Custom Tools](/agent-sdk/custom-tools) to extend your agents
+- Review [Supported Model Providers](/agent-sdk/supported-model-providers/) for more LLM options
+- Try the [Form Filling](/example-usecases/form-filling) example use case
+- Join our [Discord community](https://discord.com/invite/cua-ai) for help and discussion
 
 {/* ---
 
 ## CLI Quickstart
 
-Get started quickly with the CUA CLI - the easiest way to manage cloud sandboxes and run AI agents.
+Get started quickly with the Cua CLI - the easiest way to manage cloud sandboxes and run AI agents.
 
 <Steps>
 <Step>
 
-### Install the CUA CLI
+### Install the Cua CLI
 
 <Tabs items={['macOS / Linux', 'Windows', 'Bun (Alternative)', 'From Source']}>
   <Tab value="macOS / Linux">
@@ -743,7 +921,7 @@ Get started quickly with the CUA CLI - the easiest way to manage cloud sandboxes
     # Install Bun if you don't have it
     curl -fsSL https://bun.sh/install | bash
 
-    # Install CUA CLI
+    # Install Cua CLI
     bun add -g @trycua/cli
     ```
   </Tab>

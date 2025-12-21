@@ -12,7 +12,7 @@ After networking events, you need to export new connections from LinkedIn, X, or
 
 **The workflow**: Kick off the script after an event and let it run overnight. Wake up to a clean CSV ready for your CRM or email tool.
 
-This example focuses on LinkedIn but works across platforms. It uses [Cua Computer](/computer-sdk/computers) to interact with web interfaces and [Agent Loops](/agent-sdk/agent-loops) to iterate through connections with conversation history.
+This example focuses on LinkedIn but works across platforms. It uses [Cua Computer Framework](/computer-sdk/computers) to interact with web interfaces and [Agent Loops](/agent-sdk/agent-loops) to iterate through connections with conversation history.
 
 ### Why Cua is Perfect for This
 
@@ -66,7 +66,13 @@ cua-computer
 python-dotenv>=1.0.0
 ```
 
-Install the dependencies:
+Install the dependencies using uv (recommended):
+
+```bash
+uv pip install -r requirements.txt
+```
+
+Or using pip:
 
 ```bash
 pip install -r requirements.txt
@@ -75,7 +81,7 @@ pip install -r requirements.txt
 Create a `.env` file with your API keys:
 
 ```text
-ANTHROPIC_API_KEY=your-anthropic-api-key # optional, BYOK. By default, this cookbook uses the CUA VLM Router
+ANTHROPIC_API_KEY=your-anthropic-api-key # optional, BYOK. By default, this cookbook uses the Cua VLM Router
 CUA_API_KEY=sk_cua-api01...
 CUA_CONTAINER_NAME=m-linux-...
 ```
@@ -468,8 +474,8 @@ This script demonstrates a practical workflow for extracting LinkedIn connection
 
 ## Next Steps
 
-- Learn more about [Cua computers](/computer-sdk/computers) and [computer commands](/computer-sdk/commands)
-- Read about [Agent loops](/agent-sdk/agent-loops), [tools](/agent-sdk/custom-tools), and [supported model providers](/agent-sdk/supported-model-providers/)
+- Learn more about [Cua Computer Framework](/computer-sdk/computers) and [Computer Commands](/computer-sdk/commands)
+- Read about [Agent Loops](/agent-sdk/agent-loops), [Tools](/agent-sdk/custom-tools), and [Supported Model Providers](/agent-sdk/supported-model-providers/)
 - Experiment with different [Models and Providers](/agent-sdk/supported-model-providers/)
 - Adapt this script for other platforms (Twitter/X, email extraction, etc.)
 - Join our [Discord community](https://discord.com/invite/mVnXXpdE85) for help

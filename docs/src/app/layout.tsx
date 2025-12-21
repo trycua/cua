@@ -1,6 +1,6 @@
 import './global.css';
 import { RootProvider } from 'fumadocs-ui/provider';
-import { Geist, Geist_Mono } from 'next/font/google';
+import { Geist, Geist_Mono, Urbanist } from 'next/font/google';
 import type { ReactNode } from 'react';
 import { PHProvider, PostHogPageView } from '@/providers/posthog-provider';
 import { AnalyticsTracker } from '@/components/analytics-tracker';
@@ -18,11 +18,16 @@ const geistMono = Geist_Mono({
   variable: '--font-geist-mono',
 });
 
+const urbanist = Urbanist({
+  subsets: ['latin'],
+  variable: '--font-urbanist',
+});
+
 export default function Layout({ children }: { children: ReactNode }) {
   return (
     <html
       lang="en"
-      className={`${geist.variable} ${geistMono.variable} font-sans`}
+      className={`${geist.variable} ${geistMono.variable} ${urbanist.variable} font-sans`}
       suppressHydrationWarning
     >
       <head>

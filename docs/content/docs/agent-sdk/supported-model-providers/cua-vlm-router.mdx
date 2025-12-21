@@ -1,15 +1,15 @@
 ---
-title: CUA VLM Router
+title: Cua VLM Router
 description: Intelligent vision-language model routing with cost optimization and unified access
 ---
 
-# CUA VLM Router
+# Cua VLM Router
 
-The **CUA VLM Router** is an intelligent inference API that provides unified access to multiple vision-language model providers through a single API key. It offers cost optimization and detailed observability for production AI applications.
+The **Cua VLM Router** is an intelligent inference API that provides unified access to multiple vision-language model providers through a single API key. It offers cost optimization and detailed observability for production AI applications.
 
 ## Overview
 
-Instead of managing multiple API keys and provider-specific code, CUA VLM Router acts as a smart cloud gateway that:
+Instead of managing multiple API keys and provider-specific code, Cua VLM Router acts as a smart cloud gateway that:
 
 - **Unifies access** to multiple model providers
 - **Optimizes costs** through intelligent routing and provider selection
@@ -21,7 +21,7 @@ Instead of managing multiple API keys and provider-specific code, CUA VLM Router
 
 ### 1. Get Your API Key
 
-Sign up at [cua.ai](https://cua.ai/signin) and get your CUA API key from the dashboard.
+Sign up at [cua.ai](https://cua.ai/signin) and get your Cua API key from the dashboard.
 
 ### 2. Set Environment Variable
 
@@ -53,7 +53,7 @@ async for result in agent.run(messages):
 
 ## Available Models
 
-The CUA VLM Router currently supports these models:
+The Cua VLM Router currently supports these models:
 
 | Model ID                          | Provider  | Description       | Best For                                |
 | --------------------------------- | --------- | ----------------- | --------------------------------------- |
@@ -66,10 +66,10 @@ The CUA VLM Router currently supports these models:
 
 ### Intelligent Routing
 
-When you make a request to CUA VLM Router:
+When you make a request to Cua VLM Router:
 
 1. **Model Resolution**: Your model ID (e.g., `cua/anthropic/claude-sonnet-4.5`) is resolved to the appropriate provider
-2. **Provider Selection**: CUA routes your request to the appropriate model provider
+2. **Provider Selection**: Cua routes your request to the appropriate model provider
 3. **Response**: You receive an OpenAI-compatible response with metadata
 
 ## API Reference
@@ -224,18 +224,18 @@ Requests are billed in **credits**:
 }
 ```
 
-**Note:** CUA VLM Router is a fully managed cloud service. If you want to use your own provider API keys directly (BYOK), see the [Supported Model Providers](/agent-sdk/supported-model-providers/) page for direct provider access via the agent SDK.
+**Note:** Cua VLM Router is a fully managed cloud service. If you want to use your own provider API keys directly (BYOK), see the [Supported Model Providers](/agent-sdk/supported-model-providers/) page for direct provider access via the agent SDK.
 
 ## Response Metadata
 
-CUA VLM Router includes metadata about routing decisions and costs in the response. This information helps with debugging and monitoring your application's model usage.
+Cua VLM Router includes metadata about routing decisions and costs in the response. This information helps with debugging and monitoring your application's model usage.
 
 ## Configuration
 
 ### Environment Variables
 
 ```bash
-# Required: Your CUA API key
+# Required: Your Cua API key
 export CUA_API_KEY="sk_cua-api01_..."
 
 # Optional: Custom endpoint (defaults to https://inference.cua.ai/v1)
@@ -259,7 +259,7 @@ agent = ComputerAgent(
 
 ## Benefits Over Direct Provider Access
 
-| Feature                    | CUA VLM Router               | Direct Provider (BYOK)            |
+| Feature                    | Cua VLM Router               | Direct Provider (BYOK)            |
 | -------------------------- | ---------------------------- | --------------------------------- |
 | **Single API Key**         | ✅ One key for all providers | ❌ Multiple keys to manage        |
 | **Managed Infrastructure** | ✅ No API key management     | ❌ Manage multiple provider keys  |
@@ -397,7 +397,7 @@ async for result in agent.run(messages):
 
 ## Migration from Direct Provider Access
 
-Switching from direct provider access (BYOK) to CUA VLM Router is simple:
+Switching from direct provider access (BYOK) to Cua VLM Router is simple:
 
 **Before (Direct Provider Access with BYOK):**
 
@@ -412,11 +412,11 @@ agent = ComputerAgent(
 )
 ```
 
-**After (CUA VLM Router - Cloud Service):**
+**After (Cua VLM Router - Cloud Service):**
 
 ```python
 import os
-# Required: CUA API key only (no provider keys needed)
+# Required: Cua API key only (no provider keys needed)
 os.environ["CUA_API_KEY"] = "sk_cua-api01_..."
 
 agent = ComputerAgent(
@@ -425,7 +425,7 @@ agent = ComputerAgent(
 )
 ```
 
-That's it! Same code structure, just different model format. CUA manages all provider infrastructure and credentials for you.
+That's it! Same code structure, just different model format. Cua manages all provider infrastructure and credentials for you.
 
 ## Support
 

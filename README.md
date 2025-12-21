@@ -328,57 +328,6 @@ finally:
 
 Learn more in the [Computer SDK documentation](./libs/python/computer/README.md).
 
-# MCP Server
-
-Install the MCP server:
-
-```bash
-pip install cua-mcp-server
-```
-
-Learn more in the [MCP Server documentation](./libs/python/mcp-server/README.md).
-
-# Computer Server
-
-Install the Computer Server:
-
-```bash
-pip install cua-computer-server
-python -m computer_server
-```
-
-Learn more in the [Computer Server documentation](./libs/python/computer-server/README.md).
-
-# Lume
-
-Install Lume:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/lume/scripts/install.sh | bash
-```
-
-Learn more in the [Lume documentation](./libs/lume/README.md).
-
-# Lumier
-
-Install Lumier:
-
-```bash
-docker pull trycua/lumier:latest
-```
-
-Learn more in the [Lumier documentation](./libs/lumier/README.md).
-
-# SOM
-
-Install SOM:
-
-```bash
-pip install cua-som
-```
-
-Learn more in the [SOM documentation](./libs/python/som/README.md).
-
 # Recent Updates
 
 ## 2025

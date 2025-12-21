@@ -17,25 +17,25 @@ import { HomeIcon } from 'lucide-react';
 export const baseOptions: BaseLayoutProps = {
   nav: {
     title: (
-      <>
+      <div className="flex items-center gap-2">
         <Image
-          width={30}
-          height={30}
+          width={40}
+          height={40}
           src={LogoBlack}
           aria-label="Logo"
           className="block dark:hidden"
           alt="Logo"
         />
         <Image
-          width={30}
-          height={30}
+          width={40}
+          height={40}
           src={LogoWhite}
           aria-label="Logo"
           className="hidden dark:block"
           alt="Logo"
         />
-        Cua
-      </>
+        <span className="text-lg font-bold">Cua</span>
+      </div>
     ),
     url: 'https://cua.ai',
   },

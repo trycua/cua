@@ -4,6 +4,8 @@
   "root": true,
   "defaultOpen": true,
   "pages": [
+    "[github][GitHub](https://github.com/trycua/cua)",
+    "[discord][Discord](https://discord.com/invite/cua-ai)",
     "---[Rocket]Get Started---",
     "...get-started",
     "---[ChefHat]Cookbook---",

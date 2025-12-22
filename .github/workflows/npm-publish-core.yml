@@ -19,10 +19,8 @@ jobs:
           node-version: "24.x"
           registry-url: "https://registry.npmjs.org"
 
-      - name: Setup pnpm 10
+      - name: Setup pnpm
         uses: pnpm/action-setup@v4
-        with:
-          version: 10
 
       - name: Check if version changed
         id: check-version

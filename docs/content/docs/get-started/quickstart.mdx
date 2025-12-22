@@ -88,13 +88,13 @@ You can run your Cua sandbox in the cloud (recommended for easiest setup), local
   </Tab>
   <Tab value="QEMU Docker">
 
-    Run full Linux (Ubuntu Desktop) or Windows 11 VMs inside Docker containers using QEMU virtualization.
+    Run full Linux (Ubuntu Desktop), Windows 11, or Android 11 VMs inside Docker containers using QEMU virtualization.
 
     <Callout type="warn">
-      QEMU images require a **golden image preparation step** on first use. This involves downloading an ISO and running a one-time installation.
+      Linux and Windows images require a **golden image preparation step** on first use. Android images start directly without preparation.
     </Callout>
 
-    <Tabs items={['Linux', 'Windows']}>
+    <Tabs items={['Linux', 'Windows', 'Android']}>
       <Tab value="Linux">
 
         **1. Install Docker Desktop or Docker Engine**
@@ -161,6 +161,19 @@ You can run your Cua sandbox in the cloud (recommended for easiest setup), local
         ```
 
         The container will install Windows 11 from the ISO and shut down when complete. Monitor progress at [http://localhost:8006](http://localhost:8006).
+
+      </Tab>
+      <Tab value="Android">
+
+        **1. Install Docker Desktop or Docker Engine**
+
+        **2. Pull the QEMU Android image:**
+
+        ```bash
+        docker pull trycua/cua-qemu-android:latest
+        ```
+
+        No golden image preparation needed - the Android emulator starts directly when you run it!
 
       </Tab>
     </Tabs>
@@ -306,7 +319,7 @@ Install Cua Computer Framework and verify your sandbox is working by performing 
         ```
       </Tab>
       <Tab value="QEMU Docker">
-        <Tabs items={['Linux', 'Windows']}>
+        <Tabs items={['Linux', 'Windows', 'Android']}>
           <Tab value="Linux">
             ```python
             from computer import Computer
@@ -373,6 +386,40 @@ Install Cua Computer Framework and verify your sandbox is working by performing 
                     await computer.disconnect()
                     # Alternative: If you want to fully stop the VM, use stop() instead:
                     # await computer.stop()  # Fully stop VM and disconnect
+
+            asyncio.run(main())
+            ```
+          </Tab>
+          <Tab value="Android">
+            ```python
+            from computer import Computer
+            import asyncio
+
+            computer = Computer(
+                os_type="android",
+                provider_type="docker",
+                image="trycua/cua-qemu-android:latest",
+                timeout=150,  # Emulator needs more time to boot
+                run_opts={
+                    "devices": ["/dev/kvm"],  # Required for Android emulator
+                    "env": {
+                        "EMULATOR_DEVICE": "Samsung Galaxy S10",
+                    },
+                },
+            )
+
+            async def main():
+                await computer.run()  # Launch & connect to Android emulator
+
+                try:
+                    # Take a screenshot of the Android screen
+                    screenshot = await computer.interface.screenshot()
+                    # Simulate a left-click at coordinates (100, 100)
+                    await computer.interface.left_click(100, 100)
+                    # Type "Hello!" into the active application
+                    await computer.interface.type_text("Hello!")
+                finally:
+                    await computer.disconnect()
 
             asyncio.run(main())
             ```

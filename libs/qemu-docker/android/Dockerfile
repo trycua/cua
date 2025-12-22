@@ -1,14 +1,9 @@
 # ============================================================================
-# Development Dockerfile - builds from libs/ directory with local sources
-# Build command: docker build -f android-docker/dev.Dockerfile -t android-cua:dev .
-# ============================================================================
-
-# ============================================================================
 # Stage 1: Build wallpaper-manager APK
 # ============================================================================
 FROM eclipse-temurin:17-jdk AS builder
 
-RUN apt-get update && apt-get install -y wget unzip && \
+RUN apt-get update && apt-get install -y wget unzip dos2unix && \
     mkdir -p /opt/android-sdk/cmdline-tools && \
     cd /opt/android-sdk/cmdline-tools && \
     wget -q https://dl.google.com/android/repository/commandlinetools-linux-9477386_latest.zip && \
@@ -22,11 +17,12 @@ ENV PATH="${ANDROID_HOME}/cmdline-tools/latest/bin:${ANDROID_HOME}/platform-tool
 RUN yes | sdkmanager --licenses && \
     sdkmanager "platforms;android-30" "build-tools;30.0.3"
 
-COPY android-docker/wallpaper-manager /build/wallpaper-manager
+COPY src/wallpaper-manager /build/wallpaper-manager
 WORKDIR /build/wallpaper-manager
 
 RUN curl -fsSL -o gradle/wrapper/gradle-wrapper.jar \
     https://raw.githubusercontent.com/gradle/gradle/v7.6.0/gradle/wrapper/gradle-wrapper.jar && \
+    dos2unix gradlew && \
     chmod +x gradlew
 
 RUN ./gradlew assembleDebug --no-daemon
@@ -58,13 +54,10 @@ RUN apt-get update && \
 RUN python3 -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
-# Install computer-server from local source for development
-COPY python/computer-server /tmp/computer-server
-WORKDIR /tmp/computer-server
 RUN /opt/venv/bin/pip install --no-cache-dir --upgrade pip && \
-    /opt/venv/bin/pip install --no-cache-dir -e .
+    /opt/venv/bin/pip install --no-cache-dir cua-computer-server
 
-COPY android-docker/entry.sh /usr/local/bin/entry.sh
+COPY src/entry.sh /usr/local/bin/entry.sh
 RUN chmod +x /usr/local/bin/entry.sh
 
 # Make venv accessible to androidusr

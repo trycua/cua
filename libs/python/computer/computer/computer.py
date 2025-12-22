@@ -51,7 +51,7 @@ SYSTEM_INFO = {
 from .providers.base import VMProviderType
 from .providers.factory import VMProviderFactory
 
-OSType = Literal["macos", "linux", "windows"]
+OSType = Literal["macos", "linux", "windows", "android"]
 
 
 class Computer:

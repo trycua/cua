@@ -34,7 +34,9 @@ export const baseOptions: BaseLayoutProps = {
           className="hidden dark:block"
           alt="Logo"
         />
-        <span className="text-lg font-bold" style={{ fontFamily: 'var(--font-urbanist)' }}>Cua</span>
+        <span className="text-lg font-bold" style={{ fontFamily: 'var(--font-urbanist)' }}>
+          Cua
+        </span>
       </div>
     ),
     url: 'https://cua.ai',

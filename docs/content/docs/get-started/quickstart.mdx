@@ -203,7 +203,7 @@ You can run your Cua computer in the cloud (recommended for easiest setup), loca
     2. Pull the Android image:
 
     ```bash
-    docker pull trycua/cua-droid:latest
+    docker pull trycua/cua-android-docker:latest
     ```
 
   </Tab>
@@ -444,7 +444,7 @@ Connect to your Cua computer and perform basic interactions, such as taking scre
         computer = Computer(
             os_type="android",
             provider_type="docker",
-            image="trycua/cua-droid:latest",
+            image="trycua/cua-android-docker:latest",
             timeout=150,  # Emulator needs more time to boot
             run_opts={
                 "devices": ["/dev/kvm"],  # Required for Android emulator

@@ -5,25 +5,25 @@ on:
     branches:
       - main
     tags:
-      - "docker-cua-droid-v*.*.*"
+      - "docker-cua-android-docker-v*.*.*"
     paths:
       - "libs/android-docker/**"
-      - ".github/workflows/docker-publish-cua-droid.yml"
+      - ".github/workflows/docker-publish-cua-android-docker.yml"
       - ".github/workflows/docker-reusable-publish.yml"
   pull_request:
     paths:
       - "libs/android-docker/**"
-      - ".github/workflows/docker-publish-cua-droid.yml"
+      - ".github/workflows/docker-publish-cua-android-docker.yml"
       - ".github/workflows/docker-reusable-publish.yml"
 
 jobs:
   publish:
     uses: ./.github/workflows/docker-reusable-publish.yml
     with:
-      image_name: cua-droid
+      image_name: cua-android-docker
       context_dir: libs/android-docker
       dockerfile_path: Dockerfile
-      tag_prefix: docker-cua-droid-v
+      tag_prefix: docker-cua-android-docker-v
       docker_hub_org: trycua
     secrets:
       DOCKER_HUB_TOKEN: ${{ secrets.DOCKER_HUB_TOKEN }}

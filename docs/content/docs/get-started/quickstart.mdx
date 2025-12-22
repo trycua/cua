@@ -25,7 +25,7 @@ Choose how you want to run your Cua computer. This will be the environment where
 
 You can run your Cua computer in the cloud (recommended for easiest setup), locally on macOS with Lume, locally on Windows with a Windows Sandbox, or in a Docker container on any platform. Choose the option that matches your system and needs.
 
-<Tabs items={['Cloud Sandbox', 'Linux on Docker', 'QEMU Docker', 'macOS Sandbox', 'Windows Sandbox', 'Android on Docker']}>
+<Tabs items={['Cloud Sandbox', 'Linux on Docker', 'QEMU Docker', 'macOS Sandbox', 'Windows Sandbox']}>
   <Tab value="Cloud Sandbox">
 
     Create and manage cloud sandboxes that run Linux (Ubuntu), Windows, or macOS.
@@ -85,13 +85,13 @@ You can run your Cua computer in the cloud (recommended for easiest setup), loca
   </Tab>
   <Tab value="QEMU Docker">
 
-    Run full Linux (Ubuntu Desktop) or Windows 11 VMs inside Docker containers using QEMU virtualization.
+    Run full Linux (Ubuntu Desktop), Windows 11, or Android 11 VMs inside Docker containers using QEMU virtualization.
 
     <Callout type="warn">
-      QEMU images require a **golden image preparation step** on first use. This involves downloading an ISO and running a one-time installation.
+      Linux and Windows images require a **golden image preparation step** on first use. Android images start directly without preparation.
     </Callout>
 
-    <Tabs items={['Linux', 'Windows']}>
+    <Tabs items={['Linux', 'Windows', 'Android']}>
       <Tab value="Linux">
 
         **1. Install Docker Desktop or Docker Engine**
@@ -160,6 +160,19 @@ You can run your Cua computer in the cloud (recommended for easiest setup), loca
         The container will install Windows 11 from the ISO and shut down when complete. Monitor progress at [http://localhost:8006](http://localhost:8006).
 
       </Tab>
+      <Tab value="Android">
+
+        **1. Install Docker Desktop or Docker Engine**
+
+        **2. Pull the QEMU Android image:**
+
+        ```bash
+        docker pull trycua/cua-qemu-android:latest
+        ```
+
+        No golden image preparation needed - the Android emulator starts directly when you run it!
+
+      </Tab>
     </Tabs>
 
   </Tab>
@@ -194,19 +207,6 @@ You can run your Cua computer in the cloud (recommended for easiest setup), loca
     3. Windows Sandbox will be automatically configured when you run the CLI
 
   </Tab>
-  <Tab value="Android on Docker">
-
-    Run Android 11 emulator inside Docker containers on any platform.
-
-    1. Install Docker Desktop or Docker Engine
-
-    2. Pull the Android image:
-
-    ```bash
-    docker pull trycua/cua-android-docker:latest
-    ```
-
-  </Tab>
 </Tabs>
 
 ---
@@ -234,7 +234,7 @@ Connect to your Cua computer and perform basic interactions, such as taking scre
 
     Then, connect to your desired computer environment:
 
-    <Tabs items={['Cloud Sandbox', 'Linux on Docker', 'QEMU Docker', 'macOS Sandbox', 'Windows Sandbox', 'Android on Docker', 'Your host desktop']}>
+    <Tabs items={['Cloud Sandbox', 'Linux on Docker', 'QEMU Docker', 'macOS Sandbox', 'Windows Sandbox', 'Your host desktop']}>
       <Tab value="Cloud Sandbox">
         Set your CUA API key (same key used for model inference) and connect to your sandbox:
         ```python
@@ -302,7 +302,7 @@ Connect to your Cua computer and perform basic interactions, such as taking scre
         ```
       </Tab>
       <Tab value="QEMU Docker">
-        <Tabs items={['Linux', 'Windows']}>
+        <Tabs items={['Linux', 'Windows', 'Android']}>
           <Tab value="Linux">
             ```python
             from computer import Computer
@@ -373,6 +373,40 @@ Connect to your Cua computer and perform basic interactions, such as taking scre
             asyncio.run(main())
             ```
           </Tab>
+          <Tab value="Android">
+            ```python
+            from computer import Computer
+            import asyncio
+
+            computer = Computer(
+                os_type="android",
+                provider_type="docker",
+                image="trycua/cua-qemu-android:latest",
+                timeout=150,  # Emulator needs more time to boot
+                run_opts={
+                    "devices": ["/dev/kvm"],  # Required for Android emulator
+                    "env": {
+                        "EMULATOR_DEVICE": "Samsung Galaxy S10",
+                    },
+                },
+            )
+
+            async def main():
+                await computer.run()  # Launch & connect to Android emulator
+
+                try:
+                    # Take a screenshot of the Android screen
+                    screenshot = await computer.interface.screenshot()
+                    # Simulate a left-click at coordinates (100, 100)
+                    await computer.interface.left_click(100, 100)
+                    # Type "Hello!" into the active application
+                    await computer.interface.type_text("Hello!")
+                finally:
+                    await computer.disconnect()
+
+            asyncio.run(main())
+            ```
+          </Tab>
         </Tabs>
       </Tab>
       <Tab value="macOS Sandbox">
@@ -432,40 +466,6 @@ Connect to your Cua computer and perform basic interactions, such as taking scre
                 await computer.disconnect()
                 # Alternative: If you want to fully stop the VM, use stop() instead:
                 # await computer.stop()  # Fully stop VM and disconnect
-
-        asyncio.run(main())
-        ```
-      </Tab>
-      <Tab value="Android on Docker">
-        ```python
-        from computer import Computer
-        import asyncio
-
-        computer = Computer(
-            os_type="android",
-            provider_type="docker",
-            image="trycua/cua-android-docker:latest",
-            timeout=150,  # Emulator needs more time to boot
-            run_opts={
-                "devices": ["/dev/kvm"],  # Required for Android emulator
-                "env": {
-                    "EMULATOR_DEVICE": "Samsung Galaxy S10",
-                },
-            },
-        )
-
-        async def main():
-            await computer.run()  # Launch & connect to Android emulator
-
-            try:
-                # Take a screenshot of the Android screen
-                screenshot = await computer.interface.screenshot()
-                # Simulate a left-click at coordinates (100, 100)
-                await computer.interface.left_click(100, 100)
-                # Type "Hello!" into the active application
-                await computer.interface.type_text("Hello!")
-            finally:
-                await computer.disconnect()
 
         asyncio.run(main())
         ```

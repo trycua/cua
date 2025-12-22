@@ -17,7 +17,7 @@ ENV PATH="${ANDROID_HOME}/cmdline-tools/latest/bin:${ANDROID_HOME}/platform-tool
 RUN yes | sdkmanager --licenses && \
     sdkmanager "platforms;android-30" "build-tools;30.0.3"
 
-COPY wallpaper-manager /build/wallpaper-manager
+COPY src/wallpaper-manager /build/wallpaper-manager
 WORKDIR /build/wallpaper-manager
 
 RUN curl -fsSL -o gradle/wrapper/gradle-wrapper.jar \
@@ -57,7 +57,7 @@ ENV PATH="/opt/venv/bin:$PATH"
 RUN /opt/venv/bin/pip install --no-cache-dir --upgrade pip && \
     /opt/venv/bin/pip install --no-cache-dir cua-computer-server
 
-COPY entry.sh /usr/local/bin/entry.sh
+COPY src/entry.sh /usr/local/bin/entry.sh
 RUN chmod +x /usr/local/bin/entry.sh
 
 # Make venv accessible to androidusr

@@ -1,6 +1,6 @@
 # ============================================================================
 # Development Dockerfile - builds from libs/ directory with local sources
-# Build command: docker build -f android-docker/dev.Dockerfile -t android-cua:dev .
+# Build command: docker build -f qemu-docker/android/dev.Dockerfile -t cua-qemu-android:dev .
 # ============================================================================
 
 # ============================================================================
@@ -22,7 +22,7 @@ ENV PATH="${ANDROID_HOME}/cmdline-tools/latest/bin:${ANDROID_HOME}/platform-tool
 RUN yes | sdkmanager --licenses && \
     sdkmanager "platforms;android-30" "build-tools;30.0.3"
 
-COPY android-docker/wallpaper-manager /build/wallpaper-manager
+COPY qemu-docker/android/src/wallpaper-manager /build/wallpaper-manager
 WORKDIR /build/wallpaper-manager
 
 RUN curl -fsSL -o gradle/wrapper/gradle-wrapper.jar \
@@ -65,7 +65,7 @@ WORKDIR /tmp/computer-server
 RUN /opt/venv/bin/pip install --no-cache-dir --upgrade pip && \
     /opt/venv/bin/pip install --no-cache-dir -e .
 
-COPY android-docker/entry.sh /usr/local/bin/entry.sh
+COPY qemu-docker/android/src/entry.sh /usr/local/bin/entry.sh
 RUN chmod +x /usr/local/bin/entry.sh
 
 # Make venv accessible to androidusr

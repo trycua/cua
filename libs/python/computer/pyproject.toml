@@ -4,7 +4,7 @@ build-backend = "pdm.backend"
 
 [project]
 name = "cua-computer"
-version = "0.5.0"
+version = "0.5.1"
 description = "Computer-Use Interface (CUI) framework powering Cua"
 readme = "README.md"
 authors = [

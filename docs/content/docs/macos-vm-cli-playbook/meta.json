@@ -1,5 +1,0 @@
-{
-  "title": "macOS VM CLI",
-  "description": "CLI tools for macOS virtualization",
-  "pages": ["lume", "lumier"]
-}

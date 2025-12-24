@@ -68,7 +68,7 @@ Refer to this notebook for a step-by-step guide on how to use the Computer-Use I
 
 ## Docs
 
-- [Computers](https://cua.ai/docs/computer-sdk/computers)
-- [Commands](https://cua.ai/docs/computer-sdk/commands)
-- [Computer UI](https://cua.ai/docs/computer-sdk/computer-ui)
-- [Sandboxed Python](https://cua.ai/docs/computer-sdk/sandboxed-python)
+- [Computers](https://cua.ai/docs/computer/computers)
+- [Commands](https://cua.ai/docs/computer/commands)
+- [Computer UI](https://cua.ai/docs/computer/computer-ui)
+- [Sandboxed Python](https://cua.ai/docs/computer/sandboxed-python)

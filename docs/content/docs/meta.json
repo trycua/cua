@@ -10,13 +10,19 @@
     "...get-started",
     "---[ChefHat]Examples Cookbook---",
     "...example-usecases",
-    "---[Bot]Agent Playbook---",
-    "...agent-sdk",
-    "---[BookCopy]Computer Playbook---",
-    "...computer-sdk",
+    "---[Bot]Agent---",
+    "...agent",
+    "---[BookCopy]Computer---",
+    "...computer",
+    "---[Terminal]Lume---",
+    "...lume",
+    "---[Terminal]Lumier---",
+    "...lumier",
+    "---[Target]Set-of-Mark---",
+    "...som",
+    "---[Plug]MCP---",
+    "...mcp",
     "---[Terminal]Cloud CLI Playbook---",
-    "...cli-playbook",
-    "---[Terminal]macOS VM CLI Playbook---",
-    "...macos-vm-cli-playbook"
+    "...cli-playbook"
   ]
 }

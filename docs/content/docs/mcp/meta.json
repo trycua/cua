@@ -1,5 +1,8 @@
 {
+  "title": "MCP",
+  "description": "MCP server for using Cua agents and computers",
   "pages": [
+    "index",
     "installation",
     "configuration",
     "usage",

@@ -45,16 +45,47 @@ const config = {
         destination: '/get-started/quickstart',
         permanent: true,
       },
-      // Moved telemetry to agent-sdk section
+      // Moved telemetry to agent section
       {
         source: '/telemetry',
-        destination: '/agent-sdk/telemetry',
+        destination: '/agent/telemetry',
         permanent: true,
       },
       // Removed quickstart-cli, consolidated into main quickstart
       {
         source: '/quickstart-cli',
         destination: '/get-started/quickstart',
+        permanent: true,
+      },
+      // Documentation restructure: 6-section organization
+      // Redirect old agent-sdk paths to new agent paths
+      {
+        source: '/agent-sdk/:path*',
+        destination: '/agent/:path*',
+        permanent: true,
+      },
+      // Redirect old computer-sdk paths to new computer paths
+      {
+        source: '/computer-sdk/:path*',
+        destination: '/computer/:path*',
+        permanent: true,
+      },
+      // Redirect old macos-vm-cli-playbook/lume paths to new lume paths
+      {
+        source: '/macos-vm-cli-playbook/lume/:path*',
+        destination: '/lume/:path*',
+        permanent: true,
+      },
+      // Redirect old macos-vm-cli-playbook/lumier paths to new lumier paths
+      {
+        source: '/macos-vm-cli-playbook/lumier/:path*',
+        destination: '/lumier/:path*',
+        permanent: true,
+      },
+      // Redirect old agent-sdk/mcp-server paths to new mcp paths
+      {
+        source: '/agent-sdk/mcp-server/:path*',
+        destination: '/mcp/:path*',
         permanent: true,
       },
     ];

@@ -76,9 +76,9 @@ Refer to this example for a step-by-step guide on how to use the Computer-Use In
 
 ## Docs
 
-- [Computers](https://cua.ai/docs/computer/computers)
-- [Commands](https://cua.ai/docs/computer/commands)
-- [Computer UI](https://cua.ai/docs/computer/computer-ui)
+- [Computers](https://cua.ai/docs/computer-sdk/computers)
+- [Commands](https://cua.ai/docs/computer-sdk/commands)
+- [Computer UI](https://cua.ai/docs/computer-sdk/computer-ui)
 
 ## License
 

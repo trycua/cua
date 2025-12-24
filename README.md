@@ -208,9 +208,9 @@ Cua uses the OpenAI Agent response format.
 
 These are the valid model configurations for `ComputerAgent(model="...")`:
 
-| Configuration                            | Description                                                                                                                                |
-| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| `{computer-use-model}`                   | A single model to perform all computer-use tasks                                                                                           |
+| Configuration                            | Description                                                                                                                            |
+| ---------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| `{computer-use-model}`                   | A single model to perform all computer-use tasks                                                                                       |
 | `{grounding-model}+{any-vlm-with-tools}` | [Composed](https://cua.ai/docs/agent/supported-agents/composed-agents) with VLM for captioning and grounding LLM for element detection |
 | `moondream3+{any-llm-with-tools}`        | [Composed](https://cua.ai/docs/agent/supported-agents/composed-agents) with Moondream3 for captioning and UI element detection         |
 | `human/human`                            | A [human-in-the-loop](https://cua.ai/docs/agent/supported-agents/human-in-the-loop) in place of a model                                |

@@ -48,7 +48,7 @@ export function Footer() {
               </li>
               <li>
                 <a
-                  href="/docs/agent/agent-loops"
+                  href="/docs/agent-sdk/agent-loops"
                   className="text-sm text-fd-muted-foreground hover:text-fd-foreground transition-colors"
                 >
                   Agent Loops

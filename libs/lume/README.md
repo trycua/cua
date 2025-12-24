@@ -55,11 +55,11 @@ To get set up with Lume for development, read [these instructions](Development.m
 
 ## Docs
 
-- [Installation](https://cua.ai/docs/lume/installation)
-- [Prebuilt Images](https://cua.ai/docs/lume/prebuilt-images)
-- [CLI Reference](https://cua.ai/docs/lume/cli-reference)
-- [HTTP API](https://cua.ai/docs/lume/http-api)
-- [FAQ](https://cua.ai/docs/lume/faq)
+- [Installation](https://cua.ai/docs/macos-vm-cli-playbook/lume/installation)
+- [Prebuilt Images](https://cua.ai/docs/macos-vm-cli-playbook/lume/prebuilt-images)
+- [CLI Reference](https://cua.ai/docs/macos-vm-cli-playbook/lume/cli-reference)
+- [HTTP API](https://cua.ai/docs/macos-vm-cli-playbook/lume/http-api)
+- [FAQ](https://cua.ai/docs/macos-vm-cli-playbook/lume/faq)
 
 ## Contributing
 

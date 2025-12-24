@@ -1,0 +1,12 @@
+{
+  "title": "Lume",
+  "description": "VM management for macOS",
+  "pages": [
+    "index",
+    "installation",
+    "prebuilt-images",
+    "cli-reference",
+    "http-api",
+    "faq"
+  ]
+}

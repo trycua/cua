@@ -1,0 +1,11 @@
+{
+  "title": "Lumier",
+  "description": "Docker interface for macOS/Linux VMs",
+  "pages": [
+    "index",
+    "installation",
+    "docker",
+    "docker-compose",
+    "building-lumier"
+  ]
+}

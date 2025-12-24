@@ -1,5 +1,5 @@
 {
-  "title": "Agent SDK",
+  "title": "Agent",
   "description": "Build computer-using agents with the Agent SDK",
   "pages": [
     "agent-loops",
@@ -14,7 +14,6 @@
     "usage-tracking",
     "telemetry",
     "benchmarks",
-    "integrations",
-    "mcp-server"
+    "integrations"
   ]
 }

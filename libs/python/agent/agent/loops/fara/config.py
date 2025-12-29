@@ -284,7 +284,12 @@ class FaraVlmConfig(AsyncAgentConfig):
         # Check if this is a terminate action - if so, add a final assistant message to stop the loop
         has_terminate = False
         for item in output_items:
-            if item.get("type") in ("computer_call", "function_call"):
+            if item.get("type") == "computer_call":
+                action = item.get("action", {})
+                if action.get("type") == "terminate":
+                    has_terminate = True
+                    break
+            elif item.get("type") == "function_call":
                 try:
                     args = json.loads(item.get("arguments", "{}"))
                     if args.get("action") == "terminate":
@@ -303,11 +308,13 @@ class FaraVlmConfig(AsyncAgentConfig):
             )
             if not has_assistant_message:
                 # Add a simple assistant message to signal completion
-                output_items.append({
-                    "type": "message",
-                    "role": "assistant",
-                    "content": [{"type": "output_text", "text": ""}]
-                })
+                output_items.append(
+                    {
+                        "type": "message",
+                        "role": "assistant",
+                        "content": [{"type": "output_text", "text": ""}],
+                    }
+                )
 
         # Prepend any pre_output_items (e.g., simulated screenshot-taking message)
         return {"output": (pre_output_items + output_items), "usage": usage}

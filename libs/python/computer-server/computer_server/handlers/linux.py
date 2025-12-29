@@ -22,7 +22,6 @@ from PIL import Image, ImageGrab
 # Configure logger
 logger = logging.getLogger(__name__)
 
-# pyautogui removed in favor of pynput
 
 from pynput.keyboard import Controller as KeyboardController
 from pynput.keyboard import Key
@@ -81,7 +80,7 @@ class LinuxAccessibilityHandler(BaseAccessibilityHandler):
 
         Returns:
             Tuple[int, int]: The x and y coordinates of the cursor position.
-                           Returns (0, 0) if pyautogui is not available.
+                           Returns (0, 0) if cursor position cannot be determined.
         """
         try:
             # Use pynput mouse controller
@@ -98,7 +97,7 @@ class LinuxAccessibilityHandler(BaseAccessibilityHandler):
 
         Returns:
             Tuple[int, int]: The width and height of the screen in pixels.
-                           Returns (1920, 1080) if pyautogui is not available.
+                           Returns (1920, 1080) if screen size cannot be determined.
         """
         try:
             img = ImageGrab.grab()

@@ -504,7 +504,7 @@ class WindowsAutomationHandler(BaseAutomationHandler):
         """Scroll vertically at the current cursor position.
 
         Args:
-            x (int): Horizontal scroll amount (not used in pyautogui implementation).
+            x (int): Horizontal scroll amount.
             y (int): Vertical scroll amount. Positive values scroll up, negative values scroll down.
 
         Returns:

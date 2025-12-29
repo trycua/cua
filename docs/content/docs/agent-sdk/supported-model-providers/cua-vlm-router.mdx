@@ -62,7 +62,10 @@ The Cua VLM Router currently supports these models:
 | `cua/anthropic/claude-haiku-4.5`    | Anthropic | Claude Haiku 4.5       | Fast responses, cost-effective          |
 | `cua/google/gemini-3-pro-preview`   | Google    | Gemini 3 Pro Preview   | Advanced reasoning and vision tasks     |
 | `cua/google/gemini-3-flash-preview` | Google    | Gemini 3 Flash Preview | Fast responses, cost-effective          |
-| `cua/qwen/qwen3-vl-235b`            | Qwen      | Qwen3 VL 235B          | Large-scale vision-language tasks       |
+
+{/_ TODO: Re-enable when Qwen provider is back
+| `cua/qwen/qwen3-vl-235b` | Qwen | Qwen3 VL 235B | Large-scale vision-language tasks |
+_/}
 
 ## How It Works
 
@@ -351,6 +354,8 @@ agent = ComputerAgent(
 )
 ```
 
+{/\* TODO: Re-enable when Qwen provider is back
+
 ### Using Qwen3 VL 235B
 
 ```python
@@ -370,6 +375,8 @@ messages = [{"role": "user", "content": "Open a browser and search for Python tu
 async for result in agent.run(messages):
     print(result)
 ```
+
+\*/}
 
 ### Using Claude Opus 4.5
 

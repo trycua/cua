@@ -143,7 +143,5 @@ class Message(BaseModelCompatibleDict):
     def role_checker(cls, value: str) -> str:
         values = ["system", "user", "assistant", "function"]
         if value not in values:
-            raise ValueError(
-                f'{value} must be one of {",".join(values)}'
-            )
+            raise ValueError(f'{value} must be one of {",".join(values)}')
         return value

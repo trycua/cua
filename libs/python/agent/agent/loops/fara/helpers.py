@@ -62,6 +62,7 @@ Here is the code.
 </code>
 </tool_call>"""
 
+
 class NousFnCallPrompt:
     def __init__(self, template_name: str = "default"):
         """Initialize NousFnCallPrompt with a specific template.
@@ -112,9 +113,7 @@ class NousFnCallPrompt:
                 content = content or []
                 fn_call = msg.function_call
                 if fn_call:
-                    if (not SPECIAL_CODE_MODE) or (
-                        CODE_TOOL_PATTERN not in fn_call.name
-                    ):
+                    if (not SPECIAL_CODE_MODE) or (CODE_TOOL_PATTERN not in fn_call.name):
                         fc = {
                             "name": fn_call.name,
                             "arguments": json.loads(fn_call.arguments),
@@ -158,8 +157,7 @@ class NousFnCallPrompt:
 
         tool_descs = [{"type": "function", "function": f} for f in functions]
         tool_names = [
-            function.get("name_for_model", function.get("name", ""))
-            for function in functions
+            function.get("name_for_model", function.get("name", "")) for function in functions
         ]
         tool_descs = "\n".join([json.dumps(f, ensure_ascii=False) for f in tool_descs])
 
@@ -173,9 +171,7 @@ class NousFnCallPrompt:
         if messages[0].role == "system":
             messages[0].content.append(ContentItem(text="\n\n" + tool_system))
         else:
-            messages = [
-                Message(role="system", content=[ContentItem(text=tool_system)])
-            ] + messages
+            messages = [Message(role="system", content=[ContentItem(text=tool_system)])] + messages
         return messages
 
 
@@ -249,9 +245,9 @@ def parse_tool_call_from_text(text: str) -> Optional[Dict[str, Any]]:
     brace_count = 0
     json_end = json_start
     for i in range(json_start, len(text)):
-        if text[i] == '{':
+        if text[i] == "{":
             brace_count += 1
-        elif text[i] == '}':
+        elif text[i] == "}":
             brace_count -= 1
             if brace_count == 0:
                 json_end = i + 1

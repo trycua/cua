@@ -5,4 +5,4 @@ Original implementation from Microsoft: https://github.com/microsoft/Fara
 
 from .config import FaraVlmConfig
 
-__all__ = ("FaraVlmConfig", )
+__all__ = ("FaraVlmConfig",)

@@ -7,6 +7,7 @@ This guide covers setting up and developing the CUA (Computer Use Agent) monorep
 The project is organized as a monorepo with these main packages:
 
 **Python Packages** (located in `libs/python/`):
+
 - `core/` - Base package with telemetry support
 - `computer/` - Computer-use interface (CUI) library
 - `agent/` - AI agent library with multi-provider support
@@ -16,47 +17,54 @@ The project is organized as a monorepo with these main packages:
 - `bench-ui/` - Benchmark UI utilities
 
 **Other Packages**:
+
 - `libs/lume/` - Lume CLI (Swift)
 - `libs/typescript/` - TypeScript packages including `cua-cli`
 
-All Python packages are part of a [uv workspace](https://docs.astral.sh/uv/workspaces/) which manages a shared virtual environment and dependencies.
+All Python packages are part of a [uv workspace](https://docs.astral.sh/uv/concepts/projects/workspaces/) which manages a shared virtual environment and dependencies.
 
 ## Quick Start
 
 1. **Install Lume CLI** (required for local VM management):
+
    ```bash
    /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/lume/scripts/install.sh)"
    ```
 
 2. **Clone the repository**:
+
    ```bash
    git clone https://github.com/trycua/cua.git
    cd cua
    ```
 
 3. **Create `.env.local`** in the root directory with your API keys:
+
    ```bash
    ANTHROPIC_API_KEY=your_anthropic_key_here
    OPENAI_API_KEY=your_openai_key_here
    ```
 
 4. **Install Node.js dependencies**:
+
    ```bash
    npm install -g pnpm  # if not already installed
    pnpm install
    ```
 
 5. **Install Python dependencies**:
+
    ```bash
    pip install uv  # if not already installed
    uv sync
    ```
 
 6. **Open workspace in VS Code/Cursor**:
+
    ```bash
    # For Python development
    code .vscode/py.code-workspace
-   
+
    # For Lume (Swift) development
    code .vscode/lume.code-workspace
    ```
@@ -159,6 +167,7 @@ Formatting configuration is defined in [`pyproject.toml`](./pyproject.toml). See
 ##### Python-specific settings
 
 Python-specific IDE settings are configured in [`.vscode/settings.json`](.vscode/settings.json), including:
+
 - Python interpreter path
 - Format on save
 - Code actions on save
@@ -250,11 +259,13 @@ pnpm install
 #### Usage
 
 - **Check formatting** (without making changes):
+
   ```bash
   pnpm prettier:check
   ```
 
 - **Automatically format files**:
+
   ```bash
   pnpm prettier:format
   ```
@@ -342,6 +353,7 @@ To release a new version of the CUA CLI (`@trycua/cli`):
 5. Click "Run workflow"
 
 The workflow will:
+
 - Build single-file executables for all supported platforms
 - Publish the package to npm
 - Create a GitHub release with the version tag (format: `cua-vX.Y.Z`)
@@ -367,6 +379,7 @@ The workflow will:
 ### 4. Update Documentation
 
 Update any relevant documentation with the new version number, including:
+
 - Example code in documentation
 - Any version-specific instructions
 - Compatibility matrices

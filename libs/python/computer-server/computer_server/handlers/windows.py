@@ -14,8 +14,10 @@ from io import BytesIO
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 from PIL import Image, ImageGrab
-from pynput.keyboard import Controller as KeyboardController, Key as KBKey
-from pynput.mouse import Button as MouseButton, Controller as MouseController
+from pynput.keyboard import Controller as KeyboardController
+from pynput.keyboard import Key as KBKey
+from pynput.mouse import Button as MouseButton
+from pynput.mouse import Controller as MouseController
 
 # Configure logger
 logger = logging.getLogger(__name__)

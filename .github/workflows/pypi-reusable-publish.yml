@@ -100,7 +100,7 @@ jobs:
             pdm lock
           fi
 
-      # Conditional step for lume binary download (only for pylume package)
+      # Conditional step for lume binary download (only for packages that include lume binary)
       - name: Download and setup lume binary
         if: inputs.is_lume_package
         run: |
@@ -117,12 +117,12 @@ jobs:
           # Make the binary executable
           chmod +x lume
 
-          # Copy the lume binary to the correct location in the pylume package
-          mkdir -p "${GITHUB_WORKSPACE}/${{ inputs.package_dir }}/pylume"
-          cp lume "${GITHUB_WORKSPACE}/${{ inputs.package_dir }}/pylume/lume"
+          # Copy the lume binary to the correct location in the package
+          mkdir -p "${GITHUB_WORKSPACE}/${{ inputs.package_dir }}/lume"
+          cp lume "${GITHUB_WORKSPACE}/${{ inputs.package_dir }}/lume/lume"
 
           # Verify the binary exists and is executable
-          test -x "${GITHUB_WORKSPACE}/${{ inputs.package_dir }}/pylume/lume" || { echo "lume binary not found or not executable"; exit 1; }
+          test -x "${GITHUB_WORKSPACE}/${{ inputs.package_dir }}/lume/lume" || { echo "lume binary not found or not executable"; exit 1; }
 
           # Get the version from the downloaded binary for reference
           LUME_VERSION=$(./lume --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' || echo "unknown")
@@ -142,13 +142,17 @@ jobs:
           # Build with PDM
           pdm build
 
-          # For pylume package, verify the binary is in the wheel
+          # For packages with lume binary, verify the binary is in the wheel
           if [ "${{ inputs.is_lume_package }}" = "true" ]; then
             python -m pip install wheel
             wheel unpack dist/*.whl --dest temp_wheel
             echo "Listing contents of wheel directory:"
             find temp_wheel -type f
-            test -f temp_wheel/pylume-*/pylume/lume || { echo "lume binary not found in wheel"; exit 1; }
+            # Check for lume binary in the wheel (path may vary by package)
+            if ! find temp_wheel -name "lume" -type f | grep -q .; then
+              echo "lume binary not found in wheel"
+              exit 1
+            fi
             rm -rf temp_wheel
             echo "Publishing ${{ inputs.base_package_name }} ${VERSION} with lume ${LUME_VERSION}"
           else
@@ -173,18 +177,10 @@ jobs:
           echo "# ${{ inputs.base_package_name }} v${VERSION}" > release_notes.md
           echo "" >> release_notes.md
 
-          if [ "${{ inputs.package_name }}" = "pylume" ]; then
-            echo "## Python SDK for lume - run macOS and Linux VMs on Apple Silicon" >> release_notes.md
-            echo "" >> release_notes.md
-            echo "This package provides Python bindings for the lume virtualization tool." >> release_notes.md
-            echo "" >> release_notes.md
-            echo "## Dependencies" >> release_notes.md
-            echo "* lume binary: v${LUME_VERSION}" >> release_notes.md
-          elif [ "${{ inputs.package_name }}" = "computer" ]; then
+          if [ "${{ inputs.package_name }}" = "computer" ]; then
             echo "## Computer control library for the Computer Universal Automation (CUA) project" >> release_notes.md
             echo "" >> release_notes.md
-            echo "## Dependencies" >> release_notes.md
-            echo "* pylume: ${PYLUME_VERSION:-latest}" >> release_notes.md
+            echo "This package uses the Lume CLI for creating and managing sandbox environments." >> release_notes.md
           elif [ "${{ inputs.package_name }}" = "agent" ]; then
             echo "## Dependencies" >> release_notes.md
             echo "* cua-computer: ${COMPUTER_VERSION:-latest}" >> release_notes.md

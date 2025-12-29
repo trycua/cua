@@ -104,7 +104,7 @@ def get_image_size(image_bytes: bytes) -> Tuple[int, int]:
 
 
 def parse_vm_info(vm_info: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    """Parse VM info from pylume response."""
+    """Parse VM info from Lume API response."""
     if not vm_info:
         return None
 

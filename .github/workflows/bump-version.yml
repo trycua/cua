@@ -14,7 +14,6 @@ on:
           - cua-core
           - cua-mcp-server
           - cua-som
-          - pylume
       bump_type:
         description: "Version bump type"
         required: true
@@ -55,9 +54,6 @@ jobs:
               ;;
             "cua-som")
               echo "directory=libs/python/som" >> $GITHUB_OUTPUT
-              ;;
-            "pylume")
-              echo "directory=libs/python/pylume" >> $GITHUB_OUTPUT
               ;;
             *)
               echo "Unknown service: ${{ inputs.service }}"

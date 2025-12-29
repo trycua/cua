@@ -58,7 +58,7 @@ To install the Computer-Use Interface (CUI):
 pip install "cua-computer[all]"
 ```
 
-The `cua-computer` PyPi package pulls automatically the latest executable version of Lume through [pylume](https://github.com/trycua/pylume).
+The `cua-computer` PyPi package automatically uses the Lume CLI for creating and managing sandbox environments.
 
 ## Run
 

@@ -73,18 +73,6 @@ async for _ in agent.run("Open Firefox and navigate to github.com"):
     pass
 ```
 
-## Qwen3 VL
-
-Qwen3 VL family:
-
-- `cua/qwen/qwen3-vl-235b` (via Cua VLM Router - recommended)
-
-```python
-agent = ComputerAgent("cua/qwen/qwen3-vl-235b", tools=[computer])
-async for _ in agent.run("Open Firefox and navigate to github.com"):
-    pass
-```
-
 ## UI-TARS 1.5
 
 Unified vision-language model for computer-use:

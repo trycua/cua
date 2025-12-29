@@ -298,23 +298,16 @@ class FaraVlmConfig(AsyncAgentConfig):
                 except:
                     pass
 
-        # If terminate detected, ensure there's a final assistant message to exit the loop
-        # The generic agent loop checks if last item has role="assistant" to determine if it should continue
+        # If terminate detected, ensure LAST item is an assistant message to exit the loop
+        # The generic agent loop checks: while new_items[-1].get("role") != "assistant"
         if has_terminate:
-            # Check if there's already an assistant message with the thoughts
-            has_assistant_message = any(
-                item.get("type") == "message" and item.get("role") == "assistant"
-                for item in output_items
+            output_items.append(
+                {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": ""}],
+                }
             )
-            if not has_assistant_message:
-                # Add a simple assistant message to signal completion
-                output_items.append(
-                    {
-                        "type": "message",
-                        "role": "assistant",
-                        "content": [{"type": "output_text", "text": ""}],
-                    }
-                )
 
         # Prepend any pre_output_items (e.g., simulated screenshot-taking message)
         return {"output": (pre_output_items + output_items), "usage": usage}

@@ -1,6 +1,34 @@
 # CUA CLI Installation Script for Windows
 $ErrorActionPreference = "Stop"
 
+function Get-LatestCuaTag {
+    $page = 1
+    $perPage = 100
+    $maxPages = 10
+
+    while ($page -le $maxPages) {
+        try {
+            $response = Invoke-RestMethod -Uri "https://api.github.com/repos/trycua/cua/tags?per_page=$perPage&page=$page" -ErrorAction Stop
+
+            if (-not $response -or $response.Count -eq 0) {
+                return $null
+            }
+
+            $cuaTag = $response | Where-Object { $_.name -like "cua-*" } | Select-Object -First 1
+
+            if ($cuaTag) {
+                return $cuaTag.name
+            }
+
+            $page++
+        } catch {
+            return $null
+        }
+    }
+
+    return $null
+}
+
 function Install-WithBun {
     Write-Host "Installing CUA CLI using Bun..." -ForegroundColor Yellow
     
@@ -78,20 +106,10 @@ if (-not $is64Bit) {
     }
 }
 
-# Get the latest release version
-try {
-    $release = Invoke-RestMethod -Uri "https://api.github.com/repos/trycua/cua/releases/latest" -ErrorAction Stop
-    $version = $release.tag_name -replace '^cua-v', ''
-    # Look for the windows binary in the release assets
-    $windowsAsset = $release.assets | Where-Object { $_.name -eq 'cua-windows-x64.exe' }
-    
-    if (-not $windowsAsset) {
-        throw "Windows binary not found in release assets"
-    }
-    
-    $binaryUrl = $windowsAsset.browser_download_url
-} catch {
-    Write-Host "Warning: Could not fetch latest release, falling back to Bun installation" -ForegroundColor Yellow
+# Get the latest cua release tag
+$tagName = Get-LatestCuaTag
+if (-not $tagName) {
+    Write-Host "Warning: Could not find latest cua release, falling back to Bun installation" -ForegroundColor Yellow
     if (Install-WithBun) {
         exit 0
     } else {
@@ -100,6 +118,12 @@ try {
         exit 1
     }
 }
+
+# Extract version number (remove 'cua-v' prefix)
+$version = $tagName -replace '^cua-v', ''
+
+# Construct download URL using the specific cua release tag
+$binaryUrl = "https://github.com/trycua/cua/releases/download/$tagName/cua-windows-x64.exe"
 
 # Create installation directory
 $installDir = "$env:USERPROFILE\.cua\bin"

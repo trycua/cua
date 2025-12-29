@@ -1,6 +1,3 @@
-import pyautogui
-
-pyautogui.FAILSAFE = False
 import asyncio
 import base64
 import copy
@@ -76,9 +73,9 @@ except Exception as e:
 
 # Trigger screen recording prompt on macOS
 try:
-    import pyautogui
+    from PIL import ImageGrab
 
-    pyautogui.screenshot()
+    ImageGrab.grab()
 except Exception as e:
     logger.debug(f"Failed to trigger screenshot permissions prompt: {e}")
 
@@ -702,8 +699,10 @@ def get_dock_items():
             item_type = "document"
         elif subrole == "AXSeparatorDockItem" or role == "AXSeparator":
             item_type = "separator"
-        elif "trash" in title.lower():
-            item_type = "trash"
+        else:
+            title_str = title if isinstance(title, str) else str(title)
+            if "trash" in title_str.lower():
+                item_type = "trash"
         dock_items.append(
             {
                 "title": title,
@@ -1178,14 +1177,16 @@ class MacOSAutomationHandler(BaseAutomationHandler):
         """Press and hold a keyboard key.
 
         Args:
-            key: Key name to press (using pyautogui key names)
+            key: Key name to press
 
         Returns:
             Dictionary containing success status and error message if failed
         """
         try:
-            # use pyautogui for their key names
-            pyautogui.keyDown(key)
+            k = getattr(Key, key) if hasattr(Key, key) else (key if len(key) == 1 else None)
+            if k is None:
+                return {"success": False, "error": f"Unknown key: {key}"}
+            self.keyboard.press(k)
             return {"success": True}
         except Exception as e:
             return {"success": False, "error": str(e)}
@@ -1194,14 +1195,16 @@ class MacOSAutomationHandler(BaseAutomationHandler):
         """Release a keyboard key.
 
         Args:
-            key: Key name to release (using pyautogui key names)
+            key: Key name to release
 
         Returns:
             Dictionary containing success status and error message if failed
         """
         try:
-            # use pyautogui for their key names
-            pyautogui.keyUp(key)
+            k = getattr(Key, key) if hasattr(Key, key) else (key if len(key) == 1 else None)
+            if k is None:
+                return {"success": False, "error": f"Unknown key: {key}"}
+            self.keyboard.release(k)
             return {"success": True}
         except Exception as e:
             return {"success": False, "error": str(e)}
@@ -1216,7 +1219,6 @@ class MacOSAutomationHandler(BaseAutomationHandler):
             Dictionary containing success status and error message if failed
         """
         try:
-            # use pynput for Unicode support
             self.keyboard.type(text)
             return {"success": True}
         except Exception as e:
@@ -1226,14 +1228,17 @@ class MacOSAutomationHandler(BaseAutomationHandler):
         """Press and release a keyboard key.
 
         Args:
-            key: Key name to press (using pyautogui key names)
+            key: Key name to press
 
         Returns:
             Dictionary containing success status and error message if failed
         """
         try:
-            # use pyautogui for their key names
-            pyautogui.press(key)
+            k = getattr(Key, key) if hasattr(Key, key) else (key if len(key) == 1 else None)
+            if k is None:
+                return {"success": False, "error": f"Unknown key: {key}"}
+            self.keyboard.press(k)
+            self.keyboard.release(k)
             return {"success": True}
         except Exception as e:
             return {"success": False, "error": str(e)}
@@ -1242,14 +1247,25 @@ class MacOSAutomationHandler(BaseAutomationHandler):
         """Press a combination of keys simultaneously.
 
         Args:
-            keys: List of key names to press together (using pyautogui key names)
+            keys: List of key names to press together
 
         Returns:
             Dictionary containing success status and error message if failed
         """
         try:
-            # use pyautogui for their key names
-            pyautogui.hotkey(*keys)
+            seq = []
+            for k in keys:
+                kk = getattr(Key, k) if hasattr(Key, k) else (k if len(k) == 1 else None)
+                if kk is None:
+                    return {"success": False, "error": f"Unknown key in hotkey: {k}"}
+                seq.append(kk)
+            for k in seq[:-1]:
+                self.keyboard.press(k)
+            last = seq[-1]
+            self.keyboard.press(last)
+            self.keyboard.release(last)
+            for k in reversed(seq[:-1]):
+                self.keyboard.release(k)
             return {"success": True}
         except Exception as e:
             return {"success": False, "error": str(e)}
@@ -1309,9 +1325,7 @@ class MacOSAutomationHandler(BaseAutomationHandler):
             Dictionary containing success status and base64-encoded image data or error message
         """
         try:
-            from PIL import Image
-
-            screenshot = pyautogui.screenshot()
+            screenshot = ImageGrab.grab()
             if not isinstance(screenshot, Image.Image):
                 return {"success": False, "error": "Failed to capture screenshot"}
 
@@ -1338,8 +1352,8 @@ class MacOSAutomationHandler(BaseAutomationHandler):
             Dictionary containing success status and screen size or error message
         """
         try:
-            size = pyautogui.size()
-            return {"success": True, "size": {"width": size.width, "height": size.height}}
+            img = ImageGrab.grab()
+            return {"success": True, "size": {"width": img.width, "height": img.height}}
         except Exception as e:
             return {"success": False, "error": str(e)}
 

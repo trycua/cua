@@ -12,15 +12,24 @@ const processor = remark()
   .use(remarkGfm);
 
 export async function getLLMText(page: InferPageType<typeof source>) {
-  const processed = await processor.process({
-    path: page.data._file.absolutePath,
-    value: page.data.content,
-  });
+  const pageData = page.data as any;
+  const filePath = pageData._file?.absolutePath;
+  const content = pageData.content || pageData.body || '';
+
+  let processed;
+  if (filePath && typeof content === 'string') {
+    processed = await processor.process({ path: filePath, value: content });
+  } else if (typeof content === 'string') {
+    processed = await processor.process(content);
+  } else {
+    // Handle case where content is not available
+    processed = { value: '' };
+  }
 
   return `# ${page.data.title}
 URL: ${page.url}
 
-${page.data.description}
+${page.data.description || ''}
 
 ${processed.value}`;
 }

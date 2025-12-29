@@ -31,26 +31,39 @@ jobs:
       core_version: ${{ steps.update-deps.outputs.core_version }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Ensure latest main branch
+        run: |
+          git fetch origin main
+          git reset --hard origin/main
+          echo "Current HEAD commit:"
+          git log -1 --oneline
 
       - name: Determine version
         id: get-version
         run: |
-          if [ "${{ github.event_name }}" == "push" ]; then
+          # Check inputs.version first (works for workflow_call regardless of event_name)
+          if [ -n "${{ inputs.version }}" ]; then
+            VERSION=${{ inputs.version }}
+          elif [ "${{ github.event_name }}" == "push" ]; then
             # Extract version from tag (for package-specific tags)
             if [[ "${{ github.ref }}" =~ ^refs/tags/agent-v([0-9]+\.[0-9]+\.[0-9]+) ]]; then
               VERSION=${BASH_REMATCH[1]}
             else
-              echo "Invalid tag format for agent"
+              echo "ERROR: Invalid tag format for agent"
               exit 1
             fi
-          elif [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
-            # Use version from workflow dispatch
+          elif [ -n "${{ github.event.inputs.version }}" ]; then
             VERSION=${{ github.event.inputs.version }}
           else
-            # Use version from workflow_call
-            VERSION=${{ inputs.version }}
+            echo "ERROR: No version found (inputs.version, event.inputs.version, and tag all empty)"
+            exit 1
           fi
-          echo "VERSION=$VERSION"
+
+          echo "Agent version: $VERSION"
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
       - name: Set up Python

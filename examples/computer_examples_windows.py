@@ -1,8 +1,8 @@
-import os
 import asyncio
-from pathlib import Path
+import os
 import sys
 import traceback
+from pathlib import Path
 
 # Load environment variables from .env file
 project_root = Path(__file__).parent.parent
@@ -21,12 +21,13 @@ for path in pythonpath.split(":"):
         print(f"Added to sys.path: {path}")
 
 from computer.computer import Computer
-from computer.providers.base import VMProviderType
 from computer.logger import LogLevel
+from computer.providers.base import VMProviderType
 
 # ANSI color codes
-RED = '\033[91m'
-RESET = '\033[0m'
+RED = "\033[91m"
+RESET = "\033[0m"
+
 
 async def main():
     try:
@@ -39,15 +40,15 @@ async def main():
             name=os.getenv("CONTAINER_NAME") or "",
             provider_type=VMProviderType.CLOUD,
         )
-        
+
         try:
             # Run the computer with default parameters
             await computer.run()
-            
+
             # Create output directory if it doesn't exist
             output_dir = Path("./output")
             output_dir.mkdir(exist_ok=True)
-            
+
             # Keyboard Actions Examples
             print("\n=== Keyboard Actions ===")
             await computer.interface.type_text("Hello, World!")
@@ -65,8 +66,10 @@ async def main():
 
             @sandboxed("demo_venv")
             def greet_and_print(name):
-                from mss import mss
                 import os
+
+                from mss import mss
+
                 # get username
                 username = os.getlogin()
                 print(f"Hello from inside the container, {name}!")
@@ -75,9 +78,9 @@ async def main():
 
                 # take a screenshot
                 with mss() as sct:
-                    filename = sct.shot(mon=-1, output='C:/Users/azureuser/Desktop/fullscreen.png')
+                    filename = sct.shot(mon=-1, output="C:/Users/azureuser/Desktop/fullscreen.png")
                     print(filename)
-                
+
                 return {"greeted": name, "username": username}
 
             # Call with args and kwargs
@@ -94,33 +97,32 @@ async def main():
             with open(screenshot_path, "wb") as f:
                 f.write(screenshot)
             print(f"Screenshot saved to: {screenshot_path.absolute()}")
-            
+
             # Clipboard Actions Examples
             print("\n=== Clipboard Actions ===")
             await computer.interface.set_clipboard("Test clipboard")
             content = await computer.interface.copy_to_clipboard()
             print(f"Clipboard content: {content}")
 
-
             # Simple REPL Loop
             print("\n=== Command REPL ===")
             print("Enter commands to run on the remote computer.")
             print("Type 'exit' or 'quit' to leave the REPL.\n")
-            
+
             while True:
                 try:
                     # Get command from user
                     command = input("command> ").strip()
-                    
+
                     # Check for exit commands
-                    if command.lower() in ['exit', 'quit', '']:
-                        if command.lower() in ['exit', 'quit']:
+                    if command.lower() in ["exit", "quit", ""]:
+                        if command.lower() in ["exit", "quit"]:
                             print("Exiting REPL...")
                         break
-                    
+
                     # Run the command
                     result = await computer.interface.run_command(command)
-                    
+
                     print(result.stdout)
                     if result.stderr:
                         print(f"{RED}{result.stderr}{RESET}")
@@ -129,7 +131,6 @@ async def main():
                     break
                 except Exception as e:
                     print(f"{RED}Error running command: {e}{RESET}")
-
 
         finally:
             # Important to clean up resources

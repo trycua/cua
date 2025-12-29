@@ -13,7 +13,7 @@ The TrajectorySaverCallback records complete agent conversations including messa
 from agent.callbacks import TrajectorySaverCallback
 
 agent = ComputerAgent(
-    model="anthropic/claude-3-5-sonnet-20241022",
+    model="anthropic/claude-sonnet-4-5-20250929",
     tools=[computer],
     callbacks=[
         TrajectorySaverCallback(
@@ -28,7 +28,7 @@ agent = ComputerAgent(
 
 ```python
 agent = ComputerAgent(
-    model="anthropic/claude-3-5-sonnet-20241022",
+    model="anthropic/claude-sonnet-4-5-20250929",
     trajectory_dir="trajectories",  # Auto-save trajectories
     tools=[computer]
 )
@@ -37,9 +37,10 @@ agent = ComputerAgent(
 ## View Trajectories Online
 
 View trajectories in the browser at:
-**[trycua.com/trajectory-viewer](http://trycua.com/trajectory-viewer)**
+**[cua.ai/trajectory-viewer](https://cua.ai/trajectory-viewer)**
 
 The viewer provides:
+
 - Interactive conversation replay
 - Screenshot galleries
 - No data collection
@@ -47,11 +48,13 @@ The viewer provides:
 ## Trajectory Structure
 
 Trajectories are saved with:
+
 - Complete conversation history
 - Usage statistics and costs
 - Timestamps and metadata
 - Screenshots and computer actions
 
 Each trajectory contains:
+
 - **metadata.json**: Run info, timestamps, usage stats (`total_tokens`, `response_cost`)
 - **turn_000/**: Turn-by-turn conversation history (api calls, responses, computer calls, screenshots)

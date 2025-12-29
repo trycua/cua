@@ -2,16 +2,15 @@
 
 import asyncio
 import logging
-import traceback
 import signal
-
-from computer import Computer, VMProviderType
+import traceback
 
 # Import the unified agent class and types
 from agent import ComputerAgent
+from computer import Computer, VMProviderType
 
 # Import utility functions
-from utils import load_dotenv_files, handle_sigint
+from utils import handle_sigint, load_dotenv_files
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -40,25 +39,24 @@ async def run_agent_example():
         # Create ComputerAgent with new API
         agent = ComputerAgent(
             # Supported models:
-            
             # == OpenAI CUA (computer-use-preview) ==
             model="openai/computer-use-preview",
-
             # == Anthropic CUA (Claude > 3.5) ==
-            # model="anthropic/claude-opus-4-20250514", 
+            # model="anthropic/claude-opus-4-20250514",
             # model="anthropic/claude-sonnet-4-20250514",
             # model="anthropic/claude-3-7-sonnet-20250219",
-            # model="anthropic/claude-3-5-sonnet-20241022",
-
+            # model="anthropic/claude-sonnet-4-5-20250929",
             # == UI-TARS ==
             # model="huggingface-local/ByteDance-Seed/UI-TARS-1.5-7B",
             # model="mlx/mlx-community/UI-TARS-1.5-7B-6bit",
             # model="ollama_chat/0000/ui-tars-1.5-7b",
-
             # == Omniparser + Any LLM ==
             # model="omniparser+anthropic/claude-opus-4-20250514",
             # model="omniparser+ollama_chat/gemma3:12b-it-q4_K_M",
-
+            # == Omniparser + Vertex AI Gemini 3 (with thinking_level) ==
+            # model="omni+vertex_ai/gemini-3-flash",
+            # thinking_level="high",  # or "low"
+            # media_resolution="medium",  # or "low" or "high"
             tools=[computer],
             only_n_most_recent_images=3,
             verbosity=logging.DEBUG,
@@ -79,18 +77,18 @@ async def run_agent_example():
 
         # Use message-based conversation history
         history = []
-        
+
         for i, task in enumerate(tasks):
             print(f"\nExecuting task {i+1}/{len(tasks)}: {task}")
-            
+
             # Add user message to history
             history.append({"role": "user", "content": task})
-            
+
             # Run agent with conversation history
             async for result in agent.run(history, stream=False):
                 # Add agent outputs to history
                 history += result.get("output", [])
-                
+
                 # Print output for debugging
                 for item in result.get("output", []):
                     if item.get("type") == "message":
@@ -104,7 +102,7 @@ async def run_agent_example():
                         print(f"Computer Action: {action_type}({action})")
                     elif item.get("type") == "computer_call_output":
                         print("Computer Output: [Screenshot/Result]")
-                        
+
             print(f"✅ Task {i+1}/{len(tasks)} completed: {task}")
 
     except Exception as e:

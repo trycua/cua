@@ -3,7 +3,13 @@ on:
   push:
     branches:
       - "main"
-  pull_request: {}
+    paths:
+      - "libs/lume/**"
+      - ".github/workflows/ci-lume.yml"
+  pull_request:
+    paths:
+      - "libs/lume/**"
+      - ".github/workflows/ci-lume.yml"
 
 concurrency:
   group: lume-${{ github.workflow }}-${{ github.ref }}

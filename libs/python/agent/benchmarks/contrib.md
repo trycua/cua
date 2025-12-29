@@ -17,29 +17,29 @@ class YourModelName(ModelProtocol):
     def __init__(self, model_path: str):
         self.model_path = model_path
         self._model = None
-    
+
     @property
     def model_name(self) -> str:
         return self.model_path
-    
+
     async def load_model(self) -> None:
         """Load the model into memory."""
         # Your model loading logic here
         pass
-    
+
     async def unload_model(self) -> None:
         """Unload the model from memory."""
         # Your model cleanup logic here
         pass
-    
+
     async def predict_click(self, image: Image.Image, instruction: str) -> Optional[Tuple[int, int]]:
         """
         Predict click coordinates for the given image and instruction.
-        
+
         Args:
             image: PIL Image to analyze
             instruction: Text instruction describing what to click
-            
+
         Returns:
             Tuple of (x, y) coordinates or None if prediction fails
         """
@@ -56,7 +56,7 @@ def get_available_models() -> List[Union[str, ModelProtocol]]:
     models = [
         # Computer Agent SDK providers
         "huggingface-local/HelloKKMe/GTA1-7B",
-        
+
         # Reference implementations
         GTA1Model("HelloKKMe/GTA1-7B"),
         YourModelName("path/to/your/model"),  # Add your model here
@@ -79,6 +79,7 @@ This will help you verify that your model loads correctly and produces reasonabl
 Here's a complete example of adding a hypothetical "MyVisionModel":
 
 1. **Create `models/my_vision_model.py`:**
+
 ```python
 import torch
 from transformers import AutoModel, AutoProcessor
@@ -91,11 +92,11 @@ class MyVisionModel(ModelProtocol):
         self.model_path = model_path
         self.model = None
         self.processor = None
-    
+
     @property
     def model_name(self) -> str:
         return f"MyVisionModel({self.model_path})"
-    
+
     async def load_model(self) -> None:
         """Load the model and processor."""
         self.processor = AutoProcessor.from_pretrained(self.model_path)
@@ -104,7 +105,7 @@ class MyVisionModel(ModelProtocol):
             torch_dtype=torch.float16,
             device_map="auto"
         )
-    
+
     async def unload_model(self) -> None:
         """Clean up model resources."""
         del self.model
@@ -112,7 +113,7 @@ class MyVisionModel(ModelProtocol):
         self.model = None
         self.processor = None
         torch.cuda.empty_cache()
-    
+
     async def predict_click(self, image: Image.Image, instruction: str) -> Optional[Tuple[int, int]]:
         """Predict click coordinates."""
         try:
@@ -122,19 +123,19 @@ class MyVisionModel(ModelProtocol):
                 images=image,
                 return_tensors="pt"
             )
-            
+
             # Run inference
             with torch.no_grad():
                 outputs = self.model(**inputs)
-            
+
             # Extract coordinates (model-specific logic)
             x, y = self._extract_coordinates(outputs)
             return (int(x), int(y))
-            
+
         except Exception as e:
             print(f"Prediction failed: {e}")
             return None
-    
+
     def _extract_coordinates(self, outputs):
         """Extract x, y coordinates from model outputs."""
         # Your model-specific coordinate extraction logic
@@ -142,6 +143,7 @@ class MyVisionModel(ModelProtocol):
 ```
 
 2. **Update `models/__init__.py`:**
+
 ```python
 from .gta1 import GTA1Model
 from .my_vision_model import MyVisionModel
@@ -150,6 +152,7 @@ __all__ = ["GTA1Model", "MyVisionModel"]
 ```
 
 3. **Update `utils.py`:**
+
 ```python
 from models import GTA1Model, MyVisionModel
 

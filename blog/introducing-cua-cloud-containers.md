@@ -1,6 +1,6 @@
 # Introducing Cua Cloud Sandbox: Computer-Use Agents in the Cloud
 
-*Published on May 28, 2025 by Francesco Bonacci*
+_Published on May 28, 2025 by Francesco Bonacci_
 
 Welcome to the next chapter in our Computer-Use Agent journey! In [Part 1](./build-your-own-operator-on-macos-1), we showed you how to build your own Operator on macOS. In [Part 2](./build-your-own-operator-on-macos-2), we explored the cua-agent framework. Today, we're excited to introduce **Cua Cloud Sandbox** – the easiest way to deploy Computer-Use Agents at scale.
 
@@ -14,9 +14,9 @@ Think of Cua Cloud as **Docker for Computer-Use Agents**. Instead of managing VM
 
 ## Why Cua Cloud Sandbox?
 
-Four months ago, we launched [**Lume**](https://github.com/trycua/cua/tree/main/libs/lume) and [**Cua**](https://github.com/trycua/cua) with the goal to bring sandboxed VMs and Computer-Use Agents on Apple Silicon. The developer's community response was incredible 🎉 
+Four months ago, we launched [**Lume**](https://github.com/trycua/cua/tree/main/libs/lume) and [**Cua**](https://github.com/trycua/cua) with the goal to bring sandboxed VMs and Computer-Use Agents on Apple Silicon. The developer's community response was incredible 🎉
 
-Going from prototype to production revealed a problem though: **local macOS VMs don't scale**, neither are they easily portable. 
+Going from prototype to production revealed a problem though: **local macOS VMs don't scale**, neither are they easily portable.
 
 Our Discord community, YC peers, and early pilot customers kept hitting the same issues. Storage constraints meant **20-40GB per VM** filled laptops fast. Different hardware architectures (Apple Silicon ARM vs Intel x86) prevented portability of local workflows. Every new user lost a day to setup and configuration.
 
@@ -32,7 +32,7 @@ The result? **Instant deployment** in seconds instead of hours, with no infrastr
 
 ### Step 1: Get Your API Key
 
-Sign up at [**trycua.com**](https://trycua.com) to get your API key.
+Sign up at [**cua.ai**](https://cua.ai) to get your API key.
 
 ```bash
 # Set your API key in environment variables
@@ -55,7 +55,7 @@ async def run_cloud_agent():
         name=os.getenv("CUA_CONTAINER_NAME"),
         provider_type=VMProviderType.CLOUD,
     )
-    
+
     # Create an agent with your preferred loop
     agent = ComputerAgent(
         model="openai/gpt-4o",
@@ -63,7 +63,7 @@ async def run_cloud_agent():
         verbosity=logging.INFO,
         tools=[computer]
     )
-    
+
     # Run a task
     async for result in agent.run("Open Chrome and search for AI news"):
         print(f"Response: {result.get('text')}")
@@ -102,14 +102,14 @@ async def github_automation():
         name="github-automation",
         provider_type=VMProviderType.CLOUD,
     )
-    
+
     agent = ComputerAgent(
         model="openai/gpt-4o",
         save_trajectory=True,
         verbosity=logging.INFO,
         tools=[computer]
     )
-    
+
     tasks = [
         "Look for a repository named trycua/cua on GitHub.",
         "Check the open issues, open the most recent one and read it.",
@@ -119,17 +119,17 @@ async def github_automation():
         "Commit the changes with a descriptive message.",
         "Create a pull request."
     ]
-    
+
     for i, task in enumerate(tasks):
         print(f"\nExecuting task {i+1}/{len(tasks)}: {task}")
         async for result in agent.run(task):
             print(f"Response: {result.get('text')}")
-            
+
             # Check if any tools were used
             tools = result.get('tools')
             if tools:
                 print(f"Tools used: {tools}")
-        
+
         print(f"Task {i+1} completed")
 
 # Run the automation
@@ -153,13 +153,13 @@ async def scrape_website(site_name, url):
         name=f"scraper-{site_name}",
         provider_type=VMProviderType.CLOUD,
     )
-    
+
     agent = ComputerAgent(
         model="openai/gpt-4o",
         save_trajectory=True,
         tools=[computer]
     )
-    
+
     results = []
     tasks = [
         f"Navigate to {url}",
@@ -167,7 +167,7 @@ async def scrape_website(site_name, url):
         "Take a screenshot of the page",
         "Save the extracted data to a file"
     ]
-    
+
     for task in tasks:
         async for result in agent.run(task):
             results.append({
@@ -175,7 +175,7 @@ async def scrape_website(site_name, url):
                 'task': task,
                 'response': result.get('text')
             })
-    
+
     return results
 
 async def parallel_scraping():
@@ -185,11 +185,11 @@ async def parallel_scraping():
         ("HackerNews", "https://news.ycombinator.com"),
         ("TechCrunch", "https://techcrunch.com")
     ]
-    
+
     # Run all scraping tasks in parallel
     tasks = [scrape_website(name, url) for name, url in sites]
     results = await asyncio.gather(*tasks)
-    
+
     # Process results
     for site_results in results:
         print(f"\nResults from {site_results[0]['site']}:")
@@ -226,6 +226,6 @@ Stay tuned for updates and join our [**Discord**](https://discord.gg/cua-ai) to 
 
 Ready to deploy your Computer-Use Agents in the cloud?
 
-Visit [**trycua.com**](https://trycua.com) to sign up and get your API key. Join our [**Discord community**](https://discord.gg/cua-ai) for support and explore more examples on [**GitHub**](https://github.com/trycua/cua).
+Visit [**cua.ai**](https://cua.ai) to sign up and get your API key. Join our [**Discord community**](https://discord.gg/cua-ai) for support and explore more examples on [**GitHub**](https://github.com/trycua/cua).
 
 Happy RPA 2.0! 🚀

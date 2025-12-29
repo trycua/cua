@@ -9,17 +9,18 @@ This script shows how to:
 """
 
 import argparse
-import logging
-import sys
-from pathlib import Path
-import time
-from PIL import Image
-from typing import Dict, Any, List, Optional
-import numpy as np
-import io
 import base64
 import glob
+import io
+import logging
 import os
+import sys
+import time
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+
+import numpy as np
+from PIL import Image
 
 # Load environment variables from .env file
 project_root = Path(__file__).parent.parent
@@ -42,8 +43,8 @@ if str(libs_path) not in sys.path:
     sys.path.append(str(libs_path))
     print(f"Added to sys.path: {libs_path}")
 
-from som import OmniParser, ParseResult, IconElement, TextElement
-from som.models import UIElement, ParserMetadata, BoundingBox
+from som import IconElement, OmniParser, ParseResult, TextElement
+from som.models import BoundingBox, ParserMetadata, UIElement
 
 # Configure logging
 logging.basicConfig(
@@ -361,7 +362,7 @@ def run_experiments(input_path: str, output_dir: Path, use_ocr: bool = False):
 
                         # Update timing totals
                         total_time += t.elapsed_time
-                        
+
                     # Write summary for this combination
                     avg_time = total_time / len(image_files)
                     f.write(

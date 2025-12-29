@@ -34,7 +34,7 @@ interface IOUProps {
 }
 
 /**
- * A React component that visualizes and calculates the Intersection over Union (IOU) 
+ * A React component that visualizes and calculates the Intersection over Union (IOU)
  * of two rectangles on a canvas
  * @param props - The component props
  * @returns The rendered IOU visualization component
@@ -130,12 +130,7 @@ export default function IOU({ title, description, rect1, rect2 }: IOUProps) {
       <h3 className="text-sm font-semibold ">{title}</h3>
       <div className="flex items-start gap-6">
         <div>
-          <canvas
-            ref={canvasRef}
-            width={200}
-            height={150}
-            className="border bg-white rounded-md"
-          />
+          <canvas ref={canvasRef} width={200} height={150} className="border bg-white rounded-md" />
           <div className="mt-2 text-sm">
             <div className="font-mono mb-2">IOU = {actualIOU.toFixed(3)}</div>
             <span className="">{description}</span>

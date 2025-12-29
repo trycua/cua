@@ -2,21 +2,36 @@ import asyncio
 import json
 import time
 from typing import Any, Dict, List, Optional, Tuple
+
+import aiohttp
+import websockets
 from PIL import Image
 
-import websockets
-import aiohttp
-
 from ..logger import Logger, LogLevel
+from ..utils import (
+    bytes_to_image,
+    decode_base64_image,
+    draw_box,
+    encode_base64_image,
+    resize_image,
+)
 from .base import BaseComputerInterface
-from ..utils import decode_base64_image, encode_base64_image, bytes_to_image, draw_box, resize_image
-from .models import Key, KeyType, MouseButton, CommandResult
+from .models import CommandResult, Key, KeyType, MouseButton
 
 
 class GenericComputerInterface(BaseComputerInterface):
     """Generic interface with common functionality for all supported platforms (Windows, Linux, macOS)."""
 
-    def __init__(self, ip_address: str, username: str = "lume", password: str = "lume", api_key: Optional[str] = None, vm_name: Optional[str] = None, logger_name: str = "computer.interface.generic"):
+    def __init__(
+        self,
+        ip_address: str,
+        username: str = "lume",
+        password: str = "lume",
+        api_key: Optional[str] = None,
+        vm_name: Optional[str] = None,
+        logger_name: str = "computer.interface.generic",
+        api_port: Optional[int] = None,
+    ):
         super().__init__(ip_address, username, password, api_key, vm_name)
         self._ws = None
         self._reconnect_task = None
@@ -33,12 +48,15 @@ class GenericComputerInterface(BaseComputerInterface):
         # Set logger name for the interface
         self.logger = Logger(logger_name, LogLevel.NORMAL)
 
+        # Store custom ports
+        self._api_port = api_port
+
         # Optional default delay time between commands (in seconds)
         self.delay = 0.0
 
     async def _handle_delay(self, delay: Optional[float] = None):
         """Handle delay between commands using async sleep.
-        
+
         Args:
             delay: Optional delay in seconds. If None, uses self.delay.
         """
@@ -51,43 +69,71 @@ class GenericComputerInterface(BaseComputerInterface):
     @property
     def ws_uri(self) -> str:
         """Get the WebSocket URI using the current IP address.
-        
+
         Returns:
             WebSocket URI for the Computer API Server
         """
         protocol = "wss" if self.api_key else "ws"
-        port = "8443" if self.api_key else "8000"
+        # Use custom API port if provided, otherwise use defaults based on API key
+        port = (
+            str(self._api_port)
+            if self._api_port is not None
+            else ("8443" if self.api_key else "8000")
+        )
         return f"{protocol}://{self.ip_address}:{port}/ws"
-    
+
     @property
     def rest_uri(self) -> str:
         """Get the REST URI using the current IP address.
-        
+
         Returns:
             REST URI for the Computer API Server
         """
         protocol = "https" if self.api_key else "http"
-        port = "8443" if self.api_key else "8000"
+        # Use custom API port if provided, otherwise use defaults based on API key
+        port = (
+            str(self._api_port)
+            if self._api_port is not None
+            else ("8443" if self.api_key else "8000")
+        )
         return f"{protocol}://{self.ip_address}:{port}/cmd"
 
     # Mouse actions
-    async def mouse_down(self, x: Optional[int] = None, y: Optional[int] = None, button: str = "left", delay: Optional[float] = None) -> None:
+    async def mouse_down(
+        self,
+        x: Optional[int] = None,
+        y: Optional[int] = None,
+        button: str = "left",
+        delay: Optional[float] = None,
+    ) -> None:
         await self._send_command("mouse_down", {"x": x, "y": y, "button": button})
         await self._handle_delay(delay)
-    
-    async def mouse_up(self, x: Optional[int] = None, y: Optional[int] = None, button: str = "left", delay: Optional[float] = None) -> None:
+
+    async def mouse_up(
+        self,
+        x: Optional[int] = None,
+        y: Optional[int] = None,
+        button: str = "left",
+        delay: Optional[float] = None,
+    ) -> None:
         await self._send_command("mouse_up", {"x": x, "y": y, "button": button})
         await self._handle_delay(delay)
-    
-    async def left_click(self, x: Optional[int] = None, y: Optional[int] = None, delay: Optional[float] = None) -> None:
+
+    async def left_click(
+        self, x: Optional[int] = None, y: Optional[int] = None, delay: Optional[float] = None
+    ) -> None:
         await self._send_command("left_click", {"x": x, "y": y})
         await self._handle_delay(delay)
 
-    async def right_click(self, x: Optional[int] = None, y: Optional[int] = None, delay: Optional[float] = None) -> None:
+    async def right_click(
+        self, x: Optional[int] = None, y: Optional[int] = None, delay: Optional[float] = None
+    ) -> None:
         await self._send_command("right_click", {"x": x, "y": y})
         await self._handle_delay(delay)
 
-    async def double_click(self, x: Optional[int] = None, y: Optional[int] = None, delay: Optional[float] = None) -> None:
+    async def double_click(
+        self, x: Optional[int] = None, y: Optional[int] = None, delay: Optional[float] = None
+    ) -> None:
         await self._send_command("double_click", {"x": x, "y": y})
         await self._handle_delay(delay)
 
@@ -95,37 +141,40 @@ class GenericComputerInterface(BaseComputerInterface):
         await self._send_command("move_cursor", {"x": x, "y": y})
         await self._handle_delay(delay)
 
-    async def drag_to(self, x: int, y: int, button: "MouseButton" = "left", duration: float = 0.5, delay: Optional[float] = None) -> None:
+    async def drag_to(
+        self,
+        x: int,
+        y: int,
+        button: "MouseButton" = "left",
+        duration: float = 0.5,
+        delay: Optional[float] = None,
+    ) -> None:
         await self._send_command(
             "drag_to", {"x": x, "y": y, "button": button, "duration": duration}
         )
         await self._handle_delay(delay)
 
-    async def drag(self, path: List[Tuple[int, int]], button: "MouseButton" = "left", duration: float = 0.5, delay: Optional[float] = None) -> None:
-        await self._send_command(
-            "drag", {"path": path, "button": button, "duration": duration}
-        )
+    async def drag(
+        self,
+        path: List[Tuple[int, int]],
+        button: "MouseButton" = "left",
+        duration: float = 0.5,
+        delay: Optional[float] = None,
+    ) -> None:
+        await self._send_command("drag", {"path": path, "button": button, "duration": duration})
         await self._handle_delay(delay)
 
     # Keyboard Actions
     async def key_down(self, key: "KeyType", delay: Optional[float] = None) -> None:
         await self._send_command("key_down", {"key": key})
         await self._handle_delay(delay)
-    
+
     async def key_up(self, key: "KeyType", delay: Optional[float] = None) -> None:
         await self._send_command("key_up", {"key": key})
         await self._handle_delay(delay)
-    
+
     async def type_text(self, text: str, delay: Optional[float] = None) -> None:
-        # Temporary fix for https://github.com/trycua/cua/issues/165
-        # Check if text contains Unicode characters
-        if any(ord(char) > 127 for char in text):
-            # For Unicode text, use clipboard and paste
-            await self.set_clipboard(text)
-            await self.hotkey(Key.COMMAND, 'v')
-        else:
-            # For ASCII text, use the regular typing method
-            await self._send_command("type_text", {"text": text})
+        await self._send_command("type_text", {"text": text})
         await self._handle_delay(delay)
 
     async def press(self, key: "KeyType", delay: Optional[float] = None) -> None:
@@ -203,10 +252,12 @@ class GenericComputerInterface(BaseComputerInterface):
             elif isinstance(key, str):
                 # Try to convert to enum if it matches a known key
                 key_or_enum = Key.from_string(key)
-                actual_keys.append(key_or_enum.value if isinstance(key_or_enum, Key) else key_or_enum)
+                actual_keys.append(
+                    key_or_enum.value if isinstance(key_or_enum, Key) else key_or_enum
+                )
             else:
                 raise ValueError(f"Invalid key type: {type(key)}. Must be Key enum or string.")
-        
+
         await self._send_command("hotkey", {"keys": actual_keys})
         await self._handle_delay(delay)
 
@@ -214,11 +265,11 @@ class GenericComputerInterface(BaseComputerInterface):
     async def scroll(self, x: int, y: int, delay: Optional[float] = None) -> None:
         await self._send_command("scroll", {"x": x, "y": y})
         await self._handle_delay(delay)
-    
+
     async def scroll_down(self, clicks: int = 1, delay: Optional[float] = None) -> None:
         await self._send_command("scroll_down", {"clicks": clicks})
         await self._handle_delay(delay)
-    
+
     async def scroll_up(self, clicks: int = 1, delay: Optional[float] = None) -> None:
         await self._send_command("scroll_up", {"clicks": clicks})
         await self._handle_delay(delay)
@@ -302,27 +353,32 @@ class GenericComputerInterface(BaseComputerInterface):
         await self._send_command("set_clipboard", {"text": text})
 
     # File Operations
-    async def _write_bytes_chunked(self, path: str, content: bytes, append: bool = False, chunk_size: int = 1024 * 1024) -> None:
+    async def _write_bytes_chunked(
+        self, path: str, content: bytes, append: bool = False, chunk_size: int = 1024 * 1024
+    ) -> None:
         """Write large files in chunks to avoid memory issues."""
         total_size = len(content)
         current_offset = 0
-        
+
         while current_offset < total_size:
             chunk_end = min(current_offset + chunk_size, total_size)
             chunk_data = content[current_offset:chunk_end]
-            
+
             # First chunk uses the original append flag, subsequent chunks always append
             chunk_append = append if current_offset == 0 else True
-            
-            result = await self._send_command("write_bytes", {
-                "path": path,
-                "content_b64": encode_base64_image(chunk_data),
-                "append": chunk_append
-            })
-            
+
+            result = await self._send_command(
+                "write_bytes",
+                {
+                    "path": path,
+                    "content_b64": encode_base64_image(chunk_data),
+                    "append": chunk_append,
+                },
+            )
+
             if not result.get("success", False):
                 raise RuntimeError(result.get("error", "Failed to write file chunk"))
-            
+
             current_offset = chunk_end
 
     async def write_bytes(self, path: str, content: bytes, append: bool = False) -> None:
@@ -330,36 +386,39 @@ class GenericComputerInterface(BaseComputerInterface):
         if len(content) > 5 * 1024 * 1024:  # 5MB threshold
             await self._write_bytes_chunked(path, content, append)
             return
-        
-        result = await self._send_command("write_bytes", {"path": path, "content_b64": encode_base64_image(content), "append": append})
+
+        result = await self._send_command(
+            "write_bytes",
+            {"path": path, "content_b64": encode_base64_image(content), "append": append},
+        )
         if not result.get("success", False):
             raise RuntimeError(result.get("error", "Failed to write file"))
 
-    async def _read_bytes_chunked(self, path: str, offset: int, total_length: int, chunk_size: int = 1024 * 1024) -> bytes:
+    async def _read_bytes_chunked(
+        self, path: str, offset: int, total_length: int, chunk_size: int = 1024 * 1024
+    ) -> bytes:
         """Read large files in chunks to avoid memory issues."""
         chunks = []
         current_offset = offset
         remaining = total_length
-        
+
         while remaining > 0:
             read_size = min(chunk_size, remaining)
-            result = await self._send_command("read_bytes", {
-                "path": path,
-                "offset": current_offset,
-                "length": read_size
-            })
-            
+            result = await self._send_command(
+                "read_bytes", {"path": path, "offset": current_offset, "length": read_size}
+            )
+
             if not result.get("success", False):
                 raise RuntimeError(result.get("error", "Failed to read file chunk"))
-            
+
             content_b64 = result.get("content_b64", "")
             chunk_data = decode_base64_image(content_b64)
             chunks.append(chunk_data)
-            
+
             current_offset += read_size
             remaining -= read_size
-        
-        return b''.join(chunks)
+
+        return b"".join(chunks)
 
     async def read_bytes(self, path: str, offset: int = 0, length: Optional[int] = None) -> bytes:
         # For large files, use chunked reading
@@ -368,34 +427,36 @@ class GenericComputerInterface(BaseComputerInterface):
             file_size = await self.get_file_size(path)
             # If file is larger than 5MB, read in chunks
             if file_size > 5 * 1024 * 1024:  # 5MB threshold
-                return await self._read_bytes_chunked(path, offset, file_size - offset if offset > 0 else file_size)
-        
-        result = await self._send_command("read_bytes", {
-            "path": path, 
-            "offset": offset, 
-            "length": length
-        })
+                return await self._read_bytes_chunked(
+                    path, offset, file_size - offset if offset > 0 else file_size
+                )
+
+        result = await self._send_command(
+            "read_bytes", {"path": path, "offset": offset, "length": length}
+        )
         if not result.get("success", False):
             raise RuntimeError(result.get("error", "Failed to read file"))
         content_b64 = result.get("content_b64", "")
         return decode_base64_image(content_b64)
 
-    async def read_text(self, path: str, encoding: str = 'utf-8') -> str:
+    async def read_text(self, path: str, encoding: str = "utf-8") -> str:
         """Read text from a file with specified encoding.
-        
+
         Args:
             path: Path to the file to read
             encoding: Text encoding to use (default: 'utf-8')
-            
+
         Returns:
             str: The decoded text content of the file
         """
         content_bytes = await self.read_bytes(path)
         return content_bytes.decode(encoding)
 
-    async def write_text(self, path: str, content: str, encoding: str = 'utf-8', append: bool = False) -> None:
+    async def write_text(
+        self, path: str, content: str, encoding: str = "utf-8", append: bool = False
+    ) -> None:
         """Write text to a file with specified encoding.
-        
+
         Args:
             path: Path to the file to write
             content: Text content to write
@@ -440,6 +501,104 @@ class GenericComputerInterface(BaseComputerInterface):
             raise RuntimeError(result.get("error", "Failed to list directory"))
         return result.get("files", [])
 
+    # Desktop actions
+    async def get_desktop_environment(self) -> str:
+        result = await self._send_command("get_desktop_environment")
+        if not result.get("success", False):
+            raise RuntimeError(result.get("error", "Failed to get desktop environment"))
+        return result.get("environment", "unknown")
+
+    async def set_wallpaper(self, path: str) -> None:
+        result = await self._send_command("set_wallpaper", {"path": path})
+        if not result.get("success", False):
+            raise RuntimeError(result.get("error", "Failed to set wallpaper"))
+
+    # Window management
+    async def open(self, target: str) -> None:
+        result = await self._send_command("open", {"target": target})
+        if not result.get("success", False):
+            raise RuntimeError(result.get("error", "Failed to open target"))
+
+    async def launch(self, app: str, args: list[str] | None = None) -> int | None:
+        payload: dict[str, object] = {"app": app}
+        if args is not None:
+            payload["args"] = args
+        result = await self._send_command("launch", payload)
+        if not result.get("success", False):
+            raise RuntimeError(result.get("error", "Failed to launch application"))
+        return result.get("pid")  # type: ignore[return-value]
+
+    async def get_current_window_id(self) -> int | str:
+        result = await self._send_command("get_current_window_id")
+        if not result.get("success", False):
+            raise RuntimeError(result.get("error", "Failed to get current window id"))
+        return result["window_id"]  # type: ignore[return-value]
+
+    async def get_application_windows(self, app: str) -> list[int | str]:
+        result = await self._send_command("get_application_windows", {"app": app})
+        if not result.get("success", False):
+            raise RuntimeError(result.get("error", "Failed to get application windows"))
+        return list(result.get("windows", []))  # type: ignore[return-value]
+
+    async def get_window_name(self, window_id: int | str) -> str:
+        result = await self._send_command("get_window_name", {"window_id": window_id})
+        if not result.get("success", False):
+            raise RuntimeError(result.get("error", "Failed to get window name"))
+        return result.get("name", "")  # type: ignore[return-value]
+
+    async def get_window_size(self, window_id: int | str) -> tuple[int, int]:
+        result = await self._send_command("get_window_size", {"window_id": window_id})
+        if not result.get("success", False):
+            raise RuntimeError(result.get("error", "Failed to get window size"))
+        return int(result.get("width", 0)), int(result.get("height", 0))
+
+    async def get_window_position(self, window_id: int | str) -> tuple[int, int]:
+        result = await self._send_command("get_window_position", {"window_id": window_id})
+        if not result.get("success", False):
+            raise RuntimeError(result.get("error", "Failed to get window position"))
+        return int(result.get("x", 0)), int(result.get("y", 0))
+
+    async def set_window_size(self, window_id: int | str, width: int, height: int) -> None:
+        result = await self._send_command(
+            "set_window_size", {"window_id": window_id, "width": width, "height": height}
+        )
+        if not result.get("success", False):
+            raise RuntimeError(result.get("error", "Failed to set window size"))
+
+    async def set_window_position(self, window_id: int | str, x: int, y: int) -> None:
+        result = await self._send_command(
+            "set_window_position", {"window_id": window_id, "x": x, "y": y}
+        )
+        if not result.get("success", False):
+            raise RuntimeError(result.get("error", "Failed to set window position"))
+
+    async def maximize_window(self, window_id: int | str) -> None:
+        result = await self._send_command("maximize_window", {"window_id": window_id})
+        if not result.get("success", False):
+            raise RuntimeError(result.get("error", "Failed to maximize window"))
+
+    async def minimize_window(self, window_id: int | str) -> None:
+        result = await self._send_command("minimize_window", {"window_id": window_id})
+        if not result.get("success", False):
+            raise RuntimeError(result.get("error", "Failed to minimize window"))
+
+    async def activate_window(self, window_id: int | str) -> None:
+        result = await self._send_command("activate_window", {"window_id": window_id})
+        if not result.get("success", False):
+            raise RuntimeError(result.get("error", "Failed to activate window"))
+
+    async def close_window(self, window_id: int | str) -> None:
+        result = await self._send_command("close_window", {"window_id": window_id})
+        if not result.get("success", False):
+            raise RuntimeError(result.get("error", "Failed to close window"))
+
+    # Convenience aliases
+    async def get_window_title(self, window_id: int | str) -> str:
+        return await self.get_window_name(window_id)
+
+    async def window_size(self, window_id: int | str) -> tuple[int, int]:
+        return await self.get_window_size(window_id)
+
     # Command execution
     async def run_command(self, command: str) -> CommandResult:
         result = await self._send_command("run_command", {"command": command})
@@ -448,7 +607,7 @@ class GenericComputerInterface(BaseComputerInterface):
         return CommandResult(
             stdout=result.get("stdout", ""),
             stderr=result.get("stderr", ""),
-            returncode=result.get("return_code", 0)
+            returncode=result.get("return_code", 0),
         )
 
     # Accessibility Actions
@@ -458,7 +617,7 @@ class GenericComputerInterface(BaseComputerInterface):
         if not result.get("success", False):
             raise RuntimeError(result.get("error", "Failed to get accessibility tree"))
         return result
-    
+
     async def get_active_window_bounds(self) -> Dict[str, int]:
         """Get the bounds of the currently active window."""
         result = await self._send_command("get_active_window_bounds")
@@ -516,6 +675,56 @@ class GenericComputerInterface(BaseComputerInterface):
 
         return screenshot_x, screenshot_y
 
+    # Playwright browser control
+    async def playwright_exec(self, command: str, params: Optional[Dict] = None) -> Dict[str, Any]:
+        """
+        Execute a Playwright browser command.
+
+        Args:
+            command: The browser command to execute (visit_url, click, type, scroll, web_search)
+            params: Command parameters
+
+        Returns:
+            Dict containing the command result
+
+        Examples:
+            # Navigate to a URL
+            await interface.playwright_exec("visit_url", {"url": "https://example.com"})
+
+            # Click at coordinates
+            await interface.playwright_exec("click", {"x": 100, "y": 200})
+
+            # Type text
+            await interface.playwright_exec("type", {"text": "Hello, world!"})
+
+            # Scroll
+            await interface.playwright_exec("scroll", {"delta_x": 0, "delta_y": -100})
+
+            # Web search
+            await interface.playwright_exec("web_search", {"query": "computer use agent"})
+        """
+        protocol = "https" if self.api_key else "http"
+        port = "8443" if self.api_key else "8000"
+        url = f"{protocol}://{self.ip_address}:{port}/playwright_exec"
+
+        payload = {"command": command, "params": params or {}}
+        headers = {"Content-Type": "application/json"}
+        if self.api_key:
+            headers["X-API-Key"] = self.api_key
+        if self.vm_name:
+            headers["X-Container-Name"] = self.vm_name
+
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(url, json=payload, headers=headers) as response:
+                    if response.status == 200:
+                        return await response.json()
+                    else:
+                        error_text = await response.text()
+                        return {"success": False, "error": error_text}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
     # Websocket Methods
     async def _keep_alive(self):
         """Keep the WebSocket connection alive with automatic reconnection."""
@@ -564,33 +773,30 @@ class GenericComputerInterface(BaseComputerInterface):
                             timeout=120,
                         )
                         self.logger.info("WebSocket connection established")
-                        
+
                         # If api_key and vm_name are provided, perform authentication handshake
                         if self.api_key and self.vm_name:
                             self.logger.info("Performing authentication handshake...")
                             auth_message = {
                                 "command": "authenticate",
-                                "params": {
-                                    "api_key": self.api_key,
-                                    "container_name": self.vm_name
-                                }
+                                "params": {"api_key": self.api_key, "container_name": self.vm_name},
                             }
                             await self._ws.send(json.dumps(auth_message))
-                            
+
                             # Wait for authentication response
                             async with self._recv_lock:
                                 auth_response = await asyncio.wait_for(self._ws.recv(), timeout=10)
                             auth_result = json.loads(auth_response)
-                            
+
                             if not auth_result.get("success"):
                                 error_msg = auth_result.get("error", "Authentication failed")
                                 self.logger.error(f"Authentication failed: {error_msg}")
                                 await self._ws.close()
                                 self._ws = None
                                 raise ConnectionError(f"Authentication failed: {error_msg}")
-                            
+
                             self.logger.info("Authentication successful")
-                        
+
                         self._reconnect_delay = 1  # Reset reconnect delay on successful connection
                         self._last_ping = time.time()
                         retry_count = 0  # Reset retry count on successful connection
@@ -600,7 +806,7 @@ class GenericComputerInterface(BaseComputerInterface):
                         # Only log the first error at WARNING level, then every Nth attempt
                         if retry_count == 1:
                             self.logger.warning(
-                                f"Computer API Server not ready yet. Will retry automatically."
+                                "Computer API Server not ready yet. Will retry automatically."
                             )
                         elif retry_count % log_interval == 0:
                             self.logger.warning(
@@ -648,7 +854,7 @@ class GenericComputerInterface(BaseComputerInterface):
                 # Only log connection lost warnings at most once every min_warning_interval seconds
                 if current_time - last_warning_time >= min_warning_interval:
                     self.logger.warning(
-                        f"Computer API Server connection lost. Will retry automatically."
+                        "Computer API Server connection lost. Will retry automatically."
                     )
                     last_warning_time = current_time
                 else:
@@ -661,7 +867,7 @@ class GenericComputerInterface(BaseComputerInterface):
                     except:
                         pass
                 self._ws = None
-    
+
     async def _ensure_connection(self):
         """Ensure WebSocket connection is established."""
         if self._reconnect_task is None or self._reconnect_task.done():
@@ -730,32 +936,30 @@ class GenericComputerInterface(BaseComputerInterface):
 
         raise last_error if last_error else RuntimeError("Failed to send command")
 
-    async def _send_command_rest(self, command: str, params: Optional[Dict] = None) -> Dict[str, Any]:
+    async def _send_command_rest(
+        self, command: str, params: Optional[Dict] = None
+    ) -> Dict[str, Any]:
         """Send command through REST API without retries or connection management."""
         try:
             # Prepare the request payload
             payload = {"command": command, "params": params or {}}
-            
+
             # Prepare headers
             headers = {"Content-Type": "application/json"}
             if self.api_key:
                 headers["X-API-Key"] = self.api_key
             if self.vm_name:
                 headers["X-Container-Name"] = self.vm_name
-            
+
             # Send the request
             async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    self.rest_uri,
-                    json=payload,
-                    headers=headers
-                ) as response:
+                async with session.post(self.rest_uri, json=payload, headers=headers) as response:
                     # Get the response text
                     response_text = await response.text()
-                    
+
                     # Trim whitespace
                     response_text = response_text.strip()
-                    
+
                     # Check if it starts with "data: "
                     if response_text.startswith("data: "):
                         # Extract everything after "data: "
@@ -766,38 +970,39 @@ class GenericComputerInterface(BaseComputerInterface):
                             return {
                                 "success": False,
                                 "error": "Server returned malformed response",
-                                "message": response_text
+                                "message": response_text,
                             }
                     else:
                         # Return error response
                         return {
                             "success": False,
                             "error": "Server returned malformed response",
-                            "message": response_text
+                            "message": response_text,
                         }
-                        
+
         except Exception as e:
-            return {
-                "success": False,
-                "error": "Request failed",
-                "message": str(e)
-            }
+            return {"success": False, "error": "Request failed", "message": str(e)}
 
     async def _send_command(self, command: str, params: Optional[Dict] = None) -> Dict[str, Any]:
         """Send command using REST API with WebSocket fallback."""
         # Try REST API first
         result = await self._send_command_rest(command, params)
-        
+
         # If REST failed with "Request failed", try WebSocket as fallback
-        if not result.get("success", True) and (result.get("error") == "Request failed" or result.get("error") == "Server returned malformed response"):
-            self.logger.warning(f"REST API failed for command '{command}', trying WebSocket fallback")
+        if not result.get("success", True) and (
+            result.get("error") == "Request failed"
+            or result.get("error") == "Server returned malformed response"
+        ):
+            self.logger.warning(
+                f"REST API failed for command '{command}', trying WebSocket fallback"
+            )
             try:
                 return await self._send_command_ws(command, params)
             except Exception as e:
                 self.logger.error(f"WebSocket fallback also failed: {e}")
                 # Return the original REST error
                 return result
-        
+
         return result
 
     async def wait_for_ready(self, timeout: int = 60, interval: float = 1.0):
@@ -808,7 +1013,9 @@ class GenericComputerInterface(BaseComputerInterface):
             result = await self._send_command_rest("version", {})
             assert result.get("success", True)
         except Exception as e:
-            self.logger.debug(f"REST API failed for command 'version', trying WebSocket fallback: {e}")
+            self.logger.debug(
+                f"REST API failed for command 'version', trying WebSocket fallback: {e}"
+            )
             try:
                 await self._wait_for_ready_ws(timeout, interval)
                 return
@@ -957,7 +1164,7 @@ class GenericComputerInterface(BaseComputerInterface):
         # if self._ws:
         #     asyncio.create_task(self._ws.close())
         #     self._ws = None
-    
+
     def force_close(self):
         """Force close the WebSocket connection.
 
@@ -970,4 +1177,3 @@ class GenericComputerInterface(BaseComputerInterface):
         if self._ws:
             asyncio.create_task(self._ws.close())
             self._ws = None
-

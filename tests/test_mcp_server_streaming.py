@@ -7,7 +7,9 @@ from pathlib import Path
 import pytest
 
 
-def _install_stub_module(name: str, module: types.ModuleType, registry: dict[str, types.ModuleType | None]) -> None:
+def _install_stub_module(
+    name: str, module: types.ModuleType, registry: dict[str, types.ModuleType | None]
+) -> None:
     registry[name] = sys.modules.get(name)
     sys.modules[name] = module
 
@@ -182,9 +184,7 @@ def test_run_cua_task_streams_partial_results(server_module):
                         {
                             "type": "message",
                             "role": "assistant",
-                            "content": [
-                                {"type": "output_text", "text": "First chunk"}
-                            ],
+                            "content": [{"type": "output_text", "text": "First chunk"}],
                         }
                     ]
                 },
@@ -202,9 +202,7 @@ def test_run_cua_task_streams_partial_results(server_module):
                         {
                             "type": "computer_call_output",
                             "call_id": "call_1",
-                            "output": [
-                                {"type": "text", "text": "Tool completed"}
-                            ],
+                            "output": [{"type": "text", "text": "Tool completed"}],
                         },
                     ]
                 },

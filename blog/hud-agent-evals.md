@@ -1,6 +1,6 @@
 # Cua × HUD - Evaluate Any Computer-Use Agent
 
-*Published on August 27, 2025 by Dillon DuPont*
+_Published on August 27, 2025 by Dillon DuPont_
 
 You can now benchmark any GUI-capable agent on real computer-use tasks through our new integration with [HUD](https://hud.so), the evaluation platform for computer-use agents.
 
@@ -58,7 +58,7 @@ await run_full_dataset(
 # Or test on SheetBench (50 spreadsheet tasks)
 await run_full_dataset(
     dataset="hud-evals/SheetBench-V2",
-    model="anthropic/claude-3-5-sonnet-20241022",
+    model="anthropic/claude-sonnet-4-5-20250929",
     split="train[:2]"
 )
 ```
@@ -70,9 +70,9 @@ Watch your agent work in real-time. Example output:
 ```md
 Starting full dataset run...
 ╔═════════════════════════════════════════════════════════════════╗
-║                    🚀 See your agent live at:                   ║
+║ 🚀 See your agent live at: ║
 ╟─────────────────────────────────────────────────────────────────╢
-║  https://app.hud.so/jobs/fe05805d-4da9-4fc6-84b5-5c518528fd3c   ║
+║ https://app.hud.so/jobs/fe05805d-4da9-4fc6-84b5-5c518528fd3c ║
 ╚═════════════════════════════════════════════════════════════════╝
 ```
 
@@ -89,5 +89,5 @@ Customize your evaluation with these options:
 ## Learn more
 
 - Notebook with end‑to‑end examples: https://github.com/trycua/cua/blob/main/notebooks/eval_osworld.ipynb
-- Docs: https://docs.trycua.com/docs/agent-sdk/integrations/hud
+- Docs: https://cua.ai/docs/agent-sdk/integrations/hud
 - Live traces: https://app.hud.so

@@ -38,20 +38,23 @@ Vanilla XFCE desktop container for Computer-Using Agents (CUA) with noVNC and co
 ## Building the Container
 
 ```bash
-docker build -t cua-docker-xfce:latest .
+docker build -t cua-xfce:latest .
 ```
 
-## Pushing to Registry
+### Build and Push (multi-arch)
+
+Use Docker Buildx to build and push a multi-architecture image for both `linux/amd64` and `linux/arm64` in a single command. Replace `trycua` with your Docker Hub username or your registry namespace as needed.
 
 ```bash
-# Tag for Docker Hub (replace 'trycua' with your Docker Hub username)
-docker tag cua-docker-xfce:latest trycua/cua-docker-xfce:latest
-
-# Login to Docker Hub
+# Login to your registry first (Docker Hub shown here)
 docker login
 
-# Push to Docker Hub
-docker push trycua/cua-docker-xfce:latest
+# Build and push for amd64 and arm64 in one step
+docker buildx build \
+  --platform linux/amd64,linux/arm64 \
+  -t trycua/cua-xfce:latest \
+  --push \
+  .
 ```
 
 ## Running the Container Manually
@@ -64,7 +67,7 @@ docker run --rm -it \
   -p 5901:5901 \
   -p 6901:6901 \
   -p 8000:8000 \
-  cua-docker-xfce:latest
+  cua-xfce:latest
 ```
 
 ### With Custom Resolution
@@ -76,7 +79,7 @@ docker run --rm -it \
   -p 6901:6901 \
   -p 8000:8000 \
   -e VNC_RESOLUTION=1280x720 \
-  cua-docker-xfce:latest
+  cua-xfce:latest
 ```
 
 ### With Persistent Storage
@@ -88,7 +91,7 @@ docker run --rm -it \
   -p 6901:6901 \
   -p 8000:8000 \
   -v $(pwd)/storage:/home/cua/storage \
-  cua-docker-xfce:latest
+  cua-xfce:latest
 ```
 
 ## Accessing the Container
@@ -99,16 +102,16 @@ docker run --rm -it \
 
 ## Using with CUA Docker Provider
 
-This container is designed to work with the CUA Docker provider. Simply specify the docker-xfce image:
+This container is designed to work with the CUA Docker provider. Simply specify the xfce image:
 
 ```python
 from computer import Computer
 
-# Create computer with docker-xfce container
+# Create computer with xfce container
 computer = Computer(
     os_type="linux",
     provider_type="docker",
-    image="trycua/cua-docker-xfce:latest",  # Use docker-xfce instead of Kasm
+    image="trycua/cua-xfce:latest",  # Use xfce instead of Kasm
     display="1024x768",
     memory="4GB",
     cpu="2"
@@ -128,7 +131,7 @@ async with computer:
     print(result.stdout)
 ```
 
-### Switching between Kasm and docker-xfce
+### Switching between Kasm and xfce
 
 The Docker provider automatically detects which image you're using:
 
@@ -140,11 +143,11 @@ computer_kasm = Computer(
     image="trycua/cua-ubuntu:latest",  # Kasm image
 )
 
-# Use docker-xfce container (vanilla XFCE)
+# Use xfce container (vanilla XFCE)
 computer_xfce = Computer(
     os_type="linux",
     provider_type="docker",
-    image="trycua/cua-docker-xfce:latest",  # docker-xfce image
+    image="trycua/cua-xfce:latest",  # xfce image
 )
 ```
 
@@ -152,14 +155,14 @@ Both provide the same API and functionality - the provider automatically configu
 
 ## Environment Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `VNC_RESOLUTION` | `1024x768` | Screen resolution |
-| `VNC_COL_DEPTH` | `24` | Color depth |
-| `VNC_PORT` | `5901` | VNC server port |
-| `NOVNC_PORT` | `6901` | noVNC web interface port |
-| `API_PORT` | `8000` | Computer-server API port |
-| `DISPLAY` | `:1` | X11 display number |
+| Variable         | Default    | Description              |
+| ---------------- | ---------- | ------------------------ |
+| `VNC_RESOLUTION` | `1024x768` | Screen resolution        |
+| `VNC_COL_DEPTH`  | `24`       | Color depth              |
+| `VNC_PORT`       | `5901`     | VNC server port          |
+| `NOVNC_PORT`     | `6901`     | noVNC web interface port |
+| `API_PORT`       | `8000`     | Computer-server API port |
+| `DISPLAY`        | `:1`       | X11 display number       |
 
 ## Exposed Ports
 
@@ -182,29 +185,31 @@ Both provide the same API and functionality - the provider automatically configu
 ## Creating Snapshots
 
 ### Filesystem Snapshot
+
 ```bash
-docker commit <container_id> cua-docker-xfce-snapshot:latest
+docker commit <container_id> cua-xfce-snapshot:latest
 ```
 
 ### Running from Snapshot
+
 ```bash
 docker run --rm -it \
   --shm-size=512m \
   -p 6901:6901 \
   -p 8000:8000 \
-  cua-docker-xfce-snapshot:latest
+  cua-xfce-snapshot:latest
 ```
 
 ## Comparison with Kasm Container
 
-| Feature | Kasm Container | Docker XFCE Container |
-|---------|---------------|----------------------|
-| Base Image | KasmWeb Ubuntu | Vanilla Ubuntu |
-| VNC Server | KasmVNC | TigerVNC |
-| Dependencies | Higher | Lower |
-| Configuration | Pre-configured | Minimal |
-| Size | Larger | Smaller |
-| Maintenance | Depends on Kasm | Independent |
+| Feature       | Kasm Container  | Docker XFCE Container |
+| ------------- | --------------- | --------------------- |
+| Base Image    | KasmWeb Ubuntu  | Vanilla Ubuntu        |
+| VNC Server    | KasmVNC         | TigerVNC              |
+| Dependencies  | Higher          | Lower                 |
+| Configuration | Pre-configured  | Minimal               |
+| Size          | Larger          | Smaller               |
+| Maintenance   | Depends on Kasm | Independent           |
 
 ## Process Management
 
@@ -219,24 +224,31 @@ All processes are automatically restarted on failure.
 ## Troubleshooting
 
 ### VNC server won't start
+
 Check if X11 lock files exist:
+
 ```bash
 docker exec <container_id> rm -rf /tmp/.X1-lock /tmp/.X11-unix/X1
 ```
 
 ### noVNC shows black screen
+
 Ensure VNC server is running:
+
 ```bash
 docker exec <container_id> supervisorctl status vncserver
 ```
 
 ### Computer-server not responding
+
 Check if X server is accessible:
+
 ```bash
 docker exec <container_id> env DISPLAY=:1 xdpyinfo
 ```
 
 ### View logs
+
 ```bash
 docker exec <container_id> tail -f /var/log/supervisor/supervisord.log
 docker exec <container_id> supervisorctl status
@@ -245,12 +257,14 @@ docker exec <container_id> supervisorctl status
 ## Integration with CUA System
 
 This container provides the same functionality as the Kasm container but with:
+
 - **Reduced dependencies**: No reliance on KasmWeb infrastructure
 - **Smaller image size**: Minimal base configuration
 - **Full control**: Direct access to all components
 - **Easy customization**: Simple to modify and extend
 
 The container integrates seamlessly with:
+
 - CUA Computer library (via WebSocket API)
 - Docker provider for lifecycle management
 - Standard VNC clients for debugging

@@ -6,8 +6,8 @@ build-backend = "pdm.backend"
 name = "cua-mcp-server"
 description = "MCP Server for Computer-Use Agent (CUA)"
 readme = "README.md"
-requires-python = ">=3.11"
-version = "0.1.13"
+requires-python = ">=3.12,<3.14"
+version = "0.1.15"
 authors = [
     {name = "TryCua", email = "gh@trycua.com"}
 ]
@@ -28,13 +28,3 @@ dev = [
     "black>=23.9.1",
     "ruff>=0.0.292",
 ]
-
-[tool.black]
-line-length = 100
-target-version = ["py311"]
-
-[tool.ruff]
-line-length = 100
-target-version = "py311"
-select = ["E", "F", "B", "I"]
-fix = true

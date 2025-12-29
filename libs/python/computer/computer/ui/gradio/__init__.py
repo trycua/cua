@@ -1,6 +1,7 @@
 """Gradio UI for Computer UI."""
 
-import gradio as gr
 from typing import Optional
+
+import gradio as gr
 
 from .app import create_gradio_ui

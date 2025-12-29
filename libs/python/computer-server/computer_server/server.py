@@ -5,8 +5,9 @@ Provides a clean API for starting and stopping the server.
 
 import asyncio
 import logging
-import uvicorn
 from typing import Optional
+
+import uvicorn
 from fastapi import FastAPI
 
 from .main import app as fastapi_app
@@ -32,8 +33,14 @@ class Server:
         await server.stop()  # Stop the server
     """
 
-    def __init__(self, host: str = "0.0.0.0", port: int = 8000, log_level: str = "info", 
-                 ssl_keyfile: Optional[str] = None, ssl_certfile: Optional[str] = None):
+    def __init__(
+        self,
+        host: str = "0.0.0.0",
+        port: int = 8000,
+        log_level: str = "info",
+        ssl_keyfile: Optional[str] = None,
+        ssl_certfile: Optional[str] = None,
+    ):
         """
         Initialize the server.
 
@@ -58,12 +65,12 @@ class Server:
         Start the server synchronously. This will block until the server is stopped.
         """
         uvicorn.run(
-            self.app, 
-            host=self.host, 
-            port=self.port, 
+            self.app,
+            host=self.host,
+            port=self.port,
             log_level=self.log_level,
             ssl_keyfile=self.ssl_keyfile,
-            ssl_certfile=self.ssl_certfile
+            ssl_certfile=self.ssl_certfile,
         )
 
     async def start_async(self) -> None:
@@ -72,12 +79,12 @@ class Server:
         will run in the background.
         """
         server_config = uvicorn.Config(
-            self.app, 
-            host=self.host, 
-            port=self.port, 
+            self.app,
+            host=self.host,
+            port=self.port,
             log_level=self.log_level,
             ssl_keyfile=self.ssl_keyfile,
-            ssl_certfile=self.ssl_certfile
+            ssl_certfile=self.ssl_certfile,
         )
 
         self._should_exit.clear()

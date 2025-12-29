@@ -1,0 +1,1083 @@
+---
+title: Quickstart
+description: Get started with Cua
+---
+
+import { Step, Steps } from 'fumadocs-ui/components/steps';
+import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
+import { Accordion, Accordions } from 'fumadocs-ui/components/accordion';
+import { Code, Terminal } from 'lucide-react';
+
+{/* Choose your quickstart path:
+
+<div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-8 mb-8">
+  <Card icon={<Code />} href="#developer-quickstart" title="Developer Quickstart">
+    Build with Python or TypeScript SDKs - full programmatic control
+  </Card>
+  <Card icon={<Terminal />} href="#cli-quickstart" title="CLI Quickstart">
+    Get started quickly with the command-line interface
+  </Card>
+</div> */}
+
+## Set Up Your Computer Sanbox
+
+Choose how you want to run your Cua sandbox. This will be the isolated environment where your automated tasks will execute.
+
+You can run your Cua sandbox in the cloud (recommended for easiest setup), locally in a Docker container on any platform, on a macOS VM with Lume, or on Windows with a Windows Sandbox. Choose the option that matches your system and needs.
+
+<Tabs items={['Cloud Sandbox', 'Linux on Docker', 'QEMU Docker', 'macOS Sandbox', 'Windows Sandbox']}>
+  <Tab value="Cloud Sandbox">
+
+    Create and manage cloud sandboxes that run Linux (Ubuntu), Windows, or macOS.
+
+    **First, create your API key:**
+
+    1. Go to [cua.ai/signin](https://cua.ai/signin)
+    2. Navigate to **Dashboard > API Keys > New API Key** to create your API key
+    3. **Important:** Copy and save your API key immediately - you won't be able to see it again (you'll need to regenerate if lost)
+
+    **Then, create your sandbox using either option:**
+
+    **Option 1: Via Website**
+
+    1. Navigate to **Dashboard > Sandboxes > Create Sandbox**
+    2. Create a sandbox, choosing **Linux**, **Windows**, or **macOS**
+
+    ![Create Sandbox Instance](/img/sandbox-create.png)
+
+    3. Note your sandbox name
+
+    **Option 2: Via CLI**
+
+    1. Install the Cua CLI:
+    ```bash
+    # macOS/Linux
+    curl -LsSf https://cua.ai/cli/install.sh | sh
+
+    # Windows
+    powershell -ExecutionPolicy ByPass -c "irm https://cua.ai/cli/install.ps1 | iex"
+    ```
+
+    2. Login and create a sandbox:
+    ```bash
+    cua auth login
+    cua sb create --os linux --size small --region north-america
+    ```
+
+    3. Note your sandbox name and password from the output
+
+    Your Cloud Sandbox will be automatically configured and ready to use.
+
+  </Tab>
+  <Tab value="Linux on Docker">
+
+    Run Linux desktop locally on macOS, Windows, or Linux hosts.
+
+    1. Install Docker Desktop or Docker Engine
+
+    2. Pull a CUA Docker image:
+
+    ```bash
+    # XFCE (Lightweight) - recommended for most use cases
+    docker pull --platform=linux/amd64 trycua/cua-xfce:latest
+
+    # OR KASM (Full-Featured) - full Ubuntu desktop
+    docker pull --platform=linux/amd64 trycua/cua-ubuntu:latest
+    ```
+
+  </Tab>
+  <Tab value="QEMU Docker">
+
+    Run full Linux (Ubuntu Desktop), Windows 11, or Android 11 VMs inside Docker containers using QEMU virtualization.
+
+    <Callout type="warn">
+      Linux and Windows images require a **golden image preparation step** on first use. Android images start directly without preparation.
+    </Callout>
+
+    <Tabs items={['Linux', 'Windows', 'Android']}>
+      <Tab value="Linux">
+
+        **1. Install Docker Desktop or Docker Engine**
+
+        **2. Pull the QEMU Linux image:**
+
+        ```bash
+        docker pull trycua/cua-qemu-linux:latest
+        ```
+
+        **3. Download Ubuntu 22.04 LTS Server ISO:**
+
+        - Download the [Ubuntu 22.04 Server ISO](https://releases.ubuntu.com/22.04/ubuntu-22.04.5-live-server-amd64.iso) (~2GB)
+
+        **4. Create golden image:**
+
+        ```bash
+        docker run -it --rm \
+            --device=/dev/kvm \
+            --cap-add NET_ADMIN \
+            --mount type=bind,source=/path/to/ubuntu-22.04.5-live-server-amd64.iso,target=/custom.iso \
+            -v ~/cua-storage/linux:/storage \
+            -p 8006:8006 \
+            -p 5000:5000 \
+            -e RAM_SIZE=8G \
+            -e CPU_CORES=4 \
+            -e DISK_SIZE=64G \
+            trycua/cua-qemu-linux:latest
+        ```
+
+        The container will install Ubuntu Desktop from the ISO and shut down when complete. Monitor progress at [http://localhost:8006](http://localhost:8006).
+
+      </Tab>
+      <Tab value="Windows">
+
+        **1. Install Docker Desktop or Docker Engine**
+
+        **2. Pull the QEMU Windows image:**
+
+        ```bash
+        docker pull trycua/cua-qemu-windows:latest
+        ```
+
+        **3. Download Windows 11 Enterprise Evaluation ISO:**
+
+        - Visit [Microsoft Evaluation Center](https://info.microsoft.com/ww-landing-windows-11-enterprise.html)
+        - Accept the Terms of Service
+        - Download **Windows 11 Enterprise Evaluation (90-day trial, English, United States)** ISO (~6GB)
+
+        **4. Create golden image:**
+
+        ```bash
+        docker run -it --rm \
+            --device=/dev/kvm \
+            --cap-add NET_ADMIN \
+            --mount type=bind,source=/path/to/windows-11-enterprise-eval.iso,target=/custom.iso \
+            -v ~/cua-storage/windows:/storage \
+            -p 8006:8006 \
+            -p 5000:5000 \
+            -e RAM_SIZE=8G \
+            -e CPU_CORES=4 \
+            -e DISK_SIZE=64G \
+            trycua/cua-qemu-windows:latest
+        ```
+
+        The container will install Windows 11 from the ISO and shut down when complete. Monitor progress at [http://localhost:8006](http://localhost:8006).
+
+      </Tab>
+      <Tab value="Android">
+
+        **1. Install Docker Desktop or Docker Engine**
+
+        **2. Pull the QEMU Android image:**
+
+        ```bash
+        docker pull trycua/cua-qemu-android:latest
+        ```
+
+        No golden image preparation needed - the Android emulator starts directly when you run it!
+
+      </Tab>
+    </Tabs>
+
+  </Tab>
+  <Tab value="macOS Sandbox">
+
+    macOS hosts only - requires Lume CLI.
+
+    1. Install the Lume CLI:
+
+    ```bash
+    /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/lume/scripts/install.sh)"
+    ```
+
+    2. Start a local Cua sandbox:
+
+    ```bash
+    lume run macos-sequoia-cua:latest
+    ```
+
+  </Tab>
+  <Tab value="Windows Sandbox">
+
+    Windows hosts only - requires Windows 10 Pro/Enterprise or Windows 11.
+
+    1. Enable [Windows Sandbox](https://learn.microsoft.com/en-us/windows/security/application-security/application-isolation/windows-sandbox/windows-sandbox-install)
+    2. Install the `pywinsandbox` dependency:
+
+    ```bash
+    pip install -U git+git://github.com/karkason/pywinsandbox.git
+    ```
+
+    3. Windows Sandbox will be automatically configured when you run the CLI
+
+  </Tab>
+</Tabs>
+
+---
+
+## Automate Your Sandbox
+
+<Callout type="warn" title="Python Version Compatibility">
+  Cua packages require **Python 3.12 or 3.13**. Python 3.14 is not currently supported due to dependency compatibility issues (pydantic-core/PyO3 compatibility). If you encounter build errors on Python 3.14, please use Python 3.13 or earlier.
+</Callout>
+
+This section guides you through building automation in layers:
+
+1. **Cua Computer Framework** - Direct sandbox control for manual automation and testing
+2. **Cua Agent Framework** - Adds AI automation on top, using vision-language models to understand and interact with the UI
+
+Start by setting up Cua Computer Framework to verify your sandbox works, then add Cua Agent Framework on top to enable intelligent, autonomous automation.
+
+<Steps>
+
+<Step>
+
+### Step 1: Connect with Cua Computer Framework
+
+Install Cua Computer Framework and verify your sandbox is working by performing basic interactions such as taking screenshots or simulating user input. This is an important verification step before adding AI agents.
+
+<Tabs items={['Python', 'TypeScript']}>
+  <Tab value="Python">
+    Install the Cua computer Python SDK:
+
+    **Using uv (recommended):**
+    ```bash
+    uv pip install cua-computer
+    ```
+
+    **Or with pip:**
+    ```bash
+    pip install cua-computer
+    ```
+
+    Then, connect to your desired computer environment:
+
+    <Tabs items={['Cloud Sandbox', 'Linux on Docker', 'QEMU Docker', 'macOS Sandbox', 'Windows Sandbox', 'Your host desktop']}>
+      <Tab value="Cloud Sandbox">
+        Set your Cua API key (same key used for model inference) and connect to your sandbox:
+        ```python
+        import os
+        from computer import Computer
+        import asyncio
+
+        os.environ["CUA_API_KEY"] = "sk_cua-api01_..."
+
+        computer = Computer(
+            os_type="linux",  # or "windows" or "macos"
+            provider_type="cloud",
+            name="your-sandbox-name"  # from CLI or website
+        )
+
+        async def main():
+            await computer.run()  # Connect to the sandbox
+            # Alternative: If your VM is not running, use start() instead:
+            # await computer.start()  # Start and connect to the sandbox
+
+            try:
+                # Take a screenshot of the computer's current display
+                screenshot = await computer.interface.screenshot()
+                # Simulate a left-click at coordinates (100, 100)
+                await computer.interface.left_click(100, 100)
+                # Type "Hello!" into the active application
+                await computer.interface.type_text("Hello!")
+            finally:
+                await computer.disconnect()
+                # Alternative: If you want to fully stop the VM, use stop() instead:
+                # await computer.stop()  # Fully stop VM and disconnect
+
+        asyncio.run(main())
+        ```
+      </Tab>
+      <Tab value="Linux on Docker">
+        ```python
+        from computer import Computer
+        import asyncio
+
+        computer = Computer(
+            os_type="linux",
+            provider_type="docker",
+            image="trycua/cua-xfce:latest"  # or "trycua/cua-ubuntu:latest"
+        )
+
+        async def main():
+            await computer.run()  # Launch & connect to the sandbox
+            # Alternative: If your VM is not running, use start() instead:
+            # await computer.start()  # Start and connect to the sandbox
+
+            try:
+                # Take a screenshot of the computer's current display
+                screenshot = await computer.interface.screenshot()
+                # Simulate a left-click at coordinates (100, 100)
+                await computer.interface.left_click(100, 100)
+                # Type "Hello!" into the active application
+                await computer.interface.type_text("Hello!")
+            finally:
+                await computer.disconnect()
+                # Alternative: If you want to fully stop the VM, use stop() instead:
+                # await computer.stop()  # Fully stop VM and disconnect
+
+        asyncio.run(main())
+        ```
+      </Tab>
+      <Tab value="QEMU Docker">
+        <Tabs items={['Linux', 'Windows', 'Android']}>
+          <Tab value="Linux">
+            ```python
+            from computer import Computer
+            import asyncio
+
+            computer = Computer(
+                os_type="linux",
+                provider_type="docker",
+                image="trycua/cua-qemu-linux:latest",
+                storage="~/cua-storage/linux",
+                run_opts={
+                    "devices": ["/dev/kvm"],  # Optional but recommended
+                },
+            )
+
+            async def main():
+                await computer.run()  # Boot from golden image
+                # Alternative: If your VM is not running, use start() instead:
+                # await computer.start()  # Start and connect
+
+                try:
+                    # Take a screenshot of the computer's current display
+                    screenshot = await computer.interface.screenshot()
+                    # Simulate a left-click at coordinates (100, 100)
+                    await computer.interface.left_click(100, 100)
+                    # Type "Hello!" into the active application
+                    await computer.interface.type_text("Hello!")
+                finally:
+                    await computer.disconnect()
+                    # Alternative: If you want to fully stop the VM, use stop() instead:
+                    # await computer.stop()  # Fully stop VM and disconnect
+
+            asyncio.run(main())
+            ```
+          </Tab>
+          <Tab value="Windows">
+            ```python
+            from computer import Computer
+            import asyncio
+
+            computer = Computer(
+                os_type="windows",
+                provider_type="docker",
+                image="trycua/cua-qemu-windows:latest",
+                storage="~/cua-storage/windows",
+                run_opts={
+                    "devices": ["/dev/kvm"],  # Optional but recommended
+                },
+            )
+
+            async def main():
+                await computer.run()  # Boot from golden image
+                # Alternative: If your VM is not running, use start() instead:
+                # await computer.start()  # Start and connect
+
+                try:
+                    # Take a screenshot of the computer's current display
+                    screenshot = await computer.interface.screenshot()
+                    # Simulate a left-click at coordinates (100, 100)
+                    await computer.interface.left_click(100, 100)
+                    # Type "Hello!" into the active application
+                    await computer.interface.type_text("Hello!")
+                finally:
+                    await computer.disconnect()
+                    # Alternative: If you want to fully stop the VM, use stop() instead:
+                    # await computer.stop()  # Fully stop VM and disconnect
+
+            asyncio.run(main())
+            ```
+          </Tab>
+          <Tab value="Android">
+            ```python
+            from computer import Computer
+            import asyncio
+
+            computer = Computer(
+                os_type="android",
+                provider_type="docker",
+                image="trycua/cua-qemu-android:latest",
+                timeout=150,  # Emulator needs more time to boot
+                run_opts={
+                    "devices": ["/dev/kvm"],  # Required for Android emulator
+                    "env": {
+                        "EMULATOR_DEVICE": "Samsung Galaxy S10",
+                    },
+                },
+            )
+
+            async def main():
+                await computer.run()  # Launch & connect to Android emulator
+
+                try:
+                    # Take a screenshot of the Android screen
+                    screenshot = await computer.interface.screenshot()
+                    # Simulate a left-click at coordinates (100, 100)
+                    await computer.interface.left_click(100, 100)
+                    # Type "Hello!" into the active application
+                    await computer.interface.type_text("Hello!")
+                finally:
+                    await computer.disconnect()
+
+            asyncio.run(main())
+            ```
+          </Tab>
+        </Tabs>
+      </Tab>
+      <Tab value="macOS Sandbox">
+        ```python
+        from computer import Computer
+        import asyncio
+
+        computer = Computer(
+            os_type="macos",
+            provider_type="lume",
+            name="macos-sequoia-cua:latest"
+        )
+
+        async def main():
+            await computer.run()  # Launch & connect to the sandbox
+            # Alternative: If your VM is not running, use start() instead:
+            # await computer.start()  # Start and connect to the sandbox
+
+            try:
+                # Take a screenshot of the computer's current display
+                screenshot = await computer.interface.screenshot()
+                # Simulate a left-click at coordinates (100, 100)
+                await computer.interface.left_click(100, 100)
+                # Type "Hello!" into the active application
+                await computer.interface.type_text("Hello!")
+            finally:
+                await computer.disconnect()
+                # Alternative: If you want to fully stop the VM, use stop() instead:
+                # await computer.stop()  # Fully stop VM and disconnect
+
+        asyncio.run(main())
+        ```
+      </Tab>
+      <Tab value="Windows Sandbox">
+        ```python
+        from computer import Computer
+        import asyncio
+
+        computer = Computer(
+            os_type="windows",
+            provider_type="windows_sandbox"
+        )
+
+        async def main():
+            await computer.run()  # Launch & connect to the sandbox
+            # Alternative: If your VM is not running, use start() instead:
+            # await computer.start()  # Start and connect to the sandbox
+
+            try:
+                # Take a screenshot of the computer's current display
+                screenshot = await computer.interface.screenshot()
+                # Simulate a left-click at coordinates (100, 100)
+                await computer.interface.left_click(100, 100)
+                # Type "Hello!" into the active application
+                await computer.interface.type_text("Hello!")
+            finally:
+                await computer.disconnect()
+                # Alternative: If you want to fully stop the VM, use stop() instead:
+                # await computer.stop()  # Fully stop VM and disconnect
+
+        asyncio.run(main())
+        ```
+      </Tab>
+      <Tab value="Your host desktop">
+        Install and run `cua-computer-server`:
+        ```bash
+        pip install cua-computer-server
+        python -m computer_server
+        ```
+
+        Then, use the `Computer` object to connect:
+        ```python
+        from computer import Computer
+        import asyncio
+
+        computer = Computer(use_host_computer_server=True)
+
+        async def main():
+            await computer.run()  # Connect to the host desktop
+            # Alternative: If your computer server is not running, use start() instead:
+            # await computer.start()  # Start and connect to the host desktop
+
+            try:
+                # Take a screenshot of the computer's current display
+                screenshot = await computer.interface.screenshot()
+                # Simulate a left-click at coordinates (100, 100)
+                await computer.interface.left_click(100, 100)
+                # Type "Hello!" into the active application
+                await computer.interface.type_text("Hello!")
+            finally:
+                await computer.disconnect()
+                # Alternative: If you want to fully stop everything, use stop() instead:
+                # await computer.stop()  # Fully stop and disconnect
+
+        asyncio.run(main())
+        ```
+      </Tab>
+    </Tabs>
+
+  </Tab>
+  <Tab value="TypeScript">
+    Install the Cua computer TypeScript SDK:
+    ```bash
+    npm install @trycua/computer
+    ```
+
+    Then, connect to your desired computer environment:
+
+    <Tabs items={['Cloud Sandbox', 'Linux on Docker', 'macOS Sandbox', 'Windows Sandbox', 'Your host desktop']}>
+      <Tab value="Cloud Sandbox">
+        Set your Cua API key (same key used for model inference):
+        ```bash
+        export CUA_API_KEY="sk_cua-api01_..."
+        ```
+
+        Then connect to your sandbox:
+        ```typescript
+        import { Computer, OSType } from '@trycua/computer';
+
+        const computer = new Computer({
+          osType: OSType.LINUX,  // or OSType.WINDOWS or OSType.MACOS
+          name: "your-sandbox-name"  // from CLI or website
+        });
+        await computer.run(); // Connect to the sandbox
+        ```
+      </Tab>
+      <Tab value="Linux on Docker">
+        ```typescript
+        import { Computer, OSType, ProviderType } from '@trycua/computer';
+
+        const computer = new Computer({
+          osType: OSType.LINUX,
+          providerType: ProviderType.DOCKER,
+          image: "trycua/cua-xfce:latest"  // or "trycua/cua-ubuntu:latest"
+        });
+        await computer.run(); // Launch & connect to the sandbox
+        ```
+      </Tab>
+      <Tab value="macOS Sandbox">
+        ```typescript
+        import { Computer, OSType, ProviderType } from '@trycua/computer';
+
+        const computer = new Computer({
+          osType: OSType.MACOS,
+          providerType: ProviderType.LUME,
+          name: "macos-sequoia-cua:latest"
+        });
+        await computer.run(); // Launch & connect to the sandbox
+        ```
+      </Tab>
+      <Tab value="Windows Sandbox">
+        ```typescript
+        import { Computer, OSType, ProviderType } from '@trycua/computer';
+
+        const computer = new Computer({
+          osType: OSType.WINDOWS,
+          providerType: ProviderType.WINDOWS_SANDBOX
+        });
+        await computer.run(); // Launch & connect to the sandbox
+        ```
+      </Tab>
+      <Tab value="Your host desktop">
+        First, install and run `cua-computer-server`:
+        ```bash
+        pip install cua-computer-server
+        python -m computer_server
+        ```
+
+        Then, use the `Computer` object to connect:
+        ```typescript
+        import { Computer } from '@trycua/computer';
+
+        const computer = new Computer({ useHostComputerServer: true });
+        await computer.run(); // Connect to the host desktop
+        ```
+      </Tab>
+    </Tabs>
+
+    Once connected, you can perform interactions:
+    ```typescript
+    try {
+      // Take a screenshot of the computer's current display
+      const screenshot = await computer.interface.screenshot();
+      // Simulate a left-click at coordinates (100, 100)
+      await computer.interface.leftClick(100, 100);
+      // Type "Hello!" into the active application
+      await computer.interface.typeText("Hello!");
+    } finally {
+      await computer.disconnect();
+    }
+    ```
+
+  </Tab>
+</Tabs>
+
+Learn more about computers in the [Cua computers documentation](/computer-sdk/computers).
+
+</Step>
+
+<Step>
+
+### Step 2: Add AI Automation with Cua Agent Framework
+
+Now that you've verified your sandbox works, use an Agent to automate complex tasks by providing it with a goal. The agent will interact with the computer environment using a vision-language model to understand the UI and execute actions.
+
+While you can build your own agent loop with any LLM, Cua Agent Framework is the recommended approach as it provides:
+- **100+ VLM options** through Cua VLM Router and direct provider access
+- **Built-in optimizations** for computer-use tasks
+- **Structured agent loops** for consistent behavior
+
+<Tabs items={['Python', 'TypeScript']}>
+  <Tab value="Python">
+    Install the Cua agent Python SDK:
+
+    **Using uv (recommended):**
+    ```bash
+    uv pip install "cua-agent[all]"
+    ```
+
+    **Or with pip:**
+    ```bash
+    pip install "cua-agent[all]"
+    ```
+
+    Choose how you want to access vision-language models for your agent:
+
+<Tabs items={['Cua VLM Router', 'BYOK (Bring Your Own Key)']}>
+  <Tab value="Cua VLM Router">
+
+    Use Cua's inference API to access multiple model providers with a single API key (same key used for sandbox access). Cua VLM Router provides intelligent routing and cost optimization.
+
+    **Use the agent with Cua models:**
+    ```python
+    import os
+    import asyncio
+    from computer import Computer
+    from agent import ComputerAgent
+
+    os.environ["CUA_API_KEY"] = "sk_cua-api01_..."
+
+    computer = Computer(
+        os_type="linux",  # or "windows" or "macos"
+        provider_type="cloud",
+        name="your-sandbox-name"  # from CLI or website
+    )
+
+    async def main():
+        await computer.run()  # Connect to the sandbox
+        # Alternative: If your VM is not running, use start() instead:
+        # await computer.start()  # Start and connect to the sandbox
+
+        try:
+            agent = ComputerAgent(
+                model="cua/anthropic/claude-sonnet-4.5",  # CUA-routed model
+                tools=[computer],
+                max_trajectory_budget=5.0
+            )
+
+            messages = [{"role": "user", "content": "Take a screenshot and tell me what you see"}]
+
+            async for result in agent.run(messages):
+                for item in result["output"]:
+                    if item["type"] == "message":
+                        print(item["content"][0]["text"])
+        finally:
+            await computer.disconnect()
+            # Alternative: If you want to fully stop the VM, use stop() instead:
+            # await computer.stop()  # Fully stop VM and disconnect
+
+    asyncio.run(main())
+    ```
+
+    **Available Cua models:**
+    - `cua/anthropic/claude-sonnet-4.5` - Claude Sonnet 4.5 (recommended)
+    - `cua/anthropic/claude-opus-4.5` - Claude Opus 4.5 (enhanced agentic capabilities)
+    - `cua/anthropic/claude-haiku-4.5` - Claude Haiku 4.5 (faster, cost-effective)
+    - `cua/google/gemini-3-pro-preview` - Gemini 3 Pro Preview (most powerful multimodal)
+    - `cua/google/gemini-3-flash-preview` - Gemini 3 Flash Preview (fastest and cheapest, recommended for balance)
+    - `cua/qwen/qwen3-vl-235b` - Qwen3 VL 235B (large-scale vision-language tasks)
+
+    **Available composed models**
+    - `huggingface-local/HelloKKMe/GTA1-7B+anthropic/claude-sonnet-4-5-20250929` - GTA1 grounding + Claude Sonnet 4.5 planning
+    - `huggingface-local/HelloKKMe/GTA1-7B+openai/gpt-5` - GTA1 grounding + GPT-5 planning
+    - `huggingface-local/ByteDance-Seed/UI-TARS-1.5-7B+openai/gpt-4o` - UI-TARS grounding + GPT-4o planning
+    - `moondream3+openai/gpt-4o` - Moondream3 grounding + GPT-4o planning
+
+    
+    **Benefits:**
+    - Single API key for multiple providers
+    - Cost tracking and optimization
+    - No need to manage multiple provider keys
+
+  </Tab>
+  <Tab value="BYOK (Bring Your Own Key)">
+
+    Use your own API keys from model providers like Anthropic, OpenAI, or others.
+
+    **Use the agent with your provider:**
+    ```python
+    import os
+    import asyncio
+    from computer import Computer
+    from agent import ComputerAgent
+
+    # Set your provider API key
+    os.environ["ANTHROPIC_API_KEY"] = "sk-ant-..."  # For Anthropic
+    # OR
+    os.environ["OPENAI_API_KEY"] = "sk-..."  # For OpenAI
+
+    computer = Computer(
+        os_type="linux",  # or "windows" or "macos"
+        provider_type="cloud",
+        name="your-sandbox-name"  # from CLI or website
+    )
+
+    async def main():
+        await computer.run()  # Launch & connect to the sandbox
+        # Alternative: If your VM is not running, use start() instead:
+        # await computer.start()  # Start and connect to the sandbox
+
+        try:
+            agent = ComputerAgent(
+                model="anthropic/claude-sonnet-4-5-20250929",  # Direct provider model
+                tools=[computer],
+                max_trajectory_budget=5.0
+            )
+
+            messages = [{"role": "user", "content": "Take a screenshot and tell me what you see"}]
+
+            async for result in agent.run(messages):
+                for item in result["output"]:
+                    if item["type"] == "message":
+                        print(item["content"][0]["text"])
+        finally:
+            await computer.disconnect()
+            # Alternative: If you want to fully stop the VM, use stop() instead:
+            # await computer.stop()  # Fully stop VM and disconnect
+
+    asyncio.run(main())
+    ```
+
+    **Supported providers:**
+    - `anthropic/claude-*` - Anthropic Claude models
+    - `openai/gpt-*` - OpenAI GPT models
+    - `openai/o1-*` - OpenAI o1 models
+    - `huggingface-local/*` - Local HuggingFace models
+    - And many more via LiteLLM
+
+    See [Supported Models](/agent-sdk/supported-model-providers/) for the complete list.
+
+    </Tab>
+  </Tabs>
+
+  </Tab>
+  <Tab value="TypeScript">
+    For TypeScript, you can build agent loops using the [Vercel AI SDK](https://ai-sdk.dev/) with the Cua Computer Framework TypeScript library. The Vercel AI SDK provides a unified interface for building multi-step agent workflows with language models.
+
+    Install the required packages:
+
+    ```bash
+    npm install @trycua/computer ai
+    ```
+
+    Here's an example of building an agent loop with the Vercel AI SDK:
+
+    ```typescript
+    import Anthropic from "@anthropic-ai/sdk";
+    import { Computer, OSType } from "@trycua/computer";
+    import { generateText } from "ai";
+    import { anthropic } from "@ai-sdk/anthropic";
+
+    const client = new Anthropic();
+    let computer: Computer;
+
+    const computerTool = {
+      type: "tool" as const,
+      name: "computer",
+      description: "Control the computer with actions like screenshot, click, type, etc.",
+      inputSchema: {
+        type: "object" as const,
+        properties: {
+          action: {
+            type: "string" as const,
+            description: "Action to perform (screenshot, click, type, key_press, etc.)",
+          },
+          coordinate: {
+            type: "array" as const,
+            items: { type: "number" as const },
+            description: "x, y coordinates for click actions",
+          },
+          text: {
+            type: "string" as const,
+            description: "Text to type",
+          },
+        },
+        required: ["action"],
+      },
+    };
+
+    async function runAgentLoop(goal: string) {
+      // Initialize computer
+      computer = new Computer({
+        osType: OSType.LINUX,
+        provider_type: "cloud",
+        name: "your-sandbox-name",
+        apiKey: process.env.CUA_API_KEY!,
+      });
+
+      await computer.run();
+
+      const messages: any[] = [];
+
+      // First message with goal
+      messages.push({
+        role: "user",
+        content: goal,
+      });
+
+      // Agent loop
+      for (let i = 0; i < 10; i++) {
+        // Get model response with tool use
+        const response = await client.messages.create({
+          model: "claude-opus-4-1-20250805",
+          max_tokens: 4096,
+          tools: [computerTool],
+          messages: messages,
+        });
+
+        // Check if we're done
+        if (response.stop_reason === "end_turn") {
+          console.log("Task completed!");
+          break;
+        }
+
+        // Add assistant response to history
+        messages.push({
+          role: "assistant",
+          content: response.content,
+        });
+
+        // Process tool calls
+        const toolResults = [];
+        for (const block of response.content) {
+          if (block.type === "tool_use") {
+            try {
+              let result: any;
+              switch (block.input.action) {
+                case "screenshot":
+                  result = await computer.interface.screenshot();
+                  break;
+                case "click":
+                  result = await computer.interface.click(
+                    block.input.coordinate[0],
+                    block.input.coordinate[1]
+                  );
+                  break;
+                case "type":
+                  result = await computer.interface.type(block.input.text);
+                  break;
+                case "key_press":
+                  result = await computer.interface.key_press(block.input.text);
+                  break;
+                default:
+                  result = { error: "Unknown action" };
+              }
+
+              toolResults.push({
+                type: "tool_result",
+                tool_use_id: block.id,
+                content: JSON.stringify(result),
+              });
+            } catch (error) {
+              toolResults.push({
+                type: "tool_result",
+                tool_use_id: block.id,
+                content: `Error: ${error}`,
+                is_error: true,
+              });
+            }
+          }
+        }
+
+        // Add tool results to messages
+        if (toolResults.length > 0) {
+          messages.push({
+            role: "user",
+            content: toolResults,
+          });
+        }
+      }
+
+      await computer.disconnect();
+    }
+
+    // Run the agent
+    runAgentLoop("Take a screenshot and tell me what you see");
+    ```
+
+    For more details and examples, see the [Vercel AI SDK Computer Use Cookbook](https://ai-sdk.dev/cookbook/guides/computer-use).
+
+  </Tab>
+</Tabs>
+
+Learn more about agents in [Agent Loops](/agent-sdk/agent-loops) and available models in [Supported Models](/agent-sdk/supported-model-providers/).
+
+</Step>
+</Steps>
+
+### Next Steps
+
+- Explore [Cua Computer Framework Commands](/computer-sdk/commands) for more sandbox interactions
+- Learn about [Agent Loops](/agent-sdk/agent-loops) and advanced agent configuration
+- Check out [Custom Tools](/agent-sdk/custom-tools) to extend your agents
+- Review [Supported Model Providers](/agent-sdk/supported-model-providers/) for more LLM options
+- Try the [Form Filling](/example-usecases/form-filling) example use case
+- Join our [Discord community](https://discord.com/invite/cua-ai) for help and discussion
+
+{/* ---
+
+## CLI Quickstart
+
+Get started quickly with the Cua CLI - the easiest way to manage cloud sandboxes and run AI agents.
+
+<Steps>
+<Step>
+
+### Install the Cua CLI
+
+<Tabs items={['macOS / Linux', 'Windows', 'Bun (Alternative)', 'From Source']}>
+  <Tab value="macOS / Linux">
+    ```bash
+    curl -LsSf https://cua.ai/cli/install.sh | sh
+    ```
+  </Tab>
+  <Tab value="Windows">
+    ```powershell
+    powershell -ExecutionPolicy ByPass -c "irm https://cua.ai/cli/install.ps1 | iex"
+    ```
+  </Tab>
+  <Tab value="Bun (Alternative)">
+    ```bash
+    # Install Bun if you don't have it
+    curl -fsSL https://bun.sh/install | bash
+
+    # Install Cua CLI
+    bun add -g @trycua/cli
+    ```
+  </Tab>
+  <Tab value="From Source">
+    ```bash
+    # Install Bun (macOS/Linux)
+    curl -fsSL https://bun.sh/install | bash
+
+    # Install Bun (Windows)
+    # powershell -c "irm bun.sh/install.ps1|iex"
+
+    # Clone the repo
+    git clone https://github.com/trycua/cua
+    cd cua/libs/typescript/cua-cli
+
+    # Install the CLI
+    bun install
+    bun link
+    bun link cua-cli
+    ```
+
+  </Tab>
+</Tabs>
+
+</Step>
+
+<Step>
+
+### Authenticate with CUA
+
+Login to your CUA account:
+
+```bash
+# Interactive browser login (recommended)
+cua auth login
+
+# Or provide your API key directly
+cua auth login --api-key sk-your-api-key-here
+```
+
+If you don't have a CUA account yet, sign up at [cua.ai/signin](https://cua.ai/signin).
+
+</Step>
+
+<Step>
+
+### Create Your First Sandbox
+
+Create a cloud sandbox where your AI agents will run:
+
+```bash
+# Create a Linux sandbox (recommended for most use cases)
+cua sb create --os linux --size small --region north-america
+
+# Or create a Windows sandbox
+cua sb create --os windows --size small --region north-america
+
+```
+
+Your sandbox will be created and you'll see output like:
+
+```
+Sandbox created and ready: my-sandbox-abc123
+Password: secure-password-here
+Host: my-sandbox-abc123.sandbox.cua.ai
+```
+
+</Step>
+
+<Step>
+
+### Start Using Your Sandbox
+
+You can now interact with your sandbox in multiple ways:
+
+
+
+#### Option 1: Access VNC Desktop
+
+```bash
+cua sb vnc my-sandbox-abc123
+```
+
+This opens a remote desktop connection to your sandbox.
+
+#### Option 2: List and Manage Sandboxes
+
+```bash
+# List all your sandboxes
+cua sb list
+
+# Start/stop sandboxes as needed
+cua sb stop my-sandbox-abc123
+cua sb start my-sandbox-abc123
+
+# Delete sandboxes when done
+cua sb delete my-sandbox-abc123
+```
+
+</Step>
+
+</Steps>
+
+### What's Next?
+
+- **Explore more commands**: Check out the [complete CLI reference](/libraries/cua-cli/commands)
+- **Learn about programming**: Try the [Developer Quickstart](#developer-quickstart) to build custom automations
+- **Join the community**: Get help in our [Discord community](https://discord.com/invite/mVnXXpdE85)
+
+---
+
+For running models locally, see [Running Models Locally](/agent-sdk/supported-model-providers/local-models). */}

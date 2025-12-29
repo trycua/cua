@@ -1,8 +1,0 @@
-{
-	"pages": [
-		"installation",
-		"docker",
-		"docker-compose",
-		"building-lumier"
-	]
-}

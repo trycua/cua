@@ -2,6 +2,7 @@
 
 try:
     import winsandbox
+
     HAS_WINSANDBOX = True
 except ImportError:
     HAS_WINSANDBOX = False

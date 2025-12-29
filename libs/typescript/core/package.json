@@ -2,7 +2,7 @@
   "name": "@trycua/core",
   "version": "0.1.3",
   "packageManager": "pnpm@10.11.0",
-  "description": "Typescript SDK for cua core.",
+  "description": "Typescript SDK for Cua core.",
   "type": "module",
   "license": "MIT",
   "homepage": "https://github.com/trycua/cua/tree/feature/computer/typescript/libs/typescript/computer",
@@ -28,8 +28,8 @@
     "access": "public"
   },
   "scripts": {
-    "lint": "biome lint .",
-    "lint:fix": "biome lint --fix .",
+    "lint": "prettier --check .",
+    "lint:fix": "prettier --write .",
     "build": "tsdown",
     "dev": "tsdown --watch",
     "test": "vitest",
@@ -40,18 +40,17 @@
   "dependencies": {
     "@types/uuid": "^10.0.0",
     "pino": "^9.7.0",
-    "posthog-node": "^5.1.1",
+    "posthog-node": "^5.14.1",
     "uuid": "^11.1.0"
   },
   "devDependencies": {
-    "@biomejs/biome": "^1.9.4",
     "@types/node": "^22.15.17",
     "@types/ws": "^8.18.1",
     "bumpp": "^10.1.0",
-    "happy-dom": "^17.4.7",
+    "happy-dom": "^20.0.11",
     "tsdown": "^0.11.9",
     "tsx": "^4.19.4",
     "typescript": "^5.8.3",
-    "vitest": "^3.1.3"
+    "vitest": "^4.0.14"
   }
 }

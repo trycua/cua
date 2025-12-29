@@ -8,10 +8,11 @@
     </picture>
   </div>
 
-  [![Python](https://img.shields.io/badge/Python-333333?logo=python&logoColor=white&labelColor=333333)](#)
-  [![macOS](https://img.shields.io/badge/macOS-000000?logo=apple&logoColor=F0F0F0)](#)
-  [![Discord](https://img.shields.io/badge/Discord-%235865F2.svg?&logo=discord&logoColor=white)](https://discord.com/invite/mVnXXpdE85)
-  [![PyPI](https://img.shields.io/pypi/v/cua-computer?color=333333)](https://pypi.org/project/cua-computer/)
+[![Python](https://img.shields.io/badge/Python-333333?logo=python&logoColor=white&labelColor=333333)](#)
+[![macOS](https://img.shields.io/badge/macOS-000000?logo=apple&logoColor=F0F0F0)](#)
+[![Discord](https://img.shields.io/badge/Discord-%235865F2.svg?&logo=discord&logoColor=white)](https://discord.com/invite/mVnXXpdE85)
+[![PyPI](https://img.shields.io/pypi/v/cua-computer?color=333333)](https://pypi.org/project/cua-computer/)
+
 </h1>
 </div>
 
@@ -41,8 +42,9 @@ Add this to your MCP client configuration:
     "cua-agent": {
       "command": "/usr/bin/env",
       "args": [
-        "bash", "-lc",
-        "export CUA_MODEL_NAME='anthropic/claude-3-5-sonnet-20241022'; ~/.cua/start_mcp_server.sh"
+        "bash",
+        "-lc",
+        "export CUA_MODEL_NAME='anthropic/claude-sonnet-4-5-20250929'; ~/.cua/start_mcp_server.sh"
       ]
     }
   }
@@ -59,7 +61,8 @@ Use an absolute path to the repository root in the arguments below.
     "cua-agent": {
       "command": "/usr/bin/env",
       "args": [
-        "bash", "-lc",
+        "bash",
+        "-lc",
         "export CUA_MODEL_NAME='huggingface-local/ByteDance-Seed/UI-TARS-1.5-7B'; /Users/your-username/Documents/GitHub/cua/libs/python/mcp-server/scripts/start_mcp_server.sh"
       ]
     }
@@ -68,6 +71,7 @@ Use an absolute path to the repository root in the arguments below.
 ```
 
 Notes:
+
 - Replace `/Users/your-username/Documents/GitHub/cua` with the absolute path to your clone.
 - The script sets `PYTHONPATH` for local libs and runs the server module.
 
@@ -94,21 +98,48 @@ After configuring your MCP client, restart it and invoke one of these tools:
 ```
 
 Expected results:
+
 - Assistant messages streamed during execution
 - A final screenshot image
 
+## Desktop Extension
+
+CUA also provides a Claude Desktop Extension (`.mcpb` file) for easy one-click installation.
+
+### Building the Desktop Extension
+
+To build the desktop extension from source:
+
+```bash
+cd libs/python/mcp-server
+python3 build-extension.py
+```
+
+This creates `desktop-extension/cua-extension.mcpb` which can be installed directly in Claude Desktop.
+
+### Installing the Desktop Extension
+
+1. Build the extension (see above)
+2. Open Claude Desktop Settings
+3. Go to Extensions
+4. Drop the `cua-extension.mcpb` file into the window
+5. Follow the installation prompts
+
+See [desktop-extension/README.md](desktop-extension/README.md) for more details.
+
 ## Documentation
 
-- Installation: https://trycua.com/docs/libraries/mcp-server/installation
-- Configuration: https://trycua.com/docs/libraries/mcp-server/configuration
-- Usage: https://trycua.com/docs/libraries/mcp-server/usage
-- Tools: https://trycua.com/docs/libraries/mcp-server/tools
-- Client Integrations: https://trycua.com/docs/libraries/mcp-server/client-integrations
-- LLM Integrations: https://trycua.com/docs/libraries/mcp-server/llm-integrations
+- Installation: https://cua.ai/docs/agent-sdk/mcp-server/installation
+- Configuration: https://cua.ai/docs/agent-sdk/mcp-server/configuration
+- Usage: https://cua.ai/docs/agent-sdk/mcp-server/usage
+- Tools: https://cua.ai/docs/agent-sdk/mcp-server/tools
+- Client Integrations: https://cua.ai/docs/agent-sdk/mcp-server/client-integrations
+- LLM Integrations: https://cua.ai/docs/agent-sdk/mcp-server/llm-integrations
 
 ## Troubleshooting
 
 Server reports disconnected in MCP client:
+
 - Use an absolute path in the `args` command.
 - Launch via `/usr/bin/env bash -lc` so the shell initializes and expands paths.
 - Run the script manually to verify:
@@ -117,12 +148,14 @@ Server reports disconnected in MCP client:
   ```
 
 pip not found in venv:
+
 ```bash
 python3 -m ensurepip --upgrade
 python3 -m pip install -U pip setuptools wheel
 ```
 
 Pydantic schema error related to Image:
+
 ```bash
 python3 -m pip install -U "mcp>=1.2.0" "fastmcp>=0.4.7" "pydantic>=2.7,<2.12"
 ```

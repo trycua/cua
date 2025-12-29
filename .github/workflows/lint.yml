@@ -1,0 +1,57 @@
+name: Lint & Format Check
+
+on:
+  pull_request:
+
+  push:
+    branches:
+      - main
+
+jobs:
+  lint:
+    name: Lint & Format
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: 20
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: 3.12
+
+      - name: Install Python dependencies
+        run: |
+          pip install uv
+          uv sync
+
+      - name: Install Node dependencies
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm -C libs/typescript install --frozen-lockfile
+
+      # Python checks (isort, black, ruff, mypy)
+      - name: Python lint & typecheck
+        run: |
+          uv run isort --check-only .
+          uv run black --check .
+          uv run ruff check .
+          # Temporarily disabled due to untyped codebase
+          # uv run mypy .
+
+      # TypeScript type check
+      - name: TypeScript typecheck
+        run: node ./scripts/typescript-typecheck.js
+
+      # JS/TS/Markdown/YAML checks
+      - name: Prettier check
+        run: pnpm prettier --check "**/*.{ts,tsx,js,jsx,json,md,yaml,yml}"

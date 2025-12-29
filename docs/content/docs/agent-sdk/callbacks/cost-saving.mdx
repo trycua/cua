@@ -13,7 +13,7 @@ Optimize agent costs with budget management and image retention callbacks.
 from agent.callbacks import BudgetManagerCallback
 
 agent = ComputerAgent(
-    model="anthropic/claude-3-5-sonnet-20241022",
+    model="anthropic/claude-sonnet-4-5-20250929",
     tools=[computer],
     callbacks=[
         BudgetManagerCallback(
@@ -30,16 +30,17 @@ agent = ComputerAgent(
 ```python
 # Simple budget limit
 agent = ComputerAgent(
-    model="anthropic/claude-3-5-sonnet-20241022",
+    model="anthropic/claude-sonnet-4-5-20250929",
     max_trajectory_budget=5.0  # $5 limit
 )
 ```
 
 **Or with options:**
+
 ```python
 # Advanced budget configuration
 agent = ComputerAgent(
-    model="anthropic/claude-3-5-sonnet-20241022",
+    model="anthropic/claude-sonnet-4-5-20250929",
     max_trajectory_budget={
         "max_budget": 10.0,
         "raise_error": True,  # Raise error when exceeded
@@ -54,7 +55,7 @@ agent = ComputerAgent(
 from agent.callbacks import ImageRetentionCallback
 
 agent = ComputerAgent(
-    model="anthropic/claude-3-5-sonnet-20241022",
+    model="anthropic/claude-sonnet-4-5-20250929",
     tools=[computer],
     callbacks=[
         ImageRetentionCallback(only_n_most_recent_images=3)
@@ -66,7 +67,7 @@ agent = ComputerAgent(
 
 ```python
 agent = ComputerAgent(
-    model="anthropic/claude-3-5-sonnet-20241022",
+    model="anthropic/claude-sonnet-4-5-20250929",
     tools=[computer],
     only_n_most_recent_images=3  # Auto-adds ImageRetentionCallback
 )
@@ -76,7 +77,7 @@ agent = ComputerAgent(
 
 ```python
 agent = ComputerAgent(
-    model="anthropic/claude-3-5-sonnet-20241022",
+    model="anthropic/claude-sonnet-4-5-20250929",
     tools=[computer],
     max_trajectory_budget=5.0,        # Budget limit
     only_n_most_recent_images=3,      # Image retention

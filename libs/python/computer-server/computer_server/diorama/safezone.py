@@ -8,31 +8,31 @@ like the menubar and dock, which are needed for proper screenshot composition.
 
 import sys
 import time
-from typing import Dict, Any, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 # Import Objective-C bridge libraries
 try:
     import AppKit
+    import Foundation
+    from AppKit import NSRunningApplication, NSWorkspace
     from ApplicationServices import (
-        AXUIElementCreateSystemWide,
-        AXUIElementCreateApplication,
         AXUIElementCopyAttributeValue,
         AXUIElementCopyAttributeValues,
-        kAXChildrenAttribute,
-        kAXRoleAttribute,
-        kAXTitleAttribute,
-        kAXPositionAttribute,
-        kAXSizeAttribute,
-        kAXErrorSuccess,
-        AXValueGetType,
-        kAXValueCGSizeType,
-        kAXValueCGPointType,
+        AXUIElementCreateApplication,
+        AXUIElementCreateSystemWide,
         AXUIElementGetTypeID,
+        AXValueGetType,
         AXValueGetValue,
+        kAXChildrenAttribute,
+        kAXErrorSuccess,
         kAXMenuBarAttribute,
+        kAXPositionAttribute,
+        kAXRoleAttribute,
+        kAXSizeAttribute,
+        kAXTitleAttribute,
+        kAXValueCGPointType,
+        kAXValueCGSizeType,
     )
-    from AppKit import NSWorkspace, NSRunningApplication
-    import Foundation
 except ImportError:
     print("Error: This script requires PyObjC to be installed.")
     print("Please install it with: pip install pyobjc")
@@ -74,13 +74,8 @@ def element_value(element, type):
 
 def get_element_bounds(element):
     """Get the bounds of an accessibility element"""
-    bounds = {
-        "x": 0,
-        "y": 0,
-        "width": 0,
-        "height": 0
-    }
-    
+    bounds = {"x": 0, "y": 0, "width": 0, "height": 0}
+
     # Get position
     position_value = element_attribute(element, kAXPositionAttribute)
     if position_value:
@@ -88,7 +83,7 @@ def get_element_bounds(element):
         if position_value:
             bounds["x"] = position_value.x
             bounds["y"] = position_value.y
-    
+
     # Get size
     size_value = element_attribute(element, kAXSizeAttribute)
     if size_value:
@@ -96,7 +91,7 @@ def get_element_bounds(element):
         if size_value:
             bounds["width"] = size_value.width
             bounds["height"] = size_value.height
-            
+
     return bounds
 
 
@@ -111,13 +106,13 @@ def find_dock_process():
 
 def get_menubar_bounds():
     """Get the bounds of the macOS menubar
-    
+
     Returns:
         Dictionary with x, y, width, height of the menubar
     """
     # Get the system-wide accessibility element
     system_element = AXUIElementCreateSystemWide()
-    
+
     # Try to find the menubar
     menubar = element_attribute(system_element, kAXMenuBarAttribute)
     if menubar is None:
@@ -127,19 +122,19 @@ def get_menubar_bounds():
             app_pid = frontmost_app.processIdentifier()
             app_element = AXUIElementCreateApplication(app_pid)
             menubar = element_attribute(app_element, kAXMenuBarAttribute)
-    
+
     if menubar is None:
         print("Error: Could not get menubar")
         # Return default menubar bounds as fallback
         return {"x": 0, "y": 0, "width": 1800, "height": 24}
-    
+
     # Get menubar bounds
     return get_element_bounds(menubar)
 
 
 def get_dock_bounds():
     """Get the bounds of the macOS Dock
-    
+
     Returns:
         Dictionary with x, y, width, height of the Dock
     """
@@ -148,19 +143,19 @@ def get_dock_bounds():
         print("Error: Could not find Dock process")
         # Return empty bounds as fallback
         return {"x": 0, "y": 0, "width": 0, "height": 0}
-        
+
     # Create an accessibility element for the Dock
     dock_element = AXUIElementCreateApplication(dock_pid)
     if dock_element is None:
         print(f"Error: Could not create accessibility element for Dock (PID {dock_pid})")
         return {"x": 0, "y": 0, "width": 0, "height": 0}
-    
+
     # Get the Dock's children
     children = element_attribute(dock_element, kAXChildrenAttribute)
     if not children or len(children) == 0:
         print("Error: Could not get Dock children")
         return {"x": 0, "y": 0, "width": 0, "height": 0}
-    
+
     # Find the Dock's list (first child is usually the main dock list)
     dock_list = None
     for child in children:
@@ -168,28 +163,25 @@ def get_dock_bounds():
         if role == "AXList":
             dock_list = child
             break
-    
+
     if dock_list is None:
         print("Error: Could not find Dock list")
         return {"x": 0, "y": 0, "width": 0, "height": 0}
-    
+
     # Get the bounds of the dock list
     return get_element_bounds(dock_list)
 
 
 def get_ui_element_bounds():
     """Get the bounds of important UI elements like menubar and dock
-    
+
     Returns:
         Dictionary with menubar and dock bounds
     """
     menubar_bounds = get_menubar_bounds()
     dock_bounds = get_dock_bounds()
-    
-    return {
-        "menubar": menubar_bounds,
-        "dock": dock_bounds
-    }
+
+    return {"menubar": menubar_bounds, "dock": dock_bounds}
 
 
 if __name__ == "__main__":

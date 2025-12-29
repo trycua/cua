@@ -133,44 +133,93 @@ detect_platform() {
 create_temp_dir() {
   TEMP_DIR=$(mktemp -d)
   echo "Using temporary directory: $TEMP_DIR"
-  
+
   # Make sure we clean up on exit
   trap 'rm -rf "$TEMP_DIR"' EXIT
 }
 
+# Get the latest lume release tag
+get_latest_lume_tag() {
+  echo "Finding latest Lume release..." >&2
+
+  local page=1
+  local per_page=100
+  local max_pages=10  # Safety limit (1000 tags max)
+  local LUME_TAG=""
+
+  while [ $page -le $max_pages ]; do
+    echo "Checking page $page..." >&2
+
+    local response=$(curl -s "https://api.github.com/repos/$GITHUB_REPO/tags?per_page=$per_page&page=$page")
+
+    if [ -z "$response" ] || [ "$(echo "$response" | grep -c '"name":')" -eq 0 ]; then
+      if [ $page -eq 1 ]; then
+        echo "${RED}Error: Failed to fetch tags from GitHub API.${NORMAL}" >&2
+        exit 1
+      else
+        echo "${RED}Error: No lume tags found after checking $((page - 1)) pages.${NORMAL}" >&2
+        exit 1
+      fi
+    fi
+
+    LUME_TAG=$(echo "$response" \
+      | grep '"name": "lume-' \
+      | head -n 1 \
+      | cut -d '"' -f 4)
+
+    if [ -n "$LUME_TAG" ]; then
+      echo "Found latest Lume release: ${BOLD}$LUME_TAG${NORMAL}" >&2
+      echo "$LUME_TAG"
+      return 0
+    fi
+
+    page=$((page + 1))
+  done
+
+  echo "${RED}Error: Could not find any lume tags after checking $max_pages pages.${NORMAL}" >&2
+  exit 1
+}
+
 # Download the latest release
 download_release() {
-  echo "Downloading latest Lume release..."
-  
-  # Use the direct download link with the non-versioned symlink
-  DOWNLOAD_URL="https://github.com/$GITHUB_REPO/releases/latest/download/lume.tar.gz"
+  LUME_TAG=$(get_latest_lume_tag)
+
+  if [ -z "$LUME_TAG" ]; then
+    echo "${RED}Error: Could not determine latest Lume release tag.${NORMAL}"
+    exit 1
+  fi
+
+  echo "Downloading Lume release $LUME_TAG..."
+
+  # Use the direct download link with the lume release tag
+  DOWNLOAD_URL="https://github.com/$GITHUB_REPO/releases/download/$LUME_TAG/lume.tar.gz"
   echo "Downloading from: $DOWNLOAD_URL"
-  
+
   # Download the tarball
   if command -v curl &> /dev/null; then
     curl -L --progress-bar "$DOWNLOAD_URL" -o "$TEMP_DIR/lume.tar.gz"
-    
+
     # Verify the download was successful
     if [ ! -s "$TEMP_DIR/lume.tar.gz" ]; then
       echo "${RED}Error: Failed to download Lume.${NORMAL}"
       echo "The download URL may be incorrect or the file may not exist."
       exit 1
     fi
-    
+
     # Verify the file is a valid archive
     if ! tar -tzf "$TEMP_DIR/lume.tar.gz" > /dev/null 2>&1; then
       echo "${RED}Error: The downloaded file is not a valid tar.gz archive.${NORMAL}"
       echo "Let's try the alternative URL..."
-      
-      # Try alternative URL
-      ALT_DOWNLOAD_URL="https://github.com/$GITHUB_REPO/releases/latest/download/lume-$PLATFORM.tar.gz"
+
+      # Try alternative URL with platform-specific name
+      ALT_DOWNLOAD_URL="https://github.com/$GITHUB_REPO/releases/download/$LUME_TAG/lume-darwin.tar.gz"
       echo "Downloading from alternative URL: $ALT_DOWNLOAD_URL"
       curl -L --progress-bar "$ALT_DOWNLOAD_URL" -o "$TEMP_DIR/lume.tar.gz"
-      
+
       # Check again
       if ! tar -tzf "$TEMP_DIR/lume.tar.gz" > /dev/null 2>&1; then
         echo "${RED}Error: Could not download a valid Lume archive.${NORMAL}"
-        echo "Please try installing Lume manually from: https://github.com/$GITHUB_REPO/releases/latest"
+        echo "Please try installing Lume manually from: https://github.com/$GITHUB_REPO/releases/tag/$LUME_TAG"
         exit 1
       fi
     fi

@@ -1,0 +1,500 @@
+---
+title: PDF to Form Automation
+description: Enhance and Automate Interactions Between Form Filling and Local File Systems
+---
+
+import { Step, Steps } from 'fumadocs-ui/components/steps';
+import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
+
+## Overview
+
+Cua can be used to automate interactions between form filling and local file systems over any operating system. Cua let's you interact with all the elements of a web page and local file systems to integrate between the two.
+
+This preset usecase uses [Cua Computer Framework](/computer-sdk/computers) to interact with a web page and local file systems along with [Agent Loops](/agent-sdk/agent-loops) to run the agent in a loop with message history.
+
+---
+
+<Steps>
+
+<Step>
+
+### Set Up Your Environment
+
+First, install the required dependencies:
+
+Create a `requirements.txt` file:
+
+```text
+cua-agent
+cua-computer
+python-dotenv>=1.0.0
+```
+
+Install the dependencies using uv (recommended):
+
+```bash
+uv pip install -r requirements.txt
+```
+
+Or using pip:
+
+```bash
+pip install -r requirements.txt
+```
+
+Create a `.env` file with your API keys:
+
+```text
+ANTHROPIC_API_KEY=your-anthropic-api-key
+CUA_API_KEY=sk_cua-api01...
+```
+
+</Step>
+
+<Step>
+
+### Create Your Form Filling Script
+
+Create a Python file (e.g., `form_filling.py`) and select your environment:
+
+<Tabs items={['Cloud Sandbox', 'Linux on Docker', 'macOS Sandbox', 'Windows Sandbox']}>
+  <Tab value="Cloud Sandbox">
+
+```python
+import asyncio
+import logging
+import os
+import signal
+import traceback
+
+from agent import ComputerAgent
+from computer import Computer, VMProviderType
+from dotenv import load_dotenv
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+def handle_sigint(sig, frame):
+    print("\n\nExecution interrupted by user. Exiting gracefully...")
+    exit(0)
+
+async def fill_application():
+    try:
+        async with Computer(
+            os_type="linux",
+            provider_type=VMProviderType.CLOUD,
+            name="your-sandbox-name",  # Replace with your sandbox name
+            api_key=os.environ["CUA_API_KEY"],
+            verbosity=logging.INFO,
+        ) as computer:
+
+            agent = ComputerAgent(
+                model="cua/anthropic/claude-sonnet-4.5",
+                tools=[computer],
+                only_n_most_recent_images=3,
+                verbosity=logging.INFO,
+                trajectory_dir="trajectories",
+                use_prompt_caching=True,
+                max_trajectory_budget=5.0,
+            )
+
+            tasks = [
+                "Visit https://www.overleaf.com/latex/templates/jakes-resume/syzfjbzwjncs.pdf and download the pdf.",
+                "Visit https://form.jotform.com/252881246782264 and fill the form from the information in the pdf."
+            ]
+
+            history = []
+
+            for i, task in enumerate(tasks, 1):
+                print(f"\n[Task {i}/{len(tasks)}] {task}")
+
+                # Add user message to history
+                history.append({"role": "user", "content": task})
+
+                # Run agent with conversation history
+                async for result in agent.run(history, stream=False):
+                    history += result.get("output", [])
+
+                    # Print output for debugging
+                    for item in result.get("output", []):
+                        if item.get("type") == "message":
+                            content = item.get("content", [])
+                            for content_part in content:
+                                if content_part.get("text"):
+                                    logger.info(f"Agent: {content_part.get('text')}")
+                        elif item.get("type") == "computer_call":
+                            action = item.get("action", {})
+                            action_type = action.get("type", "")
+                            logger.debug(f"Computer Action: {action_type}")
+
+                print(f"✅ Task {i}/{len(tasks)} completed")
+
+            print("\n🎉 All tasks completed successfully!")
+
+    except Exception as e:
+        logger.error(f"Error in fill_application: {e}")
+        traceback.print_exc()
+        raise
+
+def main():
+    try:
+        load_dotenv()
+
+        if "ANTHROPIC_API_KEY" not in os.environ:
+            raise RuntimeError(
+                "Please set the ANTHROPIC_API_KEY environment variable.\n"
+                "You can add it to a .env file in the project root."
+            )
+
+        if "CUA_API_KEY" not in os.environ:
+            raise RuntimeError(
+                "Please set the CUA_API_KEY environment variable.\n"
+                "You can add it to a .env file in the project root."
+            )
+
+        signal.signal(signal.SIGINT, handle_sigint)
+
+        asyncio.run(fill_application())
+
+    except Exception as e:
+        logger.error(f"Error running automation: {e}")
+        traceback.print_exc()
+
+if __name__ == "__main__":
+    main()
+```
+
+  </Tab>
+  <Tab value="Linux on Docker">
+
+```python
+import asyncio
+import logging
+import os
+import signal
+import traceback
+
+from agent import ComputerAgent
+from computer import Computer, VMProviderType
+from dotenv import load_dotenv
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+def handle_sigint(sig, frame):
+    print("\n\nExecution interrupted by user. Exiting gracefully...")
+    exit(0)
+
+async def fill_application():
+    try:
+        async with Computer(
+            os_type="linux",
+            provider_type=VMProviderType.DOCKER,
+            image="trycua/cua-xfce:latest",  # or "trycua/cua-ubuntu:latest"
+            verbosity=logging.INFO,
+        ) as computer:
+
+            agent = ComputerAgent(
+                model="cua/anthropic/claude-sonnet-4.5",
+                tools=[computer],
+                only_n_most_recent_images=3,
+                verbosity=logging.INFO,
+                trajectory_dir="trajectories",
+                use_prompt_caching=True,
+                max_trajectory_budget=5.0,
+            )
+
+            tasks = [
+                "Visit https://www.overleaf.com/latex/templates/jakes-resume/syzfjbzwjncs.pdf and download the pdf.",
+                "Visit https://form.jotform.com/252881246782264 and fill the form from the information in the pdf."
+            ]
+
+            history = []
+
+            for i, task in enumerate(tasks, 1):
+                print(f"\n[Task {i}/{len(tasks)}] {task}")
+
+                # Add user message to history
+                history.append({"role": "user", "content": task})
+
+                # Run agent with conversation history
+                async for result in agent.run(history, stream=False):
+                    history += result.get("output", [])
+
+                    # Print output for debugging
+                    for item in result.get("output", []):
+                        if item.get("type") == "message":
+                            content = item.get("content", [])
+                            for content_part in content:
+                                if content_part.get("text"):
+                                    logger.info(f"Agent: {content_part.get('text')}")
+                        elif item.get("type") == "computer_call":
+                            action = item.get("action", {})
+                            action_type = action.get("type", "")
+                            logger.debug(f"Computer Action: {action_type}")
+
+                print(f"✅ Task {i}/{len(tasks)} completed")
+
+            print("\n🎉 All tasks completed successfully!")
+
+    except Exception as e:
+        logger.error(f"Error in fill_application: {e}")
+        traceback.print_exc()
+        raise
+
+def main():
+    try:
+        load_dotenv()
+
+        if "ANTHROPIC_API_KEY" not in os.environ:
+            raise RuntimeError(
+                "Please set the ANTHROPIC_API_KEY environment variable.\n"
+                "You can add it to a .env file in the project root."
+            )
+
+        signal.signal(signal.SIGINT, handle_sigint)
+
+        asyncio.run(fill_application())
+
+    except Exception as e:
+        logger.error(f"Error running automation: {e}")
+        traceback.print_exc()
+
+if __name__ == "__main__":
+    main()
+```
+
+  </Tab>
+  <Tab value="macOS Sandbox">
+
+```python
+import asyncio
+import logging
+import os
+import signal
+import traceback
+
+from agent import ComputerAgent
+from computer import Computer, VMProviderType
+from dotenv import load_dotenv
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+def handle_sigint(sig, frame):
+    print("\n\nExecution interrupted by user. Exiting gracefully...")
+    exit(0)
+
+async def fill_application():
+    try:
+        async with Computer(
+            os_type="macos",
+            provider_type=VMProviderType.LUME,
+            name="macos-sequoia-cua:latest",
+            verbosity=logging.INFO,
+        ) as computer:
+
+            agent = ComputerAgent(
+                model="cua/anthropic/claude-sonnet-4.5",
+                tools=[computer],
+                only_n_most_recent_images=3,
+                verbosity=logging.INFO,
+                trajectory_dir="trajectories",
+                use_prompt_caching=True,
+                max_trajectory_budget=5.0,
+            )
+
+            tasks = [
+                "Visit https://www.overleaf.com/latex/templates/jakes-resume/syzfjbzwjncs.pdf and download the pdf.",
+                "Visit https://form.jotform.com/252881246782264 and fill the form from the information in the pdf."
+            ]
+
+            history = []
+
+            for i, task in enumerate(tasks, 1):
+                print(f"\n[Task {i}/{len(tasks)}] {task}")
+
+                # Add user message to history
+                history.append({"role": "user", "content": task})
+
+                # Run agent with conversation history
+                async for result in agent.run(history, stream=False):
+                    history += result.get("output", [])
+
+                    # Print output for debugging
+                    for item in result.get("output", []):
+                        if item.get("type") == "message":
+                            content = item.get("content", [])
+                            for content_part in content:
+                                if content_part.get("text"):
+                                    logger.info(f"Agent: {content_part.get('text')}")
+                        elif item.get("type") == "computer_call":
+                            action = item.get("action", {})
+                            action_type = action.get("type", "")
+                            logger.debug(f"Computer Action: {action_type}")
+
+                print(f"✅ Task {i}/{len(tasks)} completed")
+
+            print("\n🎉 All tasks completed successfully!")
+
+    except Exception as e:
+        logger.error(f"Error in fill_application: {e}")
+        traceback.print_exc()
+        raise
+
+def main():
+    try:
+        load_dotenv()
+
+        if "ANTHROPIC_API_KEY" not in os.environ:
+            raise RuntimeError(
+                "Please set the ANTHROPIC_API_KEY environment variable.\n"
+                "You can add it to a .env file in the project root."
+            )
+
+        signal.signal(signal.SIGINT, handle_sigint)
+
+        asyncio.run(fill_application())
+
+    except Exception as e:
+        logger.error(f"Error running automation: {e}")
+        traceback.print_exc()
+
+if __name__ == "__main__":
+    main()
+```
+
+  </Tab>
+  <Tab value="Windows Sandbox">
+
+```python
+import asyncio
+import logging
+import os
+import signal
+import traceback
+
+from agent import ComputerAgent
+from computer import Computer, VMProviderType
+from dotenv import load_dotenv
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+def handle_sigint(sig, frame):
+    print("\n\nExecution interrupted by user. Exiting gracefully...")
+    exit(0)
+
+async def fill_application():
+    try:
+        async with Computer(
+            os_type="windows",
+            provider_type=VMProviderType.WINDOWS_SANDBOX,
+            verbosity=logging.INFO,
+        ) as computer:
+
+            agent = ComputerAgent(
+                model="cua/anthropic/claude-sonnet-4.5",
+                tools=[computer],
+                only_n_most_recent_images=3,
+                verbosity=logging.INFO,
+                trajectory_dir="trajectories",
+                use_prompt_caching=True,
+                max_trajectory_budget=5.0,
+            )
+
+            tasks = [
+                "Visit https://www.overleaf.com/latex/templates/jakes-resume/syzfjbzwjncs.pdf and download the pdf.",
+                "Visit https://form.jotform.com/252881246782264 and fill the form from the information in the pdf."
+            ]
+
+            history = []
+
+            for i, task in enumerate(tasks, 1):
+                print(f"\n[Task {i}/{len(tasks)}] {task}")
+
+                # Add user message to history
+                history.append({"role": "user", "content": task})
+
+                # Run agent with conversation history
+                async for result in agent.run(history, stream=False):
+                    history += result.get("output", [])
+
+                    # Print output for debugging
+                    for item in result.get("output", []):
+                        if item.get("type") == "message":
+                            content = item.get("content", [])
+                            for content_part in content:
+                                if content_part.get("text"):
+                                    logger.info(f"Agent: {content_part.get('text')}")
+                        elif item.get("type") == "computer_call":
+                            action = item.get("action", {})
+                            action_type = action.get("type", "")
+                            logger.debug(f"Computer Action: {action_type}")
+
+                print(f"✅ Task {i}/{len(tasks)} completed")
+
+            print("\n🎉 All tasks completed successfully!")
+
+    except Exception as e:
+        logger.error(f"Error in fill_application: {e}")
+        traceback.print_exc()
+        raise
+
+def main():
+    try:
+        load_dotenv()
+
+        if "ANTHROPIC_API_KEY" not in os.environ:
+            raise RuntimeError(
+                "Please set the ANTHROPIC_API_KEY environment variable.\n"
+                "You can add it to a .env file in the project root."
+            )
+
+        signal.signal(signal.SIGINT, handle_sigint)
+
+        asyncio.run(fill_application())
+
+    except Exception as e:
+        logger.error(f"Error running automation: {e}")
+        traceback.print_exc()
+
+if __name__ == "__main__":
+    main()
+```
+
+  </Tab>
+</Tabs>
+
+</Step>
+
+<Step>
+
+### Run Your Script
+
+Execute your form filling automation:
+
+```bash
+python form_filling.py
+```
+
+The agent will:
+
+1. Download the PDF resume from Overleaf
+2. Extract information from the PDF
+3. Fill out the JotForm with the extracted information
+
+Monitor the output to see the agent's progress through each task.
+
+</Step>
+
+</Steps>
+
+---
+
+## Next Steps
+
+- Learn more about [Cua Computer Framework](/computer-sdk/computers) and [Computer Commands](/computer-sdk/commands)
+- Read about [Agent Loops](/agent-sdk/agent-loops), [Tools](/agent-sdk/custom-tools), and [Supported Model Providers](/agent-sdk/supported-model-providers/)
+- Experiment with different [Models and Providers](/agent-sdk/supported-model-providers/)
+- Join our [Discord community](https://discord.com/invite/mVnXXpdE85) for help

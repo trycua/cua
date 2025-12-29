@@ -5,26 +5,30 @@ This directory contains benchmarks designed to test agent providers in the Compu
 ## Overview
 
 The benchmark system evaluates models on GUI grounding tasks, specifically click prediction accuracy. It supports both:
+
 - **Computer Agent SDK providers** (using model strings like `"huggingface-local/HelloKKMe/GTA1-7B"`)
 - **Reference agent implementations** (custom model classes implementing the `ModelProtocol`)
 
 ## Available Benchmarks
 
 ### 1. ScreenSpot-v2 (`ss-v2.py`)
+
 - **Dataset**: ScreenSpot-v2 (click-only GUI grounding)
 - **Format**: Standard resolution screenshots
 - **Task**: Predict click coordinates given an instruction and image
 - **Metrics**: Accuracy, Error Rate, Timing, VRAM usage
 
-### 2. ScreenSpot-Pro (`ss-pro.py`) 
+### 2. ScreenSpot-Pro (`ss-pro.py`)
+
 - **Dataset**: ScreenSpot-Pro (high-resolution click-only GUI grounding)
 - **Format**: High-resolution screenshots
 - **Task**: Predict click coordinates given an instruction and image
 - **Metrics**: Accuracy, Error Rate, Timing, VRAM usage
 
 ### 3. Interactive Testing (`interactive.py`)
+
 - **Real-time testing**: Take screenshots and visualize model predictions
-- **Commands**: 
+- **Commands**:
   - Type instruction → test all models on last screenshot
   - `screenshot` → take screenshot
   - `models` → list available models
@@ -34,14 +38,16 @@ The benchmark system evaluates models on GUI grounding tasks, specifically click
 ## Running Benchmarks
 
 ### 1. Configure Models
+
 Edit `utils.py` to specify which models you want to test in `get_available_models()`.
 
 ### 2. Run Benchmark
+
 ```bash
 # ScreenSpot-v2 benchmark
 python ss-v2.py --samples 50
 
-# ScreenSpot-Pro benchmark  
+# ScreenSpot-Pro benchmark
 python ss-pro.py --samples 50
 
 # Interactive testing
@@ -51,6 +57,7 @@ python interactive.py
 ## Output
 
 ### Console Output
+
 ```
 Model Results:
   Accuracy: 85.50% (171/200)
@@ -59,6 +66,7 @@ Model Results:
 ```
 
 ### Generated Files
+
 - **Markdown Report**: `*_results.md` with detailed results tables
 - **Visualizations**: `output/` directory with prediction visualizations
 - **Interactive Output**: `interactive_output/` for interactive session results

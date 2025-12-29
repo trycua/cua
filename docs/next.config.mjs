@@ -24,6 +24,39 @@ const config = {
         basePath: false, // Important: this bypasses the basePath
         permanent: false,
       },
+      // Redirect old docs.cua.ai URLs to cua.ai/docs with 301 for SEO
+      // This handles URLs that Google has indexed from the old domain
+      {
+        source: '/:path*',
+        has: [
+          {
+            type: 'host',
+            value: 'docs.cua.ai',
+          },
+        ],
+        destination: 'https://cua.ai/docs/:path*',
+        permanent: true, // 301 redirect to preserve SEO authority
+        basePath: false,
+      },
+      // Redirects for documentation restructure (PR #568)
+      // Moved quickstart-devs to get-started section
+      {
+        source: '/quickstart-devs',
+        destination: '/get-started/quickstart',
+        permanent: true,
+      },
+      // Moved telemetry to agent-sdk section
+      {
+        source: '/telemetry',
+        destination: '/agent-sdk/telemetry',
+        permanent: true,
+      },
+      // Removed quickstart-cli, consolidated into main quickstart
+      {
+        source: '/quickstart-cli',
+        destination: '/get-started/quickstart',
+        permanent: true,
+      },
     ];
   },
   images: {

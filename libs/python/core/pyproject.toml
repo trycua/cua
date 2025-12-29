@@ -15,7 +15,7 @@ dependencies = [
     "httpx>=0.24.0",
     "posthog>=3.20.0"
 ]
-requires-python = ">=3.11"
+requires-python = ">=3.12,<3.14"
 
 [tool.pdm]
 distribution = true
@@ -24,33 +24,10 @@ distribution = true
 includes = ["core/"]
 source-includes = ["tests/", "README.md", "LICENSE"]
 
-[tool.black]
-line-length = 100
-target-version = ["py311"]
-
-[tool.ruff]
-line-length = 100
-target-version = "py311"
-select = ["E", "F", "B", "I"]
-fix = true
-
-[tool.ruff.format]
-docstring-code-format = true
-
-[tool.mypy]
-strict = true
-python_version = "3.11"
-ignore_missing_imports = true
-disallow_untyped_defs = true
-check_untyped_defs = true
-warn_return_any = true
-show_error_codes = true
-warn_unused_ignores = false
-
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
-python_files = "test_*.py" 
+python_files = "test_*.py"
 [dependency-groups]
 dev = [
     "pytest>=8.3.5",

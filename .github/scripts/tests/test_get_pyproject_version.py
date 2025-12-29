@@ -10,10 +10,10 @@ This test suite covers:
 """
 
 import sys
-import unittest
 import tempfile
-from pathlib import Path
+import unittest
 from io import StringIO
+from pathlib import Path
 from unittest.mock import patch
 
 # Add parent directory to path to import the module
@@ -36,46 +36,54 @@ class TestGetPyprojectVersion(unittest.TestCase):
 
     def create_pyproject_toml(self, version: str) -> Path:
         """Helper to create a temporary pyproject.toml file with a given version."""
-        temp_file = tempfile.NamedTemporaryFile(mode='w', suffix='.toml', delete=False)
-        temp_file.write(f"""
+        temp_file = tempfile.NamedTemporaryFile(mode="w", suffix=".toml", delete=False)
+        temp_file.write(
+            f"""
 [project]
 name = "test-project"
 version = "{version}"
 description = "A test project"
-""")
+"""
+        )
         temp_file.close()
         return Path(temp_file.name)
 
     def create_pyproject_toml_no_version(self) -> Path:
         """Helper to create a pyproject.toml without a version field."""
-        temp_file = tempfile.NamedTemporaryFile(mode='w', suffix='.toml', delete=False)
-        temp_file.write("""
+        temp_file = tempfile.NamedTemporaryFile(mode="w", suffix=".toml", delete=False)
+        temp_file.write(
+            """
 [project]
 name = "test-project"
 description = "A test project without version"
-""")
+"""
+        )
         temp_file.close()
         return Path(temp_file.name)
 
     def create_pyproject_toml_no_project(self) -> Path:
         """Helper to create a pyproject.toml without a project section."""
-        temp_file = tempfile.NamedTemporaryFile(mode='w', suffix='.toml', delete=False)
-        temp_file.write("""
+        temp_file = tempfile.NamedTemporaryFile(mode="w", suffix=".toml", delete=False)
+        temp_file.write(
+            """
 [tool.poetry]
 name = "test-project"
 version = "1.0.0"
-""")
+"""
+        )
         temp_file.close()
         return Path(temp_file.name)
 
     def create_malformed_toml(self) -> Path:
         """Helper to create a malformed TOML file."""
-        temp_file = tempfile.NamedTemporaryFile(mode='w', suffix='.toml', delete=False)
-        temp_file.write("""
+        temp_file = tempfile.NamedTemporaryFile(mode="w", suffix=".toml", delete=False)
+        temp_file.write(
+            """
 [project
 name = "test-project
 version = "1.0.0"
-""")
+"""
+        )
         temp_file.close()
         return Path(temp_file.name)
 
@@ -85,11 +93,11 @@ version = "1.0.0"
         pyproject_file = self.create_pyproject_toml("1.2.3")
 
         try:
-            sys.argv = ['get_pyproject_version.py', str(pyproject_file), '1.2.3']
+            sys.argv = ["get_pyproject_version.py", str(pyproject_file), "1.2.3"]
 
             # Capture stdout
             captured_output = StringIO()
-            with patch('sys.stdout', captured_output):
+            with patch("sys.stdout", captured_output):
                 with self.assertRaises(SystemExit) as cm:
                     get_pyproject_version.main()
 
@@ -104,11 +112,11 @@ version = "1.0.0"
         pyproject_file = self.create_pyproject_toml("1.2.3")
 
         try:
-            sys.argv = ['get_pyproject_version.py', str(pyproject_file), '1.2.4']
+            sys.argv = ["get_pyproject_version.py", str(pyproject_file), "1.2.4"]
 
             # Capture stderr
             captured_error = StringIO()
-            with patch('sys.stderr', captured_error):
+            with patch("sys.stderr", captured_error):
                 with self.assertRaises(SystemExit) as cm:
                     get_pyproject_version.main()
 
@@ -127,10 +135,10 @@ version = "1.0.0"
         pyproject_file = self.create_pyproject_toml_no_version()
 
         try:
-            sys.argv = ['get_pyproject_version.py', str(pyproject_file), '1.0.0']
+            sys.argv = ["get_pyproject_version.py", str(pyproject_file), "1.0.0"]
 
             captured_error = StringIO()
-            with patch('sys.stderr', captured_error):
+            with patch("sys.stderr", captured_error):
                 with self.assertRaises(SystemExit) as cm:
                     get_pyproject_version.main()
 
@@ -145,10 +153,10 @@ version = "1.0.0"
         pyproject_file = self.create_pyproject_toml_no_project()
 
         try:
-            sys.argv = ['get_pyproject_version.py', str(pyproject_file), '1.0.0']
+            sys.argv = ["get_pyproject_version.py", str(pyproject_file), "1.0.0"]
 
             captured_error = StringIO()
-            with patch('sys.stderr', captured_error):
+            with patch("sys.stderr", captured_error):
                 with self.assertRaises(SystemExit) as cm:
                     get_pyproject_version.main()
 
@@ -160,7 +168,7 @@ version = "1.0.0"
     # Test: File not found
     def test_file_not_found(self):
         """Test handling of non-existent pyproject.toml file."""
-        sys.argv = ['get_pyproject_version.py', '/nonexistent/pyproject.toml', '1.0.0']
+        sys.argv = ["get_pyproject_version.py", "/nonexistent/pyproject.toml", "1.0.0"]
 
         with self.assertRaises(SystemExit) as cm:
             get_pyproject_version.main()
@@ -173,7 +181,7 @@ version = "1.0.0"
         pyproject_file = self.create_malformed_toml()
 
         try:
-            sys.argv = ['get_pyproject_version.py', str(pyproject_file), '1.0.0']
+            sys.argv = ["get_pyproject_version.py", str(pyproject_file), "1.0.0"]
 
             with self.assertRaises(SystemExit) as cm:
                 get_pyproject_version.main()
@@ -185,44 +193,50 @@ version = "1.0.0"
     # Test: Incorrect number of arguments - too few
     def test_too_few_arguments(self):
         """Test that providing too few arguments results in usage error."""
-        sys.argv = ['get_pyproject_version.py', 'pyproject.toml']
+        sys.argv = ["get_pyproject_version.py", "pyproject.toml"]
 
         captured_error = StringIO()
-        with patch('sys.stderr', captured_error):
+        with patch("sys.stderr", captured_error):
             with self.assertRaises(SystemExit) as cm:
                 get_pyproject_version.main()
 
         self.assertEqual(cm.exception.code, 1)
-        self.assertIn("Usage: python get_pyproject_version.py <pyproject_path> <expected_version>",
-                     captured_error.getvalue())
+        self.assertIn(
+            "Usage: python get_pyproject_version.py <pyproject_path> <expected_version>",
+            captured_error.getvalue(),
+        )
 
     # Test: Incorrect number of arguments - too many
     def test_too_many_arguments(self):
         """Test that providing too many arguments results in usage error."""
-        sys.argv = ['get_pyproject_version.py', 'pyproject.toml', '1.0.0', 'extra']
+        sys.argv = ["get_pyproject_version.py", "pyproject.toml", "1.0.0", "extra"]
 
         captured_error = StringIO()
-        with patch('sys.stderr', captured_error):
+        with patch("sys.stderr", captured_error):
             with self.assertRaises(SystemExit) as cm:
                 get_pyproject_version.main()
 
         self.assertEqual(cm.exception.code, 1)
-        self.assertIn("Usage: python get_pyproject_version.py <pyproject_path> <expected_version>",
-                     captured_error.getvalue())
+        self.assertIn(
+            "Usage: python get_pyproject_version.py <pyproject_path> <expected_version>",
+            captured_error.getvalue(),
+        )
 
     # Test: No arguments
     def test_no_arguments(self):
         """Test that providing no arguments results in usage error."""
-        sys.argv = ['get_pyproject_version.py']
+        sys.argv = ["get_pyproject_version.py"]
 
         captured_error = StringIO()
-        with patch('sys.stderr', captured_error):
+        with patch("sys.stderr", captured_error):
             with self.assertRaises(SystemExit) as cm:
                 get_pyproject_version.main()
 
         self.assertEqual(cm.exception.code, 1)
-        self.assertIn("Usage: python get_pyproject_version.py <pyproject_path> <expected_version>",
-                     captured_error.getvalue())
+        self.assertIn(
+            "Usage: python get_pyproject_version.py <pyproject_path> <expected_version>",
+            captured_error.getvalue(),
+        )
 
     # Test: Version with pre-release tags
     def test_version_with_prerelease_tags(self):
@@ -230,15 +244,17 @@ version = "1.0.0"
         pyproject_file = self.create_pyproject_toml("1.2.3-rc.1")
 
         try:
-            sys.argv = ['get_pyproject_version.py', str(pyproject_file), '1.2.3-rc.1']
+            sys.argv = ["get_pyproject_version.py", str(pyproject_file), "1.2.3-rc.1"]
 
             captured_output = StringIO()
-            with patch('sys.stdout', captured_output):
+            with patch("sys.stdout", captured_output):
                 with self.assertRaises(SystemExit) as cm:
                     get_pyproject_version.main()
 
             self.assertEqual(cm.exception.code, 0)
-            self.assertIn("✅ Version consistency check passed: 1.2.3-rc.1", captured_output.getvalue())
+            self.assertIn(
+                "✅ Version consistency check passed: 1.2.3-rc.1", captured_output.getvalue()
+            )
         finally:
             pyproject_file.unlink()
 
@@ -248,15 +264,17 @@ version = "1.0.0"
         pyproject_file = self.create_pyproject_toml("1.2.3+build.123")
 
         try:
-            sys.argv = ['get_pyproject_version.py', str(pyproject_file), '1.2.3+build.123']
+            sys.argv = ["get_pyproject_version.py", str(pyproject_file), "1.2.3+build.123"]
 
             captured_output = StringIO()
-            with patch('sys.stdout', captured_output):
+            with patch("sys.stdout", captured_output):
                 with self.assertRaises(SystemExit) as cm:
                     get_pyproject_version.main()
 
             self.assertEqual(cm.exception.code, 0)
-            self.assertIn("✅ Version consistency check passed: 1.2.3+build.123", captured_output.getvalue())
+            self.assertIn(
+                "✅ Version consistency check passed: 1.2.3+build.123", captured_output.getvalue()
+            )
         finally:
             pyproject_file.unlink()
 
@@ -290,15 +308,17 @@ version = "1.0.0"
         pyproject_file = self.create_pyproject_toml(version)
 
         try:
-            sys.argv = ['get_pyproject_version.py', str(pyproject_file), version]
+            sys.argv = ["get_pyproject_version.py", str(pyproject_file), version]
 
             captured_output = StringIO()
-            with patch('sys.stdout', captured_output):
+            with patch("sys.stdout", captured_output):
                 with self.assertRaises(SystemExit) as cm:
                     get_pyproject_version.main()
 
             self.assertEqual(cm.exception.code, 0)
-            self.assertIn(f"✅ Version consistency check passed: {version}", captured_output.getvalue())
+            self.assertIn(
+                f"✅ Version consistency check passed: {version}", captured_output.getvalue()
+            )
         finally:
             pyproject_file.unlink()
 
@@ -308,10 +328,10 @@ version = "1.0.0"
         pyproject_file = self.create_pyproject_toml("")
 
         try:
-            sys.argv = ['get_pyproject_version.py', str(pyproject_file), '1.0.0']
+            sys.argv = ["get_pyproject_version.py", str(pyproject_file), "1.0.0"]
 
             captured_error = StringIO()
-            with patch('sys.stderr', captured_error):
+            with patch("sys.stderr", captured_error):
                 with self.assertRaises(SystemExit) as cm:
                     get_pyproject_version.main()
 
@@ -327,14 +347,14 @@ class TestSuiteInfo(unittest.TestCase):
 
     def test_suite_info(self):
         """Display test suite information."""
-        print("\n" + "="*70)
+        print("\n" + "=" * 70)
         print("Test Suite: get_pyproject_version.py")
         print("Framework: unittest (Python built-in)")
         print("TOML Library: tomllib (Python 3.11+ built-in)")
-        print("="*70)
+        print("=" * 70)
         self.assertTrue(True)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     # Run tests with verbose output
     unittest.main(verbosity=2)

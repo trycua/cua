@@ -11,15 +11,17 @@ All models that support `ComputerAgent.run()` also support `ComputerAgent.predic
 
 ### Anthropic CUAs
 
+- Claude 4.5: `claude-sonnet-4-5-20250929`
 - Claude 4.1: `claude-opus-4-1-20250805`
 - Claude 4: `claude-opus-4-20250514`, `claude-sonnet-4-20250514`
 - Claude 3.7: `claude-3-7-sonnet-20250219`
-- Claude 3.5: `claude-3-5-sonnet-20241022`
 
 ### OpenAI CUA Preview
+
 - Computer-use-preview: `computer-use-preview`
 
 ### UI-TARS 1.5 (Unified VLM with grounding support)
+
 - `huggingface-local/ByteDance-Seed/UI-TARS-1.5-7B`
 - `huggingface/ByteDance-Seed/UI-TARS-1.5-7B` (requires TGI endpoint)
 
@@ -28,15 +30,19 @@ All models that support `ComputerAgent.run()` also support `ComputerAgent.predic
 These models are optimized specifically for click prediction and UI element grounding:
 
 ### OpenCUA
+
 - `huggingface-local/xlangai/OpenCUA-{7B,32B}`
 
 ### GTA1 Family
+
 - `huggingface-local/HelloKKMe/GTA1-{7B,32B,72B}`
 
 ### Holo 1.5 Family
+
 - `huggingface-local/Hcompany/Holo1.5-{3B,7B,72B}`
 
 ### InternVL 3.5 Family
+
 - `huggingface-local/OpenGVLab/InternVL3_5-{1B,2B,4B,8B,...}`
 
 ### OmniParser (OCR)
@@ -55,7 +61,7 @@ Moondream3 is a powerful small model that can perform UI grounding and click pre
 
 ```python
 # Using any grounding model for click prediction
-agent = ComputerAgent("claude-3-5-sonnet-20241022", tools=[computer])
+agent = ComputerAgent("claude-sonnet-4-5-20250929", tools=[computer])
 
 # Predict coordinates for specific elements
 login_coords = agent.predict_click("find the login button")
@@ -69,7 +75,7 @@ print(f"Menu icon: {menu_coords}")
 
 ```python
 # OmniParser is just for OCR, so it requires an LLM for predict_click
-agent = ComputerAgent("omniparser+anthropic/claude-3-5-sonnet-20241022", tools=[computer])
+agent = ComputerAgent("omniparser+anthropic/claude-sonnet-4-5-20250929", tools=[computer])
 
 # Predict click coordinates using composed agent
 coords = agent.predict_click("find the submit button")

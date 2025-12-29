@@ -13,23 +13,20 @@ Containerized virtual desktop for Computer-Using Agents (CUA). Utilizes Kasm's M
 
 ## Usage
 
-### Building the Container
+### Build and Push (multi-arch)
+
+Use Docker Buildx to build and push a multi-architecture image for both `linux/amd64` and `linux/arm64` in a single command. Replace `trycua` with your Docker Hub username or your registry namespace as needed.
 
 ```bash
-docker build -t cua-ubuntu:latest .
-```
-
-### Pushing to Registry
-
-```bash
-# Tag for Docker Hub (replace 'trycua' with your Docker Hub username)
-docker tag cua-ubuntu:latest trycua/cua-ubuntu:latest
-
-# Login to Docker Hub
+# Login to your registry first (Docker Hub shown here)
 docker login
 
-# Push to Docker Hub
-docker push trycua/cua-ubuntu:latest
+# Build and push for amd64 and arm64 in one step
+docker buildx build \
+  --platform linux/amd64,linux/arm64 \
+  -t trycua/cua-ubuntu:latest \
+  --push \
+  .
 ```
 
 ### Running the Container Manually
@@ -73,14 +70,17 @@ async with provider:
 ## Container Configuration
 
 ### Ports
+
 - **6901**: VNC web interface (noVNC)
 - **8080**: Computer-server API endpoint
 
 ### Environment Variables
+
 - `VNC_PW`: VNC password (default: "password")
 - `DISPLAY`: X11 display (set to ":0")
 
 ### Volumes
+
 - `/home/kasm-user/storage`: Persistent storage mount point
 - `/home/kasm-user/shared`: Shared folder mount point
 

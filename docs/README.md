@@ -34,6 +34,14 @@ A `source.config.ts` config file has been included, you can customise different 
 
 Read the [Introduction](https://fumadocs.dev/docs/mdx) for further details.
 
+## Setup Telemetry
+
+We use PostHog for telemetry to improve the clarity and structure of our documentation. Start by copying the `.env.example` and adding in your PostHog API key and host.
+
+```bash
+cp .env.example .env
+```
+
 ## Learn More
 
 To learn more about Next.js and Fumadocs, take a look at the following

@@ -133,7 +133,7 @@ await cleanup_session(ctx, "session-to-cleanup")
 
 ### Environment Variables
 
-- `CUA_MODEL_NAME`: Model to use (default: `anthropic/claude-3-5-sonnet-20241022`)
+- `CUA_MODEL_NAME`: Model to use (default: `anthropic/claude-sonnet-4-5-20250929`)
 - `CUA_MAX_IMAGES`: Maximum images to keep (default: `3`)
 
 ### Session Manager Configuration
@@ -143,7 +143,7 @@ await cleanup_session(ctx, "session-to-cleanup")
 class SessionManager:
     def __init__(self, max_concurrent_sessions: int = 10):
         # Configurable maximum concurrent sessions
-        
+
 class ComputerPool:
     def __init__(self, max_size: int = 5, idle_timeout: float = 300.0):
         # Configurable pool size and idle timeout
@@ -152,6 +152,7 @@ class ComputerPool:
 ## Performance Improvements
 
 ### Before (Issues):
+
 - ❌ Single global computer instance
 - ❌ Client interference and resource conflicts
 - ❌ Sequential task processing only
@@ -159,6 +160,7 @@ class ComputerPool:
 - ❌ 30s timeout issues with long-running tasks
 
 ### After (Benefits):
+
 - ✅ Per-session computer instances with proper isolation
 - ✅ Computer instance pooling for efficient resource usage
 - ✅ Concurrent task execution support

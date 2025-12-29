@@ -10,30 +10,39 @@ Callbacks provide hooks into the agent lifecycle for extensibility. They're call
 ## Callback Lifecycle
 
 ### 1. `on_run_start(kwargs, old_items)`
+
 Called once when agent run begins. Initialize tracking, logging, or state.
 
 ### 2. `on_run_continue(kwargs, old_items, new_items)` → bool
+
 Called before each iteration. Return `False` to stop execution (e.g., budget limits).
 
 ### 3. `on_llm_start(messages)` → messages
+
 Preprocess messages before LLM call. Use for PII anonymization, image retention.
 
 ### 4. `on_api_start(kwargs)`
+
 Called before each LLM API call.
 
 ### 5. `on_api_end(kwargs, result)`
+
 Called after each LLM API call completes.
 
 ### 6. `on_usage(usage)`
+
 Called when usage information is received from LLM.
 
 ### 7. `on_llm_end(messages)` → messages
+
 Postprocess messages after LLM call. Use for PII deanonymization.
 
 ### 8. `on_responses(kwargs, responses)`
+
 Called when responses are received from agent loop.
 
 ### 9. Response-specific hooks:
+
 - `on_text(item)` - Text messages
 - `on_computer_call_start(item)` - Before computer actions
 - `on_computer_call_end(item, result)` - After computer actions
@@ -42,4 +51,5 @@ Called when responses are received from agent loop.
 - `on_screenshot(screenshot, name)` - When screenshots are taken
 
 ### 10. `on_run_end(kwargs, old_items, new_items)`
+
 Called when agent run completes. Finalize tracking, save trajectories.

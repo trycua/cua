@@ -1,19 +1,20 @@
 ---
-title: Cua Computers
-description: Understanding cua computer types and connection methods
+title: Computer Types
+description: Understanding Cua computer types and connection methods
 ---
 
+{/* prettier-ignore */}
 <Callout>A corresponding <a href="https://github.com/trycua/cua/blob/main/notebooks/computer_nb.ipynb" target="_blank">Jupyter Notebook</a> and <a href="https://github.com/trycua/cua/tree/main/examples/computer-example-ts" target="_blank">NodeJS project</a> are available for this documentation.</Callout>
 
 Before we can automate apps using AI, we need to first connect to a Computer Server to give the AI a safe environment to execute workflows in.
 
-Cua Computers are preconfigured virtual machines running the Computer Server. They can be either macOS, Linux, or Windows. They're found in either a cloud-native container, or on your host desktop.
+The Cua Computer Framework provides access to preconfigured sandboxes running the Computer Server. These can be either macOS, Linux, or Windows instances, available either as cloud-native sandboxes or running locally on your host desktop.
 
 ## Cloud Sandbox
 
 **Easiest & safest way to get started - works on any host OS**
 
-This is a Cloud Sandbox running the Computer Server. Get a container at [trycua.com](https://www.trycua.com/).
+This is a Cloud Sandbox running the Computer Server. Get a sandbox at [cua.ai](https://cua.ai/).
 
 <Tabs items={['Python', 'TypeScript']}>
   <Tab value="Python">
@@ -75,7 +76,7 @@ Cua provides two Docker images for running Linux desktops:
         os_type="linux",
         provider_type="docker",
         image="trycua/cua-xfce:latest",
-        name="my-xfce-container"
+        name="my-xfce-sandbox"
     )
 
     await computer.run() # Launch & connect to Docker sandbox
@@ -108,7 +109,7 @@ Cua provides two Docker images for running Linux desktops:
         os_type="linux",
         provider_type="docker",
         image="trycua/cua-ubuntu:latest",
-        name="my-kasm-container"
+        name="my-kasm-sandbox"
     )
 
     await computer.run() # Launch & connect to Docker sandbox
@@ -142,7 +143,7 @@ computer = Computer(
 await computer.run() # Launch & connect to Windows Sandbox
 ```
 
-## macOS VM
+## macOS Sandbox
 
 **macOS hosts only - requires Lume CLI**
 
@@ -152,7 +153,7 @@ await computer.run() # Launch & connect to Windows Sandbox
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/lume/scripts/install.sh)"
 ```
 
-2. Start a local cua macOS VM
+2. Start a local Cua macOS sandbox
 
 ```bash
 lume run macos-sequoia-cua:latest

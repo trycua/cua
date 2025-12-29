@@ -1,0 +1,135 @@
+---
+title: Telemetry
+description: How telemetry works in Cua and how to control it
+---
+
+# Telemetry
+
+Cua collects anonymized usage and error statistics. We follow [Posthog's ethical telemetry approach](https://posthog.com/blog/open-source-telemetry-ethical). To opt out, set `telemetry_enabled` to false.
+
+## What we collect
+
+### Enabled by default (opt-out)
+
+- System info: OS, OS version, Python version
+- Module initialization: When modules are imported and their versions
+- Performance: Agent run durations, step counts, token usage, API costs
+- Session tracking: Anonymous session IDs and run IDs
+
+### Disabled by default (opt-in)
+
+**Trajectory logging** captures full conversation history:
+
+- User messages and agent responses
+- Computer actions and outputs
+- Agent reasoning traces
+
+Must be explicitly enabled.
+
+### We don't collect
+
+- Personal information or user identifiers
+- API keys or credentials
+- File contents or application data
+- Files being accessed
+- Screenshots or screen contents (unless trajectory logging is enabled)
+- Text being typed, user inputs, model outputs, computer outputs, or tool call outputs (unless trajectory logging is enabled)
+
+## How to disable
+
+### Environment variable (global)
+
+Set `CUA_TELEMETRY_ENABLED` to a falsy value (`0`, `false`, `no`, or `off`):
+
+```bash
+export CUA_TELEMETRY_ENABLED=false
+```
+
+Or in Python:
+
+```python
+import os
+os.environ["CUA_TELEMETRY_ENABLED"] = "false"
+```
+
+<Callout type="info">
+  **Deprecated environment variables:** The environment variables `CUA_TELEMETRY` and
+  `CUA_TELEMETRY_DISABLED` are deprecated and no longer have any effect. Use `CUA_TELEMETRY_ENABLED`
+  instead.
+</Callout>
+
+### Per instance
+
+**Computer SDK:**
+
+```python
+from computer import Computer
+
+computer = Computer(telemetry_enabled=False)
+```
+
+**Agent SDK:**
+
+```python
+from agent import ComputerAgent
+import os
+
+# Basic telemetry - performance metrics only (opt-out, enabled by default)
+agent = ComputerAgent(
+    model="claude-sonnet-4-5-20250929",
+    telemetry_enabled=True  # Default is True
+)
+
+# Enable telemetry with full conversation trajectory logging (opt-in)
+agent = ComputerAgent(
+    model="claude-sonnet-4-5-20250929",
+    telemetry_enabled={
+        "log_trajectory": True  # Logs full conversation items
+    }
+)
+
+# Disable completely
+agent = ComputerAgent(
+    model="claude-sonnet-4-5-20250929",
+    telemetry_enabled=False
+)
+
+# Enable trajectory logging (opt-in)
+agent = ComputerAgent(
+    model="claude-sonnet-4-5-20250929",
+    telemetry_enabled={"log_trajectory": True}
+)
+```
+
+Check status:
+
+```python
+print(computer.telemetry_enabled)  # True or False
+print(agent.telemetry_enabled)     # True, False, or dict
+```
+
+Telemetry settings are configured at initialization and can't be changed afterward.
+
+## Events collected
+
+### Computer SDK
+
+| Event Name               | Data Collected                                                                                                                        | Trigger Notes                                                           |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| **computer_initialized** | • `os`: Operating system (e.g., 'windows', 'darwin', 'linux')<br />• `os_version`: OS version<br />• `python_version`: Python version | Triggered when a Computer instance is created                           |
+| **module_init**          | • `module`: "computer"<br />• `version`: Package version<br />• `python_version`: Full Python version string                          | Triggered once when the computer package is imported for the first time |
+
+### Agent SDK
+
+| Event Name              | Data Collected                                                                                                                                                                                                                                                                                                        | Trigger Notes                                                         |
+| ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| **module_init**         | • `module`: "agent"<br />• `version`: Package version<br />• `python_version`: Full Python version string                                                                                                                                                                                                             | Triggered once when the agent package is imported for the first time  |
+| **agent_session_start** | • `session_id`: Unique UUID for this agent instance<br />• `agent_type`: Class name (e.g., "ComputerAgent")<br />• `model`: Model name (e.g., "claude-sonnet-4-5")<br />• `os`: Operating system<br />• `os_version`: OS version<br />• `python_version`: Python version                                              | Triggered when TelemetryCallback is initialized (agent instantiation) |
+| **agent_run_start**     | • `session_id`: Agent session UUID<br />• `run_id`: Unique UUID for this run<br />• `start_time`: Unix timestamp<br />• `input_context_size`: Character count of input messages<br />• `num_existing_messages`: Count of existing messages<br />• `uploaded_trajectory`: Full conversation items (opt-in)             | Triggered at the start of each agent.run() call                       |
+| **agent_run_end**       | • `session_id`: Agent session UUID<br />• `run_id`: Run UUID<br />• `end_time`: Unix timestamp<br />• `duration_seconds`: Total run duration<br />• `num_steps`: Total steps taken in this run<br />• `total_usage`: Accumulated token usage and costs<br />• `uploaded_trajectory`: Full conversation items (opt-in) | Triggered at the end of each agent.run() call                         |
+| **agent_step**          | • `session_id`: Agent session UUID<br />• `run_id`: Run UUID<br />• `step`: Step number (incremental)<br />• `timestamp`: Unix timestamp<br />• `duration_seconds`: Duration of previous step                                                                                                                         | Triggered on each agent response/step during a run                    |
+| **agent_usage**         | • `session_id`: Agent session UUID<br />• `run_id`: Run UUID<br />• `step`: Current step number<br />• `prompt_tokens`: Tokens in prompt<br />• `completion_tokens`: Tokens in response<br />• `total_tokens`: Total tokens used<br />• `response_cost`: Cost of this API call                                        | Triggered whenever usage information is received from LLM API         |
+
+## Questions
+
+Questions about telemetry? Open an issue on our [GitHub repository](https://github.com/trycua/cua).

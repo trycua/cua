@@ -1,12 +1,13 @@
-from typing import List, Dict, Any, Tuple, Union
 import logging
 import signal
 from contextlib import contextmanager
 from pathlib import Path
+from typing import Any, Dict, List, Tuple, Union
+
 import easyocr
-from PIL import Image
 import numpy as np
 import torch
+from PIL import Image
 
 logger = logging.getLogger(__name__)
 
@@ -18,9 +19,10 @@ class TimeoutException(Exception):
 @contextmanager
 def timeout(seconds: int):
     import threading
-    
+
     # Check if we're in the main thread
     if threading.current_thread() is threading.main_thread():
+
         def timeout_handler(signum, frame):
             raise TimeoutException("OCR process timed out")
 
@@ -34,7 +36,9 @@ def timeout(seconds: int):
             signal.signal(signal.SIGALRM, original_handler)
     else:
         # In a non-main thread, we can't use signal
-        logger.warning("Timeout function called from non-main thread; signal-based timeout disabled")
+        logger.warning(
+            "Timeout function called from non-main thread; signal-based timeout disabled"
+        )
         try:
             yield
         finally:
@@ -80,7 +84,7 @@ class OCRProcessor:
                 # Use GPU if available
                 use_gpu = self.device in ["cuda", "mps"]
                 self.reader = easyocr.Reader(["en"], gpu=use_gpu)
-                
+
                 # Verify reader initialization
                 if self.reader is None:
                     raise ValueError("Failed to initialize EasyOCR reader")

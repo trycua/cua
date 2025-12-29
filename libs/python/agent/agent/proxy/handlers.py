@@ -7,24 +7,25 @@ import json
 import logging
 import os
 from contextlib import contextmanager
-from typing import Dict, Any, List, Union, Optional
+from typing import Any, Dict, List, Optional, Union
+
+from computer import Computer
 
 from ..agent import ComputerAgent
-from computer import Computer
 
 logger = logging.getLogger(__name__)
 
 
 class ResponsesHandler:
     """Handler for /responses endpoint that processes agent requests."""
-    
+
     def __init__(self):
         self.computer = None
         self.agent = None
         # Simple in-memory caches
         self._computer_cache: Dict[str, Any] = {}
         self._agent_cache: Dict[str, Any] = {}
-    
+
     async def setup_computer_agent(
         self,
         model: str,
@@ -75,7 +76,9 @@ class ResponsesHandler:
                 computer = Computer(**default_c_config)
                 await computer.__aenter__()
                 self._computer_cache[comp_key] = computer
-                logger.info(f"Computer created and cached with key={comp_key} config={default_c_config}")
+                logger.info(
+                    f"Computer created and cached with key={comp_key} config={default_c_config}"
+                )
             else:
                 logger.info(f"Reusing cached computer for key={comp_key}")
 
@@ -115,14 +118,14 @@ class ResponsesHandler:
 
         # Bind current agent reference
         self.agent = agent
-    
+
     async def process_request(self, request_data: Dict[str, Any]) -> Dict[str, Any]:
         """
         Process a /responses request and return the result.
-        
+
         Args:
             request_data: Dictionary containing model, input, and optional kwargs
-            
+
         Returns:
             Dictionary with the agent's response
         """
@@ -133,12 +136,12 @@ class ResponsesHandler:
             agent_kwargs = request_data.get("agent_kwargs", {})
             computer_kwargs = request_data.get("computer_kwargs", {})
             env_overrides = request_data.get("env", {}) or {}
-            
+
             if not model:
                 raise ValueError("Model is required")
             if not input_data:
                 raise ValueError("Input is required")
-            
+
             # Apply env overrides for the duration of this request
             with self._env_overrides(env_overrides):
                 # Set up (and possibly reuse) computer and agent via caches
@@ -155,28 +158,22 @@ class ResponsesHandler:
                 # Run agent and get first result
                 async for result in agent.run(messages):
                     # Return the first result and break
-                    return {
-                        "success": True,
-                        "result": result,
-                        "model": model
-                    }
-                
+                    return {"success": True, "result": result, "model": model}
+
             # If no results were yielded
-            return {
-                "success": False,
-                "error": "No results from agent",
-                "model": model
-            }
-            
+            return {"success": False, "error": "No results from agent", "model": model}
+
         except Exception as e:
             logger.error(f"Error processing request: {e}")
             return {
                 "success": False,
                 "error": str(e),
-                "model": request_data.get("model", "unknown")
+                "model": request_data.get("model", "unknown"),
             }
-    
-    def _convert_input_to_messages(self, input_data: Union[str, List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
+
+    def _convert_input_to_messages(
+        self, input_data: Union[str, List[Dict[str, Any]]]
+    ) -> List[Dict[str, Any]]:
         """Convert input data to messages format."""
         if isinstance(input_data, str):
             # Simple string input
@@ -192,22 +189,18 @@ class ResponsesHandler:
                         if part.get("type") == "input_text":
                             content_parts.append({"type": "text", "text": part["text"]})
                         elif part.get("type") == "input_image":
-                            content_parts.append({
-                                "type": "image_url",
-                                "image_url": {"url": part["image_url"]}
-                            })
+                            content_parts.append(
+                                {"type": "image_url", "image_url": {"url": part["image_url"]}}
+                            )
                         else:
                             content_parts.append(part)
-                    messages.append({
-                        "role": msg["role"],
-                        "content": content_parts
-                    })
+                    messages.append({"role": msg["role"], "content": content_parts})
                 else:
                     messages.append(msg)
             return messages
         else:
             raise ValueError("Input must be string or list of messages")
-    
+
     async def cleanup(self):
         """Clean up resources."""
         if self.computer:

@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import logging
 import os
-import uuid
 import sys
+import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -19,6 +19,7 @@ logger = logging.getLogger("core.telemetry")
 # https://posthog.com/docs/product-analytics/troubleshooting#is-it-ok-for-my-api-key-to-be-exposed-and-public
 PUBLIC_POSTHOG_API_KEY = "phc_eSkLnbLxsnYFaXksif1ksbrNzYlJShr35miFLDppF14"
 PUBLIC_POSTHOG_HOST = "https://eu.i.posthog.com"
+
 
 class PostHogTelemetryClient:
     """Collects and reports telemetry data via PostHog."""
@@ -43,12 +44,12 @@ class PostHogTelemetryClient:
     @classmethod
     def is_telemetry_enabled(cls) -> bool:
         """True if telemetry is currently active for this process."""
-        return (
-            # Legacy opt-out flag
-            os.environ.get("CUA_TELEMETRY", "").lower() != "off"
-            # Opt-in flag (defaults to enabled)
-            and os.environ.get("CUA_TELEMETRY_ENABLED", "true").lower() in { "1", "true", "yes", "on" }
-        )
+        return os.environ.get("CUA_TELEMETRY_ENABLED", "true").lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
 
     def _get_or_create_installation_id(self) -> str:
         """Get or create a unique installation ID that persists across runs.
@@ -150,14 +151,12 @@ class PostHogTelemetryClient:
             logger.debug(
                 f"Setting up PostHog user properties for: {self.installation_id} with properties: {properties}"
             )
-            
+
             # In the Python SDK, we capture an identification event instead of calling identify()
             posthog.capture(
-                distinct_id=self.installation_id,
-                event="$identify",
-                properties={"$set": properties}
+                distinct_id=self.installation_id, event="$identify", properties={"$set": properties}
             )
-            
+
             logger.info(f"Set up PostHog user properties for installation: {self.installation_id}")
         except Exception as e:
             logger.warning(f"Failed to set up PostHog user properties: {e}")
@@ -224,12 +223,15 @@ class PostHogTelemetryClient:
         """Destroy the global PostHogTelemetryClient instance."""
         cls._singleton = None
 
+
 def destroy_telemetry_client() -> None:
     """Destroy the global PostHogTelemetryClient instance (class-managed)."""
     PostHogTelemetryClient.destroy_client()
 
+
 def is_telemetry_enabled() -> bool:
     return PostHogTelemetryClient.is_telemetry_enabled()
+
 
 def record_event(event_name: str, properties: Optional[Dict[str, Any]] | None = None) -> None:
     """Record an arbitrary PostHog event."""

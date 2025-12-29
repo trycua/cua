@@ -4,7 +4,7 @@ build-backend = "pdm.backend"
 
 [project]
 name = "cua-agent"
-version = "0.4.32"
+version = "0.7.2"
 description = "CUA (Computer Use) Agent for AI-driven computer interaction"
 readme = "README.md"
 authors = [
@@ -19,16 +19,21 @@ dependencies = [
     "pydantic>=2.6.4",
     "rich>=13.7.1",
     "python-dotenv>=1.0.1",
-    "cua-computer>=0.4.0,<0.5.0",
+    "cua-computer>=0.5.0,<0.6.0",
     "cua-core>=0.1.8,<0.2.0",
     "certifi>=2024.2.2",
     "litellm>=1.74.12"
 ]
-requires-python = ">=3.12"
+requires-python = ">=3.12,<3.14"
 
 [project.optional-dependencies]
 openai = []
 anthropic = []
+qwen = [
+    "qwen-vl-utils",
+    "qwen-agent",
+    "Pillow>=10.0.0",
+]
 omni = [
     "cua-som>=0.1.0,<0.2.0",
 ]
@@ -49,7 +54,7 @@ glm45v-hf = [
 opencua-hf = [
     "accelerate",
     "torch",
-    "transformers==4.53.0",
+    "transformers>=4.53.0",
     "tiktoken>=0.11.0",
     "blobfile>=3.0.0"
 ]
@@ -59,6 +64,11 @@ internvl-hf = [
     "transformers>=4.55.0",
     "einops",
     "timm"
+]
+moondream3 = [
+    "accelerate",
+    "torch",
+    "transformers>=4.55.0"
 ]
 ui = [
     "gradio>=5.23.3",
@@ -90,10 +100,12 @@ all = [
     "python-dotenv>=1.0.1",
     # cli requirements
     "yaspin>=3.1.0",
-    # hud requirements
-    "hud-python==0.4.52",
     # gemini requirements
     "google-genai>=1.41.0",
+    # qwen requirements
+    "qwen-vl-utils",
+    "qwen-agent",
+    "Pillow>=10.0.0",
 ]
 
 [tool.uv]

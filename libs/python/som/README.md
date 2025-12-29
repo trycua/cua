@@ -8,10 +8,11 @@
     </picture>
   </div>
 
-  [![Python](https://img.shields.io/badge/Python-333333?logo=python&logoColor=white&labelColor=333333)](#)
-  [![macOS](https://img.shields.io/badge/macOS-000000?logo=apple&logoColor=F0F0F0)](#)
-  [![Discord](https://img.shields.io/badge/Discord-%235865F2.svg?&logo=discord&logoColor=white)](https://discord.com/invite/mVnXXpdE85)
-  [![PyPI](https://img.shields.io/pypi/v/cua-computer?color=333333)](https://pypi.org/project/cua-computer/)
+[![Python](https://img.shields.io/badge/Python-333333?logo=python&logoColor=white&labelColor=333333)](#)
+[![macOS](https://img.shields.io/badge/macOS-000000?logo=apple&logoColor=F0F0F0)](#)
+[![Discord](https://img.shields.io/badge/Discord-%235865F2.svg?&logo=discord&logoColor=white)](https://discord.com/invite/mVnXXpdE85)
+[![PyPI](https://img.shields.io/pypi/v/cua-computer?color=333333)](https://pypi.org/project/cua-computer/)
+
 </h1>
 </div>
 
@@ -33,7 +34,6 @@
   - Uses Metal Performance Shaders (MPS)
   - Multi-scale detection enabled
   - ~0.4s average detection time
-  
 - **Supported**: Any Python 3.11+ environment
   - Falls back to CPU if no GPU available
   - Single-scale detection on CPU
@@ -82,11 +82,13 @@ for elem in result.elements:
 ## Development
 
 ### Test Data
+
 - Place test screenshots in `examples/test_data/`
 - Not tracked in git to keep repository size manageable
 - Default test image: `test_screen.png` (1920x1080)
 
 ### Running Tests
+
 ```bash
 # Run benchmark with no OCR
 python examples/omniparser_examples.py examples/test_data/test_screen.png --runs 5 --ocr none

@@ -7,14 +7,16 @@ This module tests the new concurrent session management and resource lifecycle f
 import asyncio
 import importlib.util
 import sys
-import types
 import time
+import types
 from pathlib import Path
 
 import pytest
 
 
-def _install_stub_module(name: str, module: types.ModuleType, registry: dict[str, types.ModuleType | None]) -> None:
+def _install_stub_module(
+    name: str, module: types.ModuleType, registry: dict[str, types.ModuleType | None]
+) -> None:
     registry[name] = sys.modules.get(name)
     sys.modules[name] = module
 
@@ -112,7 +114,7 @@ def server_module():
                     {
                         "type": "message",
                         "role": "assistant",
-                        "content": [{"type": "output_text", "text": "Task completed"}]
+                        "content": [{"type": "output_text", "text": "Task completed"}],
                     }
                 ]
             }
@@ -142,7 +144,7 @@ def server_module():
             """Context manager that returns a session."""
             if session_id is None:
                 session_id = "test-session-123"
-            
+
             async with self._session_lock:
                 if session_id not in self._sessions:
                     computer = _StubComputer()
@@ -150,10 +152,10 @@ def server_module():
                         session_id=session_id,
                         computer=computer,
                         created_at=time.time(),
-                        last_activity=time.time()
+                        last_activity=time.time(),
                     )
                     self._sessions[session_id] = session
-                
+
                 return self._sessions[session_id]
 
         async def register_task(self, session_id: str, task_id: str):
@@ -170,7 +172,7 @@ def server_module():
             return {
                 "total_sessions": len(self._sessions),
                 "max_concurrent": 10,
-                "sessions": {sid: {"active_tasks": 0} for sid in self._sessions}
+                "sessions": {sid: {"active_tasks": 0} for sid in self._sessions},
             }
 
     _stub_session_manager = _StubSessionManager()
@@ -216,7 +218,7 @@ def server_module():
 
 class FakeContext:
     """Fake context for testing."""
-    
+
     def __init__(self) -> None:
         self.events: list[tuple] = []
         self.progress_updates: list[float] = []
@@ -245,10 +247,11 @@ class FakeContext:
 
 def test_screenshot_cua_with_session_id(server_module):
     """Test that screenshot_cua works with session management."""
+
     async def _run_test():
         ctx = FakeContext()
         result = await server_module.screenshot_cua(ctx, session_id="test-session")
-        
+
         assert result.format == "png"
         assert result.data == b"test-screenshot-data"
 
@@ -257,10 +260,11 @@ def test_screenshot_cua_with_session_id(server_module):
 
 def test_screenshot_cua_creates_new_session(server_module):
     """Test that screenshot_cua creates a new session when none provided."""
+
     async def _run_test():
         ctx = FakeContext()
         result = await server_module.screenshot_cua(ctx)
-        
+
         assert result.format == "png"
         assert result.data == b"test-screenshot-data"
 
@@ -269,13 +273,14 @@ def test_screenshot_cua_creates_new_session(server_module):
 
 def test_run_cua_task_with_session_management(server_module):
     """Test that run_cua_task works with session management."""
+
     async def _run_test():
         ctx = FakeContext()
         task = "Test task"
         session_id = "test-session-456"
-        
+
         text_result, image = await server_module.run_cua_task(ctx, task, session_id)
-        
+
         assert "Task completed" in text_result
         assert image.format == "png"
         assert image.data == b"test-screenshot-data"
@@ -285,12 +290,13 @@ def test_run_cua_task_with_session_management(server_module):
 
 def test_run_multi_cua_tasks_sequential(server_module):
     """Test that run_multi_cua_tasks works sequentially."""
+
     async def _run_test():
         ctx = FakeContext()
         tasks = ["Task 1", "Task 2", "Task 3"]
-        
+
         results = await server_module.run_multi_cua_tasks(ctx, tasks, concurrent=False)
-        
+
         assert len(results) == 3
         for i, (text, image) in enumerate(results):
             assert "Task completed" in text
@@ -301,12 +307,13 @@ def test_run_multi_cua_tasks_sequential(server_module):
 
 def test_run_multi_cua_tasks_concurrent(server_module):
     """Test that run_multi_cua_tasks works concurrently."""
+
     async def _run_test():
         ctx = FakeContext()
         tasks = ["Task 1", "Task 2", "Task 3"]
-        
+
         results = await server_module.run_multi_cua_tasks(ctx, tasks, concurrent=True)
-        
+
         assert len(results) == 3
         for i, (text, image) in enumerate(results):
             assert "Task completed" in text
@@ -317,10 +324,11 @@ def test_run_multi_cua_tasks_concurrent(server_module):
 
 def test_get_session_stats(server_module):
     """Test that get_session_stats returns proper statistics."""
+
     async def _run_test():
         ctx = FakeContext()
         stats = await server_module.get_session_stats()
-        
+
         assert "total_sessions" in stats
         assert "max_concurrent" in stats
         assert "sessions" in stats
@@ -330,12 +338,13 @@ def test_get_session_stats(server_module):
 
 def test_cleanup_session(server_module):
     """Test that cleanup_session works properly."""
+
     async def _run_test():
         ctx = FakeContext()
         session_id = "test-cleanup-session"
-        
+
         result = await server_module.cleanup_session(ctx, session_id)
-        
+
         assert f"Session {session_id} cleanup initiated" in result
 
     asyncio.run(_run_test())
@@ -343,9 +352,10 @@ def test_cleanup_session(server_module):
 
 def test_concurrent_sessions_isolation(server_module):
     """Test that concurrent sessions are properly isolated."""
+
     async def _run_test():
         ctx = FakeContext()
-        
+
         # Run multiple tasks with different session IDs concurrently
         task1 = asyncio.create_task(
             server_module.run_cua_task(ctx, "Task for session 1", "session-1")
@@ -353,9 +363,9 @@ def test_concurrent_sessions_isolation(server_module):
         task2 = asyncio.create_task(
             server_module.run_cua_task(ctx, "Task for session 2", "session-2")
         )
-        
+
         results = await asyncio.gather(task1, task2)
-        
+
         assert len(results) == 2
         for text, image in results:
             assert "Task completed" in text
@@ -366,16 +376,17 @@ def test_concurrent_sessions_isolation(server_module):
 
 def test_session_reuse_with_same_id(server_module):
     """Test that sessions are reused when the same session ID is provided."""
+
     async def _run_test():
         ctx = FakeContext()
         session_id = "reuse-session"
-        
+
         # First call
         result1 = await server_module.screenshot_cua(ctx, session_id)
-        
+
         # Second call with same session ID
         result2 = await server_module.screenshot_cua(ctx, session_id)
-        
+
         assert result1.format == result2.format
         assert result1.data == result2.data
 
@@ -384,6 +395,7 @@ def test_session_reuse_with_same_id(server_module):
 
 def test_error_handling_with_session_management(server_module):
     """Test that errors are handled properly with session management."""
+
     async def _run_test():
         # Mock an agent that raises an exception
         class _FailingAgent:
@@ -396,16 +408,16 @@ def test_error_handling_with_session_management(server_module):
         # Replace the ComputerAgent with our failing one
         original_agent = server_module.ComputerAgent
         server_module.ComputerAgent = _FailingAgent
-        
+
         try:
             ctx = FakeContext()
             task = "This will fail"
-            
+
             text_result, image = await server_module.run_cua_task(ctx, task, "error-session")
-            
+
             assert "Error during task execution" in text_result
             assert image.format == "png"
-            
+
         finally:
             # Restore original agent
             server_module.ComputerAgent = original_agent

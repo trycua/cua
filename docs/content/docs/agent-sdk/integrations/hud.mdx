@@ -3,7 +3,13 @@ title: HUD Evals
 description: Use ComputerAgent with HUD for benchmarking and evaluation
 ---
 
-<Callout>A corresponding <a href="https://github.com/trycua/cua/blob/main/notebooks/eval_osworld.ipynb" target="_blank">Jupyter Notebook</a> is available for this documentation.</Callout>
+<Callout>
+  A corresponding{' '}
+  <a href="https://github.com/trycua/cua/blob/main/notebooks/eval_osworld.ipynb" target="_blank">
+    Jupyter Notebook
+  </a>{' '}
+  is available for this documentation.
+</Callout>
 
 The HUD integration allows an agent to be benchmarked using the [HUD framework](https://www.hud.so/). Through the HUD integration, the agent controls a computer inside HUD, where tests are run to evaluate the success of each task.
 
@@ -120,8 +126,8 @@ Both single-task and full-dataset runs share a common set of configuration optio
 HUD provides multiple benchmark datasets for realistic evaluation.
 
 1. **[OSWorld-Verified](/agent-sdk/benchmarks/osworld-verified)** – Benchmark on 369+ real-world desktop tasks across Chrome, LibreOffice, GIMP, VS Code, etc.
-   *Best for*: evaluating full computer-use agents in realistic environments.
-   *Verified variant*: fixes 300+ issues from earlier versions for reliability.
+   _Best for_: evaluating full computer-use agents in realistic environments.
+   _Verified variant_: fixes 300+ issues from earlier versions for reliability.
 
 **Coming soon:** SheetBench (spreadsheet automation) and other specialized HUD datasets.
 
@@ -129,7 +135,7 @@ See the [HUD docs](https://docs.hud.so/environment-creation) for more eval envir
 
 ## Tips
 
-* **Debugging:** set `verbosity=2` to see every model call and tool action.
-* **Performance:** lower `screenshot_delay` for faster runs; raise it if you see race conditions.
-* **Safety:** always set `max_steps` (defaults to 50) to prevent runaway loops.
-* **Custom tools:** pass extra `tools=[...]` into the agent config if you need beyond `openai_computer`.
+- **Debugging:** set `verbosity=2` to see every model call and tool action.
+- **Performance:** lower `screenshot_delay` for faster runs; raise it if you see race conditions.
+- **Safety:** always set `max_steps` (defaults to 50) to prevent runaway loops.
+- **Custom tools:** pass extra `tools=[...]` into the agent config if you need beyond `openai_computer`.

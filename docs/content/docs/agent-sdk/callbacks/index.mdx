@@ -15,13 +15,13 @@ Built-in callbacks can be used as follows:
 ```python
 from agent.callbacks import (
     ImageRetentionCallback,
-    TrajectorySaverCallback, 
+    TrajectorySaverCallback,
     BudgetManagerCallback,
     LoggingCallback
 )
 
 agent = ComputerAgent(
-    model="anthropic/claude-3-5-sonnet-20241022",
+    model="anthropic/claude-sonnet-4-5-20250929",
     tools=[computer],
     callbacks=[
         ImageRetentionCallback(only_n_most_recent_images=3),
@@ -52,12 +52,12 @@ class CustomCallback(AsyncCallbackHandler):
         """Preprocess messages before LLM call"""
         # Add custom preprocessing logic
         return messages
-    
+
     async def on_llm_end(self, messages):
         """Postprocess messages after LLM call"""
         # Add custom postprocessing logic
         return messages
-    
+
     async def on_usage(self, usage):
         """Track usage information"""
         print(f"Tokens used: {usage.total_tokens}")

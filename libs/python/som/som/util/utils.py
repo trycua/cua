@@ -1,13 +1,14 @@
-import easyocr
+import logging
+import signal
+import time
+from contextlib import contextmanager
+from typing import Any, List, Optional, Sequence, Tuple, Union, cast
+
 import cv2
+import easyocr
 import matplotlib.pyplot as plt
 import numpy as np
 from PIL import Image
-from typing import Union, List, Tuple, Any, Optional, cast, Sequence
-import time
-import signal
-from contextlib import contextmanager
-import logging
 
 logger = logging.getLogger(__name__)
 

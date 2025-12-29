@@ -1,27 +1,38 @@
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, HTTPException, Header
-from fastapi.responses import StreamingResponse, JSONResponse
-from typing import List, Dict, Any, Optional, Union, Literal, cast
-import uvicorn
-import logging
 import asyncio
-import json
-import traceback
-import inspect
-from contextlib import redirect_stdout, redirect_stderr
-from io import StringIO
-from .handlers.factory import HandlerFactory
-import os
-import aiohttp
 import hashlib
-import time
+import inspect
+import json
+import logging
+import os
 import platform
+import time
+import traceback
+from contextlib import redirect_stderr, redirect_stdout
+from io import StringIO
+from typing import Any, Dict, List, Literal, Optional, Union, cast
+
+import aiohttp
+import uvicorn
+from fastapi import (
+    FastAPI,
+    Header,
+    HTTPException,
+    Request,
+    WebSocket,
+    WebSocketDisconnect,
+)
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse, StreamingResponse
+
+from .browser import get_browser_manager
+from .handlers.factory import OS_TYPE, HandlerFactory
 
 # Authentication session TTL (in seconds). Override via env var CUA_AUTH_TTL_SECONDS. Default: 60s
 AUTH_SESSION_TTL_SECONDS: int = int(os.environ.get("CUA_AUTH_TTL_SECONDS", "60"))
 
 try:
     from agent import ComputerAgent
+
     HAS_AGENT = True
 except ImportError:
     HAS_AGENT = False
@@ -54,16 +65,25 @@ app.add_middleware(
 protocol_version = 1
 try:
     from importlib.metadata import version
+
     package_version = version("cua-computer-server")
 except Exception:
     # Fallback for cases where package is not installed or importlib.metadata is not available
     try:
         import pkg_resources
+
         package_version = pkg_resources.get_distribution("cua-computer-server").version
     except Exception:
         package_version = "unknown"
 
-accessibility_handler, automation_handler, diorama_handler, file_handler = HandlerFactory.create_handlers()
+(
+    accessibility_handler,
+    automation_handler,
+    diorama_handler,
+    file_handler,
+    desktop_handler,
+    window_handler,
+) = HandlerFactory.create_handlers()
 handlers = {
     "version": lambda: {"protocol": protocol_version, "package": package_version},
     # App-Use commands
@@ -85,6 +105,23 @@ handlers = {
     "delete_file": file_handler.delete_file,
     "create_dir": file_handler.create_dir,
     "delete_dir": file_handler.delete_dir,
+    # Desktop commands
+    "get_desktop_environment": desktop_handler.get_desktop_environment,
+    "set_wallpaper": desktop_handler.set_wallpaper,
+    # Window management
+    "open": window_handler.open,
+    "launch": window_handler.launch,
+    "get_current_window_id": window_handler.get_current_window_id,
+    "get_application_windows": window_handler.get_application_windows,
+    "get_window_name": window_handler.get_window_name,
+    "get_window_size": window_handler.get_window_size,
+    "get_window_position": window_handler.get_window_position,
+    "set_window_size": window_handler.set_window_size,
+    "set_window_position": window_handler.set_window_position,
+    "maximize_window": window_handler.maximize_window,
+    "minimize_window": window_handler.minimize_window,
+    "activate_window": window_handler.activate_window,
+    "close_window": window_handler.close_window,
     # Mouse commands
     "mouse_down": automation_handler.mouse_down,
     "mouse_up": automation_handler.mouse_up,
@@ -118,87 +155,91 @@ class AuthenticationManager:
     def __init__(self):
         self.sessions: Dict[str, Dict[str, Any]] = {}
         self.container_name = os.environ.get("CONTAINER_NAME")
-    
+
     def _hash_credentials(self, container_name: str, api_key: str) -> str:
         """Create a hash of container name and API key for session identification"""
         combined = f"{container_name}:{api_key}"
         return hashlib.sha256(combined.encode()).hexdigest()
-    
+
     def _is_session_valid(self, session_data: Dict[str, Any]) -> bool:
         """Check if a session is still valid based on expiration time"""
-        if not session_data.get('valid', False):
+        if not session_data.get("valid", False):
             return False
-        
-        expires_at = session_data.get('expires_at', 0)
+
+        expires_at = session_data.get("expires_at", 0)
         return time.time() < expires_at
-    
+
     async def auth(self, container_name: str, api_key: str) -> bool:
         """Authenticate container name and API key, using cached sessions when possible"""
         # If no CONTAINER_NAME is set, always allow access (local development)
         if not self.container_name:
-            logger.info("No CONTAINER_NAME set in environment. Allowing access (local development mode)")
+            logger.info(
+                "No CONTAINER_NAME set in environment. Allowing access (local development mode)"
+            )
             return True
-        
+
         # Layer 1: VM Identity Verification
         if container_name != self.container_name:
-            logger.warning(f"VM name mismatch. Expected: {self.container_name}, Got: {container_name}")
+            logger.warning(
+                f"VM name mismatch. Expected: {self.container_name}, Got: {container_name}"
+            )
             return False
-        
+
         # Create hash for session lookup
         session_hash = self._hash_credentials(container_name, api_key)
-        
+
         # Check if we have a valid cached session
         if session_hash in self.sessions:
             session_data = self.sessions[session_hash]
             if self._is_session_valid(session_data):
                 logger.info(f"Using cached authentication for container: {container_name}")
-                return session_data['valid']
+                return session_data["valid"]
             else:
                 # Remove expired session
                 del self.sessions[session_hash]
-        
+
         # No valid cached session, authenticate with API
         logger.info(f"Authenticating with TryCUA API for container: {container_name}")
-        
+
         try:
             async with aiohttp.ClientSession() as session:
-                headers = {
-                    "Authorization": f"Bearer {api_key}"
-                }
-                
+                headers = {"Authorization": f"Bearer {api_key}"}
+
                 async with session.get(
-                    f"https://www.trycua.com/api/vm/auth?container_name={container_name}",
+                    f"https://www.cua.ai/api/vm/auth?container_name={container_name}",
                     headers=headers,
                 ) as resp:
                     is_valid = resp.status == 200 and bool((await resp.text()).strip())
-                    
+
                     # Cache the result with configurable expiration
                     self.sessions[session_hash] = {
-                        'valid': is_valid,
-                        'expires_at': time.time() + AUTH_SESSION_TTL_SECONDS
+                        "valid": is_valid,
+                        "expires_at": time.time() + AUTH_SESSION_TTL_SECONDS,
                     }
-                    
+
                     if is_valid:
                         logger.info(f"Authentication successful for container: {container_name}")
                     else:
-                        logger.warning(f"Authentication failed for container: {container_name}. Status: {resp.status}")
-                    
+                        logger.warning(
+                            f"Authentication failed for container: {container_name}. Status: {resp.status}"
+                        )
+
                     return is_valid
-        
+
         except aiohttp.ClientError as e:
             logger.error(f"Failed to validate API key with TryCUA API: {str(e)}")
             # Cache failed result to avoid repeated requests
             self.sessions[session_hash] = {
-                'valid': False,
-                'expires_at': time.time() + AUTH_SESSION_TTL_SECONDS
+                "valid": False,
+                "expires_at": time.time() + AUTH_SESSION_TTL_SECONDS,
             }
             return False
         except Exception as e:
             logger.error(f"Unexpected error during authentication: {str(e)}")
             # Cache failed result to avoid repeated requests
             self.sessions[session_hash] = {
-                'valid': False,
-                'expires_at': time.time() + AUTH_SESSION_TTL_SECONDS
+                "valid": False,
+                "expires_at": time.time() + AUTH_SESSION_TTL_SECONDS,
             }
             return False
 
@@ -218,21 +259,15 @@ class ConnectionManager:
 manager = ConnectionManager()
 auth_manager = AuthenticationManager()
 
+
 @app.get("/status")
 async def status():
-    sys = platform.system().lower()
-    # get os type
-    if "darwin" in sys or sys == "macos" or sys == "mac":
-        os_type = "macos"
-    elif "windows" in sys:
-        os_type = "windows"
-    else:
-        os_type = "linux"
     # get computer-server features
     features = []
     if HAS_AGENT:
         features.append("agent")
-    return {"status": "ok", "os_type": os_type, "features": features}
+    return {"status": "ok", "os_type": OS_TYPE, "features": features}
+
 
 @app.websocket("/ws", name="websocket_endpoint")
 async def websocket_endpoint(websocket: WebSocket):
@@ -240,74 +275,60 @@ async def websocket_endpoint(websocket: WebSocket):
 
     # WebSocket message size is configured at the app or endpoint level, not on the instance
     await manager.connect(websocket)
-    
+
     # Check if CONTAINER_NAME is set (indicating cloud provider)
     server_container_name = os.environ.get("CONTAINER_NAME")
-    
+
     # If cloud provider, perform authentication handshake
     if server_container_name:
         try:
-            logger.info(f"Cloud provider detected. CONTAINER_NAME: {server_container_name}. Waiting for authentication...")
-            
+            logger.info(
+                f"Cloud provider detected. CONTAINER_NAME: {server_container_name}. Waiting for authentication..."
+            )
+
             # Wait for authentication message
             auth_data = await websocket.receive_json()
-            
+
             # Validate auth message format
             if auth_data.get("command") != "authenticate":
-                await websocket.send_json({
-                    "success": False,
-                    "error": "First message must be authentication"
-                })
+                await websocket.send_json(
+                    {"success": False, "error": "First message must be authentication"}
+                )
                 await websocket.close()
                 manager.disconnect(websocket)
                 return
-            
+
             # Extract credentials
             client_api_key = auth_data.get("params", {}).get("api_key")
             client_container_name = auth_data.get("params", {}).get("container_name")
-            
+
             # Validate credentials using AuthenticationManager
             if not client_api_key:
-                await websocket.send_json({
-                    "success": False,
-                    "error": "API key required"
-                })
+                await websocket.send_json({"success": False, "error": "API key required"})
                 await websocket.close()
                 manager.disconnect(websocket)
                 return
-            
+
             if not client_container_name:
-                await websocket.send_json({
-                    "success": False,
-                    "error": "Container name required"
-                })
+                await websocket.send_json({"success": False, "error": "Container name required"})
                 await websocket.close()
                 manager.disconnect(websocket)
                 return
-            
+
             # Use AuthenticationManager for validation
             is_authenticated = await auth_manager.auth(client_container_name, client_api_key)
             if not is_authenticated:
-                await websocket.send_json({
-                    "success": False,
-                    "error": "Authentication failed"
-                })
+                await websocket.send_json({"success": False, "error": "Authentication failed"})
                 await websocket.close()
                 manager.disconnect(websocket)
                 return
-            
+
             logger.info(f"Authentication successful for VM: {client_container_name}")
-            await websocket.send_json({
-                "success": True,
-                "message": "Authentication successful"
-            })
-        
+            await websocket.send_json({"success": True, "message": "Authentication successful"})
+
         except Exception as e:
             logger.error(f"Error during authentication handshake: {str(e)}")
-            await websocket.send_json({
-                "success": False,
-                "error": "Authentication failed"
-            })
+            await websocket.send_json({"success": False, "error": "Authentication failed"})
             await websocket.close()
             manager.disconnect(websocket)
             return
@@ -330,7 +351,7 @@ async def websocket_endpoint(websocket: WebSocket):
                     handler_func = handlers[command]
                     sig = inspect.signature(handler_func)
                     filtered_params = {k: v for k, v in params.items() if k in sig.parameters}
-                    
+
                     # Handle both sync and async functions
                     if asyncio.iscoroutinefunction(handler_func):
                         result = await handler_func(**filtered_params)
@@ -367,20 +388,21 @@ async def websocket_endpoint(websocket: WebSocket):
             pass
         manager.disconnect(websocket)
 
+
 @app.post("/cmd")
 async def cmd_endpoint(
     request: Request,
     container_name: Optional[str] = Header(None, alias="X-Container-Name"),
-    api_key: Optional[str] = Header(None, alias="X-API-Key")
+    api_key: Optional[str] = Header(None, alias="X-API-Key"),
 ):
     """
     Backup endpoint for when WebSocket connections fail.
     Accepts commands via HTTP POST with streaming response.
-    
+
     Headers:
     - X-Container-Name: Container name for cloud authentication
     - X-API-Key: API key for cloud authentication
-    
+
     Body:
     {
         "command": "command_name",
@@ -388,7 +410,7 @@ async def cmd_endpoint(
     }
     """
     global handlers
-    
+
     # Parse request body
     try:
         body = await request.json()
@@ -396,32 +418,34 @@ async def cmd_endpoint(
         params = body.get("params", {})
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Invalid JSON body: {str(e)}")
-    
+
     if not command:
         raise HTTPException(status_code=400, detail="Command is required")
-    
+
     # Check if CONTAINER_NAME is set (indicating cloud provider)
     server_container_name = os.environ.get("CONTAINER_NAME")
-    
+
     # If cloud provider, perform authentication
     if server_container_name:
-        logger.info(f"Cloud provider detected. CONTAINER_NAME: {server_container_name}. Performing authentication...")
-        
+        logger.info(
+            f"Cloud provider detected. CONTAINER_NAME: {server_container_name}. Performing authentication..."
+        )
+
         # Validate required headers
         if not container_name:
             raise HTTPException(status_code=401, detail="Container name required")
-        
+
         if not api_key:
             raise HTTPException(status_code=401, detail="API key required")
-        
+
         # Validate with AuthenticationManager
         is_authenticated = await auth_manager.auth(container_name, api_key)
         if not is_authenticated:
             raise HTTPException(status_code=401, detail="Authentication failed")
-    
+
     if command not in handlers:
         raise HTTPException(status_code=400, detail=f"Unknown command: {command}")
-    
+
     async def generate_response():
         """Generate streaming response for the command execution"""
         try:
@@ -429,34 +453,35 @@ async def cmd_endpoint(
             handler_func = handlers[command]
             sig = inspect.signature(handler_func)
             filtered_params = {k: v for k, v in params.items() if k in sig.parameters}
-            
+
             # Handle both sync and async functions
             if asyncio.iscoroutinefunction(handler_func):
                 result = await handler_func(**filtered_params)
             else:
                 # Run sync functions in thread pool to avoid blocking event loop
                 result = await asyncio.to_thread(handler_func, **filtered_params)
-            
+
             # Stream the successful result
             response_data = {"success": True, **result}
             yield f"data: {json.dumps(response_data)}\n\n"
-            
+
         except Exception as cmd_error:
             logger.error(f"Error executing command {command}: {str(cmd_error)}")
             logger.error(traceback.format_exc())
-            
+
             # Stream the error result
             error_data = {"success": False, "error": str(cmd_error)}
             yield f"data: {json.dumps(error_data)}\n\n"
-    
+
     return StreamingResponse(
         generate_response(),
         media_type="text/plain",
         headers={
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
-        }
+        },
     )
+
 
 @app.post("/responses")
 async def agent_response_endpoint(
@@ -480,11 +505,17 @@ async def agent_response_endpoint(
     """
     if not HAS_AGENT:
         raise HTTPException(status_code=501, detail="ComputerAgent not available")
-    
+
     # Authenticate via AuthenticationManager if running in cloud (CONTAINER_NAME set)
     container_name = os.environ.get("CONTAINER_NAME")
     if container_name:
-        is_public = os.environ.get("CUA_ENABLE_PUBLIC_PROXY", "").lower().strip() in ["1", "true", "yes", "y", "on"]
+        is_public = os.environ.get("CUA_ENABLE_PUBLIC_PROXY", "").lower().strip() in [
+            "1",
+            "true",
+            "yes",
+            "y",
+            "on",
+        ]
         if not is_public:
             if not api_key:
                 raise HTTPException(status_code=401, detail="Missing AGENT PROXY auth headers")
@@ -511,10 +542,12 @@ async def agent_response_endpoint(
         def __init__(self, overrides: Dict[str, str]):
             self.overrides = overrides
             self._original: Dict[str, Optional[str]] = {}
+
         def __enter__(self):
             for k, v in (self.overrides or {}).items():
                 self._original[k] = os.environ.get(k)
                 os.environ[k] = str(v)
+
         def __exit__(self, exc_type, exc, tb):
             for k, old in self._original.items():
                 if old is None:
@@ -598,9 +631,9 @@ async def agent_response_endpoint(
             start = path[0]
             await self._auto.mouse_down(start["x"], start["y"])
             for pt in path[1:]:
-                await self._auto.move_cursor(pt["x"], pt["y"]) 
+                await self._auto.move_cursor(pt["x"], pt["y"])
             end = path[-1]
-            await self._auto.mouse_up(end["x"], end["y"]) 
+            await self._auto.mouse_up(end["x"], end["y"])
 
         async def get_current_url(self) -> str:
             # Not available in this server context
@@ -667,7 +700,11 @@ async def agent_response_endpoint(
             async for result in agent.run(messages):
                 total_output += result["output"]
                 # Try to collect usage if present
-                if isinstance(result, dict) and "usage" in result and isinstance(result["usage"], dict):
+                if (
+                    isinstance(result, dict)
+                    and "usage" in result
+                    and isinstance(result["usage"], dict)
+                ):
                     # Merge usage counters
                     for k, v in result["usage"].items():
                         if isinstance(v, (int, float)):
@@ -686,14 +723,14 @@ async def agent_response_endpoint(
             logger.error(f"Error running agent: {str(e)}")
             logger.error(traceback.format_exc())
             error = str(e)
-    
+
     # Build response payload
     payload = {
         "model": model,
         "error": error,
         "output": total_output,
         "usage": total_usage,
-        "status": "completed" if not error else "failed"
+        "status": "completed" if not error else "failed",
     }
 
     # CORS: allow any origin
@@ -703,6 +740,72 @@ async def agent_response_endpoint(
     }
 
     return JSONResponse(content=payload, headers=headers)
+
+
+@app.post("/playwright_exec")
+async def playwright_exec_endpoint(
+    request: Request,
+    container_name: Optional[str] = Header(None, alias="X-Container-Name"),
+    api_key: Optional[str] = Header(None, alias="X-API-Key"),
+):
+    """
+    Execute Playwright browser commands.
+
+    Headers:
+    - X-Container-Name: Container name for cloud authentication
+    - X-API-Key: API key for cloud authentication
+
+    Body:
+    {
+        "command": "visit_url|click|type|scroll|web_search",
+        "params": {...}
+    }
+    """
+    # Parse request body
+    try:
+        body = await request.json()
+        command = body.get("command")
+        params = body.get("params", {})
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid JSON body: {str(e)}")
+
+    if not command:
+        raise HTTPException(status_code=400, detail="Command is required")
+
+    # Check if CONTAINER_NAME is set (indicating cloud provider)
+    server_container_name = os.environ.get("CONTAINER_NAME")
+
+    # If cloud provider, perform authentication
+    if server_container_name:
+        logger.info(
+            f"Cloud provider detected. CONTAINER_NAME: {server_container_name}. Performing authentication..."
+        )
+
+        # Validate required headers
+        if not container_name:
+            raise HTTPException(status_code=401, detail="Container name required")
+
+        if not api_key:
+            raise HTTPException(status_code=401, detail="API key required")
+
+        # Validate with AuthenticationManager
+        is_authenticated = await auth_manager.auth(container_name, api_key)
+        if not is_authenticated:
+            raise HTTPException(status_code=401, detail="Authentication failed")
+
+    # Get browser manager and execute command
+    try:
+        browser_manager = get_browser_manager()
+        result = await browser_manager.execute_command(command, params)
+
+        if result.get("success"):
+            return JSONResponse(content=result)
+        else:
+            raise HTTPException(status_code=400, detail=result.get("error", "Command failed"))
+    except Exception as e:
+        logger.error(f"Error executing playwright command: {str(e)}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 if __name__ == "__main__":

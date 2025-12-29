@@ -1,10 +1,15 @@
 import pino from 'pino';
-import {
-  type BaseComputerInterface,
-  InterfaceFactory,
-} from '../../interface/index';
+import { type BaseComputerInterface, InterfaceFactory } from '../../interface/index';
 import type { CloudComputerConfig, VMProviderType } from '../types';
 import { BaseComputer } from './base';
+
+const DEFAULT_API_BASE = process.env.CUA_API_BASE || 'https://api.cua.ai';
+
+interface VMInfo {
+  name: string;
+  host?: string;
+  status?: string;
+}
 
 /**
  * Cloud-specific computer implementation
@@ -14,16 +19,55 @@ export class CloudComputer extends BaseComputer {
   protected apiKey: string;
   private iface?: BaseComputerInterface;
   private initialized = false;
+  private cachedHost?: string;
+  private apiBase: string;
 
   protected logger = pino({ name: 'computer.provider_cloud' });
 
   constructor(config: CloudComputerConfig) {
     super(config);
     this.apiKey = config.apiKey;
+    this.apiBase = DEFAULT_API_BASE;
   }
 
-  get ip() {
-    return `${this.name}.containers.cloud.trycua.com`;
+  /**
+   * Get the host for this VM.
+   * Returns cached host if available, otherwise falls back to default format.
+   */
+  get ip(): string {
+    return this.cachedHost || `${this.name}.sandbox.cua.ai`;
+  }
+
+  /**
+   * Fetch VM list from API and cache the host for this VM.
+   */
+  private async fetchAndCacheHost(): Promise<string> {
+    try {
+      const response = await fetch(`${this.apiBase}/v1/vms`, {
+        headers: {
+          Authorization: `Bearer ${this.apiKey}`,
+          Accept: 'application/json',
+        },
+      });
+
+      if (response.ok) {
+        const vms = (await response.json()) as VMInfo[];
+        const vm = vms.find((v) => v.name === this.name);
+        if (vm?.host) {
+          this.cachedHost = vm.host;
+          this.logger.info(`Cached host from API: ${this.cachedHost}`);
+          return this.cachedHost;
+        }
+      }
+    } catch (error) {
+      this.logger.warn(`Failed to fetch VM list for host lookup: ${error}`);
+    }
+
+    // Fall back to default format
+    const fallbackHost = `${this.name}.sandbox.cua.ai`;
+    this.cachedHost = fallbackHost;
+    this.logger.info(`Using fallback host: ${fallbackHost}`);
+    return fallbackHost;
   }
 
   /**
@@ -36,8 +80,8 @@ export class CloudComputer extends BaseComputer {
     }
 
     try {
-      // For cloud provider, the VM is already running, we just need to connect
-      const ipAddress = this.ip;
+      // Fetch the host from API before connecting
+      const ipAddress = await this.fetchAndCacheHost();
       this.logger.info(`Connecting to cloud VM at ${ipAddress}`);
 
       // Create the interface with API key authentication

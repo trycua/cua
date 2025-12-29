@@ -3,28 +3,42 @@ Agent loops for agent
 """
 
 # Import the loops to register them
-from . import anthropic
-from . import openai
-from . import uitars
-from . import omniparser
-from . import gta1
-from . import composed_grounded
-from . import glm45v
-from . import opencua
-from . import internvl
-from . import holo
-from . import moondream3
+from . import (
+    anthropic,
+    composed_grounded,
+    fara,
+    gelato,
+    gemini,
+    generic_vlm,
+    glm45v,
+    gta1,
+    holo,
+    internvl,
+    moondream3,
+    omniparser,
+    openai,
+    opencua,
+    uiins,
+    uitars,
+    uitars2,
+)
 
 __all__ = [
-    "anthropic", 
-    "openai", 
-    "uitars", 
-    "omniparser", 
-    "gta1", 
-    "composed_grounded", 
-    "glm45v", 
-    "opencua",
-    "internvl",
+    "anthropic",
+    "composed_grounded",
+    "gelato",
+    "gemini",
+    "generic_vlm",
+    "fara",
+    "glm45v",
+    "gta1",
     "holo",
+    "internvl",
     "moondream3",
+    "omniparser",
+    "openai",
+    "opencua",
+    "uiins",
+    "uitars",
+    "uitars2",
 ]

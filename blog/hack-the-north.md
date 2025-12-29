@@ -1,6 +1,6 @@
 # What happens when hackathon judging is a public benchmark (Hack the North edition)
 
-*Written by Francesco Bonacci — Reviewed by Parth Patel (HUD W25) — Sept 25, 2025*
+_Written by Francesco Bonacci — Reviewed by Parth Patel (HUD W25) — Sept 25, 2025_
 
 ## Prologue
 
@@ -16,15 +16,15 @@ The rest, as they say, was a 36h story worth telling—and a playbook worth shar
 
 ## The sign-up problem we had to invent
 
-We joined as a sponsor at the last minute, thanks to a push from our friend @Michael Chiang at Ollama—Waterloo alum, naturally. It’s kind of an open secret that UWaterloo turns out some of the sharpest hackers around (*no pun intended, HackMIT*). It was a bit of a scramble, but also great timing—our Agent framework had just finished a major refactor, with support for **100+ VLM configurations** now live. Naturally, we wanted to stress-test it at scale—and see whether teams could come up with SOTA-level setups. *This wasn’t a blank-slate, build-whatever-you-want kind of track.*
+We joined as a sponsor at the last minute, thanks to a push from our friend @Michael Chiang at Ollama—Waterloo alum, naturally. It’s kind of an open secret that UWaterloo turns out some of the sharpest hackers around (_no pun intended, HackMIT_). It was a bit of a scramble, but also great timing—our Agent framework had just finished a major refactor, with support for **100+ VLM configurations** now live. Naturally, we wanted to stress-test it at scale—and see whether teams could come up with SOTA-level setups. _This wasn’t a blank-slate, build-whatever-you-want kind of track._
 
 From day one, though, we knew we’d have to fight for sign-ups. This was a niche track, and a guaranteed YC interview alone wouldn’t be enough to pull people in.
 
 Unfortunately, Hack the North (HTN) didn’t offer an interest form to help us estimate demand, which made capacity planning tricky—especially with early-stage infra. Stress-testing takes foresight, and multimodal language model usage is still costly (~1.5× to 3–4× the price of comparable text-only models).
 
-On top of that, we were discouraged from external promotion on [lu.ma](http://lu.ma). So we spun up our own sign-up page at **trycua.com/hackathon** and built ad-hoc Discord channels to share track details. We emphasized—repeatedly—that only students already accepted to Hack the North should register.
+On top of that, we were discouraged from external promotion on [lu.ma](http://lu.ma). So we spun up our own sign-up page at **cua.ai/hackathon** and built ad-hoc Discord channels to share track details. We emphasized—repeatedly—that only students already accepted to Hack the North should register.
 
-*(Moral: the “measure-zero effect”—no matter how many times you say it, some people won’t see it. Plenty of invalid sign-ups still slipped through.)*
+_(Moral: the “measure-zero effect”—no matter how many times you say it, some people won’t see it. Plenty of invalid sign-ups still slipped through.)_
 
 Even so, having your own form is absolutely worth it: it gives you an **early funnel**, surfaces demand signals ahead of time, and—crucially—**lets you require platform sign-up before kickoff**. In our case, Hack the North didn’t provide Devpost access until the very end, so our form was the only way to build a working roster.
 
@@ -45,13 +45,13 @@ Day 0 on campus made the difference. We arrived a couple of hours early to colle
 
 ![hack-booth](./assets/hack-booth.png)
 
-*(Our Founding Engineer, Morgan, hangs out with students at the stand, while Adam (runner-up) hacks on the side.)*
+_(Our Founding Engineer, Morgan, hangs out with students at the stand, while Adam (runner-up) hacks on the side.)_
 
 ## 02:30 a.m. is still prime time at a hackathon
 
 Hack the North gives sponsors a 30-minute API Workshop during the early hours of the event—a perfect moment to shift from talking to building.
 
-Our slot landed at **2:30 a.m.** (*perks of the cheapest sponsor tier*). Thirty students showed up, energy surprisingly high. James, our new Founding DevRel Engineer, led the session and nailed it.
+Our slot landed at **2:30 a.m.** (_perks of the cheapest sponsor tier_). Thirty students showed up, energy surprisingly high. James, our new Founding DevRel Engineer, led the session and nailed it.
 
 **Our track rules were simple:**
 
@@ -67,7 +67,7 @@ Our slot landed at **2:30 a.m.** (*perks of the cheapest sponsor tier*). Thirty 
 
 ![hack-booth](./assets/hack-workshop.jpeg)
 
-*(Our CUA Workshop at 2:30 AM.)*
+_(Our CUA Workshop at 2:30 AM.)_
 
 ## Making it possible to focus on the work
 
@@ -87,7 +87,7 @@ We provided:
 
 **After the workshop buzz.** Morning interest was high, but Docker setup + requiring focus on a single track thinned the crowd. Most sponsor prizes are broad (“use our product and you qualify”), letting students stack tracks. Ours required commitment. Upside: those who stayed shipped sharper, higher-quality submissions.
 
-**The bell curve of submissions.** Most entries used *claude-sonnet-4-20250514*—proof that docs and public leaderboards ([OSWorld](https://os-world.github.io/#benchmark)) guide choices. Results clustered around the safe pick, with fewer pushing boundaries.
+**The bell curve of submissions.** Most entries used _claude-sonnet-4-20250514_—proof that docs and public leaderboards ([OSWorld](https://os-world.github.io/#benchmark)) guide choices. Results clustered around the safe pick, with fewer pushing boundaries.
 
 **Who went beyond the baseline.** A few tried multi-agent/tool graphs. One standout—[**cuala**](https://github.com/YeIIcw/cuala)—was a clean reference: deterministic actions, verifiable state changes, callbacks for saving images and trajectories.
 
@@ -97,7 +97,7 @@ We provided:
 
 We skipped a full end-to-end **Cua × HUD** dry-run. It showed.
 
-- Hackers ran out of inference credits. Desktop tasks are token-heavy. A full OSWorld run (200 max steps) for *computer-use-preview* (OpenAI Operator API) can cost >$600. Serious attempts: ~400k tokens × 14 tasks.
+- Hackers ran out of inference credits. Desktop tasks are token-heavy. A full OSWorld run (200 max steps) for _computer-use-preview_ (OpenAI Operator API) can cost >$600. Serious attempts: ~400k tokens × 14 tasks.
 - Python version/build mismatches surfaced, requiring debug time across both OSS repos.
 - Our Cua framework lacked a **Response Agent** to complete evaluation loops. Some runs stalled until patched.
 
@@ -112,28 +112,31 @@ We skipped a full end-to-end **Cua × HUD** dry-run. It showed.
 
 ![hack-leaderboard](./assets/hack-leaderboard.png)
 
-*(Leaderboard on HUD)*
+_(Leaderboard on HUD)_
 
 ### Winners
 
-**🥇 Winner — Ram**  
-- Devpost: https://devpost.com/software/sota-computer-use-agent-challenge  
-- Code: https://github.com/Ram-Raghav-S/cua/tree/ram  
+**🥇 Winner — Ram**
+
+- Devpost: https://devpost.com/software/sota-computer-use-agent-challenge
+- Code: https://github.com/Ram-Raghav-S/cua/tree/ram
 - Score: 68.3%
 
-**🥈 Runner-up — Aryan**  
-- Devpost: https://devpost.com/software/loopdeloop-computer-use-agent-sota-attempt  
-- Code: https://github.com/Tumph/cua  
+**🥈 Runner-up — Aryan**
+
+- Devpost: https://devpost.com/software/loopdeloop-computer-use-agent-sota-attempt
+- Code: https://github.com/Tumph/cua
 - Score: 55.9%
 
-**🥉 Special Mention — Adam**  
-- Devpost: https://devpost.com/software/cuala  
-- Code: https://github.com/YeIIcw/cuala  
+**🥉 Special Mention — Adam**
+
+- Devpost: https://devpost.com/software/cuala
+- Code: https://github.com/YeIIcw/cuala
 - Score: 42.1%
 
 ![hack-winners](./assets/hack-winners.jpeg)
 
-*(Our finalists before the award ceremony)*
+_(Our finalists before the award ceremony)_
 
 ## What We’d Keep
 
@@ -163,4 +166,4 @@ Whether you’re a hacker who wants to participate, or a company looking to spon
 
 ![hack-closing-ceremony](./assets/hack-closing-ceremony.jpg)
 
-*(HTN Closing Ceremony — Cua Track Winner Announcement)*
+_(HTN Closing Ceremony — Cua Track Winner Announcement)_

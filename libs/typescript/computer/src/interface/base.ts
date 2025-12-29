@@ -98,9 +98,7 @@ export abstract class BaseComputerInterface {
       } catch (error) {
         console.log(error);
         // Wait a bit before retrying
-        this.logger.error(
-          `Error connecting to websocket: ${JSON.stringify(error)}`
-        );
+        this.logger.error(`Error connecting to websocket: ${JSON.stringify(error)}`);
         await new Promise((resolve) => setTimeout(resolve, 1000));
       }
     }
@@ -158,17 +156,12 @@ export abstract class BaseComputerInterface {
   public async connect(): Promise<void> {
     // If the WebSocket is already open, check if we need to authenticate
     if (this.ws.readyState === WebSocket.OPEN) {
-      this.logger.info(
-        'Websocket is open, ensuring authentication is complete.'
-      );
+      this.logger.info('Websocket is open, ensuring authentication is complete.');
       return this.authenticate();
     }
 
     // If the WebSocket is closed or closing, reinitialize it
-    if (
-      this.ws.readyState === WebSocket.CLOSED ||
-      this.ws.readyState === WebSocket.CLOSING
-    ) {
+    if (this.ws.readyState === WebSocket.CLOSED || this.ws.readyState === WebSocket.CLOSING) {
       this.logger.info('Websocket is closed. Reinitializing connection.');
       const headers: { [key: string]: string } = {};
       if (this.apiKey && this.vmName) {
@@ -224,45 +217,39 @@ export abstract class BaseComputerInterface {
     params: { [key: string]: unknown } = {}
   ): Promise<{ [key: string]: unknown }> {
     // Create a new promise for this specific command
-    const commandPromise = new Promise<{ [key: string]: unknown }>(
-      (resolve, reject) => {
-        // Chain it to the previous commands
-        const executeCommand = async (): Promise<{
-          [key: string]: unknown;
-        }> => {
-          if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
-            await this.connect();
-          }
+    const commandPromise = new Promise<{ [key: string]: unknown }>((resolve, reject) => {
+      // Chain it to the previous commands
+      const executeCommand = async (): Promise<{
+        [key: string]: unknown;
+      }> => {
+        if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+          await this.connect();
+        }
 
-          return new Promise<{ [key: string]: unknown }>(
-            (innerResolve, innerReject) => {
-              const messageHandler = (data: WebSocket.RawData) => {
-                try {
-                  const response = JSON.parse(data.toString());
-                  if (response.error) {
-                    innerReject(new Error(response.error));
-                  } else {
-                    innerResolve(response);
-                  }
-                } catch (error) {
-                  innerReject(error);
-                }
-                this.ws.off('message', messageHandler);
-              };
-
-              this.ws.on('message', messageHandler);
-              const wsCommand = { command, params };
-              this.ws.send(JSON.stringify(wsCommand));
+        return new Promise<{ [key: string]: unknown }>((innerResolve, innerReject) => {
+          const messageHandler = (data: WebSocket.RawData) => {
+            try {
+              const response = JSON.parse(data.toString());
+              if (response.error) {
+                innerReject(new Error(response.error));
+              } else {
+                innerResolve(response);
+              }
+            } catch (error) {
+              innerReject(error);
             }
-          );
-        };
+            this.ws.off('message', messageHandler);
+          };
 
-        // Add this command to the lock chain
-        this.commandLock = this.commandLock.then(() =>
-          executeCommand().then(resolve, reject)
-        );
-      }
-    );
+          this.ws.on('message', messageHandler);
+          const wsCommand = { command, params };
+          this.ws.send(JSON.stringify(wsCommand));
+        });
+      };
+
+      // Add this command to the lock chain
+      this.commandLock = this.commandLock.then(() => executeCommand().then(resolve, reject));
+    });
 
     return commandPromise;
   }
@@ -297,22 +284,13 @@ export abstract class BaseComputerInterface {
   }
 
   // Mouse Actions
-  abstract mouseDown(
-    x?: number,
-    y?: number,
-    button?: MouseButton
-  ): Promise<void>;
+  abstract mouseDown(x?: number, y?: number, button?: MouseButton): Promise<void>;
   abstract mouseUp(x?: number, y?: number, button?: MouseButton): Promise<void>;
   abstract leftClick(x?: number, y?: number): Promise<void>;
   abstract rightClick(x?: number, y?: number): Promise<void>;
   abstract doubleClick(x?: number, y?: number): Promise<void>;
   abstract moveCursor(x: number, y: number): Promise<void>;
-  abstract dragTo(
-    x: number,
-    y: number,
-    button?: MouseButton,
-    duration?: number
-  ): Promise<void>;
+  abstract dragTo(x: number, y: number, button?: MouseButton, duration?: number): Promise<void>;
   abstract drag(
     path: Array<[number, number]>,
     button?: MouseButton,
@@ -336,6 +314,25 @@ export abstract class BaseComputerInterface {
   abstract getScreenSize(): Promise<ScreenSize>;
   abstract getCursorPosition(): Promise<CursorPosition>;
 
+  // Window Management
+  abstract open(target: string): Promise<void>;
+  abstract launch(app: string, args?: string[]): Promise<number | undefined>;
+  abstract getCurrentWindowId(): Promise<number | string>;
+  abstract getApplicationWindows(app: string): Promise<Array<number | string>>;
+  abstract getWindowName(windowId: number | string): Promise<string>;
+  abstract getWindowSize(windowId: number | string): Promise<[number, number]>;
+  abstract getWindowPosition(windowId: number | string): Promise<[number, number]>;
+  abstract setWindowSize(windowId: number | string, width: number, height: number): Promise<void>;
+  abstract setWindowPosition(windowId: number | string, x: number, y: number): Promise<void>;
+  abstract maximizeWindow(windowId: number | string): Promise<void>;
+  abstract minimizeWindow(windowId: number | string): Promise<void>;
+  abstract activateWindow(windowId: number | string): Promise<void>;
+  abstract closeWindow(windowId: number | string): Promise<void>;
+
+  // Desktop Actions
+  abstract getDesktopEnvironment(): Promise<string>;
+  abstract setWallpaper(path: string): Promise<void>;
+
   // Clipboard Actions
   abstract copyToClipboard(): Promise<string>;
   abstract setClipboard(text: string): Promise<void>;
@@ -356,8 +353,5 @@ export abstract class BaseComputerInterface {
   // Accessibility Actions
   abstract getAccessibilityTree(): Promise<AccessibilityNode>;
   abstract toScreenCoordinates(x: number, y: number): Promise<[number, number]>;
-  abstract toScreenshotCoordinates(
-    x: number,
-    y: number
-  ): Promise<[number, number]>;
+  abstract toScreenshotCoordinates(x: number, y: number): Promise<[number, number]>;
 }

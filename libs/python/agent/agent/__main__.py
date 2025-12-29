@@ -5,8 +5,9 @@ Usage:
     python -m agent.cli <model_string>
 """
 
-import sys
 import asyncio
+import sys
+
 from .cli import main
 
 if __name__ == "__main__":

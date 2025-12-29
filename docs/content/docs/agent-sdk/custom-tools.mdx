@@ -3,7 +3,7 @@ title: Custom Tools
 slug: custom-tools
 ---
 
-The Agent SDK supports defining custom Python tools that run securely in sandboxed environments on remote Cua Computers. This enables safe execution of user-defined functions, isolation of dependencies, and robust automation workflows.
+The Agent SDK supports defining custom Python tools that run securely in sandboxed environments on remote Cua Computer Frameworks. This enables safe execution of user-defined functions, isolation of dependencies, and robust automation workflows.
 
 ## Custom Tools
 
@@ -16,7 +16,7 @@ def calculate(a: int, b: int) -> int:
 
 # Use with agent
 agent = ComputerAgent(
-    model="anthropic/claude-3-5-sonnet-20241022",
+    model="cua/anthropic/claude-sonnet-4.5",
     tools=[computer, calculate]
 )
 ```
@@ -43,7 +43,7 @@ from computer import Computer
 
 computer = Computer(...)
 agent = ComputerAgent(
-    model="anthropic/claude-3-5-sonnet-20241022",
+    model="cua/anthropic/claude-sonnet-4.5",
     tools=[computer, read_file],
 )
 ```

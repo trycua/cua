@@ -5,6 +5,7 @@ This guide will help you set up your development environment and understand the 
 ## Environment Setup
 
 Lume development requires:
+
 - Swift 6 or higher
 - Xcode 15 or higher
 - macOS Sequoia 15.2 or higher
@@ -16,12 +17,13 @@ If you're working on Lume in the context of the Cua monorepo, we recommend using
 # Open VS Code workspace from the root of the monorepo
 code .vscode/lume.code-workspace
 ```
+
 This workspace is preconfigured with Swift language support, build tasks, and debug configurations.
 
 ## Setting Up the Repository Locally
 
 1. **Fork the Repository**: Create your own fork of lume
-2. **Clone the Repository**: 
+2. **Clone the Repository**:
    ```bash
    git clone https://github.com/trycua/lume.git
    cd lume

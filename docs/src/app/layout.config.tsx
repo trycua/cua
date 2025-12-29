@@ -17,39 +17,42 @@ import { HomeIcon } from 'lucide-react';
 export const baseOptions: BaseLayoutProps = {
   nav: {
     title: (
-      <>
+      <div className="flex items-center gap-2">
         <Image
-          width={30}
-          height={30}
+          width={40}
+          height={40}
           src={LogoBlack}
           aria-label="Logo"
           className="block dark:hidden"
           alt="Logo"
         />
         <Image
-          width={30}
-          height={30}
+          width={40}
+          height={40}
           src={LogoWhite}
           aria-label="Logo"
           className="hidden dark:block"
           alt="Logo"
         />
-        Cua Documentation
-      </>
+        <span className="text-lg font-bold" style={{ fontFamily: 'var(--font-urbanist)' }}>
+          Cua
+        </span>
+      </div>
     ),
+    url: 'https://cua.ai',
   },
   githubUrl: 'https://github.com/trycua/cua',
   links: [
     {
-      url: 'https://trycua.com',
-      text: 'cua home',
+      url: 'https://cua.ai',
+      text: 'Cua Home',
       type: 'icon',
       icon: <HomeIcon />,
-      external: false,
+      external: true,
     },
     {
       url: 'https://discord.com/invite/mVnXXpdE85',
-      text: 'cua discord',
+      text: 'Discord',
       type: 'icon',
       icon: (
         <>
@@ -69,6 +72,7 @@ export const baseOptions: BaseLayoutProps = {
           />
         </>
       ),
+      external: true,
     },
   ],
 };

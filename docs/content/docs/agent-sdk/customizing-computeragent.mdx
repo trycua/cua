@@ -1,8 +1,17 @@
 ---
-title: Customizing Your ComputerAgent
+title: Customize ComputerAgent
 ---
 
-<Callout>A corresponding <a href="https://github.com/trycua/cua/blob/main/notebooks/customizing_computeragent.ipynb" target="_blank">Jupyter Notebook</a> is available for this documentation.</Callout>
+<Callout>
+  A corresponding{' '}
+  <a
+    href="https://github.com/trycua/cua/blob/main/notebooks/customizing_computeragent.ipynb"
+    target="_blank"
+  >
+    Jupyter Notebook
+  </a>{' '}
+  is available for this documentation.
+</Callout>
 
 The `ComputerAgent` interface provides an easy proxy to any computer-using model configuration, and it is a powerful framework for extending and building your own agentic systems.
 
@@ -65,7 +74,7 @@ Callbacks provide lifecycle hooks to preprocess messages, postprocess outputs, r
 from agent.callbacks import ImageRetentionCallback, TrajectorySaverCallback, BudgetManagerCallback
 
 agent = ComputerAgent(
-    model="anthropic/claude-3-5-sonnet-20241022",
+    model="cua/anthropic/claude-sonnet-4.5",
     tools=[computer],
     callbacks=[
         ImageRetentionCallback(only_n_most_recent_images=3),

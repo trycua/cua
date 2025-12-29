@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import json
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -43,6 +44,36 @@ class FaraVlmConfig(AsyncAgentConfig):
         _on_screenshot=None,
         **kwargs,
     ) -> Dict[str, Any]:
+        # Check if the last message is a terminate function_call_output
+        # If so, return a final assistant message to stop the loop
+        if messages:
+            last_msg = messages[-1]
+            if last_msg.get("type") in ("function_call_output", "computer_call_output"):
+                output_data = last_msg.get("output")
+
+                # Parse string if needed (could be JSON or Python dict literal)
+                if isinstance(output_data, str):
+                    try:
+                        output_data = json.loads(output_data)
+                    except:
+                        try:
+                            output_data = ast.literal_eval(output_data)
+                        except:
+                            pass
+
+                # Check if it's a terminate action output (contains "terminated": True)
+                if isinstance(output_data, dict) and output_data.get("terminated") is True:
+                    return {
+                        "output": [
+                            {
+                                "type": "message",
+                                "role": "assistant",
+                                "content": [{"type": "output_text", "text": "Task completed."}],
+                            }
+                        ],
+                        "usage": {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0},
+                    }
+
         # Build messages using NousFnCallPrompt system with tool schema in text
         # Start with converted conversation (images/text preserved)
         converted_msgs = convert_responses_items_to_completion_messages(

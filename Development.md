@@ -21,7 +21,7 @@ The project is organized as a monorepo with these main packages:
 - `libs/lume/` - Lume CLI (Swift)
 - `libs/typescript/` - TypeScript packages including `cua-cli`
 
-All Python packages are part of a [uv workspace](https://docs.astral.sh/uv/workspaces/) which manages a shared virtual environment and dependencies.
+All Python packages are part of a [uv workspace](https://docs.astral.sh/uv/concepts/projects/workspaces/) which manages a shared virtual environment and dependencies.
 
 ## Quick Start
 

@@ -219,9 +219,18 @@ class WindowsAutomationHandler(BaseAutomationHandler):
             "win": KBKey.cmd,
             "meta": KBKey.cmd,
             "capslock": KBKey.caps_lock,
-            "f1": KBKey.f1, "f2": KBKey.f2, "f3": KBKey.f3, "f4": KBKey.f4,
-            "f5": KBKey.f5, "f6": KBKey.f6, "f7": KBKey.f7, "f8": KBKey.f8,
-            "f9": KBKey.f9, "f10": KBKey.f10, "f11": KBKey.f11, "f12": KBKey.f12,
+            "f1": KBKey.f1,
+            "f2": KBKey.f2,
+            "f3": KBKey.f3,
+            "f4": KBKey.f4,
+            "f5": KBKey.f5,
+            "f6": KBKey.f6,
+            "f7": KBKey.f7,
+            "f8": KBKey.f8,
+            "f9": KBKey.f9,
+            "f10": KBKey.f10,
+            "f11": KBKey.f11,
+            "f12": KBKey.f12,
         }
         if lk in special:
             return special[lk]

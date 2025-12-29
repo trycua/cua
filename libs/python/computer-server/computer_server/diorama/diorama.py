@@ -483,6 +483,7 @@ class Diorama:
                     return tx, ty
             return x, y
 
+
 import time
 
 from pynput.mouse import Controller as MouseController

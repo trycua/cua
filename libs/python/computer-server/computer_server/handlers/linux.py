@@ -85,6 +85,7 @@ class LinuxAccessibilityHandler(BaseAccessibilityHandler):
         try:
             # Use pynput mouse controller
             from pynput.mouse import Controller as MouseController
+
             m = MouseController()
             x, y = m.position
             return int(x), int(y)
@@ -92,6 +93,7 @@ class LinuxAccessibilityHandler(BaseAccessibilityHandler):
             logger.warning(f"Failed to get cursor position: {e}")
             logger.info("Getting cursor position (simulated)")
             return 0, 0
+
     def get_screen_size(self) -> Tuple[int, int]:
         """Get the screen size.
 
@@ -110,6 +112,7 @@ class LinuxAccessibilityHandler(BaseAccessibilityHandler):
 
 class LinuxAutomationHandler(BaseAutomationHandler):
     """Linux implementation of automation handler using pynput."""
+
     keyboard = KeyboardController()
     mouse = MouseController()
 
@@ -131,7 +134,8 @@ class LinuxAutomationHandler(BaseAutomationHandler):
             if x is not None and y is not None:
                 self.mouse.position = (x, y)
             from pynput.mouse import Button
-            btn = getattr(Button, button if button in ["left","right","middle"] else "left")
+
+            btn = getattr(Button, button if button in ["left", "right", "middle"] else "left")
             self.mouse.press(btn)
             return {"success": True}
         except Exception as e:
@@ -154,7 +158,8 @@ class LinuxAutomationHandler(BaseAutomationHandler):
             if x is not None and y is not None:
                 self.mouse.position = (x, y)
             from pynput.mouse import Button
-            btn = getattr(Button, button if button in ["left","right","middle"] else "left")
+
+            btn = getattr(Button, button if button in ["left", "right", "middle"] else "left")
             self.mouse.release(btn)
             return {"success": True}
         except Exception as e:
@@ -188,6 +193,7 @@ class LinuxAutomationHandler(BaseAutomationHandler):
         """
         try:
             from pynput.mouse import Button
+
             if x is not None and y is not None:
                 self.mouse.position = (x, y)
             self.mouse.click(Button.left, 1)
@@ -207,6 +213,7 @@ class LinuxAutomationHandler(BaseAutomationHandler):
         """
         try:
             from pynput.mouse import Button
+
             if x is not None and y is not None:
                 self.mouse.position = (x, y)
             self.mouse.click(Button.right, 1)
@@ -228,6 +235,7 @@ class LinuxAutomationHandler(BaseAutomationHandler):
         """
         try:
             from pynput.mouse import Button
+
             if x is not None and y is not None:
                 self.mouse.position = (x, y)
             self.mouse.click(Button.left, 2)
@@ -250,9 +258,10 @@ class LinuxAutomationHandler(BaseAutomationHandler):
         """
         try:
             from pynput.mouse import Button
+
             if x is not None and y is not None:
                 self.mouse.position = (x, y)
-            btn = getattr(Button, button if button in ["left","right","middle"] else "left")
+            btn = getattr(Button, button if button in ["left", "right", "middle"] else "left")
             self.mouse.click(btn, 1)
             return {"success": True}
         except Exception as e:
@@ -274,7 +283,8 @@ class LinuxAutomationHandler(BaseAutomationHandler):
         """
         try:
             from pynput.mouse import Button
-            btn = getattr(Button, button if button in ["left","right","middle"] else "left")
+
+            btn = getattr(Button, button if button in ["left", "right", "middle"] else "left")
             self.mouse.press(btn)
             self.mouse.position = (x, y)
             self.mouse.release(btn)
@@ -297,9 +307,10 @@ class LinuxAutomationHandler(BaseAutomationHandler):
         """
         try:
             from pynput.mouse import Button
+
             if not path:
                 return {"success": False, "error": "Path is empty"}
-            btn = getattr(Button, button if button in ["left","right","middle"] else "left")
+            btn = getattr(Button, button if button in ["left", "right", "middle"] else "left")
             self.mouse.position = path[0]
             for x, y in path[1:]:
                 self.mouse.press(btn)
@@ -321,6 +332,7 @@ class LinuxAutomationHandler(BaseAutomationHandler):
         """
         try:
             from pynput.keyboard import Key
+
             k = getattr(Key, key) if hasattr(Key, key) else (key if len(key) == 1 else None)
             if k is None:
                 return {"success": False, "error": f"Unknown key: {key}"}
@@ -340,6 +352,7 @@ class LinuxAutomationHandler(BaseAutomationHandler):
         """
         try:
             from pynput.keyboard import Key
+
             k = getattr(Key, key) if hasattr(Key, key) else (key if len(key) == 1 else None)
             if k is None:
                 return {"success": False, "error": f"Unknown key: {key}"}
@@ -375,6 +388,7 @@ class LinuxAutomationHandler(BaseAutomationHandler):
         """
         try:
             from pynput.keyboard import Key
+
             k = getattr(Key, key) if hasattr(Key, key) else (key if len(key) == 1 else None)
             if k is None:
                 return {"success": False, "error": f"Unknown key: {key}"}
@@ -395,6 +409,7 @@ class LinuxAutomationHandler(BaseAutomationHandler):
         """
         try:
             from pynput.keyboard import Key
+
             seq = []
             for k in keys:
                 kk = getattr(Key, k) if hasattr(Key, k) else (k if len(k) == 1 else None)
@@ -501,6 +516,7 @@ class LinuxAutomationHandler(BaseAutomationHandler):
         """
         try:
             from pynput.mouse import Controller as MouseController
+
             m = MouseController()
             x, y = m.position
             return {"success": True, "position": {"x": int(x), "y": int(y)}}

@@ -23,7 +23,7 @@ from .composed_grounded import ComposedGroundedConfig
 
 def extract_coordinates_from_click(text: str) -> Optional[Tuple[int, int]]:
     """Extract coordinates from click(x=..., y=...) or pyautogui.click(x=..., y=...) format.
-    
+
     This function supports parsing both generic click() and legacy pyautogui.click() formats
     for backwards compatibility with models that may still output pyautogui format.
     """

@@ -16,7 +16,7 @@ on:
         default: ""
 
 jobs:
-  build-and-publish:
+  build-binaries:
     permissions:
       id-token: write
       contents: write
@@ -51,31 +51,6 @@ jobs:
         with:
           bun-version: latest
 
-      - name: Get version
-        id: version
-        run: |
-          if [ -n "${{ inputs.version }}" ]; then
-            EXPECTED_VERSION="${{ inputs.version }}"
-          elif [ -n "${{ github.event.inputs.version }}" ]; then
-            EXPECTED_VERSION="${{ github.event.inputs.version }}"
-          else
-            EXPECTED_VERSION=$(bun -p "require('./libs/typescript/cua-cli/package.json').version")
-          fi
-
-          # If version was provided as input, validate it matches package.json
-          if [ -n "${{ inputs.version }}" ] || [ -n "${{ github.event.inputs.version }}" ]; then
-            ACTUAL_VERSION=$(bun -p "require('./libs/typescript/cua-cli/package.json').version")
-            if [ "$ACTUAL_VERSION" != "$EXPECTED_VERSION" ]; then
-              echo "ERROR: Version mismatch!"
-              echo "Expected version: $EXPECTED_VERSION"
-              echo "Actual version in package.json: $ACTUAL_VERSION"
-              exit 1
-            fi
-            echo "Version validation passed: $EXPECTED_VERSION"
-          fi
-
-          echo "version=${EXPECTED_VERSION}" >> $GITHUB_OUTPUT
-
       - name: Install dependencies
         working-directory: ./libs/typescript/cua-cli
         run: bun install --frozen-lockfile
@@ -96,30 +71,17 @@ jobs:
           retention-days: 1
 
   publish-npm:
-    needs: build-and-publish
-    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/cua-v')
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: latest
-
-      - name: Install dependencies
-        working-directory: ./libs/typescript/cua-cli
-        run: bun install --frozen-lockfile
-
-      - name: Publish to npm
-        working-directory: ./libs/typescript/cua-cli
-        env:
-          NPM_CONFIG_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: bun publish --production --access public --tolerate-republish
+    uses: ./.github/workflows/npm-reusable-publish.yml
+    with:
+      package_name: "cli"
+      package_dir: "libs/typescript/cua-cli"
+      package_manager: "bun"
+      version: ${{ inputs.version || github.event.inputs.version || '' }}
+    secrets:
+      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
 
   create-release:
-    needs: [build-and-publish, publish-npm]
+    needs: [build-binaries, publish-npm]
     runs-on: ubuntu-latest
     permissions:
       contents: write

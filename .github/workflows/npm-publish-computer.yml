@@ -35,7 +35,29 @@ jobs:
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
 
+      - name: Verify version consistency
+        if: inputs.version != '' || github.event.inputs.version != ''
+        run: |
+          EXPECTED_VERSION="${{ inputs.version }}"
+          if [ -z "$EXPECTED_VERSION" ]; then
+            EXPECTED_VERSION="${{ github.event.inputs.version }}"
+          fi
+
+          ACTUAL_VERSION=$(node -p "require('./libs/typescript/computer/package.json').version")
+
+          if [ "$ACTUAL_VERSION" != "$EXPECTED_VERSION" ]; then
+            echo "ERROR: Version mismatch!"
+            echo "Expected version: $EXPECTED_VERSION"
+            echo "Actual version in package.json: $ACTUAL_VERSION"
+            exit 1
+          fi
+
+          echo "Version validation passed: $ACTUAL_VERSION"
+          echo "should_publish=true" >> $GITHUB_OUTPUT
+        id: verify-version
+
       - name: Check if version changed
+        if: steps.verify-version.outputs.should_publish != 'true'
         id: check-version
         uses: EndBug/version-check@v2
         with:
@@ -43,17 +65,17 @@ jobs:
           diff-search: true
 
       - name: Install dependencies
-        if: steps.check-version.outputs.changed == 'true'
+        if: steps.verify-version.outputs.should_publish == 'true' || steps.check-version.outputs.changed == 'true'
         working-directory: ./libs/typescript/computer
         run: pnpm install --frozen-lockfile
 
       - name: Build package
-        if: steps.check-version.outputs.changed == 'true'
+        if: steps.verify-version.outputs.should_publish == 'true' || steps.check-version.outputs.changed == 'true'
         working-directory: ./libs/typescript/computer
         run: pnpm run build --if-present
 
       - name: Publish to npm
-        if: steps.check-version.outputs.changed == 'true'
+        if: steps.verify-version.outputs.should_publish == 'true' || steps.check-version.outputs.changed == 'true'
         working-directory: ./libs/typescript/computer
         run: pnpm publish --access public --no-git-checks
         env:

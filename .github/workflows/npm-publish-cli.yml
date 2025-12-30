@@ -54,12 +54,27 @@ jobs:
       - name: Get version
         id: version
         run: |
-          if [ -n "${{ github.event.inputs.version }}" ]; then
-            echo "version=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+          if [ -n "${{ inputs.version }}" ]; then
+            EXPECTED_VERSION="${{ inputs.version }}"
+          elif [ -n "${{ github.event.inputs.version }}" ]; then
+            EXPECTED_VERSION="${{ github.event.inputs.version }}"
           else
-            VERSION=$(bun -p "require('./libs/typescript/cua-cli/package.json').version")
-            echo "version=${VERSION}" >> $GITHUB_OUTPUT
+            EXPECTED_VERSION=$(bun -p "require('./libs/typescript/cua-cli/package.json').version")
           fi
+
+          # If version was provided as input, validate it matches package.json
+          if [ -n "${{ inputs.version }}" ] || [ -n "${{ github.event.inputs.version }}" ]; then
+            ACTUAL_VERSION=$(bun -p "require('./libs/typescript/cua-cli/package.json').version")
+            if [ "$ACTUAL_VERSION" != "$EXPECTED_VERSION" ]; then
+              echo "ERROR: Version mismatch!"
+              echo "Expected version: $EXPECTED_VERSION"
+              echo "Actual version in package.json: $ACTUAL_VERSION"
+              exit 1
+            fi
+            echo "Version validation passed: $EXPECTED_VERSION"
+          fi
+
+          echo "version=${EXPECTED_VERSION}" >> $GITHUB_OUTPUT
 
       - name: Install dependencies
         working-directory: ./libs/typescript/cua-cli

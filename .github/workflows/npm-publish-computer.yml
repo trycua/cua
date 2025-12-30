@@ -3,6 +3,19 @@ name: Publish @trycua/computer to npm
 on:
   push:
     branches: main
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to publish (default: from package.json)"
+        required: false
+        default: ""
+  workflow_call:
+    inputs:
+      version:
+        description: "Version to publish (default: from package.json)"
+        required: false
+        type: string
+        default: ""
 
 jobs:
   publish:

@@ -274,7 +274,7 @@ class BrowserTool(BaseComputerTool):
 
         # Convert keys to proper format and press via hotkey
         try:
-            await self.interface.hotkey(*keys)
+            await self.interface.interface.hotkey(*keys)
             return {"success": True, "message": f"Pressed keys: {keys}"}
         except Exception as e:
             return {"success": False, "error": str(e)}
@@ -299,7 +299,7 @@ class BrowserTool(BaseComputerTool):
         if not coordinate or len(coordinate) != 2:
             return {"success": False, "error": "coordinate parameter [x, y] is required"}
 
-        await self.interface.move_cursor(coordinate[0], coordinate[1])
+        await self.interface.interface.move_cursor(coordinate[0], coordinate[1])
         return {"success": True, "message": f"Moved cursor to {coordinate}"}
 
     async def _action_left_click(self, params: dict) -> dict:
@@ -345,7 +345,7 @@ class BrowserTool(BaseComputerTool):
         """Go back in browser history."""
         # Press Alt+Left arrow key combination
         try:
-            await self.interface.hotkey("Alt", "ArrowLeft")
+            await self.interface.interface.hotkey("Alt", "ArrowLeft")
             return {"success": True, "message": "Navigated back in history"}
         except Exception as e:
             return {"success": False, "error": str(e)}

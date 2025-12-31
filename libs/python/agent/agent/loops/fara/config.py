@@ -1,13 +1,9 @@
-"""
-Qwen3-VL agent loop implementation using litellm with function/tool calling.
-- Passes a ComputerUse tool schema to acompletion
-- Converts between Responses items and completion messages using helpers
-"""
+"""FARA VLM agent configuration."""
 
 from __future__ import annotations
 
+import ast
 import json
-import re
 from typing import Any, Dict, List, Optional, Tuple
 
 import litellm
@@ -15,223 +11,20 @@ from litellm.responses.litellm_completion_transformation.transformation import (
     LiteLLMCompletionResponsesConfig,
 )
 
-from ..decorators import register_agent
-from ..loops.base import AsyncAgentConfig
-from ..responses import (
+from ...decorators import register_agent
+from ...loops.base import AsyncAgentConfig
+from ...responses import (
     convert_completion_messages_to_responses_items,
     convert_responses_items_to_completion_messages,
     make_reasoning_item,
 )
-from ..types import AgentCapability
-
-# ComputerUse tool schema (OpenAI function tool format)
-QWEN3_COMPUTER_TOOL: Dict[str, Any] = {
-    "type": "function",
-    "function": {
-        "name": "computer",
-        "description": (
-            "Use a mouse and keyboard to interact with a computer, and take screenshots.\n"
-            "* This is an interface to a desktop GUI. You do not have access to a terminal or applications menu. You must click on desktop icons to start applications.\n"
-            "* Some applications may take time to start or process actions, so you may need to wait and take successive screenshots to see the results of your actions. E.g. if you click on Firefox and a window doesn't open, try wait and taking another screenshot.\n"
-            "* The screen's resolution is 1000x1000.\n"
-            "* Whenever you intend to move the cursor to click on an element like an icon, you should consult a screenshot to determine the coordinates of the element before moving the cursor.\n"
-            "* If you tried clicking on a program or link but it failed to load, even after waiting, try adjusting your cursor position so that the tip of the cursor visually falls on the element that you want to click.\n"
-            "* Make sure to click any buttons, links, icons, etc with the cursor tip in the center of the element. Don't click boxes on their edges."
-        ),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "action": {
-                    "description": "The action to perform.",
-                    "enum": [
-                        "key",
-                        "type",
-                        "mouse_move",
-                        "left_click",
-                        "left_click_drag",
-                        "right_click",
-                        "middle_click",
-                        "double_click",
-                        "triple_click",
-                        "scroll",
-                        "hscroll",
-                        "screenshot",
-                        "wait",
-                        # "terminate",
-                        # "answer",
-                    ],
-                    "type": "string",
-                },
-                "keys": {
-                    "description": "Required only by action=key.",
-                    "type": "array",
-                    "items": {"type": "string"},
-                },
-                "text": {
-                    "description": "Required only by action=type and action=answer.",
-                    "type": "string",
-                },
-                "coordinate": {
-                    "description": "(x, y): Pixel coordinates from top-left.",
-                    "type": "array",
-                    "items": {"type": ["number", "integer"]},
-                    "minItems": 2,
-                    "maxItems": 2,
-                },
-                "pixels": {
-                    "description": "Scroll amount. Positive=up, negative=down. For scroll/hscroll.",
-                    "type": "number",
-                },
-                "time": {
-                    "description": "Seconds to wait (action=wait).",
-                    "type": "number",
-                },
-                # "status": {
-                #     "description": "Task status (action=terminate).",
-                #     "type": "string",
-                #     "enum": ["success", "failure"],
-                # },
-            },
-            "required": ["action"],
-        },
-    },
-}
-
-
-def _build_nous_system(functions: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
-    """Use qwen-agent NousFnCallPrompt to generate a system message embedding tool schema."""
-    try:
-        from qwen_agent.llm.fncall_prompts.nous_fncall_prompt import (
-            ContentItem as NousContentItem,
-        )
-        from qwen_agent.llm.fncall_prompts.nous_fncall_prompt import (
-            Message as NousMessage,
-        )
-        from qwen_agent.llm.fncall_prompts.nous_fncall_prompt import (
-            NousFnCallPrompt,
-        )
-    except ImportError:
-        raise ImportError(
-            "qwen-agent not installed. Please install it with `pip install cua-agent[qwen]`."
-        )
-    msgs = NousFnCallPrompt().preprocess_fncall_messages(
-        messages=[
-            NousMessage(
-                role="system", content=[NousContentItem(text="You are a helpful assistant.")]
-            )
-        ],
-        functions=functions,
-        lang="en",
-    )
-    sys = msgs[0].model_dump()
-    # Convert qwen-agent structured content to OpenAI-style content list
-    content = [{"type": "text", "text": c["text"]} for c in sys.get("content", [])]
-    return {"role": "system", "content": content}
-
-
-def _parse_tool_call_from_text(text: str) -> Optional[Dict[str, Any]]:
-    """Extract JSON object within <tool_call>...</tool_call> from model text."""
-    m = re.search(r"<tool_call>\s*(\{[\s\S]*?\})\s*</tool_call>", text)
-    if not m:
-        return None
-    try:
-        return json.loads(m.group(1))
-    except Exception:
-        return None
-
-
-async def _unnormalize_coordinate(args: Dict[str, Any], dims: Tuple[int, int]) -> Dict[str, Any]:
-    """Coordinates appear in 0..1000 space, scale to actual screen size using dims if provided."""
-    coord = args.get("coordinate")
-    if not coord or not isinstance(coord, (list, tuple)) or len(coord) < 2:
-        return args
-    x, y = float(coord[0]), float(coord[1])
-    width, height = float(dims[0]), float(dims[1])
-    x_abs = max(0.0, min(width, (x / 1000.0) * width))
-    y_abs = max(0.0, min(height, (y / 1000.0) * height))
-    args = {**args, "coordinate": [round(x_abs), round(y_abs)]}
-    return args
-
-
-def convert_qwen_tool_args_to_computer_action(args: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    """
-    Convert Qwen computer tool arguments to the Computer Calls action schema.
-
-    Qwen (example):
-        {"action": "left_click", "coordinate": [114, 68]}
-
-    Target (example):
-        {"action": "left_click", "x": 114, "y": 68}
-
-    Other mappings:
-    - right_click, middle_click, double_click (triple_click -> double_click)
-    - mouse_move -> { action: "move", x, y }
-    - key -> { action: "keypress", keys: [...] }
-    - type -> { action: "type", text }
-    - scroll/hscroll -> { action: "scroll", scroll_x, scroll_y, x, y }
-    - wait -> { action: "wait" }
-    - terminate/answer are not direct UI actions; return None for now
-    """
-    if not isinstance(args, dict):
-        return None
-
-    action = args.get("action")
-    if not isinstance(action, str):
-        return None
-
-    # Coordinates helper
-    coord = args.get("coordinate")
-    x = y = None
-    if isinstance(coord, (list, tuple)) and len(coord) >= 2:
-        try:
-            x = int(round(float(coord[0])))
-            y = int(round(float(coord[1])))
-        except Exception:
-            x = y = None
-
-    # Map actions
-    a = action.lower()
-    if a in {"left_click", "right_click", "middle_click", "double_click"}:
-        if x is None or y is None:
-            return None
-        return {"action": a, "x": x, "y": y}
-    if a == "triple_click":
-        # Approximate as double_click
-        if x is None or y is None:
-            return None
-        return {"action": "double_click", "x": x, "y": y}
-    if a == "mouse_move":
-        if x is None or y is None:
-            return None
-        return {"action": "move", "x": x, "y": y}
-    if a == "key":
-        keys = args.get("keys")
-        if isinstance(keys, list) and all(isinstance(k, str) for k in keys):
-            return {"action": "keypress", "keys": keys}
-        return None
-    if a == "type":
-        text = args.get("text")
-        if isinstance(text, str):
-            return {"action": "type", "text": text}
-        return None
-    if a in {"scroll", "hscroll"}:
-        pixels = args.get("pixels") or 0
-        try:
-            pixels_val = int(round(float(pixels)))
-        except Exception:
-            pixels_val = 0
-        scroll_x = pixels_val if a == "hscroll" else 0
-        scroll_y = pixels_val if a == "scroll" else 0
-        # Include cursor position if available (optional)
-        out: Dict[str, Any] = {"action": "scroll", "scroll_x": scroll_x, "scroll_y": scroll_y}
-        if x is not None and y is not None:
-            out.update({"x": x, "y": y})
-        return out
-    if a == "wait":
-        return {"action": "wait"}
-
-    # Non-UI or terminal actions: terminate/answer -> not mapped here
-    return None
+from ...types import AgentCapability
+from .helpers import (
+    build_nous_system,
+    convert_qwen_tool_args_to_computer_action,
+    parse_tool_call_from_text,
+    unnormalize_coordinate,
+)
 
 
 @register_agent(models=r"(?i).*fara-7b.*")
@@ -251,6 +44,36 @@ class FaraVlmConfig(AsyncAgentConfig):
         _on_screenshot=None,
         **kwargs,
     ) -> Dict[str, Any]:
+        # Check if the last message is a terminate function_call_output
+        # If so, return a final assistant message to stop the loop
+        if messages:
+            last_msg = messages[-1]
+            if last_msg.get("type") in ("function_call_output", "computer_call_output"):
+                output_data = last_msg.get("output")
+
+                # Parse string if needed (could be JSON or Python dict literal)
+                if isinstance(output_data, str):
+                    try:
+                        output_data = json.loads(output_data)
+                    except:
+                        try:
+                            output_data = ast.literal_eval(output_data)
+                        except:
+                            pass
+
+                # Check if it's a terminate action output (contains "terminated": True)
+                if isinstance(output_data, dict) and output_data.get("terminated") is True:
+                    return {
+                        "output": [
+                            {
+                                "type": "message",
+                                "role": "assistant",
+                                "content": [{"type": "output_text", "text": "Task completed."}],
+                            }
+                        ],
+                        "usage": {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0},
+                    }
+
         # Build messages using NousFnCallPrompt system with tool schema in text
         # Start with converted conversation (images/text preserved)
         converted_msgs = convert_responses_items_to_completion_messages(
@@ -260,7 +83,7 @@ class FaraVlmConfig(AsyncAgentConfig):
         # Build function schemas from tools array
         function_schemas = []
         if tools:
-            from ..computers import is_agent_computer
+            from ...computers import is_agent_computer
 
             for tool in tools:
                 tool_type = tool.get("type")
@@ -281,11 +104,10 @@ class FaraVlmConfig(AsyncAgentConfig):
             function_schemas = [QWEN3_COMPUTER_TOOL["function"]]
 
         # Prepend Nous-generated system if available
-        nous_system = _build_nous_system(function_schemas)
+        nous_system = build_nous_system(function_schemas)
         completion_messages = ([nous_system] if nous_system else []) + converted_msgs
 
         # If there is no screenshot in the conversation, take one now and inject it.
-        # Also record a pre_output_items assistant message to reflect action.
         def _has_any_image(msgs: List[Dict[str, Any]]) -> bool:
             for m in msgs:
                 content = m.get("content")
@@ -304,6 +126,7 @@ class FaraVlmConfig(AsyncAgentConfig):
             screenshot_b64 = await computer_handler.screenshot()
             if not screenshot_b64:
                 raise RuntimeError("Failed to capture screenshot from computer_handler.")
+
             await _on_screenshot(screenshot_b64, "screenshot_before")
 
             # Check if computer_handler has get_current_url method
@@ -315,23 +138,19 @@ class FaraVlmConfig(AsyncAgentConfig):
                 except Exception:
                     # If get_current_url fails, fall back to default text
                     pass
-            else:
-                print(computer_handler)
-                print("HAS ATTR get_current_url", hasattr(computer_handler, "get_current_url"))
 
             # Inject a user message with the screenshot so the model can see current context
-            completion_messages.append(
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "image_url",
-                            "image_url": {"url": f"data:image/png;base64,{screenshot_b64}"},
-                        },
-                        {"type": "text", "text": screenshot_text},
-                    ],
-                }
-            )
+            screenshot_msg = {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:image/png;base64,{screenshot_b64}"},
+                    },
+                    {"type": "text", "text": screenshot_text},
+                ],
+            }
+            completion_messages.append(screenshot_msg)
 
         # Smart-resize all screenshots and attach min/max pixel hints. Fail fast if deps missing.
         # Also record the last resized width/height to unnormalize coordinates later.
@@ -413,7 +232,7 @@ class FaraVlmConfig(AsyncAgentConfig):
             output_items.append(make_reasoning_item(reasoning_text))
 
         # Priority 1: Try to parse tool call from content text (OpenRouter format)
-        tool_call = _parse_tool_call_from_text(content_text)
+        tool_call = parse_tool_call_from_text(content_text)
 
         if tool_call and isinstance(tool_call, dict):
             fn_name = tool_call.get("name") or "computer"
@@ -423,11 +242,17 @@ class FaraVlmConfig(AsyncAgentConfig):
                 raise RuntimeError(
                     "No screenshots found to derive dimensions for coordinate unnormalization."
                 )
-            args = await _unnormalize_coordinate(raw_args, (last_rw, last_rh))
+            args = await unnormalize_coordinate(raw_args, (last_rw, last_rh))
+
+            # Extract thoughts (text before <tool_call> tag)
+            thoughts = ""
+            if "<tool_call>" in content_text:
+                thoughts = content_text.split("<tool_call>")[0].strip()
 
             # Build an OpenAI-style tool call so we can reuse the converter
             fake_cm = {
                 "role": "assistant",
+                "content": thoughts,  # Preserve thoughts before tool call
                 "tool_calls": [
                     {
                         "type": "function",
@@ -454,7 +279,7 @@ class FaraVlmConfig(AsyncAgentConfig):
 
                     # Unnormalize coordinates if present
                     if "coordinate" in args and last_rw is not None and last_rh is not None:
-                        args = await _unnormalize_coordinate(args, (last_rw, last_rh))
+                        args = await unnormalize_coordinate(args, (last_rw, last_rh))
 
                     # Convert Qwen format to Computer Calls format if this is a computer tool
                     if fn_name == "computer":
@@ -486,6 +311,34 @@ class FaraVlmConfig(AsyncAgentConfig):
             # No tool calls found in either format, return text response
             fake_cm = {"role": "assistant", "content": content_text}
             output_items.extend(convert_completion_messages_to_responses_items([fake_cm]))
+
+        # Check if this is a terminate action - if so, add a final assistant message to stop the loop
+        has_terminate = False
+        for item in output_items:
+            if item.get("type") == "computer_call":
+                action = item.get("action", {})
+                if action.get("type") == "terminate":
+                    has_terminate = True
+                    break
+            elif item.get("type") == "function_call":
+                try:
+                    args = json.loads(item.get("arguments", "{}"))
+                    if args.get("action") == "terminate":
+                        has_terminate = True
+                        break
+                except:
+                    pass
+
+        # If terminate detected, ensure LAST item is an assistant message to exit the loop
+        # The generic agent loop checks: while new_items[-1].get("role") != "assistant"
+        if has_terminate:
+            output_items.append(
+                {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": ""}],
+                }
+            )
 
         # Prepend any pre_output_items (e.g., simulated screenshot-taking message)
         return {"output": (pre_output_items + output_items), "usage": usage}
@@ -525,7 +378,7 @@ class FaraVlmConfig(AsyncAgentConfig):
         }
 
         # Build Nous system (lazy import inside helper already raises clear guidance if missing)
-        nous_system = _build_nous_system([reduced_tool["function"]])
+        nous_system = build_nous_system([reduced_tool["function"]])
 
         # Pre-process using smart_resize
         min_pixels = 3136
@@ -577,10 +430,77 @@ class FaraVlmConfig(AsyncAgentConfig):
         resp = response.model_dump()  # type: ignore
         choice = (resp.get("choices") or [{}])[0]
         content_text = ((choice.get("message") or {}).get("content")) or ""
-        tool_call = _parse_tool_call_from_text(content_text) or {}
+        tool_call = parse_tool_call_from_text(content_text) or {}
         args = tool_call.get("arguments") or {}
-        args = await _unnormalize_coordinate(args, (rh, rw))
+        args = await unnormalize_coordinate(args, (rh, rw))
         coord = args.get("coordinate")
         if isinstance(coord, (list, tuple)) and len(coord) >= 2:
             return int(coord[0]), int(coord[1])
         return None
+
+
+# ComputerUse tool schema (OpenAI function tool format)
+QWEN3_COMPUTER_TOOL: dict[str, Any] = {
+    "type": "function",
+    "function": {
+        "name": "computer",
+        "description": (
+            "Use a mouse and keyboard to interact with a computer, and take screenshots.\n"
+            "* This is an interface to a desktop GUI. You do not have access to a terminal or applications menu. You must click on desktop icons to start applications.\n"
+            "* Some applications may take time to start or process actions, so you may need to wait and take successive screenshots to see the results of your actions. E.g. if you click on Firefox and a window doesn't open, try wait and taking another screenshot.\n"
+            "* The screen's resolution is 1000x1000.\n"
+            "* Whenever you intend to move the cursor to click on an element like an icon, you should consult a screenshot to determine the coordinates of the element before moving the cursor.\n"
+            "* If you tried clicking on a program or link but it failed to load, even after waiting, try adjusting your cursor position so that the tip of the cursor visually falls on the element that you want to click.\n"
+            "* Make sure to click any buttons, links, icons, etc with the cursor tip in the center of the element. Don't click boxes on their edges."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "description": "The action to perform.",
+                    "enum": [
+                        "key",
+                        "type",
+                        "mouse_move",
+                        "left_click",
+                        "left_click_drag",
+                        "right_click",
+                        "middle_click",
+                        "double_click",
+                        "triple_click",
+                        "scroll",
+                        "hscroll",
+                        "screenshot",
+                        "wait",
+                    ],
+                    "type": "string",
+                },
+                "keys": {
+                    "description": "Required only by action=key.",
+                    "type": "array",
+                    "items": {"type": "string"},
+                },
+                "text": {
+                    "description": "Required only by action=type and action=answer.",
+                    "type": "string",
+                },
+                "coordinate": {
+                    "description": "(x, y): Pixel coordinates from top-left.",
+                    "type": "array",
+                    "items": {"type": ["number", "integer"]},
+                    "minItems": 2,
+                    "maxItems": 2,
+                },
+                "pixels": {
+                    "description": "Scroll amount. Positive=up, negative=down. For scroll/hscroll.",
+                    "type": "number",
+                },
+                "time": {
+                    "description": "Seconds to wait (action=wait).",
+                    "type": "number",
+                },
+            },
+            "required": ["action"],
+        },
+    },
+}

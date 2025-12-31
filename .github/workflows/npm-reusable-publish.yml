@@ -104,12 +104,6 @@ jobs:
       - name: Publish to npm
         if: steps.verify-version.outputs.should_publish == 'true' || steps.check-version.outputs.changed == 'true'
         working-directory: ./${{ inputs.package_dir }}
-        run: |
-          if [ "${{ inputs.package_manager }}" = "bun" ]; then
-            bun publish --production --access public --tolerate-republish
-          else
-            pnpm publish --access public --no-git-checks
-          fi
+        run: npm publish --access public --provenance
         env:
-          NPM_CONFIG_PROVENANCE: true
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

@@ -7,9 +7,16 @@ on:
         description: "Version to publish (default: from package.json)"
         required: false
         default: ""
+  workflow_call:
+    inputs:
+      version:
+        description: "Version to publish (default: from package.json)"
+        required: false
+        type: string
+        default: ""
 
 jobs:
-  build-and-publish:
+  build-binaries:
     permissions:
       id-token: write
       contents: write
@@ -44,16 +51,6 @@ jobs:
         with:
           bun-version: latest
 
-      - name: Get version
-        id: version
-        run: |
-          if [ -n "${{ github.event.inputs.version }}" ]; then
-            echo "version=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
-          else
-            VERSION=$(bun -p "require('./libs/typescript/cua-cli/package.json').version")
-            echo "version=${VERSION}" >> $GITHUB_OUTPUT
-          fi
-
       - name: Install dependencies
         working-directory: ./libs/typescript/cua-cli
         run: bun install --frozen-lockfile
@@ -74,30 +71,17 @@ jobs:
           retention-days: 1
 
   publish-npm:
-    needs: build-and-publish
-    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/cua-v')
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: latest
-
-      - name: Install dependencies
-        working-directory: ./libs/typescript/cua-cli
-        run: bun install --frozen-lockfile
-
-      - name: Publish to npm
-        working-directory: ./libs/typescript/cua-cli
-        env:
-          NPM_CONFIG_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: bun publish --production --access public --tolerate-republish
+    uses: ./.github/workflows/npm-reusable-publish.yml
+    with:
+      package_name: "cli"
+      package_dir: "libs/typescript/cua-cli"
+      package_manager: "bun"
+      version: ${{ inputs.version || github.event.inputs.version || '' }}
+    secrets:
+      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
 
   create-release:
-    needs: [build-and-publish, publish-npm]
+    needs: [build-binaries, publish-npm]
     runs-on: ubuntu-latest
     permissions:
       contents: write

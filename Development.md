@@ -291,31 +291,47 @@ Refer to [`libs/lume/Development.md`](./libs/lume/Development.md) for detailed L
 
 ## Releasing Packages
 
-Cua uses an automated GitHub Actions workflow to bump package versions.
+Cua uses an automated GitHub Actions workflow to bump package versions and publish to PyPI/NPM.
 
 > **Note:** The main branch is currently not protected. If branch protection is enabled in the future, the github-actions bot must be added to the bypass list for these workflows to commit directly.
 
-### Version Bump Workflow
+### Version Bump & Publish Workflow
 
-All packages are managed through a single consolidated workflow: [Bump Version](https://github.com/trycua/cua/actions/workflows/bump-version.yml)
+All packages are managed through a single consolidated workflow: [Bump Version & Publish](https://github.com/trycua/cua/actions/workflows/bump-version.yml)
 
 **Supported packages:**
 
-- `cua-agent`
-- `cua-computer`
-- `cua-computer-server`
-- `cua-core`
-- `cua-mcp-server`
-- `cua-som`
+**Python (PyPI):**
+
+- `pypi/agent` - AI agent library
+- `pypi/computer` - Computer-use interface library
+- `pypi/computer-server` - Server component for VM
+- `pypi/core` - Base package with telemetry
+- `pypi/mcp-server` - MCP server implementation
+- `pypi/som` - Set-of-Mark parser
+
+**JavaScript/TypeScript (NPM):**
+
+- `npm/cli` - CUA command-line interface
+- `npm/computer` - Computer client for TypeScript
+- `npm/core` - Core TypeScript utilities
 
 **How to use:**
 
-1. Navigate to the [Bump Version workflow](https://github.com/trycua/cua/actions/workflows/bump-version.yml)
+1. Navigate to the [Bump Version & Publish workflow](https://github.com/trycua/cua/actions/workflows/bump-version.yml)
 2. Click the "Run workflow" button in the GitHub UI
-3. Select the **service/package** you want to bump from the first dropdown
+3. Select the **service/package** from the dropdown (e.g., `pypi/computer` or `npm/cli`)
 4. Select the **bump type** (patch/minor/major) from the second dropdown
-5. Click "Run workflow" to start the version bump
-6. The workflow will automatically commit changes and push to main
+5. Click "Run workflow" to start the process
+
+**What happens automatically:**
+
+1. Version is bumped in the package configuration file
+2. Changes are committed and pushed to main
+3. Package is automatically published to PyPI or NPM
+4. For `npm/cli`: Binaries are built and a GitHub release is created
+
+> **Note:** For `pypi/computer`, the workflow also automatically bumps `pypi/agent` to maintain version compatibility.
 
 <details>
 <summary>Local Testing (Advanced)</summary>
@@ -331,64 +347,6 @@ make show-versions
 ```
 
 **Note:** For production releases, always use the GitHub Actions workflows above instead of running Makefile commands directly.
-
-</details>
-
-## Releasing a New CLI Version
-
-To release a new version of the CUA CLI (`@trycua/cli`):
-
-### 1. Update the Version
-
-1. Update the version in `libs/typescript/cua-cli/package.json`
-2. Commit the version change with a message like "Bump version to x.y.z"
-3. Push the changes to the main branch
-
-### 2. Trigger the Release Workflow
-
-1. Go to the GitHub Actions tab in the repository
-2. Select the "Publish @trycua/cli" workflow
-3. Click "Run workflow"
-4. Optionally, specify a version (e.g., "1.2.3") or leave empty to use the version from package.json
-5. Click "Run workflow"
-
-The workflow will:
-
-- Build single-file executables for all supported platforms
-- Publish the package to npm
-- Create a GitHub release with the version tag (format: `cua-vX.Y.Z`)
-- Attach all platform-specific binaries to the release
-
-<details>
-<summary>3-5. Verify, update docs, and announce</summary>
-
-### 3. Verify the Release
-
-1. Check the GitHub Releases page to ensure the new version is published
-2. Verify the npm package was published to the registry
-3. Test installation on different platforms:
-
-   ```bash
-   # Test Linux/macOS installation
-   curl -fsSL https://cua.ai/install.sh | sh
-
-   # Test Windows installation (PowerShell)
-   irm https://cua.ai/install.ps1 | iex
-   ```
-
-### 4. Update Documentation
-
-Update any relevant documentation with the new version number, including:
-
-- Example code in documentation
-- Any version-specific instructions
-- Compatibility matrices
-
-### 5. Announce the Release
-
-- Create a new GitHub release with release notes
-- Update the changelog if maintained separately
-- Announce in relevant channels (Slack, Discord, etc.)
 
 </details>
 

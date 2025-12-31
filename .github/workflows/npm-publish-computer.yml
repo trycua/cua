@@ -3,46 +3,27 @@ name: Publish @trycua/computer to npm
 on:
   push:
     branches: main
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to publish (default: from package.json)"
+        required: false
+        default: ""
+  workflow_call:
+    inputs:
+      version:
+        description: "Version to publish (default: from package.json)"
+        required: false
+        type: string
+        default: ""
 
 jobs:
   publish:
-    permissions:
-      id-token: write
-      contents: read
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Use Node.js 24.x
-        uses: actions/setup-node@v4
-        with:
-          node-version: "24.x"
-          registry-url: "https://registry.npmjs.org"
-
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
-
-      - name: Check if version changed
-        id: check-version
-        uses: EndBug/version-check@v2
-        with:
-          file-name: libs/typescript/computer/package.json
-          diff-search: true
-
-      - name: Install dependencies
-        if: steps.check-version.outputs.changed == 'true'
-        working-directory: ./libs/typescript/computer
-        run: pnpm install --frozen-lockfile
-
-      - name: Build package
-        if: steps.check-version.outputs.changed == 'true'
-        working-directory: ./libs/typescript/computer
-        run: pnpm run build --if-present
-
-      - name: Publish to npm
-        if: steps.check-version.outputs.changed == 'true'
-        working-directory: ./libs/typescript/computer
-        run: pnpm publish --access public --no-git-checks
-        env:
-          NPM_CONFIG_PROVENANCE: true
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+    uses: ./.github/workflows/npm-reusable-publish.yml
+    with:
+      package_name: "computer"
+      package_dir: "libs/typescript/computer"
+      package_manager: "pnpm"
+      version: ${{ inputs.version || github.event.inputs.version || '' }}
+    secrets:
+      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}

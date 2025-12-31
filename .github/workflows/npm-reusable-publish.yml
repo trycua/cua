@@ -93,7 +93,10 @@ jobs:
         working-directory: ./${{ inputs.package_dir }}
         run: |
           if [ "${{ inputs.package_manager }}" = "bun" ]; then
-            bun run build --if-present
+            # Bun doesn't support --if-present, check if build script exists
+            if grep -q '"build"' package.json; then
+              bun run build
+            fi
           else
             pnpm run build --if-present
           fi

@@ -63,7 +63,7 @@ jobs:
       PYPI_TOKEN: ${{ secrets.PYPI_TOKEN }}
 
   create-release:
-    needs: prepare
+    needs: [prepare, publish]
     uses: ./.github/workflows/github-release-reusable.yml
     with:
       tag_name: "core-v${{ needs.prepare.outputs.version }}"

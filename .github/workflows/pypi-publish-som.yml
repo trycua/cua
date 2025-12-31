@@ -67,7 +67,7 @@ jobs:
       PYPI_TOKEN: ${{ secrets.PYPI_TOKEN }}
 
   create-release:
-    needs: determine-version
+    needs: [determine-version, publish]
     uses: ./.github/workflows/github-release-reusable.yml
     with:
       tag_name: "som-v${{ needs.determine-version.outputs.version }}"

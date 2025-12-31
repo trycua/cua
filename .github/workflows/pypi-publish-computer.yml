@@ -158,7 +158,7 @@ jobs:
           echo "CORE_VERSION=${{ needs.prepare.outputs.core_version }}" >> $GITHUB_ENV
 
   create-release:
-    needs: prepare
+    needs: [prepare, publish]
     uses: ./.github/workflows/github-release-reusable.yml
     with:
       tag_name: "computer-v${{ needs.prepare.outputs.version }}"

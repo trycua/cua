@@ -42,6 +42,8 @@ jobs:
       - name: Setup pnpm
         if: inputs.package_manager == 'pnpm'
         uses: pnpm/action-setup@v4
+        with:
+          package_json_file: ${{ inputs.package_dir }}/package.json
 
       - name: Setup Bun
         if: inputs.package_manager == 'bun'

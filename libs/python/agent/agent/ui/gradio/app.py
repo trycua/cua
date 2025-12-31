@@ -99,9 +99,9 @@ def save_settings(settings: Dict[str, Any]):
 
 # Detect platform capabilities
 is_mac = platform.system().lower() == "darwin"
-is_lume_available = is_mac or (os.environ.get("PYLUME_HOST", "localhost") != "localhost")
+is_lume_available = is_mac or (os.environ.get("LUME_HOST", "localhost") != "localhost")
 
-print("PYLUME_HOST: ", os.environ.get("PYLUME_HOST", "localhost"))
+print("LUME_HOST: ", os.environ.get("LUME_HOST", "localhost"))
 print("is_mac: ", is_mac)
 print("Lume available: ", is_lume_available)
 

@@ -32,7 +32,6 @@ dry-run-major-%: ## Dry run for major version bump (e.g., make dry-run-major-cor
 show-versions: ## Show current versions of all packages
 	@echo "Current Python package versions:"
 	@echo "  cua-core:           $$(grep 'current_version' libs/python/core/.bumpversion.cfg | cut -d' ' -f3)"
-	@echo "  pylume:             $$(grep 'current_version' libs/python/pylume/.bumpversion.cfg | cut -d' ' -f3)"
 	@echo "  cua-computer:       $$(grep 'current_version' libs/python/computer/.bumpversion.cfg | cut -d' ' -f3)"
 	@echo "  cua-som:            $$(grep 'current_version' libs/python/som/.bumpversion.cfg | cut -d' ' -f3)"
 	@echo "  cua-agent:          $$(grep 'current_version' libs/python/agent/.bumpversion.cfg | cut -d' ' -f3)"

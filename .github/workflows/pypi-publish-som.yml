@@ -65,3 +65,20 @@ jobs:
       base_package_name: "cua-som"
     secrets:
       PYPI_TOKEN: ${{ secrets.PYPI_TOKEN }}
+
+  create-release:
+    needs: determine-version
+    uses: ./.github/workflows/github-release-reusable.yml
+    with:
+      tag_name: "som-v${{ needs.determine-version.outputs.version }}"
+      release_name: "cua-som v${{ needs.determine-version.outputs.version }}"
+      body: |
+        ## Computer Vision and OCR library for detecting and analyzing UI elements
+
+        This package provides enhanced UI understanding capabilities through computer vision and OCR.
+
+        ## Installation
+
+        ```bash
+        pip install cua-som==${{ needs.determine-version.outputs.version }}
+        ```

@@ -173,3 +173,31 @@ jobs:
           echo "COMPUTER_VERSION=${{ needs.prepare.outputs.computer_version }}" >> $GITHUB_ENV
           echo "SOM_VERSION=${{ needs.prepare.outputs.som_version }}" >> $GITHUB_ENV
           echo "CORE_VERSION=${{ needs.prepare.outputs.core_version }}" >> $GITHUB_ENV
+
+  create-release:
+    needs: prepare
+    uses: ./.github/workflows/github-release-reusable.yml
+    with:
+      tag_name: "agent-v${{ needs.prepare.outputs.version }}"
+      release_name: "cua-agent v${{ needs.prepare.outputs.version }}"
+      body: |
+        ## Dependencies
+        * cua-computer: ${{ needs.prepare.outputs.computer_version }}
+        * cua-som: ${{ needs.prepare.outputs.som_version }}
+
+        ## Installation Options
+
+        ### Basic installation with Anthropic
+        ```bash
+        pip install cua-agent[anthropic]==${{ needs.prepare.outputs.version }}
+        ```
+
+        ### With SOM (recommended)
+        ```bash
+        pip install cua-agent[som]==${{ needs.prepare.outputs.version }}
+        ```
+
+        ### All features
+        ```bash
+        pip install cua-agent[all]==${{ needs.prepare.outputs.version }}
+        ```

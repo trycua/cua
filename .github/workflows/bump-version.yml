@@ -125,10 +125,6 @@ jobs:
         with:
           bun-version: latest
 
-      - name: Install bumpp for npm packages
-        if: ${{ steps.package.outputs.type == 'npm' }}
-        run: npm install -g bumpp
-
       - name: Configure Git
         run: |
           git config user.name "github-actions[bot]"
@@ -140,16 +136,12 @@ jobs:
           cd ${{ steps.package.outputs.directory }}
           bump2version ${{ inputs.bump_type }}
 
-      - name: Run bumpp (NPM)
+      - name: Run npm version (NPM)
         if: ${{ steps.package.outputs.type == 'npm' }}
         run: |
           cd ${{ steps.package.outputs.directory }}
-          bumpp --${{ inputs.bump_type }} --yes --no-push --no-tag --no-commit
-
-      - name: Commit NPM version changes
-        if: ${{ steps.package.outputs.type == 'npm' }}
-        run: |
-          git add ${{ steps.package.outputs.directory }}/package.json
+          npm version ${{ inputs.bump_type }} --no-git-tag-version
+          git add package.json
           git commit -m "chore: bump ${{ inputs.service }} version to ${{ inputs.bump_type }}"
 
       - name: Also bump cua-agent

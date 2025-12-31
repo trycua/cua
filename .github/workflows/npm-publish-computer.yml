@@ -19,15 +19,55 @@ on:
 
 permissions:
   id-token: write
-  contents: read
+  contents: write
 
 jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.get-version.outputs.version }}
+      tag: ${{ steps.get-version.outputs.tag }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Determine version
+        id: get-version
+        run: |
+          # Check inputs.version first (works for workflow_call)
+          if [ -n "${{ inputs.version }}" ]; then
+            VERSION="${{ inputs.version }}"
+          elif [ -n "${{ github.event.inputs.version }}" ]; then
+            VERSION="${{ github.event.inputs.version }}"
+          else
+            # Read from package.json
+            VERSION=$(node -p "require('./libs/typescript/computer/package.json').version")
+          fi
+
+          echo "Computer version: $VERSION"
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "tag=npm-computer-v${VERSION}" >> $GITHUB_OUTPUT
+
   publish:
+    needs: prepare
     uses: ./.github/workflows/npm-reusable-publish.yml
     with:
       package_name: "computer"
       package_dir: "libs/typescript/computer"
       package_manager: "pnpm"
-      version: ${{ inputs.version || github.event.inputs.version || '' }}
+      version: ${{ needs.prepare.outputs.version }}
     secrets:
       NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  create-release:
+    needs: prepare
+    uses: ./.github/workflows/github-release-reusable.yml
+    with:
+      tag_name: ${{ needs.prepare.outputs.tag }}
+      release_name: "@trycua/computer v${{ needs.prepare.outputs.version }}"
+      body: |
+        ## Installation
+
+        ```bash
+        npm install @trycua/computer
+        ```

@@ -55,7 +55,7 @@ jobs:
       package_name: "core"
       package_dir: "libs/typescript/core"
       package_manager: "pnpm"
-      version: ${{ needs.prepare.outputs.version }}
+      version: ${{ github.event_name != 'push' && needs.prepare.outputs.version || '' }}
     secrets:
       NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
 

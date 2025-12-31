@@ -24,11 +24,7 @@ class BaseModelCompatibleDict(BaseModel):
 
     def get(self, key, default=None):
         try:
-            value = getattr(self, key)
-            if value:
-                return value
-            else:
-                return default
+            return getattr(self, key)
         except AttributeError:
             return default
 

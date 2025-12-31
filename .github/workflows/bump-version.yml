@@ -28,6 +28,8 @@ on:
 
 permissions:
   contents: write
+  id-token: write
+  packages: write
 
 jobs:
   bump-version:
@@ -114,6 +116,8 @@ jobs:
       - name: Setup pnpm
         if: ${{ steps.package.outputs.type == 'npm' && inputs.service != 'npm/cli' }}
         uses: pnpm/action-setup@v4
+        with:
+          package_json_file: ${{ steps.package.outputs.directory }}/package.json
 
       - name: Setup Bun
         if: ${{ inputs.service == 'npm/cli' }}

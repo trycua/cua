@@ -17,6 +17,10 @@ on:
         type: string
         default: ""
 
+permissions:
+  id-token: write
+  contents: read
+
 jobs:
   publish:
     uses: ./.github/workflows/npm-reusable-publish.yml

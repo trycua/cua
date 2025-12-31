@@ -15,13 +15,13 @@ on:
         type: string
         default: ""
 
+permissions:
+  id-token: write
+  contents: write
+  packages: write
+
 jobs:
   build-binaries:
-    permissions:
-      id-token: write
-      contents: write
-      packages: write
-
     strategy:
       matrix:
         include:
@@ -83,8 +83,6 @@ jobs:
   create-release:
     needs: [build-binaries, publish-npm]
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
     steps:
       - name: Checkout code
         uses: actions/checkout@v4

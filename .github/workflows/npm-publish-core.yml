@@ -1,8 +1,6 @@
 name: Publish @trycua/core to npm
 
 on:
-  push:
-    branches: main
   workflow_dispatch:
     inputs:
       version:
@@ -55,7 +53,7 @@ jobs:
       package_name: "core"
       package_dir: "libs/typescript/core"
       package_manager: "pnpm"
-      version: ${{ github.event_name != 'push' && needs.prepare.outputs.version || '' }}
+      version: ${{ needs.prepare.outputs.version }}
     secrets:
       NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
 

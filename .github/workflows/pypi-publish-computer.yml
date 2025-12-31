@@ -156,3 +156,18 @@ jobs:
       - name: Set environment variables for use in other jobs
         run: |
           echo "CORE_VERSION=${{ needs.prepare.outputs.core_version }}" >> $GITHUB_ENV
+
+  create-release:
+    needs: [prepare, publish]
+    uses: ./.github/workflows/github-release-reusable.yml
+    with:
+      tag_name: "computer-v${{ needs.prepare.outputs.version }}"
+      release_name: "cua-computer v${{ needs.prepare.outputs.version }}"
+      body: |
+        ## Computer control library for the Computer Universal Automation (CUA) project
+
+        ## Installation
+
+        ```bash
+        pip install cua-computer==${{ needs.prepare.outputs.version }}
+        ```

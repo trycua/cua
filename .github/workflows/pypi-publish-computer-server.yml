@@ -78,3 +78,27 @@ jobs:
       - name: Set environment variables for use in other jobs
         run: |
           echo "COMPUTER_VERSION=${{ needs.prepare.outputs.version }}" >> $GITHUB_ENV
+
+  create-release:
+    needs: [prepare, publish]
+    uses: ./.github/workflows/github-release-reusable.yml
+    with:
+      tag_name: "computer-server-v${{ needs.prepare.outputs.version }}"
+      release_name: "cua-computer-server v${{ needs.prepare.outputs.version }}"
+      body: |
+        ## Computer Server for the Computer Universal Automation (CUA) project
+
+        A FastAPI-based server implementation for computer control.
+
+        ## Usage
+
+        ```bash
+        # Run the server
+        cua-computer-server
+        ```
+
+        ## Installation
+
+        ```bash
+        pip install cua-computer-server==${{ needs.prepare.outputs.version }}
+        ```

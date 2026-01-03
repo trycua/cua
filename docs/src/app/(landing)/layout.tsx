@@ -1,7 +1,12 @@
 import type { ReactNode } from 'react';
 import { HomeLayout } from 'fumadocs-ui/layouts/home';
-import { baseOptions } from '@/app/layout.config';
+import { CustomHeader } from '@/components/custom-header';
 
 export default function LandingLayout({ children }: { children: ReactNode }) {
-  return <HomeLayout {...baseOptions}>{children}</HomeLayout>;
+  return (
+    <>
+      <CustomHeader />
+      <HomeLayout nav={{ enabled: false }}>{children}</HomeLayout>
+    </>
+  );
 }

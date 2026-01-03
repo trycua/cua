@@ -1,0 +1,180 @@
+---
+title: Local Computer Server
+description: Run the computer server on your host machine for direct desktop control
+---
+
+The **computer server** is a local HTTP service that exposes your desktop for programmatic control. Use it when you want agents to control your actual machine instead of a sandbox, or when connecting to a self-hosted VM.
+
+## When to Use
+
+- **Development/debugging** - Test agents on your real desktop
+- **Self-hosted VMs** - Connect to Windows/Linux VMs you manage yourself
+- **Air-gapped environments** - Run everything locally without cloud dependencies
+- **MCP integrations** - Let Claude Desktop control your computer
+
+## Installation
+
+Install the computer server package:
+
+```bash
+pip install cua-computer-server
+```
+
+Or install dependencies manually:
+
+```bash
+pip install uvicorn fastapi
+pip install cua-computer
+```
+
+## Starting the Server
+
+Run the server on the default port (8000):
+
+```bash
+python -m computer_server
+```
+
+With debug logging:
+
+```bash
+python -m computer_server --log-level debug
+```
+
+Custom port:
+
+```bash
+python -m computer_server --port 9000
+```
+
+The server exposes endpoints for screenshots, mouse/keyboard input, and other computer operations.
+
+## Connecting from Python
+
+Use `use_host_computer_server=True` to connect to a running computer server:
+
+```python
+from computer import Computer
+
+# Connect to local computer server
+computer = Computer(use_host_computer_server=True)
+await computer.run()
+
+# Now you can control your desktop
+screenshot = await computer.interface.screenshot()
+await computer.interface.left_click(500, 300)
+await computer.interface.type_text("Hello from the agent!")
+```
+
+### Custom Host/Port
+
+Connect to a computer server running on a different machine:
+
+```python
+computer = Computer(
+    use_host_computer_server=True,
+    computer_server_host="192.168.1.100",
+    computer_server_port=8000
+)
+```
+
+## With ComputerAgent
+
+Run agents against your desktop:
+
+```python
+from computer import Computer
+from agent import ComputerAgent
+
+computer = Computer(use_host_computer_server=True)
+await computer.run()
+
+agent = ComputerAgent(
+    model="anthropic/claude-sonnet-4-5-20250929",
+    tools=[computer]
+)
+
+async for result in agent.run("Open Firefox and go to github.com"):
+    print(result)
+```
+
+## Self-Hosted VMs
+
+For VMs you manage yourself (e.g., Windows behind a VPN), install the computer server inside the VM and connect remotely:
+
+```python
+# Connect to Windows VM running computer-server
+computer = Computer(
+    use_host_computer_server=True,
+    computer_server_host="windows-vm.local",
+    computer_server_port=8000
+)
+```
+
+See the [Windows App Behind VPN](/docs/examples/platform-specific/windows-app-behind-vpn) example for a complete walkthrough.
+
+## MCP Server Integration
+
+To use with Claude Desktop, start the computer server and configure the MCP server:
+
+```bash
+# Terminal 1: Start computer server
+python -m computer_server --log-level debug
+```
+
+```json
+// Claude Desktop config
+{
+  "mcpServers": {
+    "cua-agent": {
+      "command": "/bin/bash",
+      "args": ["~/.cua/start_mcp_server.sh"],
+      "env": {
+        "CUA_MODEL_NAME": "anthropic/claude-sonnet-4-20250514",
+        "ANTHROPIC_API_KEY": "your-key",
+        "CUA_USE_HOST_COMPUTER_SERVER": "true"
+      }
+    }
+  }
+}
+```
+
+See [MCP Server Installation](/docs/reference/mcp-server/installation) for full setup instructions.
+
+## Security Warning
+
+The computer server gives full control over your desktop. Anyone who can reach the server can:
+
+- Take screenshots of your screen
+- Click anywhere on your desktop
+- Type text and press keys
+- Launch applications
+
+**Recommendations:**
+
+- Only run on localhost or trusted networks
+- Don't expose to the public internet
+- Stop the server when not in use
+- Consider using sandboxes for untrusted workloads
+
+## Troubleshooting
+
+**Port already in use:**
+
+```bash
+lsof -i :8000  # Find what's using the port
+kill -9 <PID>  # Stop it
+```
+
+**Connection refused:**
+
+- Ensure the server is running
+- Check the host and port match
+- Verify firewall allows the connection
+
+**Permission errors (Linux):**
+
+```bash
+# May need to run with display access
+DISPLAY=:0 python -m computer_server
+```

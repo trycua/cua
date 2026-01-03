@@ -266,7 +266,7 @@ await computer.interface.set_clipboard("Text to copy")
 
 #### Shell Methods
 
-##### `run_shell(command)`
+##### `run_shell(command)` / `run_command(command)`
 
 Execute a shell command in the computer.
 
@@ -285,6 +285,114 @@ print(result.exit_code)
 - `stdout` - Standard output
 - `stderr` - Standard error
 - `exit_code` - Exit code (0 = success)
+
+#### Window Management
+
+##### `launch(application)`
+
+Launch an application.
+
+```python
+await computer.interface.launch("xfce4-terminal")
+await computer.interface.launch("libreoffice --writer")
+```
+
+##### `open(uri)`
+
+Open a URL or file with the default application.
+
+```python
+await computer.interface.open("https://www.google.com")
+await computer.interface.open("/home/user/document.pdf")
+```
+
+##### `get_application_windows(app_name)`
+
+Get window IDs for an application.
+
+```python
+windows = await computer.interface.get_application_windows("xfce4-terminal")
+window_id = windows[0]
+```
+
+##### `activate_window(window_id)`
+
+Bring a window to focus.
+
+```python
+await computer.interface.activate_window(window_id)
+```
+
+##### `get_current_window_id()`
+
+Get the active window ID.
+
+```python
+window_id = await computer.interface.get_current_window_id()
+```
+
+##### `window_size(window_id)` / `set_window_size(window_id, width, height)`
+
+Get or set window dimensions.
+
+```python
+size = await computer.interface.window_size(window_id)
+await computer.interface.set_window_size(window_id, 1200, 800)
+```
+
+##### `maximize_window(window_id)` / `minimize_window(window_id)` / `close_window(window_id)`
+
+Window state controls.
+
+```python
+await computer.interface.maximize_window(window_id)
+await computer.interface.minimize_window(window_id)
+await computer.interface.close_window(window_id)
+```
+
+#### Accessibility
+
+##### `get_accessibility_tree()`
+
+Get the accessibility tree for the current screen.
+
+```python
+tree = await computer.interface.get_accessibility_tree()
+```
+
+**Returns:** Accessibility tree structure with UI element information.
+
+#### Virtual Environment
+
+##### `venv_install(venv_name, packages)`
+
+Install packages in a virtual environment.
+
+```python
+await computer.venv_install("my_env", ["requests", "pandas"])
+```
+
+##### `venv_cmd(venv_name, command)`
+
+Run a shell command in a virtual environment.
+
+```python
+result = await computer.venv_cmd("my_env", "pip list")
+```
+
+##### `venv_exec(venv_name, function, *args, **kwargs)`
+
+Execute a Python function in a virtual environment.
+
+```python
+def process_data(x):
+    import pandas as pd
+    return pd.DataFrame(x).to_dict()
+
+result = await computer.venv_exec("my_env", process_data, [1, 2, 3])
+```
+
+See [Sandboxed Python](/docs/guide/fundamentals/sandboxed-python) for detailed usage.
 
 #### File Methods
 
@@ -466,12 +574,13 @@ Directly controls the host machine. Use with caution.
 The `CloudProvider` class enables programmatic management of cloud sandboxes.
 
 ```python
-from computer.providers import CloudProvider
+from computer.providers.cloud.provider import CloudProvider
 
-provider = CloudProvider(
-    api_key="your-api-key",
-    region="north-america"
-)
+# Automatically reads CUA_API_KEY from environment
+provider = CloudProvider(verbose=False)
+
+async with provider:
+    vms = await provider.list_vms()
 ```
 
 ### Constructor Parameters
@@ -479,52 +588,86 @@ provider = CloudProvider(
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `api_key` | `str` | `CUA_API_KEY` env var | API key for authentication |
-| `region` | `str` | `"north-america"` | Region: `"north-america"`, `"europe"`, `"asia-pacific"` |
+| `verbose` | `bool` | `False` | Enable verbose logging |
 
 ### Methods
 
-##### `create_sandbox(options)`
-
-Create a new cloud sandbox.
-
-```python
-sandbox = await provider.create_sandbox({
-    "os": "linux",
-    "size": "medium",
-    "image": "trycua/cua-xfce:latest"
-})
-```
-
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `os` | `str` | `"linux"` | Operating system |
-| `size` | `str` | `"small"` | Size: `"small"`, `"medium"`, `"large"` |
-| `image` | `str` | Default image | Container image to use |
-
-##### `list_sandboxes()`
+##### `list_vms()`
 
 List all sandboxes.
 
 ```python
-sandboxes = await provider.list_sandboxes()
-for sandbox in sandboxes:
-    print(f"{sandbox.id}: {sandbox.status}")
+async with provider:
+    vms = await provider.list_vms()
+    for vm in vms:
+        print(f"{vm['name']}: {vm['status']}")
 ```
 
-##### `get_sandbox(sandbox_id)`
+##### `get_vm(name)`
 
 Get details for a specific sandbox.
 
 ```python
-sandbox = await provider.get_sandbox("sandbox-abc123")
+info = await provider.get_vm("my-vm-name")
 ```
 
-##### `delete_sandbox(sandbox_id)`
+##### `run_vm(name)`
 
-Delete a sandbox.
+Start a sandbox.
 
 ```python
-await provider.delete_sandbox("sandbox-abc123")
+resp = await provider.run_vm("my-vm-name")
+# {"name": "my-vm-name", "status": "starting"}
+```
+
+##### `stop_vm(name)`
+
+Stop a sandbox.
+
+```python
+resp = await provider.stop_vm("my-vm-name")
+# {"name": "my-vm-name", "status": "stopping"}
+```
+
+##### `restart_vm(name)`
+
+Restart a sandbox.
+
+```python
+resp = await provider.restart_vm("my-vm-name")
+# {"name": "my-vm-name", "status": "restarting"}
+```
+
+### Sandbox Status Values
+
+| Status | Description |
+|--------|-------------|
+| `pending` | Deployment in progress |
+| `running` | Active and accessible |
+| `stopped` | Stopped but not terminated |
+| `terminated` | Permanently destroyed |
+| `failed` | Deployment or operation failed |
+
+### HTTP API
+
+You can also manage sandboxes via HTTP:
+
+```bash
+# List sandboxes
+curl -H "Authorization: Bearer $CUA_API_KEY" \
+     "https://api.cua.ai/v1/vms"
+
+# Start sandbox
+curl -X POST -H "Authorization: Bearer $CUA_API_KEY" \
+     "https://api.cua.ai/v1/vms/my-vm-name/start"
+
+# Stop sandbox
+curl -X POST -H "Authorization: Bearer $CUA_API_KEY" \
+     "https://api.cua.ai/v1/vms/my-vm-name/stop"
+
+# Restart sandbox
+curl -X POST -H "Authorization: Bearer $CUA_API_KEY" \
+     "https://api.cua.ai/v1/vms/my-vm-name/restart"
 ```
 
 ---

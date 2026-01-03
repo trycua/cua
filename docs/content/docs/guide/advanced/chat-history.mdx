@@ -1,0 +1,148 @@
+---
+title: Chat History
+description: Managing conversation history for multi-turn agent interactions
+---
+
+**Chat history** tracks the conversation between you and the agent across multiple turns. Each run builds on the previous context, enabling complex multi-step workflows and conversational interactions.
+
+## Basic Multi-Turn Conversation
+
+Pass a message history to continue from previous context:
+
+```python
+from computer import Computer
+from agent import ComputerAgent
+
+computer = Computer(os_type="linux", provider_type="docker", image="trycua/cua-xfce:latest")
+await computer.run()
+
+agent = ComputerAgent(
+    model="anthropic/claude-sonnet-4-5-20250929",
+    tools=[computer]
+)
+
+# First turn
+messages = [{"role": "user", "content": "Open Firefox"}]
+async for result in agent.run(messages):
+    messages.extend(result["output"])
+
+# Second turn - agent remembers Firefox is open
+messages.append({"role": "user", "content": "Now go to github.com"})
+async for result in agent.run(messages):
+    messages.extend(result["output"])
+```
+
+## Interactive Loop
+
+Build a chat interface where each response adds to the history:
+
+```python
+history = []
+
+while True:
+    user_input = input("> ")
+    if user_input.lower() == "quit":
+        break
+
+    history.append({"role": "user", "content": user_input})
+
+    async for result in agent.run(history):
+        history.extend(result["output"])
+
+        # Print assistant responses
+        for item in result["output"]:
+            if item["type"] == "message":
+                print(item["content"][0]["text"])
+```
+
+## Message Structure
+
+A conversation history contains these message types:
+
+```python
+messages = [
+    # User input
+    {"role": "user", "content": "go to trycua on github"},
+
+    # Agent reasoning (internal thought process)
+    {
+        "type": "reasoning",
+        "summary": [{"type": "summary_text", "text": "Searching for Trycua GitHub"}]
+    },
+
+    # Computer action
+    {
+        "type": "computer_call",
+        "call_id": "call_abc123",
+        "status": "completed",
+        "action": {"type": "type", "text": "Trycua GitHub"}
+    },
+
+    # Screenshot result
+    {
+        "type": "computer_call_output",
+        "call_id": "call_abc123",
+        "output": {"type": "input_image", "image_url": "data:image/png;base64,..."}
+    },
+
+    # Final response
+    {
+        "type": "message",
+        "role": "assistant",
+        "content": [{"type": "output_text", "text": "Done! The Trycua GitHub page is now open."}]
+    }
+]
+```
+
+See [Message Format](/docs/guide/advanced/message-format) for complete type definitions.
+
+## Managing Context Size
+
+Screenshots accumulate in the history and consume context window space. Use `only_n_most_recent_images` to limit how many are kept:
+
+```python
+agent = ComputerAgent(
+    model="anthropic/claude-sonnet-4-5-20250929",
+    tools=[computer],
+    only_n_most_recent_images=3  # Keep only last 3 screenshots
+)
+```
+
+Older screenshots are automatically removed, preventing context overflow during long sessions.
+
+## Clearing History
+
+Start fresh by resetting the messages array:
+
+```python
+# Reset to start a new conversation
+messages = []
+
+# Or keep system context but clear conversation
+messages = [{"role": "system", "content": "You are a helpful assistant."}]
+```
+
+## Saving and Loading History
+
+Persist conversations for later use:
+
+```python
+import json
+
+# Save
+with open("conversation.json", "w") as f:
+    # Filter out large image data if needed
+    saveable = [
+        {**m, "output": {"type": m["output"]["type"]}}
+        if m.get("type") == "computer_call_output"
+        else m
+        for m in messages
+    ]
+    json.dump(saveable, f)
+
+# Load
+with open("conversation.json", "r") as f:
+    messages = json.load(f)
+```
+
+For full conversation recording including screenshots, use [Trajectories](/docs/guide/fundamentals/trajectories) instead.

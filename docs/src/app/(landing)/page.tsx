@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import Image from 'next/image';
-import { BookOpen, Code2, FileCode, Play, ArrowRight, ChevronRight } from 'lucide-react';
+import { BookOpen, Code2, FileCode, Cloud, ArrowRight, ChevronRight } from 'lucide-react';
 import type { Metadata } from 'next';
 
 export const metadata: Metadata = {
@@ -16,28 +16,28 @@ const navCards = [
     title: 'Guide',
     description:
       'Everything you need to know to use Cua. Dive deep into all of our features and best practices.',
-    href: '/guide',
+    href: '/guide/get-started/what-is-cua',
   },
   {
     icon: Code2,
     title: 'Examples',
     description:
       'Practical examples built with Cua. Explore guided starting points for your use case.',
-    href: '/examples',
+    href: '/examples/automation/form-filling',
   },
   {
     icon: FileCode,
-    title: 'Reference',
+    title: 'API Reference',
     description:
       'Technical information about the Cua APIs. Quickly refer to basic descriptions of various programming functionalities.',
-    href: '/reference',
+    href: '/reference/computer-sdk',
   },
   {
-    icon: Play,
-    title: 'Playground',
+    icon: Cloud,
+    title: 'Cloud',
     description:
-      'Interactive tutorials to learn how to use Cua. Run serverless cloud functions from your browser.',
-    href: '/guide/get-started/quickstart',
+      'Managed cloud sandboxes for production workloads. Deploy agents at scale with our hosted infrastructure.',
+    href: 'https://cua.ai',
   },
 ];
 
@@ -46,22 +46,22 @@ const featuredExamples = [
   {
     title: 'Windows App Behind VPN',
     description: 'Automate legacy Windows applications securely behind VPN',
-    href: '/examples/example-usecases/windows-app-behind-vpn',
+    href: '/examples/platform-specific/windows-app-behind-vpn',
   },
   {
     title: 'PDF to Form Automation',
     description: 'Enhance interactions between form filling and local file systems',
-    href: '/examples/example-usecases/form-filling',
+    href: '/examples/automation/form-filling',
   },
   {
     title: 'Contact Export',
     description: 'Export contacts from post-event platforms automatically',
-    href: '/examples/example-usecases/post-event-contact-export',
+    href: '/examples/automation/post-event-contact-export',
   },
   {
     title: 'Complex UI Navigation',
     description: 'Navigate complex UIs with Gemini vision capabilities',
-    href: '/examples/example-usecases/gemini-complex-ui-navigation',
+    href: '/examples/ai-models/gemini-complex-ui-navigation',
   },
 ];
 
@@ -98,7 +98,7 @@ export default function LandingPage() {
               {/* Badge */}
               <div className="mb-6 inline-flex items-center gap-2 rounded-lg border border-fd-border bg-fd-card/50 px-3 py-1.5 text-sm backdrop-blur-sm">
                 <span className="h-2 w-2 rounded-full bg-emerald-500" />
-                <span className="text-fd-muted-foreground">Open Source Documentation</span>
+                <span className="text-fd-muted-foreground">Open Source</span>
               </div>
 
               <h1
@@ -208,7 +208,7 @@ export default function LandingPage() {
             </p>
           </div>
           <Link
-            href="/examples"
+            href="/examples/automation/form-filling"
             className="hidden items-center gap-1 text-sm font-medium text-fd-muted-foreground transition-colors hover:text-fd-foreground sm:inline-flex"
           >
             View all
@@ -257,7 +257,7 @@ export default function LandingPage() {
         {/* Mobile "View all" link */}
         <div className="mt-6 text-center sm:hidden">
           <Link
-            href="/examples"
+            href="/examples/automation/form-filling"
             className="inline-flex items-center gap-1 text-sm font-medium text-fd-muted-foreground transition-colors hover:text-fd-foreground"
           >
             View all examples
@@ -281,23 +281,17 @@ export default function LandingPage() {
             </p>
             <div className="mt-6 flex flex-wrap items-center justify-center gap-3">
               <Link
-                href="/guide/get-started/quickstart"
+                href="/guide/get-started/what-is-cua"
                 className="inline-flex items-center gap-2 rounded-xl bg-fd-foreground px-6 py-2.5 text-sm font-medium text-fd-background transition-colors hover:bg-fd-foreground/90"
               >
-                Quickstart Guide
+                Get Started
                 <ArrowRight className="h-4 w-4" />
               </Link>
               <Link
-                href="/reference/agent-sdk/agent-loops"
+                href="/reference/computer-sdk"
                 className="inline-flex items-center gap-2 rounded-xl border border-fd-border px-6 py-2.5 text-sm font-medium transition-colors hover:bg-fd-accent"
               >
-                Agent Loops
-              </Link>
-              <Link
-                href="/reference/computer-sdk/computers"
-                className="inline-flex items-center gap-2 rounded-xl border border-fd-border px-6 py-2.5 text-sm font-medium transition-colors hover:bg-fd-accent"
-              >
-                Computer SDK
+                API Reference
               </Link>
             </div>
           </div>

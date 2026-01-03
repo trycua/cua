@@ -6,9 +6,7 @@
   "pages": [
     "get-started",
     "fundamentals",
-    "model-providers",
-    "agents",
-    "computers",
+    "advanced",
     "integrations"
   ]
 }

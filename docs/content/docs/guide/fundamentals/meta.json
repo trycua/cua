@@ -5,13 +5,9 @@
   "defaultOpen": true,
   "pages": [
     "agent-loops",
-    "computers",
     "vlms",
+    "cua-vlm-router",
     "browser-tool",
-    "sandboxed-python",
-    "custom-tools",
-    "callbacks",
-    "trajectories",
-    "tracing"
+    "callbacks"
   ]
 }

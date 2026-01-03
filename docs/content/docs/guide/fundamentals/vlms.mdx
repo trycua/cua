@@ -116,65 +116,29 @@ The first run downloads model weights from HuggingFace. Subsequent runs load fro
 
 ### Using MLX (Apple Silicon)
 
-For M1/M2/M3 Macs, MLX provides optimized inference:
+For M1/M2/M3/M4 Macs, MLX provides optimized inference:
 
 ```python
 agent = ComputerAgent(
-    model="mlx-vlm/Qwen/Qwen2.5-VL-7B-Instruct",
+    model="mlx/mlx-community/UI-TARS-1.5-7B-6bit",
     tools=[computer]
 )
 ```
 
 MLX models run efficiently on Apple's unified memory architecture.
 
-## Composed Models
+### Using Ollama
 
-Some models excel at **grounding** (finding UI elements) but can't reason about tasks. Others are great at **planning** but can't precisely locate elements. Composed models combine both:
+Run models locally via Ollama:
 
 ```python
-# Format: grounding_model+planning_model
 agent = ComputerAgent(
-    model="huggingface-local/HelloKKMe/GTA1-7B+anthropic/claude-sonnet-4-5-20250929",
+    model="ollama_chat/llama3.2:latest",
     tools=[computer]
 )
 ```
 
-The `+` syntax tells Cua to use a two-stage approach:
-
-1. **Grounding stage** - The first model (GTA1) analyzes the screenshot and identifies UI element coordinates
-2. **Planning stage** - The second model (Claude) receives the element list and decides which to interact with
-
-This is useful when you want local grounding (privacy, cost) with cloud reasoning (accuracy):
-
-```python
-# Local grounding + cloud planning
-"moondream3+anthropic/claude-sonnet-4-5-20250929"
-"omniparser+openai/gpt-4o"
-"huggingface-local/ByteDance-Seed/UI-TARS-1.5-7B+openai/gpt-4o"
-```
-
-## Cua VLM Router
-
-Instead of managing multiple API keys, use Cua VLM Router for unified access:
-
-```python
-agent = ComputerAgent(
-    model="cua/anthropic/claude-sonnet-4.5",
-    tools=[computer]
-)
-```
-
-```bash
-export CUA_API_KEY="your-cua-key"
-```
-
-The router provides:
-
-- Single API key for all supported providers
-- Automatic fallback between providers
-- Unified usage tracking and billing
-
-See [Cua VLM Router](/docs/guide/model-providers/cua-vlm-router) for details.
+Ollama handles model downloading and serves inference locally.
 
 ## Model Capabilities
 

@@ -1,0 +1,91 @@
+---
+title: Cua VLM Router
+description: Unified API access to multiple VLM providers without managing infrastructure
+---
+
+Instead of deploying and managing computer-use vision language models yourself on various cloud providers, Cua VLM Router gives you instant access to all supported models through a single API key. No infrastructure setup, no multiple provider accounts—just one integration for Claude, Gemini, Qwen, and more.
+
+## Setup
+
+```python
+from computer import Computer
+from agent import ComputerAgent
+
+computer = Computer(os_type="linux", provider_type="docker", image="trycua/cua-xfce:latest")
+await computer.run()
+
+agent = ComputerAgent(
+    model="cua/anthropic/claude-sonnet-4.5",
+    tools=[computer]
+)
+```
+
+```bash
+export CUA_API_KEY="your-cua-key"
+```
+
+Get your API key at [cua.ai](https://cua.ai/signin).
+
+## Available Models
+
+| Model | Description |
+|-------|-------------|
+| `cua/anthropic/claude-sonnet-4.5` | General-purpose (recommended) |
+| `cua/anthropic/claude-haiku-4.5` | Fast, cost-effective |
+| `cua/anthropic/claude-opus-4.5` | Most capable |
+| `cua/google/gemini-3-flash-preview` | Fastest, cheapest |
+| `cua/google/gemini-3-pro-preview` | Most powerful |
+| `cua/qwen/qwen3-vl-235b` | Large-scale vision tasks |
+
+## Benefits
+
+- **Single API key** for all supported providers
+- **Cost tracking** in every response
+- **Unified dashboard** for usage monitoring
+- **No vendor lock-in** - switch models without changing code
+
+## Cost Tracking
+
+Every response includes usage information:
+
+```python
+async for result in agent.run(messages):
+    print(f"Cost: ${result['usage']['response_cost']:.4f}")
+    print(f"Tokens: {result['usage']['total_tokens']}")
+```
+
+## HTTP API
+
+Use the router directly via HTTP for integrations outside Python:
+
+### Chat Completions
+
+```bash
+curl -X POST https://inference.cua.ai/v1/chat/completions \
+  -H "Authorization: Bearer $CUA_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "anthropic/claude-sonnet-4.5",
+    "messages": [{"role": "user", "content": "Hello!"}],
+    "max_tokens": 100
+  }'
+```
+
+### Check Balance
+
+```bash
+curl -H "Authorization: Bearer $CUA_API_KEY" \
+     "https://inference.cua.ai/v1/balance"
+```
+
+## When to Use
+
+**Multi-provider workflows** - Access Claude, Gemini, and Qwen from a single integration.
+
+**Cost monitoring** - Track spending across all providers in one dashboard.
+
+**Team environments** - Share a single API key with usage limits and monitoring.
+
+**Rapid prototyping** - Try different models without setting up individual provider accounts.
+
+For direct provider access or custom billing arrangements, use the provider-specific APIs instead. See [Vision Language Models](/guide/fundamentals/vlms) for direct provider setup.

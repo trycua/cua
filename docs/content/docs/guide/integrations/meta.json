@@ -3,8 +3,7 @@
   "description": "Third-party tools and integrations",
   "icon": "Plug",
   "pages": [
-    "mcp-server",
-    "observability",
+    "laminar",
     "hud",
     "benchmarks"
   ]

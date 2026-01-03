@@ -3,17 +3,14 @@ title: Sandboxed Python
 description: Execute Python functions securely in isolated virtual environments
 ---
 
-**Sandboxed Python** lets you run Python code inside your sandbox rather than on your host machine. This bridges the gap between UI automation (clicking buttons, filling forms) and data processing (API calls, file manipulation, computation).
+Sometimes you don't want to rely on UI automation or shell commands—you just want to run Python code directly inside the sandbox. **Sandboxed Python** lets you execute Python functions in isolated virtual environments within your sandbox, giving you programmatic control without clicking through UIs.
 
 ## Why Run Code in the Sandbox?
 
-When your agent scrapes data from a UI, you often need to process it—call an API, transform the data, or save it somewhere. Running this code on your host has drawbacks:
-
-- **Security risk** - Untrusted code could affect your system
-- **Dependency conflicts** - Packages might clash with your local environment
-- **Reproducibility** - Different hosts have different setups
-
-Sandboxed Python executes your functions inside the sandbox's isolated environment, using virtual environments you control.
+- **Faster than UI** - Skip the clicks and run code directly
+- **More reliable** - No flaky element detection or timing issues
+- **Full Python power** - Use any library for data processing, API calls, or computation
+- **Isolated** - Code runs in the sandbox, not on your host, with its own dependencies
 
 ## Running a Function in the Sandbox
 

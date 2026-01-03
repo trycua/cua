@@ -1,0 +1,52 @@
+name: Generate SDK Docs
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "libs/**"
+      - ".github/workflows/docs.yml"
+  workflow_dispatch: # Allow manual trigger
+
+jobs:
+  generate-docs:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install pnpm
+        run: npm install -g pnpm
+
+      - name: Install uv
+        run: pip install uv
+
+      - name: Generate TypeScript Docs
+        run: |
+          cd libs/typescript
+          pnpm install
+          pnpm docs
+
+      - name: Generate Python Docs
+        run: |
+          uv sync --group docs
+          sphinx-build -b markdown docs/sphinx docs/content/docs/api/python
+
+      - name: Commit generated docs
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "docs: auto-generate SDK API reference"
+          file_pattern: |
+            docs/content/docs/api/**

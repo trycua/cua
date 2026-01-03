@@ -1,0 +1,15 @@
+{
+  "entryPoints": [
+    "core/src/index.ts",
+    "agent/src/index.ts",
+    "computer/src/index.ts",
+    "cua-cli/index.ts"
+  ],
+  "out": "../../docs/content/docs/api/typescript",
+  "plugin": ["typedoc-plugin-markdown"],
+  "outputFileStrategy": "modules",
+  "excludePrivate": true,
+  "excludeInternal": true,
+  "readme": "none",
+  "gitRevision": "main"
+}

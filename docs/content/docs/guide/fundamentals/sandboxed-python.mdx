@@ -1,0 +1,225 @@
+---
+title: Sandboxed Python
+description: Execute Python functions securely in isolated virtual environments
+---
+
+**Sandboxed Python** lets you run Python code inside your sandbox rather than on your host machine. This bridges the gap between UI automation (clicking buttons, filling forms) and data processing (API calls, file manipulation, computation).
+
+## Why Run Code in the Sandbox?
+
+When your agent scrapes data from a UI, you often need to process it—call an API, transform the data, or save it somewhere. Running this code on your host has drawbacks:
+
+- **Security risk** - Untrusted code could affect your system
+- **Dependency conflicts** - Packages might clash with your local environment
+- **Reproducibility** - Different hosts have different setups
+
+Sandboxed Python executes your functions inside the sandbox's isolated environment, using virtual environments you control.
+
+## Running a Function in the Sandbox
+
+Here's the basic pattern:
+
+```python
+from computer import Computer
+
+computer = Computer(os_type="linux", provider_type="docker", image="trycua/cua-xfce:latest")
+await computer.run()
+
+# First, install any packages you need
+await computer.venv_install("my_env", ["requests", "pandas"])
+
+# Define a function to run remotely
+def fetch_data(url):
+    import requests
+    import pandas as pd
+
+    response = requests.get(url)
+    data = response.json()
+    df = pd.DataFrame(data)
+    return {"rows": len(df), "columns": list(df.columns)}
+
+# Execute it in the sandbox
+result = await computer.venv_exec("my_env", fetch_data, "https://api.example.com/data")
+print(result)  # {"rows": 100, "columns": ["id", "name", "value"]}
+```
+
+The function runs inside the sandbox, not on your host. Cua automatically extracts the function's source code, serializes the arguments, sends everything to the sandbox, executes it, and returns the result.
+
+## Setting Up Virtual Environments
+
+Before running code, create a virtual environment and install packages:
+
+```python
+# Create "data_env" and install packages
+await computer.venv_install("data_env", ["numpy", "scipy", "matplotlib"])
+
+# Add more packages later
+await computer.venv_install("data_env", ["seaborn", "scikit-learn"])
+```
+
+Virtual environments are stored in `~/.venvs/{name}` on Linux/macOS or `%USERPROFILE%\.venvs\{name}` on Windows sandboxes. They persist across function calls.
+
+You can also run arbitrary shell commands with the environment activated:
+
+```python
+# Check installed packages
+result = await computer.venv_cmd("data_env", "pip list")
+print(result.output)
+
+# Run a script
+result = await computer.venv_cmd("data_env", "python /path/to/script.py")
+```
+
+## Using the `@sandboxed` Decorator
+
+For cleaner code, use the decorator to mark functions for remote execution:
+
+```python
+from computer import Computer
+from computer.helpers import sandboxed
+
+computer = Computer(os_type="linux", provider_type="docker", image="trycua/cua-xfce:latest")
+await computer.run()
+
+await computer.venv_install("api_env", ["requests"])
+
+@sandboxed("api_env")
+def call_api(endpoint, payload):
+    import requests
+    response = requests.post(endpoint, json=payload)
+    response.raise_for_status()
+    return response.json()
+
+# Call it like a normal async function
+result = await call_api("https://api.example.com/submit", {"name": "test"})
+```
+
+The decorator transforms the function so that calling it executes remotely. You can configure retry behavior and specify which computer instance to use:
+
+```python
+@sandboxed(venv_name="my_env", computer=computer, max_retries=5)
+def unreliable_operation():
+    # Will retry up to 5 times on failure
+    ...
+```
+
+## How It Works Under the Hood
+
+When you call a sandboxed function, Cua:
+
+1. **Extracts source code** - Uses Python's AST to analyze your function
+2. **Detects dependencies** - Automatically includes imports, helper functions, and closure variables
+3. **Serializes arguments** - JSON-encodes and base64-wraps data for safe transport
+4. **Executes remotely** - Runs the code in the sandbox's virtual environment
+5. **Returns results** - Deserializes the output back to Python objects
+
+This means your function can call other local functions, and they'll be included automatically:
+
+```python
+def helper(x):
+    return x * 2
+
+@sandboxed("my_env")
+def process(value):
+    return helper(value) + 10  # helper() is included automatically
+
+result = await process(5)  # Returns 20
+```
+
+## Handling Errors
+
+Exceptions raised in the sandbox propagate back with full tracebacks:
+
+```python
+@sandboxed("my_env")
+def might_fail(x):
+    if x < 0:
+        raise ValueError(f"Expected positive number, got {x}")
+    return x ** 2
+
+try:
+    result = await might_fail(-5)
+except ValueError as e:
+    print(f"Error from sandbox: {e}")
+    # Traceback shows the exact line in your function
+```
+
+The traceback includes both the remote stack (where the error occurred in the sandbox) and local context (where you called the function).
+
+## Running Long Tasks in the Background
+
+For tasks that take a while, run them in the background to avoid blocking:
+
+```python
+def long_running_analysis(data_path):
+    import pandas as pd
+    import time
+
+    df = pd.read_csv(data_path)
+    # ... expensive computation ...
+    time.sleep(60)
+    return {"processed": len(df)}
+
+# Start without waiting
+pid = await computer.venv_exec_background(
+    "data_env",
+    long_running_analysis,
+    "/tmp/large_dataset.csv",
+    requirements=["pandas"]  # Auto-installs if missing
+)
+
+print(f"Background task running with PID: {pid}")
+
+# Continue with other work while it runs
+```
+
+## Example: Browser Automation with Playwright
+
+Combine UI automation with Playwright running inside the sandbox:
+
+```python
+await computer.venv_install("browser_env", ["playwright"])
+await computer.venv_cmd("browser_env", "playwright install chromium")
+
+@sandboxed("browser_env")
+def scrape_page(url):
+    from playwright.sync_api import sync_playwright
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch()
+        page = browser.new_page()
+        page.goto(url)
+
+        title = page.title()
+        links = [a.get_attribute("href") for a in page.query_selector_all("a")]
+
+        browser.close()
+
+    return {"title": title, "link_count": len(links)}
+
+result = await scrape_page("https://example.com")
+```
+
+## Example: Processing Agent-Scraped Data
+
+After your agent extracts data from a UI, process it in the sandbox:
+
+```python
+# Agent scrapes a table from the UI
+table_data = await agent.run("Extract the sales data table from the spreadsheet")
+
+@sandboxed("data_env")
+def analyze_sales(data):
+    import pandas as pd
+
+    df = pd.DataFrame(data)
+    return {
+        "total_revenue": df["revenue"].sum(),
+        "top_product": df.loc[df["revenue"].idxmax(), "product"],
+        "monthly_avg": df.groupby("month")["revenue"].mean().to_dict()
+    }
+
+analysis = await analyze_sales(table_data)
+```
+
+This pattern keeps your host clean while giving agents full computational capabilities inside isolated environments.

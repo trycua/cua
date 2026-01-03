@@ -1,0 +1,17 @@
+{
+  "title": "Reference",
+  "description": "SDK and CLI reference documentation",
+  "root": true,
+  "defaultOpen": true,
+  "pages": [
+    "index",
+    "---[Bot]Agent SDK---",
+    "...agent-sdk",
+    "---[Monitor]Computer SDK---",
+    "...computer-sdk",
+    "---[Terminal]Cloud CLI---",
+    "...cli-playbook",
+    "---[Terminal]macOS VM CLI---",
+    "...macos-vm-cli-playbook"
+  ]
+}

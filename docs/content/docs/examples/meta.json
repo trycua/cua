@@ -1,0 +1,12 @@
+{
+  "title": "Examples",
+  "description": "Real-world examples of building with Cua",
+  "root": true,
+  "icon": "Blocks",
+  "pages": [
+    "index",
+    "automation",
+    "platform-specific",
+    "ai-models"
+  ]
+}

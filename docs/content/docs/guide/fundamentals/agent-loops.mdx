@@ -1,0 +1,143 @@
+---
+title: Agent Loops
+description: Supported computer-using agent loops and models
+---
+
+<Callout>
+  A corresponding <a href="https://github.com/trycua/cua/blob/main/notebooks/agent_nb.ipynb" target="_blank">Jupyter Notebook</a> is available for this documentation.
+</Callout>
+
+An **agent loop** runs iteratively until a task is complete:
+
+1. **Observe** → Take a screenshot
+2. **Reason** → VLM decides the next action
+3. **Act** → Execute (click, type, scroll)
+4. **Repeat** → Until done
+
+To run an agent loop simply do:
+
+```python
+from agent import ComputerAgent
+import asyncio
+from computer import Computer
+
+
+async def take_screenshot():
+    async with Computer(
+        os_type="linux",
+        provider_type="cloud",
+        name="your-sandbox-name",
+        api_key="your-api-key"
+    ) as computer:
+
+        agent = ComputerAgent(
+            model="anthropic/claude-sonnet-4-5-20250929",
+            tools=[computer],
+            max_trajectory_budget=5.0
+        )
+
+        messages = [{"role": "user", "content": "Take a screenshot and tell me what you see"}]
+
+        async for result in agent.run(messages):
+            for item in result["output"]:
+                if item["type"] == "message":
+                    print(item["content"][0]["text"])
+
+
+if __name__ == "__main__":
+    asyncio.run(take_screenshot())
+```
+
+For a list of supported models and configurations, see the [Supported Agents](./supported-agents/computer-use-agents) page.
+
+## Configuration
+
+Before running an agent, set the appropriate API key as an environment variable:
+
+```bash
+# For cloud sandboxes and Cua VLM Router
+export CUA_API_KEY="your-cua-api-key"
+
+# For direct provider access (BYOK - Bring Your Own Key)
+export ANTHROPIC_API_KEY="your-anthropic-key"
+export OPENAI_API_KEY="your-openai-key"
+```
+
+Use `CUA_API_KEY` when using Cua's cloud infrastructure or VLM Router. Use provider-specific keys when connecting directly to Anthropic or OpenAI.
+
+## Sending Tasks
+
+You can send tasks to the agent as a simple string or as a message list for multi-turn conversations:
+
+```python
+# Single task
+async for result in agent.run("Open Firefox and go to google.com"):
+    process(result)
+
+# Multi-turn conversation (continues from previous context)
+messages = [
+    {"role": "user", "content": "Take a screenshot"},
+    {"role": "assistant", "content": "Done. I can see a desktop with Firefox open."},
+    {"role": "user", "content": "Now click the search bar"}
+]
+async for result in agent.run(messages):
+    process(result)
+```
+
+Multi-turn conversations are useful when you need the agent to build on previous actions or when implementing human-in-the-loop workflows.
+
+## Processing Results
+
+Each iteration yields a result containing the agent's outputs and token usage:
+
+```python
+async for result in agent.run(messages):
+    for item in result["output"]:
+        match item["type"]:
+            case "message":
+                # Agent's text response
+                print(item["content"][0]["text"])
+            case "computer_call":
+                # Action the agent is taking (screenshot, click, type)
+                print(f"Action: {item['action']['type']}")
+            case "computer_call_output":
+                # Result of the action (e.g., screenshot image)
+                print(f"Output received for {item['call_id']}")
+
+    # Track costs
+    print(f"Cost so far: ${result['usage']['response_cost']:.4f}")
+```
+
+### Streaming Responses
+
+For real-time feedback, enable streaming to receive partial results as they're generated:
+
+```python
+async for result in agent.run(messages, stream=True):
+    for item in result["output"]:
+        if item["type"] == "message":
+            # Print text as it arrives
+            print(item["content"][0]["text"], end="", flush=True)
+```
+
+## Handling Errors
+
+The agent respects the `max_trajectory_budget` you set. When the budget is exceeded, the agent raises an exception:
+
+```python
+from agent.exceptions import BudgetExceededException
+
+agent = ComputerAgent(
+    model="anthropic/claude-sonnet-4-5-20250929",
+    tools=[computer],
+    max_trajectory_budget=5.0  # Max $5 per run
+)
+
+try:
+    async for result in agent.run(messages):
+        process(result)
+except BudgetExceededException:
+    print("Task exceeded budget limit")
+```
+
+This prevents runaway costs when agents get stuck in loops or take longer than expected.

@@ -1,0 +1,17 @@
+{
+  "title": "Fundamentals",
+  "description": "Core concepts for building with Cua",
+  "icon": "Lightbulb",
+  "defaultOpen": true,
+  "pages": [
+    "agent-loops",
+    "computers",
+    "vlms",
+    "browser-tool",
+    "sandboxed-python",
+    "custom-tools",
+    "callbacks",
+    "trajectories",
+    "tracing"
+  ]
+}

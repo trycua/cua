@@ -1,0 +1,14 @@
+{
+  "title": "Guide",
+  "description": "Learn how to build with Cua",
+  "root": true,
+  "icon": "Book",
+  "pages": [
+    "get-started",
+    "fundamentals",
+    "model-providers",
+    "agents",
+    "computers",
+    "integrations"
+  ]
+}

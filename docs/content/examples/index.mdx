@@ -1,0 +1,48 @@
+---
+title: Examples
+description: Real-world examples of building with Cua
+---
+
+import { Code2, Monitor, FileText, Globe } from 'lucide-react';
+
+<div className="not-prose -mt-2 mb-6">
+  <p className="text-fd-primary font-semibold text-sm mb-1">Examples</p>
+  <h1 className="text-3xl font-bold tracking-tight md:text-4xl">Real-World Examples</h1>
+</div>
+
+Explore practical examples and use cases built with Cua. These examples demonstrate how to build computer-use agents for various automation tasks.
+
+## Featured Examples
+
+<div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-6">
+  <Card
+    icon={<Monitor className="w-4 h-4" />}
+    href="/examples/example-usecases/windows-app-behind-vpn"
+    title="Windows App Behind VPN"
+    description="Automate legacy Windows applications securely behind VPN"
+  />
+  <Card
+    icon={<FileText className="w-4 h-4" />}
+    href="/examples/example-usecases/form-filling"
+    title="PDF to Form Automation"
+    description="Enhance interactions between form filling and local file systems"
+  />
+  <Card
+    icon={<Globe className="w-4 h-4" />}
+    href="/examples/example-usecases/post-event-contact-export"
+    title="Contact Export"
+    description="Export contacts from post-event platforms automatically"
+  />
+  <Card
+    icon={<Code2 className="w-4 h-4" />}
+    href="/examples/example-usecases/gemini-complex-ui-navigation"
+    title="Complex UI Navigation"
+    description="Navigate complex UIs with Gemini vision capabilities"
+  />
+</div>
+
+## More Resources
+
+- Check out our [GitHub examples](https://github.com/trycua/cua/tree/main/examples) for code samples
+- Explore [Jupyter notebooks](https://github.com/trycua/cua/tree/main/notebooks) for interactive tutorials
+- Read our [blog tutorials](https://cua.ai/blog) for step-by-step guides

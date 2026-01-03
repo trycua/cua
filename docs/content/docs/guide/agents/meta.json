@@ -1,0 +1,17 @@
+{
+  "title": "Agents",
+  "description": "Building and configuring computer-use agents",
+  "icon": "Bot",
+  "pages": [
+    "supported-agents",
+    "callbacks",
+    "custom-tools",
+    "chat-history",
+    "customizing-computeragent",
+    "prompt-caching",
+    "message-format",
+    "usage-tracking",
+    "telemetry",
+    "migration-guide"
+  ]
+}

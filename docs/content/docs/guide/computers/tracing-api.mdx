@@ -1,0 +1,345 @@
+---
+title: Tracing
+description: Record computer interactions for debugging, training, and analysis
+---
+
+# Tracing
+
+The Computer tracing API provides a powerful way to record computer interactions for debugging, training, analysis, and compliance purposes. Inspired by Playwright's tracing functionality, it offers flexible recording options and standardized output formats.
+
+## Overview
+
+The tracing API allows you to:
+
+- Record screenshots at key moments
+- Log all API calls and their results
+- Capture accessibility tree snapshots
+- Add custom metadata
+- Export recordings in standardized formats
+- Support for both automated and human-in-the-loop workflows
+
+## Basic Usage
+
+### Starting and Stopping Traces
+
+```python
+from computer import Computer
+
+computer = Computer(os_type="macos")
+await computer.run()
+
+# Start tracing with default options
+await computer.tracing.start()
+
+# Perform some operations
+await computer.interface.left_click(100, 200)
+await computer.interface.type_text("Hello, World!")
+await computer.interface.press_key("enter")
+
+# Stop tracing and save
+trace_path = await computer.tracing.stop()
+print(f"Trace saved to: {trace_path}")
+```
+
+### Custom Configuration
+
+```python
+# Start tracing with custom configuration
+await computer.tracing.start({
+    'video': False,              # Record video frames
+    'screenshots': True,         # Record screenshots (default: True)
+    'api_calls': True,          # Record API calls (default: True)
+    'accessibility_tree': True, # Record accessibility snapshots
+    'metadata': True,           # Allow custom metadata (default: True)
+    'name': 'my_custom_trace',  # Custom trace name
+    'path': './my_traces'       # Custom output directory
+})
+
+# Add custom metadata during tracing
+await computer.tracing.add_metadata('user_id', 'user123')
+await computer.tracing.add_metadata('test_case', 'login_flow')
+
+# Stop with custom options
+trace_path = await computer.tracing.stop({
+    'path': './exports/trace.zip',
+    'format': 'zip'  # 'zip' or 'dir'
+})
+```
+
+## Configuration Options
+
+### Start Options
+
+| Option               | Type | Default        | Description                           |
+| -------------------- | ---- | -------------- | ------------------------------------- |
+| `video`              | bool | `False`        | Record video frames (future feature)  |
+| `screenshots`        | bool | `True`         | Capture screenshots after key actions |
+| `api_calls`          | bool | `True`         | Log all interface method calls        |
+| `accessibility_tree` | bool | `False`        | Record accessibility tree snapshots   |
+| `metadata`           | bool | `True`         | Enable custom metadata recording      |
+| `name`               | str  | auto-generated | Custom name for the trace             |
+| `path`               | str  | auto-generated | Custom directory for trace files      |
+
+### Stop Options
+
+| Option   | Type | Default        | Description                        |
+| -------- | ---- | -------------- | ---------------------------------- |
+| `path`   | str  | auto-generated | Custom output path for final trace |
+| `format` | str  | `'zip'`        | Output format: `'zip'` or `'dir'`  |
+
+## Use Cases
+
+### Custom Agent Development
+
+```python
+from computer import Computer
+
+async def test_custom_agent():
+    computer = Computer(os_type="linux")
+    await computer.run()
+
+    # Start tracing for this test session
+    await computer.tracing.start({
+        'name': 'custom_agent_test',
+        'screenshots': True,
+        'accessibility_tree': True
+    })
+
+    # Your custom agent logic here
+    screenshot = await computer.interface.screenshot()
+    await computer.interface.left_click(500, 300)
+    await computer.interface.type_text("test input")
+
+    # Add context about what the agent is doing
+    await computer.tracing.add_metadata('action', 'filling_form')
+    await computer.tracing.add_metadata('confidence', 0.95)
+
+    # Save the trace
+    trace_path = await computer.tracing.stop()
+    return trace_path
+```
+
+### Training Data Collection
+
+```python
+async def collect_training_data():
+    computer = Computer(os_type="macos")
+    await computer.run()
+
+    tasks = [
+        "open_browser_and_search",
+        "create_document",
+        "send_email"
+    ]
+
+    for task in tasks:
+        # Start a new trace for each task
+        await computer.tracing.start({
+            'name': f'training_{task}',
+            'screenshots': True,
+            'accessibility_tree': True,
+            'metadata': True
+        })
+
+        # Add task metadata
+        await computer.tracing.add_metadata('task_type', task)
+        await computer.tracing.add_metadata('difficulty', 'beginner')
+
+        # Perform the task (automated or human-guided)
+        await perform_task(computer, task)
+
+        # Save this training example
+        await computer.tracing.stop({
+            'path': f'./training_data/{task}.zip'
+        })
+```
+
+### Human-in-the-Loop Recording
+
+```python
+async def record_human_demonstration():
+    computer = Computer(os_type="windows")
+    await computer.run()
+
+    # Start recording human demonstration
+    await computer.tracing.start({
+        'name': 'human_demo_excel_workflow',
+        'screenshots': True,
+        'api_calls': True,  # Will capture any programmatic actions
+        'metadata': True
+    })
+
+    print("Trace recording started. Perform your demonstration...")
+    print("The system will record all computer interactions.")
+
+    # Add metadata about the demonstration
+    await computer.tracing.add_metadata('demonstrator', 'expert_user')
+    await computer.tracing.add_metadata('workflow', 'excel_data_analysis')
+
+    # Human performs actions manually or through other tools
+    # Tracing will still capture any programmatic interactions
+
+    input("Press Enter when demonstration is complete...")
+
+    # Stop and save the demonstration
+    trace_path = await computer.tracing.stop()
+    print(f"Human demonstration saved to: {trace_path}")
+```
+
+### RPA Debugging
+
+```python
+async def debug_rpa_workflow():
+    computer = Computer(os_type="linux")
+    await computer.run()
+
+    # Start tracing with full debugging info
+    await computer.tracing.start({
+        'name': 'rpa_debug_session',
+        'screenshots': True,
+        'accessibility_tree': True,
+        'api_calls': True
+    })
+
+    try:
+        # Your RPA workflow
+        await rpa_login_sequence(computer)
+        await rpa_data_entry(computer)
+        await rpa_generate_report(computer)
+
+        await computer.tracing.add_metadata('status', 'success')
+
+    except Exception as e:
+        # Record the error in the trace
+        await computer.tracing.add_metadata('error', str(e))
+        await computer.tracing.add_metadata('status', 'failed')
+        raise
+    finally:
+        # Always save the debug trace
+        trace_path = await computer.tracing.stop()
+        print(f"Debug trace saved to: {trace_path}")
+```
+
+## Output Format
+
+### Directory Structure
+
+When using `format='dir'`, traces are saved with this structure:
+
+```
+trace_20240922_143052_abc123/
+├── trace_metadata.json         # Overall trace information
+├── event_000001_trace_start.json
+├── event_000002_api_call.json
+├── event_000003_api_call.json
+├── 000001_initial_screenshot.png
+├── 000002_after_left_click.png
+├── 000003_after_type_text.png
+└── event_000004_trace_end.json
+```
+
+### Metadata Format
+
+The `trace_metadata.json` contains:
+
+```json
+{
+  "trace_id": "trace_20240922_143052_abc123",
+  "config": {
+    "screenshots": true,
+    "api_calls": true,
+    "accessibility_tree": false,
+    "metadata": true
+  },
+  "start_time": 1695392252.123,
+  "end_time": 1695392267.456,
+  "duration": 15.333,
+  "total_events": 12,
+  "screenshot_count": 5,
+  "events": [...] // All events in chronological order
+}
+```
+
+### Event Format
+
+Individual events follow this structure:
+
+```json
+{
+  "type": "api_call",
+  "timestamp": 1695392255.789,
+  "relative_time": 3.666,
+  "data": {
+    "method": "left_click",
+    "args": { "x": 100, "y": 200, "delay": null },
+    "result": null,
+    "error": null,
+    "screenshot": "000002_after_left_click.png",
+    "success": true
+  }
+}
+```
+
+## Integration with ComputerAgent
+
+The tracing API works seamlessly with existing ComputerAgent workflows:
+
+```python
+from agent import ComputerAgent
+from computer import Computer
+
+# Create computer and start tracing
+computer = Computer(os_type="macos")
+await computer.run()
+
+await computer.tracing.start({
+    'name': 'agent_with_tracing',
+    'screenshots': True,
+    'metadata': True
+})
+
+# Create agent using the same computer
+agent = ComputerAgent(
+    model="openai/computer-use-preview",
+    tools=[computer]
+)
+
+# Agent operations will be automatically traced
+async for _ in agent.run("open cua.ai and navigate to docs"):
+    pass
+
+# Save the combined trace
+trace_path = await computer.tracing.stop()
+```
+
+## Privacy Considerations
+
+The tracing API is designed with privacy in mind:
+
+- Clipboard content is not recorded (only content length)
+- Screenshots can be disabled
+- Sensitive text input can be filtered
+- Custom metadata allows you to control what information is recorded
+
+## Comparison with ComputerAgent Trajectories
+
+| Feature                | ComputerAgent Trajectories | Computer.tracing     |
+| ---------------------- | -------------------------- | -------------------- |
+| **Scope**              | ComputerAgent only         | Any Computer usage   |
+| **Flexibility**        | Fixed format               | Configurable options |
+| **Custom Agents**      | Not supported              | Fully supported      |
+| **Human-in-the-loop**  | Limited                    | Full support         |
+| **Real-time Control**  | No                         | Start/stop anytime   |
+| **Output Format**      | Agent-specific             | Standardized         |
+| **Accessibility Data** | No                         | Optional             |
+
+## Best Practices
+
+1. **Start tracing early**: Begin recording before your main workflow to capture the complete session
+2. **Use meaningful names**: Provide descriptive trace names for easier organization
+3. **Add contextual metadata**: Include information about what you're testing or demonstrating
+4. **Handle errors gracefully**: Always stop tracing in a finally block
+5. **Choose appropriate options**: Only record what you need to minimize overhead
+6. **Organize output**: Use custom paths to organize traces by project or use case
+
+The Computer tracing API provides a powerful foundation for recording, analyzing, and improving computer automation workflows across all use cases.

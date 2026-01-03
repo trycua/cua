@@ -1,0 +1,12 @@
+{
+  "title": "Reference",
+  "description": "SDK and CLI API reference",
+  "root": true,
+  "icon": "FileText",
+  "pages": [
+    "computer-sdk",
+    "agent-sdk",
+    "cli-playbook",
+    "macos-vm-cli-playbook"
+  ]
+}

@@ -1,0 +1,601 @@
+---
+title: Computer SDK
+description: Python API reference for the Computer SDK
+---
+
+import { Tabs, Tab } from 'fumadocs-ui/components/tabs';
+
+The **Computer SDK** (`cua-computer`) provides the Python interface for creating and controlling sandboxed desktop environments. This reference covers the core classes, methods, and types you'll use when working with computers programmatically.
+
+## Installation
+
+```bash
+pip install cua-computer
+```
+
+## Core Classes
+
+### Computer
+
+The main class for creating and managing sandboxed desktop environments.
+
+```python
+from computer import Computer
+
+computer = Computer(
+    os_type="linux",
+    provider_type="docker",
+    image="trycua/cua-xfce:latest"
+)
+await computer.run()
+```
+
+#### Constructor Parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `os_type` | `str` | Required | Operating system type: `"linux"`, `"macos"`, or `"windows"` |
+| `provider_type` | `str` | Required | Provider type: `"docker"`, `"lume"`, `"cloud"`, `"qemu"`, `"windows-sandbox"`, or `"host"` |
+| `image` | `str` | `None` | Container/VM image to use (provider-specific) |
+| `name` | `str` | `None` | Optional name for the computer instance |
+| `display` | `str` | `"1024x768"` | Display resolution |
+| `memory` | `str` | `"4GB"` | Memory allocation |
+| `cpu` | `int` | `2` | Number of CPU cores |
+
+#### Methods
+
+##### `run()`
+
+Start the computer and establish connection.
+
+```python
+await computer.run()
+```
+
+Returns once the computer is ready to accept commands.
+
+##### `stop()`
+
+Stop the computer and release resources.
+
+```python
+await computer.stop()
+```
+
+##### `screenshot()`
+
+Capture the current screen state.
+
+```python
+screenshot = await computer.screenshot()
+# Returns PIL.Image object
+```
+
+**Returns:** `PIL.Image.Image` - The current screen contents
+
+---
+
+### ComputerInterface
+
+The interface for interacting with the computer's display, keyboard, and mouse. Accessed via `computer.interface`.
+
+```python
+interface = computer.interface
+```
+
+#### Mouse Actions
+
+##### `left_click(x, y)`
+
+Perform a left mouse click at the specified coordinates.
+
+```python
+await computer.interface.left_click(500, 300)
+```
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `x` | `int` | X coordinate |
+| `y` | `int` | Y coordinate |
+
+##### `right_click(x, y)`
+
+Perform a right mouse click at the specified coordinates.
+
+```python
+await computer.interface.right_click(500, 300)
+```
+
+##### `double_click(x, y)`
+
+Perform a double-click at the specified coordinates.
+
+```python
+await computer.interface.double_click(500, 300)
+```
+
+##### `middle_click(x, y)`
+
+Perform a middle mouse click at the specified coordinates.
+
+```python
+await computer.interface.middle_click(500, 300)
+```
+
+##### `move(x, y)`
+
+Move the mouse cursor to the specified coordinates.
+
+```python
+await computer.interface.move(500, 300)
+```
+
+##### `drag(start_x, start_y, end_x, end_y)`
+
+Drag from start coordinates to end coordinates.
+
+```python
+await computer.interface.drag(100, 100, 500, 500)
+```
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `start_x` | `int` | Starting X coordinate |
+| `start_y` | `int` | Starting Y coordinate |
+| `end_x` | `int` | Ending X coordinate |
+| `end_y` | `int` | Ending Y coordinate |
+
+##### `scroll(x, y, scroll_x, scroll_y)`
+
+Scroll at the specified coordinates.
+
+```python
+# Scroll down
+await computer.interface.scroll(500, 300, 0, -3)
+
+# Scroll up
+await computer.interface.scroll(500, 300, 0, 3)
+
+# Scroll right
+await computer.interface.scroll(500, 300, 3, 0)
+```
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `x` | `int` | X coordinate where scroll occurs |
+| `y` | `int` | Y coordinate where scroll occurs |
+| `scroll_x` | `int` | Horizontal scroll amount (positive = right) |
+| `scroll_y` | `int` | Vertical scroll amount (positive = up) |
+
+#### Keyboard Actions
+
+##### `type_text(text)`
+
+Type text using the keyboard.
+
+```python
+await computer.interface.type_text("Hello, World!")
+```
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `text` | `str` | Text to type |
+
+##### `key(key)`
+
+Press a single key or key combination.
+
+```python
+# Single key
+await computer.interface.key("enter")
+
+# Key combination
+await computer.interface.key("ctrl+c")
+await computer.interface.key("cmd+v")  # macOS
+await computer.interface.key("alt+tab")
+```
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `key` | `str` | Key name or combination (e.g., `"enter"`, `"ctrl+c"`) |
+
+**Supported Keys:**
+
+- Letters: `a-z`
+- Numbers: `0-9`
+- Modifiers: `ctrl`, `alt`, `shift`, `cmd` (macOS), `win` (Windows)
+- Special: `enter`, `return`, `tab`, `escape`, `backspace`, `delete`, `space`
+- Navigation: `up`, `down`, `left`, `right`, `home`, `end`, `pageup`, `pagedown`
+- Function: `f1`-`f12`
+
+#### Screen Methods
+
+##### `screenshot()`
+
+Capture the current screen.
+
+```python
+screenshot = await computer.interface.screenshot()
+```
+
+**Returns:** `PIL.Image.Image` - The current screen contents
+
+##### `get_screen_size()`
+
+Get the screen dimensions.
+
+```python
+width, height = await computer.interface.get_screen_size()
+```
+
+**Returns:** `tuple[int, int]` - Width and height in pixels
+
+##### `get_cursor_position()`
+
+Get the current cursor position.
+
+```python
+x, y = await computer.interface.get_cursor_position()
+```
+
+**Returns:** `tuple[int, int]` - X and Y coordinates
+
+#### Clipboard Methods
+
+##### `get_clipboard()`
+
+Get the current clipboard contents.
+
+```python
+text = await computer.interface.get_clipboard()
+```
+
+**Returns:** `str` - Clipboard text content
+
+##### `set_clipboard(text)`
+
+Set the clipboard contents.
+
+```python
+await computer.interface.set_clipboard("Text to copy")
+```
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `text` | `str` | Text to set in clipboard |
+
+#### Shell Methods
+
+##### `run_shell(command)`
+
+Execute a shell command in the computer.
+
+```python
+result = await computer.interface.run_shell("ls -la")
+print(result.stdout)
+print(result.stderr)
+print(result.exit_code)
+```
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `command` | `str` | Shell command to execute |
+
+**Returns:** `ShellResult` with properties:
+- `stdout` - Standard output
+- `stderr` - Standard error
+- `exit_code` - Exit code (0 = success)
+
+#### File Methods
+
+##### `file_read(path)`
+
+Read a file from the computer.
+
+```python
+content = await computer.interface.file_read("/home/user/file.txt")
+```
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `path` | `str` | Absolute path to the file |
+
+**Returns:** `str` - File contents
+
+##### `file_write(path, content)`
+
+Write content to a file on the computer.
+
+```python
+await computer.interface.file_write("/home/user/file.txt", "Hello!")
+```
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `path` | `str` | Absolute path to the file |
+| `content` | `str` | Content to write |
+
+##### `file_exists(path)`
+
+Check if a file exists.
+
+```python
+exists = await computer.interface.file_exists("/home/user/file.txt")
+```
+
+**Returns:** `bool` - True if file exists
+
+---
+
+### Tracing
+
+The tracing subsystem records computer interactions. Accessed via `computer.tracing`.
+
+```python
+tracing = computer.tracing
+```
+
+#### Methods
+
+##### `start(options)`
+
+Start recording interactions.
+
+```python
+await computer.tracing.start({
+    "name": "my-workflow",
+    "screenshots": True,
+    "api_calls": True,
+    "accessibility_tree": False,
+    "metadata": True
+})
+```
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `name` | `str` | Auto-generated | Custom trace name |
+| `screenshots` | `bool` | `True` | Capture screenshots |
+| `api_calls` | `bool` | `True` | Log interface calls |
+| `accessibility_tree` | `bool` | `False` | Record accessibility trees |
+| `metadata` | `bool` | `True` | Enable custom metadata |
+
+##### `stop(options)`
+
+Stop recording and save the trace.
+
+```python
+trace_path = await computer.tracing.stop({
+    "format": "zip",  # or "dir"
+    "path": "/custom/path.zip"  # optional
+})
+```
+
+**Returns:** `str` - Path to saved trace
+
+##### `add_metadata(key, value)`
+
+Add custom metadata to the trace.
+
+```python
+await computer.tracing.add_metadata("workflow", "login-flow")
+await computer.tracing.add_metadata("step", "entering-credentials")
+```
+
+---
+
+## Provider Types
+
+Different providers offer different capabilities and trade-offs.
+
+### Docker Provider
+
+```python
+computer = Computer(
+    os_type="linux",
+    provider_type="docker",
+    image="trycua/cua-xfce:latest"
+)
+```
+
+Best for Linux sandboxes with fast startup. Requires Docker to be installed.
+
+### Lume Provider
+
+```python
+computer = Computer(
+    os_type="macos",
+    provider_type="lume",
+    name="my-macos-vm"
+)
+```
+
+For macOS virtual machines on Apple Silicon. Requires [Lume](/docs/reference/macos-vm-cli-playbook/lume) to be installed.
+
+### Cloud Provider
+
+```python
+from computer import Computer
+from computer.providers import CloudProvider
+
+computer = Computer(
+    os_type="linux",
+    provider_type="cloud"
+)
+```
+
+For managed cloud sandboxes. See [CloudProvider](#cloudprovider) for configuration.
+
+### Windows Sandbox Provider
+
+```python
+computer = Computer(
+    os_type="windows",
+    provider_type="windows-sandbox"
+)
+```
+
+For Windows sandboxes on Windows hosts. Requires Windows Sandbox feature enabled.
+
+### QEMU Provider
+
+```python
+computer = Computer(
+    os_type="linux",
+    provider_type="qemu",
+    image="/path/to/disk.qcow2"
+)
+```
+
+For full VM emulation with QEMU. Supports any guest OS.
+
+### Host Provider
+
+```python
+computer = Computer(
+    os_type="macos",  # or current host OS
+    provider_type="host"
+)
+```
+
+Directly controls the host machine. Use with caution.
+
+---
+
+## CloudProvider
+
+The `CloudProvider` class enables programmatic management of cloud sandboxes.
+
+```python
+from computer.providers import CloudProvider
+
+provider = CloudProvider(
+    api_key="your-api-key",
+    region="north-america"
+)
+```
+
+### Constructor Parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `api_key` | `str` | `CUA_API_KEY` env var | API key for authentication |
+| `region` | `str` | `"north-america"` | Region: `"north-america"`, `"europe"`, `"asia-pacific"` |
+
+### Methods
+
+##### `create_sandbox(options)`
+
+Create a new cloud sandbox.
+
+```python
+sandbox = await provider.create_sandbox({
+    "os": "linux",
+    "size": "medium",
+    "image": "trycua/cua-xfce:latest"
+})
+```
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `os` | `str` | `"linux"` | Operating system |
+| `size` | `str` | `"small"` | Size: `"small"`, `"medium"`, `"large"` |
+| `image` | `str` | Default image | Container image to use |
+
+##### `list_sandboxes()`
+
+List all sandboxes.
+
+```python
+sandboxes = await provider.list_sandboxes()
+for sandbox in sandboxes:
+    print(f"{sandbox.id}: {sandbox.status}")
+```
+
+##### `get_sandbox(sandbox_id)`
+
+Get details for a specific sandbox.
+
+```python
+sandbox = await provider.get_sandbox("sandbox-abc123")
+```
+
+##### `delete_sandbox(sandbox_id)`
+
+Delete a sandbox.
+
+```python
+await provider.delete_sandbox("sandbox-abc123")
+```
+
+---
+
+## Types
+
+### OSType
+
+```python
+from computer import OSType
+
+OSType.LINUX    # "linux"
+OSType.MACOS    # "macos"
+OSType.WINDOWS  # "windows"
+```
+
+### ProviderType
+
+```python
+from computer import ProviderType
+
+ProviderType.DOCKER           # "docker"
+ProviderType.LUME             # "lume"
+ProviderType.CLOUD            # "cloud"
+ProviderType.QEMU             # "qemu"
+ProviderType.WINDOWS_SANDBOX  # "windows-sandbox"
+ProviderType.HOST             # "host"
+```
+
+### ShellResult
+
+Result from `run_shell()` calls.
+
+```python
+result = await computer.interface.run_shell("echo hello")
+result.stdout     # "hello\n"
+result.stderr     # ""
+result.exit_code  # 0
+```
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `stdout` | `str` | Standard output |
+| `stderr` | `str` | Standard error |
+| `exit_code` | `int` | Exit code (0 = success) |
+
+---
+
+## Environment Variables
+
+| Variable | Description |
+|----------|-------------|
+| `CUA_API_KEY` | API key for cloud provider |
+| `CUA_REGION` | Default region for cloud provider |
+| `DOCKER_HOST` | Custom Docker host for Docker provider |
+| `LUME_HOST` | Custom Lume API host (default: `localhost:7777`) |
+
+---
+
+## Context Manager Usage
+
+The Computer class supports async context managers for automatic cleanup:
+
+```python
+from computer import Computer
+
+async with Computer(
+    os_type="linux",
+    provider_type="docker",
+    image="trycua/cua-xfce:latest"
+) as computer:
+    await computer.interface.type_text("Hello!")
+    # Computer automatically stopped on exit
+```

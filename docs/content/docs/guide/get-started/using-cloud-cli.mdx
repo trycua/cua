@@ -1,0 +1,199 @@
+---
+title: Using the Cloud CLI
+description: Manage cloud sandboxes from your terminal
+---
+
+import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
+import { Callout } from 'fumadocs-ui/components/callout';
+
+The Cua Cloud CLI lets you create, manage, and connect to cloud sandboxes directly from your terminal. This is the fastest way to get a sandbox running without writing any code.
+
+## Installation
+
+Install the CLI globally using npm or bun:
+
+<Tabs items={['npm', 'bun']}>
+<Tab value="npm">
+```bash
+npm install -g @trycua/cli
+```
+</Tab>
+<Tab value="bun">
+```bash
+bun install -g @trycua/cli
+```
+</Tab>
+</Tabs>
+
+Verify the installation:
+
+```bash
+cua --version
+```
+
+## Authentication
+
+Before managing sandboxes, authenticate with your Cua account:
+
+```bash
+# Browser-based login (opens OAuth flow)
+cua auth login
+
+# Or use an API key directly
+cua auth login --api-key sk_cua-api01_...
+```
+
+To write your API key to a `.env` file for use in projects:
+
+```bash
+cua auth env
+```
+
+This creates or updates `.env` with your `CUA_API_KEY`.
+
+## Creating a Sandbox
+
+Create a new cloud sandbox with the `create` command:
+
+```bash
+cua sandbox create --os linux --size small --region north-america
+```
+
+**Required options:**
+
+| Option | Values | Description |
+|--------|--------|-------------|
+| `--os` | `linux`, `windows`, `macos` | Operating system |
+| `--size` | `small`, `medium`, `large` | Compute tier |
+| `--region` | `north-america`, `europe`, `asia-pacific`, `south-america` | Geographic region |
+
+**Compute tiers:**
+
+| Size | vCPU | RAM | Best for |
+|------|------|-----|----------|
+| `small` | 1 | 4 GB | Simple tasks, testing |
+| `medium` | 2 | 8 GB | General automation |
+| `large` | 8 | 32 GB | Complex workflows, multiple apps |
+
+The command returns once your sandbox is ready. You'll see the sandbox name, which you'll use for all other commands.
+
+## Listing Sandboxes
+
+View all your sandboxes:
+
+```bash
+cua sandbox list
+```
+
+Output shows NAME, STATUS, and HOST for each sandbox. Status values:
+
+- `running` - Ready to use
+- `stopped` - Not running (no charges)
+- `pending` - Starting up
+- `suspended` - Memory state preserved
+- `terminated` - Deleted
+
+Shorthand aliases: `cua ls`, `cua ps`, `cua sb list`
+
+## Managing Sandbox Lifecycle
+
+Start, stop, and restart sandboxes:
+
+```bash
+# Start a stopped sandbox (hot-start in under 1 second)
+cua sandbox start my-sandbox
+
+# Stop a running sandbox (preserves data)
+cua sandbox stop my-sandbox
+
+# Restart a sandbox
+cua sandbox restart my-sandbox
+
+# Suspend (preserves memory state)
+cua sandbox suspend my-sandbox
+
+# Permanently delete
+cua sandbox delete my-sandbox
+```
+
+Stopping a sandbox preserves all files, installed software, and browser profiles. You only pay for compute time while the sandbox is running.
+
+## Connecting to a Sandbox
+
+Open the sandbox desktop in your browser:
+
+```bash
+cua sandbox vnc my-sandbox
+```
+
+This opens a NoVNC session with the password pre-filled. You can interact with the desktop directly in your browser.
+
+Shorthand: `cua open my-sandbox`
+
+## Getting Sandbox Details
+
+View detailed information about a sandbox:
+
+```bash
+cua sandbox get my-sandbox
+```
+
+Add flags for more details:
+
+```bash
+# Include password in output
+cua sandbox get my-sandbox --show-passwords
+
+# Include VNC URL
+cua sandbox get my-sandbox --show-vnc-url
+
+# JSON output for scripting
+cua sandbox get my-sandbox --json
+```
+
+## Command Reference
+
+The CLI supports both grouped and flat command styles:
+
+| Grouped Style | Flat Style | Description |
+|---------------|------------|-------------|
+| `cua auth login` | `cua login` | Authenticate |
+| `cua auth logout` | `cua logout` | Clear credentials |
+| `cua auth env` | `cua env` | Write API key to .env |
+| `cua sandbox list` | `cua list` | List sandboxes |
+| `cua sandbox create` | `cua create` | Create sandbox |
+| `cua sandbox get <name>` | `cua get <name>` | Get sandbox details |
+| `cua sandbox start <name>` | `cua start <name>` | Start sandbox |
+| `cua sandbox stop <name>` | `cua stop <name>` | Stop sandbox |
+| `cua sandbox restart <name>` | `cua restart <name>` | Restart sandbox |
+| `cua sandbox delete <name>` | `cua delete <name>` | Delete sandbox |
+| `cua sandbox vnc <name>` | `cua vnc <name>` | Open VNC in browser |
+
+## Example Workflow
+
+Here's a typical workflow for setting up and using a sandbox:
+
+```bash
+# 1. Login
+cua auth login
+
+# 2. Create a Linux sandbox
+cua sandbox create --os linux --size small --region north-america
+# Output: Created sandbox "curious-fox-123"
+
+# 3. Open the desktop in your browser
+cua open curious-fox-123
+
+# 4. Export your API key for SDK usage
+cua auth env
+
+# 5. Use the sandbox with Python SDK
+python my_agent.py
+
+# 6. Stop when done (preserves data, stops charges)
+cua stop curious-fox-123
+```
+
+## Next Step
+
+Once your sandbox is running, proceed to [Using the Computer SDK](/docs/guide/get-started/using-computer-sdk) to connect programmatically, or [Using the Agent SDK](/docs/guide/get-started/using-agent-sdk) to add AI automation.

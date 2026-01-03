@@ -1,0 +1,196 @@
+---
+title: Browser Tool
+description: Specialized browser automation for web-focused models
+---
+
+The **Browser Tool** provides a specialized interface for browser automation. While full computer-use models control the entire desktop, some models like Gemini 2.5 Computer-Use and Microsoft Fara are optimized specifically for web interactions. The Browser Tool gives these models browser-specific actions that are more efficient than simulating desktop clicks.
+
+## When to Use Browser Tool
+
+Use the Browser Tool when:
+
+- You're automating web-based workflows (forms, data extraction, navigation)
+- You're using a browser-optimized model (Gemini 2.5, Fara)
+- You want browser-specific actions like direct URL navigation or web search
+
+Use the standard Computer tool when:
+
+- You need to control desktop applications
+- You're using a full computer-use model (Claude, OpenAI, UI-TARS, Qwen)
+- Your workflow spans multiple applications
+
+## Basic Usage
+
+The Browser Tool uses Playwright under the hood to control the browser:
+
+```python
+from computer import Computer
+from agent import ComputerAgent
+from agent.tools import BrowserTool
+
+# Create a computer instance
+computer = Computer(os_type="linux", provider_type="docker", image="trycua/cua-xfce:latest")
+await computer.run()
+
+# Create a browser tool from the computer interface
+browser = BrowserTool(interface=computer)
+
+# Use with a browser-optimized model
+agent = ComputerAgent(
+    model="gemini-2.5-computer-use-preview-10-2025",
+    tools=[browser]
+)
+
+async for result in agent.run("Go to github.com and search for 'cua'"):
+    print(result)
+```
+
+The agent sees the browser viewport and can issue browser-specific commands.
+
+## Browser-Specific Actions
+
+The Browser Tool provides actions that aren't available with standard computer-use:
+
+### Direct URL Navigation
+
+Instead of clicking the address bar and typing, go directly to a URL:
+
+```python
+# Agent can use visit_url action
+await agent.run("Navigate to https://docs.cua.ai")
+```
+
+The model issues a `visit_url` action that immediately loads the page—no keyboard or mouse simulation needed.
+
+### Web Search
+
+Perform searches without navigating to a search engine first:
+
+```python
+# Agent can use web_search action
+await agent.run("Search for 'python async tutorial'")
+```
+
+The `web_search` action opens a search directly, saving multiple interaction steps.
+
+### Browser History
+
+Navigate back without finding and clicking the back button:
+
+```python
+# Agent can use history_back action
+await agent.run("Go back to the previous page")
+```
+
+## Using Browser Tool Directly
+
+You can also call Browser Tool actions programmatically without an agent:
+
+```python
+from agent.tools import BrowserTool
+
+browser = BrowserTool(interface=computer)
+
+# Navigate to a URL
+await browser.visit_url("https://example.com")
+
+# Take a screenshot
+screenshot = await browser.screenshot()
+
+# Click at coordinates
+await browser.click(x=500, y=300)
+
+# Type text
+await browser.type("Hello from Browser Tool")
+
+# Scroll the page (positive = up, negative = down)
+await browser.scroll(delta_x=0, delta_y=500)
+
+# Perform a web search
+await browser.web_search("Python documentation")
+
+# Go back in history
+await browser.history_back()
+```
+
+This is useful for scripted automation where you don't need AI reasoning.
+
+## Coordinate Handling
+
+Browser-optimized models often work with resized images for efficiency. The Browser Tool automatically handles coordinate translation:
+
+1. **Model sees** - A resized screenshot optimized for the VLM
+2. **Model outputs** - Coordinates in the resized image space
+3. **Browser Tool translates** - Converts to actual viewport coordinates
+4. **Playwright executes** - Click/type at the correct screen position
+
+You don't need to handle this manually—coordinates from the model are automatically mapped to the correct viewport position.
+
+## Memory System
+
+The Browser Tool includes a memory feature for multi-step tasks:
+
+```python
+# Agent can memorize facts during execution
+await agent.run("Find the pricing for the Pro plan and remember it, then go to the FAQ page")
+```
+
+The `pause_and_memorize_fact` action lets the agent store information for later reference within the same session.
+
+## Example: Form Automation
+
+Here's a complete example automating a web form:
+
+```python
+from computer import Computer
+from agent import ComputerAgent
+from agent.tools import BrowserTool
+
+computer = Computer(os_type="linux", provider_type="docker", image="trycua/cua-xfce:latest")
+await computer.run()
+
+browser = BrowserTool(interface=computer)
+
+agent = ComputerAgent(
+    model="gemini-2.5-computer-use-preview-10-2025",
+    tools=[browser]
+)
+
+# Multi-step form automation
+instructions = """
+1. Go to https://example.com/contact
+2. Fill in the name field with "John Doe"
+3. Fill in the email field with "john@example.com"
+4. Select "Sales Inquiry" from the dropdown
+5. Type a message asking about enterprise pricing
+6. Click the Submit button
+"""
+
+async for result in agent.run(instructions):
+    for item in result["output"]:
+        if item["type"] == "message":
+            print(item["content"][0]["text"])
+```
+
+## Supported Models
+
+These models are designed for browser automation and work best with the Browser Tool:
+
+- **Gemini 2.5 Computer-Use** (`gemini-2.5-computer-use-preview-10-2025`)
+- **Microsoft Fara** (`azure_ml/Fara-7B`)
+
+Full computer-use models (Claude, OpenAI, UI-TARS, Qwen) can also use the Browser Tool, but they're designed for broader desktop control and may not take full advantage of browser-specific actions.
+
+## Browser Tool vs Computer Tool
+
+| Feature | Browser Tool | Computer Tool |
+|---------|-------------|---------------|
+| Direct URL navigation | ✅ | ❌ (requires typing) |
+| Web search action | ✅ | ❌ (requires browser UI) |
+| History navigation | ✅ | ❌ (requires clicking) |
+| Desktop applications | ❌ | ✅ |
+| System dialogs | ❌ | ✅ |
+| Multi-application workflows | ❌ | ✅ |
+| Playwright integration | ✅ Native | ❌ |
+
+Choose Browser Tool for web-focused tasks where efficiency matters. Choose Computer Tool for workflows that span multiple applications or require desktop access.

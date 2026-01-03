@@ -1,0 +1,11 @@
+{
+  "title": "Integrations",
+  "description": "Third-party tools and integrations",
+  "icon": "Plug",
+  "pages": [
+    "mcp-server",
+    "observability",
+    "hud",
+    "benchmarks"
+  ]
+}

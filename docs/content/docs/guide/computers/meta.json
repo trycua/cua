@@ -1,0 +1,13 @@
+{
+  "title": "Computers",
+  "description": "Working with sandboxed computers and VMs",
+  "icon": "Monitor",
+  "pages": [
+    "commands",
+    "sandboxed-python",
+    "computer-ui",
+    "tracing-api",
+    "custom-computer-handlers",
+    "cloud-vm-management"
+  ]
+}

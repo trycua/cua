@@ -1,0 +1,8 @@
+{
+  "title": "AI Models",
+  "description": "Examples using different AI models",
+  "icon": "Brain",
+  "pages": [
+    "gemini-complex-ui-navigation"
+  ]
+}

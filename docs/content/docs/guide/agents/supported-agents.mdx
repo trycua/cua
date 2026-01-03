@@ -1,0 +1,219 @@
+---
+title: Supported Agents
+description: Computer-use agents, grounding models, composed agents, and human-in-the-loop
+---
+
+import { Tabs, Tab } from 'fumadocs-ui/components/tabs';
+import { Callout } from 'fumadocs-ui/components/callout';
+
+The Agent SDK supports multiple types of agents for different use cases. All agent loops are compatible with any LLM provider supported by LiteLLM.
+
+<Tabs items={['All-in-one CUAs', 'Grounding Models', 'Composed Agents', 'Human-in-the-Loop']}>
+<Tab value="All-in-one CUAs">
+
+## Computer-Use Agents
+
+These models support complete computer-use agent functionality through `ComputerAgent.run()`. They can understand natural language instructions and autonomously perform sequences of actions.
+
+### Anthropic Claude
+
+Claude models with computer-use capabilities:
+
+| Model | ID |
+|-------|-----|
+| Claude 4.5 | `claude-sonnet-4-5-20250929`, `claude-haiku-4-5-20251001` |
+| Claude 4.1 | `claude-opus-4-1-20250805` |
+| Claude 4 | `claude-opus-4-20250514`, `claude-sonnet-4-20250514` |
+| Claude 3.7 | `claude-3-7-sonnet-20250219` |
+
+```python
+agent = ComputerAgent("claude-sonnet-4-5-20250929", tools=[computer])
+async for _ in agent.run("Open Firefox and navigate to github.com"):
+    pass
+```
+
+### Google Gemini
+
+- Gemini 2.5 CUA: `gemini-2.5-computer-use-preview-10-2025`
+
+```python
+agent = ComputerAgent("gemini-2.5-computer-use-preview-10-2025", tools=[computer])
+async for _ in agent.run("Open Firefox and navigate to github.com"):
+    pass
+```
+
+### OpenAI
+
+- Computer-use-preview: `computer-use-preview`
+
+```python
+agent = ComputerAgent("openai/computer-use-preview", tools=[computer])
+async for _ in agent.run("Take a screenshot and describe what you see"):
+    pass
+```
+
+### Other Models
+
+| Model | ID |
+|-------|-----|
+| GLM-4.5V | `openrouter/z-ai/glm-4.5v` |
+| InternVL 3.5 | `huggingface-local/OpenGVLab/InternVL3_5-{1B,2B,4B,8B,...}` |
+| Qwen3 VL | `cua/qwen/qwen3-vl-235b` (via Cua VLM Router) |
+| UI-TARS 1.5 | `huggingface-local/ByteDance-Seed/UI-TARS-1.5-7B` |
+
+</Tab>
+<Tab value="Grounding Models">
+
+## Grounding Models
+
+These models specialize in UI element grounding and click prediction. They can identify precise coordinates for UI elements based on natural language descriptions.
+
+Use `ComputerAgent.predict_click()` to get coordinates for specific UI elements.
+
+<Callout type="info">
+All models that support `ComputerAgent.run()` also support `ComputerAgent.predict_click()`.
+</Callout>
+
+### Specialized Grounding Models
+
+| Model | ID |
+|-------|-----|
+| OpenCUA | `huggingface-local/xlangai/OpenCUA-{7B,32B}` |
+| GTA1 | `huggingface-local/HelloKKMe/GTA1-{7B,32B,72B}` |
+| Holo 1.5 | `huggingface-local/Hcompany/Holo1.5-{3B,7B,72B}` |
+| InternVL 3.5 | `huggingface-local/OpenGVLab/InternVL3_5-{1B,2B,4B,8B,...}` |
+| OmniParser | `omniparser` (requires LLM combination) |
+| Moondream3 | `moondream3` |
+
+### Usage
+
+```python
+agent = ComputerAgent("claude-sonnet-4-5-20250929", tools=[computer])
+
+# Predict coordinates for specific elements
+login_coords = agent.predict_click("find the login button")
+search_coords = agent.predict_click("locate the search text field")
+
+print(f"Login button: {login_coords}")
+print(f"Search field: {search_coords}")
+```
+
+```python
+# GTA1 for click prediction only
+agent = ComputerAgent("huggingface-local/HelloKKMe/GTA1-7B", tools=[computer])
+coords = agent.predict_click("find the submit button")
+print(f"Click coordinates: {coords}")  # (450, 320)
+
+# Note: GTA1 cannot perform autonomous task planning
+# Use composed agents for full capabilities
+```
+
+</Tab>
+<Tab value="Composed Agents">
+
+## Composed Agents
+
+Combine specialized grounding models with powerful LLMs for task planning using the format `"grounding_model+planning_model"`.
+
+### How It Works
+
+1. **Planning Phase**: The LLM analyzes the task and decides what actions to take
+2. **Grounding Phase**: The grounding model converts element descriptions to precise coordinates
+3. **Execution**: Actions are performed using the predicted coordinates
+
+### Examples
+
+**GTA1 + Claude 4.5 Sonnet**
+
+```python
+agent = ComputerAgent(
+    "huggingface-local/HelloKKMe/GTA1-7B+anthropic/claude-sonnet-4-5-20250929",
+    tools=[computer]
+)
+
+async for _ in agent.run("Open Firefox, navigate to github.com, and search for 'computer-use'"):
+    pass
+```
+
+**GTA1 + GPT-5**
+
+```python
+agent = ComputerAgent(
+    "huggingface-local/HelloKKMe/GTA1-7B+openai/gpt-5",
+    tools=[computer]
+)
+
+async for _ in agent.run("Take a screenshot and click on the most prominent button"):
+    pass
+```
+
+**Moondream3 + GPT-4o**
+
+```python
+agent = ComputerAgent(
+    "moondream3+openai/gpt-4o",
+    tools=[computer]
+)
+
+async for _ in agent.run("Close the settings window, then open Downloads"):
+    pass
+```
+
+### Benefits
+
+- **Specialized Grounding**: Use models optimized for click prediction accuracy
+- **Flexible Planning**: Choose any LLM for task reasoning
+- **Cost Optimization**: Use smaller grounding models with larger planning models
+
+</Tab>
+<Tab value="Human-in-the-Loop">
+
+## Human-in-the-Loop
+
+Use humans as agents for evaluation, demonstrations, and interactive control.
+
+### Getting Started
+
+Start the human agent tool:
+
+```bash
+python -m agent.human_tool
+```
+
+The UI will show pending completions. Select a completion to take control of the agent.
+
+### Usage
+
+**Direct Human Agent**
+
+```python
+agent = ComputerAgent(
+    "human/human",
+    tools=[computer]
+)
+
+async for _ in agent.run("Take a screenshot and click on the most prominent button"):
+    pass
+```
+
+**Composed with Grounding Model**
+
+```python
+agent = ComputerAgent(
+    "huggingface-local/HelloKKMe/GTA1-7B+human/human",
+    tools=[computer]
+)
+
+async for _ in agent.run("Navigate to settings and enable dark mode"):
+    pass
+```
+
+### Use Cases
+
+- **Evaluation**: Have humans evaluate agent performance and provide ground truth
+- **Demonstrations**: Create training data by having humans demonstrate tasks
+- **Interactive Control**: Take manual control when automated agents need guidance
+- **Testing**: Validate agent, tool, and environment behavior manually
+
+</Tab>
+</Tabs>

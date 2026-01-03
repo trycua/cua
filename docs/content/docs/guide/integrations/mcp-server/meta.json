@@ -1,0 +1,10 @@
+{
+  "pages": [
+    "installation",
+    "configuration",
+    "usage",
+    "tools",
+    "client-integrations",
+    "llm-integrations"
+  ]
+}

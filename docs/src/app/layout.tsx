@@ -32,8 +32,26 @@ export default function Layout({ children }: { children: ReactNode }) {
     >
       <head>
         <link rel="icon" href="/docs/favicon.ico" sizes="any" />
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `
+              // Suppress Radix UI hydration warnings in development
+              if (typeof window !== 'undefined') {
+                const originalError = console.error;
+                console.error = (...args) => {
+                  if (args[0]?.includes?.('A tree hydrated but some attributes') ||
+                      args[0]?.includes?.('Hydration failed') ||
+                      (typeof args[0] === 'string' && args[0].includes('aria-controls'))) {
+                    return;
+                  }
+                  originalError.apply(console, args);
+                };
+              }
+            `,
+          }}
+        />
       </head>
-      <body className="flex min-h-screen flex-col">
+      <body className="flex min-h-screen flex-col" suppressHydrationWarning>
         <PHProvider>
           <Suspense fallback={null}>
             <PostHogPageView />

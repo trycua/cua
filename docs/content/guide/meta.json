@@ -1,0 +1,10 @@
+{
+  "title": "Guide",
+  "description": "Get started with Cua",
+  "root": true,
+  "defaultOpen": true,
+  "pages": [
+    "index",
+    "...get-started"
+  ]
+}

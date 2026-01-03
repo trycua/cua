@@ -1,0 +1,640 @@
+---
+title: GUI Grounding with Gemini 3
+description: Using Google's Gemini 3 with OmniParser for Advanced GUI Grounding Tasks
+---
+
+import { Step, Steps } from 'fumadocs-ui/components/steps';
+import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
+import { Callout } from 'fumadocs-ui/components/callout';
+
+## Overview
+
+This example demonstrates how to use Google's Gemini 3 models with OmniParser for complex GUI grounding tasks. Gemini 3 Pro achieves exceptional performance on the [ScreenSpot-Pro benchmark](https://github.com/likaixin2000/ScreenSpot-Pro-GUI-Grounding) with a **72.7% accuracy** (compared to Claude Sonnet 4.5's 36.2%), making it ideal for precise UI element location and complex navigation tasks.
+
+<img
+  src="/docs/img/grounding-with-gemini3.gif"
+  alt="Demo of Gemini 3 with OmniParser performing complex GUI navigation tasks"
+  width="800px"
+/>
+
+<Callout type="info" title="Why Gemini 3 for UI Navigation?">
+  According to [Google's Gemini 3 announcement](https://blog.google/products/gemini/gemini-3/),
+  Gemini 3 Pro achieves: - **72.7%** on ScreenSpot-Pro (vs. Gemini 2.5 Pro's 11.4%) -
+  Industry-leading performance on complex UI navigation tasks - Advanced multimodal understanding
+  for high-resolution screens
+</Callout>
+
+### What You'll Build
+
+This guide shows how to:
+
+- Set up Vertex AI with proper authentication
+- Use OmniParser with Gemini 3 for GUI element detection
+- Leverage Gemini 3-specific features like `thinking_level` and `media_resolution`
+- Create agents that can perform complex multi-step UI interactions
+
+---
+
+<Steps>
+
+<Step>
+
+### Set Up Google Cloud and Vertex AI
+
+Before using Gemini 3 models, you need to enable Vertex AI in Google Cloud Console.
+
+#### 1. Create a Google Cloud Project
+
+1. Go to [Google Cloud Console](https://console.cloud.google.com/)
+2. Click **Select a project** → **New Project**
+3. Enter a project name and click **Create**
+4. Note your **Project ID** (you'll need this later)
+
+#### 2. Enable Vertex AI API
+
+1. Navigate to [Vertex AI API](https://console.cloud.google.com/apis/library/aiplatform.googleapis.com)
+2. Select your project
+3. Click **Enable**
+
+#### 3. Enable Billing
+
+1. Go to [Billing](https://console.cloud.google.com/billing)
+2. Link a billing account to your project
+3. Vertex AI offers a [free tier](https://cloud.google.com/vertex-ai/pricing) for testing
+
+#### 4. Create a Service Account
+
+1. Go to [IAM & Admin > Service Accounts](https://console.cloud.google.com/iam-admin/serviceaccounts)
+2. Click **Create Service Account**
+3. Enter a name (e.g., "cua-gemini-agent")
+4. Click **Create and Continue**
+5. Grant the **Vertex AI User** role
+6. Click **Done**
+
+#### 5. Create and Download Service Account Key
+
+1. Click on your newly created service account
+2. Go to **Keys** tab
+3. Click **Add Key** → **Create new key**
+4. Select **JSON** format
+5. Click **Create** (the key file will download automatically)
+6. **Important**: Store this key file securely! It contains credentials for accessing your Google Cloud resources
+
+<Callout type="warn">
+  Never commit your service account JSON key to version control! Add it to `.gitignore` immediately.
+</Callout>
+
+</Step>
+
+<Step>
+
+### Install Dependencies
+
+Install the required packages for OmniParser and Gemini 3:
+
+Create a `requirements.txt` file:
+
+```text
+cua-agent
+cua-computer
+cua-som  # OmniParser for GUI element detection
+litellm>=1.0.0
+python-dotenv>=1.0.0
+google-cloud-aiplatform>=1.70.0
+```
+
+Install the dependencies:
+
+```bash
+pip install -r requirements.txt
+```
+
+</Step>
+
+<Step>
+
+### Configure Environment Variables
+
+Create a `.env` file in your project root:
+
+```text
+# Google Cloud / Vertex AI credentials
+GOOGLE_CLOUD_PROJECT=your-project-id
+GOOGLE_APPLICATION_CREDENTIALS=/path/to/your-service-account-key.json
+
+# Cua credentials (for cloud sandboxes)
+CUA_API_KEY=sk_cua-api01...
+CUA_SANDBOX_NAME=your-sandbox-name
+```
+
+Replace the values:
+
+- `your-project-id`: Your Google Cloud Project ID from Step 1
+- `/path/to/your-service-account-key.json`: Path to the JSON key file you downloaded
+- `sk_cua-api01...`: Your Cua API key from the [Cua dashboard](https://cua.dev)
+- `your-sandbox-name`: Your sandbox name (if using cloud sandboxes)
+
+</Step>
+
+<Step>
+
+### Create Your Complex UI Navigation Script
+
+Create a Python file (e.g., `gemini_ui_navigation.py`):
+
+<Tabs items={['Cloud Sandbox', 'Linux on Docker', 'macOS Sandbox']}>
+  <Tab value="Cloud Sandbox">
+
+```python
+import asyncio
+import logging
+import os
+import signal
+import traceback
+
+from agent import ComputerAgent
+from computer import Computer, VMProviderType
+from dotenv import load_dotenv
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+def handle_sigint(sig, frame):
+    print("\n\nExecution interrupted by user. Exiting gracefully...")
+    exit(0)
+
+async def complex_ui_navigation():
+    """
+    Demonstrate Gemini 3's exceptional UI grounding capabilities
+    with complex, multi-step navigation tasks.
+    """
+    try:
+        async with Computer(
+            os_type="linux",
+            provider_type=VMProviderType.CLOUD,
+            name=os.environ["CUA_SANDBOX_NAME"],
+            api_key=os.environ["CUA_API_KEY"],
+            verbosity=logging.INFO,
+        ) as computer:
+
+            agent = ComputerAgent(
+                # Use OmniParser with Gemini 3 Pro for optimal GUI grounding
+                model="omniparser+vertex_ai/gemini-3-pro-preview",
+                tools=[computer],
+                only_n_most_recent_images=3,
+                verbosity=logging.INFO,
+                trajectory_dir="trajectories",
+                use_prompt_caching=False,
+                max_trajectory_budget=5.0,
+                # Gemini 3-specific parameters
+                thinking_level="high",  # Enables deeper reasoning (vs "low")
+                media_resolution="high",  # High-resolution image processing (vs "low" or "medium")
+            )
+
+            # Complex GUI grounding tasks inspired by ScreenSpot-Pro benchmark
+            # These test precise element location in professional UIs
+            tasks = [
+                # Task 1: GitHub repository navigation
+                {
+                    "instruction": (
+                        "Go to github.com/trycua/cua. "
+                        "Find and click on the 'Issues' tab. "
+                        "Then locate and click on the search box within the issues page "
+                        "(not the global GitHub search). "
+                        "Type 'omniparser' and press Enter."
+                    ),
+                    "description": "Tests precise UI element distinction in a complex interface",
+                },
+
+                # Task 2: Search for and install Visual Studio Code
+                {
+                    "instruction": (
+                        "Open your system's app store (e.g., Microsoft Store). "
+                        "Search for 'Visual Studio Code'. "
+                        "In the search results, select 'Visual Studio Code'. "
+                        "Click on 'Install' or 'Get' to begin the installation. "
+                        "If prompted, accept any permissions or confirm the installation. "
+                        "Wait for Visual Studio Code to finish installing."
+                    ),
+                    "description": "Tests the ability to search for an application and complete its installation through a step-by-step app store workflow.",
+                },
+            ]
+
+            history = []
+
+            for i, task_info in enumerate(tasks, 1):
+                task = task_info["instruction"]
+                print(f"\n{'='*60}")
+                print(f"[Task {i}/{len(tasks)}] {task_info['description']}")
+                print(f"{'='*60}")
+                print(f"\nInstruction: {task}\n")
+
+                # Add user message to history
+                history.append({"role": "user", "content": task})
+
+                # Run agent with conversation history
+                async for result in agent.run(history, stream=False):
+                    history += result.get("output", [])
+
+                    # Print output for debugging
+                    for item in result.get("output", []):
+                        if item.get("type") == "message":
+                            content = item.get("content", [])
+                            for content_part in content:
+                                if content_part.get("text"):
+                                    logger.info(f"Agent: {content_part.get('text')}")
+                        elif item.get("type") == "computer_call":
+                            action = item.get("action", {})
+                            action_type = action.get("type", "")
+                            logger.debug(f"Computer Action: {action_type}")
+
+                print(f"\n✅ Task {i}/{len(tasks)} completed")
+
+            print("\n🎉 All complex UI navigation tasks completed successfully!")
+
+    except Exception as e:
+        logger.error(f"Error in complex_ui_navigation: {e}")
+        traceback.print_exc()
+        raise
+
+def main():
+    try:
+        load_dotenv()
+
+        # Validate required environment variables
+        required_vars = [
+            "GOOGLE_CLOUD_PROJECT",
+            "GOOGLE_APPLICATION_CREDENTIALS",
+            "CUA_API_KEY",
+            "CUA_SANDBOX_NAME",
+        ]
+
+        missing_vars = [var for var in required_vars if not os.environ.get(var)]
+        if missing_vars:
+            raise RuntimeError(
+                f"Missing required environment variables: {', '.join(missing_vars)}\n"
+                f"Please check your .env file and ensure all keys are set.\n"
+                f"See the setup guide for details on configuring Vertex AI credentials."
+            )
+
+        signal.signal(signal.SIGINT, handle_sigint)
+
+        asyncio.run(complex_ui_navigation())
+
+    except Exception as e:
+        logger.error(f"Error running automation: {e}")
+        traceback.print_exc()
+
+if __name__ == "__main__":
+    main()
+```
+
+  </Tab>
+  <Tab value="Linux on Docker">
+
+```python
+import asyncio
+import logging
+import os
+import signal
+import traceback
+
+from agent import ComputerAgent
+from computer import Computer, VMProviderType
+from dotenv import load_dotenv
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+def handle_sigint(sig, frame):
+    print("\n\nExecution interrupted by user. Exiting gracefully...")
+    exit(0)
+
+async def complex_ui_navigation():
+    """
+    Demonstrate Gemini 3's exceptional UI grounding capabilities
+    with complex, multi-step navigation tasks.
+    """
+    try:
+        async with Computer(
+            os_type="linux",
+            provider_type=VMProviderType.DOCKER,
+            image="trycua/cua-xfce:latest",
+            verbosity=logging.INFO,
+        ) as computer:
+
+            agent = ComputerAgent(
+                # Use OmniParser with Gemini 3 Pro for optimal GUI grounding
+                model="omniparser+vertex_ai/gemini-3-pro-preview",
+                tools=[computer],
+                only_n_most_recent_images=3,
+                verbosity=logging.INFO,
+                trajectory_dir="trajectories",
+                use_prompt_caching=False,
+                max_trajectory_budget=5.0,
+                # Gemini 3-specific parameters
+                thinking_level="high",  # Enables deeper reasoning (vs "low")
+                media_resolution="high",  # High-resolution image processing (vs "low" or "medium")
+            )
+
+            # Complex GUI grounding tasks inspired by ScreenSpot-Pro benchmark
+            tasks = [
+                {
+                    "instruction": (
+                        "Go to github.com/trycua/cua. "
+                        "Find and click on the 'Issues' tab. "
+                        "Then locate and click on the search box within the issues page "
+                        "(not the global GitHub search). "
+                        "Type 'omniparser' and press Enter."
+                    ),
+                    "description": "Tests precise UI element distinction in a complex interface",
+                },
+            ]
+
+            history = []
+
+            for i, task_info in enumerate(tasks, 1):
+                task = task_info["instruction"]
+                print(f"\n{'='*60}")
+                print(f"[Task {i}/{len(tasks)}] {task_info['description']}")
+                print(f"{'='*60}")
+                print(f"\nInstruction: {task}\n")
+
+                history.append({"role": "user", "content": task})
+
+                async for result in agent.run(history, stream=False):
+                    history += result.get("output", [])
+
+                    for item in result.get("output", []):
+                        if item.get("type") == "message":
+                            content = item.get("content", [])
+                            for content_part in content:
+                                if content_part.get("text"):
+                                    logger.info(f"Agent: {content_part.get('text')}")
+                        elif item.get("type") == "computer_call":
+                            action = item.get("action", {})
+                            action_type = action.get("type", "")
+                            logger.debug(f"Computer Action: {action_type}")
+
+                print(f"\n✅ Task {i}/{len(tasks)} completed")
+
+            print("\n🎉 All complex UI navigation tasks completed successfully!")
+
+    except Exception as e:
+        logger.error(f"Error in complex_ui_navigation: {e}")
+        traceback.print_exc()
+        raise
+
+def main():
+    try:
+        load_dotenv()
+
+        required_vars = [
+            "GOOGLE_CLOUD_PROJECT",
+            "GOOGLE_APPLICATION_CREDENTIALS",
+        ]
+
+        missing_vars = [var for var in required_vars if not os.environ.get(var)]
+        if missing_vars:
+            raise RuntimeError(
+                f"Missing required environment variables: {', '.join(missing_vars)}\n"
+                f"Please check your .env file."
+            )
+
+        signal.signal(signal.SIGINT, handle_sigint)
+
+        asyncio.run(complex_ui_navigation())
+
+    except Exception as e:
+        logger.error(f"Error running automation: {e}")
+        traceback.print_exc()
+
+if __name__ == "__main__":
+    main()
+```
+
+  </Tab>
+  <Tab value="macOS Sandbox">
+
+```python
+import asyncio
+import logging
+import os
+import signal
+import traceback
+
+from agent import ComputerAgent
+from computer import Computer, VMProviderType
+from dotenv import load_dotenv
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+def handle_sigint(sig, frame):
+    print("\n\nExecution interrupted by user. Exiting gracefully...")
+    exit(0)
+
+async def complex_ui_navigation():
+    """
+    Demonstrate Gemini 3's exceptional UI grounding capabilities
+    with complex, multi-step navigation tasks.
+    """
+    try:
+        async with Computer(
+            os_type="macos",
+            provider_type=VMProviderType.LUME,
+            name="macos-sequoia-cua:latest",
+            verbosity=logging.INFO,
+        ) as computer:
+
+            agent = ComputerAgent(
+                # Use OmniParser with Gemini 3 Pro for optimal GUI grounding
+                model="omniparser+vertex_ai/gemini-3-pro-preview",
+                tools=[computer],
+                only_n_most_recent_images=3,
+                verbosity=logging.INFO,
+                trajectory_dir="trajectories",
+                use_prompt_caching=False,
+                max_trajectory_budget=5.0,
+                # Gemini 3-specific parameters
+                thinking_level="high",  # Enables deeper reasoning (vs "low")
+                media_resolution="high",  # High-resolution image processing (vs "low" or "medium")
+            )
+
+            # Complex GUI grounding tasks inspired by ScreenSpot-Pro benchmark
+            tasks = [
+                {
+                    "instruction": (
+                        "Go to github.com/trycua/cua. "
+                        "Find and click on the 'Issues' tab. "
+                        "Then locate and click on the search box within the issues page "
+                        "(not the global GitHub search). "
+                        "Type 'omniparser' and press Enter."
+                    ),
+                    "description": "Tests precise UI element distinction in a complex interface",
+                },
+            ]
+
+            history = []
+
+            for i, task_info in enumerate(tasks, 1):
+                task = task_info["instruction"]
+                print(f"\n{'='*60}")
+                print(f"[Task {i}/{len(tasks)}] {task_info['description']}")
+                print(f"{'='*60}")
+                print(f"\nInstruction: {task}\n")
+
+                history.append({"role": "user", "content": task})
+
+                async for result in agent.run(history, stream=False):
+                    history += result.get("output", [])
+
+                    for item in result.get("output", []):
+                        if item.get("type") == "message":
+                            content = item.get("content", [])
+                            for content_part in content:
+                                if content_part.get("text"):
+                                    logger.info(f"Agent: {content_part.get('text')}")
+                        elif item.get("type") == "computer_call":
+                            action = item.get("action", {})
+                            action_type = action.get("type", "")
+                            logger.debug(f"Computer Action: {action_type}")
+
+                print(f"\n✅ Task {i}/{len(tasks)} completed")
+
+            print("\n🎉 All complex UI navigation tasks completed successfully!")
+
+    except Exception as e:
+        logger.error(f"Error in complex_ui_navigation: {e}")
+        traceback.print_exc()
+        raise
+
+def main():
+    try:
+        load_dotenv()
+
+        required_vars = [
+            "GOOGLE_CLOUD_PROJECT",
+            "GOOGLE_APPLICATION_CREDENTIALS",
+        ]
+
+        missing_vars = [var for var in required_vars if not os.environ.get(var)]
+        if missing_vars:
+            raise RuntimeError(
+                f"Missing required environment variables: {', '.join(missing_vars)}\n"
+                f"Please check your .env file."
+            )
+
+        signal.signal(signal.SIGINT, handle_sigint)
+
+        asyncio.run(complex_ui_navigation())
+
+    except Exception as e:
+        logger.error(f"Error running automation: {e}")
+        traceback.print_exc()
+
+if __name__ == "__main__":
+    main()
+```
+
+  </Tab>
+</Tabs>
+
+</Step>
+
+<Step>
+
+### Run Your Script
+
+Execute your complex UI navigation automation:
+
+```bash
+python gemini_ui_navigation.py
+```
+
+The agent will:
+
+1. Navigate to GitHub and locate specific UI elements
+2. Distinguish between similar elements (e.g., global search vs. issues search)
+3. Perform multi-step interactions with visual feedback
+4. Use Gemini 3's advanced reasoning for precise element grounding
+
+Monitor the output to see the agent's progress through each task.
+
+</Step>
+
+</Steps>
+
+---
+
+## Understanding Gemini 3-Specific Parameters
+
+### `thinking_level`
+
+Controls the amount of internal reasoning the model performs:
+
+- `"high"`: Deeper reasoning, better for complex UI navigation (recommended for ScreenSpot-like tasks)
+- `"low"`: Faster responses, suitable for simpler tasks
+
+### `media_resolution`
+
+Controls vision processing for multimodal inputs:
+
+- `"high"`: Best for complex UIs with many small elements (recommended)
+- `"medium"`: Balanced quality and speed
+- `"low"`: Faster processing for simple interfaces
+
+<Callout type="info">
+  For tasks requiring precise GUI element location (like ScreenSpot-Pro), use
+  `thinking_level="high"` and `media_resolution="high"` for optimal performance.
+</Callout>
+
+---
+
+## Benchmark Performance
+
+Gemini 3 Pro's performance on ScreenSpot-Pro demonstrates its exceptional UI grounding capabilities:
+
+| Model             | ScreenSpot-Pro Score |
+| ----------------- | -------------------- |
+| **Gemini 3 Pro**  | **72.7%**            |
+| Claude Sonnet 4.5 | 36.2%                |
+| Gemini 2.5 Pro    | 11.4%                |
+| GPT-5.1           | 3.5%                 |
+
+This makes Gemini 3 the ideal choice for complex UI navigation, element detection, and professional GUI automation tasks.
+
+---
+
+## Troubleshooting
+
+### Authentication Issues
+
+If you encounter authentication errors:
+
+1. Verify your service account JSON key path is correct
+2. Ensure the service account has the **Vertex AI User** role
+3. Check that the Vertex AI API is enabled in your project
+4. Confirm your `GOOGLE_CLOUD_PROJECT` matches your actual project ID
+
+### "Vertex AI API not enabled" Error
+
+Run this command to enable the API:
+
+```bash
+gcloud services enable aiplatform.googleapis.com --project=YOUR_PROJECT_ID
+```
+
+### Billing Issues
+
+Ensure billing is enabled for your Google Cloud project. Visit the [Billing section](https://console.cloud.google.com/billing) to verify.
+
+---
+
+## Next Steps
+
+- Learn more about [OmniParser agent loops](/agent-sdk/agent-loops)
+- Explore [Vertex AI pricing](https://cloud.google.com/vertex-ai/pricing)
+- Read about [ScreenSpot-Pro benchmark](https://github.com/likaixin2000/ScreenSpot-Pro-GUI-Grounding)
+- Check out [Google's Gemini 3 announcement](https://blog.google/products/gemini/gemini-3/)
+- Join our [Discord community](https://discord.com/invite/mVnXXpdE85) for help

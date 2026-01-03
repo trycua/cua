@@ -14,7 +14,7 @@ export default function Layout({ children }: { children: ReactNode }) {
           {
             title: 'Guide',
             description: 'Learn how to build with Cua',
-            url: '/guide',
+            url: '/guide/get-started/what-is-cua',
             icon: (
               <span className="flex items-center justify-center">
                 <Compass className="size-4" />
@@ -34,7 +34,7 @@ export default function Layout({ children }: { children: ReactNode }) {
           {
             title: 'Reference',
             description: 'CLI tools and API reference',
-            url: '/reference',
+            url: '/reference/computer-sdk',
             icon: (
               <span className="flex items-center justify-center">
                 <BookOpen className="size-4" />

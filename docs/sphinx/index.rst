@@ -3,18 +3,6 @@ CUA Python SDK Documentation
 
 This is the auto-generated API reference for all CUA Python SDK packages.
 
-.. toctree::
-   :maxdepth: 2
-   :caption: Packages
-
-   core
-   agent
-   computer
-   computer-server
-   som
-   mcp-server
-   bench-ui
-
 Core
 ----
 
@@ -66,8 +54,12 @@ MCP Server
 Bench UI
 --------
 
+.. note::
+   The bench_ui module may not be available in all environments.
+
 .. automodule:: bench_ui
    :members:
    :undoc-members:
    :show-inheritance:
+   :noindex:
 

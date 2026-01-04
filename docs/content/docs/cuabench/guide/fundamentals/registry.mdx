@@ -1,0 +1,94 @@
+---
+title: Registry
+description: The Cua-Bench registry of tasks and datasets.
+---
+
+The [Cua-Bench registry](https://cuabench.ai/cuabench/registry) contains a collection of pre-built tasks and datasets for evaluating computer-use agents.
+
+The goal of the registry is to be a community-based effort to increase the variety and quantity of useful, verifiable computer-use tasks.
+
+## Using the Registry
+
+### List Available Datasets
+
+```bash
+cb datasets
+```
+
+### Run a Dataset from the Registry
+
+```bash
+# Run with agent
+cb run --dataset cua-bench-basic --agent cua-agent --model anthropic/claude-sonnet-4-20250514
+
+# Run interactively
+cb interact click-button --dataset cua-bench-basic
+
+# Run oracle solutions
+cb run --dataset cua-bench-basic --oracle
+```
+
+### Clone Registry Locally
+
+The registry is automatically cloned when you first use the `--dataset` flag:
+
+```bash
+# Registry location
+~/.cua/cbregistry/
+
+# Update registry
+cd ~/.cua/cbregistry && git pull
+```
+
+## Available Datasets
+
+| Dataset | Tasks | Description | Golden Environment |
+|---------|-------|-------------|-------------------|
+| `cua-bench-basic` | 13 | Basic UI interaction tasks (clicking, typing, dragging) | `linux-docker` |
+| `winarena` | 173 | Windows 11 desktop automation | `windows-qemu` |
+| `osworld` | 369 | Linux desktop automation | `linux-qemu` |
+| `webarena` | 812 | Web browsing tasks | `linux-docker` |
+
+## Dataset Structure
+
+Each dataset in the registry follows this structure:
+
+```
+registry/
+└── datasets/
+    └── cua-bench-basic/
+        ├── meta.json           # Dataset metadata
+        └── tasks/
+            ├── click-button/
+            │   ├── main.py     # Task implementation
+            │   └── gui/
+            │       └── index.html
+            └── ...
+```
+
+### meta.json Format
+
+```json
+{
+  "name": "cua-bench-basic",
+  "version": "1.0.0",
+  "description": "Basic UI interaction tasks",
+  "platform": "linux-docker",
+  "tasks": [
+    "click-button",
+    "typing-input",
+    "drag-slider"
+  ]
+}
+```
+
+## Contributing Tasks
+
+To contribute tasks to the registry:
+
+1. Fork the [cua-bench-registry](https://github.com/trycua/cua-bench-registry) repository
+2. Create your task following the [task structure](/docs/cuabench/guide/fundamentals/tasks)
+3. Test locally with `cb interact tasks/your_task`
+4. Submit a pull request
+
+See [Creating Private Tasks](/docs/cuabench/guide/advanced/creating-private-tasks) for task development guidance.

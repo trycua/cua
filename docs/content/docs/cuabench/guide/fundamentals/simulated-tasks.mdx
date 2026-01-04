@@ -1,0 +1,71 @@
+---
+title: Simulated Tasks
+description: Lightweight synthetic tasks for testing and development
+---
+
+# Simulated Tasks
+
+Simulated tasks use synthetic HTML webapps to test agent capabilities in controlled environments. They run via Playwright in a headless browser, making them fast and lightweight.
+
+## What are Simulated Tasks?
+
+- **Lightweight**: Run in `linux-docker` containers, no KVM required
+- **Fast**: Quick to set up and iterate (~2 seconds startup)
+- **Deterministic**: Consistent behavior for reproducible testing
+- **No Docker Required**: Uses Playwright directly
+
+## How They Work
+
+Simulated tasks render HTML/CSS desktops in a Chromium browser:
+
+```
+┌───────────────────────────────────────────────────────────┐
+│  Simulated macOS/Windows Desktop (HTML/CSS)               │
+│  ┌─────────────────────────────────────────────────────┐  │
+│  │              App Window (iframe)                    │  │
+│  │              HTML content, JS enabled               │  │
+│  └─────────────────────────────────────────────────────┘  │
+│     🍎 Finder  Chrome  Slack  ...                         │
+└───────────────────────────────────────────────────────────┘
+```
+
+## Available Datasets
+
+| Dataset | Tasks | Description |
+|---------|-------|-------------|
+| `cua-bench-basic` | 13 | Core UI interactions (click, type, drag, etc.) |
+| `cua-bench-forms` | - | Form filling and validation |
+| `cua-bench-navigation` | - | Multi-page navigation |
+
+## Running Simulated Tasks
+
+```bash
+# Check task provider type
+cb task info ./tasks/my_task
+
+# Interactive mode (opens Chromium window)
+cb interact ./tasks/slack_env --oracle
+
+# Run with agent
+cb run --dataset cua-bench-basic --agent cua-agent
+```
+
+## When to Use
+
+- Agent development and debugging
+- CI/CD pipeline testing
+- Quick iteration on agent logic
+- Testing UI interaction patterns
+
+## Creating Simulated Tasks
+
+Simulated tasks use the `simulated` provider and include HTML/CSS for the desktop simulation:
+
+```
+my_task/
+├── main.py           # Task definition
+└── gui/
+    └── index.html    # HTML webapp
+```
+
+See [Creating Private Tasks](/docs/cuabench/guide/advanced/creating-private-tasks) for details.

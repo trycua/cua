@@ -1,0 +1,100 @@
+---
+title: Native Tasks
+description: Real-world benchmarks with production applications
+---
+
+# Native Tasks
+
+Native tasks run against real desktop and mobile applications in full VM environments. They use Docker containers with QEMU/KVM virtualization to provide isolated, reproducible environments.
+
+## What are Native Tasks?
+
+- **Real Applications**: Actual Windows, Linux, macOS, Android software
+- **Production Benchmarks**: Industry-standard evaluation datasets
+- **Full VM Environments**: QEMU/KVM virtualization
+- **Reproducible**: Base images ensure consistent starting state
+
+## How They Work
+
+Native tasks run inside Docker containers with VNC for remote access:
+
+```
+┌───────────────────────────────────────────────────────────┐
+│  Docker Container                                         │
+│  ┌─────────────────────────────────────────────────────┐  │
+│  │  Real XFCE/Windows Desktop (via VNC)                │  │
+│  │  ┌─────────────────────────────────────────────────┐│  │
+│  │  │  Actual applications: Firefox, LibreOffice,    ││  │
+│  │  │  Terminal, File Manager, etc.                  ││  │
+│  │  └─────────────────────────────────────────────────┘│  │
+│  └─────────────────────────────────────────────────────┘  │
+│  Startup: 60-180 seconds | Requires Docker + KVM          │
+└───────────────────────────────────────────────────────────┘
+```
+
+## Available Benchmarks
+
+| Benchmark | Platform | Tasks | Description |
+|-----------|----------|-------|-------------|
+| Windows Arena | `windows-qemu` | 173 | Windows 11 across 12 app domains |
+| OSWorld | `linux-qemu` | 369 | Linux desktop automation |
+| WebArena | `linux-docker` | 812 | Web browsing tasks |
+| AndroidWorld | `android-qemu` | 200+ | Android mobile automation |
+| macOSWorld | `macos-lume` | 100+ | macOS desktop automation |
+
+## Platform Requirements
+
+| Platform | Requirements |
+|----------|--------------|
+| `linux-docker` | Docker |
+| `linux-qemu` | Docker + KVM |
+| `windows-qemu` | Docker + KVM, x86_64 Linux |
+| `android-qemu` | Docker + KVM |
+| `macos-lume` | Apple Silicon Mac |
+
+## Running Native Tasks
+
+```bash
+# Create required base image first
+cb image create windows-qemu --download-iso
+
+# Check task provider type
+cb task info ./tasks/winarena
+
+# Interactive mode (opens VNC in browser)
+cb interact ./tasks/winarena --variant-id 0 --oracle
+
+# Run with agent
+cb run --dataset winarena --agent cua-agent --image windows-qemu
+```
+
+## When to Use
+
+- Final agent evaluation
+- Benchmarking against published results
+- Testing real-world robustness
+- Production-grade testing
+
+## Creating Native Tasks
+
+Native tasks use the `native` provider and require a base image:
+
+```python
+@benchmark.task(
+    environment="windows-qemu",
+    timeout=600,
+)
+async def my_task(session):
+    # Setup
+    import subprocess
+    subprocess.run(["powershell", "-Command", "Start-Process notepad"])
+
+    yield {
+        "description": "Type 'Hello' in Notepad",
+    }
+
+    # Evaluation
+    return {"success": True, "reward": 1.0}
+```
+
+See [Creating Private Tasks](/docs/cuabench/guide/advanced/creating-private-tasks) for details.

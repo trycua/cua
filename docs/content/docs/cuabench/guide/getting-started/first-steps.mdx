@@ -1,0 +1,178 @@
+---
+title: First Steps
+description: Running the benchmark and testing your own agent.
+---
+
+## Prerequisites
+
+Before running benchmarks, ensure you have:
+
+1. [Installed the CLI](/docs/cuabench/guide/getting-started/installation)
+2. Created at least one [base image](/docs/cuabench/guide/getting-started/images):
+
+```bash
+# Quick setup (Linux container, no KVM required)
+cb image create linux-docker
+
+# Check available images
+cb image list
+```
+
+## Run a Basic Benchmark
+
+The Cua-Bench CLI can run many different computer-use benchmarks and versions of benchmarks.
+
+To see the available datasets, run `cb datasets` or visit the [registry](http://cuabench.ai/cuabench/registry/).
+
+### Step 1: Explore Interactively
+
+Start by exploring a single task interactively to see how it works in a browser window:
+
+```bash
+cb interact click-icon --dataset cua-bench-basic
+```
+
+### Step 2: Validate Oracle Solutions
+
+Next, verify your environment setup by running the oracle solutions:
+
+```bash
+cb run --dataset cua-bench-basic --oracle
+```
+
+### Step 3: Run with an Agent
+
+Finally, perform a benchmark using the Cua Agent SDK:
+
+```bash
+export ANTHROPIC_API_KEY=sk-....
+cb run \
+    --dataset cua-bench-basic \
+    --agent cua-agent \
+    --model anthropic/claude-haiku-4-5 \
+    --max-parallel 8 \
+    --max-steps 10 \
+    --max-variants 1
+```
+
+You should see output similar to:
+
+```
+
+    ⠀⣀⣀⡀⠀⠀⠀⠀⢀⣀⣀⣀⡀⠘⠋⢉⠙⣷⠀⠀ ⠀ 
+ ⠀⠀⢀⣴⣿⡿⠋⣉⠁⣠⣾⣿⣿⣿⣿⡿⠿⣦⡈⠀⣿⡇⠃⠀
+ ⠀⠀⠀⣽⣿⣧⠀⠃⢰⣿⣿⡏⠙⣿⠿⢧⣀⣼⣷⠀⡿⠃⠀⠀
+ ⠀⠀⠀⠉⣿⣿⣦⠀⢿⣿⣿⣷⣾⡏⠀⠀⢹⣿⣿⠀⠀⠀⠀⠀⠀
+ ⠀⠀⠀⠀⠀⠉⠛⠁⠈⠿⣿⣿⣿⣷⣄⣠⡼⠟⠁⠀cua-bench==v0.1.0
+           toolkit for computer-use RL environments and benchmarks
+
+████████████████████ 13/13
+Model: anthropic/claude-haiku-4-5
+Agent: cua-agent
+Run ID: run-2768db7f
+
+
+
+SESSION ID                                   ENVIRONMENT       VARIANT  STATUS           REWARD     
+----------------------------------------     ---------------   -------  ---------------  ---------- 
+task-baecb22e                                typing-input      0        ✗ failed         0.0        
+task-05a6e068                                video-player      0        ✓ completed      1.0        
+task-a8faeb43                                spreadsheet-cell  0        ✗ failed         0.0        
+task-5a5f30c5                                toggle-switch     0        ✓ completed      1.0        
+task-3555ee20                                select-dropdown   0        ✗ failed         0.0        
+task-e9560151                                click-button      0        ✓ completed      1.0        
+task-7ec326f2                                fill-form         0        ✗ failed         0.0        
+task-57dae23d                                date-picker       0        ✗ failed         0.0        
+task-01276975                                drag-slider       0        ✗ failed         0.0        
+task-4b875cd2                                color-picker      0        ✓ completed      1.0        
+task-c933d5b0                                drag-drop         0        ✗ failed         0.0        
+task-ec44d643                                right-click-menu  0        ✗ failed         0.0        
+task-7c4acb4c                                click-icon        0        ✓ completed      1.0        
+
+
+
+✓ All sessions completed!
+Average Reward: 0.385
+
+REWARD  COUNT
+-------------
+1.0     5
+0.0     8
+```
+
+You can see an overview table of your past runs with `cb runs`
+
+## Run Windows Arena
+
+Windows Arena is a benchmark with 173 tasks across 12 Windows application domains.
+
+<Callout title="Requirements" type="info">
+  Windows Arena requires x86_64 Linux with KVM support (nested virtualization). Setup takes ~1-2 hours.
+</Callout>
+
+### Step 1: Create Windows Base Image
+
+```bash
+# Download Windows ISO and create base image (~1-2 hours)
+cb image create windows-qemu --download-iso
+
+# Monitor progress (VNC at http://localhost:8006)
+docker logs -f cua-setup-windows
+```
+
+### Step 2: Start Sandbox
+
+```bash
+# Start Windows sandbox
+cb sandbox start windows-qemu
+
+# Verify it's running
+cb sandbox list
+
+# Connect via VNC
+cb sandbox vnc windows-qemu
+```
+
+### Step 3: Run Tasks
+
+```bash
+# List available tasks
+cb run tasks/winarena_adapter --list
+
+# Run specific task with oracle
+cb interact tasks/winarena_adapter --variant-id 0 --oracle
+
+# Run with agent
+cb run tasks/winarena_adapter \
+    --agent cua-agent \
+    --model anthropic/claude-sonnet-4-20250514 \
+    --image windows-qemu
+
+# Stop when done
+cb sandbox stop windows-qemu
+```
+
+## View Past Runs
+
+```bash
+# List all runs with statistics
+cb runs
+
+# View traces from a specific run
+cb view-traces outputs/<run-id>
+```
+
+## Export Training Data
+
+Export agent trajectories to training datasets:
+
+```bash
+# Export with aguvis-stage-1 format
+cb process outputs/<run-id> --save-dir datasets/
+
+# Export with gui-r1 format
+cb process outputs/<run-id> --mode gui-r1 --save-dir datasets/
+
+# Push to Hugging Face
+cb process outputs/<run-id> --push-to-hub --repo-id username/my-dataset
+```

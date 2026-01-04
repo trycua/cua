@@ -1,0 +1,239 @@
+---
+title: CLI Reference
+description: Complete reference for all cua-bench CLI commands
+---
+
+## Image Commands
+
+Create and manage base images for environments.
+
+```bash
+cb image <action> [options]
+```
+
+| Command | Description |
+|---------|-------------|
+| `cb image create <platform>` | Create a base image |
+| `cb image list` | List all images |
+| `cb image info <name>` | Show image details |
+| `cb image clone <src> <dst>` | Clone/fork an image |
+| `cb image delete <name>` | Delete an image |
+
+### Create Options
+
+```bash
+cb image create <platform> [options]
+```
+
+| Option | Description |
+|--------|-------------|
+| `--download-iso` | Download Windows 11 ISO (~6GB) |
+| `--iso <path>` | Use existing Windows ISO |
+| `--name <name>` | Image name (default: same as platform) |
+| `--apps <list>` | Comma-separated apps to install (e.g., chrome,libreoffice) |
+| `--memory <size>` | Memory (default: 8G) |
+| `--cpus <count>` | CPU cores (default: 8) |
+| `--disk <size>` | Disk size (default: 64G) |
+| `--detach`, `-d` | Run in background |
+| `--force` | Force recreation |
+
+### List Options
+
+```bash
+cb image list [options]
+```
+
+| Option | Description |
+|--------|-------------|
+| `--format <fmt>` | Output format: table, json |
+| `--platform <type>` | Filter by platform type |
+
+## Sandbox Commands
+
+Manage running sandbox instances.
+
+```bash
+cb sandbox <action> [options]
+```
+
+| Command | Description |
+|---------|-------------|
+| `cb sandbox start <image>` | Start sandbox from image |
+| `cb sandbox stop <id>` | Stop running sandbox |
+| `cb sandbox list` | List running sandboxes |
+| `cb sandbox vnc <id>` | Open VNC in browser |
+| `cb sandbox logs <id>` | View sandbox logs |
+| `cb sandbox exec <id> <cmd>` | Execute command in sandbox |
+
+### Start Options
+
+```bash
+cb sandbox start <image> [options]
+```
+
+| Option | Description |
+|--------|-------------|
+| `--vnc-port <port>` | VNC port (default varies by type) |
+| `--api-port <port>` | API port (default varies by type) |
+| `--name <name>` | Custom sandbox name |
+
+## Platform Commands
+
+View available platforms.
+
+```bash
+cb platform list [options]
+```
+
+| Option | Description |
+|--------|-------------|
+| `--format <fmt>` | Output format: table, json |
+
+## Status Commands
+
+Show system status.
+
+```bash
+cb status
+```
+
+Shows Docker status, KVM availability, and running sandboxes.
+
+## Run Commands
+
+Run tasks with the 2-container architecture (agent container + environment container).
+
+```bash
+cb run <task> [options]
+```
+
+### Basic Options
+
+| Option | Description |
+|--------|-------------|
+| `--agent <name>` | Agent to use (from `.cua/agents.yaml`) |
+| `--model <model>` | Model to use (e.g., `anthropic/claude-sonnet-4-20250514`) |
+| `--oracle` | Run with oracle solution (no agent) |
+| `--variant-id <n>` | Run specific task variant (default: 0) |
+| `--max-steps <n>` | Maximum steps per task (default: 100) |
+
+### Environment Options
+
+| Option | Description |
+|--------|-------------|
+| `--image <name>` | Use specific base image |
+| `--platform <type>` | Platform type: `linux-docker`, `windows-qemu`, `android-qemu` |
+
+### Debugging Options
+
+| Option | Description |
+|--------|-------------|
+| `--vnc-port <port>` | Expose VNC on host port (for live viewing) |
+| `--api-port <port>` | Expose API on host port (for debugging) |
+
+### Batch Options
+
+| Option | Description |
+|--------|-------------|
+| `--max-parallel <n>` | Maximum parallel sessions |
+| `--max-variants <n>` | Maximum variants per task |
+| `--output-dir <dir>` | Output directory for results |
+| `--dataset <name>` | Use dataset from registry |
+| `--dataset-path <path>` | Use local dataset path |
+| `--list` | List available tasks |
+
+### Provider Options
+
+| Option | Description |
+|--------|-------------|
+| `--on <provider>` | Where to run: `local` (default) or `cloud` |
+
+### Examples
+
+```bash
+# Run task with oracle solution
+cb run tasks/click_button --variant-id 0
+
+# Run with agent evaluation
+cb run tasks/click_button --variant-id 0 --agent cua-agent
+
+# Run with VNC for live debugging (open http://localhost:8006)
+cb run tasks/click_button --agent cua-agent --vnc-port 8006
+
+# Run with custom model and step limit
+cb run tasks/click_button --agent cua-agent --model gpt-4o --max-steps 50
+
+# Run Windows task
+cb run tasks/winarena --variant-id 0 --platform windows-qemu --agent cua-agent
+
+# Run with specific image
+cb run tasks/winarena --image windows-custom --agent cua-agent
+```
+
+## Interact Commands
+
+Interactive task mode with visible browser.
+
+```bash
+cb interact <task> [options]
+```
+
+| Option | Description |
+|--------|-------------|
+| `--variant-id <id>` | Run specific task variant |
+| `--oracle` | Run oracle solution |
+| `--screenshot <path>` | Save screenshot to file |
+| `--dataset <name>` | Use dataset from registry |
+
+## Task Creation Commands
+
+Create and generate tasks.
+
+```bash
+# Create empty task scaffold
+cb create-task <path>
+
+# AI-generate a task
+cb generate-task "<description>" [options]
+```
+
+| Option | Description |
+|--------|-------------|
+| `--output <path>` | Output directory for generated task |
+
+## Data Processing Commands
+
+Export snapshots to training datasets.
+
+```bash
+cb process <dir> [options]
+```
+
+| Option | Description |
+|--------|-------------|
+| `--save-dir <dir>` | Output directory for datasets |
+| `--mode <mode>` | Processor mode: aguvis-stage-1, gui-r1 |
+| `--push-to-hub` | Push to Hugging Face Hub |
+| `--repo-id <id>` | Hugging Face repo ID |
+
+## View Commands
+
+View traces and results.
+
+```bash
+# View single trace
+cb view-trace <path>
+
+# View multiple traces
+cb view-traces <dir>
+```
+
+## Datasets Commands
+
+View available datasets.
+
+```bash
+cb datasets [options]
+```
+
+Lists available datasets from the registry.

@@ -1,0 +1,316 @@
+---
+title: SDK Reference
+description: Programming API for writing agents and tasks
+---
+
+# SDK Reference
+
+cua-bench provides a Modal-style Python SDK for writing agents and tasks.
+
+## Quick Example
+
+```python
+from cua_bench import Benchmark, Image, Secret, TaskDataset
+
+benchmark = Benchmark("my-eval")
+tasks = TaskDataset.from_registry("winarena")
+
+image = (
+    Image.from_registry("trycua/cua-bench:latest")
+    .pip_install("anthropic")
+)
+
+@benchmark.function(
+    image=image,
+    timeout=600,
+    secrets=[Secret.from_name("anthropic-api-key")],
+)
+async def run_task(task_index: int, env) -> dict:
+    session, task_config = await env.reset()
+
+    for _ in range(50):
+        screenshot = await session.screenshot()
+        # ... agent logic ...
+        await session.click(100, 200)
+
+    result = await session.close()
+    return {"reward": result["reward"]}
+
+@benchmark.local_entrypoint()
+def main():
+    results = run_task.map(
+        [i for i, _ in enumerate(tasks)],
+        env=[task for task in tasks]
+    )
+    print(f"Avg reward: {sum(r['reward'] for r in results) / len(results):.2%}")
+```
+
+---
+
+## Core Classes
+
+### Benchmark
+
+Create a benchmark context for organizing agent functions and tasks.
+
+```python
+from cua_bench import Benchmark
+
+benchmark = Benchmark("my-benchmark-name")
+```
+
+**Decorators:**
+
+| Decorator | Description |
+|-----------|-------------|
+| `@benchmark.function(...)` | Define an agent function |
+| `@benchmark.task(...)` | Define a task with setup/eval |
+| `@benchmark.local_entrypoint()` | Entry point for local runs |
+
+---
+
+### Image
+
+Build agent runtime environments using a builder pattern:
+
+```python
+from cua_bench import Image
+
+image = (
+    Image.from_registry("trycua/cua-bench:latest")
+    .pip_install("anthropic", "openai")
+    .apt_install("ffmpeg", "imagemagick")
+    .run_commands("python -c 'import anthropic'")
+    .copy_local_dir("./src", "/app/src")
+    .env("MY_VAR", "value")
+)
+```
+
+**Builder Methods:**
+
+| Method | Description |
+|--------|-------------|
+| `Image.from_registry(name)` | Start from a base Docker image |
+| `.pip_install(*packages)` | Install Python packages |
+| `.apt_install(*packages)` | Install system packages (Debian/Ubuntu) |
+| `.run_commands(*commands)` | Run shell commands during build |
+| `.copy_local_dir(src, dst)` | Copy local directory into image |
+| `.env(key, value)` | Set environment variable |
+
+---
+
+### Secret
+
+Reference API keys securely:
+
+```python
+from cua_bench import Secret
+
+# Reference by name (configured in .cua/secrets.yaml)
+anthropic_key = Secret.from_name("anthropic-api-key")
+
+# Reference from environment variable
+openai_key = Secret.from_env("OPENAI_API_KEY")
+
+@benchmark.function(
+    image=image,
+    secrets=[anthropic_key, openai_key],
+)
+async def run_task(task_index: int, env) -> dict:
+    import os
+    api_key = os.environ["ANTHROPIC_API_KEY"]
+```
+
+**Methods:**
+
+| Method | Description |
+|--------|-------------|
+| `Secret.from_name(name)` | Reference a named secret |
+| `Secret.from_env(var)` | Reference an environment variable |
+
+---
+
+### TaskDataset
+
+Load task definitions from the registry or local paths:
+
+```python
+from cua_bench import TaskDataset
+
+# Load from registry
+tasks = TaskDataset.from_registry("winarena")
+tasks = TaskDataset.from_registry("osworld")
+
+# Load from local path
+tasks = TaskDataset.from_path("./my_tasks/")
+
+# Filter tasks
+tasks = tasks.filter(domain="chrome")
+tasks = tasks.filter(difficulty="easy")
+tasks = tasks[:10]  # First 10 tasks
+
+# Iterate
+for task in tasks:
+    print(task.id, task.description)
+```
+
+**Methods:**
+
+| Method | Description |
+|--------|-------------|
+| `TaskDataset.from_registry(name)` | Load from CUA registry |
+| `TaskDataset.from_path(path)` | Load from local directory |
+| `.filter(**kwargs)` | Filter by attributes |
+| `[start:end]` | Slice tasks |
+| `len(tasks)` | Get task count |
+
+---
+
+### Session Interface
+
+Interact with the desktop environment:
+
+```python
+@benchmark.function(image=image)
+async def run_task(task_index: int, env) -> dict:
+    session, task_config = await env.reset()
+
+    # Screenshot
+    screenshot_bytes = await session.screenshot()  # PNG bytes
+    screenshot_b64 = await session.screenshot(format="base64")
+
+    # Mouse actions
+    await session.click(x, y)
+    await session.right_click(x, y)
+    await session.double_click(x, y)
+    await session.drag(from_x, from_y, to_x, to_y)
+    await session.scroll(x, y, direction="down", amount=3)
+    await session.move_to(x, y)
+
+    # Keyboard actions
+    await session.type("Hello, world!")
+    await session.key("Enter")
+    await session.hotkey(["ctrl", "c"])
+
+    # Advanced
+    snapshot = await session.get_snapshot()  # Window info
+    pid = await session.launch_window("https://example.com")
+    result = await session.execute_javascript(pid, "document.title")
+
+    # Finalize
+    result = await session.close()  # Runs evaluation
+    return {"reward": result["reward"]}
+```
+
+**Session Methods:**
+
+| Method | Description |
+|--------|-------------|
+| `screenshot(format?)` | Capture screen (PNG bytes or base64) |
+| `click(x, y)` | Left click at coordinates |
+| `right_click(x, y)` | Right click |
+| `double_click(x, y)` | Double click |
+| `drag(x1, y1, x2, y2)` | Drag gesture |
+| `scroll(x, y, direction, amount)` | Scroll at position |
+| `move_to(x, y)` | Move cursor |
+| `type(text)` | Type text |
+| `key(key)` | Press single key |
+| `hotkey(keys)` | Key combination (e.g., `["ctrl", "c"]`) |
+| `get_snapshot()` | Get desktop state |
+| `launch_window(url)` | Launch browser window |
+| `execute_javascript(pid, js)` | Run JS in window |
+| `close()` | Finalize and get result |
+
+---
+
+## Execution Patterns
+
+Agent functions support multiple execution patterns:
+
+```python
+@benchmark.function(image=image, timeout=600)
+async def run_task(task_index: int, env) -> dict:
+    ...
+
+@benchmark.local_entrypoint()
+def main():
+    # Single local execution
+    result = run_task.local(task_index=0, env=tasks[0])
+
+    # Single remote execution
+    result = run_task.remote(task_index=0, env=tasks[0])
+
+    # Parallel execution (recommended)
+    results = run_task.map(
+        [i for i, _ in enumerate(tasks)],
+        env=[task for task in tasks]
+    )
+
+    # With concurrency limit
+    results = run_task.map(
+        task_indices,
+        env=task_configs,
+        concurrency=10,
+    )
+```
+
+**Execution Methods:**
+
+| Method | Description |
+|--------|-------------|
+| `.local(...)` | Run locally in current process |
+| `.remote(...)` | Run single task remotely |
+| `.map(...)` | Run multiple tasks in parallel |
+
+---
+
+## Task Definition
+
+Define tasks using a generator pattern with `yield`:
+
+```python
+from cua_bench import benchmark, Demonstrations
+
+@benchmark.task(
+    environment="windows-qemu",
+    oracle=Demonstrations.from_name("my-demo"),
+    timeout=600,
+)
+async def my_task(session):
+    # ─── SETUP (runs on env.reset()) ───
+    import subprocess
+    subprocess.run(["powershell", "-Command", "Start-Process notepad"])
+
+    # ─── YIELD TASK DESCRIPTION ───
+    yield {
+        "description": "Type 'Hello World' in Notepad",
+        "hints": ["Use Ctrl+S to save"],
+    }
+
+    # ─── EVALUATION (runs on session.close()) ───
+    import os
+    if os.path.exists("C:/Users/User/Desktop/hello.txt"):
+        return {"success": True, "reward": 1.0}
+
+    return {"success": False, "reward": 0.0}
+```
+
+**Task Decorator Options:**
+
+| Option | Type | Description |
+|--------|------|-------------|
+| `environment` | string | Platform type |
+| `oracle` | Demonstrations | Optional oracle demonstration |
+| `timeout` | int | Task timeout in seconds |
+| `tags` | list | Task tags for filtering |
+
+**Task Return Value:**
+
+```python
+{
+    "success": bool,      # Whether task succeeded
+    "reward": float,      # 0.0 to 1.0
+    "reason": str,        # Optional explanation
+    "details": dict,      # Optional extra data
+}
+```

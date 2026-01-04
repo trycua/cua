@@ -1,0 +1,206 @@
+---
+title: Base Images
+description: Setting up reproducible VM environments for benchmarks
+---
+
+Base images are reproducible environments for running benchmarks. Each image type provides a consistent, isolated desktop or mobile environment that can be started, stopped, and reset to a known state.
+
+## Image Types
+
+| Type | Command | Description | Requirements |
+|------|---------|-------------|--------------|
+| `linux-docker` | `cb image create linux-docker` | Linux GUI container (XFCE) | Docker |
+| `linux-qemu` | `cb image create linux-qemu` | Linux VM with QEMU/KVM | Docker + KVM |
+| `windows-qemu` | `cb image create windows-qemu --download-iso` | Windows 11 VM | Docker + KVM |
+| `android-qemu` | `cb image create android-qemu` | Android VM | Docker + KVM |
+| `macos-lume` | `cb image create macos-lume` | macOS VM via Lume | Apple Silicon |
+
+## Quick Setup
+
+### linux-docker (Fastest)
+
+Container-based Linux GUI. No KVM required, works anywhere Docker runs.
+
+```bash
+# Create image (~1 minute)
+cb image create linux-docker
+
+# Start sandbox
+cb sandbox start linux-docker
+
+# Connect via browser
+cb sandbox vnc linux-docker
+
+# Stop when done
+cb sandbox stop linux-docker
+```
+
+### windows-qemu (Windows Arena)
+
+Full Windows 11 VM with QEMU/KVM. Required for Windows Arena benchmarks.
+
+```bash
+# Create image (~1-2 hours, downloads Windows 11 ISO)
+cb image create windows-qemu --download-iso
+
+# With specific apps pre-installed
+cb image create windows-qemu --download-iso --apps chrome,libreoffice,vlc
+
+# With custom resources
+cb image create windows-qemu --download-iso --memory 16G --cpus 8 --disk 128G
+
+# Run in background (detached)
+cb image create windows-qemu --download-iso --detach
+```
+
+<Callout title="Requirements" type="info">
+  Windows QEMU requires an x86_64 Linux host with KVM support. For cloud VMs, ensure nested virtualization is enabled.
+</Callout>
+
+### macos-lume (Apple Silicon only)
+
+macOS VM using Apple's Virtualization framework via Lume.
+
+```bash
+# Install Lume first
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/lume/scripts/install.sh)"
+
+# Create macOS image
+cb image create macos-lume --version sonoma
+```
+
+## Managing Sandboxes
+
+### Start and Stop
+
+```bash
+# Start sandbox from image
+cb sandbox start linux-docker
+cb sandbox start windows-qemu --vnc-port 8080 --api-port 9000
+
+# List running sandboxes
+cb sandbox list
+
+# Stop sandbox
+cb sandbox stop linux-docker
+```
+
+### Connect to Sandbox
+
+```bash
+# Open VNC in browser
+cb sandbox vnc linux-docker
+
+# Or access directly via ports
+# linux-docker: http://localhost:6901 (VNC), http://localhost:8000 (API)
+# windows-qemu: http://localhost:8006 (VNC), http://localhost:5000 (API)
+```
+
+## Image Management
+
+Images are stored in `~/.local/share/cua-bench/images/`. Use the `cb image` commands to manage them:
+
+```bash
+# List all images
+cb image list
+cb image list --format json
+
+# Show detailed info
+cb image info windows-qemu
+
+# Clone for customization
+cb image clone windows-qemu windows-custom
+
+# Delete an image
+cb image delete windows-custom
+```
+
+## Port Mappings
+
+Different image types use different internal ports:
+
+| Image Type | VNC Port (internal) | API Port (internal) |
+|------------|---------------------|---------------------|
+| `linux-docker` | 6901 | 8000 |
+| `windows-qemu` | 8006 | 5000 |
+| `linux-qemu` | 8006 | 5000 |
+| `android-qemu` | 8006 | 5000 |
+
+When starting sandboxes, you can map these to custom external ports:
+
+```bash
+cb sandbox start linux-docker --vnc-port 8080 --api-port 9000
+```
+
+## Storage Structure
+
+Cua-Bench follows the XDG Base Directory specification:
+
+```
+~/.local/share/cua-bench/           # Data directory
+├── images/                         # Base images
+│   ├── linux-docker/
+│   ├── windows-qemu/
+│   │   ├── windows.boot            # Marker file (setup complete)
+│   │   └── data/                   # VM disk files
+│   └── ...
+└── windows.iso                     # Downloaded Windows ISO
+
+~/.local/state/cua-bench/           # State directory
+├── images.json                     # Image registry
+└── sandboxes.json                  # Running sandbox registry
+```
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                              cua-bench                                   │
+├─────────────────────────────────┬───────────────────────────────────────┤
+│           LOCAL                 │              CLOUD                     │
+│   (Development & Authoring)     │         (Execution & Scale)            │
+├─────────────────────────────────┼───────────────────────────────────────┤
+│                                 │                                        │
+│  cb image create windows-qemu   │  cb run --on cloud                     │
+│  cb sandbox start               │  Parallel execution                    │
+│  cb interact                    │  Agent orchestration                   │
+│  cb image clone                 │  Result aggregation                    │
+│                                 │                                        │
+│  ↓                              │  ↑                                     │
+│  Create base images             │  Run evals at scale                    │
+│  Develop benchmark tasks        │  100s of parallel VMs                  │
+│  Debug & iterate                │  Automatic infrastructure              │
+│                                 │                                        │
+└─────────────────────────────────┴───────────────────────────────────────┘
+```
+
+**Local** is the authoring environment for images and tasks. **Cloud** handles scale.
+
+## Troubleshooting
+
+### KVM not available
+
+```bash
+# Check if KVM is available
+ls -la /dev/kvm
+
+# If not available on cloud VM, enable nested virtualization
+# or use linux-docker which doesn't require KVM
+```
+
+### Docker not running
+
+```bash
+# Start Docker
+sudo systemctl start docker
+
+# Or on macOS
+open -a Docker
+```
+
+### Port already in use
+
+```bash
+# Use custom ports
+cb sandbox start linux-docker --vnc-port 9000 --api-port 9001
+```

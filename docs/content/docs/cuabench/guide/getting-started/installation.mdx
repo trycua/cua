@@ -1,0 +1,87 @@
+---
+title: Installation
+description: Getting started with Cua-Bench
+---
+
+Cua-Bench provides a CLI for running the benchmark, creating tasks, and generating training data.
+
+## Install Dependencies
+
+Cua-Bench requires `git` and `Docker` to be installed on your system.
+
+## Install the CLI
+
+Install Cua-Bench using `uv`:
+
+```bash
+# Post-OSS this step will just be: 
+# uv tool install cua-bench
+
+# Clone the repo
+git clone https://github.com/trycua/cua-bench.git
+cd cua-bench
+
+# Install cua-bench CLI
+uv tool install -e .
+
+# Install playwright
+uv run python -m playwright install chromium
+
+# Build cua-bench Docker image
+docker build -t cua-bench:latest .
+```
+
+After installation, you can run the CLI using `cua-bench` or `cb` for convenience.
+
+## Create Base Image
+
+Base images are reproducible environments for running benchmarks. Create at least one:
+
+```bash
+# Quick setup (Linux container, no KVM required)
+cb image create linux-docker
+
+# Or for Windows Arena benchmarks (~1-2 hours)
+cb image create windows-qemu --download-iso
+```
+
+See [Base Images](/docs/cuabench/guide/getting-started/images) for more options.
+
+## Verify Installation
+
+Run the help command to verify the installation:
+
+```bash
+cb --help
+```
+
+You should see output similar to:
+
+```
+     ⠀⣀⣀⡀⠀⠀⠀⠀⢀⣀⣀⣀⡀⠘⠋⢉⠙⣷⠀⠀ ⠀
+ ⠀⠀⢀⣴⣿⡿⠋⣉⠁⣠⣾⣿⣿⣿⣿⡿⠿⣦⡈⠀⣿⡇⠃⠀
+ ⠀⠀⠀⣽⣿⣧⠀⠃⢰⣿⣿⡏⠙⣿⠿⢧⣀⣼⣷⠀⡿⠃⠀⠀
+ ⠀⠀⠀⠉⣿⣿⣦⠀⢿⣿⣿⣷⣾⡏⠀⠀⢹⣿⣿⠀⠀⠀⠀⠀⠀
+ ⠀⠀⠀⠀⠀⠉⠛⠁⠈⠿⣿⣿⣿⣷⣄⣠⡼⠟⠁⠀cua-bench==v0.4.0
+           toolkit for computer-use RL environments and benchmarks
+
+Commands:
+  run              Run a benchmark file or task
+  interact         Run a task interactively with visible GUI
+  task             Inspect and manage tasks (info, list)
+  image            Manage base images (create, list, info, clone, delete)
+  sandbox          Manage running sandboxes (start, stop, list, vnc, logs, exec)
+  platform         View available platforms (list)
+  status           Show system status
+  datasets         List available datasets from the registry
+  process          Process outputs into training datasets
+  view-trace       View a single trace
+  view-traces      View multiple traces in a grid
+  create-task      Scaffold a new task
+  generate-task    AI-generate a task from description
+  login            Authenticate with CUA Cloud
+
+Options:
+  -h, --help       Show this help message and exit
+  --version        Show version
+```

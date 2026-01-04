@@ -5,6 +5,7 @@
   "pages": [
     "tasks",
     "simulated-tasks",
+    "os-themes",
     "native-tasks",
     "registry"
   ]

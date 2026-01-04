@@ -1,55 +1,176 @@
 'use client';
 
+import { useState, useRef, useEffect } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
 import { usePathname } from 'next/navigation';
 import { cn } from 'fumadocs-ui/utils/cn';
 import { SearchToggle } from 'fumadocs-ui/components/layout/search-toggle';
 import { ThemeToggle } from 'fumadocs-ui/components/layout/theme-toggle';
+import { ChevronsUpDown, Check } from 'lucide-react';
 import LogoBlack from '@/assets/logo-black.svg';
 import LogoWhite from '@/assets/logo-white.svg';
+import CuaBenchLogoBlack from '@/assets/cuabench-logo-black.svg';
+import CuaBenchLogoWhite from '@/assets/cuabench-logo-white.svg';
 
-const navTabs = [
-  { name: 'Guide', href: '/guide/get-started/what-is-cua', prefix: '/docs/guide' },
-  { name: 'Examples', href: '/examples/automation/form-filling', prefix: '/docs/examples' },
-  { name: 'API Reference', href: '/reference/computer-sdk', prefix: '/docs/reference' },
+const docsSites = [
+  {
+    name: 'Cua',
+    label: 'Docs',
+    href: '/cua/guide/get-started/what-is-cua',
+    prefix: '/cua',
+    isDefault: true,
+    description: 'Computer Use Agent SDK',
+    logoBlack: LogoBlack,
+    logoWhite: LogoWhite,
+    iconWidth: 24,
+    iconHeight: 24,
+    dropdownIconWidth: 20,
+    dropdownIconHeight: 20,
+    navTabs: [
+      { name: 'Guide', href: '/cua/guide/get-started/what-is-cua', prefix: '/cua/guide' },
+      { name: 'Examples', href: '/cua/examples/automation/form-filling', prefix: '/cua/examples' },
+      { name: 'API Reference', href: '/cua/reference/computer-sdk', prefix: '/cua/reference' },
+    ],
+  },
+  {
+    name: 'Cua Bench',
+    label: 'Docs',
+    href: '/cuabench/guide/getting-started/introduction',
+    prefix: '/cuabench',
+    isDefault: false,
+    description: 'Benchmarking toolkit',
+    logoBlack: CuaBenchLogoBlack,
+    logoWhite: CuaBenchLogoWhite,
+    iconWidth: 36,
+    iconHeight: 22,
+    dropdownIconWidth: 30,
+    dropdownIconHeight: 18,
+    navTabs: [
+      { name: 'Guide', href: '/cuabench/guide/getting-started/introduction', prefix: '/cuabench/guide' },
+      { name: 'Reference', href: '/cuabench/reference/cli-reference', prefix: '/cuabench/reference' },
+    ],
+  },
 ];
 
 export function CustomHeader() {
   const pathname = usePathname();
+  const [isOpen, setIsOpen] = useState(false);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+
+  // Determine current docs site based on pathname
+  const currentSite =
+    docsSites.find((site) => !site.isDefault && pathname.startsWith(site.prefix)) ||
+    docsSites.find((site) => site.isDefault) ||
+    docsSites[0];
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+        setIsOpen(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
 
   return (
     <header className="fixed top-0 left-0 right-0 z-50 border-b border-fd-border bg-fd-background/80 backdrop-blur-sm">
       <div className="container mx-auto flex h-14 items-center justify-between px-4">
         {/* Left: Logo and Nav */}
         <div className="flex items-center gap-6">
-          {/* Logo */}
-          <Link href="/" className="flex items-center gap-2">
-            <Image
-              width={24}
-              height={24}
-              src={LogoBlack}
-              aria-label="Logo"
-              className="block dark:hidden"
-              alt="Logo"
-            />
-            <Image
-              width={24}
-              height={24}
-              src={LogoWhite}
-              aria-label="Logo"
-              className="hidden dark:block"
-              alt="Logo"
-            />
-            <span className="font-semibold" style={{ fontFamily: 'var(--font-urbanist)' }}>
-              Cua
-            </span>
-            <span className="text-sky-500 font-medium">Docs</span>
-          </Link>
+          {/* Docs Switcher - wraps logo, name, and label */}
+          <div className="relative" ref={dropdownRef}>
+            <button
+              onClick={() => setIsOpen(!isOpen)}
+              className="flex items-center gap-2 rounded-lg px-2 py-1.5 transition-colors hover:bg-fd-accent"
+            >
+              {/* Logo */}
+              <div className="relative flex h-6 items-center justify-center" style={{ width: currentSite.iconWidth }}>
+                <Image
+                  width={currentSite.iconWidth}
+                  height={currentSite.iconHeight}
+                  src={currentSite.logoBlack}
+                  aria-label="Logo"
+                  className="block dark:hidden"
+                  style={{ width: currentSite.iconWidth, height: currentSite.iconHeight }}
+                  alt="Logo"
+                />
+                <Image
+                  width={currentSite.iconWidth}
+                  height={currentSite.iconHeight}
+                  src={currentSite.logoWhite}
+                  aria-label="Logo"
+                  className="hidden dark:block"
+                  style={{ width: currentSite.iconWidth, height: currentSite.iconHeight }}
+                  alt="Logo"
+                />
+              </div>
+              {/* Site name and label */}
+              <span className="font-semibold" style={{ fontFamily: 'var(--font-urbanist)' }}>
+                {currentSite.name}
+              </span>
+              <span className="text-sky-500 font-medium">{currentSite.label}</span>
+              {/* Up/down chevron */}
+              <ChevronsUpDown className="h-4 w-4 text-fd-muted-foreground" />
+            </button>
+
+            {/* Dropdown menu */}
+            {isOpen && (
+              <div className="absolute left-0 top-full mt-1 w-64 rounded-lg border border-fd-border bg-fd-popover p-1 shadow-lg">
+                {docsSites.map((site, index) => {
+                  const isActive = site.name === currentSite.name;
+                  return (
+                    <div key={site.name}>
+                      {index > 0 && <div className="mx-2 my-1 border-t border-fd-border" />}
+                      <Link
+                        href={site.href}
+                        onClick={() => setIsOpen(false)}
+                        className={cn(
+                          'flex items-center gap-3 rounded-md px-3 py-2.5 transition-colors',
+                          isActive
+                            ? 'bg-fd-accent text-fd-foreground'
+                            : 'text-fd-muted-foreground hover:bg-fd-accent hover:text-fd-foreground'
+                        )}
+                      >
+                        {/* Site logo in dropdown */}
+                        <div className="flex h-5 w-8 shrink-0 items-center justify-center">
+                          <Image
+                            width={site.dropdownIconWidth}
+                            height={site.dropdownIconHeight}
+                            src={site.logoBlack}
+                            aria-label={`${site.name} logo`}
+                            className="block dark:hidden"
+                            style={{ width: site.dropdownIconWidth, height: site.dropdownIconHeight }}
+                            alt={`${site.name} logo`}
+                          />
+                          <Image
+                            width={site.dropdownIconWidth}
+                            height={site.dropdownIconHeight}
+                            src={site.logoWhite}
+                            aria-label={`${site.name} logo`}
+                            className="hidden dark:block"
+                            style={{ width: site.dropdownIconWidth, height: site.dropdownIconHeight }}
+                            alt={`${site.name} logo`}
+                          />
+                        </div>
+                        <div className="flex-1">
+                          <div className="font-medium text-fd-foreground">{site.name}</div>
+                          <div className="text-xs text-fd-muted-foreground">{site.description}</div>
+                        </div>
+                        {isActive && <Check className="h-4 w-4 text-sky-500" />}
+                      </Link>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
 
           {/* Navigation */}
           <nav className="hidden items-center gap-4 md:flex">
-            {navTabs.map((tab) => {
+            {currentSite.navTabs.map((tab) => {
               const isActive = pathname.startsWith(tab.prefix);
               return (
                 <Link

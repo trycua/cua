@@ -38,14 +38,14 @@ def load():
                 }
             }
         )
-        for provider, os_type in [("computer", "linux"), ("computer", "macos"), ("computer", "windows"), ("webtop", "linux"), ("webtop", "macos"), ("webtop", "win11"), ("webtop", "win10")]
+        for provider, os_type in [("computer", "linux"), ("computer", "windows"), ("webtop", "linux"), ("webtop", "win11"), ("webtop", "macos")]
         # More task variants...
     ]
 ```
 
-Each task variant can have different metadata, enabling thousands of unique scenarios from a single template. 
+Each task variant can have different metadata, enabling thousands of unique scenarios from a single template.
 
-The `computer` provider **emulates** `windows`, `macos`, `linux`, and `android` operating systems, while the `webtop` provider **simulates** `macos`, `win10`, `win11`, `win7`, `win98`, `winxp`, `ios`, and `android`.
+The `computer` provider **emulates** `windows` and `linux` operating systems, while the `webtop` provider **simulates** desktop themes including `linux`, `win11`, and `macos`. See [OS Themes](/cuabench/guide/fundamentals/os-themes) for all available themes.
 
 ### 2. Setup (`@cb.setup_task`)
 

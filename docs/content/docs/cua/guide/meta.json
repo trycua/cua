@@ -1,0 +1,11 @@
+{
+  "title": "Guide",
+  "description": "Learn how to build with Cua",
+  "icon": "Book",
+  "pages": [
+    "get-started",
+    "fundamentals",
+    "advanced",
+    "integrations"
+  ]
+}

@@ -16,18 +16,20 @@ Simulated tasks use synthetic HTML webapps to test agent capabilities in control
 
 ## How They Work
 
-Simulated tasks render HTML/CSS desktops in a Chromium browser:
+Simulated tasks render HTML/CSS desktops in a Chromium browser using the **td.css** design system:
 
 ```
 ┌───────────────────────────────────────────────────────────┐
-│  Simulated macOS/Windows Desktop (HTML/CSS)               │
+│  Simulated Desktop (HTML/CSS)                             │
 │  ┌─────────────────────────────────────────────────────┐  │
 │  │              App Window (iframe)                    │  │
 │  │              HTML content, JS enabled               │  │
 │  └─────────────────────────────────────────────────────┘  │
-│     🍎 Finder  Chrome  Slack  ...                         │
+│  [Start/Dock]  Chrome  Slack  ...              [Tray]     │
 └───────────────────────────────────────────────────────────┘
 ```
+
+Available themes: **Linux**, **Windows 11**, and **macOS**. See [OS Themes](/cuabench/guide/fundamentals/os-themes) for details.
 
 ## Available Datasets
 
@@ -68,4 +70,4 @@ my_task/
     └── index.html    # HTML webapp
 ```
 
-See [Creating Private Tasks](/docs/cuabench/guide/advanced/creating-private-tasks) for details.
+See [Creating Private Tasks](/cuabench/guide/advanced/creating-private-tasks) for details.

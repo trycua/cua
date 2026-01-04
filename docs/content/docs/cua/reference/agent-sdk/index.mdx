@@ -1,0 +1,584 @@
+---
+title: Agent SDK
+description: Python API reference for the Agent SDK
+---
+
+import { Tabs, Tab } from 'fumadocs-ui/components/tabs';
+import { Callout } from 'fumadocs-ui/components/callout';
+
+The **Agent SDK** (`cua-agent`) provides the Python interface for building computer-use agents. This reference covers the ComputerAgent class, callbacks, tools, and response types.
+
+## Installation
+
+```bash
+pip install cua-agent
+```
+
+## ComputerAgent
+
+The main class for creating agents that can autonomously operate computers.
+
+```python
+from agent import ComputerAgent
+
+agent = ComputerAgent(
+    model="anthropic/claude-sonnet-4-5-20250929",
+    tools=[computer]
+)
+
+async for result in agent.run("Open Firefox and search for Cua"):
+    print(result.text)
+```
+
+### Constructor Parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `model` | `str` | Required | Model identifier (see [VLMs](/cua/guide/fundamentals/vlms)) |
+| `tools` | `list` | Required | Tools the agent can use |
+| `api_key` | `str` | Provider env var | API key for the model provider |
+| `callbacks` | `list` | `[]` | List of callback handlers |
+| `instructions` | `str` | `None` | Custom instructions prepended to prompts |
+| `verbosity` | `int` | `None` | Logging level (e.g., `logging.INFO`) |
+| `max_trajectory_budget` | `float` | `None` | Maximum cost in dollars |
+| `only_n_most_recent_images` | `int` | `None` | Limit retained screenshots |
+| `trajectory_dir` | `str` \| `dict` | `None` | Directory for saving trajectories |
+
+### Methods
+
+#### `run(task, chat_history)`
+
+Execute a task autonomously. Returns an async generator of results.
+
+```python
+async for result in agent.run("Click the submit button"):
+    if result.text:
+        print(result.text)
+    if result.action:
+        print(f"Action: {result.action}")
+```
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `task` | `str` | Required | Natural language task description |
+| `chat_history` | `list` | `[]` | Previous conversation messages |
+
+**Yields:** `AgentResult` objects containing model responses and actions.
+
+#### `run_to_completion(task, chat_history)`
+
+Execute a task and return only the final result.
+
+```python
+result = await agent.run_to_completion("Open the calculator app")
+print(result.text)
+```
+
+**Returns:** `AgentResult` - The final result after task completion.
+
+---
+
+## AgentResult
+
+Returned by `agent.run()` for each iteration of the agent loop.
+
+```python
+async for result in agent.run("Search for documentation"):
+    # Check what happened this iteration
+    if result.text:
+        print(f"Agent said: {result.text}")
+
+    if result.action:
+        print(f"Action type: {result.action.type}")
+
+    if result.usage:
+        print(f"Tokens used: {result.usage.total_tokens}")
+```
+
+### Properties
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `text` | `str \| None` | Text response from the model |
+| `action` | `Action \| None` | Computer action taken |
+| `screenshot` | `PIL.Image \| None` | Screenshot after action |
+| `usage` | `Usage \| None` | Token and cost information |
+| `error` | `str \| None` | Error message if action failed |
+| `done` | `bool` | True if agent considers task complete |
+
+### Action Types
+
+The `action` property contains details about computer actions:
+
+```python
+result.action.type          # "click", "type", "key", "scroll", etc.
+result.action.coordinate    # [x, y] for click actions
+result.action.text          # Text for type actions
+result.action.key           # Key for key press actions
+```
+
+---
+
+## Usage Tracking
+
+The `Usage` object tracks token consumption and costs.
+
+```python
+async for result in agent.run("Complete this form"):
+    if result.usage:
+        print(f"Input tokens: {result.usage.input_tokens}")
+        print(f"Output tokens: {result.usage.output_tokens}")
+        print(f"Total tokens: {result.usage.total_tokens}")
+        print(f"Cost: ${result.usage.response_cost:.4f}")
+```
+
+### Properties
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `input_tokens` | `int` | Tokens in the prompt |
+| `output_tokens` | `int` | Tokens in the response |
+| `total_tokens` | `int` | Total tokens used |
+| `response_cost` | `float` | Cost in dollars |
+| `cache_creation_input_tokens` | `int` | Tokens written to cache |
+| `cache_read_input_tokens` | `int` | Tokens read from cache |
+
+---
+
+## Callbacks
+
+Callbacks hook into the agent lifecycle for logging, cost tracking, and custom behavior.
+
+### Built-in Callbacks
+
+#### LoggingCallback
+
+Log agent events with configurable verbosity.
+
+```python
+from agent.callbacks import LoggingCallback
+import logging
+
+agent = ComputerAgent(
+    model="...",
+    tools=[computer],
+    callbacks=[LoggingCallback(level=logging.DEBUG)]
+)
+```
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `level` | `int` | `logging.INFO` | Logging level |
+
+#### BudgetManagerCallback
+
+Track costs and stop when budget is exceeded.
+
+```python
+from agent.callbacks import BudgetManagerCallback
+
+agent = ComputerAgent(
+    model="...",
+    tools=[computer],
+    callbacks=[BudgetManagerCallback(
+        max_budget=10.0,
+        reset_after_each_run=True,
+        raise_error=False
+    )]
+)
+```
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `max_budget` | `float` | Required | Maximum cost in dollars |
+| `reset_after_each_run` | `bool` | `True` | Reset budget per run |
+| `raise_error` | `bool` | `False` | Raise exception vs graceful stop |
+
+#### ImageRetentionCallback
+
+Limit screenshot history to prevent context overflow.
+
+```python
+from agent.callbacks import ImageRetentionCallback
+
+agent = ComputerAgent(
+    model="...",
+    tools=[computer],
+    callbacks=[ImageRetentionCallback(only_n_most_recent_images=3)]
+)
+```
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `only_n_most_recent_images` | `int` | Required | Max screenshots to retain |
+
+#### TrajectorySaverCallback
+
+Save complete agent conversations for debugging.
+
+```python
+from agent.callbacks import TrajectorySaverCallback
+
+agent = ComputerAgent(
+    model="...",
+    tools=[computer],
+    callbacks=[TrajectorySaverCallback(
+        trajectory_dir="trajectories",
+        reset_on_run=True,
+        screenshot_dir="screenshots"
+    )]
+)
+```
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `trajectory_dir` | `str` | Required | Base directory for trajectories |
+| `reset_on_run` | `bool` | `True` | Create new trajectory per run |
+| `screenshot_dir` | `str` | `None` | Separate directory for screenshots |
+
+#### PromptInstructionsCallback
+
+Prepend custom instructions to every LLM call.
+
+```python
+from agent.callbacks import PromptInstructionsCallback
+
+agent = ComputerAgent(
+    model="...",
+    tools=[computer],
+    callbacks=[PromptInstructionsCallback("Always confirm before clicking")]
+)
+```
+
+### Creating Custom Callbacks
+
+Extend `AsyncCallbackHandler` to create custom callbacks:
+
+```python
+from agent.callbacks.base import AsyncCallbackHandler
+
+class MyCallback(AsyncCallbackHandler):
+    async def on_run_start(self, kwargs, old_items):
+        """Called when agent.run() begins"""
+        print("Starting run...")
+
+    async def on_run_continue(self, kwargs, old_items, new_items) -> bool:
+        """Called before each iteration. Return False to stop."""
+        return True
+
+    async def on_llm_start(self, messages):
+        """Preprocess messages before LLM call."""
+        return messages
+
+    async def on_llm_end(self, messages):
+        """Postprocess messages after LLM call."""
+        return messages
+
+    async def on_usage(self, usage):
+        """Called with usage stats after each LLM call."""
+        print(f"Cost: ${usage.response_cost:.4f}")
+
+    async def on_computer_call_start(self, item):
+        """Called before a computer action."""
+        pass
+
+    async def on_computer_call_end(self, item, result):
+        """Called after a computer action."""
+        pass
+
+    async def on_screenshot(self, screenshot, name):
+        """Called when a screenshot is taken."""
+        pass
+
+    async def on_run_end(self, kwargs, old_items, new_items):
+        """Called when agent.run() completes."""
+        print("Run complete!")
+```
+
+### Callback Lifecycle Order
+
+1. `on_run_start` - Once at the beginning
+2. For each iteration:
+   - `on_run_continue` - Check if should continue
+   - `on_llm_start` - Before LLM call
+   - `on_api_start` - Before API request
+   - `on_api_end` - After API response
+   - `on_usage` - With usage stats
+   - `on_llm_end` - After LLM processing
+   - `on_responses` - With model responses
+   - `on_text` / `on_computer_call_start` / `on_computer_call_end` - Per response item
+   - `on_screenshot` - When screenshots are taken
+3. `on_run_end` - Once at the end
+
+---
+
+## Tools
+
+### Built-in Tools
+
+#### Computer
+
+The primary tool for full computer control.
+
+```python
+from computer import Computer
+
+computer = Computer(
+    os_type="linux",
+    provider_type="docker",
+    image="trycua/cua-xfce:latest"
+)
+await computer.run()
+
+agent = ComputerAgent(
+    model="anthropic/claude-sonnet-4-5-20250929",
+    tools=[computer]
+)
+```
+
+#### BrowserTool
+
+Specialized tool for web automation with browser-only models.
+
+```python
+from agent.tools import BrowserTool
+
+browser = BrowserTool(interface=computer)
+
+agent = ComputerAgent(
+    model="google/gemini-2.5-flash",
+    tools=[browser]
+)
+```
+
+See [Browser Tool](/cua/guide/fundamentals/browser-tool) for available actions.
+
+### Custom Function Tools
+
+Add Python functions as tools:
+
+```python
+def calculate(a: int, b: int) -> int:
+    """Calculate the sum of two integers"""
+    return a + b
+
+async def fetch_data(url: str) -> str:
+    """Fetch data from a URL"""
+    async with httpx.AsyncClient() as client:
+        response = await client.get(url)
+        return response.text
+
+agent = ComputerAgent(
+    model="anthropic/claude-sonnet-4-5-20250929",
+    tools=[computer, calculate, fetch_data]
+)
+```
+
+### Sandboxed Tools
+
+Run tools inside the sandbox with the `@sandboxed` decorator:
+
+```python
+from computer.helpers import sandboxed
+
+@sandboxed()
+def read_sandbox_file(path: str) -> str:
+    """Read a file from inside the sandbox"""
+    with open(path, 'r') as f:
+        return f.read()
+
+agent = ComputerAgent(
+    model="anthropic/claude-sonnet-4-5-20250929",
+    tools=[computer, read_sandbox_file]
+)
+```
+
+### BaseTool Class
+
+For full control over tool schema:
+
+```python
+from agent.tools import BaseTool, register_tool
+
+@register_tool("database_query")
+class DatabaseQueryTool(BaseTool):
+    def __init__(self, connection_string: str):
+        self.connection = connection_string
+
+    @property
+    def description(self) -> str:
+        return "Execute a read-only SQL query"
+
+    @property
+    def parameters(self) -> dict:
+        return {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "SQL SELECT query to execute"
+                }
+            },
+            "required": ["query"]
+        }
+
+    def call(self, params, **kwargs):
+        query = params["query"] if isinstance(params, dict) else params
+        # Execute and return results
+        return {"rows": [...]}
+```
+
+### ToolError
+
+Raise `ToolError` for recoverable errors:
+
+```python
+from agent.tools import ToolError
+
+def divide(a: float, b: float) -> float:
+    """Divide a by b"""
+    if b == 0:
+        raise ToolError("Cannot divide by zero")
+    return a / b
+```
+
+The model sees the error message and can adjust its approach.
+
+---
+
+## Model Providers
+
+### Model Format
+
+Models are specified as `provider/model-name`:
+
+```python
+# Anthropic
+agent = ComputerAgent(model="anthropic/claude-sonnet-4-5-20250929", ...)
+
+# OpenAI
+agent = ComputerAgent(model="openai/computer-use-preview", ...)
+
+# Google
+agent = ComputerAgent(model="google/gemini-2.5-flash", ...)
+
+# Local models via Ollama
+agent = ComputerAgent(model="ollama/ui-tars:latest", ...)
+```
+
+### Composed Models
+
+Use `+` to combine models for different capabilities:
+
+```python
+# UI-TARS for grounding, Claude for planning
+agent = ComputerAgent(
+    model="ollama/ui-tars:latest+anthropic/claude-sonnet-4-5-20250929",
+    tools=[computer]
+)
+
+# Qwen for grounding, GPT-4 for planning
+agent = ComputerAgent(
+    model="ollama/qwen2.5-vl:latest+openai/gpt-4o",
+    tools=[computer]
+)
+```
+
+### Environment Variables
+
+| Variable | Description |
+|----------|-------------|
+| `ANTHROPIC_API_KEY` | API key for Anthropic models |
+| `OPENAI_API_KEY` | API key for OpenAI models |
+| `GOOGLE_API_KEY` | API key for Google models |
+| `OLLAMA_HOST` | Host for Ollama (default: `localhost:11434`) |
+
+---
+
+## Chat History
+
+Pass previous messages to maintain context:
+
+```python
+from agent.types import Message
+
+history = [
+    Message(role="user", content="Open the browser"),
+    Message(role="assistant", content="I've opened Firefox."),
+]
+
+async for result in agent.run(
+    "Now search for Python tutorials",
+    chat_history=history
+):
+    print(result.text)
+```
+
+### Message Format
+
+```python
+from agent.types import Message
+
+# User message
+user_msg = Message(role="user", content="Click the button")
+
+# Assistant message
+assistant_msg = Message(role="assistant", content="I clicked the submit button.")
+
+# System message (for instructions)
+system_msg = Message(role="system", content="Be concise in responses.")
+```
+
+---
+
+## Error Handling
+
+Handle errors during agent execution:
+
+```python
+from agent import ComputerAgent
+from agent.errors import AgentError, BudgetExceededError
+
+try:
+    async for result in agent.run("Complete the form"):
+        if result.error:
+            print(f"Action failed: {result.error}")
+        print(result.text)
+except BudgetExceededError:
+    print("Budget limit reached")
+except AgentError as e:
+    print(f"Agent error: {e}")
+```
+
+### Error Types
+
+| Error | Description |
+|-------|-------------|
+| `AgentError` | Base class for agent errors |
+| `BudgetExceededError` | Cost limit exceeded |
+| `ModelError` | Model API error |
+| `ToolError` | Tool execution error |
+
+---
+
+## Trajectory Configuration
+
+Configure trajectory saving with a dict:
+
+```python
+agent = ComputerAgent(
+    model="anthropic/claude-sonnet-4-5-20250929",
+    tools=[computer],
+    trajectory_dir={
+        "trajectory_dir": "trajectories",
+        "reset_on_run": False,         # Continue same trajectory across runs
+        "screenshot_dir": "screenshots" # Save screenshots separately
+    }
+)
+```
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `trajectory_dir` | Required | Base directory |
+| `reset_on_run` | `True` | Create new ID per run |
+| `screenshot_dir` | `None` | Separate screenshot directory |

@@ -16,21 +16,21 @@ const navCards = [
     title: 'Guide',
     description:
       'Everything you need to know to use Cua. Dive deep into all of our features and best practices.',
-    href: '/guide/get-started/what-is-cua',
+    href: '/cua/guide/get-started/what-is-cua',
   },
   {
     icon: Code2,
     title: 'Examples',
     description:
       'Practical examples built with Cua. Explore guided starting points for your use case.',
-    href: '/examples/automation/form-filling',
+    href: '/cua/examples/automation/form-filling',
   },
   {
     icon: FileCode,
     title: 'API Reference',
     description:
       'Technical information about the Cua APIs. Quickly refer to basic descriptions of various programming functionalities.',
-    href: '/reference/computer-sdk',
+    href: '/cua/reference/computer-sdk',
   },
   {
     icon: Cloud,
@@ -46,22 +46,22 @@ const featuredExamples = [
   {
     title: 'Windows App Behind VPN',
     description: 'Automate legacy Windows applications securely behind VPN',
-    href: '/examples/platform-specific/windows-app-behind-vpn',
+    href: '/cua/examples/platform-specific/windows-app-behind-vpn',
   },
   {
     title: 'PDF to Form Automation',
     description: 'Enhance interactions between form filling and local file systems',
-    href: '/examples/automation/form-filling',
+    href: '/cua/examples/automation/form-filling',
   },
   {
     title: 'Contact Export',
     description: 'Export contacts from post-event platforms automatically',
-    href: '/examples/automation/post-event-contact-export',
+    href: '/cua/examples/automation/post-event-contact-export',
   },
   {
     title: 'Complex UI Navigation',
     description: 'Navigate complex UIs with Gemini vision capabilities',
-    href: '/examples/ai-models/gemini-complex-ui-navigation',
+    href: '/cua/examples/ai-models/gemini-complex-ui-navigation',
   },
 ];
 
@@ -117,7 +117,7 @@ export default function LandingPage() {
               {/* CTA Buttons */}
               <div className="mt-8 flex flex-wrap items-center gap-4">
                 <Link
-                  href="/guide/get-started/what-is-cua"
+                  href="/cua/guide/get-started/what-is-cua"
                   className="group inline-flex items-center gap-2 rounded-xl bg-fd-foreground px-6 py-2.5 text-sm font-medium text-fd-background transition-all hover:bg-fd-foreground/90"
                 >
                   Get Started
@@ -208,7 +208,7 @@ export default function LandingPage() {
             </p>
           </div>
           <Link
-            href="/examples/automation/form-filling"
+            href="/cua/examples/automation/form-filling"
             className="hidden items-center gap-1 text-sm font-medium text-fd-muted-foreground transition-colors hover:text-fd-foreground sm:inline-flex"
           >
             View all
@@ -257,7 +257,7 @@ export default function LandingPage() {
         {/* Mobile "View all" link */}
         <div className="mt-6 text-center sm:hidden">
           <Link
-            href="/examples/automation/form-filling"
+            href="/cua/examples/automation/form-filling"
             className="inline-flex items-center gap-1 text-sm font-medium text-fd-muted-foreground transition-colors hover:text-fd-foreground"
           >
             View all examples
@@ -281,14 +281,14 @@ export default function LandingPage() {
             </p>
             <div className="mt-6 flex flex-wrap items-center justify-center gap-3">
               <Link
-                href="/guide/get-started/what-is-cua"
+                href="/cua/guide/get-started/what-is-cua"
                 className="inline-flex items-center gap-2 rounded-xl bg-fd-foreground px-6 py-2.5 text-sm font-medium text-fd-background transition-colors hover:bg-fd-foreground/90"
               >
                 Get Started
                 <ArrowRight className="h-4 w-4" />
               </Link>
               <Link
-                href="/reference/computer-sdk"
+                href="/cua/reference/computer-sdk"
                 className="inline-flex items-center gap-2 rounded-xl border border-fd-border px-6 py-2.5 text-sm font-medium transition-colors hover:bg-fd-accent"
               >
                 API Reference

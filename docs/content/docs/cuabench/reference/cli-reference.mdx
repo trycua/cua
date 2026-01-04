@@ -18,6 +18,7 @@ cb image <action> [options]
 | `cb image info <name>` | Show image details |
 | `cb image clone <src> <dst>` | Clone/fork an image |
 | `cb image delete <name>` | Delete an image |
+| `cb image shell <name>` | Interactive shell into image (protected) |
 
 ### Create Options
 
@@ -48,34 +49,26 @@ cb image list [options]
 | `--format <fmt>` | Output format: table, json |
 | `--platform <type>` | Filter by platform type |
 
-## Sandbox Commands
+### Shell Options
 
-Manage running sandbox instances.
-
-```bash
-cb sandbox <action> [options]
-```
-
-| Command | Description |
-|---------|-------------|
-| `cb sandbox start <image>` | Start sandbox from image |
-| `cb sandbox stop <id>` | Stop running sandbox |
-| `cb sandbox list` | List running sandboxes |
-| `cb sandbox vnc <id>` | Open VNC in browser |
-| `cb sandbox logs <id>` | View sandbox logs |
-| `cb sandbox exec <id> <cmd>` | Execute command in sandbox |
-
-### Start Options
+Interactive shell into an image. By default uses an overlay to protect the golden image.
 
 ```bash
-cb sandbox start <image> [options]
+cb image shell <name> [options]
 ```
 
 | Option | Description |
 |--------|-------------|
-| `--vnc-port <port>` | VNC port (default varies by type) |
-| `--api-port <port>` | API port (default varies by type) |
-| `--name <name>` | Custom sandbox name |
+| `--writable` | Modify golden image directly (dangerous!) |
+| `--vnc-port <port>` | VNC port (default: 8006) |
+| `--api-port <port>` | API port (default: 5000) |
+| `--memory <size>` | Memory (default: 8G) |
+| `--cpus <count>` | CPU cores (default: 8) |
+| `--no-kvm` | Disable KVM acceleration |
+
+<Callout title="Image Protection" type="info">
+  By default, `cb image shell` mounts the golden image read-only and uses an overlay for any changes. This protects your base images from accidental modification. Use `--writable` only when you intentionally want to modify the golden image.
+</Callout>
 
 ## Platform Commands
 
@@ -97,77 +90,90 @@ Show system status.
 cb status
 ```
 
-Shows Docker status, KVM availability, and running sandboxes.
+Shows Docker status, KVM availability, running shells, and active runs.
 
 ## Run Commands
 
 Run tasks with the 2-container architecture (agent container + environment container).
 
 ```bash
-cb run <task> [options]
+cb run <subcommand> [options]
 ```
 
-### Basic Options
+| Command | Description |
+|---------|-------------|
+| `cb run task <path>` | Run a single task |
+| `cb run dataset <path>` | Run all tasks in a dataset (parallel) |
+| `cb run list` | List all runs with status |
+| `cb run status <id>` | Show detailed run status |
+| `cb run watch <id>` | Watch a run in real-time |
+| `cb run stop <id>` | Stop/cancel a run |
+| `cb run logs <id>` | View combined logs from a run |
+
+### Task Options
+
+```bash
+cb run task <path> [options]
+```
 
 | Option | Description |
 |--------|-------------|
+| `--variant-id <n>` | Task variant index (default: 0) |
 | `--agent <name>` | Agent to use (from `.cua/agents.yaml`) |
+| `--agent-import-path <path>` | Import path for custom agent |
 | `--model <model>` | Model to use (e.g., `anthropic/claude-sonnet-4-20250514`) |
 | `--oracle` | Run with oracle solution (no agent) |
-| `--variant-id <n>` | Run specific task variant (default: 0) |
 | `--max-steps <n>` | Maximum steps per task (default: 100) |
-
-### Environment Options
-
-| Option | Description |
-|--------|-------------|
 | `--image <name>` | Use specific base image |
 | `--platform <type>` | Platform type: `linux-docker`, `windows-qemu`, `android-qemu` |
-
-### Debugging Options
-
-| Option | Description |
-|--------|-------------|
 | `--vnc-port <port>` | Expose VNC on host port (for live viewing) |
 | `--api-port <port>` | Expose API on host port (for debugging) |
-
-### Batch Options
-
-| Option | Description |
-|--------|-------------|
-| `--max-parallel <n>` | Maximum parallel sessions |
-| `--max-variants <n>` | Maximum variants per task |
 | `--output-dir <dir>` | Output directory for results |
-| `--dataset <name>` | Use dataset from registry |
-| `--dataset-path <path>` | Use local dataset path |
-| `--list` | List available tasks |
 
-### Provider Options
+### Dataset Options
+
+```bash
+cb run dataset <path> [options]
+```
 
 | Option | Description |
 |--------|-------------|
-| `--on <provider>` | Where to run: `local` (default) or `cloud` |
+| `--max-parallel <n>` | Maximum parallel task runners (default: 4) |
+| `--max-variants <n>` | Maximum variants per task (default: all) |
+| `--task-filter <pattern>` | Filter tasks by name pattern (glob) |
+| `--agent <name>` | Agent to use (from `.cua/agents.yaml`) |
+| `--model <model>` | Model to use |
+| `--oracle` | Run with oracle solution (no agent) |
+| `--max-steps <n>` | Maximum steps per task (default: 100) |
+| `--image <name>` | Use specific base image |
+| `--platform <type>` | Platform type |
+| `--output-dir <dir>` | Output directory for results |
 
 ### Examples
 
 ```bash
-# Run task with oracle solution
-cb run tasks/click_button --variant-id 0
+# Run single task with oracle solution
+cb run task tasks/click_button --variant-id 0 --oracle
 
-# Run with agent evaluation
-cb run tasks/click_button --variant-id 0 --agent cua-agent
+# Run single task with agent evaluation
+cb run task tasks/click_button --agent cua-agent --model anthropic/claude-sonnet-4-20250514
 
 # Run with VNC for live debugging (open http://localhost:8006)
-cb run tasks/click_button --agent cua-agent --vnc-port 8006
+cb run task tasks/click_button --agent cua-agent --vnc-port 8006
 
-# Run with custom model and step limit
-cb run tasks/click_button --agent cua-agent --model gpt-4o --max-steps 50
+# Run Windows task with specific image
+cb run task tasks/winarena --image windows-qemu --agent cua-agent
 
-# Run Windows task
-cb run tasks/winarena --variant-id 0 --platform windows-qemu --agent cua-agent
+# Run all tasks in a dataset (4 parallel)
+cb run dataset datasets/cua-bench-basic --agent cua-agent --max-parallel 4
 
-# Run with specific image
-cb run tasks/winarena --image windows-custom --agent cua-agent
+# Run dataset with filtering
+cb run dataset datasets/cua-bench-basic --task-filter "click*" --max-variants 1
+
+# Monitor runs
+cb run list
+cb run watch run-abc123
+cb run logs run-abc123
 ```
 
 ## Interact Commands
@@ -185,28 +191,63 @@ cb interact <task> [options]
 | `--screenshot <path>` | Save screenshot to file |
 | `--dataset <name>` | Use dataset from registry |
 
-## Task Creation Commands
+## Task Commands
 
-Create and generate tasks.
+Manage task environments.
 
 ```bash
-# Create empty task scaffold
-cb create-task <path>
+cb task <action> [options]
+```
 
-# AI-generate a task
-cb generate-task "<description>" [options]
+| Command | Description |
+|---------|-------------|
+| `cb task info <path>` | Show task details (provider, variants) |
+| `cb task list [path]` | List tasks in a directory |
+| `cb task create [path]` | Scaffold a new task environment |
+| `cb task generate "<prompt>"` | Generate a task using Claude |
+
+### Generate Options
+
+```bash
+cb task generate "<description>" [options]
 ```
 
 | Option | Description |
 |--------|-------------|
 | `--output <path>` | Output directory for generated task |
+| `--no-interaction` | Skip prompts and run Claude non-interactively |
 
-## Data Processing Commands
+## Trace Commands
 
-Export snapshots to training datasets.
+View and manage trace datasets.
 
 ```bash
-cb process <dir> [options]
+cb trace <action> [options]
+```
+
+| Command | Description |
+|---------|-------------|
+| `cb trace view <path>` | View a single trace dataset in browser |
+| `cb trace grid <dir>` | View multiple traces in a grid layout |
+| `cb trace replay <dataset>` | Create a replay task from a trace |
+
+## Dataset Commands
+
+Manage datasets and build from outputs.
+
+```bash
+cb dataset <action> [options]
+```
+
+| Command | Description |
+|---------|-------------|
+| `cb dataset list` | List available datasets from registry |
+| `cb dataset build <outputs>` | Build a dataset from batch outputs |
+
+### Build Options
+
+```bash
+cb dataset build <outputs> [options]
 ```
 
 | Option | Description |
@@ -215,25 +256,4 @@ cb process <dir> [options]
 | `--mode <mode>` | Processor mode: aguvis-stage-1, gui-r1 |
 | `--push-to-hub` | Push to Hugging Face Hub |
 | `--repo-id <id>` | Hugging Face repo ID |
-
-## View Commands
-
-View traces and results.
-
-```bash
-# View single trace
-cb view-trace <path>
-
-# View multiple traces
-cb view-traces <dir>
-```
-
-## Datasets Commands
-
-View available datasets.
-
-```bash
-cb datasets [options]
-```
-
-Lists available datasets from the registry.
+| `--private` | Create private repo on Hub |

@@ -12,7 +12,7 @@ However, many agents are designed for more narrow use cases. The harness can sti
 ### Using the Wizard
 
 ```bash
-cb create-task tasks/my_custom_task
+cb task create tasks/my_custom_task
 ```
 
 This starts an interactive wizard that guides you through the task creation process.
@@ -22,7 +22,7 @@ This starts an interactive wizard that guides you through the task creation proc
 Use Claude Code to scaffold your starter environment:
 
 ```bash
-cb generate-task "discord clone with channels and messages" --output tasks/discord_clone
+cb task generate "discord clone with channels and messages" --output tasks/discord_clone
 ```
 
 ### Manual Creation
@@ -146,7 +146,7 @@ cb run --dataset-path tasks/my_custom_task,tasks/another_task --agent cua-agent
 
 ## Task Development Workflow
 
-1. **Create task structure** with `cb create-task` or `cb generate-task`
+1. **Create task structure** with `cb task create` or `cb task generate`
 2. **Implement task logic** in `main.py` with async functions
 3. **Test interactively** with `cb interact tasks/my_task`
 4. **Validate oracle** with `cb interact tasks/my_task --oracle`

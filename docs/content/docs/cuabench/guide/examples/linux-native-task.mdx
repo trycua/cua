@@ -1,0 +1,396 @@
+---
+title: Native Linux Task
+description: Create a task that runs in a real Linux desktop environment
+---
+
+In this tutorial, you'll create a task that runs in a real Linux desktop (XFCE) inside a Docker container. Native tasks let you test agents against real applications, file systems, and network access.
+
+**Time:** ~15 minutes
+**Prerequisites:** Docker running
+
+## What You'll Build
+
+A task where the agent must open the calculator app and perform a calculation. You'll learn:
+
+- When to use native vs simulated tasks
+- Creating and managing Linux images
+- Writing tasks that use screen coordinates
+- Working with real desktop applications
+
+## When to Use Native Tasks
+
+| Use Native Tasks When... | Use Simulated Tasks When... |
+|--------------------------|----------------------------|
+| Testing real applications | Rapid prototyping |
+| File system operations needed | Web-app testing |
+| Network access required | Don't have Docker/KVM |
+| Production benchmarking | Fast iteration |
+
+## Step 1: Create the Linux Image
+
+First, create a base Linux image:
+
+```bash
+cb image create linux-docker
+```
+
+This pulls the `trycua/cua-xfce` Docker image (~1 minute).
+
+## Step 2: Explore the Environment
+
+Start an interactive shell to explore:
+
+```bash
+cb image shell linux-docker
+```
+
+Open `http://localhost:8006` in your browser. You'll see an XFCE desktop with:
+- File manager
+- Terminal
+- Calculator (galculator)
+- Text editor
+- Web browser
+
+Press `Ctrl+C` to stop when done exploring.
+
+## Step 3: Create Task Directory
+
+```bash
+mkdir -p tasks/linux-calc
+cd tasks/linux-calc
+```
+
+## Step 4: Create the Task Configuration
+
+Create `main.py`:
+
+```python
+import cua_bench as cb
+from pathlib import Path
+
+@cb.tasks_config(split="train")
+def load():
+    """Define calculator task variants."""
+    return [
+        cb.Task(
+            description="Open the calculator app and compute 7 + 5. The result should show 12.",
+            metadata={
+                "operation": "7 + 5",
+                "expected_result": "12"
+            },
+            computer={
+                "provider": "native",
+                "setup_config": {
+                    "os_type": "linux",
+                    "width": 1024,
+                    "height": 768,
+                }
+            }
+        )
+    ]
+
+
+@cb.setup_task(split="train")
+async def start(task_cfg: cb.Task, session: cb.DesktopSession):
+    """Initialize the desktop environment."""
+    # For native tasks, the desktop is already running
+    # We just need to ensure a clean state
+
+    # Wait for desktop to be ready
+    await session.execute_action(cb.WaitAction(seconds=2.0))
+
+
+@cb.evaluate_task(split="train")
+async def evaluate(task_cfg: cb.Task, session: cb.DesktopSession) -> list[float]:
+    """Check if the calculation was performed correctly."""
+
+    # Take a screenshot and check for the result
+    # In production, you'd use OCR or other methods
+    # For now, we'll use a simple heuristic
+
+    screenshot = await session.screenshot()
+
+    # Save for debugging
+    Path("debug_screenshot.png").write_bytes(screenshot)
+
+    # For a real implementation, you'd analyze the screenshot
+    # to verify the calculator shows "12"
+
+    # Placeholder: assume success if we got this far
+    return [1.0]
+
+
+@cb.solve_task(split="train")
+async def solve(task_cfg: cb.Task, session: cb.DesktopSession):
+    """Demonstrate the solution using screen coordinates."""
+
+    # Step 1: Open the applications menu
+    # Click on the applications menu (top-left corner in XFCE)
+    await session.execute_action(cb.ClickAction(x=50, y=30))
+    await session.execute_action(cb.WaitAction(seconds=0.5))
+
+    # Step 2: Navigate to Accessories > Calculator
+    # These coordinates depend on the menu layout
+    await session.execute_action(cb.ClickAction(x=100, y=150))  # Accessories
+    await session.execute_action(cb.WaitAction(seconds=0.3))
+    await session.execute_action(cb.ClickAction(x=250, y=200))  # Calculator
+    await session.execute_action(cb.WaitAction(seconds=1.0))
+
+    # Step 3: Click calculator buttons
+    # Note: Coordinates depend on where the calculator window opens
+    # You'll need to adjust these for your setup
+
+    # Click "7"
+    await session.execute_action(cb.ClickAction(x=520, y=450))
+    await session.execute_action(cb.WaitAction(seconds=0.2))
+
+    # Click "+"
+    await session.execute_action(cb.ClickAction(x=620, y=450))
+    await session.execute_action(cb.WaitAction(seconds=0.2))
+
+    # Click "5"
+    await session.execute_action(cb.ClickAction(x=520, y=500))
+    await session.execute_action(cb.WaitAction(seconds=0.2))
+
+    # Click "="
+    await session.execute_action(cb.ClickAction(x=620, y=550))
+    await session.execute_action(cb.WaitAction(seconds=0.5))
+```
+
+## Step 5: Add Task Metadata
+
+Create `pyproject.toml`:
+
+```toml
+[project]
+name = "linux-calc"
+version = "0.1.0"
+
+[tool.cua-bench]
+description = "Use calculator app in Linux desktop"
+difficulty = "medium"
+category = "desktop"
+tags = ["linux", "native", "calculator", "app"]
+```
+
+## Step 6: Find Accurate Coordinates
+
+The coordinates above are approximations. To find accurate coordinates:
+
+1. Start an interactive session:
+   ```bash
+   cb image shell linux-docker
+   ```
+
+2. Open the calculator manually and note the window position
+
+3. Use browser developer tools or a screenshot tool to find exact pixel coordinates
+
+4. Update your `solve()` function with the correct coordinates
+
+<Callout title="Tip" type="info">
+  For more robust solutions, consider using keyboard shortcuts instead of clicking menus. For example, many Linux desktops support `Alt+F2` to open a run dialog.
+</Callout>
+
+## Step 7: Alternative Approach Using Keyboard
+
+A more reliable approach uses keyboard shortcuts:
+
+```python
+@cb.solve_task(split="train")
+async def solve(task_cfg: cb.Task, session: cb.DesktopSession):
+    """Use keyboard shortcuts for more reliable automation."""
+
+    # Open run dialog with Alt+F2
+    await session.execute_action(cb.HotkeyAction(keys=["alt", "F2"]))
+    await session.execute_action(cb.WaitAction(seconds=0.5))
+
+    # Type calculator command
+    await session.execute_action(cb.TypeAction(text="galculator"))
+    await session.execute_action(cb.WaitAction(seconds=0.3))
+
+    # Press Enter to launch
+    await session.execute_action(cb.KeyAction(key="Return"))
+    await session.execute_action(cb.WaitAction(seconds=1.0))
+
+    # Type the calculation (calculator accepts keyboard input)
+    await session.execute_action(cb.TypeAction(text="7+5"))
+    await session.execute_action(cb.WaitAction(seconds=0.2))
+
+    # Press Enter for result
+    await session.execute_action(cb.KeyAction(key="Return"))
+```
+
+## Step 8: Run the Task
+
+### Run Interactively
+
+```bash
+cb interact tasks/linux-calc --platform linux-docker --variant-id 0
+```
+
+Watch the desktop in your browser while the oracle runs.
+
+### Run with Oracle
+
+```bash
+cb run task tasks/linux-calc --platform linux-docker --oracle
+```
+
+### Run with Agent
+
+```bash
+cb run task tasks/linux-calc --platform linux-docker --agent cua-agent --model anthropic/claude-sonnet-4-20250514
+```
+
+## Adding Complexity
+
+### Multiple Operations
+
+```python
+@cb.tasks_config(split="train")
+def load():
+    operations = [
+        ("7 + 5", "12"),
+        ("10 - 3", "7"),
+        ("6 * 4", "24"),
+        ("15 / 3", "5"),
+    ]
+
+    return [
+        cb.Task(
+            description=f"Open calculator and compute {op}. Result should be {result}.",
+            metadata={"operation": op, "expected_result": result},
+            computer={
+                "provider": "native",
+                "setup_config": {"os_type": "linux", "width": 1024, "height": 768}
+            }
+        )
+        for op, result in operations
+    ]
+```
+
+### Multi-Step Workflow
+
+Create a more complex task involving multiple apps:
+
+```python
+@cb.tasks_config(split="train")
+def load():
+    return [
+        cb.Task(
+            description="""
+            1. Open the text editor
+            2. Type "Hello, World!"
+            3. Save the file as "greeting.txt" on the Desktop
+            """,
+            metadata={"filename": "greeting.txt", "content": "Hello, World!"},
+            computer={
+                "provider": "native",
+                "setup_config": {"os_type": "linux", "width": 1024, "height": 768}
+            }
+        )
+    ]
+```
+
+## Key Differences from Simulated Tasks
+
+| Aspect | Simulated | Native |
+|--------|-----------|--------|
+| **Startup time** | ~2 seconds | ~60 seconds |
+| **Element selection** | CSS selectors | Screen coordinates |
+| **JavaScript access** | Yes (`execute_javascript`) | No |
+| **Real applications** | No | Yes |
+| **File system** | No | Yes |
+| **Network** | Limited | Full |
+
+## Complete Code
+
+<details>
+<summary>main.py (complete)</summary>
+
+```python
+import cua_bench as cb
+from pathlib import Path
+
+
+@cb.tasks_config(split="train")
+def load():
+    """Define calculator task variants."""
+    return [
+        cb.Task(
+            description="Open the calculator app and compute 7 + 5. The result should show 12.",
+            metadata={
+                "operation": "7 + 5",
+                "expected_result": "12"
+            },
+            computer={
+                "provider": "native",
+                "setup_config": {
+                    "os_type": "linux",
+                    "width": 1024,
+                    "height": 768,
+                }
+            }
+        )
+    ]
+
+
+@cb.setup_task(split="train")
+async def start(task_cfg: cb.Task, session: cb.DesktopSession):
+    """Initialize the desktop environment."""
+    await session.execute_action(cb.WaitAction(seconds=2.0))
+
+
+@cb.evaluate_task(split="train")
+async def evaluate(task_cfg: cb.Task, session: cb.DesktopSession) -> list[float]:
+    """Check if the calculation was performed correctly."""
+    screenshot = await session.screenshot()
+    Path("debug_screenshot.png").write_bytes(screenshot)
+
+    # In production, use OCR to verify the result
+    return [1.0]
+
+
+@cb.solve_task(split="train")
+async def solve(task_cfg: cb.Task, session: cb.DesktopSession):
+    """Demonstrate the solution using keyboard shortcuts."""
+
+    # Open run dialog
+    await session.execute_action(cb.HotkeyAction(keys=["alt", "F2"]))
+    await session.execute_action(cb.WaitAction(seconds=0.5))
+
+    # Launch calculator
+    await session.execute_action(cb.TypeAction(text="galculator"))
+    await session.execute_action(cb.KeyAction(key="Return"))
+    await session.execute_action(cb.WaitAction(seconds=1.0))
+
+    # Type calculation
+    await session.execute_action(cb.TypeAction(text="7+5"))
+    await session.execute_action(cb.KeyAction(key="Return"))
+```
+
+</details>
+
+<details>
+<summary>pyproject.toml</summary>
+
+```toml
+[project]
+name = "linux-calc"
+version = "0.1.0"
+
+[tool.cua-bench]
+description = "Use calculator app in Linux desktop"
+difficulty = "medium"
+category = "desktop"
+tags = ["linux", "native", "calculator", "app"]
+```
+
+</details>
+
+## Next Steps
+
+- [Create a Windows Native Task](/cuabench/guide/examples/windows-native-task) for Windows 11
+- Learn about [Native Tasks](/cuabench/guide/fundamentals/native-tasks) in depth
+- See the [CLI Reference](/cuabench/reference/cli-reference) for all run options

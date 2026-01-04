@@ -18,10 +18,13 @@ uv tool install -e .
 cb image create linux-docker
 
 # Run interactive task
-cb interact tasks/click_button --dataset cua-bench-basic
+cb interact click-icon --dataset cua-bench-basic
 
-# Run with agent
-cb run --dataset cua-bench-basic --agent cua-agent --model anthropic/claude-sonnet-4-20250514
+# Run single task with agent
+cb run task tasks/click_button --agent cua-agent --model anthropic/claude-sonnet-4-20250514
+
+# Run entire dataset in parallel
+cb run dataset datasets/cua-bench-basic --agent cua-agent --max-parallel 4
 ```
 
 ## Key Features
@@ -44,7 +47,7 @@ Cua-Bench uses a **2-container architecture** where agent and environment run in
 │  ┌─────────────────────┐    ┌─────────────────────────────┐│
 │  │  cua-agent-{id}     │    │  cua-env-{id}               ││
 │  │                     │    │                             ││
-│  │  Your agent image   │───►│  Base image sandbox         ││
+│  │  Your agent image   │───►│  Base image environment     ││
 │  │  (or built-in)      │HTTP│  (linux/windows/android)    ││
 │  │                     │    │                             ││
 │  └─────────────────────┘    └─────────────────────────────┘│

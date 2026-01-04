@@ -5,6 +5,7 @@
   "pages": [
     "getting-started",
     "fundamentals",
+    "examples",
     "advanced"
   ]
 }

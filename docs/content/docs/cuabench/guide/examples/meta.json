@@ -1,0 +1,12 @@
+{
+  "title": "Examples",
+  "description": "Step-by-step tutorials for common workflows",
+  "icon": "Blocks",
+  "pages": [
+    "simulated-task",
+    "genai-task-generation",
+    "custom-agent",
+    "linux-native-task",
+    "windows-native-task"
+  ]
+}

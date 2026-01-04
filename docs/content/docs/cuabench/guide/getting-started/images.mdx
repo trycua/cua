@@ -3,7 +3,7 @@ title: Base Images
 description: Setting up reproducible VM environments for benchmarks
 ---
 
-Base images are reproducible environments for running benchmarks. Each image type provides a consistent, isolated desktop or mobile environment that can be started, stopped, and reset to a known state.
+Base images are reproducible environments for running benchmarks. Each image type provides a consistent, isolated desktop or mobile environment. Images are protected by overlays during benchmark runs, ensuring each task starts from a clean state.
 
 ## Image Types
 
@@ -25,14 +25,11 @@ Container-based Linux GUI. No KVM required, works anywhere Docker runs.
 # Create image (~1 minute)
 cb image create linux-docker
 
-# Start sandbox
-cb sandbox start linux-docker
+# Start interactive shell (protected by overlay)
+cb image shell linux-docker
 
-# Connect via browser
-cb sandbox vnc linux-docker
-
-# Stop when done
-cb sandbox stop linux-docker
+# Access via browser at http://localhost:8006
+# Press Ctrl+C to stop
 ```
 
 ### windows-qemu (Windows Arena)
@@ -69,32 +66,55 @@ macOS VM using Apple's Virtualization framework via Lume.
 cb image create macos-lume --version sonoma
 ```
 
-## Managing Sandboxes
+## Interactive Shells
 
-### Start and Stop
+Use `cb image shell` to interactively explore or debug images. By default, shells use an overlay to protect the golden image.
 
-```bash
-# Start sandbox from image
-cb sandbox start linux-docker
-cb sandbox start windows-qemu --vnc-port 8080 --api-port 9000
-
-# List running sandboxes
-cb sandbox list
-
-# Stop sandbox
-cb sandbox stop linux-docker
-```
-
-### Connect to Sandbox
+### Protected Mode (Default)
 
 ```bash
-# Open VNC in browser
-cb sandbox vnc linux-docker
+# Start shell with overlay protection
+cb image shell windows-qemu
 
-# Or access directly via ports
-# linux-docker: http://localhost:6901 (VNC), http://localhost:8000 (API)
-# windows-qemu: http://localhost:8006 (VNC), http://localhost:5000 (API)
+# Access VNC at http://localhost:8006
+# Any changes are discarded when you exit
 ```
+
+### Writable Mode (Image Authoring)
+
+Use `--writable` when you need to permanently modify an image (e.g., installing apps, configuring settings):
+
+```bash
+# Clone image first (recommended workflow)
+cb image clone windows-qemu windows-custom
+
+# Modify the clone
+cb image shell windows-custom --writable
+# Install apps, configure settings...
+# Changes persist to the image
+
+# Use your custom image in benchmarks
+cb run task my-task --image windows-custom
+```
+
+<Callout title="Warning" type="warn">
+  `--writable` mode directly modifies the golden image. Always clone first to preserve your original base image.
+</Callout>
+
+### Shell Options
+
+```bash
+cb image shell <name> [options]
+```
+
+| Option | Description |
+|--------|-------------|
+| `--writable` | Modify golden image directly (dangerous!) |
+| `--vnc-port <port>` | VNC port (default: 8006) |
+| `--api-port <port>` | API port (default: 5000) |
+| `--memory <size>` | Memory (default: 8G) |
+| `--cpus <count>` | CPU cores (default: 8) |
+| `--no-kvm` | Disable KVM acceleration |
 
 ## Image Management
 
@@ -126,10 +146,10 @@ Different image types use different internal ports:
 | `linux-qemu` | 8006 | 5000 |
 | `android-qemu` | 8006 | 5000 |
 
-When starting sandboxes, you can map these to custom external ports:
+When starting shells, you can map these to custom external ports:
 
 ```bash
-cb sandbox start linux-docker --vnc-port 8080 --api-port 9000
+cb image shell linux-docker --vnc-port 8080 --api-port 9000
 ```
 
 ## Storage Structure
@@ -138,17 +158,19 @@ Cua-Bench follows the XDG Base Directory specification:
 
 ```
 ~/.local/share/cua-bench/           # Data directory
-├── images/                         # Base images
+├── images/                         # Base images (golden)
 │   ├── linux-docker/
 │   ├── windows-qemu/
 │   │   ├── windows.boot            # Marker file (setup complete)
 │   │   └── data/                   # VM disk files
 │   └── ...
+├── workers/                        # Task overlays (ephemeral)
+│   ├── shell-windows-qemu/         # Shell overlay
+│   └── task-abc123/                # Task run overlay
 └── windows.iso                     # Downloaded Windows ISO
 
 ~/.local/state/cua-bench/           # State directory
-├── images.json                     # Image registry
-└── sandboxes.json                  # Running sandbox registry
+└── images.json                     # Image registry
 ```
 
 ## Architecture
@@ -161,8 +183,8 @@ Cua-Bench follows the XDG Base Directory specification:
 │   (Development & Authoring)     │         (Execution & Scale)            │
 ├─────────────────────────────────┼───────────────────────────────────────┤
 │                                 │                                        │
-│  cb image create windows-qemu   │  cb run --on cloud                     │
-│  cb sandbox start               │  Parallel execution                    │
+│  cb image create windows-qemu   │  cb run dataset --on cloud             │
+│  cb image shell                 │  Parallel execution                    │
 │  cb interact                    │  Agent orchestration                   │
 │  cb image clone                 │  Result aggregation                    │
 │                                 │                                        │
@@ -175,6 +197,19 @@ Cua-Bench follows the XDG Base Directory specification:
 ```
 
 **Local** is the authoring environment for images and tasks. **Cloud** handles scale.
+
+## Image Protection
+
+During benchmark runs, golden images are protected by an overlay system:
+
+1. **Golden image** mounted read-only at `/golden`
+2. **Worker overlay** mounted writable at `/storage`
+3. QEMU creates a QCOW2 overlay on top
+
+This ensures:
+- Each task starts from a pristine state
+- Golden images are never accidentally modified
+- Failed tasks don't contaminate subsequent runs
 
 ## Troubleshooting
 
@@ -202,5 +237,5 @@ open -a Docker
 
 ```bash
 # Use custom ports
-cb sandbox start linux-docker --vnc-port 9000 --api-port 9001
+cb image shell linux-docker --vnc-port 9000 --api-port 9001
 ```

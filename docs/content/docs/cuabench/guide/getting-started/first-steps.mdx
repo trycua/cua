@@ -22,7 +22,7 @@ cb image list
 
 The Cua-Bench CLI can run many different computer-use benchmarks and versions of benchmarks.
 
-To see the available datasets, run `cb datasets` or visit the [registry](http://cuabench.ai/cuabench/registry/).
+To see the available datasets, run `cb dataset list` or visit the [registry](http://cuabench.ai/cuabench/registry/).
 
 ### Step 1: Explore Interactively
 
@@ -120,36 +120,34 @@ cb image create windows-qemu --download-iso
 docker logs -f cua-setup-windows
 ```
 
-### Step 2: Start Sandbox
+### Step 2: Verify Image (Optional)
 
 ```bash
-# Start Windows sandbox
-cb sandbox start windows-qemu
+# Start interactive shell to verify the image works
+cb image shell windows-qemu
 
-# Verify it's running
-cb sandbox list
-
-# Connect via VNC
-cb sandbox vnc windows-qemu
+# Access VNC at http://localhost:8006
+# Press Ctrl+C to stop when done verifying
 ```
 
 ### Step 3: Run Tasks
 
 ```bash
-# List available tasks
-cb run tasks/winarena_adapter --list
-
 # Run specific task with oracle
 cb interact tasks/winarena_adapter --variant-id 0 --oracle
 
-# Run with agent
-cb run tasks/winarena_adapter \
+# Run with agent (2-container architecture)
+cb run task tasks/winarena_adapter \
     --agent cua-agent \
     --model anthropic/claude-sonnet-4-20250514 \
     --image windows-qemu
 
-# Stop when done
-cb sandbox stop windows-qemu
+# Run entire dataset in parallel
+cb run dataset datasets/winarena \
+    --agent cua-agent \
+    --model anthropic/claude-sonnet-4-20250514 \
+    --image windows-qemu \
+    --max-parallel 4
 ```
 
 ## View Past Runs
@@ -159,7 +157,7 @@ cb sandbox stop windows-qemu
 cb runs
 
 # View traces from a specific run
-cb view-traces outputs/<run-id>
+cb trace grid outputs/<run-id>
 ```
 
 ## Export Training Data
@@ -168,11 +166,11 @@ Export agent trajectories to training datasets:
 
 ```bash
 # Export with aguvis-stage-1 format
-cb process outputs/<run-id> --save-dir datasets/
+cb dataset build outputs/<run-id> --save-dir datasets/
 
 # Export with gui-r1 format
-cb process outputs/<run-id> --mode gui-r1 --save-dir datasets/
+cb dataset build outputs/<run-id> --mode gui-r1 --save-dir datasets/
 
 # Push to Hugging Face
-cb process outputs/<run-id> --push-to-hub --repo-id username/my-dataset
+cb dataset build outputs/<run-id> --push-to-hub --repo-id username/my-dataset
 ```

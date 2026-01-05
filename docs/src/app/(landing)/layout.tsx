@@ -6,9 +6,7 @@ export default function LandingLayout({ children }: { children: ReactNode }) {
   return (
     <>
       <CustomHeader />
-      <div className="pt-14">
-        <HomeLayout nav={{ enabled: false }}>{children}</HomeLayout>
-      </div>
+      <HomeLayout nav={{ enabled: false }}>{children}</HomeLayout>
     </>
   );
 }

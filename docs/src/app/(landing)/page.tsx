@@ -68,28 +68,28 @@ const featuredExamples = [
 export default function LandingPage() {
   return (
     <div className="relative min-h-screen">
-      {/* Hero Section with background image */}
-      <section className="relative overflow-hidden pb-16 pt-8 md:pb-24 md:pt-16">
-        {/* Background image - dark/light mode */}
-        <div className="pointer-events-none absolute inset-0">
-          <Image
-            src="/docs/img/bg-dark.jpg"
-            alt=""
-            fill
-            className="hidden object-cover object-top opacity-50 dark:block"
-            priority
-          />
-          <Image
-            src="/docs/img/bg-light.jpg"
-            alt=""
-            fill
-            className="block object-cover object-top opacity-30 dark:hidden"
-            priority
-          />
-        </div>
-
+      {/* Background image - extends behind header */}
+      <div className="pointer-events-none absolute inset-0 -top-14">
+        <Image
+          src="/docs/img/bg-dark.jpg"
+          alt=""
+          fill
+          className="hidden object-cover object-top opacity-50 dark:block"
+          priority
+        />
+        <Image
+          src="/docs/img/bg-light.jpg"
+          alt=""
+          fill
+          className="block object-cover object-top opacity-30 dark:hidden"
+          priority
+        />
         {/* Gradient overlay */}
-        <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-transparent via-fd-background/50 to-fd-background" />
+        <div className="absolute inset-0 bg-gradient-to-b from-transparent via-fd-background/50 to-fd-background" />
+      </div>
+
+      {/* Hero Section */}
+      <section className="relative overflow-hidden pb-16 pt-20 md:pb-24 md:pt-28">
 
         <div className="container relative mx-auto px-6 lg:px-8">
           <div className="grid items-center gap-12 lg:grid-cols-2 lg:gap-16">

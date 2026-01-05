@@ -18,6 +18,16 @@ if [ -d "/storage" -a ! -f "/storage/windows.boot" ]; then
   touch /storage/windows.boot
 fi
 
+# Generate install_config.json from Docker environment variable
+# This allows the INSTALL_WINARENA_APPS env var to be passed to the Windows guest
+if [ "$INSTALL_WINARENA_APPS" = "true" ]; then
+  echo "Creating install_config.json with INSTALL_WINARENA_APPS=true..."
+  echo '{"INSTALL_WINARENA_APPS": true}' > /oem/install_config.json
+else
+  echo "Creating install_config.json with INSTALL_WINARENA_APPS=false..."
+  echo '{"INSTALL_WINARENA_APPS": false}' > /oem/install_config.json
+fi
+
 # Start the VM in the background
 echo "Starting Windows VM..."
 /usr/bin/tini -s /run/entry.sh &

@@ -1,48 +1,71 @@
 name: Publish @trycua/computer to npm
 
 on:
-  push:
-    branches: main
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to publish (default: from package.json)"
+        required: false
+        default: ""
+  workflow_call:
+    inputs:
+      version:
+        description: "Version to publish (default: from package.json)"
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  id-token: write
+  contents: write
 
 jobs:
-  publish:
-    permissions:
-      id-token: write
-      contents: read
+  prepare:
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.get-version.outputs.version }}
+      tag: ${{ steps.get-version.outputs.tag }}
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-      - name: Use Node.js 24.x
-        uses: actions/setup-node@v4
-        with:
-          node-version: "24.x"
-          registry-url: "https://registry.npmjs.org"
+      - name: Determine version
+        id: get-version
+        run: |
+          # Check inputs.version first (works for workflow_call)
+          if [ -n "${{ inputs.version }}" ]; then
+            VERSION="${{ inputs.version }}"
+          elif [ -n "${{ github.event.inputs.version }}" ]; then
+            VERSION="${{ github.event.inputs.version }}"
+          else
+            # Read from package.json
+            VERSION=$(node -p "require('./libs/typescript/computer/package.json').version")
+          fi
 
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
+          echo "Computer version: $VERSION"
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "tag=npm-computer-v${VERSION}" >> $GITHUB_OUTPUT
 
-      - name: Check if version changed
-        id: check-version
-        uses: EndBug/version-check@v2
-        with:
-          file-name: libs/typescript/computer/package.json
-          diff-search: true
+  publish:
+    needs: prepare
+    uses: ./.github/workflows/npm-reusable-publish.yml
+    with:
+      package_name: "computer"
+      package_dir: "libs/typescript/computer"
+      package_manager: "pnpm"
+      version: ${{ needs.prepare.outputs.version }}
+    secrets:
+      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
 
-      - name: Install dependencies
-        if: steps.check-version.outputs.changed == 'true'
-        working-directory: ./libs/typescript/computer
-        run: pnpm install --frozen-lockfile
+  create-release:
+    needs: [prepare, publish]
+    uses: ./.github/workflows/github-release-reusable.yml
+    with:
+      tag_name: ${{ needs.prepare.outputs.tag }}
+      release_name: "@trycua/computer v${{ needs.prepare.outputs.version }}"
+      body: |
+        ## Installation
 
-      - name: Build package
-        if: steps.check-version.outputs.changed == 'true'
-        working-directory: ./libs/typescript/computer
-        run: pnpm run build --if-present
-
-      - name: Publish to npm
-        if: steps.check-version.outputs.changed == 'true'
-        working-directory: ./libs/typescript/computer
-        run: pnpm publish --access public --no-git-checks
-        env:
-          NPM_CONFIG_PROVENANCE: true
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        ```bash
+        npm install @trycua/computer
+        ```

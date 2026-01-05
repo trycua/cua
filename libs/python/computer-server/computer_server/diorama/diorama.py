@@ -486,7 +486,7 @@ class Diorama:
 
 import time
 
-import pyautogui
+from pynput.mouse import Controller as MouseController
 
 
 async def main():
@@ -522,8 +522,10 @@ async def main():
     last_mouse_pos = None
     print("Tracking mouse... Press Ctrl+C to stop.")
     try:
+        mouse = MouseController()
         while True:
-            mouse_x, mouse_y = pyautogui.position()
+            mx, my = mouse.position
+            mouse_x, mouse_y = int(mx), int(my)
             if last_mouse_pos != (mouse_x, mouse_y):
                 last_mouse_pos = (mouse_x, mouse_y)
                 # Map to screenshot coordinates

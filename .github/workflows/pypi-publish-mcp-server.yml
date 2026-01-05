@@ -155,3 +155,47 @@ jobs:
         run: |
           echo "AGENT_VERSION=${{ needs.prepare.outputs.agent_version }}" >> $GITHUB_ENV
           echo "COMPUTER_VERSION=${{ needs.prepare.outputs.computer_version }}" >> $GITHUB_ENV
+
+  create-release:
+    needs: [prepare, publish]
+    uses: ./.github/workflows/github-release-reusable.yml
+    with:
+      tag_name: "mcp-server-v${{ needs.prepare.outputs.version }}"
+      release_name: "cua-mcp-server v${{ needs.prepare.outputs.version }}"
+      body: |
+        ## MCP Server for the Computer-Use Agent (CUA)
+
+        This package provides MCP (Model Context Protocol) integration for CUA agents, allowing them to be used with Claude Desktop, Cursor, and other MCP clients.
+
+        ## Usage
+
+        ```bash
+        # Run the MCP server directly
+        cua-mcp-server
+        ```
+
+        ## Claude Desktop Integration
+
+        Add to your Claude Desktop configuration (~/.config/claude-desktop/claude_desktop_config.json or OS-specific location):
+
+        ```json
+        "mcpServers": {
+          "cua-agent": {
+            "command": "cua-mcp-server",
+            "args": [],
+            "env": {
+              "CUA_AGENT_LOOP": "OMNI",
+              "CUA_MODEL_PROVIDER": "ANTHROPIC",
+              "CUA_MODEL_NAME": "claude-3-opus-20240229",
+              "ANTHROPIC_API_KEY": "your-api-key",
+              "PYTHONIOENCODING": "utf-8"
+            }
+          }
+        }
+        ```
+
+        ## Installation
+
+        ```bash
+        pip install cua-mcp-server==${{ needs.prepare.outputs.version }}
+        ```

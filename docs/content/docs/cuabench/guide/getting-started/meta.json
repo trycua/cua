@@ -3,10 +3,5 @@
   "description": "Get started with Cua-Bench",
   "icon": "Rocket",
   "defaultOpen": true,
-  "pages": [
-    "introduction",
-    "installation",
-    "images",
-    "first-steps"
-  ]
+  "pages": ["introduction", "installation", "images", "first-steps"]
 }

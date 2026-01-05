@@ -2,10 +2,5 @@
   "title": "Guide",
   "description": "Learn how to use Cua-Bench",
   "icon": "Book",
-  "pages": [
-    "getting-started",
-    "fundamentals",
-    "examples",
-    "advanced"
-  ]
+  "pages": ["getting-started", "fundamentals", "examples", "advanced"]
 }

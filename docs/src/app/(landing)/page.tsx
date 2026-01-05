@@ -90,7 +90,6 @@ export default function LandingPage() {
 
       {/* Hero Section */}
       <section className="relative overflow-hidden pb-16 pt-20 md:pb-24 md:pt-28">
-
         <div className="container relative mx-auto px-6 lg:px-8">
           <div className="grid items-center gap-12 lg:grid-cols-2 lg:gap-16">
             {/* Text content */}

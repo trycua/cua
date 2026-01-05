@@ -3,11 +3,5 @@
   "description": "Core concepts for building with Cua",
   "icon": "Lightbulb",
   "defaultOpen": true,
-  "pages": [
-    "agent-loops",
-    "vlms",
-    "cua-vlm-router",
-    "browser-tool",
-    "callbacks"
-  ]
+  "pages": ["agent-loops", "vlms", "cua-vlm-router", "browser-tool", "callbacks"]
 }

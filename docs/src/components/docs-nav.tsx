@@ -23,9 +23,7 @@ export function DocsNav() {
             href={tab.href}
             className={cn(
               'text-sm font-medium transition-colors',
-              isActive
-                ? 'text-fd-foreground'
-                : 'text-fd-muted-foreground hover:text-fd-foreground'
+              isActive ? 'text-fd-foreground' : 'text-fd-muted-foreground hover:text-fd-foreground'
             )}
           >
             {tab.name}

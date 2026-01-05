@@ -2,10 +2,5 @@
   "title": "Examples",
   "description": "Real-world examples of building with Cua",
   "icon": "Blocks",
-  "pages": [
-    "index",
-    "automation",
-    "platform-specific",
-    "ai-models"
-  ]
+  "pages": ["index", "automation", "platform-specific", "ai-models"]
 }

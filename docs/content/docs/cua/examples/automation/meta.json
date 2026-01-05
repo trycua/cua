@@ -3,8 +3,5 @@
   "description": "Automate repetitive tasks with Cua",
   "icon": "Workflow",
   "defaultOpen": true,
-  "pages": [
-    "form-filling",
-    "post-event-contact-export"
-  ]
+  "pages": ["form-filling", "post-event-contact-export"]
 }

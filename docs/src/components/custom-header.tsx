@@ -47,9 +47,21 @@ const docsSites = [
     dropdownIconWidth: 30,
     dropdownIconHeight: 18,
     navTabs: [
-      { name: 'Guide', href: '/cuabench/guide/getting-started/introduction', prefix: '/cuabench/guide' },
-      { name: 'Examples', href: '/cuabench/guide/examples/custom-agent', prefix: '/cuabench/guide/examples' },
-      { name: 'API Reference', href: '/cuabench/reference/cli-reference', prefix: '/cuabench/reference' },
+      {
+        name: 'Guide',
+        href: '/cuabench/guide/getting-started/introduction',
+        prefix: '/cuabench/guide',
+      },
+      {
+        name: 'Examples',
+        href: '/cuabench/guide/examples/custom-agent',
+        prefix: '/cuabench/guide/examples',
+      },
+      {
+        name: 'API Reference',
+        href: '/cuabench/reference/cli-reference',
+        prefix: '/cuabench/reference',
+      },
     ],
   },
 ];
@@ -88,7 +100,10 @@ export function CustomHeader() {
               className="flex items-center gap-2 rounded-lg px-2 py-1.5 transition-colors hover:bg-fd-accent"
             >
               {/* Logo */}
-              <div className="relative flex h-6 items-center justify-center" style={{ width: currentSite.iconWidth }}>
+              <div
+                className="relative flex h-6 items-center justify-center"
+                style={{ width: currentSite.iconWidth }}
+              >
                 <Image
                   width={currentSite.iconWidth}
                   height={currentSite.iconHeight}
@@ -143,7 +158,10 @@ export function CustomHeader() {
                             src={site.logoBlack}
                             aria-label={`${site.name} logo`}
                             className="block dark:hidden"
-                            style={{ width: site.dropdownIconWidth, height: site.dropdownIconHeight }}
+                            style={{
+                              width: site.dropdownIconWidth,
+                              height: site.dropdownIconHeight,
+                            }}
                             alt={`${site.name} logo`}
                           />
                           <Image
@@ -152,7 +170,10 @@ export function CustomHeader() {
                             src={site.logoWhite}
                             aria-label={`${site.name} logo`}
                             className="hidden dark:block"
-                            style={{ width: site.dropdownIconWidth, height: site.dropdownIconHeight }}
+                            style={{
+                              width: site.dropdownIconWidth,
+                              height: site.dropdownIconHeight,
+                            }}
                             alt={`${site.name} logo`}
                           />
                         </div>

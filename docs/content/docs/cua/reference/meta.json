@@ -2,11 +2,5 @@
   "title": "Reference",
   "description": "SDK and CLI API reference",
   "icon": "FileText",
-  "pages": [
-    "computer-sdk",
-    "agent-sdk",
-    "mcp-server",
-    "cli-playbook",
-    "macos-vm-cli-playbook"
-  ]
+  "pages": ["computer-sdk", "agent-sdk", "mcp-server", "cli-playbook", "macos-vm-cli-playbook"]
 }

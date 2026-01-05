@@ -73,14 +73,14 @@ export default function LandingPage() {
         {/* Background image - dark/light mode */}
         <div className="pointer-events-none absolute inset-0">
           <Image
-            src="/docs/img/bg-dark.jpg"
+            src="/img/bg-dark.jpg"
             alt=""
             fill
             className="hidden object-cover object-top opacity-50 dark:block"
             priority
           />
           <Image
-            src="/docs/img/bg-light.jpg"
+            src="/img/bg-light.jpg"
             alt=""
             fill
             className="block object-cover object-top opacity-30 dark:hidden"
@@ -144,7 +144,7 @@ export default function LandingPage() {
                 <div className="absolute -inset-4 rounded-3xl bg-gradient-to-br from-sky-500/20 via-emerald-500/10 to-purple-500/20 blur-2xl" />
                 <div className="relative overflow-hidden rounded-2xl border border-fd-border/50 bg-fd-card/30 p-4 backdrop-blur-sm">
                   <Image
-                    src="/docs/img/hero.png"
+                    src="/img/hero.png"
                     alt="Cua Platform"
                     width={400}
                     height={400}

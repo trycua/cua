@@ -5,9 +5,9 @@ import { usePathname } from 'next/navigation';
 import { cn } from 'fumadocs-ui/utils/cn';
 
 const tabs = [
-  { name: 'Guide', href: '/guide/get-started/what-is-cua', prefix: '/guide' },
-  { name: 'Examples', href: '/examples', prefix: '/examples' },
-  { name: 'Reference', href: '/reference/computer-sdk', prefix: '/reference' },
+  { name: 'Guide', href: '/cua/guide/get-started/what-is-cua', prefix: '/cua/guide' },
+  { name: 'Examples', href: '/cua/examples', prefix: '/cua/examples' },
+  { name: 'Reference', href: '/cua/reference/computer-sdk', prefix: '/cua/reference' },
 ];
 
 export function DocsNav() {

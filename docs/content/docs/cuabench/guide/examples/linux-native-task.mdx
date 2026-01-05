@@ -26,9 +26,24 @@ A task where the agent must open the calculator app and perform a calculation. Y
 | Network access required | Don't have Docker/KVM |
 | Production benchmarking | Fast iteration |
 
+## Step 0: Build the Agent Container
+
+Native tasks run in a two-container architecture: an **environment container** (the Linux desktop) and an **agent container** (runs the solver/agent code). First, build the agent container:
+
+```bash
+cd /path/to/cua-bench
+docker build -t trycua/cua-agent:latest .
+```
+
+This builds the cua-bench solver image (~2-3 minutes). You only need to do this once.
+
+<Callout title="Auto-Pull" type="info">
+  The CLI will attempt to pull `trycua/cua-agent:latest` from Docker Hub if it's not found locally. If the pull fails, you'll need to build it manually as shown above.
+</Callout>
+
 ## Step 1: Create the Linux Image
 
-First, create a base Linux image:
+Next, create the base Linux desktop image:
 
 ```bash
 cb image create linux-docker

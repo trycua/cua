@@ -207,23 +207,32 @@ tags = ["grounding", "click", "button"]
 See the task in a browser window:
 
 ```bash
-cb interact tasks/my-button-task --variant-id 0
+cb interact tasks/my-button-task --task-id 0
 ```
 
 A browser window will open showing the simulated desktop. Try clicking the button yourself!
+
+<Callout title="Headless Servers" type="info">
+  On headless servers (no display), prefix commands with `xvfb-run -a`:
+  ```bash
+  xvfb-run -a cb interact tasks/my-button-task --task-id 0
+  ```
+</Callout>
 
 ### Run with Oracle Solution
 
 Verify the oracle works:
 
 ```bash
-cb run task tasks/my-button-task --oracle
+cb interact tasks/my-button-task --oracle --no-wait
 ```
 
 You should see output like:
 ```
-✓ Task completed
-Reward: 1.0
+✓ Setup complete
+✓ Solution complete
+✓ Evaluation result: [1.0]
+✓ Task completed successfully!
 ```
 
 ### Run with an Agent
@@ -232,7 +241,8 @@ Test with the built-in Cua agent:
 
 ```bash
 export ANTHROPIC_API_KEY=sk-...
-cb run task tasks/my-button-task --agent cua-agent --model anthropic/claude-sonnet-4-20250514
+cb interact tasks/my-button-task --task-id 0
+# Then in the interactive prompt, the agent will solve the task
 ```
 
 ## Adding Complexity

@@ -42,18 +42,30 @@ cb run --dataset cua-bench-basic --oracle
 
 ### Step 3: Run with an Agent
 
-Finally, perform a benchmark using the Cua Agent SDK:
+Finally, perform a benchmark using the Cua Agent SDK. Tasks run **asynchronously by default** and return immediately with a run ID:
 
 ```bash
 export ANTHROPIC_API_KEY=sk-....
-cb run \
-    --dataset cua-bench-basic \
+
+# Run a single task (async - returns immediately)
+cb run task tasks/click_button --agent cua-agent --model anthropic/claude-haiku-4-5
+
+# Monitor progress in real-time
+cb run watch <run_id>
+
+# Or wait for completion inline
+cb run task tasks/click_button --agent cua-agent --model anthropic/claude-haiku-4-5 --wait
+
+# Run entire dataset in parallel
+cb run dataset datasets/cua-bench-basic \
     --agent cua-agent \
     --model anthropic/claude-haiku-4-5 \
     --max-parallel 8 \
     --max-steps 10 \
     --max-variants 1
 ```
+
+Results are saved to `~/.local/share/cua-bench/runs/<run_id>/` by default.
 
 You should see output similar to:
 
@@ -100,7 +112,7 @@ REWARD  COUNT
 0.0     8
 ```
 
-You can see an overview table of your past runs with `cb runs`
+You can see an overview table of your past runs with `cb run list`
 
 ## Run Windows Arena
 
@@ -115,6 +127,9 @@ Windows Arena is a benchmark with 173 tasks across 12 Windows application domain
 ```bash
 # Download Windows ISO and create base image (~1-2 hours)
 cb image create windows-qemu --download-iso
+
+# With WinArena benchmark apps pre-installed (recommended)
+cb image create windows-qemu --download-iso --winarena-apps
 
 # Monitor progress (VNC at http://localhost:8006)
 docker logs -f cua-setup-windows
@@ -154,10 +169,19 @@ cb run dataset datasets/winarena \
 
 ```bash
 # List all runs with statistics
-cb runs
+cb run list
+
+# Watch a run in real-time
+cb run watch <run_id>
+
+# Check status of a specific run
+cb run status <run_id>
+
+# View logs
+cb run logs <run_id>
 
 # View traces from a specific run
-cb trace grid outputs/<run-id>
+cb trace grid ~/.local/share/cua-bench/runs/<run_id>/
 ```
 
 ## Export Training Data

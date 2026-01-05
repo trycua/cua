@@ -40,8 +40,8 @@ Full Windows 11 VM with QEMU/KVM. Required for Windows Arena benchmarks.
 # Create image (~1-2 hours, downloads Windows 11 ISO)
 cb image create windows-qemu --download-iso
 
-# With specific apps pre-installed
-cb image create windows-qemu --download-iso --apps chrome,libreoffice,vlc
+# With WinArena benchmark apps pre-installed (Chrome, LibreOffice, VLC, etc.)
+cb image create windows-qemu --download-iso --winarena-apps
 
 # With custom resources
 cb image create windows-qemu --download-iso --memory 16G --cpus 8 --disk 128G
@@ -110,11 +110,16 @@ cb image shell <name> [options]
 | Option | Description |
 |--------|-------------|
 | `--writable` | Modify golden image directly (dangerous!) |
-| `--vnc-port <port>` | VNC port (default: 8006) |
-| `--api-port <port>` | API port (default: 5000) |
+| `--vnc-port <port>` | VNC port (auto-allocated if not specified) |
+| `--api-port <port>` | API port (auto-allocated if not specified) |
 | `--memory <size>` | Memory (default: 8G) |
 | `--cpus <count>` | CPU cores (default: 8) |
 | `--no-kvm` | Disable KVM acceleration |
+| `--detach`, `-d` | Run in background |
+
+<Callout title="Auto Port Allocation" type="info">
+  Ports are automatically allocated to avoid conflicts when not specified. The CLI finds available ports starting from the defaults (8006 for VNC, 5000 for API).
+</Callout>
 
 ## Image Management
 
@@ -164,13 +169,18 @@ Cua-Bench follows the XDG Base Directory specification:
 │   │   ├── windows.boot            # Marker file (setup complete)
 │   │   └── data/                   # VM disk files
 │   └── ...
-├── workers/                        # Task overlays (ephemeral)
+├── runs/                           # Task run outputs (default location)
+│   └── <run_id>/                   # Each run gets its own directory
+│       ├── run.log                 # Execution logs
+│       └── ...                     # Results, traces, etc.
+├── overlays/                       # Task overlays (ephemeral)
 │   ├── shell-windows-qemu/         # Shell overlay
 │   └── task-abc123/                # Task run overlay
 └── windows.iso                     # Downloaded Windows ISO
 
 ~/.local/state/cua-bench/           # State directory
-└── images.json                     # Image registry
+├── images.json                     # Image registry
+└── runs.json                       # Run session tracking
 ```
 
 ## Architecture
@@ -234,6 +244,8 @@ open -a Docker
 ```
 
 ### Port already in use
+
+Ports are now auto-allocated by default, so conflicts are rare. If you need specific ports:
 
 ```bash
 # Use custom ports

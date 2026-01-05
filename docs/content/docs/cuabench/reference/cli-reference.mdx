@@ -31,12 +31,15 @@ cb image create <platform> [options]
 | `--download-iso` | Download Windows 11 ISO (~6GB) |
 | `--iso <path>` | Use existing Windows ISO |
 | `--name <name>` | Image name (default: same as platform) |
-| `--apps <list>` | Comma-separated apps to install (e.g., chrome,libreoffice) |
+| `--winarena-apps` | Install WinArena benchmark apps (Chrome, LibreOffice, VLC, etc.) |
 | `--memory <size>` | Memory (default: 8G) |
 | `--cpus <count>` | CPU cores (default: 8) |
 | `--disk <size>` | Disk size (default: 64G) |
 | `--detach`, `-d` | Run in background |
 | `--force` | Force recreation |
+| `--skip-pull` | Don't pull Docker image (use local) |
+| `--vnc-port <port>` | VNC port (default: auto-allocate from 8006) |
+| `--api-port <port>` | API port (default: auto-allocate from 5000) |
 
 ### List Options
 
@@ -60,11 +63,12 @@ cb image shell <name> [options]
 | Option | Description |
 |--------|-------------|
 | `--writable` | Modify golden image directly (dangerous!) |
-| `--vnc-port <port>` | VNC port (default: 8006) |
-| `--api-port <port>` | API port (default: 5000) |
+| `--vnc-port <port>` | VNC port (default: auto-allocate from 8006) |
+| `--api-port <port>` | API port (default: auto-allocate from 5000) |
 | `--memory <size>` | Memory (default: 8G) |
 | `--cpus <count>` | CPU cores (default: 8) |
 | `--no-kvm` | Disable KVM acceleration |
+| `--detach`, `-d` | Run in background |
 
 <Callout title="Image Protection" type="info">
   By default, `cb image shell` mounts the golden image read-only and uses an overlay for any changes. This protects your base images from accidental modification. Use `--writable` only when you intentionally want to modify the golden image.
@@ -112,12 +116,16 @@ cb run <subcommand> [options]
 
 ### Task Options
 
+Tasks run **asynchronously by default** and return immediately with a run ID. Use `--wait` for synchronous execution.
+
 ```bash
 cb run task <path> [options]
 ```
 
 | Option | Description |
 |--------|-------------|
+| `--wait`, `-w` | Wait for task completion (default: run async) |
+| `--debug` | Auto-allocate debug ports (VNC + API) |
 | `--variant-id <n>` | Task variant index (default: 0) |
 | `--agent <name>` | Agent to use (from `.cua/agents.yaml`) |
 | `--agent-import-path <path>` | Import path for custom agent |
@@ -126,9 +134,9 @@ cb run task <path> [options]
 | `--max-steps <n>` | Maximum steps per task (default: 100) |
 | `--image <name>` | Use specific base image |
 | `--platform <type>` | Platform type: `linux-docker`, `windows-qemu`, `android-qemu` |
-| `--vnc-port <port>` | Expose VNC on host port (for live viewing) |
-| `--api-port <port>` | Expose API on host port (for debugging) |
-| `--output-dir <dir>` | Output directory for results |
+| `--vnc-port <port>` | Expose VNC on host port (auto-allocated if not specified) |
+| `--api-port <port>` | Expose API on host port (auto-allocated if not specified) |
+| `--output-dir <dir>` | Output directory (default: `~/.local/share/cua-bench/runs/<run_id>/`) |
 
 ### Dataset Options
 
@@ -152,14 +160,18 @@ cb run dataset <path> [options]
 ### Examples
 
 ```bash
-# Run single task with oracle solution
-cb run task tasks/click_button --variant-id 0 --oracle
-
-# Run single task with agent evaluation
+# Run single task (async by default - returns immediately)
 cb run task tasks/click_button --agent cua-agent --model anthropic/claude-sonnet-4-20250514
 
-# Run with VNC for live debugging (open http://localhost:8006)
-cb run task tasks/click_button --agent cua-agent --vnc-port 8006
+# Wait for task completion (synchronous)
+cb run task tasks/click_button --agent cua-agent --wait
+
+# Run with oracle solution
+cb run task tasks/click_button --variant-id 0 --oracle --wait
+
+# Auto-allocate debug ports for live viewing
+cb run task tasks/click_button --agent cua-agent --debug
+# Output shows: Auto-allocated debug ports: VNC=8006, API=5000
 
 # Run Windows task with specific image
 cb run task tasks/winarena --image windows-qemu --agent cua-agent
@@ -170,10 +182,12 @@ cb run dataset datasets/cua-bench-basic --agent cua-agent --max-parallel 4
 # Run dataset with filtering
 cb run dataset datasets/cua-bench-basic --task-filter "click*" --max-variants 1
 
-# Monitor runs
-cb run list
-cb run watch run-abc123
-cb run logs run-abc123
+# Monitor runs (async tasks)
+cb run list                    # List all runs
+cb run watch <run_id>          # Watch progress in real-time
+cb run status <run_id>         # Check status
+cb run logs <run_id>           # View logs
+cb run stop <run_id>           # Stop a run
 ```
 
 ## Interact Commands

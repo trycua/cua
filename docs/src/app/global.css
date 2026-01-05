@@ -40,3 +40,14 @@
   overflow-y: auto;
   overflow-x: hidden;
 }
+
+/* Ensure search dialog appears above fixed header (z-50) */
+[data-search-dialog],
+[data-radix-dialog-content][role="dialog"],
+[vaul-drawer] {
+  z-index: 100 !important;
+}
+
+[data-radix-dialog-overlay] {
+  z-index: 99 !important;
+}

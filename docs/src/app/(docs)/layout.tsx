@@ -7,7 +7,7 @@ export default function Layout({ children }: { children: ReactNode }) {
   return (
     <>
       <CustomHeader />
-      <div className="pt-10">
+      <div className="pt-14">
         <DocsLayout
           tree={source.pageTree}
           nav={{ enabled: false }}

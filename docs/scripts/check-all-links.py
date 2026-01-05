@@ -106,14 +106,16 @@ def normalize_link(link: str, docs_dir: Path, public_dir: Path, src_dir: Path) -
         return None, 'internal'
 
     # Check if it's a public asset (images, etc.)
+    # With basePath: '/docs', image paths are /docs/img/... which maps to public/img/
+    if clean_link.startswith('docs/img/'):
+        return public_dir / clean_link[5:], 'public'  # Remove 'docs/' prefix
+    if clean_link.startswith('docs/favicon'):
+        return public_dir / clean_link[5:], 'public'  # Remove 'docs/' prefix
     if clean_link.startswith(('img/', 'images/', 'favicon', 'icons/')):
         return public_dir / clean_link, 'public'
 
     # Check if it's a docs path
-    if clean_link.startswith(('docs/', 'cua/', 'cuabench/')):
-        # Remove 'docs/' prefix if present
-        if clean_link.startswith('docs/'):
-            clean_link = clean_link[5:]
+    if clean_link.startswith(('cua/', 'cuabench/')):
         docs_content_dir = docs_dir / 'content' / 'docs'
         return docs_content_dir / clean_link, 'docs'
 

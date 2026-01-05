@@ -31,7 +31,7 @@ export default function Layout({ children }: { children: ReactNode }) {
       suppressHydrationWarning
     >
       <head>
-        <link rel="icon" href="/favicon.ico" sizes="any" />
+        <link rel="icon" href="/docs/favicon.ico" sizes="any" />
         <script
           dangerouslySetInnerHTML={{
             __html: `

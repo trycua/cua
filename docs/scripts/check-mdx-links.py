@@ -58,6 +58,11 @@ def normalize_link_to_file_path(link: str, docs_dir: Path, public_dir: Path) -> 
     clean_link = link.lstrip('/')
 
     # Check if it's a public asset (images, etc.)
+    # With basePath: '/docs', image paths are /docs/img/... which maps to public/img/
+    if clean_link.startswith('docs/img/'):
+        return public_dir / clean_link[5:], 'public'  # Remove 'docs/' prefix
+    if clean_link.startswith('docs/favicon'):
+        return public_dir / clean_link[5:], 'public'  # Remove 'docs/' prefix
     if clean_link.startswith(('img/', '_next/', 'favicon')):
         return public_dir / clean_link, 'public'
 

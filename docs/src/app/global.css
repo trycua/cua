@@ -41,13 +41,8 @@
   overflow-x: hidden;
 }
 
-/* Ensure search dialog appears above fixed header (z-50) */
-[data-search-dialog],
-[data-radix-dialog-content][role="dialog"],
-[vaul-drawer] {
-  z-index: 100 !important;
+/* Push search dialog below the fixed header on mobile */
+[data-radix-dialog-content] {
+  top: 4rem !important;
 }
 
-[data-radix-dialog-overlay] {
-  z-index: 99 !important;
-}

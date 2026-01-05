@@ -48,7 +48,8 @@ const docsSites = [
     dropdownIconHeight: 18,
     navTabs: [
       { name: 'Guide', href: '/cuabench/guide/getting-started/introduction', prefix: '/cuabench/guide' },
-      { name: 'Reference', href: '/cuabench/reference/cli-reference', prefix: '/cuabench/reference' },
+      { name: 'Examples', href: '/cuabench/guide/examples/custom-agent', prefix: '/cuabench/guide/examples' },
+      { name: 'API Reference', href: '/cuabench/reference/cli-reference', prefix: '/cuabench/reference' },
     ],
   },
 ];
@@ -76,7 +77,7 @@ export function CustomHeader() {
   }, []);
 
   return (
-    <header className="fixed top-0 left-0 right-0 z-50 border-b border-fd-border bg-fd-background/80 backdrop-blur-sm">
+    <header className="fixed top-0 left-0 right-0 z-40 border-b border-fd-border bg-fd-background/80 backdrop-blur-sm">
       <div className="container mx-auto flex h-14 items-center justify-between px-4">
         {/* Left: Logo and Nav */}
         <div className="flex items-center gap-6">

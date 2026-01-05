@@ -34,8 +34,10 @@ dev = [
     "isort>=7.0.0",
 ]
 docs = [
-    "mkdocs-material>=9.2.0",
-    "mkdocs>=1.5.0",
+    "sphinx>=7.0.0",
+    "sphinx-autodoc-typehints>=1.25.0",
+    "myst-parser>=2.0.0",
+    "sphinx-markdown-builder>=0.6.0",
 ]
 test = [
     "aioresponses>=0.7.4",

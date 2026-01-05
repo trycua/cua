@@ -17,6 +17,8 @@
     "---[Terminal]Cloud CLI Playbook---",
     "...cli-playbook",
     "---[Terminal]macOS VM CLI Playbook---",
-    "...macos-vm-cli-playbook"
+    "...macos-vm-cli-playbook",
+    "---[Code]API Reference---",
+    "...api"
   ]
 }

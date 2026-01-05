@@ -40,3 +40,9 @@
   overflow-y: auto;
   overflow-x: hidden;
 }
+
+/* Push search dialog below the fixed header on mobile */
+[data-radix-dialog-content] {
+  top: 4rem !important;
+}
+

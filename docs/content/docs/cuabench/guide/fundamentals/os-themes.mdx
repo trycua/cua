@@ -1,0 +1,177 @@
+---
+title: OS Themes
+description: Simulating Windows, Linux, and macOS desktop environments with CSS themes
+---
+
+# OS Themes
+
+Cua-Bench includes a CSS design system called **td.css** that renders pixel-perfect simulations of desktop operating systems. These themes let you create realistic UI environments without requiring actual VMs.
+
+## Available Themes
+
+| Theme | Description |
+|-------|-------------|
+| `linux` | Linux desktop (XFCE-style) |
+| `win11` | Windows 11 |
+| `macos` | macOS (Sonoma-style) |
+
+All themes use the `webtop` provider for lightweight CSS-based simulation.
+
+## Theme Architecture
+
+```
+┌────────────────────────────────────────────────────────────────────┐
+│  Chromium Browser (Playwright)                                      │
+│  ┌──────────────────────────────────────────────────────────────┐  │
+│  │  Desktop Shell (td.css themed)                               │  │
+│  │  ┌─────────────────────────────────────────────────────────┐ │  │
+│  │  │ ┌─────────────────────────────────────────────────────┐ │ │  │
+│  │  │ │  Window Chrome (title bar, buttons, borders)        │ │ │  │
+│  │  │ │  ┌───────────────────────────────────────────────┐  │ │ │  │
+│  │  │ │  │                                               │  │ │ │  │
+│  │  │ │  │     Your HTML App (iframe)                    │  │ │ │  │
+│  │  │ │  │                                               │  │ │ │  │
+│  │  │ │  └───────────────────────────────────────────────┘  │ │ │  │
+│  │  │ └─────────────────────────────────────────────────────┘ │ │  │
+│  │  └─────────────────────────────────────────────────────────┘ │  │
+│  │  [Start] [Apps...]                          [Tray] [Clock]   │  │
+│  └──────────────────────────────────────────────────────────────┘  │
+└────────────────────────────────────────────────────────────────────┘
+```
+
+Each theme applies authentic styling to:
+- **Window chrome**: Title bars, minimize/maximize/close buttons, borders
+- **Taskbar**: Start button, app icons, system tray, clock
+- **Desktop**: Background, icons, context menus
+- **UI controls**: Buttons, inputs, scrollbars, dialogs
+
+## Using Themes
+
+### In Task Configuration
+
+Specify the theme via `os_type` in your task configuration:
+
+```python
+import cua_bench as cb
+
+@cb.tasks_config(split="train")
+def load():
+    return [
+        cb.Task(
+            description='Click the Submit button',
+            computer={
+                "provider": "webtop",
+                "setup_config": {
+                    "os_type": "win11",  # Windows 11 theme
+                    "width": 1920,
+                    "height": 1080,
+                }
+            }
+        )
+    ]
+```
+
+### Multiple Theme Variants
+
+Generate variants across different OS themes:
+
+```python
+@cb.tasks_config(split="train")
+def load():
+    themes = ["linux", "win11", "macos"]
+
+    return [
+        cb.Task(
+            description=f'Complete the form on {theme}',
+            metadata={"os_type": theme},
+            computer={
+                "provider": "webtop",
+                "setup_config": {
+                    "os_type": theme,
+                    "width": 1280,
+                    "height": 800,
+                }
+            }
+        )
+        for theme in themes
+    ]
+```
+
+## Generating Themed Tasks
+
+Use `cb task generate` to create tasks with AI assistance:
+
+```bash
+# Generate a Windows 11 styled task
+cb task generate "todo app with dark mode" --output tasks/todo_win11
+
+# Generate a macOS styled task
+cb task generate "notes app with sidebar" --output tasks/notes_macos
+```
+
+The generated task will include:
+- `main.py` with task configuration
+- `gui/index.html` with your app's HTML
+- Default theme set to `linux` (modify `os_type` to change)
+
+## Theme Examples
+
+### Windows 11
+
+```python
+computer={
+    "provider": "webtop",
+    "setup_config": {
+        "os_type": "win11",
+        "width": 1920,
+        "height": 1080,
+    }
+}
+```
+
+Features: Rounded corners, centered taskbar, Fluent Design icons
+
+### macOS
+
+```python
+computer={
+    "provider": "webtop",
+    "setup_config": {
+        "os_type": "macos",
+        "width": 1920,
+        "height": 1080,
+    }
+}
+```
+
+Features: Top menu bar, dock, traffic light window buttons, SF Pro typography
+
+### Linux
+
+```python
+computer={
+    "provider": "webtop",
+    "setup_config": {
+        "os_type": "linux",
+        "width": 1920,
+        "height": 1080,
+    }
+}
+```
+
+Features: XFCE-style panel, clean GTK widgets
+
+## Why Use Themes?
+
+1. **Agent Generalization**: Train agents that work across different OS appearances
+2. **Visual Diversity**: Create varied training data without multiple VMs
+3. **Fast Iteration**: Themes render instantly, no VM boot time
+4. **Deterministic**: Same theme always renders identically
+5. **Lightweight**: Run hundreds of parallel simulations
+
+## Best Practices
+
+- **Use modern resolutions**: 1920x1080 works well for all current themes
+- **Test across themes**: Ensure your app renders correctly in all themes
+- **Match platform conventions**: Use platform-appropriate UI patterns (e.g., top menu bar for macOS)
+- **Consider accessibility**: Some themes have better contrast than others

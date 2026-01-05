@@ -1,0 +1,18 @@
+{
+  "title": "Advanced",
+  "description": "Advanced topics for building with Cua",
+  "icon": "Layers",
+  "pages": [
+    "composed-models",
+    "custom-tools",
+    "sandboxed-python",
+    "local-computer-server",
+    "human-in-the-loop",
+    "trajectories",
+    "tracing",
+    "chat-history",
+    "message-format",
+    "prompt-caching",
+    "telemetry"
+  ]
+}

@@ -1,0 +1,490 @@
+---
+title: Create a Simulated Task
+description: Build a button-click task from scratch in an HTML/CSS virtual desktop
+---
+
+In this tutorial, you'll create a complete simulated task that tests an agent's ability to click a button. Simulated tasks run in a lightweight HTML/CSS virtual desktop—no Docker or KVM required.
+
+**Time:** ~10 minutes
+**Prerequisites:** cua-bench installed
+
+## What You'll Build
+
+A task where the agent must click a "Submit" button on a simulated desktop. You'll learn:
+
+- Task configuration with `@cb.tasks_config`
+- Environment setup with `@cb.setup_task`
+- Reward evaluation with `@cb.evaluate_task`
+- Oracle solutions with `@cb.solve_task`
+
+## Step 1: Create Task Directory
+
+```bash
+mkdir -p tasks/my-button-task/gui
+cd tasks/my-button-task
+```
+
+## Step 2: Create the Task Configuration
+
+Create `main.py` with the task configuration:
+
+```python
+import cua_bench as cb
+from pathlib import Path
+
+# Global variable to track the window
+pid = None
+
+@cb.tasks_config(split="train")
+def load():
+    """Define task variants."""
+    return [
+        cb.Task(
+            description='Click the "Submit" button on the page.',
+            metadata={"button_text": "Submit"},
+            computer={
+                "provider": "simulated",
+                "setup_config": {
+                    "os_type": "macos",
+                    "width": 512,
+                    "height": 512,
+                    "background": "#c0c0c0"
+                }
+            }
+        )
+    ]
+```
+
+This creates a single task variant with:
+- A clear description for the agent
+- Metadata to customize the button text
+- A simulated macOS-style desktop (512x512 pixels)
+
+## Step 3: Add Environment Setup
+
+Add the setup function to initialize the task:
+
+```python
+@cb.setup_task(split="train")
+async def start(task_cfg: cb.Task, session: cb.DesktopSession):
+    """Initialize the task environment."""
+    global pid
+
+    # Load HTML content
+    html_content = (Path(__file__).parent / "gui/index.html").read_text()
+
+    # Launch window with the task UI
+    pid = await session.launch_window(
+        html=html_content,
+        title="Button Task",
+        x=100,
+        y=100,
+        width=300,
+        height=200,
+    )
+```
+
+## Step 4: Add Reward Evaluation
+
+Add the evaluation function to check if the agent succeeded:
+
+```python
+@cb.evaluate_task(split="train")
+async def evaluate(task_cfg: cb.Task, session: cb.DesktopSession) -> list[float]:
+    """Return reward based on task completion."""
+    global pid
+
+    if pid is None:
+        return [0.0]
+
+    # Check if button was clicked via JavaScript state
+    clicked = await session.execute_javascript(pid, "window.__clicked")
+
+    return [1.0] if clicked is True else [0.0]
+```
+
+## Step 5: Add Oracle Solution
+
+Add the oracle (baseline solution) that demonstrates how to solve the task:
+
+```python
+@cb.solve_task(split="train")
+async def solve(task_cfg: cb.Task, session: cb.DesktopSession):
+    """Demonstrate the solution."""
+    global pid
+
+    if pid is None:
+        return
+
+    # Click the button by CSS selector (simulated environments only)
+    await session.click_element(pid, "#submit-btn")
+```
+
+## Step 6: Create the HTML Interface
+
+Create `gui/index.html`:
+
+```html
+<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            margin: 0;
+            background: #f5f5f5;
+        }
+
+        h1 {
+            font-size: 18px;
+            color: #333;
+            margin-bottom: 20px;
+        }
+
+        #submit-btn {
+            padding: 12px 32px;
+            font-size: 16px;
+            background: #007AFF;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        #submit-btn:hover {
+            background: #0056b3;
+        }
+
+        #submit-btn.clicked {
+            background: #28a745;
+        }
+    </style>
+</head>
+<body>
+    <h1>Click the button below</h1>
+    <button id="submit-btn">Submit</button>
+
+    <script>
+        // Track whether button was clicked
+        window.__clicked = false;
+
+        document.getElementById('submit-btn').addEventListener('click', function() {
+            window.__clicked = true;
+            this.textContent = 'Clicked!';
+            this.classList.add('clicked');
+        });
+    </script>
+</body>
+</html>
+```
+
+## Step 7: Add Task Metadata
+
+Create `pyproject.toml`:
+
+```toml
+[project]
+name = "my-button-task"
+version = "0.1.0"
+
+[tool.cua-bench]
+description = "Click a submit button"
+difficulty = "easy"
+category = "grounding"
+tags = ["grounding", "click", "button"]
+```
+
+## Step 8: Run the Task
+
+### Run Interactively
+
+See the task in a browser window:
+
+```bash
+cb interact tasks/my-button-task --task-id 0
+```
+
+A browser window will open showing the simulated desktop. Try clicking the button yourself!
+
+<Callout title="Headless Servers" type="info">
+  On headless servers (no display), prefix commands with `xvfb-run -a`:
+  ```bash
+  xvfb-run -a cb interact tasks/my-button-task --task-id 0
+  ```
+</Callout>
+
+### Run with Oracle Solution
+
+Verify the oracle works:
+
+```bash
+cb interact tasks/my-button-task --oracle --no-wait
+```
+
+You should see output like:
+```
+✓ Setup complete
+✓ Solution complete
+✓ Evaluation result: [1.0]
+✓ Task completed successfully!
+```
+
+### Run with an Agent
+
+Test with the built-in Cua agent:
+
+```bash
+export ANTHROPIC_API_KEY=sk-...
+cb interact tasks/my-button-task --task-id 0
+# Then in the interactive prompt, the agent will solve the task
+```
+
+## Adding Complexity
+
+### Multiple Button Variants
+
+Modify `load()` to generate multiple variants:
+
+```python
+@cb.tasks_config(split="train")
+def load():
+    """Generate multiple task variants."""
+    buttons = ["Submit", "OK", "Continue", "Next"]
+
+    return [
+        cb.Task(
+            description=f'Click the "{btn}" button on the page.',
+            metadata={"button_text": btn},
+            computer={
+                "provider": "simulated",
+                "setup_config": {
+                    "os_type": "macos",
+                    "width": 512,
+                    "height": 512,
+                }
+            }
+        )
+        for btn in buttons
+    ]
+```
+
+Then update your HTML to use the metadata:
+
+```python
+@cb.setup_task(split="train")
+async def start(task_cfg: cb.Task, session: cb.DesktopSession):
+    global pid
+
+    button_text = task_cfg.metadata.get("button_text", "Submit")
+
+    html_content = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>...</head>
+    <body>
+        <h1>Click the button below</h1>
+        <button id="submit-btn">{button_text}</button>
+        <script>
+            window.__clicked = false;
+            document.getElementById('submit-btn').addEventListener('click', function() {{
+                window.__clicked = true;
+            }});
+        </script>
+    </body>
+    </html>
+    """
+
+    pid = await session.launch_window(html=html_content, ...)
+```
+
+### Different Themes
+
+Use the `os_type` setting for different visual styles:
+
+```python
+@cb.tasks_config(split="train")
+def load():
+    themes = ["macos", "win11", "linux"]
+
+    return [
+        cb.Task(
+            description='Click the "Submit" button.',
+            metadata={"theme": theme},
+            computer={
+                "provider": "simulated",
+                "setup_config": {
+                    "os_type": theme,
+                    "width": 512,
+                    "height": 512,
+                }
+            }
+        )
+        for theme in themes
+    ]
+```
+
+## Complete Code
+
+<details>
+<summary>main.py (complete)</summary>
+
+```python
+import cua_bench as cb
+from pathlib import Path
+
+pid = None
+
+@cb.tasks_config(split="train")
+def load():
+    """Define task variants."""
+    return [
+        cb.Task(
+            description='Click the "Submit" button on the page.',
+            metadata={"button_text": "Submit"},
+            computer={
+                "provider": "simulated",
+                "setup_config": {
+                    "os_type": "macos",
+                    "width": 512,
+                    "height": 512,
+                    "background": "#c0c0c0"
+                }
+            }
+        )
+    ]
+
+
+@cb.setup_task(split="train")
+async def start(task_cfg: cb.Task, session: cb.DesktopSession):
+    """Initialize the task environment."""
+    global pid
+
+    html_content = (Path(__file__).parent / "gui/index.html").read_text()
+
+    pid = await session.launch_window(
+        html=html_content,
+        title="Button Task",
+        x=100,
+        y=100,
+        width=300,
+        height=200,
+    )
+
+
+@cb.evaluate_task(split="train")
+async def evaluate(task_cfg: cb.Task, session: cb.DesktopSession) -> list[float]:
+    """Return reward based on task completion."""
+    global pid
+
+    if pid is None:
+        return [0.0]
+
+    clicked = await session.execute_javascript(pid, "window.__clicked")
+    return [1.0] if clicked is True else [0.0]
+
+
+@cb.solve_task(split="train")
+async def solve(task_cfg: cb.Task, session: cb.DesktopSession):
+    """Demonstrate the solution."""
+    global pid
+
+    if pid is None:
+        return
+
+    await session.click_element(pid, "#submit-btn")
+```
+
+</details>
+
+<details>
+<summary>gui/index.html (complete)</summary>
+
+```html
+<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            margin: 0;
+            background: #f5f5f5;
+        }
+
+        h1 {
+            font-size: 18px;
+            color: #333;
+            margin-bottom: 20px;
+        }
+
+        #submit-btn {
+            padding: 12px 32px;
+            font-size: 16px;
+            background: #007AFF;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        #submit-btn:hover {
+            background: #0056b3;
+        }
+
+        #submit-btn.clicked {
+            background: #28a745;
+        }
+    </style>
+</head>
+<body>
+    <h1>Click the button below</h1>
+    <button id="submit-btn">Submit</button>
+
+    <script>
+        window.__clicked = false;
+
+        document.getElementById('submit-btn').addEventListener('click', function() {
+            window.__clicked = true;
+            this.textContent = 'Clicked!';
+            this.classList.add('clicked');
+        });
+    </script>
+</body>
+</html>
+```
+
+</details>
+
+<details>
+<summary>pyproject.toml (complete)</summary>
+
+```toml
+[project]
+name = "my-button-task"
+version = "0.1.0"
+
+[tool.cua-bench]
+description = "Click a submit button"
+difficulty = "easy"
+category = "grounding"
+tags = ["grounding", "click", "button"]
+```
+
+</details>
+
+## Next Steps
+
+- [Build a Custom Agent](/cuabench/guide/examples/custom-agent) to solve this task
+- [Create a Native Linux Task](/cuabench/guide/examples/linux-native-task) for real applications
+- Learn about [OS Themes](/cuabench/guide/fundamentals/os-themes) for visual variants

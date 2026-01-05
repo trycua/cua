@@ -1,0 +1,114 @@
+---
+title: Prompt Caching
+description: Reduce costs and latency with provider-specific prompt caching
+---
+
+**Prompt caching** avoids reprocessing the same prompt content on repeated calls. This reduces costs and latency for long-running tasks or iterative workflows where the context stays mostly the same.
+
+## Enabling Prompt Caching
+
+Set `use_prompt_caching=True` when creating your agent:
+
+```python
+from computer import Computer
+from agent import ComputerAgent
+
+computer = Computer(os_type="linux", provider_type="docker", image="trycua/cua-xfce:latest")
+await computer.run()
+
+agent = ComputerAgent(
+    model="anthropic/claude-sonnet-4-5-20250929",
+    tools=[computer],
+    use_prompt_caching=True
+)
+```
+
+## Provider Behavior
+
+### Anthropic
+
+When enabled, Cua adds `{"cache_control": "ephemeral"}` to messages. This tells Anthropic to cache the prompt for the duration of the session.
+
+```python
+# Required for Anthropic models
+agent = ComputerAgent(
+    model="anthropic/claude-sonnet-4-5-20250929",
+    tools=[computer],
+    use_prompt_caching=True
+)
+```
+
+### OpenAI
+
+OpenAI automatically caches prompts over 1000 tokens. You don't need to set `use_prompt_caching`—it happens automatically.
+
+```python
+# Caching is automatic for OpenAI
+agent = ComputerAgent(
+    model="openai/computer-use-preview",
+    tools=[computer]
+)
+```
+
+### Other Providers
+
+For providers that don't support caching, the parameter is ignored.
+
+## When to Use
+
+**Iterative tasks** - When the agent runs multiple turns with similar context:
+
+```python
+agent = ComputerAgent(
+    model="anthropic/claude-sonnet-4-5-20250929",
+    tools=[computer],
+    use_prompt_caching=True
+)
+
+# Each turn reuses cached context
+for task in tasks:
+    async for result in agent.run(task):
+        process(result)
+```
+
+**Long system prompts** - When using detailed instructions that repeat across calls:
+
+```python
+agent = ComputerAgent(
+    model="anthropic/claude-sonnet-4-5-20250929",
+    tools=[computer],
+    instructions="Very long system prompt with detailed rules...",
+    use_prompt_caching=True
+)
+```
+
+**Multi-turn conversations** - When conversation history grows but the beginning stays constant:
+
+```python
+agent = ComputerAgent(
+    model="anthropic/claude-sonnet-4-5-20250929",
+    tools=[computer],
+    use_prompt_caching=True
+)
+
+messages = [{"role": "system", "content": "Long context..."}]
+for user_input in inputs:
+    messages.append({"role": "user", "content": user_input})
+    async for result in agent.run(messages):
+        messages.extend(result["output"])
+```
+
+## Cost Impact
+
+With Anthropic's prompt caching:
+- Cached input tokens cost 90% less than regular input tokens
+- Cache writes have a small additional cost
+- Cache hits provide significant savings on repeated runs
+
+Check your usage in the response:
+
+```python
+async for result in agent.run(messages):
+    usage = result["usage"]
+    print(f"Tokens: {usage['total_tokens']}, Cost: ${usage['response_cost']:.4f}")
+```

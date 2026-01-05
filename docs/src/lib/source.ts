@@ -34,6 +34,15 @@ const brandIcons: Record<string, () => React.ReactElement> = {
     ),
 };
 
+// Icon resolver
+function iconResolver(icon: string | undefined) {
+  if (!icon) return;
+  // Check brand icons first (github, discord, etc.)
+  if (icon in brandIcons) return brandIcons[icon]();
+  // Fall back to Lucide icons
+  if (icon in icons) return createElement(icons[icon as keyof typeof icons]);
+}
+
 /**
  * Returns available API doc versions for a given section (e.g., 'agent').
  * Each version is an object: { label, slug }
@@ -66,16 +75,9 @@ export async function getApiVersions(
   ];
 }
 
-// See https://fumadocs.vercel.app/docs/headless/source-api for more info
+// Single docs source
 export const source = loader({
-  // it assigns a URL to your pages
   baseUrl: '/',
   source: docs.toFumadocsSource(),
-  icon(icon) {
-    if (!icon) return;
-    // Check brand icons first (github, discord, etc.)
-    if (icon in brandIcons) return brandIcons[icon]();
-    // Fall back to Lucide icons
-    if (icon in icons) return createElement(icons[icon as keyof typeof icons]);
-  },
+  icon: iconResolver,
 });

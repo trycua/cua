@@ -1,0 +1,271 @@
+---
+title: Tracing API
+description: Record computer interactions for debugging, training, and analysis
+---
+
+The **Tracing API** records everything that happens on a Computer—screenshots, API calls, accessibility trees, and custom metadata. Unlike [Trajectories](/cua/guide/advanced/trajectories) which are specific to ComputerAgent, tracing works with any Computer usage: custom agents, scripts, human-in-the-loop workflows, or RPA.
+
+## Basic Usage
+
+Start and stop tracing around any computer operations:
+
+```python
+from computer import Computer
+
+computer = Computer(os_type="linux", provider_type="docker", image="trycua/cua-xfce:latest")
+await computer.run()
+
+# Start tracing
+await computer.tracing.start()
+
+# Perform operations (these get recorded)
+await computer.interface.left_click(100, 200)
+await computer.interface.type_text("Hello, World!")
+screenshot = await computer.interface.screenshot()
+
+# Stop and save trace
+trace_path = await computer.tracing.stop()
+print(f"Trace saved to: {trace_path}")
+```
+
+This creates a ZIP archive containing all recorded events, screenshots, and metadata.
+
+## What Gets Recorded
+
+By default, tracing captures:
+
+- **Screenshots** - Taken automatically after key actions (clicks, typing, key presses)
+- **API calls** - Every method called on `computer.interface` with arguments and results
+- **Timestamps** - Absolute and relative timing for each event
+- **Errors** - Any exceptions that occur during operations
+
+You can also enable:
+
+- **Accessibility trees** - Semantic structure of the UI (useful for debugging element detection)
+- **Custom metadata** - Your own key-value data added during the session
+
+## Configuration
+
+Control what gets recorded with start options:
+
+```python
+await computer.tracing.start({
+    "name": "my-workflow",           # Custom trace name
+    "screenshots": True,             # Capture screenshots (default: True)
+    "api_calls": True,               # Log interface calls (default: True)
+    "accessibility_tree": False,     # Record a11y trees (default: False)
+    "metadata": True,                # Enable custom metadata (default: True)
+})
+```
+
+Control output format when stopping:
+
+```python
+# Save as ZIP archive (default)
+trace_path = await computer.tracing.stop({"format": "zip"})
+
+# Save as directory (easier to browse)
+trace_path = await computer.tracing.stop({"format": "dir"})
+
+# Custom output path
+trace_path = await computer.tracing.stop({"path": "/tmp/my-trace.zip"})
+```
+
+## Output Format
+
+Traces are saved with this structure:
+
+```
+trace_20250103_143052_abc123/
+├── trace_metadata.json           # Overall trace info
+├── event_000001_trace_start.json
+├── event_000002_api_call.json
+├── event_000003_api_call.json
+├── 000001_initial_screenshot.png
+├── 000002_after_left_click.png
+├── 000003_after_type_text.png
+└── event_000004_trace_end.json
+```
+
+**trace_metadata.json:**
+```json
+{
+  "trace_id": "trace_20250103_143052_abc123",
+  "start_time": "2025-01-03T14:30:52Z",
+  "end_time": "2025-01-03T14:31:15Z",
+  "duration": 23.456,
+  "total_events": 12,
+  "screenshot_count": 5,
+  "config": {
+    "screenshots": true,
+    "api_calls": true
+  }
+}
+```
+
+**API call event:**
+```json
+{
+  "type": "api_call",
+  "timestamp": 1704295852.789,
+  "relative_time": 3.666,
+  "data": {
+    "method": "left_click",
+    "args": {"x": 100, "y": 200},
+    "result": null,
+    "error": null,
+    "screenshot": "000002_after_left_click.png",
+    "success": true
+  }
+}
+```
+
+## Adding Custom Metadata
+
+Add context during tracing for later analysis:
+
+```python
+await computer.tracing.start()
+
+# Add metadata at any point
+await computer.tracing.add_metadata("workflow", "login-flow")
+await computer.tracing.add_metadata("user_id", "test-user-123")
+await computer.tracing.add_metadata("step", "entering-credentials")
+
+await computer.interface.type_text("username")
+
+await computer.tracing.add_metadata("step", "clicking-submit")
+await computer.interface.left_click(500, 300)
+
+trace_path = await computer.tracing.stop()
+```
+
+Metadata appears in the trace alongside events, making it easy to correlate actions with your application context.
+
+## Tracing with ComputerAgent
+
+Tracing works alongside ComputerAgent—you get both agent-level information and detailed computer interaction logs:
+
+```python
+from computer import Computer
+from agent import ComputerAgent
+
+computer = Computer(os_type="linux", provider_type="docker", image="trycua/cua-xfce:latest")
+await computer.run()
+
+# Start tracing before agent runs
+await computer.tracing.start({"name": "agent-task"})
+
+agent = ComputerAgent(
+    model="anthropic/claude-sonnet-4-5-20250929",
+    tools=[computer],
+    trajectory_dir="trajectories"  # Can use both!
+)
+
+async for result in agent.run("Open Firefox and search for Cua"):
+    pass
+
+# Stop tracing after agent completes
+trace_path = await computer.tracing.stop()
+```
+
+Now you have:
+- **Trajectory** - Agent's reasoning, API calls to the model, action decisions
+- **Trace** - Low-level computer interactions, screenshots, timing
+
+## Tracing vs Trajectories
+
+| Feature | Tracing API | Trajectories |
+|---------|-------------|--------------|
+| Works with | Any Computer usage | ComputerAgent only |
+| Records | Computer interface calls | Agent reasoning + actions |
+| Screenshots | After each action | Per agent turn |
+| Accessibility data | Optional | No |
+| Custom metadata | Yes | No |
+| Output format | ZIP or directory | Directory with turns |
+| Real-time control | Start/stop anytime | Per agent run |
+
+**Use Tracing when:**
+- Building custom agents or scripts
+- Recording human demonstrations
+- Debugging computer interface issues
+- Need fine-grained timing data
+- Want accessibility tree snapshots
+
+**Use Trajectories when:**
+- Using ComputerAgent
+- Need agent reasoning and model responses
+- Want turn-by-turn organization
+- Using the trajectory viewer
+
+## Recording Human Demonstrations
+
+Tracing is ideal for capturing human-driven workflows as training data:
+
+```python
+computer = Computer(os_type="linux", provider_type="docker", image="trycua/cua-xfce:latest")
+await computer.run()
+
+await computer.tracing.start({
+    "name": "human-demo-login",
+    "accessibility_tree": True  # Capture UI structure
+})
+
+# Human performs actions via VNC or other interface
+# Meanwhile, your script can add context:
+await computer.tracing.add_metadata("task", "login-to-dashboard")
+await computer.tracing.add_metadata("demonstrator", "expert-user-1")
+
+# Wait for human to finish...
+input("Press Enter when done with demonstration")
+
+trace_path = await computer.tracing.stop()
+print(f"Demo saved to: {trace_path}")
+```
+
+## Privacy Considerations
+
+Tracing is designed with privacy in mind:
+
+- **Clipboard** - Only the length is recorded, not the actual content
+- **Screenshots** - Can be disabled entirely with `screenshots: False`
+- **Passwords** - Text input is recorded, so consider disabling for sensitive workflows
+
+```python
+# Privacy-conscious tracing
+await computer.tracing.start({
+    "screenshots": False,  # No visual data
+    "api_calls": True      # Still log actions
+})
+```
+
+## Debugging with Traces
+
+When something goes wrong, traces show exactly what happened:
+
+1. **Open trace_metadata.json** to see the overview
+2. **Check event files** in order to find where things went wrong
+3. **Look at screenshots** to see what the screen looked like
+4. **Check error fields** in API call events for exceptions
+
+```python
+import json
+from pathlib import Path
+
+# Load a trace
+trace_dir = Path("trace_20250103_143052_abc123")
+
+with open(trace_dir / "trace_metadata.json") as f:
+    metadata = json.load(f)
+
+print(f"Duration: {metadata['duration']:.2f}s")
+print(f"Events: {metadata['total_events']}")
+print(f"Screenshots: {metadata['screenshot_count']}")
+
+# Find failed API calls
+for event_file in sorted(trace_dir.glob("event_*.json")):
+    with open(event_file) as f:
+        event = json.load(f)
+    if event.get("data", {}).get("error"):
+        print(f"Error in {event_file.name}: {event['data']['error']}")
+```

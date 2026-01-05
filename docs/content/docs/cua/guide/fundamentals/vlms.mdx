@@ -1,0 +1,199 @@
+---
+title: Vision Language Models
+description: VLMs supported by the Cua Agent Framework
+---
+
+A **Vision Language Model (VLM)** is the AI that powers your computer-use agent. It sees screenshots, reasons about what's on screen, and decides what action to take next. Cua supports models from cloud providers, open-source projects, and local inference.
+
+## Using a Model
+
+Specify the model when creating your agent:
+
+```python
+from computer import Computer
+from agent import ComputerAgent
+
+computer = Computer(os_type="linux", provider_type="docker", image="trycua/cua-xfce:latest")
+await computer.run()
+
+agent = ComputerAgent(
+    model="anthropic/claude-sonnet-4-5-20250929",
+    tools=[computer]
+)
+
+async for result in agent.run("Open Firefox and search for 'Cua'"):
+    print(result)
+```
+
+The model string tells Cua which provider and model to use. Cua automatically selects the right agent loop implementation for each model.
+
+## Cloud Providers
+
+Cloud-hosted models offer the best accuracy and require no local GPU. You'll need an API key from the provider (or use Cua VLM Router for unified access).
+
+### Anthropic Claude
+
+Claude models are optimized for computer-use with native tool support.
+
+```python
+# Claude Sonnet 4.5 - best balance of speed and accuracy
+agent = ComputerAgent(model="anthropic/claude-sonnet-4-5-20250929", tools=[computer])
+
+# Claude Haiku 4.5 - faster, lower cost
+agent = ComputerAgent(model="anthropic/claude-haiku-4-5-20250929", tools=[computer])
+```
+
+Set your API key:
+
+```bash
+export ANTHROPIC_API_KEY="your-key"
+```
+
+### OpenAI
+
+OpenAI's computer-use preview model:
+
+```python
+agent = ComputerAgent(model="openai/computer-use-preview", tools=[computer])
+```
+
+```bash
+export OPENAI_API_KEY="your-key"
+```
+
+### Google Gemini
+
+Gemini 2.5 Computer-Use is optimized for **browser automation** rather than full desktop control. Use it with the [Browser Tool](/cua/guide/fundamentals/browser-tool) for web-based tasks:
+
+```python
+from agent.tools import BrowserTool
+
+# Use with BrowserTool for web automation
+agent = ComputerAgent(model="gemini-2.5-computer-use-preview-10-2025", tools=[browser])
+```
+
+```bash
+export GOOGLE_API_KEY="your-key"
+```
+
+For full desktop computer-use, consider Anthropic Claude or OpenAI instead.
+
+### Microsoft Fara
+
+Fara is Microsoft's browser automation model, available via Azure ML. Like Gemini 2.5, it's designed for web tasks and works with the [Browser Tool](/cua/guide/fundamentals/browser-tool):
+
+```python
+from agent.tools import BrowserTool
+
+agent = ComputerAgent(
+    model="azure_ml/Fara-7B",
+    tools=[browser],
+    api_base="https://your-azure-endpoint.inference.ml.azure.com"
+)
+```
+
+## Local Models
+
+Run models on your own hardware for privacy, cost savings, or air-gapped environments. Local models require a GPU with sufficient VRAM (typically 16GB+ for 7B models).
+
+### Using HuggingFace Models
+
+```python
+# UI-TARS - ByteDance's full computer-use model
+agent = ComputerAgent(
+    model="huggingface-local/ByteDance-Seed/UI-TARS-1.5-7B",
+    tools=[computer]
+)
+
+# Qwen 2.5 VL - Alibaba's full computer-use model
+agent = ComputerAgent(
+    model="huggingface-local/Qwen/Qwen2.5-VL-7B-Instruct",
+    tools=[computer]
+)
+```
+
+The first run downloads model weights from HuggingFace. Subsequent runs load from cache.
+
+### Using MLX (Apple Silicon)
+
+For M1/M2/M3/M4 Macs, MLX provides optimized inference:
+
+```python
+agent = ComputerAgent(
+    model="mlx/mlx-community/UI-TARS-1.5-7B-6bit",
+    tools=[computer]
+)
+```
+
+MLX models run efficiently on Apple's unified memory architecture.
+
+### Using Ollama
+
+Run models locally via Ollama:
+
+```python
+agent = ComputerAgent(
+    model="ollama_chat/llama3.2:latest",
+    tools=[computer]
+)
+```
+
+Ollama handles model downloading and serves inference locally.
+
+## Model Capabilities
+
+Models fall into three categories based on what they can control:
+
+### Full Computer-Use
+
+These models can control any desktop application—clicking, typing, scrolling across the entire screen. They work with the standard `Computer` tool:
+
+- **Anthropic Claude** (all versions)
+- **OpenAI computer-use-preview**
+- **UI-TARS** (ByteDance)
+- **Qwen 2.5 VL** (Alibaba)
+
+```python
+# Full desktop control
+agent = ComputerAgent(model="anthropic/claude-sonnet-4-5-20250929", tools=[computer])
+```
+
+### Browser-Only
+
+These models are optimized for web automation. They work with the `BrowserTool` and provide browser-specific actions like URL navigation and web search:
+
+- **Gemini 2.5 Computer-Use** (Google)
+- **Fara** (Microsoft)
+
+```python
+# Browser automation only
+agent = ComputerAgent(model="gemini-2.5-computer-use-preview-10-2025", tools=[browser])
+```
+
+See [Browser Tool](/cua/guide/fundamentals/browser-tool) for details.
+
+### Grounding-Only
+
+These models can locate UI elements but can't reason about what action to take. They must be composed with a planning model:
+
+- **GTA1** (grounding)
+- **OmniParser** (Microsoft, UI element detection)
+- **Moondream3** (lightweight grounding)
+
+```python
+# Must be composed with a planning model
+"omniparser+openai/gpt-4o"
+"huggingface-local/HelloKKMe/GTA1-7B+anthropic/claude-sonnet-4-5-20250929"
+```
+
+## Choosing a Model
+
+**For full desktop automation:** Use Claude Sonnet 4.5 or OpenAI computer-use-preview. They handle complex UIs and multi-application workflows.
+
+**For web automation:** Use Gemini 2.5 or Fara with the Browser Tool. They have browser-specific optimizations like direct URL navigation.
+
+**For local development:** UI-TARS 1.5 7B or Qwen 2.5 VL run well on consumer GPUs without API keys.
+
+**For cost optimization:** Compose a local grounding model with a cloud planner. The grounding model handles visual processing locally, reducing API calls.
+
+**For air-gapped environments:** UI-TARS or Qwen run fully offline with no external API calls.

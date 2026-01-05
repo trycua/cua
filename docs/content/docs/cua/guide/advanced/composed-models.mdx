@@ -1,0 +1,99 @@
+---
+title: Composed Models
+description: Combine grounding and planning models for optimized computer-use
+---
+
+Some models excel at **grounding** (finding UI elements) but can't reason about tasks. Others are great at **planning** but can't precisely locate elements. Composed models combine both capabilities for better results.
+
+## How It Works
+
+Use the `+` syntax to combine a grounding model with a planning model:
+
+```python
+from computer import Computer
+from agent import ComputerAgent
+
+computer = Computer(os_type="linux", provider_type="docker", image="trycua/cua-xfce:latest")
+await computer.run()
+
+# Format: grounding_model+planning_model
+agent = ComputerAgent(
+    model="huggingface-local/HelloKKMe/GTA1-7B+anthropic/claude-sonnet-4-5-20250929",
+    tools=[computer]
+)
+```
+
+Cua uses a two-stage approach:
+
+1. **Grounding stage** - The first model analyzes the screenshot and identifies UI element coordinates
+2. **Planning stage** - The second model receives the element list and decides which to interact with
+
+## Common Combinations
+
+### Local Grounding + Cloud Planning
+
+Run visual processing locally while using cloud models for reasoning:
+
+```python
+# GTA1 for grounding + Claude for planning
+agent = ComputerAgent(
+    model="huggingface-local/HelloKKMe/GTA1-7B+anthropic/claude-sonnet-4-5-20250929",
+    tools=[computer]
+)
+
+# Moondream3 for grounding + Claude for planning
+agent = ComputerAgent(
+    model="moondream3+anthropic/claude-sonnet-4-5-20250929",
+    tools=[computer]
+)
+
+# OmniParser for grounding + GPT-4o for planning
+agent = ComputerAgent(
+    model="omniparser+openai/gpt-4o",
+    tools=[computer]
+)
+
+# UI-TARS for grounding + GPT-4o for planning
+agent = ComputerAgent(
+    model="huggingface-local/ByteDance-Seed/UI-TARS-1.5-7B+openai/gpt-4o",
+    tools=[computer]
+)
+```
+
+## Grounding Models
+
+These models locate UI elements but can't reason about actions:
+
+| Model | Description |
+|-------|-------------|
+| `huggingface-local/HelloKKMe/GTA1-7B` | General-purpose grounding |
+| `omniparser` | Microsoft's UI element detection |
+| `moondream3` | Lightweight, fast grounding |
+
+## Planning Models
+
+Any full computer-use model can serve as a planner:
+
+| Model | Description |
+|-------|-------------|
+| `anthropic/claude-sonnet-4-5-20250929` | Best balance of speed and accuracy |
+| `anthropic/claude-haiku-4-5-20250929` | Faster, lower cost |
+| `openai/gpt-4o` | Strong reasoning capabilities |
+
+## When to Use Composed Models
+
+**Privacy** - Run grounding locally so screenshots never leave your machine. Only text descriptions of UI elements go to the cloud.
+
+**Cost** - Grounding models process images locally, reducing API calls to cloud providers.
+
+**Latency** - Local grounding can be faster than sending full screenshots over the network.
+
+**Accuracy** - Some grounding models detect UI elements more precisely than general-purpose VLMs.
+
+## Limitations
+
+- Requires a local GPU for the grounding model (typically 16GB+ VRAM for 7B models)
+- Two-stage processing adds some overhead
+- Not all grounding models work with all planning models
+
+For simpler setups, consider using a single full computer-use model like Claude or OpenAI computer-use-preview.

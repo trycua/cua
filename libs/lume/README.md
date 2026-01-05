@@ -69,7 +69,7 @@ Join our [Discord community](https://discord.com/invite/mVnXXpdE85) to discuss i
 
 ## License
 
-lume is open-sourced under the MIT License - see the [LICENSE](LICENSE) file for details.
+lume is open-sourced under the MIT License - see the [LICENSE](../../LICENSE.md) file for details.
 
 ## Trademarks
 

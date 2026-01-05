@@ -206,3 +206,9 @@ storage/
 post-provision
 # Local secrets for act
 .secrets
+
+# Link checker scripts (dev tools)
+scripts/check-repo-md-links.py
+docs/scripts/check-links.py
+docs/scripts/check-all-links.py
+docs/scripts/check-mdx-links.py

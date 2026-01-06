@@ -213,13 +213,13 @@ docker push myregistry/my-agent:latest
 
 ```bash
 # Run with your custom agent
-cb run tasks/my_task --task-index 0 --eval --agent my-agent
+cb run task tasks/my_task --task-index 0 --eval --agent my-agent
 
 # Run with VNC debugging
-cb run tasks/my_task --task-index 0 --eval --agent my-agent --vnc-port 8006
+cb run task tasks/my_task --task-index 0 --eval --agent my-agent --vnc-port 8006
 
 # Override model
-cb run tasks/my_task --eval --agent my-agent --model gpt-4-turbo
+cb run task tasks/my_task --eval --agent my-agent --model gpt-4-turbo
 ```
 
 ## What You Can Include

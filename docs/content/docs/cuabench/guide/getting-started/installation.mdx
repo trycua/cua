@@ -75,15 +75,18 @@ You should see output similar to:
            toolkit for computer-use RL environments and benchmarks
 
 Commands:
-  run              Run tasks (cb run task, cb run dataset)
-  interact         Run a task interactively with visible GUI
-  task             Inspect and manage tasks (info, list)
-  image            Manage base images (create, list, info, clone, delete, shell)
-  platform         View available platforms (list)
-  status           Show system status
-  dataset          Manage datasets (list, build)
-  trace            View and manage traces (view, grid, replay)
-  login            Authenticate with Cua Cloud
+                        Available commands
+    run                 Run tasks with optional agent evaluation
+    interact            Interactively run a task with browser visible
+    agent               Agent management commands
+    platform            Show available platform configurations
+    image               Manage stored base images
+    status              Show system status dashboard
+    task                Inspect and manage task environments
+    trace               View and manage trace datasets
+    dataset             Manage datasets and build from outputs
+    prune               Clean up cua-bench data, images, and Docker resources
+    login               Authenticate with CUA Cloud to get API token
 
 Options:
   -h, --help       Show this help message and exit

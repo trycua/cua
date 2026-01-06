@@ -1,0 +1,78 @@
+---
+title: Universal GUI
+description: Package custom GUIs with your tasks using the window management API
+---
+
+# Universal GUI
+
+Cua-Bench provides an Electron-like API for packaging custom HTML/CSS/JS GUIs with your tasks. This allows you to create interactive GUI apps, GUI-based tools, or simulated clones of real applications when developing tasks.
+
+## Window Management API
+
+Use `session.launch_window()` to create GUI windows in any task:
+
+```python
+import cua_bench as cb
+from pathlib import Path
+
+@cb.setup_task(split="train")
+async def start(task_cfg: cb.Task, session: cb.DesktopSession):
+    # Launch a window with your HTML GUI
+    pid = await session.launch_window(
+        html=(Path(__file__).parent / "gui/index.html").read_text(),
+        title="My App",
+        width=800,
+        height=600,
+    )
+
+    # Initialize your app with JavaScript
+    await session.execute_javascript(pid, "window.initApp()")
+```
+
+## When to Use
+
+- **Custom GUI apps**: Build interactive applications (games, tools, dashboards)
+- **Simulated environments**: Create clones of real apps for testing
+- **GUI-based benchmarks**: Test agent capabilities with visual interfaces
+- **Rapid prototyping**: Quickly iterate on task ideas with HTML/CSS
+
+## Structure
+
+```
+my_task/
+├── main.py           # Task with launch_window() calls
+└── gui/
+    └── index.html    # Your HTML/CSS/JS GUI
+```
+
+## Previewing with HTML Desktops
+
+For lightweight previewing without Docker, set `provider: "simulated"` in your task config:
+
+```python
+computer={
+    "provider": "simulated",  # Enables HTML desktop preview
+    "setup_config": {
+        "os_type": "linux",  # linux, win11, or macos theme
+        "width": 800,
+        "height": 800,
+    }
+}
+```
+
+Then preview with:
+
+```bash
+cb interact tasks/my_game --task-id 0
+```
+
+The [HTML Desktop](/cuabench/guide/fundamentals/html-desktops) renders your GUI in a themed desktop environment (Linux/Windows/macOS) without requiring Docker.
+
+## Key Features
+
+- **JavaScript execution**: Communicate with your GUI via `execute_javascript()`
+- **CSS selectors**: Click elements with `click_element(pid, "#button")`
+- **State management**: Expose game/app state via `window.__variables`
+- **Cross-platform**: Works in Docker containers and HTML desktops
+
+See the [Create a Universal Task](/cuabench/guide/examples/universal-task) example for a complete walkthrough.

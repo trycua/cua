@@ -41,7 +41,7 @@ def load():
 
 Each task variant can have different metadata, enabling thousands of unique scenarios from a single template.
 
-The `computer` provider **emulates** `windows` and `linux` operating systems, while the `webtop` provider **simulates** desktop themes including `linux`, `win11`, and `macos`. See [OS Themes](/cuabench/guide/fundamentals/os-themes) for all available themes.
+The `computer` provider **emulates** `windows` and `linux` operating systems, while the `simulated` provider renders HTML desktop themes including `linux`, `win11`, and `macos`. See [HTML Desktops](/cuabench/guide/fundamentals/html-desktops) for all available themes.
 
 ### 2. Setup (`@cb.setup_task`)
 
@@ -213,8 +213,8 @@ def start(task_cfg: cb.Task, env: cb.DesktopSession | cb.MobileSession):
 cb interact tasks/my_task --task-id 0
 
 # Run evaluations
-cb run tasks/my_task --model anthropic/claude-opus-4-5 --agent cua-agent
+cb run task tasks/my_task --model anthropic/claude-opus-4-5 --agent cua-agent
 
 # Generate oracle trajectories
-cb run tasks/my_task --oracle
+cb run task tasks/my_task --oracle
 ```

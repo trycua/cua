@@ -40,7 +40,22 @@ Next, verify your environment setup by running the oracle solutions:
 cb run --dataset cua-bench-basic --oracle
 ```
 
-### Step 3: Run with an Agent
+### Step 3: Build the Agent Container
+
+Native tasks use a two-container architecture. Before running with an agent, build the agent container:
+
+```bash
+cd /path/to/cua-bench
+docker build -t trycua/cua-agent:latest .
+```
+
+This builds the solver image (~2-3 minutes). You only need to do this once.
+
+<Callout title="Auto-Pull" type="info">
+  The CLI will attempt to pull `trycua/cua-agent:latest` from Docker Hub if not found locally. If the pull fails, build it manually as shown above.
+</Callout>
+
+### Step 4: Run with an Agent
 
 Finally, perform a benchmark using the Cua Agent SDK. Tasks run **asynchronously by default** and return immediately with a run ID:
 

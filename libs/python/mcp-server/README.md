@@ -129,12 +129,12 @@ See [desktop-extension/README.md](desktop-extension/README.md) for more details.
 
 ## Documentation
 
-- Installation: https://cua.ai/docs/agent-sdk/mcp-server/installation
-- Configuration: https://cua.ai/docs/agent-sdk/mcp-server/configuration
-- Usage: https://cua.ai/docs/agent-sdk/mcp-server/usage
-- Tools: https://cua.ai/docs/agent-sdk/mcp-server/tools
-- Client Integrations: https://cua.ai/docs/agent-sdk/mcp-server/client-integrations
-- LLM Integrations: https://cua.ai/docs/agent-sdk/mcp-server/llm-integrations
+- Installation: https://cua.ai/docs/cua/reference/mcp-server/installation
+- Configuration: https://cua.ai/docs/cua/reference/mcp-server/configuration
+- Usage: https://cua.ai/docs/cua/reference/mcp-server/usage
+- Tools: https://cua.ai/docs/cua/reference/mcp-server/tools
+- Client Integrations: https://cua.ai/docs/cua/reference/mcp-server/client-integrations
+- LLM Integrations: https://cua.ai/docs/cua/reference/mcp-server/llm-integrations
 
 ## Troubleshooting
 

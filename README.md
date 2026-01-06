@@ -32,14 +32,14 @@ Computer-Use Agents (CUAs) are AI systems that can autonomously interact with co
 
 With the [Computer SDK](#computer-sdk), you can:
 
-- automate Windows, Linux, and macOS VMs with a consistent, [GUI automation API](https://cua.ai/docs/computer-sdk/commands)
-- create & manage VMs [locally](https://cua.ai/docs/quickstart-devs#using-computer) or using [Cua cloud](https://www.cua.ai/)
+- automate Windows, Linux, and macOS VMs with a consistent, [GUI automation API](https://cua.ai/docs/cua/reference/computer-sdk)
+- create & manage VMs [locally](https://cua.ai/docs/cua/guide/get-started/using-computer-sdk) or using [Cua cloud](https://www.cua.ai/)
 
 With the [Agent SDK](#agent-sdk), you can:
 
-- run computer-use models with a [consistent schema](https://cua.ai/docs/agent-sdk/message-format)
-- benchmark on OSWorld-Verified (369 tasks), SheetBench-V2, and ScreenSpot [with a single line of code using HUD](https://cua.ai/docs/agent-sdk/integrations/hud) - see [benchmark results](#research--benchmarks) ([Notebook](https://github.com/trycua/cua/blob/main/notebooks/eval_osworld.ipynb))
-- combine UI grounding models with any LLM using [composed agents](https://cua.ai/docs/agent-sdk/supported-agents/composed-agents)
+- run computer-use models with a [consistent schema](https://cua.ai/docs/cua/guide/advanced/message-format)
+- benchmark on OSWorld-Verified (369 tasks), SheetBench-V2, and ScreenSpot [with a single line of code using HUD](https://cua.ai/docs/cua/guide/integrations/hud) - see [benchmark results](#research--benchmarks) ([Notebook](https://github.com/trycua/cua/blob/main/notebooks/eval_osworld.ipynb))
+- combine UI grounding models with any LLM using [composed agents](https://cua.ai/docs/cua/guide/advanced/composed-models)
 - use new UI agent models and UI grounding models from the Model Zoo below with just a model string (e.g., `ComputerAgent(model="openai/computer-use-preview")`)
 - use API or local inference by changing a prefix (e.g., `openai/`, `openrouter/`, `ollama/`, `huggingface-local/`, `mlx/`, [etc.](https://docs.litellm.ai/docs/providers))
 
@@ -106,8 +106,8 @@ Core utilities for Cua
 # Quick Start
 
 - [Clone a starter template and run the code in <1 min](https://github.com/trycua/agent-template)
-- [Get started with the Cua SDKs](https://cua.ai/docs/quickstart-devs)
-- [Get started with the Cua CLI](https://cua.ai/docs/quickstart-cli)
+- [Get started with the Cua SDKs](https://cua.ai/docs/cua/guide/get-started/using-agent-sdk)
+- [Get started with the Cua CLI](https://cua.ai/docs/cua/guide/get-started/using-cloud-cli)
 
 ## Python Version Compatibility
 
@@ -208,12 +208,12 @@ Cua uses the OpenAI Agent response format.
 
 These are the valid model configurations for `ComputerAgent(model="...")`:
 
-| Configuration                            | Description                                                                                                                                |
-| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| `{computer-use-model}`                   | A single model to perform all computer-use tasks                                                                                           |
-| `{grounding-model}+{any-vlm-with-tools}` | [Composed](https://cua.ai/docs/agent-sdk/supported-agents/composed-agents) with VLM for captioning and grounding LLM for element detection |
-| `moondream3+{any-llm-with-tools}`        | [Composed](https://cua.ai/docs/agent-sdk/supported-agents/composed-agents) with Moondream3 for captioning and UI element detection         |
-| `human/human`                            | A [human-in-the-loop](https://cua.ai/docs/agent-sdk/supported-agents/human-in-the-loop) in place of a model                                |
+| Configuration                            | Description                                                                                                                        |
+| ---------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `{computer-use-model}`                   | A single model to perform all computer-use tasks                                                                                   |
+| `{grounding-model}+{any-vlm-with-tools}` | [Composed](https://cua.ai/docs/cua/guide/advanced/composed-models) with VLM for captioning and grounding LLM for element detection |
+| `moondream3+{any-llm-with-tools}`        | [Composed](https://cua.ai/docs/cua/guide/advanced/composed-models) with Moondream3 for captioning and UI element detection         |
+| `human/human`                            | A [human-in-the-loop](https://cua.ai/docs/cua/guide/advanced/human-in-the-loop) in place of a model                                |
 
 ### Model Capabilities
 
@@ -246,7 +246,7 @@ The following table shows which capabilities are supported by each model:
 
 **Composition Examples:**
 
-See more examples on our [composition docs](https://cua.ai/docs/agent-sdk/supported-agents/composed-agents).
+See more examples on our [composition docs](https://cua.ai/docs/cua/guide/advanced/composed-models).
 
 ```python
 # Use OpenAI's GPT-5 for planning with specialized grounding

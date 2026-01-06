@@ -33,9 +33,9 @@ docker build -t cua-bench:latest .
 
 After installation, you can run the CLI using `cua-bench` or `cb` for convenience.
 
-## Create Base Image
+## Install a default Base Image
 
-Base images are reproducible environments for running benchmarks. Create at least one:
+Base images are reproducible computer environments for running tasks. Create at least one:
 
 ```bash
 # Quick setup (Linux container, no KVM required)
@@ -44,6 +44,15 @@ cb image create linux-docker
 # Or for Windows Arena benchmarks (~1-2 hours)
 cb image create windows-qemu --download-iso
 ```
+
+| Type | Description | Requirements |
+|------|-------------|--------------|
+| `linux-docker` | Linux GUI container (XFCE) | Docker |
+| `linux-qemu` | Linux VM with QEMU/KVM | Docker + KVM |
+| `windows-qemu` | Windows 11 VM | Docker + KVM |
+| `android-qemu` | Android VM | Docker + KVM |
+| `macos-lume` | macOS VM via Lume | Apple Silicon |
+
 
 See [Base Images](/cuabench/guide/getting-started/images) for more options.
 

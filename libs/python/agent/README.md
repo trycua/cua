@@ -72,16 +72,16 @@ if __name__ == "__main__":
 
 ## Docs
 
-- [Agent Loops](https://cua.ai/docs/agent-sdk/agent-loops)
-- [Supported Agents](https://cua.ai/docs/agent-sdk/supported-agents/computer-use-agents)
-- [Supported Models](https://cua.ai/docs/agent-sdk/supported-model-providers)
-- [Chat History](https://cua.ai/docs/agent-sdk/chat-history)
-- [Callbacks](https://cua.ai/docs/agent-sdk/callbacks)
-- [Custom Tools](https://cua.ai/docs/agent-sdk/custom-tools)
-- [Custom Computer Handlers](https://cua.ai/docs/computer-sdk/custom-computer-handlers)
-- [Prompt Caching](https://cua.ai/docs/agent-sdk/prompt-caching)
-- [Usage Tracking](https://cua.ai/docs/agent-sdk/usage-tracking)
-- [Benchmarks](https://cua.ai/docs/agent-sdk/benchmarks)
+- [Agent Loops](https://cua.ai/docs/cua/guide/fundamentals/agent-loops)
+- [Supported Agents](https://cua.ai/docs/cua/guide/get-started/what-is-computer-use-agent)
+- [Supported Models](https://cua.ai/docs/cua/guide/fundamentals/vlms)
+- [Chat History](https://cua.ai/docs/cua/guide/advanced/chat-history)
+- [Callbacks](https://cua.ai/docs/cua/guide/fundamentals/callbacks)
+- [Custom Tools](https://cua.ai/docs/cua/guide/advanced/custom-tools)
+- [Custom Computer Handlers](https://cua.ai/docs/cua/reference/computer-sdk)
+- [Prompt Caching](https://cua.ai/docs/cua/guide/advanced/prompt-caching)
+- [Usage Tracking](https://cua.ai/docs/cua/guide/advanced/telemetry)
+- [Benchmarks](https://cua.ai/docs/cua/guide/integrations/benchmarks)
 
 ## License
 

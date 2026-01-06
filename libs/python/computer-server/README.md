@@ -40,7 +40,4 @@ Refer to this notebook for a step-by-step guide on how to use the Computer-Use S
 
 ## Docs
 
-- [Commands](https://cua.ai/docs/computer-sdk/computer-server/Commands)
-- [REST-API](https://cua.ai/docs/computer-sdk/computer-server/REST-API)
-- [WebSocket-API](https://cua.ai/docs/computer-sdk/computer-server/WebSocket-API)
-- [Index](https://cua.ai/docs/computer-sdk/computer-server)
+- [Local Computer Server](https://cua.ai/docs/cua/guide/advanced/local-computer-server)

@@ -1,0 +1,138 @@
+/* Windows 7 Taskbar (semantic) */
+
+/* Resets (scoped) */
+.btn-reset {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+.list-reset {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.input-reset {
+  appearance: none;
+  -webkit-appearance: none;
+  border: none;
+  outline: none;
+  background: transparent;
+}
+
+/* Taskbar anchored to bottom */
+.taskbar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 40px;
+  padding-right: 11px; /* match Win10 sizing adjustments */
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: rgba(0,0,0,0.5);
+  border-top: 1px solid rgba(255,255,255,0.18);
+  backdrop-filter: blur(24px);
+  color: white;
+  text-shadow: 0 1px 8px rgba(0,0,0,.2);
+}
+
+/* Hoverable item surface */
+.taskbar-item {
+  background-color: rgba(255,255,255,0);
+  border: 1px solid rgba(255,255,255,0);
+  transition: background-color 200ms ease, border-color 200ms ease;
+  height: 40px;
+}
+.taskbar-item:is(:hover, :focus-visible) {
+  background-color: rgba(255,255,255,0.05);
+  border-color: rgba(255,255,255,0.05);
+}
+
+/* Center nav area */
+.taskbar-apps { display: flex; align-items: center; gap: 4px; }
+
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; padding-inline: 8px; }
+.btn .btn__icon { width: 24px; height: 24px; }
+
+/* Start button: use provided PNG icon */
+.taskbar [aria-label="Start"] {
+  position: relative; width: 56px; height: 40px;
+  background-image: url("icon/start-icon.png");
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: 38px 38px;
+  transform: translateY(-1px);
+}
+
+.taskbar [aria-label="Show desktop"] {
+  position: absolute;
+  right: 0;
+  width: 5px;
+  height: 40px;
+  border-left: solid 1px rgba(255,255,255,0.18);
+}
+
+/* Search form (kept for parity if used) */
+.search-form__field {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 5px 6px 16px;
+  background: rgba(255,255,255,0.1);
+  border: 1px solid rgba(255,255,255,0.18);
+  border-radius: 20px;
+  transition: background 120ms ease;
+}
+.search-form__field:hover { background: rgba(255,255,255,0.16); }
+.search-form__input { color: #ffffff; width: 160px; font-size: 13px; }
+.search-form__btn .bing { width: 20px; height: 20px; }
+
+/* App list */
+.app-list { display: flex; align-items: center; gap: 4px; flex: 1; }
+.app-list .taskbar-item { 
+  min-width: 120px;
+  max-width: 180px;
+  height: 40px; 
+  display: flex; 
+  align-items: center; 
+  justify-content: flex-start;
+  gap: 8px;
+  padding: 0 12px;
+}
+.app-list .taskbar-item .icon,
+.app-list .taskbar-item .btn__icon, 
+.app-list .taskbar-item img.btn__icon { 
+  width: 24px; 
+  height: 24px; 
+  object-fit: contain;
+  flex-shrink: 0;
+}
+.app-list .taskbar-item .label {
+  display: inline-block !important;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1;
+  font-size: 12px;
+  color: white;
+}
+
+/* System tray */
+.system-tray { display: flex; align-items: center; gap: 0px; }
+.system-tray .taskbar-item { 
+  min-width: 32px; 
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.system-tray .date-time { 
+  display: flex; 
+  flex-direction: column; 
+  align-items: flex-end; 
+  justify-content: center; 
+  padding: 6px 10px; 
+  font-size: 12px; 
+}
+.date-time [aria-label="Date"] { transform: translateY(-2px); }

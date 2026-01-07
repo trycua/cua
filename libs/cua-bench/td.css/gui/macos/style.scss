@@ -1,0 +1,355 @@
+/* macOS-inspired styling for cua-bench classes used in +page.svelte
+   Targets: .computer, .desktop, .window, .title-bar, .title-bar-text, .title-bar-controls, .window-body
+   Note: These rules are intended to be used under [data-appearance="macos"] from src/lib/gui/index.scss
+*/
+
+/* Base resets for the macOS computer canvas */
+.computer {
+  position: relative;
+  overflow: hidden;
+  background: #000; /* desktop wallpaper overlaid by .desktop */
+  color: #fff;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, Segoe UI, Roboto, sans-serif;
+}
+
+.taskbar,
+.navbar,
+.statusbar {
+  display: none;
+}
+
+/* Window shell */
+.window {
+  overflow: hidden;
+  position: absolute;
+  top: 0;
+  left: 0;
+  border-radius: 10px;
+  background: rgb(50 50 50);
+  color: #fff;
+  box-shadow:
+    0 40px 60px rgba(0,0,0,.20),
+    0 0 15px rgba(0,0,0,.10),
+    0 0 0 1px rgba(0,0,0,.05),
+    0 0 0 1px rgba(0,0,0,.50);
+}
+
+.window[data-focused="true"] {
+  filter: drop-shadow(0px 12px 16px rgba(0,0,0,.5));
+}
+
+.window::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  border-radius: 10px;
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,.15);
+}
+
+/* Title bar with traffic lights */
+.title-bar {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 26px;
+  padding: 0 8px;
+  gap: 8px;
+  border-top-left-radius: 10px;
+  border-top-right-radius: 10px;
+  background: rgb(59 61 56);
+  backdrop-filter: blur(15px);
+  -webkit-backdrop-filter: blur(15px);
+  box-shadow: inset 0 -1px 0 rgba(255,255,255,.08);
+}
+
+.title-bar-text {
+  order: 2;
+  flex: 1 1 auto;
+  font-size: 13px;
+  color: rgb(186 188 183);
+  font-weight: 500;
+  text-shadow: 0 1px 1px rgba(0,0,0,.25);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.title-bar-controls {
+  order: 1;
+  display: flex;
+  gap: 8px;
+}
+
+.title-bar-controls .btn {
+  appearance: none;
+  -webkit-appearance: none;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 1px rgba(0,0,0,.25), 0 0 0 1px rgba(0,0,0,.3);
+  background: rgba(255,255,255,.15);
+  cursor: default;
+}
+
+/* macOS traffic light colors */
+.title-bar-controls button[aria-label="Close"] { 
+  order: 1;
+  background: #ff5f56; 
+}
+.title-bar-controls button[aria-label="Minimize"] { 
+  order: 2;
+  background: #f5bf4f; 
+}
+.title-bar-controls button[aria-label="Maximize"] { 
+  order: 3;
+  background: #27c93f; 
+}
+
+/* When the window is not focused, dim the traffic lights */
+.window:not([data-focused="true"]) .title-bar-controls:not(:hover) button {
+  background: #73737370 !important;
+  box-shadow: none;
+}
+
+/* Window body */
+.window-body {
+  height: calc(100% - 26px);
+  font-size: 14px;
+  overflow: auto;
+  background: rgba(255,255,255,0.02);
+}
+
+/* Generic buttons inside macOS window body */
+.window-body .btn {
+  appearance: none;
+  -webkit-appearance: none;
+  border: none;
+  border-radius: 6px;
+  padding: 0px 12px;
+  font-size: 14px;
+  color: rgba(255,255,255,.9);
+  background: rgba(255,255,255,.15);
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,.08), 0 1px 0 rgba(0,0,0,.25);
+}
+
+.window-body .btn:hover {
+  background: rgba(255,255,255,.22);
+}
+
+.window-body .btn:active {
+  background: #006aff;
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,.20), 0 1px 0 rgba(0,0,0,.25);
+}
+
+/* Inputs */
+.window-body input[type="checkbox"] {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 4px;
+  background: rgba(255,255,255,.15);
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,.075), 0 0 0 1px rgba(0,0,0,.20);
+  position: relative;
+}
+
+.window-body input[type="checkbox"]:checked::before {
+  content: "";
+  position: absolute;
+  top: 2px; left: 4px;
+  width: 5px; height: 9px;
+  border: 2px solid #fff;
+  border-top: 0; border-left: 0;
+  transform: rotate(45deg);
+}
+
+/* Menubar (top system bar) */
+.menubar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0px 8px;
+  color: #fff;
+  font-size: 13px;
+  line-height: 20px;
+  // backdrop-filter: blur(30px) saturate(2) brightness(0.5);
+  // -webkit-backdrop-filter: blur(30px) saturate(2) brightness(0.5);
+  // background: rgba(50,50,50,0.5);
+  // box-shadow: 0 1px 0 0 rgba(0,0,0,0.5);
+  // box shadow is now just a shadow from the top
+  box-shadow: 0px 32px 32px -32px rgba(0,0,0,1) inset;
+  z-index: 50;
+}
+
+.menubar .menubar-left,
+.menubar .menubar-right {
+  display: flex;
+  gap: 0px;
+  align-items: center;
+}
+
+.menubar .apple {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  margin: 0 6px 0 2px;
+  background: url("icon/apple_logo_white.svg") center/contain no-repeat;
+  /* Hide the fallback emoji glyph while keeping the element accessible */
+  color: transparent;
+  font-size: 0;
+  filter: drop-shadow(0px 0px 12px rgba(0,0,0,.5));
+}
+
+.menubar .status {
+  font-size: 20px;
+  height: 22px;
+}
+
+.menubar .menu-item-app,
+.menubar .menu-item,
+.menubar .status,
+.menubar .clock {
+  padding: 1px 10px;
+  border-radius: 8px;
+  filter: drop-shadow(0px 0px 12px rgba(0,0,0,.5));
+  text-shadow: 0px 0.5px 1px rgba(0,0,0,.5);
+}
+
+.menubar .menu-item-app:hover,
+.menubar .menu-item:hover,
+.menubar .status:hover,
+.menubar .clock:hover {
+  background: rgba(255,255,255,0.2);
+  filter: none;
+}
+
+.menubar .menu-item-app {
+  font-weight: bold;
+}
+
+
+/* Dock (bottom app strip) */
+.dock {
+  position: absolute;
+  left: 50%;
+  bottom: 8px;
+  transform: translateX(-50%);
+  // height: 46px;
+  padding: 6px 8px;
+  gap: 4px;
+  display: flex;
+  align-items: center;
+  border-radius: 14px;
+  
+  /* Glass effect (self-contained) */
+  /* local tokens to avoid leaking to global scope */
+  --surface-3: hsl(243, 26%, 15%);
+  --border-1: hsl(0, 0%, 100% / 50%); /* top */
+  --border-2: hsl(0, 0%, 100% / 25%);  /* bottom */
+  --border-width: 1px;
+  background: hsl(from var(--surface-3) h s l / 0.1);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  z-index: 40;
+}
+
+.dock::before {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  border-radius: inherit;
+  border: var(--border-width) solid transparent;
+  background: linear-gradient(var(--border-1), var(--border-2)) border-box;
+  mask: linear-gradient(black, black) border-box,
+    linear-gradient(black, black) padding-box;
+  mask-composite: subtract;
+}
+
+.dock .dock-item {
+  appearance: none;
+  -webkit-appearance: none;
+  border: none;
+  width: 40px;
+  height: 40px;
+  border-radius: 8px;
+  // background: rgba(255,255,255,0.15);
+  // box-shadow: 0 2px 5px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.075);
+  transition: transform 120ms ease, filter 120ms ease;
+  filter: drop-shadow(0 2px 5px rgba(0,0,0,0.15));
+}
+
+.dock .dock-item:hover { transform: translateY(-1px) scale(1.01); }
+.dock .dock-item:active { filter: brightness(0.6); }
+
+.dock .sep {
+  width: 1px;
+  height: 40px;
+  margin: 0 4px;
+  background: rgba(255,255,255,0.5);
+}
+
+/* Desktop Icons */
+
+
+.desktop-icons {
+  position: absolute;
+  top: 32px;
+  left: 8px;
+  right: 8px;
+  /* keep above the dock area */
+  bottom: 72px;
+  /* Vertical-first flow: fill top-to-bottom, then wrap into next column */
+  display: flex;
+  flex-flow: column wrap;
+  align-content: flex-start; /* controls how columns wrap horizontally */
+  justify-content: flex-start; /* start from top */
+  gap: 12px 16px; /* row gap, column gap */
+  pointer-events: auto;
+}
+
+.desktop-icon {
+  width: 80px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  text-align: center;
+  color: #fff;
+  text-shadow: 0 1px 2px rgba(0,0,0,.6);
+  user-select: none;
+}
+
+.desktop-icon .icon {
+  appearance: none;
+  -webkit-appearance: none;
+  border: none;
+  width: 48px;
+  height: 48px;
+  border-radius: 10px;
+  background: transparent; /* uses background from .icon[data-icon] sprite */
+  filter: drop-shadow(0px 0px 8px rgba(0,0,0,.1));
+}
+
+.desktop-icon .label {
+  font-size: 12px;
+  line-height: 1.2;
+  max-width: 100%;
+  word-break: break-word;
+  filter: drop-shadow(0px 2px 4px rgba(0,0,0,.2));
+}
+
+.desktop-icon:hover .icon,
+.desktop-icon:focus-within .icon {
+  filter: brightness(1.1);
+}

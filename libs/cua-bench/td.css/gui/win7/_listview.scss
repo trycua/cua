@@ -1,0 +1,87 @@
+.computer {
+  --w7-lvc-size: 5px;
+}
+
+table {
+  font: var(--w7-font);
+  background-color: #fff;
+  border: 1px solid #c0c1cd;
+
+  border-collapse: collapse;
+  position: relative;
+  text-align: left;
+  white-space: nowrap;
+  table-layout: fixed;
+
+  td,
+  th {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  &.has-shadow {
+    box-shadow: 4px 4px 3px -2px #999;
+  }
+
+  > thead > tr > * {
+    background: linear-gradient(to bottom, #fff 45%, #fafafa 45%, #f0f0f0);
+    border: 1px solid #d7d7d7;
+    box-sizing: border-box;
+    font-weight: 400;
+    height: 22px;
+    padding: 0 8px;
+    position: sticky;
+    top: 0;
+    cursor: default;
+
+    &.highlighted {
+      border: 1px solid #a7d8f5;
+      background: linear-gradient(to bottom, #f3f9fc 45%, #e4f0f8 45%, #d9eaf5);
+      border-radius: var(--w7-el-bdr);
+
+      &:not(:last-child) {
+        border-right-color: #a7d8f5;
+      }
+
+      &.indicator {
+        &::before {
+          content: "";
+          position: absolute;
+          right: 50%;
+          top: 0;
+          width: calc(var(--w7-lvc-size) * 1.2);
+          height: var(--w7-lvc-size);
+          background: linear-gradient(to bottom right, #667f91 45%, #90c1e2 65%, #cce3f2);
+          clip-path: polygon(0% 0%, 50% 100%, 100% 0%);
+        }
+        &.up::before {
+          clip-path: polygon(0% 100%, 50% 0%, 100% 100%);
+        }
+      }
+    }
+  }
+
+  > tbody > tr {
+    cursor: default;
+
+    &.highlighted {
+      border: 1px solid var(--w7-li-bd-hl);
+      background: var(--w7-li-bg-hl);
+      border-radius: var(--w7-el-bdr);
+
+      > *:not(:last-child) {
+        border-right: none;
+      }
+    }
+
+    > * {
+      height: 14px;
+      padding: 2px 8px;
+    }
+
+    > *:not(:last-child) {
+      border-right: 1px solid #eee;
+    }
+  }
+}

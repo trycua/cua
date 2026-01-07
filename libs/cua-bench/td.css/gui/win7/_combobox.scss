@@ -1,0 +1,36 @@
+.combobox {
+  position: relative;
+  display: inline-block;
+
+  input[type="text"] {
+    padding-right: 20px;
+    width: 100%;
+  }
+
+  .btn {
+    position: absolute;
+    right: 0;
+    padding: 0;
+    min-width: 16px;
+    border-top-left-radius: 0;
+    border-bottom-left-radius: 0;
+    background: url("icon/button-down.svg") center no-repeat, var(--w7-el-grad);
+
+    &::before {
+      border-top-left-radius: 0;
+      border-bottom-left-radius: 0;
+      background: url("icon/button-down.svg") center no-repeat, var(--w7-el-grad-h);
+    }
+
+    &::after {
+      border-top-left-radius: 0;
+      border-bottom-left-radius: 0;
+      background: url("icon/button-down.svg") center no-repeat, var(--w7-el-grad-a);
+    }
+
+    &:focus {
+      box-shadow: none;
+      outline: none;
+    }
+  }
+}

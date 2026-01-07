@@ -1,0 +1,69 @@
+name: Bump Version & Publish
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump_type:
+        description: "Version bump type"
+        required: true
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+      publish:
+        description: "Publish to PyPI after bumping"
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+jobs:
+  bump-version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.capture_version.outputs.version }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install bump2version
+        run: pip install bump2version
+
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Run bump2version
+        run: |
+          bump2version ${{ inputs.bump_type }}
+
+      - name: Capture bumped version
+        id: capture_version
+        run: |
+          VERSION=$(python -c "import tomllib; from pathlib import Path; data = tomllib.loads(Path('pyproject.toml').read_text()); print(data['project']['version'])")
+          echo "Version: $VERSION"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Push changes and tags
+        run: |
+          git push origin main --follow-tags
+
+  publish:
+    needs: bump-version
+    if: ${{ inputs.publish }}
+    uses: ./.github/workflows/pypi-publish.yml
+    with:
+      version: ${{ needs.bump-version.outputs.version }}
+    secrets: inherit

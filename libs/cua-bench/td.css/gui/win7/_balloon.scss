@@ -1,0 +1,57 @@
+.computer {
+  /* blt = balloon tail */
+  --w7-bl-bd: #0006;
+  --w7-blt-size: 18px;
+  --w7-blt-offset: 1em;
+}
+
+[role="tooltip"] {
+  position: relative;
+  padding: 1em 1em 1em 2.5em;
+  border: 1px solid var(--w7-bl-bd);
+  border-radius: var(--w7-el-bdr);
+  box-shadow: 5px 5px 3px -3px var(--w7-bl-bd);
+  background: linear-gradient(to bottom, #fff, var(--w7-el-bg-s-1));
+
+  &::before {
+    content: "";
+    position: absolute;
+    background: url("data:image/svg+xml,%3Csvg width='20' height='20' viewBox='0 0 20 20' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M0.5 1.5V19.5H18.5L0.5 1.5Z' fill='%23fff' stroke='%23fff'/%3E%3Cpath d='M1 19.5H0.5V1.5L18.5 19.5H18' stroke='%23939393'/%3E%3C/svg%3E");
+    width: var(--w7-blt-size);
+    height: var(--w7-blt-size);
+    top: calc(var(--w7-blt-size) * -1);
+    left: var(--w7-blt-offset);
+  }
+
+  &[id] {
+    position: absolute;
+  }
+
+  &.is-top {
+    &::before {
+      background: url("data:image/svg+xml,%3Csvg width='20' height='20' viewBox='0 0 20 20' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M0.5 1.5V19.5H18.5L0.5 1.5Z' fill='%23ebebeb' stroke='%23ddd'/%3E%3Cpath d='M1 19.5H0.5V1.5L18.5 19.5H18' stroke='%23939393'/%3E%3C/svg%3E");
+      bottom: calc(var(--w7-blt-size) * -1);
+      top: unset;
+      transform: scale(-1);
+    }
+
+    &.is-right {
+      &::before {
+        transform: scaleY(-1);
+      }
+    }
+  }
+
+  &.is-left {
+    &::before {
+      left: unset;
+      right: var(--w7-blt-offset);
+    }
+
+    &.is-bottom {
+      &::before {
+        transform: scaleX(-1);
+      }
+    }
+  }
+}

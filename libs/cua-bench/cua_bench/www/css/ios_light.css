@@ -1,0 +1,299 @@
+/*! ios_light.css v0.3.0 - https://botoxparty.github.io/XP.css/ */
+/* iOS minimal styling
+   - Hide desktop chrome
+   - Create notch overlays at top and bottom using pseudo-elements
+   Intended to be used under [data-appearance="ios"], [data-appearance="ios:light"], [data-appearance="ios:dark"]
+*/
+.computer {
+    color: #fff;
+}
+/* Top notch overlay - maintains 731:85 aspect ratio */
+.computer::before {
+        content: "";
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 100%;
+        aspect-ratio: 731 / 85;
+        background-image: url('notch-top-dark.png');
+        background-size: cover;
+        background-repeat: no-repeat;
+        background-position: center;
+        z-index: 100;
+        pointer-events: none;
+    }
+/* Bottom notch overlay - maintains 731:73 aspect ratio */
+.computer::after {
+        content: "";
+        position: absolute;
+        left: 0;
+        bottom: 0;
+        width: 100%;
+        aspect-ratio: 731 / 73;
+        background-image: url('notch-bottom-dark.png');
+        background-size: cover;
+        background-repeat: no-repeat;
+        background-position: center;
+        z-index: 100;
+        pointer-events: none;
+    }
+/* Hide desktop-specific chrome on iOS */
+.menubar,
+.dock,
+.taskbar,
+.desktop-icons,
+.navigation-bar,
+.navbar { display: none !important; }
+/* Ensure window fills area similar to Android full-bleed demo */
+.window {
+  position: absolute !important;
+  inset: 0 !important;
+  width: 100% !important;
+  height: 100% !important;
+  margin: 0 !important;
+  border-radius: 34px; /* rounded corners common on iOS mock */
+  overflow: hidden;
+  background: transparent;
+  box-shadow: none;
+}
+.title-bar { display: none !important; }
+.window-body {
+  position: absolute;
+  inset: 0;
+  margin-top: 24px;
+  background: transparent;
+  overflow: auto;
+}
+/* Default iOS button theme (dark) */
+.btn,
+.window-body .btn {
+  appearance: none;
+  -webkit-appearance: none;
+  border: 1px solid rgba(255,255,255,0.18);
+  background: rgba(255,255,255,0.08);
+  color: #fff;
+  font: 600 13px/1.2 -apple-system, system-ui, Segoe UI, Roboto, Arial, sans-serif;
+  padding: 8px 14px;
+  border-radius: 12px;
+  box-shadow: 0 1px 0 rgba(255,255,255,0.06) inset, 0 1px 2px rgba(0,0,0,0.3);
+  transition: background 120ms ease, border-color 120ms ease, box-shadow 120ms ease, transform 60ms ease;
+}
+.btn:hover,
+.btn:hover,
+.window-body .btn:hover { background: rgba(255,255,255,0.12); }
+.btn:active,
+.btn:active,
+.window-body .btn:active { transform: translateY(0.5px); background: rgba(255,255,255,0.16); }
+.btn:focus-visible,
+.btn:focus-visible,
+.window-body .btn:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(0,122,255,0.35);
+}
+/* Primary action */
+.btn-primary,
+button.primary {
+  background: #0a84ff; /* iOS blue (dark mode) */
+  border-color: rgba(255,255,255,0.2);
+  color: #fff;
+}
+.btn-primary:hover,
+button.primary:hover { background: #2b95ff; }
+.btn-primary:active,
+button.primary:active { background: #0673e6; }
+/* Hide status bar - notches are created via .computer pseudo-elements */
+.statusbar {
+  display: none !important;
+}
+/* Default iOS (dark) text is light; light variant is provided in ios/light.scss */
+/* iOS light overrides
+   - Dark text
+   - Use light notch images
+*/
+.computer {
+    color: #000;
+}
+/* Override with light notch images */
+.computer::before {
+        background-image: url('notch-top.png');
+    }
+.computer::after {
+        background-image: url('notch-bottom.png');
+    }
+/* Light buttons: dark text, lighter backgrounds */
+.btn,
+.window-body .btn {
+  border-color: rgba(0,0,0,0.15);
+  background: rgba(0,0,0,0.06);
+  color: #111;
+  box-shadow: 0 1px 0 rgba(255,255,255,0.6) inset, 0 1px 2px rgba(0,0,0,0.12);
+}
+.btn:hover,
+.btn:hover,
+.window-body .btn:hover { background: rgba(0,0,0,0.09); }
+.btn:active,
+.btn:active,
+.window-body .btn:active { background: rgba(0,0,0,0.12); }
+/* Primary remains iOS blue, with white text */
+.btn-primary,
+button.primary {
+  background: #0a84ff;
+  color: #fff;
+  border-color: rgba(0,0,0,0.15);
+}
+.icon {
+    background-repeat: no-repeat !important;
+    background-size: contain !important;
+}
+.icon[data-size="16"] {
+    width: 16px;
+    height: 16px;
+}
+.icon[data-size="32"] {
+    width: 32px;
+    height: 32px;
+}
+.icon[data-size="64"] {
+    width: 64px;
+    height: 64px;
+}
+.icon[data-size="128"] {
+    width: 128px;
+    height: 128px;
+}
+.icon[data-display=inline-block] {
+    display: inline-block;
+}
+.icon[data-icon=folder] {
+    background-image: url("https://raw.githubusercontent.com/aboredvaro/codepen_resources/main/macOS/img/system/icons/files/folder.png") !important;
+}
+.icon[data-icon=finder] {
+    background-image: url("https://raw.githubusercontent.com/aboredvaro/codepen_resources/main/macOS/img/system/icons/finder.png") !important;
+}
+.icon[data-icon=launchpad] {
+    background-image: url("https://raw.githubusercontent.com/aboredvaro/codepen_resources/main/macOS/img/system/icons/launchpad.png") !important;
+}
+.icon[data-icon=settings] {
+    background-image: url("https://raw.githubusercontent.com/aboredvaro/codepen_resources/main/macOS/img/system/icons/systempreferences.png") !important;
+}
+.icon[data-icon=messages] {
+    background-image: url("https://raw.githubusercontent.com/aboredvaro/codepen_resources/main/macOS/img/system/icons/messages.png") !important;
+}
+.icon[data-icon=safari] {
+    background-image: url("https://raw.githubusercontent.com/aboredvaro/codepen_resources/main/macOS/img/system/icons/safari.png") !important;
+}
+.icon[data-icon=podcast] {
+    background-image: url("https://raw.githubusercontent.com/aboredvaro/codepen_resources/main/macOS/img/system/icons/podcasts.png") !important;
+}
+.icon[data-icon=reminders] {
+    background-image: url("https://raw.githubusercontent.com/aboredvaro/codepen_resources/main/macOS/img/system/icons/reminders.png") !important;
+}
+.icon[data-icon=calendar] {
+    background-image: url("https://raw.githubusercontent.com/aboredvaro/codepen_resources/main/macOS/img/system/icons/calendar.png") !important;
+}
+.icon[data-icon=mail] {
+    background-image: url("https://raw.githubusercontent.com/aboredvaro/codepen_resources/main/macOS/img/system/icons/mail.png") !important;
+}
+.icon[data-icon=chrome] {
+    background-image: url(https://bit.ly/2Qj9Zmg) !important;
+}
+.icon[data-icon=drive] {
+    background-image: url(https://bit.ly/2M2LqJq) !important;
+}
+.icon[data-icon=adobe] {
+    background-image: url(https://bit.ly/2QmJnhJ) !important;
+}
+.icon[data-icon="adobe ae"] {
+    background-image: url(https://bit.ly/2Hz4FWU) !important;
+}
+.icon[data-icon="adobe ps"] {
+    background-image: url(https://bit.ly/2VJP1f0) !important;
+}
+.icon[data-icon="adobe id"] {
+    background-image: url(https://bit.ly/2HwDKL0) !important;
+}
+.icon[data-icon="adobe lr"] {
+    background-image: url(https://bit.ly/2Jy2Ewd) !important;
+}
+.icon[data-icon=outlook] {
+    background-image: url(https://bit.ly/37YY8yD) !important;
+}
+.icon[data-icon=vscode] {
+    background-image: url(https://bit.ly/2lWXorv) !important;
+}
+.icon[data-icon=word] {
+    background-image: url(https://bit.ly/2vZeSIF) !important;
+}
+.icon[data-icon=excel] {
+    background-image: url(https://bit.ly/2w1sdAc) !important;
+}
+.icon[data-icon="power point"] {
+    background-image: url(https://bit.ly/32rNtLO) !important;
+}
+.icon[data-icon=onenote] {
+    background-image: url(https://bit.ly/3c322K9) !important;
+}
+.icon[data-icon=console] {
+    background-image: url(https://bit.ly/2JwVZ5n) !important;
+}
+.icon[data-icon=whatsapp] {
+    background-image: url(https://bit.ly/2K105Co) !important;
+}
+.icon[data-icon=instagram] {
+    background-image: url(https://bit.ly/30EYpEw) !important;
+}
+.icon[data-icon="vlc player"] {
+    background-image: url(https://bit.ly/2VKPHRa) !important;
+}
+.icon[data-icon=spotify] {
+    background-image: url(https://bit.ly/2VEdT81) !important;
+}
+.icon[data-icon=slack] {
+    background-image: url(https://bit.ly/2Er8AmD) !important;
+}
+.icon[data-icon="davinci resolve"] {
+    background-image: url(https://bit.ly/35ygeXY) !important;
+}
+.icon[data-icon=discord] {
+    background-image: url(https://bit.ly/30y4IJO) !important;
+}
+.icon[data-icon=comet] {
+    background-image: url(https://bit.ly/2XP6Puo) !important;
+}
+.icon[data-icon=user] {
+    background-image: url("https://raw.githubusercontent.com/aboredvaro/codepen_resources/main/macOS/img/user/pic/1.png") !important;
+}
+.computer {
+    position: relative;
+    overflow: hidden;
+}
+.taskbar {
+    user-select: none;
+    cursor: default;
+}
+.menubar {
+    user-select: none;
+    cursor: default;
+}
+.statusbar {
+    user-select: none;
+    cursor: default;
+}
+.window-body {
+    flex-grow: 1;
+}
+.material-symbols--search {
+    display: inline-block;
+    width: 24px;
+    height: 24px;
+    --svg: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='%23000' d='m19.6 21l-6.3-6.3q-.75.6-1.725.95T9.5 16q-2.725 0-4.612-1.888T3 9.5t1.888-4.612T9.5 3t4.613 1.888T16 9.5q0 1.1-.35 2.075T14.7 13.3l6.3 6.3zM9.5 14q1.875 0 3.188-1.312T14 9.5t-1.312-3.187T9.5 5T6.313 6.313T5 9.5t1.313 3.188T9.5 14'/%3E%3C/svg%3E");
+    background-color: currentColor;
+    -webkit-mask-image: var(--svg);
+    mask-image: var(--svg);
+    -webkit-mask-repeat: no-repeat;
+    mask-repeat: no-repeat;
+    -webkit-mask-size: 100% 100%;
+    mask-size: 100% 100%;
+}
+
+/*# sourceMappingURL=ios_light.css.map */

@@ -1,0 +1,76 @@
+/*-------------------------------------------*\
+    Window
+\*-------------------------------------------*/
+
+.computer {
+    --title-bar-bg: black;
+}
+.window {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    font-size: 11px;
+    box-shadow: var(--border-window-outer), var(--border-window-inner);
+    background: var(--surface);
+    padding: 3px;
+    fieldset {
+        margin-bottom: 9px;
+    }
+}
+.title-bar {
+    font-size: 11px;
+    background: var(--title-bar-bg);
+    padding: 3px 2px 3px 3px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+.title-bar-text {
+    font-weight: bold;
+    color: white;
+    letter-spacing: 0;
+    margin-right: 24px;
+    // ellipsis if text is too long
+    text-overflow: ellipsis;
+    overflow: hidden;
+    white-space: nowrap;
+}
+.title-bar-controls {
+    display: flex;
+    .btn {
+        padding: 0;
+        display: block;
+        min-width: 16px;
+        min-height: 14px;
+        &:focus {
+            outline: none;
+        }
+    }
+    button[aria-label="Minimize"] {
+    }
+    button[aria-label="Maximize"] {
+    }
+    button[aria-label="Help"] {
+    }
+    button[aria-label="Close"] {
+    }
+}
+.window-body {
+    overflow: auto;
+    pre {
+        margin: -8px;
+    }
+}
+
+.status-bar {
+    margin: 0px 1px;
+    display: flex;
+    gap: 1px;
+}
+
+.status-bar-field {
+    box-shadow: var(--border-status-bar-field);
+    flex-grow: 1;
+    padding: 2px 3px;
+    margin: 0;
+}

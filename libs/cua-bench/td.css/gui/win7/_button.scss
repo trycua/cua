@@ -1,0 +1,127 @@
+.btn {
+  font: var(--w7-font);
+  box-sizing: border-box;
+  border: 1px solid var(--w7-el-bd);
+  border-radius: var(--w7-el-bdr);
+  box-shadow: var(--w7-el-sd);
+  color: #222;
+  min-width: 75px;
+  min-height: 23px;
+  padding: 0 12px;
+  text-align: center;
+  background: var(--w7-el-grad);
+  position: relative;
+  z-index: 0;
+}
+
+.btn {
+  /* Button style on hovered */
+  &::before {
+    content: "";
+    position: absolute;
+    width: 100%;
+    height: 100%;
+    padding: 0;
+    margin: 0;
+    top: 0;
+    left: 0;
+    border-radius: var(--w7-el-bdr);
+    box-shadow: var(--w7-el-sd);
+    background: var(--w7-el-grad-h);
+    opacity: 0;
+    transition: opacity 0.3s;
+    z-index: -1;
+  }
+
+  /* Button style on clicked */
+  &::after {
+    content: "";
+    position: absolute;
+    width: 100%;
+    height: 100%;
+    padding: 0;
+    margin: 0;
+    top: 0;
+    left: 0;
+    box-shadow: var(--w7-el-sd-a);
+    border-radius: 2px;
+    background: var(--w7-el-grad-a);
+    opacity: 0;
+    transition: opacity 0.3s;
+    z-index: -1;
+  }
+
+  &:disabled {
+    background: var(--w7-el-bg-d);
+    border-color: var(--w7-el-bd-d);
+    color: var(--w7-el-c-d);
+  }
+
+  &:not(:disabled) {
+    /* Animation when hovered */
+    &:hover {
+      border-color: var(--w7-el-bd-h);
+      transition: border-color 0.3s;
+
+      &::before {
+        opacity: 1;
+        transition: opacity 0.3s;
+      }
+    }
+
+    /* Animation when unhovered */
+    &:not(:hover) {
+      border-color: var(--w7-el-bd);
+      transition: border-color 1s linear;
+
+      &::before {
+        opacity: 0;
+        transition: opacity 1s linear;
+      }
+    }
+
+    &:active,
+    &.active {
+      border-color: var(--w7-el-bd-a);
+      transition: border-color 0.3s;
+
+      &::after {
+        opacity: 1;
+        transition: opacity 0.3s;
+      }
+    }
+  }
+
+  &:focus-visible,
+  &.focused {
+    box-shadow: inset 0 0 0 2px #98d1ef;
+    outline: 1px dotted #000;
+    outline-offset: -4px;
+  }
+
+  &.default,
+  &:focus,
+  &.focused {
+    border-color: #5586a3;
+    background-image: var(--w7-el-grad-h);
+    animation: 1s ease infinite alternate pulse-anim;
+  }
+}
+
+label[role="button"] {
+  display: inline-flex;
+  align-items: center;
+
+  > input[type="file"] {
+    display: none;
+  }
+}
+
+@keyframes pulse-anim {
+  from {
+    box-shadow: inset 0 0 3px 1px #34deffdd;
+  }
+  to {
+    box-shadow: inset 0 0 1px 1px #34deffdd;
+  }
+}

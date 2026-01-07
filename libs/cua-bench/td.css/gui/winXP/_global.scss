@@ -1,0 +1,66 @@
+/*-------------------------------------------*\
+    Global
+\*-------------------------------------------*/
+
+.dock {
+    display: none;
+}
+
+.navbar,
+.statusbar,
+.menubar {
+    display: none;
+}
+
+::-webkit-scrollbar {
+    width: 17px;
+}
+::-webkit-scrollbar-corner {
+    background: var(--button-face);
+}
+::-webkit-scrollbar-track {
+    &:vertical {
+        background-image: url("icon/scroll-background.svg");
+    }
+    &:horizontal {
+        background-image: url("icon/scroll-background-horizontal.svg");
+    }
+}
+::-webkit-scrollbar-thumb {
+    background-position: center;
+    background-repeat: no-repeat;
+    background-color: #c8d6fb;
+    background-size: 7px;
+    border: 1px solid white;
+    border-radius: 2px;
+    box-shadow: inset -3px 0 #bad1fc, inset 1px 1px #b7caf5;
+    &:vertical {
+        background-image: url("icon/scroll-thumb.svg");
+    }
+    &:horizontal {
+        background-size: 8px;
+        background-image: url("icon/scroll-thumb-horizontal.svg");
+    }
+}
+::-webkit-scrollbar-button {
+    &:vertical {
+        &:start {
+            height: 17px;
+            background-image: url("icon/scroll-arrow-up.svg");
+        }
+        &:end {
+            height: 17px;
+            background-image: url("icon/scroll-arrow-down.svg");
+        }
+    }
+    &:horizontal {
+        &:start {
+            width: 17px;
+            background-image: url("icon/scroll-arrow-left.svg");
+        }
+        &:end {
+            width: 17px;
+            background-image: url("icon/scroll-arrow-right.svg");
+        }
+    }
+}

@@ -1,0 +1,48 @@
+.computer {
+  --w7-link-c: #0066cc;
+  --w7-link-c-h: #3399ff;
+  --w7-title-c: #003399;
+}
+
+a {
+  color: var(--w7-link-c);
+  text-decoration: none;
+
+  &:focus-visible {
+    outline: 1px dotted var(--w7-link-c);
+  }
+
+  &:hover,
+  &:focus {
+    color: var(--w7-link-c-h);
+    text-decoration: underline;
+  }
+}
+
+.instruction {
+  font: var(--w7-font);
+  color: var(--w7-el-c);
+  font-weight: normal;
+  margin: 0 0 20px;
+
+  &-primary {
+    font-size: 12pt;
+    color: var(--w7-title-c);
+  }
+}
+
+.header {
+  font: var(--w7-font);
+  font-weight: normal;
+
+  &-document {
+    font-family: "Calibri", "Noto Sans", sans-serif;
+    font-size: 17pt;
+    color: var(--w7-el-c);
+  }
+
+  &-group {
+    font-size: 11pt;
+    color: var(--w7-title-c);
+  }
+}

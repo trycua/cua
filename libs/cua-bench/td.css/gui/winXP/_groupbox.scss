@@ -1,0 +1,45 @@
+/*-------------------------------------------*\
+    GroupBox
+\*-------------------------------------------*/
+
+fieldset {
+    border: none;
+    box-shadow: none;
+    background: white;
+    border: 1px solid #d0d0bf;
+    border-radius: 4px;
+    padding-top: 10px;
+}
+legend {
+    background: transparent;
+    color: #0046d5;
+}
+.field-row {
+    display: flex;
+    align-items: center;
+    > * {
+        + {
+            * {
+                margin-left: var(--grouped-element-spacing);
+            }
+        }
+    }
+}
+[class^="field-row"] {
+    + {
+        [class^="field-row"] {
+            margin-top: var(--grouped-element-spacing);
+        }
+    }
+}
+.field-row-stacked {
+    display: flex;
+    flex-direction: column;
+    * {
+        + {
+            * {
+                margin-top: var(--grouped-element-spacing);
+            }
+        }
+    }
+}

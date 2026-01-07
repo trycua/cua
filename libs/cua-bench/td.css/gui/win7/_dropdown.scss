@@ -1,0 +1,46 @@
+select:not([multiple]) {
+  font: var(--w7-font);
+  padding: 2px 3px;
+  border: 1px solid var(--w7-el-bd);
+  border-radius: var(--w7-el-bdr);
+  box-shadow: var(--w7-el-sd);
+  box-sizing: border-box;
+  color: #222;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  appearance: none;
+  position: relative;
+  padding-right: 30px;
+  background: url("icon/dropdown-arrow.svg"), var(--w7-el-grad);
+  background-position: center right;
+  background-repeat: no-repeat;
+
+  &:not(:disabled) {
+    &:hover {
+      border-color: var(--w7-el-bd-h);
+      background-image: url("icon/dropdown-arrow.svg"), var(--w7-el-grad-h);
+    }
+
+    &:active {
+      outline: none;
+      border-color: var(--w7-el-bd-a);
+      box-shadow: var(--w7-el-sd-a);
+      background-image: url("icon/dropdown-arrow.svg"), var(--w7-el-grad-a);
+    }
+
+    &:focus {
+      box-shadow: inset 0 0 0 2px #98d1ef;
+      outline: 1px dotted #000;
+      outline-offset: -4px;
+    }
+  }
+
+  &:disabled {
+    background: url("icon/dropdown-arrow-disabled.svg"), var(--w7-el-bg-d);
+    background-position: center right;
+    background-repeat: no-repeat;
+    border-color: var(--w7-el-bd-d);
+    color: var(--w7-el-c-d);
+    opacity: 1;
+  }
+}

@@ -1,0 +1,140 @@
+/*-------------------------------------------*\
+    Window
+\*-------------------------------------------*/
+
+.window {
+    box-shadow: inset -1px -1px #00138c, inset 1px 1px #0831d9, inset -2px -2px #001ea0, inset 2px 2px #166aee,
+        inset -3px -3px #003bda, inset 3px 3px #0855dd;
+    border-top-left-radius: 8px;
+    border-top-right-radius: 8px;
+    padding: 0 0 3px 0;
+    -webkit-font-smoothing: antialiased;
+    position: absolute;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+}
+.window-body {
+    height: 100%;
+    overflow: auto;
+    margin: 0px 3px;
+    background: #ece9d8; /* Classic XP Luna window background color */
+}
+.title-bar {
+    font-family: "Trebuchet MS";
+    background: linear-gradient(
+        180deg,
+        rgba(9, 151, 255, 1) 0%,
+        rgba(0, 83, 238, 1) 8%,
+        rgba(0, 80, 238, 1) 40%,
+        rgba(0, 102, 255, 1) 88%,
+        rgba(0, 102, 255, 1) 93%,
+        rgba(0, 91, 255, 1) 95%,
+        rgba(0, 61, 215, 1) 96%,
+        rgba(0, 61, 215, 1) 100%
+    );
+    padding: 3px 5px 3px 3px;
+    border-top: 1px solid #0831d9;
+    border-left: 1px solid #0831d9;
+    border-right: 1px solid #001ea0;
+    border-top-left-radius: 8px;
+    border-top-right-radius: 7px;
+    font-size: 13px;
+    text-shadow: 1px 1px #0f1089;
+    height: 28px;
+}
+
+.title-bar-text {
+    padding-left: 3px;
+    // ellipsis if text is too long
+    text-overflow: ellipsis;
+    overflow: hidden;
+    white-space: nowrap;
+}
+
+.title-bar-controls {
+    display: flex;
+    button {
+        min-width: 21px;
+        min-height: 21px;
+        margin-left: 2px;
+        background-repeat: no-repeat;
+        background-position: center;
+        box-shadow: none;
+        background-color: #0050ee;
+        transition: background 100ms;
+        border: none;
+        &:active,
+        &:hover,
+        &:focus {
+            box-shadow: none !important;
+        }
+    }
+    button[aria-label="Minimize"] {
+        background-image: svg-load("winXP/icon/minimize.svg");
+        &:hover {
+            background-image: svg-load("winXP/icon/minimize-hover.svg");
+        }
+        &:not(:disabled):active {
+            background-image: svg-load("winXP/icon/minimize-active.svg");
+        }
+    }
+    button[aria-label="Maximize"] {
+        background-image: svg-load("winXP/icon/maximize.svg");
+        &:hover {
+            background-image: svg-load("winXP/icon/maximize-hover.svg");
+        }
+        &:not(:disabled):active {
+            background-image: svg-load("winXP/icon/maximize-active.svg");
+        }
+    }
+    button[aria-label="Restore"] {
+        background-image: svg-load("winXP/icon/restore.svg");
+        &:hover {
+            background-image: svg-load("winXP/icon/restore-hover.svg");
+        }
+        &:not(:disabled):active {
+            background-image: svg-load("winXP/icon/restore-active.svg");
+        }
+    }
+    button[aria-label="Help"] {
+        background-image: svg-load("winXP/icon/help.svg");
+        &:hover {
+            background-image: svg-load("winXP/icon/help-hover.svg");
+        }
+        &:not(:disabled):active {
+            background-image: svg-load("winXP/icon/help-active.svg");
+        }
+    }
+    button[aria-label="Close"] {
+        background-image: svg-load("winXP/icon/close.svg");
+        &:hover {
+            background-image: svg-load("winXP/icon/close-hover.svg");
+        }
+        &:not(:disabled):active {
+            background-image: svg-load("winXP/icon/close-active.svg");
+        }
+    }
+}
+
+.status-bar {
+    margin: 0 3px;
+    box-shadow: inset 0px 1px 2px var(--button-shadow);
+    padding: 2px 1px;
+    gap: 0px;
+}
+
+.status-bar-field {
+    font-family: var(--sans-serif);
+    -webkit-font-smoothing: antialiased;
+    box-shadow: none;
+    padding: 1px 2px;
+    border-right: 1px solid rgba(208, 206, 191, 0.75);
+    border-left: 1px solid rgba(255, 255, 255, 0.75);
+    &:first-of-type{
+        border-left: none;
+    }
+    &:last-of-type {
+        border-right: none;
+    }
+}

@@ -1,0 +1,123 @@
+/* iOS minimal styling
+   - Hide desktop chrome
+   - Create notch overlays at top and bottom using pseudo-elements
+   Intended to be used under [data-appearance="ios"], [data-appearance="ios:light"], [data-appearance="ios:dark"]
+*/
+
+.computer {
+    color: #fff;
+    
+    /* Top notch overlay - maintains 731:85 aspect ratio */
+    &::before {
+        content: "";
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 100%;
+        aspect-ratio: 731 / 85;
+        background-image: url('img/notch-top-dark.png');
+        background-size: cover;
+        background-repeat: no-repeat;
+        background-position: center;
+        z-index: 100;
+        pointer-events: none;
+    }
+    
+    /* Bottom notch overlay - maintains 731:73 aspect ratio */
+    &::after {
+        content: "";
+        position: absolute;
+        left: 0;
+        bottom: 0;
+        width: 100%;
+        aspect-ratio: 731 / 73;
+        background-image: url('img/notch-bottom-dark.png');
+        background-size: cover;
+        background-repeat: no-repeat;
+        background-position: center;
+        z-index: 100;
+        pointer-events: none;
+    }
+}
+
+/* Hide desktop-specific chrome on iOS */
+.menubar,
+.dock,
+.taskbar,
+.desktop-icons,
+.navigation-bar,
+.navbar { display: none !important; }
+
+/* Ensure window fills area similar to Android full-bleed demo */
+.window {
+  position: absolute !important;
+  inset: 0 !important;
+  width: 100% !important;
+  height: 100% !important;
+  margin: 0 !important;
+  border-radius: 34px; /* rounded corners common on iOS mock */
+  overflow: hidden;
+  background: transparent;
+  box-shadow: none;
+}
+
+.title-bar { display: none !important; }
+
+.window-body {
+  position: absolute;
+  inset: 0;
+  margin-top: 24px;
+  background: transparent;
+  overflow: auto;
+}
+
+/* Default iOS button theme (dark) */
+.btn,
+.window-body .btn {
+  appearance: none;
+  -webkit-appearance: none;
+  border: 1px solid rgba(255,255,255,0.18);
+  background: rgba(255,255,255,0.08);
+  color: #fff;
+  font: 600 13px/1.2 -apple-system, system-ui, Segoe UI, Roboto, Arial, sans-serif;
+  padding: 8px 14px;
+  border-radius: 12px;
+  box-shadow: 0 1px 0 rgba(255,255,255,0.06) inset, 0 1px 2px rgba(0,0,0,0.3);
+  transition: background 120ms ease, border-color 120ms ease, box-shadow 120ms ease, transform 60ms ease;
+}
+
+.btn:hover,
+.btn:hover,
+.window-body .btn:hover { background: rgba(255,255,255,0.12); }
+
+.btn:active,
+.btn:active,
+.window-body .btn:active { transform: translateY(0.5px); background: rgba(255,255,255,0.16); }
+
+.btn:focus-visible,
+.btn:focus-visible,
+.window-body .btn:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(0,122,255,0.35);
+}
+
+/* Primary action */
+.btn-primary,
+button.primary {
+  background: #0a84ff; /* iOS blue (dark mode) */
+  border-color: rgba(255,255,255,0.2);
+  color: #fff;
+}
+
+.btn-primary:hover,
+button.primary:hover { background: #2b95ff; }
+
+.btn-primary:active,
+button.primary:active { background: #0673e6; }
+
+/* Hide status bar - notches are created via .computer pseudo-elements */
+.statusbar {
+  display: none !important;
+}
+
+/* Default iOS (dark) text is light; light variant is provided in ios/light.scss */

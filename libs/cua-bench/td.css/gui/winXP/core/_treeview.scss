@@ -1,0 +1,91 @@
+/*-------------------------------------------*\
+    Tree View
+\*-------------------------------------------*/
+
+ul.tree-view {
+    font-family: var(--sans-serif);
+    font-size: 11px;
+    display: block;
+    background: var(--button-highlight);
+    padding: 6px;
+    margin: 0;
+    li {
+        list-style-type: none;
+        margin-top: 3px;
+    }
+    a {
+        text-decoration: none;
+        color: #000;
+        &:focus {
+            background-color: var(--dialog-blue);
+            color: var(--button-highlight);
+        }
+    }
+    ul {
+        margin-top: 3px;
+        margin-left: 16px;
+        padding-left: 16px;
+        border-left: 1px dotted #808080;
+        > li {
+            position: relative;
+            &::before {
+                content: "";
+                display: block;
+                position: absolute;
+                left: -16px;
+                top: 6px;
+                width: 12px;
+                border-bottom: 1px dotted #808080;
+            }
+            &:last-child {
+                &::after {
+                    content: "";
+                    display: block;
+                    position: absolute;
+                    left: -20px;
+                    top: 7px;
+                    bottom: 0px;
+                    width: 8px;
+                    background: var(--button-highlight);
+                }
+            }
+        }
+        details {
+            > summary {
+                &:before {
+                    margin-left: -22px;
+                    position: relative;
+                    z-index: 1;
+                }
+            }
+        }
+    }
+    details {
+        margin-top: 0;
+        > summary {
+            &:before {
+                text-align: center;
+                display: block;
+                float: left;
+                content: "+";
+                border: 1px solid #808080;
+                width: 8px;
+                height: 9px;
+                line-height: 9px;
+                margin-right: 5px;
+                padding-left: 1px;
+                background-color: #fff;
+            }
+        }
+    }
+    details[open] {
+        summary {
+            margin-bottom: 0;
+        }
+        > summary {
+            &:before {
+                content: "-";
+            }
+        }
+    }
+}

@@ -1,0 +1,76 @@
+/* Windows 98 Taskbar (semantic) */
+
+/* Resets (scoped) */
+.btn-reset { border: 0; padding: 0; background: transparent; cursor: pointer; }
+.list-reset { list-style: none; margin: 0; padding: 0; }
+.input-reset { appearance: none; -webkit-appearance: none; border: 0; outline: 0; background: transparent; }
+
+.taskbar {
+  position: absolute;
+  left: 0; right: 0; bottom: 0;
+  height: 28px;
+  display: flex; align-items: center; justify-content: space-between;
+  padding-inline: 6px;
+  background: #c0c0c0; /* classic gray */
+  /* 98-style bevel: light top-left, dark bottom-right */
+  box-shadow:
+    inset 1px 1px 0 #fff,
+    inset -1px -1px 0 #000,
+    inset 2px 2px 0 #dfdfdf,
+    inset -2px -2px 0 #808080;
+  color: #000;
+  font-family: Tahoma, MS Sans Serif, Arial, sans-serif;
+  line-height: 1;
+}
+
+.taskbar-apps { display: flex; align-items: center; gap: 8px; }
+
+/* Start button (single element with glyph) */
+.taskbar [aria-label="Start"] {
+  width: 60px; height: 22px;
+  background: #c0c0c0;
+  box-shadow:
+    inset 1px 1px 0 #fff,
+    inset -1px -1px 0 #000,
+    inset 2px 2px 0 #dfdfdf,
+    inset -2px -2px 0 #808080;
+  /* Windows 98 logo glyph */
+  background-image: url('./icon/w98-icon.png');
+  background-repeat: no-repeat;
+  background-position: 6px center;
+  background-size: 14px 14px;
+  padding-left: 24px; /* room for glyph */
+  font-size: 12px;
+  line-height: 22px;
+}
+.taskbar [aria-label="Start"]:active {
+  box-shadow:
+    inset 1px 1px 0 #000,
+    inset -1px -1px 0 #fff,
+    inset 2px 2px 0 #808080,
+    inset -2px -2px 0 #dfdfdf;
+}
+// Start button text
+.taskbar [aria-label="Start"]::after {
+  content: 'Start';
+  position: absolute;
+  left: 24px; top: 4px;
+  width: 40px; height: 22px;
+  text-align: center;
+  line-height: 22px;
+  font-weight: bold;
+}
+
+.taskbar [aria-label="Show desktop"] {
+  display: none;
+}
+
+/* Pinned apps */
+.app-list { 
+  display: none;
+}
+
+/* System tray */
+.system-tray { display: flex; align-items: center; gap: 6px; }
+.system-tray .btn { display: none; }
+.date-time { display: flex; flex-direction: column; align-items: center; font-size: 11px; padding: 2px 6px; }

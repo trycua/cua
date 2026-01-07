@@ -1,0 +1,36 @@
+.computer {
+  /* Naming convention:
+   * `--w7-<component>-<property>-<state>`
+   * where:
+   * <component> is the name of the component (el = element, li = list item, etc.)
+   * <property> is the property being defined (bg = background, bd = border, c = color, sd = shadow, etc.)
+   * <state> is the state of the component (d = disabled, h = hovered, a = active, hl = highlighted, etc.)
+   */
+
+  --w7-font: 9pt "Segoe UI", "SegoeUI", "Noto Sans", sans-serif;
+  --w7-surface: #f0f0f0;
+
+  --w7-el-bg: #f2f2f2;
+  --w7-el-bg-d: #f4f4f4;
+  --w7-el-bg-s-1: #ebebeb; /* element background shade 1 (slightly darker) */
+  --w7-el-bg-s-2: #cfcfcf; /* element background shade 2 (darker) */
+
+  --w7-el-sd: inset 0 0 0 1px #fffc;
+  --w7-el-sd-a: inset 1px 1px 0 #0003, inset -1px 1px 0 #0001;
+
+  --w7-el-bd: #8e8f8f;
+  --w7-el-bd-h: #3c7fb1;
+  --w7-el-bd-a: #6d91ab;
+  --w7-el-bd-d: #adb2b5;
+  --w7-el-bdr: 3px; /* element border radius */
+
+  --w7-el-c: #000000;
+  --w7-el-c-d: #838383;
+
+  --w7-el-grad: linear-gradient(var(--w7-el-bg) 45%, var(--w7-el-bg-s-1) 45%, var(--w7-el-bg-s-2));
+  --w7-el-grad-h: linear-gradient(#eaf6fd 45%, #bee6fd 45%, #a7d9f5);
+  --w7-el-grad-a: linear-gradient(#e5f4fc, #c4e5f6 30% 50%, #98d1ef 50%, #68b3db);
+
+  --w7-li-bd-hl: #aaddfa;
+  --w7-li-bg-hl: linear-gradient(#fff9, #e6ecf5cc 90%, #fffc);
+}

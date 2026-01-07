@@ -219,7 +219,7 @@ async def solve(task_cfg: cb.Task, session: cb.DesktopSession):
 ### Run Interactively
 
 ```bash
-cb interact tasks/color-picker-env --task-id 0
+cb interact tasks/color-picker-env --variant-id 0
 ```
 
 Try clicking different colors and see how the UI responds.
@@ -238,7 +238,7 @@ cb interact tasks/color-picker-env --oracle --no-wait
 ### Run with Agent
 
 ```bash
-cb interact tasks/color-picker-env --task-id 0
+cb interact tasks/color-picker-env --variant-id 0
 # Agent will be prompted interactively
 ```
 
@@ -363,14 +363,14 @@ cb task generate "Create a calculator"
 cb task generate "Create a simple quiz with 3 multiple choice questions about Python"
 
 # 2. Test interactively
-cb interact tasks/python-quiz-env --task-id 0
+cb interact tasks/python-quiz-env --variant-id 0
 
 # 3. Verify oracle works
 cb interact tasks/python-quiz-env --oracle --no-wait
 # On headless servers: xvfb-run -a cb interact tasks/python-quiz-env --oracle --no-wait
 
 # 4. Test with agent
-cb interact tasks/python-quiz-env --task-id 0
+cb interact tasks/python-quiz-env --variant-id 0
 
 # 5. Manually refine if needed
 # Edit tasks/python-quiz-env/main.py

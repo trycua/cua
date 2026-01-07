@@ -18,43 +18,122 @@ cb image create linux-docker
 cb image list
 ```
 
-## Run a Basic Benchmark
+## Example 1: Run a Single Task
 
-The Cua-Bench CLI can run many different computer-use benchmarks and versions of benchmarks.
-
-To see the available datasets, run `cb dataset list` or visit the [registry](http://cuabench.ai/cuabench/registry/).
+Learn the basic workflow by running a single task end-to-end.
 
 ### Step 1: Explore Interactively
 
-Start by exploring a single task interactively to see how it works in a browser window:
+Start by exploring the task interactively in a browser window to see how it works:
 
 ```bash
-cb interact click-icon --dataset cua-bench-basic
+cb interact tasks/click_button --variant-id 0
 ```
 
-### Step 2: Validate Oracle Solutions
+This opens a visible browser where you can manually interact with the task to understand what needs to be done.
 
-Next, verify your environment setup by running the oracle solutions:
+### Step 2: Run the Task with an Agent
 
-```bash
-cb run dataset datasets/cua-bench-basic --oracle
-```
-
-### Step 3: Run with an Agent
-
-Finally, perform a benchmark using the Cua Agent SDK. Tasks run **asynchronously by default** and return immediately with a run ID:
+Now run the same task with an AI agent. Tasks run **asynchronously by default** and return immediately with a run ID:
 
 ```bash
 export ANTHROPIC_API_KEY=sk-....
 
 # Run a single task (async - returns immediately)
-cb run task tasks/click_button --agent cua-agent --model anthropic/claude-haiku-4-5
+cb run task tasks/click_button --agent cua-agent --model anthropic/claude-sonnet-4-20250514
+```
 
-# Monitor progress in real-time
-cb run watch <run_id>
+You'll see output like:
 
-# Or wait for completion inline
-cb run task tasks/click_button --agent cua-agent --model anthropic/claude-haiku-4-5 --wait
+```
+✓ Run started
+
+  Run ID:  96d41b51
+  Task:    click_button (variant 0)
+  Env:     simulated (Playwright)
+  Output:  ~/.local/share/cua-bench/runs/96d41b51
+  Session: ~/.local/share/cua-bench/runs/96d41b51/click_button_v0
+
+Commands:
+  cb run watch 96d41b51   # Watch progress in real-time
+  cb run info 96d41b51    # Show run details
+  cb run logs 96d41b51    # View logs
+  cb run stop 96d41b51    # Stop the run
+```
+
+### Step 3: Watch Progress
+
+Monitor the agent's progress in real-time:
+
+```bash
+cb run watch 96d41b51
+```
+
+You'll see live updates:
+
+```
+████████████████████ 1/1
+Model: anthropic/claude-sonnet-4-20250514
+Agent: cua-agent
+Run ID: 96d41b51
+
+SESSION ID            ENVIRONMENT      VARIANT    STATUS         REWARD
+----------------      ------------     -------    -----------    ------
+task-96d41b51         click_button     0          ✓ completed    1.0
+
+✓ All sessions completed!
+Average Reward: 1.000
+```
+
+### Step 4: View the Trace
+
+Finally, explore the agent's trajectory using the trace viewer:
+
+```bash
+cb trace view 96d41b51
+```
+
+This launches an interactive viewer where you can see screenshots, actions, and debug the agent's behavior:
+
+```
+Serving trace viewer at: http://127.0.0.1:55115/
+Press Enter to stop...
+```
+
+Open the URL in your browser to explore the full execution trace.
+
+---
+
+## Example 2: Run a Basic Benchmark
+
+Scale up to run an entire benchmark dataset with multiple tasks.
+
+The Cua-Bench CLI can run many different computer-use benchmarks and versions of benchmarks. To see available datasets, run `cb dataset list` or visit the [registry](http://cuabench.ai/cuabench/registry/).
+
+### Step 1: Explore a Single Task
+
+Start by exploring one task from the dataset interactively:
+
+```bash
+cb interact click-icon --dataset cua-bench-basic
+```
+
+### Step 2: Validate with Oracle Solutions
+
+Verify your environment setup by running the oracle solutions (reference implementations) for all tasks:
+
+```bash
+cb run dataset datasets/cua-bench-basic --oracle
+```
+
+Oracle solutions should achieve 100% success rate. If they fail, check your environment setup.
+
+### Step 3: Run the Entire Dataset in Parallel
+
+Now run the full benchmark with an agent. Use `--max-parallel` to run multiple tasks simultaneously:
+
+```bash
+export ANTHROPIC_API_KEY=sk-....
 
 # Run entire dataset in parallel
 cb run dataset datasets/cua-bench-basic \
@@ -65,13 +144,17 @@ cb run dataset datasets/cua-bench-basic \
     --max-variants 1
 ```
 
-Results are saved to `~/.local/share/cua-bench/runs/<run_id>/` by default.
+Monitor progress with:
+
+```bash
+cb run watch <run_id>
+```
 
 You should see output similar to:
 
 ```
 
-    ⠀⣀⣀⡀⠀⠀⠀⠀⢀⣀⣀⣀⡀⠘⠋⢉⠙⣷⠀⠀ ⠀ 
+    ⠀⣀⣀⡀⠀⠀⠀⠀⢀⣀⣀⣀⡀⠘⠋⢉⠙⣷⠀⠀ ⠀
  ⠀⠀⢀⣴⣿⡿⠋⣉⠁⣠⣾⣿⣿⣿⣿⡿⠿⣦⡈⠀⣿⡇⠃⠀
  ⠀⠀⠀⣽⣿⣧⠀⠃⢰⣿⣿⡏⠙⣿⠿⢧⣀⣼⣷⠀⡿⠃⠀⠀
  ⠀⠀⠀⠉⣿⣿⣦⠀⢿⣿⣿⣷⣾⡏⠀⠀⢹⣿⣿⠀⠀⠀⠀⠀⠀
@@ -85,21 +168,21 @@ Run ID: run-2768db7f
 
 
 
-SESSION ID                                   ENVIRONMENT       VARIANT  STATUS           REWARD     
-----------------------------------------     ---------------   -------  ---------------  ---------- 
-task-baecb22e                                typing-input      0        ✗ failed         0.0        
-task-05a6e068                                video-player      0        ✓ completed      1.0        
-task-a8faeb43                                spreadsheet-cell  0        ✗ failed         0.0        
-task-5a5f30c5                                toggle-switch     0        ✓ completed      1.0        
-task-3555ee20                                select-dropdown   0        ✗ failed         0.0        
-task-e9560151                                click-button      0        ✓ completed      1.0        
-task-7ec326f2                                fill-form         0        ✗ failed         0.0        
-task-57dae23d                                date-picker       0        ✗ failed         0.0        
-task-01276975                                drag-slider       0        ✗ failed         0.0        
-task-4b875cd2                                color-picker      0        ✓ completed      1.0        
-task-c933d5b0                                drag-drop         0        ✗ failed         0.0        
-task-ec44d643                                right-click-menu  0        ✗ failed         0.0        
-task-7c4acb4c                                click-icon        0        ✓ completed      1.0        
+SESSION ID                                   ENVIRONMENT       VARIANT  STATUS           REWARD
+----------------------------------------     ---------------   -------  ---------------  ----------
+task-baecb22e                                typing-input      0        ✗ failed         0.0
+task-05a6e068                                video-player      0        ✓ completed      1.0
+task-a8faeb43                                spreadsheet-cell  0        ✗ failed         0.0
+task-5a5f30c5                                toggle-switch     0        ✓ completed      1.0
+task-3555ee20                                select-dropdown   0        ✗ failed         0.0
+task-e9560151                                click-button      0        ✓ completed      1.0
+task-7ec326f2                                fill-form         0        ✗ failed         0.0
+task-57dae23d                                date-picker       0        ✗ failed         0.0
+task-01276975                                drag-slider       0        ✗ failed         0.0
+task-4b875cd2                                color-picker      0        ✓ completed      1.0
+task-c933d5b0                                drag-drop         0        ✗ failed         0.0
+task-ec44d643                                right-click-menu  0        ✗ failed         0.0
+task-7c4acb4c                                click-icon        0        ✓ completed      1.0
 
 
 
@@ -112,9 +195,13 @@ REWARD  COUNT
 0.0     8
 ```
 
-You can see an overview table of your past runs with `cb run list`
+Results are saved to `~/.local/share/cua-bench/runs/<run_id>/` by default.
 
-## View Past Runs
+---
+
+## Managing Runs
+
+View and manage your past runs:
 
 ```bash
 # List all runs with statistics
@@ -124,13 +211,30 @@ cb run list
 cb run watch <run_id>
 
 # Check status of a specific run
-cb run status <run_id>
+cb run info <run_id>
 
 # View logs
 cb run logs <run_id>
 
+# Stop a running task
+cb run stop <run_id>
+
 # View traces from a specific run
-cb trace grid ~/.local/share/cua-bench/runs/<run_id>/
+cb trace view <run_id>
+```
+
+## Advanced: Wait for Completion
+
+By default, runs execute asynchronously. To wait for completion inline:
+
+```bash
+# Wait for single task to complete
+cb run task tasks/click_button \
+    --agent cua-agent \
+    --model anthropic/claude-haiku-4-5 \
+    --wait
+
+# This blocks until the task completes and shows results immediately
 ```
 
 ## Export Training Data

@@ -32,7 +32,10 @@ jobs:
       - name: Determine version
         id: get-version
         run: |
-          if [ "${{ github.event_name }}" == "push" ]; then
+          # Check if version was provided via workflow_call first
+          if [ -n "${{ inputs.version }}" ]; then
+            VERSION=${{ inputs.version }}
+          elif [ "${{ github.event_name }}" == "push" ]; then
             # Extract version from tag (for package-specific tags)
             if [[ "${{ github.ref }}" =~ ^refs/tags/bench-v([0-9]+\.[0-9]+\.[0-9]+) ]]; then
               VERSION=${BASH_REMATCH[1]}
@@ -41,11 +44,11 @@ jobs:
               exit 1
             fi
           elif [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
-            # Use version from workflow dispatch
+            # Use version from workflow dispatch (direct trigger)
             VERSION=${{ github.event.inputs.version }}
           else
-            # Use version from workflow_call
-            VERSION=${{ inputs.version }}
+            echo "Unable to determine version"
+            exit 1
           fi
           echo "VERSION=$VERSION"
           echo "version=$VERSION" >> $GITHUB_OUTPUT

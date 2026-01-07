@@ -1,6 +1,6 @@
 """Centralized registry management for cua-bench.
 
-Handles cloning, updating, and resolving paths from the cua-bench-registry.
+Handles cloning, updating, and resolving paths from the cua dataset registry.
 """
 
 import os
@@ -18,19 +18,19 @@ RESET = "\033[0m"
 
 
 def get_registry_path() -> Path:
-    """Get the path to the cua-bench registry.
+    """Get the path to the cua dataset registry.
 
     Priority:
     1. CUA_REGISTRY_HOME environment variable
-    2. Default: ~/.cua/cbregistry
+    2. Default: ~/.cua/cbregistry/libs/cua-bench
 
     Returns:
-        Path to the registry directory
+        Path to the cua-bench directory in the cua repo (parent of 'datasets' folder)
     """
     registry_home = os.environ.get("CUA_REGISTRY_HOME")
     if registry_home:
         return Path(registry_home)
-    return Path.home() / '.cua' / 'cbregistry'
+    return Path.home() / '.cua' / 'cbregistry' / 'libs' / 'cua-bench'
 
 
 def ensure_registry(update: bool = True, verbose: bool = True) -> Path:
@@ -41,64 +41,65 @@ def ensure_registry(update: bool = True, verbose: bool = True) -> Path:
         verbose: Whether to print status messages (default: True)
 
     Returns:
-        Path to the registry directory
+        Path to the datasets directory
 
     Raises:
         RuntimeError: If registry cannot be cloned
     """
     registry_path = get_registry_path()
+    cua_repo_path = registry_path.parent.parent  # Go up to ~/.cua/cbregistry
 
-    if not registry_path.exists():
-        # Clone registry
+    if not cua_repo_path.exists() or not (cua_repo_path / '.git').exists():
+        # Clone cua repo
         if verbose:
-            print(f"{CYAN}Cloning registry...{RESET}")
-        registry_path.parent.mkdir(parents=True, exist_ok=True)
+            print(f"{CYAN}Cloning cua repository...{RESET}")
+        cua_repo_path.parent.mkdir(parents=True, exist_ok=True)
 
         # Try SSH first
         try:
             result = subprocess.run(
-                ['git', 'clone', 'git@github.com:trycua/cua-bench-registry.git', str(registry_path)],
+                ['git', 'clone', 'git@github.com:trycua/cua.git', str(cua_repo_path)],
                 capture_output=True,
                 text=True,
-                timeout=60
+                timeout=120
             )
             if result.returncode != 0:
                 raise Exception(f"SSH clone failed: {result.stderr}")
             if verbose:
-                print(f"{GREEN}✓ Registry cloned successfully via SSH{RESET}")
+                print(f"{GREEN}✓ Repository cloned successfully via SSH{RESET}")
         except Exception as ssh_error:
             if verbose:
                 print(f"{YELLOW}SSH clone failed, trying HTTPS...{RESET}")
             # Try HTTPS
             try:
                 result = subprocess.run(
-                    ['git', 'clone', 'https://github.com/trycua/cua-bench-registry.git', str(registry_path)],
+                    ['git', 'clone', 'https://github.com/trycua/cua.git', str(cua_repo_path)],
                     capture_output=True,
                     text=True,
-                    timeout=60
+                    timeout=120
                 )
                 if result.returncode != 0:
                     raise Exception(f"HTTPS clone failed: {result.stderr}")
                 if verbose:
-                    print(f"{GREEN}✓ Registry cloned successfully via HTTPS{RESET}")
+                    print(f"{GREEN}✓ Repository cloned successfully via HTTPS{RESET}")
             except Exception as https_error:
                 # Check if git is installed
                 try:
                     subprocess.run(['git', '--version'], capture_output=True, check=True)
                     raise RuntimeError(
-                        f"Failed to clone registry. Both SSH and HTTPS failed.\n"
+                        f"Failed to clone cua repository. Both SSH and HTTPS failed.\n"
                         f"SSH error: {ssh_error}\n"
                         f"HTTPS error: {https_error}"
                     )
                 except (subprocess.CalledProcessError, FileNotFoundError):
                     raise RuntimeError("git is not installed. Please install git and try again.")
     elif update:
-        # Registry exists, update it with git pull
+        # Repo exists, update it with git pull
         if verbose:
-            print(f"{CYAN}Updating registry...{RESET}")
+            print(f"{CYAN}Updating datasets...{RESET}")
         try:
             result = subprocess.run(
-                ['git', '-C', str(registry_path), 'pull'],
+                ['git', '-C', str(cua_repo_path), 'pull'],
                 capture_output=True,
                 text=True,
                 timeout=30
@@ -106,16 +107,16 @@ def ensure_registry(update: bool = True, verbose: bool = True) -> Path:
             if result.returncode == 0:
                 if 'Already up to date' in result.stdout or 'Already up-to-date' in result.stdout:
                     if verbose:
-                        print(f"{GREEN}✓ Registry is up to date{RESET}")
+                        print(f"{GREEN}✓ Datasets are up to date{RESET}")
                 else:
                     if verbose:
-                        print(f"{GREEN}✓ Registry updated{RESET}")
+                        print(f"{GREEN}✓ Datasets updated{RESET}")
             else:
                 if verbose:
-                    print(f"{YELLOW}Warning: Failed to update registry: {result.stderr}{RESET}")
+                    print(f"{YELLOW}Warning: Failed to update datasets: {result.stderr}{RESET}")
         except Exception as e:
             if verbose:
-                print(f"{YELLOW}Warning: Failed to update registry: {e}{RESET}")
+                print(f"{YELLOW}Warning: Failed to update datasets: {e}{RESET}")
 
     return registry_path
 
@@ -138,7 +139,7 @@ def resolve_dataset_path(dataset_name: str, update_registry: bool = True) -> Opt
             return dataset_path
         return None
     except Exception as e:
-        print(f"{RED}Error accessing registry: {e}{RESET}")
+        print(f"{RED}Error accessing datasets: {e}{RESET}")
         return None
 
 

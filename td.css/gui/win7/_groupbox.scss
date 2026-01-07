@@ -1,0 +1,22 @@
+fieldset {
+  border: 1px solid #cdd7db;
+  border-radius: var(--w7-el-bdr);
+  box-shadow: inset 0 0 0 1px #fff;
+  margin: 0;
+  padding: 8px 10px 10px;
+
+  legend {
+    font: var(--w7-font);
+  }
+}
+
+fieldset,
+.group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.group + .group {
+  margin-top: 6px;
+}

@@ -1,0 +1,570 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+    <script src="https://cdn.jsdelivr.net/npm/iconify-icon@3.0.2/dist/iconify-icon.min.js"></script>
+    <title>td.css Development Example</title>
+    <link rel="stylesheet" id="theme-link" href="dist/macos.css" />
+    <link rel="stylesheet" id="iconset-link" href="dist/iconsets/macos.css" />
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+        
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: #1a1a1a;
+            display: flex;
+            flex-direction: column;
+            min-height: 100vh;
+        }
+        
+        .theme-controls {
+            background: #2a2a2a;
+            padding: 15px 20px;
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            flex-wrap: wrap;
+            border-bottom: 1px solid #444;
+            position: sticky;
+            top: 0;
+            z-index: 1000;
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+        }
+        
+        .theme-controls label {
+            color: #fff;
+            font-size: 14px;
+            font-weight: 500;
+        }
+        
+        .theme-controls select {
+            border-radius: 4px;
+            border: 1px solid #555;
+            background: #3a3a3a;
+            color: #fff;
+            cursor: pointer;
+            min-width: 200px;
+            max-width: 300px;
+        }
+        
+        .theme-controls select:hover {
+            background: #444;
+        }
+        
+        .theme-controls select option {
+            background: #3a3a3a;
+            color: #fff;
+        }
+        
+        .info {
+            color: #999;
+            font-size: 12px;
+            margin-left: auto;
+        }
+        
+        .demo-container {
+            flex: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 40px 20px;
+        }
+        
+        .computer {
+            position: relative;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+            overflow: hidden;
+        }
+        
+        /* Placeholder background for icons */
+        .icon {
+            background: linear-gradient(135deg, rgba(255,255,255,0.03) 0%, rgba(255,255,255,0.01) 100%);
+            border-radius: 4px;
+        }
+        
+        /* Fix taskbar gap - Start button should be flush left */
+        .taskbar-apps {
+            padding-left: 0 !important;
+        }
+        
+        /* Override background for visibility */
+        .window-body {
+            min-height: 200px;
+            padding: 20px;
+        }
+        
+        .window-body h2 {
+            margin-top: 0;
+            margin-bottom: 15px;
+        }
+        
+        .window-body p {
+            line-height: 1.6;
+            margin-bottom: 12px;
+        }
+        
+        .window-body .button-group {
+            display: flex;
+            gap: 10px;
+            margin-top: 20px;
+        }
+    </style>
+</head>
+<body>
+    <!-- Theme Switcher Controls -->
+    <div class="theme-controls">
+        <label for="theme-select">Select Theme:</label>
+        <select id="theme-select">
+            <option value="macos">macOS (Dark)</option>
+            <option value="macos_light">macOS (Light)</option>
+            <option value="win11">Windows 11 (Dark)</option>
+            <option value="win11_light">Windows 11 (Light)</option>
+            <option value="win10">Windows 10</option>
+            <option value="win7">Windows 7</option>
+            <option value="winxp">Windows XP</option>
+            <option value="win98">Windows 98</option>
+            <option value="ios">iOS (Dark)</option>
+            <option value="ios_light">iOS (Light)</option>
+            <option value="android">Android</option>
+        </select>
+        
+        <label for="resolution-select">Resolution:</label>
+        <select id="resolution-select">
+            <option value="1920,1080">1920x1080 (Full HD)</option>
+            <option value="1366,768">1366x768 (HD Laptop)</option>
+            <option value="2560,1440">2560x1440 (2K/QHD)</option>
+            <option value="3840,2160">3840x2160 (4K/UHD)</option>
+            <option value="1280,720">1280x720 (HD Ready)</option>
+            <option value="1600,900">1600x900 (HD+)</option>
+            <option value="1920,1200">1920x1200 (WUXGA)</option>
+            <option value="2560,1600">2560x1600 (WQXGA)</option>
+            <option value="3440,1440">3440x1440 (Ultrawide QHD)</option>
+            <option value="1024,768">1024x768 (iPad)</option>
+            <option value="640,360">640x360 (Custom)</option>
+            <option value="360,640">360x640 (Mobile)</option>
+            <option value="1440,900">1440x900 (Custom Laptop)</option>
+            <option value="1680,1050">1680x1050 (WSXGA+)</option>
+        </select>
+        
+        <span class="info">💡 Edit SCSS files in gui/[theme]/, save, and see changes automatically</span>
+    </div>
+
+    <!-- Demo Container -->
+    <div class="demo-container">
+        <div class="computer" id="demo-desktop" data-appearance="macos">
+            <!-- macOS Menubar (shown for macOS themes) -->
+            <div class="menubar" style="display: none;">
+                <div class="menubar-left">
+                    <span class="apple"></span>
+                    <span class="menu-item-app">Finder</span>
+                    <span class="menu-item">File</span>
+                    <span class="menu-item">Edit</span>
+                    <span class="menu-item">View</span>
+                    <span class="menu-item">Go</span>
+                    <span class="menu-item">Window</span>
+                    <span class="menu-item">Help</span>
+                </div>
+                <div class="menubar-right">
+                    <span class="clock">Mon Dec 9 2:36 PM</span>
+                </div>
+            </div>
+
+            <!-- Mobile Status Bar (shown for iOS/Android) -->
+            <div class="statusbar" style="display: none;">
+                <div class="statusbar-left">
+                    <span class="clock">14:36</span>
+                </div>
+                <div class="statusbar-center">
+                    <span class="notch"></span>
+                </div>
+                <div class="statusbar-right">
+                    <span class="status">📶</span>
+                    <span class="status">🔋</span>
+                </div>
+            </div>
+
+            <!-- Desktop Icons -->
+            <div class="desktop-icons" id="desktop-icons" style="display: none;"></div>
+
+            <!-- Example Window -->
+            <div class="window" data-focused="true" style="left: 100px; top: 100px; width: 500px; height: auto;">
+                <div class="title-bar">
+                    <div class="title-bar-text">
+                        <span class="title">td.css Development Example</span>
+                    </div>
+                    <div class="title-bar-controls">
+                        <button class="btn" aria-label="Minimize"></button>
+                        <button class="btn" aria-label="Maximize"></button>
+                        <button class="btn" aria-label="Close"></button>
+                    </div>
+                </div>
+                <div class="window-body">
+                    <h2>Welcome to td.css!</h2>
+                    <p>This is a simple example window showing the td.css design system.</p>
+                    <p>Use the theme switcher above to preview different OS styles.</p>
+                    <p>Key features:</p>
+                    <ul>
+                        <li>Faithful OS UI recreations</li>
+                        <li>Multiple themes (Windows, macOS, iOS, Android)</li>
+                        <li>Easy to customize with SCSS</li>
+                        <li>Hot reload during development</li>
+                        <li>Production-ready CSS output</li>
+                    </ul>
+                    <div class="button-group">
+                        <button class="btn">OK</button>
+                        <button class="btn">Cancel</button>
+                        <button class="btn">Apply</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Windows Taskbar (shown for Windows themes) -->
+            <footer class="taskbar" id="taskbar" style="display: none;">
+                <nav class="taskbar-apps" aria-label="Taskbar apps">
+                    <button class="taskbar-item" aria-label="Start" data-instruction="open start menu"></button>
+                    <ul class="app-list" id="taskbar-apps" aria-label="Pinned apps">
+                        <!-- Dynamically populated -->
+                    </ul>
+                </nav>
+                <div class="system-tray">
+                    <div class="date-time taskbar-item">
+                        <span aria-label="Time">2:36 PM</span>
+                        <span aria-label="Date">12/9/2024</span>
+                    </div>
+                </div>
+            </footer>
+
+            <!-- macOS Dock (shown for macOS themes) -->
+            <div class="dock" id="dock" style="display: none;">
+                <!-- Dynamically populated -->
+            </div>
+
+            <!-- Mobile Navigation (shown for iOS/Android) -->
+            <nav class="navbar" style="display: none;">
+                <button class="nav-btn" aria-label="Back">◀</button>
+                <button class="nav-btn" aria-label="Home">⚪</button>
+                <button class="nav-btn" aria-label="Recent">▣</button>
+            </nav>
+        </div>
+    </div>
+
+    <script>
+        const themeSelect = document.getElementById('theme-select');
+        const resolutionSelect = document.getElementById('resolution-select');
+        const themeLink = document.getElementById('theme-link');
+        const demoDesktop = document.getElementById('demo-desktop');
+        const menubar = document.querySelector('.menubar');
+        const statusbar = document.querySelector('.statusbar');
+        const taskbar = document.querySelector('.taskbar');
+        const dock = document.querySelector('.dock');
+        const navbar = document.querySelector('.navbar');
+        const demoWindow = document.querySelector('.window');
+        const desktopIcons = document.getElementById('desktop-icons');
+
+        // Theme configurations
+        const themeConfig = {
+            macos: { showMenubar: true, showDock: true, showDesktopIcons: true, windowTop: 80, background: '#1e1e1e' },
+            macos_light: { showMenubar: true, showDock: true, showDesktopIcons: true, windowTop: 80, background: '#f0f0f0' },
+            win11: { showTaskbar: true, showDesktopIcons: true, windowTop: 50, background: '#1e1e1e' },
+            win11_light: { showTaskbar: true, showDesktopIcons: true, windowTop: 50, background: '#f3f3f3' },
+            win10: { showTaskbar: true, showDesktopIcons: true, windowTop: 50, background: '#1e1e1e' },
+            win7: { showTaskbar: true, showDesktopIcons: true, windowTop: 50, background: '#3a6ea5' },
+            winxp: { showTaskbar: true, showDesktopIcons: true, windowTop: 50, background: '#3a6ea5' },
+            win98: { showTaskbar: true, showDesktopIcons: true, windowTop: 50, background: '#008080' },
+            ios: { showStatusbar: true, showNavbar: true, windowTop: 60, background: '#000' },
+            ios_light: { showStatusbar: true, showNavbar: true, windowTop: 60, background: '#f2f2f7' },
+            android: { showStatusbar: true, showNavbar: true, windowTop: 60, background: '#1a1a1a' }
+        };
+
+        // Generate random desktop icons
+        function generateDesktopIcons(themeName, count = 0) {
+            if (count === 0) {
+                count = Math.floor(Math.random() * 26); // 0-25 icons
+            }
+            
+            const iconsetName = themeName.replace('_light', '');
+            const iconset = window.ICONSETS?.[iconsetName];
+            
+            if (!iconset || !iconset.icons) {
+                return '';
+            }
+            
+            const systemIcons = iconset.icons.system_icons || [];
+            const appIcons = iconset.icons.application_icons || [];
+            const allIcons = [...systemIcons, ...appIcons];
+            
+            if (allIcons.length === 0) {
+                return '';
+            }
+            
+            // Pick random icons
+            const selectedIcons = [];
+            const availableIcons = [...allIcons];
+            for (let i = 0; i < Math.min(count, availableIcons.length); i++) {
+                const idx = Math.floor(Math.random() * availableIcons.length);
+                selectedIcons.push(availableIcons.splice(idx, 1)[0]);
+            }
+            
+            return selectedIcons.map(icon => {
+                const title = icon.replace('Icon', '').replace('Folder', '').trim() || icon;
+                return `
+                    <div class="desktop-icon" title="${title}">
+                        <div class="icon" data-icon="${icon}"></div>
+                        <span class="label">${title}</span>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        // Generate dock items for macOS
+        function generateDockItems(themeName) {
+            const iconsetName = themeName.replace('_light', '');
+            const iconset = window.ICONSETS?.[iconsetName];
+            
+            if (!iconset || !iconset.icons) {
+                return '';
+            }
+            
+            const appIcons = iconset.icons.application_icons || [];
+            if (appIcons.length === 0) {
+                return '';
+            }
+            
+            // Pick 3-7 random apps for dock
+            const count = 3 + Math.floor(Math.random() * 5);
+            const selectedApps = [];
+            const availableApps = [...appIcons];
+            
+            for (let i = 0; i < Math.min(count, availableApps.length); i++) {
+                const idx = Math.floor(Math.random() * availableApps.length);
+                selectedApps.push(availableApps.splice(idx, 1)[0]);
+            }
+            
+            let html = selectedApps.map(icon => {
+                return `<button class="dock-item icon" data-icon="${icon}" title="${icon}"></button>`;
+            }).join('');
+            
+            // Add separator and Trash
+            const systemIcons = iconset.icons.system_icons || [];
+            const trashIcon = systemIcons.find(i => i === 'TrashIcon' || i === 'FullTrashIcon') || 'TrashIcon';
+            html += `<span class="sep"></span>`;
+            html += `<button class="dock-item icon" data-icon="${trashIcon}" title="Trash"></button>`;
+            
+            return html;
+        }
+
+        // Generate taskbar items for Windows - matching webtop.py structure exactly
+        function generateTaskbarItems(themeName) {
+            const iconsetName = themeName.replace('_light', '');
+            const iconset = window.ICONSETS?.[iconsetName];
+            
+            let html = '';
+            
+            // Only generate random apps if iconset is available
+            if (iconset && iconset.icons) {
+                const appIcons = iconset.icons.application_icons || [];
+                
+                if (appIcons.length > 0) {
+                    // Pinned apps (no label, no open class)
+                    const pinnedCount = Math.floor(Math.random() * 4); // 0-3 pinned
+                    const selectedPinned = [];
+                    const availableApps = [...appIcons];
+                    
+                    for (let i = 0; i < Math.min(pinnedCount, availableApps.length); i++) {
+                        const idx = Math.floor(Math.random() * availableApps.length);
+                        selectedPinned.push(availableApps.splice(idx, 1)[0]);
+                    }
+                    
+                    html += selectedPinned.map(icon => {
+                        const title = icon.replace('Icon', '').trim() || icon;
+                        return `
+                            <li class="taskbar-item" title="${title}" aria-label="${title}">
+                                <div class="icon" data-icon="${icon}" aria-hidden="true"></div>
+                            </li>
+                        `;
+                    }).join('');
+                    
+                    // Open apps (with label, open class, maybe active)
+                    const openCount = Math.floor(Math.random() * 3); // 0-2 open apps
+                    const selectedOpen = [];
+                    
+                    for (let i = 0; i < Math.min(openCount, availableApps.length); i++) {
+                        const idx = Math.floor(Math.random() * availableApps.length);
+                        selectedOpen.push(availableApps.splice(idx, 1)[0]);
+                    }
+                    
+                    html += selectedOpen.map((icon, idx) => {
+                        const title = icon.replace('Icon', '').trim() || icon;
+                        const isActive = idx === 0 && Math.random() > 0.5; // Maybe first one is active
+                        return `
+                            <li class="taskbar-item open${isActive ? ' active' : ''}" title="${title}" aria-label="${title}" data-instruction="minimize ${title}">
+                                <div class="icon" data-icon="${icon}" aria-hidden="true"></div>
+                                <span class="label">${title}</span>
+                            </li>
+                        `;
+                    }).join('');
+                }
+            }
+            
+            // The demo window itself (open active) - ALWAYS show this even without iconsets
+            html += `
+                <li class="taskbar-item open active" title="td.css Development Example" aria-label="td.css Development Example" data-instruction="minimize td.css Development Example">
+                    <div class="icon" data-icon="GenericWindowIcon" aria-hidden="true"></div>
+                    <span class="label">td.css Development Example</span>
+                </li>
+            `;
+            
+            return html;
+        }
+
+        function updateResolution() {
+            const [width, height] = resolutionSelect.value.split(',').map(Number);
+            demoDesktop.style.width = `${width}px`;
+            demoDesktop.style.height = `${height}px`;
+            
+            // Save preference
+            localStorage.setItem('td-css-resolution', resolutionSelect.value);
+        }
+
+        function switchTheme(themeName) {
+            // Update CSS link
+            themeLink.href = `dist/${themeName}.css`;
+            
+            // Update iconset link (remove _light suffix for iconset lookup)
+            const iconsetTheme = themeName.replace('_light', '');
+            const iconsetLink = document.getElementById('iconset-link');
+            iconsetLink.href = `dist/iconsets/${iconsetTheme}.css`;
+            
+            // Update data-appearance attribute
+            demoDesktop.setAttribute('data-appearance', themeName);
+            
+            // Get theme config
+            const config = themeConfig[themeName];
+            
+            // Set background
+            demoDesktop.style.background = config.background;
+            
+            // Hide all OS-specific elements
+            menubar.style.display = 'none';
+            statusbar.style.display = 'none';
+            taskbar.style.display = 'none';
+            dock.style.display = 'none';
+            navbar.style.display = 'none';
+            desktopIcons.style.display = 'none';
+            
+            // Show relevant elements
+            if (config.showMenubar) menubar.style.display = 'flex';
+            if (config.showStatusbar) statusbar.style.display = 'flex';
+            if (config.showTaskbar) {
+                taskbar.style.display = 'flex';
+                // Populate taskbar with random apps
+                document.getElementById('taskbar-apps').innerHTML = generateTaskbarItems(themeName);
+            }
+            if (config.showDock) {
+                dock.style.display = 'flex';
+                // Populate dock with random apps
+                dock.innerHTML = generateDockItems(themeName);
+            }
+            if (config.showNavbar) navbar.style.display = 'flex';
+            if (config.showDesktopIcons) {
+                desktopIcons.style.display = 'grid';
+                // Populate desktop icons
+                desktopIcons.innerHTML = generateDesktopIcons(themeName);
+            }
+            
+            // Adjust window position
+            demoWindow.style.top = config.windowTop + 'px';
+            
+            // Save preference
+            localStorage.setItem('td-css-theme', themeName);
+        }
+
+        // Handle theme selection
+        themeSelect.addEventListener('change', (e) => {
+            switchTheme(e.target.value);
+        });
+
+        // Handle resolution selection
+        resolutionSelect.addEventListener('change', updateResolution);
+
+        // Load saved preferences
+        const savedTheme = localStorage.getItem('td-css-theme') || 'macos';
+        const savedResolution = localStorage.getItem('td-css-resolution') || '1920,1080';
+        
+        themeSelect.value = savedTheme;
+        resolutionSelect.value = savedResolution;
+        
+        switchTheme(savedTheme);
+        updateResolution();
+
+        // Update clock every second
+        function updateClock() {
+            const now = new Date();
+            
+            // macOS format
+            const macosTime = now.toLocaleString('en-US', {
+                weekday: 'short',
+                month: 'short',
+                day: 'numeric',
+                hour: 'numeric',
+                minute: '2-digit',
+                hour12: true
+            });
+            
+            // Mobile format (24-hour)
+            const mobileTime = now.toLocaleTimeString('en-US', { 
+                hour: '2-digit', 
+                minute: '2-digit',
+                hour12: false 
+            });
+            
+            // Windows format
+            const windowsTime = now.toLocaleTimeString('en-US', { 
+                hour: 'numeric', 
+                minute: '2-digit',
+                hour12: true 
+            });
+            const windowsDate = now.toLocaleDateString('en-US', {
+                month: 'numeric',
+                day: 'numeric',
+                year: 'numeric'
+            });
+            
+            // Update displays
+            const menubarClock = document.querySelector('.menubar .clock');
+            const statusbarClock = document.querySelector('.statusbar .clock');
+            const taskbarTime = document.querySelector('.date-time span:first-child');
+            const taskbarDate = document.querySelector('.date-time span:last-child');
+            
+            if (menubarClock) menubarClock.textContent = macosTime;
+            if (statusbarClock) statusbarClock.textContent = mobileTime;
+            if (taskbarTime) taskbarTime.textContent = windowsTime;
+            if (taskbarDate) taskbarDate.textContent = windowsDate;
+        }
+        
+        updateClock();
+        setInterval(updateClock, 1000);
+
+        // Hot reload via Server-Sent Events
+        if (typeof EventSource !== 'undefined') {
+            const evtSource = new EventSource('/livereload');
+            evtSource.onmessage = (event) => {
+                if (event.data === 'reload') {
+                    console.log('Changes detected, reloading...');
+                    location.reload();
+                }
+            };
+            evtSource.onerror = () => {
+                // Connection lost, will auto-reconnect
+            };
+        }
+    </script>
+</body>
+</html>

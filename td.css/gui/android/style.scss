@@ -1,0 +1,107 @@
+/* Android-inspired minimal styling
+   - Hide the title bar
+   - Make the window occupy the full parent and window-body fill it entirely
+   Intended to be used under [data-appearance="android"] scope
+*/
+
+/* Fill the entire computer area regardless of inline styles */
+.window {
+  position: absolute !important;
+  inset: 0 !important; /* top/right/bottom/left = 0 */
+  width: 100% !important;
+  height: 100% !important;
+  margin: 0 !important;
+  border-radius: 0;
+  background: #121417;
+  color: #e5e7eb; /* light gray text */
+  box-shadow: none; /* flatter android look */
+  overflow: hidden;
+}
+
+/* Hide the title bar entirely */
+.title-bar {
+  display: none !important;
+}
+
+/* Window body takes full space */
+.window-body {
+  position: absolute;
+  inset: 0; /* occupy full window */
+  margin-top: 24px !important;
+  background: transparent; /* rely on window background */
+  overflow: auto;
+}
+
+/* Buttons within body - simple Material-like chip */
+.window-body .btn {
+  appearance: none;
+  -webkit-appearance: none;
+  border: none;
+  border-radius: 9999px;
+  padding: 6px 12px;
+  font-size: 14px;
+  color: #e5e7eb;
+  background: #1f2937; /* slate-800 */
+}
+
+.window-body .btn:hover {
+  background: #374151; /* slate-700 */
+}
+
+.window-body .btn:active {
+  background: #2563eb; /* blue-600 */
+}
+
+/* Hide desktop-specific chrome on Android */
+.menubar,
+.dock,
+.notch,
+.taskbar {
+  display: none !important;
+}
+
+/* Status bar (top) */
+.statusbar {
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 8px;
+  color: #e5e7eb;
+  font: 500 12px/1 system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+  background: linear-gradient(180deg, rgba(0,0,0,0.45), rgba(0,0,0,0.1));
+  z-index: 10;
+}
+.statusbar-left, .statusbar-center, .statusbar-right { display: flex; align-items: center; gap: 6px; }
+.statusbar .clock { font-variant-numeric: tabular-nums; opacity: 0.9; }
+.statusbar .status :global(svg) { width: 16px; height: 16px; opacity: 0.9; }
+.statusbar .notch { display: none; }
+
+/* Navigation bar (bottom) */
+.navbar {
+  position: absolute;
+  left: 0; right: 0; bottom: 0;
+  height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 28px;
+  background: linear-gradient(0deg, rgba(0,0,0,0.45), rgba(0,0,0,0.1));
+  z-index: 10;
+  backdrop-filter: blur(4px);
+}
+.nav-btn {
+  appearance: none;
+  -webkit-appearance: none;
+  border: 0;
+  background: transparent;
+  color: #e5e7eb;
+  width: 36px; height: 36px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 9999px;
+}
+.nav-btn:hover { background: rgba(255,255,255,0.08); }
+.nav-btn:active { background: rgba(37,99,235,0.25); }
+.nav-btn :global(svg) { width: 20px; height: 20px; }

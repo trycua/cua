@@ -1,0 +1,34 @@
+[role="listbox"],
+select[multiple] {
+  background: #fff;
+  border: 1px solid #c0c1cd;
+  display: block;
+  font: var(--w7-font);
+  overflow-y: scroll;
+
+  &.has-shadow {
+    box-shadow: 4px 4px 3px -2px #999;
+  }
+
+  &.has-hover {
+    li:hover {
+      background-color: #2a90ff;
+      color: #fff;
+    }
+  }
+
+  &:focus {
+    outline: none;
+  }
+
+  [role="option"],
+  option {
+    padding: 2px;
+
+    &[aria-selected],
+    &:focus {
+      background-color: #2a90ff;
+      color: #fff;
+    }
+  }
+}

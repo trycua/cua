@@ -1,0 +1,28 @@
+/*-------------------------------------------*\
+    Global
+\*-------------------------------------------*/
+
+.computer {
+    font-family: Arial;
+    font-size: 12px;
+    color: #222222;
+}
+
+@media (hover: none) {
+    button:not(:disabled):hover {
+        box-shadow: var(--border-sunken-outer), var(--border-sunken-inner);
+    }
+}
+pre {
+    box-shadow: var(--border-field);
+}
+
+.dock {
+    display: none;
+}
+
+.navbar,
+.statusbar,
+.menubar {
+    display: none;
+}

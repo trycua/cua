@@ -1,0 +1,86 @@
+/* Windows 11 - Light overrides
+   Scoped via [data-appearance="win11:light"] after win11/index.scss
+   Applies light colors over the dark base in style.scss
+*/
+
+/* Base text color */
+.computer {
+  color: #1b1b1b;
+}
+
+
+.taskbar {
+  background: rgba(255, 255, 255,0.5);
+  color: black;
+}
+
+.taskbar-item:is(:hover, :focus-visible) {
+  background-color: rgba(255, 255, 255, 0.5);
+  border-color: rgba(0,0,0,0.05);
+}
+
+/* Window surfaces */
+.window {
+  background: #FFFFFF; /* light body */
+  border: 1px solid #e6e6e6;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.18), 0 2px 8px rgba(0,0,0,0.12);
+}
+
+/* Title bar (light menu bar) */
+.title-bar {
+  background: #F6F1F4; /* light menu bar */
+  border-bottom: 1px solid #e6e6e6;
+}
+
+.title-bar-text {
+  color: #1b1b1b;
+}
+
+/* Title bar controls: same sizes, light colors, with provided hovers */
+.title-bar-controls .btn {
+  color: #1b1b1b;
+}
+
+/* Min/Max hover: bg #2D2D2D per spec, with white glyph for contrast */
+.title-bar-controls button[aria-label="Minimize"]:hover,
+.title-bar-controls button[aria-label="Maximize"]:hover {
+  background: rgba(0,0,0,0.18);
+}
+
+/* Close hover: bg #C42B1C, white text */
+.title-bar-controls button[aria-label="Close"]:hover {
+  background: #C42B1C;
+  color: #FFFFFF;
+}
+
+/* Window body text on light */
+.window-body {
+  overflow: auto;
+  color: #1b1b1b;
+  background: #FFFFFF; /* light body */
+}
+
+/* Buttons on light */
+.field-row .btn,
+.window-body .btn {
+  border: 1px solid #d0d0d0;
+  background: #f6f6f6;
+  color: #1b1b1b;
+}
+
+.field-row .btn:hover,
+.window-body .btn:hover {
+  background: #ececec;
+}
+
+.field-row .btn:active,
+.window-body .btn:active {
+  background: #e2e2e2;
+}
+
+/* Light focus ring */
+.field-row .btn:focus,
+.window-body .btn:focus {
+  outline: 2px solid #2563eb; /* blue */
+  outline-offset: 1px;
+}

@@ -1,0 +1,23 @@
+.computer {
+    position: relative;
+    overflow: hidden;
+}
+
+.taskbar {
+    user-select: none;
+    cursor: default;
+}
+
+.menubar {
+    user-select: none;
+    cursor: default;
+}
+
+.statusbar {
+    user-select: none;
+    cursor: default;
+}
+
+.window-body {
+    flex-grow: 1;
+}

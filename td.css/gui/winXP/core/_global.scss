@@ -1,0 +1,112 @@
+/*-------------------------------------------*\
+    Global
+\*-------------------------------------------*/
+
+.computer {
+    font-family: Arial;
+    font-size: 12px;
+    color: #222222;
+}
+.surface {
+    background: var(--surface);
+}
+// h1 {
+//     font-size: 5rem;
+// }
+// h2 {
+//     font-size: 2.5rem;
+// }
+// h3 {
+//     font-size: 2rem;
+// }
+// h4 {
+//     font-size: 1.5rem;
+// }
+u {
+    text-decoration: none;
+    border-bottom: 0.5px solid #222222;
+}
+
+a {
+    color: var(--link-blue);
+    &:focus {
+        outline: 1px dotted var(--link-blue);
+    }
+}
+
+code {
+    font-family: monospace;
+    * {
+        font-family: monospace;
+    }
+}
+pre {
+    display: block;
+    padding: 12px 8px;
+    background-color: black;
+    color: #c0c0c0;
+    font-family: "Perfect DOS VGA 437 Win";
+    font-size: 1rem;
+    margin: 0;
+    * {
+        font-family: "Perfect DOS VGA 437 Win";
+    }
+}
+summary {
+    &:focus {
+        outline: 1px dotted #000000;
+    }
+}
+::-webkit-scrollbar {
+    width: 16px;
+    &:horizontal {
+        height: 17px;
+    }
+}
+::-webkit-scrollbar-corner {
+    background: var(--button-face);
+}
+::-webkit-scrollbar {
+    width: 16px;
+    &:horizontal {
+        height: 17px;
+    }
+}
+::-webkit-scrollbar-corner {
+    background: var(--button-face);
+}
+::-webkit-scrollbar-track {
+    background-image: url("icon/scrollbar-background.svg");
+}
+::-webkit-scrollbar-thumb {
+    background-color: var(--button-face);
+    box-shadow: var(--border-raised-outer), var(--border-raised-inner);
+}
+::-webkit-scrollbar-button:horizontal:start:decrement,
+::-webkit-scrollbar-button:horizontal:end:increment,
+::-webkit-scrollbar-button:vertical:start:decrement,
+::-webkit-scrollbar-button:vertical:end:increment {
+    display: block;
+}
+::-webkit-scrollbar-button {
+    &:vertical {
+        &:start {
+            height: 17px;
+            background-image: url("icon/button-up.svg");
+        }
+        &:end {
+            height: 17px;
+            background-image: url("icon/button-down.svg");
+        }
+    }
+    &:horizontal {
+        &:start {
+            width: 16px;
+            background-image: url("icon/button-left.svg");
+        }
+        &:end {
+            width: 16px;
+            background-image: url("icon/button-right.svg");
+        }
+    }
+}

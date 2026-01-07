@@ -47,6 +47,8 @@ dependencies = [
     "numpy>=2.0.0",
     "python-dotenv>=1.0.0",
     "psutil>=5.9.0",
+    "datasets>=3.0.0",
+    "matplotlib>=3.8.0",
     # Docker integration
     "docker>=7.0.0",
     # CUA SDK
@@ -56,7 +58,7 @@ dependencies = [
 [project.optional-dependencies]
 # Full installation with all features
 all = [
-    "cua-bench[browser,agents,cloud,tracing]",
+    "cua-bench[browser,agents,cloud]",
 ]
 
 # Browser automation (for simulated environments)
@@ -77,12 +79,6 @@ cloud = [
     "google-cloud-storage>=2.10.0",
     "gcloud-aio-storage>=9.0.0",
     "grpcio>=1.60.0",
-]
-
-# Tracing & datasets
-tracing = [
-    "datasets>=3.0.0",
-    "matplotlib>=3.8.0",
 ]
 
 # API server (for custom environments)

@@ -1,316 +1,270 @@
 ---
 title: SDK Reference
-description: Programming API for writing agents and tasks
+description: Session interface for interacting with desktop environments
 ---
 
-# SDK Reference
-
-cua-bench provides a Modal-style Python SDK for writing agents and tasks.
+The cua-bench Session interface provides methods for interacting with desktop environments, whether they're simulated (Playwright-based) or native (Docker/QEMU-based).
 
 ## Quick Example
 
 ```python
-from cua_bench import Benchmark, Image, Secret, TaskDataset
+from cua_bench import make
 
-benchmark = Benchmark("my-eval")
-tasks = TaskDataset.from_registry("winarena")
+# Load an environment
+env = make("./my_task")
 
-image = (
-    Image.from_registry("trycua/cua-bench:latest")
-    .pip_install("anthropic")
-)
+# Reset to start a task
+screenshot, task_config = await env.reset(task_id=0)
 
-@benchmark.function(
-    image=image,
-    timeout=600,
-    secrets=[Secret.from_name("anthropic-api-key")],
-)
-async def run_task(task_index: int, env) -> dict:
-    session, task_config = await env.reset()
+# Get the session from the environment
+session = env.session
 
-    for _ in range(50):
-        screenshot = await session.screenshot()
-        # ... agent logic ...
-        await session.click(100, 200)
+# Take actions
+await session.click(100, 200)
+await session.type("Hello, world!")
+await session.key("Enter")
 
-    result = await session.close()
-    return {"reward": result["reward"]}
+# Take a screenshot
+screenshot_bytes = await session.screenshot()
 
-@benchmark.local_entrypoint()
-def main():
-    results = run_task.map(
-        [i for i, _ in enumerate(tasks)],
-        env=[task for task in tasks]
-    )
-    print(f"Avg reward: {sum(r['reward'] for r in results) / len(results):.2%}")
+# Close when done
+await env.close()
 ```
 
 ---
 
-## Core Classes
+## Session Interface
 
-### Benchmark
+The `DesktopSession` protocol defines the interface for interacting with desktop environments.
 
-Create a benchmark context for organizing agent functions and tasks.
-
-```python
-from cua_bench import Benchmark
-
-benchmark = Benchmark("my-benchmark-name")
-```
-
-**Decorators:**
-
-| Decorator | Description |
-|-----------|-------------|
-| `@benchmark.function(...)` | Define an agent function |
-| `@benchmark.task(...)` | Define a task with setup/eval |
-| `@benchmark.local_entrypoint()` | Entry point for local runs |
-
----
-
-### Image
-
-Build agent runtime environments using a builder pattern:
+### Lifecycle Methods
 
 ```python
-from cua_bench import Image
+# Async context manager (preferred)
+async with get_session("native")(os_type="linux") as session:
+    await session.screenshot()
 
-image = (
-    Image.from_registry("trycua/cua-bench:latest")
-    .pip_install("anthropic", "openai")
-    .apt_install("ffmpeg", "imagemagick")
-    .run_commands("python -c 'import anthropic'")
-    .copy_local_dir("./src", "/app/src")
-    .env("MY_VAR", "value")
-)
+# Manual lifecycle
+session = get_session("native")(os_type="linux")
+await session.start()
+try:
+    await session.screenshot()
+finally:
+    await session.close()
 ```
-
-**Builder Methods:**
 
 | Method | Description |
 |--------|-------------|
-| `Image.from_registry(name)` | Start from a base Docker image |
-| `.pip_install(*packages)` | Install Python packages |
-| `.apt_install(*packages)` | Install system packages (Debian/Ubuntu) |
-| `.run_commands(*commands)` | Run shell commands during build |
-| `.copy_local_dir(src, dst)` | Copy local directory into image |
-| `.env(key, value)` | Set environment variable |
+| `start(config?, headless?)` | Start the session and connect to the environment |
+| `close()` | Close the session and cleanup resources |
 
 ---
 
-### Secret
-
-Reference API keys securely:
+### Screenshot & State
 
 ```python
-from cua_bench import Secret
+# Capture screenshot
+screenshot_bytes = await session.screenshot()  # PNG bytes
 
-# Reference by name (configured in .cua/secrets.yaml)
-anthropic_key = Secret.from_name("anthropic-api-key")
+# Get desktop state snapshot
+snapshot = await session.get_snapshot()
+# Returns: Snapshot(windows: List[WindowSnapshot])
+```
 
-# Reference from environment variable
-openai_key = Secret.from_env("OPENAI_API_KEY")
+| Method | Return Type | Description |
+|--------|-------------|-------------|
+| `screenshot()` | `bytes` | Capture screen as PNG bytes |
+| `get_snapshot()` | `Snapshot` | Get lightweight snapshot of desktop state (windows, geometry, metadata) |
 
-@benchmark.function(
-    image=image,
-    secrets=[anthropic_key, openai_key],
+---
+
+### Mouse Actions
+
+```python
+# Click actions
+await session.click(x, y)           # Left click
+await session.right_click(x, y)     # Right click
+await session.double_click(x, y)    # Double click
+await session.middle_click(x, y)    # Middle click
+
+# Movement and drag
+await session.move_to(x, y)         # Move cursor
+await session.drag(from_x, from_y, to_x, to_y)  # Drag gesture
+
+# Scroll
+await session.scroll(direction="down", amount=100)  # Scroll up/down
+```
+
+| Method | Parameters | Description |
+|--------|------------|-------------|
+| `click(x, y)` | x: int, y: int | Left click at coordinates |
+| `right_click(x, y)` | x: int, y: int | Right click at coordinates |
+| `double_click(x, y)` | x: int, y: int | Double click at coordinates |
+| `middle_click(x, y)` | x: int, y: int | Middle click at coordinates |
+| `move_to(x, y)` | x: int, y: int | Move cursor to coordinates |
+| `drag(from_x, from_y, to_x, to_y)` | from_x: int, from_y: int, to_x: int, to_y: int | Drag from one position to another |
+| `scroll(direction, amount)` | direction: "up" \| "down", amount: int | Scroll in given direction |
+
+---
+
+### Keyboard Actions
+
+```python
+# Type text
+await session.type("Hello, world!")
+
+# Press single key
+await session.key("Enter")
+await session.key("Escape")
+await session.key("Tab")
+
+# Key combinations (hotkeys)
+await session.hotkey(["ctrl", "c"])     # Copy
+await session.hotkey(["ctrl", "v"])     # Paste
+await session.hotkey(["ctrl", "shift", "t"])  # Multiple modifiers
+```
+
+| Method | Parameters | Description |
+|--------|------------|-------------|
+| `type(text)` | text: str | Type a string of text |
+| `key(key)` | key: str | Press a single key (e.g., "Enter", "Escape", "Tab") |
+| `hotkey(keys)` | keys: List[str] | Press a key combination (e.g., ["ctrl", "c"]) |
+
+---
+
+### Window Management
+
+```python
+# Launch a window
+pid = await session.launch_window(
+    url="https://example.com",
+    title="My Window",
+    width=800,
+    height=600
 )
-async def run_task(task_index: int, env) -> dict:
-    import os
-    api_key = os.environ["ANTHROPIC_API_KEY"]
+
+# Execute JavaScript in a window
+result = await session.execute_javascript(pid, "document.title")
+
+# Get element position within a window
+rect = await session.get_element_rect(pid, ".button-class")
+# Returns: {"x": 10, "y": 20, "width": 100, "height": 30}
+
+# Close all windows
+await session.close_all_windows()
 ```
 
-**Methods:**
-
-| Method | Description |
-|--------|-------------|
-| `Secret.from_name(name)` | Reference a named secret |
-| `Secret.from_env(var)` | Reference an environment variable |
+| Method | Parameters | Return Type | Description |
+|--------|------------|-------------|-------------|
+| `launch_window(url?, html?, folder?, ...)` | Various options for window creation | `int \| str` | Launch a window and return its process ID |
+| `execute_javascript(pid, js)` | pid: int \| str, js: str | `Any` | Execute JavaScript in a specific window |
+| `get_element_rect(pid, selector)` | pid: int \| str, selector: str | `dict \| None` | Get element rectangle in window or screen space |
+| `close_all_windows()` | - | `None` | Close or clear all open windows |
 
 ---
 
-### TaskDataset
+### Action System
 
-Load task definitions from the registry or local paths:
-
-```python
-from cua_bench import TaskDataset
-
-# Load from registry
-tasks = TaskDataset.from_registry("winarena")
-tasks = TaskDataset.from_registry("osworld")
-
-# Load from local path
-tasks = TaskDataset.from_path("./my_tasks/")
-
-# Filter tasks
-tasks = tasks.filter(domain="chrome")
-tasks = tasks.filter(difficulty="easy")
-tasks = tasks[:10]  # First 10 tasks
-
-# Iterate
-for task in tasks:
-    print(task.id, task.description)
-```
-
-**Methods:**
-
-| Method | Description |
-|--------|-------------|
-| `TaskDataset.from_registry(name)` | Load from Cua registry |
-| `TaskDataset.from_path(path)` | Load from local directory |
-| `.filter(**kwargs)` | Filter by attributes |
-| `[start:end]` | Slice tasks |
-| `len(tasks)` | Get task count |
-
----
-
-### Session Interface
-
-Interact with the desktop environment:
+For more advanced use cases, you can use the action dataclasses directly:
 
 ```python
-@benchmark.function(image=image)
-async def run_task(task_index: int, env) -> dict:
-    session, task_config = await env.reset()
-
-    # Screenshot
-    screenshot_bytes = await session.screenshot()  # PNG bytes
-    screenshot_b64 = await session.screenshot(format="base64")
-
-    # Mouse actions
-    await session.click(x, y)
-    await session.right_click(x, y)
-    await session.double_click(x, y)
-    await session.drag(from_x, from_y, to_x, to_y)
-    await session.scroll(x, y, direction="down", amount=3)
-    await session.move_to(x, y)
-
-    # Keyboard actions
-    await session.type("Hello, world!")
-    await session.key("Enter")
-    await session.hotkey(["ctrl", "c"])
-
-    # Advanced
-    snapshot = await session.get_snapshot()  # Window info
-    pid = await session.launch_window("https://example.com")
-    result = await session.execute_javascript(pid, "document.title")
-
-    # Finalize
-    result = await session.close()  # Runs evaluation
-    return {"reward": result["reward"]}
-```
-
-**Session Methods:**
-
-| Method | Description |
-|--------|-------------|
-| `screenshot(format?)` | Capture screen (PNG bytes or base64) |
-| `click(x, y)` | Left click at coordinates |
-| `right_click(x, y)` | Right click |
-| `double_click(x, y)` | Double click |
-| `drag(x1, y1, x2, y2)` | Drag gesture |
-| `scroll(x, y, direction, amount)` | Scroll at position |
-| `move_to(x, y)` | Move cursor |
-| `type(text)` | Type text |
-| `key(key)` | Press single key |
-| `hotkey(keys)` | Key combination (e.g., `["ctrl", "c"]`) |
-| `get_snapshot()` | Get desktop state |
-| `launch_window(url)` | Launch browser window |
-| `execute_javascript(pid, js)` | Run JS in window |
-| `close()` | Finalize and get result |
-
----
-
-## Execution Patterns
-
-Agent functions support multiple execution patterns:
-
-```python
-@benchmark.function(image=image, timeout=600)
-async def run_task(task_index: int, env) -> dict:
-    ...
-
-@benchmark.local_entrypoint()
-def main():
-    # Single local execution
-    result = run_task.local(task_index=0, env=tasks[0])
-
-    # Single remote execution
-    result = run_task.remote(task_index=0, env=tasks[0])
-
-    # Parallel execution (recommended)
-    results = run_task.map(
-        [i for i, _ in enumerate(tasks)],
-        env=[task for task in tasks]
-    )
-
-    # With concurrency limit
-    results = run_task.map(
-        task_indices,
-        env=task_configs,
-        concurrency=10,
-    )
-```
-
-**Execution Methods:**
-
-| Method | Description |
-|--------|-------------|
-| `.local(...)` | Run locally in current process |
-| `.remote(...)` | Run single task remotely |
-| `.map(...)` | Run multiple tasks in parallel |
-
----
-
-## Task Definition
-
-Define tasks using a generator pattern with `yield`:
-
-```python
-from cua_bench import benchmark, Demonstrations
-
-@benchmark.task(
-    environment="windows-qemu",
-    oracle=Demonstrations.from_name("my-demo"),
-    timeout=600,
+from cua_bench.types import (
+    ClickAction,
+    RightClickAction,
+    DoubleClickAction,
+    MiddleClickAction,
+    DragAction,
+    MoveToAction,
+    ScrollAction,
+    TypeAction,
+    KeyAction,
+    HotkeyAction,
+    WaitAction,
+    DoneAction,
 )
-async def my_task(session):
-    # ─── SETUP (runs on env.reset()) ───
-    import subprocess
-    subprocess.run(["powershell", "-Command", "Start-Process notepad"])
 
-    # ─── YIELD TASK DESCRIPTION ───
-    yield {
-        "description": "Type 'Hello World' in Notepad",
-        "hints": ["Use Ctrl+S to save"],
-    }
-
-    # ─── EVALUATION (runs on session.close()) ───
-    import os
-    if os.path.exists("C:/Users/User/Desktop/hello.txt"):
-        return {"success": True, "reward": 1.0}
-
-    return {"success": False, "reward": 0.0}
+# Execute an action directly
+await session.execute_action(ClickAction(x=100, y=200))
+await session.execute_action(TypeAction(text="Hello"))
+await session.execute_action(HotkeyAction(keys=["ctrl", "c"]))
 ```
 
-**Task Decorator Options:**
+**Available Action Types:**
 
-| Option | Type | Description |
-|--------|------|-------------|
-| `environment` | string | Platform type |
-| `oracle` | Demonstrations | Optional oracle demonstration |
-| `timeout` | int | Task timeout in seconds |
-| `tags` | list | Task tags for filtering |
+| Action Class | Fields | Description |
+|--------------|--------|-------------|
+| `ClickAction` | x: int, y: int | Left click at position |
+| `RightClickAction` | x: int, y: int | Right click at position |
+| `DoubleClickAction` | x: int, y: int | Double click at position |
+| `MiddleClickAction` | x: int, y: int | Middle click at position |
+| `DragAction` | from_x: int, from_y: int, to_x: int, to_y: int, duration: float | Drag gesture |
+| `MoveToAction` | x: int, y: int, duration: float | Move cursor |
+| `ScrollAction` | direction: "up" \| "down", amount: int | Scroll action |
+| `TypeAction` | text: str | Type text |
+| `KeyAction` | key: str | Press single key |
+| `HotkeyAction` | keys: List[str] | Key combination |
+| `WaitAction` | seconds: float | Wait/pause |
+| `DoneAction` | - | Signal completion |
 
-**Task Return Value:**
+---
+
+## Provider Types
+
+cua-bench supports two provider types:
+
+### Simulated Desktop (Playwright-based)
+
+- **Name:** `"simulated"` or `"webtop"`
+- **Description:** HTML/CSS desktop simulation in headless browser
+- **Pros:** Fast, no Docker required
+- **Use cases:** Web app testing, UI benchmarks
 
 ```python
-{
-    "success": bool,      # Whether task succeeded
-    "reward": float,      # 0.0 to 1.0
-    "reason": str,        # Optional explanation
-    "details": dict,      # Optional extra data
-}
+from cua_bench.computers.base import get_session
+
+SessionClass = get_session("simulated")
+session = SessionClass(env=env)
 ```
+
+### Native Desktop (Docker/QEMU-based)
+
+- **Name:** `"native"` or `"computer"`
+- **Description:** Real OS in Docker/QEMU container
+- **Pros:** Actual desktop environment with real applications
+- **Requires:** Docker
+- **Use cases:** Real app testing, OS-level tasks
+
+```python
+from cua_bench.computers.base import get_session
+
+SessionClass = get_session("native")
+session = SessionClass(env=env)
+```
+
+---
+
+## Data Types
+
+### Snapshot
+
+```python
+@dataclass
+class WindowSnapshot:
+    window_type: Literal["webview", "process", "desktop"]
+    pid: Optional[str] = None
+    url: Optional[str] = None
+    html: Optional[str] = None
+    title: str = ""
+    x: int = 0
+    y: int = 0
+    width: int = 0
+    height: int = 0
+    active: bool = False
+    minimized: bool = False
+
+@dataclass
+class Snapshot:
+    windows: List[WindowSnapshot]
+```
+
+The `get_snapshot()` method returns a `Snapshot` object containing information about all open windows, their positions, sizes, and states.

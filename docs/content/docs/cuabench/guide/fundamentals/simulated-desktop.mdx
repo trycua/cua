@@ -1,9 +1,11 @@
 ---
-title: HTML Desktops
-description: Preview tasks with themed desktop environments (no Docker required)
+title: Simulated Desktop (Preview)
+description: Preview feature for testing tasks with themed desktop environments (no Docker required)
 ---
 
-# HTML Desktops
+<Callout type="info">
+This is a **preview feature** for rapid development and testing.
+</Callout>
 
 When you set `provider="simulated"` in your task config, you can preview it in a lightweight HTML/CSS desktop environment without Docker. This renders OS-themed window chrome, taskbars, and desktop styling around your GUI.
 
@@ -28,7 +30,7 @@ def load():
         cb.Task(
             description='Click the Submit button',
             computer={
-                "provider": "simulated",  # Enables HTML desktop
+                "provider": "simulated",  # Enables simulated desktop
                 "setup_config": {
                     "os_type": "win11",  # linux, win11, or macos
                     "width": 1920,
@@ -70,12 +72,22 @@ def load():
     ]
 ```
 
-## Why Use HTML Desktops?
+## Limitations
+
+Simulated desktop runs in a browser, so it has some restrictions:
+
+- **No shell actions**: Can't execute bash commands or scripts
+- **No native apps**: Can't install or run real applications
+- **HTML/CSS only**: Only works with custom GUIs created via `launch_window()` or `install_app()`
+
+For tasks requiring shell access or native applications, use Docker or QEMU environments instead.
+
+## Why Use Simulated Desktop?
 
 - **No Docker**: Runs directly in browser with Playwright
 - **Fast**: Instant startup, no VM boot time
 - **Visual Diversity**: Train agents on different OS appearances
 - **Deterministic**: Same theme always renders identically
-- **Lightweight**: Run hundreds in parallel
+- **Lightweight**: Run thousands in parallel
 
-Use HTML desktops for quick iteration and agent development. Switch to Docker/QEMU when you need real OS environments.
+Use simulated desktop for quick iteration and agent development. Switch to Docker/QEMU when you need real OS environments.

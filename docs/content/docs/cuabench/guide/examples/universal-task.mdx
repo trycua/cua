@@ -1,9 +1,9 @@
 ---
 title: Create a Universal Task
-description: Build a cross-platform Minesweeper game that works on QEMU, HTML desktops, and Docker
+description: Build a cross-platform Minesweeper game that works on QEMU, simulated desktop, and Docker
 ---
 
-In this tutorial, you'll create a Minesweeper game task using the Universal GUI API. This task is **universal** - it runs across QEMU, HTML desktops, and Docker environments without modification.
+In this tutorial, you'll create a Minesweeper game task using the Universal GUI API. This task is **universal** - it runs across QEMU, simulated desktop, and Docker environments without modification.
 
 **Time:** ~15 minutes
 **Prerequisites:** cua-bench installed
@@ -52,7 +52,7 @@ def load():
                 "mines": mines,
             },
             computer={
-                "provider": "simulated",  # Use HTML desktop for preview
+                "provider": "simulated",  # Use simulated desktop for preview
                 "setup_config": {
                     "os_type": "linux",
                     "width": 800,
@@ -358,7 +358,7 @@ Create `gui/index.html` with the Minesweeper game:
 cb interact tasks/minesweeper --task-id 0
 ```
 
-A browser window will open showing the Minesweeper game in an HTML desktop environment.
+A browser window will open showing the Minesweeper game in a simulated desktop environment.
 
 ### Run with Oracle
 
@@ -386,7 +386,7 @@ cb run task tasks/minesweeper --agent cua-agent --model anthropic/claude-sonnet-
 ## Why Universal?
 
 This task works across all platforms:
-- **HTML Desktops**: Set `provider: "simulated"` for lightweight browser preview
+- **Simulated Desktop**: Set `provider: "simulated"` for lightweight browser preview
 - **Docker**: Use real Linux desktop environments
 - **QEMU**: Run on actual Windows/Linux VMs
 
@@ -394,6 +394,6 @@ The same HTML GUI and task code runs everywhere.
 
 ## Next Steps
 
-- Learn about [HTML Desktops](/cuabench/guide/fundamentals/html-desktops) for themed previews
+- Learn about [Simulated Desktop](/cuabench/guide/fundamentals/simulated-desktop) for themed previews
 - See [Universal GUI](/cuabench/guide/fundamentals/universal-gui) for the full API
 - Build a [Custom Agent](/cuabench/guide/examples/custom-agent) to solve tasks

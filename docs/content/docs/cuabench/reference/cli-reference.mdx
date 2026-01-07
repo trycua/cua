@@ -242,14 +242,13 @@ cb task generate "<description>" [options]
 View and manage trace datasets.
 
 ```bash
-cb trace <action> [options]
+cb trace <action> <id>
 ```
 
-| Command | Description |
-|---------|-------------|
-| `cb trace view <path>` | View a single trace dataset in browser |
-| `cb trace grid <dir>` | View multiple traces in a grid layout |
-| `cb trace replay <dataset>` | Create a replay task from a trace |
+| Command            | Description                                                   |
+|--------------------|---------------------------------------------------------------|
+| `cb trace view <id>` | View a single trace in browser (accepts run_id or session_id) |
+| `cb trace grid <id>` | View all traces in a run as a grid (accepts run_id)           |
 
 ## Dataset Commands
 

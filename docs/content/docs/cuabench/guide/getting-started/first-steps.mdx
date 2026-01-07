@@ -222,32 +222,3 @@ cb run stop <run_id>
 # View traces from a specific run
 cb trace view <run_id>
 ```
-
-## Advanced: Wait for Completion
-
-By default, runs execute asynchronously. To wait for completion inline:
-
-```bash
-# Wait for single task to complete
-cb run task tasks/click_button \
-    --agent cua-agent \
-    --model anthropic/claude-haiku-4-5 \
-    --wait
-
-# This blocks until the task completes and shows results immediately
-```
-
-## Export Training Data
-
-Export agent trajectories to training datasets:
-
-```bash
-# Export with aguvis-stage-1 format
-cb dataset build outputs/<run-id> --save-dir datasets/
-
-# Export with gui-r1 format
-cb dataset build outputs/<run-id> --mode gui-r1 --save-dir datasets/
-
-# Push to Hugging Face
-cb dataset build outputs/<run-id> --push-to-hub --repo-id username/my-dataset
-```

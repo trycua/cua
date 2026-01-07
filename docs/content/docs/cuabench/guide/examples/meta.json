@@ -4,6 +4,7 @@
   "icon": "Blocks",
   "pages": [
     "universal-task",
+    "native-task",
     "genai-task-generation",
     "custom-agent"
   ]

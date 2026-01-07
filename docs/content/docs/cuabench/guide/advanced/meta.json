@@ -2,5 +2,10 @@
   "title": "Advanced",
   "description": "Build your own tasks and agents",
   "icon": "Layers",
-  "pages": ["creating-private-tasks", "custom-agents", "configuration"]
+  "pages": [
+    "images",
+    "creating-private-tasks",
+    "custom-agents",
+    "configuration"
+  ]
 }

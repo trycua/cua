@@ -27,7 +27,7 @@ Learn the basic workflow by running a single task end-to-end.
 Start by exploring the task interactively in a browser window to see how it works:
 
 ```bash
-cb interact tasks/click_button --variant-id 0
+cb interact tasks/slack_env --variant-id 0
 ```
 
 This opens a visible browser where you can manually interact with the task to understand what needs to be done.
@@ -40,7 +40,7 @@ Now run the same task with an AI agent. Tasks run **asynchronously by default** 
 export ANTHROPIC_API_KEY=sk-....
 
 # Run a single task (async - returns immediately)
-cb run task tasks/click_button --agent cua-agent --model anthropic/claude-sonnet-4-20250514
+cb run task tasks/slack_env --agent cua-agent --model anthropic/claude-sonnet-4-20250514
 ```
 
 You'll see output like:
@@ -79,7 +79,7 @@ Run ID: 96d41b51
 
 SESSION ID            ENVIRONMENT      VARIANT    STATUS         REWARD
 ----------------      ------------     -------    -----------    ------
-task-96d41b51         click_button     0          ✓ completed    1.0
+task-96d41b51         slack_env        0          ✓ completed    1.0
 
 ✓ All sessions completed!
 Average Reward: 1.000

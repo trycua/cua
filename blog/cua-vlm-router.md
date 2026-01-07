@@ -109,7 +109,7 @@ Same code structure. No other changes needed.
 The router exposes an OpenAI-compatible API at `https://inference.cua.ai/v1`:
 
 ```bash
-curl -X POST https://inference.cua.ai/v1/chat/completions \
+curl -X POST https://inference.cua.ai/v1/messages \
   -H "Authorization: Bearer ${CUA_API_KEY}" \
   -H "Content-Type: application/json" \
   -d '{

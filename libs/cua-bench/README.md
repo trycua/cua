@@ -1,65 +1,297 @@
 # cua-bench
 
-A toolkit for verifiable cross-platform computer-use RL environments and benchmarks. Supports real Windows, Linux, macOS, and Android VM environments, as well as lightweight HTML-based webtop environments.
+A toolkit for verifiable cross-platform computer-use RL environments and benchmarks. Create custom GUI tasks with HTML/CSS/JS or run tasks on real Windows, Linux, macOS environments.
 
 ## Installation
 
 ```bash
-# Install cua-bench CLI
+pip install cua-bench
+```
+
+Or install from source:
+
+```bash
+git clone https://github.com/trycua/cua.git
+cd cua/libs/cua-bench
 pip install -e .
-
-# Or with uv
-uv pip install -e .
-
-# Install playwright (for webtop environments)
-playwright install chromium
 ```
 
 ## Quick Start
 
-### Base Images
+### 1. Create a Base Image (Optional)
 
-Base images are reproducible environments for running benchmarks. The naming convention indicates the underlying technology:
-
-| Type | Command | Description | Requirements |
-|------|---------|-------------|--------------|
-| `linux-docker` | `cb image create linux-docker` | Linux GUI container (XFCE) | Docker |
-| `linux-qemu` | `cb image create linux-qemu` | Linux VM with QEMU/KVM | Docker + KVM |
-| `windows-qemu` | `cb image create windows-qemu --download-iso` | Windows 11 VM | Docker + KVM |
-| `android-qemu` | `cb image create android-qemu` | Android VM | Docker + KVM |
-| `macos-lume` | `cb image create macos-lume` | macOS VM via Lume | Apple Silicon |
-
-### Create an Image
+For tasks requiring native environments (real OS), create a base image:
 
 ```bash
-# Quick setup (Linux container, no KVM required)
+# Quick setup: Linux container (no KVM required)
 cb image create linux-docker
 
-# Windows VM setup (~1-2 hours, downloads Windows ISO)
+# Windows VM (requires KVM, ~1-2 hours)
 cb image create windows-qemu --download-iso
 
 # Check available images
 cb image list
 ```
 
-### Start a Sandbox
+Most tasks use simulated environments (HTML/CSS/JS) and don't require base images.
+
+### 2. Run a Task
 
 ```bash
-# Start sandbox from image
-cb sandbox start linux-docker
-cb sandbox start windows-qemu
+export ANTHROPIC_API_KEY=sk-....
 
-# Start with custom name
-cb sandbox start windows-qemu --name my-test
+# Run a single task with an AI agent (async)
+cb run task tasks/click_button --agent cua-agent --model anthropic/claude-sonnet-4-20250514
 
-# List running sandboxes
-cb sandbox list
+# Watch progress
+cb run watch <run_id>
 
-# Connect to sandbox (opens VNC in browser)
-cb sandbox vnc linux-docker
+# View the trace
+cb trace view <run_id>
+```
 
-# Stop sandbox
-cb sandbox stop linux-docker
+### 3. Explore Interactively
+
+```bash
+# Open task in browser for manual testing
+cb interact tasks/click_button --variant-id 0
+
+# Run with oracle solution
+cb interact tasks/click_button --oracle
+```
+
+## Running Tasks
+
+### Single Task
+
+Tasks run **asynchronously by default** and return immediately with a run ID:
+
+```bash
+# Run async (returns immediately)
+cb run task tasks/my_task --agent cua-agent --model anthropic/claude-sonnet-4-20250514
+
+# Monitor progress
+cb run watch <run_id>
+
+# Or wait for completion inline
+cb run task tasks/my_task --agent cua-agent --model anthropic/claude-sonnet-4-20250514 --wait
+
+# Run with oracle solution (reference implementation)
+cb run task tasks/my_task --oracle --wait
+```
+
+### Run a Dataset
+
+Run multiple tasks in parallel:
+
+```bash
+# Run entire dataset
+cb run dataset datasets/cua-bench-basic \
+    --agent cua-agent \
+    --model anthropic/claude-haiku-4-5 \
+    --max-parallel 8 \
+    --max-steps 10
+
+# Run with filtering
+cb run dataset datasets/cua-bench-basic \
+    --task-filter "click*" \
+    --max-variants 1
+```
+
+### Managing Runs
+
+```bash
+# List all runs
+cb run list
+
+# Watch a run in real-time
+cb run watch <run_id>
+
+# Check run status
+cb run info <run_id>
+
+# View logs
+cb run logs <run_id>
+
+# Stop a run
+cb run stop <run_id>
+```
+
+## Viewing Traces
+
+```bash
+# View traces from a run
+cb trace view <run_id>
+
+# Opens interactive viewer at http://127.0.0.1:55115/
+```
+
+## Creating Tasks
+
+### Generate a Task with AI
+
+```bash
+# AI-assisted task generation
+cb generate-task "2048 game" --output tasks/2048_game
+
+# Create empty task scaffold
+cb create-task tasks/my_task
+```
+
+### Task Structure
+
+Every task has a `main.py` with four decorated functions:
+
+```python
+import cua_bench as cb
+from pathlib import Path
+
+pid = None
+
+@cb.tasks_config(split="train")
+def load():
+    return [
+        cb.Task(
+            description='Click the "Submit" button.',
+            metadata={"button_text": "Submit"},
+            computer={
+                "provider": "simulated",  # or "native"
+                "setup_config": {
+                    "os_type": "win11",  # win11, macos (simulated) or linux, windows (native)
+                    "width": 1024,
+                    "height": 768
+                }
+            }
+        )
+    ]
+
+@cb.setup_task(split="train")
+async def start(task_cfg: cb.Task, session: cb.DesktopSession):
+    global pid
+    # Launch a window with HTML GUI
+    pid = await session.launch_window(
+        html=(Path(__file__).parent / "gui/index.html").read_text(),
+        title="My App",
+        width=800,
+        height=600
+    )
+
+@cb.evaluate_task(split="train")
+async def evaluate(task_cfg: cb.Task, session: cb.DesktopSession) -> list[float]:
+    global pid
+    if pid is None:
+        return [0.0]
+
+    # Read state from JavaScript
+    submitted = await session.execute_javascript(pid, "window.__submitted")
+    return [1.0] if submitted else [0.0]
+
+@cb.solve_task(split="train")
+async def solve(task_cfg: cb.Task, session: cb.DesktopSession):
+    global pid
+    if pid is None:
+        return
+
+    # Get element position and click it
+    rect = await session.get_element_rect(pid, "#submit-btn")
+    if rect:
+        await session.click(rect["x"] + rect["width"] // 2, rect["y"] + rect["height"] // 2)
+
+    # Or click via JavaScript
+    # await session.execute_javascript(pid, 'document.querySelector("#submit-btn").click()')
+```
+
+## Programmatic Interface
+
+```python
+import cua_bench as cb
+
+# Load an environment
+env = cb.make("./tasks/my_task")
+
+# Reset to start a task
+screenshot, task_config = await env.reset(task_id=0)
+
+# Get the session
+session = env.session
+
+# Take actions
+await session.click(100, 200)
+await session.type("Hello, world!")
+await session.key("Enter")
+
+# Take screenshot
+screenshot_bytes = await session.screenshot()
+
+# Run oracle solution
+await env.solve()
+
+# Evaluate
+rewards = await env.evaluate()
+
+# Clean up
+await env.close()
+```
+
+### Session API
+
+```python
+# Mouse actions
+await session.click(x, y)
+await session.right_click(x, y)
+await session.double_click(x, y)
+await session.move_to(x, y)
+await session.drag(from_x, from_y, to_x, to_y)
+await session.scroll(direction="down", amount=100)
+
+# Keyboard actions
+await session.type("Hello, world!")
+await session.key("Enter")
+await session.hotkey(["ctrl", "c"])
+
+# Screenshots
+screenshot_bytes = await session.screenshot()  # PNG bytes
+
+# Window management (for simulated tasks)
+pid = await session.launch_window(
+    html="<h1>Hello</h1>",
+    title="My Window",
+    width=800,
+    height=600
+)
+
+# Execute JavaScript in window
+result = await session.execute_javascript(pid, "document.title")
+
+# Get element position
+rect = await session.get_element_rect(pid, ".my-button")
+# Returns: {"x": 10, "y": 20, "width": 100, "height": 30}
+
+# Close all windows
+await session.close_all_windows()
+```
+
+## Base Images
+
+Base images are reproducible environments for running tasks on real operating systems.
+
+### Create Images
+
+```bash
+# Linux container (fast, no KVM)
+cb image create linux-docker
+
+# Linux VM with KVM
+cb image create linux-qemu
+
+# Windows 11 VM (~1-2 hours)
+cb image create windows-qemu --download-iso
+
+# Android VM
+cb image create android-qemu
+
+# macOS VM (Apple Silicon only)
+cb image create macos-lume
 ```
 
 ### Manage Images
@@ -68,193 +300,139 @@ cb sandbox stop linux-docker
 # List all images
 cb image list
 
+# Show image details
+cb image info windows-qemu
+
 # Clone for customization
 cb image clone windows-qemu windows-custom
 
-# Show image details
-cb image info windows-qemu
+# Interactive shell (read-only overlay)
+cb image shell windows-qemu
+
+# Interactive shell (modify golden image)
+cb image shell windows-qemu --writable
 
 # Delete an image
 cb image delete windows-custom
 ```
 
-## Running Benchmarks
+## Export Training Data
 
-### Run Tasks
-
-```bash
-# Run a task with agent evaluation
-cb run tasks/my_task --agent cua-agent --model anthropic/claude-sonnet-4-20250514
-
-# Run with oracle solution
-cb run tasks/my_task --oracle
-
-# Run on specific image
-cb run tasks/winarena_adapter --image windows-qemu
-
-# Run on cloud (coming soon)
-cb run tasks/my_task --on cloud
-```
-
-### Supported Benchmarks
-
-| Benchmark | Image | Tasks | Description |
-|-----------|--------------|-------|-------------|
-| Windows Arena | `windows-qemu` | 173 | Windows 11 desktop automation across 12 apps |
-| OSWorld | `linux-qemu` | 369 | Linux desktop automation |
-| OS-Harm | `linux-qemu` | 150+ | Security/safety evaluation |
-| WebArena | `linux-docker` | 812 | Web browsing tasks |
-| AndroidWorld | `android-qemu` | 200+ | Android mobile automation |
-| macOSWorld | `macos-lume` | 100+ | macOS desktop automation |
-
-### Windows Arena
-
-Run Windows desktop automation benchmarks with 173 tasks across 12 application domains.
-
-**Requirements:** x86_64 Linux with KVM support (nested virtualization).
+Export agent trajectories to training datasets:
 
 ```bash
-# Create base image (~1-2 hours)
-cb image create windows-qemu --download-iso
+# Export with aguvis-stage-1 format (default)
+cb dataset build <run-id> --save-dir datasets/
 
-# Start sandbox
-cb sandbox start windows-qemu
+# Export with gui-r1 format
+cb dataset build <run-id> --mode gui-r1 --save-dir datasets/
 
-# List available tasks
-cb run tasks/winarena_adapter --list
-
-# Run a specific task variant
-cb run task tasks/winarena_adapter --variant-id 0
-
-# Stop when done
-cb env stop windows-qemu
+# Push to Hugging Face
+cb dataset build <run-id> --push-to-hub --repo-id username/my-dataset
 ```
 
-## Creating Tasks
+**Available formats:**
+- **aguvis-stage-1** - Action augmentation dataset (AgUVis/smol2operator style)
+- **gui-r1** - Low-level click instructions (GUI-R1 format)
 
-### Generate a Task
+## Platform Support
 
-```bash
-# AI-assisted task generation
-cb generate-task "2048 game with icons" --output tasks/2048_icons_env
+### Simulated Desktop (HTML/CSS/JS)
 
-# Create empty task scaffold
-cb create-task tasks/my_env
-```
+Fast, lightweight environments using Playwright. No Docker required.
 
-### Interact with Tasks
+**Best for:**
+- Custom GUI tasks
+- Web app testing
+- Quick iteration
+- Cross-platform compatibility
 
-```bash
-# Interactive mode (opens browser)
-cb interact tasks/my_env
+**Themes:**
+- `win11` - Windows 11 desktop simulation
+- `macos` - macOS desktop simulation
 
-# With specific task variant
-cb interact tasks/my_env --variant-id 0
+### Native Desktop (Docker/QEMU)
 
-# Run oracle and save screenshot
-cb interact tasks/my_env --oracle --screenshot output.png
-```
+Real operating systems running in containers or VMs.
 
-## Session Management
+**Best for:**
+- Real application testing
+- OS-specific tasks
+- Benchmarks requiring actual apps
 
-```bash
-# List all sessions
-cb sessions
-
-# View session logs
-cb sessions logs <session_id>
-
-# Open log directory
-cb sessions open <session_id>
-
-# Stop a session
-cb sessions stop <session_id>
-
-# Clean up inactive sessions
-cb sessions --clean
-```
-
-## Dataset Export
-
-Export snapshots to training datasets for UI grounding:
-
-```bash
-# Process with aguvis-stage-1 format (default)
-cb process ./outputs --save-dir ./datasets
-
-# Process with gui-r1 format
-cb process ./outputs --mode gui-r1
-
-# Push to Hugging Face Hub
-cb process ./outputs --push-to-hub --repo-id username/repo
-```
-
-**Available Processors:**
-
-- **`aguvis-stage-1`** - Action augmentation dataset (AgUVis/smol2operator style)
-- **`gui-r1`** - Low-level click instructions (GUI-R1 format)
-
-## Programmatic Interface
-
-```python
-import cua_bench as cb
-
-# Create an environment
-env = cb.make("tasks/click_env")
-
-# Setup and get initial screenshot
-screenshot, task_cfg = await env.reset(task_id=0)
-
-# Execute a step
-screenshot = await env.step('page.click("#submit")')
-
-# Run the solution
-screenshot = await env.solve()
-
-# Evaluate the result
-rewards = await env.evaluate()
-
-# Clean up
-await env.close()
-```
-
-### Python API for Running Environments
-
-```python
-from cua_bench.cli.commands.env import get_computer
-
-# Connect to a running environment
-computer = await get_computer("windows-qemu")
-
-# Take screenshot
-screenshot = await computer.interface.screenshot()
-
-# Execute actions
-await computer.interface.left_click(100, 200)
-await computer.interface.type_text("Hello world")
-await computer.interface.key("Enter")
-```
+**Platforms:**
+- `linux-docker` - Linux container (XFCE)
+- `linux-qemu` - Linux VM with KVM
+- `windows-qemu` - Windows 11 VM
+- `android-qemu` - Android VM
+- `macos-lume` - macOS VM (Apple Silicon)
 
 ## CLI Reference
 
-| Command | Description |
-|---------|-------------|
-| `cb image create <platform>` | Create base image |
-| `cb image list` | List available images |
-| `cb image clone <src> <dst>` | Clone an image |
-| `cb image delete <name>` | Delete an image |
-| `cb sandbox start <image>` | Start sandbox from image |
-| `cb sandbox stop <id>` | Stop sandbox |
-| `cb sandbox list` | List running sandboxes |
-| `cb sandbox vnc <id>` | Open VNC viewer |
-| `cb run <task>` | Run task with evaluation |
-| `cb interact <task>` | Interactive task mode |
-| `cb process <dir>` | Export training data |
+### Image Commands
 
-For full CLI documentation, see [docs/CLI_REFERENCE.md](docs/CLI_REFERENCE.md).
+```bash
+cb image create <platform>     # Create base image
+cb image list                   # List all images
+cb image info <name>            # Show image details
+cb image clone <src> <dst>      # Clone an image
+cb image delete <name>          # Delete an image
+cb image shell <name>           # Interactive shell (read-only overlay)
+```
+
+### Run Commands
+
+```bash
+cb run task <path>              # Run a single task
+cb run dataset <path>           # Run all tasks in dataset
+cb run list                     # List all runs
+cb run watch <id>               # Watch run in real-time
+cb run info <id>                # Show run details
+cb run logs <id>                # View run logs
+cb run stop <id>                # Stop a run
+```
+
+### Interact Commands
+
+```bash
+cb interact <task>              # Interactive mode (manual testing)
+cb interact <task> --oracle     # Run oracle solution
+cb interact <task> --variant-id <n>  # Specific task variant
+```
+
+### Trace Commands
+
+```bash
+cb trace view <run-id>          # View traces from a run
+cb trace list                   # List all traces
+```
+
+### Dataset Commands
+
+```bash
+cb dataset list                 # List available datasets
+cb dataset build <run-id>       # Export training data
+```
+
+### Platform Commands
+
+```bash
+cb platform list                # List available platforms
+cb status                       # Show system status
+```
 
 ## Documentation
 
-- [CLI Reference](docs/CLI_REFERENCE.md) - Complete CLI specification
-- [Local Testing Guide](docs/LOCAL_TESTING.md) - Testing on remote VMs
-- [Windows Arena](tasks/winarena_adapter/README.md) - Windows Arena adapter docs
+- **Full Documentation**: https://cuabench.ai/
+- **Getting Started**: https://cuabench.ai/cuabench/guide/getting-started
+- **CLI Reference**: https://cuabench.ai/cuabench/reference/cli-reference
+- **SDK Reference**: https://cuabench.ai/cuabench/reference/sdk-reference
+- **Creating Tasks**: https://cuabench.ai/cuabench/guide/creating-tasks
+
+## Examples
+
+See the `tasks/` directory for example tasks and the documentation for detailed guides.
+
+## License
+
+Licensed under the Apache License 2.0. See [LICENSE](LICENSE) for details.

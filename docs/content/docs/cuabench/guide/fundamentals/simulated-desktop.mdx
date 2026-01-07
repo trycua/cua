@@ -13,7 +13,6 @@ When you set `provider="simulated"` in your task config, you can preview it in a
 
 | Theme | Style |
 |-------|-------|
-| `linux` | XFCE-style panel and GTK widgets |
 | `win11` | Windows 11 with rounded corners and centered taskbar |
 | `macos` | macOS with top menu bar and dock |
 
@@ -32,7 +31,7 @@ def load():
             computer={
                 "provider": "simulated",  # Enables simulated desktop
                 "setup_config": {
-                    "os_type": "win11",  # linux, win11, or macos
+                    "os_type": "win11",  # win11 or macos
                     "width": 1920,
                     "height": 1080,
                 }
@@ -54,7 +53,7 @@ Generate tasks across different desktop themes:
 ```python
 @cb.tasks_config(split="train")
 def load():
-    themes = ["linux", "win11", "macos"]
+    themes = ["win11", "macos"]
 
     return [
         cb.Task(

@@ -34,14 +34,14 @@ def load():
                 }
             }
         )
-        for provider, os_type in [("native", "linux"), ("native", "windows"), ("simulated", "linux"), ("simulated", "win11"), ("simulated", "macos")]
+        for provider, os_type in [("native", "linux"), ("native", "windows"), ("simulated", "win11"), ("simulated", "macos")]
         # More task variants...
     ]
 ```
 
 Each task variant can have different metadata, enabling thousands of unique scenarios from a single template.
 
-The `native` provider **emulates** `windows` and `linux` operating systems using QEMU/Docker, while the `simulated` provider lightweight Playwright-based desktop environments with themes such as `linux`, `win11`, and `macos`. See [Simulated Desktop](/cuabench/guide/fundamentals/simulated-desktop) for all available themes.
+The `native` provider **emulates** `windows` and `linux` operating systems using QEMU/Docker, while the `simulated` provider lightweight Playwright-based desktop environments with themes such as `win11` and `macos`. See [Simulated Desktop](/cuabench/guide/fundamentals/simulated-desktop) for all available themes.
 
 ### 2. Setup (`@cb.setup_task`)
 

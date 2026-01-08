@@ -4,6 +4,7 @@
   "private": true,
   "scripts": {
     "build": "next build",
+    "build:db": "uv run scripts/build_docs_db.py",
     "dev": "next dev --turbo -p 8090",
     "start": "next start -p 8090",
     "postinstall": "fumadocs-mdx"

@@ -5,6 +5,7 @@
 .contentlayer
 .content-collections
 .source
+/data
 
 # test & build
 /coverage

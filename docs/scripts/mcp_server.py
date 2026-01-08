@@ -34,6 +34,7 @@ Always cite the source URL when providing information.""",
 # Global database connections
 _lance_db: Optional[lancedb.DBConnection] = None
 _lance_table = None
+_sqlite_conn: Optional[sqlite3.Connection] = None
 
 
 def get_lance_table():
@@ -51,15 +52,17 @@ def get_lance_table():
 
 
 def get_sqlite_conn() -> sqlite3.Connection:
-    """Get SQLite connection"""
-    if not SQLITE_PATH.exists():
-        raise RuntimeError(
-            f"SQLite database not found at {SQLITE_PATH}. "
-            "Run generate_sqlite.py first to create the database."
-        )
-    conn = sqlite3.connect(SQLITE_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
+    """Get or create SQLite connection"""
+    global _sqlite_conn
+    if _sqlite_conn is None:
+        if not SQLITE_PATH.exists():
+            raise RuntimeError(
+                f"SQLite database not found at {SQLITE_PATH}. "
+                "Run generate_sqlite.py first to create the database."
+            )
+        _sqlite_conn = sqlite3.connect(SQLITE_PATH)
+        _sqlite_conn.row_factory = sqlite3.Row
+    return _sqlite_conn
 
 
 # =============================================================================
@@ -189,8 +192,6 @@ def search_docs_fts(
 
     except sqlite3.OperationalError as e:
         return [{"error": f"FTS query error: {str(e)}. Try simplifying your query."}]
-    finally:
-        conn.close()
 
 
 @mcp.tool
@@ -207,35 +208,31 @@ def get_page_content(url: str) -> dict:
     conn = get_sqlite_conn()
     cursor = conn.cursor()
 
-    try:
-        # Try exact match first
+    # Try exact match first
+    cursor.execute(
+        "SELECT url, title, category, content, raw_markdown FROM pages WHERE url = ?",
+        (url,)
+    )
+    row = cursor.fetchone()
+
+    # If no exact match, try partial match
+    if not row:
         cursor.execute(
-            "SELECT url, title, category, content, raw_markdown FROM pages WHERE url = ?",
-            (url,)
+            "SELECT url, title, category, content, raw_markdown FROM pages WHERE url LIKE ?",
+            (f"%{url}%",)
         )
         row = cursor.fetchone()
 
-        # If no exact match, try partial match
-        if not row:
-            cursor.execute(
-                "SELECT url, title, category, content, raw_markdown FROM pages WHERE url LIKE ?",
-                (f"%{url}%",)
-            )
-            row = cursor.fetchone()
+    if not row:
+        raise ValueError(f"No page found matching URL: {url}")
 
-        if not row:
-            raise ValueError(f"No page found matching URL: {url}")
-
-        return {
-            "url": row["url"],
-            "title": row["title"],
-            "category": row["category"],
-            "content": row["content"],
-            "has_raw_markdown": bool(row["raw_markdown"]),
-        }
-
-    finally:
-        conn.close()
+    return {
+        "url": row["url"],
+        "title": row["title"],
+        "category": row["category"],
+        "content": row["content"],
+        "has_raw_markdown": bool(row["raw_markdown"]),
+    }
 
 
 @mcp.tool
@@ -253,24 +250,20 @@ def get_page_raw_markdown(url: str) -> dict:
     conn = get_sqlite_conn()
     cursor = conn.cursor()
 
-    try:
-        cursor.execute(
-            "SELECT url, title, raw_markdown FROM pages WHERE url LIKE ?",
-            (f"%{url}%",)
-        )
-        row = cursor.fetchone()
+    cursor.execute(
+        "SELECT url, title, raw_markdown FROM pages WHERE url LIKE ?",
+        (f"%{url}%",)
+    )
+    row = cursor.fetchone()
 
-        if not row:
-            return {"error": f"No page found matching URL: {url}"}
+    if not row:
+        return {"error": f"No page found matching URL: {url}"}
 
-        return {
-            "url": row["url"],
-            "title": row["title"],
-            "raw_markdown": row["raw_markdown"],
-        }
-
-    finally:
-        conn.close()
+    return {
+        "url": row["url"],
+        "title": row["title"],
+        "raw_markdown": row["raw_markdown"],
+    }
 
 
 # =============================================================================
@@ -288,19 +281,15 @@ def get_doc_categories() -> list[dict]:
     conn = get_sqlite_conn()
     cursor = conn.cursor()
 
-    try:
-        cursor.execute("""
-            SELECT category, COUNT(*) as page_count
-            FROM pages
-            GROUP BY category
-            ORDER BY page_count DESC
-        """)
-        rows = cursor.fetchall()
+    cursor.execute("""
+        SELECT category, COUNT(*) as page_count
+        FROM pages
+        GROUP BY category
+        ORDER BY page_count DESC
+    """)
+    rows = cursor.fetchall()
 
-        return [{"category": row["category"], "page_count": row["page_count"]} for row in rows]
-
-    finally:
-        conn.close()
+    return [{"category": row["category"], "page_count": row["page_count"]} for row in rows]
 
 
 @mcp.tool
@@ -320,23 +309,19 @@ def list_pages(category: Optional[str] = None, limit: int = 50) -> list[dict]:
     conn = get_sqlite_conn()
     cursor = conn.cursor()
 
-    try:
-        if category:
-            cursor.execute(
-                "SELECT url, title, category FROM pages WHERE category = ? LIMIT ?",
-                (category, limit)
-            )
-        else:
-            cursor.execute(
-                "SELECT url, title, category FROM pages LIMIT ?",
-                (limit,)
-            )
+    if category:
+        cursor.execute(
+            "SELECT url, title, category FROM pages WHERE category = ? LIMIT ?",
+            (category, limit)
+        )
+    else:
+        cursor.execute(
+            "SELECT url, title, category FROM pages LIMIT ?",
+            (limit,)
+        )
 
-        rows = cursor.fetchall()
-        return [{"url": row["url"], "title": row["title"], "category": row["category"]} for row in rows]
-
-    finally:
-        conn.close()
+    rows = cursor.fetchall()
+    return [{"url": row["url"], "title": row["title"], "category": row["category"]} for row in rows]
 
 
 @mcp.tool
@@ -356,17 +341,13 @@ def search_by_url(url_pattern: str, limit: int = 10) -> list[dict]:
     conn = get_sqlite_conn()
     cursor = conn.cursor()
 
-    try:
-        cursor.execute(
-            "SELECT url, title, category FROM pages WHERE url LIKE ? LIMIT ?",
-            (f"%{url_pattern}%", limit)
-        )
-        rows = cursor.fetchall()
+    cursor.execute(
+        "SELECT url, title, category FROM pages WHERE url LIKE ? LIMIT ?",
+        (f"%{url_pattern}%", limit)
+    )
+    rows = cursor.fetchall()
 
-        return [{"url": row["url"], "title": row["title"], "category": row["category"]} for row in rows]
-
-    finally:
-        conn.close()
+    return [{"url": row["url"], "title": row["title"], "category": row["category"]} for row in rows]
 
 
 # =============================================================================
@@ -389,32 +370,28 @@ def get_stats_resource() -> str:
     conn = get_sqlite_conn()
     cursor = conn.cursor()
 
-    try:
-        cursor.execute("SELECT COUNT(*) FROM pages")
-        total_pages = cursor.fetchone()[0]
+    cursor.execute("SELECT COUNT(*) FROM pages")
+    total_pages = cursor.fetchone()[0]
 
-        cursor.execute("SELECT category, COUNT(*) FROM pages GROUP BY category")
-        categories = cursor.fetchall()
+    cursor.execute("SELECT category, COUNT(*) FROM pages GROUP BY category")
+    categories = cursor.fetchall()
 
-        # Get LanceDB stats
-        table = get_lance_table()
-        total_chunks = table.count_rows()
+    # Get LanceDB stats
+    table = get_lance_table()
+    total_chunks = table.count_rows()
 
-        stats = [
-            "CUA Documentation Database Statistics",
-            "=" * 40,
-            f"Total pages: {total_pages}",
-            f"Total chunks (for semantic search): {total_chunks}",
-            "",
-            "Pages by category:",
-        ]
-        for cat, count in categories:
-            stats.append(f"  - {cat}: {count}")
+    stats = [
+        "CUA Documentation Database Statistics",
+        "=" * 40,
+        f"Total pages: {total_pages}",
+        f"Total chunks (for semantic search): {total_chunks}",
+        "",
+        "Pages by category:",
+    ]
+    for cat, count in categories:
+        stats.append(f"  - {cat}: {count}")
 
-        return "\n".join(stats)
-
-    finally:
-        conn.close()
+    return "\n".join(stats)
 
 
 # =============================================================================
@@ -445,8 +422,7 @@ def main():
         print(f"Warning: {e}")
 
     try:
-        conn = get_sqlite_conn()
-        conn.close()
+        get_sqlite_conn()
         print(f"SQLite loaded from: {SQLITE_PATH}")
     except RuntimeError as e:
         print(f"Warning: {e}")

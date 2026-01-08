@@ -709,6 +709,25 @@ class ComputerAgent:
                 **merged_kwargs,
             }
 
+            # ---- Ollama image input guard ----
+            if isinstance(self.model, str) and self.model.startswith("ollama"):
+                def _contains_image_content(msgs):
+                    for m in msgs:
+                        content = m.get("content")
+                        if isinstance(content, list):
+                            for item in content:
+                                if isinstance(item, dict) and item.get("type") == "image_url":
+                                    return True
+                    return False
+
+                if _contains_image_content(preprocessed_messages):
+                    raise ValueError(
+                        "Ollama models do not support image inputs required by ComputerAgent. "
+                        "Please use a vision-capable model (e.g. OpenAI or Anthropic) "
+                        "or remove computer/screenshot actions."
+                    )
+            # ---------------------------------
+
             # Run agent loop iteration
             result = await self.agent_loop.predict_step(
                 **loop_kwargs,

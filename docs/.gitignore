@@ -26,3 +26,7 @@ yarn-error.log*
 .env*.local
 .vercel
 next-env.d.ts
+
+# Crawler data and database
+/crawled_data
+/docs_db

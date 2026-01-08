@@ -3,9 +3,8 @@
 
 import { useThreads } from '@/lib/threads';
 import { ArrowLeft } from 'lucide-react';
-import { HeaderProps } from '@copilotkit/react-ui';
 
-export function ChatHeader({ setOpen }: HeaderProps) {
+export function ChatHeader() {
   const { getActiveThread, setView } = useThreads();
   const activeThread = getActiveThread();
 

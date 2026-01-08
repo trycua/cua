@@ -22,8 +22,8 @@ export function useTitleGeneration() {
     if (activeThread.title !== DEFAULT_THREAD_TITLE) return;
 
     // Check if we have at least one user message and one assistant response
-    const userMessage = visibleMessages.find((m) => m.role === 'user');
-    const assistantMessage = visibleMessages.find((m) => m.role === 'assistant' && m.content);
+    const userMessage = visibleMessages?.find((m: any) => m.role === 'user');
+    const assistantMessage = visibleMessages?.find((m: any) => m.role === 'assistant' && m.content);
 
     if (!userMessage || !assistantMessage) return;
 
@@ -31,8 +31,8 @@ export function useTitleGeneration() {
     hasGeneratedRef.current.add(activeThreadId);
 
     // Generate title from first exchange
-    const userContent = typeof userMessage.content === 'string'
-      ? userMessage.content
+    const userContent = typeof (userMessage as any).content === 'string'
+      ? (userMessage as any).content
       : '';
 
     // Simple title extraction: use first ~50 chars of user message

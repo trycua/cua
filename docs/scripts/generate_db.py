@@ -85,7 +85,18 @@ def chunk_text(text: str, chunk_size: int = CHUNK_SIZE, overlap: int = CHUNK_OVE
                     if len(current_chunk) + len(sentence) + 1 > chunk_size:
                         if current_chunk:
                             chunks.append(current_chunk.strip())
-                        current_chunk = sentence
+                            # Start new chunk with overlap from previous, similar to paragraph logic
+                            if overlap > 0 and len(current_chunk) > overlap:
+                                overlap_text = current_chunk[-overlap:]
+                                sentence_end = overlap_text.rfind('. ')
+                                if sentence_end > 0:
+                                    overlap_text = overlap_text[sentence_end + 2:]
+                                current_chunk = (overlap_text + " " + sentence).strip()
+                            else:
+                                current_chunk = sentence.strip()
+                        else:
+                            # No existing chunk; start with this sentence
+                            current_chunk = sentence.strip()
                     else:
                         current_chunk = (current_chunk + " " + sentence).strip()
         else:

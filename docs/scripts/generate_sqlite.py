@@ -4,6 +4,7 @@ Creates a full-text search enabled SQLite database from crawled data
 """
 
 import json
+import re
 import sqlite3
 from pathlib import Path
 
@@ -65,7 +66,7 @@ def clean_markdown(markdown: str) -> str:
                 extract_text(token.children)
             
             # Add spacing between block elements
-            if token.type.endswith('_close') and token.type in [
+            if token.type in [
                 'heading_close', 'paragraph_close', 'list_item_close',
                 'blockquote_close', 'code_block_close', 'fence_close'
             ]:
@@ -76,7 +77,6 @@ def clean_markdown(markdown: str) -> str:
     # Join and clean up whitespace
     text = ''.join(text_parts)
     # Normalize multiple newlines to at most double newlines
-    import re
     text = re.sub(r'\n{3,}', '\n\n', text)
     # Normalize multiple spaces to single space within lines
     text = re.sub(r' {2,}', ' ', text)

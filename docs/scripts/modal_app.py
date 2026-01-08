@@ -11,11 +11,13 @@ Usage:
 
 import asyncio
 import json
+import re
 import sqlite3
 from pathlib import Path
 from typing import Optional
 
 import modal
+from markdown_it import MarkdownIt
 
 # Define the Modal app
 app = modal.App("cua-docs-mcp")
@@ -45,6 +47,46 @@ image = (
 VOLUME_PATH = "/data"
 CRAWLED_DATA_PATH = f"{VOLUME_PATH}/crawled_data"
 DB_PATH = f"{VOLUME_PATH}/docs_db"
+
+
+# =============================================================================
+# Helper Functions
+# =============================================================================
+
+def clean_markdown(markdown: str) -> str:
+    """Extract plain text content from markdown using markdown-it-py parser"""
+    md_parser = MarkdownIt()
+    tokens = md_parser.parse(markdown)
+    
+    text_parts = []
+    
+    def extract_text(token_list):
+        for token in token_list:
+            if token.type == 'inline' and token.children:
+                for child in token.children:
+                    if child.type == 'text':
+                        text_parts.append(child.content)
+                    elif child.type == 'code_inline':
+                        text_parts.append(child.content)
+                    elif child.type == 'softbreak':
+                        text_parts.append(' ')
+                    elif child.type == 'hardbreak':
+                        text_parts.append('\n')
+            elif token.type == 'fence' or token.type == 'code_block':
+                text_parts.append(token.content)
+                text_parts.append('\n')
+            
+            if token.children:
+                extract_text(token.children)
+            
+            if token.type in ['heading_close', 'paragraph_close', 'list_item_close', 'blockquote_close']:
+                text_parts.append('\n')
+    
+    extract_text(tokens)
+    text = ''.join(text_parts)
+    text = re.sub(r'\n{3,}', '\n\n', text)
+    text = re.sub(r' {2,}', ' ', text)
+    return text.strip()
 
 
 # =============================================================================
@@ -275,8 +317,6 @@ async def generate_vector_db():
     import lancedb
     from lancedb.embeddings import get_registry
     import pandas as pd
-    import re
-    from markdown_it import MarkdownIt
     
     print("Generating LanceDB vector database...")
     
@@ -294,41 +334,6 @@ async def generate_vector_db():
     if not json_files:
         print("No crawled data found!")
         return
-    
-    def clean_markdown(markdown: str) -> str:
-        """Extract plain text content from markdown using markdown-it-py parser"""
-        md_parser = MarkdownIt()
-        tokens = md_parser.parse(markdown)
-        
-        text_parts = []
-        
-        def extract_text(token_list):
-            for token in token_list:
-                if token.type == 'inline' and token.children:
-                    for child in token.children:
-                        if child.type == 'text':
-                            text_parts.append(child.content)
-                        elif child.type == 'code_inline':
-                            text_parts.append(child.content)
-                        elif child.type == 'softbreak':
-                            text_parts.append(' ')
-                        elif child.type == 'hardbreak':
-                            text_parts.append('\n')
-                elif token.type == 'fence' or token.type == 'code_block':
-                    text_parts.append(token.content)
-                    text_parts.append('\n')
-                
-                if token.children:
-                    extract_text(token.children)
-                
-                if token.type in ['heading_close', 'paragraph_close', 'list_item_close', 'blockquote_close']:
-                    text_parts.append('\n')
-        
-        extract_text(tokens)
-        text = ''.join(text_parts)
-        text = re.sub(r'\n{3,}', '\n\n', text)
-        text = re.sub(r' {2,}', ' ', text)
-        return text.strip()
     
     all_chunks = []
     
@@ -400,8 +405,6 @@ async def generate_vector_db():
 )
 async def generate_sqlite_db():
     """Generate SQLite FTS5 database from crawled data"""
-    import re
-    from markdown_it import MarkdownIt
     
     print("Generating SQLite FTS5 database...")
     
@@ -410,41 +413,6 @@ async def generate_sqlite_db():
     DB_DIR.mkdir(parents=True, exist_ok=True)
     
     SQLITE_PATH = DB_DIR / "docs.sqlite"
-    
-    def clean_markdown(markdown: str) -> str:
-        """Extract plain text content from markdown using markdown-it-py parser"""
-        md_parser = MarkdownIt()
-        tokens = md_parser.parse(markdown)
-        
-        text_parts = []
-        
-        def extract_text(token_list):
-            for token in token_list:
-                if token.type == 'inline' and token.children:
-                    for child in token.children:
-                        if child.type == 'text':
-                            text_parts.append(child.content)
-                        elif child.type == 'code_inline':
-                            text_parts.append(child.content)
-                        elif child.type == 'softbreak':
-                            text_parts.append(' ')
-                        elif child.type == 'hardbreak':
-                            text_parts.append('\n')
-                elif token.type == 'fence' or token.type == 'code_block':
-                    text_parts.append(token.content)
-                    text_parts.append('\n')
-                
-                if token.children:
-                    extract_text(token.children)
-                
-                if token.type in ['heading_close', 'paragraph_close', 'list_item_close', 'blockquote_close']:
-                    text_parts.append('\n')
-        
-        extract_text(tokens)
-        text = ''.join(text_parts)
-        text = re.sub(r'\n{3,}', '\n\n', text)
-        text = re.sub(r' {2,}', ' ', text)
-        return text.strip()
     
     # Create database
     conn = sqlite3.connect(SQLITE_PATH)

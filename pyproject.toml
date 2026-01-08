@@ -46,6 +46,8 @@ docs-scripts = [
     "fastmcp>=2.0.0",
     "pydantic>=2.0.0",
     "pandas>=2.0.0",
+    "markdown-it-py>=3.0.0",
+    "markitdown>=0.0.1",
 ]
 test = [
     "aioresponses>=0.7.4",

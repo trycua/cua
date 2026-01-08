@@ -21,12 +21,27 @@ model = get_registry().get("sentence-transformers").create(name="all-MiniLM-L6-v
 # Create FastMCP server
 mcp = FastMCP(
     name="CUA Docs",
-    instructions="""You are a helpful assistant for CUA (Computer Use Agent) documentation.
+    instructions="""CUA Documentation Server - provides search and retrieval for Computer Use Agent (CUA) documentation.
 
-Available search tools:
+Documentation covers:
+- CUA SDK: Python library for building computer-use agents with screen capture, mouse/keyboard control
+- CUA Bench: Benchmarking framework for evaluating computer-use agents
+- Agent Loop: Core execution loop for autonomous agent operation
+- Sandboxes: Docker and cloud VM environments for safe agent execution
+- Computer interfaces: Screen, mouse, keyboard, and bash interaction APIs
+
+Available tools:
 - search_docs: Semantic/vector search - best for conceptual queries like "how does X work?"
 - search_docs_fts: Full-text search - best for exact terms, code snippets, or specific keywords
 - get_page_content: Get full content of a specific page by URL
+- get_page_raw_markdown: Get raw markdown with original formatting
+- list_pages: Browse available documentation pages
+- get_doc_categories: See all documentation categories
+
+IMPORTANT: After performing search_docs or search_docs_fts queries, ALWAYS use get_page_content
+to retrieve the full page context before answering. Search results return snippets/chunks that
+may lack important context. The full page often contains setup instructions, prerequisites,
+code examples, and related information essential for complete answers.
 
 Always cite the source URL when providing information.""",
 )

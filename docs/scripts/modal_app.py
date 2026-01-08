@@ -575,12 +575,24 @@ def web():
     # Initialize the MCP server
     mcp = FastMCP(
         name="CUA Docs",
-        instructions="""You are a helpful assistant for CUA (Computer Use Agent) documentation.
+        instructions="""CUA Documentation Server - provides search and retrieval for Computer Use Agent (CUA) documentation.
 
-Available search tools:
+Documentation covers:
+- CUA SDK: Python library for building computer-use agents with screen capture, mouse/keyboard control
+- CUA Bench: Benchmarking framework for evaluating computer-use agents
+- Agent Loop: Core execution loop for autonomous agent operation
+- Sandboxes: Docker and cloud VM environments for safe agent execution
+- Computer interfaces: Screen, mouse, keyboard, and bash interaction APIs
+
+Available tools:
 - search_docs: Semantic/vector search - best for conceptual queries like "how does X work?"
-- search_docs_fts: Full-text search - best for exact terms, code snippets, or specific keywords
-- get_page_content: Get full content of a specific page by URL
+- sql_query: Direct SQL/FTS5 queries for exact keyword matches and advanced filtering
+
+IMPORTANT: After performing search_docs queries, ALWAYS use sql_query to retrieve the full page content
+before answering. Search results return snippets/chunks that may lack important context. Example:
+  sql_query("SELECT url, title, content FROM pages WHERE url LIKE '%installation%'")
+The full page often contains setup instructions, prerequisites, code examples, and related information
+essential for complete answers.
 
 Always cite the source URL when providing information.""",
     )

@@ -398,8 +398,7 @@ def get_stats_resource() -> str:
 
         # Get LanceDB stats
         table = get_lance_table()
-        df = table.to_pandas()
-        total_chunks = len(df)
+        total_chunks = table.count_rows()
 
         stats = [
             "CUA Documentation Database Statistics",

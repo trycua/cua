@@ -55,8 +55,9 @@ def clean_markdown(markdown: str) -> str:
                     # Skip link markup, images, and formatting tokens
                     # (link_open, link_close, image, strong_open, strong_close, em_open, em_close, etc.)
             elif token.type == 'fence' or token.type == 'code_block':
-                # Include code content
+                # Include code content and add newline after
                 text_parts.append(token.content)
+                text_parts.append('\n')
             elif token.type == 'html_block' or token.type == 'html_inline':
                 # Skip HTML blocks and inline HTML
                 pass
@@ -65,10 +66,10 @@ def clean_markdown(markdown: str) -> str:
             if token.children:
                 extract_text(token.children)
             
-            # Add spacing between block elements
+            # Add spacing after block elements
             if token.type in [
                 'heading_close', 'paragraph_close', 'list_item_close',
-                'blockquote_close', 'code_block_close', 'fence_close'
+                'blockquote_close'
             ]:
                 text_parts.append('\n')
     

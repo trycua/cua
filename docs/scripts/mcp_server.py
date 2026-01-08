@@ -92,7 +92,9 @@ def search_docs(query: str, limit: int = 5, category: Optional[str] = None) -> l
 
     # Apply category filter if specified
     if category:
-        search = search.where(f"category = '{category}'")
+        # Escape single quotes to prevent injection via the category parameter
+        safe_category = category.replace("'", "''")
+        search = search.where(f"category = '{safe_category}'")
 
     results = search.to_list()
 

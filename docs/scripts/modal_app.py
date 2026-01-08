@@ -567,8 +567,7 @@ async def generate_sqlite_db():
 @modal.asgi_app()
 def web():
     """ASGI web endpoint for the MCP server"""
-    from fastapi import FastAPI
-    from fastapi.middleware.cors import CORSMiddleware
+    from starlette.middleware.cors import CORSMiddleware
     from fastmcp import FastMCP
     import lancedb
     from lancedb.embeddings import get_registry
@@ -737,26 +736,23 @@ Always cite the source URL when providing information.""",
         else:
             return {"error": f"No page found matching URL: {url}"}
     
-    # Create FastAPI app and mount MCP
-    # Use path="/" so when mounted at "/mcp", the endpoint is at "/mcp" not "/mcp/mcp"
-    mcp_app = mcp.http_app(transport="streamable-http", path="/", stateless_http=True)
-    fastapi_app = FastAPI(
-        lifespan=mcp_app.router.lifespan_context,
-        redirect_slashes=False,  # Prevent 307 redirects from /mcp to /mcp/
+    # Create SSE app directly - endpoints at /sse (GET) and /messages (POST)
+    from starlette.middleware import Middleware
+
+    mcp_app = mcp.http_app(
+        transport="sse",
+        middleware=[
+            Middleware(
+                CORSMiddleware,
+                allow_origins=["*"],
+                allow_credentials=True,
+                allow_methods=["*"],
+                allow_headers=["*"],
+            )
+        ]
     )
 
-    # Add CORS middleware to handle preflight requests
-    fastapi_app.add_middleware(
-        CORSMiddleware,
-        allow_origins=["*"],
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
-
-    fastapi_app.mount("/mcp", mcp_app, "mcp")
-
-    return fastapi_app
+    return mcp_app
 
 
 # =============================================================================

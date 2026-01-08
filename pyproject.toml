@@ -48,6 +48,7 @@ docs-scripts = [
     "pandas>=2.0.0",
     "markdown-it-py>=3.0.0",
     "markitdown>=0.0.1",
+    "modal>=0.63.0",
 ]
 test = [
     "aioresponses>=0.7.4",

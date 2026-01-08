@@ -1,0 +1,681 @@
+"""
+Modal app for CUA documentation crawling and MCP server
+
+This app provides:
+1. Scheduled daily crawling of cua.ai/docs stored in a Modal volume
+2. MCP server that serves documentation search over the crawled data
+
+Usage:
+    modal deploy docs/scripts/modal_app.py
+"""
+
+import asyncio
+import json
+import sqlite3
+from pathlib import Path
+from typing import Optional
+
+import modal
+
+# Define the Modal app
+app = modal.App("cua-docs-mcp")
+
+# Create a persistent volume for storing crawled data and databases
+docs_volume = modal.Volume.from_name("cua-docs-data", create_if_missing=True)
+
+# Define the container image with all dependencies
+image = (
+    modal.Image.debian_slim(python_version="3.12")
+    .pip_install(
+        "crawl4ai>=0.4.0",
+        "playwright>=1.40.0",
+        "lancedb>=0.4.0",
+        "sentence-transformers>=2.2.0",
+        "pyarrow>=14.0.1",
+        "fastmcp>=2.14.0",
+        "pydantic>=2.0.0",
+        "pandas>=2.0.0",
+        "markdown-it-py>=3.0.0",
+        "markitdown>=0.0.1",
+    )
+    .run_commands("playwright install --with-deps chromium")
+)
+
+# Volume mount path
+VOLUME_PATH = "/data"
+CRAWLED_DATA_PATH = f"{VOLUME_PATH}/crawled_data"
+DB_PATH = f"{VOLUME_PATH}/docs_db"
+
+
+# =============================================================================
+# Crawling Functions
+# =============================================================================
+
+@app.function(
+    image=image,
+    volumes={VOLUME_PATH: docs_volume},
+    timeout=3600,  # 1 hour timeout
+    cpu=2.0,
+    memory=4096,
+)
+async def crawl_docs():
+    """Crawl CUA documentation and save to volume"""
+    from crawl4ai import AsyncWebCrawler, BrowserConfig, CrawlerRunConfig
+    from urllib.parse import urljoin, urlparse
+    import re
+    
+    print("Starting documentation crawl...")
+    
+    BASE_URL = "https://cua.ai"
+    DOCS_URL = f"{BASE_URL}/docs"
+    OUTPUT_DIR = Path(CRAWLED_DATA_PATH)
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    
+    visited_urls = set()
+    to_visit = set()
+    failed_urls = set()
+    all_data = []
+    
+    def normalize_url(url: str) -> str:
+        """Normalize URL to avoid duplicates"""
+        parsed = urlparse(url)
+        path = parsed.path.rstrip('/')
+        if not path:
+            path = ''
+        return f"{parsed.scheme}://{parsed.netloc}{path}"
+    
+    def is_valid_url(url: str) -> bool:
+        """Check if URL should be crawled (only /docs pages)"""
+        parsed = urlparse(url)
+        if parsed.netloc and parsed.netloc not in ['cua.ai', 'www.cua.ai']:
+            return False
+        if not parsed.path.startswith('/docs'):
+            return False
+        # Skip non-page resources
+        excluded_extensions = ['.pdf', '.zip', '.png', '.jpg', '.jpeg', '.gif', '.svg', '.ico', '.css', '.js']
+        if any(parsed.path.lower().endswith(ext) for ext in excluded_extensions):
+            return False
+        return True
+    
+    def extract_links(html: str, base_url: str) -> set[str]:
+        """Extract all valid links from HTML"""
+        links = set()
+        # Find all href attributes
+        href_pattern = r'href=["\']([^"\']+)["\']'
+        matches = re.findall(href_pattern, html)
+        
+        for match in matches:
+            full_url = urljoin(base_url, match)
+            normalized = normalize_url(full_url)
+            if is_valid_url(normalized):
+                links.add(normalized)
+        
+        return links
+    
+    def extract_path_info(url: str) -> dict:
+        """Extract meaningful path information from URL"""
+        parsed = urlparse(url)
+        path = parsed.path.replace('/docs/', '').strip('/')
+        parts = path.split('/') if path else []
+        
+        return {
+            "path": path,
+            "category": parts[0] if parts else "root",
+            "subcategory": parts[1] if len(parts) > 1 else None,
+            "page": parts[-1] if parts else "index",
+            "depth": len(parts),
+        }
+    
+    def save_page(url: str, data: dict):
+        """Save page data to a JSON file"""
+        parsed = urlparse(url)
+        path = parsed.path.strip('/') or 'index'
+        filename = path.replace('/', '_') + '.json'
+        
+        filepath = OUTPUT_DIR / filename
+        with open(filepath, 'w', encoding='utf-8') as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+    
+    # Seed URLs
+    seed_urls = [
+        DOCS_URL,
+        f"{DOCS_URL}/cua",
+        f"{DOCS_URL}/cua/guide",
+        f"{DOCS_URL}/cua/guide/get-started",
+        f"{DOCS_URL}/cua/reference",
+        f"{DOCS_URL}/cua/reference/computer-sdk",
+        f"{DOCS_URL}/cuabench",
+        f"{DOCS_URL}/cuabench/guide",
+        f"{DOCS_URL}/cuabench/reference",
+    ]
+    
+    for url in seed_urls:
+        normalized = normalize_url(url)
+        if is_valid_url(normalized):
+            to_visit.add(normalized)
+    
+    browser_config = BrowserConfig(
+        headless=True,
+        verbose=False,
+    )
+    
+    async with AsyncWebCrawler(config=browser_config) as crawler:
+        while to_visit:
+            # Get batch of URLs to crawl
+            batch = []
+            MAX_CONCURRENT = 5
+            while to_visit and len(batch) < MAX_CONCURRENT:
+                url = to_visit.pop()
+                if url not in visited_urls:
+                    batch.append(url)
+                    visited_urls.add(url)
+            
+            if not batch:
+                break
+            
+            # Crawl each URL in batch
+            for url in batch:
+                try:
+                    print(f"Crawling: {url}")
+                    
+                    config = CrawlerRunConfig(
+                        word_count_threshold=10,
+                        exclude_external_links=True,
+                    )
+                    
+                    result = await crawler.arun(url=url, config=config)
+                    
+                    if result.success:
+                        # Extract new links from the page
+                        new_links = extract_links(result.html, url)
+                        for link in new_links:
+                            if link not in visited_urls and link not in to_visit:
+                                to_visit.add(link)
+                        
+                        path_info = extract_path_info(url)
+                        
+                        page_data = {
+                            "url": url,
+                            "title": result.metadata.get("title", "") if result.metadata else "",
+                            "description": result.metadata.get("description", "") if result.metadata else "",
+                            "markdown": result.markdown,
+                            "path_info": path_info,
+                            "links_found": list(new_links),
+                        }
+                        
+                        # Save individual page
+                        save_page(url, page_data)
+                        all_data.append(page_data)
+                        
+                        await asyncio.sleep(0.5)
+                    else:
+                        print(f"Failed to crawl {url}: {result.error_message}")
+                        failed_urls.add(url)
+                
+                except Exception as e:
+                    print(f"Error crawling {url}: {e}")
+                    failed_urls.add(url)
+            
+            print(f"Progress: {len(visited_urls)} crawled, {len(to_visit)} remaining")
+    
+    # Save summary
+    summary = {
+        "total_pages": len(all_data),
+        "failed_urls": list(failed_urls),
+        "all_urls": list(visited_urls),
+    }
+    
+    with open(OUTPUT_DIR / "_summary.json", 'w', encoding='utf-8') as f:
+        json.dump(summary, f, indent=2)
+    
+    # Save all data in one file too
+    with open(OUTPUT_DIR / "_all_pages.json", 'w', encoding='utf-8') as f:
+        json.dump(all_data, f, indent=2, ensure_ascii=False)
+    
+    # Commit changes to volume
+    docs_volume.commit()
+    
+    print(f"Crawl complete! Crawled {len(all_data)} pages")
+    return summary
+
+
+@app.function(
+    image=image,
+    volumes={VOLUME_PATH: docs_volume},
+    schedule=modal.Cron("0 6 * * *"),  # Daily at 6 AM UTC
+    timeout=3600,
+)
+async def scheduled_crawl():
+    """Scheduled daily crawl of documentation"""
+    print("Running scheduled crawl...")
+    summary = await crawl_docs.remote.aio()
+    
+    # Regenerate databases after crawl
+    print("Generating databases...")
+    await generate_vector_db.remote.aio()
+    await generate_sqlite_db.remote.aio()
+    
+    print(f"Scheduled crawl complete: {summary}")
+    return summary
+
+
+# =============================================================================
+# Database Generation Functions
+# =============================================================================
+
+@app.function(
+    image=image,
+    volumes={VOLUME_PATH: docs_volume},
+    timeout=1800,  # 30 minutes
+    cpu=2.0,
+    memory=8192,
+)
+async def generate_vector_db():
+    """Generate LanceDB vector database from crawled data"""
+    import lancedb
+    from lancedb.embeddings import get_registry
+    import pandas as pd
+    from markitdown import MarkItDown
+    
+    print("Generating LanceDB vector database...")
+    
+    CRAWLED_DIR = Path(CRAWLED_DATA_PATH)
+    DB_DIR = Path(DB_PATH)
+    DB_DIR.mkdir(parents=True, exist_ok=True)
+    
+    # Initialize embedding model
+    model = get_registry().get("sentence-transformers").create(name="all-MiniLM-L6-v2")
+    
+    # Load all crawled pages
+    json_files = list(CRAWLED_DIR.glob("*.json"))
+    json_files = [f for f in json_files if not f.name.startswith("_")]
+    
+    if not json_files:
+        print("No crawled data found!")
+        return
+    
+    all_chunks = []
+    md = MarkItDown()
+    
+    for json_file in json_files:
+        with open(json_file, 'r', encoding='utf-8') as f:
+            page_data = json.load(f)
+        
+        url = page_data.get("url", "")
+        title = page_data.get("title", "")
+        markdown = page_data.get("markdown", "")
+        category = page_data.get("path_info", {}).get("category", "unknown")
+        
+        if not markdown:
+            continue
+        
+        # Convert markdown to plain text
+        try:
+            result = md.convert_local(json_file)
+            text = result.text_content if hasattr(result, 'text_content') else str(result)
+        except:
+            text = markdown
+        
+        # Simple chunking by paragraphs
+        paragraphs = [p.strip() for p in text.split('\n\n') if p.strip()]
+        
+        for i, para in enumerate(paragraphs):
+            if len(para) < 50:  # Skip very short paragraphs
+                continue
+            
+            chunk = {
+                "text": para,
+                "url": url,
+                "title": title,
+                "category": category,
+                "chunk_index": i,
+            }
+            all_chunks.append(chunk)
+    
+    if not all_chunks:
+        print("No chunks generated!")
+        return
+    
+    # Create DataFrame
+    df = pd.DataFrame(all_chunks)
+    
+    # Create LanceDB table
+    db = lancedb.connect(DB_DIR)
+    
+    # Create table with embeddings
+    table = db.create_table(
+        "docs",
+        data=df,
+        embedding_functions=[model.embedding_function("text")],
+        mode="overwrite",
+    )
+    
+    # Commit changes to volume
+    docs_volume.commit()
+    
+    print(f"Vector database created with {len(all_chunks)} chunks")
+    return {"chunks": len(all_chunks)}
+
+
+@app.function(
+    image=image,
+    volumes={VOLUME_PATH: docs_volume},
+    timeout=1800,
+    cpu=2.0,
+    memory=4096,
+)
+async def generate_sqlite_db():
+    """Generate SQLite FTS5 database from crawled data"""
+    from markitdown import MarkItDown
+    
+    print("Generating SQLite FTS5 database...")
+    
+    CRAWLED_DIR = Path(CRAWLED_DATA_PATH)
+    DB_DIR = Path(DB_PATH)
+    DB_DIR.mkdir(parents=True, exist_ok=True)
+    
+    SQLITE_PATH = DB_DIR / "docs.sqlite"
+    
+    # Create database
+    conn = sqlite3.connect(SQLITE_PATH)
+    cursor = conn.cursor()
+    
+    # Create tables
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS pages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            url TEXT UNIQUE NOT NULL,
+            title TEXT,
+            category TEXT,
+            content TEXT
+        )
+    """)
+    
+    cursor.execute("""
+        CREATE VIRTUAL TABLE IF NOT EXISTS pages_fts USING fts5(
+            content,
+            url UNINDEXED,
+            title UNINDEXED,
+            category UNINDEXED,
+            content='pages',
+            content_rowid='id'
+        )
+    """)
+    
+    # Load and insert data
+    json_files = list(CRAWLED_DIR.glob("*.json"))
+    json_files = [f for f in json_files if not f.name.startswith("_")]
+    
+    md = MarkItDown()
+    inserted = 0
+    
+    for json_file in json_files:
+        with open(json_file, 'r', encoding='utf-8') as f:
+            page_data = json.load(f)
+        
+        url = page_data.get("url", "")
+        title = page_data.get("title", "")
+        markdown = page_data.get("markdown", "")
+        category = page_data.get("path_info", {}).get("category", "unknown")
+        
+        if not markdown:
+            continue
+        
+        # Convert markdown to plain text
+        try:
+            result = md.convert_local(json_file)
+            text = result.text_content if hasattr(result, 'text_content') else str(result)
+        except:
+            text = markdown
+        
+        try:
+            cursor.execute(
+                "INSERT OR REPLACE INTO pages (url, title, category, content) VALUES (?, ?, ?, ?)",
+                (url, title, category, text)
+            )
+            inserted += 1
+        except Exception as e:
+            print(f"Error inserting {url}: {e}")
+    
+    # Create FTS triggers
+    cursor.execute("""
+        CREATE TRIGGER IF NOT EXISTS pages_ai AFTER INSERT ON pages BEGIN
+            INSERT INTO pages_fts(rowid, content, url, title, category)
+            VALUES (new.id, new.content, new.url, new.title, new.category);
+        END;
+    """)
+    
+    cursor.execute("""
+        CREATE TRIGGER IF NOT EXISTS pages_ad AFTER DELETE ON pages BEGIN
+            DELETE FROM pages_fts WHERE rowid = old.id;
+        END;
+    """)
+    
+    cursor.execute("""
+        CREATE TRIGGER IF NOT EXISTS pages_au AFTER UPDATE ON pages BEGIN
+            DELETE FROM pages_fts WHERE rowid = old.id;
+            INSERT INTO pages_fts(rowid, content, url, title, category)
+            VALUES (new.id, new.content, new.url, new.title, new.category);
+        END;
+    """)
+    
+    conn.commit()
+    conn.close()
+    
+    # Commit changes to volume
+    docs_volume.commit()
+    
+    print(f"SQLite database created with {inserted} pages")
+    return {"pages": inserted}
+
+
+# =============================================================================
+# MCP Server
+# =============================================================================
+
+@app.function(
+    image=image,
+    volumes={VOLUME_PATH: docs_volume},
+    cpu=1.0,
+    memory=2048,
+    allow_concurrent_inputs=10,
+)
+@modal.asgi_app()
+def web():
+    """ASGI web endpoint for the MCP server"""
+    from fastapi import FastAPI
+    from fastmcp import FastMCP
+    import lancedb
+    from lancedb.embeddings import get_registry
+    
+    # Initialize the MCP server
+    mcp = FastMCP(
+        name="CUA Docs",
+        instructions="""You are a helpful assistant for CUA (Computer Use Agent) documentation.
+
+Available search tools:
+- search_docs: Semantic/vector search - best for conceptual queries like "how does X work?"
+- search_docs_fts: Full-text search - best for exact terms, code snippets, or specific keywords
+- get_page_content: Get full content of a specific page by URL
+
+Always cite the source URL when providing information.""",
+    )
+    
+    # Initialize embedding model
+    model = get_registry().get("sentence-transformers").create(name="all-MiniLM-L6-v2")
+    
+    # Global database connections
+    _lance_db = None
+    _lance_table = None
+    _sqlite_conn = None
+    
+    def get_lance_table():
+        """Get or create LanceDB connection"""
+        nonlocal _lance_db, _lance_table
+        if _lance_table is None:
+            db_path = Path(DB_PATH)
+            if not db_path.exists():
+                raise RuntimeError("Database not found. Run crawl and generation functions first.")
+            _lance_db = lancedb.connect(db_path)
+            _lance_table = _lance_db.open_table("docs")
+        return _lance_table
+    
+    def get_sqlite_conn():
+        """Get or create SQLite connection"""
+        nonlocal _sqlite_conn
+        if _sqlite_conn is None:
+            sqlite_path = Path(DB_PATH) / "docs.sqlite"
+            if not sqlite_path.exists():
+                raise RuntimeError("SQLite database not found.")
+            _sqlite_conn = sqlite3.connect(sqlite_path)
+            _sqlite_conn.row_factory = sqlite3.Row
+        return _sqlite_conn
+    
+    @mcp.tool()
+    def search_docs(query: str, limit: int = 5, category: Optional[str] = None) -> list[dict]:
+        """
+        Semantic search over CUA documentation using vector embeddings.
+        Best for conceptual queries like "how does the agent loop work?"
+        
+        Args:
+            query: Natural language search query
+            limit: Maximum number of results (default: 5, max: 20)
+            category: Optional category filter (e.g., 'cua', 'cuabench')
+        
+        Returns:
+            List of relevant documentation chunks with URLs and content
+        """
+        limit = min(max(1, limit), 20)
+        
+        table = get_lance_table()
+        search = table.search(query).limit(limit)
+        
+        if category:
+            safe_category = category.replace("'", "''")
+            search = search.where(f"category = '{safe_category}'")
+        
+        results = search.to_list()
+        
+        return [
+            {
+                "text": r.get("text", ""),
+                "url": r.get("url", ""),
+                "title": r.get("title", ""),
+                "category": r.get("category", ""),
+                "score": float(r.get("_distance", 0.0)),
+            }
+            for r in results
+        ]
+    
+    @mcp.tool()
+    def search_docs_fts(query: str, limit: int = 10, category: Optional[str] = None) -> list[dict]:
+        """
+        Full-text search over CUA documentation using SQLite FTS5.
+        Best for exact terms, code snippets, or specific keywords.
+        
+        Args:
+            query: Search query (supports FTS5 syntax: AND, OR, NOT, prefix*)
+            limit: Maximum number of results (default: 10, max: 50)
+            category: Optional category filter
+        
+        Returns:
+            List of matching pages with URLs and content snippets
+        """
+        limit = min(max(1, limit), 50)
+        
+        conn = get_sqlite_conn()
+        cursor = conn.cursor()
+        
+        try:
+            sql = """
+                SELECT p.url, p.title, p.category, snippet(pages_fts, 0, '<mark>', '</mark>', '...', 32) as snippet,
+                       rank
+                FROM pages_fts
+                JOIN pages p ON pages_fts.rowid = p.id
+                WHERE pages_fts MATCH ?
+            """
+            
+            params = [query]
+            if category:
+                sql += " AND p.category = ?"
+                params.append(category)
+            
+            sql += " ORDER BY rank LIMIT ?"
+            params.append(limit)
+            
+            cursor.execute(sql, params)
+            results = cursor.fetchall()
+            
+            return [
+                {
+                    "url": row["url"],
+                    "title": row["title"],
+                    "category": row["category"],
+                    "snippet": row["snippet"],
+                }
+                for row in results
+            ]
+        
+        except sqlite3.OperationalError as e:
+            return [{"error": f"Search error: {str(e)}"}]
+    
+    @mcp.tool()
+    def get_page_content(url: str) -> dict:
+        """
+        Get full content of a specific documentation page by URL.
+        
+        Args:
+            url: Full URL or partial URL path of the page
+        
+        Returns:
+            Page content with title, category, and full text
+        """
+        conn = get_sqlite_conn()
+        cursor = conn.cursor()
+        
+        # Try exact match first, then partial match
+        cursor.execute(
+            "SELECT url, title, category, content FROM pages WHERE url = ? OR url LIKE ?",
+            (url, f"%{url}%")
+        )
+        
+        result = cursor.fetchone()
+        
+        if result:
+            return {
+                "url": result["url"],
+                "title": result["title"],
+                "category": result["category"],
+                "content": result["content"],
+            }
+        else:
+            return {"error": f"No page found matching URL: {url}"}
+    
+    # Create FastAPI app and mount MCP
+    mcp_app = mcp.http_app(transport="streamable-http", stateless_http=True)
+    fastapi_app = FastAPI(lifespan=mcp_app.router.lifespan_context)
+    fastapi_app.mount("/mcp", mcp_app, "mcp")
+    
+    return fastapi_app
+
+
+# =============================================================================
+# Local testing functions
+# =============================================================================
+
+@app.local_entrypoint()
+def main():
+    """Run initial crawl and database generation"""
+    print("Running initial crawl...")
+    summary = crawl_docs.remote()
+    print(f"Crawl summary: {summary}")
+    
+    print("Generating vector database...")
+    vector_result = generate_vector_db.remote()
+    print(f"Vector DB: {vector_result}")
+    
+    print("Generating SQLite database...")
+    sqlite_result = generate_sqlite_db.remote()
+    print(f"SQLite DB: {sqlite_result}")
+    
+    print("Done! Deploy with: modal deploy docs/scripts/modal_app.py")

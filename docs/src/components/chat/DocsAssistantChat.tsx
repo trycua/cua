@@ -5,6 +5,7 @@ import { CopilotPopup } from '@copilotkit/react-ui';
 import { useThreads, useTitleGeneration, useMessageSync } from '@/lib/threads';
 import { ThreadListView } from './ThreadListView';
 import { ChatHeader } from './ChatHeader';
+import { QueuedInput } from './QueuedInput';
 
 const DOCS_INSTRUCTIONS = `You are a helpful assistant for CUA (Computer Use Agent) and CUA-Bench documentation. Be concise and helpful.`;
 
@@ -21,6 +22,7 @@ function ChatView() {
         initial: 'How can I help you?',
       }}
       Header={ChatHeader}
+      Input={QueuedInput}
       defaultOpen={true}
       clickOutsideToClose={false}
     />

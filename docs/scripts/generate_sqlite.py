@@ -4,9 +4,10 @@ Creates a full-text search enabled SQLite database from crawled data
 """
 
 import json
-import re
 import sqlite3
 from pathlib import Path
+
+from markdown_it import MarkdownIt
 
 # Configuration
 CRAWLED_DATA_DIR = Path(__file__).parent.parent / "crawled_data"
@@ -14,12 +15,67 @@ SQLITE_PATH = Path(__file__).parent.parent / "docs_db" / "docs.sqlite"
 
 
 def clean_markdown(markdown: str) -> str:
-    """Clean markdown content"""
-    text = re.sub(r'\n{3,}', '\n\n', markdown)
-    text = re.sub(r'!\[.*?\]\(.*?\)', '', text)
-    text = re.sub(r'\[([^\]]+)\]\([^)]+\)', r'\1', text)
-    text = re.sub(r'<[^>]+>', '', text)
-    text = re.sub(r' {2,}', ' ', text)
+    """
+    Extract plain text content from markdown using a proper markdown parser.
+    
+    This function uses markdown-it-py to parse the markdown into a token tree
+    and then extracts only the text content, removing:
+    - Markdown formatting (bold, italic, headers, etc.)
+    - Links (keeping only the link text)
+    - Images (alt text is discarded)
+    - HTML tags
+    - Code block language identifiers
+    
+    Args:
+        markdown: Raw markdown content
+        
+    Returns:
+        Plain text content suitable for full-text search
+    """
+    md_parser = MarkdownIt()
+    tokens = md_parser.parse(markdown)
+    
+    text_parts = []
+    
+    def extract_text(token_list):
+        """Recursively extract text from token tree"""
+        for token in token_list:
+            if token.type == 'inline' and token.children:
+                # Process inline content (text, links, formatting, etc.)
+                for child in token.children:
+                    if child.type == 'text':
+                        text_parts.append(child.content)
+                    elif child.type == 'code_inline':
+                        text_parts.append(child.content)
+                    elif child.type == 'softbreak':
+                        text_parts.append(' ')
+                    elif child.type == 'hardbreak':
+                        text_parts.append('\n')
+                    # Skip link markup, images, and formatting tokens
+                    # (link_open, link_close, image, strong_open, strong_close, em_open, em_close, etc.)
+            elif token.type == 'fence' or token.type == 'code_block':
+                # Include code content
+                text_parts.append(token.content)
+            elif token.type == 'html_block' or token.type == 'html_inline':
+                # Skip HTML blocks and inline HTML
+                pass
+            
+            # Add spacing between block elements
+            if token.type.endswith('_close') and token.type in [
+                'heading_close', 'paragraph_close', 'list_item_close',
+                'blockquote_close', 'code_block_close', 'fence_close'
+            ]:
+                text_parts.append('\n')
+    
+    extract_text(tokens)
+    
+    # Join and clean up whitespace
+    text = ''.join(text_parts)
+    # Normalize multiple newlines to double newlines
+    text = '\n\n'.join(part.strip() for part in text.split('\n\n') if part.strip())
+    # Normalize spaces within lines
+    text = ' '.join(text.split())
+    
     return text.strip()
 
 

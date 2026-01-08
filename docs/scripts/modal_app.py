@@ -34,6 +34,7 @@ image = (
         "lancedb>=0.4.0",
         "sentence-transformers>=2.2.0",
         "pyarrow>=14.0.1",
+        "fastapi>=0.100.0",
         "fastmcp>=2.14.0",
         "pydantic>=2.0.0",
         "pandas>=2.0.0",
@@ -105,12 +106,19 @@ async def crawl_docs():
     from crawl4ai import AsyncWebCrawler, BrowserConfig, CrawlerRunConfig
     from urllib.parse import urljoin, urlparse
     import re
-    
+    import shutil
+
     print("Starting documentation crawl...")
-    
+
     BASE_URL = "https://cua.ai"
     DOCS_URL = f"{BASE_URL}/docs"
     OUTPUT_DIR = Path(CRAWLED_DATA_PATH)
+
+    # Clear existing crawled data to ensure fresh results
+    if OUTPUT_DIR.exists():
+        shutil.rmtree(OUTPUT_DIR)
+        print("Cleared existing crawled data")
+
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     
     visited_urls = set()
@@ -314,54 +322,69 @@ async def scheduled_crawl():
 )
 async def generate_vector_db():
     """Generate LanceDB vector database from crawled data"""
+    import shutil
+    import tempfile
     import lancedb
+    from lancedb.pydantic import LanceModel, Vector
     from lancedb.embeddings import get_registry
-    import pandas as pd
-    
+
     print("Generating LanceDB vector database...")
-    
+
     CRAWLED_DIR = Path(CRAWLED_DATA_PATH)
     DB_DIR = Path(DB_PATH)
     DB_DIR.mkdir(parents=True, exist_ok=True)
-    
+
+    # Use /tmp for LanceDB operations (Modal volumes don't support atomic rename)
+    TMP_LANCE_DIR = Path(tempfile.mkdtemp(prefix="lancedb_"))
+    print(f"Using temp directory: {TMP_LANCE_DIR}")
+
     # Initialize embedding model
     model = get_registry().get("sentence-transformers").create(name="all-MiniLM-L6-v2")
-    
+
+    # Define schema with embedding configuration
+    class DocsChunk(LanceModel):
+        text: str = model.SourceField()
+        vector: Vector(model.ndims()) = model.VectorField()
+        url: str
+        title: str
+        category: str
+        chunk_index: int
+
     # Load all crawled pages
     json_files = list(CRAWLED_DIR.glob("*.json"))
     json_files = [f for f in json_files if not f.name.startswith("_")]
-    
+
     if not json_files:
         print("No crawled data found!")
         return
-    
+
     all_chunks = []
-    
+
     for json_file in json_files:
         with open(json_file, 'r', encoding='utf-8') as f:
             page_data = json.load(f)
-        
+
         url = page_data.get("url", "")
         title = page_data.get("title", "")
         markdown = page_data.get("markdown", "")
         category = page_data.get("path_info", {}).get("category", "unknown")
-        
+
         if not markdown:
             continue
-        
+
         # Convert markdown to plain text
         try:
             text = clean_markdown(markdown)
         except Exception:
             text = markdown
-        
+
         # Simple chunking by paragraphs
         paragraphs = [p.strip() for p in text.split('\n\n') if p.strip()]
-        
+
         for i, para in enumerate(paragraphs):
             if len(para) < 50:  # Skip very short paragraphs
                 continue
-            
+
             chunk = {
                 "text": para,
                 "url": url,
@@ -370,28 +393,48 @@ async def generate_vector_db():
                 "chunk_index": i,
             }
             all_chunks.append(chunk)
-    
+
     if not all_chunks:
         print("No chunks generated!")
         return
-    
-    # Create DataFrame
-    df = pd.DataFrame(all_chunks)
-    
-    # Create LanceDB table
-    db = lancedb.connect(DB_DIR)
-    
-    # Create table with embeddings
+
+    # Create LanceDB in temp directory (supports atomic operations)
+    db = lancedb.connect(TMP_LANCE_DIR)
+
+    # Create table with schema - embeddings are generated automatically
     table = db.create_table(
         "docs",
-        data=df,
-        embedding_functions=[model.embedding_function("text")],
+        schema=DocsChunk,
         mode="overwrite",
     )
-    
+
+    # Add data in batches for better performance
+    batch_size = 100
+    for i in range(0, len(all_chunks), batch_size):
+        batch = all_chunks[i:i + batch_size]
+        table.add(batch)
+        print(f"Added batch {i // batch_size + 1}/{(len(all_chunks) + batch_size - 1) // batch_size}")
+
+    # Close the connection before copying
+    del table
+    del db
+
+    # Copy completed database to Modal volume
+    lance_db_dest = DB_DIR / "docs.lance"
+    if lance_db_dest.exists():
+        shutil.rmtree(lance_db_dest)
+        print("Cleared existing vector database on volume")
+
+    # Copy from temp to volume
+    shutil.copytree(TMP_LANCE_DIR / "docs.lance", lance_db_dest)
+    print(f"Copied LanceDB to volume: {lance_db_dest}")
+
+    # Clean up temp directory
+    shutil.rmtree(TMP_LANCE_DIR)
+
     # Commit changes to volume
     docs_volume.commit()
-    
+
     print(f"Vector database created with {len(all_chunks)} chunks")
     return {"chunks": len(all_chunks)}
 
@@ -405,22 +448,27 @@ async def generate_vector_db():
 )
 async def generate_sqlite_db():
     """Generate SQLite FTS5 database from crawled data"""
-    
+
     print("Generating SQLite FTS5 database...")
-    
+
     CRAWLED_DIR = Path(CRAWLED_DATA_PATH)
     DB_DIR = Path(DB_PATH)
     DB_DIR.mkdir(parents=True, exist_ok=True)
-    
+
     SQLITE_PATH = DB_DIR / "docs.sqlite"
-    
+
+    # Delete existing database to ensure fresh data
+    if SQLITE_PATH.exists():
+        SQLITE_PATH.unlink()
+        print("Cleared existing SQLite database")
+
     # Create database
     conn = sqlite3.connect(SQLITE_PATH)
     cursor = conn.cursor()
-    
+
     # Create tables
     cursor.execute("""
-        CREATE TABLE IF NOT EXISTS pages (
+        CREATE TABLE pages (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             url TEXT UNIQUE NOT NULL,
             title TEXT,
@@ -428,9 +476,9 @@ async def generate_sqlite_db():
             content TEXT
         )
     """)
-    
+
     cursor.execute("""
-        CREATE VIRTUAL TABLE IF NOT EXISTS pages_fts USING fts5(
+        CREATE VIRTUAL TABLE pages_fts USING fts5(
             content,
             url UNINDEXED,
             title UNINDEXED,
@@ -475,20 +523,20 @@ async def generate_sqlite_db():
     
     # Create FTS triggers
     cursor.execute("""
-        CREATE TRIGGER IF NOT EXISTS pages_ai AFTER INSERT ON pages BEGIN
+        CREATE TRIGGER pages_ai AFTER INSERT ON pages BEGIN
             INSERT INTO pages_fts(rowid, content, url, title, category)
             VALUES (new.id, new.content, new.url, new.title, new.category);
         END;
     """)
-    
+
     cursor.execute("""
-        CREATE TRIGGER IF NOT EXISTS pages_ad AFTER DELETE ON pages BEGIN
+        CREATE TRIGGER pages_ad AFTER DELETE ON pages BEGIN
             DELETE FROM pages_fts WHERE rowid = old.id;
         END;
     """)
-    
+
     cursor.execute("""
-        CREATE TRIGGER IF NOT EXISTS pages_au AFTER UPDATE ON pages BEGIN
+        CREATE TRIGGER pages_au AFTER UPDATE ON pages BEGIN
             DELETE FROM pages_fts WHERE rowid = old.id;
             INSERT INTO pages_fts(rowid, content, url, title, category)
             VALUES (new.id, new.content, new.url, new.title, new.category);
@@ -514,16 +562,17 @@ async def generate_sqlite_db():
     volumes={VOLUME_PATH: docs_volume},
     cpu=1.0,
     memory=2048,
-    allow_concurrent_inputs=10,
 )
+@modal.concurrent(max_inputs=10)
 @modal.asgi_app()
 def web():
     """ASGI web endpoint for the MCP server"""
     from fastapi import FastAPI
+    from fastapi.middleware.cors import CORSMiddleware
     from fastmcp import FastMCP
     import lancedb
     from lancedb.embeddings import get_registry
-    
+
     # Initialize the MCP server
     mcp = FastMCP(
         name="CUA Docs",
@@ -689,10 +738,24 @@ Always cite the source URL when providing information.""",
             return {"error": f"No page found matching URL: {url}"}
     
     # Create FastAPI app and mount MCP
-    mcp_app = mcp.http_app(transport="streamable-http", stateless_http=True)
-    fastapi_app = FastAPI(lifespan=mcp_app.router.lifespan_context)
+    # Use path="/" so when mounted at "/mcp", the endpoint is at "/mcp" not "/mcp/mcp"
+    mcp_app = mcp.http_app(transport="streamable-http", path="/", stateless_http=True)
+    fastapi_app = FastAPI(
+        lifespan=mcp_app.router.lifespan_context,
+        redirect_slashes=False,  # Prevent 307 redirects from /mcp to /mcp/
+    )
+
+    # Add CORS middleware to handle preflight requests
+    fastapi_app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
     fastapi_app.mount("/mcp", mcp_app, "mcp")
-    
+
     return fastapi_app
 
 

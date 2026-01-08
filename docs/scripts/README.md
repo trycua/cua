@@ -1,6 +1,6 @@
 # CUA Documentation Scripts
 
-This directory contains scripts for crawling, indexing, and serving CUA documentation through an MCP (Model Context Protocol) server.
+This directory contains scripts for crawling, indexing, and serving CUA documentation through a Model Context Protocol (MCP) server.
 
 ## Scripts
 
@@ -42,7 +42,7 @@ uv run docs/scripts/generate_sqlite.py
 uv run docs/scripts/mcp_server.py
 ```
 
-The server will be available at `http://localhost:8000` and provides:
+The MCP server will be available at `http://localhost:8000` and provides:
 - Semantic search over documentation
 - Full-text search capabilities
 - Page content retrieval

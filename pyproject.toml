@@ -37,6 +37,16 @@ docs = [
     "mkdocs-material>=9.2.0",
     "mkdocs>=1.5.0",
 ]
+docs-scripts = [
+    "crawl4ai>=0.4.0",
+    "playwright>=1.40.0",
+    "lancedb>=0.4.0",
+    "sentence-transformers>=2.2.0",
+    "pyarrow>=14.0.0",
+    "fastmcp>=2.0.0",
+    "pydantic>=2.0.0",
+    "pandas>=2.0.0",
+]
 test = [
     "aioresponses>=0.7.4",
     "pytest-asyncio>=0.21.1",

@@ -163,12 +163,15 @@ def search_docs_fts(
                 WHERE pages_fts MATCH ?
             """
 
+        params = [query]
         if category:
-            sql += f" AND p.category = '{category}'"
+            sql += " AND p.category = ?"
+            params.append(category)
 
         sql += " ORDER BY rank LIMIT ?"
+        params.append(limit)
 
-        cursor.execute(sql, (query, limit))
+        cursor.execute(sql, params)
         rows = cursor.fetchall()
 
         results = []

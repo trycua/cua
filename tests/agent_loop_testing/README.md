@@ -12,7 +12,7 @@ python tests/agent_loop_testing/agent_test.py --model anthropic/claude-sonnet-4-
 
 - Tests real CUA ComputerAgent SDK
 - Uses mock computer (only screenshots, no real actions)
-- Agent tries to "Open Safari browser" 
+- Agent tries to "Open Safari browser"
 - Runs up to 5 iterations
 - Shows agent responses and tool calls
 

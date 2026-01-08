@@ -6,6 +6,8 @@ import { useThreads, useTitleGeneration, useMessageSync } from '@/lib/threads';
 import { ThreadListView } from './ThreadListView';
 import { ChatHeader } from './ChatHeader';
 import { QueuedInput } from './QueuedInput';
+import { PendingMessageProvider } from './PendingMessageContext';
+import { OptimisticMessages } from './OptimisticMessages';
 
 const DOCS_INSTRUCTIONS = `You are a helpful assistant for CUA (Computer Use Agent) and CUA-Bench documentation. Be concise and helpful.`;
 
@@ -15,17 +17,20 @@ function ChatView() {
   useTitleGeneration();
 
   return (
-    <CopilotPopup
-      instructions={DOCS_INSTRUCTIONS}
-      labels={{
-        title: 'CUA Docs Assistant',
-        initial: 'How can I help you?',
-      }}
-      Header={ChatHeader}
-      Input={QueuedInput}
-      defaultOpen={true}
-      clickOutsideToClose={false}
-    />
+    <PendingMessageProvider>
+      <CopilotPopup
+        instructions={DOCS_INSTRUCTIONS}
+        labels={{
+          title: 'CUA Docs Assistant',
+          initial: 'How can I help you?',
+        }}
+        Header={ChatHeader}
+        Input={QueuedInput}
+        Messages={OptimisticMessages}
+        defaultOpen={true}
+        clickOutsideToClose={false}
+      />
+    </PendingMessageProvider>
   );
 }
 

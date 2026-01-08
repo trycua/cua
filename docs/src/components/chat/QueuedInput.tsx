@@ -1,8 +1,9 @@
 // src/components/chat/QueuedInput.tsx
 'use client';
 
-import { useRef, useEffect, useState, useMemo } from 'react';
+import { useRef, useEffect, useState, useMemo, useCallback } from 'react';
 import { useChatContext } from '@copilotkit/react-ui';
+import { usePendingMessage } from './PendingMessageContext';
 
 // Re-implement the essential Input logic with queuing support
 // Based on CopilotKit's Input component but with message queuing when chatReady is false
@@ -19,6 +20,11 @@ interface QueuedInputProps {
 
 const MAX_ROWS = 6;
 
+// Generate a simple unique ID
+function generateId() {
+  return `pending-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+}
+
 export function QueuedInput({
   inProgress,
   onSend,
@@ -28,31 +34,38 @@ export function QueuedInput({
   chatReady = false,
 }: QueuedInputProps) {
   const context = useChatContext();
+  const { pendingMessage, setPendingMessage, clearPendingMessage } = usePendingMessage();
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [text, setText] = useState('');
   const [isComposing, setIsComposing] = useState(false);
   const queuedMessageRef = useRef<string | null>(null);
-  const [isQueuedMessagePending, setIsQueuedMessagePending] = useState(false);
+
+  const isQueuedMessagePending = !!pendingMessage;
 
   // When chatReady becomes true, send any queued message
   useEffect(() => {
     if (chatReady && queuedMessageRef.current !== null) {
       const messageToSend = queuedMessageRef.current;
       queuedMessageRef.current = null;
-      setIsQueuedMessagePending(false);
+      // Clear the pending message from context (it will be replaced by the real one)
+      clearPendingMessage();
       onSend(messageToSend);
     }
-  }, [chatReady, onSend]);
+  }, [chatReady, onSend, clearPendingMessage]);
 
-  const send = () => {
+  const send = useCallback(() => {
     const trimmedText = text.trim();
     if (!trimmedText) return;
     if (inProgress) return;
 
     if (!chatReady) {
-      // Queue the message - it will be sent when chatReady becomes true
+      // Queue the message and show it optimistically
       queuedMessageRef.current = trimmedText;
-      setIsQueuedMessagePending(true);
+      setPendingMessage({
+        id: generateId(),
+        content: trimmedText,
+        timestamp: Date.now(),
+      });
       setText('');
       textareaRef.current?.focus();
       return;
@@ -61,7 +74,7 @@ export function QueuedInput({
     onSend(trimmedText);
     setText('');
     textareaRef.current?.focus();
-  };
+  }, [text, inProgress, chatReady, onSend, setPendingMessage]);
 
   const handleDivClick = (event: React.MouseEvent<HTMLDivElement>) => {
     const target = event.target as HTMLElement;

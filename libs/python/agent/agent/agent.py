@@ -728,7 +728,7 @@ class ComputerAgent:
 
                     return False
 
-                if contains_image_content(messages):
+                if contains_image_content(preprocessed_messages):
                     raise ValueError(
                         "Ollama models do not support image inputs required by ComputerAgent. "
                         "Please use a vision-capable model (e.g., OpenAI or Anthropic) "

@@ -13,3 +13,4 @@ fastmcp>=2.0.0
 # Utilities
 pydantic>=2.0.0
 pandas>=2.0.0
+markdown-it-py>=3.0.0

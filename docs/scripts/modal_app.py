@@ -605,42 +605,42 @@ Always cite the source URL when providing information.""",
         return _lance_table
     
     def get_sqlite_conn():
-        """Get or create SQLite connection"""
+        """Get or create read-only SQLite connection"""
         nonlocal _sqlite_conn
         if _sqlite_conn is None:
             sqlite_path = Path(DB_PATH) / "docs.sqlite"
             if not sqlite_path.exists():
                 raise RuntimeError("SQLite database not found.")
-            _sqlite_conn = sqlite3.connect(sqlite_path)
+            # Open in read-only mode
+            _sqlite_conn = sqlite3.connect(f"file:{sqlite_path}?mode=ro", uri=True)
             _sqlite_conn.row_factory = sqlite3.Row
         return _sqlite_conn
-    
+
     @mcp.tool()
     def search_docs(query: str, limit: int = 5, category: Optional[str] = None) -> list[dict]:
         """
         Semantic search over CUA documentation using vector embeddings.
         Best for conceptual queries like "how does the agent loop work?"
-        
+
         Args:
             query: Natural language search query
             limit: Maximum number of results (default: 5, max: 20)
             category: Optional category filter (e.g., 'cua', 'cuabench')
-        
+
         Returns:
             List of relevant documentation chunks with URLs and content
         """
         limit = min(max(1, limit), 20)
-        
+
         table = get_lance_table()
         search = table.search(query).limit(limit)
-        
+
         if category:
-            # Use parameterized filtering to prevent SQL injection
             safe_category = category.replace("'", "''")
             search = search.where(f"category = '{safe_category}'")
-        
+
         results = search.to_list()
-        
+
         return [
             {
                 "text": r.get("text", ""),
@@ -651,90 +651,37 @@ Always cite the source URL when providing information.""",
             }
             for r in results
         ]
-    
+
     @mcp.tool()
-    def search_docs_fts(query: str, limit: int = 10, category: Optional[str] = None) -> list[dict]:
+    def sql_query(query: str) -> list[dict]:
         """
-        Full-text search over CUA documentation using SQLite FTS5.
-        Best for exact terms, code snippets, or specific keywords.
-        
+        Execute a read-only SQL query on the documentation database.
+
+        Tables:
+        - pages: id, url, title, category, content
+        - pages_fts: FTS5 virtual table for full-text search (content, url, title, category)
+
+        FTS5 examples:
+        - SELECT * FROM pages_fts WHERE pages_fts MATCH 'agent' LIMIT 10
+        - SELECT p.*, snippet(pages_fts, 0, '**', '**', '...', 32) as snippet
+          FROM pages_fts JOIN pages p ON pages_fts.rowid = p.id
+          WHERE pages_fts MATCH 'computer use' ORDER BY rank LIMIT 5
+
         Args:
-            query: Search query (supports FTS5 syntax: AND, OR, NOT, prefix*)
-            limit: Maximum number of results (default: 10, max: 50)
-            category: Optional category filter
-        
+            query: SQL query (SELECT only, connection is read-only)
+
         Returns:
-            List of matching pages with URLs and content snippets
+            List of result rows as dictionaries
         """
-        limit = min(max(1, limit), 50)
-        
         conn = get_sqlite_conn()
         cursor = conn.cursor()
-        
+
         try:
-            sql = """
-                SELECT p.url, p.title, p.category, snippet(pages_fts, 0, '<mark>', '</mark>', '...', 32) as snippet,
-                       rank
-                FROM pages_fts
-                JOIN pages p ON pages_fts.rowid = p.id
-                WHERE pages_fts MATCH ?
-            """
-            
-            params = [query]
-            if category:
-                sql += " AND p.category = ?"
-                params.append(category)
-            
-            sql += " ORDER BY rank LIMIT ?"
-            params.append(limit)
-            
-            cursor.execute(sql, params)
+            cursor.execute(query)
             results = cursor.fetchall()
-            
-            return [
-                {
-                    "url": row["url"],
-                    "title": row["title"],
-                    "category": row["category"],
-                    "snippet": row["snippet"],
-                }
-                for row in results
-            ]
-        
-        except sqlite3.OperationalError as e:
-            return [{"error": f"Search error: {str(e)}"}]
-    
-    @mcp.tool()
-    def get_page_content(url: str) -> dict:
-        """
-        Get full content of a specific documentation page by URL.
-        
-        Args:
-            url: Full URL or partial URL path of the page
-        
-        Returns:
-            Page content with title, category, and full text
-        """
-        conn = get_sqlite_conn()
-        cursor = conn.cursor()
-        
-        # Try exact match first, then partial match
-        cursor.execute(
-            "SELECT url, title, category, content FROM pages WHERE url = ? OR url LIKE ?",
-            (url, f"%{url}%")
-        )
-        
-        result = cursor.fetchone()
-        
-        if result:
-            return {
-                "url": result["url"],
-                "title": result["title"],
-                "category": result["category"],
-                "content": result["content"],
-            }
-        else:
-            return {"error": f"No page found matching URL: {url}"}
+            return [dict(row) for row in results]
+        except sqlite3.Error as e:
+            return [{"error": str(e)}]
     
     # Create SSE app directly - endpoints at /sse (GET) and /messages (POST)
     from starlette.middleware import Middleware

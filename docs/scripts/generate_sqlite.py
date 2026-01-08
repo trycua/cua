@@ -60,6 +60,10 @@ def clean_markdown(markdown: str) -> str:
                 # Skip HTML blocks and inline HTML
                 pass
             
+            # Recursively process nested children
+            if token.children:
+                extract_text(token.children)
+            
             # Add spacing between block elements
             if token.type.endswith('_close') and token.type in [
                 'heading_close', 'paragraph_close', 'list_item_close',
@@ -71,10 +75,11 @@ def clean_markdown(markdown: str) -> str:
     
     # Join and clean up whitespace
     text = ''.join(text_parts)
-    # Normalize multiple newlines to double newlines
-    text = '\n\n'.join(part.strip() for part in text.split('\n\n') if part.strip())
-    # Normalize spaces within lines
-    text = ' '.join(text.split())
+    # Normalize multiple newlines to at most double newlines
+    import re
+    text = re.sub(r'\n{3,}', '\n\n', text)
+    # Normalize multiple spaces to single space within lines
+    text = re.sub(r' {2,}', ' ', text)
     
     return text.strip()
 

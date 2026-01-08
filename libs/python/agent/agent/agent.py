@@ -710,7 +710,7 @@ class ComputerAgent:
             }
 
             # ---- Ollama image input guard ----
-            if isinstance(self.model, str) and self.model.startswith("ollama"):
+            if isinstance(self.model, str) and ("ollama/" in self.model or "ollama_chat/" in self.model):
                 def _contains_image_content(msgs):
                     for m in msgs:
                         content = m.get("content")

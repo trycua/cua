@@ -40,6 +40,7 @@
     "@types/react-dom": "^19.1.5",
     "postcss": "^8.5.4",
     "prettier": "^3.6.2",
+    "shiki": "^3.21.0",
     "tailwindcss": "^4.1.8",
     "typescript": "^5.8.3"
   },

@@ -224,7 +224,7 @@ def get_page_content(url: str) -> dict:
             row = cursor.fetchone()
 
         if not row:
-            return {"error": f"No page found matching URL: {url}"}
+            raise ValueError(f"No page found matching URL: {url}")
 
         return {
             "url": row["url"],

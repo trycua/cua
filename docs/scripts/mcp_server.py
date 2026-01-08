@@ -193,7 +193,7 @@ def search_docs_fts(
         return results
 
     except sqlite3.OperationalError as e:
-        return [{"error": f"FTS query error: {str(e)}. Try simplifying your query."}]
+        raise ValueError(f"FTS query error: {str(e)}. Try simplifying your query.")
 
 
 @mcp.tool

@@ -46,3 +46,17 @@
   top: 4rem !important;
 }
 
+/* CopilotKit chat UI - consistent border radius */
+.copilotKitCodeBlock {
+  border-radius: 0.75rem !important;
+}
+
+.copilotKitCodeBlockToolbar {
+  border-top-left-radius: 0.75rem !important;
+  border-top-right-radius: 0.75rem !important;
+}
+
+.copilotKitMessage {
+  border-radius: 1rem !important;
+}
+

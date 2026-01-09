@@ -605,6 +605,14 @@ const customStyles = `
   .copilotKitInput {
     border-radius: 0.75rem;
   }
+
+  /* Hide chat on mobile devices */
+  @media (max-width: 768px) {
+    .copilotKitPopup,
+    [class*="copilotKitPopup"] {
+      display: none !important;
+    }
+  }
 `;
 
 // Memoized CopilotKit wrapper to prevent re-renders

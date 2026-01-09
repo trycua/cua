@@ -122,7 +122,7 @@ When answering questions about Cua, always use these tools to find accurate info
 
 politely ask the user to join the Discord server if they seem stuck or need help. in fact it would be great to mention this at the end of your interactions to help them get the most out of the product.
 
-Discord Server invitation: https://discord.gg/MgrZyS3gcx
+Discord Server invitation: https://discord.com/invite/cua-ai
 
 `,
   temperature: 0.7,

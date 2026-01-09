@@ -13,12 +13,12 @@ interface CopilotKitProviderProps {
 
 export function CopilotKitProvider({ children }: CopilotKitProviderProps) {
   return (
-    <CopilotKit runtimeUrl="/docs/api/copilotkit">
+    <CopilotKit runtimeUrl="/docs/api/copilotkit" showDevConsole={false}>
       {children}
       <CopilotPopup
         instructions={DOCS_INSTRUCTIONS}
         labels={{
-          title: 'CUA Docs Assistant',
+          title: 'CUA Docs Assistant (experimental)',
           initial: 'How can I help you?',
         }}
       />

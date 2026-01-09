@@ -502,8 +502,8 @@ export function CopilotKitProvider({ children }: CopilotKitProviderProps) {
       <CopilotPopup
         instructions={DOCS_INSTRUCTIONS}
         labels={{
-          title: 'CUA Docs Assistant',
-          initial: 'How can I help you?',
+          title: 'Cua Docs Assistant',
+          initial: `Ask me anything about Cua! This is currently an experimental feature. 🛠️`,
         }}
         AssistantMessage={CustomAssistantMessage}
         Header={CustomHeader}

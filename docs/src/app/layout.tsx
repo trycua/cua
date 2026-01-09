@@ -3,7 +3,6 @@ import { RootProvider } from 'fumadocs-ui/provider';
 import { Geist, Geist_Mono, Urbanist } from 'next/font/google';
 import type { ReactNode } from 'react';
 import { PHProvider, PostHogPageView } from '@/providers/posthog-provider';
-import { CopilotKitProvider } from '@/providers/copilotkit-provider';
 import { AnalyticsTracker } from '@/components/analytics-tracker';
 import { CookieConsent } from '@/components/cookie-consent';
 import { Footer } from '@/components/footer';
@@ -58,10 +57,8 @@ export default function Layout({ children }: { children: ReactNode }) {
             <PostHogPageView />
           </Suspense>
           <AnalyticsTracker />
-          <CopilotKitProvider>
-            <RootProvider search={{ options: { api: '/docs/api/search' } }}>{children}</RootProvider>
-            <Footer />
-          </CopilotKitProvider>
+          <RootProvider search={{ options: { api: '/docs/api/search' } }}>{children}</RootProvider>
+          <Footer />
           <CookieConsent />
         </PHProvider>
       </body>

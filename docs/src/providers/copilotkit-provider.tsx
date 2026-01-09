@@ -503,7 +503,15 @@ export function CopilotKitProvider({ children }: CopilotKitProviderProps) {
         instructions={DOCS_INSTRUCTIONS}
         labels={{
           title: 'Cua Docs Assistant',
-          initial: `Ask me anything about Cua! This is currently an experimental feature 🛠️ Because of this, the responses may be incomplete or incorrect, but we're working on it! Please refer to the docs for the most accurate information.`,
+          initial: `Ask me anything about Cua! 
+
+This is currently an **experimental** feature.
+
+Because of this, the responses may be **incomplete or incorrect**
+
+Please refer to the source documentation for the most accurate information.
+
+For additional help, please join the Discord server: https://discord.com/invite/cua-ai`,
         }}
         AssistantMessage={CustomAssistantMessage}
         Header={CustomHeader}

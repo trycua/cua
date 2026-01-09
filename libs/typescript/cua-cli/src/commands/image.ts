@@ -121,7 +121,7 @@ const listHandler = async (argv: Record<string, unknown>) => {
   printTable(headers, rows);
 };
 
-const uploadHandler = async (argv: Record<string, unknown>) => {
+const pushHandler = async (argv: Record<string, unknown>) => {
   const token = await ensureApiKeyInteractive();
   const name = String(argv.name);
   const tag = String(argv.tag || 'latest');
@@ -153,7 +153,7 @@ const uploadHandler = async (argv: Record<string, unknown>) => {
   }
 
   const sizeBytes = file.size;
-  console.log(`Uploading ${filePath} (${formatBytes(sizeBytes)})`);
+  console.log(`Pushing ${filePath} (${formatBytes(sizeBytes)})`);
 
   // Calculate checksum
   console.log('Calculating checksum...');
@@ -264,18 +264,18 @@ const uploadHandler = async (argv: Record<string, unknown>) => {
   }
 
   const result = (await completeRes.json()) as ImageVersionInfo;
-  console.log(`Upload complete: ${name}:${tag}`);
+  console.log(`Push complete: ${name}:${tag}`);
   console.log(`Version ID: ${result.version_id}`);
   console.log(`Status: ${result.status}`);
 };
 
-const downloadHandler = async (argv: Record<string, unknown>) => {
+const pullHandler = async (argv: Record<string, unknown>) => {
   const token = await ensureApiKeyInteractive();
   const name = String(argv.name);
   const tag = String(argv.tag || 'latest');
   const outputPath = String(argv.output || `${name}-${tag}.qcow2`);
 
-  console.log(`Downloading ${name}:${tag}...`);
+  console.log(`Pulling ${name}:${tag}...`);
 
   // Get download URL
   const urlRes = await http(`/v1/images/${encodeURIComponent(name)}/download?tag=${encodeURIComponent(tag)}`, {
@@ -323,7 +323,7 @@ const downloadHandler = async (argv: Record<string, unknown>) => {
     process.exit(1);
   }
 
-  console.log(`Download complete: ${outputPath}`);
+  console.log(`Pull complete: ${outputPath}`);
   console.log(`Checksum verified: ${downloadedChecksum}`);
 };
 
@@ -366,7 +366,7 @@ const deleteHandler = async (argv: Record<string, unknown>) => {
 export function registerImageCommands(y: Argv) {
   y.command(
     ['image', 'img'],
-    'Manage VM images (upload, download, delete)',
+    'Manage VM images (push, pull, delete)',
     (y) => {
       return y
         .command(
@@ -381,8 +381,8 @@ export function registerImageCommands(y: Argv) {
           listHandler
         )
         .command(
-          'upload <name>',
-          'Upload a VM image to cloud storage',
+          'push <name>',
+          'Push a VM image to cloud storage',
           (y) =>
             y
               .positional('name', { type: 'string', describe: 'Image name', demandOption: true })
@@ -402,11 +402,11 @@ export function registerImageCommands(y: Argv) {
                 choices: ['qcow2', 'raw', 'vmdk'],
                 describe: 'Image type',
               }),
-          uploadHandler
+          pushHandler
         )
         .command(
-          'download <name>',
-          'Download a VM image from cloud storage',
+          'pull <name>',
+          'Pull a VM image from cloud storage',
           (y) =>
             y
               .positional('name', { type: 'string', describe: 'Image name', demandOption: true })
@@ -420,7 +420,7 @@ export function registerImageCommands(y: Argv) {
                 type: 'string',
                 describe: 'Output file path',
               }),
-          downloadHandler
+          pullHandler
         )
         .command(
           'delete <name>',

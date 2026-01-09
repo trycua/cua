@@ -214,18 +214,12 @@
     {
       "type": "launch",
       "parameters": {
-        "command": [
-          "start",
-          "msedge",
-          "--remote-debugging-port=1337"
-        ]
+        "command": ["start", "msedge", "--remote-debugging-port=1337"]
       }
     }
   ],
   "trajectory": "trajectories\\",
-  "related_apps": [
-    "msedge"
-  ],
+  "related_apps": ["msedge"],
   "evaluator": {
     "postconfig": [
       {
@@ -240,15 +234,11 @@
         "parameters": {
           "seconds": 2
         }
-    },
+      },
       {
         "type": "launch",
         "parameters": {
-          "command": [
-            "start",
-            "msedge", 
-            "--remote-debugging-port=1337"
-          ]
+          "command": ["start", "msedge", "--remote-debugging-port=1337"]
         }
       }
     ],
@@ -261,9 +251,7 @@
       "type": "rule",
       "rules": {
         "type": "keywords",
-        "keywords": [
-          "youtube"
-        ]
+        "keywords": ["youtube"]
       }
     }
   }

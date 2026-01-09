@@ -1,17 +1,18 @@
 """Batch integration for cua-bench."""
 
-import os
 import asyncio
 from pathlib import Path
-from typing import Optional, List
+from typing import List, Optional
 
 # Import GCP batch utilities from the batch_example
 # We'll adapt the execute function for cua-bench use
 try:
-    from . import gcp as _
+    from . import gcp as _  # noqa: F401
+
     GCP_AVAILABLE = True
-except ImportError as e:
+except ImportError:
     GCP_AVAILABLE = False
+
 
 async def execute_batch(
     job_name: str,
@@ -25,7 +26,7 @@ async def execute_batch(
     output_dir: Optional[str] = None,
 ) -> List[str]:
     """Execute a batch job for cua-bench environment.
-    
+
     Args:
         job_name: Name of the batch job
         env_path: Path to the environment directory
@@ -35,7 +36,7 @@ async def execute_batch(
         run_local: Run locally using Docker instead of GCP
         image_uri: Custom container image
         auto_cleanup: Clean up resources after completion
-    
+
     Returns:
         List of log lines from the job
     """
@@ -43,7 +44,7 @@ async def execute_batch(
         raise RuntimeError(
             "GCP dependencies not installed. Install with: pip install google-cloud-batch google-cloud-logging google-cloud-storage gcloud-aio-storage"
         )
-    
+
     # For local runs, use Docker
     if run_local:
         return await run_local_docker(
@@ -54,11 +55,10 @@ async def execute_batch(
             task_count=task_count,
             parallelism=task_parallelism,
         )
-    
+
     # Import the batch execution from batch_example
-    import sys
     from . import gcp
-    
+
     # Upload environment to GCS and run batch job
     mapped_folders = [
         (str(env_path.absolute()), "/mnt/disks/env"),
@@ -98,8 +98,13 @@ async def execute_batch(
         out_path.mkdir(parents=True, exist_ok=True)
         # Use gsutil to copy everything from the bucket to the local output dir
         import asyncio as _asyncio
+
         proc = await _asyncio.create_subprocess_exec(
-            "gsutil", "cp", "-r", "gs://cua-bench-data/", str(out_path),
+            "gsutil",
+            "cp",
+            "-r",
+            "gs://cua-bench-data/",
+            str(out_path),
             stdout=_asyncio.subprocess.PIPE,
             stderr=_asyncio.subprocess.PIPE,
         )
@@ -125,7 +130,7 @@ async def run_local_docker(
     parallelism: int = 1,
 ) -> List[str]:
     """Run the batch job locally using Docker.
-    
+
     Args:
         env_path: Path to environment directory
         container_script: Script to run
@@ -133,82 +138,84 @@ async def run_local_docker(
         output_dir: Local directory to mount as /tmp/td_output for results
         task_count: Total number of tasks to run
         parallelism: Maximum number of concurrent containers
-    
+
     Returns:
         List of output lines
     """
-    import subprocess
-    import asyncio
-    
     image = image_uri or "cua-bench:latest"
-    
+
     # Prepare output directory
     if output_dir:
         output_path = Path(output_dir).absolute()
         output_path.mkdir(parents=True, exist_ok=True)
         print(f"Output directory: {output_path} -> /tmp/td_output")
-    
+
     print(f"Running {task_count} tasks with parallelism {parallelism}\n")
-    
+
     all_output = []
-    
+
     async def run_task(task_index: int) -> List[str]:
         """Run a single task in a Docker container."""
         # Build docker command for this specific task
         docker_cmd = [
-            "docker", "run", "--rm",
-            "-e", f"BATCH_TASK_INDEX={task_index}",
-            "-e", f"BATCH_TASK_COUNT={task_count}",
-            "-v", f"{env_path.absolute()}:/app/env:ro",
+            "docker",
+            "run",
+            "--rm",
+            "-e",
+            f"BATCH_TASK_INDEX={task_index}",
+            "-e",
+            f"BATCH_TASK_COUNT={task_count}",
+            "-v",
+            f"{env_path.absolute()}:/app/env:ro",
         ]
-        
+
         # Add output directory mount if specified
         if output_dir:
             docker_cmd.extend(["-v", f"{output_path}:/tmp/td_output"])
-        
+
         docker_cmd.append(image)
         docker_cmd.extend(["/bin/sh", "-c", container_script])
-        
+
         print(f"[Task {task_index}] Starting...")
-        
+
         # Run container and capture output
         process = await asyncio.create_subprocess_exec(
             *docker_cmd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
-        
+
         stdout, stderr = await process.communicate()
-        
+
         output_lines = []
         if stdout:
             for line in stdout.decode().splitlines():
                 print(f"[Task {task_index}] {line}")
                 output_lines.append(line)
-        
+
         if stderr:
             for line in stderr.decode().splitlines():
                 print(f"[Task {task_index}] [stderr] {line}")
-        
+
         if process.returncode != 0:
             raise RuntimeError(f"Task {task_index} failed with code {process.returncode}")
-        
+
         print(f"[Task {task_index}] ✓ Completed\n")
         return output_lines
-    
+
     # Run tasks with limited parallelism
     semaphore = asyncio.Semaphore(parallelism)
-    
+
     async def run_with_semaphore(task_index: int):
         async with semaphore:
             return await run_task(task_index)
-    
+
     # Create tasks for all indices
     tasks = [run_with_semaphore(i) for i in range(task_count)]
-    
+
     # Run all tasks and collect results
     results = await asyncio.gather(*tasks, return_exceptions=True)
-    
+
     # Check for errors and collect output
     for i, result in enumerate(results):
         if isinstance(result, Exception):
@@ -216,6 +223,5 @@ async def run_local_docker(
             raise result
         else:
             all_output.extend(result)
-    
-    return all_output
 
+    return all_output

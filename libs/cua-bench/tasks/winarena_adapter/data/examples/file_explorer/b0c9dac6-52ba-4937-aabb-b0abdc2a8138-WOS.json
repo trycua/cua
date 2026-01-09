@@ -5,20 +5,20 @@
   "source": "Microsoft Corporation",
   "config": [
     {
-        "type": "create_folder",
-        "parameters": {
-            "path": "C:\\Users\\Docker\\Desktop\\OldProjects"
-        }
+      "type": "create_folder",
+      "parameters": {
+        "path": "C:\\Users\\Docker\\Desktop\\OldProjects"
+      }
     },
     {
       "type": "download",
       "parameters": {
-          "files": [
-              {
-                  "url": "https://raw.githubusercontent.com/rogeriobonatti/winarenafiles/main/task_files/file_explorer/b0c9dac6-52ba-4937-aabb-b0abdc2a8138-WOS/config/SampleText.txt",
-                  "path": "C:\\Users\\Docker\\Desktop\\OldProjects\\example.txt"
-              }
-          ]
+        "files": [
+          {
+            "url": "https://raw.githubusercontent.com/rogeriobonatti/winarenafiles/main/task_files/file_explorer/b0c9dac6-52ba-4937-aabb-b0abdc2a8138-WOS/config/SampleText.txt",
+            "path": "C:\\Users\\Docker\\Desktop\\OldProjects\\example.txt"
+          }
+        ]
       }
     },
     {
@@ -29,22 +29,19 @@
     }
   ],
   "trajectory": "trajectories/",
-  "related_apps": [
-    "file_explorer"
-  ],
- "evaluator": {
+  "related_apps": ["file_explorer"],
+  "evaluator": {
     "func": "exact_match",
     "result": {
-        "type": "zipped_folder_in_desktop",
-        "filename": "C:\\Users\\Docker\\Desktop\\OldProjects.7z",
-        "password": "12345"
+      "type": "zipped_folder_in_desktop",
+      "filename": "C:\\Users\\Docker\\Desktop\\OldProjects.7z",
+      "password": "12345"
     },
     "expected": {
-        "type": "rule",
-        "rules": {
-            "expected": "true"
-        }
+      "type": "rule",
+      "rules": {
+        "expected": "true"
+      }
     }
   }
 }
-

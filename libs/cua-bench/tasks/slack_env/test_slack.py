@@ -15,8 +15,9 @@ Usage:
     2. Run this test: python test_slack.py
 """
 
-from cua_bench_ui import launch_window, execute_javascript
 import time
+
+from cua_bench_ui import execute_javascript, launch_window
 
 
 def test_slack_message_api():
@@ -47,7 +48,7 @@ def test_slack_message_api():
     print(f"Retrieved {len(msgs)} outbound message(s)")
 
     # Check if any message contains "Hello!"
-    passed = any("Hello!" in str(msg.get('text', '')) for msg in msgs)
+    passed = any("Hello!" in str(msg.get("text", "")) for msg in msgs)
 
     if passed:
         print("PASSED: Found message containing 'Hello!'")

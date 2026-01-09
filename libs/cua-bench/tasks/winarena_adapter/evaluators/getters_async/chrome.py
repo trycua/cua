@@ -2,12 +2,10 @@
 
 import json
 import logging
-import os
 import sqlite3
-import tempfile
 from typing import Any, Dict, List, Optional
 
-from .base import CACHE_DIR, get_cache_path, run_powershell
+from .base import get_cache_path, run_powershell
 
 logger = logging.getLogger("winarena.getters_async.chrome")
 
@@ -15,8 +13,7 @@ logger = logging.getLogger("winarena.getters_async.chrome")
 async def _get_chrome_profile_path(session) -> str:
     """Get the Chrome profile path on the VM."""
     result = await run_powershell(
-        session,
-        "$env:USERPROFILE + '\\AppData\\Local\\Google\\Chrome\\User Data\\Default'"
+        session, "$env:USERPROFILE + '\\AppData\\Local\\Google\\Chrome\\User Data\\Default'"
     )
     if result["exit_code"] == 0:
         return result["stdout"].strip()
@@ -91,24 +88,28 @@ async def get_history(session, config: Dict[str, Any]) -> Optional[List[Dict]]:
         conn = sqlite3.connect(str(local_path))
         cursor = conn.cursor()
 
-        cursor.execute(f"""
+        cursor.execute(
+            f"""
             SELECT url, title, visit_count, last_visit_time
             FROM urls
             ORDER BY last_visit_time DESC
             LIMIT {limit}
-        """)
+        """
+        )
 
         rows = cursor.fetchall()
         conn.close()
 
         history = []
         for url, title, visit_count, last_visit_time in rows:
-            history.append({
-                "url": url,
-                "title": title,
-                "visit_count": visit_count,
-                "last_visit_time": last_visit_time,
-            })
+            history.append(
+                {
+                    "url": url,
+                    "title": title,
+                    "visit_count": visit_count,
+                    "last_visit_time": last_visit_time,
+                }
+            )
 
         return history
 
@@ -145,29 +146,36 @@ async def get_cookie_data(session, config: Dict[str, Any]) -> Optional[List[Dict
         cursor = conn.cursor()
 
         if domain_filter:
-            cursor.execute("""
+            cursor.execute(
+                """
                 SELECT host_key, name, path, expires_utc, is_secure
                 FROM cookies
                 WHERE host_key LIKE ?
-            """, (f"%{domain_filter}%",))
+            """,
+                (f"%{domain_filter}%",),
+            )
         else:
-            cursor.execute("""
+            cursor.execute(
+                """
                 SELECT host_key, name, path, expires_utc, is_secure
                 FROM cookies
-            """)
+            """
+            )
 
         rows = cursor.fetchall()
         conn.close()
 
         cookies = []
         for host_key, name, path, expires_utc, is_secure in rows:
-            cookies.append({
-                "host_key": host_key,
-                "name": name,
-                "path": path,
-                "expires_utc": expires_utc,
-                "is_secure": is_secure,
-            })
+            cookies.append(
+                {
+                    "host_key": host_key,
+                    "name": name,
+                    "path": path,
+                    "expires_utc": expires_utc,
+                    "is_secure": is_secure,
+                }
+            )
 
         return cookies
 

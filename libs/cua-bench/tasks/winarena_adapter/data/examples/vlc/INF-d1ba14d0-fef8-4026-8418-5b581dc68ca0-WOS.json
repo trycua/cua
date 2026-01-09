@@ -6,14 +6,10 @@
   "_comments": "made into infeasible because original evaluator was empty string, resulting in no score and errors downstream",
   "config": [],
   "trajectory": "trajectories/",
-  "related_apps": [
-    "vlc"
-  ],
+  "related_apps": ["vlc"],
   "evaluator": {
     "func": "infeasible",
-    "result": {
-    },
-    "expected": {
-    }
+    "result": {},
+    "expected": {}
   }
 }

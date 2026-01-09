@@ -1,16 +1,18 @@
 """Desktop environment management for cua-bench."""
 
-from dataclasses import dataclass, field
-from typing import List, Optional, Dict, Union
-from pathlib import Path
-from jinja2 import Template
 import json
 import random
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Dict, List, Optional, Union
+
+from jinja2 import Template
 
 
 @dataclass
 class Window:
     """Represents a window in the desktop environment."""
+
     x: int
     y: int
     width: int
@@ -25,6 +27,7 @@ class Window:
 @dataclass
 class DesktopState:
     """State of the unified desktop environment."""
+
     os_type: str = "win11"  # win11, win10, win7, macos, winxp, win98, android, ios
     width: int = 1024
     height: int = 768
@@ -47,24 +50,24 @@ class DesktopState:
 
 class Desktop:
     """Desktop environment manager."""
-    
+
     def __init__(self, env):
         """Initialize desktop.
-        
+
         Args:
             env: Environment instance
         """
         self.env = env
         self.state = DesktopState()
         self.template = self._load_template()
-    
+
     def _load_template(self) -> Template:
         """Load the desktop HTML template."""
         template_path = Path(__file__).parent / "www" / "index.html"
-        with open(template_path, 'r', encoding='utf-8') as f:
+        with open(template_path, "r", encoding="utf-8") as f:
             template_content = f.read()
         return Template(template_content)
-    
+
     def configure(
         self,
         os_type: Optional[str] = None,
@@ -78,7 +81,7 @@ class Desktop:
         randomize_taskbar: bool = True,
     ):
         """Configure desktop appearance.
-        
+
         Args:
             os_type: OS appearance (win11, win10, win7, macos, winxp, win98, android, ios)
             width: Screen width in pixels
@@ -104,14 +107,27 @@ class Desktop:
                 out: List[Dict[str, str]] = []
                 for it in items or []:
                     if isinstance(it, str):
-                        title = f"{it} app" if kind in ("pinned_apps", "recent_apps") else ("Trash folder" if "trash" in it.lower() else f"{it} folder")
+                        title = (
+                            f"{it} app"
+                            if kind in ("pinned_apps", "recent_apps")
+                            else ("Trash folder" if "trash" in it.lower() else f"{it} folder")
+                        )
                         out.append({"icon": it, "title": title})
                     elif isinstance(it, dict):
                         icon = it.get("icon") or it.get("name")
-                        title = it.get("title") or (f"{icon} app" if kind in ("pinned_apps", "recent_apps") else ("Trash folder" if icon and "trash" in icon.lower() else f"{icon} folder"))
+                        title = it.get("title") or (
+                            f"{icon} app"
+                            if kind in ("pinned_apps", "recent_apps")
+                            else (
+                                "Trash folder"
+                                if icon and "trash" in icon.lower()
+                                else f"{icon} folder"
+                            )
+                        )
                         if icon:
                             out.append({"icon": icon, "title": title})
                 return out
+
             self.state.dock_state = {
                 "pinned_apps": norm(dock_state.get("pinned_apps", []), "pinned_apps"),
                 "recent_apps": norm(dock_state.get("recent_apps", []), "recent_apps"),
@@ -120,15 +136,13 @@ class Desktop:
         elif randomize_dock:
             # Load icon name lists
             icons_json = Path(__file__).parent / "www" / "iconsets" / "macos.json"
-            system_icons: List[str] = []
             application_icons: List[str] = []
             try:
                 data = json.loads(icons_json.read_text(encoding="utf-8"))
                 icons = data.get("icons", {})
-                system_icons = list(icons.get("system_icons", []) or [])
+                list(icons.get("system_icons", []) or [])
                 application_icons = list(icons.get("application_icons", []) or [])
             except Exception:
-                system_icons = []
                 application_icons = []
 
             # Random pinned apps: 1-5 from application_icons
@@ -157,6 +171,7 @@ class Desktop:
 
         # Taskbar state handling
         if taskbar_state is not None:
+
             def norm_taskbar(items: List[Union[str, Dict[str, str]]]) -> List[Dict[str, str]]:
                 out: List[Dict[str, str]] = []
                 for it in items or []:
@@ -168,6 +183,7 @@ class Desktop:
                         if icon:
                             out.append({"icon": icon, "title": title})
                 return out
+
             self.state.taskbar_state = {
                 "pinned_apps": norm_taskbar(taskbar_state.get("pinned_apps", [])),
                 "open_apps": norm_taskbar(taskbar_state.get("open_apps", [])),
@@ -202,9 +218,9 @@ class Desktop:
                 "pinned_apps": pinned_apps_tb,
                 "open_apps": open_apps_tb,
             }
-        
+
         self._render()
-    
+
     def launch(
         self,
         content: str,
@@ -218,7 +234,7 @@ class Desktop:
         title_bar_style: str = "default",
     ) -> Window:
         """Launch a new window on the desktop.
-        
+
         Args:
             content: HTML content for the window body
             title: Window title
@@ -227,7 +243,7 @@ class Desktop:
             width: Window width
             height: Window height
             use_inner_size: Whether to use the inner size of the window (i.e. content size)
-        
+
         Returns:
             Window instance
         """
@@ -236,7 +252,7 @@ class Desktop:
             x = 100 + (len(self.state.windows) * 30)
         if y is None:
             y = 100 + (len(self.state.windows) * 30)
-        
+
         # Unfocus all existing windows
         for w in self.state.windows:
             w.focused = False
@@ -244,7 +260,7 @@ class Desktop:
         if use_inner_size:
             # TODO: improve this
             height += 30
-        
+
         # Create new window
         window = Window(
             x=x,
@@ -257,26 +273,23 @@ class Desktop:
             icon=icon,
             title_bar_style=title_bar_style,
         )
-        
+
         self.state.windows.append(window)
         self._render()
-        
+
         return window
-    
+
     def _render(self):
         """Render the desktop template and update the page."""
         # Initialize playwright if needed
         self.env._init_playwright()
 
-        self.env.page.set_viewport_size({
-            "width": self.state.width,
-            "height": self.state.height
-        })
-        
+        self.env.page.set_viewport_size({"width": self.state.width, "height": self.state.height})
+
         # Serve CSS files statically
         self.env.serve_static("css", "www/css")
         self.env.serve_static("iconsets", "www/iconsets")
-        
+
         # Render template with current state
         html = self.template.render(
             os_type=self.state.os_type,
@@ -287,14 +300,14 @@ class Desktop:
             dock_state=self.state.dock_state,
             taskbar_state=self.state.taskbar_state,
         )
-        
+
         # Navigate to a proper origin for localStorage support
         def handle_root(route):
-            route.fulfill(status=200, content_type='text/html', body='')
-        
-        self.env.page.route('http://127.0.0.1/', handle_root)
-        self.env.page.goto('http://127.0.0.1')
-        self.env.page.unroute('http://127.0.0.1/')
-        
+            route.fulfill(status=200, content_type="text/html", body="")
+
+        self.env.page.route("http://127.0.0.1/", handle_root)
+        self.env.page.goto("http://127.0.0.1")
+        self.env.page.unroute("http://127.0.0.1/")
+
         # Set the rendered content
         self.env.page.set_content(html)

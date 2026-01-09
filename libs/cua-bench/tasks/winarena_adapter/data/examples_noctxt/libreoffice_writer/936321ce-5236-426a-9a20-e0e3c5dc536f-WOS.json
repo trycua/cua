@@ -12,7 +12,6 @@
           {
             "url": "https://raw.githubusercontent.com/rogeriobonatti/winarenafiles/main/task_files/writer/936321ce-5236-426a-9a20-e0e3c5dc536f-WOS/config/Graphemes_Sound_Letter_Patterns.docx",
             "path": "C:\\Users\\Docker\\Downloads\\Graphemes_Sound_Letter_Patterns.docx"
-            
           }
         ]
       }
@@ -25,9 +24,7 @@
     }
   ],
   "trajectory": "trajectories/",
-  "related_apps": [
-    "libreoffice_writer"
-  ],
+  "related_apps": ["libreoffice_writer"],
   "evaluator": {
     "postconfig": [
       {

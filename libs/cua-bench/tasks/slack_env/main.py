@@ -11,8 +11,10 @@ Tasks include:
 - Multi-step messaging workflows
 """
 
-import cua_bench as cb
 from pathlib import Path
+
+import cua_bench as cb
+
 
 @cb.tasks_config(split="train")
 def load():
@@ -44,8 +46,8 @@ def load():
                         "width": 1280,
                         "height": 800,
                         "background": "#ffcbcb",
-                    }
-                }
+                    },
+                },
             )
         )
 
@@ -67,8 +69,8 @@ def load():
                         "width": 1280,
                         "height": 800,
                         "background": "#ffcbcb",
-                    }
-                }
+                    },
+                },
             )
         )
 
@@ -108,8 +110,8 @@ def load():
                         "width": 1280,
                         "height": 800,
                         "background": "#ffcbcb",
-                    }
-                }
+                    },
+                },
             )
         )
 
@@ -134,8 +136,8 @@ def load_test():
                     "width": 1280,
                     "height": 800,
                     "background": "#ffcbcb",
-                }
-            }
+                },
+            },
         ),
         cb.Task(
             description='Switch to #engineering channel and send "deployment ready".',
@@ -151,8 +153,8 @@ def load_test():
                     "width": 1280,
                     "height": 800,
                     "background": "#ffcbcb",
-                }
-            }
+                },
+            },
         ),
         cb.Task(
             description='Reply to Carol Johnson\'s message about the PR in a thread saying "LGTM, approved!"',
@@ -169,8 +171,8 @@ def load_test():
                     "width": 1280,
                     "height": 800,
                     "background": "#ffcbcb",
-                }
-            }
+                },
+            },
         ),
     ]
 
@@ -179,7 +181,7 @@ def load_test():
 async def start(task_cfg, session: cb.DesktopSession | cb.MobileSession):
     """Initialize the Slack environment for a task."""
     # Read the Slack HTML content
-    html_content = (Path(__file__).parent / "gui" / "index.html").read_text('utf-8')
+    html_content = (Path(__file__).parent / "gui" / "index.html").read_text("utf-8")
 
     # Launch the Slack window
     await session.launch_window(
@@ -217,8 +219,7 @@ async def evaluate_channel_message(task_cfg, session: cb.DesktopSession | cb.Mob
 
     # Get outbound messages from the Slack API
     outbound_messages = await session.execute_javascript(
-        pid=1,
-        javascript="window.__slack_shell.getOutboundMessages()"
+        pid=1, javascript="window.__slack_shell.getOutboundMessages()"
     )
 
     if not outbound_messages:
@@ -248,8 +249,7 @@ async def evaluate_thread_reply(task_cfg, session: cb.DesktopSession | cb.Mobile
 
     # Get thread replies from the Slack API
     thread_replies = await session.execute_javascript(
-        pid=1,
-        javascript="window.__slack_shell.getThreadReplies()"
+        pid=1, javascript="window.__slack_shell.getThreadReplies()"
     )
 
     if not thread_replies:
@@ -295,21 +295,21 @@ async def solve_channel_message(task_cfg, session: cb.DesktopSession | cb.Mobile
     if task_type == "channel_message" and expected_channel != "general":
         # Click on the channel in the sidebar
         await session.click_element(1, f'.channel-item[data-channel="{expected_channel}"]')
-        if hasattr(session, 'env') and session.env:
+        if hasattr(session, "env") and session.env:
             await session.env.step(cb.WaitAction(seconds=0.5))
 
     # Click on the message input
     await session.click_element(1, "#message-input")
-    if hasattr(session, 'env') and session.env:
+    if hasattr(session, "env") and session.env:
         await session.env.step(cb.WaitAction(seconds=0.2))
 
     # Type the message
-    if hasattr(session, 'env') and session.env:
+    if hasattr(session, "env") and session.env:
         await session.env.step(cb.TypeAction(text=expected_message))
         await session.env.step(cb.WaitAction(seconds=0.2))
 
     # Click send or press Enter
-    if hasattr(session, 'env') and session.env:
+    if hasattr(session, "env") and session.env:
         await session.env.step(cb.KeyAction(key="Return"))
 
 
@@ -320,26 +320,26 @@ async def solve_thread_reply(task_cfg, session: cb.DesktopSession | cb.MobileSes
 
     # Hover over the parent message to show the reply button
     await session.click_element(1, f'[data-message-id="{parent_message_id}"]')
-    if hasattr(session, 'env') and session.env:
+    if hasattr(session, "env") and session.env:
         await session.env.step(cb.WaitAction(seconds=0.3))
 
     # Click the reply button to open the thread panel
     await session.click_element(1, f'[data-message-id="{parent_message_id}"] .reply-btn')
-    if hasattr(session, 'env') and session.env:
+    if hasattr(session, "env") and session.env:
         await session.env.step(cb.WaitAction(seconds=0.5))
 
     # Click on the thread input
     await session.click_element(1, "#thread-input")
-    if hasattr(session, 'env') and session.env:
+    if hasattr(session, "env") and session.env:
         await session.env.step(cb.WaitAction(seconds=0.2))
 
     # Type the reply
-    if hasattr(session, 'env') and session.env:
+    if hasattr(session, "env") and session.env:
         await session.env.step(cb.TypeAction(text=expected_reply))
         await session.env.step(cb.WaitAction(seconds=0.2))
 
     # Send the reply
-    if hasattr(session, 'env') and session.env:
+    if hasattr(session, "env") and session.env:
         await session.env.step(cb.KeyAction(key="Return"))
 
 

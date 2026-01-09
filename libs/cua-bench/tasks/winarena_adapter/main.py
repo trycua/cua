@@ -21,8 +21,8 @@ Domains:
 
 import os
 import sys
-from pathlib import Path
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Optional
 
 import cua_bench as cb
@@ -32,18 +32,19 @@ _MODULE_DIR = Path(__file__).parent
 if str(_MODULE_DIR.parent) not in sys.path:
     sys.path.insert(0, str(_MODULE_DIR.parent))
 
-from winarena_adapter.task_loader import load_waa_tasks
-from winarena_adapter.setup_controller import WAASetupController
-from winarena_adapter.evaluator import WAAEvaluator
-
+from winarena_adapter.evaluator import WAAEvaluator  # noqa: E402
+from winarena_adapter.setup_controller import WAASetupController  # noqa: E402
+from winarena_adapter.task_loader import load_waa_tasks  # noqa: E402
 
 # ============================================================================
 # Setup Check (for cb run --setup integration)
 # ============================================================================
 
+
 @dataclass
 class SetupStatus:
     """Status of adapter setup requirements."""
+
     ready: bool
     message: str
     can_setup: bool = False
@@ -67,8 +68,8 @@ def check_setup() -> SetupStatus:
         return SetupStatus(
             ready=False,
             message="Windows Arena requires KVM for local execution.\n"
-                    "KVM is only available on Linux with virtualization enabled.\n"
-                    "For cloud execution, use --provider with a pre-configured image.",
+            "KVM is only available on Linux with virtualization enabled.\n"
+            "For cloud execution, use --provider with a pre-configured image.",
             can_setup=False,
         )
 
@@ -86,10 +87,10 @@ def check_setup() -> SetupStatus:
     return SetupStatus(
         ready=False,
         message="Windows Arena requires a base VM image (first-time setup).\n"
-                "This requires a Windows 11 ISO file (~6GB download).\n\n"
-                "Options:\n"
-                "  1. Auto-download ISO:  cb run tasks/winarena_adapter --setup --download-iso\n"
-                "  2. Use existing ISO:   cb run tasks/winarena_adapter --setup --iso /path/to/windows.iso",
+        "This requires a Windows 11 ISO file (~6GB download).\n\n"
+        "Options:\n"
+        "  1. Auto-download ISO:  cb run tasks/winarena_adapter --setup --download-iso\n"
+        "  2. Use existing ISO:   cb run tasks/winarena_adapter --setup --iso /path/to/windows.iso",
         can_setup=True,
         setup_command="cb run tasks/winarena_adapter --setup --download-iso",
     )

@@ -7,12 +7,11 @@ Usage:
 """
 
 import asyncio
-import os
 import platform as sys_platform
 import subprocess
 
-from .platform import PLATFORMS, check_docker, check_kvm, check_lume, check_image_exists
-from .image import load_image_registry, get_image_path
+from .image import get_image_path, load_image_registry
+from .platform import PLATFORMS, check_docker, check_image_exists, check_kvm, check_lume
 
 
 def list_running_shells() -> list:
@@ -22,11 +21,11 @@ def list_running_shells() -> list:
             ["docker", "ps", "--format", "{{.Names}}", "-f", "name=cua-shell-"],
             capture_output=True,
             text=True,
-            timeout=10
+            timeout=10,
         )
         if result.returncode == 0:
-            containers = [c.strip() for c in result.stdout.strip().split('\n') if c.strip()]
-            return [c.replace("cua-shell-", '') for c in containers]
+            containers = [c.strip() for c in result.stdout.strip().split("\n") if c.strip()]
+            return [c.replace("cua-shell-", "") for c in containers]
         return []
     except Exception:
         return []
@@ -60,13 +59,25 @@ async def _execute_async(args) -> int:
 
     print(f"\n{BOLD}System{RESET}")
     print("-" * 70)
-    print(f"  Docker:  {GREEN}✓ Running{RESET}" if docker_ok else f"  Docker:  {RED}✗ Not running{RESET}")
+    print(
+        f"  Docker:  {GREEN}✓ Running{RESET}"
+        if docker_ok
+        else f"  Docker:  {RED}✗ Not running{RESET}"
+    )
 
     if is_linux:
-        print(f"  KVM:     {GREEN}✓ Available{RESET}" if kvm_ok else f"  KVM:     {YELLOW}○ Not available{RESET}")
+        print(
+            f"  KVM:     {GREEN}✓ Available{RESET}"
+            if kvm_ok
+            else f"  KVM:     {YELLOW}○ Not available{RESET}"
+        )
 
     if is_macos:
-        print(f"  Lume:    {GREEN}✓ Installed{RESET}" if lume_ok else f"  Lume:    {GREY}○ Not installed{RESET}")
+        print(
+            f"  Lume:    {GREEN}✓ Installed{RESET}"
+            if lume_ok
+            else f"  Lume:    {GREY}○ Not installed{RESET}"
+        )
 
     # Images
     image_registry = load_image_registry()
@@ -101,9 +112,9 @@ async def _execute_async(args) -> int:
         print(f"\n  {ready_count}/{len(image_registry)} images ready")
     else:
         print(f"  {GREY}No images registered.{RESET}")
-        print(f"\n  Create one with:")
-        print(f"    cb image create linux-docker")
-        print(f"    cb image create windows-qemu --download-iso")
+        print("\n  Create one with:")
+        print("    cb image create linux-docker")
+        print("    cb image create windows-qemu --download-iso")
 
     # Interactive shells
     running_shells = list_running_shells()
@@ -115,8 +126,8 @@ async def _execute_async(args) -> int:
             print(f"  {GREEN}●{RESET} {name:<20}")
     else:
         print(f"  {GREY}No shells running.{RESET}")
-        print(f"\n  Start one with:")
-        print(f"    cb image shell <image>")
+        print("\n  Start one with:")
+        print("    cb image shell <image>")
 
     # Runs (sessions)
     try:
@@ -128,6 +139,7 @@ async def _execute_async(args) -> int:
 
         # Group by run_id
         from collections import defaultdict
+
         runs = defaultdict(list)
         for session in sessions:
             run_id = session.get("run_id", "-")
@@ -177,8 +189,8 @@ async def _execute_async(args) -> int:
                 print(f"\n  ... and {len(runs) - 5} more runs")
         else:
             print(f"  {GREY}No runs in progress.{RESET}")
-            print(f"\n  Start a run with:")
-            print(f"    cb run <task>")
+            print("\n  Start a run with:")
+            print("    cb run <task>")
 
     except Exception as e:
         print(f"\n{BOLD}Runs{RESET}")
@@ -200,7 +212,4 @@ async def _execute_async(args) -> int:
 
 def register_parser(subparsers):
     """Register the status command with the main CLI parser."""
-    subparsers.add_parser(
-        'status',
-        help='Show system status dashboard'
-    )
+    subparsers.add_parser("status", help="Show system status dashboard")

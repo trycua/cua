@@ -1,10 +1,10 @@
-from pathlib import Path
+import base64
 import json
 import sys
-import base64
 import time
-from io import BytesIO
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from io import BytesIO
+from pathlib import Path
 
 try:
     import tomllib  # Python 3.11+
@@ -68,6 +68,7 @@ def count_tasks_in_env(env_dir: Path) -> int:
     if not main_py.exists():
         return 0
     from cua_bench import make
+
     env = make(str(env_dir))
     if env.tasks_config_fn is None:
         env.close()
@@ -87,6 +88,7 @@ def generate_previews(dataset_id: str, env_dir: Path, max_previews: int = 5):
     if not main_py.exists():
         return previews
     from cua_bench import make
+
     env = make(str(env_dir))
     if env.tasks_config_fn is None:
         env.close()
@@ -95,17 +97,18 @@ def generate_previews(dataset_id: str, env_dir: Path, max_previews: int = 5):
     count = min(len(tasks), max_previews)
     for i in range(count):
         screenshot_bytes, task_cfg = env.reset(task_id=i)
-        
+
         # Wait a bit for the environment to stabilize
         time.sleep(5)
-        
+
         # Take a fresh screenshot after waiting
         screenshot_bytes = env.provider.screenshot()
-        
+
         # Convert to JPEG (quality 95) and encode as base64
         screenshot_b64 = None
         mime = "image/jpeg"
         from PIL import Image  # type: ignore
+
         img = Image.open(BytesIO(screenshot_bytes)).convert("RGB")
         buf = BytesIO()
         img.save(buf, format="JPEG", quality=95)
@@ -116,13 +119,15 @@ def generate_previews(dataset_id: str, env_dir: Path, max_previews: int = 5):
             "task_id": getattr(task_cfg, "task_id", None) or i,
             "metadata": getattr(task_cfg, "metadata", None),
         }
-        previews.append({
-            "index": i,
-            "screenshot": f"data:{mime};base64,{screenshot_b64}",
-            "task": task_dict,
-        })
+        previews.append(
+            {
+                "index": i,
+                "screenshot": f"data:{mime};base64,{screenshot_b64}",
+                "task": task_dict,
+            }
+        )
 
-        env.close() # Close environment to reset before next preview
+        env.close()  # Close environment to reset before next preview
     env.close()
     return previews
 
@@ -156,27 +161,29 @@ def build_registry(task_datasets_root: Path, meta_entries, parallelism: int = 16
         ds_path = task_datasets_root / ds_id
         ds_github = f"{task_registry_url}{ds_id}/"
         if not ds_path.exists():
-            output.append({
-                "id": ds_id,
-                "github_url": ds_github,
-                "description": ds_desc,
-                "num_environments": 0,
-                "num_tasks": 0,
-                "environments": [],
-            })
+            output.append(
+                {
+                    "id": ds_id,
+                    "github_url": ds_github,
+                    "description": ds_desc,
+                    "num_environments": 0,
+                    "num_tasks": 0,
+                    "environments": [],
+                }
+            )
             continue
 
         env_dirs = sorted([p for p in ds_path.iterdir() if p.is_dir()])
         envs = []
         total_tasks = 0
-        
+
         # Process environments in parallel
         with ThreadPoolExecutor(max_workers=parallelism) as executor:
             future_to_env = {
                 executor.submit(process_environment, ds_id, ds_github, env_dir): env_dir
                 for env_dir in env_dirs
             }
-            
+
             for future in as_completed(future_to_env):
                 try:
                     env_data = future.result()
@@ -186,28 +193,31 @@ def build_registry(task_datasets_root: Path, meta_entries, parallelism: int = 16
                     env_dir = future_to_env[future]
                     print(f"Error processing {env_dir}: {e}", file=sys.stderr)
 
-        output.append({
-            "id": ds_id,
-            "github_url": ds_github,
-            "description": ds_desc,
-            "num_environments": len(envs),
-            "num_tasks": total_tasks,
-            "environments": envs,
-        })
+        output.append(
+            {
+                "id": ds_id,
+                "github_url": ds_github,
+                "description": ds_desc,
+                "num_environments": len(envs),
+                "num_tasks": total_tasks,
+                "environments": envs,
+            }
+        )
     return output
 
 
 def main():
     import argparse
+
     parser = argparse.ArgumentParser(description="Dump task registry to JSON")
     parser.add_argument(
         "--parallelism",
         type=int,
         default=16,
-        help="Number of parallel workers for processing environments (default: 16)"
+        help="Number of parallel workers for processing environments (default: 16)",
     )
     args = parser.parse_args()
-    
+
     if not task_metadata.exists():
         print(f"meta.json not found at {task_metadata}")
         return 1

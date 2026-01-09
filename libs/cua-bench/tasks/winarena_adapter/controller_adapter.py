@@ -4,7 +4,6 @@ WAA evaluators expect a controller object with specific methods. This adapter
 wraps the cua-bench session to provide those methods.
 """
 
-import base64
 import json
 import logging
 from typing import Any, Dict, List, Optional
@@ -40,8 +39,10 @@ class WAAControllerAdapter:
 
     async def get_vm_screen_size(self) -> Optional[Dict[str, int]]:
         """Get the size of the VM screen."""
-        return {"width": getattr(self.session, '_width', 1920),
-                "height": getattr(self.session, '_height', 1080)}
+        return {
+            "width": getattr(self.session, "_width", 1920),
+            "height": getattr(self.session, "_height", 1080),
+        }
 
     # --- File Operations ---
 
@@ -186,7 +187,9 @@ class WAAControllerAdapter:
         try:
             # Use PowerShell to set clipboard on Windows
             escaped = text.replace("'", "''")
-            await self.session.run_command(f"powershell -Command \"Set-Clipboard -Value '{escaped}'\"")
+            await self.session.run_command(
+                f"powershell -Command \"Set-Clipboard -Value '{escaped}'\""
+            )
             return True
         except Exception as e:
             logger.error(f"Failed to set clipboard: {e}")
@@ -241,7 +244,7 @@ print('true' if files == sorted_files else 'false')"""
 
     async def get_vm_wallpaper(self) -> Optional[bytes]:
         """Get the current wallpaper image."""
-        command = 'powershell -Command "(Get-ItemProperty \'HKCU:\\Control Panel\\Desktop\' -Name Wallpaper).Wallpaper"'
+        command = "powershell -Command \"(Get-ItemProperty 'HKCU:\\Control Panel\\Desktop' -Name Wallpaper).Wallpaper\""
         result = await self.execute_shell_command(command)
         if result and result.get("status") == "success":
             wallpaper_path = result["output"].strip()
@@ -255,8 +258,10 @@ print('true' if files == sorted_files else 'false')"""
         """Get window size for an application - not directly supported."""
         # Window-specific size queries would require UI automation
         # Return screen size as default
-        return {"width": getattr(self.session, '_width', 1920),
-                "height": getattr(self.session, '_height', 1080)}
+        return {
+            "width": getattr(self.session, "_width", 1920),
+            "height": getattr(self.session, "_height", 1080),
+        }
 
     # --- Library Folders (Windows) ---
 
@@ -281,7 +286,7 @@ if ($library) {{
     async def get_vm_check_if_timer_started(self, hours: int, minutes: int, seconds: int) -> str:
         """Check if a timer exists in Clock app."""
         # Simplified check - actual implementation would need UI automation
-        command = 'powershell -Command "Get-Process -Name \'Time\' -ErrorAction SilentlyContinue | Select-Object -First 1"'
+        command = "powershell -Command \"Get-Process -Name 'Time' -ErrorAction SilentlyContinue | Select-Object -First 1\""
         result = await self.execute_shell_command(command)
         if result and result.get("status") == "success" and result["output"].strip():
             return "True"

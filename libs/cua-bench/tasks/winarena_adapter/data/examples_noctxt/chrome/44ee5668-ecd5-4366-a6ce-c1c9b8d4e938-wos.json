@@ -224,18 +224,12 @@
     {
       "type": "launch",
       "parameters": {
-        "command": [
-          "socat",
-          "tcp-listen:9222,fork",
-          "tcp:localhost:1337"
-        ]
+        "command": ["socat", "tcp-listen:9222,fork", "tcp:localhost:1337"]
       }
     }
   ],
   "trajectory": "trajectories\\",
-  "related_apps": [
-    "chrome"
-  ],
+  "related_apps": ["chrome"],
   "evaluator": {
     "postconfig": [
       {
@@ -250,7 +244,7 @@
         "parameters": {
           "seconds": 2
         }
-    },
+      },
       {
         "type": "launch",
         "parameters": {
@@ -271,9 +265,7 @@
       "type": "rule",
       "rules": {
         "type": "keywords",
-        "keywords": [
-          "youtube"
-        ]
+        "keywords": ["youtube"]
       }
     }
   }

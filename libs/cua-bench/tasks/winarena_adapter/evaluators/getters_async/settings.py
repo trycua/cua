@@ -4,7 +4,7 @@ import json
 import logging
 from typing import Any, Dict, List, Optional, Union
 
-from .base import get_registry_value, get_registry_binary, run_powershell
+from .base import get_registry_binary, get_registry_value, run_powershell
 
 logger = logging.getLogger("winarena.getters_async.settings")
 
@@ -49,7 +49,9 @@ async def get_night_light_state(session, config: Dict[str, Any]) -> Union[bool, 
 
             if len(binary_data) > ending_index + 2:
                 ending_hour = binary_data[ending_index]
-                ending_minute = binary_data[ending_index + 2] if binary_data[ending_index + 1] != 0 else 0
+                ending_minute = (
+                    binary_data[ending_index + 2] if binary_data[ending_index + 1] != 0 else 0
+                )
 
                 start = _generate_time(starting_hour, starting_minute)
                 end = _generate_time(ending_hour, ending_minute)
@@ -80,7 +82,9 @@ async def get_storage_sense_run_frequency(session, config: Dict[str, Any]) -> Op
     Returns:
         Frequency value (e.g., '1' for daily) or None if disabled
     """
-    key_path = r"HKCU:\Software\Microsoft\Windows\CurrentVersion\StorageSense\Parameters\StoragePolicy"
+    key_path = (
+        r"HKCU:\Software\Microsoft\Windows\CurrentVersion\StorageSense\Parameters\StoragePolicy"
+    )
 
     # Check if Storage Sense is enabled
     enabled = await get_registry_value(session, key_path, "01")
@@ -126,8 +130,7 @@ async def get_system_timezone(session, config: Dict[str, Any]) -> str:
         Timezone display name (e.g., "(UTC-08:00) Pacific Time (US & Canada)")
     """
     result = await run_powershell(
-        session,
-        "Get-TimeZone | Select-Object -Property DisplayName, StandardName | ConvertTo-Json"
+        session, "Get-TimeZone | Select-Object -Property DisplayName, StandardName | ConvertTo-Json"
     )
 
     if result["exit_code"] == 0 and result["stdout"]:

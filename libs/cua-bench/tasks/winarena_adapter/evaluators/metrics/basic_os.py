@@ -16,14 +16,14 @@ def check_gnome_favorite_apps(apps_str: str, rule):
 
 def is_utc_0(timedatectl_output):
     """
-    Format as:
-    Local time: Thu 2024-01-25 12:56:06 WET
-           Universal time: Thu 2024-01-25 12:56:06 UTC
-                 RTC time: Thu 2024-01-25 12:56:05
-                Time zone: Atlantic/Faroe (WET, +0000)
-System clock synchronized: yes
-              NTP service: inactive
-          RTC in local TZ: no
+        Format as:
+        Local time: Thu 2024-01-25 12:56:06 WET
+               Universal time: Thu 2024-01-25 12:56:06 UTC
+                     RTC time: Thu 2024-01-25 12:56:05
+                    Time zone: Atlantic/Faroe (WET, +0000)
+    System clock synchronized: yes
+                  NTP service: inactive
+              RTC in local TZ: no
     """
 
     utc_line = timedatectl_output.split("\n")[3]
@@ -44,7 +44,7 @@ def check_text_enlarged(scaling_factor_str):
 
 def check_moved_jpgs(directory_list, rule):
     expected_jpgs = rule["expected"]
-    moved_jpgs = [node['name'] for node in directory_list['children']]
+    moved_jpgs = [node["name"] for node in directory_list["children"]]
 
     if len(moved_jpgs) != len(expected_jpgs):
         return 0

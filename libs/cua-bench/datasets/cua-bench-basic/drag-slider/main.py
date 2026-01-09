@@ -1,10 +1,12 @@
-import cua_bench as cb
 from pathlib import Path
+
+import cua_bench as cb
+
 
 # Called once per batch
 @cb.tasks_config(split="train")
 def load():
-    os_types = ["linux"] # ["macos", "win11", "win10"]
+    os_types = ["linux"]  # ["macos", "win11", "win10"]
 
     # Different slider scenarios with various target values
     slider_scenarios = [
@@ -28,17 +30,19 @@ def load():
                     "os_type": os_type,
                     "width": 1024,
                     "height": 768,
-                    "background": '#c0c0c0'
-                }
-            }
+                    "background": "#c0c0c0",
+                },
+            },
         )
         for os_type in os_types
         for scenario in slider_scenarios
     ]
 
+
 # All code below will be running in a separate process per task
 
 pid = None
+
 
 # Called at start of task
 @cb.setup_task(split="train")
@@ -47,7 +51,7 @@ async def start(task_cfg: cb.Task, session: cb.DesktopSession):
 
     # Setup steps:
     # 1. Create a webview window with dynamic label
-    html_template = (Path(__file__).parent / "gui/index.html").read_text('utf-8')
+    html_template = (Path(__file__).parent / "gui/index.html").read_text("utf-8")
     html = html_template.replace("{{LABEL}}", task_cfg.metadata["label"])
 
     pid = await session.launch_window(
@@ -56,6 +60,7 @@ async def start(task_cfg: cb.Task, session: cb.DesktopSession):
         width=500,
         height=300,
     )
+
 
 # Called at end of task
 @cb.evaluate_task(split="train")
@@ -77,6 +82,7 @@ async def evaluate(task_cfg: cb.Task, session: cb.DesktopSession) -> list[float]
 
     return [1.0] if matches else [0.0]
 
+
 # Called after setup_task if run_solution is True
 @cb.solve_task(split="train")
 async def solve(task_cfg: cb.Task, session: cb.DesktopSession):
@@ -84,7 +90,9 @@ async def solve(task_cfg: cb.Task, session: cb.DesktopSession):
 
     # Solution steps:
     # 1. Get the slider element coordinates
-    slider_info = await session.execute_javascript(pid, """
+    slider_info = await session.execute_javascript(
+        pid,
+        """
         (function() {
             const slider = document.getElementById('slider');
             const rect = slider.getBoundingClientRect();
@@ -95,7 +103,8 @@ async def solve(task_cfg: cb.Task, session: cb.DesktopSession):
                 height: rect.height
             };
         })()
-    """)
+    """,
+    )
 
     # 2. Calculate the target position based on the target value (0-100)
     target_value = task_cfg.metadata["target_value"]
@@ -108,13 +117,10 @@ async def solve(task_cfg: cb.Task, session: cb.DesktopSession):
     start_x = slider_info["x"] + slider_info["width"] / 2
     start_y = slider_info["y"] + slider_info["height"] / 2
 
-    await session.execute_action(cb.DragAction(
-        from_x=start_x,
-        from_y=start_y,
-        to_x=target_x,
-        to_y=target_y,
-        duration=0.5
-    ))
+    await session.execute_action(
+        cb.DragAction(from_x=start_x, from_y=start_y, to_x=target_x, to_y=target_y, duration=0.5)
+    )
+
 
 if __name__ == "__main__":
     cb.interact(__file__)

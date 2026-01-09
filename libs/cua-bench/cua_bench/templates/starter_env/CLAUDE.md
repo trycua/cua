@@ -3,6 +3,7 @@
 ## Overview
 
 cua-bench creates RL environments for training computer-use agents. Each task defines:
+
 - Task variants (different scenarios from one template)
 - Setup logic (launch GUI or apps)
 - Evaluation logic (check if task was completed)
@@ -15,6 +16,7 @@ cua-bench creates RL environments for training computer-use agents. Each task de
 Create custom HTML/CSS/JS interfaces that work across all platforms. This is the **default approach** for most tasks.
 
 **Use this when:**
+
 - Building custom games, tools, or interfaces
 - Creating simulated versions of real apps (e.g., "a calculator app", "a color picker")
 - You want cross-platform compatibility (simulated, Docker, QEMU)
@@ -27,6 +29,7 @@ Create custom HTML/CSS/JS interfaces that work across all platforms. This is the
 Use real applications (Firefox, LibreOffice, etc.) on actual operating systems via Docker/QEMU.
 
 **Use this when:**
+
 - Testing interactions with real applications
 - The task explicitly requires a real app's specific behavior
 - You need shell access for setup
@@ -35,6 +38,7 @@ Use real applications (Firefox, LibreOffice, etc.) on actual operating systems v
 
 **When asked "make a task using Firefox":** (or any other task involving a 'real app')
 Ask the user to clarify:
+
 1. Do you want a **simulated clone** using Universal GUI? (faster, recommended)
 2. Do you want a task using **real Firefox** on a native OS? (requires Docker/QEMU)
 
@@ -68,6 +72,7 @@ def load():
 ```
 
 **Provider types:**
+
 - `"native"`: Real OS environments via Docker/QEMU
   - OS types: `"linux"`, `"windows"`
 - `"simulated"`: Lightweight browser-based desktop (no Docker needed)
@@ -149,57 +154,60 @@ my_task/
 ```html
 <!DOCTYPE html>
 <html>
-<head>
+  <head>
     <style>
-        body {
-            font-family: system-ui;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            height: 100vh;
-            margin: 0;
-            padding: 20px;
-        }
-        .button {
-            padding: 10px 20px;
-            font-size: 16px;
-            cursor: pointer;
-        }
+      body {
+        font-family: system-ui;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        height: 100vh;
+        margin: 0;
+        padding: 20px;
+      }
+      .button {
+        padding: 10px 20px;
+        font-size: 16px;
+        cursor: pointer;
+      }
     </style>
-</head>
-<body>
+  </head>
+  <body>
     <h1>My Task</h1>
     <button class="button" id="submit-btn">Submit</button>
 
     <script>
-        // Store state for evaluation
-        window.__submitted = false;
+      // Store state for evaluation
+      window.__submitted = false;
 
-        // Handle interaction
-        document.getElementById('submit-btn').addEventListener('click', function() {
-            window.__submitted = true;
-            this.textContent = 'Submitted!';
-        });
+      // Handle interaction
+      document.getElementById('submit-btn').addEventListener('click', function () {
+        window.__submitted = true;
+        this.textContent = 'Submitted!';
+      });
     </script>
-</body>
+  </body>
 </html>
 ```
 
 ### Key Patterns
 
 **Global state**: Use `window.__varName` to expose state for evaluation
+
 ```javascript
 window.__gameWon = false;
 window.__currentScore = 0;
 ```
 
 **Data attributes**: Use `data-*` for reliable element selection
+
 ```html
 <button data-color="red" data-action="submit">Click me</button>
 ```
 
 **CSS selectors**: Click elements in oracle solutions
+
 ```python
 await session.click_element(pid, "#submit-btn")
 await session.click_element(pid, "[data-color='red']")
@@ -343,12 +351,14 @@ async def start(task_cfg: cb.Task, session: cb.DesktopSession):
 ```
 
 **Important limitations:**
+
 - `session.run_command()` only works with native provider (not simulated)
 - Requires Docker/QEMU setup
 - Slower than Universal GUI
 - Less deterministic than custom GUIs
 
 **When to use:**
+
 - WinArena-style tasks requiring real applications
 - OS-specific behavior testing
 - Tasks that cannot be simulated with HTML/CSS/JS
@@ -448,58 +458,58 @@ async def solve(task_cfg: cb.Task, session: cb.DesktopSession):
 <!-- gui/index.html -->
 <!DOCTYPE html>
 <html>
-<head>
+  <head>
     <style>
-        body {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            height: 100vh;
-            font-family: system-ui;
-        }
-        .palette {
-            display: grid;
-            grid-template-columns: repeat(2, 100px);
-            gap: 10px;
-        }
-        .color-box {
-            width: 100px;
-            height: 100px;
-            cursor: pointer;
-            border: 3px solid #ccc;
-            border-radius: 8px;
-        }
-        .color-box:hover {
-            border-color: #666;
-        }
-        .color-box.selected {
-            border-color: #000;
-            border-width: 5px;
-        }
+      body {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        height: 100vh;
+        font-family: system-ui;
+      }
+      .palette {
+        display: grid;
+        grid-template-columns: repeat(2, 100px);
+        gap: 10px;
+      }
+      .color-box {
+        width: 100px;
+        height: 100px;
+        cursor: pointer;
+        border: 3px solid #ccc;
+        border-radius: 8px;
+      }
+      .color-box:hover {
+        border-color: #666;
+      }
+      .color-box.selected {
+        border-color: #000;
+        border-width: 5px;
+      }
     </style>
-</head>
-<body>
+  </head>
+  <body>
     <h1>Pick a Color</h1>
     <div class="palette">
-        <div class="color-box" data-color="red" style="background: red;"></div>
-        <div class="color-box" data-color="blue" style="background: blue;"></div>
-        <div class="color-box" data-color="green" style="background: green;"></div>
-        <div class="color-box" data-color="yellow" style="background: yellow;"></div>
+      <div class="color-box" data-color="red" style="background: red;"></div>
+      <div class="color-box" data-color="blue" style="background: blue;"></div>
+      <div class="color-box" data-color="green" style="background: green;"></div>
+      <div class="color-box" data-color="yellow" style="background: yellow;"></div>
     </div>
 
     <script>
-        window.__selectedColor = null;
+      window.__selectedColor = null;
 
-        document.querySelectorAll('.color-box').forEach(box => {
-            box.addEventListener('click', function() {
-                document.querySelectorAll('.color-box').forEach(b => b.classList.remove('selected'));
-                this.classList.add('selected');
-                window.__selectedColor = this.dataset.color;
-            });
+      document.querySelectorAll('.color-box').forEach((box) => {
+        box.addEventListener('click', function () {
+          document.querySelectorAll('.color-box').forEach((b) => b.classList.remove('selected'));
+          this.classList.add('selected');
+          window.__selectedColor = this.dataset.color;
         });
+      });
     </script>
-</body>
+  </body>
 </html>
 ```
 
@@ -508,6 +518,7 @@ async def solve(task_cfg: cb.Task, session: cb.DesktopSession):
 **Always use async**: All task functions must be `async def`
 
 **Global window handles**: Store `pid` globally so all functions can access it
+
 ```python
 pid = None  # At module level
 
@@ -518,6 +529,7 @@ async def start(...):
 ```
 
 **Expose state via window globals**: Let evaluation read JavaScript state
+
 ```javascript
 window.__gameWon = false;
 window.__score = 0;
@@ -525,6 +537,7 @@ window.__submitted = true;
 ```
 
 **Use data attributes**: Make oracle solutions robust
+
 ```html
 <button data-action="submit" data-color="red">Submit</button>
 ```
@@ -532,11 +545,13 @@ window.__submitted = true;
 **Prefer Universal GUI**: Start with custom HTML/CSS/JS. Only use native apps if absolutely necessary.
 
 **Test incrementally**:
+
 1. Start with `cb interact` to preview your GUI
 2. Add `--oracle` to verify your solution works
 3. Use `cb run` to evaluate with agents
 
 **Simulated vs Native**:
+
 - **Simulated**: Fast, no Docker, perfect for custom GUIs
 - **Native**: Slower, requires Docker, needed for real apps
 
@@ -544,6 +559,7 @@ window.__submitted = true;
 
 **Q: How do I make a task using Firefox?**
 A: Clarify the requirement first:
+
 - Want a simulated browser clone? Use Universal GUI (recommended)
 - Need real Firefox? Use native provider with `session.run_command()`
 
@@ -555,12 +571,14 @@ A: Use `cb interact tasks/my_task --variant-id 0` to open a visible browser and 
 
 **Q: What if my task needs to install packages?**
 A: Use `session.run_command()` with native provider:
+
 ```python
 await session.run_command("sudo apt update && sudo apt install -y <package>")
 ```
 
 **Q: How do I create partial rewards?**
 A: Return values between 0.0 and 1.0 from `evaluate()`:
+
 ```python
 return [revealed_cells / total_cells]  # Progress-based reward
 ```

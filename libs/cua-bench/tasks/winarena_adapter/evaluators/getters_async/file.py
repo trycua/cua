@@ -2,15 +2,13 @@
 
 import logging
 import os
-import tempfile
 from datetime import datetime
-from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Union
 
 import aiohttp
 import pandas as pd
 
-from .base import CACHE_DIR, download_file_from_vm, get_cache_path
+from .base import get_cache_path
 
 logger = logging.getLogger("winarena.getters_async.file")
 
@@ -85,13 +83,19 @@ async def get_vm_file(session, config: Dict[str, Any]) -> Union[Optional[str], L
         if config.get("time_suffix", False):
             timestamp = datetime.now().strftime(time_format)
             paths = [
-                p.rsplit(".", 1)[0] + timestamp + "." + p.rsplit(".", 1)[1]
-                if "." in p else p + timestamp
+                (
+                    p.rsplit(".", 1)[0] + timestamp + "." + p.rsplit(".", 1)[1]
+                    if "." in p
+                    else p + timestamp
+                )
                 for p in paths
             ]
             dests = [
-                d.rsplit(".", 1)[0] + timestamp + "." + d.rsplit(".", 1)[1]
-                if "." in d else d + timestamp
+                (
+                    d.rsplit(".", 1)[0] + timestamp + "." + d.rsplit(".", 1)[1]
+                    if "." in d
+                    else d + timestamp
+                )
                 for d in dests
             ]
     else:
@@ -156,10 +160,7 @@ async def get_content_from_vm_file(session, config: Dict[str, Any]) -> Any:
     file_content = config["file_content"]
 
     # Download file first
-    local_path = await get_vm_file(session, {
-        "path": path,
-        "dest": os.path.basename(path)
-    })
+    local_path = await get_vm_file(session, {"path": path, "dest": os.path.basename(path)})
 
     if local_path is None:
         return None

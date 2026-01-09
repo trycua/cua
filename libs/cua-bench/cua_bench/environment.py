@@ -2,15 +2,16 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-from dataclasses import asdict
-from typing import Any, Callable, Dict, Optional, Tuple, Literal
 import inspect
+from dataclasses import asdict
+from pathlib import Path
+from typing import Any, Callable, Dict, Literal, Optional, Tuple
 
-from .computers import get_session, DesktopSession, DesktopSetupConfig
 from .bot import Bot
+from .computers import DesktopSession, DesktopSetupConfig, get_session
 from .tracing import Tracing
 from .types import Action
+
 
 async def _call_function(func, *args, **kwargs):
     """Calls a function, awaiting it if it is awaitable."""
@@ -20,9 +21,12 @@ async def _call_function(func, *args, **kwargs):
     else:
         return result
 
+
 class MaxStepsExceeded(Exception):
     """Raised when the environment's max step budget is exhausted."""
+
     pass
+
 
 class Environment:
     """A minimal environment wrapper that delegates everything to a provider.
@@ -125,7 +129,7 @@ class Environment:
         SessionCls = get_session(self.session_name)
         self.session = SessionCls(**self.session_config)
         self.session.env = self
-        
+
         await self.session.start(config=self.setup_config, headless=self.headless)
         self.page = self.session.page
 
@@ -145,26 +149,32 @@ class Environment:
         # Get tasks
         if self.tasks is None and self.tasks_config_fn is not None:
             self.tasks = self.tasks_config_fn()
-        
+
         # Get current task
         if self.tasks is not None and self.current_task is None:
             self.current_task = self.tasks[0] if task_id is None else self.tasks[task_id]
-        
+
         # Create sandbox from task config if provided
-        if self.current_task is not None and hasattr(self.current_task, 'computer') and self.current_task.computer:
+        if (
+            self.current_task is not None
+            and hasattr(self.current_task, "computer")
+            and self.current_task.computer
+        ):
             computer_config = self.current_task.computer
-            provider = computer_config.get('provider', 'webtop')
-            setup_config = computer_config.get('setup_config', {})
+            provider = computer_config.get("provider", "webtop")
+            setup_config = computer_config.get("setup_config", {})
             await self.create_sandbox(provider=provider, setup_config=setup_config)
-        
+
         # Setup current task
         if self.current_task is not None and self.setup_task_fn is not None:
             await _call_function(self.setup_task_fn, self.current_task, self.session)
 
         # Return screenshot and task
         if self.session is None:
-            raise RuntimeError("create_sandbox was never called, please fix your task setup code to call env.create_sandbox() or add computer config to Task")
-        
+            raise RuntimeError(
+                "create_sandbox was never called, please fix your task setup code to call env.create_sandbox() or add computer config to Task"
+            )
+
         # Record reset event
         screenshot = await self.session.screenshot()
         if self.tracing is not None:
@@ -174,65 +184,80 @@ class Environment:
                 snapshot_payload = asdict(snapshot)
             except Exception as e:
                 import traceback
+
                 snapshot_payload = {"error": repr(e), "traceback": traceback.format_exc()}
-            
+
             # Include setup_config in the reset event for dataset processing
             self.tracing.record(
                 "reset",
                 {
-                    "task": repr(self.current_task), 
+                    "task": repr(self.current_task),
                     "snapshot": snapshot_payload,
                     "setup_config": dict(self.setup_config),
                 },
                 [screenshot],
             )
-        
+
         return screenshot, self.current_task
 
-    async def step(self, action: Action, dry_run: bool | Literal['before', 'after'] = False) -> bytes:
+    async def step(
+        self, action: Action, dry_run: bool | Literal["before", "after"] = False
+    ) -> bytes:
         # validate session
         if self.session is None:
-            raise RuntimeError("create_sandbox was never called, please call env.reset() or fix your task setup code")
+            raise RuntimeError(
+                "create_sandbox was never called, please call env.reset() or fix your task setup code"
+            )
 
         # check for max steps
         if self.max_steps is not None and self.step_count >= self.max_steps:
             raise MaxStepsExceeded("Max steps exceeded")
-        
+
         # record step:before
-        if self.tracing is not None and dry_run in (False, 'before'):
+        if self.tracing is not None and dry_run in (False, "before"):
             before_screenshot = await self.session.screenshot()
             try:
                 before_snapshot = await self.session.get_snapshot()  # type: ignore[attr-defined]
                 before_snapshot_payload = asdict(before_snapshot)
             except Exception as e:
                 import traceback
+
                 before_snapshot_payload = {"error": repr(e), "traceback": traceback.format_exc()}
             self.tracing.record(
                 "step:before",
-                {"action": repr(action), "step_count": self.step_count, "snapshot": before_snapshot_payload},
+                {
+                    "action": repr(action),
+                    "step_count": self.step_count,
+                    "snapshot": before_snapshot_payload,
+                },
                 [before_screenshot],
             )
-            if dry_run == 'before':
+            if dry_run == "before":
                 return before_screenshot
 
         # execute high-level action via session
-        if dry_run == False:
+        if not dry_run:
             if self.print_actions:
                 print(f"Executing action: {action}")
             await self.session.execute_action(action)
 
         # take screenshot, record trace event, and return
         screenshot = await self.session.screenshot()
-        if self.tracing is not None and dry_run in (False, 'after'):
+        if self.tracing is not None and dry_run in (False, "after"):
             try:
                 snapshot = await self.session.get_snapshot()  # type: ignore[attr-defined]
                 snapshot_payload = asdict(snapshot)
             except Exception as e:
                 import traceback
+
                 snapshot_payload = {"error": repr(e), "traceback": traceback.format_exc()}
             self.tracing.record(
                 "step:after",
-                {"action": repr(action), "step_count": self.step_count, "snapshot": snapshot_payload},
+                {
+                    "action": repr(action),
+                    "step_count": self.step_count,
+                    "snapshot": snapshot_payload,
+                },
                 [screenshot],
             )
 
@@ -244,12 +269,14 @@ class Environment:
     async def solve(self) -> bytes:
         # validate state and solver
         if self.session is None and self.solve_task_fn is None:
-            raise RuntimeError("create_sandbox was never called, please call env.reset() or fix your task setup code")
+            raise RuntimeError(
+                "create_sandbox was never called, please call env.reset() or fix your task setup code"
+            )
         if self.current_task is None:
             raise RuntimeError("No task is selected; call reset() first")
         if self.solve_task_fn is None:
             raise RuntimeError("No solve_task_fn provided")
-        
+
         # solve task
         try:
             await _call_function(self.solve_task_fn, self.current_task, self.session)
@@ -259,7 +286,9 @@ class Environment:
 
         # validate session
         if self.session is None:
-            raise RuntimeError("create_sandbox was never called, please call env.reset() or fix your task setup code")
+            raise RuntimeError(
+                "create_sandbox was never called, please call env.reset() or fix your task setup code"
+            )
 
         # return screenshot
         return await self.session.screenshot()
@@ -270,7 +299,7 @@ class Environment:
             raise RuntimeError("No task is selected; call reset() first")
         if self.evaluate_task_fn is None:
             raise RuntimeError("No evaluate_task_fn provided")
-        
+
         # evaluate task, return score
         result = await _call_function(self.evaluate_task_fn, self.current_task, self.session)
         if self.tracing is not None:

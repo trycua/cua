@@ -8,17 +8,15 @@
     {
       "type": "launch",
       "parameters": {
-        "command": [
-          "code"
-        ]
+        "command": ["code"]
       }
     },
     {
-        "type": "sleep",
-        "parameters": {
-          "seconds": 2
-        }
-      },
+      "type": "sleep",
+      "parameters": {
+        "seconds": 2
+      }
+    },
     {
       "type": "activate_window",
       "parameters": {
@@ -27,9 +25,7 @@
     }
   ],
   "trajectory": "trajectories/",
-  "related_apps": [
-    "vscode"
-  ],
+  "related_apps": ["vscode"],
   "evaluator": {
     "func": "check_json_settings",
     "expected": {

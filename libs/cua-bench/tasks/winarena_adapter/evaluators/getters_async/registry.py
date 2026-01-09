@@ -3,7 +3,7 @@
 import logging
 from typing import Any, Dict, Optional
 
-from .base import get_registry_value, get_registry_binary
+from .base import get_registry_binary, get_registry_value
 
 logger = logging.getLogger("winarena.getters_async.registry")
 

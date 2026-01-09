@@ -3,9 +3,8 @@
 import io
 from pathlib import Path
 
-from PIL import Image
-
 from cua_bench.utils import render_windows
+from PIL import Image
 
 
 # Android-styled UIs
@@ -285,17 +284,17 @@ def create_minimal_ui_ios():
 
 def main():
     """Generate mobile OS screenshots."""
-    
+
     # Dimensions for each screenshot
     screenshot_width = 360
     screenshot_height = 640
-    
+
     output_dir = Path(__file__).parent
-    
+
     print("=" * 60)
     print("ANDROID SCREENSHOTS")
     print("=" * 60)
-    
+
     # Generate Android screenshots with Android styling
     android_images = []
     android_uis = [
@@ -303,44 +302,44 @@ def main():
         ("Spreadsheet", create_spreadsheet_ui_android()),
         ("Minimal", create_minimal_ui_android()),
     ]
-    
+
     for i, (name, ui_func) in enumerate(android_uis):
         print(f"\nRendering Android {i+1}/3: {name}...")
-        
+
         setup_config = {
             "os_type": "android",
             "width": screenshot_width,
             "height": screenshot_height,
             "background": "#1a1a1a",
         }
-        
+
         screenshot_bytes = render_windows(
             provider="webtop",
             setup_config=setup_config,
             windows=[ui_func],
             screenshot_delay=0.5,
         )
-        
+
         img = Image.open(io.BytesIO(screenshot_bytes))
         android_images.append(img)
-    
+
     # Create Android composite
     print("\nCreating Android composite image...")
     android_width = screenshot_width * 3
-    android_composite = Image.new('RGB', (android_width, screenshot_height))
-    
+    android_composite = Image.new("RGB", (android_width, screenshot_height))
+
     for i, img in enumerate(android_images):
         x = i * screenshot_width
         android_composite.paste(img, (x, 0))
-    
+
     android_path = output_dir / "android.png"
     android_composite.save(android_path)
     print(f"✓ Android composite saved to: {android_path}")
-    
+
     print("\n" + "=" * 60)
     print("iOS SCREENSHOTS")
     print("=" * 60)
-    
+
     # Generate iOS screenshots with iOS styling (all light mode)
     ios_images = []
     ios_uis = [
@@ -348,44 +347,44 @@ def main():
         ("Spreadsheet", create_spreadsheet_ui_ios()),
         ("Minimal", create_minimal_ui_ios()),
     ]
-    
+
     for i, (name, ui_func) in enumerate(ios_uis):
         print(f"\nRendering iOS {i+1}/3: {name} (Light)...")
-        
+
         setup_config = {
             "os_type": "ios_light",
             "width": screenshot_width,
             "height": screenshot_height,
             "background": "#f2f2f7",
         }
-        
+
         screenshot_bytes = render_windows(
             provider="webtop",
             setup_config=setup_config,
             windows=[ui_func],
             screenshot_delay=0.5,
         )
-        
+
         img = Image.open(io.BytesIO(screenshot_bytes))
         ios_images.append(img)
-    
+
     # Create iOS composite
     print("\nCreating iOS composite image...")
     ios_width = screenshot_width * 3
-    ios_composite = Image.new('RGB', (ios_width, screenshot_height))
-    
+    ios_composite = Image.new("RGB", (ios_width, screenshot_height))
+
     for i, img in enumerate(ios_images):
         x = i * screenshot_width
         ios_composite.paste(img, (x, 0))
-    
+
     ios_path = output_dir / "ios.png"
     ios_composite.save(ios_path)
     print(f"✓ iOS composite saved to: {ios_path}")
-    
+
     print("\n" + "=" * 60)
     print("COMPLETE")
     print("=" * 60)
-    print(f"\nGenerated files:")
+    print("\nGenerated files:")
     print(f"  • {android_path.name} ({android_width}x{screenshot_height})")
     print(f"  • {ios_path.name} ({ios_width}x{screenshot_height})")
 

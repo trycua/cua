@@ -17,9 +17,7 @@
     }
   ],
   "trajectory": "trajectories/",
-  "related_apps": [
-    "vlc"
-  ],
+  "related_apps": ["vlc"],
   "evaluator": {
     "func": "is_vlc_recordings_folder",
     "expected": {

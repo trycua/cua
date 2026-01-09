@@ -3,7 +3,7 @@
   "snapshot": "base_setup",
   "instruction": "My VLC Media Player has been auto-closing once the video ends. It is very annoying. Could you help me prevent the VLC Media Player from auto-closing once the video ends?",
   "source": "https://superuser.com/questions/1412810/how-to-prevent-vlc-media-player-from-auto-closing-after-video-end#:%7E:text=Click%20on%20%22Media%22on%20the,VLC%20player%20after%20video%20ending",
-  "_comments":"not sure why this was labeled infeasible but, judging from the source, this functionality may not be available outside of mac OS",
+  "_comments": "not sure why this was labeled infeasible but, judging from the source, this functionality may not be available outside of mac OS",
   "config": [
     {
       "type": "launch",
@@ -13,9 +13,7 @@
     }
   ],
   "trajectory": "trajectories/",
-  "related_apps": [
-    "vlc"
-  ],
+  "related_apps": ["vlc"],
   "evaluator": {
     "func": "infeasible"
   }

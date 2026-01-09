@@ -4,15 +4,13 @@ import re
 import xml.etree.ElementTree as ET
 import zipfile
 from io import BytesIO
-from typing import List, Dict, Any
+from typing import Any, Dict, List
 
-from PIL import Image
 from docx import Document
 from docx.enum.text import WD_PARAGRAPH_ALIGNMENT, WD_TAB_ALIGNMENT
-from docx.shared import RGBColor
 from odf.opendocument import load
-from odf.text import P
-from odf.text import Span
+from odf.text import P, Span
+from PIL import Image
 from rapidfuzz import fuzz
 
 logger = logging.getLogger("desktopenv.metric.docs")
@@ -31,12 +29,14 @@ def find_default_font(config_file_path, rules):
         root = tree.getroot()
 
         # Define the XML namespace used in the file
-        namespace = {'oor': 'http://openoffice.org/2001/registry'}
+        namespace = {"oor": "http://openoffice.org/2001/registry"}
 
         # Search for the node containing the default font setting for LibreOffice Writer
-        for elem in root.findall('.//item[@oor:path="/org.openoffice.Office.Writer/DefaultFont"]', namespace):
+        for elem in root.findall(
+            './/item[@oor:path="/org.openoffice.Office.Writer/DefaultFont"]', namespace
+        ):
             for prop in elem.findall('.//prop[@oor:name="Standard"]', namespace):
-                for value in prop.findall('value', namespace):
+                for value in prop.findall("value", namespace):
                     default_font = value.text
     except Exception as e:
         logger.error(f"Error: {e}")
@@ -54,24 +54,31 @@ def contains_page_break(docx_file):
         logger.error(f"Error: {e}")
         return 0
 
-    namespaces = {'w': 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'}
+    namespaces = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
 
     for paragraph in doc.paragraphs:
         for run in paragraph.runs:
-            br_elems = run.element.findall('.//w:br', namespaces)
+            br_elems = run.element.findall(".//w:br", namespaces)
             for br in br_elems:
-                if br is not None and '{http://schemas.openxmlformats.org/wordprocessingml/2006/main}type' in br.attrib and \
-                        br.attrib['{http://schemas.openxmlformats.org/wordprocessingml/2006/main}type'] == 'page':
+                if (
+                    br is not None
+                    and "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}type"
+                    in br.attrib
+                    and br.attrib[
+                        "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}type"
+                    ]
+                    == "page"
+                ):
                     # logger.info(f"Page break found in {br}, {print(br_elems)}, {print(run)}, {print(paragraph)}")
                     return 1
     return 0
 
 
 def compare_docx_files(file1, file2, **options):
-    ignore_blanks = options.get('ignore_blanks', True)
-    ignore_case = options.get('ignore_case', False)
-    ignore_order = options.get('ignore_order', False)
-    content_only = options.get('content_only', False)
+    ignore_blanks = options.get("ignore_blanks", True)
+    ignore_case = options.get("ignore_case", False)
+    ignore_order = options.get("ignore_order", False)
+    content_only = options.get("content_only", False)
 
     if not file1 or not file2:
         return 0
@@ -84,16 +91,16 @@ def compare_docx_files(file1, file2, **options):
             for node in paragraph.childNodes:
                 if node.nodeType == node.TEXT_NODE:
                     text_parts.append(node.data)
-                elif node.nodeType == node.ELEMENT_NODE and node.tagName == 'text:span':
+                elif node.nodeType == node.ELEMENT_NODE and node.tagName == "text:span":
                     # Assuming direct text content in <text:span>, for simplicity
                     for child in node.childNodes:
                         if child.nodeType == child.TEXT_NODE:
                             text_parts.append(child.data)
-            paragraph_texts.append(''.join(text_parts))
+            paragraph_texts.append("".join(text_parts))
         return paragraph_texts
 
     # Determine file types and load documents
-    if file1.endswith('.docx') and file2.endswith('.docx'):
+    if file1.endswith(".docx") and file2.endswith(".docx"):
         try:
             doc1 = Document(file1)
             doc2 = Document(file2)
@@ -105,7 +112,7 @@ def compare_docx_files(file1, file2, **options):
         if ignore_order:
             doc1_paragraphs = sorted(doc1_paragraphs)
             doc2_paragraphs = sorted(doc2_paragraphs)
-    elif file1.endswith('.odt') and file2.endswith('.odt'):
+    elif file1.endswith(".odt") and file2.endswith(".odt"):
         try:
             doc1 = load(file1)
             doc2 = load(file2)
@@ -124,8 +131,8 @@ def compare_docx_files(file1, file2, **options):
 
     if content_only:
         # Compare the content of the documents
-        text1 = re.sub(r'\s+', ' ', '\n'.join(doc1_paragraphs)).strip()
-        text2 = re.sub(r'\s+', ' ', '\n'.join(doc2_paragraphs)).strip()
+        text1 = re.sub(r"\s+", " ", "\n".join(doc1_paragraphs)).strip()
+        text2 = re.sub(r"\s+", " ", "\n".join(doc2_paragraphs)).strip()
         if ignore_case:
             text1, text2 = text1.lower(), text2.lower()
         similarity = fuzz.ratio(text1, text2) / 100.0
@@ -133,8 +140,8 @@ def compare_docx_files(file1, file2, **options):
 
     # Process and compare documents
     if ignore_blanks:
-        text1 = re.sub(r'\s+', ' ', '\n'.join(doc1_paragraphs)).strip()
-        text2 = re.sub(r'\s+', ' ', '\n'.join(doc2_paragraphs)).strip()
+        text1 = re.sub(r"\s+", " ", "\n".join(doc1_paragraphs)).strip()
+        text2 = re.sub(r"\s+", " ", "\n".join(doc2_paragraphs)).strip()
         if ignore_case:
             text1, text2 = text1.lower(), text2.lower()
         if text1 != text2:
@@ -292,7 +299,7 @@ def compare_insert_equation(docx_file1, docx_file2):
     # Compare each paragraph if it contains equation
     for para1, para2 in zip(doc1.paragraphs, doc2.paragraphs):
         for run1, run2 in zip(para1.runs, para2.runs):
-            if run1.element.xpath('.//w:object') and run2.element.xpath('.//w:object'):
+            if run1.element.xpath(".//w:object") and run2.element.xpath(".//w:object"):
                 return 1
     return 0
 
@@ -350,7 +357,7 @@ def has_page_numbers_in_footers(docx_file):
         footer = section.footer
         if footer is None:
             return 0
-        footer_text = footer.paragraphs[0].text if footer.paragraphs else ''
+        footer_text = footer.paragraphs[0].text if footer.paragraphs else ""
         if not any(char.isdigit() for char in footer_text):
             # if no digit in footer, then no page number
             return 0
@@ -382,45 +389,51 @@ def check_file_exists(directory, filename):
 
 def check_tabstops(docx_file1, docx_file2, **kwargs) -> float:
     if not docx_file1 or not docx_file2:
-        return .0
+        return 0.0
 
     try:
         doc1: Document = Document(docx_file1)
         doc2: Document = Document(docx_file2)
     except Exception as e:
         logger.error(f"Error: {e}")
-        return .0
+        return 0.0
 
     para1 = [p for p in doc1.paragraphs if p.text.strip()]
     para2 = [p for p in doc2.paragraphs if p.text.strip()]
-    if len(para1) != len(para2): 
-        return .0
+    if len(para1) != len(para2):
+        return 0.0
 
-    if kwargs.get('word_number_split_by_tabstop', None) is not None:
-        number = kwargs['word_number_split_by_tabstop']
-        index = kwargs.get('index', 0)
+    if kwargs.get("word_number_split_by_tabstop", None) is not None:
+        number = kwargs["word_number_split_by_tabstop"]
+        index = kwargs.get("index", 0)
         for p1 in para1:
-            splits = p1.text.split('\t')
+            splits = p1.text.split("\t")
             if len(splits) == 0:
-                logger.info("d1 splits") 
-                return .0
-            words = list(filter(lambda x: x.strip(), re.split(r'\s', splits[index])))
+                logger.info("d1 splits")
+                return 0.0
+            words = list(filter(lambda x: x.strip(), re.split(r"\s", splits[index])))
             if len(words) != number:
-                return .0
+                return 0.0
 
     section = doc2.sections[0]
     paragraph_width = section.page_width - section.left_margin - section.right_margin
-    ignore_tabs = lambda x: x.alignment == WD_TAB_ALIGNMENT.CLEAR or (
-            x.alignment == WD_TAB_ALIGNMENT.LEFT and x.position == 0)
-    minus = .0
+
+    def ignore_tabs(x):
+        return x.alignment == WD_TAB_ALIGNMENT.CLEAR or (
+            x.alignment == WD_TAB_ALIGNMENT.LEFT and x.position == 0
+        )
+
+    minus = 0.0
     for p1, p2 in zip(para1, para2):
         # filter CLEAR tabstop and default left-0 tabstop
         tabs1 = [tst for tst in p1.paragraph_format.tab_stops if not ignore_tabs(tst)]
         tabs2 = [tst for tst in p2.paragraph_format.tab_stops if not ignore_tabs(tst)]
-        if len(tabs1) != len(tabs2): return .0
-        difference = .0
+        if len(tabs1) != len(tabs2):
+            return 0.0
+        difference = 0.0
         for t1, t2 in zip(tabs1, tabs2):
-            if t1.alignment != t2.alignment: return .0
+            if t1.alignment != t2.alignment:
+                return 0.0
             difference += abs(t1.position - t2.position)
         minus += difference / paragraph_width
     score = 1 - (minus / len(para1))
@@ -441,8 +454,9 @@ def compare_contains_image(docx_file1, docx_file2):
     for para1, para2 in zip(doc1.paragraphs, doc2.paragraphs):
         for run1, run2 in zip(para1.runs, para2.runs):
             logger.info(f"run1xml: {run1._element.xml}, run2xml: {run2._element.xml}")
-            if ('graphicData' in run1._element.xml and 'graphicData' not in run2._element.xml) or (
-                    'graphicData' not in run1._element.xml and 'graphicData' in run2._element.xml):
+            if ("graphicData" in run1._element.xml and "graphicData" not in run2._element.xml) or (
+                "graphicData" not in run1._element.xml and "graphicData" in run2._element.xml
+            ):
                 return 0
     return 1
 
@@ -458,12 +472,12 @@ def check_highlighted_words(file_path1, file_path2):
     highlighted = False
 
     for span in doc.getElementsByType(Span):
-        style_name = span.getAttribute('stylename')
+        style_name = span.getAttribute("stylename")
         if style_name:
             for automatic_style in doc.automaticstyles.childNodes:
-                if automatic_style.getAttribute('name') == style_name:
+                if automatic_style.getAttribute("name") == style_name:
                     for property in automatic_style.childNodes:
-                        if property.getAttribute('backgroundcolor') == '#ffff00':
+                        if property.getAttribute("backgroundcolor") == "#ffff00":
                             highlighted = True
                             break
             if highlighted:
@@ -536,7 +550,7 @@ def evaluate_spacing(file_path):
     introduction_spacing = document.paragraphs[0].paragraph_format.line_spacing
     body_spacing = document.paragraphs[1].paragraph_format.line_spacing
     conclusion_spacing = document.paragraphs[2].paragraph_format.line_spacing
-    if (introduction_spacing == 1.0 and body_spacing == 2.0 and conclusion_spacing == 1.5):
+    if introduction_spacing == 1.0 and body_spacing == 2.0 and conclusion_spacing == 1.5:
         return 1
     else:
         return 0
@@ -578,7 +592,7 @@ def evaluate_alignment(docx_path):
     # Iterate through each paragraph in the document
     for para in doc.paragraphs:
         # Split the paragraph into individual sentences
-        sentences = para.text.split('.')
+        sentences = para.text.split(".")
 
         for sentence in sentences:
             # Split the sentence into words
@@ -589,12 +603,15 @@ def evaluate_alignment(docx_path):
                 continue  # Skip sentences with less than three words
 
             # The first three words should be separated from the rest
-            first_part = ' '.join(words[:3])
-            second_part = ' '.join(words[3:])
+            first_part = " ".join(words[:3])
+            second_part = " ".join(words[3:])
 
             # Check if the sentence structure matches the pattern: first part + large space/tab + second part
-            if not (first_part in sentence and second_part in sentence and sentence.find(first_part) < sentence.find(
-                    second_part)):
+            if not (
+                first_part in sentence
+                and second_part in sentence
+                and sentence.find(first_part) < sentence.find(second_part)
+            ):
                 return 0  # The sentence does not meet the alignment criteria
 
     return 1  # All sentences meet the alignment criteria
@@ -614,7 +631,7 @@ def get_unique_train_ids(initial_file):  # fixed standard
     processed_lines = 0
 
     for para in doc.paragraphs:
-        line_parts = para.text.split(',')
+        line_parts = para.text.split(",")
         if len(line_parts) == 4:
             train_id = line_parts[1].strip()
             if train_id not in train_ids:
@@ -643,7 +660,7 @@ def check_no_duplicates(initial_file, processed_file):
     # processed
     for para in doc_processed.paragraphs:
         # Each line has the format: time_HH:MM:SS, train_id, station_id, platform_no
-        line_parts = para.text.split(',')
+        line_parts = para.text.split(",")
         # Ensure the line has the correct format
         if len(line_parts) == 4:
             train_id = line_parts[1].strip()
@@ -685,13 +702,13 @@ def compare_docx_lines(file1, file2):
 
 
 def compare_docx_files_and_ignore_new_lines(file1, file2, **options):
-    ignore_blanks = options.get('ignore_blanks', True)
+    ignore_blanks = options.get("ignore_blanks", True)
 
     if not file1 or not file2:
         return 0
 
     # Determine file types and load documents
-    if file1.endswith('.docx') and file2.endswith('.docx'):
+    if file1.endswith(".docx") and file2.endswith(".docx"):
         try:
             doc1 = Document(file1)
             doc2 = Document(file2)
@@ -700,8 +717,8 @@ def compare_docx_files_and_ignore_new_lines(file1, file2, **options):
             return 0
 
         # First, delete all the blank in paragraphs
-        doc1 = [p for p in doc1.paragraphs if p.text != '']
-        doc2 = [p for p in doc2.paragraphs if p.text != '']
+        doc1 = [p for p in doc1.paragraphs if p.text != ""]
+        doc2 = [p for p in doc2.paragraphs if p.text != ""]
         doc1_paragraphs = [p.text for p in doc1]
         doc2_paragraphs = [p.text for p in doc2]
     else:
@@ -711,8 +728,8 @@ def compare_docx_files_and_ignore_new_lines(file1, file2, **options):
 
     # Process and compare documents
     if ignore_blanks:
-        text1 = re.sub(r'\s+', ' ', '\n'.join(doc1_paragraphs)).strip()
-        text2 = re.sub(r'\s+', ' ', '\n'.join(doc2_paragraphs)).strip()
+        text1 = re.sub(r"\s+", " ", "\n".join(doc1_paragraphs)).strip()
+        text2 = re.sub(r"\s+", " ", "\n".join(doc2_paragraphs)).strip()
         if text1 != text2:
             return 0
     else:
@@ -734,22 +751,27 @@ def compare_highlighted_text(file1, file2):
         highlighted_texts = []
 
         # Open the .docx file as a zip file and read the document.xml
-        with zipfile.ZipFile(file_path, 'r') as docx:
-            with docx.open('word/document.xml') as document_xml:
+        with zipfile.ZipFile(file_path, "r") as docx:
+            with docx.open("word/document.xml") as document_xml:
                 tree = ET.parse(document_xml)
                 root = tree.getroot()
 
         # Define the namespaces
         namespaces = {
-            'w': 'http://schemas.openxmlformats.org/wordprocessingml/2006/main',
+            "w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main",
         }
 
         # Find all runs with highlight property
-        for run in root.findall('.//w:r', namespaces):
-            highlight = run.find('.//w:highlight', namespaces)
-            if highlight is not None and highlight.get(
-                    '{http://schemas.openxmlformats.org/wordprocessingml/2006/main}val') != 'none':
-                text = run.find('.//w:t', namespaces)
+        for run in root.findall(".//w:r", namespaces):
+            highlight = run.find(".//w:highlight", namespaces)
+            if (
+                highlight is not None
+                and highlight.get(
+                    "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}val"
+                )
+                != "none"
+            ):
+                text = run.find(".//w:t", namespaces)
                 if text is not None:
                     highlighted_texts.append(text.text)
 
@@ -770,11 +792,11 @@ def compare_references(file1, file2, **options):
     if not file1 or not file2:
         return 0
 
-    reference_indicator = options.get('reference_indicator', 'References')
-    reference_base_result = options.get('reference_base_result', 0.5)
+    reference_indicator = options.get("reference_indicator", "References")
+    reference_base_result = options.get("reference_base_result", 0.5)
 
     # Determine file types and load documents
-    if file1.endswith('.docx') and file2.endswith('.docx'):
+    if file1.endswith(".docx") and file2.endswith(".docx"):
         try:
             doc1 = Document(file1)
             doc2 = Document(file2)
@@ -790,8 +812,12 @@ def compare_references(file1, file2, **options):
         return 0
 
     # Find the references section in the paragraphs, find the idx of the last reference_indicator in the paragraph list
-    ref1_idx = doc1_paragraphs.index(reference_indicator) if reference_indicator in doc1_paragraphs else -1
-    ref2_idx = doc2_paragraphs.index(reference_indicator) if reference_indicator in doc2_paragraphs else -1
+    ref1_idx = (
+        doc1_paragraphs.index(reference_indicator) if reference_indicator in doc1_paragraphs else -1
+    )
+    ref2_idx = (
+        doc2_paragraphs.index(reference_indicator) if reference_indicator in doc2_paragraphs else -1
+    )
 
     if ref1_idx == -1 and ref2_idx == -1:
         return 1
@@ -800,8 +826,8 @@ def compare_references(file1, file2, **options):
         return 0
 
     # split the reference section into reference items, and remove the empty string items
-    ref1 = [p for p in doc1_paragraphs[ref1_idx + 1:] if p.strip()]
-    ref2 = [p for p in doc2_paragraphs[ref2_idx + 1:] if p.strip()]
+    ref1 = [p for p in doc1_paragraphs[ref1_idx + 1 :] if p.strip()]
+    ref2 = [p for p in doc2_paragraphs[ref2_idx + 1 :] if p.strip()]
 
     # Compare the references
 

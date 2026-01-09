@@ -3,12 +3,10 @@
   "snapshot": "base_setup",
   "instruction": "Could you help me compress this video to MPEG-4 format and save with name with prefix _?",
   "source": "https://www.quora.com/How-do-I-compress-a-video-with-VLC",
-  "_comments":"original evaluator was just 'evaluator': 'evaluation_dir' which results in code/evaulation error and no score. Changed to 'infeasible'",
+  "_comments": "original evaluator was just 'evaluator': 'evaluation_dir' which results in code/evaulation error and no score. Changed to 'infeasible'",
   "config": [],
   "trajectory": "trajectories/",
-  "related_apps": [
-    "vlc"
-  ],
+  "related_apps": ["vlc"],
   "evaluator": {
     "func": "infeasible"
   }

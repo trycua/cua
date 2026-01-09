@@ -52,87 +52,70 @@ tags = [{tags_toml}]
 
 def register_parser(subparsers):
     """Register the task command parser."""
-    task_parser = subparsers.add_parser(
-        'task',
-        help='Inspect and manage task environments'
-    )
-    task_subparsers = task_parser.add_subparsers(dest='task_command')
+    task_parser = subparsers.add_parser("task", help="Inspect and manage task environments")
+    task_subparsers = task_parser.add_subparsers(dest="task_command")
 
     # cb task info <path>
-    info_parser = task_subparsers.add_parser(
-        'info',
-        help='Show detailed information about a task'
-    )
-    info_parser.add_argument(
-        'path',
-        help='Path to task directory (containing main.py)'
-    )
+    info_parser = task_subparsers.add_parser("info", help="Show detailed information about a task")
+    info_parser.add_argument("path", help="Path to task directory (containing main.py)")
 
     # cb task list [path]
-    list_parser = task_subparsers.add_parser(
-        'list',
-        help='List tasks in a directory'
-    )
+    list_parser = task_subparsers.add_parser("list", help="List tasks in a directory")
     list_parser.add_argument(
-        'path',
-        nargs='?',
-        default='.',
-        help='Path to directory containing tasks (default: current directory)'
+        "path",
+        nargs="?",
+        default=".",
+        help="Path to directory containing tasks (default: current directory)",
     )
 
     # cb task create [path]
-    create_parser = task_subparsers.add_parser(
-        'create',
-        help='Scaffold a new task environment'
-    )
+    create_parser = task_subparsers.add_parser("create", help="Scaffold a new task environment")
     create_parser.add_argument(
-        'path',
-        nargs='?',
-        default='.',
-        help='Target directory to create the task in (default: current directory)'
+        "path",
+        nargs="?",
+        default=".",
+        help="Target directory to create the task in (default: current directory)",
     )
 
     # cb task generate "<prompt>" [output_dir]
     generate_parser = task_subparsers.add_parser(
-        'generate',
-        help='Generate a task from a prompt using Claude'
+        "generate", help="Generate a task from a prompt using Claude"
     )
     generate_parser.add_argument(
-        'prompt',
-        help='Natural language description of the task to generate (e.g., "2048 game")'
+        "prompt", help='Natural language description of the task to generate (e.g., "2048 game")'
     )
     generate_parser.add_argument(
-        'output',
-        nargs='?',
-        help='Output directory path (optional, auto-generates from prompt if not provided)'
+        "output",
+        nargs="?",
+        help="Output directory path (optional, auto-generates from prompt if not provided)",
     )
     generate_parser.add_argument(
-        '--no-interaction',
-        action='store_true',
-        dest='no_interaction',
-        help='Skip interactive prompts and run Claude non-interactively'
+        "--no-interaction",
+        action="store_true",
+        dest="no_interaction",
+        help="Skip interactive prompts and run Claude non-interactively",
     )
 
 
 def execute(args):
     """Execute the task command."""
-    task_command = getattr(args, 'task_command', None)
+    task_command = getattr(args, "task_command", None)
 
-    if task_command == 'info':
+    if task_command == "info":
         return cmd_info(args)
-    elif task_command == 'list':
+    elif task_command == "list":
         return cmd_list(args)
-    elif task_command == 'create':
+    elif task_command == "create":
         return cmd_create(args)
-    elif task_command == 'generate':
+    elif task_command == "generate":
         return cmd_generate(args)
     else:
         print(f"{YELLOW}Usage: cb task <command> [args]{RESET}")
         print(f"\n{GREY}Commands:{RESET}")
-        print(f"  info <path>             Show detailed information about a task")
-        print(f"  list [path]             List tasks in a directory")
-        print(f"  create [path]           Scaffold a new task environment")
-        print(f"  generate <prompt> [dir] Generate a task using Claude")
+        print("  info <path>             Show detailed information about a task")
+        print("  list [path]             List tasks in a directory")
+        print("  create [path]           Scaffold a new task environment")
+        print("  generate <prompt> [dir] Generate a task using Claude")
         return 1
 
 
@@ -166,24 +149,24 @@ def cmd_info(args) -> int:
         providers = set()
         os_types = set()
         for task in tasks:
-            if hasattr(task, 'computer') and task.computer:
-                provider = task.computer.get('provider', 'simulated')
+            if hasattr(task, "computer") and task.computer:
+                provider = task.computer.get("provider", "simulated")
                 # Normalize to new names
-                if provider == 'webtop':
-                    provider = 'simulated'
-                elif provider == 'computer':
-                    provider = 'native'
+                if provider == "webtop":
+                    provider = "simulated"
+                elif provider == "computer":
+                    provider = "native"
                 providers.add(provider)
 
-                setup_config = task.computer.get('setup_config', {})
-                if 'os_type' in setup_config:
-                    os_types.add(setup_config['os_type'])
-                if 'env_type' in setup_config:
-                    os_types.add(setup_config['env_type'])
+                setup_config = task.computer.get("setup_config", {})
+                if "os_type" in setup_config:
+                    os_types.add(setup_config["os_type"])
+                if "env_type" in setup_config:
+                    os_types.add(setup_config["env_type"])
 
         # Default if no provider specified
         if not providers:
-            providers.add('simulated')
+            providers.add("simulated")
 
         # Print info
         print(f"\n{BOLD}Task: {task_path.name}{RESET}")
@@ -193,11 +176,11 @@ def cmd_info(args) -> int:
         provider_list = list(providers)
         print(f"\n{CYAN}Provider:{RESET}")
         for p in provider_list:
-            if p == 'simulated':
+            if p == "simulated":
                 print(f"  {GREEN}simulated{RESET} {GREY}(Playwright - fast, no Docker){RESET}")
                 print(f"    {GREY}HTML/CSS desktop simulation in headless browser{RESET}")
                 print(f"    {GREY}Run with: cb interact {task_path.name}{RESET}")
-            elif p == 'native':
+            elif p == "native":
                 print(f"  {GREEN}native{RESET} {GREY}(Docker/QEMU - real OS){RESET}")
                 print(f"    {GREY}Actual desktop environment with real applications{RESET}")
                 print(f"    {GREY}Run with: cb run {task_path.name}{RESET}")
@@ -213,7 +196,7 @@ def cmd_info(args) -> int:
         if tasks:
             print(f"\n{CYAN}Sample Tasks:{RESET}")
             for i, task in enumerate(tasks[:5]):
-                desc = task.description if hasattr(task, 'description') else str(task)
+                desc = task.description if hasattr(task, "description") else str(task)
                 # Truncate long descriptions
                 if len(desc) > 70:
                     desc = desc[:67] + "..."
@@ -229,12 +212,12 @@ def cmd_info(args) -> int:
 
         # Quick commands
         print(f"\n{CYAN}Quick Commands:{RESET}")
-        if 'simulated' in providers:
+        if "simulated" in providers:
             print(f"  {GREY}# Interactive mode (browser visible):{RESET}")
             print(f"  cb interact {args.path} --task-id 0")
             print(f"  {GREY}# With oracle solution:{RESET}")
             print(f"  cb interact {args.path} --task-id 0 --oracle")
-        if 'native' in providers:
+        if "native" in providers:
             print(f"  {GREY}# Run with Docker:{RESET}")
             print(f"  cb run {args.path} --variant-id 0 --oracle")
 
@@ -244,6 +227,7 @@ def cmd_info(args) -> int:
     except Exception as e:
         print(f"{RED}Error loading task: {e}{RESET}")
         import traceback
+
         traceback.print_exc()
         return 1
 
@@ -277,6 +261,7 @@ def cmd_list(args) -> int:
     for task_path in sorted(tasks, key=lambda p: p.name):
         try:
             from cua_bench import make
+
             env = make(str(task_path))
 
             # Get task count and provider
@@ -286,20 +271,20 @@ def cmd_list(args) -> int:
             if env.tasks_config_fn:
                 task_list = env.tasks_config_fn()
                 task_count = len(task_list)
-                if task_list and hasattr(task_list[0], 'computer') and task_list[0].computer:
-                    provider = task_list[0].computer.get('provider', 'simulated')
+                if task_list and hasattr(task_list[0], "computer") and task_list[0].computer:
+                    provider = task_list[0].computer.get("provider", "simulated")
                     # Normalize names
-                    if provider == 'webtop':
-                        provider = 'simulated'
-                    elif provider == 'computer':
-                        provider = 'native'
+                    if provider == "webtop":
+                        provider = "simulated"
+                    elif provider == "computer":
+                        provider = "native"
                 else:
-                    provider = 'simulated'
+                    provider = "simulated"
 
             # Color code provider
-            if provider == 'simulated':
+            if provider == "simulated":
                 provider_colored = f"{GREEN}{provider}{RESET}"
-            elif provider == 'native':
+            elif provider == "native":
                 provider_colored = f"{CYAN}{provider}{RESET}"
             else:
                 provider_colored = provider
@@ -319,6 +304,7 @@ def cmd_list(args) -> int:
 # cmd_create - Scaffold a new task environment
 # ============================================================================
 
+
 def _prompt_input(prompt_text: str, default: str | None = None) -> str:
     """Prompt user for input with optional default."""
     suffix = f" [{default}]" if default else ""
@@ -328,7 +314,7 @@ def _prompt_input(prompt_text: str, default: str | None = None) -> str:
 
 def cmd_create(args) -> int:
     """Scaffold a new task environment."""
-    target_path = Path(getattr(args, 'path', '.') or '.')
+    target_path = Path(getattr(args, "path", ".") or ".")
     if not target_path.is_absolute():
         target_path = Path.cwd() / target_path
 
@@ -343,7 +329,7 @@ def cmd_create(args) -> int:
     # Derive default task name from directory name
     dir_name = target_path.name
     default_project_name = f"{dir_name.replace('_', '-').replace(' ', '-')}"
-    if not default_project_name.endswith('-env'):
+    if not default_project_name.endswith("-env"):
         default_project_name = f"{default_project_name}-env"
 
     # Interactive prompts
@@ -356,13 +342,13 @@ def cmd_create(args) -> int:
     category = _prompt_input("Task category (e.g., grounding, software-engineering)", "grounding")
     tags_csv = _prompt_input("Tags (comma-separated)", "")
 
-    tags_list = [t.strip() for t in tags_csv.split(',') if t.strip()] if tags_csv else []
+    tags_list = [t.strip() for t in tags_csv.split(",") if t.strip()] if tags_csv else []
     tags_toml = ", ".join([f'"{t}"' for t in tags_list])
 
     # Prepare files
-    pyproject_path = target_path / 'pyproject.toml'
-    main_py_path = target_path / 'main.py'
-    gui_dir_path = target_path / 'gui'
+    pyproject_path = target_path / "pyproject.toml"
+    main_py_path = target_path / "main.py"
+    gui_dir_path = target_path / "gui"
 
     pyproject_content = PYPROJECT_TEMPLATE.format(
         project_name=project_name,
@@ -376,15 +362,15 @@ def cmd_create(args) -> int:
     ).strip()
 
     # Load template files
-    template_root = Path(__file__).resolve().parents[2] / 'templates' / 'starter_env'
-    template_main_py = (template_root / 'main.py').read_text(encoding='utf-8')
+    template_root = Path(__file__).resolve().parents[2] / "templates" / "starter_env"
+    template_main_py = (template_root / "main.py").read_text(encoding="utf-8")
 
     target_path.mkdir(parents=True, exist_ok=True)
-    pyproject_path.write_text(pyproject_content, encoding='utf-8')
-    main_py_path.write_text(template_main_py, encoding='utf-8')
+    pyproject_path.write_text(pyproject_content, encoding="utf-8")
+    main_py_path.write_text(template_main_py, encoding="utf-8")
 
     # Copy gui directory
-    shutil.copytree(template_root / 'gui', gui_dir_path)
+    shutil.copytree(template_root / "gui", gui_dir_path)
 
     print(f"\n{GREEN}✓ Created task at: {BOLD}{target_path}{RESET}")
     print(f"  {GREY}- {RESET}{pyproject_path.relative_to(Path.cwd())}")
@@ -396,6 +382,7 @@ def cmd_create(args) -> int:
 # ============================================================================
 # cmd_generate - Generate a task using Claude
 # ============================================================================
+
 
 def _slugify(s: str) -> str:
     """Convert string to slug for directory names."""
@@ -437,10 +424,10 @@ def _scaffold_starter(prompt: str, dest_dir: Path, profile: dict) -> SimpleNames
     main_py_path = dest_dir / "main.py"
     gui_dir_path = dest_dir / "gui"
 
-    template_root = Path(__file__).resolve().parents[2] / 'templates' / 'starter_env'
-    template_main_py = (template_root / 'main.py').read_text(encoding='utf-8')
+    template_root = Path(__file__).resolve().parents[2] / "templates" / "starter_env"
+    template_main_py = (template_root / "main.py").read_text(encoding="utf-8")
 
-    project_name = dest_dir.name.replace('_', '-').replace(' ', '-')
+    project_name = dest_dir.name.replace("_", "-").replace(" ", "-")
     pyproject_content = PYPROJECT_TEMPLATE.format(
         project_name=project_name,
         license_name="MIT",
@@ -452,14 +439,14 @@ def _scaffold_starter(prompt: str, dest_dir: Path, profile: dict) -> SimpleNames
         tags_toml="",
     )
 
-    pyproject_path.write_text(pyproject_content, encoding='utf-8')
-    main_py_path.write_text(template_main_py, encoding='utf-8')
-    shutil.copytree(template_root / 'gui', gui_dir_path)
+    pyproject_path.write_text(pyproject_content, encoding="utf-8")
+    main_py_path.write_text(template_main_py, encoding="utf-8")
+    shutil.copytree(template_root / "gui", gui_dir_path)
 
     # Copy CLAUDE.md if present
-    claude_md = template_root / 'CLAUDE.md'
+    claude_md = template_root / "CLAUDE.md"
     if claude_md.exists():
-        shutil.copy2(str(claude_md), str(dest_dir / 'CLAUDE.md'))
+        shutil.copy2(str(claude_md), str(dest_dir / "CLAUDE.md"))
 
     print(f"\n{GREEN}✓ Created task at: {BOLD}{dest_dir}{RESET}")
 
@@ -482,14 +469,23 @@ def _scaffold_starter(prompt: str, dest_dir: Path, profile: dict) -> SimpleNames
     return SimpleNamespace(pyproject=pyproject_path, main=main_py_path, gui=gui_dir_path)
 
 
-def _launch_claude(session_prompt: str, work_dir: Path, skip_permissions: bool = False, no_interaction: bool = False) -> None:
+def _launch_claude(
+    session_prompt: str,
+    work_dir: Path,
+    skip_permissions: bool = False,
+    no_interaction: bool = False,
+) -> None:
     """Launch Claude CLI to modify the scaffolded task."""
     import sys
 
     exe = shutil.which("claude")
     if not exe:
-        print(f"{YELLOW}Warning:{RESET} 'claude' CLI not found on PATH. Skipping interactive session.")
-        print(f"{GREY}Tip:{RESET} Install Claude Code CLI and run manually:\n  claude --add-dir {work_dir} \"{session_prompt}\"")
+        print(
+            f"{YELLOW}Warning:{RESET} 'claude' CLI not found on PATH. Skipping interactive session."
+        )
+        print(
+            f'{GREY}Tip:{RESET} Install Claude Code CLI and run manually:\n  claude --add-dir {work_dir} "{session_prompt}"'
+        )
         return
 
     # Note: CLAUDE_CODE_OAUTH_TOKEN is optional - Claude CLI can authenticate via keychain or other methods
@@ -497,15 +493,34 @@ def _launch_claude(session_prompt: str, work_dir: Path, skip_permissions: bool =
     try:
         cmd = [exe, session_prompt, "--add-dir", str(work_dir)]
         if skip_permissions:
-            cmd.extend([
-                "--dangerously-skip-permissions",
-                "--permission-mode", "acceptEdits",
-                "--allowedTools", ",".join([
-                    "Task", "Bash", "Glob", "Grep", "LS", "Read", "Edit",
-                    "MultiEdit", "Write", "NotebookRead", "NotebookEdit",
-                    "WebFetch", "Batch", "TodoRead", "TodoWrite", "WebSearch"
-                ])
-            ])
+            cmd.extend(
+                [
+                    "--dangerously-skip-permissions",
+                    "--permission-mode",
+                    "acceptEdits",
+                    "--allowedTools",
+                    ",".join(
+                        [
+                            "Task",
+                            "Bash",
+                            "Glob",
+                            "Grep",
+                            "LS",
+                            "Read",
+                            "Edit",
+                            "MultiEdit",
+                            "Write",
+                            "NotebookRead",
+                            "NotebookEdit",
+                            "WebFetch",
+                            "Batch",
+                            "TodoRead",
+                            "TodoWrite",
+                            "WebSearch",
+                        ]
+                    ),
+                ]
+            )
         if no_interaction:
             print(f"\n{CYAN}Running Claude Code...{RESET}")
             sys.stdout.flush()
@@ -528,21 +543,23 @@ def _launch_claude(session_prompt: str, work_dir: Path, skip_permissions: bool =
 
     except Exception as e:
         print(f"{YELLOW}Warning:{RESET} Failed to launch Claude: {e}")
-        print(f"{GREY}Tip:{RESET} Run manually:\n  claude --add-dir {work_dir} \"{session_prompt}\"")
+        print(f'{GREY}Tip:{RESET} Run manually:\n  claude --add-dir {work_dir} "{session_prompt}"')
 
 
 def cmd_generate(args) -> int:
     """Generate a task from a prompt using Claude."""
     prompt: str = args.prompt
     if not prompt or not prompt.strip():
-        print(f"{RED}Error: A non-empty prompt is required (e.g., cb task generate \"2048 game\"){RESET}")
+        print(
+            f'{RED}Error: A non-empty prompt is required (e.g., cb task generate "2048 game"){RESET}'
+        )
         return 1
 
-    no_interaction = getattr(args, 'no_interaction', False)
+    no_interaction = getattr(args, "no_interaction", False)
     profile = _ensure_profile(no_interaction)
 
     # Determine destination directory
-    if hasattr(args, 'output') and args.output:
+    if hasattr(args, "output") and args.output:
         dest_dir = Path(args.output)
         if not dest_dir.is_absolute():
             dest_dir = Path.cwd() / dest_dir
@@ -550,7 +567,7 @@ def cmd_generate(args) -> int:
         base_slug = _slugify(prompt)
         if not base_slug.endswith("-env") and not base_slug.endswith("_env"):
             base_slug = f"{base_slug}_env"
-        dest_dir = Path.cwd() / base_slug.replace('-', '_')
+        dest_dir = Path.cwd() / base_slug.replace("-", "_")
 
     try:
         _scaffold_starter(prompt, dest_dir, profile)
@@ -564,7 +581,7 @@ def cmd_generate(args) -> int:
         f"- Update gui/index.html, evaluation, and solution logic as needed.\n"
     )
 
-    skip_permissions = getattr(args, 'dangerously_skip_permissions', False) or no_interaction
+    skip_permissions = getattr(args, "dangerously_skip_permissions", False) or no_interaction
     _launch_claude(session_prompt, dest_dir, skip_permissions, no_interaction)
 
     if no_interaction:
@@ -577,7 +594,11 @@ def cmd_generate(args) -> int:
     except Exception:
         rel_env = dest_dir
     print(f"  • {BOLD}Open Claude again{RESET}:\n     {YELLOW}claude{RESET} --add-dir {rel_env}")
-    print(f"  • {BOLD}Run interactively{RESET}:\n     {YELLOW}cb{RESET} interact {rel_env} {GREY} --view{RESET}")
-    print(f"  • {BOLD}Run baseline solution{RESET}:\n     {YELLOW}cb{RESET} interact {rel_env} {GREY} --oracle --view{RESET}")
+    print(
+        f"  • {BOLD}Run interactively{RESET}:\n     {YELLOW}cb{RESET} interact {rel_env} {GREY} --view{RESET}"
+    )
+    print(
+        f"  • {BOLD}Run baseline solution{RESET}:\n     {YELLOW}cb{RESET} interact {rel_env} {GREY} --oracle --view{RESET}"
+    )
     print(f"  • {BOLD}List tasks{RESET}:\n     {YELLOW}cb{RESET} task list {rel_env}")
     return 0

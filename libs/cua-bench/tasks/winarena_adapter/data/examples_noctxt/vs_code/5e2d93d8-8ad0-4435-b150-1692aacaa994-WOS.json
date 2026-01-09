@@ -9,14 +9,14 @@
       "type": "command",
       "parameters": {
         "command": [
-            "powershell",
-            "-Command",
-            "New-Item", 
-            "-ItemType", 
-            "Directory", 
-            "-Force", 
-            "-Path", 
-            "C:\\Users\\Docker\\Downloads\\project\\.vscode"
+          "powershell",
+          "-Command",
+          "New-Item",
+          "-ItemType",
+          "Directory",
+          "-Force",
+          "-Path",
+          "C:\\Users\\Docker\\Downloads\\project\\.vscode"
         ]
       }
     },
@@ -42,18 +42,15 @@
     {
       "type": "launch",
       "parameters": {
-        "command": [
-          "code",
-          "C:\\Users\\Docker\\Downloads\\project"
-        ]
+        "command": ["code", "C:\\Users\\Docker\\Downloads\\project"]
       }
     },
     {
-        "type": "sleep",
-        "parameters": {
-          "seconds": 2
-        }
-      },
+      "type": "sleep",
+      "parameters": {
+        "seconds": 2
+      }
+    },
     {
       "type": "activate_window",
       "parameters": {
@@ -62,9 +59,7 @@
     }
   ],
   "trajectory": "trajectories/",
-  "related_apps": [
-    "vscode"
-  ],
+  "related_apps": ["vscode"],
   "evaluator": {
     "func": "is_extension_installed",
     "result": {

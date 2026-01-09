@@ -35,10 +35,10 @@ os.environ.setdefault("HF_HOME", "/tmp/hf_cache")
 
 def load_agent_from_path(import_path: str):
     """Load an agent class from an import path like 'path.to.module:ClassName'."""
-    if ':' not in import_path:
+    if ":" not in import_path:
         raise ValueError("Agent import path must be in format 'module.path:ClassName'")
 
-    module_path, class_name = import_path.split(':', 1)
+    module_path, class_name = import_path.split(":", 1)
     module = importlib.import_module(module_path)
     agent_class = getattr(module, class_name)
     return agent_class
@@ -77,7 +77,7 @@ def parse_args(argv: list[str]) -> dict:
         elif arg == "--max-steps" and i + 1 < len(argv):
             args["max_steps"] = int(argv[i + 1])
         elif arg == "--filter" and i + 1 < len(argv):
-            args["filter_events"] = [name.strip() for name in argv[i + 1].split(',')]
+            args["filter_events"] = [name.strip() for name in argv[i + 1].split(",")]
         elif arg == "--task-index" and i + 1 < len(argv):
             args["task_index"] = int(argv[i + 1])
 
@@ -168,6 +168,7 @@ async def main():
     try:
         # Load task definition
         from cua_bench import make
+
         env = make(str(env_path))
 
         # Set headless mode (always headless in container)
@@ -195,13 +196,15 @@ async def main():
             # (For some reason playwright sessions need a short delay here)
             await asyncio.sleep(2.0)
 
-            print(f"✓ Simulated session created and task setup complete")
+            print("✓ Simulated session created and task setup complete")
             print(f"  Screenshot: {len(screenshot)} bytes")
             print(f"  Task: {task_cfg.description}")
         else:
             # Remote provider - connect to remote environment via API
             if not env_api_url:
-                print("Error: CUA_ENV_API_URL environment variable is required for remote provider.")
+                print(
+                    "Error: CUA_ENV_API_URL environment variable is required for remote provider."
+                )
                 print("")
                 print("Start a golden environment first:")
                 print("  cb env start linux-docker")
@@ -211,6 +214,7 @@ async def main():
                 sys.exit(1)
 
             from cua_bench.computers.remote import RemoteDesktopSession
+
             session = RemoteDesktopSession(
                 api_url=env_api_url,
                 vnc_url=env_vnc_url,
@@ -290,6 +294,7 @@ async def main():
                     agent_class = load_agent_from_path(args["agent_import_path"])
                 elif args["agent_name"]:
                     from cua_bench.agents import get_agent, list_agents
+
                     agent_class = get_agent(args["agent_name"])
                     if agent_class is None:
                         print(f"Error: Unknown agent '{args['agent_name']}'")
@@ -299,9 +304,9 @@ async def main():
                 if agent_class:
                     agent_kwargs = {}
                     if args["model"]:
-                        agent_kwargs['model'] = args["model"]
+                        agent_kwargs["model"] = args["model"]
                     if args["max_steps"] is not None:
-                        agent_kwargs['max_steps'] = args["max_steps"]
+                        agent_kwargs["max_steps"] = args["max_steps"]
                     agent = agent_class(**agent_kwargs)
 
                     logging_dir = output_dir / f"task_{task_index}_agent_logs"
@@ -318,6 +323,7 @@ async def main():
                         print(f"✓ Agent complete: {agent_result}")
 
                         from cua_bench.agents.base import FailureMode
+
                         if agent_result.failure_mode not in (FailureMode.UNSET, FailureMode.NONE):
                             print(f"✗ Agent failed with failure mode: {agent_result.failure_mode}")
                             await session.close()
@@ -325,6 +331,7 @@ async def main():
                     except Exception as e:
                         print(f"Agent execution failed: {e}")
                         import traceback
+
                         traceback.print_exc()
                         await session.close()
                         sys.exit(1)
@@ -392,10 +399,11 @@ async def main():
     except Exception as e:
         print(f"Error running task {task_index}: {e}")
         import traceback
+
         traceback.print_exc()
         # Close session on error
         try:
-            if provider == "simulated" and 'env' in locals():
+            if provider == "simulated" and "env" in locals():
                 await env.close()
             elif session:
                 await session.close()

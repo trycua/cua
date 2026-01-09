@@ -11,19 +11,18 @@ Usage:
 """
 
 import json
-import os
 import shutil
 import subprocess
 from pathlib import Path
 from typing import Dict, List, Tuple
 
 from .image import (
-    get_data_dir,
-    get_state_dir,
-    get_images_base_path,
-    get_image_registry_path,
-    load_image_registry,
     format_size,
+    get_data_dir,
+    get_image_registry_path,
+    get_images_base_path,
+    get_state_dir,
+    load_image_registry,
 )
 
 
@@ -35,6 +34,7 @@ def get_runs_dir() -> Path:
 def get_runs_file() -> Path:
     """Get the runs.json file path."""
     return get_state_dir() / "runs.json"
+
 
 RESET = "\033[0m"
 BOLD = "\033[1m"
@@ -59,10 +59,12 @@ def get_docker_resources() -> Tuple[List[Dict], List[Dict]]:
     try:
         result = subprocess.run(
             ["docker", "ps", "-a", "--filter", "name=cua-", "--format", "{{json .}}"],
-            capture_output=True, text=True, check=False
+            capture_output=True,
+            text=True,
+            check=False,
         )
         if result.returncode == 0:
-            for line in result.stdout.strip().split('\n'):
+            for line in result.stdout.strip().split("\n"):
                 if line:
                     try:
                         containers.append(json.loads(line))
@@ -75,16 +77,21 @@ def get_docker_resources() -> Tuple[List[Dict], List[Dict]]:
     try:
         result = subprocess.run(
             ["docker", "images", "--format", "{{json .}}"],
-            capture_output=True, text=True, check=False
+            capture_output=True,
+            text=True,
+            check=False,
         )
         if result.returncode == 0:
-            for line in result.stdout.strip().split('\n'):
+            for line in result.stdout.strip().split("\n"):
                 if line:
                     try:
                         img = json.loads(line)
                         repo = img.get("Repository", "")
                         # Match cua-bench images (windows-qemu, webtop, etc.)
-                        if any(x in repo for x in ["trycua/", "windows-qemu", "webtop", "linuxserver/webtop"]):
+                        if any(
+                            x in repo
+                            for x in ["trycua/", "windows-qemu", "webtop", "linuxserver/webtop"]
+                        ):
                             images.append(img)
                     except json.JSONDecodeError:
                         pass
@@ -99,20 +106,20 @@ def calculate_dir_size(path: Path) -> int:
     if not path.exists():
         return 0
     try:
-        return sum(f.stat().st_size for f in path.rglob('*') if f.is_file())
+        return sum(f.stat().st_size for f in path.rglob("*") if f.is_file())
     except Exception:
         return 0
 
 
 def cmd_prune(args) -> int:
     """Execute the prune command."""
-    dry_run = getattr(args, 'dry_run', False)
-    force = getattr(args, 'force', False)
-    prune_all = getattr(args, 'all', False)
-    prune_images = getattr(args, 'images', False)
-    prune_overlays = getattr(args, 'overlays', False)
-    prune_docker = getattr(args, 'docker', False)
-    prune_runs = getattr(args, 'runs', False)
+    dry_run = getattr(args, "dry_run", False)
+    force = getattr(args, "force", False)
+    prune_all = getattr(args, "all", False)
+    prune_images = getattr(args, "images", False)
+    prune_overlays = getattr(args, "overlays", False)
+    prune_docker = getattr(args, "docker", False)
+    prune_runs = getattr(args, "runs", False)
 
     # If no specific flags, show interactive mode
     if not any([prune_all, prune_images, prune_overlays, prune_docker, prune_runs]):
@@ -192,7 +199,7 @@ def _interactive_prune(args) -> int:
     runs_count = 0
     if runs_file.exists():
         try:
-            with open(runs_file, 'r') as f:
+            with open(runs_file, "r") as f:
                 runs_data = json.load(f)
                 runs_count = len(runs_data)
         except Exception:
@@ -226,9 +233,15 @@ def _interactive_prune(args) -> int:
 
     # Show available commands
     print(f"\n{CYAN}Cleanup Commands:{RESET}")
-    print(f"  cb prune --overlays      {GREY}# Remove task overlays ({format_size(overlays_size)}){RESET}")
-    print(f"  cb prune --images        {GREY}# Remove all images ({format_size(images_size)}){RESET}")
-    print(f"  cb prune --runs          {GREY}# Remove run logs and registry ({format_size(runs_size)}){RESET}")
+    print(
+        f"  cb prune --overlays      {GREY}# Remove task overlays ({format_size(overlays_size)}){RESET}"
+    )
+    print(
+        f"  cb prune --images        {GREY}# Remove all images ({format_size(images_size)}){RESET}"
+    )
+    print(
+        f"  cb prune --runs          {GREY}# Remove run logs and registry ({format_size(runs_size)}){RESET}"
+    )
     print(f"  cb prune --docker        {GREY}# Stop containers, remove images{RESET}")
     print(f"  cb prune --all           {GREY}# Remove everything{RESET}")
     print(f"  cb prune --all --force   {GREY}# Remove everything without confirmation{RESET}")
@@ -263,7 +276,7 @@ def _prune_overlays(dry_run: bool, force: bool) -> Tuple[int, int]:
 
     if not force:
         response = input(f"\n  Remove {count} overlays? [y/N] ").strip().lower()
-        if response != 'y':
+        if response != "y":
             print("  Skipped.")
             return 0, 0
 
@@ -296,7 +309,7 @@ def _prune_images(dry_run: bool, force: bool) -> Tuple[int, int]:
     print(f"  Registry: {count} images")
 
     if registry:
-        print(f"\n  Registered images:")
+        print("\n  Registered images:")
         for name, info in registry.items():
             platform = info.get("platform", "unknown")
             print(f"    - {name} ({platform})")
@@ -307,9 +320,9 @@ def _prune_images(dry_run: bool, force: bool) -> Tuple[int, int]:
 
     if not force:
         print(f"\n  {RED}WARNING: This will delete all golden images!{RESET}")
-        print(f"  You will need to recreate them with 'cb image create'")
-        response = input(f"\n  Remove all images? Type 'yes' to confirm: ").strip().lower()
-        if response != 'yes':
+        print("  You will need to recreate them with 'cb image create'")
+        response = input("\n  Remove all images? Type 'yes' to confirm: ").strip().lower()
+        if response != "yes":
             print("  Skipped.")
             return 0, 0
 
@@ -377,12 +390,14 @@ def _prune_docker(dry_run: bool, force: bool) -> Tuple[int, int]:
             print(f"    - {repo}:{tag} ({size})")
 
     if dry_run:
-        print(f"\n  {YELLOW}Would remove {len(containers)} containers and {len(images)} images{RESET}")
+        print(
+            f"\n  {YELLOW}Would remove {len(containers)} containers and {len(images)} images{RESET}"
+        )
         return 0, len(containers) + len(images)
 
     if not force:
-        response = input(f"\n  Remove Docker resources? [y/N] ").strip().lower()
-        if response != 'y':
+        response = input("\n  Remove Docker resources? [y/N] ").strip().lower()
+        if response != "y":
             print("  Skipped.")
             return 0, 0
 
@@ -425,7 +440,7 @@ def _prune_runs(dry_run: bool, force: bool) -> Tuple[int, int]:
 
     if runs_file.exists():
         try:
-            with open(runs_file, 'r') as f:
+            with open(runs_file, "r") as f:
                 runs_data = json.load(f)
                 runs_count = len(runs_data)
         except Exception:
@@ -444,12 +459,14 @@ def _prune_runs(dry_run: bool, force: bool) -> Tuple[int, int]:
         print(f"  Count:    {runs_count} runs")
 
     if dry_run:
-        print(f"\n  {YELLOW}Would remove {runs_count} runs and {format_size(runs_size)} of logs{RESET}")
+        print(
+            f"\n  {YELLOW}Would remove {runs_count} runs and {format_size(runs_size)} of logs{RESET}"
+        )
         return runs_size, runs_count
 
     if not force:
-        response = input(f"\n  Remove all run logs and registry? [y/N] ").strip().lower()
-        if response != 'y':
+        response = input("\n  Remove all run logs and registry? [y/N] ").strip().lower()
+        if response != "y":
             print("  Skipped.")
             return 0, 0
 
@@ -481,44 +498,25 @@ def _prune_runs(dry_run: bool, force: bool) -> Tuple[int, int]:
 def register_parser(subparsers):
     """Register the prune command with the main CLI parser."""
     prune_parser = subparsers.add_parser(
-        'prune',
-        help='Clean up cua-bench data, images, and Docker resources'
+        "prune", help="Clean up cua-bench data, images, and Docker resources"
     )
     prune_parser.add_argument(
-        '--all', '-a',
-        action='store_true',
-        help='Remove everything (images, overlays, docker)'
+        "--all", "-a", action="store_true", help="Remove everything (images, overlays, docker)"
+    )
+    prune_parser.add_argument("--images", action="store_true", help="Remove stored images")
+    prune_parser.add_argument("--overlays", action="store_true", help="Remove task overlays")
+    prune_parser.add_argument("--runs", action="store_true", help="Remove run logs and registry")
+    prune_parser.add_argument(
+        "--docker", action="store_true", help="Remove Docker containers and images"
     )
     prune_parser.add_argument(
-        '--images',
-        action='store_true',
-        help='Remove stored images'
+        "--dry-run",
+        action="store_true",
+        dest="dry_run",
+        help="Show what would be deleted without deleting",
     )
     prune_parser.add_argument(
-        '--overlays',
-        action='store_true',
-        help='Remove task overlays'
-    )
-    prune_parser.add_argument(
-        '--runs',
-        action='store_true',
-        help='Remove run logs and registry'
-    )
-    prune_parser.add_argument(
-        '--docker',
-        action='store_true',
-        help='Remove Docker containers and images'
-    )
-    prune_parser.add_argument(
-        '--dry-run',
-        action='store_true',
-        dest='dry_run',
-        help='Show what would be deleted without deleting'
-    )
-    prune_parser.add_argument(
-        '--force', '-f',
-        action='store_true',
-        help='Skip confirmation prompts'
+        "--force", "-f", action="store_true", help="Skip confirmation prompts"
     )
 
 

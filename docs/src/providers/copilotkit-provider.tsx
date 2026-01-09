@@ -390,11 +390,11 @@ export function CopilotKitProvider({ children }: CopilotKitProviderProps) {
           }
         }
 
-        /* More padding in header */
+        /* Match header height to message box */
         .copilotKitHeader {
-          padding: 1.25rem 1.5rem;
+          padding: 0.75rem 1rem;
           height: auto;
-          min-height: 64px;
+          min-height: 56px;
         }
 
         .poweredByContainer,

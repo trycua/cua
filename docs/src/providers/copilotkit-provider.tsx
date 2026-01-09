@@ -272,6 +272,10 @@ export function CopilotKitProvider({ children }: CopilotKitProviderProps) {
           flex-shrink: 0;
         }
 
+        .dark .copilotKitHeader::before {
+          filter: invert(1);
+        }
+
         /* Tool call indicator styles */
         .copilotkit-tool-indicator {
           display: flex;

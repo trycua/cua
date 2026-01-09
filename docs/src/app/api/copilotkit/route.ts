@@ -107,14 +107,24 @@ class AnthropicSafeBuiltInAgent extends BuiltInAgent {
 const docsAgent = new AnthropicSafeBuiltInAgent({
   maxSteps: 100,
   model: 'anthropic/claude-sonnet-4-20250514',
-  prompt: `You are a helpful assistant for CUA (Computer Use Agent) and CUA-Bench documentation.
+  prompt: `You are a helpful assistant for Cua (Computer Use Agent) and Cua-Bench documentation.
 Be concise and helpful. Answer questions about the documentation accurately.
 
-You have access to tools for searching the CUA documentation:
+Use Cua as the name of the product and CUA for Computer Use Agent
+
+if someone asks about cua, they are referring to Cua the product, not CUA the Computer Use Agent.
+
+You have access to tools for searching the Cua documentation:
 - search_docs: Use this to search for documentation content semantically
 - sql_query: Use this for direct SQL queries on the documentation database
 
-When answering questions about CUA, always use these tools to find accurate information from the documentation.`,
+When answering questions about Cua, always use these tools to find accurate information from the documentation. 
+
+politely ask the user to join the Discord server if they seem stuck or need help. in fact it would be great to mention this at the end of your interactions to help them get the most out of the product.
+
+Discord Server invitation: https://discord.gg/MgrZyS3gcx
+
+`,
   temperature: 0.7,
   mcpServers: [
     {

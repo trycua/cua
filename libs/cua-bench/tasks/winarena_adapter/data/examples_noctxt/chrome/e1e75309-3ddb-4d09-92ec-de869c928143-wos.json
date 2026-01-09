@@ -17,26 +17,18 @@
     {
       "type": "launch",
       "parameters": {
-        "command": [
-          "socat",
-          "tcp-listen:9222,fork",
-          "tcp:localhost:1337"
-        ]
+        "command": ["socat", "tcp-listen:9222,fork", "tcp:localhost:1337"]
       }
     },
     {
       "type": "chrome_open_tabs",
       "parameters": {
-        "urls_to_open": [
-          "https://lilianweng.github.io/posts/2023-06-23-agent/"
-        ]
+        "urls_to_open": ["https://lilianweng.github.io/posts/2023-06-23-agent/"]
       }
     }
   ],
   "trajectory": "trajectories\\",
-  "related_apps": [
-    "chrome"
-  ],
+  "related_apps": ["chrome"],
   "evaluator": {
     "func": "compare_pdfs",
     "result": {

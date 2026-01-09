@@ -1,22 +1,25 @@
 from __future__ import annotations
-from google.cloud import batch_v1, logging, storage
-from typing import NoReturn, Iterable
-from tqdm import tqdm
-import time
-import os
-import subprocess
-import asyncio
-import aiohttp
-import aiofiles
-from gcloud.aio.storage import Storage
 
+import asyncio
+import os
 import re
- 
- 
+import subprocess
+from typing import Iterable
+
+import aiofiles
+import aiohttp
+from gcloud.aio.storage import Storage
+from google.cloud import batch_v1, logging, storage
+from tqdm import tqdm
+
 # Configuration
-IMAGE_URI = os.environ.get("GCP_IMAGE_URI", "us-central1-docker.pkg.dev/enhanced-kiln-453008-s4/bench/py311-playwright-bench:latest")
+IMAGE_URI = os.environ.get(
+    "GCP_IMAGE_URI",
+    "us-central1-docker.pkg.dev/enhanced-kiln-453008-s4/bench/py311-playwright-bench:latest",
+)
 PROJECT_ID = os.environ.get("GCP_PROJECT_ID", "enhanced-kiln-453008-s4")
 REGION = os.environ.get("GCP_REGION", "us-central1")
+
 
 # Utility: sanitize a string to be a valid GCP Batch job_id
 # Must match: ^[a-z]([a-z0-9-]{0,61}[a-z0-9])?$  (1-63 chars, start with letter, end with letter/digit)
@@ -39,9 +42,11 @@ def sanitize_job_id(name: str) -> str:
     if not s:
         s = "cb-worker"
     return s
- 
+
+
 # region Batch Job Abstraction
- 
+
+
 async def execute(
     job_name: str,
     print_logs: bool = True,
@@ -86,10 +91,12 @@ async def execute(
             print(f"Uploading {local_path} to {remote_uri}")
             await upload_directory(bucket_name, local_path, prefix)
             print(f"Uploaded {local_path} to {remote_uri}")
-            derived_gcs_vols.append({
-                "gcs": {"remotePath": remote_uri},
-                "mountPath": mount_path,
-            })
+            derived_gcs_vols.append(
+                {
+                    "gcs": {"remotePath": remote_uri},
+                    "mountPath": mount_path,
+                }
+            )
 
     # Merge provided gcs_volumes with derived ones
     final_gcs_vols: list[dict] | None = None
@@ -103,16 +110,12 @@ async def execute(
     # If running locally, execute container via Docker and return
     if run_local:
         image = image_uri or IMAGE_URI
-        shell_cmd = container_script or (
-            "echo Hello world! This is a local container run."
-        )
-        docker_cmd: list[str] = [
-            "docker", "run", "--rm"
-        ]
+        shell_cmd = container_script or ("echo Hello world! This is a local container run.")
+        docker_cmd: list[str] = ["docker", "run", "--rm"]
         # Mount folders if provided
         if mapped_folders:
             for local_path, mount_path in mapped_folders:
-                docker_cmd.extend(["-v", f"{os.path.abspath(local_path)}:{mount_path}:ro"]) 
+                docker_cmd.extend(["-v", f"{os.path.abspath(local_path)}:{mount_path}:ro"])
         docker_cmd.append(image)
         docker_cmd.extend(["/bin/sh", "-c", shell_cmd])
         print(f"Running locally via Docker: {' '.join(docker_cmd)}")
@@ -131,7 +134,7 @@ async def execute(
             f"Consider deleting it, then re-run.\n\n $ gcloud batch jobs delete {job_name} --location={REGION}\n"
         )
         return
- 
+
     result_logs: list[str] = []
     try:
         # 1) Create the job
@@ -233,7 +236,7 @@ async def execute(
     finally:
         if pbar:
             pbar.close()
-        print(f"Cleaning up cloud resources...")
+        print("Cleaning up cloud resources...")
         # 4) Clean up job resources
         if auto_cleanup:
             # Delete the job if it exists
@@ -254,7 +257,9 @@ async def execute(
 
     return result_logs
 
-#region GCP Batch Helpers
+
+# region GCP Batch Helpers
+
 
 async def list_jobs(project_id: str, region: str) -> list[batch_v1.Job]:
     client = batch_v1.BatchServiceAsyncClient()
@@ -262,17 +267,22 @@ async def list_jobs(project_id: str, region: str) -> list[batch_v1.Job]:
     pager = await client.list_jobs(request=req)
     return [job async for job in pager]
 
+
 async def job_exists(project_id: str, region: str, job_name: str) -> bool:
     jobs = await list_jobs(project_id, region)
-    return any(job.name == f"projects/{project_id}/locations/{region}/jobs/{job_name}" for job in jobs)
+    return any(
+        job.name == f"projects/{project_id}/locations/{region}/jobs/{job_name}" for job in jobs
+    )
+
 
 async def get_job(project_id: str, region: str, job_name: str) -> batch_v1.Job:
     client = batch_v1.BatchServiceAsyncClient()
-    return await client.get_job(
-        name=f"projects/{project_id}/locations/{region}/jobs/{job_name}"
-    )
+    return await client.get_job(name=f"projects/{project_id}/locations/{region}/jobs/{job_name}")
 
-async def count_completed_tasks(project_id: str, region: str, job_name: str, task_group_id: str = "group0") -> int:
+
+async def count_completed_tasks(
+    project_id: str, region: str, job_name: str, task_group_id: str = "group0"
+) -> int:
     """Count tasks that have reached a terminal state (SUCCEEDED or FAILED)."""
     client = batch_v1.BatchServiceAsyncClient()
     parent = f"projects/{project_id}/locations/{region}/jobs/{job_name}/taskGroups/{task_group_id}"
@@ -287,6 +297,7 @@ async def count_completed_tasks(project_id: str, region: str, job_name: str, tas
     except Exception:
         pass
     return completed
+
 
 async def create_container_job(
     project_id: str,
@@ -354,7 +365,9 @@ async def create_container_job(
 
     # We can specify what resources are requested by each task.
     resources = batch_v1.ComputeResource()
-    resources.cpu_milli = 2000  # in milliseconds per cpu-second. This means the task requires 2 whole CPUs.
+    resources.cpu_milli = (
+        2000  # in milliseconds per cpu-second. This means the task requires 2 whole CPUs.
+    )
     resources.memory_mib = 64  # in MiB
     task.compute_resource = resources
 
@@ -380,7 +393,7 @@ async def create_container_job(
     # Read more about machine types here: https://cloud.google.com/compute/docs/machine-types
     policy = batch_v1.AllocationPolicy.InstancePolicy()
     # policy.machine_type = "e2-standard-4" # 4 vCPUs, 16 GB RAM
-    policy.machine_type = "e2-highcpu-16" # 16 vCPUs, 16 GB RAM
+    policy.machine_type = "e2-highcpu-16"  # 16 vCPUs, 16 GB RAM
     instances = batch_v1.AllocationPolicy.InstancePolicyOrTemplate()
     instances.policy = policy
     allocation_policy = batch_v1.AllocationPolicy()
@@ -402,12 +415,12 @@ async def create_container_job(
 
     return await client.create_job(create_request)
 
+
 async def delete_job(project_id: str, region: str, job_name: str):
     client = batch_v1.BatchServiceAsyncClient()
-    operation = client.delete_job(
-        name=f"projects/{project_id}/locations/{region}/jobs/{job_name}"
-    )
+    operation = client.delete_job(name=f"projects/{project_id}/locations/{region}/jobs/{job_name}")
     return await (await operation).result()
+
 
 async def get_job_logs(project_id: str, job: batch_v1.Job) -> list[str]:
     """
@@ -425,6 +438,7 @@ async def get_job_logs(project_id: str, job: batch_v1.Job) -> list[str]:
         payload = str(log_entry.payload)
         lines.append(payload)
     return lines
+
 
 # region GCS Bucket Helpers
 async def create_bucket(project_id: str, bucket_name: str, location: str) -> storage.Bucket:
@@ -464,13 +478,11 @@ async def delete_bucket(bucket_name: str) -> None:
     for blob in blobs:
         blob.delete()
     bucket.delete()
-    
-
 
 
 if __name__ == "__main__":
     JOB_NAME = "test-job"
-    
+
     # asyncio.run(execute(JOB_NAME))
 
     # print(job_exists(
@@ -478,7 +490,7 @@ if __name__ == "__main__":
     #     region=REGION,
     #     job_name=JOB_NAME,
     # ))
-    
+
     # jobs = list_jobs(
     #     project_id=PROJECT_ID,
     #     region=REGION,

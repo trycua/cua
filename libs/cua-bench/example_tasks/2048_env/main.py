@@ -1,6 +1,8 @@
-import cua_bench as cb
 from pathlib import Path
+
+import cua_bench as cb
 from cua_bench.types import KeyAction
+
 
 # Called once per batch
 @cb.tasks_config(split="train")
@@ -18,15 +20,17 @@ def load():
                     "os_type": os_type,
                     "width": 768,
                     "height": 768,
-                    "background": '#202020',
-                }
-            }
+                    "background": "#202020",
+                },
+            },
         )
         for os_type in os_types
     ]
 
+
 # All code below will be running in a separate process per task
 pid = -1
+
 
 # Called at start of task
 @cb.setup_task(split="train")
@@ -51,6 +55,7 @@ async def evaluate(task_cfg: cb.Task, session: cb.DesktopSession | cb.MobileSess
     except Exception:
         return [0.0]
 
+
 # Called after setup_task if run_solution is True
 @cb.solve_task(split="train")
 async def solve(task_cfg: cb.Task, session: cb.DesktopSession | cb.MobileSession):
@@ -62,7 +67,9 @@ async def solve(task_cfg: cb.Task, session: cb.DesktopSession | cb.MobileSession
         lost = await session.execute_javascript(pid, "window.__lost === true")
         if lost:
             break
-        direction = await session.execute_javascript(pid, "(window.__next_move && window.__next_move()) || null")
+        direction = await session.execute_javascript(
+            pid, "(window.__next_move && window.__next_move()) || null"
+        )
         if not direction:
             break
         key = {

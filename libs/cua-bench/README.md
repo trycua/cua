@@ -332,6 +332,7 @@ cb dataset build <run-id> --push-to-hub --repo-id username/my-dataset
 ```
 
 **Available formats:**
+
 - **aguvis-stage-1** - Action augmentation dataset (AgUVis/smol2operator style)
 - **gui-r1** - Low-level click instructions (GUI-R1 format)
 
@@ -342,12 +343,14 @@ cb dataset build <run-id> --push-to-hub --repo-id username/my-dataset
 Fast, lightweight environments using Playwright. No Docker required.
 
 **Best for:**
+
 - Custom GUI tasks
 - Web app testing
 - Quick iteration
 - Cross-platform compatibility
 
 **Themes:**
+
 - `win11` - Windows 11 desktop simulation
 - `macos` - macOS desktop simulation
 
@@ -356,11 +359,13 @@ Fast, lightweight environments using Playwright. No Docker required.
 Real operating systems running in containers or VMs.
 
 **Best for:**
+
 - Real application testing
 - OS-specific tasks
 - Benchmarks requiring actual apps
 
 **Platforms:**
+
 - `linux-docker` - Linux container (XFCE)
 - `linux-qemu` - Linux VM with KVM
 - `windows-qemu` - Windows 11 VM

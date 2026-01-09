@@ -26,10 +26,7 @@
     {
       "type": "launch",
       "parameters": {
-        "command": [
-          "explorer",
-          "C:\\Users\\Docker\\Pictures"
-        ]
+        "command": ["explorer", "C:\\Users\\Docker\\Pictures"]
       }
     },
     {
@@ -40,9 +37,7 @@
     }
   ],
   "trajectory": "trajectories/",
-  "related_apps": [
-    "file_explorer"
-  ],
+  "related_apps": ["file_explorer"],
   "evaluator": {
     "postconfig": [
       {

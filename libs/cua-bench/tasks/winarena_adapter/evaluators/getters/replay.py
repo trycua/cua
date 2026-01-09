@@ -1,4 +1,4 @@
-from typing import List, Dict, Any
+from typing import Any, Dict, List
 
 
 def get_replay(env, trajectory: List[Dict[str, Any]]) -> None:

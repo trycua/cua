@@ -11,11 +11,10 @@ rather than inside the VM.
 import logging
 from typing import Any, Callable, Dict, List, Optional, Union
 
-from .setup_controller import WAASetupController
-
 # Import evaluator modules - async getters and metrics
 from .evaluators import metrics
-from .evaluators.getters_async import get_async_getter, ASYNC_GETTERS
+from .evaluators.getters_async import get_async_getter
+from .setup_controller import WAASetupController
 
 logger = logging.getLogger("winarena.evaluator")
 
@@ -87,8 +86,10 @@ class SessionInterfaceWrapper:
     async def get_screen_size(self) -> Optional[Dict[str, int]]:
         """Get the VM screen size."""
         # Return session's configured dimensions
-        return {"width": getattr(self._session, '_width', 1920),
-                "height": getattr(self._session, '_height', 1080)}
+        return {
+            "width": getattr(self._session, "_width", 1920),
+            "height": getattr(self._session, "_height", 1080),
+        }
 
     async def get_window_size(self, window_id) -> Optional[Dict[str, int]]:
         """Get the size of a window - not directly supported."""

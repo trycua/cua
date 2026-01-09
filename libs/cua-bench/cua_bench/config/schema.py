@@ -3,7 +3,6 @@
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
-
 # Default agent image used when no custom image is specified
 DEFAULT_AGENT_IMAGE = "cua-bench:latest"
 
@@ -153,12 +152,14 @@ class AgentsConfig:
             if command and isinstance(command, str):
                 command = command.split()  # Convert string to list
 
-            agents.append(CustomAgentEntry(
-                name=agent_data["name"],
-                image=agent_data.get("image"),
-                import_path=agent_data.get("import_path"),
-                builtin=agent_data.get("builtin", False),
-                command=command,
-                defaults=agent_data.get("defaults", {}),
-            ))
+            agents.append(
+                CustomAgentEntry(
+                    name=agent_data["name"],
+                    image=agent_data.get("image"),
+                    import_path=agent_data.get("import_path"),
+                    builtin=agent_data.get("builtin", False),
+                    command=command,
+                    defaults=agent_data.get("defaults", {}),
+                )
+            )
         return cls(custom_agents=agents)

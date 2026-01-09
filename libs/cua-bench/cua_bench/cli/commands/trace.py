@@ -4,11 +4,12 @@ Usage:
     cb trace view <id>   # View a single trace (run_id or session_id)
     cb trace grid <id>   # View all traces in a run as a grid
 """
+
 from __future__ import annotations
 
 import base64
 import json
-import shutil
+import os
 import threading
 import urllib.parse
 import webbrowser
@@ -17,7 +18,6 @@ from pathlib import Path
 from typing import Any, List, Optional, Tuple
 
 from datasets import load_from_disk
-import os
 
 RESET = "\033[0m"
 BOLD = "\033[1m"
@@ -48,7 +48,9 @@ def _resolve_trace_path(identifier: str) -> Optional[Path]:
     # Check if it's a session_id (contains "task-")
     if identifier.startswith("task-"):
         # Parse session_id: task-<run_id>-<task_name>-v<variant>
-        parts = identifier.split("-", 2)  # Split into ["task", "<run_id>", "<task_name>-v<variant>"]
+        parts = identifier.split(
+            "-", 2
+        )  # Split into ["task", "<run_id>", "<task_name>-v<variant>"]
         if len(parts) < 3:
             return None
 
@@ -57,7 +59,8 @@ def _resolve_trace_path(identifier: str) -> Optional[Path]:
 
         # Find the variant number (last -v<N>)
         import re
-        match = re.match(r'(.+)-v(\d+)$', task_variant)
+
+        match = re.match(r"(.+)-v(\d+)$", task_variant)
         if not match:
             return None
 
@@ -112,46 +115,34 @@ def _collect_run_traces(run_dir: Path) -> List[Tuple[str, Path]]:
 
 def register_parser(subparsers):
     """Register the trace command parser."""
-    trace_parser = subparsers.add_parser(
-        'trace',
-        help='View and analyze trace datasets'
-    )
-    trace_subparsers = trace_parser.add_subparsers(dest='trace_command')
+    trace_parser = subparsers.add_parser("trace", help="View and analyze trace datasets")
+    trace_subparsers = trace_parser.add_subparsers(dest="trace_command")
 
     # cb trace view <id>
-    view_parser = trace_subparsers.add_parser(
-        'view',
-        help='View a single trace in browser'
-    )
+    view_parser = trace_subparsers.add_parser("view", help="View a single trace in browser")
     view_parser.add_argument(
-        'identifier',
-        help='Run ID or session ID (e.g., "30c12572" or "task-30c12572-click-button-v0")'
+        "identifier",
+        help='Run ID or session ID (e.g., "30c12572" or "task-30c12572-click-button-v0")',
     )
 
     # cb trace grid <id>
-    grid_parser = trace_subparsers.add_parser(
-        'grid',
-        help='View all traces in a run as a grid'
-    )
-    grid_parser.add_argument(
-        'identifier',
-        help='Run ID (e.g., "30c12572")'
-    )
+    grid_parser = trace_subparsers.add_parser("grid", help="View all traces in a run as a grid")
+    grid_parser.add_argument("identifier", help='Run ID (e.g., "30c12572")')
 
 
 def execute(args):
     """Execute the trace command."""
-    trace_command = getattr(args, 'trace_command', None)
+    trace_command = getattr(args, "trace_command", None)
 
-    if trace_command == 'view':
+    if trace_command == "view":
         return cmd_view(args)
-    elif trace_command == 'grid':
+    elif trace_command == "grid":
         return cmd_grid(args)
     else:
         print(f"{YELLOW}Usage: cb trace <command> <id>{RESET}")
         print(f"\n{GREY}Commands:{RESET}")
-        print(f"  view <id>   View a single trace (run_id or session_id)")
-        print(f"  grid <id>   View all traces in a run as a grid")
+        print("  view <id>   View a single trace (run_id or session_id)")
+        print("  grid <id>   View all traces in a run as a grid")
         return 1
 
 
@@ -159,12 +150,9 @@ def execute(args):
 # cmd_view - View a single trace dataset
 # ============================================================================
 
+
 def _html_escape(s: str) -> str:
-    return (
-        s.replace("&", "&amp;")
-        .replace("<", "&lt;")
-        .replace(">", "&gt;")
-    )
+    return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
 def cmd_view(args) -> int:
@@ -194,7 +182,9 @@ def cmd_view(args) -> int:
             _, trace_path = traces[0]
         else:
             # Multiple traces - show error
-            print(f"{YELLOW}Run contains {len(traces)} traces. Specify a session_id to view a specific trace:{RESET}")
+            print(
+                f"{YELLOW}Run contains {len(traces)} traces. Specify a session_id to view a specific trace:{RESET}"
+            )
             for name, _ in traces[:5]:
                 session_id = f"task-{identifier}-{name.replace('_v', '-v')}"
                 print(f"  cb trace view {session_id}")
@@ -226,21 +216,28 @@ def cmd_view(args) -> int:
             try:
                 if hasattr(img, "save"):
                     import io
+
                     buf = io.BytesIO()
                     img.save(buf, format="PNG")
                     b64 = base64.b64encode(buf.getvalue()).decode("ascii")
-                    imgs_html.append(f'<div class="img-container"><img class="trace-img" data-row="{i}" data-img="{j}" src="data:image/png;base64,{b64}" style="max-width:300px; max-height:300px; cursor: zoom-in;"/></div>')
+                    imgs_html.append(
+                        f'<div class="img-container"><img class="trace-img" data-row="{i}" data-img="{j}" src="data:image/png;base64,{b64}" style="max-width:300px; max-height:300px; cursor: zoom-in;"/></div>'
+                    )
                 elif isinstance(img, dict):
                     data = img.get("bytes")
                     if data:
                         b64 = base64.b64encode(data).decode("ascii")
-                        imgs_html.append(f'<div class="img-container"><img class="trace-img" data-row="{i}" data-img="{j}" src="data:image/png;base64,{b64}" style="max-width:300px; max-height:300px; cursor: zoom-in;"/></div>')
+                        imgs_html.append(
+                            f'<div class="img-container"><img class="trace-img" data-row="{i}" data-img="{j}" src="data:image/png;base64,{b64}" style="max-width:300px; max-height:300px; cursor: zoom-in;"/></div>'
+                        )
                     else:
                         pth = img.get("path")
                         if pth and Path(pth).exists():
                             data = Path(pth).read_bytes()
                             b64 = base64.b64encode(data).decode("ascii")
-                            imgs_html.append(f'<div class="img-container"><img class="trace-img" data-row="{i}" data-img="{j}" src="data:image/png;base64,{b64}" style="max-width:300px; max-height:300px; cursor: zoom-in;"/></div>')
+                            imgs_html.append(
+                                f'<div class="img-container"><img class="trace-img" data-row="{i}" data-img="{j}" src="data:image/png;base64,{b64}" style="max-width:300px; max-height:300px; cursor: zoom-in;"/></div>'
+                            )
             except Exception:
                 continue
 
@@ -249,10 +246,12 @@ def cmd_view(args) -> int:
             "timestamp": row.get("timestamp"),
             "trajectory_id": row.get("trajectory_id"),
         }
-        row_meta.append({
-            "timestamp": meta["timestamp"],
-            "trajectory_id": meta["trajectory_id"],
-        })
+        row_meta.append(
+            {
+                "timestamp": meta["timestamp"],
+                "trajectory_id": meta["trajectory_id"],
+            }
+        )
 
         data_json = row.get("data_json")
         parsed_data: Any
@@ -267,7 +266,11 @@ def cmd_view(args) -> int:
             parsed_data = data_json
 
         row_data.append(parsed_data if isinstance(parsed_data, dict) else {})
-        data_str = json.dumps(parsed_data, ensure_ascii=False, indent=2) if not isinstance(parsed_data, str) else str(parsed_data)
+        data_str = (
+            json.dumps(parsed_data, ensure_ascii=False, indent=2)
+            if not isinstance(parsed_data, str)
+            else str(parsed_data)
+        )
 
         rows.append(
             """
@@ -289,11 +292,10 @@ def cmd_view(args) -> int:
 
     template_path = Path(__file__).resolve().parents[2] / "www" / "trace_viewer.html"
     html_template = template_path.read_text(encoding="utf-8")
-    row_data_b64 = base64.b64encode(json.dumps(row_data).encode('utf-8')).decode('ascii')
+    row_data_b64 = base64.b64encode(json.dumps(row_data).encode("utf-8")).decode("ascii")
 
     html = (
-        html_template
-        .replace("__PATH_NAME__", str(path.name))
+        html_template.replace("__PATH_NAME__", str(path.name))
         .replace("__PATH__", str(path))
         .replace("__ROWS__", "".join(rows))
         .replace("__ROW_META__", json.dumps(row_meta))
@@ -338,6 +340,7 @@ def cmd_view(args) -> int:
 # cmd_grid - View multiple traces in a grid
 # ============================================================================
 
+
 def cmd_grid(args) -> int:
     """View all traces in a run as a grid layout."""
     identifier = args.identifier
@@ -375,6 +378,7 @@ def cmd_grid(args) -> int:
             img0 = imgs[0]
             if hasattr(img0, "save"):
                 import io
+
                 buf = io.BytesIO()
                 img0.save(buf, format="PNG")
                 preview_b64 = base64.b64encode(buf.getvalue()).decode("ascii")
@@ -391,7 +395,11 @@ def cmd_grid(args) -> int:
                 break
         row_count = len(ds)
         href = "/trace?path=" + urllib.parse.quote(str(p))
-        img_html = f'<img src="data:image/png;base64,{preview_b64}" style="width:100%;height:160px;object-fit:contain;background:#111;border-bottom:1px solid #333;"/>' if preview_b64 else '<div style="height:160px;background:#111;border-bottom:1px solid #333;display:flex;align-items:center;justify-content:center;color:#888;">(no image)</div>'
+        img_html = (
+            f'<img src="data:image/png;base64,{preview_b64}" style="width:100%;height:160px;object-fit:contain;background:#111;border-bottom:1px solid #333;"/>'
+            if preview_b64
+            else '<div style="height:160px;background:#111;border-bottom:1px solid #333;display:flex;align-items:center;justify-content:center;color:#888;">(no image)</div>'
+        )
         cards_html.append(
             f"""
             <a href="#" onclick=\"window.open('{href}','trace','width=1200,height=800'); return false;\" style="text-decoration:none;color:inherit;">
@@ -447,30 +455,39 @@ def cmd_grid(args) -> int:
             for j, img in enumerate(imgs):
                 if hasattr(img, "save"):
                     import io
+
                     buf = io.BytesIO()
                     img.save(buf, format="PNG")
                     b64 = base64.b64encode(buf.getvalue()).decode("ascii")
-                    imgs_html.append(f'<img class="trace-img" data-row="{i}" data-img="{j}" src="data:image/png;base64,{b64}" style="max-width:300px; max-height:300px; cursor: zoom-in;"/>')
+                    imgs_html.append(
+                        f'<img class="trace-img" data-row="{i}" data-img="{j}" src="data:image/png;base64,{b64}" style="max-width:300px; max-height:300px; cursor: zoom-in;"/>'
+                    )
                 elif isinstance(img, dict):
                     data = img.get("bytes")
                     if data:
                         b64 = base64.b64encode(data).decode("ascii")
-                        imgs_html.append(f'<img class="trace-img" data-row="{i}" data-img="{j}" src="data:image/png;base64,{b64}" style="max-width:300px; max-height:300px; cursor: zoom-in;"/>')
+                        imgs_html.append(
+                            f'<img class="trace-img" data-row="{i}" data-img="{j}" src="data:image/png;base64,{b64}" style="max-width:300px; max-height:300px; cursor: zoom-in;"/>'
+                        )
                     else:
                         pth = img.get("path")
                         if pth and Path(pth).exists():
                             data = Path(pth).read_bytes()
                             b64 = base64.b64encode(data).decode("ascii")
-                            imgs_html.append(f'<img class="trace-img" data-row="{i}" data-img="{j}" src="data:image/png;base64,{b64}" style="max-width:300px; max-height:300px; cursor: zoom-in;"/>')
+                            imgs_html.append(
+                                f'<img class="trace-img" data-row="{i}" data-img="{j}" src="data:image/png;base64,{b64}" style="max-width:300px; max-height:300px; cursor: zoom-in;"/>'
+                            )
             meta = {
                 "event_name": row.get("event_name"),
                 "timestamp": row.get("timestamp"),
                 "trajectory_id": row.get("trajectory_id"),
             }
-            row_meta.append({
-                "timestamp": meta["timestamp"],
-                "trajectory_id": meta["trajectory_id"],
-            })
+            row_meta.append(
+                {
+                    "timestamp": meta["timestamp"],
+                    "trajectory_id": meta["trajectory_id"],
+                }
+            )
             data_json = row.get("data_json")
             if isinstance(data_json, (dict, list)):
                 parsed = data_json
@@ -483,7 +500,11 @@ def cmd_grid(args) -> int:
                 parsed = data_json
 
             row_data.append(parsed if isinstance(parsed, dict) else {})
-            data_str = json.dumps(parsed, ensure_ascii=False, indent=2) if not isinstance(parsed, str) else str(parsed)
+            (
+                json.dumps(parsed, ensure_ascii=False, indent=2)
+                if not isinstance(parsed, str)
+                else str(parsed)
+            )
             rows.append(
                 f"""
                 <tr>
@@ -499,11 +520,10 @@ def cmd_grid(args) -> int:
             )
         template_path = Path(__file__).resolve().parents[2] / "www" / "trace_viewer.html"
         html_template = template_path.read_text(encoding="utf-8")
-        row_data_b64 = base64.b64encode(json.dumps(row_data).encode('utf-8')).decode('ascii')
+        row_data_b64 = base64.b64encode(json.dumps(row_data).encode("utf-8")).decode("ascii")
 
         html = (
-            html_template
-            .replace("__PATH_NAME__", str(path.name))
+            html_template.replace("__PATH_NAME__", str(path.name))
             .replace("__PATH__", str(path))
             .replace("__ROWS__", "".join(rows))
             .replace("__ROW_META__", json.dumps(row_meta))
@@ -531,6 +551,7 @@ def cmd_grid(args) -> int:
                 self.wfile.write(body)
             except Exception as e:
                 import traceback
+
                 traceback.print_exc()
                 print(f"{RED}Error serving request: {e}{RESET}")
                 self.send_response(500)

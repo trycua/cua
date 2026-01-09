@@ -1,19 +1,21 @@
-import cua_bench as cb
 from pathlib import Path
+
+import cua_bench as cb
+
 
 # Called once per batch
 @cb.tasks_config(split="train")
 def load():
-    os_types = ["linux"] # ["macos", "win11", "win10"]
+    os_types = ["linux"]  # ["macos", "win11", "win10"]
     # Minesweeper game variants: (rows, cols, mines)
     game_configs = [
-        (8, 8, 10),   # Easy
-        (10, 10, 15), # Medium
-        (12, 12, 20), # Hard
+        (8, 8, 10),  # Easy
+        (10, 10, 15),  # Medium
+        (12, 12, 20),  # Hard
     ]
     return [
         cb.Task(
-            description=f'Play Minesweeper on a {rows}x{cols} grid with {mines} mines. Click cells to reveal them, right-click to flag mines. Win by revealing all non-mine cells.',
+            description=f"Play Minesweeper on a {rows}x{cols} grid with {mines} mines. Click cells to reveal them, right-click to flag mines. Win by revealing all non-mine cells.",
             metadata={
                 "rows": rows,
                 "cols": cols,
@@ -25,17 +27,19 @@ def load():
                     "os_type": os_type,
                     "width": 800,
                     "height": 800,
-                    "background": '#c0c0c0'
-                }
-            }
+                    "background": "#c0c0c0",
+                },
+            },
         )
         for os_type in os_types
         for rows, cols, mines in game_configs
     ]
 
+
 # All code below will be running in a separate process per task
 
 pid = None
+
 
 # Called at start of task
 @cb.setup_task(split="train")
@@ -44,16 +48,16 @@ async def start(task_cfg: cb.Task, session: cb.DesktopSession | cb.MobileSession
 
     # Setup steps:
     # 1. Create a webview window with Minesweeper game
-    rows = task_cfg.metadata["rows"] # type: ignore
-    cols = task_cfg.metadata["cols"] # type: ignore
-    mines = task_cfg.metadata["mines"] # type: ignore
+    rows = task_cfg.metadata["rows"]  # type: ignore
+    cols = task_cfg.metadata["cols"]  # type: ignore
+    mines = task_cfg.metadata["mines"]  # type: ignore
 
     # Calculate window size based on grid size (30px per cell + padding)
     window_width = cols * 30 + 100
     window_height = rows * 30 + 200
 
     pid = await session.launch_window(
-        html=(Path(__file__).parent / "gui/index.html").read_text('utf-8'),
+        html=(Path(__file__).parent / "gui/index.html").read_text("utf-8"),
         title="Minesweeper",
         width=window_width,
         height=window_height,
@@ -63,11 +67,12 @@ async def start(task_cfg: cb.Task, session: cb.DesktopSession | cb.MobileSession
     if pid is not None:
         await session.execute_javascript(pid, f"window.initGame({rows}, {cols}, {mines})")
 
+
 # Called at end of task
 @cb.evaluate_task(split="train")
 async def evaluate(task_cfg: cb.Task, session: cb.DesktopSession | cb.MobileSession) -> list[float]:
     global pid
-    
+
     if pid is None:
         return [0.0]
 
@@ -84,9 +89,9 @@ async def evaluate(task_cfg: cb.Task, session: cb.DesktopSession | cb.MobileSess
         return [0.0]
     else:
         # Game still in progress - partial credit based on revealed cells
-        rows = task_cfg.metadata["rows"] # type: ignore
-        cols = task_cfg.metadata["cols"] # type: ignore
-        mines = task_cfg.metadata["mines"] # type: ignore
+        rows = task_cfg.metadata["rows"]  # type: ignore
+        cols = task_cfg.metadata["cols"]  # type: ignore
+        mines = task_cfg.metadata["mines"]  # type: ignore
 
         revealed_count = await session.execute_javascript(pid, "window.game.revealedCount")
         total_non_mines = rows * cols - mines
@@ -96,13 +101,13 @@ async def evaluate(task_cfg: cb.Task, session: cb.DesktopSession | cb.MobileSess
             return [revealed_count / total_non_mines]
         return [0.0]
 
+
 # Called after setup_task if run_solution is True
 @cb.solve_task(split="train")
 async def solve(task_cfg: cb.Task, session: cb.DesktopSession | cb.MobileSession):
     global pid
-    import time
     import asyncio
-    
+
     if pid is None:
         return
 
@@ -110,8 +115,8 @@ async def solve(task_cfg: cb.Task, session: cb.DesktopSession | cb.MobileSession
     # A simple heuristic: click cells starting from corners and edges
     # This is a basic strategy - not optimal but demonstrates bot interaction
 
-    rows = task_cfg.metadata["rows"] # type: ignore
-    cols = task_cfg.metadata["cols"] # type: ignore
+    rows = task_cfg.metadata["rows"]  # type: ignore
+    cols = task_cfg.metadata["cols"]  # type: ignore
 
     # Strategy: Start from corner (safer), then expand
     # Click a corner cell first to start the game
@@ -130,13 +135,9 @@ async def solve(task_cfg: cb.Task, session: cb.DesktopSession | cb.MobileSession
             # Try to click cells that aren't revealed or flagged
             try:
                 is_revealed = await session.execute_javascript(
-                    pid,
-                    f"window.game.revealed[{r}][{c}]"
+                    pid, f"window.game.revealed[{r}][{c}]"
                 )
-                is_flagged = await session.execute_javascript(
-                    pid,
-                    f"window.game.flagged[{r}][{c}]"
-                )
+                is_flagged = await session.execute_javascript(pid, f"window.game.flagged[{r}][{c}]")
 
                 if not is_revealed and not is_flagged:
                     await session.click_element(pid, f'[data-row="{r}"][data-col="{c}"]')

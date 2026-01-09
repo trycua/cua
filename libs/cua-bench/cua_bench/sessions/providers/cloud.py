@@ -1,10 +1,8 @@
 """CUA Cloud session provider for remote evaluation execution."""
 
 import os
-import json
-import time
-from typing import Dict, Any, Optional, List
 from pathlib import Path
+from typing import Any, Dict, Optional
 
 from .base import SessionProvider
 
@@ -40,6 +38,7 @@ class CloudProvider(SessionProvider):
         if creds_path.exists():
             try:
                 import sqlite3
+
                 conn = sqlite3.connect(str(creds_path))
                 cursor = conn.cursor()
                 cursor.execute("SELECT value FROM credentials WHERE key = 'api_key'")
@@ -59,6 +58,7 @@ class CloudProvider(SessionProvider):
         """Get or create aiohttp client session."""
         if self._http_client is None:
             import aiohttp
+
             self._http_client = aiohttp.ClientSession(
                 headers={
                     "Authorization": f"Bearer {self.api_key}",
@@ -80,7 +80,7 @@ class CloudProvider(SessionProvider):
         container_script: str,
         image_uri: Optional[str] = None,
         output_dir: Optional[str] = None,
-        **kwargs
+        **kwargs,
     ) -> Dict[str, Any]:
         """Start a cloud evaluation session.
 
@@ -208,6 +208,7 @@ class CloudProvider(SessionProvider):
 
         # Get eval_id from session storage
         from ..manager import get_session
+
         session = get_session(session_id)
 
         if not session:
@@ -264,6 +265,7 @@ class CloudProvider(SessionProvider):
         import aiohttp
 
         from ..manager import get_session
+
         session = get_session(session_id)
 
         if not session:
@@ -279,7 +281,7 @@ class CloudProvider(SessionProvider):
             async with client.post(
                 f"{self.BASE_URL}/evals/{eval_id}/cancel",
                 timeout=aiohttp.ClientTimeout(total=10),
-            ) as response:
+            ):
                 # Ignore errors - best effort cancellation
                 pass
         except aiohttp.ClientError:
@@ -332,6 +334,7 @@ class CloudProvider(SessionProvider):
         import aiohttp
 
         from ..manager import get_session
+
         session = get_session(session_id)
 
         if not session:
@@ -377,6 +380,7 @@ class CloudProvider(SessionProvider):
         import aiohttp
 
         from ..manager import get_session
+
         session = get_session(session_id)
 
         if not session:

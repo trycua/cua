@@ -21,7 +21,6 @@ import os
 import plistlib
 import shutil
 import subprocess
-import sys
 import tempfile
 from pathlib import Path
 from typing import List, Optional, Tuple
@@ -32,8 +31,10 @@ try:
 except Exception:
     _tqdm = None  # graceful fallback if tqdm isn't installed
 
+
 def pbar(iterable, desc: str):
     return _tqdm(iterable, desc=desc) if _tqdm else iterable
+
 
 # -------------- Config --------------
 APPLICATION_DIRS = [
@@ -49,6 +50,7 @@ OUTPUT_JSON = Path(__file__).parents[1] / "www" / "iconsets" / "macos.json"
 SYSTEM_ICONS_DIR = Path("/System/Library/CoreServices/CoreTypes.bundle/Contents/Resources/")
 
 # -------------- Helpers --------------
+
 
 def is_tool(name: str) -> bool:
     return shutil.which(name) is not None
@@ -75,7 +77,7 @@ def find_app_bundles(search_dirs: List[Path]) -> List[Path]:
             # (os.walk will descend unless we remove from dirnames)
             to_remove = []
             for d in dirnames:
-                if d.lower().endswith('.app'):
+                if d.lower().endswith(".app"):
                     app_path = p / d
                     if app_path not in seen:
                         apps.append(app_path)
@@ -97,7 +99,7 @@ def read_info_plist(app_path: Path) -> Optional[dict]:
     if not plist_path.exists():
         return None
     try:
-        with plist_path.open('rb') as f:
+        with plist_path.open("rb") as f:
             return plistlib.load(f)
     except Exception:
         return None
@@ -119,9 +121,9 @@ def resolve_icon_candidates(info: dict, app_path: Path) -> List[Path]:
         if not name:
             return
         base = Path(name)
-        if base.suffix == '':
+        if base.suffix == "":
             # try common suffixes
-            possible = [base.with_suffix('.icns'), base.with_suffix('.png')]
+            possible = [base.with_suffix(".icns"), base.with_suffix(".png")]
         else:
             possible = [base]
         for p in possible:
@@ -164,15 +166,19 @@ def resolve_icon_candidates(info: dict, app_path: Path) -> List[Path]:
             seen.add(c)
     return uniq
 
+
 def has_opaque_pixels_path(path: Path) -> bool:
     """Return True if the image has any opaque (alpha > 0) pixel.
     If Pillow is not available or the format lacks alpha, assume True (opaque).
     """
     try:
         from PIL import Image  # type: ignore
+
         with Image.open(path) as im:
             # JPEG and many formats without alpha are fully opaque
-            if im.mode in ("RGB", "L", "P") and (im.mode != "P" or not hasattr(im, "info") or "transparency" not in im.info):
+            if im.mode in ("RGB", "L", "P") and (
+                im.mode != "P" or not hasattr(im, "info") or "transparency" not in im.info
+            ):
                 return True
             # Convert to RGBA to inspect alpha
             im = im.convert("RGBA")
@@ -191,14 +197,27 @@ def resize_image_file_to_max(path: Path, max_px: int = 64) -> Path:
     The returned path may be a temp file; caller should read and then allow cleanup.
     """
     # Try sips first
-    if is_tool('sips'):
+    if is_tool("sips"):
         with tempfile.TemporaryDirectory() as td:
             out_path = Path(td) / (path.stem + f"_{max_px}.png")
             try:
                 # -Z maintains aspect ratio, sets the larger dimension to max_px
-                subprocess.run([
-                    "sips", "-s", "format", "png", str(path), "-Z", str(max_px), "--out", str(out_path)
-                ], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                subprocess.run(
+                    [
+                        "sips",
+                        "-s",
+                        "format",
+                        "png",
+                        str(path),
+                        "-Z",
+                        str(max_px),
+                        "--out",
+                        str(out_path),
+                    ],
+                    check=True,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
                 if out_path.exists():
                     # read bytes then write to a persistent temp to return
                     data = out_path.read_bytes()
@@ -210,11 +229,12 @@ def resize_image_file_to_max(path: Path, max_px: int = 64) -> Path:
     # Pillow fallback
     try:
         from PIL import Image  # type: ignore
+
         with Image.open(path) as im:
             im = im.convert("RGBA")
             im.thumbnail((max_px, max_px))
             with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
-                im.save(tmp.name, format='PNG')
+                im.save(tmp.name, format="PNG")
                 return Path(tmp.name)
     except Exception:
         pass
@@ -222,10 +242,9 @@ def resize_image_file_to_max(path: Path, max_px: int = 64) -> Path:
 
 
 def icns_to_png_dataurl(icns_path: Path) -> Optional[str]:
-    """Convert .icns to PNG and return data URL. Prefers macOS `sips` if present; else tries Pillow.
-    """
+    """Convert .icns to PNG and return data URL. Prefers macOS `sips` if present; else tries Pillow."""
     # Prefer sips for reliability on macOS
-    if is_tool('sips'):
+    if is_tool("sips"):
         with tempfile.TemporaryDirectory() as td:
             out_png = Path(td) / (icns_path.stem + ".png")
             try:
@@ -247,7 +266,7 @@ def icns_to_png_dataurl(icns_path: Path) -> Optional[str]:
                             pass
                         return None
                     data = Path(resized).read_bytes()
-                    b64 = base64.b64encode(data).decode('ascii')
+                    b64 = base64.b64encode(data).decode("ascii")
                     try:
                         if resized != out_png:
                             Path(resized).unlink(missing_ok=True)  # type: ignore[arg-type]
@@ -260,21 +279,22 @@ def icns_to_png_dataurl(icns_path: Path) -> Optional[str]:
     # Fallback: Pillow (if available and supports ICNS on this system)
     try:
         from PIL import Image  # type: ignore
+
         im = Image.open(icns_path)
         # Pick largest available size frame
-        if hasattr(im, 'n_frames') and im.n_frames > 1:
+        if hasattr(im, "n_frames") and im.n_frames > 1:
             # try last frame as largest
             im.seek(im.n_frames - 1)
         with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
             tmp_path = Path(tmp.name)
         try:
-            im.save(tmp_path, format='PNG')
+            im.save(tmp_path, format="PNG")
             # Resize and filter transparency
             resized = resize_image_file_to_max(tmp_path, 64)
             if not has_opaque_pixels_path(resized):
                 return None
             data = Path(resized).read_bytes()
-            b64 = base64.b64encode(data).decode('ascii')
+            b64 = base64.b64encode(data).decode("ascii")
             return f"data:image/png;base64,{b64}"
         finally:
             try:
@@ -308,7 +328,7 @@ def any_image_to_dataurl(path: Path) -> Optional[str]:
             # Resize to max 64
             resized = resize_image_file_to_max(candidate, 64)
             data = Path(resized).read_bytes()
-            b64 = base64.b64encode(data).decode('ascii')
+            b64 = base64.b64encode(data).decode("ascii")
             return f"data:{mime};base64,{b64}"
     except Exception:
         return None
@@ -343,9 +363,6 @@ def collect_system_icons() -> List[Tuple[str, Optional[str], Path]]:
                 name = p.stem
                 entries.append((name, dataurl, p))
     return entries
-
-
- 
 
 
 def css_escape_attr(value: str) -> str:
@@ -389,19 +406,21 @@ def main() -> int:
             continue
         sel_name = css_escape_attr(name)
         lines.append(
-            f".icon[data-icon=\"{sel_name}\"] {{\n  background-image: url({dataurl}) !important;\n}}"
+            f'.icon[data-icon="{sel_name}"] {{\n  background-image: url({dataurl}) !important;\n}}'
         )
     # Spacer before application section rules
-    lines.extend([
-        "/* Application Icons */",
-        "",
-    ])
+    lines.extend(
+        [
+            "/* Application Icons */",
+            "",
+        ]
+    )
     for name, dataurl, _ in pbar(entries, "CSS rules"):
         if not dataurl:
             continue
         sel_name = css_escape_attr(name)
         lines.append(
-            f".icon[data-icon=\"{sel_name}\"] {{\n  background-image: url({dataurl}) !important;\n}}"
+            f'.icon[data-icon="{sel_name}"] {{\n  background-image: url({dataurl}) !important;\n}}'
         )
 
     # Write CSS

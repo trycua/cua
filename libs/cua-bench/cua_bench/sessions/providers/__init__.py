@@ -1,9 +1,9 @@
 """Session providers."""
 
 from .base import SessionProvider
-from .docker import DockerProvider
 from .cloud import CloudProvider
-from .local_environment import LocalEnvironmentProvider, EnvironmentInfo
+from .docker import DockerProvider
+from .local_environment import EnvironmentInfo, LocalEnvironmentProvider
 
 __all__ = [
     "SessionProvider",

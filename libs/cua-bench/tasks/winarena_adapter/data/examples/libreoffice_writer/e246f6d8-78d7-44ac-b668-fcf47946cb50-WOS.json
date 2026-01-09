@@ -23,9 +23,7 @@
     }
   ],
   "trajectory": "trajectories/",
-  "related_apps": [
-    "libreoffice_writer"
-  ],
+  "related_apps": ["libreoffice_writer"],
   "evaluator": {
     "postconfig": [
       {

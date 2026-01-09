@@ -13,8 +13,7 @@ import json
 import os
 import platform as sys_platform
 import subprocess
-from typing import Dict, Any, Optional
-
+from typing import Any, Dict, Optional
 
 # =============================================================================
 # Platform Configurations
@@ -84,14 +83,11 @@ PLATFORMS: Dict[str, Dict[str, Any]] = {
 # Helper Functions
 # =============================================================================
 
+
 def check_docker() -> bool:
     """Check if Docker is running."""
     try:
-        result = subprocess.run(
-            ["docker", "info"],
-            capture_output=True,
-            timeout=10
-        )
+        result = subprocess.run(["docker", "info"], capture_output=True, timeout=10)
         return result.returncode == 0
     except Exception:
         return False
@@ -105,11 +101,7 @@ def check_kvm() -> bool:
 def check_lume() -> bool:
     """Check if Lume is installed."""
     try:
-        result = subprocess.run(
-            ["lume", "--version"],
-            capture_output=True,
-            timeout=10
-        )
+        result = subprocess.run(["lume", "--version"], capture_output=True, timeout=10)
         return result.returncode == 0
     except Exception:
         return False
@@ -119,10 +111,7 @@ def check_image_exists(image_name: str) -> bool:
     """Check if a Docker image exists locally."""
     try:
         result = subprocess.run(
-            ["docker", "images", "-q", image_name],
-            capture_output=True,
-            text=True,
-            timeout=10
+            ["docker", "images", "-q", image_name], capture_output=True, text=True, timeout=10
         )
         return bool(result.stdout.strip())
     except Exception:
@@ -138,11 +127,12 @@ def get_platform_config(platform_name: str) -> Optional[Dict[str, Any]]:
 # Commands
 # =============================================================================
 
+
 def cmd_list(args) -> int:
     """List all available platforms."""
-    output_format = getattr(args, 'format', 'table')
+    output_format = getattr(args, "format", "table")
 
-    if output_format == 'json':
+    if output_format == "json":
         print(json.dumps(PLATFORMS, indent=2))
         return 0
 
@@ -156,7 +146,7 @@ def cmd_list(args) -> int:
     is_macos = sys_platform.system() == "Darwin"
     is_linux = sys_platform.system() == "Linux"
 
-    print(f"\nSystem:")
+    print("\nSystem:")
     print(f"  Docker:  {'✓ Running' if docker_ok else '✗ Not running'}")
     if is_linux:
         print(f"  KVM:     {'✓ Available' if kvm_ok else '○ Not available (QEMU will be slower)'}")
@@ -230,33 +220,35 @@ def cmd_info(args) -> int:
             exists = check_image_exists(config["image"])
             print(f"Image Pulled: {'✓ Yes' if exists else '✗ No'}")
 
-    print(f"\nPorts:")
+    print("\nPorts:")
     if config.get("internal_api_port"):
         print(f"  API Port (internal): {config['internal_api_port']}")
     if config.get("internal_vnc_port"):
         print(f"  VNC Port (internal): {config['internal_vnc_port']}")
 
-    print(f"\nRequirements:")
+    print("\nRequirements:")
     if config.get("requires_kvm"):
         kvm_ok = check_kvm()
         print(f"  KVM:    Required {'(✓ available)' if kvm_ok else '(✗ not available)'}")
     else:
-        print(f"  KVM:    Not required")
+        print("  KVM:    Not required")
 
     if config.get("requires_apple_silicon"):
         is_macos = sys_platform.system() == "Darwin"
-        print(f"  Apple Silicon: Required {'(✓ running on macOS)' if is_macos else '(✗ not on macOS)'}")
+        print(
+            f"  Apple Silicon: Required {'(✓ running on macOS)' if is_macos else '(✗ not on macOS)'}"
+        )
 
     if config.get("image_marker"):
         print(f"\nImage Marker: {config['image_marker']}")
-        print(f"  (Marker file created in image directory when image is ready)")
+        print("  (Marker file created in image directory when image is ready)")
 
-    print(f"\nConfiguration:")
+    print("\nConfiguration:")
     print(f"  Boot Timeout: {config.get('boot_timeout', 60)}s")
     print(f"  Use Overlays: {'Yes' if config.get('use_overlays') else 'No'}")
 
     print("\n" + "=" * 60)
-    print(f"\nTo create an image from this platform:")
+    print("\nTo create an image from this platform:")
     print(f"  cb image create {name}")
     print()
 
@@ -267,32 +259,36 @@ def cmd_info(args) -> int:
 # CLI Registration
 # =============================================================================
 
+
 def register_parser(subparsers):
     """Register the platform command with the main CLI parser."""
     platform_parser = subparsers.add_parser(
-        'platform',
-        help='Show available platform configurations'
+        "platform", help="Show available platform configurations"
     )
-    platform_subparsers = platform_parser.add_subparsers(dest='platform_command', help='Platform command')
+    platform_subparsers = platform_parser.add_subparsers(
+        dest="platform_command", help="Platform command"
+    )
 
     # platform list
-    list_parser = platform_subparsers.add_parser('list', help='List all available platforms')
-    list_parser.add_argument('--format', choices=['table', 'json'], default='table', help='Output format')
+    list_parser = platform_subparsers.add_parser("list", help="List all available platforms")
+    list_parser.add_argument(
+        "--format", choices=["table", "json"], default="table", help="Output format"
+    )
 
     # platform info
-    info_parser = platform_subparsers.add_parser('info', help='Show platform details')
-    info_parser.add_argument('platform', help='Platform name (e.g., linux-docker, windows-qemu)')
+    info_parser = platform_subparsers.add_parser("info", help="Show platform details")
+    info_parser.add_argument("platform", help="Platform name (e.g., linux-docker, windows-qemu)")
 
-    platform_parser.set_defaults(platform_command='list')
+    platform_parser.set_defaults(platform_command="list")
 
 
 def execute(args) -> int:
     """Execute the platform command."""
-    cmd = getattr(args, 'platform_command', 'list')
+    cmd = getattr(args, "platform_command", "list")
 
-    if cmd == 'list':
+    if cmd == "list":
         return cmd_list(args)
-    elif cmd == 'info':
+    elif cmd == "info":
         return cmd_info(args)
     else:
         return cmd_list(args)

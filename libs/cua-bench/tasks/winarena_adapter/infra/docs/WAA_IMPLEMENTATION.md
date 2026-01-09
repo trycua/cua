@@ -80,12 +80,12 @@ Migrated to Azure Batch for simpler, more cost-effective container execution:
 
 ### Key Migration Changes
 
-| Aspect | Azure ML | Azure Batch |
-|--------|----------|-------------|
-| Config | `config.json` (JSON) | `.env.local` (env vars) |
-| Scripts | `run_azure.py`, `azure_files/` | `run_azure_batch.py` |
-| VM Mode | Azure mode (OEM scripts) | Dev mode (Samba share) |
-| Image | Separate azure/dev builds | Unified dev mode build |
+| Aspect  | Azure ML                       | Azure Batch             |
+| ------- | ------------------------------ | ----------------------- |
+| Config  | `config.json` (JSON)           | `.env.local` (env vars) |
+| Scripts | `run_azure.py`, `azure_files/` | `run_azure_batch.py`    |
+| VM Mode | Azure mode (OEM scripts)       | Dev mode (Samba share)  |
+| Image   | Separate azure/dev builds      | Unified dev mode build  |
 
 ---
 
@@ -137,12 +137,14 @@ Used for developing and testing changes to VM setup scripts:
 ```
 
 **Features:**
+
 - **Samba Share:** Windows VM accesses `\\host.lan\Data` which maps to `/shared/` in the container
 - **Live Sync:** Changes to `src/win-arena-container/vm/setup/` appear immediately in Windows
 - **Interactive Access:** RDP (port 3390) and noVNC (port 8006) available
 - **Fast Iteration:** No rebuild needed for script changes
 
 **Mount Structure:**
+
 ```
 Host                                  Container           Windows VM
 vm/setup/ ────────────────────────> /shared/ ───────> \\host.lan\Data
@@ -159,6 +161,7 @@ python run_azure_batch.py --exp_name gpt4o --num_workers 4
 ```
 
 **Features:**
+
 - **Pre-baked Image:** Setup scripts are copied into container at build time
 - **No Interactive Access:** Fully automated execution
 - **Parallel Workers:** Multiple tasks run simultaneously
@@ -171,18 +174,21 @@ python run_azure_batch.py --exp_name gpt4o --num_workers 4
 ### Setting Up the Development Environment
 
 1. **Clone and configure:**
+
    ```bash
    cp .env.example .env.local
    # Edit .env.local with your Azure credentials
    ```
 
 2. **Build base image (once):**
+
    ```bash
    cd scripts
    ./build-container-image.sh --build-base-image true
    ```
 
 3. **Start dev container:**
+
    ```bash
    ./run-local.sh --mode dev --prepare-image true --start-client false
    ```
@@ -200,12 +206,14 @@ python run_azure_batch.py --exp_name gpt4o --num_workers 4
 Since the container requires x86_64 architecture (KVM), build on a remote VM:
 
 1. **Sync code to remote VM:**
+
    ```bash
    rsync -avz --exclude='.git' --exclude='vm/storage' \
      ./ user@remote-vm:/path/to/denpasar-v1/
    ```
 
 2. **Build on remote:**
+
    ```bash
    ssh user@remote-vm
    cd /path/to/denpasar-v1/scripts
@@ -226,6 +234,7 @@ Since the container requires x86_64 architecture (KVM), build on a remote VM:
 Creating a golden image saves ~45 minutes per benchmark run:
 
 1. **Create golden image:**
+
    ```bash
    ./run-local.sh --mode dev --prepare-image true
    # Wait for Windows setup to complete (~1 hour)
@@ -237,6 +246,7 @@ Creating a golden image saves ~45 minutes per benchmark run:
    ```
 
 2. **Backup storage:**
+
    ```bash
    cp -r src/win-arena-container/vm/storage /backup/golden-storage
    ```
@@ -279,6 +289,7 @@ pool = batchmodels.PoolAddParameter(
 ### Start Task (Node Preparation)
 
 Each node runs a start task that:
+
 1. Reconfigures Docker to use OS disk (not temp disk)
 2. Logs into Azure Container Registry
 3. Pulls the ~40GB container image
@@ -316,6 +327,7 @@ command_line = '''
 ### Storage Integration
 
 **Blobfuse Mount (for small files):**
+
 ```python
 mount_configuration=[
     batchmodels.MountConfiguration(
@@ -329,6 +341,7 @@ mount_configuration=[
 ```
 
 **azcopy (for large files like VM images):**
+
 ```bash
 # Blobfuse has I/O issues with large files and QEMU's native AIO
 # Use azcopy instead for reliable large file downloads
@@ -342,6 +355,7 @@ azcopy copy "https://account.blob.core.windows.net/container/storage/*?SAS" /sto
 ### Two-Stage Build
 
 **Stage 1: Base Image (Dockerfile-WinArena-Base)**
+
 ```dockerfile
 FROM python:3.12-slim
 # Install system dependencies
@@ -353,6 +367,7 @@ RUN pip install -r /tmp/requirements.txt
 ```
 
 **Stage 2: Application Image (Dockerfile-WinArena)**
+
 ```dockerfile
 FROM trycua/winarena-base:latest
 # Copy setup scripts to Samba share location
@@ -394,6 +409,7 @@ The CUA Computer Server is a Flask-based HTTP API running inside the Windows VM:
 | `/cmd` | POST | Execute automation commands |
 
 **Command Types:**
+
 ```python
 # Screenshot
 {"command": "screenshot", "params": {}}
@@ -479,20 +495,20 @@ AZURE_ACR_PASSWORD=...
 
 The benchmark includes **173 tasks** across **12 application domains**:
 
-| Domain | Task Count | Description |
-|--------|-----------|-------------|
-| LibreOffice Calc | 24 | Spreadsheet operations, charts, formulas |
-| VS Code | 23 | IDE settings, extensions, keybindings |
-| File Explorer | 19 | File management, folder operations |
-| LibreOffice Writer | 19 | Document editing, formatting |
-| VLC Media Player | 21 | Media playback, settings |
-| Chrome | 17 | Browser tabs, bookmarks, extensions |
-| MS Edge | 13 | Browser settings, shortcuts |
-| Settings | 5 | Windows system settings |
-| Clock | 4 | Alarms, timers |
-| Windows Calculator | 3 | Calculator operations |
-| Microsoft Paint | 3 | Image editing |
-| Notepad | 2 | Text file operations |
+| Domain             | Task Count | Description                              |
+| ------------------ | ---------- | ---------------------------------------- |
+| LibreOffice Calc   | 24         | Spreadsheet operations, charts, formulas |
+| VS Code            | 23         | IDE settings, extensions, keybindings    |
+| File Explorer      | 19         | File management, folder operations       |
+| LibreOffice Writer | 19         | Document editing, formatting             |
+| VLC Media Player   | 21         | Media playback, settings                 |
+| Chrome             | 17         | Browser tabs, bookmarks, extensions      |
+| MS Edge            | 13         | Browser settings, shortcuts              |
+| Settings           | 5          | Windows system settings                  |
+| Clock              | 4          | Alarms, timers                           |
+| Windows Calculator | 3          | Calculator operations                    |
+| Microsoft Paint    | 3          | Image editing                            |
+| Notepad            | 2          | Text file operations                     |
 
 ### Task Definition Structure
 
@@ -525,15 +541,15 @@ Each task is defined in a JSON file with the following structure:
 
 The `config` array contains setup operations executed before the task:
 
-| Type | Purpose | Example |
-|------|---------|---------|
-| `launch` | Start applications | Launch Chrome with remote debugging |
-| `download` | Download test files | Get files from GitHub/cloud |
-| `open` | Open existing files | Open documents for editing |
-| `sleep` | Wait for UI | Pause for app to load |
-| `activate_window` | Focus window | Bring app to foreground |
-| `execute` | Run commands | Execute Python scripts |
-| `create_folder` | Create directories | Setup test folder structure |
+| Type              | Purpose             | Example                             |
+| ----------------- | ------------------- | ----------------------------------- |
+| `launch`          | Start applications  | Launch Chrome with remote debugging |
+| `download`        | Download test files | Get files from GitHub/cloud         |
+| `open`            | Open existing files | Open documents for editing          |
+| `sleep`           | Wait for UI         | Pause for app to load               |
+| `activate_window` | Focus window        | Bring app to foreground             |
+| `execute`         | Run commands        | Execute Python scripts              |
+| `create_folder`   | Create directories  | Setup test folder structure         |
 
 ### Task File Locations
 
@@ -596,18 +612,18 @@ src/win-arena-container/client/evaluation_examples_windows/
 
 **Application-Specific:**
 
-| Domain | Function | Purpose |
-|--------|----------|---------|
-| Chrome/Edge | `is_expected_active_tab` | Verify active tab URL |
-| Chrome/Edge | `is_expected_tabs` | Verify all open tabs |
-| Chrome/Edge | `is_expected_bookmarks` | Check bookmarks |
-| Chrome/Edge | `is_expected_installed_extensions` | Verify extensions |
-| LibreOffice | `compare_table` | Compare spreadsheets (cells, charts, pivots) |
-| LibreOffice | `compare_docx_files` | Compare Word documents |
-| VS Code | `check_json_settings` | Verify settings.json |
-| System | `is_file_saved_desktop` | Check file on desktop |
-| System | `vm_file_exists_in_vm_folder` | Verify file existence |
-| Media | `compare_images` | Image similarity comparison |
+| Domain      | Function                           | Purpose                                      |
+| ----------- | ---------------------------------- | -------------------------------------------- |
+| Chrome/Edge | `is_expected_active_tab`           | Verify active tab URL                        |
+| Chrome/Edge | `is_expected_tabs`                 | Verify all open tabs                         |
+| Chrome/Edge | `is_expected_bookmarks`            | Check bookmarks                              |
+| Chrome/Edge | `is_expected_installed_extensions` | Verify extensions                            |
+| LibreOffice | `compare_table`                    | Compare spreadsheets (cells, charts, pivots) |
+| LibreOffice | `compare_docx_files`               | Compare Word documents                       |
+| VS Code     | `check_json_settings`              | Verify settings.json                         |
+| System      | `is_file_saved_desktop`            | Check file on desktop                        |
+| System      | `vm_file_exists_in_vm_folder`      | Verify file existence                        |
+| Media       | `compare_images`                   | Image similarity comparison                  |
 
 ### Result Types
 
@@ -653,15 +669,15 @@ The `result` field specifies what to extract from the VM:
 
 Used within rule definitions:
 
-| Method | Description |
-|--------|-------------|
-| `eq` | Equality |
-| `ne` | Not equal |
-| `contains` | Substring containment |
-| `startswith` | Prefix match |
-| `endswith` | Suffix match |
-| `regex` | Regular expression |
-| `fuzzy` | Fuzzy string matching |
+| Method       | Description           |
+| ------------ | --------------------- |
+| `eq`         | Equality              |
+| `ne`         | Not equal             |
+| `contains`   | Substring containment |
+| `startswith` | Prefix match          |
+| `endswith`   | Suffix match          |
+| `regex`      | Regular expression    |
+| `fuzzy`      | Fuzzy string matching |
 
 ### Spreadsheet Evaluation (`compare_table`)
 
@@ -682,6 +698,7 @@ LibreOffice Calc tasks support detailed comparison:
 ```
 
 **Comparison Types:**
+
 - `sheet_data` - Cell values
 - `sheet_print` - Displayed values
 - `sheet_name` - Sheet names
@@ -694,29 +711,31 @@ LibreOffice Calc tasks support detailed comparison:
 ### Example Task Definitions
 
 **Chrome Profile Update:**
+
 ```json
 {
   "instruction": "Change the username in chrome profiles to Thomas",
   "evaluator": {
     "func": "exact_match",
-    "result": {"type": "profile_name"},
-    "expected": {"type": "rule", "rules": {"expected": "Thomas"}}
+    "result": { "type": "profile_name" },
+    "expected": { "type": "rule", "rules": { "expected": "Thomas" } }
   }
 }
 ```
 
 **Spreadsheet with Chart:**
+
 ```json
 {
   "instruction": "Create monthly total sales row and line chart",
   "evaluator": {
     "func": "compare_table",
-    "expected": {"type": "cloud_file", "path": "https://.../gold.xlsx", "dest": "gold.xlsx"},
-    "result": {"type": "vm_file", "path": "C:\\...\\result.xlsx", "dest": "result.xlsx"},
+    "expected": { "type": "cloud_file", "path": "https://.../gold.xlsx", "dest": "gold.xlsx" },
+    "result": { "type": "vm_file", "path": "C:\\...\\result.xlsx", "dest": "result.xlsx" },
     "options": {
       "rules": [
-        {"type": "sheet_data", "sheet_idx0": 0, "sheet_idx1": "EI0"},
-        {"type": "chart", "sheet_idx0": 0, "chart_props": ["type"]}
+        { "type": "sheet_data", "sheet_idx0": 0, "sheet_idx1": "EI0" },
+        { "type": "chart", "sheet_idx0": 0, "chart_props": ["type"] }
       ]
     }
   }
@@ -724,18 +743,23 @@ LibreOffice Calc tasks support detailed comparison:
 ```
 
 **File Creation:**
+
 ```json
 {
   "instruction": "Create draft.txt in Documents with content 'This is a draft.'",
   "evaluator": {
     "func": ["exact_match", "compare_text_file"],
     "result": [
-      {"type": "vm_file_exists_in_vm_folder", "folder_name": "C:\\Users\\Docker\\Documents", "file_name": "draft.txt"},
-      {"type": "vm_file", "path": "C:\\Users\\Docker\\Documents\\draft.txt", "dest": "draft.txt"}
+      {
+        "type": "vm_file_exists_in_vm_folder",
+        "folder_name": "C:\\Users\\Docker\\Documents",
+        "file_name": "draft.txt"
+      },
+      { "type": "vm_file", "path": "C:\\Users\\Docker\\Documents\\draft.txt", "dest": "draft.txt" }
     ],
     "expected": [
-      {"type": "rule", "rules": {"expected": 1.0}},
-      {"type": "cloud_file", "path": "https://.../draft_gold.txt", "dest": "draft_gold.txt"}
+      { "type": "rule", "rules": { "expected": 1.0 } },
+      { "type": "cloud_file", "path": "https://.../draft_gold.txt", "dest": "draft_gold.txt" }
     ]
   }
 }
@@ -770,6 +794,7 @@ src/win-arena-container/client/desktop_env/evaluators/
 **Problem:** Large files (like 30GB VM images) fail with I/O errors when read through blobfuse.
 
 **Solution:** Use azcopy for large file downloads instead of relying on blobfuse mounts:
+
 ```bash
 azcopy copy "https://account.blob.core.windows.net/container/storage/*?SAS" /storage/ --recursive
 ```
@@ -779,6 +804,7 @@ azcopy copy "https://account.blob.core.windows.net/container/storage/*?SAS" /sto
 **Problem:** Azure Batch nodes have small temp disks (~30GB) that fill up when pulling the ~40GB container image.
 
 **Solution:** Configure Docker to use the OS disk (128GB managed disk) in the start task:
+
 ```bash
 cat > /etc/docker/daemon.json << 'EOF'
 {"data-root": "/var/lib/docker_new", "storage-driver": "overlay2"}
@@ -802,6 +828,7 @@ EOF
 **Problem:** Docker builds fail on macOS ARM when the image requires x86_64 (for KVM).
 
 **Solution:** Build on a remote x86_64 VM:
+
 ```bash
 rsync -avz ./ user@remote-vm:/path/
 ssh user@remote-vm "cd /path/scripts && ./build-container-image.sh"
@@ -810,16 +837,19 @@ ssh user@remote-vm "cd /path/scripts && ./build-container-image.sh"
 ### Debugging Tips
 
 1. **Check task logs in Azure Batch:**
+
    ```python
    output = batch_client.file.get_from_task(job_id, task_id, 'stdout.txt')
    ```
 
 2. **SSH into running container:**
+
    ```bash
    ./run-local.sh --connect true
    ```
 
 3. **Test CUA Server health:**
+
    ```bash
    curl http://172.30.0.2:5000/status
    ```
@@ -852,20 +882,20 @@ rsync -avz --exclude='.git' --exclude='vm/storage' ./ user@vm:/path/
 
 ### Key Ports
 
-| Port | Purpose |
-|------|---------|
-| 5000 | CUA Computer Server (internal) |
-| 7200 | QEMU QMP Protocol |
-| 3390 | RDP (dev mode only) |
+| Port | Purpose                              |
+| ---- | ------------------------------------ |
+| 5000 | CUA Computer Server (internal)       |
+| 7200 | QEMU QMP Protocol                    |
+| 3390 | RDP (dev mode only)                  |
 | 8006 | noVNC browser access (dev mode only) |
 
 ### Key IPs
 
-| IP | Purpose |
-|----|---------|
-| 172.30.0.1 | Linux container gateway |
+| IP         | Purpose                   |
+| ---------- | ------------------------- |
+| 172.30.0.1 | Linux container gateway   |
 | 172.30.0.2 | Windows VM (default DHCP) |
 
 ---
 
-*Last updated: December 2024*
+_Last updated: December 2024_

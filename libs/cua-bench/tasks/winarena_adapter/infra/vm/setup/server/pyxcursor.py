@@ -1,10 +1,12 @@
-import os
+import array
 import ctypes
 import ctypes.util
-import numpy as np
+import os
 
 # A helper function to convert data from Xlib to byte array.
-import struct, array
+import struct
+
+import numpy as np
 
 # Define ctypes version of XFixesCursorImage structure.
 PIXEL_DATA_PTR = ctypes.POINTER(ctypes.c_ulong)
@@ -27,16 +29,19 @@ class XFixesCursorImage(ctypes.Structure):
     endif
     } XFixesCursorImage;
     """
-    _fields_ = [('x', ctypes.c_short),
-                ('y', ctypes.c_short),
-                ('width', ctypes.c_ushort),
-                ('height', ctypes.c_ushort),
-                ('xhot', ctypes.c_ushort),
-                ('yhot', ctypes.c_ushort),
-                ('cursor_serial', ctypes.c_ulong),
-                ('pixels', PIXEL_DATA_PTR),
-                ('atom', Atom),
-                ('name', ctypes.c_char_p)]
+
+    _fields_ = [
+        ("x", ctypes.c_short),
+        ("y", ctypes.c_short),
+        ("width", ctypes.c_ushort),
+        ("height", ctypes.c_ushort),
+        ("xhot", ctypes.c_ushort),
+        ("yhot", ctypes.c_ushort),
+        ("cursor_serial", ctypes.c_ulong),
+        ("pixels", PIXEL_DATA_PTR),
+        ("atom", Atom),
+        ("name", ctypes.c_char_p),
+    ]
 
 
 class Display(ctypes.Structure):
@@ -79,19 +84,20 @@ class Xcursor:
             self.display = self.xlib.XOpenDisplay(display)  # (display) or (None)
 
     def argbdata_to_pixdata(self, data, len):
-        if data == None or len < 1: return None
+        if data is None or len < 1:  # noqa: E711
+            return None
 
         # Create byte array
-        b = array.array('b', b'\x00' * 4 * len)
+        b = array.array("b", b"\x00" * 4 * len)
 
         offset, i = 0, 0
         while i < len:
-            argb = data[i] & 0xffffffff
+            argb = data[i] & 0xFFFFFFFF
             rgba = (argb << 8) | (argb >> 24)
-            b1 = (rgba >> 24) & 0xff
-            b2 = (rgba >> 16) & 0xff
-            b3 = (rgba >> 8) & 0xff
-            b4 = rgba & 0xff
+            b1 = (rgba >> 24) & 0xFF
+            b2 = (rgba >> 16) & 0xFF
+            b3 = (rgba >> 8) & 0xFF
+            b4 = rgba & 0xFF
 
             struct.pack_into("=BBBB", b, offset, b1, b2, b3, b4)
             offset = offset + 4
@@ -103,7 +109,7 @@ class Xcursor:
         # Call the function. Read data of cursor/mouse-pointer.
         cursor_data = self.XFixesGetCursorImage(self.display)
 
-        if not (cursor_data and cursor_data[0]):
+        if not cursor_data or not cursor_data[0]:
             raise Exception("Cannot read XFixesGetCursorImage()")
 
         # Note: cursor_data is a pointer, take cursor_data[0]
@@ -136,6 +142,7 @@ class Xcursor:
 
     def saveImage(self, imgarray, text):
         from PIL import Image
+
         img = Image.fromarray(imgarray)
         img.save(text)
 
@@ -143,4 +150,4 @@ class Xcursor:
 if __name__ == "__main__":
     cursor = Xcursor()
     imgarray = cursor.getCursorImageArrayFast()
-    cursor.saveImage(imgarray, 'cursor_image.png')
+    cursor.saveImage(imgarray, "cursor_image.png")

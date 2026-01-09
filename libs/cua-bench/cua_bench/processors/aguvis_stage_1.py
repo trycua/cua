@@ -22,40 +22,41 @@ from .base import BaseProcessor
 
 class AgUVisStage1Processor(BaseProcessor):
     """Processor for aguvis-stage-1 format (action augmentation dataset)."""
-    
+
     def get_dataset_name(self) -> str:
         return "aguvis_stage_1_dataset"
-    
+
     def process(self) -> List[Dict[str, Any]]:
         """Process snapshots into aguvis-stage-1 format."""
         pairs = self._find_task_pairs()
         rows: List[Dict[str, Any]] = []
-        
+
         for shot, snapshot_html, tid, setup_config in tqdm(pairs, desc="Processing", unit="task"):
             # Seed for reproducibility per task
             random.seed(tid)
             # snapshot_html is already a string from _find_task_pairs
             # setup_config contains os_type, resolution, etc. (not used in aguvis-stage-1)
-            
+
             # Extract all data sources
             action_items = self._extract_actions(snapshot_html)
             instr_items = self._extract_instructions_with_bbox(snapshot_html)
             aria_items = self._extract_aria_with_bbox(snapshot_html)
             text_items = self._extract_text_with_bbox(snapshot_html)
-            
+
             # Build augmented text pairs
             texts = self._build_augmented_texts(
                 instr_items, aria_items, text_items, shot, n=5, action_items=action_items
             )
-            
+
             # Create annotated image
             annotated_path = self._annotate_image(shot, snapshot_html)
-            
+
             # Load images as PIL objects for HuggingFace datasets
             from PIL import Image
+
             screenshot_img = Image.open(shot)
             annotated_img = Image.open(annotated_path)
-            
+
             row = {
                 "images": [screenshot_img],
                 "annotated_images": [annotated_img],
@@ -63,10 +64,12 @@ class AgUVisStage1Processor(BaseProcessor):
                 "source": "cua-bench",
             }
             rows.append(row)
-        
+
         return rows
-    
-    def _extract_instructions_with_bbox(self, snapshot_html: str) -> List[Tuple[str, Dict[str, float]]]:
+
+    def _extract_instructions_with_bbox(
+        self, snapshot_html: str
+    ) -> List[Tuple[str, Dict[str, float]]]:
         """Return list of (instruction_text, bbox) with bbox from data-bbox-* on the element."""
         soup = BeautifulSoup(snapshot_html, "html5lib")
         items: List[Tuple[str, Dict[str, float]]] = []
@@ -79,7 +82,7 @@ class AgUVisStage1Processor(BaseProcessor):
             if not text:
                 continue
             # Require center-hit to be true
-            if tag.get("data-bbox-center-hit") != 'true':
+            if tag.get("data-bbox-center-hit") != "true":
                 continue
             # Extract bbox from this tag if present
             try:
@@ -108,7 +111,7 @@ class AgUVisStage1Processor(BaseProcessor):
             label = val.strip()
             if not label:
                 continue
-            if tag.get("data-bbox-center-hit") != 'true':
+            if tag.get("data-bbox-center-hit") != "true":
                 continue
             try:
                 x = float(tag.get("data-bbox-x"))
@@ -153,7 +156,9 @@ class AgUVisStage1Processor(BaseProcessor):
                     out.append({"user": u, "assistant": a})
         return out
 
-    def _extract_text_with_bbox(self, snapshot_html: str, min_len: int = 3, max_len: int = 80) -> List[Tuple[str, Dict[str, float]]]:
+    def _extract_text_with_bbox(
+        self, snapshot_html: str, min_len: int = 3, max_len: int = 80
+    ) -> List[Tuple[str, Dict[str, float]]]:
         """Return list of (text_content, bbox) for elements with textual content and bbox."""
         soup = BeautifulSoup(snapshot_html, "html5lib")
         out: List[Tuple[str, Dict[str, float]]] = []
@@ -181,7 +186,7 @@ class AgUVisStage1Processor(BaseProcessor):
                     h = float(cur.get("data-bbox-height"))
                     bbox = {"x": x, "y": y, "width": w, "height": h}
                     # Require that the center hits the element bearing the bbox
-                    if cur.get("data-bbox-center-hit") != 'true':
+                    if cur.get("data-bbox-center-hit") != "true":
                         bbox = None
                     break
                 except (TypeError, ValueError):
@@ -272,13 +277,29 @@ class AgUVisStage1Processor(BaseProcessor):
         action_items: List[Dict[str, str]] | None = None,
     ) -> List[Dict[str, str]]:
         """Build texts following action augmentations mapping."""
-        verbs_to = [("Double-click to", "double_click"), ("Right-click to", "right_click"), ("Click to", "click"), ("Move to", "move_mouse")]
-        verbs_the = [("Double-click the", "double_click"), ("Right-click the", "right_click"), ("Click the", "click"), ("Move to the", "move_mouse")]
-        verbs_at = [("Double-click the text", "double_click"), ("Right-click the text", "right_click"), ("Click the text", "click"), ("Move to the text", "move_mouse")]
+        verbs_to = [
+            ("Double-click to", "double_click"),
+            ("Right-click to", "right_click"),
+            ("Click to", "click"),
+            ("Move to", "move_mouse"),
+        ]
+        verbs_the = [
+            ("Double-click the", "double_click"),
+            ("Right-click the", "right_click"),
+            ("Click the", "click"),
+            ("Move to the", "move_mouse"),
+        ]
+        verbs_at = [
+            ("Double-click the text", "double_click"),
+            ("Right-click the text", "right_click"),
+            ("Click the text", "click"),
+            ("Move to the text", "move_mouse"),
+        ]
         out: List[Dict[str, str]] = []
 
         # Compute image size once
         from PIL import Image  # type: ignore
+
         with Image.open(shot_path) as im:
             W, H = im.size
             px = im.load()
@@ -318,10 +339,14 @@ class AgUVisStage1Processor(BaseProcessor):
                     y += 1
                     h -= 1
                 # Right
-                while w > 2 and x + w - 1 < W and x + w - 2 >= 0 and col_equal(x + w - 1, x + w - 2):
+                while (
+                    w > 2 and x + w - 1 < W and x + w - 2 >= 0 and col_equal(x + w - 1, x + w - 2)
+                ):
                     w -= 1
                 # Bottom
-                while h > 2 and y + h - 1 < H and y + h - 2 >= 0 and row_equal(y + h - 1, y + h - 2):
+                while (
+                    h > 2 and y + h - 1 < H and y + h - 2 >= 0 and row_equal(y + h - 1, y + h - 2)
+                ):
                     h -= 1
 
                 if w < 2 or h < 2:
@@ -329,12 +354,19 @@ class AgUVisStage1Processor(BaseProcessor):
                 return {"x": float(x), "y": float(y), "width": float(w), "height": float(h)}
 
         # Prepare filtered pools: only keep items with normalized centers strictly inside (0,1)
-        def to_pool(items: List[Tuple[str, Dict[str, float]]], *, shrink: bool = False) -> List[Tuple[str, float, float]]:
+        def to_pool(
+            items: List[Tuple[str, Dict[str, float]]], *, shrink: bool = False
+        ) -> List[Tuple[str, float, float]]:
             pool: List[Tuple[str, float, float]] = []
             for ref, bbox in items:
-                if bbox.get("x", 0) <= 0.0 or bbox.get("y", 0) <= 0.0 or bbox.get("width", 0) >= W or bbox.get("height", 0) >= H:
+                if (
+                    bbox.get("x", 0) <= 0.0
+                    or bbox.get("y", 0) <= 0.0
+                    or bbox.get("width", 0) >= W
+                    or bbox.get("height", 0) >= H
+                ):
                     continue
-                    
+
                 if shrink:
                     sb = _shrink_bbox_to_content(bbox)
                     if not sb:
@@ -356,13 +388,18 @@ class AgUVisStage1Processor(BaseProcessor):
         action_pool: List[Tuple[str, str]] = []
         if action_items:
             import re as _re
+
             click_xy = _re.compile(r"x=([0-9.]+)\s*,\s*y=([0-9.]+)")
-            drag_xy = _re.compile(r"drag\(.*?from_coord=\[\s*([0-9.]+)\s*,\s*([0-9.]+)\s*\]\s*,\s*to_coord=\[\s*([0-9.]+)\s*,\s*([0-9.]+)\s*\].*?\)")
+            drag_xy = _re.compile(
+                r"drag\(.*?from_coord=\[\s*([0-9.]+)\s*,\s*([0-9.]+)\s*\]\s*,\s*to_coord=\[\s*([0-9.]+)\s*,\s*([0-9.]+)\s*\].*?\)"
+            )
+
             def _norm_val(v: float, denom: float) -> float:
                 # If v > 1, treat as pixels; else assume already normalized
                 if v > 1.0:
                     return round(min(max(v / denom, 0.0), 1.0), 4)
                 return round(min(max(v, 0.0), 1.0), 4)
+
             for item in action_items:
                 u = item.get("user") if isinstance(item, dict) else None
                 a = item.get("assistant") if isinstance(item, dict) else None
@@ -371,8 +408,10 @@ class AgUVisStage1Processor(BaseProcessor):
                 # Normalize click x=, y=
                 m = click_xy.search(a)
                 if m:
-                    x = float(m.group(1)); y = float(m.group(2))
-                    nx = _norm_val(x, W); ny = _norm_val(y, H)
+                    x = float(m.group(1))
+                    y = float(m.group(2))
+                    nx = _norm_val(x, W)
+                    ny = _norm_val(y, H)
                     if not (0.0 < nx < 1.0 and 0.0 < ny < 1.0):
                         continue
                     a = click_xy.sub(f"x={nx}, y={ny}", a)
@@ -381,11 +420,18 @@ class AgUVisStage1Processor(BaseProcessor):
                 # Normalize drag from/to coords
                 m = drag_xy.search(a)
                 if m:
-                    fx = float(m.group(1)); fy = float(m.group(2)); tx = float(m.group(3)); ty = float(m.group(4))
-                    nfx = _norm_val(fx, W); nfy = _norm_val(fy, H)
-                    ntx = _norm_val(tx, W); nty = _norm_val(ty, H)
+                    fx = float(m.group(1))
+                    fy = float(m.group(2))
+                    tx = float(m.group(3))
+                    ty = float(m.group(4))
+                    nfx = _norm_val(fx, W)
+                    nfy = _norm_val(fy, H)
+                    ntx = _norm_val(tx, W)
+                    nty = _norm_val(ty, H)
                     # Require both endpoints inside (0,1)
-                    if not (0.0 < nfx < 1.0 and 0.0 < nfy < 1.0 and 0.0 < ntx < 1.0 and 0.0 < nty < 1.0):
+                    if not (
+                        0.0 < nfx < 1.0 and 0.0 < nfy < 1.0 and 0.0 < ntx < 1.0 and 0.0 < nty < 1.0
+                    ):
                         continue
                     a = drag_xy.sub(
                         f"drag(from_coord=[{nfx},{nfy}], to_coord=[{ntx},{nty}])",
@@ -436,7 +482,7 @@ class AgUVisStage1Processor(BaseProcessor):
         for pair in out:
             u = str(pair.get("user", ""))
             a = str(pair.get("assistant", ""))
-            key = u + "\u241F" + a  # use an unlikely separator
+            key = u + "\u241f" + a  # use an unlikely separator
             if key in seen_keys:
                 continue
             seen_keys.add(key)

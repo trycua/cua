@@ -23,6 +23,7 @@ docker buildx build \
   --push \
   .
 ```
+
 ## Run
 
 Set `GCP_IMAGE_URI` to the image you built.
@@ -30,6 +31,7 @@ Set `GCP_IMAGE_URI` to the image you built.
 ```bash
 export GCP_IMAGE_URI="us-central1-docker.pkg.dev/enhanced-kiln-453008-s4/bench/py311-playwright-bench:latest"
 ```
+
 Run the batch job:
 
 ```bash

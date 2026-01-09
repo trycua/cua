@@ -1,10 +1,12 @@
-import cua_bench as cb
 from pathlib import Path
+
+import cua_bench as cb
+
 
 # Called once per batch
 @cb.tasks_config(split="train")
 def load():
-    os_types = ["linux"] # ["macos", "win11", "win10"]
+    os_types = ["linux"]  # ["macos", "win11", "win10"]
 
     # Different video player interaction scenarios
     video_scenarios = [
@@ -32,17 +34,19 @@ def load():
                     "os_type": os_type,
                     "width": 1024,
                     "height": 768,
-                    "background": '#c0c0c0'
-                }
-            }
+                    "background": "#c0c0c0",
+                },
+            },
         )
         for os_type in os_types
         for scenario in video_scenarios
     ]
 
+
 # All code below will be running in a separate process per task
 
 pid = None
+
 
 # Called at start of task
 @cb.setup_task(split="train")
@@ -51,7 +55,7 @@ async def start(task_cfg: cb.Task, session: cb.DesktopSession):
 
     # Setup steps:
     # 1. Create a webview window with dynamic initial state
-    html_template = (Path(__file__).parent / "gui/index.html").read_text('utf-8')
+    html_template = (Path(__file__).parent / "gui/index.html").read_text("utf-8")
     initial_state = task_cfg.metadata["initial_state"]
     html = html_template.replace("{{INITIAL_STATE}}", initial_state)
 
@@ -61,6 +65,7 @@ async def start(task_cfg: cb.Task, session: cb.DesktopSession):
         width=600,
         height=450,
     )
+
 
 # Called at end of task
 @cb.evaluate_task(split="train")
@@ -78,16 +83,16 @@ async def evaluate(task_cfg: cb.Task, session: cb.DesktopSession) -> list[float]
 
     # 2. Verify the action was completed correctly
     if action == "pause":
-        return [1.0] if player_state["is_playing"] == False else [0.0]
+        return [1.0] if not player_state["is_playing"] else [0.0]
     elif action == "play":
-        return [1.0] if player_state["is_playing"] == True else [0.0]
+        return [1.0] if player_state["is_playing"] else [0.0]
     elif action == "set_volume":
         target_volume = task_cfg.metadata["volume"]
         # Allow small tolerance for volume (±3)
         volume_matches = abs(player_state["volume"] - target_volume) <= 3
         return [1.0] if volume_matches else [0.0]
     elif action == "mute":
-        return [1.0] if player_state["is_muted"] == True else [0.0]
+        return [1.0] if player_state["is_muted"] else [0.0]
     elif action == "seek":
         target_time = task_cfg.metadata["seek_time"]
         # Allow small tolerance for seek time (±2 seconds)
@@ -95,6 +100,7 @@ async def evaluate(task_cfg: cb.Task, session: cb.DesktopSession) -> list[float]
         return [1.0] if time_matches else [0.0]
 
     return [0.0]
+
 
 # Called after setup_task if run_solution is True
 @cb.solve_task(split="train")
@@ -114,7 +120,9 @@ async def solve(task_cfg: cb.Task, session: cb.DesktopSession):
 
     elif action == "set_volume":
         # Show the volume slider programmatically and get its position
-        slider_info = await session.execute_javascript(pid, """
+        slider_info = await session.execute_javascript(
+            pid,
+            """
             (function() {
                 // Show the volume slider
                 const sliderContainer = document.getElementById('volume-slider-container');
@@ -130,25 +138,26 @@ async def solve(task_cfg: cb.Task, session: cb.DesktopSession):
                     height: rect.height
                 };
             })()
-        """)
+        """,
+        )
 
         # Calculate target position for vertical slider (0 is at bottom, 100 is at top)
         target_volume = task_cfg.metadata["volume"]
         # For vertical slider, we calculate from bottom to top
         target_x = slider_info["x"] + slider_info["width"] / 2
-        target_y = slider_info["y"] + slider_info["height"] - (slider_info["height"] * target_volume / 100)
+        target_y = (
+            slider_info["y"] + slider_info["height"] - (slider_info["height"] * target_volume / 100)
+        )
 
         # Drag the slider (from current position to target)
         start_x = slider_info["x"] + slider_info["width"] / 2
         start_y = slider_info["y"] + slider_info["height"] / 2
 
-        await session.execute_action(cb.DragAction(
-            from_x=start_x,
-            from_y=start_y,
-            to_x=target_x,
-            to_y=target_y,
-            duration=0.5
-        ))
+        await session.execute_action(
+            cb.DragAction(
+                from_x=start_x, from_y=start_y, to_x=target_x, to_y=target_y, duration=0.5
+            )
+        )
 
     elif action == "mute":
         # Click the volume button to toggle mute
@@ -156,7 +165,9 @@ async def solve(task_cfg: cb.Task, session: cb.DesktopSession):
 
     elif action == "seek":
         # Get the seek bar info
-        seek_bar_info = await session.execute_javascript(pid, """
+        seek_bar_info = await session.execute_javascript(
+            pid,
+            """
             (function() {
                 const seekBar = document.getElementById('seek-bar');
                 const rect = seekBar.getBoundingClientRect();
@@ -167,7 +178,8 @@ async def solve(task_cfg: cb.Task, session: cb.DesktopSession):
                     height: rect.height
                 };
             })()
-        """)
+        """,
+        )
 
         # Calculate target position based on seek time (0-225 seconds)
         target_time = task_cfg.metadata["seek_time"]
@@ -178,13 +190,12 @@ async def solve(task_cfg: cb.Task, session: cb.DesktopSession):
         start_x = seek_bar_info["x"] + seek_bar_info["width"] / 2
         start_y = seek_bar_info["y"] + seek_bar_info["height"] / 2
 
-        await session.execute_action(cb.DragAction(
-            from_x=start_x,
-            from_y=start_y,
-            to_x=target_x,
-            to_y=target_y,
-            duration=0.5
-        ))
+        await session.execute_action(
+            cb.DragAction(
+                from_x=start_x, from_y=start_y, to_x=target_x, to_y=target_y, duration=0.5
+            )
+        )
+
 
 if __name__ == "__main__":
     cb.interact(__file__)

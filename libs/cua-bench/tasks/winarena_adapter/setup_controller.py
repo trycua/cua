@@ -9,7 +9,6 @@ import os
 import shutil
 import sqlite3
 import tempfile
-import time
 import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -77,7 +76,9 @@ class WAASetupController:
                 raise Exception(f"Setup Download - Invalid URL ({url}) or path ({path}).")
 
             # Generate cache path
-            cache_path = self.cache_dir / f"{uuid.uuid5(uuid.NAMESPACE_URL, url)}_{os.path.basename(path)}"
+            cache_path = (
+                self.cache_dir / f"{uuid.uuid5(uuid.NAMESPACE_URL, url)}_{os.path.basename(path)}"
+            )
 
             # Download if not cached
             if not cache_path.exists():
@@ -258,7 +259,9 @@ class WAASetupController:
 
     # --- Window Management ---
 
-    async def _activate_window_setup(self, window_name: str, strict: bool = False, by_class: bool = False):
+    async def _activate_window_setup(
+        self, window_name: str, strict: bool = False, by_class: bool = False
+    ):
         """Activate a window by name.
 
         Args:
@@ -271,20 +274,22 @@ class WAASetupController:
 
         try:
             # Use PowerShell to activate window (Windows-specific)
-            cmd = f'powershell -Command "(Get-Process | Where-Object {{$_.MainWindowTitle -like \'*{window_name}*\'}}).MainWindowHandle | ForEach-Object {{ $null = [Microsoft.VisualBasic.Interaction]::AppActivate($_) }}"'
+            cmd = f"powershell -Command \"(Get-Process | Where-Object {{$_.MainWindowTitle -like '*{window_name}*'}}).MainWindowHandle | ForEach-Object {{ $null = [Microsoft.VisualBasic.Interaction]::AppActivate($_) }}\""
             await self.session.run_command(cmd)
             logger.info("Activated window: %s", window_name)
         except Exception as e:
             logger.error("Failed to activate window %s: %s", window_name, e)
 
-    async def _close_window_setup(self, window_name: str, strict: bool = False, by_class: bool = False):
+    async def _close_window_setup(
+        self, window_name: str, strict: bool = False, by_class: bool = False
+    ):
         """Close a window by name."""
         if not window_name:
             raise Exception(f"Invalid window name: {window_name}")
 
         try:
             # Use PowerShell to close window by title
-            cmd = f'powershell -Command "Get-Process | Where-Object {{$_.MainWindowTitle -like \'*{window_name}*\'}} | Stop-Process -Force"'
+            cmd = f"powershell -Command \"Get-Process | Where-Object {{$_.MainWindowTitle -like '*{window_name}*'}} | Stop-Process -Force\""
             await self.session.run_command(cmd)
             logger.info("Closed window: %s", window_name)
         except Exception as e:
@@ -293,7 +298,7 @@ class WAASetupController:
     async def _close_all_setup(self):
         """Close all user windows."""
         try:
-            cmd = 'powershell -Command "Get-Process | Where-Object {$_.MainWindowTitle -ne \'\'} | Stop-Process -Force"'
+            cmd = "powershell -Command \"Get-Process | Where-Object {$_.MainWindowTitle -ne ''} | Stop-Process -Force\""
             await self.session.run_command(cmd)
             logger.info("Closed all windows")
         except Exception as e:
@@ -400,7 +405,9 @@ public class Wallpaper {{
         for history_item in history:
             url = history_item["url"]
             title = history_item["title"]
-            visit_time = datetime.now() - timedelta(seconds=history_item["visit_time_from_now_in_seconds"])
+            visit_time = datetime.now() - timedelta(
+                seconds=history_item["visit_time_from_now_in_seconds"]
+            )
 
             # Chrome uses microseconds from 1601-01-01
             epoch_start = datetime(1601, 1, 1)
@@ -426,13 +433,17 @@ public class Wallpaper {{
         # Upload to VM
         try:
             result = await self.session.run_command(
-                'python -c "import os; print(os.path.join(os.getenv(\'USERPROFILE\'), \'AppData\', \'Local\', \'Google\', \'Chrome\', \'User Data\', \'Default\', \'History\'))"'
+                "python -c \"import os; print(os.path.join(os.getenv('USERPROFILE'), 'AppData', 'Local', 'Google', 'Chrome', 'User Data', 'Default', 'History'))\""
             )
             # Handle different result formats
             if isinstance(result, dict):
-                chrome_history_path = result.get("stdout", result.get("output", str(result))).strip()
+                chrome_history_path = result.get(
+                    "stdout", result.get("output", str(result))
+                ).strip()
             else:
-                chrome_history_path = result.stdout.strip() if hasattr(result, "stdout") else str(result).strip()
+                chrome_history_path = (
+                    result.stdout.strip() if hasattr(result, "stdout") else str(result).strip()
+                )
 
             content = cache_path.read_bytes()
             await self.session.write_bytes(chrome_history_path, content)

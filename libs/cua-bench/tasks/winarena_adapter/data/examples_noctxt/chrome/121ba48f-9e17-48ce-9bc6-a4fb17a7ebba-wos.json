@@ -6,34 +6,27 @@
   "_comments": "instruction does not match evaluation which only counts the soundtrack as DLC for correct eval; revised instruction, load_state: networkidle",
   "config": [
     {
-        "type": "launch",
-        "parameters": {
-          "command": [
-            "google-chrome",
-            "--remote-debugging-port=1337",
-            "--force-renderer-accessibility"
-          ]
-        }
-      },
-      {
-        "type": "launch",
-        "parameters": {
-          "command": [
-            "socat",
-            "tcp-listen:9222,fork",
-            "tcp:localhost:1337"
-          ]
-        }
-      },
-      {
-        "type": "chrome_open_tabs",
-        "parameters": {
-          "urls_to_open": [
-            "https://www.dota2.com/home",
-            "https://store.steampowered.com"
-          ]
-        }
-      },
+      "type": "launch",
+      "parameters": {
+        "command": [
+          "google-chrome",
+          "--remote-debugging-port=1337",
+          "--force-renderer-accessibility"
+        ]
+      }
+    },
+    {
+      "type": "launch",
+      "parameters": {
+        "command": ["socat", "tcp-listen:9222,fork", "tcp:localhost:1337"]
+      }
+    },
+    {
+      "type": "chrome_open_tabs",
+      "parameters": {
+        "urls_to_open": ["https://www.dota2.com/home", "https://store.steampowered.com"]
+      }
+    },
     {
       "type": "activate_window",
       "parameters": {
@@ -52,9 +45,7 @@
     }
   ],
   "trajectory": "trajectories\\",
-  "related_apps": [
-    "chrome"
-  ],
+  "related_apps": ["chrome"],
   "evaluator": {
     "func": "is_added_to_steam_cart",
     "result": {
@@ -65,9 +56,7 @@
     "expected": {
       "type": "rule",
       "rules": {
-        "items": [
-         "The Dota 2 Official Soundtrack"
-        ]
+        "items": ["The Dota 2 Official Soundtrack"]
       }
     }
   }

@@ -1,7 +1,7 @@
 // cua-bench snapshot and augmented actions builder
 // Defines window.__td_build_snapshot which returns a serialized, normalized HTML string
 
-(function(){
+(function () {
   if (window.__td_build_snapshot) return; // idempotent
 
   // Function to check if element has text cursor and get valid drag points
@@ -37,13 +37,15 @@
 
         // Find the text node and offsets
         let currentOffset = 0;
-        let startNode = null, startOffset = 0;
-        let endNode = null, endOffset = 0;
+        let startNode = null,
+          startOffset = 0;
+        let endNode = null,
+          endOffset = 0;
 
         const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
         let node;
 
-        while (node = walker.nextNode()) {
+        while ((node = walker.nextNode())) {
           const nodeLength = node.textContent.length;
 
           if (!startNode && currentOffset + nodeLength > startPos) {
@@ -79,12 +81,12 @@
         // Calculate points: x=0% y=50% for first, x=50% y=50% for last
         const point1 = {
           x: firstBox.left,
-          y: firstBox.top + firstBox.height * 0.5
+          y: firstBox.top + firstBox.height * 0.5,
         };
 
         const point2 = {
           x: lastBox.left + lastBox.width * 0.5,
-          y: lastBox.top + lastBox.height * 0.5
+          y: lastBox.top + lastBox.height * 0.5,
         };
 
         // Check if both points hit the same element
@@ -104,7 +106,7 @@
             point1: point1,
             point2: point2,
             text: rangeText,
-            success: true
+            success: true,
           };
         }
       } catch (e) {
@@ -171,7 +173,7 @@
 
     // Normalize all input elements
     if (includeFormValues) {
-      document.querySelectorAll('input, textarea').forEach(el => {
+      document.querySelectorAll('input, textarea').forEach((el) => {
         const cloneEl = getCloneElement(el, clone);
         if (!cloneEl) return;
         if (el.type === 'checkbox' || el.type === 'radio') {
@@ -188,7 +190,7 @@
 
     // Normalize select elements
     if (includeFormValues) {
-      document.querySelectorAll('select').forEach(el => {
+      document.querySelectorAll('select').forEach((el) => {
         const cloneEl = getCloneElement(el, clone);
         if (!cloneEl) return;
         const options = el.querySelectorAll('option');
@@ -205,7 +207,7 @@
 
     // Add scroll positions
     if (includeScrollOffset) {
-      document.querySelectorAll('*').forEach(el => {
+      document.querySelectorAll('*').forEach((el) => {
         if (el.scrollTop > 0 || el.scrollLeft > 0) {
           const cloneEl = getCloneElement(el, clone);
           if (!cloneEl) return;
@@ -222,12 +224,14 @@
         const range = selection.getRangeAt(0);
         if (!range.collapsed) {
           try {
-            const startContainer = range.startContainer.nodeType === 3 
-              ? range.startContainer.parentElement 
-              : range.startContainer;
-            const endContainer = range.endContainer.nodeType === 3 
-              ? range.endContainer.parentElement 
-              : range.endContainer;
+            const startContainer =
+              range.startContainer.nodeType === 3
+                ? range.startContainer.parentElement
+                : range.startContainer;
+            const endContainer =
+              range.endContainer.nodeType === 3
+                ? range.endContainer.parentElement
+                : range.endContainer;
             if (startContainer && endContainer) {
               const cloneStart = getCloneElement(startContainer, clone);
               const cloneEnd = getCloneElement(endContainer, clone);
@@ -237,22 +241,30 @@
                 cloneStart.setAttribute('data-selection-text', selection.toString());
               }
             }
-          } catch (e) { /* ignore */ }
+          } catch (e) {
+            /* ignore */
+          }
         }
       }
     }
 
     // Add focus state
-    if (includeKeyboardFocus && document.activeElement && document.activeElement !== document.body) {
+    if (
+      includeKeyboardFocus &&
+      document.activeElement &&
+      document.activeElement !== document.body
+    ) {
       try {
         const cloneActive = getCloneElement(document.activeElement, clone);
         if (cloneActive) cloneActive.setAttribute('data-focused', 'true');
-      } catch (e) { /* ignore */ }
+      } catch (e) {
+        /* ignore */
+      }
     }
 
     // Add bounding box information for all elements
     if (includeClientRects) {
-      document.querySelectorAll('*').forEach(el => {
+      document.querySelectorAll('*').forEach((el) => {
         try {
           const rect = el.getBoundingClientRect();
           if (rect.width > 0 || rect.height > 0) {
@@ -278,7 +290,9 @@
             }
             cloneEl.setAttribute('data-bbox-center-hit', hit ? 'true' : 'false');
           }
-        } catch (e) { /* ignore */ }
+        } catch (e) {
+          /* ignore */
+        }
       });
     }
 
@@ -292,18 +306,22 @@
           try {
             const parsed = JSON.parse(prev);
             if (Array.isArray(parsed)) arr = parsed;
-          } catch (e) { /* ignore malformed */ }
+          } catch (e) {
+            /* ignore malformed */
+          }
         }
         if (item && typeof item.user === 'string' && typeof item.assistant === 'string') {
           arr.push({ user: item.user, assistant: item.assistant });
           cloneEl.setAttribute('data-actions', JSON.stringify(arr));
         }
-      } catch (e) { /* ignore */ }
+      } catch (e) {
+        /* ignore */
+      }
     }
 
     // Synthetic: "Drag to select '{random text}'" -> "drag(from_coord=[x,y], to_coord=[x,y])"
     if (includeRandomTextActions) {
-      const textEls = Array.from(document.querySelectorAll('*')).filter(el => {
+      const textEls = Array.from(document.querySelectorAll('*')).filter((el) => {
         // heuristic: elements has no children
         if (el.children.length > 0) return false;
         // heuristic: element has text nodes and visible bbox
@@ -311,12 +329,18 @@
         const hasText = (el.textContent || '').trim().length >= 4;
         if (!hasText) return false;
         const rect = el.getBoundingClientRect();
-        return (rect.width > 0 && rect.height > 0);
+        return rect.width > 0 && rect.height > 0;
       });
       for (let i = 0; i < textEls.length; i++) {
         const el = textEls[i];
         const pts = getTextDragPoints(el);
-        if (pts && pts.success && typeof pts.text === 'string' && pts.text.trim() && pts.text.trim().length >= 4) {
+        if (
+          pts &&
+          pts.success &&
+          typeof pts.text === 'string' &&
+          pts.text.trim() &&
+          pts.text.trim().length >= 4
+        ) {
           const user = `Drag to select '${pts.text.trim()}'`;
           // Keep absolute pixels; processors may normalize later
           const assistant = `drag(from_coord=[${Math.round(pts.point1.x)},${Math.round(pts.point1.y)}], to_coord=[${Math.round(pts.point2.x)},${Math.round(pts.point2.y)}])`;
@@ -329,9 +353,9 @@
     if (includeWindowManagementActions) {
       // Synthetic: "Close/Minimize/Maximize this window" -> "click" @ [data-focused="true"]
       //            "Close/Minimize/Maximize {window title}" -> "click"
-      const labels = ["Close", "Maximize", "Minimize"];
-      const selector = labels.map(l => `.title-bar-controls button[aria-label="${l}"]`).join(",");
-      document.querySelectorAll(selector).forEach(btn => {
+      const labels = ['Close', 'Maximize', 'Minimize'];
+      const selector = labels.map((l) => `.title-bar-controls button[aria-label="${l}"]`).join(',');
+      document.querySelectorAll(selector).forEach((btn) => {
         // Nearest window container
         const win = btn.closest('.window');
         if (!win) return;
@@ -347,8 +371,10 @@
         let hitOk = false;
         try {
           const hitEl = document.elementFromPoint(cx, cy);
-          hitOk = !!(hitEl && (hitEl === btn));
-        } catch (e) { hitOk = false; }
+          hitOk = !!(hitEl && hitEl === btn);
+        } catch (e) {
+          hitOk = false;
+        }
         if (!hitOk) return;
 
         // Map aria-label to verb
@@ -367,7 +393,7 @@
 
         // Variant 2: "<Verb> {window title}" using .title-bar-text
         const titleEl = win.querySelector('.title-bar-text');
-        const title = (titleEl && titleEl.textContent) ? titleEl.textContent.trim() : '';
+        const title = titleEl && titleEl.textContent ? titleEl.textContent.trim() : '';
         if (title) {
           const user2 = `${verb} ${title}`;
           appendActionToCloneEl(cloneBtn, { user: user2, assistant });
@@ -377,7 +403,7 @@
       // Synthetic: "Move to the {corner/edge} of this window frame" -> move_mouse
       //            "Move to the {corner/edge} of {window title}"
       // Only for focused windows
-      document.querySelectorAll('.window[data-focused="true"]').forEach(win => {
+      document.querySelectorAll('.window[data-focused="true"]').forEach((win) => {
         const rect = win.getBoundingClientRect();
         if (!(rect.width > 0 && rect.height > 0)) return;
         const left = rect.left;
@@ -399,32 +425,42 @@
         const cloneWin = getCloneElement(win, clone);
         if (!cloneWin) return;
         const titleEl = win.querySelector('.title-bar-text');
-        const title = (titleEl && titleEl.textContent) ? titleEl.textContent.trim() : '';
+        const title = titleEl && titleEl.textContent ? titleEl.textContent.trim() : '';
         for (const pt of points) {
           let hitOk = false;
           try {
             const hitEl = document.elementFromPoint(pt.x, pt.y);
-            hitOk = !!(hitEl && (hitEl === win));
-          } catch (e) { hitOk = false; }
+            hitOk = !!(hitEl && hitEl === win);
+          } catch (e) {
+            hitOk = false;
+          }
           if (!hitOk) continue;
           const assistant = `move_mouse(x=${Math.round(pt.x)}, y=${Math.round(pt.y)})`;
           // this window frame
-          appendActionToCloneEl(cloneWin, { user: `Move to the ${pt.name} of this window frame`, assistant });
+          appendActionToCloneEl(cloneWin, {
+            user: `Move to the ${pt.name} of this window frame`,
+            assistant,
+          });
           // title variant
           if (title) {
-            appendActionToCloneEl(cloneWin, { user: `Move to the ${pt.name} of ${title}`, assistant });
+            appendActionToCloneEl(cloneWin, {
+              user: `Move to the ${pt.name} of ${title}`,
+              assistant,
+            });
           }
         }
       });
 
       // Synthetic: "Switch to {window title}" -> "click" @ .window:not([data-focused="true"]) .title-bar-text
-      document.querySelectorAll('.window:not([data-focused="true"]) .title-bar-text').forEach(el => {
-        const title = el.textContent.trim();
-        const cloneEl = getCloneElement(el, clone);
-        if (!cloneEl) return;
-        const assistant = `click(x=${Math.round(el.getBoundingClientRect().left)}, y=${Math.round(el.getBoundingClientRect().top)})`;
-        appendActionToCloneEl(cloneEl, { user: `Switch to ${title}`, assistant });
-      });
+      document
+        .querySelectorAll('.window:not([data-focused="true"]) .title-bar-text')
+        .forEach((el) => {
+          const title = el.textContent.trim();
+          const cloneEl = getCloneElement(el, clone);
+          if (!cloneEl) return;
+          const assistant = `click(x=${Math.round(el.getBoundingClientRect().left)}, y=${Math.round(el.getBoundingClientRect().top)})`;
+          appendActionToCloneEl(cloneEl, { user: `Switch to ${title}`, assistant });
+        });
     }
 
     // Return serialized HTML

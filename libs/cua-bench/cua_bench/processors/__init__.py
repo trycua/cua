@@ -1,7 +1,7 @@
 """Snapshot processors for converting batch outputs into various dataset formats."""
 
-from .base import BaseProcessor
 from .aguvis_stage_1 import AgUVisStage1Processor
+from .base import BaseProcessor
 from .gui_r1 import GuiR1Processor
 
 # Registry of available processors

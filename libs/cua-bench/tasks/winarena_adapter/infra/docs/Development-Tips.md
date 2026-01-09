@@ -8,6 +8,7 @@ cd ./scripts
 ```
 
 Once prepared, you can run the entire setup at once using:
+
 ```bash
 ./run-local.sh --mode dev --start-client true
 ```
@@ -42,9 +43,11 @@ You can troubleshoot any errors occurring during the preparation phase of the go
 Logs of the Python server running on the Windows 11 VM can instead be found under: [src/win-arena-container/vm/setup/server/server.log](../src/win-arena-container/vm/setup/server/server.log)
 
 ### Interactive mode - how to launch the docker without running the vm and client processes:
+
 During the development of any agents and extensions for the benchmark tasks, it might be useful to start the container without starting the client and VM processes. In this case, run:
 
 In this case run:
+
 ```bash
 cd scripts
 ./run-local.sh --interactive true
@@ -54,7 +57,7 @@ If the previous command is successful, the container will run with bash attached
 
 ```bash
 ./start_vm.sh
-.. 
+..
 ./start_client.sh
 ```
 

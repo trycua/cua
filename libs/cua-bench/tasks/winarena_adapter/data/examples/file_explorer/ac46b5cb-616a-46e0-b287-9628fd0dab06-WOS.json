@@ -7,26 +7,26 @@
     {
       "type": "create_folder",
       "parameters": {
-          "path": "C:\\Users\\Docker\\OldDownloads"
+        "path": "C:\\Users\\Docker\\OldDownloads"
       }
-  },
-  {
-    "type": "create_folder",
-    "parameters": {
+    },
+    {
+      "type": "create_folder",
+      "parameters": {
         "path": "C:\\Users\\Docker\\Downloads\\Test"
-    }
-  },
-  {
-    "type": "download",
-    "parameters": {
+      }
+    },
+    {
+      "type": "download",
+      "parameters": {
         "files": [
-            {
-                "url": "https://raw.githubusercontent.com/rogeriobonatti/winarenafiles/main/task_files/file_explorer/ac46b5cb-616a-46e0-b287-9628fd0dab06-WOS/config/SampleText.txt",
-                "path": "C:\\Users\\Docker\\Downloads\\Test\\example.txt"
-            }
+          {
+            "url": "https://raw.githubusercontent.com/rogeriobonatti/winarenafiles/main/task_files/file_explorer/ac46b5cb-616a-46e0-b287-9628fd0dab06-WOS/config/SampleText.txt",
+            "path": "C:\\Users\\Docker\\Downloads\\Test\\example.txt"
+          }
         ]
-    }
-},
+      }
+    },
     {
       "type": "sleep",
       "parameters": {
@@ -35,21 +35,19 @@
     }
   ],
   "trajectory": "trajectories/",
-  "related_apps": [
-    "file_explorer"
-  ],
+  "related_apps": ["file_explorer"],
   "evaluator": {
     "func": "exact_match",
     "result": {
-        "type": "is_files_moved_downloads",
-        "folder_name": "Test",
-        "file_name": "example.txt"
+      "type": "is_files_moved_downloads",
+      "folder_name": "Test",
+      "file_name": "example.txt"
     },
     "expected": {
-        "type": "rule",
-        "rules": {
-            "expected": "true"
-        }
+      "type": "rule",
+      "rules": {
+        "expected": "true"
+      }
     }
-}
+  }
 }

@@ -1,15 +1,16 @@
 import json
+import random
 import re
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 import cua_bench as cb
 from datasets import load_from_disk
-import random
 
 # Globals for the task process
 dataset = load_from_disk(Path(__file__).parent / "traces")
 _rows: List[Dict[str, Any]] = []
+
 
 # Called once per batch
 @cb.tasks_config(split="train")
@@ -41,7 +42,7 @@ def start(task_cfg, env: cb.DesktopSession | cb.MobileSession):
     # Set sandbox dimensions based on OS type
     os_type = task_cfg.metadata["os_type"]
     width, height = (1024, 768) if os_type not in ("ios", "android") else (384, 640)
-    seed = random.randint(0, 2**32-1)
+    seed = random.randint(0, 2**32 - 1)
 
     # Create a minimal sandbox for replay
     env.create_sandbox(
@@ -57,12 +58,15 @@ def start(task_cfg, env: cb.DesktopSession | cb.MobileSession):
 
     # Find first valid snapshot
     first_snap = next(
-        (snap for row in _rows 
-        if (data := json.loads(row.get("data_json"))) 
-        and "snapshot" in data 
-        and isinstance(snap := data.get("snapshot"), dict) 
-        and isinstance(snap.get("windows"), list)),
-        None
+        (
+            snap
+            for row in _rows
+            if (data := json.loads(row.get("data_json")))
+            and "snapshot" in data
+            and isinstance(snap := data.get("snapshot"), dict)
+            and isinstance(snap.get("windows"), list)
+        ),
+        None,
     )
 
     # Render if found
@@ -82,11 +86,11 @@ def solve(task_cfg, env: cb.DesktopSession | cb.MobileSession):
             # render snapshot from row if present
             data = json.loads(row["data_json"])
             _render_snapshot(env, data["snapshot"])
-            
+
             # extract action
             act_repr = data["action"]
             action = cb.repr_to_action(act_repr)
-        
+
             # step action
             print(f"Event: {name} | Action: {act_repr}")
             env.step(action, dry_run=name.split(":")[1])
@@ -98,15 +102,15 @@ def evaluate(task_cfg, env: cb.DesktopSession | cb.MobileSession) -> List[float]
     global _rows
     # get last evaluate event
     evaluate_event = next(
-        (row for row in reversed(_rows) if row.get("event_name") == "evaluate"),
-        None
+        (row for row in reversed(_rows) if row.get("event_name") == "evaluate"), None
     )
     if evaluate_event is None:
         return []
-    
+
     # extract result
     result = json.loads(evaluate_event["data_json"]).get("result", [])
     return result
+
 
 # --- helper functions ---
 def _render_snapshot(env, snap: Dict[str, Any]) -> None:
@@ -136,8 +140,10 @@ def _render_snapshot(env, snap: Dict[str, Any]) -> None:
 
 _script_re = re.compile(r"<script\b[^>]*>.*?</script>", re.IGNORECASE | re.DOTALL)
 
+
 def strip_scripts(s: str) -> str:
     return _script_re.sub("", s)
+
 
 if __name__ == "__main__":
     cb.interact(__file__)

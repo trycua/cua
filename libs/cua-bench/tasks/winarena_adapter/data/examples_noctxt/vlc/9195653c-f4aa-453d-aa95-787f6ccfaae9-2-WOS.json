@@ -5,7 +5,6 @@
   "source": "https://superuser.com/questions/1513285/how-can-i-increase-the-maximum-volume-output-by-vlc?rq=1",
   "_comments": "(default max volume is set to 125%) tools > preferences > all settings > main interfaces > Qt > maximum volume displayed",
   "config": [
-   
     {
       "type": "execute",
       "parameters": {
@@ -18,27 +17,21 @@
     }
   ],
   "trajectory": "trajectories/",
-  "related_apps": [
-    "vlc"
-  ],
+  "related_apps": ["vlc"],
   "evaluator": {
     "postconfig": [
       {
         "type": "launch",
         "parameters": {
-          "command": [
-            "Stop-Process",
-            "-Name",
-            "vlc"
-          ]
+          "command": ["Stop-Process", "-Name", "vlc"]
         }
-      }, 
+      },
       {
         "type": "sleep",
         "parameters": {
           "seconds": 1
         }
-    },   
+      },
       {
         "type": "launch",
         "parameters": {

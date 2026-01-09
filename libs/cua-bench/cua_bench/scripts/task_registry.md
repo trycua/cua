@@ -27,7 +27,9 @@ Example:
   "description": "A collection of basic, miniwob-style desktop environments for CUA agents.",
   "num_environments": 15,
   "num_tasks": 1532,
-  "environments": [ /* ... */ ]
+  "environments": [
+    /* ... */
+  ]
 }
 ```
 
@@ -59,7 +61,9 @@ Example:
   "difficulty": "easy",
   "category": "grounding",
   "tags": ["click"],
-  "previews": [ /* ... */ ]
+  "previews": [
+    /* ... */
+  ]
 }
 ```
 

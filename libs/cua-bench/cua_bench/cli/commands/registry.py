@@ -30,7 +30,7 @@ def get_registry_path() -> Path:
     registry_home = os.environ.get("CUA_REGISTRY_HOME")
     if registry_home:
         return Path(registry_home)
-    return Path.home() / '.cua' / 'cbregistry' / 'libs' / 'cua-bench'
+    return Path.home() / ".cua" / "cbregistry" / "libs" / "cua-bench"
 
 
 def ensure_registry(update: bool = True, verbose: bool = True) -> Path:
@@ -49,7 +49,7 @@ def ensure_registry(update: bool = True, verbose: bool = True) -> Path:
     registry_path = get_registry_path()
     cua_repo_path = registry_path.parent.parent  # Go up to ~/.cua/cbregistry
 
-    if not cua_repo_path.exists() or not (cua_repo_path / '.git').exists():
+    if not cua_repo_path.exists() or not (cua_repo_path / ".git").exists():
         # Clone cua repo
         if verbose:
             print(f"{CYAN}Cloning cua repository...{RESET}")
@@ -58,10 +58,10 @@ def ensure_registry(update: bool = True, verbose: bool = True) -> Path:
         # Try SSH first
         try:
             result = subprocess.run(
-                ['git', 'clone', 'git@github.com:trycua/cua.git', str(cua_repo_path)],
+                ["git", "clone", "git@github.com:trycua/cua.git", str(cua_repo_path)],
                 capture_output=True,
                 text=True,
-                timeout=120
+                timeout=120,
             )
             if result.returncode != 0:
                 raise Exception(f"SSH clone failed: {result.stderr}")
@@ -73,10 +73,10 @@ def ensure_registry(update: bool = True, verbose: bool = True) -> Path:
             # Try HTTPS
             try:
                 result = subprocess.run(
-                    ['git', 'clone', 'https://github.com/trycua/cua.git', str(cua_repo_path)],
+                    ["git", "clone", "https://github.com/trycua/cua.git", str(cua_repo_path)],
                     capture_output=True,
                     text=True,
-                    timeout=120
+                    timeout=120,
                 )
                 if result.returncode != 0:
                     raise Exception(f"HTTPS clone failed: {result.stderr}")
@@ -85,7 +85,7 @@ def ensure_registry(update: bool = True, verbose: bool = True) -> Path:
             except Exception as https_error:
                 # Check if git is installed
                 try:
-                    subprocess.run(['git', '--version'], capture_output=True, check=True)
+                    subprocess.run(["git", "--version"], capture_output=True, check=True)
                     raise RuntimeError(
                         f"Failed to clone cua repository. Both SSH and HTTPS failed.\n"
                         f"SSH error: {ssh_error}\n"
@@ -99,13 +99,13 @@ def ensure_registry(update: bool = True, verbose: bool = True) -> Path:
             print(f"{CYAN}Updating datasets...{RESET}")
         try:
             result = subprocess.run(
-                ['git', '-C', str(cua_repo_path), 'pull'],
+                ["git", "-C", str(cua_repo_path), "pull"],
                 capture_output=True,
                 text=True,
-                timeout=30
+                timeout=30,
             )
             if result.returncode == 0:
-                if 'Already up to date' in result.stdout or 'Already up-to-date' in result.stdout:
+                if "Already up to date" in result.stdout or "Already up-to-date" in result.stdout:
                     if verbose:
                         print(f"{GREEN}✓ Datasets are up to date{RESET}")
                 else:
@@ -133,7 +133,7 @@ def resolve_dataset_path(dataset_name: str, update_registry: bool = True) -> Opt
     """
     try:
         registry_path = ensure_registry(update=update_registry)
-        dataset_path = registry_path / 'datasets' / dataset_name
+        dataset_path = registry_path / "datasets" / dataset_name
 
         if dataset_path.exists():
             return dataset_path
@@ -143,7 +143,9 @@ def resolve_dataset_path(dataset_name: str, update_registry: bool = True) -> Opt
         return None
 
 
-def resolve_task_path(dataset_name: str, task_name: str, update_registry: bool = True) -> Optional[Path]:
+def resolve_task_path(
+    dataset_name: str, task_name: str, update_registry: bool = True
+) -> Optional[Path]:
     """Resolve a task within a dataset to its path in the registry.
 
     Args:

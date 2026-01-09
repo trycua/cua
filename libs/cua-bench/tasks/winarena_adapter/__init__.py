@@ -17,10 +17,10 @@ Usage:
     cb run tasks/winarena_adapter --task-id <id> --agent cua
 """
 
-from .task_loader import load_waa_tasks
 from .evaluator import WAAEvaluator
+from .main import SetupStatus, check_setup, run_setup
 from .setup_controller import WAASetupController
-from .main import check_setup, run_setup, SetupStatus
+from .task_loader import load_waa_tasks
 
 __all__ = [
     "load_waa_tasks",

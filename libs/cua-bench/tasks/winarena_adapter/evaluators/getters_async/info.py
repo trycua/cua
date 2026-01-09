@@ -3,8 +3,6 @@
 import logging
 from typing import Any, Dict, List, Optional
 
-from .base import get_cache_path
-
 logger = logging.getLogger("winarena.getters_async.info")
 
 
@@ -58,8 +56,7 @@ async def get_vm_wallpaper(session, config: Dict[str, Any]) -> Optional[bytes]:
     from .base import run_powershell
 
     result = await run_powershell(
-        session,
-        "(Get-ItemProperty 'HKCU:\\Control Panel\\Desktop' -Name Wallpaper).Wallpaper"
+        session, "(Get-ItemProperty 'HKCU:\\Control Panel\\Desktop' -Name Wallpaper).Wallpaper"
     )
 
     if result["exit_code"] == 0 and result["stdout"]:

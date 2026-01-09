@@ -5,9 +5,7 @@
   "source": "https://support.microsoft.com/en-us/windows/how-to-set-your-time-and-time-zone-dfaa7122-479f-5b98-2a7b-fa0b6e01b261",
   "config": [],
   "trajectory": "trajectories\\",
-  "related_apps": [
-    "settings"
-  ],
+  "related_apps": ["settings"],
   "evaluator": {
     "func": "exact_match",
     "result": {

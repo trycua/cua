@@ -1,44 +1,24 @@
 import cua_bench as cb
-from pathlib import Path
 
 
 @cb.tasks_config(split="train")
 def load():
     """Define task variants."""
     qa_pairs = [
-        {
-            "question": "What is the capital of France?",
-            "answer": "Paris"
-        },
-        {
-            "question": "What is 2 + 2?",
-            "answer": "4"
-        },
-        {
-            "question": "What color is the sky on a clear day?",
-            "answer": "blue"
-        },
-        {
-            "question": "What is the largest planet in our solar system?",
-            "answer": "Jupiter"
-        }
+        {"question": "What is the capital of France?", "answer": "Paris"},
+        {"question": "What is 2 + 2?", "answer": "4"},
+        {"question": "What color is the sky on a clear day?", "answer": "blue"},
+        {"question": "What is the largest planet in our solar system?", "answer": "Jupiter"},
     ]
 
     return [
         cb.Task(
             description=f'Open the question.txt file on the Desktop, read the question, and write your answer in answer.txt on the Desktop. Question: {qa["question"]}',
-            metadata={
-                "question": qa["question"],
-                "answer": qa["answer"]
-            },
+            metadata={"question": qa["question"], "answer": qa["answer"]},
             computer={
                 "provider": "native",
-                "setup_config": {
-                    "os_type": "linux",
-                    "width": 1024,
-                    "height": 768
-                }
-            }
+                "setup_config": {"os_type": "linux", "width": 1024, "height": 768},
+            },
         )
         for qa in qa_pairs
     ]

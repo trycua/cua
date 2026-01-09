@@ -17,20 +17,65 @@ Usage:
     result = await getter(session, config)
 """
 
+# Chrome browser
+from .chrome import (
+    get_bookmarks,
+    get_cookie_data,
+    get_default_search_engine,
+    get_enable_do_not_track,
+    get_history,
+    get_open_tabs_info,
+)
+
 # File operations
 from .file import (
-    get_cloud_file,
-    get_vm_file,
     get_cache_file,
+    get_cloud_file,
     get_content_from_vm_file,
+    get_vm_file,
     get_vm_file_exists_in_vm_folder,
+)
+
+# File Explorer
+from .fileexplorer import (
+    get_all_png_file_names,
+    get_are_all_images_tagged,
+    get_are_files_sorted_by_modified_time,
+    get_is_all_docx_in_archive,
+    get_is_details_view,
+    get_is_directory_read_only_for_user,
+    get_is_file_desktop,
+    get_is_file_hidden,
+    get_is_file_saved_desktop,
+    get_is_files_moved_downloads,
+    get_vm_active_window_title,
+    get_vm_file_exists_in_desktop,
+    get_vm_folder_exists_in_documents,
+    get_vm_library_folders,
+    get_zipped_folder_in_desktop,
 )
 
 # General command execution
 from .general import (
-    get_vm_command_line,
     get_vm_command_error,
+    get_vm_command_line,
     get_vm_terminal_output,
+)
+
+# Info getters
+from .info import (
+    get_list_directory,
+    get_vm_screen_size,
+    get_vm_wallpaper,
+    get_vm_window_size,
+)
+
+# Misc
+from .misc import (
+    get_accessibility_tree,
+    get_rule,
+    get_rule_relativeTime,
+    get_time_diff_range,
 )
 
 # Registry operations
@@ -41,60 +86,14 @@ from .registry import (
 
 # Windows Settings
 from .settings import (
-    get_night_light_state,
-    get_default_browser,
-    get_storage_sense_run_frequency,
     get_active_hours_of_user_to_not_interrupt_for_windows_updates,
-    get_system_timezone,
+    get_default_browser,
     get_desktop_background,
+    get_night_light_state,
+    get_storage_sense_run_frequency,
     get_system_notifications,
+    get_system_timezone,
 )
-
-# Misc
-from .misc import (
-    get_rule,
-    get_accessibility_tree,
-    get_rule_relativeTime,
-    get_time_diff_range,
-)
-
-# Chrome browser
-from .chrome import (
-    get_enable_do_not_track,
-    get_bookmarks,
-    get_history,
-    get_cookie_data,
-    get_open_tabs_info,
-    get_default_search_engine,
-)
-
-# File Explorer
-from .fileexplorer import (
-    get_vm_folder_exists_in_documents,
-    get_vm_file_exists_in_desktop,
-    get_vm_active_window_title,
-    get_is_file_hidden,
-    get_are_files_sorted_by_modified_time,
-    get_is_details_view,
-    get_all_png_file_names,
-    get_zipped_folder_in_desktop,
-    get_is_all_docx_in_archive,
-    get_is_directory_read_only_for_user,
-    get_are_all_images_tagged,
-    get_is_file_desktop,
-    get_vm_library_folders,
-    get_is_files_moved_downloads,
-    get_is_file_saved_desktop,
-)
-
-# Info getters
-from .info import (
-    get_vm_screen_size,
-    get_vm_window_size,
-    get_vm_wallpaper,
-    get_list_directory,
-)
-
 
 # Mapping from getter type names to async functions
 # This allows the evaluator to look up getters by name

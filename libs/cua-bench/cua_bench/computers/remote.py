@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import asyncio
 import time
-import uuid
 from pathlib import Path
 from typing import Any, Dict, Literal, Optional
 from urllib.parse import urlparse
@@ -22,22 +21,21 @@ from urllib.parse import urlparse
 from ..types import (
     Action,
     ClickAction,
-    RightClickAction,
-    DoubleClickAction,
-    MiddleClickAction,
-    DragAction,
-    MoveToAction,
-    ScrollAction,
-    TypeAction,
-    KeyAction,
-    HotkeyAction,
-    WaitAction,
     DoneAction,
+    DoubleClickAction,
+    DragAction,
+    HotkeyAction,
+    KeyAction,
+    MiddleClickAction,
+    MoveToAction,
+    RightClickAction,
+    ScrollAction,
     Snapshot,
+    TypeAction,
+    WaitAction,
     WindowSnapshot,
 )
 from .base import DesktopSetupConfig
-
 
 # HTML template with Tailwind CSS for auto-wrapping incomplete HTML
 _HTML_TEMPLATE = (
@@ -101,7 +99,7 @@ class RemoteDesktopSession:
         storage: str = "",
         ephemeral: bool = True,
         headless: bool = True,
-        **kwargs
+        **kwargs,
     ):
         """Initialize RemoteDesktopSession.
 
@@ -242,6 +240,7 @@ class RemoteDesktopSession:
         # Open VNC preview if not headless
         if not effective_headless:
             import webbrowser
+
             await asyncio.sleep(1)  # Wait for VNC to be ready
             webbrowser.open(self.vnc_url)
 
@@ -289,7 +288,7 @@ class RemoteDesktopSession:
         self._initialized = True
 
         # Update VNC URL after initialization (SDK may have allocated ports)
-        if not self._client_only_mode and hasattr(self._computer, 'noVNC_port'):
+        if not self._client_only_mode and hasattr(self._computer, "noVNC_port"):
             self._vnc_port = self._computer.noVNC_port
             self._vnc_url = f"http://localhost:{self._vnc_port}"
 
@@ -349,8 +348,9 @@ class RemoteDesktopSession:
             # Get target directory path on remote system
             @self._computer.python_command(use_system_python=True)
             def _get_tmp_dir(folder_hash):
-                import tempfile
                 import os
+                import tempfile
+
                 tmp_base = tempfile.gettempdir()
                 return os.path.join(tmp_base, f"cua_folder_{folder_hash}")
 
@@ -365,13 +365,13 @@ class RemoteDesktopSession:
             await self.interface.create_dir(remote_folder_path)
 
             # Recursively copy all files
-            for item in local_folder.rglob('*'):
+            for item in local_folder.rglob("*"):
                 if item.is_file():
                     relative_path = item.relative_to(local_folder)
                     remote_path = f"{remote_folder_path}/{relative_path.as_posix()}"
 
                     # Create parent directory if needed
-                    remote_parent = '/'.join(remote_path.split('/')[:-1])
+                    remote_parent = "/".join(remote_path.split("/")[:-1])
                     if not await self.interface.directory_exists(remote_parent):
                         await self.interface.create_dir(remote_parent)
 
@@ -388,15 +388,20 @@ class RemoteDesktopSession:
             import hashlib
 
             # Wrap incomplete HTML with template
-            html_content = html if "<html" in (html or "").lower() else _HTML_TEMPLATE.replace("{content}", html)
+            html_content = (
+                html
+                if "<html" in (html or "").lower()
+                else _HTML_TEMPLATE.replace("{content}", html)
+            )
 
             # Create temp folder for HTML file
             html_hash = hashlib.md5(html_content.encode()).hexdigest()[:8]
 
             @self._computer.python_command(use_system_python=True)
             def _get_html_tmp_dir(html_hash):
-                import tempfile
                 import os
+                import tempfile
+
                 tmp_base = tempfile.gettempdir()
                 return os.path.join(tmp_base, f"cua_html_{html_hash}")
 
@@ -415,8 +420,11 @@ class RemoteDesktopSession:
 
         # Launch window via bench_ui on remote
         @self._computer.python_command(use_system_python=True)
-        def _open(url, html, folder, title, x, y, width, height, icon, use_inner_size, title_bar_style):
+        def _open(
+            url, html, folder, title, x, y, width, height, icon, use_inner_size, title_bar_style
+        ):
             from bench_ui import launch_window
+
             return launch_window(
                 url=url,
                 html=html,
@@ -432,8 +440,17 @@ class RemoteDesktopSession:
             )
 
         pid = await _open(
-            target_url, html_content, remote_folder_path,
-            title, x, y, width, height, icon, use_inner_size, title_bar_style
+            target_url,
+            html_content,
+            remote_folder_path,
+            title,
+            x,
+            y,
+            width,
+            height,
+            icon,
+            use_inner_size,
+            title_bar_style,
         )
         self._webview_pids.add(pid)
         return pid
@@ -444,7 +461,7 @@ class RemoteDesktopSession:
         selector: str,
         *,
         space: Literal["window", "screen"] = "window",
-        timeout: float = 0.5
+        timeout: float = 0.5,
     ) -> dict[str, Any] | None:
         """Get element rect by CSS selector using bench_ui.
 
@@ -462,6 +479,7 @@ class RemoteDesktopSession:
         @self._computer.python_command(use_system_python=True)
         def _get_rect(pid, selector, space):
             from bench_ui import get_element_rect
+
             return get_element_rect(pid, selector, space=space)
 
         retry_interval = max(0.1, timeout / 2.0)
@@ -493,6 +511,7 @@ class RemoteDesktopSession:
         @self._computer.python_command(use_system_python=True)
         def _exec_js(pid, javascript):
             from bench_ui import execute_javascript
+
             return execute_javascript(pid, javascript)
 
         return await _exec_js(pid, javascript)
@@ -573,6 +592,7 @@ class RemoteDesktopSession:
         @self._computer.python_command(use_system_python=True)
         def _pywinctl_active_window():
             import pywinctl as pwc
+
             win = pwc.getActiveWindow()
             if not win:
                 return None
@@ -611,7 +631,10 @@ class RemoteDesktopSession:
             snapshot_js_path = Path(__file__).resolve().parents[1] / "www" / "js" / "snapshot.js"
             if snapshot_js_path.exists():
                 snapshot_js_code = snapshot_js_path.read_text(encoding="utf-8")
-                js = snapshot_js_code + "\n;(() => { try { return window.__td_build_snapshot(); } catch(e) { return ''; } })();"
+                js = (
+                    snapshot_js_code
+                    + "\n;(() => { try { return window.__td_build_snapshot(); } catch(e) { return ''; } })();"
+                )
                 win_html = await self.execute_javascript(pid_val, js)
 
         win = WindowSnapshot(
@@ -706,10 +729,10 @@ class RemoteDesktopSession:
         result = await self.interface.run_command(command)
         # Convert CommandResult to dict
         return {
-            "success": result.return_code == 0 if hasattr(result, 'return_code') else True,
-            "stdout": result.stdout if hasattr(result, 'stdout') else str(result),
-            "stderr": result.stderr if hasattr(result, 'stderr') else "",
-            "return_code": result.return_code if hasattr(result, 'return_code') else 0,
+            "success": result.return_code == 0 if hasattr(result, "return_code") else True,
+            "stdout": result.stdout if hasattr(result, "stdout") else str(result),
+            "stderr": result.stderr if hasattr(result, "stderr") else "",
+            "return_code": result.return_code if hasattr(result, "return_code") else 0,
         }
 
     async def read_file(self, path: str) -> str:
@@ -781,6 +804,7 @@ class RemoteDesktopSession:
             True if environment became ready, False if timeout
         """
         import time
+
         start = time.time()
         while time.time() - start < timeout:
             if await self.check_status():
@@ -818,12 +842,11 @@ class RemoteDesktopSession:
 
     async def scroll(self, direction: str = "down", amount: int = 300) -> None:
         """Scroll the screen."""
-        await self.execute_action(ScrollAction(
-            x=self._width // 2,
-            y=self._height // 2,
-            direction=direction,
-            amount=amount
-        ))
+        await self.execute_action(
+            ScrollAction(
+                x=self._width // 2, y=self._height // 2, direction=direction, amount=amount
+            )
+        )
 
     async def move_to(self, x: int, y: int) -> None:
         """Move cursor to coordinates."""

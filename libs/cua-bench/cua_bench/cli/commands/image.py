@@ -23,13 +23,13 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from .platform import PLATFORMS, check_docker, check_kvm, check_lume, check_image_exists
-from ...runner.docker_utils import create_overlay_copy, allocate_ports
-
+from ...runner.docker_utils import allocate_ports, create_overlay_copy
+from .platform import PLATFORMS, check_docker, check_image_exists, check_kvm, check_lume
 
 # =============================================================================
 # XDG Base Directory Support
 # =============================================================================
+
 
 def get_xdg_data_home() -> Path:
     """Get XDG_DATA_HOME, defaulting to ~/.local/share per spec."""
@@ -60,6 +60,7 @@ def get_state_dir() -> Path:
 # =============================================================================
 # Image Registry
 # =============================================================================
+
 
 def get_image_registry_path() -> Path:
     """Get the image registry file path."""
@@ -205,6 +206,7 @@ def auto_discover_images():
 # Storage Paths
 # =============================================================================
 
+
 def get_images_base_path() -> Path:
     """Get the base path for all images."""
     return get_data_dir() / "images"
@@ -237,7 +239,7 @@ def pull_image(image_name: str):
 
 def download_windows_iso(dest_path: Path) -> bool:
     """Download Windows 11 ISO from Microsoft."""
-    print(f"\nDownloading Windows 11 Enterprise Evaluation ISO...")
+    print("\nDownloading Windows 11 Enterprise Evaluation ISO...")
     print(f"  URL: {WINDOWS_ISO_URL}")
     print(f"  Destination: {dest_path}")
     print("\n  This is a large file (~6GB) and may take a while.\n")
@@ -251,7 +253,11 @@ def download_windows_iso(dest_path: Path) -> bool:
                 percent = min(100, downloaded * 100 / total_size)
                 downloaded_mb = downloaded / (1024 * 1024)
                 total_mb = total_size / (1024 * 1024)
-                print(f"\r  Progress: {percent:.1f}% ({downloaded_mb:.1f}/{total_mb:.1f} MB)", end="", flush=True)
+                print(
+                    f"\r  Progress: {percent:.1f}% ({downloaded_mb:.1f}/{total_mb:.1f} MB)",
+                    end="",
+                    flush=True,
+                )
             else:
                 downloaded_mb = downloaded / (1024 * 1024)
                 print(f"\r  Downloaded: {downloaded_mb:.1f} MB", end="", flush=True)
@@ -266,7 +272,7 @@ def download_windows_iso(dest_path: Path) -> bool:
 
 def format_size(size_bytes: int) -> str:
     """Format size in human-readable format."""
-    for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
+    for unit in ["B", "KB", "MB", "GB", "TB"]:
         if size_bytes < 1024.0:
             return f"{size_bytes:.1f} {unit}"
         size_bytes /= 1024.0
@@ -277,18 +283,19 @@ def format_size(size_bytes: int) -> str:
 # Commands
 # =============================================================================
 
+
 def cmd_list(args) -> int:
     """List all images."""
     # Auto-discover any unregistered images (e.g., from --detach mode)
     auto_discover_images()
 
     registry = load_image_registry()
-    output_format = getattr(args, 'format', 'table')
-    filter_platform = getattr(args, 'platform', None)
+    output_format = getattr(args, "format", "table")
+    filter_platform = getattr(args, "platform", None)
 
-    if output_format == 'json':
+    if output_format == "json":
         if filter_platform:
-            filtered = {k: v for k, v in registry.items() if v.get('platform') == filter_platform}
+            filtered = {k: v for k, v in registry.items() if v.get("platform") == filter_platform}
             print(json.dumps(filtered, indent=2))
         else:
             print(json.dumps(registry, indent=2))
@@ -328,7 +335,7 @@ def cmd_list(args) -> int:
         # Calculate size
         if path.exists() and str(path) != "/dev/null":
             try:
-                total_size = sum(f.stat().st_size for f in path.rglob('*') if f.is_file())
+                total_size = sum(f.stat().st_size for f in path.rglob("*") if f.is_file())
                 size = format_size(total_size)
             except Exception:
                 size = "-"
@@ -389,7 +396,7 @@ def cmd_info(args) -> int:
     # Size
     if path.exists() and str(path) != "/dev/null":
         try:
-            total_size = sum(f.stat().st_size for f in path.rglob('*') if f.is_file())
+            total_size = sum(f.stat().st_size for f in path.rglob("*") if f.is_file())
             print(f"Size:        {format_size(total_size)}")
         except Exception:
             pass
@@ -435,7 +442,7 @@ def cmd_info(args) -> int:
 
     # Config
     if info.get("config"):
-        print(f"\nConfig:")
+        print("\nConfig:")
         for key, value in info["config"].items():
             print(f"  {key.capitalize():<10} {value}")
 
@@ -475,11 +482,11 @@ def _create_linux_docker(args, config) -> int:
         print("Error: Docker is not running. Please start Docker and try again.")
         return 1
 
-    image_name = getattr(args, 'docker_image', None) or config["image"]
-    name = getattr(args, 'name', None) or "linux-docker"
+    image_name = getattr(args, "docker_image", None) or config["image"]
+    name = getattr(args, "name", None) or "linux-docker"
 
     # Always pull latest image unless --skip-pull is set
-    if getattr(args, 'skip_pull', False):
+    if getattr(args, "skip_pull", False):
         if not check_image_exists(image_name):
             print("Error: --skip-pull is set but image not found locally.")
             return 1
@@ -503,7 +510,7 @@ def _create_linux_docker(args, config) -> int:
         tags=["default", "webtop"],
     )
 
-    print(f"\n✓ Linux Docker image ready!")
+    print("\n✓ Linux Docker image ready!")
     print("\nNext steps:")
     print(f"  cb image shell {name}")
     return 0
@@ -515,19 +522,19 @@ def _create_linux_qemu(args, config) -> int:
         print("Error: Docker is not running. Please start Docker and try again.")
         return 1
 
-    name = getattr(args, 'name', None) or "linux-qemu"
+    name = getattr(args, "name", None) or "linux-qemu"
     image_path = get_image_path(name)
-    distro = getattr(args, 'distro', 'ubuntu')
+    distro = getattr(args, "distro", "ubuntu")
 
     marker_path = image_path / config["image_marker"]
-    if marker_path.exists() and not getattr(args, 'force', False):
+    if marker_path.exists() and not getattr(args, "force", False):
         print(f"✓ Linux QEMU image '{name}' already exists at: {image_path}")
         print("\nUse --force to recreate it.")
         print("\nNext steps:")
         print(f"  cb image shell {name}")
         return 0
 
-    if getattr(args, 'iso', None):
+    if getattr(args, "iso", None):
         iso_path = Path(args.iso).resolve()
         if not iso_path.exists():
             print(f"Error: ISO file not found: {iso_path}")
@@ -535,7 +542,7 @@ def _create_linux_qemu(args, config) -> int:
     else:
         print(f"\n{'=' * 60}")
         print("Linux QEMU Setup")
-        print('=' * 60)
+        print("=" * 60)
         print(f"\nDistro: {distro}")
         print("\n[Coming soon] For now, please:")
         print("  1. Download an Ubuntu/Fedora ISO manually")
@@ -553,12 +560,12 @@ def _create_windows_qemu(args, config) -> int:
         print("Error: Docker is not running. Please start Docker and try again.")
         return 1
 
-    docker_image = getattr(args, 'docker_image', None) or config["image"]
-    name = getattr(args, 'name', None) or "windows-qemu"
+    docker_image = getattr(args, "docker_image", None) or config["image"]
+    name = getattr(args, "name", None) or "windows-qemu"
     image_path = get_image_path(name)
 
     marker_path = image_path / config["image_marker"]
-    if marker_path.exists() and not getattr(args, 'force', False):
+    if marker_path.exists() and not getattr(args, "force", False):
         print(f"✓ Windows QEMU image '{name}' already exists at: {image_path}")
         print("\nUse --force to recreate it.")
         print("\nNext steps:")
@@ -566,7 +573,7 @@ def _create_windows_qemu(args, config) -> int:
         return 0
 
     iso_path = None
-    if getattr(args, 'iso', None):
+    if getattr(args, "iso", None):
         iso_path = Path(args.iso).resolve()
         if not iso_path.exists():
             print(f"Error: ISO file not found: {iso_path}")
@@ -576,7 +583,7 @@ def _create_windows_qemu(args, config) -> int:
         if default_iso.exists():
             iso_path = default_iso
             print(f"Using existing ISO: {iso_path}")
-        elif getattr(args, 'download_iso', False):
+        elif getattr(args, "download_iso", False):
             if not download_windows_iso(default_iso):
                 return 1
             iso_path = default_iso
@@ -592,7 +599,7 @@ def _create_windows_qemu(args, config) -> int:
             return 1
 
     # Always pull latest image unless --skip-pull is set
-    if getattr(args, 'skip_pull', False):
+    if getattr(args, "skip_pull", False):
         if not check_image_exists(docker_image):
             print("Error: --skip-pull is set but image not found locally.")
             return 1
@@ -602,12 +609,12 @@ def _create_windows_qemu(args, config) -> int:
 
     print(f"\n{'=' * 60}")
     print(f"Creating Windows QEMU Image: {name}")
-    print('=' * 60)
+    print("=" * 60)
     print(f"\nImage path: {image_path}")
 
     # Get user-specified ports or auto-allocate
-    user_vnc = getattr(args, 'vnc_port', None)
-    user_api = getattr(args, 'api_port', None)
+    user_vnc = getattr(args, "vnc_port", None)
+    user_api = getattr(args, "api_port", None)
 
     if user_vnc and user_api:
         vnc_port = int(user_vnc)
@@ -615,7 +622,7 @@ def _create_windows_qemu(args, config) -> int:
     else:
         vnc_port, api_port = allocate_ports(
             vnc_default=int(user_vnc) if user_vnc else 8006,
-            api_default=int(user_api) if user_api else 5000
+            api_default=int(user_api) if user_api else 5000,
         )
         if not user_vnc or not user_api:
             print(f"Auto-allocated ports: VNC={vnc_port}, API={api_port}")
@@ -624,26 +631,36 @@ def _create_windows_qemu(args, config) -> int:
 
     setup_container = "cua-setup-windows"
     check_result = subprocess.run(
-        ["docker", "ps", "-q", "-f", f"name={setup_container}"],
-        capture_output=True, text=True
+        ["docker", "ps", "-q", "-f", f"name={setup_container}"], capture_output=True, text=True
     )
     if check_result.stdout.strip():
         print(f"Setup container '{setup_container}' is already running.")
         print(f"Use 'docker stop {setup_container}' to stop it first.")
         return 1
 
-    detach_mode = getattr(args, 'detach', False)
+    detach_mode = getattr(args, "detach", False)
 
     docker_cmd = [
-        "docker", "run", "-t", "--rm",
-        "-p", f"{vnc_port}:8006",
-        "-p", f"{api_port}:5000",
-        "--name", setup_container,
-        "--platform", "linux/amd64",
-        "-v", f"{image_path}:/storage",
-        "-v", f"{iso_path}:/custom.iso:ro",
-        "--cap-add", "NET_ADMIN",
-        "--stop-timeout", "120",
+        "docker",
+        "run",
+        "-t",
+        "--rm",
+        "-p",
+        f"{vnc_port}:8006",
+        "-p",
+        f"{api_port}:5000",
+        "--name",
+        setup_container,
+        "--platform",
+        "linux/amd64",
+        "-v",
+        f"{image_path}:/storage",
+        "-v",
+        f"{iso_path}:/custom.iso:ro",
+        "--cap-add",
+        "NET_ADMIN",
+        "--stop-timeout",
+        "120",
     ]
 
     if detach_mode:
@@ -651,19 +668,19 @@ def _create_windows_qemu(args, config) -> int:
     elif sys.stdin.isatty():
         docker_cmd.insert(2, "-i")
 
-    if check_kvm() and not getattr(args, 'no_kvm', False):
+    if check_kvm() and not getattr(args, "no_kvm", False):
         docker_cmd.extend(["--device=/dev/kvm"])
     else:
         docker_cmd.extend(["-e", "KVM=N"])
         print("Note: Running without KVM (slower)")
 
-    memory = getattr(args, 'memory', '8G')
-    disk = getattr(args, 'disk', '64G')
-    cpus = getattr(args, 'cpus', '8')
+    memory = getattr(args, "memory", "8G")
+    disk = getattr(args, "disk", "64G")
+    cpus = getattr(args, "cpus", "8")
     docker_cmd.extend(["-e", f"RAM_SIZE={memory}"])
     docker_cmd.extend(["-e", f"CPU_CORES={cpus}"])
 
-    winarena_apps = getattr(args, 'winarena_apps', False)
+    winarena_apps = getattr(args, "winarena_apps", False)
     if winarena_apps:
         print("Will install WinArena benchmark apps (Chrome, LibreOffice, VLC, etc.)")
         docker_cmd.extend(["-e", "INSTALL_WINARENA_APPS=true"])
@@ -671,6 +688,7 @@ def _create_windows_qemu(args, config) -> int:
         # Create install_config.json and mount it into /oem/
         # This file is read by setup.ps1 inside Windows VM
         import json
+
         config_file = image_path / "install_config.json"
         config_data = {"INSTALL_WINARENA_APPS": True}
         config_file.write_text(json.dumps(config_data))
@@ -690,7 +708,7 @@ def _create_windows_qemu(args, config) -> int:
 
             container_id = result.stdout.strip()[:12]
             print(f"\n✓ Setup started in background (ID: {container_id})")
-            print(f"\nMonitor progress:")
+            print("\nMonitor progress:")
             print(f"  Browser: http://localhost:{vnc_port}")
             print(f"  Logs:    docker logs -f {setup_container}")
             return 0
@@ -723,7 +741,7 @@ def _create_windows_qemu(args, config) -> int:
                 print(f"  cb image shell {name}")
                 return 0
             else:
-                print(f"\n✗ Image was not created.")
+                print("\n✗ Image was not created.")
                 return 1
     except KeyboardInterrupt:
         print("\n\nInterrupted.")
@@ -732,12 +750,12 @@ def _create_windows_qemu(args, config) -> int:
 
 def _create_android_qemu(args, config) -> int:
     """Create android-qemu image."""
-    name = getattr(args, 'name', None) or "android-qemu"
-    android_version = getattr(args, 'version', '14')
+    name = getattr(args, "name", None) or "android-qemu"
+    android_version = getattr(args, "version", "14")
 
     print(f"\n{'=' * 60}")
     print("Android QEMU Setup")
-    print('=' * 60)
+    print("=" * 60)
     print(f"\nAndroid version: {android_version}")
     print(f"Image name: {name}")
     print("\n[Coming soon] This will be available in a future release.")
@@ -755,11 +773,13 @@ def _create_macos_lume(args, config) -> int:
     if not check_lume():
         print("Error: Lume is not installed.")
         print("\nInstall Lume:")
-        print('  /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/lume/scripts/install.sh)"')
+        print(
+            '  /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/lume/scripts/install.sh)"'
+        )
         return 1
 
-    name = getattr(args, 'name', None) or "macos-lume"
-    macos_version = getattr(args, 'version', 'sonoma')
+    name = getattr(args, "name", None) or "macos-lume"
+    macos_version = getattr(args, "version", "sonoma")
 
     print("✓ Lume is installed")
     print(f"\nTo create a macOS VM ({macos_version}):")
@@ -772,7 +792,7 @@ def _create_macos_lume(args, config) -> int:
 def cmd_delete(args) -> int:
     """Delete an image."""
     name = args.name
-    force = getattr(args, 'force', False)
+    force = getattr(args, "force", False)
 
     info = get_image_info(name)
     if not info:
@@ -790,7 +810,7 @@ def cmd_delete(args) -> int:
     if not force:
         if platform != "linux-docker" and path.exists() and str(path) != "/dev/null":
             try:
-                total_size = sum(f.stat().st_size for f in path.rglob('*') if f.is_file())
+                total_size = sum(f.stat().st_size for f in path.rglob("*") if f.is_file())
                 print(f"  Size: {format_size(total_size)}")
             except Exception:
                 pass
@@ -801,7 +821,7 @@ def cmd_delete(args) -> int:
             print("  - Delete all files in the image directory")
 
         response = input("\nContinue? [y/N] ").strip().lower()
-        if response != 'y':
+        if response != "y":
             print("Cancelled.")
             return 0
 
@@ -834,7 +854,7 @@ def cmd_clone(args) -> int:
 
     # Check if target already exists
     if get_image_info(target):
-        if not getattr(args, 'force', False):
+        if not getattr(args, "force", False):
             print(f"Error: Target image '{target}' already exists.")
             print("Use --force to overwrite.")
             return 1
@@ -871,7 +891,7 @@ def cmd_clone(args) -> int:
 
     # Calculate size for progress
     try:
-        total_size = sum(f.stat().st_size for f in source_path.rglob('*') if f.is_file())
+        total_size = sum(f.stat().st_size for f in source_path.rglob("*") if f.is_file())
         print(f"  Size:   {format_size(total_size)}")
     except Exception:
         pass
@@ -900,7 +920,7 @@ def cmd_clone(args) -> int:
         )
 
         print(f"\n✓ Successfully cloned '{source}' to '{target}'")
-        print(f"\nNext steps:")
+        print("\nNext steps:")
         print(f"  cb image shell {target}              # Start shell (protected)")
         print(f"  cb image shell {target} --writable   # Start shell (modify image)")
         print(f"  cb image info {target}               # View details")
@@ -918,7 +938,7 @@ def cmd_shell(args) -> int:
     With --writable, modifies the golden image directly (dangerous!).
     """
     name = args.name
-    writable = getattr(args, 'writable', False)
+    writable = getattr(args, "writable", False)
 
     info = get_image_info(name)
     if not info:
@@ -929,8 +949,8 @@ def cmd_shell(args) -> int:
         return 1
 
     platform = info.get("platform", "unknown")
-    image_path = Path(info.get("path", ""))
-    docker_image = info.get("docker_image")
+    Path(info.get("path", ""))
+    info.get("docker_image")
 
     # Get platform config
     config = PLATFORMS.get(platform, {})
@@ -960,8 +980,8 @@ def _shell_linux_docker(args, info, name) -> int:
         return 1
 
     # Get user-specified ports or auto-allocate
-    user_vnc = getattr(args, 'vnc_port', None)
-    user_api = getattr(args, 'api_port', None)
+    user_vnc = getattr(args, "vnc_port", None)
+    user_api = getattr(args, "api_port", None)
 
     if user_vnc and user_api:
         vnc_port = int(user_vnc)
@@ -969,19 +989,18 @@ def _shell_linux_docker(args, info, name) -> int:
     else:
         vnc_port, api_port = allocate_ports(
             vnc_default=int(user_vnc) if user_vnc else 6901,
-            api_default=int(user_api) if user_api else 8000
+            api_default=int(user_api) if user_api else 8000,
         )
         if not user_vnc or not user_api:
             print(f"Auto-allocated ports: VNC={vnc_port}, API={api_port}")
 
-    detach_mode = getattr(args, 'detach', False)
+    detach_mode = getattr(args, "detach", False)
 
     container_name = f"cua-shell-{name}"
 
     # Check if already running
     check_result = subprocess.run(
-        ["docker", "ps", "-q", "-f", f"name={container_name}"],
-        capture_output=True, text=True
+        ["docker", "ps", "-q", "-f", f"name={container_name}"], capture_output=True, text=True
     )
     if check_result.stdout.strip():
         print(f"Shell for '{name}' is already running.")
@@ -992,10 +1011,16 @@ def _shell_linux_docker(args, info, name) -> int:
     print(f"Starting interactive shell for '{name}'...")
 
     docker_cmd = [
-        "docker", "run", "-t", "--rm",
-        "-p", f"{vnc_port}:6901",
-        "-p", f"{api_port}:8000",
-        "--name", container_name,
+        "docker",
+        "run",
+        "-t",
+        "--rm",
+        "-p",
+        f"{vnc_port}:6901",
+        "-p",
+        f"{api_port}:8000",
+        "--name",
+        container_name,
         docker_image,
     ]
 
@@ -1010,7 +1035,7 @@ def _shell_linux_docker(args, info, name) -> int:
     if detach_mode:
         print(f"  Stop: docker stop {container_name}")
     else:
-        print(f"\nPress Ctrl+C to stop.\n")
+        print("\nPress Ctrl+C to stop.\n")
 
     try:
         if detach_mode:
@@ -1051,8 +1076,8 @@ def _shell_qemu(args, info, name, writable: bool) -> int:
             return 1
 
     # Get user-specified ports or auto-allocate
-    user_vnc = getattr(args, 'vnc_port', None)
-    user_api = getattr(args, 'api_port', None)
+    user_vnc = getattr(args, "vnc_port", None)
+    user_api = getattr(args, "api_port", None)
 
     if user_vnc and user_api:
         vnc_port = int(user_vnc)
@@ -1060,21 +1085,20 @@ def _shell_qemu(args, info, name, writable: bool) -> int:
     else:
         vnc_port, api_port = allocate_ports(
             vnc_default=int(user_vnc) if user_vnc else 8006,
-            api_default=int(user_api) if user_api else 5000
+            api_default=int(user_api) if user_api else 5000,
         )
         if not user_vnc or not user_api:
             print(f"Auto-allocated ports: VNC={vnc_port}, API={api_port}")
 
-    memory = getattr(args, 'memory', '8G')
-    cpus = getattr(args, 'cpus', '8')
-    detach_mode = getattr(args, 'detach', False)
+    memory = getattr(args, "memory", "8G")
+    cpus = getattr(args, "cpus", "8")
+    detach_mode = getattr(args, "detach", False)
 
     container_name = f"cua-shell-{name}"
 
     # Check if already running
     check_result = subprocess.run(
-        ["docker", "ps", "-q", "-f", f"name={container_name}"],
-        capture_output=True, text=True
+        ["docker", "ps", "-q", "-f", f"name={container_name}"], capture_output=True, text=True
     )
     if check_result.stdout.strip():
         print(f"Shell for '{name}' is already running.")
@@ -1099,7 +1123,7 @@ def _shell_qemu(args, info, name, writable: bool) -> int:
 
         if sys.stdin.isatty():
             response = input("\nAre you sure? Type 'yes' to continue: ").strip().lower()
-            if response != 'yes':
+            if response != "yes":
                 print("Cancelled.")
                 return 0
         else:
@@ -1108,14 +1132,14 @@ def _shell_qemu(args, info, name, writable: bool) -> int:
             return 1
 
         volumes.append(f"{image_path}:/storage")
-        print(f"\n🔓 Writable mode: Changes will persist to golden image")
+        print("\n🔓 Writable mode: Changes will persist to golden image")
     else:
         # Use overlay to protect golden image
         # NOTE: This is a temporary workaround that copies the entire image.
         # Proper COW overlay support is WIP: https://github.com/trycua/cua/issues/699
         overlay_path = get_data_dir() / "overlays" / f"shell-{name}"
 
-        print(f"\n🔒 Protected mode: Copying golden image to overlay...")
+        print("\n🔒 Protected mode: Copying golden image to overlay...")
         try:
             create_overlay_copy(image_path, overlay_path, verbose=True)
         except Exception as e:
@@ -1123,18 +1147,27 @@ def _shell_qemu(args, info, name, writable: bool) -> int:
             return 1
 
         volumes.append(f"{overlay_path}:/storage")
-        print(f"\n✓ Overlay ready (changes will be discarded on exit)")
+        print("\n✓ Overlay ready (changes will be discarded on exit)")
 
     print(f"\nStarting {platform} shell for '{name}'...")
 
     docker_cmd = [
-        "docker", "run", "-t", "--rm",
-        "-p", f"{vnc_port}:8006",
-        "-p", f"{api_port}:5000",
-        "--name", container_name,
-        "--platform", "linux/amd64",
-        "--cap-add", "NET_ADMIN",
-        "--stop-timeout", "120",
+        "docker",
+        "run",
+        "-t",
+        "--rm",
+        "-p",
+        f"{vnc_port}:8006",
+        "-p",
+        f"{api_port}:5000",
+        "--name",
+        container_name,
+        "--platform",
+        "linux/amd64",
+        "--cap-add",
+        "NET_ADMIN",
+        "--stop-timeout",
+        "120",
     ]
 
     # Handle TTY and detach modes
@@ -1146,7 +1179,7 @@ def _shell_qemu(args, info, name, writable: bool) -> int:
     for vol in volumes:
         docker_cmd.extend(["-v", vol])
 
-    if os.path.exists("/dev/kvm") and not getattr(args, 'no_kvm', False):
+    if os.path.exists("/dev/kvm") and not getattr(args, "no_kvm", False):
         docker_cmd.extend(["--device=/dev/kvm"])
     else:
         docker_cmd.extend(["-e", "KVM=N"])
@@ -1162,7 +1195,7 @@ def _shell_qemu(args, info, name, writable: bool) -> int:
     if detach_mode:
         print(f"  Stop: docker stop {container_name}")
     else:
-        print(f"\nPress Ctrl+C to stop.\n")
+        print("\nPress Ctrl+C to stop.\n")
 
     try:
         if detach_mode:
@@ -1193,84 +1226,115 @@ def _shell_qemu(args, info, name, writable: bool) -> int:
 # CLI Registration
 # =============================================================================
 
+
 def register_parser(subparsers):
     """Register the image command with the main CLI parser."""
-    image_parser = subparsers.add_parser(
-        'image',
-        help='Manage stored base images'
-    )
-    image_subparsers = image_parser.add_subparsers(dest='image_command', help='Image command')
+    image_parser = subparsers.add_parser("image", help="Manage stored base images")
+    image_subparsers = image_parser.add_subparsers(dest="image_command", help="Image command")
 
     # image list
-    list_parser = image_subparsers.add_parser('list', help='List all images')
-    list_parser.add_argument('--platform', help='Filter by platform')
-    list_parser.add_argument('--format', choices=['table', 'json'], default='table', help='Output format')
+    list_parser = image_subparsers.add_parser("list", help="List all images")
+    list_parser.add_argument("--platform", help="Filter by platform")
+    list_parser.add_argument(
+        "--format", choices=["table", "json"], default="table", help="Output format"
+    )
 
     # image info
-    info_parser = image_subparsers.add_parser('info', help='Show image details')
-    info_parser.add_argument('name', help='Image name')
+    info_parser = image_subparsers.add_parser("info", help="Show image details")
+    info_parser.add_argument("name", help="Image name")
 
     # image create
-    create_parser = image_subparsers.add_parser('create', help='Create image from platform')
-    create_parser.add_argument('platform', help='Platform name (e.g., linux-docker, windows-qemu)')
-    create_parser.add_argument('--name', help='Image name (default: same as platform)')
-    create_parser.add_argument('--iso', help='Path to ISO file (for QEMU platforms)')
-    create_parser.add_argument('--download-iso', action='store_true', dest='download_iso', help='Download Windows 11 ISO (~6GB)')
-    create_parser.add_argument('--docker-image', dest='docker_image', help='Override Docker image')
-    create_parser.add_argument('--distro', default='ubuntu', choices=['ubuntu', 'fedora'], help='Linux distribution')
-    create_parser.add_argument('--version', default='14', help='OS version (e.g., 14 for Android, sonoma for macOS)')
-    create_parser.add_argument('--disk', default='64G', help='Disk size (default: 64G)')
-    create_parser.add_argument('--memory', default='8G', help='Memory (default: 8G)')
-    create_parser.add_argument('--cpus', default='8', help='CPU cores (default: 8)')
-    create_parser.add_argument('--winarena-apps', action='store_true', dest='winarena_apps',
-                                help='Install WinArena benchmark apps (Chrome, LibreOffice, VLC, etc.)')
-    create_parser.add_argument('--detach', '-d', action='store_true', help='Run in background')
-    create_parser.add_argument('--force', action='store_true', help='Force recreation')
-    create_parser.add_argument('--skip-pull', action='store_true', dest='skip_pull', help="Don't pull Docker image")
-    create_parser.add_argument('--no-kvm', action='store_true', dest='no_kvm', help='Disable KVM acceleration')
-    create_parser.add_argument('--vnc-port', dest='vnc_port', help='VNC port (default: auto-allocate from 8006)')
-    create_parser.add_argument('--api-port', dest='api_port', help='API port (default: auto-allocate from 5000)')
+    create_parser = image_subparsers.add_parser("create", help="Create image from platform")
+    create_parser.add_argument("platform", help="Platform name (e.g., linux-docker, windows-qemu)")
+    create_parser.add_argument("--name", help="Image name (default: same as platform)")
+    create_parser.add_argument("--iso", help="Path to ISO file (for QEMU platforms)")
+    create_parser.add_argument(
+        "--download-iso",
+        action="store_true",
+        dest="download_iso",
+        help="Download Windows 11 ISO (~6GB)",
+    )
+    create_parser.add_argument("--docker-image", dest="docker_image", help="Override Docker image")
+    create_parser.add_argument(
+        "--distro", default="ubuntu", choices=["ubuntu", "fedora"], help="Linux distribution"
+    )
+    create_parser.add_argument(
+        "--version", default="14", help="OS version (e.g., 14 for Android, sonoma for macOS)"
+    )
+    create_parser.add_argument("--disk", default="64G", help="Disk size (default: 64G)")
+    create_parser.add_argument("--memory", default="8G", help="Memory (default: 8G)")
+    create_parser.add_argument("--cpus", default="8", help="CPU cores (default: 8)")
+    create_parser.add_argument(
+        "--winarena-apps",
+        action="store_true",
+        dest="winarena_apps",
+        help="Install WinArena benchmark apps (Chrome, LibreOffice, VLC, etc.)",
+    )
+    create_parser.add_argument("--detach", "-d", action="store_true", help="Run in background")
+    create_parser.add_argument("--force", action="store_true", help="Force recreation")
+    create_parser.add_argument(
+        "--skip-pull", action="store_true", dest="skip_pull", help="Don't pull Docker image"
+    )
+    create_parser.add_argument(
+        "--no-kvm", action="store_true", dest="no_kvm", help="Disable KVM acceleration"
+    )
+    create_parser.add_argument(
+        "--vnc-port", dest="vnc_port", help="VNC port (default: auto-allocate from 8006)"
+    )
+    create_parser.add_argument(
+        "--api-port", dest="api_port", help="API port (default: auto-allocate from 5000)"
+    )
 
     # image delete
-    delete_parser = image_subparsers.add_parser('delete', help='Delete an image')
-    delete_parser.add_argument('name', help='Image name')
-    delete_parser.add_argument('--force', action='store_true', help='Skip confirmation')
+    delete_parser = image_subparsers.add_parser("delete", help="Delete an image")
+    delete_parser.add_argument("name", help="Image name")
+    delete_parser.add_argument("--force", action="store_true", help="Skip confirmation")
 
     # image clone
-    clone_parser = image_subparsers.add_parser('clone', help='Clone an image')
-    clone_parser.add_argument('source', help='Source image name')
-    clone_parser.add_argument('target', help='Target image name')
-    clone_parser.add_argument('--force', action='store_true', help='Overwrite if target exists')
+    clone_parser = image_subparsers.add_parser("clone", help="Clone an image")
+    clone_parser.add_argument("source", help="Source image name")
+    clone_parser.add_argument("target", help="Target image name")
+    clone_parser.add_argument("--force", action="store_true", help="Overwrite if target exists")
 
     # image shell
-    shell_parser = image_subparsers.add_parser('shell', help='Interactive shell into image (uses overlay by default)')
-    shell_parser.add_argument('name', help='Image name')
-    shell_parser.add_argument('--writable', action='store_true', help='Modify golden image directly (dangerous!)')
-    shell_parser.add_argument('--detach', '-d', action='store_true', help='Run in background')
-    shell_parser.add_argument('--vnc-port', dest='vnc_port', help='VNC port (default: auto-allocate from 8006)')
-    shell_parser.add_argument('--api-port', dest='api_port', help='API port (default: auto-allocate from 5000)')
-    shell_parser.add_argument('--memory', default='8G', help='Memory (default: 8G)')
-    shell_parser.add_argument('--cpus', default='8', help='CPU cores (default: 8)')
-    shell_parser.add_argument('--no-kvm', action='store_true', dest='no_kvm', help='Disable KVM acceleration')
+    shell_parser = image_subparsers.add_parser(
+        "shell", help="Interactive shell into image (uses overlay by default)"
+    )
+    shell_parser.add_argument("name", help="Image name")
+    shell_parser.add_argument(
+        "--writable", action="store_true", help="Modify golden image directly (dangerous!)"
+    )
+    shell_parser.add_argument("--detach", "-d", action="store_true", help="Run in background")
+    shell_parser.add_argument(
+        "--vnc-port", dest="vnc_port", help="VNC port (default: auto-allocate from 8006)"
+    )
+    shell_parser.add_argument(
+        "--api-port", dest="api_port", help="API port (default: auto-allocate from 5000)"
+    )
+    shell_parser.add_argument("--memory", default="8G", help="Memory (default: 8G)")
+    shell_parser.add_argument("--cpus", default="8", help="CPU cores (default: 8)")
+    shell_parser.add_argument(
+        "--no-kvm", action="store_true", dest="no_kvm", help="Disable KVM acceleration"
+    )
 
-    image_parser.set_defaults(image_command='list')
+    image_parser.set_defaults(image_command="list")
 
 
 def execute(args) -> int:
     """Execute the image command."""
-    cmd = getattr(args, 'image_command', 'list')
+    cmd = getattr(args, "image_command", "list")
 
-    if cmd == 'list':
+    if cmd == "list":
         return cmd_list(args)
-    elif cmd == 'info':
+    elif cmd == "info":
         return cmd_info(args)
-    elif cmd == 'create':
+    elif cmd == "create":
         return cmd_create(args)
-    elif cmd == 'delete':
+    elif cmd == "delete":
         return cmd_delete(args)
-    elif cmd == 'clone':
+    elif cmd == "clone":
         return cmd_clone(args)
-    elif cmd == 'shell':
+    elif cmd == "shell":
         return cmd_shell(args)
     else:
         return cmd_list(args)

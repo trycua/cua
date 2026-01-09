@@ -84,6 +84,7 @@ def get_sqlite_conn() -> sqlite3.Connection:
 # Semantic Search Tools (LanceDB)
 # =============================================================================
 
+
 @mcp.tool
 def search_docs(query: str, limit: int = 5, category: Optional[str] = None) -> list[dict]:
     """
@@ -116,13 +117,15 @@ def search_docs(query: str, limit: int = 5, category: Optional[str] = None) -> l
     # Format results
     formatted = []
     for r in results:
-        formatted.append({
-            "title": r.get("title", ""),
-            "url": r.get("url", ""),
-            "category": r.get("category", ""),
-            "content": r.get("text", ""),
-            "relevance_score": round(1 - r.get("_distance", 0), 4),
-        })
+        formatted.append(
+            {
+                "title": r.get("title", ""),
+                "url": r.get("url", ""),
+                "category": r.get("category", ""),
+                "content": r.get("text", ""),
+                "relevance_score": round(1 - r.get("_distance", 0), 4),
+            }
+        )
 
     return formatted
 
@@ -131,12 +134,10 @@ def search_docs(query: str, limit: int = 5, category: Optional[str] = None) -> l
 # Full-Text Search Tools (SQLite FTS5)
 # =============================================================================
 
+
 @mcp.tool
 def search_docs_fts(
-    query: str,
-    limit: int = 5,
-    category: Optional[str] = None,
-    highlight: bool = True
+    query: str, limit: int = 5, category: Optional[str] = None, highlight: bool = True
 ) -> list[dict]:
     """
     Full-text search over CUA documentation using SQLite FTS5.
@@ -227,8 +228,7 @@ def get_page_content(url: str) -> dict:
 
     # Try exact match first
     cursor.execute(
-        "SELECT url, title, category, content, raw_markdown FROM pages WHERE url = ?",
-        (url,)
+        "SELECT url, title, category, content, raw_markdown FROM pages WHERE url = ?", (url,)
     )
     row = cursor.fetchone()
 
@@ -236,7 +236,7 @@ def get_page_content(url: str) -> dict:
     if not row:
         cursor.execute(
             "SELECT url, title, category, content, raw_markdown FROM pages WHERE url LIKE ?",
-            (f"%{url}%",)
+            (f"%{url}%",),
         )
         row = cursor.fetchone()
 
@@ -267,10 +267,7 @@ def get_page_raw_markdown(url: str) -> dict:
     conn = get_sqlite_conn()
     cursor = conn.cursor()
 
-    cursor.execute(
-        "SELECT url, title, raw_markdown FROM pages WHERE url LIKE ?",
-        (f"%{url}%",)
-    )
+    cursor.execute("SELECT url, title, raw_markdown FROM pages WHERE url LIKE ?", (f"%{url}%",))
     row = cursor.fetchone()
 
     if not row:
@@ -287,6 +284,7 @@ def get_page_raw_markdown(url: str) -> dict:
 # Discovery Tools
 # =============================================================================
 
+
 @mcp.tool
 def get_doc_categories() -> list[dict]:
     """
@@ -298,12 +296,14 @@ def get_doc_categories() -> list[dict]:
     conn = get_sqlite_conn()
     cursor = conn.cursor()
 
-    cursor.execute("""
+    cursor.execute(
+        """
         SELECT category, COUNT(*) as page_count
         FROM pages
         GROUP BY category
         ORDER BY page_count DESC
-    """)
+    """
+    )
     rows = cursor.fetchall()
 
     return [{"category": row["category"], "page_count": row["page_count"]} for row in rows]
@@ -328,14 +328,10 @@ def list_pages(category: Optional[str] = None, limit: int = 50) -> list[dict]:
 
     if category:
         cursor.execute(
-            "SELECT url, title, category FROM pages WHERE category = ? LIMIT ?",
-            (category, limit)
+            "SELECT url, title, category FROM pages WHERE category = ? LIMIT ?", (category, limit)
         )
     else:
-        cursor.execute(
-            "SELECT url, title, category FROM pages LIMIT ?",
-            (limit,)
-        )
+        cursor.execute("SELECT url, title, category FROM pages LIMIT ?", (limit,))
 
     rows = cursor.fetchall()
     return [{"url": row["url"], "title": row["title"], "category": row["category"]} for row in rows]
@@ -360,7 +356,7 @@ def search_by_url(url_pattern: str, limit: int = 10) -> list[dict]:
 
     cursor.execute(
         "SELECT url, title, category FROM pages WHERE url LIKE ? LIMIT ?",
-        (f"%{url_pattern}%", limit)
+        (f"%{url_pattern}%", limit),
     )
     rows = cursor.fetchall()
 
@@ -370,6 +366,7 @@ def search_by_url(url_pattern: str, limit: int = 10) -> list[dict]:
 # =============================================================================
 # Resources
 # =============================================================================
+
 
 @mcp.resource("docs://categories")
 def list_categories_resource() -> str:
@@ -415,6 +412,7 @@ def get_stats_resource() -> str:
 # Main
 # =============================================================================
 
+
 def main():
     """Run the MCP server"""
     import argparse
@@ -422,11 +420,12 @@ def main():
     parser = argparse.ArgumentParser(description="CUA Docs MCP Server")
     parser.add_argument("--host", default="127.0.0.1", help="Host to bind to")
     parser.add_argument("--port", type=int, default=8000, help="Port to bind to")
-    parser.add_argument("--transport", default="sse", choices=["sse", "http", "stdio"],
-                        help="Transport type")
+    parser.add_argument(
+        "--transport", default="sse", choices=["sse", "http", "stdio"], help="Transport type"
+    )
     args = parser.parse_args()
 
-    print(f"Starting CUA Docs MCP Server...")
+    print("Starting CUA Docs MCP Server...")
     print(f"Transport: {args.transport}")
     if args.transport in ["sse", "http"]:
         print(f"URL: http://{args.host}:{args.port}")

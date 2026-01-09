@@ -13,9 +13,7 @@
     }
   ],
   "trajectory": "trajectories/",
-  "related_apps": [
-    "vlc"
-  ],
+  "related_apps": ["vlc"],
   "evaluator": {
     "func": "infeasible"
   }

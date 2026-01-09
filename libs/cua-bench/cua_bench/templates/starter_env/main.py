@@ -1,5 +1,6 @@
-import cua_bench as cb
 from pathlib import Path
+
+import cua_bench as cb
 
 # Global variable to track the window
 pid = None
@@ -18,9 +19,9 @@ def load():
                     "os_type": "macos",
                     "width": 512,
                     "height": 512,
-                    "background": "#c0c0c0"
-                }
-            }
+                    "background": "#c0c0c0",
+                },
+            },
         )
     ]
 

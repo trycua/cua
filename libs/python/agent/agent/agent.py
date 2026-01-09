@@ -710,7 +710,10 @@ class ComputerAgent:
             }
 
             # ---- Ollama image input guard ----
-            if isinstance(self.model, str) and ("ollama/" in self.model or "ollama_chat/" in self.model):
+            if isinstance(self.model, str) and (
+                "ollama/" in self.model or "ollama_chat/" in self.model
+            ):
+
                 def contains_image_content(msgs):
                     for m in msgs:
                         # 1️⃣ Check regular message content
@@ -719,7 +722,7 @@ class ComputerAgent:
                             for item in content:
                                 if isinstance(item, dict) and item.get("type") == "image_url":
                                     return True
-            
+
                         # 2️⃣ Check computer_call_output screenshots
                         if m.get("type") == "computer_call_output":
                             output = m.get("output", {})

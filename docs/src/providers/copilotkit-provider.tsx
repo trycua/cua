@@ -492,9 +492,22 @@ const customStyles = `
     color: rgba(255, 255, 255, 0.9);
   }
 
-  /* Hide regenerate button but keep thumbs up/down for feedback */
+  /* Hide regenerate button but keep copy and thumbs up/down for feedback */
+  /* Target by aria-label (multiple possible labels) */
   .copilotKitMessageControls button[aria-label="Regenerate"],
-  .copilotKitMessageControls button[aria-label="Copy"] {
+  .copilotKitMessageControls button[aria-label="regenerate"],
+  .copilotKitMessageControls button[title="Regenerate"],
+  .copilotKitMessageControls button[title="regenerate"],
+  /* Target by position (first button in the controls) */
+  .copilotKitAssistantMessage .copilotKitMessageControls > button:first-child,
+  [class*="copilotKitAssistantMessage"] [class*="MessageControls"] > button:first-child,
+  [class*="copilotKitAssistantMessage"] [class*="Controls"] > button:first-child,
+  /* Target buttons containing refresh/regenerate SVG icons (lucide RefreshCw icon class) */
+  .copilotKitMessageControls button:has(svg.lucide-refresh-cw),
+  .copilotKitMessageControls button:has([class*="refresh"]),
+  .copilotKitMessageControls button:has([class*="Refresh"]),
+  /* Additional fallback targeting first button in any flex container inside assistant messages */
+  [class*="AssistantMessage"] [class*="Controls"] button:first-of-type {
     display: none !important;
   }
 

@@ -503,7 +503,7 @@ export function CopilotKitProvider({ children }: CopilotKitProviderProps) {
         instructions={DOCS_INSTRUCTIONS}
         labels={{
           title: 'Cua Docs Assistant',
-          initial: `Ask me anything about Cua! This is currently an experimental feature. 🛠️`,
+          initial: `Ask me anything about Cua! This is currently an experimental feature 🛠️ Because of this, the responses may be incomplete or incorrect, but we're working on it! Please refer to the docs for the most accurate information.`,
         }}
         AssistantMessage={CustomAssistantMessage}
         Header={CustomHeader}

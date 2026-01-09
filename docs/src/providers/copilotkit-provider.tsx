@@ -1,9 +1,9 @@
 'use client';
 
 import { CopilotKit, useRenderToolCall } from '@copilotkit/react-core';
-import { CopilotPopup, AssistantMessage as DefaultAssistantMessage } from '@copilotkit/react-ui';
+import { CopilotPopup, AssistantMessage as DefaultAssistantMessage, useChatContext } from '@copilotkit/react-ui';
 import '@copilotkit/react-ui/styles.css';
-import { ReactNode, useMemo } from 'react';
+import { ReactNode, useMemo, useState, useCallback, useRef, useEffect } from 'react';
 
 const DOCS_INSTRUCTIONS = `You are a helpful assistant for CUA (Computer Use Agent) and CUA-Bench documentation. Be concise and helpful.
 
@@ -131,6 +131,120 @@ function ToolCallIndicators() {
   return null;
 }
 
+// Copy icon component
+function CopyIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+      <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+    </svg>
+  );
+}
+
+// Check icon for copied state
+function CheckIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <polyline points="20 6 9 17 4 12"></polyline>
+    </svg>
+  );
+}
+
+// Function to convert messages to markdown
+function messagesToMarkdown(messages: Array<{ role: string; content: string | unknown }>): string {
+  if (!messages || messages.length === 0) return '';
+
+  return messages
+    .filter(msg => msg.role === 'user' || msg.role === 'assistant')
+    .map(msg => {
+      const role = msg.role === 'user' ? '**User:**' : '**Assistant:**';
+      const content = typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content);
+      return `${role}\n\n${content}`;
+    })
+    .join('\n\n---\n\n');
+}
+
+// Helper function to extract messages from the DOM
+function extractMessagesFromDOM(): string {
+  // Find the CopilotKit messages container
+  const messagesContainer = document.querySelector('.copilotKitMessages');
+  if (!messagesContainer) {
+    console.log('No messages container found');
+    return '';
+  }
+
+  const messages: string[] = [];
+
+  // Find all message elements - CopilotKit uses specific class patterns
+  // User messages have class containing 'copilotKitUserMessage'
+  // Assistant messages have class containing 'copilotKitAssistantMessage'
+  const allElements = messagesContainer.querySelectorAll('[class*="copilotKitUserMessage"], [class*="copilotKitAssistantMessage"]');
+
+  allElements.forEach((element) => {
+    const className = element.className;
+    const isUser = className.includes('copilotKitUserMessage');
+    const isAssistant = className.includes('copilotKitAssistantMessage');
+
+    if (isUser || isAssistant) {
+      const role = isUser ? '**User:**' : '**Assistant:**';
+      // Get text content, excluding action buttons
+      const textContent = element.textContent?.trim() || '';
+      if (textContent) {
+        messages.push(`${role}\n\n${textContent}`);
+      }
+    }
+  });
+
+  return messages.join('\n\n---\n\n');
+}
+
+// Custom Header component with copy button
+function CustomHeader() {
+  const { setOpen, icons, labels } = useChatContext();
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = useCallback(async () => {
+    // Extract messages from the DOM
+    const markdown = extractMessagesFromDOM();
+
+    if (!markdown) {
+      console.log('No messages to copy');
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(markdown);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (err) {
+      console.error('Failed to copy:', err);
+    }
+  }, []);
+
+  return (
+    <div className="copilotKitHeader">
+      <div style={{ flex: 1 }}>{labels.title}</div>
+      <div className="copilotKitHeaderControls">
+        <button
+          onClick={handleCopy}
+          className="copilotkit-copy-button"
+          title="Copy chat as markdown"
+          aria-label="Copy chat as markdown"
+        >
+          {copied ? <CheckIcon /> : <CopyIcon />}
+        </button>
+        <button
+          onClick={() => setOpen(false)}
+          className="copilotKitHeaderCloseButton"
+          aria-label="Close"
+        >
+          {icons.headerCloseIcon}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export function CopilotKitProvider({ children }: CopilotKitProviderProps) {
   return (
     <CopilotKit runtimeUrl="/docs/api/copilotkit" showDevConsole={false}>
@@ -214,6 +328,47 @@ export function CopilotKitProvider({ children }: CopilotKitProviderProps) {
         .copilotKitAssistantMessage > div > p + p {
           margin-top: 1em;
         }
+
+        /* Header controls container */
+        .copilotKitHeaderControls {
+          display: flex;
+          align-items: center;
+          gap: 4px;
+        }
+
+        /* Custom copy button styles */
+        .copilotkit-copy-button {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          width: 28px;
+          height: 28px;
+          padding: 0;
+          border: none;
+          background: transparent;
+          border-radius: 6px;
+          cursor: pointer;
+          color: var(--copilot-kit-secondary-contrast-color, #666);
+          transition: background-color 0.15s ease, color 0.15s ease;
+        }
+
+        .copilotkit-copy-button:hover {
+          background-color: var(--copilot-kit-separator-color, rgba(0, 0, 0, 0.08));
+          color: var(--copilot-kit-secondary-contrast-color, #333);
+        }
+
+        .copilotkit-copy-button:active {
+          background-color: var(--copilot-kit-separator-color, rgba(0, 0, 0, 0.12));
+        }
+
+        .dark .copilotkit-copy-button {
+          color: rgba(255, 255, 255, 0.7);
+        }
+
+        .dark .copilotkit-copy-button:hover {
+          background-color: rgba(255, 255, 255, 0.1);
+          color: rgba(255, 255, 255, 0.9);
+        }
       `}</style>
       <ToolCallIndicators />
       {children}
@@ -224,6 +379,7 @@ export function CopilotKitProvider({ children }: CopilotKitProviderProps) {
           initial: 'How can I help you?',
         }}
         AssistantMessage={CustomAssistantMessage}
+        Header={CustomHeader}
       />
     </CopilotKit>
   );

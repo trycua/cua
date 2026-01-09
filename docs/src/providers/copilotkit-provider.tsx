@@ -252,17 +252,19 @@ export function CopilotKitProvider({ children }: CopilotKitProviderProps) {
         .copilotKitHeader {
           display: flex;
           align-items: center;
-          gap: 8px;
+          gap: 14px;
+          font-size: 1.125rem;
         }
         .copilotKitHeader::before {
           content: '';
           display: inline-block;
-          width: 24px;
-          height: 24px;
+          width: 40px;
+          height: 40px;
           background-image: url('/docs/img/cuala-icon.svg');
           background-size: contain;
           background-repeat: no-repeat;
           background-position: center;
+          flex-shrink: 0;
         }
 
         /* Tool call indicator styles */
@@ -369,13 +371,49 @@ export function CopilotKitProvider({ children }: CopilotKitProviderProps) {
           background-color: rgba(255, 255, 255, 0.1);
           color: rgba(255, 255, 255, 0.9);
         }
+
+        /* Hide non-functional message action buttons (regenerate, copy, thumbs up/down) */
+        .copilotKitMessageControls {
+          display: none !important;
+        }
+
+        /* Hide download button in code blocks (first button), keep copy button */
+        .copilotKitCodeBlockToolbarButtons button:first-child {
+          display: none !important;
+        }
+
+        /* Fix corner radius consistency - all corners should match window's 0.75rem */
+        @media (min-width: 640px) {
+          .copilotKitHeader {
+            border-top-left-radius: 0.75rem;
+            border-top-right-radius: 0.75rem;
+          }
+        }
+
+        /* More padding in header */
+        .copilotKitHeader {
+          padding: 1.25rem 1.5rem;
+          height: auto;
+          min-height: 64px;
+        }
+
+        .poweredByContainer,
+        .poweredBy {
+          border-bottom-left-radius: 0.75rem;
+          border-bottom-right-radius: 0.75rem;
+        }
+
+        /* Match chat input radius to window */
+        .copilotKitInput {
+          border-radius: 0.75rem;
+        }
       `}</style>
       <ToolCallIndicators />
       {children}
       <CopilotPopup
         instructions={DOCS_INSTRUCTIONS}
         labels={{
-          title: 'CUA Docs Assistant (experimental)',
+          title: 'CUA Docs Assistant',
           initial: 'How can I help you?',
         }}
         AssistantMessage={CustomAssistantMessage}

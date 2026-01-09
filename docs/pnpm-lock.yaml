@@ -50,6 +50,12 @@ importers:
       openai:
         specifier: ^4.104.0
         version: 4.104.0(zod@4.1.12)
+      pino:
+        specifier: ^9.14.0
+        version: 9.14.0
+      pino-pretty:
+        specifier: ^11.3.0
+        version: 11.3.0
       posthog-js:
         specifier: ^1.276.0
         version: 1.276.0

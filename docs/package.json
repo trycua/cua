@@ -11,9 +11,9 @@
   "dependencies": {
     "@ai-sdk/anthropic": "^3.0.9",
     "@anthropic-ai/sdk": "^0.71.2",
-    "@copilotkit/react-core": "^1.50.1",
-    "@copilotkit/react-ui": "^1.50.1",
-    "@copilotkit/runtime": "^1.50.1",
+    "@copilotkit/react-core": "1.50.1",
+    "@copilotkit/react-ui": "1.50.1",
+    "@copilotkit/runtime": "1.50.1",
     "fumadocs-core": "16.0.8",
     "fumadocs-mdx": "13.0.8",
     "fumadocs-ui": "16.0.8",

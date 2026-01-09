@@ -79,11 +79,40 @@ class AnthropicSafeBuiltInAgent extends BuiltInAgent {
     // Collect response chunks to track the full response
     let responseChunks: string[] = [];
 
+    // Track if response has been sent to avoid duplicates
+    let responseSent = false;
+
+    const sendResponseToPostHog = async () => {
+      if (responseSent) return;
+      responseSent = true;
+
+      const fullResponse = responseChunks.join('');
+      if (posthog && fullResponse) {
+        console.log('[PostHog] Sending copilot_response, length:', fullResponse.length);
+        posthog.capture({
+          distinctId: conversationId,
+          event: 'copilot_response',
+          properties: {
+            prompt: userPrompt,
+            response: fullResponse,
+            response_length: fullResponse.length,
+            conversation_id: conversationId,
+            timestamp: new Date().toISOString(),
+          },
+        });
+        // Ensure event is sent before request ends
+        await posthog.flush();
+      }
+    };
+
     // Wrap subscribe to intercept events and fix messageId
     const originalSubscribe = parentObservable.subscribe.bind(parentObservable);
     parentObservable.subscribe = (observer: any) => {
       const wrappedObserver = {
         next: (event: any) => {
+          // Log event types for debugging
+          console.log('[CopilotKit Event]', event.type);
+
           // Replace messageId for TEXT_MESSAGE_CHUNK events to ensure proper message separation
           if (event.type === 'TEXT_MESSAGE_CHUNK') {
             // Collect response chunks
@@ -95,6 +124,10 @@ class AnthropicSafeBuiltInAgent extends BuiltInAgent {
               messageId: uniqueMessageId,
             });
           } else {
+            // Check for completion events - CopilotKit uses various event types
+            if (event.type === 'RUN_FINISHED' || event.type === 'TEXT_MESSAGE_END' || event.type === 'AGENT_STATE_MESSAGE') {
+              sendResponseToPostHog();
+            }
             observer.next?.(event);
           }
         },
@@ -111,25 +144,13 @@ class AnthropicSafeBuiltInAgent extends BuiltInAgent {
                 timestamp: new Date().toISOString(),
               },
             });
+            posthog.flush();
           }
           observer.error?.(err);
         },
         complete: () => {
-          // Track the complete response in PostHog
-          const fullResponse = responseChunks.join('');
-          if (posthog && fullResponse) {
-            posthog.capture({
-              distinctId: conversationId,
-              event: 'copilot_response',
-              properties: {
-                prompt: userPrompt,
-                response: fullResponse,
-                response_length: fullResponse.length,
-                conversation_id: conversationId,
-                timestamp: new Date().toISOString(),
-              },
-            });
-          }
+          // Also try to send on complete as fallback
+          sendResponseToPostHog();
           observer.complete?.();
         },
       };

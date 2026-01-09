@@ -156,20 +156,6 @@ function CheckIcon() {
   );
 }
 
-// Function to convert messages to markdown
-function messagesToMarkdown(messages: Array<{ role: string; content: string | unknown }>): string {
-  if (!messages || messages.length === 0) return '';
-
-  return messages
-    .filter(msg => msg.role === 'user' || msg.role === 'assistant')
-    .map(msg => {
-      const role = msg.role === 'user' ? '**User:**' : '**Assistant:**';
-      const content = typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content);
-      return `${role}\n\n${content}`;
-    })
-    .join('\n\n---\n\n');
-}
-
 // Helper function to extract messages from the DOM
 function extractMessagesFromDOM(): string {
   // Find the CopilotKit messages container

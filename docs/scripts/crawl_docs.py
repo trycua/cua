@@ -8,6 +8,7 @@ import json
 import re
 from pathlib import Path
 from urllib.parse import urljoin, urlparse
+
 from crawl4ai import AsyncWebCrawler, BrowserConfig, CrawlerRunConfig
 
 # Configuration
@@ -30,9 +31,9 @@ class CuaDocsCrawler:
         """Normalize URL to avoid duplicates"""
         parsed = urlparse(url)
         # Remove trailing slashes and fragments
-        path = parsed.path.rstrip('/')
+        path = parsed.path.rstrip("/")
         if not path:
-            path = ''
+            path = ""
         return f"{parsed.scheme}://{parsed.netloc}{path}"
 
     def is_valid_url(self, url: str) -> bool:
@@ -40,20 +41,36 @@ class CuaDocsCrawler:
         parsed = urlparse(url)
 
         # Only crawl cua.ai pages
-        if parsed.netloc and parsed.netloc not in ['cua.ai', 'www.cua.ai']:
+        if parsed.netloc and parsed.netloc not in ["cua.ai", "www.cua.ai"]:
             return False
 
         # Only crawl /docs paths
-        if not parsed.path.startswith('/docs'):
+        if not parsed.path.startswith("/docs"):
             return False
 
         # Skip non-page resources
-        skip_extensions = ['.pdf', '.png', '.jpg', '.jpeg', '.gif', '.svg', '.css', '.js', '.ico', '.woff', '.woff2', '.ttf', '.zip', '.tar', '.gz']
+        skip_extensions = [
+            ".pdf",
+            ".png",
+            ".jpg",
+            ".jpeg",
+            ".gif",
+            ".svg",
+            ".css",
+            ".js",
+            ".ico",
+            ".woff",
+            ".woff2",
+            ".ttf",
+            ".zip",
+            ".tar",
+            ".gz",
+        ]
         if any(parsed.path.lower().endswith(ext) for ext in skip_extensions):
             return False
 
         # Skip external links and anchors
-        if url.startswith('#') or url.startswith('mailto:') or url.startswith('javascript:'):
+        if url.startswith("#") or url.startswith("mailto:") or url.startswith("javascript:"):
             return False
 
         return True
@@ -68,11 +85,11 @@ class CuaDocsCrawler:
 
         for href in matches:
             # Convert relative URLs to absolute
-            if href.startswith('/'):
+            if href.startswith("/"):
                 full_url = urljoin(BASE_URL, href)
-            elif href.startswith('http'):
+            elif href.startswith("http"):
                 full_url = href
-            elif not href.startswith('#') and not href.startswith('mailto:'):
+            elif not href.startswith("#") and not href.startswith("mailto:"):
                 full_url = urljoin(current_url, href)
             else:
                 continue
@@ -86,8 +103,8 @@ class CuaDocsCrawler:
     def extract_path_info(self, url: str) -> dict:
         """Extract meaningful path information from URL"""
         parsed = urlparse(url)
-        path = parsed.path.replace('/docs/', '').strip('/')
-        parts = path.split('/') if path else []
+        path = parsed.path.replace("/docs/", "").strip("/")
+        parts = path.split("/") if path else []
 
         return {
             "path": path,
@@ -122,7 +139,9 @@ class CuaDocsCrawler:
                     page_data = {
                         "url": url,
                         "title": result.metadata.get("title", "") if result.metadata else "",
-                        "description": result.metadata.get("description", "") if result.metadata else "",
+                        "description": (
+                            result.metadata.get("description", "") if result.metadata else ""
+                        ),
                         "markdown": result.markdown,
                         "path_info": path_info,
                         "links_found": list(new_links),
@@ -147,11 +166,11 @@ class CuaDocsCrawler:
         """Save page data to a JSON file"""
         # Create filename from URL path
         parsed = urlparse(url)
-        path = parsed.path.strip('/') or 'index'
-        filename = path.replace('/', '_') + '.json'
+        path = parsed.path.strip("/") or "index"
+        filename = path.replace("/", "_") + ".json"
 
         filepath = OUTPUT_DIR / filename
-        with open(filepath, 'w', encoding='utf-8') as f:
+        with open(filepath, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2, ensure_ascii=False)
 
     async def crawl_all(self):
@@ -172,7 +191,7 @@ class CuaDocsCrawler:
 
         for url in seed_urls:
             normalized = self.normalize_url(url)
-            if self.is_valid_url(normalized) or url.endswith('llms.txt'):
+            if self.is_valid_url(normalized) or url.endswith("llms.txt"):
                 self.to_visit.add(normalized)
 
         browser_config = BrowserConfig(
@@ -212,14 +231,14 @@ class CuaDocsCrawler:
             "categories": self._get_categories(),
         }
 
-        with open(OUTPUT_DIR / "_summary.json", 'w', encoding='utf-8') as f:
+        with open(OUTPUT_DIR / "_summary.json", "w", encoding="utf-8") as f:
             json.dump(summary, f, indent=2)
 
         # Save all data in one file too
-        with open(OUTPUT_DIR / "_all_pages.json", 'w', encoding='utf-8') as f:
+        with open(OUTPUT_DIR / "_all_pages.json", "w", encoding="utf-8") as f:
             json.dump(self.all_data, f, indent=2, ensure_ascii=False)
 
-        print(f"\nCrawl complete!")
+        print("\nCrawl complete!")
         print(f"Total pages crawled: {len(self.all_data)}")
         print(f"Failed URLs: {len(self.failed_urls)}")
         print(f"Output saved to: {OUTPUT_DIR.absolute()}")

@@ -24,6 +24,7 @@ model = get_registry().get("sentence-transformers").create(name="all-MiniLM-L6-v
 
 class DocChunk(LanceModel):
     """Schema for document chunks in the database"""
+
     text: str = model.SourceField()
     vector: Vector(model.ndims()) = model.VectorField()
     url: str
@@ -37,15 +38,15 @@ class DocChunk(LanceModel):
 def clean_markdown(markdown: str) -> str:
     """Clean markdown content for better chunking"""
     # Remove excessive whitespace
-    text = re.sub(r'\n{3,}', '\n\n', markdown)
+    text = re.sub(r"\n{3,}", "\n\n", markdown)
     # Remove image markdown
-    text = re.sub(r'!\[.*?\]\(.*?\)', '', text)
+    text = re.sub(r"!\[.*?\]\(.*?\)", "", text)
     # Remove link URLs but keep text
-    text = re.sub(r'\[([^\]]+)\]\([^)]+\)', r'\1', text)
+    text = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", text)
     # Remove HTML tags
-    text = re.sub(r'<[^>]+>', '', text)
+    text = re.sub(r"<[^>]+>", "", text)
     # Clean up whitespace
-    text = re.sub(r' {2,}', ' ', text)
+    text = re.sub(r" {2,}", " ", text)
     return text.strip()
 
 
@@ -55,7 +56,7 @@ def chunk_text(text: str, chunk_size: int = CHUNK_SIZE, overlap: int = CHUNK_OVE
         return []
 
     # Split by paragraphs first
-    paragraphs = text.split('\n\n')
+    paragraphs = text.split("\n\n")
     chunks = []
     current_chunk = ""
 
@@ -72,15 +73,15 @@ def chunk_text(text: str, chunk_size: int = CHUNK_SIZE, overlap: int = CHUNK_OVE
                 if overlap > 0 and len(current_chunk) > overlap:
                     # Try to find a sentence boundary for overlap
                     overlap_text = current_chunk[-overlap:]
-                    sentence_end = overlap_text.rfind('. ')
+                    sentence_end = overlap_text.rfind(". ")
                     if sentence_end > 0:
-                        overlap_text = overlap_text[sentence_end + 2:]
+                        overlap_text = overlap_text[sentence_end + 2 :]
                     current_chunk = overlap_text + "\n\n" + para
                 else:
                     current_chunk = para
             else:
                 # Single paragraph exceeds chunk size, split by sentences
-                sentences = re.split(r'(?<=[.!?])\s+', para)
+                sentences = re.split(r"(?<=[.!?])\s+", para)
                 for sentence in sentences:
                     if len(current_chunk) + len(sentence) + 1 > chunk_size:
                         if current_chunk:
@@ -88,9 +89,9 @@ def chunk_text(text: str, chunk_size: int = CHUNK_SIZE, overlap: int = CHUNK_OVE
                             # Start new chunk with overlap from previous, similar to paragraph logic
                             if overlap > 0 and len(current_chunk) > overlap:
                                 overlap_text = current_chunk[-overlap:]
-                                sentence_end = overlap_text.rfind('. ')
+                                sentence_end = overlap_text.rfind(". ")
                                 if sentence_end > 0:
-                                    overlap_text = overlap_text[sentence_end + 2:]
+                                    overlap_text = overlap_text[sentence_end + 2 :]
                                 current_chunk = (overlap_text + " " + sentence).strip()
                             else:
                                 current_chunk = sentence.strip()
@@ -114,15 +115,15 @@ def load_crawled_data() -> list[dict]:
     all_pages_file = CRAWLED_DATA_DIR / "_all_pages.json"
 
     if all_pages_file.exists():
-        with open(all_pages_file, 'r', encoding='utf-8') as f:
+        with open(all_pages_file, "r", encoding="utf-8") as f:
             return json.load(f)
 
     # Fallback: load individual files
     pages = []
     for json_file in CRAWLED_DATA_DIR.glob("*.json"):
-        if json_file.name.startswith('_'):
+        if json_file.name.startswith("_"):
             continue
-        with open(json_file, 'r', encoding='utf-8') as f:
+        with open(json_file, "r", encoding="utf-8") as f:
             pages.append(json.load(f))
 
     return pages
@@ -174,6 +175,7 @@ def create_database(chunks: list[dict]):
     # Remove existing database
     if DB_PATH.exists():
         import shutil
+
         shutil.rmtree(DB_PATH)
 
     # Create database
@@ -189,7 +191,7 @@ def create_database(chunks: list[dict]):
     # Add data in batches
     batch_size = 100
     for i in range(0, len(chunks), batch_size):
-        batch = chunks[i:i + batch_size]
+        batch = chunks[i : i + batch_size]
         print(f"Adding batch {i // batch_size + 1}/{(len(chunks) + batch_size - 1) // batch_size}")
         table.add(batch)
 

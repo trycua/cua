@@ -18,7 +18,7 @@ SQLITE_PATH = Path(__file__).parent.parent / "docs_db" / "docs.sqlite"
 def clean_markdown(markdown: str) -> str:
     """
     Extract plain text content from markdown using a proper markdown parser.
-    
+
     This function uses markdown-it-py to parse the markdown into a token tree
     and then extracts only the text content, removing:
     - Markdown formatting (bold, italic, headers, etc.)
@@ -26,62 +26,64 @@ def clean_markdown(markdown: str) -> str:
     - Images (alt text is discarded)
     - HTML tags
     - Code block language identifiers
-    
+
     Args:
         markdown: Raw markdown content
-        
+
     Returns:
         Plain text content suitable for full-text search
     """
     md_parser = MarkdownIt()
     tokens = md_parser.parse(markdown)
-    
+
     text_parts = []
-    
+
     def extract_text(token_list):
         """Recursively extract text from token tree"""
         for token in token_list:
-            if token.type == 'inline' and token.children:
+            if token.type == "inline" and token.children:
                 # Process inline content (text, links, formatting, etc.)
                 for child in token.children:
-                    if child.type == 'text':
+                    if child.type == "text":
                         text_parts.append(child.content)
-                    elif child.type == 'code_inline':
+                    elif child.type == "code_inline":
                         text_parts.append(child.content)
-                    elif child.type == 'softbreak':
-                        text_parts.append(' ')
-                    elif child.type == 'hardbreak':
-                        text_parts.append('\n')
+                    elif child.type == "softbreak":
+                        text_parts.append(" ")
+                    elif child.type == "hardbreak":
+                        text_parts.append("\n")
                     # Skip link markup, images, and formatting tokens
                     # (link_open, link_close, image, strong_open, strong_close, em_open, em_close, etc.)
-            elif token.type == 'fence' or token.type == 'code_block':
+            elif token.type == "fence" or token.type == "code_block":
                 # Include code content and add newline after
                 text_parts.append(token.content)
-                text_parts.append('\n')
-            elif token.type == 'html_block' or token.type == 'html_inline':
+                text_parts.append("\n")
+            elif token.type == "html_block" or token.type == "html_inline":
                 # Skip HTML blocks and inline HTML
                 pass
-            
+
             # Recursively process nested children
             if token.children:
                 extract_text(token.children)
-            
+
             # Add spacing after block elements
             if token.type in [
-                'heading_close', 'paragraph_close', 'list_item_close',
-                'blockquote_close'
+                "heading_close",
+                "paragraph_close",
+                "list_item_close",
+                "blockquote_close",
             ]:
-                text_parts.append('\n')
-    
+                text_parts.append("\n")
+
     extract_text(tokens)
-    
+
     # Join and clean up whitespace
-    text = ''.join(text_parts)
+    text = "".join(text_parts)
     # Normalize multiple newlines to at most double newlines
-    text = re.sub(r'\n{3,}', '\n\n', text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
     # Normalize multiple spaces to single space within lines
-    text = re.sub(r' {2,}', ' ', text)
-    
+    text = re.sub(r" {2,}", " ", text)
+
     return text.strip()
 
 
@@ -90,14 +92,14 @@ def load_crawled_data() -> list[dict]:
     all_pages_file = CRAWLED_DATA_DIR / "_all_pages.json"
 
     if all_pages_file.exists():
-        with open(all_pages_file, 'r', encoding='utf-8') as f:
+        with open(all_pages_file, "r", encoding="utf-8") as f:
             return json.load(f)
 
     pages = []
     for json_file in CRAWLED_DATA_DIR.glob("*.json"):
-        if json_file.name.startswith('_'):
+        if json_file.name.startswith("_"):
             continue
-        with open(json_file, 'r', encoding='utf-8') as f:
+        with open(json_file, "r", encoding="utf-8") as f:
             pages.append(json.load(f))
 
     return pages
@@ -116,7 +118,8 @@ def create_database(pages: list[dict]):
     cursor = conn.cursor()
 
     # Create main pages table
-    cursor.execute("""
+    cursor.execute(
+        """
         CREATE TABLE pages (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             url TEXT UNIQUE NOT NULL,
@@ -128,10 +131,12 @@ def create_database(pages: list[dict]):
             content TEXT,
             raw_markdown TEXT
         )
-    """)
+    """
+    )
 
     # Create FTS5 virtual table for full-text search
-    cursor.execute("""
+    cursor.execute(
+        """
         CREATE VIRTUAL TABLE pages_fts USING fts5(
             content,
             url UNINDEXED,
@@ -140,29 +145,36 @@ def create_database(pages: list[dict]):
             content='pages',
             content_rowid='id'
         )
-    """)
+    """
+    )
 
     # Create triggers to keep FTS in sync
-    cursor.execute("""
+    cursor.execute(
+        """
         CREATE TRIGGER pages_ai AFTER INSERT ON pages BEGIN
             INSERT INTO pages_fts(rowid, content, url, title, category)
             VALUES (new.id, new.content, new.url, new.title, new.category);
         END;
-    """)
+    """
+    )
 
-    cursor.execute("""
+    cursor.execute(
+        """
         CREATE TRIGGER pages_ad AFTER DELETE ON pages BEGIN
             DELETE FROM pages_fts WHERE rowid = old.id;
         END;
-    """)
+    """
+    )
 
-    cursor.execute("""
+    cursor.execute(
+        """
         CREATE TRIGGER pages_au AFTER UPDATE ON pages BEGIN
             DELETE FROM pages_fts WHERE rowid = old.id;
             INSERT INTO pages_fts(rowid, content, url, title, category)
             VALUES (new.id, new.content, new.url, new.title, new.category);
         END;
-    """)
+    """
+    )
 
     # Insert pages
     for page in pages:
@@ -176,20 +188,23 @@ def create_database(pages: list[dict]):
 
         path_info = page.get("path_info", {})
 
-        cursor.execute("""
+        cursor.execute(
+            """
             INSERT OR REPLACE INTO pages
             (url, title, description, category, subcategory, page_name, content, raw_markdown)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        """, (
-            page.get("url", ""),
-            page.get("title") or path_info.get("page", "") or "Untitled",
-            page.get("description", ""),
-            path_info.get("category", "unknown"),
-            path_info.get("subcategory"),
-            path_info.get("page", ""),
-            content,
-            markdown,
-        ))
+        """,
+            (
+                page.get("url", ""),
+                page.get("title") or path_info.get("page", "") or "Untitled",
+                page.get("description", ""),
+                path_info.get("category", "unknown"),
+                path_info.get("subcategory"),
+                path_info.get("page", ""),
+                content,
+                markdown,
+            ),
+        )
 
     conn.commit()
 
@@ -217,13 +232,16 @@ def test_search(query: str):
     print(f"\nFTS5 search for: '{query}'")
     print("-" * 50)
 
-    cursor.execute("""
+    cursor.execute(
+        """
         SELECT url, title, snippet(pages_fts, 0, '>>>', '<<<', '...', 50) as snippet
         FROM pages_fts
         WHERE pages_fts MATCH ?
         ORDER BY rank
         LIMIT 5
-    """, (query,))
+    """,
+        (query,),
+    )
 
     results = cursor.fetchall()
     for url, title, snippet in results:

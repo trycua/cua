@@ -133,9 +133,10 @@ def create_database(pages: list[dict]):
     # Create FTS5 virtual table for full-text search
     cursor.execute("""
         CREATE VIRTUAL TABLE pages_fts USING fts5(
-            title,
             content,
-            url,
+            url UNINDEXED,
+            title UNINDEXED,
+            category UNINDEXED,
             content='pages',
             content_rowid='id'
         )
@@ -144,25 +145,23 @@ def create_database(pages: list[dict]):
     # Create triggers to keep FTS in sync
     cursor.execute("""
         CREATE TRIGGER pages_ai AFTER INSERT ON pages BEGIN
-            INSERT INTO pages_fts(rowid, title, content, url)
-            VALUES (new.id, new.title, new.content, new.url);
-        END
+            INSERT INTO pages_fts(rowid, content, url, title, category)
+            VALUES (new.id, new.content, new.url, new.title, new.category);
+        END;
     """)
 
     cursor.execute("""
         CREATE TRIGGER pages_ad AFTER DELETE ON pages BEGIN
-            INSERT INTO pages_fts(pages_fts, rowid, title, content, url)
-            VALUES('delete', old.id, old.title, old.content, old.url);
-        END
+            DELETE FROM pages_fts WHERE rowid = old.id;
+        END;
     """)
 
     cursor.execute("""
         CREATE TRIGGER pages_au AFTER UPDATE ON pages BEGIN
-            INSERT INTO pages_fts(pages_fts, rowid, title, content, url)
-            VALUES('delete', old.id, old.title, old.content, old.url);
-            INSERT INTO pages_fts(rowid, title, content, url)
-            VALUES (new.id, new.title, new.content, new.url);
-        END
+            DELETE FROM pages_fts WHERE rowid = old.id;
+            INSERT INTO pages_fts(rowid, content, url, title, category)
+            VALUES (new.id, new.content, new.url, new.title, new.category);
+        END;
     """)
 
     # Insert pages
@@ -219,7 +218,7 @@ def test_search(query: str):
     print("-" * 50)
 
     cursor.execute("""
-        SELECT url, title, snippet(pages_fts, 1, '>>>', '<<<', '...', 50) as snippet
+        SELECT url, title, snippet(pages_fts, 0, '>>>', '<<<', '...', 50) as snippet
         FROM pages_fts
         WHERE pages_fts MATCH ?
         ORDER BY rank

@@ -8,6 +8,7 @@ import { NextRequest } from 'next/server';
 
 // Create a BuiltInAgent using AI SDK with Anthropic and MCP tools
 const docsAgent = new BuiltInAgent({
+  maxSteps: 100,
   model: 'anthropic/claude-sonnet-4-20250514',
   prompt: `You are a helpful assistant for CUA (Computer Use Agent) and CUA-Bench documentation.
 Be concise and helpful. Answer questions about the documentation accurately.

@@ -1,9 +1,13 @@
 'use client';
 
 import { CopilotKit, useRenderToolCall } from '@copilotkit/react-core';
-import { CopilotPopup, AssistantMessage as DefaultAssistantMessage, useChatContext } from '@copilotkit/react-ui';
+import {
+  CopilotPopup,
+  AssistantMessage as DefaultAssistantMessage,
+  useChatContext,
+} from '@copilotkit/react-ui';
 import '@copilotkit/react-ui/styles.css';
-import { ReactNode, useMemo, useState, useCallback, useRef, useEffect } from 'react';
+import { ReactNode, useMemo, useState, useCallback } from 'react';
 
 const DOCS_INSTRUCTIONS = `You are a helpful assistant for CUA (Computer Use Agent) and CUA-Bench documentation. Be concise and helpful.
 
@@ -49,9 +53,10 @@ function CustomAssistantMessage(props: React.ComponentProps<typeof DefaultAssist
 
     // Handle array content (multipart messages)
     if (Array.isArray(message.content)) {
+      const contentArray = message.content as unknown[];
       return {
         ...message,
-        content: message.content.map((part: unknown) => {
+        content: contentArray.map((part: unknown) => {
           if (typeof part === 'string') {
             return fixTextConcatenation(part);
           }
@@ -69,7 +74,7 @@ function CustomAssistantMessage(props: React.ComponentProps<typeof DefaultAssist
     return message;
   }, [message]);
 
-  return <DefaultAssistantMessage {...rest} message={processedMessage} />;
+  return <DefaultAssistantMessage {...rest} message={processedMessage as typeof message} />;
 }
 
 // Component to render tool call indicators
@@ -97,7 +102,7 @@ function ToolCallIndicators() {
           </div>
         );
       }
-      return null;
+      return <></>;
     },
   });
 
@@ -124,7 +129,7 @@ function ToolCallIndicators() {
           </div>
         );
       }
-      return null;
+      return <></>;
     },
   });
 

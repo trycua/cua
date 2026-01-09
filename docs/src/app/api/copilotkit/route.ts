@@ -5,20 +5,15 @@ import {
 } from '@copilotkit/runtime';
 import { BuiltInAgent, InMemoryAgentRunner } from '@copilotkit/runtime/v2';
 import { NextRequest } from 'next/server';
-import { Observable } from 'rxjs';
+import { randomUUID } from 'crypto';
 
 /**
- * Custom agent that extends BuiltInAgent to fix empty message content issue with Anthropic.
+ * Custom agent that extends BuiltInAgent to fix issues with Anthropic and message ordering.
  *
- * The Anthropic API requires all messages to have non-empty content (except the optional
- * final assistant message). CopilotKit creates separate empty TextMessages alongside
- * ActionExecutionMessages when the assistant uses tools. These empty messages cause
- * Anthropic API errors on follow-up messages.
- *
- * This fix:
- * 1. Overrides clone() to preserve our custom class (base class clone() returns BuiltInAgent)
- * 2. Overrides run() to filter out empty assistant messages before they reach the AI SDK
- * 3. Preserves messages with tool calls or meaningful content
+ * Fixes:
+ * 1. Filters empty assistant messages (Anthropic API requirement)
+ * 2. Forces new message IDs for each conversation turn to fix message ordering
+ * 3. Preserves our custom class on clone()
  */
 class AnthropicSafeBuiltInAgent extends BuiltInAgent {
   private agentConfig: any;
@@ -33,7 +28,7 @@ class AnthropicSafeBuiltInAgent extends BuiltInAgent {
     return new AnthropicSafeBuiltInAgent(this.agentConfig);
   }
 
-  run(input: any): Observable<any> {
+  run(input: any): ReturnType<BuiltInAgent['run']> {
     // Filter out empty assistant messages before passing to parent
     const filteredMessages = this.filterEmptyMessages(input.messages || []);
 
@@ -43,7 +38,36 @@ class AnthropicSafeBuiltInAgent extends BuiltInAgent {
       messages: filteredMessages,
     };
 
-    return super.run(modifiedInput);
+    // Generate a unique message ID for this run to fix message ordering
+    // Without this, all responses use messageId: 0 and get merged together
+    const uniqueMessageId = randomUUID();
+    console.log('[AnthropicSafeBuiltInAgent] run() with', filteredMessages.length, 'messages, uniqueMessageId:', uniqueMessageId);
+
+    // Get the parent observable
+    const parentObservable = super.run(modifiedInput);
+
+    // Wrap subscribe to intercept events and fix messageId
+    const originalSubscribe = parentObservable.subscribe.bind(parentObservable);
+    parentObservable.subscribe = (observer: any) => {
+      const wrappedObserver = {
+        next: (event: any) => {
+          // Replace messageId for TEXT_MESSAGE_CHUNK events to ensure proper message separation
+          if (event.type === 'TEXT_MESSAGE_CHUNK') {
+            observer.next?.({
+              ...event,
+              messageId: uniqueMessageId,
+            });
+          } else {
+            observer.next?.(event);
+          }
+        },
+        error: (err: any) => observer.error?.(err),
+        complete: () => observer.complete?.(),
+      };
+      return originalSubscribe(wrappedObserver);
+    };
+
+    return parentObservable;
   }
 
   private filterEmptyMessages(messages: any[]): any[] {
@@ -101,9 +125,10 @@ When answering questions about CUA, always use these tools to find accurate info
 });
 
 // Create runtime with the agent registered as 'default'
+// Cast to any to bypass rxjs version conflicts between our Observable and CopilotKit's
 const runtime = new CopilotRuntime({
   agents: {
-    default: docsAgent,
+    default: docsAgent as any,
   },
   runner: new InMemoryAgentRunner(),
 });

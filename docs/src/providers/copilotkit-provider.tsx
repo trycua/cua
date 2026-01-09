@@ -73,7 +73,12 @@ function CustomAssistantMessage(props: React.ComponentProps<typeof DefaultAssist
           if (typeof part === 'string') {
             return fixTextConcatenation(part);
           }
-          if (part && typeof part === 'object' && 'text' in part && typeof (part as { text?: unknown }).text === 'string') {
+          if (
+            part &&
+            typeof part === 'object' &&
+            'text' in part &&
+            typeof (part as { text?: unknown }).text === 'string'
+          ) {
             return {
               ...part,
               text: fixTextConcatenation((part as { text: string }).text),
@@ -96,17 +101,31 @@ function ToolCallIndicators() {
   useRenderToolCall({
     name: 'search_docs',
     description: 'Searches the CUA documentation',
-    parameters: [
-      { name: 'query', type: 'string', description: 'Search query', required: true },
-    ],
+    parameters: [{ name: 'query', type: 'string', description: 'Search query', required: true }],
     render: ({ status, args }) => {
       if (status === 'inProgress') {
         return (
           <div className="copilotkit-tool-indicator">
             <div className="copilotkit-tool-indicator-icon">
-              <svg className="copilotkit-spinner" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+              <svg
+                className="copilotkit-spinner"
+                viewBox="0 0 24 24"
+                fill="none"
+                xmlns="http://www.w3.org/2000/svg"
+              >
+                <circle
+                  className="opacity-25"
+                  cx="12"
+                  cy="12"
+                  r="10"
+                  stroke="currentColor"
+                  strokeWidth="4"
+                ></circle>
+                <path
+                  className="opacity-75"
+                  fill="currentColor"
+                  d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                ></path>
               </svg>
             </div>
             <span className="copilotkit-tool-indicator-text">
@@ -123,17 +142,31 @@ function ToolCallIndicators() {
   useRenderToolCall({
     name: 'sql_query',
     description: 'Queries the documentation database',
-    parameters: [
-      { name: 'query', type: 'string', description: 'SQL query', required: true },
-    ],
+    parameters: [{ name: 'query', type: 'string', description: 'SQL query', required: true }],
     render: ({ status }) => {
       if (status === 'inProgress') {
         return (
           <div className="copilotkit-tool-indicator">
             <div className="copilotkit-tool-indicator-icon">
-              <svg className="copilotkit-spinner" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+              <svg
+                className="copilotkit-spinner"
+                viewBox="0 0 24 24"
+                fill="none"
+                xmlns="http://www.w3.org/2000/svg"
+              >
+                <circle
+                  className="opacity-25"
+                  cx="12"
+                  cy="12"
+                  r="10"
+                  stroke="currentColor"
+                  strokeWidth="4"
+                ></circle>
+                <path
+                  className="opacity-75"
+                  fill="currentColor"
+                  d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                ></path>
               </svg>
             </div>
             <span className="copilotkit-tool-indicator-text">
@@ -152,7 +185,16 @@ function ToolCallIndicators() {
 // Copy icon component
 function CopyIcon() {
   return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
       <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
       <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
     </svg>
@@ -162,7 +204,16 @@ function CopyIcon() {
 // Check icon for copied state
 function CheckIcon() {
   return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
       <polyline points="20 6 9 17 4 12"></polyline>
     </svg>
   );
@@ -180,7 +231,9 @@ function extractMessagesFromDOM(): string {
   const messages: string[] = [];
 
   // Find all message elements - CopilotKit uses specific class patterns
-  const allElements = messagesContainer.querySelectorAll('[class*="copilotKitUserMessage"], [class*="copilotKitAssistantMessage"]');
+  const allElements = messagesContainer.querySelectorAll(
+    '[class*="copilotKitUserMessage"], [class*="copilotKitAssistantMessage"]'
+  );
 
   allElements.forEach((element) => {
     const className = element.className;
@@ -280,45 +333,56 @@ function CopilotPopupWithFeedback() {
     return null;
   }, []);
 
-  const findPrecedingUserPrompt = useCallback((assistantMessageId: string) => {
-    const messageIndex = visibleMessages.findIndex((m: CopilotMessage) => m.id === assistantMessageId);
-    if (messageIndex <= 0) return null;
+  const findPrecedingUserPrompt = useCallback(
+    (assistantMessageId: string) => {
+      const messageIndex = visibleMessages.findIndex(
+        (m: CopilotMessage) => m.id === assistantMessageId
+      );
+      if (messageIndex <= 0) return null;
 
-    // Look backwards for the most recent user message
-    for (let i = messageIndex - 1; i >= 0; i--) {
-      const msg = visibleMessages[i] as CopilotMessage;
-      if (msg.role === 'user') {
-        return getMessageContent(msg);
+      // Look backwards for the most recent user message
+      for (let i = messageIndex - 1; i >= 0; i--) {
+        const msg = visibleMessages[i] as CopilotMessage;
+        if (msg.role === 'user') {
+          return getMessageContent(msg);
+        }
       }
-    }
-    return null;
-  }, [visibleMessages, getMessageContent]);
+      return null;
+    },
+    [visibleMessages, getMessageContent]
+  );
 
-  const handleThumbsUp = useCallback((message: CopilotMessage) => {
-    const prompt = findPrecedingUserPrompt(message.id);
-    const response = getMessageContent(message);
+  const handleThumbsUp = useCallback(
+    (message: CopilotMessage) => {
+      const prompt = findPrecedingUserPrompt(message.id);
+      const response = getMessageContent(message);
 
-    posthog.capture('copilot_feedback', {
-      vote: 'up',
-      response,
-      prompt,
-      conversation_id: conversationId,
-      timestamp: new Date().toISOString(),
-    });
-  }, [findPrecedingUserPrompt, getMessageContent, conversationId]);
+      posthog.capture('copilot_feedback', {
+        vote: 'up',
+        response,
+        prompt,
+        conversation_id: conversationId,
+        timestamp: new Date().toISOString(),
+      });
+    },
+    [findPrecedingUserPrompt, getMessageContent, conversationId]
+  );
 
-  const handleThumbsDown = useCallback((message: CopilotMessage) => {
-    const prompt = findPrecedingUserPrompt(message.id);
-    const response = getMessageContent(message);
+  const handleThumbsDown = useCallback(
+    (message: CopilotMessage) => {
+      const prompt = findPrecedingUserPrompt(message.id);
+      const response = getMessageContent(message);
 
-    posthog.capture('copilot_feedback', {
-      vote: 'down',
-      response,
-      prompt,
-      conversation_id: conversationId,
-      timestamp: new Date().toISOString(),
-    });
-  }, [findPrecedingUserPrompt, getMessageContent, conversationId]);
+      posthog.capture('copilot_feedback', {
+        vote: 'down',
+        response,
+        prompt,
+        conversation_id: conversationId,
+        timestamp: new Date().toISOString(),
+      });
+    },
+    [findPrecedingUserPrompt, getMessageContent, conversationId]
+  );
 
   return (
     <CopilotPopup
@@ -528,11 +592,7 @@ const customStyles = `
 `;
 
 // Memoized CopilotKit wrapper to prevent re-renders
-const CopilotKitWrapper = memo(function CopilotKitWrapper({
-  children,
-}: {
-  children: ReactNode;
-}) {
+const CopilotKitWrapper = memo(function CopilotKitWrapper({ children }: { children: ReactNode }) {
   return (
     <CopilotKit runtimeUrl="/docs/api/copilotkit" showDevConsole={false}>
       <style>{customStyles}</style>

@@ -52,7 +52,12 @@ class AnthropicSafeBuiltInAgent extends BuiltInAgent {
     // Without this, all responses use messageId: 0 and get merged together
     const uniqueMessageId = randomUUID();
     const conversationId = input.threadId || uniqueMessageId;
-    console.log('[AnthropicSafeBuiltInAgent] run() with', filteredMessages.length, 'messages, uniqueMessageId:', uniqueMessageId);
+    console.log(
+      '[AnthropicSafeBuiltInAgent] run() with',
+      filteredMessages.length,
+      'messages, uniqueMessageId:',
+      uniqueMessageId
+    );
 
     // Extract the latest user message for tracking
     const userMessages = filteredMessages.filter((m: any) => m.role === 'user');
@@ -125,7 +130,11 @@ class AnthropicSafeBuiltInAgent extends BuiltInAgent {
             });
           } else {
             // Check for completion events - CopilotKit uses various event types
-            if (event.type === 'RUN_FINISHED' || event.type === 'TEXT_MESSAGE_END' || event.type === 'AGENT_STATE_MESSAGE') {
+            if (
+              event.type === 'RUN_FINISHED' ||
+              event.type === 'TEXT_MESSAGE_END' ||
+              event.type === 'AGENT_STATE_MESSAGE'
+            ) {
               sendResponseToPostHog();
             }
             observer.next?.(event);

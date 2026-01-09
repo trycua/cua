@@ -33,8 +33,7 @@ self.addEventListener('fetch', (event) => {
   // Only intercept POST requests to CopilotKit endpoints
   if (
     request.method !== 'POST' ||
-    (!url.pathname.endsWith('/api/copilotkit') &&
-      !url.pathname.includes('/api/copilotkit'))
+    (!url.pathname.endsWith('/api/copilotkit') && !url.pathname.includes('/api/copilotkit'))
   ) {
     return;
   }

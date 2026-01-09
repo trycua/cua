@@ -1,0 +1,6 @@
+{
+  "title": "Fundamentals",
+  "description": "Core concepts and usage",
+  "icon": "Layers",
+  "pages": ["prebuilt-images", "vm-management"]
+}

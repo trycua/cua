@@ -1,0 +1,93 @@
+---
+title: Quickstart
+description: Create and run your first VM with Lume
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+This guide walks you through creating and running your first macOS VM with Lume.
+
+## Run a Prebuilt Image
+
+The fastest way to get started is with a prebuilt image:
+
+```bash
+# Pull and run a prebuilt macOS image
+lume run macos-sequoia-vanilla:latest
+```
+
+This command:
+1. Downloads the `macos-sequoia-vanilla:latest` image from the registry
+2. Creates a VM named `macos-sequoia-vanilla`
+3. Starts the VM with a display window
+
+<Callout title="Security Note">
+  All prebuilt images use the default password `lume`. Change this immediately after your first
+  login using the `passwd` command.
+</Callout>
+
+## Create a Custom VM
+
+For more control, create a VM from scratch:
+
+```bash
+# Create a new macOS VM using the latest IPSW
+lume create my-vm --os macos --ipsw latest
+
+# Run the VM
+lume run my-vm
+```
+
+### Customize Resources
+
+```bash
+# Create with custom resources
+lume create my-vm --os macos --ipsw latest \
+  --cpu 4 \
+  --memory 8GB \
+  --disk-size 100GB
+```
+
+Default values:
+- **CPU**: 4 cores
+- **Memory**: 8GB
+- **Disk**: 50GB
+
+## Basic VM Operations
+
+```bash
+# List all VMs
+lume ls
+
+# Get VM details
+lume get my-vm
+
+# Stop a running VM
+lume stop my-vm
+
+# Delete a VM
+lume delete my-vm
+```
+
+## Run Without Display
+
+For headless operation (automation, CI/CD):
+
+```bash
+# Run without opening a display window
+lume run my-vm --no-display
+```
+
+## Clone a VM
+
+Create a copy of an existing VM:
+
+```bash
+lume clone my-vm my-vm-copy
+```
+
+## Next Steps
+
+- [VM Management](/lume/guide/fundamentals/vm-management) - Learn more VM operations
+- [Prebuilt Images](/lume/guide/fundamentals/prebuilt-images) - Available images
+- [CLI Reference](/lume/reference/cli-reference) - Full command reference

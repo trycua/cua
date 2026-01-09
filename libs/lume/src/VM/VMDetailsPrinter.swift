@@ -47,6 +47,14 @@ enum VMDetailsPrinter {
                 $0.ipAddress ?? "-"
             }),
         Column(
+            header: "ssh", width: 6,
+            getValue: {
+                if let ssh = $0.sshAvailable {
+                    return ssh ? "yes" : "no"
+                }
+                return "-"
+            }),
+        Column(
             header: "vnc", width: 50,
             getValue: {
                 $0.vncUrl ?? "-"

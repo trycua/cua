@@ -1,0 +1,6 @@
+{
+  "title": "Advanced",
+  "description": "Advanced features and automation",
+  "icon": "Wrench",
+  "pages": ["unattended-setup", "http-server", "faq"]
+}

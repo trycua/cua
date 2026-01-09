@@ -1,0 +1,113 @@
+---
+title: HTTP Server
+description: Using the Lume REST API server
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+Lume includes a built-in HTTP server that exposes a REST API for managing VMs. This enables integration with automation tools, scripts, and the Computer Use Agent SDK.
+
+## Starting the Server
+
+```bash
+# Start on default port (7777)
+lume serve
+
+# Start on custom port
+lume serve --port 8080
+```
+
+<Callout>
+  If you installed Lume with the default settings, the server runs as a background service and starts automatically on login. You don't need to manually run `lume serve`.
+</Callout>
+
+## Default URL
+
+```
+http://localhost:7777
+```
+
+## Quick Examples
+
+### List VMs
+
+```bash
+curl http://localhost:7777/lume/vms
+```
+
+### Get VM Details
+
+```bash
+curl http://localhost:7777/lume/vms/my-vm
+```
+
+### Run a VM
+
+```bash
+curl -X POST http://localhost:7777/lume/vms/my-vm/run \
+  -H "Content-Type: application/json" \
+  -d '{"noDisplay": true}'
+```
+
+### Stop a VM
+
+```bash
+curl -X POST http://localhost:7777/lume/vms/my-vm/stop
+```
+
+### Create a VM
+
+```bash
+curl -X POST http://localhost:7777/lume/vms \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "my-vm",
+    "os": "macOS",
+    "cpu": 4,
+    "memory": "8GB",
+    "diskSize": "50GB"
+  }'
+```
+
+## Integration with Computer Use Agent
+
+The Cua Computer Use Agent SDK uses the Lume HTTP API to manage VMs. When using `cua-computer`, ensure the Lume server is running:
+
+```python
+from cua import Computer
+
+# The Computer class connects to lume serve at localhost:7777
+async with Computer() as computer:
+    await computer.run("my-vm")
+    # ... perform automation
+    await computer.stop()
+```
+
+## Background Service Management
+
+If installed as a background service:
+
+```bash
+# Check service status (macOS)
+launchctl list | grep lume
+
+# Stop the service
+launchctl unload ~/Library/LaunchAgents/com.trycua.lume.plist
+
+# Start the service
+launchctl load ~/Library/LaunchAgents/com.trycua.lume.plist
+```
+
+## Server Configuration
+
+The server respects Lume's configuration file for:
+- VM storage locations
+- Cache settings
+- Default resource allocations
+
+See the [FAQ](/lume/guide/advanced/faq) for configuration file locations.
+
+## Next Steps
+
+- [HTTP API Reference](/lume/reference/http-api) - Full API documentation
+- [CLI Reference](/lume/reference/cli-reference) - CLI command reference

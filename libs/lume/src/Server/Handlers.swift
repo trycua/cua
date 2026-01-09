@@ -250,6 +250,74 @@ extension Server {
         }
     }
 
+    func handleSetupVM(name: String, body: Data?) async throws -> HTTPResponse {
+        Logger.info("Setting up VM", metadata: ["name": name])
+
+        guard let body = body else {
+            return HTTPResponse(
+                statusCode: .badRequest,
+                headers: ["Content-Type": "application/json"],
+                body: try JSONEncoder().encode(APIError(message: "Request body is required"))
+            )
+        }
+
+        do {
+            let request = try JSONDecoder().decode(SetupVMRequest.self, from: body)
+
+            // Load config from path or parse YAML directly
+            let config: UnattendedConfig
+            if let configPath = request.configPath {
+                config = try UnattendedConfig.load(from: configPath)
+            } else if let configYaml = request.configYaml {
+                config = try UnattendedConfig.parse(yaml: configYaml)
+            } else {
+                return HTTPResponse(
+                    statusCode: .badRequest,
+                    headers: ["Content-Type": "application/json"],
+                    body: try JSONEncoder().encode(APIError(message: "Either configPath or configYaml is required"))
+                )
+            }
+
+            // Run setup in background task since it can take a long time
+            Task {
+                do {
+                    let vmController = LumeController()
+                    try await vmController.setup(
+                        name: name,
+                        config: config,
+                        storage: request.storage,
+                        vncPort: request.vncPort ?? 0,
+                        noDisplay: request.noDisplay ?? true,
+                        debug: request.debug ?? false,
+                        debugDir: request.debugDir
+                    )
+                    Logger.info("Unattended setup completed", metadata: ["name": name])
+                } catch {
+                    Logger.error("Unattended setup failed", metadata: [
+                        "name": name,
+                        "error": error.localizedDescription
+                    ])
+                }
+            }
+
+            return HTTPResponse(
+                statusCode: .accepted,
+                headers: ["Content-Type": "application/json"],
+                body: try JSONEncoder().encode(["message": "Setup started", "name": name])
+            )
+        } catch {
+            Logger.error("Failed to start setup", metadata: [
+                "name": name,
+                "error": error.localizedDescription
+            ])
+            return HTTPResponse(
+                statusCode: .badRequest,
+                headers: ["Content-Type": "application/json"],
+                body: try JSONEncoder().encode(APIError(message: error.localizedDescription))
+            )
+        }
+    }
+
     func handleRunVM(name: String, body: Data?) async throws -> HTTPResponse {
         Logger.info("Running VM", metadata: ["name": name])
 

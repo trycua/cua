@@ -1,0 +1,74 @@
+---
+title: What is Lume?
+description: Introduction to Lume - the macOS VM CLI and framework
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+Lume is a lightweight Command Line Interface and local API server for creating, running, and managing **macOS and Linux virtual machines** with near-native performance on Apple Silicon, using Apple's [Virtualization.Framework](https://developer.apple.com/documentation/virtualization).
+
+## Why Lume?
+
+Before Lume, running macOS VMs on Apple Silicon required complex setup or expensive commercial tools. Lume provides:
+
+- **Simple CLI** - Intuitive commands for VM lifecycle management
+- **Near-native performance** - Built on Apple's Virtualization Framework
+- **Prebuilt images** - Ready-to-use macOS and Linux images
+- **HTTP API** - RESTful API for tool integration
+- **Open source** - MIT licensed, community-driven
+
+## How It Works
+
+Lume leverages Apple's Virtualization Framework to create hardware-accelerated VMs that run at near-native speed. The framework provides:
+
+- **Para-virtualized devices** - High-performance network and storage
+- **GPU acceleration** - Hardware graphics support
+- **Rosetta 2 support** - Run x86 Linux binaries on ARM VMs
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────────┐
+│                  Your Tools                      │
+│     (Cua Agent, Scripts, CI/CD, etc.)           │
+└───────────────────┬─────────────────────────────┘
+                    │
+          ┌─────────▼─────────┐
+          │   Lume HTTP API   │  ← lume serve (port 7777)
+          │   (REST Server)   │
+          └─────────┬─────────┘
+                    │
+          ┌─────────▼─────────┐
+          │     Lume CLI      │  ← lume create, run, stop...
+          └─────────┬─────────┘
+                    │
+    ┌───────────────▼───────────────┐
+    │  Apple Virtualization.Framework  │
+    └───────────────┬───────────────┘
+                    │
+    ┌───────────────▼───────────────┐
+    │      macOS / Linux VMs        │
+    └───────────────────────────────┘
+```
+
+## Use Cases
+
+### Development and Testing
+- Test software on different macOS versions
+- Isolate development environments
+- Run CI/CD pipelines locally
+
+### Automation
+- Automate macOS setup with unattended configurations
+- Script VM operations via CLI or API
+- Integrate with Computer Use Agent for UI automation
+
+### Sandboxing
+- Create disposable environments
+- Test potentially risky operations safely
+- Reset to clean state instantly
+
+## Next Steps
+
+- [Installation](/lume/guide/getting-started/installation) - Install Lume on your Mac
+- [Quickstart](/lume/guide/getting-started/quickstart) - Create your first VM

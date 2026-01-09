@@ -318,8 +318,12 @@ export function CopilotKitProvider({ children }: CopilotKitProviderProps) {
         }
 
         /* Fix text spacing in assistant messages */
+        .copilotKitAssistantMessage {
+          line-height: 1.6;
+        }
+
         .copilotKitAssistantMessage p {
-          margin-bottom: 1em;
+          margin-bottom: 0.75em;
         }
 
         .copilotKitAssistantMessage p:last-child {
@@ -328,7 +332,24 @@ export function CopilotKitProvider({ children }: CopilotKitProviderProps) {
 
         /* Ensure proper spacing between text blocks */
         .copilotKitAssistantMessage > div > p + p {
+          margin-top: 0.75em;
+        }
+
+        /* Better spacing for list items and headers */
+        .copilotKitAssistantMessage ul,
+        .copilotKitAssistantMessage ol {
+          margin: 0.75em 0;
+        }
+
+        .copilotKitAssistantMessage li {
+          margin-bottom: 0.25em;
+        }
+
+        .copilotKitAssistantMessage h1,
+        .copilotKitAssistantMessage h2,
+        .copilotKitAssistantMessage h3 {
           margin-top: 1em;
+          margin-bottom: 0.5em;
         }
 
         /* Header controls container */

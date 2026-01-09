@@ -14,6 +14,23 @@ interface CopilotKitProviderProps {
 export function CopilotKitProvider({ children }: CopilotKitProviderProps) {
   return (
     <CopilotKit runtimeUrl="/docs/api/copilotkit" showDevConsole={false}>
+      <style>{`
+        .copilotKitHeader {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+        }
+        .copilotKitHeader::before {
+          content: '';
+          display: inline-block;
+          width: 24px;
+          height: 24px;
+          background-image: url('/docs/img/cuala-icon.svg');
+          background-size: contain;
+          background-repeat: no-repeat;
+          background-position: center;
+        }
+      `}</style>
       {children}
       <CopilotPopup
         instructions={DOCS_INSTRUCTIONS}

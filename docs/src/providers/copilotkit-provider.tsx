@@ -397,10 +397,14 @@ export function CopilotKitProvider({ children }: CopilotKitProviderProps) {
           min-height: 56px;
         }
 
-        .poweredByContainer,
+        /* Hide "Powered by CopilotKit" text and reduce bottom spacing */
         .poweredBy {
-          border-bottom-left-radius: 0.75rem;
-          border-bottom-right-radius: 0.75rem;
+          display: none !important;
+        }
+
+        .poweredByContainer {
+          padding: 0.75rem !important;
+          min-height: 0 !important;
         }
 
         /* Match chat input radius to window */

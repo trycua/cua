@@ -20,6 +20,8 @@
     "lucide-react": "^0.525.0",
     "mermaid": "^11.12.1",
     "next": "16.0.7",
+    "pino": "^9.14.0",
+    "pino-pretty": "^11.3.0",
     "next-themes": "^0.4.6",
     "openai": "^4.104.0",
     "posthog-js": "^1.276.0",

@@ -6,6 +6,16 @@ import {
 import { BuiltInAgent, InMemoryAgentRunner } from '@copilotkit/runtime/v2';
 import { NextRequest } from 'next/server';
 import { randomUUID } from 'crypto';
+import { PostHog } from 'posthog-node';
+
+// Initialize PostHog server-side client
+const posthog = process.env.NEXT_PUBLIC_POSTHOG_API_KEY
+  ? new PostHog(process.env.NEXT_PUBLIC_POSTHOG_API_KEY, {
+      host: process.env.NEXT_PUBLIC_POSTHOG_HOST || 'https://us.i.posthog.com',
+      flushAt: 1, // Send events immediately for real-time tracking
+      flushInterval: 0,
+    })
+  : null;
 
 /**
  * Custom agent that extends BuiltInAgent to fix issues with Anthropic and message ordering.
@@ -41,10 +51,33 @@ class AnthropicSafeBuiltInAgent extends BuiltInAgent {
     // Generate a unique message ID for this run to fix message ordering
     // Without this, all responses use messageId: 0 and get merged together
     const uniqueMessageId = randomUUID();
+    const conversationId = input.threadId || uniqueMessageId;
     console.log('[AnthropicSafeBuiltInAgent] run() with', filteredMessages.length, 'messages, uniqueMessageId:', uniqueMessageId);
+
+    // Extract the latest user message for tracking
+    const userMessages = filteredMessages.filter((m: any) => m.role === 'user');
+    const latestUserMessage = userMessages[userMessages.length - 1];
+    const userPrompt = this.extractMessageContent(latestUserMessage);
+
+    // Track user prompt in PostHog
+    if (posthog && userPrompt) {
+      posthog.capture({
+        distinctId: conversationId,
+        event: 'copilot_user_prompt',
+        properties: {
+          prompt: userPrompt,
+          message_count: filteredMessages.length,
+          conversation_id: conversationId,
+          timestamp: new Date().toISOString(),
+        },
+      });
+    }
 
     // Get the parent observable
     const parentObservable = super.run(modifiedInput);
+
+    // Collect response chunks to track the full response
+    let responseChunks: string[] = [];
 
     // Wrap subscribe to intercept events and fix messageId
     const originalSubscribe = parentObservable.subscribe.bind(parentObservable);
@@ -53,6 +86,10 @@ class AnthropicSafeBuiltInAgent extends BuiltInAgent {
         next: (event: any) => {
           // Replace messageId for TEXT_MESSAGE_CHUNK events to ensure proper message separation
           if (event.type === 'TEXT_MESSAGE_CHUNK') {
+            // Collect response chunks
+            if (event.delta) {
+              responseChunks.push(event.delta);
+            }
             observer.next?.({
               ...event,
               messageId: uniqueMessageId,
@@ -61,13 +98,64 @@ class AnthropicSafeBuiltInAgent extends BuiltInAgent {
             observer.next?.(event);
           }
         },
-        error: (err: any) => observer.error?.(err),
-        complete: () => observer.complete?.(),
+        error: (err: any) => {
+          // Track errors in PostHog
+          if (posthog) {
+            posthog.capture({
+              distinctId: conversationId,
+              event: 'copilot_error',
+              properties: {
+                error: err?.message || String(err),
+                prompt: userPrompt,
+                conversation_id: conversationId,
+                timestamp: new Date().toISOString(),
+              },
+            });
+          }
+          observer.error?.(err);
+        },
+        complete: () => {
+          // Track the complete response in PostHog
+          const fullResponse = responseChunks.join('');
+          if (posthog && fullResponse) {
+            posthog.capture({
+              distinctId: conversationId,
+              event: 'copilot_response',
+              properties: {
+                prompt: userPrompt,
+                response: fullResponse,
+                response_length: fullResponse.length,
+                conversation_id: conversationId,
+                timestamp: new Date().toISOString(),
+              },
+            });
+          }
+          observer.complete?.();
+        },
       };
       return originalSubscribe(wrappedObserver);
     };
 
     return parentObservable;
+  }
+
+  private extractMessageContent(message: any): string {
+    if (!message) return '';
+
+    const content = message.content;
+    if (typeof content === 'string') {
+      return content;
+    }
+    if (Array.isArray(content)) {
+      return content
+        .map((part: any) => {
+          if (typeof part === 'string') return part;
+          if (part?.type === 'text') return part.text || '';
+          return '';
+        })
+        .join('');
+    }
+    return '';
   }
 
   private filterEmptyMessages(messages: any[]): any[] {

@@ -123,16 +123,32 @@ const listHandler = async (argv: Record<string, unknown>) => {
 
 const uploadHandler = async (argv: Record<string, unknown>) => {
   const token = await ensureApiKeyInteractive();
-  const filePath = String(argv.file);
   const name = String(argv.name);
   const tag = String(argv.tag || 'latest');
   const imageType = String(argv.type || 'qcow2');
+
+  // Determine file path - use --file if provided, otherwise look in cua-bench images directory
+  let filePath: string;
+  if (argv.file) {
+    filePath = String(argv.file);
+  } else {
+    // Look for image in cua-bench local storage
+    const home = process.env.HOME || process.env.USERPROFILE || '';
+    const cuaBenchPath = `${home}/.local/share/cua-bench/images/${name}/data.img`;
+    filePath = cuaBenchPath;
+  }
 
   // Check if file exists and get size
   const file = Bun.file(filePath);
   const exists = await file.exists();
   if (!exists) {
-    console.error(`File not found: ${filePath}`);
+    if (argv.file) {
+      console.error(`File not found: ${filePath}`);
+    } else {
+      console.error(`Image not found: ${name}`);
+      console.error(`Looked in: ${filePath}`);
+      console.error(`Use --file to specify a custom path`);
+    }
     process.exit(1);
   }
 
@@ -365,15 +381,15 @@ export function registerImageCommands(y: Argv) {
           listHandler
         )
         .command(
-          'upload <file>',
+          'upload <name>',
           'Upload a VM image to cloud storage',
           (y) =>
             y
-              .positional('file', { type: 'string', describe: 'Path to image file', demandOption: true })
-              .option('name', {
+              .positional('name', { type: 'string', describe: 'Image name', demandOption: true })
+              .option('file', {
+                alias: 'f',
                 type: 'string',
-                demandOption: true,
-                describe: 'Image name',
+                describe: 'Path to image file (defaults to ~/.local/share/cua-bench/images/<name>/data.img)',
               })
               .option('tag', {
                 type: 'string',

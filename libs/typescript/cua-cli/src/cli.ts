@@ -2,6 +2,7 @@ import yargs from 'yargs';
 import { hideBin } from 'yargs/helpers';
 import { registerAuthCommands } from './commands/auth';
 import { registerSandboxCommands } from './commands/sandbox';
+import { registerImageCommands } from './commands/image';
 
 export async function runCli() {
   let argv = yargs(hideBin(process.argv))
@@ -23,6 +24,12 @@ export async function runCli() {
         '    suspend            Suspend a sandbox (preserves memory)\n' +
         '    vnc                Open remote desktop\n' +
         '\n' +
+        '  cua image <command>    Manage VM images in cloud storage\n' +
+        '    list               View all images in your workspace\n' +
+        '    upload             Upload a VM image\n' +
+        '    download           Download a VM image\n' +
+        '    delete             Delete an image version\n' +
+        '\n' +
         'Documentation: https://docs.cua.ai/libraries/cua-cli/commands'
     );
   // Override the default --version behavior
@@ -34,6 +41,7 @@ export async function runCli() {
   });
   argv = registerAuthCommands(argv);
   argv = registerSandboxCommands(argv);
+  argv = registerImageCommands(argv);
 
   // Check for version flag before command validation
   const args = process.argv.slice(2);

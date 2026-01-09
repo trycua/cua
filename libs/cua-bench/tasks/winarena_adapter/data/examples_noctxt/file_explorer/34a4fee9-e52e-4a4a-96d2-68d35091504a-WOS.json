@@ -12,9 +12,7 @@
     }
   ],
   "trajectory": "trajectories/",
-  "related_apps": [
-    "file_explorer"
-  ],
+  "related_apps": ["file_explorer"],
   "evaluator": {
     "postconfig": [
       {

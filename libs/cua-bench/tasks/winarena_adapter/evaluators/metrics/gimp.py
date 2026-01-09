@@ -1,13 +1,14 @@
 import os
 from typing import List, Union
-from skimage.metrics import structural_similarity as ssim
+
 from PIL import Image, ImageChops, ImageStat
+from skimage.metrics import structural_similarity as ssim
 
 
-def compare_image_list(pred_img_path_list: Union[str, List[str]],
-                       gold_img_path_list: Union[str, List[str]]) -> float:
-    """ Compare two image lists, only if all images are the same, return 1.0, otherwise return 0.0
-    """
+def compare_image_list(
+    pred_img_path_list: Union[str, List[str]], gold_img_path_list: Union[str, List[str]]
+) -> float:
+    """Compare two image lists, only if all images are the same, return 1.0, otherwise return 0.0"""
     if type(pred_img_path_list) != list:
         pred_img_path_list = [pred_img_path_list]
         gold_img_path_list = [gold_img_path_list]
@@ -29,7 +30,7 @@ def get_gimp_export_path():
 
     try:
         # Open and read the configuration file
-        with open(gimp_config_file, 'r') as file:
+        with open(gimp_config_file, "r") as file:
             for line in file:
                 # Search for the default export path setting
                 if "default-export-path" in line:
@@ -117,8 +118,8 @@ def find_yellow_triangle(image):
 
     # calculate the center of the contour
     M = cv2.moments(max_contour)
-    cx = int(M['m10'] / M['m00'])
-    cy = int(M['m01'] / M['m00'])
+    cx = int(M["m10"] / M["m00"])
+    cy = int(M["m01"] / M["m00"])
 
     return cx, cy
 
@@ -132,9 +133,11 @@ def compare_triangle_positions(image1, image2):
 
     # calculate the distance between the center of the triangle and the center of the image
     center_distance1 = np.sqrt(
-        (cx1 - image1.shape[1] // 2) ** 2 + (cy1 - image1.shape[0] // 2) ** 2)
+        (cx1 - image1.shape[1] // 2) ** 2 + (cy1 - image1.shape[0] // 2) ** 2
+    )
     center_distance2 = np.sqrt(
-        (cx2 - image2.shape[1] // 2) ** 2 + (cy2 - image2.shape[0] // 2) ** 2)
+        (cx2 - image2.shape[1] // 2) ** 2 + (cy2 - image2.shape[0] // 2) ** 2
+    )
 
     return 1 if center_distance1 > center_distance2 else 0
 
@@ -142,7 +145,7 @@ def compare_triangle_positions(image1, image2):
 # Functions for the GIMP evaluator
 def calculate_brightness(image):
     """Calculate the average brightness of an image"""
-    grayscale = image.convert('L')
+    grayscale = image.convert("L")
     stat = ImageStat.Stat(grayscale)
     return stat.mean[0]
 
@@ -190,8 +193,8 @@ def calculate_image_sharpness(image_path):
 def structure_check_by_mse(img1, img2, threshold=0.03):
     """Check if two images are approximately the same by MSE"""
     mse = np.mean(
-        (np.array(img1, dtype=np.float32) / 255
-         - np.array(img2, dtype=np.float32) / 255) ** 2)
+        (np.array(img1, dtype=np.float32) / 255 - np.array(img2, dtype=np.float32) / 255) ** 2
+    )
     structure_same = True if mse < threshold else False
     print("MSE: ", mse)
     return structure_same
@@ -210,7 +213,7 @@ def check_brightness_decrease_and_structure_sim(src_path, tgt_path):
     gimp:7a4deb26-d57d-4ea9-9a73-630f66a7b568
     """
     if src_path is None or tgt_path is None:
-        return 0.
+        return 0.0
 
     img_src = Image.open(src_path)
     img_tgt = Image.open(tgt_path)
@@ -227,9 +230,9 @@ def check_brightness_decrease_and_structure_sim(src_path, tgt_path):
 
     structure_same = structure_check_by_mse(img_src_normalized, img_tgt_normalized)
     if brightness_reduced and structure_same:
-        return 1.
+        return 1.0
     else:
-        return 0.
+        return 0.0
 
 
 def check_saturation_increase_and_structure_sim(src_path, tgt_path):
@@ -238,12 +241,12 @@ def check_saturation_increase_and_structure_sim(src_path, tgt_path):
     gimp:554785e9-4523-4e7a-b8e1-8016f565f56a
     """
     if src_path is None or tgt_path is None:
-        return 0.
+        return 0.0
 
     img_src = Image.open(src_path)
-    hsv_img_src = img_src.convert('HSV')
+    hsv_img_src = img_src.convert("HSV")
     img_tgt = Image.open(tgt_path)
-    hsv_img_tgt = img_tgt.convert('HSV')
+    hsv_img_tgt = img_tgt.convert("HSV")
 
     # Saturation comparison
     src_saturation = measure_saturation(hsv_img_src)
@@ -262,9 +265,9 @@ def check_saturation_increase_and_structure_sim(src_path, tgt_path):
         structure_same = False
 
     if saturation_increased and structure_same:
-        return 1.
+        return 1.0
     else:
-        return 0.
+        return 0.0
 
 
 def check_file_exists_and_structure_sim(src_path, tgt_path):
@@ -273,12 +276,12 @@ def check_file_exists_and_structure_sim(src_path, tgt_path):
     gimp:77b8ab4d-994f-43ac-8930-8ca087d7c4b4
     """
     if src_path is None or tgt_path is None:
-        return 0.
+        return 0.0
 
     # Check if the file exists
     export_file_exists = os.path.isfile(src_path)
     if not export_file_exists:
-        return 0.
+        return 0.0
 
     # Check whether the target image is the same as the source image
     img_src = Image.open(src_path)
@@ -286,9 +289,9 @@ def check_file_exists_and_structure_sim(src_path, tgt_path):
     structure_same = structure_check_by_ssim(img_src, img_tgt)
 
     if structure_same:
-        return 1.
+        return 1.0
     else:
-        return 0.
+        return 0.0
 
 
 def check_triangle_position(tgt_path):
@@ -297,7 +300,7 @@ def check_triangle_position(tgt_path):
     gimp:f4aec372-4fb0-4df5-a52b-79e0e2a5d6ce
     """
     if tgt_path is None:
-        return 0.
+        return 0.0
 
     # Load the image
     img = Image.open(tgt_path)
@@ -305,8 +308,9 @@ def check_triangle_position(tgt_path):
 
     # We assume the triangle is a different color from the background
     # Find the unique colors
-    unique_colors, counts = np.unique(img_array.reshape(-1, img_array.shape[2]), axis=0,
-                                      return_counts=True)
+    unique_colors, counts = np.unique(
+        img_array.reshape(-1, img_array.shape[2]), axis=0, return_counts=True
+    )
     unique_colors_sorted = unique_colors[np.argsort(counts)]
 
     # Assuming the background is the most common color and the triangle is a different color
@@ -329,9 +333,9 @@ def check_triangle_position(tgt_path):
     middle = np.all(np.abs(centroid - image_center) < tolerance)
 
     if bool(middle):
-        return 1.
+        return 1.0
     else:
-        return 0.
+        return 0.0
 
 
 def check_structure_sim(src_path, tgt_path):
@@ -340,7 +344,7 @@ def check_structure_sim(src_path, tgt_path):
     gimp:2a729ded-3296-423d-aec4-7dd55ed5fbb3
     """
     if src_path is None or tgt_path is None:
-        return 0.
+        return 0.0
 
     img_src = Image.open(src_path)
     img_tgt = Image.open(tgt_path)
@@ -354,7 +358,7 @@ def check_structure_sim_resized(src_path, tgt_path):
     gimp:d16c99dc-2a1e-46f2-b350-d97c86c85c15
     """
     if src_path is None or tgt_path is None:
-        return 0.
+        return 0.0
 
     img_src = Image.open(src_path)
     img_tgt = Image.open(tgt_path)
@@ -373,7 +377,7 @@ def check_contrast_increase_and_structure_sim(src_path, tgt_path):
     gimp:f723c744-e62c-4ae6-98d1-750d3cd7d79d
     """
     if src_path is None or tgt_path is None:
-        return 0.
+        return 0.0
 
     # Load images
     source_image = Image.open(src_path)
@@ -388,9 +392,9 @@ def check_contrast_increase_and_structure_sim(src_path, tgt_path):
     structure_same = structure_check_by_ssim(source_image, target_image, threshold=0.65)
 
     if higher_contrast and structure_same:
-        return 1.
+        return 1.0
     else:
-        return 0.
+        return 0.0
 
 
 def check_config_status(actual_config_path, rule):
@@ -398,24 +402,26 @@ def check_config_status(actual_config_path, rule):
     Check if the GIMP status is as expected
     """
     if actual_config_path is None:
-        return 0.
+        return 0.0
 
-    with open(actual_config_path, 'r') as f:
+    with open(actual_config_path, "r") as f:
         content = f.readlines()
 
     for line in content:
-        if line.startswith('#') or line == '\n':
+        if line.startswith("#") or line == "\n":
             continue
-        items = line.strip().lstrip('(').rstrip(')\n').split()
+        items = line.strip().lstrip("(").rstrip(")\n").split()
         if isinstance(rule["key"], str):
             if items[0] == rule["key"] and items[-1] == rule["value"]:
-                return 1.
+                return 1.0
         elif isinstance(rule["key"], list) and len(rule["key"]) == 2:
-            if items[0] == rule["key"][0] \
-                    and items[1] == rule["key"][1] \
-                    and items[-1] == rule["value"]:
-                return 1.
-    return 0.
+            if (
+                items[0] == rule["key"][0]
+                and items[1] == rule["key"][1]
+                and items[-1] == rule["value"]
+            ):
+                return 1.0
+    return 0.0
 
 
 def check_image_size(src_path, rule):
@@ -424,7 +430,7 @@ def check_image_size(src_path, rule):
     multi-apps:42f4d1c7-4521-4161-b646-0a8934e36081
     """
     if src_path is None:
-        return 0.
+        return 0.0
 
     # Load the image
     img = Image.open(src_path)
@@ -440,9 +446,9 @@ def check_image_size(src_path, rule):
         width_same = True
 
     if height_same and width_same:
-        return 1.
+        return 1.0
     else:
-        return 0.
+        return 0.0
 
 
 def check_palette_and_structure_sim(src_path, tgt_path):
@@ -451,20 +457,20 @@ def check_palette_and_structure_sim(src_path, tgt_path):
     gimp:06ca5602-62ca-47f6-ad4f-da151cde54cc
     """
     if src_path is None or tgt_path is None:
-        return 0.
+        return 0.0
 
     # Check if the source image is palette-based
     source_image = Image.open(src_path)
-    palette_based = source_image.mode == 'P'
+    palette_based = source_image.mode == "P"
 
     # Check structure
     target_image = Image.open(tgt_path)
-    source_image = source_image.convert('RGB')
+    source_image = source_image.convert("RGB")
     structure_same = structure_check_by_ssim(source_image, target_image)
     if palette_based and structure_same:
-        return 1.
+        return 1.0
     else:
-        return 0.
+        return 0.0
 
 
 def check_textbox_on_leftside(src_path):
@@ -473,7 +479,7 @@ def check_textbox_on_leftside(src_path):
     gimp:e2dd0213-26db-4349-abe5-d5667bfd725c
     """
     if src_path is None:
-        return 0.
+        return 0.0
 
     source_image = Image.open(src_path)
     gray_image = source_image.convert("L")
@@ -490,9 +496,9 @@ def check_textbox_on_leftside(src_path):
 
     # Here we define "almost" on the left side as being within the left 5% of the image
     if left_most_dark_pixel < width * 0.05:
-        return 1.
+        return 1.0
     else:
-        return 0.
+        return 0.0
 
 
 def check_image_mirror(src_path, tgt_path):
@@ -501,7 +507,7 @@ def check_image_mirror(src_path, tgt_path):
     gimp:72f83cdc-bf76-4531-9a1b-eb893a13f8aa
     """
     if src_path is None or tgt_path is None:
-        return 0.
+        return 0.0
 
     # Load images
     source_image = Image.open(src_path)
@@ -512,9 +518,9 @@ def check_image_mirror(src_path, tgt_path):
     # Use 0.99 because the image may not be exactly mirrored by gimp
     mirrored = structure_check_by_ssim(transposed_image, target_image, 0.99)
     if mirrored:
-        return 1.
+        return 1.0
     else:
-        return 0.
+        return 0.0
 
 
 def check_green_background(src_path, tgt_path):
@@ -523,7 +529,7 @@ def check_green_background(src_path, tgt_path):
     gimp:734d6579-c07d-47a8-9ae2-13339795476b
     """
     if src_path is None or tgt_path is None:
-        return 0.
+        return 0.0
 
     # Load images
     source_image = Image.open(src_path)
@@ -540,9 +546,9 @@ def check_green_background(src_path, tgt_path):
                 # Here, "green" means more green than red or blue
                 r, g, b = source_pixels[x, y][:3]
                 if not (g > r and g > b):
-                    return 0.
+                    return 0.0
 
-    return 1.
+    return 1.0
 
 
 def check_sharper(src_path, tgt_path):
@@ -572,28 +578,23 @@ def check_image_file_size(src_path, rule):
 
 if __name__ == "__main__":
     actual_config_path = "../../../cache/sessionrc_test"
-    rule = {
-        "key": "hide-docks",
-        "value": "no"
-    }
+    rule = {"key": "hide-docks", "value": "no"}
     print(check_config_status(actual_config_path, rule))
 
     actual_config_path = "../../../cache/action-history_test"
-    rule = {
-        "key": ["history-item", "\"filters-vignette\""],
-        "value": "1"
-    }
+    rule = {"key": ["history-item", '"filters-vignette"'], "value": "1"}
     print(check_config_status(actual_config_path, rule))
 
     actual_config_path = "../../../cache/gimprc_test"
-    rule = {
-        "key": "undo-levels",
-        "value": "100"
-    }
+    rule = {"key": "undo-levels", "value": "100"}
     print(check_config_status(actual_config_path, rule))
 
-    src_path = "../../../cache/734d6579-c07d-47a8-9ae2-13339795476b/green_background_with_object.png"
-    tgt_path = "../../../cache/734d6579-c07d-47a8-9ae2-13339795476b/white_background_with_object.png"
+    src_path = (
+        "../../../cache/734d6579-c07d-47a8-9ae2-13339795476b/green_background_with_object.png"
+    )
+    tgt_path = (
+        "../../../cache/734d6579-c07d-47a8-9ae2-13339795476b/white_background_with_object.png"
+    )
     print(check_green_background(src_path, tgt_path))
 
     tgt_path = "../../../cache/f4aec372-4fb0-4df5-a52b-79e0e2a5d6ce/Triangle_In_The_Middle.png"
@@ -604,15 +605,11 @@ if __name__ == "__main__":
     print(check_sharper(src_path, tgt_path))
 
     src_path = "../../../cache/3c8f201a-009d-4bbe-8b65-a6f8b35bb57f/compressed.jpeg"
-    rule = {
-        "max_size": 500000
-    }
+    rule = {"max_size": 500000}
     print(check_image_file_size(src_path, rule))
 
     src_path = "../../../cache/d16c99dc-2a1e-46f2-b350-d97c86c85c15/resized.png"
     tgt_path = "../../../cache/d16c99dc-2a1e-46f2-b350-d97c86c85c15/dog_with_background.png"
-    rule = {
-        "height": 512
-    }
+    rule = {"height": 512}
     print(check_image_size(src_path, rule))
     print(check_structure_sim_resized(src_path, tgt_path))

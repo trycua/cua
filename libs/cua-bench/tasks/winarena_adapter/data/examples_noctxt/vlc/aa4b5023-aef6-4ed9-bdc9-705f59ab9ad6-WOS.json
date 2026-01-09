@@ -18,11 +18,12 @@
     },
     {
       "type": "launch",
-        "parameters": {
-            "command": [
-                "vlc", 
-                "C:\\Users\\Docker\\Downloads\\flipped_1984_Apple_Macintosh_Commercial.mp4"]
-        }
+      "parameters": {
+        "command": [
+          "vlc",
+          "C:\\Users\\Docker\\Downloads\\flipped_1984_Apple_Macintosh_Commercial.mp4"
+        ]
+      }
     },
     {
       "type": "execute",
@@ -36,9 +37,7 @@
     }
   ],
   "trajectory": "trajectories/",
-  "related_apps": [
-    "vlc"
-  ],
+  "related_apps": ["vlc"],
   "evaluator": {
     "func": "compare_videos",
     "expected": {

@@ -1,11 +1,10 @@
 """Interact command - Interactively run a task with browser visible."""
 
-import os
-import tempfile
-from types import SimpleNamespace
-from pathlib import Path
-import time
 import asyncio
+import tempfile
+import time
+from pathlib import Path
+from types import SimpleNamespace
 
 # ANSI colors
 RESET = "\033[0m"
@@ -21,6 +20,7 @@ def execute(args):
     """Execute the interact command."""
     return asyncio.run(_execute_async(args))
 
+
 def _detect_provider_type(env_path: Path) -> str:
     """Detect provider type from task configuration.
 
@@ -30,8 +30,8 @@ def _detect_provider_type(env_path: Path) -> str:
     Returns:
         Provider type ("simulated", "webtop", "native", "computer", or "unknown")
     """
-    import sys
     import importlib.util
+    import sys
 
     # Try to import and inspect the task
     try:
@@ -55,7 +55,7 @@ def _detect_provider_type(env_path: Path) -> str:
             for name in dir(module):
                 obj = getattr(module, name)
                 if callable(obj) and hasattr(obj, "_td_type"):
-                    if getattr(obj, "_td_type") == "tasks_config":
+                    if obj._td_type == "tasks_config":
                         # Call the function to get tasks
                         tasks = obj()
                         if tasks and len(tasks) > 0:
@@ -69,8 +69,8 @@ def _detect_provider_type(env_path: Path) -> str:
         finally:
             sys.path.pop(0)
             # Clean up module
-            if 'env_module' in sys.modules:
-                del sys.modules['env_module']
+            if "env_module" in sys.modules:
+                del sys.modules["env_module"]
 
     except Exception as e:
         print(f"{YELLOW}Warning: Could not detect provider type: {e}{RESET}")
@@ -98,22 +98,26 @@ async def _execute_async(args):
     from .registry import resolve_task_path
 
     # Handle --dataset flag: resolve from registry
-    if getattr(args, 'dataset', None):
+    if getattr(args, "dataset", None):
         env_path = resolve_task_path(args.dataset, args.env_path)
         if env_path is None:
-            print(f"{RED}Error: Task '{args.env_path}' not found in dataset '{args.dataset}'{RESET}")
+            print(
+                f"{RED}Error: Task '{args.env_path}' not found in dataset '{args.dataset}'{RESET}"
+            )
             return 1
-    elif getattr(args, 'dataset_path', None):
+    elif getattr(args, "dataset_path", None):
         # Handle --dataset-path flag: resolve task from local dataset directory
         dataset_path = Path(args.dataset_path)
         if not dataset_path.exists():
             print(f"{RED}Error: Dataset path not found: {dataset_path}{RESET}")
             return 1
-        
+
         # Resolve the env path from the dataset directory
         env_path = dataset_path / args.env_path
         if not env_path.exists():
-            print(f"{RED}Error: Environment '{args.env_path}' not found in dataset path '{args.dataset_path}' at {env_path}{RESET}")
+            print(
+                f"{RED}Error: Environment '{args.env_path}' not found in dataset path '{args.dataset_path}' at {env_path}{RESET}"
+            )
             return 1
     else:
         env_path = Path(args.env_path)
@@ -147,14 +151,14 @@ async def _execute_simulated_interactive(args, env_path: Path) -> int:
         env.headless = False
         env.print_actions = True
         # Apply max steps if provided
-        if getattr(args, 'max_steps', None) is not None:
+        if getattr(args, "max_steps", None) is not None:
             env.max_steps = int(args.max_steps)
             print(f"{GREY}Max steps set to {env.max_steps}{RESET}")
 
         # Determine trace behavior
         tmp_trace_dir: Path | None = None
-        want_trace = bool(getattr(args, 'trace_out', None) or getattr(args, 'view', False))
-        if want_trace and getattr(args, 'trace_out', None) is None:
+        want_trace = bool(getattr(args, "trace_out", None) or getattr(args, "view", False))
+        if want_trace and getattr(args, "trace_out", None) is None:
             tmp_trace_dir = Path(tempfile.mkdtemp(prefix="cua_trace_"))
             args.trace_out = str(tmp_trace_dir)
         # Start tracing if requested (either --trace-out or --view-trace)
@@ -165,13 +169,15 @@ async def _execute_simulated_interactive(args, env_path: Path) -> int:
             except Exception:
                 print(f"{RED}Failed to start tracing; continuing without trace.{RESET}")
 
-        print(f"{CYAN}Running task {args.variant_id} (interactive mode - browser will be visible)...{RESET}")
+        print(
+            f"{CYAN}Running task {args.variant_id} (interactive mode - browser will be visible)...{RESET}"
+        )
         _t0 = time.perf_counter()
         screenshot, task_cfg = await env.reset(task_id=args.variant_id)
         _elapsed = time.perf_counter() - _t0
 
         # Print task description
-        if hasattr(task_cfg, 'description') and task_cfg.description:
+        if hasattr(task_cfg, "description") and task_cfg.description:
             print(f"\n{BOLD}Task: {task_cfg.description}{RESET}")
 
         # Bold the setup time only
@@ -192,7 +198,7 @@ async def _execute_simulated_interactive(args, env_path: Path) -> int:
             print(f"{GREEN}✓ Screenshot saved to: {screenshot_path}{RESET}")
 
         # Keep preview open for interaction (unless --no-wait)
-        if not getattr(args, 'no_wait', False):
+        if not getattr(args, "no_wait", False):
             print(f"\n{GREY}Environment is open. Press Enter to close...{RESET}")
             input()
 
@@ -203,15 +209,20 @@ async def _execute_simulated_interactive(args, env_path: Path) -> int:
             print(f"{YELLOW}✓ Evaluation result: {BOLD}{result}{RESET}")
 
         # Save trace if requested
-        if getattr(args, 'trace_out', None) and getattr(env, 'tracing', None) and env.tracing.trajectory_id:
+        if (
+            getattr(args, "trace_out", None)
+            and getattr(env, "tracing", None)
+            and env.tracing.trajectory_id
+        ):
             try:
                 out_path = Path(args.trace_out)
                 env.tracing.save_to_disk(str(out_path))
                 print(f"{GREEN}✓ Trace saved to: {out_path}{RESET}")
                 # If --view-trace, open the viewer
-                if getattr(args, 'view', False):
+                if getattr(args, "view", False):
                     try:
                         from . import view_trace as _view_trace
+
                         print(f"{CYAN}Opening trace viewer...{RESET}")
                         _view_trace.execute(SimpleNamespace(path=str(out_path)))
                     except Exception as _e:
@@ -222,23 +233,28 @@ async def _execute_simulated_interactive(args, env_path: Path) -> int:
         await env.close()
         print(f"\n{GREEN}✓ Task completed successfully!{RESET}")
         try:
-            if getattr(args, 'trace_out', None):
+            if getattr(args, "trace_out", None):
                 out_path = Path(args.trace_out)
                 print(f"\n{CYAN}Next steps:{RESET}")
                 print(f"  • {BOLD}View trace{RESET}:\n     {YELLOW}cb{RESET} view-trace {out_path}")
-                print(f"  • {BOLD}Create replay environment{RESET}:\n     {YELLOW}cb{RESET} create-replay {out_path}")
-                print(f"  • {BOLD}Process outputs{RESET}:\n     {YELLOW}cb{RESET} process {out_path.parent} {GREY}--mode aguvis --save-dir ./outputs/processed{RESET}")
+                print(
+                    f"  • {BOLD}Create replay environment{RESET}:\n     {YELLOW}cb{RESET} create-replay {out_path}"
+                )
+                print(
+                    f"  • {BOLD}Process outputs{RESET}:\n     {YELLOW}cb{RESET} process {out_path.parent} {GREY}--mode aguvis --save-dir ./outputs/processed{RESET}"
+                )
         except Exception:
             pass
 
     except Exception as e:
         print(f"{RED}Error running task: {e}{RESET}")
         import traceback
+
         traceback.print_exc()
         return 1
     finally:
         try:
-            if 'env' in locals():
+            if "env" in locals():
                 await env.close()
         except Exception:
             pass
@@ -248,12 +264,12 @@ async def _execute_simulated_interactive(args, env_path: Path) -> int:
 
 async def _execute_native_interactive(args, env_path: Path, provider_type: str) -> int:
     """Execute interactive mode for native tasks using task runner."""
+
     from cua_bench.runner.task_runner import TaskRunner
-    import time
 
     try:
         # Determine env_type (linux-docker, windows-qemu, etc.)
-        env_type = getattr(args, 'env_type', None) or _get_env_type_from_provider(provider_type)
+        env_type = getattr(args, "env_type", None) or _get_env_type_from_provider(provider_type)
 
         print(f"{CYAN}Starting environment with task runner (env_type: {env_type})...{RESET}")
 
@@ -261,28 +277,28 @@ async def _execute_native_interactive(args, env_path: Path, provider_type: str) 
         runner = TaskRunner()
 
         # Get task index
-        task_index = getattr(args, 'variant_id', 0)
+        task_index = getattr(args, "variant_id", 0)
 
         # Start environment container interactively
         vnc_url, api_url, cleanup, task_config, env, session = await runner.run_task_interactively(
             env_type=env_type,
             env_path=env_path,
             task_index=task_index,
-            memory=getattr(args, 'memory', '8G'),
-            cpus=getattr(args, 'cpus', '8'),
+            memory=getattr(args, "memory", "8G"),
+            cpus=getattr(args, "cpus", "8"),
         )
 
         print(f"{GREEN}✓ Environment started{RESET}")
 
         # Print task description if available
         if task_config:
-            description = task_config.get('description')
+            description = task_config.get("description")
             if description:
                 print(f"\n{BOLD}Task: {description}{RESET}")
 
             # Print setup info
-            setup_time = task_config.get('_setup_time')
-            screenshot_size = task_config.get('_screenshot_size')
+            setup_time = task_config.get("_setup_time")
+            screenshot_size = task_config.get("_screenshot_size")
             if setup_time is not None:
                 print(
                     f"{GREEN}✓ Setup complete in {BOLD}{setup_time:.2f}s{RESET}{GREEN} "
@@ -295,7 +311,6 @@ async def _execute_native_interactive(args, env_path: Path, provider_type: str) 
         # Wait for VNC to be available
         print(f"{CYAN}Waiting for VNC to be ready...{RESET}")
         import urllib.request
-        import time as sync_time
 
         vnc_ready = False
         max_attempts = 30
@@ -316,19 +331,20 @@ async def _execute_native_interactive(args, env_path: Path, provider_type: str) 
 
         # Open VNC in browser automatically with autoconnect and show_dot parameters
         import webbrowser
+
         vnc_url_with_params = f"{vnc_url}?autoconnect=true&show_dot=true"
         webbrowser.open(vnc_url_with_params)
         print(f"{GREEN}✓ Opened VNC in browser{RESET}")
 
         # Keep environment running until user presses Enter
-        if not getattr(args, 'no_wait', False):
+        if not getattr(args, "no_wait", False):
             print(f"\n{GREY}Environment is open. Press Enter to close...{RESET}")
             input()
 
         # Evaluate if function exists
         if env and env.evaluate_task_fn and task_config:
             print(f"\n{CYAN}Running evaluation...{RESET}")
-            task_cfg = task_config.get('_task_cfg')
+            task_cfg = task_config.get("_task_cfg")
             if task_cfg and session:
                 result = await env.evaluate_task_fn(task_cfg, session)
                 print(f"{YELLOW}✓ Evaluation result: {BOLD}{result}{RESET}")
@@ -343,5 +359,6 @@ async def _execute_native_interactive(args, env_path: Path, provider_type: str) 
     except Exception as e:
         print(f"{RED}Error running interactive environment: {e}{RESET}")
         import traceback
+
         traceback.print_exc()
         return 1

@@ -1,12 +1,14 @@
-import os
-from pathlib import Path
-import time
-import comtypes.client
-from ctypes import windll
 import logging
+import os
 import re
+import time
+from ctypes import windll
+from pathlib import Path
+
+import comtypes.client
 
 logger = logging.getLogger("uiautomation_utils")
+
 
 def find_element_by_name(element, iui, name=None, name_re=None, debug=False):
     """
@@ -47,8 +49,9 @@ def find_element_by_name(element, iui, name=None, name_re=None, debug=False):
         if result:
             return result
         child = walker.GetNextSiblingElement(child)
-    
+
     return None
+
 
 def get_file_list_from_explorer(directory):
     """
@@ -58,7 +61,7 @@ def get_file_list_from_explorer(directory):
         A list of filenames in the order displayed by Windows Explorer.
     """
     # Load UIAutomation
-    uia = comtypes.client.GetModule('UIAutomationCore.dll')
+    uia = comtypes.client.GetModule("UIAutomationCore.dll")
     iui = comtypes.client.CreateObject(uia.CUIAutomation)
 
     # Get the active Explorer window
@@ -78,29 +81,30 @@ def get_file_list_from_explorer(directory):
         file_names = []
         items_list = walker.GetFirstChildElement(file_panel)
         item = walker.GetFirstChildElement(items_list)
-        
+
         while item:
             full_path = os.path.join(directory, item.CurrentName)
             print(full_path)
-            if Path(full_path).exists(): # Filter out "Header" which can also be accessed by UIA.
+            if Path(full_path).exists():  # Filter out "Header" which can also be accessed by UIA.
                 file_names.append(item.CurrentName)
             item = walker.GetNextSiblingElement(item)
-        
+
         return file_names
     except Exception.COMError as e:
         print(f"Error occurred: {e}")
         return []
-    
+
+
 def is_file_explorer_details_view(directory):
     """
     Check if the current Explorer window is in details view.
-    Since there is no direct way to check the view mode, we check if the there is a 
+    Since there is no direct way to check the view mode, we check if the there is a
     "header" element in the file panel, which is distinct to details view.
     Returns:
         True if the current Explorer window is in details view, False otherwise.
     """
     # Load UIAutomation
-    uia = comtypes.client.GetModule('UIAutomationCore.dll')
+    uia = comtypes.client.GetModule("UIAutomationCore.dll")
     iui = comtypes.client.CreateObject(uia.CUIAutomation)
     # Get the active Explorer window
     hwnd = windll.user32.GetForegroundWindow()
@@ -114,28 +118,31 @@ def is_file_explorer_details_view(directory):
         # Get the list view from the file panel
         walker = iui.ControlViewWalker
         items_list = walker.GetFirstChildElement(file_panel)
-        
+
         # Look for the "Header" element
         item = walker.GetFirstChildElement(items_list)
         while item:
             full_path = os.path.join(directory, item.CurrentName)
             print(full_path)
-            if not Path(full_path).exists(): # Look for "Header" element in the children of the file panel.
+            if not Path(
+                full_path
+            ).exists():  # Look for "Header" element in the children of the file panel.
 
                 if item.CurrentName == "Header":
                     return True
             item = walker.GetNextSiblingElement(item)
-        
+
         # If we've gone through all items and haven't found a Header, return False
         return False
     except Exception as e:
         logger.error(f"Error occurred while checking for Details view: {e}")
         return False
-    
+
+
 def _maximize_clock_window(iui, clock_element):
     """
     Maximizes the clock window by clicking the "Maximize Clock" button.
-    
+
     Args:
         clock_element: The root element to start searching from.
         iui: The UIAutomation interface instance.
@@ -145,13 +152,16 @@ def _maximize_clock_window(iui, clock_element):
         print("Maximizing the clock window")
         try:
             UIA_InvokePatternId = 10000
-            invoke_pattern = maximize_clock_element.GetCurrentPattern(UIA_InvokePatternId).QueryInterface(comtypes.gen.UIAutomationClient.IUIAutomationInvokePattern)
+            invoke_pattern = maximize_clock_element.GetCurrentPattern(
+                UIA_InvokePatternId
+            ).QueryInterface(comtypes.gen.UIAutomationClient.IUIAutomationInvokePattern)
             invoke_pattern.Invoke()
             time.sleep(1)
         except:
             print("Error occurred while maximizing the clock window.")
     else:
         print("Maximize Clock button not found")
+
 
 def clock_check_if_timer_started(hours: str, minutes: str, seconds: str) -> bool:
 
@@ -160,13 +170,15 @@ def clock_check_if_timer_started(hours: str, minutes: str, seconds: str) -> bool
         hours_text = "hour" if int(hours) == 1 else "hours"
         minutes_text = "minute" if int(minutes) == 1 else "minutes"
         seconds_text = "second" if int(seconds) == 1 else "seconds"
-        formatted_timer_text = f"{hours} {hours_text} {minutes} {minutes_text} {seconds} {seconds_text}"
+        formatted_timer_text = (
+            f"{hours} {hours_text} {minutes} {minutes_text} {seconds} {seconds_text}"
+        )
         print("Attempting to look for timer with text: {}".format(formatted_timer_text))
     except:
         print("Error occurred while formatting timer text.")
         return False
 
-    uia = comtypes.client.GetModule('UIAutomationCore.dll')
+    uia = comtypes.client.GetModule("UIAutomationCore.dll")
     iui = comtypes.client.CreateObject(uia.CUIAutomation)
 
     # Clock should already be foreground window before this function is called
@@ -174,7 +186,7 @@ def clock_check_if_timer_started(hours: str, minutes: str, seconds: str) -> bool
     clock_element = iui.ElementFromHandle(clock_hwnd)
 
     _maximize_clock_window(iui, clock_element)
-        
+
     try:
         re_string = f".*{formatted_timer_text}.*"
         timer_element = find_element_by_name(clock_element, iui, name_re=re_string)
@@ -186,15 +198,20 @@ def clock_check_if_timer_started(hours: str, minutes: str, seconds: str) -> bool
             else:
                 print("Pause button not found for the timer. Timer is not started")
                 return False
-                   
-        print("No timers found for the given interval[{} hours, {} minutes, {} seconds]".format(hours, minutes, seconds))
+
+        print(
+            "No timers found for the given interval[{} hours, {} minutes, {} seconds]".format(
+                hours, minutes, seconds
+            )
+        )
         return False
     except:
         print("Error occurred while looking for a timer.")
         return False
-    
+
+
 def clock_check_if_world_clock_exists(city: str, country: str) -> bool:
-    uia = comtypes.client.GetModule('UIAutomationCore.dll')
+    uia = comtypes.client.GetModule("UIAutomationCore.dll")
     iui = comtypes.client.CreateObject(uia.CUIAutomation)
 
     # Clock should already be foreground window before this function is called
@@ -206,7 +223,7 @@ def clock_check_if_world_clock_exists(city: str, country: str) -> bool:
     # If the clock window is small, we might not be able to evaluate if the world clock exists.
     # Maximizing clock window to ensure the elements are visible.
     _maximize_clock_window(iui, clock_element)
-        
+
     re_string = f".*{city}, {country}.*"
     try:
         munich_germany_element = find_element_by_name(clock_element, iui, name_re=re_string)

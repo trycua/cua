@@ -3,6 +3,7 @@
 ## Overview
 
 cua-bench creates computer-use RL environments. Structure:
+
 - `main.py`: Python decorators for task logic
 - `gui/`: HTML/CSS/JS for UI (auto-includes Tailwind)
 
@@ -29,6 +30,7 @@ pid = env.launch_window(html=html_content, title="Game", width=400, height=400) 
 All game/task logic goes here. The HTML will be rendered in a Tailwind + Iconify template within a desktop webview window (Do NOT use `<html>` or `<body>` tags).
 
 **Key patterns:**
+
 - **Use semantic HTML with ARIA descriptions** - Use proper semantic elements (`<main>`, `<section>`, `<button>`, `<nav>`, etc.) and include `aria-label`, `aria-describedby`, and `role` attributes for accessibility and better element identification
 - **Responsive design with compact padding** - Use minimal padding/margins (`p-1`, `p-2`, `gap-1`, `gap-2`) and responsive layouts that work from popup size (300x200) to full desktop. Avoid fixed heights/widths, use `min-h-0`, `overflow-auto`, and ensure critical elements remain visible when viewport shrinks
 - **Global state** - Store current score in `window.__score` (0.0-1.0 range for RL)
@@ -58,8 +60,8 @@ env.step(DoneAction())
 
 - You can only use `env.step` or `env.bot` to execute actions that solve the task.
 - You can only use `env.execute_javascript` to execute helper functions that return information about the optimal action (e.g., the target element, or the output from an AI agent that implements the optimal strategy and exposes a `window.__next_move()` function).
-- Any `window.__next_move()` function in the GUI should only return the next action to take if the task is not solved. 
-- The `window.__next_move()` function is usually called in a loop by the `@cb.solve_task` decorated function until the task is solved. 
+- Any `window.__next_move()` function in the GUI should only return the next action to take if the task is not solved.
+- The `window.__next_move()` function is usually called in a loop by the `@cb.solve_task` decorated function until the task is solved.
 - The `window.__next_move()` function should not execute any actions or modify the environment / state - it should only return the next action to take, which will be executed by the `env.step` or `env.bot` functions.
 
 ### @cb.evaluate_task
@@ -77,6 +79,7 @@ return [float(score)]  # 0.0-1.0 range preferred
 Available action classes for `env.step()`:
 
 **Mouse:**
+
 - `ClickAction(x, y)`
 - `RightClickAction(x, y)`
 - `DoubleClickAction(x, y)`
@@ -84,11 +87,13 @@ Available action classes for `env.step()`:
 - `ScrollAction(direction="up|down", amount=100)`
 
 **Keyboard:**
+
 - `TypeAction(text="hello")`
 - `KeyAction(key="Enter")`
 - `HotkeyAction(keys=["ctrl", "c"])`
 
 **Control:**
+
 - `DoneAction()`
 - `WaitAction(seconds=1.0)`
 
@@ -150,4 +155,4 @@ StandardScreenSize = Union[
 - Parameterize variants via Task metadata (difficulty, size, OS, # of rounds)
 - Avoid using `WaitAction` unless the task requires it (e.g., waiting for a page to load) or if you are waiting for the next action to be available. The `env.bot` helpers will automatically step the environment forward with actionability logic, including waiting for elements to become clickable.
 - All `x,y` coordinates are in screen coordinates (0,0 is top-left of the screen). Use `window.screenX` and `window.screenY` to get the offset from the top-left of the browser viewport to the top-left of the screen.
-- Pick a screen size that is appropriate for the task and environment. 
+- Pick a screen size that is appropriate for the task and environment.

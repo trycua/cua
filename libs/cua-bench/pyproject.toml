@@ -1,11 +1,14 @@
+[build-system]
+requires = ["pdm-backend"]
+build-backend = "pdm.backend"
+
 [project]
 name = "cua-bench"
 version = "0.2.2"
 description = "Toolkit for computer-use RL environments and benchmarks"
 readme = "README.md"
-license = "MIT"
 authors = [
-    { name = "TryCua", email = "hello@trycua.com" }
+    { name = "TryCua", email = "gh@trycua.com" }
 ]
 keywords = [
     "computer-use",
@@ -112,32 +115,12 @@ Issues = "https://github.com/trycua/cua/issues"
 cb = "cua_bench.cli.main:main"
 cua-bench = "cua_bench.cli.main:main"
 
-[build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
+[tool.pdm]
+distribution = true
 
-[tool.hatch.build]
-include = [
-    "cua_bench/**",
-    "README.md",
-    "LICENSE",
-]
-exclude = [
-    "cua_bench/**/__pycache__",
-    "cua_bench/**/tests",
-    "**/.DS_Store",
-]
-
-[tool.hatch.build.targets.wheel]
-packages = ["cua_bench"]
-
-[tool.hatch.build.targets.sdist]
-include = [
-    "cua_bench/**",
-    "README.md",
-    "LICENSE",
-    "pyproject.toml",
-]
+[tool.pdm.build]
+includes = ["cua_bench/"]
+source-includes = ["README.md", "LICENSE"]
 
 # Ruff configuration
 [tool.ruff]
@@ -145,8 +128,13 @@ line-length = 100
 target-version = "py312"
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "W"]
-ignore = ["E501"]
+select = ["E", "F", "B", "I"]
+ignore = [
+    "E402", "E501", "E711", "E712", "E721", "E722", "E731", "E741",
+    "F401", "F403", "F405", "F811", "F821", "F841",
+    "B005", "B007", "B023", "B024", "B027", "B028", "B904", "B905",
+    "I001", "I002",
+]
 
 # Pytest configuration
 [tool.pytest.ini_options]

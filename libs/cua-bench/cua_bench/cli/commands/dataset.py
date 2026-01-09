@@ -4,12 +4,11 @@ Usage:
     cb dataset list               # List available datasets from registry
     cb dataset build <outputs>    # Build a dataset from batch outputs
 """
+
 from __future__ import annotations
 
 import html as _html
-import json
 import re
-import subprocess
 import textwrap as _textwrap
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
@@ -25,81 +24,69 @@ GREY = "\033[90m"
 
 def register_parser(subparsers):
     """Register the dataset command parser."""
-    dataset_parser = subparsers.add_parser(
-        'dataset',
-        help='Manage datasets and build from outputs'
-    )
-    dataset_subparsers = dataset_parser.add_subparsers(dest='dataset_command')
+    dataset_parser = subparsers.add_parser("dataset", help="Manage datasets and build from outputs")
+    dataset_subparsers = dataset_parser.add_subparsers(dest="dataset_command")
 
     # cb dataset list
-    list_parser = dataset_subparsers.add_parser(
-        'list',
-        help='List available datasets from registry'
-    )
+    dataset_subparsers.add_parser("list", help="List available datasets from registry")
 
     # cb dataset build <outputs>
-    build_parser = dataset_subparsers.add_parser(
-        'build',
-        help='Build a dataset from batch outputs'
+    build_parser = dataset_subparsers.add_parser("build", help="Build a dataset from batch outputs")
+    build_parser.add_argument(
+        "outputs_path",
+        help="Path to outputs folder from batch dump (e.g., ./outputs or /tmp/td_output)",
     )
     build_parser.add_argument(
-        'outputs_path',
-        help='Path to outputs folder from batch dump (e.g., ./outputs or /tmp/td_output)'
-    )
-    build_parser.add_argument(
-        'max_samples',
-        nargs='?',
+        "max_samples",
+        nargs="?",
         type=int,
-        help='Limit number of samples processed (useful for testing)'
+        help="Limit number of samples processed (useful for testing)",
     )
     build_parser.add_argument(
-        '--mode',
-        default='aguvis-stage-1',
-        help="Processing mode: 'aguvis-stage-1' (action augmentation) or 'gui-r1' (low-level click). Default: 'aguvis-stage-1'"
+        "--mode",
+        default="aguvis-stage-1",
+        help="Processing mode: 'aguvis-stage-1' (action augmentation) or 'gui-r1' (low-level click). Default: 'aguvis-stage-1'",
     )
     build_parser.add_argument(
-        '--dataset-name',
-        help='Dataset name when saving to disk (default: td_<mode>_dataset)'
+        "--dataset-name", help="Dataset name when saving to disk (default: td_<mode>_dataset)"
     )
     build_parser.add_argument(
-        '--save-dir',
-        help='Directory to save a JSONL dataset (default: <outputs>/processed if not pushing)'
+        "--save-dir",
+        help="Directory to save a JSONL dataset (default: <outputs>/processed if not pushing)",
     )
     build_parser.add_argument(
-        '--push-to-hub',
-        action='store_true',
-        help='Push the dataset to the Hugging Face Hub'
+        "--push-to-hub", action="store_true", help="Push the dataset to the Hugging Face Hub"
     )
     build_parser.add_argument(
-        '--repo-id',
-        help='HF Hub repository ID (e.g., username/repo). Required with --push-to-hub.'
+        "--repo-id", help="HF Hub repository ID (e.g., username/repo). Required with --push-to-hub."
     )
     build_parser.add_argument(
-        '--private',
-        action='store_true',
-        help='When pushing to hub, create/update the repo as private'
+        "--private",
+        action="store_true",
+        help="When pushing to hub, create/update the repo as private",
     )
 
 
 def execute(args):
     """Execute the dataset command."""
-    dataset_command = getattr(args, 'dataset_command', None)
+    dataset_command = getattr(args, "dataset_command", None)
 
-    if dataset_command == 'list':
+    if dataset_command == "list":
         return cmd_list(args)
-    elif dataset_command == 'build':
+    elif dataset_command == "build":
         return cmd_build(args)
     else:
         print(f"{YELLOW}Usage: cb dataset <command> [args]{RESET}")
         print(f"\n{GREY}Commands:{RESET}")
-        print(f"  list              List available datasets from registry")
-        print(f"  build <outputs>   Build a dataset from batch outputs")
+        print("  list              List available datasets from registry")
+        print("  build <outputs>   Build a dataset from batch outputs")
         return 1
 
 
 # ============================================================================
 # cmd_list - List available datasets from registry
 # ============================================================================
+
 
 def cmd_list(args) -> int:
     """List available datasets from the registry."""
@@ -111,12 +98,14 @@ def cmd_list(args) -> int:
         print(f"{RED}Error: {e}{RESET}")
         return 1
 
-    datasets_path = registry_path / 'datasets'
+    datasets_path = registry_path / "datasets"
     if not datasets_path.exists():
         print(f"{RED}Error: Datasets directory not found in registry{RESET}")
         return 1
 
-    datasets = [d.name for d in datasets_path.iterdir() if d.is_dir() and not d.name.startswith('.')]
+    datasets = [
+        d.name for d in datasets_path.iterdir() if d.is_dir() and not d.name.startswith(".")
+    ]
 
     if not datasets:
         print(f"{YELLOW}No datasets found in registry{RESET}")
@@ -139,6 +128,7 @@ def cmd_list(args) -> int:
 # ============================================================================
 # cmd_build - Build a dataset from batch outputs
 # ============================================================================
+
 
 def cmd_build(args) -> int:
     """Build a dataset from batch dump outputs."""
@@ -188,10 +178,14 @@ def cmd_build(args) -> int:
 
     if pargs.push_to_hub:
         if not pargs.repo_id:
-            print(f"{RED}--repo-id is required when --push-to-hub is set (e.g., username/repo){RESET}")
+            print(
+                f"{RED}--repo-id is required when --push-to-hub is set (e.g., username/repo){RESET}"
+            )
             return 1
         processor.push_to_hub(rows, pargs.repo_id, pargs.private)
-        print(f"{GREEN}✓ Pushed dataset to hub:{RESET} {pargs.repo_id} {GREY}(private={pargs.private}){RESET}")
+        print(
+            f"{GREEN}✓ Pushed dataset to hub:{RESET} {pargs.repo_id} {GREY}(private={pargs.private}){RESET}"
+        )
 
     if not pargs.save_dir and not pargs.push_to_hub:
         default_dir = pargs.outputs_path / "processed"
@@ -209,17 +203,23 @@ def cmd_build(args) -> int:
     return 0
 
 
-def _write_previews(rows: List[Dict[str, Any]], base_dir: Path, processor_name: str, limit: int = 50) -> Path:
+def _write_previews(
+    rows: List[Dict[str, Any]], base_dir: Path, processor_name: str, limit: int = 50
+) -> Path:
     """Write HTML preview of the dataset."""
     preview_dir = base_dir / "previews"
     preview_dir.mkdir(parents=True, exist_ok=True)
     index_path = preview_dir / "index.html"
 
     xy_re = re.compile(r"x=([0-9.]+)\s*,\s*y=([0-9.]+)")
-    drag_re = re.compile(r"drag\(.*?from_coord=\[\s*([0-9.]+)\s*,\s*([0-9.]+)\s*\]\s*,\s*to_coord=\[\s*([0-9.]+)\s*,\s*([0-9.]+)\s*\].*?\)")
+    drag_re = re.compile(
+        r"drag\(.*?from_coord=\[\s*([0-9.]+)\s*,\s*([0-9.]+)\s*\]\s*,\s*to_coord=\[\s*([0-9.]+)\s*,\s*([0-9.]+)\s*\].*?\)"
+    )
 
     parts: List[str] = []
-    parts.append("<!DOCTYPE html><html><head><meta charset=\"utf-8\"><title>cua-bench Previews</title>")
+    parts.append(
+        '<!DOCTYPE html><html><head><meta charset="utf-8"><title>cua-bench Previews</title>'
+    )
     parts.append(
         "<style>\n"
         ".item{{margin:16px 0;padding:12px;border:1px solid #ddd;border-radius:8px;}}\n"
@@ -233,7 +233,9 @@ def _write_previews(rows: List[Dict[str, Any]], base_dir: Path, processor_name: 
         ".cross.half-right:after{{left:50%;right:0;}}\n"
         ".cross .num{{position:absolute;top:-16px;left:10px;background:red;color:#fff;font:600 12px/12px ui-monospace,Menlo,monospace;padding:2px 4px;border-radius:10px;}}\n"
         "pre{{background:#f7f7f7;padding:8px;border-radius:6px;overflow:auto;white-space:pre-wrap;}}\n"
-        "</style></head><body>\n<h1>cua-bench Previews - {0}</h1>\n".format(_html.escape(processor_name))
+        "</style></head><body>\n<h1>cua-bench Previews - {0}</h1>\n".format(
+            _html.escape(processor_name)
+        )
     )
 
     for i, r in enumerate(rows[:limit]):
@@ -241,13 +243,14 @@ def _write_previews(rows: List[Dict[str, Any]], base_dir: Path, processor_name: 
         if not img_list:
             continue
         img_obj = img_list[0]
-        if hasattr(img_obj, 'filename') and img_obj.filename:
+        if hasattr(img_obj, "filename") and img_obj.filename:
             img_path = img_obj.filename
         else:
             continue
 
         try:
             from PIL import Image as _PIL
+
             with _PIL.open(img_path) as _im:
                 _W, _H = _im.size
         except Exception:
@@ -262,24 +265,33 @@ def _write_previews(rows: List[Dict[str, Any]], base_dir: Path, processor_name: 
                 assistant = str(pair.get("assistant", ""))
                 md = drag_re.search(assistant)
                 if md:
-                    fx = float(md.group(1)); fy = float(md.group(2)); tx = float(md.group(3)); ty = float(md.group(4))
+                    fx = float(md.group(1))
+                    fy = float(md.group(2))
+                    tx = float(md.group(3))
+                    ty = float(md.group(4))
+
                     def _n(v, d):
                         return v / d if v > 1.0 else v
+
                     nfx, nfy = _n(fx, _W), _n(fy, _H)
                     ntx, nty = _n(tx, _W), _n(ty, _H)
-                    nfx = min(max(nfx, 0.0), 1.0); nfy = min(max(nfy, 0.0), 1.0)
-                    ntx = min(max(ntx, 0.0), 1.0); nty = min(max(nty, 0.0), 1.0)
+                    nfx = min(max(nfx, 0.0), 1.0)
+                    nfy = min(max(nfy, 0.0), 1.0)
+                    ntx = min(max(ntx, 0.0), 1.0)
+                    nty = min(max(nty, 0.0), 1.0)
                     markers.append((idx, nfx, nfy, user, assistant, "half-left"))
                     markers.append((idx, ntx, nty, user, assistant, "half-right"))
                 else:
                     m = xy_re.search(assistant)
                     if m:
-                        x = float(m.group(1)); y = float(m.group(2))
+                        x = float(m.group(1))
+                        y = float(m.group(2))
                         x = x / _W if x > 1.0 else x
                         y = y / _H if y > 1.0 else y
                     else:
                         continue
-                    x = min(max(x, 0.0), 1.0); y = min(max(y, 0.0), 1.0)
+                    x = min(max(x, 0.0), 1.0)
+                    y = min(max(y, 0.0), 1.0)
                     markers.append((idx, x, y, user, assistant, ""))
 
         elif "gt_bbox" in r:
@@ -296,18 +308,20 @@ def _write_previews(rows: List[Dict[str, Any]], base_dir: Path, processor_name: 
         parts.append(f'<img src="file://{_html.escape(img_path)}" alt="preview_{i}">')
         for idx, x, y, user, assistant, cls in markers:
             cls_attr = f" cross {cls}" if cls else " cross"
-            parts.append(f'<div class="{cls_attr}" style="left:{x*100:.2f}%; top:{y*100:.2f}%;"><div class="num">{idx}</div></div>')
-        parts.append('</div>')
-        parts.append('<pre>')
+            parts.append(
+                f'<div class="{cls_attr}" style="left:{x*100:.2f}%; top:{y*100:.2f}%;"><div class="num">{idx}</div></div>'
+            )
+        parts.append("</div>")
+        parts.append("<pre>")
 
         if "texts" in r:
             for idx, _, _, user, assistant, cls in markers:
                 if cls == "half-left":
                     continue
-                parts.append(f'user: {_html.escape(user)}')
-                parts.append(f'assistant: {_html.escape(assistant)} [{idx}]')
+                parts.append(f"user: {_html.escape(user)}")
+                parts.append(f"assistant: {_html.escape(assistant)} [{idx}]")
                 if idx != len(markers):
-                    parts.append('')
+                    parts.append("")
         elif "gt_bbox" in r:
             parts.append(f'instruction: {_html.escape(r.get("instruction", ""))}')
             parts.append(f'gt_bbox: {r.get("gt_bbox", [])}')
@@ -316,8 +330,8 @@ def _write_previews(rows: List[Dict[str, Any]], base_dir: Path, processor_name: 
             parts.append(f'os_type: {_html.escape(r.get("os_type", ""))}')
             parts.append(f'resolution: {_html.escape(r.get("resolution", ""))}')
 
-        parts.append('</pre>')
-        parts.append('</div>')
+        parts.append("</pre>")
+        parts.append("</div>")
 
     parts.append("</body></html>")
     index_path.write_text("\n".join(parts), encoding="utf-8")
@@ -351,7 +365,9 @@ def _write_preview_gif(
     box_y = 0
 
     xy_re = re.compile(r"x=([0-9.]+)\s*,\s*y=([0-9.]+)")
-    drag_re = re.compile(r"drag\(.*?from_coord=\[\s*([0-9.]+)\s*,\s*([0-9.]+)\s*\]\s*,\s*to_coord=\[\s*([0-9.]+)\s*,\s*([0-9.]+)\s*\].*?\)")
+    drag_re = re.compile(
+        r"drag\(.*?from_coord=\[\s*([0-9.]+)\s*,\s*([0-9.]+)\s*\]\s*,\s*to_coord=\[\s*([0-9.]+)\s*,\s*([0-9.]+)\s*\].*?\)"
+    )
 
     frames: List[_PIL_Image.Image] = []
     try:
@@ -364,7 +380,7 @@ def _write_preview_gif(
         if not img_list:
             continue
         img_obj = img_list[0]
-        if hasattr(img_obj, 'filename') and img_obj.filename:
+        if hasattr(img_obj, "filename") and img_obj.filename:
             img_path = img_obj.filename
         else:
             continue
@@ -400,24 +416,33 @@ def _write_preview_gif(
                 assistant = str(pair.get("assistant", ""))
                 md = drag_re.search(assistant)
                 if md:
-                    fx = float(md.group(1)); fy = float(md.group(2)); tx = float(md.group(3)); ty = float(md.group(4))
+                    fx = float(md.group(1))
+                    fy = float(md.group(2))
+                    tx = float(md.group(3))
+                    ty = float(md.group(4))
+
                     def _n(v, d):
                         return v / d if v > 1.0 else v
+
                     nfx, nfy = _n(fx, _W), _n(fy, _H)
                     ntx, nty = _n(tx, _W), _n(ty, _H)
-                    nfx = min(max(nfx, 0.0), 1.0); nfy = min(max(nfy, 0.0), 1.0)
-                    ntx = min(max(ntx, 0.0), 1.0); nty = min(max(nty, 0.0), 1.0)
+                    nfx = min(max(nfx, 0.0), 1.0)
+                    nfy = min(max(nfy, 0.0), 1.0)
+                    ntx = min(max(ntx, 0.0), 1.0)
+                    nty = min(max(nty, 0.0), 1.0)
                     markers.append((idx, nfx, nfy, user, assistant, "half-left"))
                     markers.append((idx, ntx, nty, user, assistant, "half-right"))
                 else:
                     m = xy_re.search(assistant)
                     if m:
-                        x = float(m.group(1)); y = float(m.group(2))
+                        x = float(m.group(1))
+                        y = float(m.group(2))
                         x = x / _W if x > 1.0 else x
                         y = y / _H if y > 1.0 else y
                     else:
                         continue
-                    x = min(max(x, 0.0), 1.0); y = min(max(y, 0.0), 1.0)
+                    x = min(max(x, 0.0), 1.0)
+                    y = min(max(y, 0.0), 1.0)
                     markers.append((idx, x, y, user, assistant, ""))
         elif "gt_bbox" in r:
             gt_bbox = r.get("gt_bbox", [])

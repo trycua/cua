@@ -11,11 +11,13 @@ In this tutorial, you'll create a task that uses native OS capabilities to set u
 ## What You'll Build
 
 A question-answering task where agents must:
+
 1. Read a question from a text file on the Desktop
 2. Write their answer to another text file
 3. Get evaluated based on file contents
 
 You'll learn:
+
 - Using `run_command()` for OS-level operations
 - Setting up files and directories
 - Evaluating tasks by reading files
@@ -24,12 +26,14 @@ You'll learn:
 ## When to Use Native Tasks
 
 **Use native tasks when:**
+
 - You need to test real OS interactions (file system, registry, processes)
 - The task requires installing or using real applications
 - You need shell access for complex setup
 - You're building WinArena-style tasks
 
 **Use Universal GUI instead when:**
+
 - You're building custom interfaces or games
 - You want cross-platform compatibility
 - You don't need real OS features
@@ -164,33 +168,39 @@ succeeded = result["success"]
 ### Common Patterns
 
 **Create directories:**
+
 ```python
 await session.run_command("mkdir -p ~/Desktop/MyFolder")
 ```
 
 **Write files:**
+
 ```python
 await session.run_command('echo "content" > ~/Desktop/file.txt')
 ```
 
 **Read files:**
+
 ```python
 result = await session.run_command("cat ~/Desktop/file.txt")
 content = result["stdout"]
 ```
 
 **Check if file exists:**
+
 ```python
 result = await session.run_command("test -f ~/Desktop/file.txt && echo 'yes' || echo 'no'")
 exists = result["stdout"].strip() == "yes"
 ```
 
 **Install applications (Linux):**
+
 ```python
 await session.run_command("sudo apt update && sudo apt install -y firefox")
 ```
 
 **Launch applications:**
+
 ```python
 await session.run_command("firefox &")  # Background process
 ```
@@ -251,16 +261,19 @@ async def start(task_cfg: cb.Task, session: cb.DesktopSession):
 ### Windows Command Patterns
 
 **PowerShell commands:**
+
 ```python
 result = await session.run_command('powershell -Command "Get-ChildItem C:\\Users"')
 ```
 
 **Registry operations:**
+
 ```python
 await session.run_command('reg add "HKCU\\Software\\MyApp" /v Setting /t REG_SZ /d "value"')
 ```
 
 **File operations:**
+
 ```python
 await session.run_command('powershell -Command "Get-Content C:\\path\\file.txt"')
 ```
@@ -300,11 +313,13 @@ These methods are cleaner than shell commands for basic file operations.
 ## Performance Considerations
 
 Native tasks are **slower** than Universal GUI tasks because they:
+
 - Require Docker/QEMU startup time
 - Run full OS environments
 - Execute real shell commands
 
 **Optimization tips:**
+
 - Use Universal GUI when possible
 - Batch multiple commands with `&&`
 - Avoid unnecessary file operations
@@ -313,24 +328,29 @@ Native tasks are **slower** than Universal GUI tasks because they:
 ## Troubleshooting
 
 **Docker not running:**
+
 ```
 Error: Cannot connect to Docker daemon
 ```
+
 Solution: Start Docker Desktop
 
 **Permission denied:**
+
 ```python
 # Add sudo for operations requiring permissions
 await session.run_command("sudo apt install -y package")
 ```
 
 **Command not found:**
+
 ```python
 # Install the package first
 await session.run_command("sudo apt update && sudo apt install -y package-name")
 ```
 
 **Windows path escaping:**
+
 ```python
 # Use raw strings or double backslashes
 await session.run_command('powershell -Command "Get-Item C:\\\\Users"')

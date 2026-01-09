@@ -4,12 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import re
-import time
 from typing import Any, Dict, List, Literal, Optional, Tuple
 
-from .environment import Environment
 from .computers.base import DesktopSetupConfig
-from .types import Snapshot, WindowSnapshot
+from .environment import Environment
+from .types import Snapshot
 
 
 async def render_snapshot_async(
@@ -131,7 +130,7 @@ async def render_windows_async(
             if "html" in window:
                 window = dict(window)  # Make a copy to avoid mutating input
                 window["html"] = _strip_scripts(window.get("html", ""))
-            
+
             if env.session:
                 pid = await env.session.launch_window(**window)
                 pids.append(pid)
@@ -219,7 +218,11 @@ def render_windows(
     Returns:
         Screenshot as bytes, or tuple of (bytes, Snapshot) if return_snapshot=True
     """
-    return asyncio.run(render_windows_async(setup_config, windows, screenshot_delay, provider, return_snapshot, scroll_into_view))
+    return asyncio.run(
+        render_windows_async(
+            setup_config, windows, screenshot_delay, provider, return_snapshot, scroll_into_view
+        )
+    )
 
 
 # --- Helper functions ---

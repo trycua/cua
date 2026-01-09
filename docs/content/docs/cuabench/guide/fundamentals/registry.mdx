@@ -50,9 +50,9 @@ export CUA_REGISTRY_HOME=/path/to/your/datasets
 
 ## Available Datasets
 
-| Dataset | Tasks | Description | Golden Environment |
-|---------|-------|-------------|-------------------|
-| `cua-bench-basic` | 13 | Basic UI interaction tasks (clicking, typing, dragging) | `simulated` |
+| Dataset           | Tasks | Description                                             | Golden Environment |
+| ----------------- | ----- | ------------------------------------------------------- | ------------------ |
+| `cua-bench-basic` | 13    | Basic UI interaction tasks (clicking, typing, dragging) | `simulated`        |
 
 ## Dataset Structure
 
@@ -78,11 +78,7 @@ libs/cua-bench/datasets/
   "version": "1.0.0",
   "description": "Basic UI interaction tasks",
   "platform": "simulated",
-  "tasks": [
-    "click-button",
-    "typing-input",
-    "drag-slider"
-  ]
+  "tasks": ["click-button", "typing-input", "drag-slider"]
 }
 ```
 
@@ -101,6 +97,7 @@ See [Creating Tasks](/cuabench/guide/creating-tasks) for task development guidan
 ## Registry Location
 
 By default, datasets are stored at:
+
 - **Default**: `~/.cua/cua/libs/cua-bench/datasets/`
 - **Custom**: Set `CUA_REGISTRY_HOME` environment variable
 

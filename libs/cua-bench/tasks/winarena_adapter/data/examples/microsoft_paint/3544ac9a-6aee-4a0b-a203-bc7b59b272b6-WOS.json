@@ -13,20 +13,18 @@
     {
       "type": "sleep",
       "parameters": {
-          "seconds": 1
+        "seconds": 1
       }
     }
-],
-  "trajectory": "trajectories/",
-  "related_apps": [
-    "microsoft_paint"
   ],
+  "trajectory": "trajectories/",
+  "related_apps": ["microsoft_paint"],
   "evaluator": {
     "func": "exact_match",
     "result": {
-        "type": "vm_file_exists_in_vm_folder",
-        "folder_name": "C:\\Users\\Docker\\Downloads",
-        "file_name": "circle.png"
+      "type": "vm_file_exists_in_vm_folder",
+      "folder_name": "C:\\Users\\Docker\\Downloads",
+      "file_name": "circle.png"
     },
     "expected": {
       "type": "rule",

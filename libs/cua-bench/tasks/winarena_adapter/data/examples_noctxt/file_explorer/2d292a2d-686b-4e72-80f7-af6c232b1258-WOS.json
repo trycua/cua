@@ -7,32 +7,32 @@
     {
       "type": "download",
       "parameters": {
-          "files": [
-              {
-                  "url": "https://raw.githubusercontent.com/rogeriobonatti/winarenafiles/main/task_files/file_explorer/2d292a2d-686b-4e72-80f7-af6c232b1258-WOS/config/SampleText.txt",
-                  "path": "C:\\Users\\Docker\\Downloads\\example.txt"
-              }
-          ]
+        "files": [
+          {
+            "url": "https://raw.githubusercontent.com/rogeriobonatti/winarenafiles/main/task_files/file_explorer/2d292a2d-686b-4e72-80f7-af6c232b1258-WOS/config/SampleText.txt",
+            "path": "C:\\Users\\Docker\\Downloads\\example.txt"
+          }
+        ]
       }
     },
     {
       "type": "download",
       "parameters": {
-          "files": [
-              {
-                  "url": "https://raw.githubusercontent.com/rogeriobonatti/winarenafiles/main/task_files/file_explorer/2d292a2d-686b-4e72-80f7-af6c232b1258-WOS/config/The%20Wonders%20of%20Our%20Solar%20System.docx",
-                  "path": "C:\\Users\\Docker\\Downloads\\solarsystem.docx"
-              }
-          ]
+        "files": [
+          {
+            "url": "https://raw.githubusercontent.com/rogeriobonatti/winarenafiles/main/task_files/file_explorer/2d292a2d-686b-4e72-80f7-af6c232b1258-WOS/config/The%20Wonders%20of%20Our%20Solar%20System.docx",
+            "path": "C:\\Users\\Docker\\Downloads\\solarsystem.docx"
+          }
+        ]
       }
     },
     {
-    "type": "command",
+      "type": "command",
       "parameters": {
         "command": [
-        "cmd",
-        "/c",                     
-        "fsutil file createnew C:\\Users\\Docker\\Downloads\\testing.bin 15000000"
+          "cmd",
+          "/c",
+          "fsutil file createnew C:\\Users\\Docker\\Downloads\\testing.bin 15000000"
         ]
       }
     },
@@ -44,22 +44,19 @@
     }
   ],
   "trajectory": "trajectories/",
-  "related_apps": [
-    "file_explorer"
-  ],
- "evaluator": {
+  "related_apps": ["file_explorer"],
+  "evaluator": {
     "func": "exact_match",
     "result": {
-        "type": "is_file_saved_desktop",
-        "filename": "report.txt",
-        "textcontent": "testing.bin"
+      "type": "is_file_saved_desktop",
+      "filename": "report.txt",
+      "textcontent": "testing.bin"
     },
     "expected": {
-        "type": "rule",
-        "rules": {
-            "expected": "true"
-        }
+      "type": "rule",
+      "rules": {
+        "expected": "true"
+      }
     }
   }
 }
-

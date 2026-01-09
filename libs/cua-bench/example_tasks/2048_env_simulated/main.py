@@ -1,6 +1,8 @@
-import cua_bench as cb
 from pathlib import Path
+
+import cua_bench as cb
 from cua_bench.types import KeyAction
+
 
 # Called once per batch
 @cb.tasks_config(split="train")
@@ -18,17 +20,19 @@ def load():
                     "os_type": os_type,
                     "width": 768,
                     "height": 768,
-                    "background": '#202020',
+                    "background": "#202020",
                     "randomize_apps": True,
-                }
-            }
+                },
+            },
         )
         for os_type in os_types
     ]
 
+
 # All code below will be running in a separate process per task
 
 pid = None
+
 
 # Called at start of task
 @cb.setup_task(split="train")
@@ -55,6 +59,7 @@ def evaluate(task_cfg, session: cb.DesktopSession | cb.MobileSession) -> list[fl
     except Exception:
         return [0.0]
 
+
 # Called after setup_task if run_solution is True
 @cb.solve_task(split="train")
 def solve(task_cfg, session: cb.DesktopSession | cb.MobileSession):
@@ -66,7 +71,9 @@ def solve(task_cfg, session: cb.DesktopSession | cb.MobileSession):
         lost = session.execute_javascript(pid, "window.__lost === true")
         if lost:
             break
-        direction = session.execute_javascript(pid, "(window.__next_move && window.__next_move()) || null")
+        direction = session.execute_javascript(
+            pid, "(window.__next_move && window.__next_move()) || null"
+        )
         if not direction:
             break
         key = {
@@ -77,5 +84,5 @@ def solve(task_cfg, session: cb.DesktopSession | cb.MobileSession):
         }.get(direction)
         if not key:
             break
-        if hasattr(session, 'env') and session.env:
+        if hasattr(session, "env") and session.env:
             session.env.step(KeyAction(key=key))

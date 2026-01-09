@@ -2,10 +2,10 @@ import functools
 import itertools
 import logging
 import os.path
+
 # import operator
 from numbers import Number
-from typing import Any, Union, cast, Callable, Iterable
-from typing import Dict, List, Tuple, Set
+from typing import Any, Callable, Dict, Iterable, List, Set, Tuple, Union, cast
 
 import openpyxl
 import pandas as pd
@@ -17,9 +17,17 @@ from openpyxl.worksheet.datavalidation import DataValidation
 from openpyxl.worksheet.worksheet import Worksheet
 from rapidfuzz import fuzz
 
-from .utils import _match_value_to_rule, _read_cell_style, read_cell_value
-from .utils import load_charts, load_sparklines, load_rows_or_cols, load_xlsx_styles \
-    , load_filters, load_pivot_tables
+from .utils import (
+    _match_value_to_rule,
+    _read_cell_style,
+    load_charts,
+    load_filters,
+    load_pivot_tables,
+    load_rows_or_cols,
+    load_sparklines,
+    load_xlsx_styles,
+    read_cell_value,
+)
 
 # from openpyxl.utils import coordinate_to_tuple
 
@@ -28,12 +36,14 @@ logger = logging.getLogger("desktopenv.metric.table")
 BOOK = Union[pd.ExcelFile, Workbook, str]
 
 
-def _parse_sheet_idx(sheet_idx: Union[int, str]
-                     , result: BOOK, expected: BOOK
-                     , result_sheet_names: List[str]
-                     , expected_sheet_names: List[str]
-                     ) -> Tuple[BOOK, str]:
-    #  function _parse_sheet_idx {{{ # 
+def _parse_sheet_idx(
+    sheet_idx: Union[int, str],
+    result: BOOK,
+    expected: BOOK,
+    result_sheet_names: List[str],
+    expected_sheet_names: List[str],
+) -> Tuple[BOOK, str]:
+    #  function _parse_sheet_idx {{{ #
     if isinstance(sheet_idx, int):
         try:
             index: str = result_sheet_names[sheet_idx]
@@ -62,26 +72,26 @@ def _parse_sheet_idx(sheet_idx: Union[int, str]
         logger.error("Unrecognized sheet index")
         raise ValueError("Unrecognized sheet index")
     return book, index
-    #  }}} function _parse_sheet_idx # 
+    #  }}} function _parse_sheet_idx #
 
 
 SHEET = Union[pd.DataFrame, Worksheet, List[str]]
 
 
 def _load_sheet(book: BOOK, index: str) -> SHEET:
-    #  function _load_sheet {{{ # 
+    #  function _load_sheet {{{ #
     try:
         if isinstance(book, str):
             book: str = cast(str, book)
             csv_name: str = "{:}-{:}.csv".format(os.path.splitext(book)[0], index)
 
             with open(csv_name) as f:
-                csv_lines: List[str] = list(itertools.dropwhile(lambda l: len(l) == 0
-                                                                , map(lambda l: l.strip()
-                                                                      , reversed(f.read().splitlines())
-                                                                      )
-                                                                )
-                                            )
+                csv_lines: List[str] = list(
+                    itertools.dropwhile(
+                        lambda l: len(l) == 0,
+                        map(lambda l: l.strip(), reversed(f.read().splitlines())),
+                    )
+                )
             return csv_lines
         if isinstance(book, pd.ExcelFile):
             return pd.read_excel(book, index)
@@ -93,11 +103,11 @@ def _load_sheet(book: BOOK, index: str) -> SHEET:
         raise e
     except:
         return None
-    #  }}} function _load_sheet # 
+    #  }}} function _load_sheet #
 
 
 def compare_table(result: str, expected: str = None, **options) -> float:
-    #  function compare_table {{{ # 
+    #  function compare_table {{{ #
     """
     Args:
         result (str): path to result xlsx
@@ -114,13 +124,13 @@ def compare_table(result: str, expected: str = None, **options) -> float:
     """
 
     if result is None:
-        return 0.
+        return 0.0
 
     try:
         xlworkbookr: Workbook = openpyxl.load_workbook(filename=result)
         pdworkbookr = pd.ExcelFile(result)
     except:
-        return 0.
+        return 0.0
     worksheetr_names: List[str] = pdworkbookr.sheet_names
 
     if expected is not None:
@@ -132,32 +142,35 @@ def compare_table(result: str, expected: str = None, **options) -> float:
         pdworkbooke = None
         worksheete_names: List[str] = None
 
-    parse_idx: Callable[[Union[str, int], BOOK, BOOK], Tuple[BOOK, str]] = \
-        functools.partial(
-            _parse_sheet_idx,
-            result_sheet_names=worksheetr_names,
-            expected_sheet_names=worksheete_names
-        )
+    parse_idx: Callable[[Union[str, int], BOOK, BOOK], Tuple[BOOK, str]] = functools.partial(
+        _parse_sheet_idx, result_sheet_names=worksheetr_names, expected_sheet_names=worksheete_names
+    )
 
     passes = True
     for r in options["rules"]:
         if r["type"] == "sheet_name":
-            #  Compare Sheet Names {{{ # 
+            #  Compare Sheet Names {{{ #
             metric: bool = worksheetr_names == worksheete_names
-            logger.debug("Assertion: %s.sheet_names == %s.sheet_names - %s", result, expected, metric)
-            #  }}} Compare Sheet Names # 
+            logger.debug(
+                "Assertion: %s.sheet_names == %s.sheet_names - %s", result, expected, metric
+            )
+            #  }}} Compare Sheet Names #
 
         elif r["type"] == "sheet_data":
-            #  Compare Sheet Data by Internal Value {{{ # 
+            #  Compare Sheet Data by Internal Value {{{ #
             # sheet_idx0: 0 == "RI0" == "RNSheet1" | "EI0" == "ENSheet1"
             # sheet_idx1: as sheet_idx0
             # precision: int as number of decimal digits, default to 4
 
             error_limit: int = r.get("precision", 4)
-            sheet1: pd.DataFrame = _load_sheet(*parse_idx(r["sheet_idx0"], pdworkbookr, pdworkbooke))
+            sheet1: pd.DataFrame = _load_sheet(
+                *parse_idx(r["sheet_idx0"], pdworkbookr, pdworkbooke)
+            )
             if sheet1 is None:
-                return 0.
-            sheet2: pd.DataFrame = _load_sheet(*parse_idx(r["sheet_idx1"], pdworkbookr, pdworkbooke))
+                return 0.0
+            sheet2: pd.DataFrame = _load_sheet(
+                *parse_idx(r["sheet_idx1"], pdworkbookr, pdworkbooke)
+            )
 
             sheet1 = sheet1.round(error_limit)
             sheet2 = sheet2.round(error_limit)
@@ -169,27 +182,27 @@ def compare_table(result: str, expected: str = None, **options) -> float:
             except:
                 logger.debug("Sheet1 =/v= Sheet2")
             logger.debug("Assertion: %s =v= %s - %s", r["sheet_idx0"], r["sheet_idx1"], metric)
-            #  }}} Compare Sheet Data by Internal Value # 
+            #  }}} Compare Sheet Data by Internal Value #
 
         elif r["type"] == "sheet_print":
-            #  Compare Sheet Data by Printed Value {{{ # 
+            #  Compare Sheet Data by Printed Value {{{ #
             # sheet_idx0: 0 == "RI0" == "RNSheet1" | "EI0" == "ENSheet1"
             # sheet_idx1: as sheet_idx0
             # ignore_case: optional, defaults to False
 
             sheet1: List[str] = _load_sheet(*parse_idx(r["sheet_idx0"], result, expected))
             if sheet1 is None:
-                return 0.
+                return 0.0
             sheet2: List[str] = _load_sheet(*parse_idx(r["sheet_idx1"], result, expected))
             if r.get("ignore_case", False):
                 sheet1 = [l.lower() for l in sheet1]
                 sheet2 = [l.lower() for l in sheet2]
             metric: bool = sheet1 == sheet2
             logger.debug("Assertion: %s =p= %s - %s", r["sheet_idx0"], r["sheet_idx1"], metric)
-            #  }}} Compare Sheet Data by Printed Value # 
+            #  }}} Compare Sheet Data by Printed Value #
 
         elif r["type"] == "sheet_fuzzy":
-            #  Fuzzy Match for Ranges {{{ # 
+            #  Fuzzy Match for Ranges {{{ #
             # sheet_idx0: 0 == "RI0" == "RNSheet1" | "EI0" == "ENSheet1"
             # sheet_idx1: as sheet_idx0
             # rules: list of dict, each dict is like
@@ -236,44 +249,56 @@ def compare_table(result: str, expected: str = None, **options) -> float:
                         elif rl["type"] == "included_by":
                             metric: bool = value1 in value2
                         elif rl["type"] == "fuzzy_match":
-                            metric: bool = fuzz.ratio(value1, value2) >= rl.get("threshold", 85.)
+                            metric: bool = fuzz.ratio(value1, value2) >= rl.get("threshold", 85.0)
                         elif rl["type"] == "exact_match":
                             metric: bool = value1 == value2
                         total_metric = total_metric and metric
 
             metric: bool = total_metric
             logger.debug("Assertion: %s =~= %s - %s", r["sheet_idx0"], r["sheet_idx1"], metric)
-            #  }}} Fuzzy Match for Ranges # 
+            #  }}} Fuzzy Match for Ranges #
 
         elif r["type"] == "sparkline":
-            #  Compare Sparklines {{{ # 
+            #  Compare Sparklines {{{ #
             # sheet_idx0: 0 == "RI0" == "RNSheet1" | "EI0" == "ENSheet1"
             # sheet_idx1: as sheet_idx0
 
-            sparkline1: Dict[str, str] = load_sparklines(*parse_idx(r["sheet_idx0"], result, expected))
-            sparkline2: Dict[str, str] = load_sparklines(*parse_idx(r["sheet_idx1"], result, expected))
+            sparkline1: Dict[str, str] = load_sparklines(
+                *parse_idx(r["sheet_idx0"], result, expected)
+            )
+            sparkline2: Dict[str, str] = load_sparklines(
+                *parse_idx(r["sheet_idx1"], result, expected)
+            )
             metric: bool = sparkline1 == sparkline2
             logger.debug("Assertion: %s.sp == %.sp - %s", r["sheet_idx0"], r["sheet_idx1"], metric)
-            #  }}} Compare Sparklines # 
+            #  }}} Compare Sparklines #
 
         elif r["type"] == "chart":
-            #  Compare Charts {{{ # 
+            #  Compare Charts {{{ #
             # sheet_idx0: 0 == "RI0" == "RNSheet1" | "EI0" == "ENSheet1"
             # sheet_idx1: as sheet_idx0
             # chart_props: list of str, see utils.load_charts
 
-            charts1: Dict[str, Any] = load_charts(*parse_idx(r["sheet_idx0"], xlworkbookr, xlworkbooke), **r)
-            charts2: Dict[str, Any] = load_charts(*parse_idx(r["sheet_idx1"], xlworkbookr, xlworkbooke), **r)
+            charts1: Dict[str, Any] = load_charts(
+                *parse_idx(r["sheet_idx0"], xlworkbookr, xlworkbooke), **r
+            )
+            charts2: Dict[str, Any] = load_charts(
+                *parse_idx(r["sheet_idx1"], xlworkbookr, xlworkbooke), **r
+            )
             metric: bool = charts1 == charts2
-            logger.debug("Assertion: %s[chart] == %s[chart] - %s", r["sheet_idx0"], r["sheet_idx1"], metric)
-            logger.info(f"charts1: {charts1}")            
-            logger.info(f"charts2: {charts2}")            
+            logger.debug(
+                "Assertion: %s[chart] == %s[chart] - %s", r["sheet_idx0"], r["sheet_idx1"], metric
+            )
+            logger.info(f"charts1: {charts1}")
+            logger.info(f"charts2: {charts2}")
 
-            logger.info("Assertion: %s[chart] == %s[chart] - %s", r["sheet_idx0"], r["sheet_idx1"], metric)            
-            #  }}} Compare Charts # 
+            logger.info(
+                "Assertion: %s[chart] == %s[chart] - %s", r["sheet_idx0"], r["sheet_idx1"], metric
+            )
+            #  }}} Compare Charts #
 
         elif r["type"] == "style":
-            #  Compare Style (Also Conditional Formatiing) {{{ # 
+            #  Compare Style (Also Conditional Formatiing) {{{ #
             # sheet_idx0: 0 == "RI0" == "RNSheet1" | "EI0" == "ENSheet1"
             # sheet_idx1: as sheet_idx0
             # props: list of str indicating concerned styles, see utils._read_cell_style
@@ -288,43 +313,54 @@ def compare_table(result: str, expected: str = None, **options) -> float:
             # number_formats1: List[str] = [c.number_format.lower() for col in sheet1.iter_cols() for c in col if c.value is not None and c.data_type=="n"]
             # number_formats2: List[str] = [c.number_format.lower() for col in sheet2.iter_cols() for c in col if c.value is not None and c.data_type=="n"]
             metric: bool = styles1 == styles2
-            logger.debug("Assertion: %s.style == %s.style - %s", r["sheet_idx0"], r["sheet_idx1"], metric)
-            #  }}} Compare Style (Also Conditional Formatiing) # 
+            logger.debug(
+                "Assertion: %s.style == %s.style - %s", r["sheet_idx0"], r["sheet_idx1"], metric
+            )
+            #  }}} Compare Style (Also Conditional Formatiing) #
 
         elif r["type"] == "freeze":
-            #  Compare Freezing {{{ # 
+            #  Compare Freezing {{{ #
             # sheet_idx0: 0 == "RI0" == "RNSheet1" | "EI0" == "ENSheet1"
             # sheet_idx1: as sheet_idx0
 
             sheet1: Worksheet = _load_sheet(*parse_idx(r["sheet_idx0"], xlworkbookr, xlworkbooke))
             if sheet1 is None:
-                return 0.
+                return 0.0
             sheet2: Worksheet = _load_sheet(*parse_idx(r["sheet_idx1"], xlworkbookr, xlworkbooke))
             metric: bool = sheet1.freeze_panes == sheet2.freeze_panes
-            logger.debug("Assertion: %s.freeze(%s) == %s.freeze(%s) - %s"
-                         , r["sheet_idx0"], sheet1.freeze_panes
-                         , r["sheet_idx1"], sheet2.freeze_panes
-                         , metric
-                         )
-            #  }}} Compare Freezing # 
+            logger.debug(
+                "Assertion: %s.freeze(%s) == %s.freeze(%s) - %s",
+                r["sheet_idx0"],
+                sheet1.freeze_panes,
+                r["sheet_idx1"],
+                sheet2.freeze_panes,
+                metric,
+            )
+            #  }}} Compare Freezing #
 
         elif r["type"] == "zoom":
-            #  Check Zooming {{{ # 
+            #  Check Zooming {{{ #
             # sheet_idx: 0 == "RI0" == "RNSheet1" | "EI0" == "ENSheet1"
             # method: str
             # ref: value
 
             sheet: Worksheet = _load_sheet(*parse_idx(r["sheet_idx"], xlworkbookr, xlworkbooke))
             if sheet is None:
-                return 0.
-            zoom_scale: Number = sheet.sheet_view.zoomScale or 100.
+                return 0.0
+            zoom_scale: Number = sheet.sheet_view.zoomScale or 100.0
             metric: bool = _match_value_to_rule(zoom_scale, r)
-            logger.debug("Assertion: %s.zoom(%.1f) %s %.1f - %s", r["sheet_idx"], zoom_scale, r["method"], r["ref"],
-                         metric)
-            #  }}} Check Zooming # 
+            logger.debug(
+                "Assertion: %s.zoom(%.1f) %s %.1f - %s",
+                r["sheet_idx"],
+                zoom_scale,
+                r["method"],
+                r["ref"],
+                metric,
+            )
+            #  }}} Check Zooming #
 
         elif r["type"] == "data_validation":
-            #  Check Data Validation {{{ # 
+            #  Check Data Validation {{{ #
             # sheet_idx: 0 == "RI0" == "RNSheet1" | "EI0" == "ENSheet1"
             # dv_props: list of dict like {attribute: {"method": str, "ref": anything}}
             #   available attributes:
@@ -346,18 +382,17 @@ def compare_table(result: str, expected: str = None, **options) -> float:
 
             sheet: Worksheet = _load_sheet(*parse_idx(r["sheet_idx"], xlworkbookr, xlworkbooke))
             if sheet is None:
-                return 0.
+                return 0.0
             data_validators: List[DataValidation] = sheet.data_validations.dataValidation
 
             total_metric = len(data_validators) >= len(r["dv_props"])
             for dat_vldt in data_validators:
                 metric = False
                 for prpt in r["dv_props"]:
-                    metric = metric or all(_match_value_to_rule(getattr(dat_vldt, attrbt)
-                                                                , mr
-                                                                ) \
-                                           for attrbt, mr in prpt.items()
-                                           )
+                    metric = metric or all(
+                        _match_value_to_rule(getattr(dat_vldt, attrbt), mr)
+                        for attrbt, mr in prpt.items()
+                    )
                     if metric:
                         break
                 total_metric = total_metric and metric
@@ -366,71 +401,83 @@ def compare_table(result: str, expected: str = None, **options) -> float:
 
             logger.debug("Assertion: %s.data_validation - %s", r["sheet_idx"], total_metric)
             metric: bool = total_metric
-            #  }}} Check Data Validation # 
+            #  }}} Check Data Validation #
 
         elif r["type"] == "row_props":
-            #  Check Row Properties {{{ # 
+            #  Check Row Properties {{{ #
             # sheet_idx0: 0 == "RI0" == "RNSheet1" | "EI0" == "ENSheet1"
             # sheet_idx1: as sheet_idx0
             # props: list of str, see utils.load_rows_or_cols
 
-            rows1: Dict[str, Any] = load_rows_or_cols(*parse_idx(r["sheet_idx0"], xlworkbookr, xlworkbooke)
-                                                      , obj="row"
-                                                      , **r
-                                                      )
-            rows2: Dict[str, Any] = load_rows_or_cols(*parse_idx(r["sheet_idx1"], xlworkbookr, xlworkbooke)
-                                                      , obj="row"
-                                                      , **r
-                                                      )
+            rows1: Dict[str, Any] = load_rows_or_cols(
+                *parse_idx(r["sheet_idx0"], xlworkbookr, xlworkbooke), obj="row", **r
+            )
+            rows2: Dict[str, Any] = load_rows_or_cols(
+                *parse_idx(r["sheet_idx1"], xlworkbookr, xlworkbooke), obj="row", **r
+            )
             logger.debug("Rows1: %s", repr(rows1))
             logger.debug("Rows2: %s", repr(rows2))
             metric: bool = rows1 == rows2
-            logger.debug("Assertion: %s[rows] == %s[rows] - %s", r["sheet_idx0"], r["sheet_idx1"], metric)
-            #  }}} Check Row Properties # 
+            logger.debug(
+                "Assertion: %s[rows] == %s[rows] - %s", r["sheet_idx0"], r["sheet_idx1"], metric
+            )
+            #  }}} Check Row Properties #
 
         elif r["type"] == "col_props":
-            #  Check Row Properties {{{ # 
+            #  Check Row Properties {{{ #
             # sheet_idx0: 0 == "RI0" == "RNSheet1" | "EI0" == "ENSheet1"
             # sheet_idx1: as sheet_idx0
             # props: list of str, see utils.load_rows_or_cols
 
-            cols1: Dict[str, Any] = load_rows_or_cols(*parse_idx(r["sheet_idx0"], xlworkbookr, xlworkbooke)
-                                                      , obj="column"
-                                                      , **r
-                                                      )
-            cols2: Dict[str, Any] = load_rows_or_cols(*parse_idx(r["sheet_idx1"], xlworkbookr, xlworkbooke)
-                                                      , obj="column"
-                                                      , **r
-                                                      )
+            cols1: Dict[str, Any] = load_rows_or_cols(
+                *parse_idx(r["sheet_idx0"], xlworkbookr, xlworkbooke), obj="column", **r
+            )
+            cols2: Dict[str, Any] = load_rows_or_cols(
+                *parse_idx(r["sheet_idx1"], xlworkbookr, xlworkbooke), obj="column", **r
+            )
             metric: bool = cols1 == cols2
-            logger.debug("Assertion: %s[cols] == %s[cols] - %s", r["sheet_idx0"], r["sheet_idx1"], metric)
-            #  }}} Check Row Properties # 
+            logger.debug(
+                "Assertion: %s[cols] == %s[cols] - %s", r["sheet_idx0"], r["sheet_idx1"], metric
+            )
+            #  }}} Check Row Properties #
 
         elif r["type"] == "filter":
-            #  Compare Filters {{{ # 
+            #  Compare Filters {{{ #
             # sheet_idx0: 0 == "RI0" == "RNSheet1" | "EI0" == "ENSheet1"
             # sheet_idx1: as sheet_idx0
 
-            filters1: Dict[str, Any] = load_filters(*parse_idx(r["sheet_idx0"], xlworkbookr, xlworkbooke), **r)
-            filters2: Dict[str, Any] = load_filters(*parse_idx(r["sheet_idx1"], xlworkbookr, xlworkbooke), **r)
+            filters1: Dict[str, Any] = load_filters(
+                *parse_idx(r["sheet_idx0"], xlworkbookr, xlworkbooke), **r
+            )
+            filters2: Dict[str, Any] = load_filters(
+                *parse_idx(r["sheet_idx1"], xlworkbookr, xlworkbooke), **r
+            )
             metric: bool = filters1 == filters2
-            logger.debug("Assertion: %s[filter] == %s[filter] - %s", r["sheet_idx0"], r["sheet_idx1"], metric)
-            #  }}} Compare Filters # 
+            logger.debug(
+                "Assertion: %s[filter] == %s[filter] - %s", r["sheet_idx0"], r["sheet_idx1"], metric
+            )
+            #  }}} Compare Filters #
 
         elif r["type"] == "pivot_table":
-            #  Compare Pivot Tables {{{ # 
+            #  Compare Pivot Tables {{{ #
             # sheet_idx0: 0 == "RI0" == "RNSheet1" | "EI0" == "ENSheet1"
             # sheet_idx1: as sheet_idx0
             # pivot_props: list of str, see utils.load_pivot_tables
 
-            pivots1: Dict[str, Any] = load_pivot_tables(*parse_idx(r["sheet_idx0"], xlworkbookr, xlworkbooke), **r)
-            pivots2: Dict[str, Any] = load_pivot_tables(*parse_idx(r["sheet_idx1"], xlworkbookr, xlworkbooke), **r)
+            pivots1: Dict[str, Any] = load_pivot_tables(
+                *parse_idx(r["sheet_idx0"], xlworkbookr, xlworkbooke), **r
+            )
+            pivots2: Dict[str, Any] = load_pivot_tables(
+                *parse_idx(r["sheet_idx1"], xlworkbookr, xlworkbooke), **r
+            )
             metric: bool = pivots1 == pivots2
-            logger.debug("Assertion: %s[pivot]==%s[pivot] - %s", r["sheet_idx0"], r["sheet_idx1"], metric)
-            #  }}} Compare Pivot Tables # 
+            logger.debug(
+                "Assertion: %s[pivot]==%s[pivot] - %s", r["sheet_idx0"], r["sheet_idx1"], metric
+            )
+            #  }}} Compare Pivot Tables #
 
         elif r["type"] == "check_cell":
-            #  Check Cell Properties {{{ # 
+            #  Check Cell Properties {{{ #
             # sheet_idx: 0 == "RI0" == "RNSheet1" | "EI0" == "ENSheet1"
             # coordinate: str, "E3"
             # props: dict like {attribute: {"method": str, "ref": anything}}
@@ -438,23 +485,28 @@ def compare_table(result: str, expected: str = None, **options) -> float:
 
             sheet: Worksheet = _load_sheet(*parse_idx(r["sheet_idx"], xlworkbookr, xlworkbooke))
             if sheet is None:
-                return 0.
+                return 0.0
             # data_frame: pd.DataFrame = _load_sheet(*parse_idx(r["sheet_idx"], pdworkbookr, pdworkbooke))
             cell: Cell = sheet[r["coordinate"]]
             metric: bool = True
             for prpt, rule in r["props"].items():
                 if prpt == "value":
-                    val = read_cell_value(*parse_idx(r["sheet_idx"], result, expected), r["coordinate"])
+                    val = read_cell_value(
+                        *parse_idx(r["sheet_idx"], result, expected), r["coordinate"]
+                    )
                 else:
                     val = _read_cell_style(prpt, cell)
 
                 metric = metric and _match_value_to_rule(val, rule)
 
-            logger.debug("Assertion: %s[%s] :%s - %s"
-                         , r["sheet_idx"], r["coordinate"]
-                         , repr(r["props"]), metric
-                         )
-            #  }}} Check Cell Properties # 
+            logger.debug(
+                "Assertion: %s[%s] :%s - %s",
+                r["sheet_idx"],
+                r["coordinate"],
+                repr(r["props"]),
+                metric,
+            )
+            #  }}} Check Cell Properties #
 
         else:
             raise NotImplementedError("Unimplemented sheet check: {:}".format(r["type"]))
@@ -464,12 +516,12 @@ def compare_table(result: str, expected: str = None, **options) -> float:
             break
 
     return float(passes)
-    #  }}} function compare_table # 
+    #  }}} function compare_table #
 
 
 def compare_csv(result: str, expected: str, **options) -> float:
     if result is None:
-        return 0.
+        return 0.0
 
     with open(result) as f:
         result_lines: Iterable[str] = f.read().splitlines()
@@ -501,21 +553,30 @@ def compare_conference_city_in_order(actual_city_list_path, expected_city):
         for i in range(len(actual_city_list)):
             if isinstance(expected_city_list[i], str):
                 if expected_city_list[i] not in actual_city_list[i]:
-                    logger.debug(f"Expected city {expected_city_list[i]}; Actual city {actual_city_list[i]}")
-                    print(f"Expected city {expected_city_list[i]}; Actual city {actual_city_list[i]}")
-                    return 0.
-
+                    logger.debug(
+                        f"Expected city {expected_city_list[i]}; Actual city {actual_city_list[i]}"
+                    )
+                    print(
+                        f"Expected city {expected_city_list[i]}; Actual city {actual_city_list[i]}"
+                    )
+                    return 0.0
 
             elif isinstance(expected_city_list[i], List):
-                if not any(possible_str in actual_city_list[i] for possible_str in expected_city_list[i]):
-                    logger.debug(f"Expected city {expected_city_list[i]}; Actual city {actual_city_list[i]}")
-                    print(f"Expected city {expected_city_list[i]}; Actual city {actual_city_list[i]}")
-                    return 0.
+                if not any(
+                    possible_str in actual_city_list[i] for possible_str in expected_city_list[i]
+                ):
+                    logger.debug(
+                        f"Expected city {expected_city_list[i]}; Actual city {actual_city_list[i]}"
+                    )
+                    print(
+                        f"Expected city {expected_city_list[i]}; Actual city {actual_city_list[i]}"
+                    )
+                    return 0.0
 
             else:
                 raise TypeError("Expected city should be a string or a list of strings")
 
     except:
-        return 0.
+        return 0.0
 
-    return 1.
+    return 1.0

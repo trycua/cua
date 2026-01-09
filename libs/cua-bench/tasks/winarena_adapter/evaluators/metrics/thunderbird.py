@@ -1,8 +1,7 @@
 import json
 import logging
 import re
-from typing import List, Pattern, Dict, Match
-from typing import Union, Any, TypeVar, Callable
+from typing import Any, Dict, List, Match, Pattern, TypeVar, Union
 
 from .utils import _match_record
 from .utils import _match_value_to_rule as _match_pref
@@ -11,7 +10,7 @@ logger = logging.getLogger("desktopenv.metric.thunderbird")
 
 V = TypeVar("Value")
 
-_pref_pattern: Pattern[str] = re.compile(r'^user_pref\("(?P<key>(?:[^"]|\\")+)\", (?P<val>.+)\);$');
+_pref_pattern: Pattern[str] = re.compile(r'^user_pref\("(?P<key>(?:[^"]|\\")+)\", (?P<val>.+)\);$')
 
 
 def check_thunderbird_prefs(result: str, rule: Dict[str, Dict[str, Dict[str, Any]]]):
@@ -39,7 +38,7 @@ def check_thunderbird_prefs(result: str, rule: Dict[str, Dict[str, Dict[str, Any
     """
 
     if result is None:
-        return 0.
+        return 0.0
 
     expect_rules = rule.get("expect", {})
     unexpect_rules = rule.get("unexpect", {})
@@ -67,10 +66,14 @@ def check_thunderbird_prefs(result: str, rule: Dict[str, Dict[str, Dict[str, Any
     return float(all(expect_metrics.values()) and unexpect_metric)
 
 
-_value_processor: Callable[[str], str] = lambda val: val.replace("\\\"", "\"").replace("\\\\", "\\")
+def _value_processor(val: str) -> str:
+    return val.replace('\\"', '"').replace("\\\\", "\\")
+
+
 # _condition_pattern: Pattern[str] = re.compile(r'(?P<type>AND|OR) \((?P<key>[\w ]+),(?P<rel>[\w ' + '\'' + r']+),(?:"(?P<val2>(?:[^"]|\")+)"|(?P<val1>[^)]+))\)')
 _condition_pattern: Pattern[str] = re.compile(
-    r'\b(?:AND|OR) \((?:[\w ]+),(?:[\w ' + '\'' + r']+),(?:"(?:(?:[^"]|\")+)"|(?:[^)]+))\)|\bALL\b')
+    r"\b(?:AND|OR) \((?:[\w ]+),(?:[\w " + "'" + r']+),(?:"(?:(?:[^"]|\")+)"|(?:[^)]+))\)|\bALL\b'
+)
 
 
 def check_thunderbird_filter(result: str, rules: Dict[str, List[Dict[str, str]]]) -> float:
@@ -88,7 +91,7 @@ def check_thunderbird_filter(result: str, rules: Dict[str, List[Dict[str, str]]]
     """
 
     if result is None:
-        return 0.
+        return 0.0
 
     # read filter def file
     # a filter:
@@ -118,8 +121,7 @@ def check_thunderbird_filter(result: str, rules: Dict[str, List[Dict[str, str]]]
                 condition_str: str = _value_processor(l[11:-2])
                 logger.debug("FILTER CONDITION: %s", condition_str)
 
-                conditions: List[str] = \
-                    _condition_pattern.findall(condition_str)
+                conditions: List[str] = _condition_pattern.findall(condition_str)
                 logger.debug("FILTER CONDITIONS: %s", repr(conditions))
 
                 filter_["condition"] = conditions
@@ -131,11 +133,15 @@ def check_thunderbird_filter(result: str, rules: Dict[str, List[Dict[str, str]]]
     for flt in filters:
         for i, r in enumerate(rules.get("expect", [])):
             expect_metrics[i] = expect_metrics[i] or _match_record(r, flt)
-        unexpect_metric = unexpect_metric and not any(_match_record(r, flt) for r in rules.get("unexpect", []))
+        unexpect_metric = unexpect_metric and not any(
+            _match_record(r, flt) for r in rules.get("unexpect", [])
+        )
     return float(all(expect_metrics) and unexpect_metric)
 
 
-def check_thunderbird_folder(result: Union[str, List[str]], reference: Union[str, List[str]], **kwargs) -> float:
+def check_thunderbird_folder(
+    result: Union[str, List[str]], reference: Union[str, List[str]], **kwargs
+) -> float:
     """
     Check the file or file_list that each text file contains all messages in a folder in Thunderbird. Each message is started with `FROM - `.
     **kwargs:
@@ -146,31 +152,37 @@ def check_thunderbird_folder(result: Union[str, List[str]], reference: Union[str
     """
 
     def normalize_msg(msg, options):
-        ignore_status = options.get('ignore_status', False)
-        ignore_keys = options.get('ignore_keys', False)
+        ignore_status = options.get("ignore_status", False)
+        ignore_keys = options.get("ignore_keys", False)
         if ignore_status:
-            msg = re.sub(r'X-Mozilla-Status\d?:[\s\d]+', '', msg)
+            msg = re.sub(r"X-Mozilla-Status\d?:[\s\d]+", "", msg)
         if ignore_keys:
-            msg = re.sub(r'(X-Mozilla-Keys:[^\n]*?)\n(MIME-Version)', r'\2', msg)
+            msg = re.sub(r"(X-Mozilla-Keys:[^\n]*?)\n(MIME-Version)", r"\2", msg)
         return msg.strip()
 
     def read_thunderbird_folder_file(path: str) -> str:
-        with open(path, 'r') as inf:
+        with open(path, "r") as inf:
             data = inf.read().strip()
             messages = []
-            for mail in data.split('FROM - '):
-                if mail.strip(): continue
-                if kwargs.get('remove_deleted', True) and re.search(r'X-Mozilla-Status: 000[89]', mail): continue
-                messages.append('FROM - ' + normalize_msg(mail, kwargs))
-            if kwargs.get('remove_duplicate', True):
+            for mail in data.split("FROM - "):
+                if mail.strip():
+                    continue
+                if kwargs.get("remove_deleted", True) and re.search(
+                    r"X-Mozilla-Status: 000[89]", mail
+                ):
+                    continue
+                messages.append("FROM - " + normalize_msg(mail, kwargs))
+            if kwargs.get("remove_duplicate", True):
                 messages = set(messages)
-        return '\n'.join(sorted(messages))
+        return "\n".join(sorted(messages))
 
     if type(reference) != list:
         result, reference = [result], [reference]
     for pred, gold in zip(result, reference):
-        if pred is None: return .0
+        if pred is None:
+            return 0.0
         mail1 = read_thunderbird_folder_file(pred)
         mail2 = read_thunderbird_folder_file(gold)
-        if mail1 != mail2: return .0
+        if mail1 != mail2:
+            return 0.0
     return 1.0

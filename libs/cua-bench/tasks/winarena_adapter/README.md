@@ -30,6 +30,7 @@ python -m tasks.winarena_adapter.cli vm status
 ```
 
 Output:
+
 ```
 Windows Arena Status
 ========================================
@@ -189,26 +190,27 @@ During benchmark execution:
 
 ## Task Domains
 
-| Domain | Tasks | Description |
-|--------|-------|-------------|
-| LibreOffice Calc | 24 | Spreadsheet operations, charts, formulas |
-| VS Code | 23 | IDE settings, extensions, keybindings |
-| VLC Media Player | 21 | Media playback, settings |
-| File Explorer | 19 | File management, folder operations |
-| LibreOffice Writer | 19 | Document editing, formatting |
-| Chrome | 17 | Browser tabs, bookmarks, extensions |
-| MS Edge | 13 | Browser settings, shortcuts |
-| Settings | 5 | Windows system settings |
-| Clock | 4 | Alarms, timers |
-| Windows Calculator | 3 | Calculator operations |
-| Microsoft Paint | 3 | Image editing |
-| Notepad | 2 | Text file operations |
+| Domain             | Tasks | Description                              |
+| ------------------ | ----- | ---------------------------------------- |
+| LibreOffice Calc   | 24    | Spreadsheet operations, charts, formulas |
+| VS Code            | 23    | IDE settings, extensions, keybindings    |
+| VLC Media Player   | 21    | Media playback, settings                 |
+| File Explorer      | 19    | File management, folder operations       |
+| LibreOffice Writer | 19    | Document editing, formatting             |
+| Chrome             | 17    | Browser tabs, bookmarks, extensions      |
+| MS Edge            | 13    | Browser settings, shortcuts              |
+| Settings           | 5     | Windows system settings                  |
+| Clock              | 4     | Alarms, timers                           |
+| Windows Calculator | 3     | Calculator operations                    |
+| Microsoft Paint    | 3     | Image editing                            |
+| Notepad            | 2     | Text file operations                     |
 
 ## Monitoring
 
 ### Browser Access (noVNC)
 
 During base image creation or task execution, view the Windows VM at:
+
 ```
 http://localhost:8006
 ```
@@ -226,6 +228,7 @@ docker ps -f name=winarena
 ### RDP Access
 
 Connect via RDP for interactive debugging:
+
 ```
 Host: localhost
 Port: 3390
@@ -245,6 +248,7 @@ Password: (none)
 ### Connection to CUA Server fails
 
 The Windows VM needs time to boot and start the CUA Computer Server. Wait for the log message:
+
 ```
 VM is up and running, and the CUA Computer Server is ready to use!
 ```
@@ -256,6 +260,7 @@ Tool downloads use mirror lists in `infra/vm/setup/tools_config.json`. If a down
 ## Development
 
 For development and Azure Batch deployment details, see:
+
 - [infra/README.md](infra/README.md) - Detailed implementation guide
 - [infra/docs/](infra/docs/) - Development tips and agent documentation
 
@@ -264,11 +269,13 @@ For development and Azure Batch deployment details, see:
 The setup scripts (`setup.ps1`, `tools_config.json`, etc.) control how the Windows VM is configured during base image creation.
 
 **Local CLI (vm setup, vm start, task run):**
+
 - Setup folder is **mounted** at `/shared` inside the container
 - Changes to `infra/vm/setup/` take effect immediately without rebuilding
 - Edit `tools_config.json` to update download mirrors, then re-run `vm setup`
 
 **Azure Batch (production):**
+
 - Setup scripts are **baked into the Docker image** at build time
 - Changes require rebuilding and pushing the Docker image
 - This ensures reproducible, versioned production runs
@@ -284,6 +291,7 @@ infra/vm/setup/
 ```
 
 To update tool mirrors or setup behavior:
+
 1. Edit files in `infra/vm/setup/`
 2. Sync to remote VM: `./sync-to-remote.sh`
 3. Re-run `vm setup` (local setup folder is auto-mounted)

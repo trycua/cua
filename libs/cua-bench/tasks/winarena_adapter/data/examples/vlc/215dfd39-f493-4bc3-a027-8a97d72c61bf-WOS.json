@@ -23,21 +23,13 @@
     }
   ],
   "trajectory": "trajectories/",
-  "related_apps": [
-    "vlc"
-  ],
+  "related_apps": ["vlc"],
   "evaluator": {
     "postconfig": [
       {
         "type": "launch",
         "parameters": {
-          "command": [
-            "powershell",
-            "-Command",
-            "Stop-Process",
-            "-Name",
-            "vlc"
-          ]
+          "command": ["powershell", "-Command", "Stop-Process", "-Name", "vlc"]
         }
       },
       {
@@ -45,7 +37,7 @@
         "parameters": {
           "seconds": 1
         }
-    },      
+      },
       {
         "type": "launch",
         "parameters": {

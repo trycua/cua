@@ -1,24 +1,24 @@
 """cua-bench SDK - A framework for desktop automation tasks with batch processing."""
 
-from .core import Task, make, interact
-from .decorators import tasks_config, setup_task, solve_task, evaluate_task
-from .environment import Environment
-from .desktop import Desktop
+from .actions import repr_to_action
 from .computers import DesktopSession
+from .core import Task, interact, make
+from .decorators import evaluate_task, setup_task, solve_task, tasks_config
+from .desktop import Desktop
+from .environment import Environment
 from .types import (
     Action,
     ClickAction,
+    DoneAction,
+    DoubleClickAction,
     DragAction,
-    KeyAction,
     HotkeyAction,
+    KeyAction,
+    RightClickAction,
+    ScrollAction,
     TypeAction,
     WaitAction,
-    DoneAction,
-    ScrollAction,
-    RightClickAction,
-    DoubleClickAction,
 )
-from .actions import repr_to_action
 
 # MobileSession placeholder (not yet implemented)
 MobileSession = DesktopSession

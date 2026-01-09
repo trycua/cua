@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List, Literal, Union, Optional
+from typing import List, Literal, Optional, Union
 
 # --- Screen size options for desktop environments ---
 StandardScreenSize = Union[
@@ -55,7 +55,9 @@ class WindowSnapshot:
 class Snapshot:
     windows: List[WindowSnapshot]
 
+
 # --- Action types ---
+
 
 # Mouse Actions
 @dataclass
@@ -63,20 +65,24 @@ class ClickAction:
     x: int
     y: int
 
+
 @dataclass
 class RightClickAction:
     x: int
     y: int
+
 
 @dataclass
 class DoubleClickAction:
     x: int
     y: int
 
+
 @dataclass
 class MiddleClickAction:
     x: int
     y: int
+
 
 @dataclass
 class DragAction:
@@ -86,38 +92,46 @@ class DragAction:
     to_y: int
     duration: float = 1.0
 
+
 @dataclass
 class MoveToAction:
     x: int
     y: int
     duration: float = 0.0
 
+
 @dataclass
 class ScrollAction:
     direction: Literal["up", "down"] = "up"
     amount: int = 100
+
 
 # Keyboard Actions
 @dataclass
 class TypeAction:
     text: str
 
+
 @dataclass
 class KeyAction:
     key: str
 
+
 @dataclass
 class HotkeyAction:
     keys: List[str]
+
 
 # Control Actions
 @dataclass
 class DoneAction:
     pass
 
+
 @dataclass
 class WaitAction:
     seconds: float = 1.0
+
 
 Action = Union[
     ClickAction,

@@ -11,6 +11,7 @@ In this tutorial, you'll build a custom agent that can interact with desktop env
 ## What You'll Build
 
 A custom agent that can:
+
 1. Take screenshots of the desktop
 2. Analyze what it sees
 3. Decide on actions (click, type, etc.)
@@ -47,6 +48,7 @@ cb agent init my-agent --output-dir ./agents
 ```
 
 This creates:
+
 ```
 agents/
 ├── __init__.py
@@ -401,17 +403,17 @@ agents:
 
 Your agent can execute these actions via `session.execute_action()`:
 
-| Action | Description |
-|--------|-------------|
-| `ClickAction(x, y)` | Single click at coordinates |
-| `RightClickAction(x, y)` | Right-click |
-| `DoubleClickAction(x, y)` | Double-click |
-| `DragAction(from_x, from_y, to_x, to_y)` | Drag from one point to another |
-| `TypeAction(text)` | Type text |
-| `KeyAction(key)` | Press a single key (e.g., "return", "escape") |
-| `HotkeyAction(keys)` | Press key combination (e.g., ["ctrl", "c"]) |
-| `ScrollAction(direction, amount)` | Scroll up/down |
-| `WaitAction(seconds)` | Wait for a duration |
+| Action                                   | Description                                   |
+| ---------------------------------------- | --------------------------------------------- |
+| `ClickAction(x, y)`                      | Single click at coordinates                   |
+| `RightClickAction(x, y)`                 | Right-click                                   |
+| `DoubleClickAction(x, y)`                | Double-click                                  |
+| `DragAction(from_x, from_y, to_x, to_y)` | Drag from one point to another                |
+| `TypeAction(text)`                       | Type text                                     |
+| `KeyAction(key)`                         | Press a single key (e.g., "return", "escape") |
+| `HotkeyAction(keys)`                     | Press key combination (e.g., ["ctrl", "c"])   |
+| `ScrollAction(direction, amount)`        | Scroll up/down                                |
+| `WaitAction(seconds)`                    | Wait for a duration                           |
 
 ## Complete Code
 

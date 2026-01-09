@@ -16,11 +16,11 @@ from __future__ import annotations
 
 import base64
 import html
+import json
 import os
 import re
 import sys
 from pathlib import Path
-import json
 from typing import Dict, List, Optional, Tuple
 
 # Optional progress bars
@@ -29,11 +29,13 @@ try:
 except Exception:
     _tqdm = None
 
+
 def pbar(iterable, desc: str):
     return _tqdm(iterable, desc=desc) if _tqdm else iterable
 
+
 # Windows-only imports guarded
-if os.name != 'nt':
+if os.name != "nt":
     print("This script is intended to run on Windows.")
     sys.exit(1)
 
@@ -56,12 +58,17 @@ START_MENU_DIR = Path(r"C:\ProgramData\Microsoft\Windows\Start Menu")
 
 # --- Image helpers ---
 
+
 def _has_opaque_pixels_bytes(data: bytes) -> bool:
     try:
-        from PIL import Image  # type: ignore
         from io import BytesIO
+
+        from PIL import Image  # type: ignore
+
         with Image.open(BytesIO(data)) as im:
-            if im.mode in ("RGB", "L", "P") and (im.mode != "P" or not hasattr(im, "info") or "transparency" not in im.info):
+            if im.mode in ("RGB", "L", "P") and (
+                im.mode != "P" or not hasattr(im, "info") or "transparency" not in im.info
+            ):
                 return True
             im = im.convert("RGBA")
             alpha = im.getchannel("A")
@@ -73,8 +80,10 @@ def _has_opaque_pixels_bytes(data: bytes) -> bool:
 
 def _resize_image_bytes_to_png_dataurl(data: bytes, max_px: int = ICO_MAX_SIZE) -> Optional[str]:
     try:
-        from PIL import Image  # type: ignore
         from io import BytesIO
+
+        from PIL import Image  # type: ignore
+
         with Image.open(BytesIO(data)) as im:
             im = im.convert("RGBA")
             im.thumbnail((max_px, max_px))
@@ -117,9 +126,9 @@ VALUE_INSTALL_LOCATION = "InstallLocation"
 def _open_key(root, subkey):
     # Try both 64-bit and 32-bit views where applicable
     access_flags = [0]
-    if hasattr(winreg, 'KEY_WOW64_64KEY'):
+    if hasattr(winreg, "KEY_WOW64_64KEY"):
         access_flags.append(winreg.KEY_WOW64_64KEY)
-    if hasattr(winreg, 'KEY_WOW64_32KEY'):
+    if hasattr(winreg, "KEY_WOW64_32KEY"):
         access_flags.append(winreg.KEY_WOW64_32KEY)
 
     for flag in access_flags:
@@ -194,6 +203,7 @@ def _extract_png_dataurl_from_exe(exe_path: Path, icon_index: Optional[int]) -> 
     except Exception:
         return None
     import tempfile
+
     with tempfile.NamedTemporaryFile(suffix=".ico", delete=False) as tmp:
         tmp_ico = Path(tmp.name)
     if icon_index is not None:
@@ -457,7 +467,7 @@ def main() -> int:
     for name, dataurl in filtered_entries:
         sel_name = css_escape_attr(name)
         css_lines.append(
-            f".icon[data-icon=\"{sel_name}\"] {{\n  background-image: url({dataurl}) !important;\n}}"
+            f'.icon[data-icon="{sel_name}"] {{\n  background-image: url({dataurl}) !important;\n}}'
         )
     OUTPUT_CSS.write_text("\n\n".join(css_lines) + "\n", encoding="utf-8")
     print(f"Wrote {OUTPUT_CSS} with {len(filtered_entries)} icon rules.")

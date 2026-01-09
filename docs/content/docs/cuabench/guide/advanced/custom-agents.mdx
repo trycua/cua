@@ -51,7 +51,7 @@ agents:
   # Custom Docker image agent (cloud-ready)
   - name: my-agent
     image: myregistry/my-agent:latest
-    command: ["python", "-m", "my_agent.main"]
+    command: ['python', '-m', 'my_agent.main']
     defaults:
       model: gpt-4o
       max_steps: 100
@@ -72,12 +72,13 @@ Best for production and CI/CD. Your agent is fully self-contained in a Docker im
 ```yaml
 - name: my-agent
   image: myregistry/my-agent:latest
-  command: ["python", "-m", "my_agent.main"]  # Optional
+  command: ['python', '-m', 'my_agent.main'] # Optional
   defaults:
     model: gpt-4o
 ```
 
 Your Docker image can include **any dependencies** - the only requirement is that it can:
+
 1. Read environment variables (to know where to connect)
 2. Make HTTP requests (to communicate with the environment)
 
@@ -107,17 +108,17 @@ Use the pre-configured agents without any setup:
 
 Custom Docker image agents receive these environment variables:
 
-| Variable | Description | Example |
-|----------|-------------|---------|
-| `CUA_ENV_API_URL` | API endpoint for environment | `http://cua-env:5000` |
-| `CUA_ENV_VNC_URL` | VNC endpoint for debugging | `http://cua-env:8006` |
-| `CUA_ENV_TYPE` | OS type | `linux`, `windows`, `android` |
-| `CUA_TASK_PATH` | Mounted task config path | `/app/env` |
-| `CUA_TASK_INDEX` | Task index to run | `0` |
-| `CUA_MODEL` | Model to use (if specified) | `gpt-4o` |
-| `ANTHROPIC_API_KEY` | Passed through from host | `sk-...` |
-| `OPENAI_API_KEY` | Passed through from host | `sk-...` |
-| `GOOGLE_API_KEY` | Passed through from host | `...` |
+| Variable            | Description                  | Example                       |
+| ------------------- | ---------------------------- | ----------------------------- |
+| `CUA_ENV_API_URL`   | API endpoint for environment | `http://cua-env:5000`         |
+| `CUA_ENV_VNC_URL`   | VNC endpoint for debugging   | `http://cua-env:8006`         |
+| `CUA_ENV_TYPE`      | OS type                      | `linux`, `windows`, `android` |
+| `CUA_TASK_PATH`     | Mounted task config path     | `/app/env`                    |
+| `CUA_TASK_INDEX`    | Task index to run            | `0`                           |
+| `CUA_MODEL`         | Model to use (if specified)  | `gpt-4o`                      |
+| `ANTHROPIC_API_KEY` | Passed through from host     | `sk-...`                      |
+| `OPENAI_API_KEY`    | Passed through from host     | `sk-...`                      |
+| `GOOGLE_API_KEY`    | Passed through from host     | `...`                         |
 
 ## Building a Docker Image Agent
 
@@ -226,14 +227,14 @@ cb run task tasks/my_task --eval --agent my-agent --model gpt-4-turbo
 
 Since you control the Docker image, you can include any dependencies:
 
-| Use Case | Dependencies |
-|----------|-------------|
-| Vision model agent | `torch`, `transformers`, CUDA runtime |
-| Browser automation | `playwright`, `selenium`, Chrome |
-| OCR-based agent | `tesseract`, `pytesseract`, `opencv` |
-| Multi-modal LLM | `openai`, `anthropic`, `google-generativeai` |
-| Local LLM | `llama-cpp-python`, GGUF models |
-| Reinforcement learning | `stable-baselines3`, `gymnasium` |
+| Use Case               | Dependencies                                 |
+| ---------------------- | -------------------------------------------- |
+| Vision model agent     | `torch`, `transformers`, CUDA runtime        |
+| Browser automation     | `playwright`, `selenium`, Chrome             |
+| OCR-based agent        | `tesseract`, `pytesseract`, `opencv`         |
+| Multi-modal LLM        | `openai`, `anthropic`, `google-generativeai` |
+| Local LLM              | `llama-cpp-python`, GGUF models              |
+| Reinforcement learning | `stable-baselines3`, `gymnasium`             |
 
 ## Best Practices
 

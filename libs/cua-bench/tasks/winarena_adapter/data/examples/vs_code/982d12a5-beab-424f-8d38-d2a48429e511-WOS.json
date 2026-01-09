@@ -8,16 +8,14 @@
     {
       "type": "launch",
       "parameters": {
-        "command": [
-          "code"
-        ]
+        "command": ["code"]
       }
     },
     {
-        "type": "sleep",
-        "parameters": {
-          "seconds": 2
-        }
+      "type": "sleep",
+      "parameters": {
+        "seconds": 2
+      }
     },
     {
       "type": "activate_window",
@@ -27,15 +25,13 @@
     }
   ],
   "trajectory": "trajectories/982d12a5-beab-424f-8d38-d2a48429e511",
-  "related_apps": [
-    "vscode"
-  ],
+  "related_apps": ["vscode"],
   "evaluator": {
     "func": "check_json_settings",
     "expected": {
       "type": "rule",
       "rules": {
-        "expected": {"workbench.colorTheme": "Visual Studio Dark"}
+        "expected": { "workbench.colorTheme": "Visual Studio Dark" }
       }
     },
     "result": {

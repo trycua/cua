@@ -1,10 +1,12 @@
-import cua_bench as cb
 from pathlib import Path
+
+import cua_bench as cb
+
 
 # Called once per batch
 @cb.tasks_config(split="train")
 def load():
-    os_types = ["linux"] # ["macos", "win11", "win10"]
+    os_types = ["linux"]  # ["macos", "win11", "win10"]
 
     # Different date picking scenarios
     date_scenarios = [
@@ -27,17 +29,19 @@ def load():
                     "os_type": os_type,
                     "width": 1024,
                     "height": 768,
-                    "background": '#c0c0c0'
-                }
-            }
+                    "background": "#c0c0c0",
+                },
+            },
         )
         for os_type in os_types
         for scenario in date_scenarios
     ]
 
+
 # All code below will be running in a separate process per task
 
 pid = None
+
 
 # Called at start of task
 @cb.setup_task(split="train")
@@ -47,11 +51,12 @@ async def start(task_cfg: cb.Task, session: cb.DesktopSession):
     # Setup steps:
     # 1. Create a webview window
     pid = await session.launch_window(
-        html=(Path(__file__).parent / "gui/index.html").read_text('utf-8'),
+        html=(Path(__file__).parent / "gui/index.html").read_text("utf-8"),
         title="Date Picker Task",
         width=450,
         height=400,
     )
+
 
 # Called at end of task
 @cb.evaluate_task(split="train")
@@ -69,6 +74,7 @@ async def evaluate(task_cfg: cb.Task, session: cb.DesktopSession) -> list[float]
     expected_date = task_cfg.metadata["date"]
     return [1.0] if selected_date == expected_date else [0.0]
 
+
 # Called after setup_task if run_solution is True
 @cb.solve_task(split="train")
 async def solve(task_cfg: cb.Task, session: cb.DesktopSession):
@@ -83,6 +89,7 @@ async def solve(task_cfg: cb.Task, session: cb.DesktopSession):
 
     # 3. Press Enter to confirm
     await session.execute_action(cb.KeyAction(key="Return"))
+
 
 if __name__ == "__main__":
     cb.interact(__file__)

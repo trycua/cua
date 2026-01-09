@@ -32,22 +32,22 @@ await computer.run()
 
 #### Constructor Parameters
 
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `os_type` | `str` | Required | Operating system type: `"linux"`, `"macos"`, or `"windows"` |
-| `provider_type` | `str` | Required | Provider type: `"docker"`, `"lume"`, `"cloud"`, `"qemu"`, `"windows-sandbox"`, or `"host"` |
-| `image` | `str` | `None` | Container/VM image to use (provider-specific) |
-| `name` | `str` | `""` | Optional name for the computer instance |
-| `display` | `str \| dict` | `"1024x768"` | Display resolution (can be string like `"1920x1080"` or dict like `{"width": 1920, "height": 1080}`) |
-| `memory` | `str` | `"8GB"` | Memory allocation |
-| `cpu` | `str` | `"4"` | Number of CPU cores |
-| `shared_directories` | `list[str]` | `None` | List of host directories to share with the computer |
-| `storage` | `str` | `None` | Path to persistent storage |
-| `ephemeral` | `bool` | `False` | Use ephemeral storage (data lost on stop) |
-| `api_key` | `str` | `None` | API key for cloud provider (defaults to `CUA_API_KEY` env var) |
-| `host` | `str` | `"localhost"` | Host address for provider connection |
-| `timeout` | `int` | `100` | Connection timeout in seconds |
-| `telemetry_enabled` | `bool` | `True` | Enable telemetry |
+| Parameter            | Type          | Default       | Description                                                                                          |
+| -------------------- | ------------- | ------------- | ---------------------------------------------------------------------------------------------------- |
+| `os_type`            | `str`         | Required      | Operating system type: `"linux"`, `"macos"`, or `"windows"`                                          |
+| `provider_type`      | `str`         | Required      | Provider type: `"docker"`, `"lume"`, `"cloud"`, `"qemu"`, `"windows-sandbox"`, or `"host"`           |
+| `image`              | `str`         | `None`        | Container/VM image to use (provider-specific)                                                        |
+| `name`               | `str`         | `""`          | Optional name for the computer instance                                                              |
+| `display`            | `str \| dict` | `"1024x768"`  | Display resolution (can be string like `"1920x1080"` or dict like `{"width": 1920, "height": 1080}`) |
+| `memory`             | `str`         | `"8GB"`       | Memory allocation                                                                                    |
+| `cpu`                | `str`         | `"4"`         | Number of CPU cores                                                                                  |
+| `shared_directories` | `list[str]`   | `None`        | List of host directories to share with the computer                                                  |
+| `storage`            | `str`         | `None`        | Path to persistent storage                                                                           |
+| `ephemeral`          | `bool`        | `False`       | Use ephemeral storage (data lost on stop)                                                            |
+| `api_key`            | `str`         | `None`        | API key for cloud provider (defaults to `CUA_API_KEY` env var)                                       |
+| `host`               | `str`         | `"localhost"` | Host address for provider connection                                                                 |
+| `timeout`            | `int`         | `100`         | Connection timeout in seconds                                                                        |
+| `telemetry_enabled`  | `bool`        | `True`        | Enable telemetry                                                                                     |
 
 #### Methods
 
@@ -222,11 +222,11 @@ await computer.interface.left_click(500, 300)
 await computer.interface.left_click()  # Click at current position
 ```
 
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `x` | `int \| None` | X coordinate (optional) |
-| `y` | `int \| None` | Y coordinate (optional) |
-| `delay` | `float \| None` | Delay in seconds after action |
+| Parameter | Type            | Description                   |
+| --------- | --------------- | ----------------------------- |
+| `x`       | `int \| None`   | X coordinate (optional)       |
+| `y`       | `int \| None`   | Y coordinate (optional)       |
+| `delay`   | `float \| None` | Delay in seconds after action |
 
 ##### `right_click(x=None, y=None, delay=None)`
 
@@ -252,9 +252,9 @@ Press and hold a mouse button.
 await computer.interface.mouse_down(100, 100, button="left")
 ```
 
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `button` | `str` | Mouse button: `"left"`, `"right"`, or `"middle"` |
+| Parameter | Type  | Description                                      |
+| --------- | ----- | ------------------------------------------------ |
+| `button`  | `str` | Mouse button: `"left"`, `"right"`, or `"middle"` |
 
 ##### `mouse_up(x=None, y=None, button="left", delay=None)`
 
@@ -283,12 +283,12 @@ await computer.interface.move_cursor(100, 100)
 await computer.interface.drag_to(500, 500, duration=1.0)
 ```
 
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `x` | `int` | Ending X coordinate |
-| `y` | `int` | Ending Y coordinate |
-| `button` | `str` | Mouse button to use: `"left"`, `"right"`, or `"middle"` |
-| `duration` | `float` | Duration of drag in seconds |
+| Parameter  | Type    | Description                                             |
+| ---------- | ------- | ------------------------------------------------------- |
+| `x`        | `int`   | Ending X coordinate                                     |
+| `y`        | `int`   | Ending Y coordinate                                     |
+| `button`   | `str`   | Mouse button to use: `"left"`, `"right"`, or `"middle"` |
+| `duration` | `float` | Duration of drag in seconds                             |
 
 ##### `drag(path, button="left", duration=0.5, delay=None)`
 
@@ -299,9 +299,9 @@ path = [(100, 100), (200, 150), (300, 200), (400, 250)]
 await computer.interface.drag(path, duration=2.0)
 ```
 
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `path` | `list[tuple[int, int]]` | List of (x, y) coordinate tuples |
+| Parameter | Type                    | Description                      |
+| --------- | ----------------------- | -------------------------------- |
+| `path`    | `list[tuple[int, int]]` | List of (x, y) coordinate tuples |
 
 ##### `scroll(x, y, delay=None)`
 
@@ -318,10 +318,10 @@ await computer.interface.scroll(0, 3)
 await computer.interface.scroll(3, 0)
 ```
 
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `x` | `int` | Horizontal scroll amount (positive = right, negative = left) |
-| `y` | `int` | Vertical scroll amount (positive = up, negative = down) |
+| Parameter | Type  | Description                                                  |
+| --------- | ----- | ------------------------------------------------------------ |
+| `x`       | `int` | Horizontal scroll amount (positive = right, negative = left) |
+| `y`       | `int` | Vertical scroll amount (positive = up, negative = down)      |
 
 ##### `scroll_down(clicks=1, delay=None)` / `scroll_up(clicks=1, delay=None)`
 
@@ -342,9 +342,9 @@ Type text using the keyboard.
 await computer.interface.type_text("Hello, World!")
 ```
 
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `text` | `str` | Text to type |
+| Parameter | Type  | Description  |
+| --------- | ----- | ------------ |
+| `text`    | `str` | Text to type |
 
 ##### `press(key, delay=None)`
 
@@ -361,9 +361,9 @@ await computer.interface.press(Key.PAGE_DOWN)
 await computer.interface.press("enter")
 ```
 
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `key` | `Key \| str` | Key to press (use `Key` enum or string) |
+| Parameter | Type         | Description                             |
+| --------- | ------------ | --------------------------------------- |
+| `key`     | `Key \| str` | Key to press (use `Key` enum or string) |
 
 ##### `hotkey(*keys, delay=None)`
 
@@ -516,9 +516,9 @@ Set the clipboard contents.
 await computer.interface.set_clipboard("Text to copy")
 ```
 
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `text` | `str` | Text to set in clipboard |
+| Parameter | Type  | Description              |
+| --------- | ----- | ------------------------ |
+| `text`    | `str` | Text to set in clipboard |
 
 #### Shell Methods
 
@@ -533,11 +533,12 @@ print(result.stderr)
 print(result.returncode)
 ```
 
-| Parameter | Type | Description |
-|-----------|------|-------------|
+| Parameter | Type  | Description              |
+| --------- | ----- | ------------------------ |
 | `command` | `str` | Shell command to execute |
 
 **Returns:** `CommandResult` with properties:
+
 - `stdout: str` - Standard output
 - `stderr: str` - Standard error
 - `returncode: int` - Exit code (0 = success)
@@ -831,13 +832,13 @@ await computer.tracing.start({
 })
 ```
 
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `name` | `str` | Auto-generated | Custom trace name |
-| `screenshots` | `bool` | `True` | Capture screenshots |
-| `api_calls` | `bool` | `True` | Log interface calls |
-| `accessibility_tree` | `bool` | `False` | Record accessibility trees |
-| `metadata` | `bool` | `True` | Enable custom metadata |
+| Option               | Type   | Default        | Description                |
+| -------------------- | ------ | -------------- | -------------------------- |
+| `name`               | `str`  | Auto-generated | Custom trace name          |
+| `screenshots`        | `bool` | `True`         | Capture screenshots        |
+| `api_calls`          | `bool` | `True`         | Log interface calls        |
+| `accessibility_tree` | `bool` | `False`        | Record accessibility trees |
+| `metadata`           | `bool` | `True`         | Enable custom metadata     |
 
 ##### `stop(options)`
 
@@ -957,10 +958,10 @@ async with provider:
 
 ### Constructor Parameters
 
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `api_key` | `str` | `CUA_API_KEY` env var | API key for authentication |
-| `verbose` | `bool` | `False` | Enable verbose logging |
+| Parameter | Type   | Default               | Description                |
+| --------- | ------ | --------------------- | -------------------------- |
+| `api_key` | `str`  | `CUA_API_KEY` env var | API key for authentication |
+| `verbose` | `bool` | `False`               | Enable verbose logging     |
 
 ### Methods
 
@@ -1012,13 +1013,13 @@ resp = await provider.restart_vm("my-vm-name")
 
 ### Sandbox Status Values
 
-| Status | Description |
-|--------|-------------|
-| `pending` | Deployment in progress |
-| `running` | Active and accessible |
-| `stopped` | Stopped but not terminated |
-| `terminated` | Permanently destroyed |
-| `failed` | Deployment or operation failed |
+| Status       | Description                    |
+| ------------ | ------------------------------ |
+| `pending`    | Deployment in progress         |
+| `running`    | Active and accessible          |
+| `stopped`    | Stopped but not terminated     |
+| `terminated` | Permanently destroyed          |
+| `failed`     | Deployment or operation failed |
 
 ### HTTP API
 
@@ -1083,14 +1084,14 @@ await computer.interface.hotkey(Key.CTRL, Key.C)
 
 **Available Keys:**
 
-| Category | Keys |
-|----------|------|
-| Navigation | `PAGE_DOWN`, `PAGE_UP`, `HOME`, `END`, `LEFT`, `RIGHT`, `UP`, `DOWN` |
-| Special | `RETURN`/`ENTER`, `ESCAPE`/`ESC`, `TAB`, `SPACE`, `BACKSPACE`, `DELETE` |
-| Modifiers | `ALT`, `CTRL`, `SHIFT`, `WIN`, `COMMAND`, `OPTION` |
-| Function | `F1` through `F12` |
-| Letters | `A` through `Z` |
-| Numbers | `N0` through `N9` |
+| Category   | Keys                                                                    |
+| ---------- | ----------------------------------------------------------------------- |
+| Navigation | `PAGE_DOWN`, `PAGE_UP`, `HOME`, `END`, `LEFT`, `RIGHT`, `UP`, `DOWN`    |
+| Special    | `RETURN`/`ENTER`, `ESCAPE`/`ESC`, `TAB`, `SPACE`, `BACKSPACE`, `DELETE` |
+| Modifiers  | `ALT`, `CTRL`, `SHIFT`, `WIN`, `COMMAND`, `OPTION`                      |
+| Function   | `F1` through `F12`                                                      |
+| Letters    | `A` through `Z`                                                         |
+| Numbers    | `N0` through `N9`                                                       |
 
 ### CommandResult
 
@@ -1103,22 +1104,22 @@ result.stderr      # ""
 result.returncode  # 0
 ```
 
-| Property | Type | Description |
-|----------|------|-------------|
-| `stdout` | `str` | Standard output |
-| `stderr` | `str` | Standard error |
+| Property     | Type  | Description             |
+| ------------ | ----- | ----------------------- |
+| `stdout`     | `str` | Standard output         |
+| `stderr`     | `str` | Standard error          |
 | `returncode` | `int` | Exit code (0 = success) |
 
 ---
 
 ## Environment Variables
 
-| Variable | Description |
-|----------|-------------|
-| `CUA_API_KEY` | API key for cloud provider |
-| `CUA_REGION` | Default region for cloud provider |
-| `DOCKER_HOST` | Custom Docker host for Docker provider |
-| `LUME_HOST` | Custom Lume API host (default: `localhost:7777`) |
+| Variable      | Description                                      |
+| ------------- | ------------------------------------------------ |
+| `CUA_API_KEY` | API key for cloud provider                       |
+| `CUA_REGION`  | Default region for cloud provider                |
+| `DOCKER_HOST` | Custom Docker host for Docker provider           |
+| `LUME_HOST`   | Custom Lume API host (default: `localhost:7777`) |
 
 ---
 

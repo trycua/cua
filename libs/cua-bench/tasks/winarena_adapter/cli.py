@@ -17,10 +17,8 @@ import argparse
 import os
 import subprocess
 import sys
-import shutil
 import urllib.request
 from pathlib import Path
-
 
 # Get the adapter directory
 ADAPTER_DIR = Path(__file__).parent
@@ -44,11 +42,7 @@ def get_docker_image_name(mode: str = "azure") -> str:
 def check_docker():
     """Check if Docker is running."""
     try:
-        result = subprocess.run(
-            ["docker", "info"],
-            capture_output=True,
-            timeout=10
-        )
+        result = subprocess.run(["docker", "info"], capture_output=True, timeout=10)
         return result.returncode == 0
     except Exception:
         return False
@@ -58,10 +52,7 @@ def check_image_exists(image_name: str) -> bool:
     """Check if a Docker image exists locally."""
     try:
         result = subprocess.run(
-            ["docker", "images", "-q", image_name],
-            capture_output=True,
-            text=True,
-            timeout=10
+            ["docker", "images", "-q", image_name], capture_output=True, text=True, timeout=10
         )
         return bool(result.stdout.strip())
     except Exception:
@@ -104,7 +95,7 @@ def download_windows_iso(dest_path: Path) -> bool:
 
     Returns True if download succeeded, False otherwise.
     """
-    print(f"\nDownloading Windows 11 Enterprise Evaluation ISO...")
+    print("\nDownloading Windows 11 Enterprise Evaluation ISO...")
     print(f"  URL: {WINDOWS_ISO_URL}")
     print(f"  Destination: {dest_path}")
     print("\n  This is a large file (~6GB) and may take a while.\n")
@@ -120,7 +111,11 @@ def download_windows_iso(dest_path: Path) -> bool:
                 percent = min(100, downloaded * 100 / total_size)
                 downloaded_mb = downloaded / (1024 * 1024)
                 total_mb = total_size / (1024 * 1024)
-                print(f"\r  Progress: {percent:.1f}% ({downloaded_mb:.1f}/{total_mb:.1f} MB)", end="", flush=True)
+                print(
+                    f"\r  Progress: {percent:.1f}% ({downloaded_mb:.1f}/{total_mb:.1f} MB)",
+                    end="",
+                    flush=True,
+                )
             else:
                 downloaded_mb = downloaded / (1024 * 1024)
                 print(f"\r  Downloaded: {downloaded_mb:.1f} MB", end="", flush=True)
@@ -136,6 +131,7 @@ def download_windows_iso(dest_path: Path) -> bool:
 # =============================================================================
 # VM Commands
 # =============================================================================
+
 
 def cmd_vm_setup(args):
     """Set up the Windows VM base image.
@@ -181,11 +177,11 @@ def cmd_vm_setup(args):
             print("=" * 60)
             print("\nTo create a base image, you need a Windows 11 ISO file.")
             print("\nOptions:")
-            print(f"  1. Download automatically (~6GB):")
-            print(f"     python -m tasks.winarena_adapter.cli vm setup --download-iso")
-            print(f"\n  2. Provide your own ISO:")
-            print(f"     python -m tasks.winarena_adapter.cli vm setup --iso /path/to/windows.iso")
-            print(f"\n  3. Download manually from Microsoft:")
+            print("  1. Download automatically (~6GB):")
+            print("     python -m tasks.winarena_adapter.cli vm setup --download-iso")
+            print("\n  2. Provide your own ISO:")
+            print("     python -m tasks.winarena_adapter.cli vm setup --iso /path/to/windows.iso")
+            print("\n  3. Download manually from Microsoft:")
             print(f"     {WINDOWS_ISO_URL}")
             print(f"     Then save to: {default_iso}")
             print()
@@ -207,7 +203,7 @@ def cmd_vm_setup(args):
             return 1
         pull_image(image_name)
 
-    print(f"\nPreparing Windows VM base image...")
+    print("\nPreparing Windows VM base image...")
     print(f"Base image path: {image_path}")
     print("\nThis will:")
     print("  1. Start a Windows 11 VM in Docker with the ISO")
@@ -218,8 +214,7 @@ def cmd_vm_setup(args):
 
     # Check if container already running
     check_result = subprocess.run(
-        ["docker", "ps", "-q", "-f", "name=winarena-setup"],
-        capture_output=True, text=True
+        ["docker", "ps", "-q", "-f", "name=winarena-setup"], capture_output=True, text=True
     )
     if check_result.stdout.strip():
         print("Container 'winarena-setup' is already running.")
@@ -227,7 +222,7 @@ def cmd_vm_setup(args):
         return 1
 
     # Determine if we should run detached
-    detach_mode = getattr(args, 'detach', False)
+    detach_mode = getattr(args, "detach", False)
 
     # Get the setup folder path (contains setup.ps1, tools_config.json, etc.)
     setup_path = INFRA_DIR / "vm" / "setup"
@@ -235,18 +230,28 @@ def cmd_vm_setup(args):
     # Build docker command
     # Always use -t for pseudo-TTY (required by QEMU), but -i only if interactive
     docker_cmd = [
-        "docker", "run",
+        "docker",
+        "run",
         "-t",  # Always allocate pseudo-TTY for QEMU
         "--rm",
-        "-p", f"{args.browser_port}:8006",
-        "-p", f"{args.rdp_port}:3389",
-        "--name", "winarena-setup",
-        "--platform", "linux/amd64",
-        "-v", f"{image_path}:/storage",
-        "-v", f"{iso_path}:/custom.iso:ro",  # Mount the Windows ISO
-        "-v", f"{setup_path}:/shared",  # Mount setup folder for live updates
-        "--cap-add", "NET_ADMIN",
-        "--stop-timeout", "120",
+        "-p",
+        f"{args.browser_port}:8006",
+        "-p",
+        f"{args.rdp_port}:3389",
+        "--name",
+        "winarena-setup",
+        "--platform",
+        "linux/amd64",
+        "-v",
+        f"{image_path}:/storage",
+        "-v",
+        f"{iso_path}:/custom.iso:ro",  # Mount the Windows ISO
+        "-v",
+        f"{setup_path}:/shared",  # Mount setup folder for live updates
+        "--cap-add",
+        "NET_ADMIN",
+        "--stop-timeout",
+        "120",
     ]
 
     # Add detach flag if requested
@@ -267,17 +272,19 @@ def cmd_vm_setup(args):
     docker_cmd.extend(["-e", f"CPU_CORES={args.cpus}"])
 
     # Handle --winarena-apps flag
-    install_winarena_apps = getattr(args, 'winarena_apps', False)
+    install_winarena_apps = getattr(args, "winarena_apps", False)
     if install_winarena_apps:
         print("Will install Windows Arena benchmark apps (Chrome, LibreOffice, VLC, etc.)")
         # Write config file to shared folder that setup.ps1 will read
         config_file = setup_path / "install_config.json"
         import json
+
         config_file.write_text(json.dumps({"INSTALL_WINARENA_APPS": True}, indent=2))
     else:
         # Write config with apps disabled
         config_file = setup_path / "install_config.json"
         import json
+
         config_file.write_text(json.dumps({"INSTALL_WINARENA_APPS": False}, indent=2))
 
     # Override the default ENTRYPOINT (/bin/bash -c) to run entry.sh directly with arguments
@@ -287,11 +294,11 @@ def cmd_vm_setup(args):
     docker_cmd.append(image_name)
 
     # Run with prepare-image flag (these become CMD args to the entrypoint)
-    docker_cmd.extend([
-        "--prepare-image", "true", "--start-client", "false"
-    ])
+    docker_cmd.extend(["--prepare-image", "true", "--start-client", "false"])
 
-    print(f"Running: docker run {'(detached) ' if detach_mode else ''}{' '.join(docker_cmd[2:10])}...")
+    print(
+        f"Running: docker run {'(detached) ' if detach_mode else ''}{' '.join(docker_cmd[2:10])}..."
+    )
 
     try:
         if detach_mode:
@@ -303,10 +310,10 @@ def cmd_vm_setup(args):
 
             container_id = result.stdout.strip()[:12]
             print(f"\n✓ Container started in background (ID: {container_id})")
-            print(f"\nMonitor progress:")
+            print("\nMonitor progress:")
             print(f"  Browser: http://localhost:{args.browser_port}")
-            print(f"  Logs:    docker logs -f winarena-setup")
-            print(f"  Status:  docker ps -f name=winarena-setup")
+            print("  Logs:    docker logs -f winarena-setup")
+            print("  Status:  docker ps -f name=winarena-setup")
             print(f"\nWhen complete, the base image will be at: {image_path}")
             print("\nTo check if base image was created:")
             print(f"  ls -la {image_path}")
@@ -323,11 +330,11 @@ def cmd_vm_setup(args):
                 print(f"  Path: {image_path}")
                 return 0
             else:
-                print(f"\n✗ Base image was not created.")
+                print("\n✗ Base image was not created.")
                 print(f"  Container exit code: {result.returncode}")
                 print(f"  Expected file: {windows_boot}")
                 print("\nTry running with --detach flag for background operation:")
-                print(f"  python -m tasks.winarena_adapter.cli vm setup --detach")
+                print("  python -m tasks.winarena_adapter.cli vm setup --detach")
                 return 1
     except subprocess.CalledProcessError as e:
         print(f"\n✗ Failed to prepare image: {e}")
@@ -365,33 +372,41 @@ def cmd_vm_start(args):
 
     # Check if container already running
     check_result = subprocess.run(
-        ["docker", "ps", "-q", "-f", f"name={container_name}"],
-        capture_output=True, text=True
+        ["docker", "ps", "-q", "-f", f"name={container_name}"], capture_output=True, text=True
     )
     if check_result.stdout.strip():
         print(f"Container '{container_name}' is already running.")
         print(f"  Browser: http://localhost:{args.browser_port}")
-        print(f"  Stop with: python -m tasks.winarena_adapter.cli vm stop")
+        print("  Stop with: python -m tasks.winarena_adapter.cli vm stop")
         return 0
 
-    print(f"Starting Windows Arena base image...")
+    print("Starting Windows Arena base image...")
     print(f"  Browser: http://localhost:{args.browser_port}")
     print(f"  RDP: localhost:{args.rdp_port}")
 
     # Build docker command
     docker_cmd = [
-        "docker", "run",
+        "docker",
+        "run",
         "-d",  # Always detached for start command
         "-t",  # Pseudo-TTY for QEMU
         "--rm",
-        "-p", f"{args.browser_port}:8006",
-        "-p", f"{args.rdp_port}:3389",
-        "--name", container_name,
-        "--platform", "linux/amd64",
-        "-v", f"{image_path}:/storage",
-        "-v", f"{setup_path}:/shared",  # Mount setup folder for live updates
-        "--cap-add", "NET_ADMIN",
-        "--stop-timeout", "120",
+        "-p",
+        f"{args.browser_port}:8006",
+        "-p",
+        f"{args.rdp_port}:3389",
+        "--name",
+        container_name,
+        "--platform",
+        "linux/amd64",
+        "-v",
+        f"{image_path}:/storage",
+        "-v",
+        f"{setup_path}:/shared",  # Mount setup folder for live updates
+        "--cap-add",
+        "NET_ADMIN",
+        "--stop-timeout",
+        "120",
     ]
 
     # Add KVM if available
@@ -417,10 +432,10 @@ def cmd_vm_start(args):
 
         container_id = result.stdout.strip()[:12]
         print(f"\n✓ Container started (ID: {container_id})")
-        print(f"\nMonitor:")
+        print("\nMonitor:")
         print(f"  Browser: http://localhost:{args.browser_port}")
         print(f"  Logs:    docker logs -f {container_name}")
-        print(f"  Stop:    python -m tasks.winarena_adapter.cli vm stop")
+        print("  Stop:    python -m tasks.winarena_adapter.cli vm stop")
         return 0
     except Exception as e:
         print(f"\n✗ Failed to start container: {e}")
@@ -433,8 +448,7 @@ def cmd_vm_stop(args):
 
     # Check if container is running
     check_result = subprocess.run(
-        ["docker", "ps", "-q", "-f", f"name={container_name}"],
-        capture_output=True, text=True
+        ["docker", "ps", "-q", "-f", f"name={container_name}"], capture_output=True, text=True
     )
     if not check_result.stdout.strip():
         print(f"No running container named '{container_name}' found.")
@@ -445,12 +459,12 @@ def cmd_vm_stop(args):
         subprocess.run(
             ["docker", "stop", container_name],
             check=True,
-            timeout=150  # Allow for graceful shutdown
+            timeout=150,  # Allow for graceful shutdown
         )
         print(f"✓ Container '{container_name}' stopped.")
         return 0
     except subprocess.TimeoutExpired:
-        print(f"Timeout waiting for container to stop. Forcing...")
+        print("Timeout waiting for container to stop. Forcing...")
         subprocess.run(["docker", "kill", container_name], check=False)
         return 1
     except subprocess.CalledProcessError as e:
@@ -491,8 +505,7 @@ def cmd_vm_status(args):
     # Check running container
     container_name = DEFAULT_CONTAINER_NAME
     check_result = subprocess.run(
-        ["docker", "ps", "-q", "-f", f"name={container_name}"],
-        capture_output=True, text=True
+        ["docker", "ps", "-q", "-f", f"name={container_name}"], capture_output=True, text=True
     )
     container_running = bool(check_result.stdout.strip())
     print(f"Container:    {'✓ Running' if container_running else '○ Not running'}")
@@ -522,6 +535,7 @@ def cmd_vm_status(args):
 # Task Commands
 # =============================================================================
 
+
 def cmd_task_list(args):
     """List all Windows Arena tasks."""
     from .task_loader import load_waa_tasks
@@ -546,7 +560,11 @@ def cmd_task_list(args):
 
         if args.verbose:
             for i, task in enumerate(domain_tasks):
-                desc = task.description[:70] + "..." if len(task.description) > 70 else task.description
+                desc = (
+                    task.description[:70] + "..."
+                    if len(task.description) > 70
+                    else task.description
+                )
                 print(f"  {task.task_id[:36]}  {desc}")
         else:
             # Just show count
@@ -581,7 +599,7 @@ def cmd_task_run(args):
             return 1
         pull_image(image_name)
 
-    print(f"Starting Windows Arena container...")
+    print("Starting Windows Arena container...")
     print(f"  Browser: http://localhost:{args.browser_port}")
     print(f"  RDP: localhost:{args.rdp_port}")
 
@@ -592,17 +610,26 @@ def cmd_task_run(args):
 
     # Build docker command
     docker_cmd = [
-        "docker", "run",
+        "docker",
+        "run",
         "-it" if sys.stdout.isatty() else "-i",
         "--rm",
-        "-p", f"{args.browser_port}:8006",
-        "-p", f"{args.rdp_port}:3389",
-        "--name", container_name,
-        "--platform", "linux/amd64",
-        "-v", f"{image_path}:/storage",
-        "-v", f"{setup_path}:/shared",  # Mount setup folder for live updates
-        "--cap-add", "NET_ADMIN",
-        "--stop-timeout", "120",
+        "-p",
+        f"{args.browser_port}:8006",
+        "-p",
+        f"{args.rdp_port}:3389",
+        "--name",
+        container_name,
+        "--platform",
+        "linux/amd64",
+        "-v",
+        f"{image_path}:/storage",
+        "-v",
+        f"{setup_path}:/shared",  # Mount setup folder for live updates
+        "--cap-add",
+        "NET_ADMIN",
+        "--stop-timeout",
+        "120",
     ]
 
     # Add KVM if available
@@ -628,10 +655,13 @@ def cmd_task_run(args):
     if args.interactive:
         docker_cmd.extend(["--entrypoint", "/bin/bash"])
     else:
-        docker_cmd.extend([
-            "/bin/bash", "-c",
-            f"./entry.sh --prepare-image false --start-client {'false' if args.no_client else 'true'}"
-        ])
+        docker_cmd.extend(
+            [
+                "/bin/bash",
+                "-c",
+                f"./entry.sh --prepare-image false --start-client {'false' if args.no_client else 'true'}",
+            ]
+        )
 
     try:
         subprocess.run(docker_cmd, check=True)
@@ -647,6 +677,7 @@ def cmd_task_run(args):
 # =============================================================================
 # Main CLI
 # =============================================================================
+
 
 def main():
     parser = argparse.ArgumentParser(
@@ -664,7 +695,7 @@ Examples:
   python -m tasks.winarena_adapter.cli task list           # List all tasks
   python -m tasks.winarena_adapter.cli task list --verbose # List with details
   python -m tasks.winarena_adapter.cli task run            # Run benchmark client
-"""
+""",
     )
 
     subparsers = parser.add_subparsers(dest="command", help="Command group")
@@ -676,53 +707,62 @@ Examples:
     vm_subparsers = vm_parser.add_subparsers(dest="vm_command", help="VM command")
 
     # vm setup
-    vm_setup_parser = vm_subparsers.add_parser(
-        "setup",
-        help="Create the Windows VM base image"
-    )
+    vm_setup_parser = vm_subparsers.add_parser("setup", help="Create the Windows VM base image")
     vm_setup_parser.add_argument("--iso", help="Path to Windows 11 ISO file")
-    vm_setup_parser.add_argument("--download-iso", action="store_true",
-                                  help="Download Windows 11 ISO from Microsoft (~6GB)")
-    vm_setup_parser.add_argument("--detach", "-d", action="store_true",
-                                  help="Run in background (detached mode)")
-    vm_setup_parser.add_argument("--force", action="store_true", help="Force recreation of base image")
-    vm_setup_parser.add_argument("--skip-pull", action="store_true", help="Don't pull image if missing")
+    vm_setup_parser.add_argument(
+        "--download-iso", action="store_true", help="Download Windows 11 ISO from Microsoft (~6GB)"
+    )
+    vm_setup_parser.add_argument(
+        "--detach", "-d", action="store_true", help="Run in background (detached mode)"
+    )
+    vm_setup_parser.add_argument(
+        "--force", action="store_true", help="Force recreation of base image"
+    )
+    vm_setup_parser.add_argument(
+        "--skip-pull", action="store_true", help="Don't pull image if missing"
+    )
     vm_setup_parser.add_argument("--no-kvm", action="store_true", help="Disable KVM acceleration")
-    vm_setup_parser.add_argument("--winarena-apps", action="store_true",
-                                  help="Install Windows Arena benchmark apps (Chrome, LibreOffice, VLC, etc.)")
+    vm_setup_parser.add_argument(
+        "--winarena-apps",
+        action="store_true",
+        help="Install Windows Arena benchmark apps (Chrome, LibreOffice, VLC, etc.)",
+    )
     vm_setup_parser.add_argument("--ram", default="8G", help="RAM size (default: 8G)")
     vm_setup_parser.add_argument("--cpus", default="8", help="CPU cores (default: 8)")
-    vm_setup_parser.add_argument("--browser-port", default="8006", help="noVNC port (default: 8006)")
+    vm_setup_parser.add_argument(
+        "--browser-port", default="8006", help="noVNC port (default: 8006)"
+    )
     vm_setup_parser.add_argument("--rdp-port", default="3390", help="RDP port (default: 3390)")
     vm_setup_parser.set_defaults(func=cmd_vm_setup)
 
     # vm start
     vm_start_parser = vm_subparsers.add_parser(
-        "start",
-        help="Start the Windows VM (no benchmark client)"
+        "start", help="Start the Windows VM (no benchmark client)"
     )
-    vm_start_parser.add_argument("--skip-pull", action="store_true", help="Don't pull image if missing")
+    vm_start_parser.add_argument(
+        "--skip-pull", action="store_true", help="Don't pull image if missing"
+    )
     vm_start_parser.add_argument("--no-kvm", action="store_true", help="Disable KVM acceleration")
     vm_start_parser.add_argument("--ram", default="8G", help="RAM size (default: 8G)")
     vm_start_parser.add_argument("--cpus", default="8", help="CPU cores (default: 8)")
-    vm_start_parser.add_argument("--browser-port", default="8006", help="noVNC port (default: 8006)")
+    vm_start_parser.add_argument(
+        "--browser-port", default="8006", help="noVNC port (default: 8006)"
+    )
     vm_start_parser.add_argument("--rdp-port", default="3390", help="RDP port (default: 3390)")
-    vm_start_parser.add_argument("--container-name", help=f"Container name (default: {DEFAULT_CONTAINER_NAME})")
+    vm_start_parser.add_argument(
+        "--container-name", help=f"Container name (default: {DEFAULT_CONTAINER_NAME})"
+    )
     vm_start_parser.set_defaults(func=cmd_vm_start)
 
     # vm stop
-    vm_stop_parser = vm_subparsers.add_parser(
-        "stop",
-        help="Stop the Windows VM container"
+    vm_stop_parser = vm_subparsers.add_parser("stop", help="Stop the Windows VM container")
+    vm_stop_parser.add_argument(
+        "--container-name", help=f"Container name (default: {DEFAULT_CONTAINER_NAME})"
     )
-    vm_stop_parser.add_argument("--container-name", help=f"Container name (default: {DEFAULT_CONTAINER_NAME})")
     vm_stop_parser.set_defaults(func=cmd_vm_stop)
 
     # vm status
-    vm_status_parser = vm_subparsers.add_parser(
-        "status",
-        help="Check Windows Arena setup status"
-    )
+    vm_status_parser = vm_subparsers.add_parser("status", help="Check Windows Arena setup status")
     vm_status_parser.set_defaults(func=cmd_vm_status)
 
     # ==========================================================================
@@ -732,27 +772,33 @@ Examples:
     task_subparsers = task_parser.add_subparsers(dest="task_command", help="Task command")
 
     # task list
-    task_list_parser = task_subparsers.add_parser(
-        "list",
-        help="List all Windows Arena tasks"
-    )
+    task_list_parser = task_subparsers.add_parser("list", help="List all Windows Arena tasks")
     task_list_parser.add_argument("--verbose", "-v", action="store_true", help="Show task details")
     task_list_parser.set_defaults(func=cmd_task_list)
 
     # task run
     task_run_parser = task_subparsers.add_parser(
-        "run",
-        help="Run the Windows Arena container with benchmark client"
+        "run", help="Run the Windows Arena container with benchmark client"
     )
-    task_run_parser.add_argument("--interactive", "-i", action="store_true", help="Start interactive shell")
-    task_run_parser.add_argument("--no-client", action="store_true", help="Don't start the benchmark client")
-    task_run_parser.add_argument("--skip-pull", action="store_true", help="Don't pull image if missing")
+    task_run_parser.add_argument(
+        "--interactive", "-i", action="store_true", help="Start interactive shell"
+    )
+    task_run_parser.add_argument(
+        "--no-client", action="store_true", help="Don't start the benchmark client"
+    )
+    task_run_parser.add_argument(
+        "--skip-pull", action="store_true", help="Don't pull image if missing"
+    )
     task_run_parser.add_argument("--no-kvm", action="store_true", help="Disable KVM acceleration")
     task_run_parser.add_argument("--ram", default="8G", help="RAM size (default: 8G)")
     task_run_parser.add_argument("--cpus", default="8", help="CPU cores (default: 8)")
-    task_run_parser.add_argument("--browser-port", default="8006", help="noVNC port (default: 8006)")
+    task_run_parser.add_argument(
+        "--browser-port", default="8006", help="noVNC port (default: 8006)"
+    )
     task_run_parser.add_argument("--rdp-port", default="3390", help="RDP port (default: 3390)")
-    task_run_parser.add_argument("--container-name", help=f"Container name (default: {DEFAULT_CONTAINER_NAME})")
+    task_run_parser.add_argument(
+        "--container-name", help=f"Container name (default: {DEFAULT_CONTAINER_NAME})"
+    )
     task_run_parser.set_defaults(func=cmd_task_run)
 
     # Parse arguments

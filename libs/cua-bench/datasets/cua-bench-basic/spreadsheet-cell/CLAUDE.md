@@ -3,6 +3,7 @@
 ## Overview
 
 cua-bench creates computer-use RL environments. Structure:
+
 - `main.py`: Python decorators for task logic
 - `gui/`: HTML/CSS/JS for UI (auto-includes Tailwind)
 
@@ -29,6 +30,7 @@ pid = env.launch_window(html=html_content, title="Game", width=400, height=400) 
 All game/task logic goes here. The HTML will be rendered in a Tailwind + Iconify template within a desktop webview window (Do NOT use `<html>` or `<body>` tags).
 
 **Key patterns:**
+
 - **Use semantic HTML with ARIA descriptions** - Use proper semantic elements (`<main>`, `<section>`, `<button>`, `<nav>`, etc.) and include `aria-label`, `aria-describedby`, and `role` attributes for accessibility and better element identification
 - **Responsive design with compact padding** - Use minimal padding/margins (`p-1`, `p-2`, `gap-1`, `gap-2`) and responsive layouts that work from popup size (300x200) to full desktop. Avoid fixed heights/widths, use `min-h-0`, `overflow-auto`, and ensure critical elements remain visible when viewport shrinks
 - **Global state** - Store current score in `window.__score` (0.0-1.0 range for RL)
@@ -77,6 +79,7 @@ return [float(score)]  # 0.0-1.0 range preferred
 Available action classes for `env.step()`:
 
 **Mouse:**
+
 - `ClickAction(x, y)`
 - `RightClickAction(x, y)`
 - `DoubleClickAction(x, y)`
@@ -84,11 +87,13 @@ Available action classes for `env.step()`:
 - `ScrollAction(direction="up|down", amount=100)`
 
 **Keyboard:**
+
 - `TypeAction(text="hello")`
 - `KeyAction(key="Enter")`
 - `HotkeyAction(keys=["ctrl", "c"])`
 
 **Control:**
+
 - `DoneAction()`
 - `WaitAction(seconds=1.0)`
 

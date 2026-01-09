@@ -4,10 +4,11 @@ import json
 import os
 import time
 from pathlib import Path
-from typing import Dict, Any, List, Optional
-from .providers.docker import DockerProvider
-from .providers.cloud import CloudProvider
+from typing import Any, Dict, List, Optional
+
 from .providers.base import SessionProvider
+from .providers.cloud import CloudProvider
+from .providers.docker import DockerProvider
 
 
 def _get_state_dir() -> Path:
@@ -58,7 +59,7 @@ def _load_runs() -> Dict[str, Any]:
         return {}
 
     try:
-        with open(RUNS_FILE, 'r') as f:
+        with open(RUNS_FILE, "r") as f:
             return json.load(f)
     except (json.JSONDecodeError, IOError):
         return {}
@@ -67,7 +68,7 @@ def _load_runs() -> Dict[str, Any]:
 def _save_runs(runs: Dict[str, Any]) -> None:
     """Save runs to the storage file."""
     RUNS_FILE.parent.mkdir(parents=True, exist_ok=True)
-    with open(RUNS_FILE, 'w') as f:
+    with open(RUNS_FILE, "w") as f:
         json.dump(runs, f, indent=2)
 
 

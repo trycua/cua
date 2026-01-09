@@ -7,34 +7,26 @@
     {
       "type": "command",
       "parameters": {
-        "command": [
-        "cmd",
-        "/c",                     
-        "code",
-        "--install-extension",
-        "ms-python.python"
-        ]
+        "command": ["cmd", "/c", "code", "--install-extension", "ms-python.python"]
       }
     },
-   
+
     {
-        "type": "sleep",
-        "parameters": {
-          "seconds": 2
-        }
+      "type": "sleep",
+      "parameters": {
+        "seconds": 2
+      }
     }
   ],
   "trajectory": "trajectories/",
-  "related_apps": [
-    "vscode"
-  ],
+  "related_apps": ["vscode"],
   "evaluator": {
     "func": "check_json_settings",
     "expected": {
       "type": "rule",
       "rules": {
         "expected": {
-          "python.analysis.diagnosticSeverityOverrides": {"reportMissingImports": "none"}
+          "python.analysis.diagnosticSeverityOverrides": { "reportMissingImports": "none" }
         }
       }
     },

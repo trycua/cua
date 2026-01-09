@@ -1,13 +1,13 @@
 'use client';
 
-import { CopilotKit, useRenderToolCall, useCopilotChat } from '@copilotkit/react-core';
+import { CopilotKit, useRenderToolCall } from '@copilotkit/react-core';
 import {
   CopilotPopup,
   AssistantMessage as DefaultAssistantMessage,
   useChatContext,
 } from '@copilotkit/react-ui';
 import '@copilotkit/react-ui/styles.css';
-import { ReactNode, useMemo, useState, useCallback, useEffect } from 'react';
+import { ReactNode, useMemo, useState, useCallback } from 'react';
 import posthog from 'posthog-js';
 
 const DOCS_INSTRUCTIONS = `You are a helpful assistant for CUA (Computer Use Agent) and CUA-Bench documentation. Be concise and helpful.
@@ -269,75 +269,53 @@ interface CopilotMessage {
   content?: string | unknown;
 }
 
-// Wrapper component that has access to chat context for feedback tracking
-function CopilotPopupWithFeedback() {
-  const { visibleMessages } = useCopilotChat();
-  const [conversationId, setConversationId] = useState('');
+// Track the last user prompt for feedback correlation
+let lastUserPrompt: string | null = null;
 
-  useEffect(() => {
-    setConversationId(getConversationId());
-  }, []);
+// Get message content as string
+function getMessageContent(msg: CopilotMessage): string | null {
+  if (msg.content) {
+    return typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content);
+  }
+  return null;
+}
 
-  const getMessageContent = useCallback((msg: CopilotMessage): string | null => {
-    if (msg.content) {
-      return typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content);
-    }
-    return null;
-  }, []);
+// Thumbs up handler
+function handleThumbsUp(message: CopilotMessage) {
+  const response = getMessageContent(message);
+  const conversationId = getConversationId();
 
-  const findPrecedingUserPrompt = useCallback((assistantMessageId: string) => {
-    const messageIndex = visibleMessages.findIndex((m: CopilotMessage) => m.id === assistantMessageId);
-    if (messageIndex <= 0) return null;
+  const eventData = {
+    vote: 'up',
+    response,
+    prompt: lastUserPrompt,
+    conversation_id: conversationId,
+    timestamp: new Date().toISOString(),
+  };
+  console.log('[Feedback] Thumbs up:', eventData);
+  posthog.capture('copilot_feedback', eventData);
+}
 
-    // Look backwards for the most recent user message
-    for (let i = messageIndex - 1; i >= 0; i--) {
-      const msg = visibleMessages[i] as CopilotMessage;
-      if (msg.role === 'user') {
-        return getMessageContent(msg);
-      }
-    }
-    return null;
-  }, [visibleMessages, getMessageContent]);
+// Thumbs down handler
+function handleThumbsDown(message: CopilotMessage) {
+  const response = getMessageContent(message);
+  const conversationId = getConversationId();
 
-  const handleThumbsUp = useCallback((message: CopilotMessage) => {
-    const prompt = findPrecedingUserPrompt(message.id);
-    const response = getMessageContent(message);
+  const eventData = {
+    vote: 'down',
+    response,
+    prompt: lastUserPrompt,
+    conversation_id: conversationId,
+    timestamp: new Date().toISOString(),
+  };
+  console.log('[Feedback] Thumbs down:', eventData);
+  posthog.capture('copilot_feedback', eventData);
+}
 
-    posthog.capture('copilot_feedback', {
-      vote: 'up',
-      response,
-      prompt,
-      conversation_id: conversationId,
-      timestamp: new Date().toISOString(),
-    });
-  }, [findPrecedingUserPrompt, getMessageContent, conversationId]);
-
-  const handleThumbsDown = useCallback((message: CopilotMessage) => {
-    const prompt = findPrecedingUserPrompt(message.id);
-    const response = getMessageContent(message);
-
-    posthog.capture('copilot_feedback', {
-      vote: 'down',
-      response,
-      prompt,
-      conversation_id: conversationId,
-      timestamp: new Date().toISOString(),
-    });
-  }, [findPrecedingUserPrompt, getMessageContent, conversationId]);
-
-  return (
-    <CopilotPopup
-      instructions={DOCS_INSTRUCTIONS}
-      labels={{
-        title: 'CUA Docs Assistant',
-        initial: 'How can I help you?',
-      }}
-      AssistantMessage={CustomAssistantMessage}
-      Header={CustomHeader}
-      onThumbsUp={handleThumbsUp}
-      onThumbsDown={handleThumbsDown}
-    />
-  );
+// Track user prompts when submitted
+function handleSubmitMessage(message: string) {
+  lastUserPrompt = message;
+  console.log('[Feedback] Tracking prompt:', message);
 }
 
 export function CopilotKitProvider({ children }: CopilotKitProviderProps) {
@@ -492,9 +470,9 @@ export function CopilotKitProvider({ children }: CopilotKitProviderProps) {
           color: rgba(255, 255, 255, 0.9);
         }
 
-        /* Hide regenerate button but keep thumbs up/down for feedback */
-        .copilotKitMessageControls button[aria-label="Regenerate"],
-        .copilotKitMessageControls button[aria-label="Copy"] {
+        /* Hide regenerate and copy buttons, keep only thumbs up/down */
+        .copilotKitMessageControls button:nth-child(1),
+        .copilotKitMessageControls button:nth-child(2) {
           display: none !important;
         }
 
@@ -535,7 +513,18 @@ export function CopilotKitProvider({ children }: CopilotKitProviderProps) {
       `}</style>
       <ToolCallIndicators />
       {children}
-      <CopilotPopupWithFeedback />
+      <CopilotPopup
+        instructions={DOCS_INSTRUCTIONS}
+        labels={{
+          title: 'CUA Docs Assistant',
+          initial: 'How can I help you?',
+        }}
+        AssistantMessage={CustomAssistantMessage}
+        Header={CustomHeader}
+        onSubmitMessage={handleSubmitMessage}
+        onThumbsUp={handleThumbsUp}
+        onThumbsDown={handleThumbsDown}
+      />
     </CopilotKit>
   );
 }

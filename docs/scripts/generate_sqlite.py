@@ -218,7 +218,7 @@ def test_search(query: str):
     print("-" * 50)
 
     cursor.execute("""
-        SELECT url, title, snippet(pages_fts, 1, '>>>', '<<<', '...', 50) as snippet
+        SELECT url, title, snippet(pages_fts, 0, '>>>', '<<<', '...', 50) as snippet
         FROM pages_fts
         WHERE pages_fts MATCH ?
         ORDER BY rank

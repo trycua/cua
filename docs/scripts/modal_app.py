@@ -661,7 +661,8 @@ async def generate_code_index():
             mode='w', delete=False, suffix='.sh'
         )
         credential_helper.write('#!/bin/sh\n')
-        credential_helper.write('exec echo "username=x-access-token\npassword=$GITHUB_TOKEN"\n')
+        credential_helper.write('echo "username=x-access-token"\n')
+        credential_helper.write('echo "password=$GITHUB_TOKEN"\n')
         credential_helper.close()
         os.chmod(credential_helper.name, 0o700)
         print("Using authenticated GitHub access via credential helper")

@@ -304,6 +304,7 @@ All packages are managed through a single consolidated workflow: [Bump Version &
 **Python (PyPI):**
 
 - `pypi/agent` - AI agent library
+- `pypi/bench` - Benchmark toolkit for computer-use RL environments
 - `pypi/computer` - Computer-use interface library
 - `pypi/computer-server` - Server component for VM
 - `pypi/core` - Base package with telemetry
@@ -357,12 +358,13 @@ make show-versions
 
 Each package uses its own tag format defined in `.bumpversion.cfg`:
 
-- **cua-core**: `core-v{version}` (e.g., `core-v0.1.9`)
-- **cua-computer**: `computer-v{version}` (e.g., `computer-v0.4.7`)
 - **cua-agent**: `agent-v{version}` (e.g., `agent-v0.4.35`)
-- **cua-som**: `som-v{version}` (e.g., `som-v0.1.3`)
+- **cua-bench**: `bench-v{version}` (e.g., `bench-v0.1.0`)
+- **cua-computer**: `computer-v{version}` (e.g., `computer-v0.4.7`)
 - **cua-computer-server**: `computer-server-v{version}` (e.g., `computer-server-v0.1.27`)
+- **cua-core**: `core-v{version}` (e.g., `core-v0.1.9`)
 - **cua-mcp-server**: `mcp-server-v{version}` (e.g., `mcp-server-v0.1.14`)
+- **cua-som**: `som-v{version}` (e.g., `som-v0.1.3`)
 
 </details>
 

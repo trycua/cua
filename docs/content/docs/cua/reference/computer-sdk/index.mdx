@@ -37,10 +37,17 @@ await computer.run()
 | `os_type` | `str` | Required | Operating system type: `"linux"`, `"macos"`, or `"windows"` |
 | `provider_type` | `str` | Required | Provider type: `"docker"`, `"lume"`, `"cloud"`, `"qemu"`, `"windows-sandbox"`, or `"host"` |
 | `image` | `str` | `None` | Container/VM image to use (provider-specific) |
-| `name` | `str` | `None` | Optional name for the computer instance |
-| `display` | `str` | `"1024x768"` | Display resolution |
-| `memory` | `str` | `"4GB"` | Memory allocation |
-| `cpu` | `int` | `2` | Number of CPU cores |
+| `name` | `str` | `""` | Optional name for the computer instance |
+| `display` | `str \| dict` | `"1024x768"` | Display resolution (can be string like `"1920x1080"` or dict like `{"width": 1920, "height": 1080}`) |
+| `memory` | `str` | `"8GB"` | Memory allocation |
+| `cpu` | `str` | `"4"` | Number of CPU cores |
+| `shared_directories` | `list[str]` | `None` | List of host directories to share with the computer |
+| `storage` | `str` | `None` | Path to persistent storage |
+| `ephemeral` | `bool` | `False` | Use ephemeral storage (data lost on stop) |
+| `api_key` | `str` | `None` | API key for cloud provider (defaults to `CUA_API_KEY` env var) |
+| `host` | `str` | `"localhost"` | Host address for provider connection |
+| `timeout` | `int` | `100` | Connection timeout in seconds |
+| `telemetry_enabled` | `bool` | `True` | Enable telemetry |
 
 #### Methods
 
@@ -62,16 +69,131 @@ Stop the computer and release resources.
 await computer.stop()
 ```
 
-##### `screenshot()`
+##### `restart()`
 
-Capture the current screen state.
+Restart the computer.
 
 ```python
-screenshot = await computer.screenshot()
-# Returns PIL.Image object
+await computer.restart()
 ```
 
-**Returns:** `PIL.Image.Image` - The current screen contents
+##### `disconnect()`
+
+Disconnect from the computer without stopping it.
+
+```python
+await computer.disconnect()
+```
+
+##### `get_ip()`
+
+Get the IP address of the computer.
+
+```python
+ip = await computer.get_ip()
+```
+
+**Returns:** `str` - IP address
+
+##### `update(cpu, memory)`
+
+Update computer resources (cloud provider only).
+
+```python
+await computer.update(cpu="8", memory="16GB")
+```
+
+##### Python Execution Methods
+
+##### `python_exec(func, *args, **kwargs)`
+
+Execute a Python function in the computer's Python environment.
+
+```python
+def calculate(x, y):
+    return x + y
+
+result = await computer.python_exec(calculate, 5, 10)
+# result = 15
+```
+
+##### `python_exec_background(func, *args, requirements=None, **kwargs)`
+
+Execute a Python function in the background.
+
+```python
+def long_running_task():
+    import time
+    time.sleep(60)
+    return "done"
+
+task_id = await computer.python_exec_background(long_running_task)
+```
+
+**Returns:** `int` - Task ID for tracking
+
+##### `pip_install(requirements)`
+
+Install Python packages in the computer.
+
+```python
+await computer.pip_install(["requests", "pandas==2.0.0"])
+```
+
+##### Virtual Environment Methods
+
+##### `venv_install(venv_name, requirements)`
+
+Install packages in a virtual environment.
+
+```python
+await computer.venv_install("my_env", ["requests", "pandas"])
+```
+
+##### `venv_cmd(venv_name, command)`
+
+Run a shell command in a virtual environment.
+
+```python
+result = await computer.venv_cmd("my_env", "pip list")
+print(result.stdout)
+```
+
+**Returns:** `CommandResult` with `stdout`, `stderr`, `returncode`
+
+##### `venv_exec(venv_name, func, *args, **kwargs)`
+
+Execute a Python function in a virtual environment.
+
+```python
+def process_data(x):
+    import pandas as pd
+    return pd.DataFrame(x).to_dict()
+
+result = await computer.venv_exec("my_env", process_data, [1, 2, 3])
+```
+
+##### `venv_exec_background(venv_name, func, *args, requirements=None, **kwargs)`
+
+Execute a Python function in a virtual environment in the background.
+
+```python
+task_id = await computer.venv_exec_background("my_env", long_task)
+```
+
+**Returns:** `int` - Task ID
+
+See [Sandboxed Python](/cua/guide/advanced/sandboxed-python) for detailed usage.
+
+##### Browser Automation
+
+##### `playwright_exec(command, params=None)`
+
+Execute Playwright browser automation commands.
+
+```python
+result = await computer.playwright_exec("goto", {"url": "https://example.com"})
+```
 
 ---
 
@@ -83,93 +205,136 @@ The interface for interacting with the computer's display, keyboard, and mouse. 
 interface = computer.interface
 ```
 
+All interface methods accept an optional `delay` parameter to add a pause after the action:
+
+```python
+await computer.interface.left_click(500, 300, delay=0.5)
+```
+
 #### Mouse Actions
 
-##### `left_click(x, y)`
+##### `left_click(x=None, y=None, delay=None)`
 
-Perform a left mouse click at the specified coordinates.
+Perform a left mouse click. If coordinates are omitted, clicks at current cursor position.
 
 ```python
 await computer.interface.left_click(500, 300)
+await computer.interface.left_click()  # Click at current position
 ```
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `x` | `int` | X coordinate |
-| `y` | `int` | Y coordinate |
+| `x` | `int \| None` | X coordinate (optional) |
+| `y` | `int \| None` | Y coordinate (optional) |
+| `delay` | `float \| None` | Delay in seconds after action |
 
-##### `right_click(x, y)`
+##### `right_click(x=None, y=None, delay=None)`
 
-Perform a right mouse click at the specified coordinates.
+Perform a right mouse click.
 
 ```python
 await computer.interface.right_click(500, 300)
 ```
 
-##### `double_click(x, y)`
+##### `double_click(x=None, y=None, delay=None)`
 
-Perform a double-click at the specified coordinates.
+Perform a double-click.
 
 ```python
 await computer.interface.double_click(500, 300)
 ```
 
-##### `middle_click(x, y)`
+##### `mouse_down(x=None, y=None, button="left", delay=None)`
 
-Perform a middle mouse click at the specified coordinates.
+Press and hold a mouse button.
 
 ```python
-await computer.interface.middle_click(500, 300)
+await computer.interface.mouse_down(100, 100, button="left")
 ```
 
-##### `move(x, y)`
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `button` | `str` | Mouse button: `"left"`, `"right"`, or `"middle"` |
+
+##### `mouse_up(x=None, y=None, button="left", delay=None)`
+
+Release a mouse button.
+
+```python
+await computer.interface.mouse_up(500, 500, button="left")
+```
+
+##### `move_cursor(x, y, delay=None)`
 
 Move the mouse cursor to the specified coordinates.
 
 ```python
-await computer.interface.move(500, 300)
+await computer.interface.move_cursor(500, 300)
 ```
 
-##### `drag(start_x, start_y, end_x, end_y)`
+##### `drag_to(x, y, button="left", duration=0.5, delay=None)`
 
-Drag from start coordinates to end coordinates.
+Drag from the current cursor position to the specified coordinates.
 
 ```python
-await computer.interface.drag(100, 100, 500, 500)
+# Move cursor to start position first
+await computer.interface.move_cursor(100, 100)
+# Then drag to end position
+await computer.interface.drag_to(500, 500, duration=1.0)
 ```
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `start_x` | `int` | Starting X coordinate |
-| `start_y` | `int` | Starting Y coordinate |
-| `end_x` | `int` | Ending X coordinate |
-| `end_y` | `int` | Ending Y coordinate |
+| `x` | `int` | Ending X coordinate |
+| `y` | `int` | Ending Y coordinate |
+| `button` | `str` | Mouse button to use: `"left"`, `"right"`, or `"middle"` |
+| `duration` | `float` | Duration of drag in seconds |
 
-##### `scroll(x, y, scroll_x, scroll_y)`
+##### `drag(path, button="left", duration=0.5, delay=None)`
 
-Scroll at the specified coordinates.
+Drag along a path of coordinates.
 
 ```python
-# Scroll down
-await computer.interface.scroll(500, 300, 0, -3)
-
-# Scroll up
-await computer.interface.scroll(500, 300, 0, 3)
-
-# Scroll right
-await computer.interface.scroll(500, 300, 3, 0)
+path = [(100, 100), (200, 150), (300, 200), (400, 250)]
+await computer.interface.drag(path, duration=2.0)
 ```
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `x` | `int` | X coordinate where scroll occurs |
-| `y` | `int` | Y coordinate where scroll occurs |
-| `scroll_x` | `int` | Horizontal scroll amount (positive = right) |
-| `scroll_y` | `int` | Vertical scroll amount (positive = up) |
+| `path` | `list[tuple[int, int]]` | List of (x, y) coordinate tuples |
+
+##### `scroll(x, y, delay=None)`
+
+Scroll by the specified amounts. Positive y scrolls up, negative scrolls down.
+
+```python
+# Scroll down (negative y)
+await computer.interface.scroll(0, -3)
+
+# Scroll up (positive y)
+await computer.interface.scroll(0, 3)
+
+# Scroll right (positive x)
+await computer.interface.scroll(3, 0)
+```
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `x` | `int` | Horizontal scroll amount (positive = right, negative = left) |
+| `y` | `int` | Vertical scroll amount (positive = up, negative = down) |
+
+##### `scroll_down(clicks=1, delay=None)` / `scroll_up(clicks=1, delay=None)`
+
+Convenience methods for vertical scrolling.
+
+```python
+await computer.interface.scroll_down(3)  # Scroll down 3 clicks
+await computer.interface.scroll_up(2)    # Scroll up 2 clicks
+```
 
 #### Keyboard Actions
 
-##### `type_text(text)`
+##### `type_text(text, delay=None)`
 
 Type text using the keyboard.
 
@@ -181,73 +346,164 @@ await computer.interface.type_text("Hello, World!")
 |-----------|------|-------------|
 | `text` | `str` | Text to type |
 
-##### `key(key)`
+##### `press(key, delay=None)`
 
-Press a single key or key combination.
+Press a single key.
 
 ```python
-# Single key
-await computer.interface.key("enter")
+from computer.interface.models import Key
 
-# Key combination
-await computer.interface.key("ctrl+c")
-await computer.interface.key("cmd+v")  # macOS
-await computer.interface.key("alt+tab")
+# Using Key enum (recommended)
+await computer.interface.press(Key.ENTER)
+await computer.interface.press(Key.PAGE_DOWN)
+
+# Using string (also supported)
+await computer.interface.press("enter")
 ```
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `key` | `str` | Key name or combination (e.g., `"enter"`, `"ctrl+c"`) |
+| `key` | `Key \| str` | Key to press (use `Key` enum or string) |
 
-**Supported Keys:**
+##### `hotkey(*keys, delay=None)`
 
-- Letters: `a-z`
-- Numbers: `0-9`
-- Modifiers: `ctrl`, `alt`, `shift`, `cmd` (macOS), `win` (Windows)
-- Special: `enter`, `return`, `tab`, `escape`, `backspace`, `delete`, `space`
-- Navigation: `up`, `down`, `left`, `right`, `home`, `end`, `pageup`, `pagedown`
-- Function: `f1`-`f12`
+Press a key combination.
+
+```python
+from computer.interface.models import Key
+
+# Copy (Ctrl+C)
+await computer.interface.hotkey(Key.CTRL, Key.C)
+
+# Paste (Ctrl+V)
+await computer.interface.hotkey(Key.CTRL, Key.V)
+
+# Save (Ctrl+S)
+await computer.interface.hotkey(Key.CTRL, Key.S)
+
+# Quit (Cmd+Q on macOS)
+await computer.interface.hotkey(Key.COMMAND, Key.Q)
+```
+
+##### `key_down(key, delay=None)` / `key_up(key, delay=None)`
+
+Press and hold or release a key.
+
+```python
+# Hold shift while clicking
+await computer.interface.key_down(Key.SHIFT)
+await computer.interface.left_click(500, 300)
+await computer.interface.key_up(Key.SHIFT)
+```
+
+**Supported Keys (Key enum):**
+
+```python
+from computer.interface.models import Key
+
+# Navigation
+Key.PAGE_DOWN, Key.PAGE_UP, Key.HOME, Key.END
+Key.LEFT, Key.RIGHT, Key.UP, Key.DOWN
+
+# Special
+Key.RETURN, Key.ENTER  # Same key
+Key.ESCAPE, Key.ESC    # Same key
+Key.TAB, Key.SPACE, Key.BACKSPACE, Key.DELETE
+
+# Modifiers
+Key.ALT, Key.CTRL, Key.SHIFT
+Key.WIN          # Windows key
+Key.COMMAND      # macOS Cmd key
+Key.OPTION       # macOS Option key
+
+# Function keys
+Key.F1, Key.F2, Key.F3, Key.F4, Key.F5, Key.F6
+Key.F7, Key.F8, Key.F9, Key.F10, Key.F11, Key.F12
+
+# Letters and numbers can be strings or Key.A, Key.B, etc.
+```
 
 #### Screen Methods
 
-##### `screenshot()`
+##### `screenshot(boxes=None, box_color="#FF0000", box_thickness=2, scale_factor=1.0)`
 
-Capture the current screen.
+Capture the current screen with optional box overlays.
 
 ```python
-screenshot = await computer.interface.screenshot()
+# Basic screenshot
+screenshot_bytes = await computer.interface.screenshot()
+
+# Screenshot with bounding boxes
+boxes = [
+    {"x": 100, "y": 100, "width": 200, "height": 150},
+    {"x": 400, "y": 300, "width": 100, "height": 100}
+]
+screenshot_bytes = await computer.interface.screenshot(
+    boxes=boxes,
+    box_color="#00FF00",
+    box_thickness=3
+)
+
+# Screenshot scaled down to 50%
+screenshot_bytes = await computer.interface.screenshot(scale_factor=0.5)
 ```
 
-**Returns:** `PIL.Image.Image` - The current screen contents
+**Returns:** `bytes` - Raw image data (PNG format)
 
 ##### `get_screen_size()`
 
 Get the screen dimensions.
 
 ```python
-width, height = await computer.interface.get_screen_size()
+size = await computer.interface.get_screen_size()
+width = size["width"]
+height = size["height"]
 ```
 
-**Returns:** `tuple[int, int]` - Width and height in pixels
+**Returns:** `dict[str, int]` - Dictionary with `"width"` and `"height"` keys
 
 ##### `get_cursor_position()`
 
 Get the current cursor position.
 
 ```python
-x, y = await computer.interface.get_cursor_position()
+pos = await computer.interface.get_cursor_position()
+x = pos["x"]
+y = pos["y"]
 ```
 
-**Returns:** `tuple[int, int]` - X and Y coordinates
+**Returns:** `dict[str, int]` - Dictionary with `"x"` and `"y"` keys
+
+##### Coordinate Conversion
+
+##### `to_screen_coordinates(x, y)`
+
+Convert screenshot coordinates to screen coordinates.
+
+```python
+screen_x, screen_y = await computer.interface.to_screen_coordinates(100, 100)
+```
+
+**Returns:** `tuple[float, float]` - Screen coordinates
+
+##### `to_screenshot_coordinates(x, y)`
+
+Convert screen coordinates to screenshot coordinates.
+
+```python
+ss_x, ss_y = await computer.interface.to_screenshot_coordinates(1920, 1080)
+```
+
+**Returns:** `tuple[float, float]` - Screenshot coordinates
 
 #### Clipboard Methods
 
-##### `get_clipboard()`
+##### `copy_to_clipboard()`
 
 Get the current clipboard contents.
 
 ```python
-text = await computer.interface.get_clipboard()
+text = await computer.interface.copy_to_clipboard()
 ```
 
 **Returns:** `str` - Clipboard text content
@@ -266,36 +522,129 @@ await computer.interface.set_clipboard("Text to copy")
 
 #### Shell Methods
 
-##### `run_shell(command)` / `run_command(command)`
+##### `run_command(command)`
 
 Execute a shell command in the computer.
 
 ```python
-result = await computer.interface.run_shell("ls -la")
+result = await computer.interface.run_command("ls -la")
 print(result.stdout)
 print(result.stderr)
-print(result.exit_code)
+print(result.returncode)
 ```
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `command` | `str` | Shell command to execute |
 
-**Returns:** `ShellResult` with properties:
-- `stdout` - Standard output
-- `stderr` - Standard error
-- `exit_code` - Exit code (0 = success)
+**Returns:** `CommandResult` with properties:
+- `stdout: str` - Standard output
+- `stderr: str` - Standard error
+- `returncode: int` - Exit code (0 = success)
+
+#### File Methods
+
+##### `read_text(path, encoding="utf-8")`
+
+Read a text file from the computer.
+
+```python
+content = await computer.interface.read_text("/home/user/file.txt")
+```
+
+**Returns:** `str` - File contents
+
+##### `write_text(path, content, encoding="utf-8")`
+
+Write text content to a file.
+
+```python
+await computer.interface.write_text("/home/user/file.txt", "Hello!")
+```
+
+##### `read_bytes(path, offset=0, length=None)`
+
+Read a file as bytes with optional seeking.
+
+```python
+# Read entire file
+data = await computer.interface.read_bytes("/home/user/image.png")
+
+# Read 1024 bytes starting at offset 512
+data = await computer.interface.read_bytes("/home/user/file.bin", offset=512, length=1024)
+```
+
+**Returns:** `bytes` - File contents
+
+##### `write_bytes(path, content, append=False)`
+
+Write binary content to a file.
+
+```python
+await computer.interface.write_bytes("/home/user/image.png", image_bytes)
+
+# Append to file
+await computer.interface.write_bytes("/home/user/log.bin", data, append=True)
+```
+
+##### `file_exists(path)` / `directory_exists(path)`
+
+Check if a file or directory exists.
+
+```python
+if await computer.interface.file_exists("/home/user/file.txt"):
+    print("File exists")
+
+if await computer.interface.directory_exists("/home/user/documents"):
+    print("Directory exists")
+```
+
+**Returns:** `bool` - True if exists
+
+##### `get_file_size(path)`
+
+Get the size of a file in bytes.
+
+```python
+size = await computer.interface.get_file_size("/home/user/file.txt")
+```
+
+**Returns:** `int` - File size in bytes
+
+##### `list_dir(path)`
+
+List contents of a directory.
+
+```python
+files = await computer.interface.list_dir("/home/user")
+for file in files:
+    print(file)
+```
+
+**Returns:** `list[str]` - List of file/directory names
+
+##### `create_dir(path)` / `delete_dir(path)` / `delete_file(path)`
+
+Create or delete files and directories.
+
+```python
+await computer.interface.create_dir("/home/user/new_folder")
+await computer.interface.delete_file("/home/user/old_file.txt")
+await computer.interface.delete_dir("/home/user/old_folder")
+```
 
 #### Window Management
 
-##### `launch(application)`
+##### `launch(application, args=None)`
 
 Launch an application.
 
 ```python
 await computer.interface.launch("xfce4-terminal")
-await computer.interface.launch("libreoffice --writer")
+await computer.interface.launch("firefox", ["--private-window"])
 ```
+
+**Returns:** `int | None` - Window ID if available
 
 ##### `open(uri)`
 
@@ -306,13 +655,81 @@ await computer.interface.open("https://www.google.com")
 await computer.interface.open("/home/user/document.pdf")
 ```
 
+##### `get_current_window_id()`
+
+Get the active window ID.
+
+```python
+window_id = await computer.interface.get_current_window_id()
+```
+
+**Returns:** `int | str` - Window ID
+
 ##### `get_application_windows(app_name)`
 
 Get window IDs for an application.
 
 ```python
-windows = await computer.interface.get_application_windows("xfce4-terminal")
-window_id = windows[0]
+windows = await computer.interface.get_application_windows("firefox")
+for window_id in windows:
+    print(window_id)
+```
+
+**Returns:** `list[int | str]` - List of window IDs
+
+##### `get_window_name(window_id)` / `get_window_title(window_id)`
+
+Get the title of a window.
+
+```python
+title = await computer.interface.get_window_name(window_id)
+```
+
+**Returns:** `str` - Window title
+
+##### `get_window_size(window_id)` / `window_size(window_id)`
+
+Get window dimensions.
+
+```python
+width, height = await computer.interface.get_window_size(window_id)
+```
+
+**Returns:** `tuple[int, int]` - Width and height in pixels
+
+##### `set_window_size(window_id, width, height)`
+
+Set window dimensions.
+
+```python
+await computer.interface.set_window_size(window_id, 1200, 800)
+```
+
+##### `get_window_position(window_id)`
+
+Get window position on screen.
+
+```python
+x, y = await computer.interface.get_window_position(window_id)
+```
+
+**Returns:** `tuple[int, int]` - X and Y coordinates
+
+##### `set_window_position(window_id, x, y)`
+
+Set window position on screen.
+
+```python
+await computer.interface.set_window_position(window_id, 100, 100)
+```
+
+##### `maximize_window(window_id)` / `minimize_window(window_id)`
+
+Change window state.
+
+```python
+await computer.interface.maximize_window(window_id)
+await computer.interface.minimize_window(window_id)
 ```
 
 ##### `activate_window(window_id)`
@@ -323,30 +740,11 @@ Bring a window to focus.
 await computer.interface.activate_window(window_id)
 ```
 
-##### `get_current_window_id()`
+##### `close_window(window_id)`
 
-Get the active window ID.
-
-```python
-window_id = await computer.interface.get_current_window_id()
-```
-
-##### `window_size(window_id)` / `set_window_size(window_id, width, height)`
-
-Get or set window dimensions.
+Close a window.
 
 ```python
-size = await computer.interface.window_size(window_id)
-await computer.interface.set_window_size(window_id, 1200, 800)
-```
-
-##### `maximize_window(window_id)` / `minimize_window(window_id)` / `close_window(window_id)`
-
-Window state controls.
-
-```python
-await computer.interface.maximize_window(window_id)
-await computer.interface.minimize_window(window_id)
 await computer.interface.close_window(window_id)
 ```
 
@@ -360,78 +758,52 @@ Get the accessibility tree for the current screen.
 tree = await computer.interface.get_accessibility_tree()
 ```
 
-**Returns:** Accessibility tree structure with UI element information.
+**Returns:** `dict` - Accessibility tree structure with UI element information
 
-#### Virtual Environment
+##### `get_active_window_bounds()`
 
-##### `venv_install(venv_name, packages)`
-
-Install packages in a virtual environment.
+Get the bounds of the active window.
 
 ```python
-await computer.venv_install("my_env", ["requests", "pandas"])
+bounds = await computer.interface.get_active_window_bounds()
+x = bounds["x"]
+y = bounds["y"]
+width = bounds["width"]
+height = bounds["height"]
 ```
 
-##### `venv_cmd(venv_name, command)`
+**Returns:** `dict[str, int]` - Dictionary with `"x"`, `"y"`, `"width"`, `"height"`
 
-Run a shell command in a virtual environment.
+#### Advanced Methods
+
+##### `get_desktop_environment()`
+
+Get the desktop environment name.
 
 ```python
-result = await computer.venv_cmd("my_env", "pip list")
+de = await computer.interface.get_desktop_environment()
+# Returns "XFCE", "GNOME", "KDE", etc.
 ```
 
-##### `venv_exec(venv_name, function, *args, **kwargs)`
+**Returns:** `str` - Desktop environment name
 
-Execute a Python function in a virtual environment.
+##### `set_wallpaper(path)`
+
+Set the desktop wallpaper.
 
 ```python
-def process_data(x):
-    import pandas as pd
-    return pd.DataFrame(x).to_dict()
-
-result = await computer.venv_exec("my_env", process_data, [1, 2, 3])
+await computer.interface.set_wallpaper("/home/user/wallpaper.jpg")
 ```
 
-See [Sandboxed Python](/cua/guide/advanced/sandboxed-python) for detailed usage.
+##### `playwright_exec(command, params=None)`
 
-#### File Methods
-
-##### `file_read(path)`
-
-Read a file from the computer.
+Execute Playwright browser automation commands.
 
 ```python
-content = await computer.interface.file_read("/home/user/file.txt")
+result = await computer.interface.playwright_exec("goto", {"url": "https://example.com"})
 ```
 
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `path` | `str` | Absolute path to the file |
-
-**Returns:** `str` - File contents
-
-##### `file_write(path, content)`
-
-Write content to a file on the computer.
-
-```python
-await computer.interface.file_write("/home/user/file.txt", "Hello!")
-```
-
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `path` | `str` | Absolute path to the file |
-| `content` | `str` | Content to write |
-
-##### `file_exists(path)`
-
-Check if a file exists.
-
-```python
-exists = await computer.interface.file_exists("/home/user/file.txt")
-```
-
-**Returns:** `bool` - True if file exists
+**Returns:** `dict` - Command result
 
 ---
 
@@ -523,15 +895,15 @@ For macOS virtual machines on Apple Silicon. Requires [Lume](/lume) to be instal
 
 ```python
 from computer import Computer
-from computer.providers import CloudProvider
 
 computer = Computer(
     os_type="linux",
-    provider_type="cloud"
+    provider_type="cloud",
+    api_key="your-api-key"  # or set CUA_API_KEY env var
 )
 ```
 
-For managed cloud sandboxes. See [CloudProvider](#cloudprovider) for configuration.
+For managed cloud sandboxes. See [CloudProvider](#cloudprovider) for management API.
 
 ### Windows Sandbox Provider
 
@@ -697,22 +1069,45 @@ ProviderType.WINDOWS_SANDBOX  # "windows-sandbox"
 ProviderType.HOST             # "host"
 ```
 
-### ShellResult
+### Key
 
-Result from `run_shell()` calls.
+Enum for keyboard keys with cross-platform support.
 
 ```python
-result = await computer.interface.run_shell("echo hello")
-result.stdout     # "hello\n"
-result.stderr     # ""
-result.exit_code  # 0
+from computer.interface.models import Key
+
+# Use in keyboard methods
+await computer.interface.press(Key.ENTER)
+await computer.interface.hotkey(Key.CTRL, Key.C)
+```
+
+**Available Keys:**
+
+| Category | Keys |
+|----------|------|
+| Navigation | `PAGE_DOWN`, `PAGE_UP`, `HOME`, `END`, `LEFT`, `RIGHT`, `UP`, `DOWN` |
+| Special | `RETURN`/`ENTER`, `ESCAPE`/`ESC`, `TAB`, `SPACE`, `BACKSPACE`, `DELETE` |
+| Modifiers | `ALT`, `CTRL`, `SHIFT`, `WIN`, `COMMAND`, `OPTION` |
+| Function | `F1` through `F12` |
+| Letters | `A` through `Z` |
+| Numbers | `N0` through `N9` |
+
+### CommandResult
+
+Result from `run_command()` calls.
+
+```python
+result = await computer.interface.run_command("echo hello")
+result.stdout      # "hello\n"
+result.stderr      # ""
+result.returncode  # 0
 ```
 
 | Property | Type | Description |
 |----------|------|-------------|
 | `stdout` | `str` | Standard output |
 | `stderr` | `str` | Standard error |
-| `exit_code` | `int` | Exit code (0 = success) |
+| `returncode` | `int` | Exit code (0 = success) |
 
 ---
 
@@ -741,4 +1136,72 @@ async with Computer(
 ) as computer:
     await computer.interface.type_text("Hello!")
     # Computer automatically stopped on exit
+```
+
+---
+
+## Common Patterns
+
+### Click and Type
+
+```python
+# Click a text field and type
+await computer.interface.left_click(500, 300)
+await computer.interface.type_text("Hello, World!")
+await computer.interface.press(Key.ENTER)
+```
+
+### Drag and Drop
+
+```python
+# Method 1: Using drag_to
+await computer.interface.move_cursor(100, 100)
+await computer.interface.drag_to(500, 500)
+
+# Method 2: Using mouse_down/up
+await computer.interface.mouse_down(100, 100)
+await computer.interface.move_cursor(500, 500)
+await computer.interface.mouse_up()
+```
+
+### Keyboard Shortcuts
+
+```python
+from computer.interface.models import Key
+
+# Copy
+await computer.interface.hotkey(Key.CTRL, Key.C)
+
+# Paste
+await computer.interface.hotkey(Key.CTRL, Key.V)
+
+# Select All
+await computer.interface.hotkey(Key.CTRL, Key.A)
+
+# Undo
+await computer.interface.hotkey(Key.CTRL, Key.Z)
+
+# macOS uses Command key
+await computer.interface.hotkey(Key.COMMAND, Key.Q)  # Quit
+```
+
+### File Operations
+
+```python
+# Read a text file
+content = await computer.interface.read_text("/home/user/config.json")
+data = json.loads(content)
+
+# Write a text file
+await computer.interface.write_text("/home/user/output.txt", "Results")
+
+# Read binary file
+image_data = await computer.interface.read_bytes("/home/user/photo.jpg")
+
+# Write binary file
+await computer.interface.write_bytes("/home/user/output.png", image_bytes)
+
+# Check if file exists
+if await computer.interface.file_exists("/home/user/data.csv"):
+    content = await computer.interface.read_text("/home/user/data.csv")
 ```

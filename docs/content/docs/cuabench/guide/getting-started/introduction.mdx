@@ -6,7 +6,11 @@ description: A benchmark to measure the capabilities of computer-use agents in d
 **Cua-Bench** is a framework and set of tasks for evaluating how well AI agents can accomplish complex tasks on a desktop computer using primarily the keyboard and mouse, or on a mobile device using primarily the touchscreen.
 
 <div className="not-prose relative rounded-xl overflow-hidden my-8 w-full">
-  <img src="/docs/img/cua_bench_screenshots.png" alt="Cua" className="w-full h-auto rounded-xl border" />
+  <img
+    src="/docs/img/cua_bench_screenshots.png"
+    alt="Cua"
+    className="w-full h-auto rounded-xl border"
+  />
 </div>
 
 Examples of Cua-Bench tasks are:
@@ -30,7 +34,7 @@ Each task in Cua-Bench includes:
 - a test script to verify if the agent completed the task successfully
 - a reference ("oracle") solution that solves the task
 
-Check out our existing tasks [here](https://cuabench.ai/cuabench/registry)
+Check out our existing tasks [here](https://cua.ai/docs/cuabench/guide/fundamentals/registry)
 
 # An environment harness
 
@@ -38,33 +42,8 @@ The harness provides familiar APIs for creating verifiable tasks. Use an Electro
 
 After [installing the package](/cuabench/guide/getting-started/installation), you can run the harness using `cb run` or `cb interact`.
 
-# Base Images
-
-Cua-Bench uses **base images** - reproducible environments that provide consistent, isolated desktop or mobile VMs. Images are protected by overlays during benchmark runs, ensuring each task starts from a clean state.
-
-| Type | Description | Requirements |
-|------|-------------|--------------|
-| `linux-docker` | Linux GUI container (XFCE) | Docker |
-| `linux-qemu` | Linux VM with QEMU/KVM | Docker + KVM |
-| `windows-qemu` | Windows 11 VM | Docker + KVM |
-| `android-qemu` | Android VM | Docker + KVM |
-| `macos-lume` | macOS VM via Lume | Apple Silicon |
-
-See [Base Images](/cuabench/guide/getting-started/images) for setup instructions.
-
-# Supported Benchmarks
-
-| Benchmark | Image | Tasks | Status | Description |
-|-----------|--------------|-------|--------|-------------|
-| Windows Arena | `windows-qemu` | 173 | Available | Windows 11 desktop automation across 12 apps |
-| OSWorld | `linux-qemu` | 369 | Coming soon | Linux desktop automation |
-| WebArena | `linux-docker` | 812 | Coming soon | Web browsing tasks |
-| AndroidWorld | `android-qemu` | 200+ | Coming soon | Android mobile automation |
-| macOSWorld | `macos-lume` | 100+ | Coming soon | macOS desktop automation |
-
 # Next Steps
 
 1. [Install the CLI](/cuabench/guide/getting-started/installation)
-2. [Create a base image](/cuabench/guide/getting-started/images)
-3. [Run your first benchmark](/cuabench/guide/getting-started/first-steps)
-4. [Create custom tasks](/cuabench/guide/fundamentals/tasks)
+2. [Run your first benchmark](/cuabench/guide/getting-started/first-steps)
+3. [Create custom tasks](/cuabench/guide/fundamentals/tasks)

@@ -113,7 +113,7 @@ if __name__ == "__main__":
 cb interact tasks/my_custom_task
 
 # Run specific task variant
-cb interact tasks/my_custom_task --task-id 0
+cb interact tasks/my_custom_task --variant-id 0
 
 # Run oracle solution
 cb interact tasks/my_custom_task --oracle
@@ -126,10 +126,10 @@ cb interact tasks/my_custom_task --oracle --screenshot output.png
 
 ```bash
 # Run with agent
-cb run tasks/my_custom_task --agent cua-agent --model anthropic/claude-sonnet-4-20250514
+cb run task tasks/my_custom_task --agent cua-agent --model anthropic/claude-sonnet-4-20250514
 
 # Validate oracle solutions
-cb run tasks/my_custom_task --oracle
+cb run task tasks/my_custom_task --oracle
 ```
 
 ## Running a Custom Dataset
@@ -138,10 +138,10 @@ To run multiple tasks as a dataset:
 
 ```bash
 # Run all tasks in a directory
-cb run --dataset-path tasks --agent cua-agent --model anthropic/claude-sonnet-4-20250514
+cb run dataset tasks --agent cua-agent --model anthropic/claude-sonnet-4-20250514
 
 # Run specific tasks
-cb run --dataset-path tasks/my_custom_task,tasks/another_task --agent cua-agent
+cb run dataset tasks/my_custom_task,tasks/another_task --agent cua-agent
 ```
 
 ## Task Development Workflow
@@ -150,8 +150,8 @@ cb run --dataset-path tasks/my_custom_task,tasks/another_task --agent cua-agent
 2. **Implement task logic** in `main.py` with async functions
 3. **Test interactively** with `cb interact tasks/my_task`
 4. **Validate oracle** with `cb interact tasks/my_task --oracle`
-5. **Run evaluation** with `cb run tasks/my_task --oracle` to verify evaluation returns `[1.0]`
-6. **Test with agent** with `cb run tasks/my_task --agent cua-agent`
+5. **Run evaluation** with `cb run task tasks/my_task --oracle` to verify evaluation returns `[1.0]`
+6. **Test with agent** with `cb run task tasks/my_task --agent cua-agent`
 
 ## Tips
 

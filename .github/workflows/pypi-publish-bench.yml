@@ -1,0 +1,81 @@
+name: Publish Bench Package
+
+on:
+  push:
+    tags:
+      - "bench-v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to publish (without v prefix)"
+        required: true
+        default: "0.1.0"
+  workflow_call:
+    inputs:
+      version:
+        description: "Version to publish"
+        required: true
+        type: string
+
+# Adding permissions at workflow level
+permissions:
+  contents: write
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.get-version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Determine version
+        id: get-version
+        run: |
+          # Check if version was provided via workflow_call first
+          if [ -n "${{ inputs.version }}" ]; then
+            VERSION=${{ inputs.version }}
+          elif [ "${{ github.event_name }}" == "push" ]; then
+            # Extract version from tag (for package-specific tags)
+            if [[ "${{ github.ref }}" =~ ^refs/tags/bench-v([0-9]+\.[0-9]+\.[0-9]+) ]]; then
+              VERSION=${BASH_REMATCH[1]}
+            else
+              echo "Invalid tag format for bench"
+              exit 1
+            fi
+          elif [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            # Use version from workflow dispatch (direct trigger)
+            VERSION=${{ github.event.inputs.version }}
+          else
+            echo "Unable to determine version"
+            exit 1
+          fi
+          echo "VERSION=$VERSION"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+  publish:
+    needs: prepare
+    uses: ./.github/workflows/pypi-reusable-publish.yml
+    with:
+      package_name: "bench"
+      package_dir: "libs/cua-bench"
+      version: ${{ needs.prepare.outputs.version }}
+      is_lume_package: false
+      base_package_name: "cua-bench"
+    secrets:
+      PYPI_TOKEN: ${{ secrets.PYPI_TOKEN }}
+
+  create-release:
+    needs: [prepare, publish]
+    uses: ./.github/workflows/github-release-reusable.yml
+    with:
+      tag_name: "bench-v${{ needs.prepare.outputs.version }}"
+      release_name: "cua-bench v${{ needs.prepare.outputs.version }}"
+      body: |
+        ## Toolkit for computer-use RL environments and benchmarks
+
+        ## Installation
+
+        ```bash
+        pip install cua-bench==${{ needs.prepare.outputs.version }}
+        ```

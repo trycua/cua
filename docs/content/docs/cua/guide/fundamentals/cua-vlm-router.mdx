@@ -35,7 +35,6 @@ Get your API key at [cua.ai](https://cua.ai/signin).
 | `cua/anthropic/claude-opus-4.5` | Most capable |
 | `cua/google/gemini-3-flash-preview` | Fastest, cheapest |
 | `cua/google/gemini-3-pro-preview` | Most powerful |
-| `cua/qwen/qwen3-vl-235b` | Large-scale vision tasks |
 
 ## Benefits
 
@@ -58,10 +57,10 @@ async for result in agent.run(messages):
 
 Use the router directly via HTTP for integrations outside Python:
 
-### Chat Completions
+### Messages
 
 ```bash
-curl -X POST https://inference.cua.ai/v1/chat/completions \
+curl -X POST https://inference.cua.ai/v1/messages \
   -H "Authorization: Bearer $CUA_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{

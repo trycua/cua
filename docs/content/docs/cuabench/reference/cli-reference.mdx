@@ -112,7 +112,7 @@ cb run <subcommand> [options]
 | `cb run status <id>` | Show detailed run status |
 | `cb run watch <id>` | Watch a run in real-time |
 | `cb run stop <id>` | Stop/cancel a run |
-| `cb run logs <id>` | View combined logs from a run |
+| `cb run logs <id>` | View combined logs from a run or session |
 
 ### Task Options
 
@@ -187,6 +187,7 @@ cb run list                    # List all runs
 cb run watch <run_id>          # Watch progress in real-time
 cb run status <run_id>         # Check status
 cb run logs <run_id>           # View logs
+cb run logs <run_id> --tail 100  # View last 100 lines
 cb run stop <run_id>           # Stop a run
 ```
 
@@ -200,10 +201,15 @@ cb interact <task> [options]
 
 | Option | Description |
 |--------|-------------|
-| `--variant-id <id>` | Run specific task variant |
-| `--oracle` | Run oracle solution |
+| `--variant-id <id>` | Task variant index (default: 0) |
+| `--dataset <name>` | Dataset name to resolve task from registry |
+| `--dataset-path <path>` | Path to dataset directory containing multiple tasks |
+| `--oracle` | Run the solution after setup |
+| `--max-steps <n>` | Maximum number of env.step() calls before stopping |
 | `--screenshot <path>` | Save screenshot to file |
-| `--dataset <name>` | Use dataset from registry |
+| `--trace-out <path>` | If set, start tracing and save dataset to this path on exit |
+| `--view` | Open a trace viewer when done |
+| `--no-wait` | Skip the interactive prompt (useful for SSH/CI testing) |
 
 ## Task Commands
 
@@ -228,7 +234,7 @@ cb task generate "<description>" [options]
 
 | Option | Description |
 |--------|-------------|
-| `--output <path>` | Output directory for generated task |
+| `--output <path>`, `-o` | Output directory path. If not provided, auto-generates from prompt. |
 | `--no-interaction` | Skip prompts and run Claude non-interactively |
 
 ## Trace Commands
@@ -236,14 +242,13 @@ cb task generate "<description>" [options]
 View and manage trace datasets.
 
 ```bash
-cb trace <action> [options]
+cb trace <action> <id>
 ```
 
-| Command | Description |
-|---------|-------------|
-| `cb trace view <path>` | View a single trace dataset in browser |
-| `cb trace grid <dir>` | View multiple traces in a grid layout |
-| `cb trace replay <dataset>` | Create a replay task from a trace |
+| Command            | Description                                                   |
+|--------------------|---------------------------------------------------------------|
+| `cb trace view <id>` | View a single trace in browser (accepts run_id or session_id) |
+| `cb trace grid <id>` | View all traces in a run as a grid (accepts run_id)           |
 
 ## Dataset Commands
 
@@ -271,3 +276,45 @@ cb dataset build <outputs> [options]
 | `--push-to-hub` | Push to Hugging Face Hub |
 | `--repo-id <id>` | Hugging Face repo ID |
 | `--private` | Create private repo on Hub |
+
+## Prune Commands
+
+Clean up cua-bench data, images, and Docker resources.
+
+```bash
+cb prune [options]
+```
+
+When called without options, shows an interactive overview of storage usage. Use flags to clean specific resources.
+
+| Option | Description |
+|--------|-------------|
+| `--all`, `-a` | Remove everything (images, overlays, runs, docker) |
+| `--images` | Remove only stored images |
+| `--overlays` | Remove only task overlays |
+| `--runs` | Remove only run logs and registry |
+| `--docker` | Remove only docker containers/images |
+| `--dry-run` | Show what would be deleted without deleting |
+| `--force`, `-f` | Skip confirmation prompts |
+
+### Examples
+
+```bash
+# Show storage overview
+cb prune
+
+# Remove all data with confirmation
+cb prune --all
+
+# Remove all data without confirmation
+cb prune --all --force
+
+# Preview what would be deleted
+cb prune --all --dry-run
+
+# Remove only run logs
+cb prune --runs
+
+# Remove docker resources
+cb prune --docker
+```

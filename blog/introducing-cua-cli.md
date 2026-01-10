@@ -255,10 +255,10 @@ If there's a feature you need, let us know in [Discord](https://discord.gg/cua-a
 
 ## Need Help?
 
-- **Documentation**: [https://cua.ai/docs/cli-playbook/commands](https://cua.ai/docs/cli-playbook/commands)
-- **Installation Guide**: [https://cua.ai/docs/cli-playbook](https://cua.ai/docs/cli-playbook)
+- **Documentation**: [https://cua.ai/docs/cua/reference/cli-playbook/commands](https://cua.ai/docs/cua/reference/cli-playbook/commands)
+- **Installation Guide**: [https://cua.ai/docs/cua/reference/cli-playbook](https://cua.ai/docs/cua/reference/cli-playbook)
 - **Discord Community**: [https://discord.gg/cua-ai](https://discord.gg/cua-ai)
 
 ---
 
-Get started at [cua.ai](https://cua.ai) or check out the [quickstart guide](https://cua.ai/docs/get-started/quickstart).
+Get started at [cua.ai](https://cua.ai) or check out the [quickstart guide](https://cua.ai/docs/cua/guide/get-started/using-agent-sdk).

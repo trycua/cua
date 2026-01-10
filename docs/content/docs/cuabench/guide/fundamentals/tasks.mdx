@@ -3,11 +3,7 @@ title: Tasks
 description: An in-depth guide describing the structure of a Cua-Bench task.
 ---
 
-<div className="not-prose relative rounded-xl overflow-hidden my-8 w-full">
-  <img src="/docs/img/cua_bench_overview.png" alt="Cua" className="w-full h-auto rounded-xl border" />
-</div>
-
-A Cua-Bench task is a Python module that defines a verifiable computer-use environment. Tasks use decorators to define configuration, setup, evaluation, and oracle solutions.
+A Cua-Bench task is a Python module that defines a verifiable, cross-platform GUI task. Tasks use decorators to define configuration, setup, evaluation, and oracle solutions.
 
 ## Task Structure
 
@@ -38,14 +34,14 @@ def load():
                 }
             }
         )
-        for provider, os_type in [("computer", "linux"), ("computer", "windows"), ("webtop", "linux"), ("webtop", "win11"), ("webtop", "macos")]
+        for provider, os_type in [("native", "linux"), ("native", "windows"), ("simulated", "win11"), ("simulated", "macos")]
         # More task variants...
     ]
 ```
 
 Each task variant can have different metadata, enabling thousands of unique scenarios from a single template.
 
-The `computer` provider **emulates** `windows` and `linux` operating systems, while the `webtop` provider **simulates** desktop themes including `linux`, `win11`, and `macos`. See [OS Themes](/cuabench/guide/fundamentals/os-themes) for all available themes.
+The `native` provider **emulates** `windows` and `linux` operating systems using QEMU/Docker, while the `simulated` provider lightweight Playwright-based desktop environments with themes such as `win11` and `macos`. See [Simulated Desktop](/cuabench/guide/fundamentals/simulated-desktop) for all available themes.
 
 ### 2. Setup (`@cb.setup_task`)
 
@@ -214,11 +210,11 @@ def start(task_cfg: cb.Task, env: cb.DesktopSession | cb.MobileSession):
 
 ```bash
 # Run interactively
-cb interact tasks/my_task --task-id 0
+cb interact tasks/my_task --variant-id 0
 
 # Run evaluations
-cb run tasks/my_task --model anthropic/claude-opus-4-5 --agent cua-agent
+cb run task tasks/my_task --model anthropic/claude-opus-4-5 --agent cua-agent
 
 # Generate oracle trajectories
-cb run tasks/my_task --oracle
+cb run task tasks/my_task --oracle
 ```

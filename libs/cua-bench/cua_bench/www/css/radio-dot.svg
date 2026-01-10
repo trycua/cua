@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 -0.5 5 5" shape-rendering="crispEdges">
+<path stroke="#a9dca6" d="M1 0h1M0 1h1" />
+<path stroke="#4dbf4a" d="M2 0h1M0 2h1" />
+<path stroke="#a0d29e" d="M3 0h1M0 3h1" />
+<path stroke="#55d551" d="M1 1h1" />
+<path stroke="#43c33f" d="M2 1h1" />
+<path stroke="#29a826" d="M3 1h1" />
+<path stroke="#9acc98" d="M4 1h1M1 4h1" />
+<path stroke="#42c33f" d="M1 2h1" />
+<path stroke="#38b935" d="M2 2h1" />
+<path stroke="#21a121" d="M3 2h1" />
+<path stroke="#269623" d="M4 2h1" />
+<path stroke="#2aa827" d="M1 3h1" />
+<path stroke="#22a220" d="M2 3h1" />
+<path stroke="#139210" d="M3 3h1" />
+<path stroke="#98c897" d="M4 3h1" />
+<path stroke="#249624" d="M2 4h1" />
+<path stroke="#98c997" d="M3 4h1" />
+</svg>

@@ -3,7 +3,9 @@ title: Registry
 description: The Cua-Bench registry of tasks and datasets.
 ---
 
-The [Cua-Bench registry](https://cuabench.ai/cuabench/registry) contains a collection of pre-built tasks and datasets for evaluating computer-use agents.
+The [Cua-Bench registry](https://cua.ai/docs/cuabench/guide/fundamentals/registry) contains a collection of pre-built tasks and datasets for evaluating computer-use agents.
+
+Datasets are now part of the main [cua repository](https://github.com/trycua/cua) at [`libs/cua-bench/datasets`](https://github.com/trycua/cua/tree/main/libs/cua-bench/datasets).
 
 The goal of the registry is to be a community-based effort to increase the variety and quantity of useful, verifiable computer-use tasks.
 
@@ -19,13 +21,13 @@ cb dataset list
 
 ```bash
 # Run with agent
-cb run --dataset cua-bench-basic --agent cua-agent --model anthropic/claude-sonnet-4-20250514
+cb run dataset datasets/cua-bench-basic --agent cua-agent --model anthropic/claude-sonnet-4-20250514
 
 # Run interactively
 cb interact click-button --dataset cua-bench-basic
 
 # Run oracle solutions
-cb run --dataset cua-bench-basic --oracle
+cb run dataset datasets/cua-bench-basic --oracle
 ```
 
 ### Clone Registry Locally
@@ -34,36 +36,38 @@ The registry is automatically cloned when you first use the `--dataset` flag:
 
 ```bash
 # Registry location
-~/.cua/cbregistry/
+~/.cua/cua/libs/cua-bench/datasets/
 
-# Update registry
-cd ~/.cua/cbregistry && git pull
+# Update datasets
+cd ~/.cua/cua && git pull
+```
+
+Or set a custom location:
+
+```bash
+export CUA_REGISTRY_HOME=/path/to/your/datasets
 ```
 
 ## Available Datasets
 
-| Dataset | Tasks | Description | Golden Environment |
-|---------|-------|-------------|-------------------|
-| `cua-bench-basic` | 13 | Basic UI interaction tasks (clicking, typing, dragging) | `linux-docker` |
-| `winarena` | 173 | Windows 11 desktop automation | `windows-qemu` |
-| `osworld` | 369 | Linux desktop automation | `linux-qemu` |
-| `webarena` | 812 | Web browsing tasks | `linux-docker` |
+| Dataset           | Tasks | Description                                             | Golden Environment |
+| ----------------- | ----- | ------------------------------------------------------- | ------------------ |
+| `cua-bench-basic` | 13    | Basic UI interaction tasks (clicking, typing, dragging) | `simulated`        |
 
 ## Dataset Structure
 
 Each dataset in the registry follows this structure:
 
 ```
-registry/
-└── datasets/
-    └── cua-bench-basic/
-        ├── meta.json           # Dataset metadata
-        └── tasks/
-            ├── click-button/
-            │   ├── main.py     # Task implementation
-            │   └── gui/
-            │       └── index.html
-            └── ...
+libs/cua-bench/datasets/
+└── cua-bench-basic/
+    ├── meta.json           # Dataset metadata
+    └── tasks/
+        ├── click-button/
+        │   ├── main.py     # Task implementation
+        │   └── gui/
+        │       └── index.html
+        └── ...
 ```
 
 ### meta.json Format
@@ -73,12 +77,8 @@ registry/
   "name": "cua-bench-basic",
   "version": "1.0.0",
   "description": "Basic UI interaction tasks",
-  "platform": "linux-docker",
-  "tasks": [
-    "click-button",
-    "typing-input",
-    "drag-slider"
-  ]
+  "platform": "simulated",
+  "tasks": ["click-button", "typing-input", "drag-slider"]
 }
 ```
 
@@ -86,9 +86,19 @@ registry/
 
 To contribute tasks to the registry:
 
-1. Fork the [cua-bench-registry](https://github.com/trycua/cua-bench-registry) repository
-2. Create your task following the [task structure](/cuabench/guide/fundamentals/tasks)
-3. Test locally with `cb interact tasks/your_task`
-4. Submit a pull request
+1. Fork the [cua repository](https://github.com/trycua/cua)
+2. Create your task in `libs/cua-bench/datasets/<dataset-name>/tasks/`
+3. Follow the [task structure](/cuabench/guide/fundamentals/tasks)
+4. Test locally with `cb interact tasks/your_task`
+5. Submit a pull request to the main repository
 
-See [Creating Private Tasks](/cuabench/guide/advanced/creating-private-tasks) for task development guidance.
+See [Creating Tasks](/cuabench/guide/examples/universal-task) for task development guidance.
+
+## Registry Location
+
+By default, datasets are stored at:
+
+- **Default**: `~/.cua/cua/libs/cua-bench/datasets/`
+- **Custom**: Set `CUA_REGISTRY_HOME` environment variable
+
+The registry is a shallow clone of the main cua repository, pulling only the datasets directory.

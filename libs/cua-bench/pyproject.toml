@@ -1,0 +1,154 @@
+[project]
+name = "cua-bench"
+version = "0.2.2"
+description = "Toolkit for computer-use RL environments and benchmarks"
+readme = "README.md"
+license = "MIT"
+authors = [
+    { name = "TryCua", email = "hello@trycua.com" }
+]
+keywords = [
+    "computer-use",
+    "reinforcement-learning",
+    "benchmarks",
+    "gui-automation",
+    "agents",
+    "vlm",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+requires-python = ">=3.12,<3.14"
+
+# Core dependencies - minimal set for basic functionality
+dependencies = [
+    # Async & networking
+    "aiohttp>=3.9.0",
+    "aiofiles>=23.0.0",
+    "websockets>=12.0",
+    # CLI & display
+    "rich>=14.2.0",
+    "tqdm>=4.66.0",
+    # Web/HTML parsing
+    "jinja2>=3.1.0",
+    "pyquery>=2.0.1",
+    "html5lib>=1.1",
+    "beautifulsoup4>=4.14.2",
+    # Core utilities
+    "pillow>=11.0.0",
+    "numpy>=2.0.0",
+    "python-dotenv>=1.0.0",
+    "psutil>=5.9.0",
+    "datasets>=3.0.0",
+    "matplotlib>=3.8.0",
+    # Docker integration
+    "docker>=7.0.0",
+    # CUA SDK
+    "cua-computer>=0.4.19",
+]
+
+[project.optional-dependencies]
+# Full installation with all features
+all = [
+    "cua-bench[browser,agents,cloud]",
+]
+
+# Browser automation (for simulated environments)
+browser = [
+    "playwright>=1.40.0",
+]
+
+# Agent support
+agents = [
+    "cua-agent>=0.6.2",
+    "anthropic>=0.26.0",
+]
+
+# Cloud batch execution (Google Cloud)
+cloud = [
+    "google-cloud-batch>=0.17.0",
+    "google-cloud-logging>=3.5.0",
+    "google-cloud-storage>=2.10.0",
+    "gcloud-aio-storage>=9.0.0",
+    "grpcio>=1.60.0",
+]
+
+# API server (for custom environments)
+server = [
+    "fastapi>=0.100.0",
+    "uvicorn>=0.30.0",
+    "python-multipart>=0.0.6",
+    "aiosqlite>=0.19.0",
+]
+
+# Windows-specific
+windows = [
+    "pypiwin32>=223",
+    "icoextract>=0.2.0",
+]
+
+# Development
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+    "ruff>=0.1.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/trycua/cua"
+Documentation = "https://docs.trycua.com"
+Repository = "https://github.com/trycua/cua"
+Issues = "https://github.com/trycua/cua/issues"
+
+[project.scripts]
+cb = "cua_bench.cli.main:main"
+cua-bench = "cua_bench.cli.main:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build]
+include = [
+    "cua_bench/**",
+    "README.md",
+    "LICENSE",
+]
+exclude = [
+    "cua_bench/**/__pycache__",
+    "cua_bench/**/tests",
+    "**/.DS_Store",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["cua_bench"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "cua_bench/**",
+    "README.md",
+    "LICENSE",
+    "pyproject.toml",
+]
+
+# Ruff configuration
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W"]
+ignore = ["E501"]
+
+# Pytest configuration
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["cua_bench/tests"]

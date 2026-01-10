@@ -5,6 +5,7 @@ and versioned source code across all git tags.
 """
 
 import sqlite3
+import threading
 from pathlib import Path
 from typing import Optional
 
@@ -386,12 +387,12 @@ def search_by_url(url_pattern: str, limit: int = 10) -> list[dict]:
 
 
 @mcp.tool
-def query_code_search_db(sql: str) -> list[dict]:
+def query_code_search_db(sql: str, timeout: int = 10) -> list[dict]:
     """
     Execute a SQL query against the code search database.
-    
+
     Database Schema:
-    
+
     Table: code_files
     - id INTEGER PRIMARY KEY AUTOINCREMENT
     - component TEXT NOT NULL          -- Component name (e.g., "agent", "computer", "mcp-server")
@@ -400,41 +401,41 @@ def query_code_search_db(sql: str) -> list[dict]:
     - content TEXT NOT NULL            -- Full source code content
     - language TEXT NOT NULL           -- Programming language (e.g., "python", "typescript")
     - UNIQUE(component, version, file_path)
-    
+
     Indexes:
     - idx_component ON code_files(component)
     - idx_version ON code_files(component, version)
-    
+
     Virtual Table: code_files_fts (FTS5 full-text search)
     - content TEXT                     -- Full-text indexed content
     - component TEXT UNINDEXED         -- Component name for filtering
     - version TEXT UNINDEXED           -- Version for filtering
     - file_path TEXT UNINDEXED         -- File path for reference
-    
+
     Example queries:
-    
+
     1. List all components with version counts:
-       SELECT component, COUNT(DISTINCT version) as version_count 
-       FROM code_files 
-       GROUP BY component 
+       SELECT component, COUNT(DISTINCT version) as version_count
+       FROM code_files
+       GROUP BY component
        ORDER BY component
-    
+
     2. List versions for a component:
-       SELECT DISTINCT version 
-       FROM code_files 
-       WHERE component = 'agent' 
+       SELECT DISTINCT version
+       FROM code_files
+       WHERE component = 'agent'
        ORDER BY version DESC
-    
+
     3. List files in a component@version:
-       SELECT file_path, language 
-       FROM code_files 
+       SELECT file_path, language
+       FROM code_files
        WHERE component = 'agent' AND version = '0.7.3'
-    
+
     4. Get file content:
-       SELECT content, language 
-       FROM code_files 
+       SELECT content, language
+       FROM code_files
        WHERE component = 'agent' AND version = '0.7.3' AND file_path = 'agent/core.py'
-    
+
     5. Full-text search (FTS5):
        SELECT f.file_path, f.language, snippet(code_files_fts, 0, '>>>', '<<<', '...', 64) as snippet
        FROM code_files_fts
@@ -444,53 +445,92 @@ def query_code_search_db(sql: str) -> list[dict]:
          AND code_files_fts.version = '0.7.3'
        ORDER BY rank
        LIMIT 10
-    
+
     6. Search for function definitions:
-       SELECT component, version, file_path, 
+       SELECT component, version, file_path,
               snippet(code_files_fts, 0, '>>>', '<<<', '...', 100) as snippet
        FROM code_files_fts
        JOIN code_files f ON code_files_fts.rowid = f.id
        WHERE code_files_fts MATCH '"async def" OR "def screenshot"'
        ORDER BY rank
        LIMIT 10
-    
+
     Args:
         sql: SQL query to execute (SELECT queries only)
-    
+        timeout: Query timeout in seconds (default: 10, max: 30). Queries exceeding
+                 the timeout will be interrupted and raise an error.
+
     Returns:
         List of dictionaries, one per row, with column names as keys
-    
+
     Note: Only SELECT queries are allowed. INSERT, UPDATE, DELETE, etc. will be rejected.
     """
+    # Validate and cap timeout at 30 seconds
+    timeout = min(max(1, timeout), 30)
+
     # Security: Only allow SELECT queries
     sql_stripped = sql.strip().upper()
     if not sql_stripped.startswith("SELECT"):
         raise ValueError("Only SELECT queries are allowed")
-    
+
     # Check for dangerous keywords
     dangerous_keywords = ["DROP", "DELETE", "INSERT", "UPDATE", "ALTER", "CREATE", "PRAGMA"]
     for keyword in dangerous_keywords:
         if keyword in sql_stripped:
             raise ValueError(f"Keyword '{keyword}' is not allowed in queries")
-    
+
+    conn = None
+    timer = None
+    interrupted = threading.Event()
+
+    def interrupt_query():
+        """Interrupt the query after timeout"""
+        interrupted.set()
+        if conn is not None:
+            try:
+                conn.interrupt()
+            except Exception:
+                pass
+
     try:
         conn = sqlite3.connect(CODE_SQLITE_PATH)
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
-        
+
+        # Start timeout timer
+        timer = threading.Timer(timeout, interrupt_query)
+        timer.start()
+
         cursor.execute(sql)
         rows = cursor.fetchall()
-        
+
+        # Cancel timer if query completed successfully
+        timer.cancel()
+
+        # Check if we were interrupted
+        if interrupted.is_set():
+            raise TimeoutError(f"Query exceeded timeout of {timeout} seconds")
+
         # Convert rows to list of dicts
         results = [dict(row) for row in rows]
-        
-        conn.close()
+
         return results
-        
+
+    except sqlite3.OperationalError as e:
+        if interrupted.is_set():
+            raise ValueError(f"Query timed out after {timeout} seconds")
+        raise ValueError(f"SQL error: {str(e)}")
+    except TimeoutError as e:
+        raise ValueError(str(e))
     except sqlite3.Error as e:
         raise ValueError(f"SQL error: {str(e)}")
     except Exception as e:
         raise ValueError(f"Query execution error: {str(e)}")
+    finally:
+        if timer is not None:
+            timer.cancel()
+        if conn is not None:
+            conn.close()
 
 
 # =============================================================================

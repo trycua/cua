@@ -25,6 +25,11 @@ on:
         required: false
         type: string
         default: "trycua"
+      skip_arm64:
+        description: "Skip arm64 build (for images that don't support arm64)"
+        required: false
+        type: boolean
+        default: false
     secrets:
       DOCKER_HUB_TOKEN:
         required: true
@@ -32,6 +37,7 @@ on:
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
+    if: ${{ !(inputs.skip_arm64 && matrix.platform == 'linux/arm64') }}
     strategy:
       fail-fast: false
       matrix:

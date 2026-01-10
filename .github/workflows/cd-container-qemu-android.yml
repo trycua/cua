@@ -20,5 +20,6 @@ jobs:
       dockerfile_path: Dockerfile
       tag_prefix: docker-cua-qemu-android-v
       docker_hub_org: trycua
+      skip_arm64: true  # Android QEMU image is not buildable on arm64
     secrets:
       DOCKER_HUB_TOKEN: ${{ secrets.DOCKER_HUB_TOKEN }}

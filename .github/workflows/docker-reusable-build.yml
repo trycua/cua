@@ -16,10 +16,16 @@ on:
         required: false
         type: string
         default: "Dockerfile"
+      skip_arm64:
+        description: "Skip arm64 build (for images that don't support arm64)"
+        required: false
+        type: boolean
+        default: false
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    if: ${{ !(inputs.skip_arm64 && matrix.platform == 'linux/arm64') }}
     strategy:
       fail-fast: false
       matrix:

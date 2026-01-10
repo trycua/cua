@@ -14,3 +14,4 @@ jobs:
       image_name: cua-qemu-android
       context_dir: libs/qemu-docker/android
       dockerfile_path: Dockerfile
+      skip_arm64: true  # Android QEMU image is not buildable on arm64

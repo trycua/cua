@@ -3,7 +3,6 @@ Code index generator for CUA repository
 Indexes source code across all git tags for semantic and full-text search
 """
 
-import json
 import re
 import shutil
 import sqlite3
@@ -21,7 +20,6 @@ CODE_DB_PATH = Path(__file__).parent.parent / "code_db"
 REPO_PATH = CODE_DB_PATH / "repo"
 SQLITE_PATH = CODE_DB_PATH / "code_index.sqlite"
 LANCEDB_PATH = CODE_DB_PATH / "code_index.lancedb"
-METADATA_PATH = CODE_DB_PATH / "metadata.json"
 
 # File extensions to index
 SOURCE_EXTENSIONS = {".py", ".ts", ".js", ".tsx"}
@@ -158,20 +156,6 @@ def get_file_content_at_tag(repo_path: Path, tag: str, file_path: str) -> Option
         return None
 
 
-def load_metadata() -> dict:
-    """Load indexing metadata"""
-    if METADATA_PATH.exists():
-        with open(METADATA_PATH, "r") as f:
-            return json.load(f)
-    return {"indexed_tags": [], "failed_tags": []}
-
-
-def save_metadata(metadata: dict):
-    """Save indexing metadata"""
-    with open(METADATA_PATH, "w") as f:
-        json.dump(metadata, f, indent=2)
-
-
 def init_sqlite() -> sqlite3.Connection:
     """Initialize SQLite database with FTS5"""
     SQLITE_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -258,7 +242,7 @@ def init_lancedb() -> lancedb.DBConnection:
     return db
 
 
-def index_all_tags(incremental: bool = True):
+def index_all_tags():
     """Index all git tags into SQLite and LanceDB"""
     print("Setting up repository...")
     repo_path = clone_or_pull_repo()
@@ -266,20 +250,6 @@ def index_all_tags(incremental: bool = True):
     print("Getting all tags...")
     all_tags = get_all_tags(repo_path)
     print(f"Found {len(all_tags)} tags")
-
-    # Load metadata for incremental indexing
-    metadata = load_metadata()
-
-    if incremental:
-        tags_to_index = [t for t in all_tags if t not in metadata["indexed_tags"]]
-        if not tags_to_index:
-            print("All tags already indexed. Use incremental=False for full reindex.")
-            return
-        print(f"Indexing {len(tags_to_index)} new tags (incremental)")
-    else:
-        tags_to_index = all_tags
-        metadata = {"indexed_tags": [], "failed_tags": []}
-        print(f"Indexing all {len(tags_to_index)} tags (full reindex)")
 
     # Initialize databases
     print("Initializing databases...")
@@ -294,8 +264,8 @@ def index_all_tags(incremental: bool = True):
     failed_tags = []
 
     # Process each tag
-    for i, tag in enumerate(tags_to_index):
-        print(f"\n[{i + 1}/{len(tags_to_index)}] Processing tag: {tag}")
+    for i, tag in enumerate(all_tags):
+        print(f"\n[{i + 1}/{len(all_tags)}] Processing tag: {tag}")
 
         try:
             component, version = parse_tag(tag)
@@ -368,20 +338,13 @@ def index_all_tags(incremental: bool = True):
             except Exception as e:
                 print(f"  LanceDB error: {e}")
 
-        # Update metadata
-        metadata["indexed_tags"].append(tag)
-
     # Final cleanup
     sqlite_conn.close()
-
-    # Save metadata
-    metadata["failed_tags"] = failed_tags
-    save_metadata(metadata)
 
     # Print summary
     print("\n" + "=" * 50)
     print("Indexing complete!")
-    print(f"  Total tags processed: {len(tags_to_index)}")
+    print(f"  Total tags processed: {len(all_tags)}")
     print(f"  Failed tags: {len(failed_tags)}")
     print(f"  Total files in SQLite: {total_files}")
     print(f"  Total files embedded: {total_embedded}")
@@ -443,7 +406,6 @@ def main():
     import argparse
 
     parser = argparse.ArgumentParser(description="Index CUA repository code")
-    parser.add_argument("--full", action="store_true", help="Full reindex (ignore cached tags)")
     parser.add_argument("--test", action="store_true", help="Run test searches")
     args = parser.parse_args()
 
@@ -452,7 +414,7 @@ def main():
         test_sqlite_search("ComputerAgent", "agent", "0.7.3")
         test_lance_search("how to take a screenshot", "agent", "0.7.3")
     else:
-        index_all_tags(incremental=not args.full)
+        index_all_tags()
 
 
 if __name__ == "__main__":

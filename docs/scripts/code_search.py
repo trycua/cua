@@ -102,9 +102,7 @@ class CodeSearch:
         """
         )
 
-        results = [
-            {"component": row[0], "version_count": row[1]} for row in cursor.fetchall()
-        ]
+        results = [{"component": row[0], "version_count": row[1]} for row in cursor.fetchall()]
         conn.close()
 
         self._components_cache = results
@@ -179,16 +177,12 @@ class CodeSearch:
             (component, version),
         )
 
-        results = [
-            {"path": row[0], "language": row[1]} for row in cursor.fetchall()
-        ]
+        results = [{"path": row[0], "language": row[1]} for row in cursor.fetchall()]
         conn.close()
 
         return results
 
-    def search_code(
-        self, query: str, component: str, version: str, limit: int = 10
-    ) -> list[dict]:
+    def search_code(self, query: str, component: str, version: str, limit: int = 10) -> list[dict]:
         """
         Semantic search over source code for a specific component@version.
 
@@ -368,9 +362,7 @@ class CodeSearch:
         cursor.execute("SELECT COUNT(DISTINCT component) FROM code_files")
         total_components = cursor.fetchone()[0]
 
-        cursor.execute(
-            "SELECT COUNT(DISTINCT component || '@' || version) FROM code_files"
-        )
+        cursor.execute("SELECT COUNT(DISTINCT component || '@' || version) FROM code_files")
         total_versions = cursor.fetchone()[0]
 
         cursor.execute(
@@ -382,8 +374,7 @@ class CodeSearch:
         """
         )
         by_component = [
-            {"component": row[0], "versions": row[1], "files": row[2]}
-            for row in cursor.fetchall()
+            {"component": row[0], "versions": row[1], "files": row[2]} for row in cursor.fetchall()
         ]
 
         conn.close()

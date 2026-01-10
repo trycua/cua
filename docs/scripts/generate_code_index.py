@@ -453,9 +453,7 @@ def main():
     import argparse
 
     parser = argparse.ArgumentParser(description="Index CUA repository code")
-    parser.add_argument(
-        "--full", action="store_true", help="Full reindex (ignore cached tags)"
-    )
+    parser.add_argument("--full", action="store_true", help="Full reindex (ignore cached tags)")
     parser.add_argument("--test", action="store_true", help="Run test searches")
     args = parser.parse_args()
 

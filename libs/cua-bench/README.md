@@ -428,11 +428,11 @@ cb status                       # Show system status
 
 ## Documentation
 
-- **Full Documentation**: https://cuabench.ai/
-- **Getting Started**: https://cuabench.ai/cuabench/guide/getting-started
-- **CLI Reference**: https://cuabench.ai/cuabench/reference/cli-reference
-- **SDK Reference**: https://cuabench.ai/cuabench/reference/sdk-reference
-- **Creating Tasks**: https://cuabench.ai/cuabench/guide/creating-tasks
+- **Full Documentation**: https://cua.ai/docs/cuabench
+- **Getting Started**: https://cua.ai/docs/cuabench/guide/getting-started/introduction
+- **CLI Reference**: https://cua.ai/docs/cuabench/reference/cli-reference
+- **SDK Reference**: https://cua.ai/docs/cuabench/reference/sdk-reference
+- **Creating Tasks**: https://cua.ai/docs/cuabench/guide/examples/universal-task
 
 ## Examples
 

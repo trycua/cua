@@ -3,7 +3,7 @@ title: Registry
 description: The Cua-Bench registry of tasks and datasets.
 ---
 
-The [Cua-Bench registry](https://cuabench.ai/cuabench/registry) contains a collection of pre-built tasks and datasets for evaluating computer-use agents.
+The [Cua-Bench registry](https://cua.ai/docs/cuabench/guide/fundamentals/registry) contains a collection of pre-built tasks and datasets for evaluating computer-use agents.
 
 Datasets are now part of the main [cua repository](https://github.com/trycua/cua) at [`libs/cua-bench/datasets`](https://github.com/trycua/cua/tree/main/libs/cua-bench/datasets).
 
@@ -50,9 +50,9 @@ export CUA_REGISTRY_HOME=/path/to/your/datasets
 
 ## Available Datasets
 
-| Dataset | Tasks | Description | Golden Environment |
-|---------|-------|-------------|-------------------|
-| `cua-bench-basic` | 13 | Basic UI interaction tasks (clicking, typing, dragging) | `simulated` |
+| Dataset           | Tasks | Description                                             | Golden Environment |
+| ----------------- | ----- | ------------------------------------------------------- | ------------------ |
+| `cua-bench-basic` | 13    | Basic UI interaction tasks (clicking, typing, dragging) | `simulated`        |
 
 ## Dataset Structure
 
@@ -78,11 +78,7 @@ libs/cua-bench/datasets/
   "version": "1.0.0",
   "description": "Basic UI interaction tasks",
   "platform": "simulated",
-  "tasks": [
-    "click-button",
-    "typing-input",
-    "drag-slider"
-  ]
+  "tasks": ["click-button", "typing-input", "drag-slider"]
 }
 ```
 
@@ -96,11 +92,12 @@ To contribute tasks to the registry:
 4. Test locally with `cb interact tasks/your_task`
 5. Submit a pull request to the main repository
 
-See [Creating Tasks](/cuabench/guide/creating-tasks) for task development guidance.
+See [Creating Tasks](/cuabench/guide/examples/universal-task) for task development guidance.
 
 ## Registry Location
 
 By default, datasets are stored at:
+
 - **Default**: `~/.cua/cua/libs/cua-bench/datasets/`
 - **Custom**: Set `CUA_REGISTRY_HOME` environment variable
 

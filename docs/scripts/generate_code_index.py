@@ -7,10 +7,10 @@ import json
 import re
 import shutil
 import sqlite3
-import subprocess
 from pathlib import Path
 from typing import Optional
 
+import git
 import lancedb
 from lancedb.embeddings import get_registry
 from lancedb.pydantic import LanceModel, Vector
@@ -78,83 +78,79 @@ def detect_language(file_path: str) -> str:
     return language_map.get(ext, "unknown")
 
 
-def clone_or_pull_repo() -> Path:
-    """Clone the repo if it doesn't exist, otherwise pull latest"""
+def clone_or_pull_repo() -> git.Repo:
+    """Clone the repo if it doesn't exist, otherwise fetch latest"""
     CODE_DB_PATH.mkdir(parents=True, exist_ok=True)
 
     if REPO_PATH.exists():
-        print("Pulling latest changes...")
-        subprocess.run(
-            ["git", "fetch", "--all", "--tags"],
-            cwd=REPO_PATH,
-            check=True,
-            capture_output=True,
-        )
+        print("Fetching latest changes...")
+        repo = git.Repo(REPO_PATH)
+        repo.git.fetch("--all", "--tags")
     else:
         print(f"Cloning {REPO_URL}...")
-        subprocess.run(
-            ["git", "clone", "--bare", REPO_URL, str(REPO_PATH)],
-            check=True,
-            capture_output=True,
-        )
+        repo = git.Repo.clone_from(REPO_URL, REPO_PATH, bare=True)
 
-    return REPO_PATH
+    return repo
 
 
-def get_all_tags(repo_path: Path) -> list[str]:
+def get_all_tags(repo: git.Repo) -> list[str]:
     """Get all git tags from the repository"""
-    result = subprocess.run(
-        ["git", "tag"],
-        cwd=repo_path,
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    tags = [t.strip() for t in result.stdout.strip().split("\n") if t.strip()]
+    tags = [tag.name for tag in repo.tags]
     return tags
 
 
-def get_files_at_tag(repo_path: Path, tag: str) -> list[str]:
+def get_files_at_tag(repo: git.Repo, tag: str) -> list[str]:
     """Get list of source files at a specific tag"""
-    result = subprocess.run(
-        ["git", "ls-tree", "-r", "--name-only", tag],
-        cwd=repo_path,
-        check=True,
-        capture_output=True,
-        text=True,
-    )
+    try:
+        tag_ref = repo.tags[tag]
+        tree = tag_ref.commit.tree
+    except (IndexError, KeyError, AttributeError):
+        return []
 
     files = []
-    for line in result.stdout.strip().split("\n"):
-        file_path = line.strip()
-        if not file_path:
-            continue
-        ext = Path(file_path).suffix.lower()
-        if ext in SOURCE_EXTENSIONS:
-            files.append(file_path)
 
+    def collect_files(tree_obj, prefix=""):
+        """Recursively collect files from tree"""
+        for item in tree_obj:
+            path = f"{prefix}{item.name}" if prefix else item.name
+            if item.type == "tree":
+                collect_files(item, f"{path}/")
+            elif item.type == "blob":
+                ext = Path(path).suffix.lower()
+                if ext in SOURCE_EXTENSIONS:
+                    files.append(path)
+
+    collect_files(tree)
     return files
 
 
-def get_file_content_at_tag(repo_path: Path, tag: str, file_path: str) -> Optional[str]:
+def get_file_content_at_tag(repo: git.Repo, tag: str, file_path: str) -> Optional[str]:
     """Get content of a file at a specific tag"""
     try:
-        result = subprocess.run(
-            ["git", "show", f"{tag}:{file_path}"],
-            cwd=repo_path,
-            check=True,
-            capture_output=True,
-        )
+        tag_ref = repo.tags[tag]
+        tree = tag_ref.commit.tree
+
+        # Navigate to the file in the tree
+        parts = file_path.split("/")
+        current = tree
+        for part in parts[:-1]:
+            current = current / part
+
+        # Get the blob for the file
+        blob = current / parts[-1]
+
+        # Read content and check for binary
+        content_bytes = blob.data_stream.read()
         # Try to decode as UTF-8, skip binary files
         try:
-            content = result.stdout.decode("utf-8", errors="replace")
+            content = content_bytes.decode("utf-8", errors="replace")
             # Check for binary content
             if "\x00" in content[:1024]:
                 return None
             return content
         except Exception:
             return None
-    except subprocess.CalledProcessError:
+    except (KeyError, AttributeError, TypeError):
         return None
 
 
@@ -261,10 +257,10 @@ def init_lancedb() -> lancedb.DBConnection:
 def index_all_tags(incremental: bool = True):
     """Index all git tags into SQLite and LanceDB"""
     print("Setting up repository...")
-    repo_path = clone_or_pull_repo()
+    repo = clone_or_pull_repo()
 
     print("Getting all tags...")
-    all_tags = get_all_tags(repo_path)
+    all_tags = get_all_tags(repo)
     print(f"Found {len(all_tags)} tags")
 
     # Load metadata for incremental indexing
@@ -308,8 +304,8 @@ def index_all_tags(incremental: bool = True):
 
         # Get files at this tag
         try:
-            files = get_files_at_tag(repo_path, tag)
-        except subprocess.CalledProcessError as e:
+            files = get_files_at_tag(repo, tag)
+        except Exception as e:
             print(f"  Failed to list files: {e}")
             failed_tags.append(tag)
             continue
@@ -320,7 +316,7 @@ def index_all_tags(incremental: bool = True):
         files_indexed = 0
 
         for file_path in files:
-            content = get_file_content_at_tag(repo_path, tag, file_path)
+            content = get_file_content_at_tag(repo, tag, file_path)
             if content is None:
                 continue
 

@@ -78,16 +78,6 @@ def detect_language(file_path: str) -> str:
     return language_map.get(ext, "unknown")
 
 
-def is_binary_file(file_path: Path) -> bool:
-    """Check if a file is binary by looking for null bytes"""
-    try:
-        with open(file_path, "rb") as f:
-            chunk = f.read(1024)
-            return b"\x00" in chunk
-    except Exception:
-        return True
-
-
 def clone_or_pull_repo() -> Path:
     """Clone the repo if it doesn't exist, otherwise pull latest"""
     CODE_DB_PATH.mkdir(parents=True, exist_ok=True)

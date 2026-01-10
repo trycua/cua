@@ -15,6 +15,10 @@ on:
         type: boolean
         default: false
 
+concurrency:
+  group: modal-deploy-docs-${{ github.ref }}
+  cancel-in-progress: false
+
 permissions:
   contents: read
 

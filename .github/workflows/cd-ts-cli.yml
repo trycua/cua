@@ -45,7 +45,7 @@ jobs:
 
           echo "CLI version: $VERSION"
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
-          echo "tag=cua-v${VERSION}" >> $GITHUB_OUTPUT
+          echo "tag=npm-cli-v${VERSION}" >> $GITHUB_OUTPUT
 
   build-binaries:
     strategy:

@@ -102,7 +102,7 @@ def get_all_tags(repo: git.Repo) -> list[str]:
 def get_files_at_tag(repo: git.Repo, tag: str) -> list[str]:
     """Get list of source files at a specific tag"""
     try:
-        tag_ref = repo.tags[tag]
+        tag_ref = repo.tag(tag)
         tree = tag_ref.commit.tree
     except (IndexError, KeyError, AttributeError):
         return []
@@ -127,7 +127,7 @@ def get_files_at_tag(repo: git.Repo, tag: str) -> list[str]:
 def get_file_content_at_tag(repo: git.Repo, tag: str, file_path: str) -> Optional[str]:
     """Get content of a file at a specific tag"""
     try:
-        tag_ref = repo.tags[tag]
+        tag_ref = repo.tag(tag)
         tree = tag_ref.commit.tree
 
         # Navigate to the file in the tree

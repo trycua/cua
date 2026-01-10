@@ -4,16 +4,16 @@ import {
   copilotRuntimeNextJSAppRouterEndpoint,
 } from '@copilotkit/runtime';
 import { BuiltInAgent, InMemoryAgentRunner } from '@copilotkit/runtime/v2';
-import { NextRequest } from 'next/server';
 import { randomUUID } from 'crypto';
+import { NextRequest } from 'next/server';
 import { PostHog } from 'posthog-node';
 
 const posthog = process.env.NEXT_PUBLIC_POSTHOG_API_KEY
   ? new PostHog(process.env.NEXT_PUBLIC_POSTHOG_API_KEY, {
-      host: process.env.NEXT_PUBLIC_POSTHOG_HOST || 'https://us.i.posthog.com',
-      flushAt: 1,
-      flushInterval: 0,
-    })
+    host: process.env.NEXT_PUBLIC_POSTHOG_HOST || 'https://us.i.posthog.com',
+    flushAt: 1,
+    flushInterval: 0,
+  })
   : null;
 
 // Prompt categorization types and helpers
@@ -389,19 +389,14 @@ Be concise and helpful. Answer questions about the documentation accurately.
 
 Use Cua as the name of the product and CUA for Computer Use Agent.
 
-You have access to tools for searching the Cua documentation:
-- search_docs: Semantic search for documentation content
-- sql_query: Direct SQL queries on the documentation database
-
 When using search_docs, follow up by checking the source document for accuracy.
 Include links to documentation pages in your responses.
 
 If users seem stuck, invite them to join the Discord: https://discord.com/invite/cua-ai`,
-  temperature: 0.7,
   mcpServers: [
     {
       type: 'sse',
-      url: 'https://cuaai--cua-docs-mcp-web.modal.run/sse',
+      url: 'https://doc-mcp.cua.ai/sse',
     },
   ],
 });

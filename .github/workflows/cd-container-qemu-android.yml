@@ -2,14 +2,8 @@ name: "CD: Container QEMU Android"
 
 on:
   push:
-    branches:
-      - main
     tags:
       - "docker-cua-qemu-android-v*.*.*"
-    paths:
-      - "libs/qemu-docker/android/**"
-      - ".github/workflows/cd-container-qemu-android.yml"
-      - ".github/workflows/docker-reusable-publish.yml"
 
 jobs:
   publish:

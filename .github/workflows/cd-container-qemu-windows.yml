@@ -2,14 +2,8 @@ name: "CD: Container QEMU Windows"
 
 on:
   push:
-    branches:
-      - main
     tags:
       - "docker-cua-qemu-windows-v*.*.*"
-    paths:
-      - "libs/qemu-docker/windows/**"
-      - ".github/workflows/cd-container-qemu-windows.yml"
-      - ".github/workflows/docker-reusable-publish.yml"
 
 jobs:
   publish:

@@ -2,14 +2,8 @@ name: "CD: Container XFCE"
 
 on:
   push:
-    branches:
-      - main
     tags:
       - "docker-xfce-v*.*.*"
-    paths:
-      - "libs/xfce/**"
-      - ".github/workflows/cd-container-xfce.yml"
-      - ".github/workflows/docker-reusable-publish.yml"
 
 jobs:
   publish:

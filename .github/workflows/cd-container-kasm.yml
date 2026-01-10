@@ -2,14 +2,8 @@ name: "CD: Container Kasm"
 
 on:
   push:
-    branches:
-      - main
     tags:
       - "docker-kasm-v*.*.*"
-    paths:
-      - "libs/kasm/**"
-      - ".github/workflows/cd-container-kasm.yml"
-      - ".github/workflows/docker-reusable-publish.yml"
 
 jobs:
   publish:

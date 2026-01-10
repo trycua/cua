@@ -28,11 +28,11 @@
 
 ## Choose Your Path
 
-| If you want to...                                | Check out                                                 | For                                 |
-| ------------------------------------------------ | --------------------------------------------------------- | ----------------------------------- |
-| Build AI agents or run isolated code execution   | [**Cua**](#cua---agentic-ui-automation--code-execution)   | AI Engineers                        |
-| Benchmark or train computer-use models with RL | [**Cua-Bench**](#cua-bench---benchmarks--rl-environments) | Researchers                         |
-| Run macOS/Linux VMs on Apple Silicon             | [**Lume**](#lume---macos-virtualization)                  | Developers, System Engineers |
+| If you want to...                              | Check out                                                 | For                          |
+| ---------------------------------------------- | --------------------------------------------------------- | ---------------------------- |
+| Build AI agents or run isolated code execution | [**Cua**](#cua---agentic-ui-automation--code-execution)   | AI Engineers                 |
+| Benchmark or train computer-use models with RL | [**Cua-Bench**](#cua-bench---benchmarks--rl-environments) | Researchers                  |
+| Run macOS/Linux VMs on Apple Silicon           | [**Lume**](#lume---macos-virtualization)                  | Developers, System Engineers |
 
 ---
 
@@ -91,14 +91,14 @@ lume run macos-sequoia-vanilla:latest
 
 ## Packages
 
-| Package                                                        | Description                                     |
-| -------------------------------------------------------------- | ----------------------------------------------- |
-| [cua-agent](https://cua.ai/docs/cua/reference/agent-sdk)       | AI agent framework for computer-use tasks       |
-| [cua-computer](https://cua.ai/docs/cua/reference/computer-sdk) | SDK for controlling desktop environments        |
+| Package                                                                  | Description                                                |
+| ------------------------------------------------------------------------ | ---------------------------------------------------------- |
+| [cua-agent](https://cua.ai/docs/cua/reference/agent-sdk)                 | AI agent framework for computer-use tasks                  |
+| [cua-computer](https://cua.ai/docs/cua/reference/computer-sdk)           | SDK for controlling desktop environments                   |
 | [cua-computer-server](https://cua.ai/docs/cua/reference/computer-server) | Driver for UI interactions and code execution in sandboxes |
-| [cua-bench](https://cua.ai/docs/cua-bench)                     | Benchmarks and RL environments for computer-use |
-| [lume](https://cua.ai/docs/lume)                               | macOS/Linux VM management on Apple Silicon      |
-| [lumier](https://cua.ai/docs/lume/reference/lumier)            | Docker-compatible interface for Lume VMs        |
+| [cua-bench](https://cua.ai/docs/cua-bench)                               | Benchmarks and RL environments for computer-use            |
+| [lume](https://cua.ai/docs/lume)                                         | macOS/Linux VM management on Apple Silicon                 |
+| [lumier](https://cua.ai/docs/lume/reference/lumier)                      | Docker-compatible interface for Lume VMs                   |
 
 ## Resources
 

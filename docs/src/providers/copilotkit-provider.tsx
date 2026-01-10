@@ -347,6 +347,7 @@ function CopilotPopupWithFeedback() {
 
   const findPrecedingUserPrompt = useCallback(
     (assistantMessageId: string) => {
+      if (!visibleMessages) return null;
       const messageIndex = visibleMessages.findIndex(
         (m: CopilotMessage) => m.id === assistantMessageId
       );

@@ -104,7 +104,7 @@ def get_files_at_tag(repo: git.Repo, tag: str) -> list[str]:
     try:
         tag_ref = repo.tag(tag)
         tree = tag_ref.commit.tree
-    except (IndexError, KeyError, AttributeError):
+    except (IndexError, KeyError, AttributeError, ValueError):
         return []
 
     files = []
@@ -150,7 +150,7 @@ def get_file_content_at_tag(repo: git.Repo, tag: str, file_path: str) -> Optiona
             return content
         except Exception:
             return None
-    except (KeyError, AttributeError, TypeError):
+    except (KeyError, AttributeError, TypeError, ValueError):
         return None
 
 

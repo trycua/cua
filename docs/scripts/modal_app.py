@@ -647,14 +647,26 @@ async def generate_code_index():
 
     print("Generating code search index...")
 
-    # Build authenticated URL using GitHub token
+    # Use non-authenticated URL to avoid exposing token in process listings
+    REPO_URL = "https://github.com/trycua/cua.git"
+    
+    # Configure Git credential helper to use GitHub token securely
     github_token = os.environ.get("GITHUB_TOKEN", "")
+    credential_helper = None
+    
     if github_token:
-        REPO_URL = f"https://{github_token}@github.com/trycua/cua.git"
-        print("Using authenticated GitHub URL")
+        # Create a credential helper script that Git can use
+        # This avoids exposing the token in command line arguments or URLs
+        credential_helper = tempfile.NamedTemporaryFile(
+            mode='w', delete=False, suffix='.sh'
+        )
+        credential_helper.write('#!/bin/sh\n')
+        credential_helper.write('exec echo "username=x-access-token\npassword=$GITHUB_TOKEN"\n')
+        credential_helper.close()
+        os.chmod(credential_helper.name, 0o700)
+        print("Using authenticated GitHub access via credential helper")
     else:
-        REPO_URL = "https://github.com/trycua/cua.git"
-        print("Warning: No GITHUB_TOKEN found, using unauthenticated URL")
+        print("Warning: No GITHUB_TOKEN found, using unauthenticated access")
 
     REPO_PATH = Path(CODE_REPO_PATH)
     DB_DIR = Path(CODE_DB_PATH)
@@ -662,14 +674,38 @@ async def generate_code_index():
 
     DB_DIR.mkdir(parents=True, exist_ok=True)
 
-    # Clone or update repo (bare clone for efficiency)
-    if REPO_PATH.exists():
-        print("Fetching latest tags...")
-        subprocess.run(["git", "fetch", "--all", "--tags"], cwd=REPO_PATH, check=True)
-    else:
-        print("Cloning repository...")
-        REPO_PATH.parent.mkdir(parents=True, exist_ok=True)
-        subprocess.run(["git", "clone", "--bare", REPO_URL, str(REPO_PATH)], check=True)
+    # Prepare Git environment with credential helper
+    git_env = os.environ.copy()
+    if credential_helper is not None:
+        git_env['GIT_ASKPASS'] = credential_helper.name
+        # Also set GIT_TERMINAL_PROMPT to prevent interactive prompts
+        git_env['GIT_TERMINAL_PROMPT'] = '0'
+
+    try:
+        # Clone or update repo (bare clone for efficiency)
+        if REPO_PATH.exists():
+            print("Fetching latest tags...")
+            subprocess.run(
+                ["git", "fetch", "--all", "--tags"],
+                cwd=REPO_PATH,
+                check=True,
+                env=git_env
+            )
+        else:
+            print("Cloning repository...")
+            REPO_PATH.parent.mkdir(parents=True, exist_ok=True)
+            subprocess.run(
+                ["git", "clone", "--bare", REPO_URL, str(REPO_PATH)],
+                check=True,
+                env=git_env
+            )
+    finally:
+        # Clean up credential helper file
+        if credential_helper is not None:
+            try:
+                os.unlink(credential_helper.name)
+            except Exception:
+                pass
 
     # Get all tags
     result = subprocess.run(

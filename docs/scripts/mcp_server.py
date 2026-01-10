@@ -10,7 +10,6 @@ Available databases:
 """
 
 import sqlite3
-import threading
 from pathlib import Path
 from typing import Optional
 
@@ -114,7 +113,7 @@ def get_code_lance_table():
 
 
 def get_sqlite_conn() -> sqlite3.Connection:
-    """Get or create documentation SQLite connection"""
+    """Get or create documentation SQLite connection (read-only)"""
     global _sqlite_conn
     if _sqlite_conn is None:
         if not SQLITE_PATH.exists():
@@ -122,7 +121,7 @@ def get_sqlite_conn() -> sqlite3.Connection:
                 f"SQLite database not found at {SQLITE_PATH}. "
                 "Run generate_sqlite.py first to create the database."
             )
-        _sqlite_conn = sqlite3.connect(SQLITE_PATH)
+        _sqlite_conn = sqlite3.connect(f"file:{SQLITE_PATH}?mode=ro", uri=True)
         _sqlite_conn.row_factory = sqlite3.Row
     return _sqlite_conn
 
@@ -133,9 +132,10 @@ def get_sqlite_conn() -> sqlite3.Connection:
 
 
 @mcp.tool
-def query_docs_db(sql: str, timeout: int = 10) -> list[dict]:
+def query_docs_db(sql: str) -> list[dict]:
     """
-    Execute a SQL query against the documentation database (read-only).
+    Execute a SQL query against the documentation database.
+    The database is READ-ONLY.
 
     Database Schema:
 
@@ -188,75 +188,15 @@ def query_docs_db(sql: str, timeout: int = 10) -> list[dict]:
        - NOT: 'install NOT windows'
 
     Args:
-        sql: SQL query to execute (SELECT queries only)
-        timeout: Query timeout in seconds (default: 10, max: 30)
+        sql: SQL query to execute
 
     Returns:
         List of dictionaries, one per row, with column names as keys
-
-    Note: This is a read-only interface. Only SELECT queries are allowed.
     """
-    # Validate and cap timeout at 30 seconds
-    timeout = min(max(1, timeout), 30)
-
-    # Security: Only allow SELECT queries
-    sql_stripped = sql.strip().upper()
-    if not sql_stripped.startswith("SELECT"):
-        raise ValueError("Only SELECT queries are allowed")
-
-    # Check for dangerous keywords
-    dangerous_keywords = ["DROP", "DELETE", "INSERT", "UPDATE", "ALTER", "CREATE", "PRAGMA"]
-    for keyword in dangerous_keywords:
-        if keyword in sql_stripped:
-            raise ValueError(f"Keyword '{keyword}' is not allowed in queries")
-
-    timer = None
-    interrupted = threading.Event()
     conn = get_sqlite_conn()
-
-    def interrupt_query():
-        """Interrupt the query after timeout"""
-        interrupted.set()
-        try:
-            conn.interrupt()
-        except Exception:
-            pass
-
-    try:
-        cursor = conn.cursor()
-
-        # Start timeout timer
-        timer = threading.Timer(timeout, interrupt_query)
-        timer.start()
-
-        cursor.execute(sql)
-        rows = cursor.fetchall()
-
-        # Cancel timer if query completed successfully
-        timer.cancel()
-
-        # Check if we were interrupted
-        if interrupted.is_set():
-            raise TimeoutError(f"Query exceeded timeout of {timeout} seconds")
-
-        # Convert rows to list of dicts
-        results = [dict(row) for row in rows]
-
-        return results
-
-    except sqlite3.OperationalError as e:
-        if interrupted.is_set():
-            raise ValueError(f"Query timed out after {timeout} seconds")
-        raise ValueError(f"SQL error: {str(e)}")
-    except TimeoutError as e:
-        raise ValueError(str(e))
-    except sqlite3.Error as e:
-        raise ValueError(f"SQL error: {str(e)}")
-    except Exception as e:
-        raise ValueError(f"Query execution error: {str(e)}")
-    finally:
-        if timer is not None:
-            timer.cancel()
+    cursor = conn.cursor()
+    cursor.execute(sql)
+    return [dict(row) for row in cursor.fetchall()]
 
 
 @mcp.tool
@@ -332,9 +272,10 @@ def query_docs_vectors(
 
 
 @mcp.tool
-def query_code_db(sql: str, timeout: int = 10) -> list[dict]:
+def query_code_db(sql: str) -> list[dict]:
     """
-    Execute a SQL query against the code search database (read-only).
+    Execute a SQL query against the code search database.
+    The database is READ-ONLY.
 
     Database Schema:
 
@@ -411,81 +352,18 @@ def query_code_db(sql: str, timeout: int = 10) -> list[dict]:
        LIMIT 20
 
     Args:
-        sql: SQL query to execute (SELECT queries only)
-        timeout: Query timeout in seconds (default: 10, max: 30). Queries exceeding
-                 the timeout will be interrupted and raise an error.
+        sql: SQL query to execute
 
     Returns:
         List of dictionaries, one per row, with column names as keys
-
-    Note: This is a read-only interface. Only SELECT queries are allowed.
     """
-    # Validate and cap timeout at 30 seconds
-    timeout = min(max(1, timeout), 30)
-
-    # Security: Only allow SELECT queries
-    sql_stripped = sql.strip().upper()
-    if not sql_stripped.startswith("SELECT"):
-        raise ValueError("Only SELECT queries are allowed")
-
-    # Check for dangerous keywords
-    dangerous_keywords = ["DROP", "DELETE", "INSERT", "UPDATE", "ALTER", "CREATE", "PRAGMA"]
-    for keyword in dangerous_keywords:
-        if keyword in sql_stripped:
-            raise ValueError(f"Keyword '{keyword}' is not allowed in queries")
-
-    conn = None
-    timer = None
-    interrupted = threading.Event()
-
-    def interrupt_query():
-        """Interrupt the query after timeout"""
-        interrupted.set()
-        if conn is not None:
-            try:
-                conn.interrupt()
-            except Exception:
-                pass
-
-    try:
-        conn = sqlite3.connect(CODE_SQLITE_PATH)
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
-
-        # Start timeout timer
-        timer = threading.Timer(timeout, interrupt_query)
-        timer.start()
-
-        cursor.execute(sql)
-        rows = cursor.fetchall()
-
-        # Cancel timer if query completed successfully
-        timer.cancel()
-
-        # Check if we were interrupted
-        if interrupted.is_set():
-            raise TimeoutError(f"Query exceeded timeout of {timeout} seconds")
-
-        # Convert rows to list of dicts
-        results = [dict(row) for row in rows]
-
-        return results
-
-    except sqlite3.OperationalError as e:
-        if interrupted.is_set():
-            raise ValueError(f"Query timed out after {timeout} seconds")
-        raise ValueError(f"SQL error: {str(e)}")
-    except TimeoutError as e:
-        raise ValueError(str(e))
-    except sqlite3.Error as e:
-        raise ValueError(f"SQL error: {str(e)}")
-    except Exception as e:
-        raise ValueError(f"Query execution error: {str(e)}")
-    finally:
-        if timer is not None:
-            timer.cancel()
-        if conn is not None:
-            conn.close()
+    conn = sqlite3.connect(f"file:{CODE_SQLITE_PATH}?mode=ro", uri=True)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    cursor.execute(sql)
+    results = [dict(row) for row in cursor.fetchall()]
+    conn.close()
+    return results
 
 
 @mcp.tool

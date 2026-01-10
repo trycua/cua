@@ -873,8 +873,6 @@ async def scheduled_code_index():
 @modal.asgi_app()
 def web():
     """ASGI web endpoint for the MCP server"""
-    import threading
-
     import lancedb
     from fastmcp import FastMCP
     from lancedb.embeddings import get_registry
@@ -986,9 +984,10 @@ IMPORTANT: Always cite sources - URLs for docs, component@version:path for code.
     # =================== DOCUMENTATION QUERY TOOLS (READ-ONLY) ===================
 
     @mcp.tool()
-    def query_docs_db(sql: str, timeout: int = 10) -> list[dict]:
+    def query_docs_db(sql: str) -> list[dict]:
         """
-        Execute a SQL query against the documentation database (read-only).
+        Execute a SQL query against the documentation database.
+        The database is READ-ONLY.
 
         Database Schema:
 
@@ -1017,57 +1016,15 @@ IMPORTANT: Always cite sources - URLs for docs, component@version:path for code.
         3. Get page content: SELECT url, title, content FROM pages WHERE url LIKE '%quickstart%'
 
         Args:
-            sql: SQL query to execute (SELECT queries only)
-            timeout: Query timeout in seconds (default: 10, max: 30)
+            sql: SQL query to execute
 
         Returns:
             List of dictionaries, one per row, with column names as keys
         """
-        timeout = min(max(1, timeout), 30)
-
-        sql_stripped = sql.strip().upper()
-        if not sql_stripped.startswith("SELECT"):
-            raise ValueError("Only SELECT queries are allowed")
-
-        dangerous_keywords = ["DROP", "DELETE", "INSERT", "UPDATE", "ALTER", "CREATE", "PRAGMA"]
-        for keyword in dangerous_keywords:
-            if keyword in sql_stripped:
-                raise ValueError(f"Keyword '{keyword}' is not allowed in queries")
-
-        timer = None
-        interrupted = threading.Event()
         conn = get_sqlite_conn()
-
-        def interrupt_query():
-            interrupted.set()
-            try:
-                conn.interrupt()
-            except Exception:
-                pass
-
-        try:
-            cursor = conn.cursor()
-            timer = threading.Timer(timeout, interrupt_query)
-            timer.start()
-
-            cursor.execute(sql)
-            rows = cursor.fetchall()
-            timer.cancel()
-
-            if interrupted.is_set():
-                raise ValueError(f"Query timed out after {timeout} seconds")
-
-            return [dict(row) for row in rows]
-
-        except sqlite3.OperationalError as e:
-            if interrupted.is_set():
-                raise ValueError(f"Query timed out after {timeout} seconds")
-            raise ValueError(f"SQL error: {str(e)}")
-        except sqlite3.Error as e:
-            raise ValueError(f"SQL error: {str(e)}")
-        finally:
-            if timer is not None:
-                timer.cancel()
+        cursor = conn.cursor()
+        cursor.execute(sql)
+        return [dict(row) for row in cursor.fetchall()]
 
     @mcp.tool()
     def query_docs_vectors(
@@ -1122,9 +1079,10 @@ IMPORTANT: Always cite sources - URLs for docs, component@version:path for code.
     # =================== CODE QUERY TOOLS (READ-ONLY) ===================
 
     @mcp.tool()
-    def query_code_db(sql: str, timeout: int = 10) -> list[dict]:
+    def query_code_db(sql: str) -> list[dict]:
         """
-        Execute a SQL query against the code search database (read-only).
+        Execute a SQL query against the code search database.
+        The database is READ-ONLY.
 
         Database Schema:
 
@@ -1161,57 +1119,15 @@ IMPORTANT: Always cite sources - URLs for docs, component@version:path for code.
            WHERE component = 'agent' AND version = '0.7.3' AND file_path = 'agent/core.py'
 
         Args:
-            sql: SQL query to execute (SELECT queries only)
-            timeout: Query timeout in seconds (default: 10, max: 30)
+            sql: SQL query to execute
 
         Returns:
             List of dictionaries, one per row, with column names as keys
         """
-        timeout = min(max(1, timeout), 30)
-
-        sql_stripped = sql.strip().upper()
-        if not sql_stripped.startswith("SELECT"):
-            raise ValueError("Only SELECT queries are allowed")
-
-        dangerous_keywords = ["DROP", "DELETE", "INSERT", "UPDATE", "ALTER", "CREATE", "PRAGMA"]
-        for keyword in dangerous_keywords:
-            if keyword in sql_stripped:
-                raise ValueError(f"Keyword '{keyword}' is not allowed in queries")
-
-        timer = None
-        interrupted = threading.Event()
         conn = get_code_sqlite_conn()
-
-        def interrupt_query():
-            interrupted.set()
-            try:
-                conn.interrupt()
-            except Exception:
-                pass
-
-        try:
-            cursor = conn.cursor()
-            timer = threading.Timer(timeout, interrupt_query)
-            timer.start()
-
-            cursor.execute(sql)
-            rows = cursor.fetchall()
-            timer.cancel()
-
-            if interrupted.is_set():
-                raise ValueError(f"Query timed out after {timeout} seconds")
-
-            return [dict(row) for row in rows]
-
-        except sqlite3.OperationalError as e:
-            if interrupted.is_set():
-                raise ValueError(f"Query timed out after {timeout} seconds")
-            raise ValueError(f"SQL error: {str(e)}")
-        except sqlite3.Error as e:
-            raise ValueError(f"SQL error: {str(e)}")
-        finally:
-            if timer is not None:
-                timer.cancel()
+        cursor = conn.cursor()
+        cursor.execute(sql)
+        return [dict(row) for row in cursor.fetchall()]
 
     @mcp.tool()
     def query_code_vectors(

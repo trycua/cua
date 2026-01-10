@@ -47,7 +47,7 @@ All prebuilt images use the default password `lume`. Change this immediately aft
 - Apple Silicon Mac (M1, M2, M3, etc.)
 - macOS 13.0 or later
 - At least 8GB of RAM (16GB recommended)
-- At least 50GB of free disk space
+- At least 30GB of free disk space
 
 ## Development
 

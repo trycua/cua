@@ -4,21 +4,21 @@ on:
   pull_request:
     paths:
       # Lume (Swift)
-      - 'libs/lume/src/**'
+      - "libs/lume/src/**"
       # Cua CLI (TypeScript)
-      - 'libs/typescript/cua-cli/src/**'
+      - "libs/typescript/cua-cli/src/**"
       # MCP Server (Python)
-      - 'libs/python/mcp-server/src/**'
+      - "libs/python/mcp-server/src/**"
       # Computer SDK
-      - 'libs/python/computer/src/**'
-      - 'libs/typescript/computer/src/**'
+      - "libs/python/computer/src/**"
+      - "libs/typescript/computer/src/**"
       # Agent SDK
-      - 'libs/python/agent/src/**'
-      - 'libs/typescript/agent/src/**'
+      - "libs/python/agent/src/**"
+      - "libs/typescript/agent/src/**"
       # Documentation files themselves
-      - 'docs/content/docs/cua/reference/**'
+      - "docs/content/docs/cua/reference/**"
       # Generator scripts
-      - 'scripts/docs-generators/**'
+      - "scripts/docs-generators/**"
 
 jobs:
   check-docs-sync:
@@ -28,12 +28,12 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 2  # Need history for changed file detection
+          fetch-depth: 2 # Need history for changed file detection
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: "20"
 
       - name: Install pnpm
         uses: pnpm/action-setup@v4

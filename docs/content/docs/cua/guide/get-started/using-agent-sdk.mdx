@@ -9,6 +9,7 @@ import { Callout } from 'fumadocs-ui/components/callout';
 Now that you've verified your sandbox works with the Computer SDK, use an Agent to automate complex tasks. The agent interacts with the computer environment using a vision-language model to understand the UI and execute actions.
 
 Cua Agent Framework provides:
+
 - **100+ VLM options** through Cua VLM Router and direct provider access
 - **Built-in optimizations** for computer-use tasks
 - **Structured agent loops** for consistent behavior
@@ -26,6 +27,7 @@ Cua Agent Framework provides:
     ```bash
     pip install "cua-agent[all]"
     ```
+
   </Tab>
   <Tab value="TypeScript">
     ```bash
@@ -81,6 +83,7 @@ asyncio.run(main())
 ```
 
 **Available Cua models:**
+
 - `cua/anthropic/claude-sonnet-4.5` - Claude Sonnet 4.5 (recommended)
 - `cua/anthropic/claude-opus-4.5` - Claude Opus 4.5 (enhanced agentic capabilities)
 - `cua/anthropic/claude-haiku-4.5` - Claude Haiku 4.5 (faster, cost-effective)
@@ -88,6 +91,7 @@ asyncio.run(main())
 - `cua/google/gemini-3-flash-preview` - Gemini 3 Flash Preview (fastest and cheapest)
 
 **Available composed models:**
+
 - `huggingface-local/HelloKKMe/GTA1-7B+anthropic/claude-sonnet-4-5-20250929` - GTA1 grounding + Claude Sonnet 4.5 planning
 - `huggingface-local/HelloKKMe/GTA1-7B+openai/gpt-5` - GTA1 grounding + GPT-5 planning
 - `huggingface-local/ByteDance-Seed/UI-TARS-1.5-7B+openai/gpt-4o` - UI-TARS grounding + GPT-4o planning
@@ -144,6 +148,7 @@ asyncio.run(main())
 ```
 
 **Supported providers:**
+
 - `anthropic/claude-*` - Anthropic Claude models
 - `openai/gpt-*` - OpenAI GPT models
 - `openai/o1-*` - OpenAI o1 models
@@ -161,34 +166,34 @@ See [Supported Models](/cua/guide/fundamentals/vlms) for the complete list.
 For TypeScript, you can build agent loops using the [Vercel AI SDK](https://ai-sdk.dev/) with the Cua Computer Framework TypeScript library.
 
 ```typescript
-import Anthropic from "@anthropic-ai/sdk";
-import { Computer, OSType } from "@trycua/computer";
+import Anthropic from '@anthropic-ai/sdk';
+import { Computer, OSType } from '@trycua/computer';
 
 const client = new Anthropic();
 let computer: Computer;
 
 const computerTool = {
-  type: "tool" as const,
-  name: "computer",
-  description: "Control the computer with actions like screenshot, click, type, etc.",
+  type: 'tool' as const,
+  name: 'computer',
+  description: 'Control the computer with actions like screenshot, click, type, etc.',
   inputSchema: {
-    type: "object" as const,
+    type: 'object' as const,
     properties: {
       action: {
-        type: "string" as const,
-        description: "Action to perform (screenshot, click, type, key_press, etc.)",
+        type: 'string' as const,
+        description: 'Action to perform (screenshot, click, type, key_press, etc.)',
       },
       coordinate: {
-        type: "array" as const,
-        items: { type: "number" as const },
-        description: "x, y coordinates for click actions",
+        type: 'array' as const,
+        items: { type: 'number' as const },
+        description: 'x, y coordinates for click actions',
       },
       text: {
-        type: "string" as const,
-        description: "Text to type",
+        type: 'string' as const,
+        description: 'Text to type',
       },
     },
-    required: ["action"],
+    required: ['action'],
   },
 };
 
@@ -196,53 +201,53 @@ async function runAgentLoop(goal: string) {
   // Initialize computer
   computer = new Computer({
     osType: OSType.LINUX,
-    provider_type: "cloud",
-    name: "your-sandbox-name",
+    provider_type: 'cloud',
+    name: 'your-sandbox-name',
     apiKey: process.env.CUA_API_KEY!,
   });
 
   await computer.run();
 
   const messages: any[] = [];
-  messages.push({ role: "user", content: goal });
+  messages.push({ role: 'user', content: goal });
 
   // Agent loop
   for (let i = 0; i < 10; i++) {
     const response = await client.messages.create({
-      model: "claude-opus-4-1-20250805",
+      model: 'claude-opus-4-1-20250805',
       max_tokens: 4096,
       tools: [computerTool],
       messages: messages,
     });
 
-    if (response.stop_reason === "end_turn") {
-      console.log("Task completed!");
+    if (response.stop_reason === 'end_turn') {
+      console.log('Task completed!');
       break;
     }
 
-    messages.push({ role: "assistant", content: response.content });
+    messages.push({ role: 'assistant', content: response.content });
 
     // Process tool calls
     const toolResults = [];
     for (const block of response.content) {
-      if (block.type === "tool_use") {
+      if (block.type === 'tool_use') {
         let result: any;
         switch (block.input.action) {
-          case "screenshot":
+          case 'screenshot':
             result = await computer.interface.screenshot();
             break;
-          case "click":
+          case 'click':
             result = await computer.interface.click(
               block.input.coordinate[0],
               block.input.coordinate[1]
             );
             break;
-          case "type":
+          case 'type':
             result = await computer.interface.type(block.input.text);
             break;
         }
         toolResults.push({
-          type: "tool_result",
+          type: 'tool_result',
           tool_use_id: block.id,
           content: JSON.stringify(result),
         });
@@ -250,14 +255,14 @@ async function runAgentLoop(goal: string) {
     }
 
     if (toolResults.length > 0) {
-      messages.push({ role: "user", content: toolResults });
+      messages.push({ role: 'user', content: toolResults });
     }
   }
 
   await computer.disconnect();
 }
 
-runAgentLoop("Take a screenshot and tell me what you see");
+runAgentLoop('Take a screenshot and tell me what you see');
 ```
 
 For more details, see the [Vercel AI SDK Computer Use Cookbook](https://ai-sdk.dev/cookbook/guides/computer-use).

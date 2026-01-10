@@ -6,13 +6,16 @@ description: Automate macOS Setup Assistant with YAML configuration files
 import { Callout } from 'fumadocs-ui/components/callout';
 
 <Callout type="info">
-**Preview Feature**: Unattended setup is an experimental feature. The API and behavior may change in future releases.
+  **Preview Feature**: Unattended setup is an experimental feature. The API and behavior may change
+  in future releases.
 </Callout>
 
 Lume supports unattended setup automation to configure macOS VMs without manual interaction. This uses VNC-based automation with OCR (Optical Character Recognition) to navigate through the Setup Assistant and perform post-setup configuration.
 
 <Callout type="warn">
-**Version Compatibility**: Unattended configurations are specific to macOS versions. The Setup Assistant screens, button labels, and navigation flow can change between macOS releases. A configuration built for macOS Tahoe may not work on Sequoia or future versions.
+  **Version Compatibility**: Unattended configurations are specific to macOS versions. The Setup
+  Assistant screens, button labels, and navigation flow can change between macOS releases. A
+  configuration built for macOS Tahoe may not work on Sequoia or future versions.
 </Callout>
 
 ## Quick Start
@@ -32,6 +35,7 @@ lume create my-vm --os macOS --ipsw latest --unattended path/to/config.yml
 ```
 
 This will:
+
 1. Create the VM and install macOS from the IPSW
 2. Boot the VM
 3. Automatically run through the Setup Assistant using your configuration
@@ -52,6 +56,7 @@ lume setup my-vm --unattended path/to/config.yml
 ```
 
 This is useful when you want to:
+
 - Reuse a VM that failed during setup
 - Apply different configurations to cloned VMs
 - Debug setup issues interactively before automating
@@ -60,8 +65,8 @@ This is useful when you want to:
 
 Lume includes built-in configuration presets that you can reference by name:
 
-| Preset | Description |
-|--------|-------------|
+| Preset  | Description                                                                                         |
+| ------- | --------------------------------------------------------------------------------------------------- |
 | `tahoe` | Full macOS Tahoe Setup Assistant automation (creates user `lume` with password `lume`, enables SSH) |
 
 ```bash
@@ -79,8 +84,8 @@ boot_wait: 30
 
 # Sequence of commands to execute
 boot_commands:
-  - "<command>"
-  - "<command>"
+  - '<command>'
+  - '<command>'
   # ...
 
 # Optional health check to verify setup success
@@ -92,22 +97,22 @@ health_check:
 
 ### Configuration Fields
 
-| Field | Type | Required | Default | Description |
-|-------|------|----------|---------|-------------|
-| `boot_wait` | integer | No | 60 | Seconds to wait for VM to boot before starting automation |
-| `boot_commands` | array | Yes | - | List of automation commands to execute |
-| `health_check` | object | No | - | Health check configuration to verify setup success |
+| Field           | Type    | Required | Default | Description                                               |
+| --------------- | ------- | -------- | ------- | --------------------------------------------------------- |
+| `boot_wait`     | integer | No       | 60      | Seconds to wait for VM to boot before starting automation |
+| `boot_commands` | array   | Yes      | -       | List of automation commands to execute                    |
+| `health_check`  | object  | No       | -       | Health check configuration to verify setup success        |
 
 ### Health Check Configuration
 
-| Field | Type | Required | Default | Description |
-|-------|------|----------|---------|-------------|
-| `type` | string | Yes | - | Type of health check (`ssh`) |
-| `user` | string | No | - | Username for SSH authentication |
-| `password` | string | No | - | Password for SSH authentication |
-| `timeout` | integer | No | 30 | Timeout in seconds for each attempt |
-| `retries` | integer | No | 3 | Number of retry attempts |
-| `retry_delay` | integer | No | 5 | Seconds to wait between retries |
+| Field         | Type    | Required | Default | Description                         |
+| ------------- | ------- | -------- | ------- | ----------------------------------- |
+| `type`        | string  | Yes      | -       | Type of health check (`ssh`)        |
+| `user`        | string  | No       | -       | Username for SSH authentication     |
+| `password`    | string  | No       | -       | Password for SSH authentication     |
+| `timeout`     | integer | No       | 30      | Timeout in seconds for each attempt |
+| `retries`     | integer | No       | 3       | Number of retry attempts            |
+| `retry_delay` | integer | No       | 5       | Seconds to wait between retries     |
 
 ## Boot Commands
 
@@ -115,23 +120,24 @@ Boot commands are strings enclosed in angle brackets that control mouse, keyboar
 
 ### Timing Commands
 
-| Command | Description | Example |
-|---------|-------------|---------|
-| `<delay N>` | Wait N seconds (supports decimals) | `<delay 2>`, `<delay 0.5>` |
-| `<wait 'text'>` | Wait for text to appear on screen (OCR) | `<wait 'Continue'>` |
+| Command                    | Description                              | Example                      |
+| -------------------------- | ---------------------------------------- | ---------------------------- |
+| `<delay N>`                | Wait N seconds (supports decimals)       | `<delay 2>`, `<delay 0.5>`   |
+| `<wait 'text'>`            | Wait for text to appear on screen (OCR)  | `<wait 'Continue'>`          |
 | `<wait 'text', timeout=N>` | Wait with custom timeout (default: 120s) | `<wait 'Siri', timeout=300>` |
 
 ### Mouse Commands
 
-| Command | Description | Example |
-|---------|-------------|---------|
-| `<click 'text'>` | Click on detected text | `<click 'Continue'>` |
-| `<click 'text', index=N>` | Click Nth occurrence (0=first, -1=last) | `<click 'Agree', index=-1>` |
-| `<click 'text', xoffset=N>` | Click with horizontal offset | `<click 'Option', xoffset=50>` |
-| `<click 'text', yoffset=N>` | Click with vertical offset | `<click 'Label', yoffset=30>` |
-| `<click_at X,Y>` | Click at exact coordinates | `<click_at 960,540>` |
+| Command                     | Description                             | Example                        |
+| --------------------------- | --------------------------------------- | ------------------------------ |
+| `<click 'text'>`            | Click on detected text                  | `<click 'Continue'>`           |
+| `<click 'text', index=N>`   | Click Nth occurrence (0=first, -1=last) | `<click 'Agree', index=-1>`    |
+| `<click 'text', xoffset=N>` | Click with horizontal offset            | `<click 'Option', xoffset=50>` |
+| `<click 'text', yoffset=N>` | Click with vertical offset              | `<click 'Label', yoffset=30>`  |
+| `<click_at X,Y>`            | Click at exact coordinates              | `<click_at 960,540>`           |
 
 **Index parameter**: When text appears multiple times on screen (e.g., "Agree" in both license text and button), use `index` to select which occurrence:
+
 - `index=0` - First (topmost) occurrence
 - `index=1` - Second occurrence
 - `index=-1` - Last (bottommost) occurrence
@@ -141,35 +147,36 @@ Boot commands are strings enclosed in angle brackets that control mouse, keyboar
 
 #### Special Keys
 
-| Command | Description |
-|---------|-------------|
-| `<enter>` or `<return>` | Press Enter/Return key |
-| `<tab>` | Press Tab key |
-| `<space>` | Press Spacebar |
-| `<esc>` or `<escape>` | Press Escape key |
-| `<backspace>` | Press Backspace key |
-| `<delete>` | Press Delete key |
-| `<up>`, `<down>`, `<left>`, `<right>` | Arrow keys |
-| `<f1>` through `<f12>` | Function keys |
+| Command                               | Description            |
+| ------------------------------------- | ---------------------- |
+| `<enter>` or `<return>`               | Press Enter/Return key |
+| `<tab>`                               | Press Tab key          |
+| `<space>`                             | Press Spacebar         |
+| `<esc>` or `<escape>`                 | Press Escape key       |
+| `<backspace>`                         | Press Backspace key    |
+| `<delete>`                            | Press Delete key       |
+| `<up>`, `<down>`, `<left>`, `<right>` | Arrow keys             |
+| `<f1>` through `<f12>`                | Function keys          |
 
 #### Text Input
 
-| Command | Description | Example |
-|---------|-------------|---------|
+| Command         | Description           | Example             |
+| --------------- | --------------------- | ------------------- |
 | `<type 'text'>` | Type a string of text | `<type 'username'>` |
 
 #### Hotkey Combinations
 
 Combine modifier keys with `+`:
 
-| Modifier | Aliases |
-|----------|---------|
-| Command | `cmd`, `command`, `super` |
-| Shift | `shift` |
-| Option | `alt`, `option` |
-| Control | `ctrl`, `control` |
+| Modifier | Aliases                   |
+| -------- | ------------------------- |
+| Command  | `cmd`, `command`, `super` |
+| Shift    | `shift`                   |
+| Option   | `alt`, `option`           |
+| Control  | `ctrl`, `control`         |
 
 **Examples:**
+
 - `<cmd+space>` - Open Spotlight
 - `<cmd+q>` - Quit application
 - `<cmd+c>` - Copy
@@ -186,32 +193,32 @@ boot_wait: 30
 
 boot_commands:
   # Dismiss greeting screen
-  - "<delay 5>"
-  - "<space>"
-  - "<delay 2>"
+  - '<delay 5>'
+  - '<space>'
+  - '<delay 2>'
 
   # Language selection
   - "<wait 'English', timeout=120>"
   - "<type 'English'>"
-  - "<delay 1>"
-  - "<enter>"
-  - "<delay 2>"
+  - '<delay 1>'
+  - '<enter>'
+  - '<delay 2>'
 
   # Country/Region
   - "<wait 'Country or Region'>"
-  - "<click_at 960,900>"  # Click list to focus
+  - '<click_at 960,900>' # Click list to focus
   - "<type 'United States'>"
-  - "<enter>"
+  - '<enter>'
   - "<click 'Continue'>"
-  - "<delay 2>"
+  - '<delay 2>'
 
   # Transfer Your Data - select "Set up as new"
   - "<wait 'Transfer Your Data'>"
-  - "<delay 20>"
-  - "<tab>"
-  - "<tab>"
-  - "<tab>"
-  - "<space>"  # Select "Set up as new"
+  - '<delay 20>'
+  - '<tab>'
+  - '<tab>'
+  - '<tab>'
+  - '<space>' # Select "Set up as new"
   - "<click 'Continue'>"
 
   # Skip remaining screens...
@@ -220,20 +227,20 @@ boot_commands:
 
   # Create account
   - "<wait 'Create a Mac Account'>"
-  - "<tab><tab><tab><tab><tab><tab>"  # Tab to Full Name field
+  - '<tab><tab><tab><tab><tab><tab>' # Tab to Full Name field
   - "<type 'lume'>"
-  - "<tab><tab>"  # Skip to Password
+  - '<tab><tab>' # Skip to Password
   - "<type 'lume'>"
-  - "<tab>"
-  - "<type 'lume'>"  # Verify password
-  - "<tab><tab><space>"  # Uncheck Apple Account reset
+  - '<tab>'
+  - "<type 'lume'>" # Verify password
+  - '<tab><tab><space>' # Uncheck Apple Account reset
   - "<click 'Continue'>"
 
   # Terms and Conditions
   - "<wait 'Terms and Conditions'>"
-  - "<click 'Agree', index=-1>"  # Click button, not text
+  - "<click 'Agree', index=-1>" # Click button, not text
   - "<wait 'I have read and agree'>"
-  - "<click 'Agree', index=0>"  # Click modal button
+  - "<click 'Agree', index=0>" # Click modal button
 
 health_check:
   type: ssh
@@ -253,54 +260,54 @@ boot_wait: 30
 
 boot_commands:
   # Click desktop for focus
-  - "<click_at 960,540>"
-  - "<delay 1>"
+  - '<click_at 960,540>'
+  - '<delay 1>'
 
   # Open Terminal via Spotlight
-  - "<cmd+space>"
-  - "<delay 2>"
+  - '<cmd+space>'
+  - '<delay 2>'
   - "<type 'Terminal'>"
-  - "<enter>"
-  - "<delay 3>"
+  - '<enter>'
+  - '<delay 3>'
 
   # Enable SSH
   - "<type 'sudo launchctl load -w /System/Library/LaunchDaemons/ssh.plist'>"
-  - "<enter>"
-  - "<type 'lume'>"  # Password
-  - "<enter>"
-  - "<delay 2>"
+  - '<enter>'
+  - "<type 'lume'>" # Password
+  - '<enter>'
+  - '<delay 2>'
 
   # Enable auto-login
   - "<type 'sudo sysadminctl -autologin set -userName lume -password lume'>"
-  - "<enter>"
-  - "<delay 2>"
+  - '<enter>'
+  - '<delay 2>'
 
   # Enable full keyboard navigation for Tab to work everywhere
   - "<type 'defaults write NSGlobalDomain AppleKeyboardUIMode -int 3'>"
-  - "<enter>"
-  - "<delay 1>"
+  - '<enter>'
+  - '<delay 1>'
 
   # Close Terminal
-  - "<cmd+q>"
+  - '<cmd+q>'
 
   # Enable Full Disk Access for SSH via System Settings
-  - "<cmd+space>"
+  - '<cmd+space>'
   - "<type 'System Settings'>"
-  - "<enter>"
-  - "<delay 3>"
+  - '<enter>'
+  - '<delay 3>'
 
   - "<click 'Search'>"
   - "<type 'Remote'>"
-  - "<delay 2>"
+  - '<delay 2>'
   - "<click 'Remote Login'>"
-  - "<delay 2>"
+  - '<delay 2>'
 
   # Toggle "Allow full disk access"
-  - "<tab>"
-  - "<space>"
-  - "<delay 2>"
+  - '<tab>'
+  - '<space>'
+  - '<delay 2>'
 
-  - "<cmd+q>"
+  - '<cmd+q>'
 
 health_check:
   type: ssh
@@ -321,6 +328,7 @@ lume setup my-vm --unattended tahoe --debug --debug-dir /path/to/debug
 ```
 
 Debug screenshots show:
+
 - OCR-detected text with bounding boxes
 - Click target coordinates
 - Command being executed
@@ -345,12 +353,13 @@ macOS requires full keyboard access to Tab through all UI elements:
 
 ```yaml
 - "<type 'defaults write NSGlobalDomain AppleKeyboardUIMode -int 3'>"
-- "<enter>"
+- '<enter>'
 ```
 
 ### System Settings Automation
 
 Some settings can only be changed through GUI (protected by SIP):
+
 - Full Disk Access requires navigating System Settings
 - Use Spotlight (`<cmd+space>`) to search for specific settings
 
@@ -362,13 +371,13 @@ Some settings can only be changed through GUI (protected by SIP):
 
 ## Troubleshooting
 
-| Issue | Solution |
-|-------|----------|
-| Commands execute too early | Increase `boot_wait` or add `<delay>` commands |
-| Text not found | Check exact spelling/case, increase timeout, use coordinates instead |
-| Wrong element clicked | Use `index` parameter to select correct occurrence |
-| Hotkeys don't work | Click on desktop first to give it focus |
-| Tab navigation skips elements | Enable full keyboard access with `AppleKeyboardUIMode` |
+| Issue                         | Solution                                                             |
+| ----------------------------- | -------------------------------------------------------------------- |
+| Commands execute too early    | Increase `boot_wait` or add `<delay>` commands                       |
+| Text not found                | Check exact spelling/case, increase timeout, use coordinates instead |
+| Wrong element clicked         | Use `index` parameter to select correct occurrence                   |
+| Hotkeys don't work            | Click on desktop first to give it focus                              |
+| Tab navigation skips elements | Enable full keyboard access with `AppleKeyboardUIMode`               |
 
 ## Limitations
 

@@ -28,11 +28,11 @@
 
 ## Choose Your Path
 
-| If you want to... | Check out | For |
-|-------------------|-----------|-----|
-| Build AI agents or run isolated code execution | [**Cua**](#cua---agentic-ui-automation--code-execution) | AI Engineers |
-| Benchmark computer-use models or train RL agents | [**Cua-Bench**](#cua-bench---benchmarks--rl-environments) | Researchers |
-| Run macOS/Linux VMs on Apple Silicon | [**Lume**](#lume---macos-virtualization) | Users, Developers, System Engineers |
+| If you want to...                                | Check out                                                 | For                                 |
+| ------------------------------------------------ | --------------------------------------------------------- | ----------------------------------- |
+| Build AI agents or run isolated code execution   | [**Cua**](#cua---agentic-ui-automation--code-execution)   | AI Engineers                        |
+| Benchmark computer-use models or train RL agents | [**Cua-Bench**](#cua-bench---benchmarks--rl-environments) | Researchers                         |
+| Run macOS/Linux VMs on Apple Silicon             | [**Lume**](#lume---macos-virtualization)                  | Users, Developers, System Engineers |
 
 ---
 
@@ -91,13 +91,13 @@ lume run macos-sequoia-vanilla:latest
 
 ## Packages
 
-| Package | Description |
-|---------|-------------|
-| [cua-agent](./libs/python/agent) | AI agent framework for computer-use tasks |
-| [cua-computer](./libs/python/computer) | SDK for controlling desktop environments |
+| Package                                          | Description                                     |
+| ------------------------------------------------ | ----------------------------------------------- |
+| [cua-agent](./libs/python/agent)                 | AI agent framework for computer-use tasks       |
+| [cua-computer](./libs/python/computer)           | SDK for controlling desktop environments        |
 | [cua-bench](https://github.com/trycua/cua-bench) | Benchmarks and RL environments for computer-use |
-| [lume](./libs/lume) | macOS/Linux VM management on Apple Silicon |
-| [lumier](./libs/lumier) | Docker-compatible interface for Lume VMs |
+| [lume](./libs/lume)                              | macOS/Linux VM management on Apple Silicon      |
+| [lumier](./libs/lumier)                          | Docker-compatible interface for Lume VMs        |
 
 ## Resources
 
@@ -115,6 +115,7 @@ We welcome contributions! See our [Contributing Guidelines](CONTRIBUTING.md) for
 MIT License — see [LICENSE](LICENSE.md) for details.
 
 Third-party components have their own licenses:
+
 - [Kasm](libs/kasm/LICENSE) (MIT)
 - [OmniParser](https://github.com/microsoft/OmniParser/blob/master/LICENSE) (CC-BY-4.0)
 - Optional `cua-agent[omni]` includes ultralytics (AGPL-3.0)

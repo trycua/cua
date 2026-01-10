@@ -22,11 +22,7 @@
 }
 
 .dark body {
-  background-image: linear-gradient(
-    rgba(14, 165, 233, 0.1),
-    transparent 20rem,
-    transparent
-  );
+  background-image: linear-gradient(rgba(14, 165, 233, 0.1), transparent 20rem, transparent);
   background-repeat: no-repeat;
 }
 
@@ -59,4 +55,3 @@
 .copilotKitMessage {
   border-radius: 1rem !important;
 }
-

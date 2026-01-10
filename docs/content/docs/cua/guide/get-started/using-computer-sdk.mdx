@@ -7,7 +7,9 @@ import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
 import { Callout } from 'fumadocs-ui/components/callout';
 
 <Callout type="warn" title="Python Version Compatibility">
-  Cua packages require **Python 3.12 or 3.13**. Python 3.14 is not currently supported due to dependency compatibility issues (pydantic-core/PyO3 compatibility). If you encounter build errors on Python 3.14, please use Python 3.13 or earlier.
+  Cua packages require **Python 3.12 or 3.13**. Python 3.14 is not currently supported due to
+  dependency compatibility issues (pydantic-core/PyO3 compatibility). If you encounter build errors
+  on Python 3.14, please use Python 3.13 or earlier.
 </Callout>
 
 The Computer SDK lets you connect to your sandbox and perform basic interactions like taking screenshots, clicking, and typing. This is an important verification step before adding AI agents.
@@ -25,6 +27,7 @@ The Computer SDK lets you connect to your sandbox and perform basic interactions
     ```bash
     pip install cua-computer
     ```
+
   </Tab>
   <Tab value="TypeScript">
     ```bash
@@ -353,15 +356,15 @@ The Computer SDK lets you connect to your sandbox and perform basic interactions
 
 ## Common Operations
 
-| Operation | Python | TypeScript |
-|-----------|--------|------------|
-| Screenshot | `await computer.interface.screenshot()` | `await computer.interface.screenshot()` |
-| Left click | `await computer.interface.left_click(x, y)` | `await computer.interface.leftClick(x, y)` |
-| Right click | `await computer.interface.right_click(x, y)` | `await computer.interface.rightClick(x, y)` |
-| Double click | `await computer.interface.double_click(x, y)` | `await computer.interface.doubleClick(x, y)` |
-| Type text | `await computer.interface.type_text("text")` | `await computer.interface.typeText("text")` |
-| Press key | `await computer.interface.key("Enter")` | `await computer.interface.key("Enter")` |
-| Scroll | `await computer.interface.scroll(x, y, clicks)` | `await computer.interface.scroll(x, y, clicks)` |
+| Operation    | Python                                          | TypeScript                                      |
+| ------------ | ----------------------------------------------- | ----------------------------------------------- |
+| Screenshot   | `await computer.interface.screenshot()`         | `await computer.interface.screenshot()`         |
+| Left click   | `await computer.interface.left_click(x, y)`     | `await computer.interface.leftClick(x, y)`      |
+| Right click  | `await computer.interface.right_click(x, y)`    | `await computer.interface.rightClick(x, y)`     |
+| Double click | `await computer.interface.double_click(x, y)`   | `await computer.interface.doubleClick(x, y)`    |
+| Type text    | `await computer.interface.type_text("text")`    | `await computer.interface.typeText("text")`     |
+| Press key    | `await computer.interface.key("Enter")`         | `await computer.interface.key("Enter")`         |
+| Scroll       | `await computer.interface.scroll(x, y, clicks)` | `await computer.interface.scroll(x, y, clicks)` |
 
 ## Lifecycle Methods
 
@@ -409,7 +412,7 @@ asyncio.run(main())
 <Tab value="TypeScript">
 
 ```typescript
-import { CloudProvider } from "@trycua/computer";
+import { CloudProvider } from '@trycua/computer';
 
 const provider = new CloudProvider({
   apiKey: process.env.CUA_API_KEY!,
@@ -423,14 +426,14 @@ async function main() {
   }
 
   // Start a sandbox
-  await provider.runVM("my-sandbox");
+  await provider.runVM('my-sandbox');
 
   // Check sandbox status
-  const info = await provider.getVM("my-sandbox");
+  const info = await provider.getVM('my-sandbox');
   console.log(`Status: ${info.status}`);
 
   // Stop when done
-  await provider.stopVM("my-sandbox");
+  await provider.stopVM('my-sandbox');
 }
 
 main();
@@ -441,13 +444,13 @@ main();
 
 Available operations:
 
-| Operation | Description |
-|-----------|-------------|
-| `list_vms()` | List all sandboxes in your account |
-| `get_vm(name)` | Get status and details for a specific sandbox |
-| `run_vm(name)` | Start a sandbox (hot-start in under 1 second) |
-| `stop_vm(name)` | Stop a running sandbox |
-| `restart_vm(name)` | Restart a sandbox |
+| Operation          | Description                                   |
+| ------------------ | --------------------------------------------- |
+| `list_vms()`       | List all sandboxes in your account            |
+| `get_vm(name)`     | Get status and details for a specific sandbox |
+| `run_vm(name)`     | Start a sandbox (hot-start in under 1 second) |
+| `stop_vm(name)`    | Stop a running sandbox                        |
+| `restart_vm(name)` | Restart a sandbox                             |
 
 This is useful for orchestrating multiple sandboxes, building CI/CD pipelines, or programmatically managing sandbox lifecycle.
 

@@ -42,7 +42,7 @@ Create a new virtual machine
 - `--display` - Display resolution (e.g., 1024x768) (default: 1024x768)
 - `--ipsw` - Path to IPSW file or 'latest' for macOS VMs
 - `--storage` - VM storage location to use
-- `--unattended` - Path to YAML config for unattended Setup Assistant automation
+- `--unattended` - [Preview] Preset name or path to YAML config file for unattended macOS Setup Assistant automation. Built-in presets: tahoe. Only supported for macOS VMs.
 
 ### lume clone
 
@@ -249,22 +249,23 @@ View lume serve logs
 
 ### lume setup
 
-Run unattended Setup Assistant automation on a macOS VM
+[Preview] Run unattended Setup Assistant automation on a macOS VM
 
 **Arguments:**
 
-- `<name>` - Name of the VM
+- `<name>` - Name of the virtual machine
 
 **Options:**
 
-- `--config` - Path to YAML config file
-- `--storage` - VM storage location to use
-- `--vnc-port` - Port for VNC server (0 for auto-assign) (default: 0)
+- `--unattended` - Preset name or path to YAML config file for unattended macOS Setup Assistant automation. Built-in presets: tahoe.
+- `--storage` - VM storage location to use or direct path to VM location
+- `--vnc-port` - Port to use for the VNC server. Defaults to 0 (auto-assign) (default: 0)
+- `--debug-dir` - Custom directory for debug screenshots (defaults to unique folder in system temp)
 
 **Flags:**
 
-- `--no-display` - Disable VNC client auto-open
-- `--debug` - Save debug screenshots
+- `--no-display` - Do not open the VNC client automatically
+- `--debug` - Enable debug mode - saves screenshots with click coordinates
 
 ## Global Options
 

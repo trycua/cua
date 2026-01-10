@@ -14,9 +14,9 @@
  *   npx tsx scripts/docs-generators/runner.ts --changed          # Only run for changed files (CI)
  */
 
-import { execSync, spawnSync } from "child_process";
-import * as fs from "fs";
-import * as path from "path";
+import { execSync, spawnSync } from 'child_process';
+import * as fs from 'fs';
+import * as path from 'path';
 
 // ============================================================================
 // Types
@@ -52,8 +52,8 @@ interface Config {
 // Configuration
 // ============================================================================
 
-const ROOT_DIR = path.resolve(__dirname, "../..");
-const CONFIG_PATH = path.join(__dirname, "config.json");
+const ROOT_DIR = path.resolve(__dirname, '../..');
+const CONFIG_PATH = path.join(__dirname, 'config.json');
 
 // ============================================================================
 // Main
@@ -63,14 +63,14 @@ async function main() {
   const args = process.argv.slice(2);
 
   // Parse arguments
-  const checkOnly = args.includes("--check") || args.includes("--check-only");
-  const listOnly = args.includes("--list");
-  const changedOnly = args.includes("--changed");
-  const libraryIndex = args.indexOf("--library");
+  const checkOnly = args.includes('--check') || args.includes('--check-only');
+  const listOnly = args.includes('--list');
+  const changedOnly = args.includes('--changed');
+  const libraryIndex = args.indexOf('--library');
   const specificLibrary = libraryIndex !== -1 ? args[libraryIndex + 1] : null;
 
-  console.log("📚 Documentation Generator Runner");
-  console.log("==================================\n");
+  console.log('📚 Documentation Generator Runner');
+  console.log('==================================\n');
 
   // Load config
   if (!fs.existsSync(CONFIG_PATH)) {
@@ -78,7 +78,7 @@ async function main() {
     process.exit(1);
   }
 
-  const config: Config = JSON.parse(fs.readFileSync(CONFIG_PATH, "utf-8"));
+  const config: Config = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf-8'));
 
   // List mode
   if (listOnly) {
@@ -92,17 +92,14 @@ async function main() {
   if (specificLibrary) {
     if (!config.generators[specificLibrary]) {
       console.error(`❌ Unknown library: ${specificLibrary}`);
-      console.log(
-        "\nAvailable libraries:",
-        Object.keys(config.generators).join(", ")
-      );
+      console.log('\nAvailable libraries:', Object.keys(config.generators).join(', '));
       process.exit(1);
     }
     generatorsToRun = [specificLibrary];
   } else if (changedOnly) {
     generatorsToRun = getChangedGenerators(config);
     if (generatorsToRun.length === 0) {
-      console.log("✅ No documentation-related changes detected.");
+      console.log('✅ No documentation-related changes detected.');
       return;
     }
   } else {
@@ -113,11 +110,11 @@ async function main() {
   }
 
   if (generatorsToRun.length === 0) {
-    console.log("⚠️  No generators to run. Enable generators in config.json.");
+    console.log('⚠️  No generators to run. Enable generators in config.json.');
     return;
   }
 
-  console.log(`📋 Generators to run: ${generatorsToRun.join(", ")}\n`);
+  console.log(`📋 Generators to run: ${generatorsToRun.join(', ')}\n`);
 
   // Run generators
   let hasErrors = false;
@@ -125,9 +122,9 @@ async function main() {
   for (const generatorKey of generatorsToRun) {
     const generator = config.generators[generatorKey];
 
-    console.log(`\n${"=".repeat(50)}`);
+    console.log(`\n${'='.repeat(50)}`);
     console.log(`📦 ${generator.name} (${generatorKey})`);
-    console.log(`${"=".repeat(50)}\n`);
+    console.log(`${'='.repeat(50)}\n`);
 
     if (!generator.enabled) {
       console.log(`⏭️  Skipped (disabled)`);
@@ -144,17 +141,15 @@ async function main() {
   }
 
   // Summary
-  console.log(`\n${"=".repeat(50)}`);
+  console.log(`\n${'='.repeat(50)}`);
   if (hasErrors) {
-    console.error("❌ Some generators failed or detected drift.");
+    console.error('❌ Some generators failed or detected drift.');
     if (checkOnly) {
-      console.log(
-        "\n💡 Run 'npx tsx scripts/docs-generators/runner.ts' to update documentation"
-      );
+      console.log("\n💡 Run 'npx tsx scripts/docs-generators/runner.ts' to update documentation");
     }
     process.exit(1);
   } else {
-    console.log("✅ All documentation is up to date!");
+    console.log('✅ All documentation is up to date!');
   }
 }
 
@@ -178,11 +173,11 @@ async function runGenerator(
 
   try {
     // Run the generator
-    const args = checkOnly ? ["--check"] : [];
-    const result = spawnSync("npx", ["tsx", generatorPath, ...args], {
+    const args = checkOnly ? ['--check'] : [];
+    const result = spawnSync('npx', ['tsx', generatorPath, ...args], {
       cwd: ROOT_DIR,
-      stdio: "inherit",
-      encoding: "utf-8",
+      stdio: 'inherit',
+      encoding: 'utf-8',
     });
 
     return result.status === 0;
@@ -203,11 +198,11 @@ function getChangedGenerators(config: Config): string[] {
     // Get changed files from git
     // This works for both PRs (comparing to base) and pushes
     const gitDiff = execSync(
-      "git diff --name-only HEAD~1 HEAD 2>/dev/null || git diff --name-only HEAD",
-      { cwd: ROOT_DIR, encoding: "utf-8" }
+      'git diff --name-only HEAD~1 HEAD 2>/dev/null || git diff --name-only HEAD',
+      { cwd: ROOT_DIR, encoding: 'utf-8' }
     );
 
-    const changedFiles = gitDiff.split("\n").filter(Boolean);
+    const changedFiles = gitDiff.split('\n').filter(Boolean);
 
     console.log(`📝 Changed files: ${changedFiles.length}`);
 
@@ -215,10 +210,8 @@ function getChangedGenerators(config: Config): string[] {
       if (!generator.enabled) continue;
 
       // Check if any watch path matches changed files
-      const watchPatterns = generator.watchPaths.map((p) =>
-        new RegExp(
-          p.replace(/\*\*/g, ".*").replace(/\*/g, "[^/]*").replace(/\//g, "\\/")
-        )
+      const watchPatterns = generator.watchPaths.map(
+        (p) => new RegExp(p.replace(/\*\*/g, '.*').replace(/\*/g, '[^/]*').replace(/\//g, '\\/'))
       );
 
       const hasChanges = changedFiles.some((file) =>
@@ -231,7 +224,7 @@ function getChangedGenerators(config: Config): string[] {
       }
     }
   } catch (error) {
-    console.warn("⚠️  Could not detect changed files, running all generators");
+    console.warn('⚠️  Could not detect changed files, running all generators');
     return Object.entries(config.generators)
       .filter(([_, cfg]) => cfg.enabled)
       .map(([key, _]) => key);
@@ -245,24 +238,24 @@ function getChangedGenerators(config: Config): string[] {
 // ============================================================================
 
 function listGenerators(config: Config): void {
-  console.log("Configured Documentation Generators:\n");
+  console.log('Configured Documentation Generators:\n');
 
   const maxKeyLen = Math.max(...Object.keys(config.generators).map((k) => k.length));
 
   for (const [key, generator] of Object.entries(config.generators)) {
-    const status = generator.enabled ? "✅" : "⏸️ ";
+    const status = generator.enabled ? '✅' : '⏸️ ';
     const paddedKey = key.padEnd(maxKeyLen);
     console.log(`${status} ${paddedKey}  ${generator.name} (${generator.language})`);
 
     if (!generator.enabled && generator.notes) {
-      console.log(`   ${"".padEnd(maxKeyLen)}  └─ ${generator.notes}`);
+      console.log(`   ${''.padEnd(maxKeyLen)}  └─ ${generator.notes}`);
     }
   }
 
-  console.log("\n");
-  console.log("Legend:");
-  console.log("  ✅ = Enabled (will run)");
-  console.log("  ⏸️  = Disabled (not yet implemented)");
+  console.log('\n');
+  console.log('Legend:');
+  console.log('  ✅ = Enabled (will run)');
+  console.log('  ⏸️  = Disabled (not yet implemented)');
 }
 
 // ============================================================================
@@ -270,6 +263,6 @@ function listGenerators(config: Config): void {
 // ============================================================================
 
 main().catch((error) => {
-  console.error("Error:", error);
+  console.error('Error:', error);
   process.exit(1);
 });

@@ -54,6 +54,7 @@ npx tsx scripts/docs-generators/runner.ts --library lume
 ## Adding a New Library
 
 1. **Add configuration** to `config.json`:
+
    ```json
    {
      "generators": {
@@ -71,6 +72,7 @@ npx tsx scripts/docs-generators/runner.ts --library lume
    ```
 
 2. **Create generator script** (e.g., `my-library.ts`):
+
    ```typescript
    #!/usr/bin/env npx tsx
    // Follow the pattern in lume.ts
@@ -82,13 +84,13 @@ npx tsx scripts/docs-generators/runner.ts --library lume
 
 Different libraries use different extraction methods:
 
-| Language | Method | Description |
-|----------|--------|-------------|
-| Swift | `dump-docs` | Built-in command that outputs JSON |
-| TypeScript | `yargs-parse` | Parse yargs CLI definitions |
-| Python | `argparse-introspection` | Introspect argparse commands |
-| Python | `sphinx-autodoc` | Generate from docstrings |
-| TypeScript | `typedoc` | Generate from TSDoc comments |
+| Language   | Method                   | Description                        |
+| ---------- | ------------------------ | ---------------------------------- |
+| Swift      | `dump-docs`              | Built-in command that outputs JSON |
+| TypeScript | `yargs-parse`            | Parse yargs CLI definitions        |
+| Python     | `argparse-introspection` | Introspect argparse commands       |
+| Python     | `sphinx-autodoc`         | Generate from docstrings           |
+| TypeScript | `typedoc`                | Generate from TSDoc comments       |
 
 ## CI Integration
 
@@ -101,15 +103,15 @@ The `.github/workflows/docs-sync-check.yml` workflow:
 
 ## Generator Status
 
-| Generator | Status | Notes |
-|-----------|--------|-------|
-| lume | ✅ Implemented | CLI + HTTP API |
-| cua-cli | ⏸️ Planned | Needs yargs introspection |
-| mcp-server | ⏸️ Planned | Needs MCP tool extraction |
-| computer-sdk-python | ⏸️ Planned | Needs Sphinx/pydoc |
-| computer-sdk-typescript | ⏸️ Planned | Needs TypeDoc |
-| agent-sdk-python | ⏸️ Planned | Needs Sphinx/pydoc |
-| agent-sdk-typescript | ⏸️ Planned | Needs TypeDoc |
+| Generator               | Status         | Notes                     |
+| ----------------------- | -------------- | ------------------------- |
+| lume                    | ✅ Implemented | CLI + HTTP API            |
+| cua-cli                 | ⏸️ Planned     | Needs yargs introspection |
+| mcp-server              | ⏸️ Planned     | Needs MCP tool extraction |
+| computer-sdk-python     | ⏸️ Planned     | Needs Sphinx/pydoc        |
+| computer-sdk-typescript | ⏸️ Planned     | Needs TypeDoc             |
+| agent-sdk-python        | ⏸️ Planned     | Needs Sphinx/pydoc        |
+| agent-sdk-typescript    | ⏸️ Planned     | Needs TypeDoc             |
 
 ## Development
 

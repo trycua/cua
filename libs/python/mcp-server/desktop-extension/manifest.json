@@ -23,9 +23,7 @@
     "entry_point": "server.py",
     "mcp_config": {
       "command": "${__dirname}/run_server.sh",
-      "args": [
-        "${__dirname}/server.py"
-      ],
+      "args": ["${__dirname}/server.py"],
       "env": {
         "PYTHONPATH": "${__dirname}",
         "API_KEY": "${user_config.api_key}",
@@ -56,13 +54,7 @@
       "description": "Cleanup a specific session and release its resources"
     }
   ],
-  "keywords": [
-    "automation",
-    "computer-use",
-    "desktop",
-    "ai-agent",
-    "productivity"
-  ],
+  "keywords": ["automation", "computer-use", "desktop", "ai-agent", "productivity"],
   "license": "MIT",
   "user_config": {
     "api_key": {

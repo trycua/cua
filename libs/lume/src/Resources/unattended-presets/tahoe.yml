@@ -121,7 +121,7 @@ boot_commands:
   - "<delay 1>"
   # Confirmation popup: "Are you sure you want to skip signing in with an Apple Account?"
   # Tab to move focus to "Skip" button, then press Enter
-  - "<wait \"Don't Skip\">"
+  - '<wait "Don''t Skip">'
   - "<delay 1>"
   - "<tab>"
   - "<delay 1>"
@@ -147,7 +147,7 @@ boot_commands:
   - "<click 'Continue'>"
   - "<delay 1>"
   # Confirmation popup: "Are you sure you don't want to use Location Services?"
-  - "<wait \"Don't Use\">"
+  - '<wait "Don''t Use">'
   - "<delay 1>"
   - "<enter>"
   - "<delay 2>"

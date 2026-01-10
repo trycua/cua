@@ -37,9 +37,7 @@
       "sourcePath": "libs/typescript/cua-cli/src",
       "docsOutputPath": "docs/content/docs/cua/reference/cli-playbook",
       "generatorScript": "scripts/docs-generators/cua-cli.ts",
-      "watchPaths": [
-        "libs/typescript/cua-cli/src/**/*.ts"
-      ],
+      "watchPaths": ["libs/typescript/cua-cli/src/**/*.ts"],
       "buildCommand": null,
       "buildDirectory": "libs/typescript/cua-cli",
       "extractionMethod": "yargs-parse",
@@ -59,9 +57,7 @@
       "sourcePath": "libs/python/mcp-server/src",
       "docsOutputPath": "docs/content/docs/cua/reference/mcp-server",
       "generatorScript": "scripts/docs-generators/mcp-server.ts",
-      "watchPaths": [
-        "libs/python/mcp-server/src/**/*.py"
-      ],
+      "watchPaths": ["libs/python/mcp-server/src/**/*.py"],
       "buildCommand": null,
       "buildDirectory": "libs/python/mcp-server",
       "extractionMethod": "mcp-introspection",
@@ -81,9 +77,7 @@
       "sourcePath": "libs/python/computer/src",
       "docsOutputPath": "docs/content/docs/cua/reference/computer-sdk",
       "generatorScript": "scripts/docs-generators/python-sdk.ts",
-      "watchPaths": [
-        "libs/python/computer/src/**/*.py"
-      ],
+      "watchPaths": ["libs/python/computer/src/**/*.py"],
       "extractionMethod": "sphinx-autodoc",
       "outputs": [
         {
@@ -101,9 +95,7 @@
       "sourcePath": "libs/typescript/computer/src",
       "docsOutputPath": "docs/content/docs/cua/reference/computer-sdk",
       "generatorScript": "scripts/docs-generators/typescript-sdk.ts",
-      "watchPaths": [
-        "libs/typescript/computer/src/**/*.ts"
-      ],
+      "watchPaths": ["libs/typescript/computer/src/**/*.ts"],
       "extractionMethod": "typedoc",
       "outputs": [
         {
@@ -121,9 +113,7 @@
       "sourcePath": "libs/python/agent/src",
       "docsOutputPath": "docs/content/docs/cua/reference/agent-sdk",
       "generatorScript": "scripts/docs-generators/python-sdk.ts",
-      "watchPaths": [
-        "libs/python/agent/src/**/*.py"
-      ],
+      "watchPaths": ["libs/python/agent/src/**/*.py"],
       "extractionMethod": "sphinx-autodoc",
       "outputs": [
         {
@@ -141,9 +131,7 @@
       "sourcePath": "libs/typescript/agent/src",
       "docsOutputPath": "docs/content/docs/cua/reference/agent-sdk",
       "generatorScript": "scripts/docs-generators/typescript-sdk.ts",
-      "watchPaths": [
-        "libs/typescript/agent/src/**/*.ts"
-      ],
+      "watchPaths": ["libs/typescript/agent/src/**/*.ts"],
       "extractionMethod": "typedoc",
       "outputs": [
         {

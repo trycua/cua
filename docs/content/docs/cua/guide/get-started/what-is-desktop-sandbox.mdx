@@ -6,7 +6,11 @@ description: Understanding isolated environments for safe computer-use agent exe
 A **desktop sandbox** is an isolated virtual environment that provides a complete desktop operating system where computer-use agents can safely execute tasks. Think of it as a disposable computer that your agent can control without risk to your real system.
 
 <div className="not-prose relative rounded-xl overflow-hidden my-8 w-full">
-  <img src="/docs/img/what-is-sandbox.png" alt="What is a Desktop Sandbox" className="w-full h-auto rounded-xl" />
+  <img
+    src="/docs/img/what-is-sandbox.png"
+    alt="What is a Desktop Sandbox"
+    className="w-full h-auto rounded-xl"
+  />
 </div>
 
 ## Why Use Sandboxes?
@@ -34,12 +38,12 @@ Cua supports multiple sandbox types to fit different needs:
 
 Managed virtual machines hosted by Cua's infrastructure.
 
-| Feature | Details |
-|---------|---------|
-| **OS Options** | Linux (Ubuntu), Windows, macOS |
-| **Setup** | Instant—create via CLI or dashboard |
-| **Best For** | Production workloads, teams, CI/CD |
-| **Access** | API key required |
+| Feature        | Details                             |
+| -------------- | ----------------------------------- |
+| **OS Options** | Linux (Ubuntu), Windows, macOS      |
+| **Setup**      | Instant—create via CLI or dashboard |
+| **Best For**   | Production workloads, teams, CI/CD  |
+| **Access**     | API key required                    |
 
 ```bash
 # Create a cloud sandbox
@@ -50,12 +54,12 @@ cua sb create --os linux --size small --region north-america
 
 Linux desktops running in Docker containers on your machine.
 
-| Feature | Details |
-|---------|---------|
+| Feature        | Details                      |
+| -------------- | ---------------------------- |
 | **OS Options** | Linux (XFCE, Ubuntu Desktop) |
-| **Setup** | Docker Desktop required |
-| **Best For** | Local development, testing |
-| **Access** | No API key needed |
+| **Setup**      | Docker Desktop required      |
+| **Best For**   | Local development, testing   |
+| **Access**     | No API key needed            |
 
 ```bash
 # Pull and run a Docker sandbox
@@ -66,23 +70,23 @@ docker pull trycua/cua-xfce:latest
 
 Full virtual machines (Linux, Windows, Android) running inside Docker via QEMU emulation.
 
-| Feature | Details |
-|---------|---------|
-| **OS Options** | Linux, Windows 11, Android |
-| **Setup** | Requires golden image preparation |
-| **Best For** | Testing on specific OS versions |
-| **Access** | No API key needed |
+| Feature        | Details                           |
+| -------------- | --------------------------------- |
+| **OS Options** | Linux, Windows 11, Android        |
+| **Setup**      | Requires golden image preparation |
+| **Best For**   | Testing on specific OS versions   |
+| **Access**     | No API key needed                 |
 
 ### macOS Sandboxes (Lume)
 
 Native macOS virtual machines using Apple's Virtualization framework.
 
-| Feature | Details |
-|---------|---------|
-| **OS Options** | macOS (various versions) |
-| **Setup** | macOS host required, install Lume CLI |
-| **Best For** | macOS-specific automation |
-| **Access** | No API key needed |
+| Feature        | Details                               |
+| -------------- | ------------------------------------- |
+| **OS Options** | macOS (various versions)              |
+| **Setup**      | macOS host required, install Lume CLI |
+| **Best For**   | macOS-specific automation             |
+| **Access**     | No API key needed                     |
 
 ```bash
 # Start a macOS sandbox
@@ -93,12 +97,12 @@ lume run macos-sequoia-cua:latest
 
 Native Windows sandbox using Windows Sandbox feature.
 
-| Feature | Details |
-|---------|---------|
-| **OS Options** | Windows |
-| **Setup** | Windows 10 Pro/Enterprise or Windows 11 |
-| **Best For** | Windows-specific automation |
-| **Access** | No API key needed |
+| Feature        | Details                                 |
+| -------------- | --------------------------------------- |
+| **OS Options** | Windows                                 |
+| **Setup**      | Windows 10 Pro/Enterprise or Windows 11 |
+| **Best For**   | Windows-specific automation             |
+| **Access**     | No API key needed                       |
 
 ## How Sandboxes Connect to Agents
 
@@ -130,15 +134,15 @@ The Computer Framework provides the same API regardless of which sandbox type yo
 
 ## Choosing the Right Sandbox
 
-| Use Case | Recommended Sandbox |
-|----------|-------------------|
-| Getting started / learning | Docker (Linux) |
-| Production deployment | Cloud Sandbox |
-| macOS automation | Lume (macOS) |
-| Windows automation | Cloud (Windows) or Windows Sandbox |
-| Android testing | QEMU Docker (Android) |
-| CI/CD pipelines | Cloud Sandbox |
-| Air-gapped environments | Docker or QEMU |
+| Use Case                   | Recommended Sandbox                |
+| -------------------------- | ---------------------------------- |
+| Getting started / learning | Docker (Linux)                     |
+| Production deployment      | Cloud Sandbox                      |
+| macOS automation           | Lume (macOS)                       |
+| Windows automation         | Cloud (Windows) or Windows Sandbox |
+| Android testing            | QEMU Docker (Android)              |
+| CI/CD pipelines            | Cloud Sandbox                      |
+| Air-gapped environments    | Docker or QEMU                     |
 
 ## Next Steps
 

@@ -163,190 +163,202 @@ Create `gui/index.html` with the Minesweeper game:
 
 ```html
 <div class="p-4 flex flex-col items-center">
-    <div class="mb-4 text-center">
-        <h1 class="text-2xl font-bold mb-2">Minesweeper</h1>
-        <div class="flex gap-4 justify-center items-center mb-2">
-            <div class="text-lg font-mono">🚩 <span id="flag-count">0</span></div>
-            <button id="reset-btn" class="px-4 py-2 bg-gray-200 hover:bg-gray-300 rounded">😊 New Game</button>
-            <div class="text-lg font-mono">⏱️ <span id="timer">0</span></div>
-        </div>
-        <div id="status" class="text-sm font-semibold"></div>
+  <div class="mb-4 text-center">
+    <h1 class="text-2xl font-bold mb-2">Minesweeper</h1>
+    <div class="flex gap-4 justify-center items-center mb-2">
+      <div class="text-lg font-mono">🚩 <span id="flag-count">0</span></div>
+      <button id="reset-btn" class="px-4 py-2 bg-gray-200 hover:bg-gray-300 rounded">
+        😊 New Game
+      </button>
+      <div class="text-lg font-mono">⏱️ <span id="timer">0</span></div>
     </div>
-    <div id="game-board" class="inline-block border-4 border-gray-400 bg-gray-300"></div>
+    <div id="status" class="text-sm font-semibold"></div>
+  </div>
+  <div id="game-board" class="inline-block border-4 border-gray-400 bg-gray-300"></div>
 
-    <style>
-        .cell {
-            width: 30px;
-            height: 30px;
-            border: 2px outset #999;
-            background: #c0c0c0;
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            font-weight: bold;
-            font-size: 16px;
-            cursor: pointer;
-            user-select: none;
+  <style>
+    .cell {
+      width: 30px;
+      height: 30px;
+      border: 2px outset #999;
+      background: #c0c0c0;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: bold;
+      font-size: 16px;
+      cursor: pointer;
+      user-select: none;
+    }
+    .cell.revealed {
+      border: 1px solid #999;
+      background: #e0e0e0;
+      cursor: default;
+    }
+    .cell.mine {
+      background: #ff6b6b;
+    }
+    .cell.num-1 {
+      color: blue;
+    }
+    .cell.num-2 {
+      color: green;
+    }
+    .cell.num-3 {
+      color: red;
+    }
+  </style>
+
+  <script>
+    class Minesweeper {
+      constructor(rows, cols, mines) {
+        this.rows = rows;
+        this.cols = cols;
+        this.totalMines = mines;
+        this.board = [];
+        this.revealed = [];
+        this.flagged = [];
+        this.revealedCount = 0;
+        this.initBoard();
+        this.render();
+        window.__gameState = 'playing';
+        window.__gameWon = false;
+        window.__gameLost = false;
+      }
+
+      initBoard() {
+        for (let r = 0; r < this.rows; r++) {
+          this.board[r] = [];
+          this.revealed[r] = [];
+          this.flagged[r] = [];
+          for (let c = 0; c < this.cols; c++) {
+            this.board[r][c] = 0;
+            this.revealed[r][c] = false;
+            this.flagged[r][c] = false;
+          }
         }
-        .cell.revealed {
-            border: 1px solid #999;
-            background: #e0e0e0;
-            cursor: default;
-        }
-        .cell.mine { background: #ff6b6b; }
-        .cell.num-1 { color: blue; }
-        .cell.num-2 { color: green; }
-        .cell.num-3 { color: red; }
-    </style>
+      }
 
-    <script>
-        class Minesweeper {
-            constructor(rows, cols, mines) {
-                this.rows = rows;
-                this.cols = cols;
-                this.totalMines = mines;
-                this.board = [];
-                this.revealed = [];
-                this.flagged = [];
-                this.revealedCount = 0;
-                this.initBoard();
-                this.render();
-                window.__gameState = 'playing';
-                window.__gameWon = false;
-                window.__gameLost = false;
-            }
-
-            initBoard() {
-                for (let r = 0; r < this.rows; r++) {
-                    this.board[r] = [];
-                    this.revealed[r] = [];
-                    this.flagged[r] = [];
-                    for (let c = 0; c < this.cols; c++) {
-                        this.board[r][c] = 0;
-                        this.revealed[r][c] = false;
-                        this.flagged[r][c] = false;
-                    }
-                }
-            }
-
-            placeMines(excludeRow, excludeCol) {
-                let placed = 0;
-                while (placed < this.totalMines) {
-                    const r = Math.floor(Math.random() * this.rows);
-                    const c = Math.floor(Math.random() * this.cols);
-                    if ((r === excludeRow && c === excludeCol) || this.board[r][c] === -1) {
-                        continue;
-                    }
-                    this.board[r][c] = -1;
-                    placed++;
-                }
-
-                // Calculate numbers
-                for (let r = 0; r < this.rows; r++) {
-                    for (let c = 0; c < this.cols; c++) {
-                        if (this.board[r][c] !== -1) {
-                            this.board[r][c] = this.countAdjacentMines(r, c);
-                        }
-                    }
-                }
-            }
-
-            countAdjacentMines(row, col) {
-                let count = 0;
-                for (let dr = -1; dr <= 1; dr++) {
-                    for (let dc = -1; dc <= 1; dc++) {
-                        if (dr === 0 && dc === 0) continue;
-                        const r = row + dr, c = col + dc;
-                        if (r >= 0 && r < this.rows && c >= 0 && c < this.cols && this.board[r][c] === -1) {
-                            count++;
-                        }
-                    }
-                }
-                return count;
-            }
-
-            reveal(row, col) {
-                if (this.revealed[row][col] || this.flagged[row][col]) return;
-
-                if (!this.firstClickDone) {
-                    this.placeMines(row, col);
-                    this.firstClickDone = true;
-                }
-
-                this.revealed[row][col] = true;
-                this.revealedCount++;
-
-                if (this.board[row][col] === -1) {
-                    this.lose();
-                    return;
-                }
-
-                if (this.board[row][col] === 0) {
-                    for (let dr = -1; dr <= 1; dr++) {
-                        for (let dc = -1; dc <= 1; dc++) {
-                            const r = row + dr, c = col + dc;
-                            if (r >= 0 && r < this.rows && c >= 0 && c < this.cols && !this.revealed[r][c]) {
-                                this.reveal(r, c);
-                            }
-                        }
-                    }
-                }
-
-                this.checkWin();
-                this.render();
-            }
-
-            checkWin() {
-                if (this.revealedCount === this.rows * this.cols - this.totalMines) {
-                    window.__gameState = 'won';
-                    window.__gameWon = true;
-                    document.getElementById('status').textContent = '🎉 You Won!';
-                }
-            }
-
-            lose() {
-                window.__gameState = 'lost';
-                window.__gameLost = true;
-                document.getElementById('status').textContent = '💥 Game Over!';
-            }
-
-            render() {
-                const board = document.getElementById('game-board');
-                board.innerHTML = '';
-                board.style.display = 'grid';
-                board.style.gridTemplateColumns = `repeat(${this.cols}, 30px)`;
-
-                for (let r = 0; r < this.rows; r++) {
-                    for (let c = 0; c < this.cols; c++) {
-                        const cell = document.createElement('div');
-                        cell.className = 'cell';
-                        cell.dataset.row = r;
-                        cell.dataset.col = c;
-
-                        if (this.revealed[r][c]) {
-                            cell.classList.add('revealed');
-                            if (this.board[r][c] === -1) {
-                                cell.textContent = '💣';
-                                cell.classList.add('mine');
-                            } else if (this.board[r][c] > 0) {
-                                cell.textContent = this.board[r][c];
-                                cell.classList.add(`num-${this.board[r][c]}`);
-                            }
-                        } else if (this.flagged[r][c]) {
-                            cell.textContent = '🚩';
-                        }
-
-                        cell.addEventListener('click', () => this.reveal(r, c));
-                        board.appendChild(cell);
-                    }
-                }
-            }
+      placeMines(excludeRow, excludeCol) {
+        let placed = 0;
+        while (placed < this.totalMines) {
+          const r = Math.floor(Math.random() * this.rows);
+          const c = Math.floor(Math.random() * this.cols);
+          if ((r === excludeRow && c === excludeCol) || this.board[r][c] === -1) {
+            continue;
+          }
+          this.board[r][c] = -1;
+          placed++;
         }
 
-        window.initGame = function(rows, cols, mines) {
-            window.game = new Minesweeper(rows, cols, mines);
-        };
-    </script>
+        // Calculate numbers
+        for (let r = 0; r < this.rows; r++) {
+          for (let c = 0; c < this.cols; c++) {
+            if (this.board[r][c] !== -1) {
+              this.board[r][c] = this.countAdjacentMines(r, c);
+            }
+          }
+        }
+      }
+
+      countAdjacentMines(row, col) {
+        let count = 0;
+        for (let dr = -1; dr <= 1; dr++) {
+          for (let dc = -1; dc <= 1; dc++) {
+            if (dr === 0 && dc === 0) continue;
+            const r = row + dr,
+              c = col + dc;
+            if (r >= 0 && r < this.rows && c >= 0 && c < this.cols && this.board[r][c] === -1) {
+              count++;
+            }
+          }
+        }
+        return count;
+      }
+
+      reveal(row, col) {
+        if (this.revealed[row][col] || this.flagged[row][col]) return;
+
+        if (!this.firstClickDone) {
+          this.placeMines(row, col);
+          this.firstClickDone = true;
+        }
+
+        this.revealed[row][col] = true;
+        this.revealedCount++;
+
+        if (this.board[row][col] === -1) {
+          this.lose();
+          return;
+        }
+
+        if (this.board[row][col] === 0) {
+          for (let dr = -1; dr <= 1; dr++) {
+            for (let dc = -1; dc <= 1; dc++) {
+              const r = row + dr,
+                c = col + dc;
+              if (r >= 0 && r < this.rows && c >= 0 && c < this.cols && !this.revealed[r][c]) {
+                this.reveal(r, c);
+              }
+            }
+          }
+        }
+
+        this.checkWin();
+        this.render();
+      }
+
+      checkWin() {
+        if (this.revealedCount === this.rows * this.cols - this.totalMines) {
+          window.__gameState = 'won';
+          window.__gameWon = true;
+          document.getElementById('status').textContent = '🎉 You Won!';
+        }
+      }
+
+      lose() {
+        window.__gameState = 'lost';
+        window.__gameLost = true;
+        document.getElementById('status').textContent = '💥 Game Over!';
+      }
+
+      render() {
+        const board = document.getElementById('game-board');
+        board.innerHTML = '';
+        board.style.display = 'grid';
+        board.style.gridTemplateColumns = `repeat(${this.cols}, 30px)`;
+
+        for (let r = 0; r < this.rows; r++) {
+          for (let c = 0; c < this.cols; c++) {
+            const cell = document.createElement('div');
+            cell.className = 'cell';
+            cell.dataset.row = r;
+            cell.dataset.col = c;
+
+            if (this.revealed[r][c]) {
+              cell.classList.add('revealed');
+              if (this.board[r][c] === -1) {
+                cell.textContent = '💣';
+                cell.classList.add('mine');
+              } else if (this.board[r][c] > 0) {
+                cell.textContent = this.board[r][c];
+                cell.classList.add(`num-${this.board[r][c]}`);
+              }
+            } else if (this.flagged[r][c]) {
+              cell.textContent = '🚩';
+            }
+
+            cell.addEventListener('click', () => this.reveal(r, c));
+            board.appendChild(cell);
+          }
+        }
+      }
+    }
+
+    window.initGame = function (rows, cols, mines) {
+      window.game = new Minesweeper(rows, cols, mines);
+    };
+  </script>
 </div>
 ```
 
@@ -386,6 +398,7 @@ cb run task tasks/minesweeper --agent cua-agent --model anthropic/claude-sonnet-
 ## Why Universal?
 
 This task works across all platforms:
+
 - **Simulated Desktop**: Set `provider: "simulated"` for lightweight browser preview
 - **Docker**: Use real Linux desktop environments
 - **QEMU**: Run on actual Windows/Linux VMs

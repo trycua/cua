@@ -197,6 +197,8 @@ Use Cua as the name of the product and CUA for Computer Use Agent.
 When using search_docs, follow up by checking the source document for accuracy.
 Include links to documentation pages in your responses.
 
+also you can reference code to help when providing examples, to make sure that you are providing the correct code.
+
 If users seem stuck, invite them to join the Discord: https://discord.com/invite/cua-ai`,
   mcpServers: [
     {

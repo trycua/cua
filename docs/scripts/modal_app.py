@@ -828,15 +828,16 @@ async def generate_code_index():
     conn.close()
 
     # Copy LanceDB to volume
-    del lance_table
-    del lance_db
-
-    lance_dest = DB_DIR / "code_index.lancedb"
-    if lance_dest.exists():
-        shutil.rmtree(lance_dest)
-    shutil.copytree(TMP_LANCE_DIR, lance_dest)
-    shutil.rmtree(TMP_LANCE_DIR)
-
+    try:
+        lance_dest = DB_DIR / "code_index.lancedb"
+        if lance_dest.exists():
+            shutil.rmtree(lance_dest)
+        shutil.copytree(TMP_LANCE_DIR, lance_dest)
+        shutil.rmtree(TMP_LANCE_DIR)
+    finally:
+        # Ensure LanceDB resources are released even if an exception occurs
+        del lance_table
+        del lance_db
     code_volume.commit()
 
     print(f"Code index complete: {total_files} files in SQLite, {total_embedded} embedded")

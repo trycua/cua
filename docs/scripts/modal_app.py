@@ -725,117 +725,118 @@ async def generate_code_index():
     )
     conn.commit()
 
-    # Initialize LanceDB in temp directory
-    TMP_LANCE_DIR = Path(tempfile.mkdtemp(prefix="code_lancedb_"))
-    model = get_registry().get("sentence-transformers").create(name="all-MiniLM-L6-v2")
+    # Initialize LanceDB in temp directory with automatic cleanup
+    with tempfile.TemporaryDirectory(prefix="code_lancedb_") as tmp_dir:
+        TMP_LANCE_DIR = Path(tmp_dir)
+        model = get_registry().get("sentence-transformers").create(name="all-MiniLM-L6-v2")
 
-    class CodeFile(LanceModel):
-        text: str = model.SourceField()
-        vector: Vector(model.ndims()) = model.VectorField()
-        component: str
-        version: str
-        file_path: str
-        language: str
+        class CodeFile(LanceModel):
+            text: str = model.SourceField()
+            vector: Vector(model.ndims()) = model.VectorField()
+            component: str
+            version: str
+            file_path: str
+            language: str
 
-    lance_db = lancedb.connect(TMP_LANCE_DIR)
-    lance_table = lance_db.create_table("code", schema=CodeFile, mode="overwrite")
+        lance_db = lancedb.connect(TMP_LANCE_DIR)
+        lance_table = lance_db.create_table("code", schema=CodeFile, mode="overwrite")
 
-    # Process each tag
-    total_files = 0
-    total_embedded = 0
-    failed_tags = []
+        # Process each tag
+        total_files = 0
+        total_embedded = 0
+        failed_tags = []
 
-    for i, tag in enumerate(all_tags):
-        print(f"[{i + 1}/{len(all_tags)}] Processing {tag}")
+        for i, tag in enumerate(all_tags):
+            print(f"[{i + 1}/{len(all_tags)}] Processing {tag}")
 
-        try:
-            component, version = parse_tag(tag)
-        except ValueError as e:
-            print(f"  Skipping: {e}")
-            failed_tags.append(tag)
-            continue
+            try:
+                component, version = parse_tag(tag)
+            except ValueError as e:
+                print(f"  Skipping: {e}")
+                failed_tags.append(tag)
+                continue
 
-        # Get files at this tag
-        try:
-            result = subprocess.run(
-                ["git", "ls-tree", "-r", "--name-only", tag],
-                cwd=REPO_PATH,
-                check=True,
-                capture_output=True,
-                text=True,
-            )
-            files = [
-                f.strip()
-                for f in result.stdout.strip().split("\n")
-                if f.strip() and Path(f.strip()).suffix.lower() in SOURCE_EXTENSIONS
-            ]
-        except subprocess.CalledProcessError:
-            failed_tags.append(tag)
-            continue
-
-        lance_batch = []
-
-        for file_path in files:
+            # Get files at this tag
             try:
                 result = subprocess.run(
-                    ["git", "show", f"{tag}:{file_path}"],
+                    ["git", "ls-tree", "-r", "--name-only", tag],
                     cwd=REPO_PATH,
                     check=True,
                     capture_output=True,
+                    text=True,
                 )
-                content = result.stdout.decode("utf-8", errors="replace")
-                if "\x00" in content[:1024]:
-                    continue  # Skip binary
-            except (subprocess.CalledProcessError, UnicodeDecodeError):
+                files = [
+                    f.strip()
+                    for f in result.stdout.strip().split("\n")
+                    if f.strip() and Path(f.strip()).suffix.lower() in SOURCE_EXTENSIONS
+                ]
+            except subprocess.CalledProcessError:
+                failed_tags.append(tag)
                 continue
 
-            language = detect_language(file_path)
-            content_size = len(content)
+            lance_batch = []
 
-            # Add to SQLite
-            if content_size <= MAX_FILE_SIZE_SQLITE:
+            for file_path in files:
                 try:
-                    cursor.execute(
-                        "INSERT OR REPLACE INTO code_files (component, version, file_path, content, language) VALUES (?, ?, ?, ?, ?)",
-                        (component, version, file_path, content, language),
+                    result = subprocess.run(
+                        ["git", "show", f"{tag}:{file_path}"],
+                        cwd=REPO_PATH,
+                        check=True,
+                        capture_output=True,
                     )
-                    total_files += 1
-                except Exception:
-                    pass
+                    content = result.stdout.decode("utf-8", errors="replace")
+                    if "\x00" in content[:1024]:
+                        continue  # Skip binary
+                except (subprocess.CalledProcessError, UnicodeDecodeError):
+                    continue
 
-            # Queue for LanceDB
-            if content_size <= MAX_FILE_SIZE_EMBEDDINGS:
-                lance_batch.append(
-                    {
-                        "text": content,
-                        "component": component,
-                        "version": version,
-                        "file_path": file_path,
-                        "language": language,
-                    }
-                )
+                language = detect_language(file_path)
+                content_size = len(content)
 
-        conn.commit()
+                # Add to SQLite
+                if content_size <= MAX_FILE_SIZE_SQLITE:
+                    try:
+                        cursor.execute(
+                            "INSERT OR REPLACE INTO code_files (component, version, file_path, content, language) VALUES (?, ?, ?, ?, ?)",
+                            (component, version, file_path, content, language),
+                        )
+                        total_files += 1
+                    except Exception:
+                        pass
 
-        # Add to LanceDB
-        if lance_batch:
-            try:
-                lance_table.add(lance_batch)
-                total_embedded += len(lance_batch)
-            except Exception as e:
-                print(f"  LanceDB error: {e}")
+                # Queue for LanceDB
+                if content_size <= MAX_FILE_SIZE_EMBEDDINGS:
+                    lance_batch.append(
+                        {
+                            "text": content,
+                            "component": component,
+                            "version": version,
+                            "file_path": file_path,
+                            "language": language,
+                        }
+                    )
 
-    conn.close()
+            conn.commit()
 
-    # Copy LanceDB to volume
-    del lance_table
-    del lance_db
+            # Add to LanceDB
+            if lance_batch:
+                try:
+                    lance_table.add(lance_batch)
+                    total_embedded += len(lance_batch)
+                except Exception as e:
+                    print(f"  LanceDB error: {e}")
 
-    lance_dest = DB_DIR / "code_index.lancedb"
-    if lance_dest.exists():
-        shutil.rmtree(lance_dest)
-    shutil.copytree(TMP_LANCE_DIR, lance_dest)
-    shutil.rmtree(TMP_LANCE_DIR)
+        conn.close()
+
+        # Copy LanceDB to volume
+        del lance_table
+        del lance_db
+
+        lance_dest = DB_DIR / "code_index.lancedb"
+        if lance_dest.exists():
+            shutil.rmtree(lance_dest)
+        shutil.copytree(TMP_LANCE_DIR, lance_dest)
+        # Temporary directory is automatically cleaned up when exiting context
 
     code_volume.commit()
 

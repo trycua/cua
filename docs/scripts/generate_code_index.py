@@ -391,31 +391,29 @@ def index_all_tags(incremental: bool = True):
 
 def test_sqlite_search(query: str, component: str, version: str):
     """Test SQLite FTS search"""
-    conn = sqlite3.connect(SQLITE_PATH)
-    cursor = conn.cursor()
+    with sqlite3.connect(SQLITE_PATH) as conn:
+        cursor = conn.cursor()
 
-    print(f"\nFTS search for '{query}' in {component}@{version}")
-    print("-" * 50)
+        print(f"\nFTS search for '{query}' in {component}@{version}")
+        print("-" * 50)
 
-    cursor.execute(
-        """
-        SELECT file_path, snippet(code_files_fts, 0, '>>>', '<<<', '...', 50) as snippet
-        FROM code_files_fts
-        WHERE code_files_fts MATCH ?
-          AND component = ?
-          AND version = ?
-        ORDER BY rank
-        LIMIT 5
-    """,
-        (query, component, version),
-    )
+        cursor.execute(
+            """
+            SELECT file_path, snippet(code_files_fts, 0, '>>>', '<<<', '...', 50) as snippet
+            FROM code_files_fts
+            WHERE code_files_fts MATCH ?
+              AND component = ?
+              AND version = ?
+            ORDER BY rank
+            LIMIT 5
+        """,
+            (query, component, version),
+        )
 
-    results = cursor.fetchall()
-    for file_path, snippet in results:
-        print(f"\n  {file_path}")
-        print(f"  Snippet: {snippet[:200]}...")
-
-    conn.close()
+        results = cursor.fetchall()
+        for file_path, snippet in results:
+            print(f"\n  {file_path}")
+            print(f"  Snippet: {snippet[:200]}...")
 
 
 def test_lance_search(query: str, component: str, version: str):

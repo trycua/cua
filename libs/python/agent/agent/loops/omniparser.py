@@ -314,42 +314,59 @@ class OmniparserConfig(AsyncAgentConfig):
         # Prepare tools for OpenAI API
         openai_tools, id2xy = _prepare_tools_for_omniparser(tools)
 
-        # Find last computer_call_output
-        last_computer_call_output = get_last_computer_call_output(messages)  # type: ignore
-        if last_computer_call_output:
-            image_url = last_computer_call_output.get("output", {}).get("image_url", "")
-            image_data = image_url.split(",")[-1]
-            if image_data:
-                parser = get_parser()
+        # Build per-screenshot element mappings for historical consistency
+        screenshot_mappings = []  # (message_index, xy2id)
+
+        parser = get_parser()
+
+        for idx, message in enumerate(messages):
+            if not isinstance(message, dict):
+                message = message.__dict__
+
+            if message.get("type") == "computer_call_output":
+                image_url = message.get("output", {}).get("image_url", "")
+                if not image_url:
+                    continue
+
+                image_data = image_url.split(",")[-1]
+                if not image_data:
+                    continue
+
                 result = parser.parse(image_data)
+
                 if _on_screenshot:
                     await _on_screenshot(result.annotated_image_base64, "annotated_image")
 
-                # Convert OmniParser normalized coordinates (0-1) to absolute pixels, convert to pixels
+                local_id2xy = {}
+
                 for element in result.elements:
                     norm_x = (element.bbox.x1 + element.bbox.x2) / 2
                     norm_y = (element.bbox.y1 + element.bbox.y2) / 2
                     pixel_x = int(norm_x * width)
                     pixel_y = int(norm_y * height)
-                    id2xy[element.id] = (pixel_x, pixel_y)
+                    local_id2xy[element.id] = (pixel_x, pixel_y)
 
-                # Replace the original screenshot with the annotated image
-                annotated_image_url = f"data:image/png;base64,{result.annotated_image_base64}"
-                last_computer_call_output["output"]["image_url"] = annotated_image_url
+                xy2id = {v: k for k, v in local_id2xy.items()}
+                screenshot_mappings.append((idx, xy2id))
 
-        xy2id = {v: k for k, v in id2xy.items()}
+        # Replace screenshot with annotated image
+                message["output"]["image_url"] = (
+                    f"data:image/png;base64,{result.annotated_image_base64}"
+                )
+
+        def get_mapping_for_index(index):
+            applicable = [m for i, m in screenshot_mappings if i <= index]
+            return applicable[-1] if applicable else {}
+
         messages_with_element_ids = []
+
         for i, message in enumerate(messages):
             if not isinstance(message, dict):
                 message = message.__dict__
 
-            msg_type = message.get("type")
-
-            if msg_type == "computer_call" and "action" in message:
-                action = message.get("action", {})
-
-            converted = await replace_computer_call_with_function(message, xy2id)  # type: ignore
-            messages_with_element_ids += converted
+            xy2id = get_mapping_for_index(i)
+            converted = await replace_computer_call_with_function(message, xy2id)
+            messages_with_element_ids.extend(converted)
 
         completion_messages = convert_responses_items_to_completion_messages(
             messages_with_element_ids, allow_images_in_tool_results=False

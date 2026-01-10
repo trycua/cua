@@ -39,6 +39,11 @@ jobs:
           MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
           MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
         run: |
+          if [ -z "${MODAL_TOKEN_ID}" ] || [ -z "${MODAL_TOKEN_SECRET}" ]; then
+            echo "Error: Modal credentials are not configured." >&2
+            echo "Please set both MODAL_TOKEN_ID and MODAL_TOKEN_SECRET as repository or organization secrets." >&2
+            exit 1
+          fi
           modal token set --token-id "$MODAL_TOKEN_ID" --token-secret "$MODAL_TOKEN_SECRET"
 
       - name: Run initial crawl and database generation

@@ -22,12 +22,14 @@ from markdown_it import MarkdownIt
 # Define the Modal app
 app = modal.App("cua-docs-mcp")
 
-# Create a persistent volume for storing crawled data and databases
+# Create persistent volumes for storing data
 docs_volume = modal.Volume.from_name("cua-docs-data", create_if_missing=True)
+code_volume = modal.Volume.from_name("cua-code-index", create_if_missing=True)
 
 # Define the container image with all dependencies
 image = (
     modal.Image.debian_slim(python_version="3.12")
+    .apt_install("git")
     .pip_install(
         "crawl4ai>=0.4.0",
         "playwright>=1.40.0",
@@ -44,10 +46,15 @@ image = (
     .run_commands("playwright install --with-deps chromium")
 )
 
-# Volume mount path
+# Volume mount paths
 VOLUME_PATH = "/data"
 CRAWLED_DATA_PATH = f"{VOLUME_PATH}/crawled_data"
 DB_PATH = f"{VOLUME_PATH}/docs_db"
+
+# Code index volume mount path
+CODE_VOLUME_PATH = "/code_data"
+CODE_REPO_PATH = f"{CODE_VOLUME_PATH}/repo"
+CODE_DB_PATH = f"{CODE_VOLUME_PATH}/code_db"
 
 
 # =============================================================================
@@ -589,13 +596,262 @@ async def generate_sqlite_db():
 
 
 # =============================================================================
+# Code Index Generation Functions
+# =============================================================================
+
+# Source file extensions to index
+SOURCE_EXTENSIONS = {".py", ".ts", ".js", ".tsx"}
+MAX_FILE_SIZE_SQLITE = 1_000_000  # 1MB for SQLite
+MAX_FILE_SIZE_EMBEDDINGS = 100_000  # 100KB for embeddings
+
+
+def parse_tag(tag: str) -> tuple[str, str]:
+    """Parse a git tag into component and version."""
+    if tag.startswith("v") and len(tag) > 1 and tag[1].isdigit():
+        return ("cua", tag[1:])
+    match = re.match(r"^(.+)-v(\d+\.\d+\.\d+.*)$", tag)
+    if match:
+        return (match.group(1), match.group(2))
+    raise ValueError(f"Cannot parse tag: {tag}")
+
+
+def detect_language(file_path: str) -> str:
+    """Detect programming language from file extension."""
+    ext = Path(file_path).suffix.lower()
+    return {".py": "python", ".ts": "typescript", ".tsx": "typescript", ".js": "javascript"}.get(
+        ext, "unknown"
+    )
+
+
+@app.function(
+    image=image,
+    volumes={CODE_VOLUME_PATH: code_volume},
+    timeout=3600,  # 1 hour
+    cpu=2.0,
+    memory=8192,
+)
+async def generate_code_index():
+    """Generate code search index from all git tags"""
+    import shutil
+    import subprocess
+    import tempfile
+
+    import lancedb
+    from lancedb.embeddings import get_registry
+    from lancedb.pydantic import LanceModel, Vector
+
+    print("Generating code search index...")
+
+    REPO_URL = "https://github.com/anthropics/cua.git"
+    REPO_PATH = Path(CODE_REPO_PATH)
+    DB_DIR = Path(CODE_DB_PATH)
+    SQLITE_PATH = DB_DIR / "code_index.sqlite"
+
+    DB_DIR.mkdir(parents=True, exist_ok=True)
+
+    # Clone or update repo (bare clone for efficiency)
+    if REPO_PATH.exists():
+        print("Fetching latest tags...")
+        subprocess.run(["git", "fetch", "--all", "--tags"], cwd=REPO_PATH, check=True)
+    else:
+        print(f"Cloning {REPO_URL}...")
+        REPO_PATH.parent.mkdir(parents=True, exist_ok=True)
+        subprocess.run(["git", "clone", "--bare", REPO_URL, str(REPO_PATH)], check=True)
+
+    # Get all tags
+    result = subprocess.run(
+        ["git", "tag"], cwd=REPO_PATH, check=True, capture_output=True, text=True
+    )
+    all_tags = [t.strip() for t in result.stdout.strip().split("\n") if t.strip()]
+    print(f"Found {len(all_tags)} tags")
+
+    # Initialize SQLite
+    if SQLITE_PATH.exists():
+        SQLITE_PATH.unlink()
+
+    conn = sqlite3.connect(SQLITE_PATH)
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        CREATE TABLE code_files (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            component TEXT NOT NULL,
+            version TEXT NOT NULL,
+            file_path TEXT NOT NULL,
+            content TEXT NOT NULL,
+            language TEXT NOT NULL,
+            UNIQUE(component, version, file_path)
+        )
+    """
+    )
+    cursor.execute("CREATE INDEX idx_component ON code_files(component)")
+    cursor.execute("CREATE INDEX idx_version ON code_files(component, version)")
+
+    cursor.execute(
+        """
+        CREATE VIRTUAL TABLE code_files_fts USING fts5(
+            content,
+            component UNINDEXED,
+            version UNINDEXED,
+            file_path UNINDEXED,
+            content='code_files',
+            content_rowid='id'
+        )
+    """
+    )
+
+    # FTS triggers
+    cursor.execute(
+        """
+        CREATE TRIGGER code_files_ai AFTER INSERT ON code_files BEGIN
+            INSERT INTO code_files_fts(rowid, content, component, version, file_path)
+            VALUES (new.id, new.content, new.component, new.version, new.file_path);
+        END;
+    """
+    )
+    conn.commit()
+
+    # Initialize LanceDB in temp directory
+    TMP_LANCE_DIR = Path(tempfile.mkdtemp(prefix="code_lancedb_"))
+    model = get_registry().get("sentence-transformers").create(name="all-MiniLM-L6-v2")
+
+    class CodeFile(LanceModel):
+        text: str = model.SourceField()
+        vector: Vector(model.ndims()) = model.VectorField()
+        component: str
+        version: str
+        file_path: str
+        language: str
+
+    lance_db = lancedb.connect(TMP_LANCE_DIR)
+    lance_table = lance_db.create_table("code", schema=CodeFile, mode="overwrite")
+
+    # Process each tag
+    total_files = 0
+    total_embedded = 0
+    failed_tags = []
+
+    for i, tag in enumerate(all_tags):
+        print(f"[{i + 1}/{len(all_tags)}] Processing {tag}")
+
+        try:
+            component, version = parse_tag(tag)
+        except ValueError as e:
+            print(f"  Skipping: {e}")
+            failed_tags.append(tag)
+            continue
+
+        # Get files at this tag
+        try:
+            result = subprocess.run(
+                ["git", "ls-tree", "-r", "--name-only", tag],
+                cwd=REPO_PATH,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            files = [
+                f.strip()
+                for f in result.stdout.strip().split("\n")
+                if f.strip() and Path(f.strip()).suffix.lower() in SOURCE_EXTENSIONS
+            ]
+        except subprocess.CalledProcessError:
+            failed_tags.append(tag)
+            continue
+
+        lance_batch = []
+
+        for file_path in files:
+            try:
+                result = subprocess.run(
+                    ["git", "show", f"{tag}:{file_path}"],
+                    cwd=REPO_PATH,
+                    check=True,
+                    capture_output=True,
+                )
+                content = result.stdout.decode("utf-8", errors="replace")
+                if "\x00" in content[:1024]:
+                    continue  # Skip binary
+            except (subprocess.CalledProcessError, UnicodeDecodeError):
+                continue
+
+            language = detect_language(file_path)
+            content_size = len(content)
+
+            # Add to SQLite
+            if content_size <= MAX_FILE_SIZE_SQLITE:
+                try:
+                    cursor.execute(
+                        "INSERT OR REPLACE INTO code_files (component, version, file_path, content, language) VALUES (?, ?, ?, ?, ?)",
+                        (component, version, file_path, content, language),
+                    )
+                    total_files += 1
+                except Exception:
+                    pass
+
+            # Queue for LanceDB
+            if content_size <= MAX_FILE_SIZE_EMBEDDINGS:
+                lance_batch.append(
+                    {
+                        "text": content,
+                        "component": component,
+                        "version": version,
+                        "file_path": file_path,
+                        "language": language,
+                    }
+                )
+
+        conn.commit()
+
+        # Add to LanceDB
+        if lance_batch:
+            try:
+                lance_table.add(lance_batch)
+                total_embedded += len(lance_batch)
+            except Exception as e:
+                print(f"  LanceDB error: {e}")
+
+    conn.close()
+
+    # Copy LanceDB to volume
+    del lance_table
+    del lance_db
+
+    lance_dest = DB_DIR / "code_index.lancedb"
+    if lance_dest.exists():
+        shutil.rmtree(lance_dest)
+    shutil.copytree(TMP_LANCE_DIR, lance_dest)
+    shutil.rmtree(TMP_LANCE_DIR)
+
+    code_volume.commit()
+
+    print(f"Code index complete: {total_files} files in SQLite, {total_embedded} embedded")
+    return {"files": total_files, "embedded": total_embedded, "failed_tags": len(failed_tags)}
+
+
+@app.function(
+    image=image,
+    volumes={CODE_VOLUME_PATH: code_volume},
+    schedule=modal.Cron("0 5 * * *"),  # Daily at 5 AM UTC (before docs crawl)
+    timeout=3600,
+)
+async def scheduled_code_index():
+    """Scheduled daily code index generation"""
+    print("Running scheduled code indexing...")
+    result = await generate_code_index.remote.aio()
+    print(f"Code indexing complete: {result}")
+    return result
+
+
+# =============================================================================
 # MCP Server
 # =============================================================================
 
 
 @app.function(
     image=image,
-    volumes={VOLUME_PATH: docs_volume},
+    volumes={VOLUME_PATH: docs_volume, CODE_VOLUME_PATH: code_volume},
     cpu=1.0,
     memory=2048,
 )
@@ -610,8 +866,8 @@ def web():
 
     # Initialize the MCP server
     mcp = FastMCP(
-        name="CUA Docs",
-        instructions="""CUA Documentation Server - provides search and retrieval for Computer Use Agent (CUA) documentation.
+        name="CUA Docs & Code",
+        instructions="""CUA Documentation and Code Server - provides search and retrieval for Computer Use Agent (CUA) documentation and versioned source code.
 
 Documentation covers:
 - CUA SDK: Python library for building computer-use agents with screen capture, mouse/keyboard control
@@ -620,17 +876,31 @@ Documentation covers:
 - Sandboxes: Docker and cloud VM environments for safe agent execution
 - Computer interfaces: Screen, mouse, keyboard, and bash interaction APIs
 
-Available tools:
-- search_docs: Semantic/vector search - best for conceptual queries like "how does X work?"
-- sql_query: Direct SQL/FTS5 queries for exact keyword matches and advanced filtering
+=== DOCUMENTATION TOOLS ===
+- search_docs: Semantic/vector search - best for conceptual queries
+- sql_query: Direct SQL/FTS5 queries for exact keyword matches
 
-IMPORTANT: After performing search_docs queries, ALWAYS use sql_query to retrieve the full page content
-before answering. Search results return snippets/chunks that may lack important context. Example:
-  sql_query("SELECT url, title, content FROM pages WHERE url LIKE '%installation%'")
-The full page often contains setup instructions, prerequisites, code examples, and related information
-essential for complete answers.
+=== CODE SEARCH TOOLS ===
+Search across all versions of CUA source code. Component + version are REQUIRED.
 
-Always cite the source URL when providing information.""",
+Discovery:
+- list_components: See all indexed components (agent, computer, mcp-server, etc.)
+- list_versions: See all indexed versions for a component
+
+Search (requires component + version):
+- search_code: Semantic search - "how to take a screenshot"
+- search_code_fts: Full-text search - exact function/class names
+
+Retrieval:
+- get_code_file_content: Get full source file content
+
+Workflow:
+1. list_components() -> see available components
+2. list_versions("agent") -> see versions
+3. search_code("ComputerAgent init", "agent", "0.7.3") -> find files
+4. get_code_file_content("agent", "0.7.3", "agent/computer_agent.py") -> full file
+
+Always cite sources: URLs for docs, component@version:path for code.""",
     )
 
     # Initialize embedding model
@@ -640,9 +910,12 @@ Always cite the source URL when providing information.""",
     _lance_db = None
     _lance_table = None
     _sqlite_conn = None
+    _code_lance_db = None
+    _code_lance_table = None
+    _code_sqlite_conn = None
 
     def get_lance_table():
-        """Get or create LanceDB connection"""
+        """Get or create LanceDB connection for docs"""
         nonlocal _lance_db, _lance_table
         if _lance_table is None:
             db_path = Path(DB_PATH)
@@ -653,42 +926,53 @@ Always cite the source URL when providing information.""",
         return _lance_table
 
     def get_sqlite_conn():
-        """Get or create read-only SQLite connection"""
+        """Get or create read-only SQLite connection for docs"""
         nonlocal _sqlite_conn
         if _sqlite_conn is None:
             sqlite_path = Path(DB_PATH) / "docs.sqlite"
             if not sqlite_path.exists():
                 raise RuntimeError("SQLite database not found.")
-            # Open in read-only mode
             _sqlite_conn = sqlite3.connect(f"file:{sqlite_path}?mode=ro", uri=True)
             _sqlite_conn.row_factory = sqlite3.Row
         return _sqlite_conn
+
+    def get_code_lance_table():
+        """Get or create LanceDB connection for code"""
+        nonlocal _code_lance_db, _code_lance_table
+        if _code_lance_table is None:
+            db_path = Path(CODE_DB_PATH) / "code_index.lancedb"
+            if not db_path.exists():
+                raise RuntimeError("Code index not found. Run generate_code_index first.")
+            _code_lance_db = lancedb.connect(db_path)
+            _code_lance_table = _code_lance_db.open_table("code")
+        return _code_lance_table
+
+    def get_code_sqlite_conn():
+        """Get or create read-only SQLite connection for code"""
+        nonlocal _code_sqlite_conn
+        if _code_sqlite_conn is None:
+            sqlite_path = Path(CODE_DB_PATH) / "code_index.sqlite"
+            if not sqlite_path.exists():
+                raise RuntimeError("Code SQLite database not found.")
+            _code_sqlite_conn = sqlite3.connect(f"file:{sqlite_path}?mode=ro", uri=True)
+            _code_sqlite_conn.row_factory = sqlite3.Row
+        return _code_sqlite_conn
+
+    # =================== DOCUMENTATION TOOLS ===================
 
     @mcp.tool()
     def search_docs(query: str, limit: int = 5, category: Optional[str] = None) -> list[dict]:
         """
         Semantic search over CUA documentation using vector embeddings.
         Best for conceptual queries like "how does the agent loop work?"
-
-        Args:
-            query: Natural language search query
-            limit: Maximum number of results (default: 5, max: 20)
-            category: Optional category filter (e.g., 'cua', 'cuabench')
-
-        Returns:
-            List of relevant documentation chunks with URLs and content
         """
         limit = min(max(1, limit), 20)
-
         table = get_lance_table()
         search = table.search(query).limit(limit)
-
         if category:
             safe_category = category.replace("'", "''")
             search = search.where(f"category = '{safe_category}'")
-
         results = search.to_list()
-
         return [
             {
                 "text": r.get("text", ""),
@@ -704,32 +988,125 @@ Always cite the source URL when providing information.""",
     def sql_query(query: str) -> list[dict]:
         """
         Execute a read-only SQL query on the documentation database.
-
-        Tables:
-        - pages: id, url, title, category, content
-        - pages_fts: FTS5 virtual table for full-text search (content, url, title, category)
-
-        FTS5 examples:
-        - SELECT * FROM pages_fts WHERE pages_fts MATCH 'agent' LIMIT 10
-        - SELECT p.*, snippet(pages_fts, 0, '**', '**', '...', 32) as snippet
-          FROM pages_fts JOIN pages p ON pages_fts.rowid = p.id
-          WHERE pages_fts MATCH 'computer use' ORDER BY rank LIMIT 5
-
-        Args:
-            query: SQL query (SELECT only, connection is read-only)
-
-        Returns:
-            List of result rows as dictionaries
+        Tables: pages (id, url, title, category, content), pages_fts (FTS5)
         """
         conn = get_sqlite_conn()
         cursor = conn.cursor()
-
         try:
             cursor.execute(query)
             results = cursor.fetchall()
             return [dict(row) for row in results]
         except sqlite3.Error as e:
             return [{"error": str(e)}]
+
+    # =================== CODE SEARCH TOOLS ===================
+
+    @mcp.tool()
+    def list_components() -> list[dict]:
+        """List all indexed code components with version counts."""
+        try:
+            conn = get_code_sqlite_conn()
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT component, COUNT(DISTINCT version) as version_count FROM code_files GROUP BY component ORDER BY component"
+            )
+            return [{"component": r["component"], "version_count": r["version_count"]} for r in cursor.fetchall()]
+        except Exception as e:
+            return [{"error": str(e)}]
+
+    @mcp.tool()
+    def list_versions(component: str) -> list[str]:
+        """List all indexed versions for a component, sorted by semver descending."""
+        try:
+            conn = get_code_sqlite_conn()
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT DISTINCT version FROM code_files WHERE component = ?", (component,)
+            )
+            versions = [r["version"] for r in cursor.fetchall()]
+
+            def semver_key(v):
+                try:
+                    parts = v.split(".")
+                    return tuple(int(p) for p in parts[:3])
+                except:
+                    return (0, 0, 0)
+
+            versions.sort(key=semver_key, reverse=True)
+            return versions
+        except Exception as e:
+            return [f"error: {e}"]
+
+    @mcp.tool()
+    def search_code(query: str, component: str, version: str, limit: int = 10) -> list[dict]:
+        """
+        Semantic search over source code for a specific component@version.
+        Best for natural language queries like "how to take a screenshot".
+        """
+        limit = min(max(1, limit), 20)
+        try:
+            table = get_code_lance_table()
+            where_clause = f"component = '{component}' AND version = '{version}'"
+            results = table.search(query).where(where_clause).limit(limit).to_list()
+            return [
+                {
+                    "file_path": r["file_path"],
+                    "content": r["text"][:2000] + "..." if len(r["text"]) > 2000 else r["text"],
+                    "language": r["language"],
+                    "score": round(1 - r.get("_distance", 0), 4),
+                }
+                for r in results
+            ]
+        except Exception as e:
+            return [{"error": str(e)}]
+
+    @mcp.tool()
+    def search_code_fts(query: str, component: str, version: str, limit: int = 10) -> list[dict]:
+        """
+        Full-text search over source code for a specific component@version.
+        Best for exact matches like function names, class names, keywords.
+        """
+        limit = min(max(1, limit), 50)
+        try:
+            conn = get_code_sqlite_conn()
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT file_path, snippet(code_files_fts, 0, '>>>', '<<<', '...', 64) as snippet, language
+                FROM code_files_fts
+                JOIN code_files f ON code_files_fts.rowid = f.id
+                WHERE code_files_fts MATCH ? AND code_files_fts.component = ? AND code_files_fts.version = ?
+                ORDER BY rank LIMIT ?
+                """,
+                (query, component, version, limit),
+            )
+            return [
+                {"file_path": r["file_path"], "snippet": r["snippet"], "language": r["language"]}
+                for r in cursor.fetchall()
+            ]
+        except Exception as e:
+            return [{"error": str(e)}]
+
+    @mcp.tool()
+    def get_code_file_content(component: str, version: str, file_path: str) -> dict:
+        """Get the full content of a specific source file at component@version."""
+        try:
+            conn = get_code_sqlite_conn()
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT content, language FROM code_files WHERE component = ? AND version = ? AND file_path = ?",
+                (component, version, file_path),
+            )
+            row = cursor.fetchone()
+            if not row:
+                return {"error": f"File not found: {file_path} in {component}@{version}"}
+            return {
+                "content": row["content"],
+                "language": row["language"],
+                "lines": row["content"].count("\n") + 1,
+            }
+        except Exception as e:
+            return {"error": str(e)}
 
     # Create SSE app directly - endpoints at /sse (GET) and /messages (POST)
     from starlette.middleware import Middleware
@@ -756,18 +1133,29 @@ Always cite the source URL when providing information.""",
 
 
 @app.local_entrypoint()
-def main():
-    """Run initial crawl and database generation"""
-    print("Running initial crawl...")
-    summary = crawl_docs.remote()
-    print(f"Crawl summary: {summary}")
+def main(skip_docs: bool = False, skip_code: bool = False):
+    """Run initial crawl and database generation
 
-    print("Generating vector database...")
-    vector_result = generate_vector_db.remote()
-    print(f"Vector DB: {vector_result}")
+    Args:
+        skip_docs: Skip documentation crawl and indexing
+        skip_code: Skip code indexing
+    """
+    if not skip_docs:
+        print("Running initial crawl...")
+        summary = crawl_docs.remote()
+        print(f"Crawl summary: {summary}")
 
-    print("Generating SQLite database...")
-    sqlite_result = generate_sqlite_db.remote()
-    print(f"SQLite DB: {sqlite_result}")
+        print("Generating vector database...")
+        vector_result = generate_vector_db.remote()
+        print(f"Vector DB: {vector_result}")
+
+        print("Generating SQLite database...")
+        sqlite_result = generate_sqlite_db.remote()
+        print(f"SQLite DB: {sqlite_result}")
+
+    if not skip_code:
+        print("Generating code index...")
+        code_result = generate_code_index.remote()
+        print(f"Code index: {code_result}")
 
     print("Done! Deploy with: modal deploy docs/scripts/modal_app.py")

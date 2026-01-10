@@ -108,7 +108,7 @@ enum CommandDocExtractor {
                 OptionDoc(name: "display", shortName: nil, help: "Display resolution (e.g., 1024x768)", type: "String", defaultValue: "1024x768", isOptional: false),
                 OptionDoc(name: "ipsw", shortName: nil, help: "Path to IPSW file or 'latest' for macOS VMs", type: "String", defaultValue: nil, isOptional: true),
                 OptionDoc(name: "storage", shortName: nil, help: "VM storage location to use", type: "String", defaultValue: nil, isOptional: true),
-                OptionDoc(name: "unattended", shortName: nil, help: "Path to YAML config for unattended Setup Assistant automation", type: "String", defaultValue: nil, isOptional: true),
+                OptionDoc(name: "unattended", shortName: nil, help: "[Preview] Preset name or path to YAML config file for unattended macOS Setup Assistant automation. Built-in presets: tahoe. Only supported for macOS VMs.", type: "String", defaultValue: nil, isOptional: true),
             ],
             flags: [],
             subcommands: []
@@ -498,19 +498,20 @@ enum CommandDocExtractor {
     private static var setupDoc: CommandDoc {
         CommandDoc(
             name: "setup",
-            abstract: "Run unattended Setup Assistant automation on a macOS VM",
-            discussion: nil,
+            abstract: "[Preview] Run unattended Setup Assistant automation on a macOS VM",
+            discussion: "This is an experimental feature. Unattended configurations are specific to macOS versions and may not work across different releases.",
             arguments: [
-                ArgumentDoc(name: "name", help: "Name of the VM", type: "String", isOptional: false),
+                ArgumentDoc(name: "name", help: "Name of the virtual machine", type: "String", isOptional: false),
             ],
             options: [
-                OptionDoc(name: "config", shortName: nil, help: "Path to YAML config file", type: "String", defaultValue: nil, isOptional: false),
-                OptionDoc(name: "storage", shortName: nil, help: "VM storage location to use", type: "String", defaultValue: nil, isOptional: true),
-                OptionDoc(name: "vnc-port", shortName: nil, help: "Port for VNC server (0 for auto-assign)", type: "Int", defaultValue: "0", isOptional: false),
+                OptionDoc(name: "unattended", shortName: nil, help: "Preset name or path to YAML config file for unattended macOS Setup Assistant automation. Built-in presets: tahoe.", type: "String", defaultValue: nil, isOptional: false),
+                OptionDoc(name: "storage", shortName: nil, help: "VM storage location to use or direct path to VM location", type: "String", defaultValue: nil, isOptional: true),
+                OptionDoc(name: "vnc-port", shortName: nil, help: "Port to use for the VNC server. Defaults to 0 (auto-assign)", type: "Int", defaultValue: "0", isOptional: true),
+                OptionDoc(name: "debug-dir", shortName: nil, help: "Custom directory for debug screenshots (defaults to unique folder in system temp)", type: "String", defaultValue: nil, isOptional: true),
             ],
             flags: [
-                FlagDoc(name: "no-display", shortName: nil, help: "Disable VNC client auto-open", defaultValue: false),
-                FlagDoc(name: "debug", shortName: nil, help: "Save debug screenshots", defaultValue: false),
+                FlagDoc(name: "no-display", shortName: nil, help: "Do not open the VNC client automatically", defaultValue: false),
+                FlagDoc(name: "debug", shortName: nil, help: "Enable debug mode - saves screenshots with click coordinates", defaultValue: false),
             ],
             subcommands: []
         )

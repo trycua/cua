@@ -26,6 +26,9 @@ app = modal.App("cua-docs-mcp")
 docs_volume = modal.Volume.from_name("cua-docs-data", create_if_missing=True)
 code_volume = modal.Volume.from_name("cua-code-index", create_if_missing=True)
 
+# GitHub token secret for cloning
+github_secret = modal.Secret.from_name("github-secret", required_keys=["GITHUB_TOKEN"])
+
 # Define the container image with all dependencies
 image = (
     modal.Image.debian_slim(python_version="3.12")
@@ -626,12 +629,14 @@ def detect_language(file_path: str) -> str:
 @app.function(
     image=image,
     volumes={CODE_VOLUME_PATH: code_volume},
+    secrets=[github_secret],
     timeout=3600,  # 1 hour
     cpu=2.0,
     memory=8192,
 )
 async def generate_code_index():
     """Generate code search index from all git tags"""
+    import os
     import shutil
     import subprocess
     import tempfile
@@ -642,7 +647,15 @@ async def generate_code_index():
 
     print("Generating code search index...")
 
-    REPO_URL = "https://github.com/anthropics/cua.git"
+    # Build authenticated URL using GitHub token
+    github_token = os.environ.get("GITHUB_TOKEN", "")
+    if github_token:
+        REPO_URL = f"https://{github_token}@github.com/trycua/cua.git"
+        print("Using authenticated GitHub URL")
+    else:
+        REPO_URL = "https://github.com/trycua/cua.git"
+        print("Warning: No GITHUB_TOKEN found, using unauthenticated URL")
+
     REPO_PATH = Path(CODE_REPO_PATH)
     DB_DIR = Path(CODE_DB_PATH)
     SQLITE_PATH = DB_DIR / "code_index.sqlite"
@@ -654,7 +667,7 @@ async def generate_code_index():
         print("Fetching latest tags...")
         subprocess.run(["git", "fetch", "--all", "--tags"], cwd=REPO_PATH, check=True)
     else:
-        print(f"Cloning {REPO_URL}...")
+        print("Cloning repository...")
         REPO_PATH.parent.mkdir(parents=True, exist_ok=True)
         subprocess.run(["git", "clone", "--bare", REPO_URL, str(REPO_PATH)], check=True)
 
@@ -833,6 +846,7 @@ async def generate_code_index():
 @app.function(
     image=image,
     volumes={CODE_VOLUME_PATH: code_volume},
+    secrets=[github_secret],
     schedule=modal.Cron("0 5 * * *"),  # Daily at 5 AM UTC (before docs crawl)
     timeout=3600,
 )

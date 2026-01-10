@@ -1,9 +1,9 @@
-name: "CD: cua-bench (PyPI)"
+name: "CD: cua-bench-ui (PyPI)"
 
 on:
   push:
     tags:
-      - "bench-v*"
+      - "bench-ui-v*"
   workflow_dispatch:
     inputs:
       version:
@@ -37,10 +37,10 @@ jobs:
             VERSION=${{ inputs.version }}
           elif [ "${{ github.event_name }}" == "push" ]; then
             # Extract version from tag (for package-specific tags)
-            if [[ "${{ github.ref }}" =~ ^refs/tags/bench-v([0-9]+\.[0-9]+\.[0-9]+) ]]; then
+            if [[ "${{ github.ref }}" =~ ^refs/tags/bench-ui-v([0-9]+\.[0-9]+\.[0-9]+) ]]; then
               VERSION=${BASH_REMATCH[1]}
             else
-              echo "Invalid tag format for bench"
+              echo "Invalid tag format for bench-ui"
               exit 1
             fi
           elif [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
@@ -57,11 +57,11 @@ jobs:
     needs: prepare
     uses: ./.github/workflows/py-reusable-publish.yml
     with:
-      package_name: "bench"
-      package_dir: "libs/cua-bench"
+      package_name: "bench-ui"
+      package_dir: "libs/python/bench-ui"
       version: ${{ needs.prepare.outputs.version }}
       is_lume_package: false
-      base_package_name: "cua-bench"
+      base_package_name: "cua-bench-ui"
     secrets:
       PYPI_TOKEN: ${{ secrets.PYPI_TOKEN }}
 
@@ -69,13 +69,13 @@ jobs:
     needs: [prepare, publish]
     uses: ./.github/workflows/release-github-reusable.yml
     with:
-      tag_name: "bench-v${{ needs.prepare.outputs.version }}"
-      release_name: "cua-bench v${{ needs.prepare.outputs.version }}"
+      tag_name: "bench-ui-v${{ needs.prepare.outputs.version }}"
+      release_name: "cua-bench-ui v${{ needs.prepare.outputs.version }}"
       body: |
-        ## Toolkit for computer-use RL environments and benchmarks
+        ## Lightweight webUI window controller for Cua bench
 
         ## Installation
 
         ```bash
-        pip install cua-bench==${{ needs.prepare.outputs.version }}
+        pip install cua-bench-ui==${{ needs.prepare.outputs.version }}
         ```

@@ -10,6 +10,7 @@ on:
         options:
           - pypi/agent
           - pypi/bench
+          - pypi/bench-ui
           - pypi/computer
           - pypi/computer-server
           - pypi/core
@@ -39,6 +40,7 @@ jobs:
     outputs:
       agent_version: ${{ steps.agent_version.outputs.version }}
       bench_version: ${{ steps.bench_version.outputs.version }}
+      bench_ui_version: ${{ steps.bench_ui_version.outputs.version }}
       computer_version: ${{ steps.computer_version.outputs.version }}
       computer_server_version: ${{ steps.computer_server_version.outputs.version }}
       core_version: ${{ steps.core_version.outputs.version }}
@@ -59,6 +61,10 @@ jobs:
               ;;
             "pypi/bench")
               echo "directory=libs/cua-bench" >> $GITHUB_OUTPUT
+              echo "type=python" >> $GITHUB_OUTPUT
+              ;;
+            "pypi/bench-ui")
+              echo "directory=libs/python/bench-ui" >> $GITHUB_OUTPUT
               echo "type=python" >> $GITHUB_OUTPUT
               ;;
             "pypi/computer")
@@ -149,6 +155,15 @@ jobs:
           cd libs/cua-bench
           VERSION=$(python -c "import tomllib; from pathlib import Path; data = tomllib.loads(Path('pyproject.toml').read_text()); print(data['project']['version'])")
           echo "Bench version: $VERSION"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Capture bumped bench-ui version
+        if: ${{ inputs.service == 'pypi/bench-ui' }}
+        id: bench_ui_version
+        run: |
+          cd libs/python/bench-ui
+          VERSION=$(python -c "import tomllib; from pathlib import Path; data = tomllib.loads(Path('pyproject.toml').read_text()); print(data['project']['version'])")
+          echo "Bench-ui version: $VERSION"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Capture bumped computer version
@@ -254,6 +269,14 @@ jobs:
     uses: ./.github/workflows/cd-py-bench.yml
     with:
       version: ${{ needs.bump-version.outputs.bench_version }}
+    secrets: inherit
+
+  publish-bench-ui:
+    needs: bump-version
+    if: ${{ inputs.service == 'pypi/bench-ui' }}
+    uses: ./.github/workflows/cd-py-bench-ui.yml
+    with:
+      version: ${{ needs.bump-version.outputs.bench_ui_version }}
     secrets: inherit
 
   publish-computer-server:

@@ -56,7 +56,7 @@ function categorizePrompt(prompt: string): PromptCategory {
     return 'api_reference';
   }
 
-  if (/\b(integrat|connect|webhook|third.?party|external|with\s+\w+)\b/.test(lowerPrompt)) {
+  if (/\b(integrat|connect|webhook|third.?party|external)\b/.test(lowerPrompt)) {
     return 'integration';
   }
 
@@ -76,12 +76,12 @@ function categorizePrompt(prompt: string): PromptCategory {
 function detectQuestionType(prompt: string): QuestionType {
   const lowerPrompt = prompt.toLowerCase().trim();
 
-  if (/^how\s+(do|can|to|would|should)/i.test(lowerPrompt)) return 'how-to';
-  if (/^what\s+(is|are|does)/i.test(lowerPrompt)) return 'what-is';
-  if (/^why\s+/i.test(lowerPrompt)) return 'why';
-  if (/^(can|could|is it possible)/i.test(lowerPrompt)) return 'can-i';
-  if (/^where\s+/i.test(lowerPrompt)) return 'where';
-  if (/\b(error|not working|fail|broken|debug)\b/i.test(lowerPrompt)) return 'debug';
+  if (/^how\s+(do|can|to|would|should)/.test(lowerPrompt)) return 'how-to';
+  if (/^what\s+(is|are|does)/.test(lowerPrompt)) return 'what-is';
+  if (/^why\s+/.test(lowerPrompt)) return 'why';
+  if (/^(can|could|is it possible)/.test(lowerPrompt)) return 'can-i';
+  if (/^where\s+/.test(lowerPrompt)) return 'where';
+  if (/\b(error|not working|fail|broken|debug)\b/.test(lowerPrompt)) return 'debug';
 
   return 'other';
 }
@@ -91,12 +91,14 @@ function extractTopics(prompt: string): string[] {
   const lowerPrompt = prompt.toLowerCase();
 
   const topicPatterns: Record<string, RegExp> = {
-    'computer-use': /\b(computer.?use|cua|agent)\b/,
+    'computer-use': /\b(computer.?use|cua|cua.?agent)\b/,
     lume: /\b(lume|vm|virtual.?machine)\b/,
-    mcp: /\b(mcp|model.?context|server)\b/,
+    mcp: /\b(mcp|model.?context|mcp.?server)\b/,
     benchmark: /\b(bench|benchmark|eval|score)\b/,
     python: /\b(python|pip|pypi)\b/,
-    typescript: /\b(typescript|ts|npm|node)\b/,
+    typescript: /\b(typescript|\.ts)\b/,
+    javascript: /\b(javascript|\.js|npm)\b/,
+    nodejs: /\b(node\.?js|node)\b/,
     macos: /\b(mac|macos|darwin)\b/,
     linux: /\b(linux|ubuntu|debian)\b/,
   };
@@ -155,30 +157,29 @@ function analyzeResponse(response: string): ResponseAnalysis {
     /https?:\/\/[^\s]*docs[^\s]*/i.test(response) ||
     /trycua\.com/i.test(response);
 
-  // Detect step-by-step instructions
+  // Detect step-by-step instructions (numbered lists or sequential indicators)
   const hasSteps =
-    /\b(step\s*\d|first,|second,|third,|finally,|then,)\b/i.test(response) ||
-    /^\s*\d+\.\s+/m.test(response) ||
-    /^-\s+/m.test(response);
+    /\b(step\s*\d|first,|second,|third,|finally,|then,|next,)\b/i.test(response) ||
+    /^\s*\d+\.\s+/m.test(response);
 
   // Detect Discord invite
   const hasDiscordInvite = /discord\.com\/invite/i.test(response);
 
-  // Determine response type
+  // Determine response type (order matters - check more specific patterns first)
   let responseType: ResponseType = 'other';
 
-  if (/\b(error|fix|issue|problem|solution|resolve|try\s+this)\b/i.test(lowerResponse)) {
-    responseType = 'troubleshooting';
+  if (/\b(could\s+you\s+clarify|do\s+you\s+mean|more\s+specific)\b/.test(lowerResponse)) {
+    responseType = 'clarification';
   } else if (hasSteps && hasCodeSnippet) {
     responseType = 'tutorial';
   } else if (hasCodeSnippet && !hasSteps) {
     responseType = 'code_example';
-  } else if (/\b(what\s+is|means|refers\s+to|is\s+a|are\s+used\s+for)\b/i.test(lowerResponse)) {
+  } else if (/\b(error|fix|bug|crash|exception|resolve|try\s+this)\b/.test(lowerResponse)) {
+    responseType = 'troubleshooting';
+  } else if (/\b(what\s+is|means|refers\s+to|is\s+a|are\s+used\s+for)\b/.test(lowerResponse)) {
     responseType = 'explanation';
-  } else if (/\b(api|method|function|parameter|returns?|accepts?)\b/i.test(lowerResponse)) {
+  } else if (/\b(api|method|function|parameter|returns?|accepts?)\b/.test(lowerResponse)) {
     responseType = 'reference';
-  } else if (/\b(could\s+you\s+clarify|do\s+you\s+mean|more\s+specific)\b/i.test(lowerResponse)) {
-    responseType = 'clarification';
   }
 
   return {

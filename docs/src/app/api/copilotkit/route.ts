@@ -8,11 +8,10 @@ import { NextRequest } from 'next/server';
 import { randomUUID } from 'crypto';
 import { PostHog } from 'posthog-node';
 
-// Initialize PostHog server-side client
 const posthog = process.env.NEXT_PUBLIC_POSTHOG_API_KEY
   ? new PostHog(process.env.NEXT_PUBLIC_POSTHOG_API_KEY, {
       host: process.env.NEXT_PUBLIC_POSTHOG_HOST || 'https://us.i.posthog.com',
-      flushAt: 1, // Send events immediately for real-time tracking
+      flushAt: 1,
       flushInterval: 0,
     })
   : null;
@@ -33,38 +32,25 @@ class AnthropicSafeBuiltInAgent extends BuiltInAgent {
     this.agentConfig = config;
   }
 
-  // Override clone() to return our custom class instead of base BuiltInAgent
   clone(): AnthropicSafeBuiltInAgent {
     return new AnthropicSafeBuiltInAgent(this.agentConfig);
   }
 
   run(input: any): ReturnType<BuiltInAgent['run']> {
-    // Filter out empty assistant messages before passing to parent
     const filteredMessages = this.filterEmptyMessages(input.messages || []);
-
-    // Create modified input with filtered messages
     const modifiedInput = {
       ...input,
       messages: filteredMessages,
     };
 
-    // Generate a unique message ID for this run to fix message ordering
-    // Without this, all responses use messageId: 0 and get merged together
+    // Fix message ordering - without unique IDs, responses get merged
     const uniqueMessageId = randomUUID();
     const conversationId = input.threadId || uniqueMessageId;
-    console.log(
-      '[AnthropicSafeBuiltInAgent] run() with',
-      filteredMessages.length,
-      'messages, uniqueMessageId:',
-      uniqueMessageId
-    );
 
-    // Extract the latest user message for tracking
     const userMessages = filteredMessages.filter((m: any) => m.role === 'user');
     const latestUserMessage = userMessages[userMessages.length - 1];
     const userPrompt = this.extractMessageContent(latestUserMessage);
 
-    // Track user prompt in PostHog
     if (posthog && userPrompt) {
       posthog.capture({
         distinctId: conversationId,
@@ -78,13 +64,8 @@ class AnthropicSafeBuiltInAgent extends BuiltInAgent {
       });
     }
 
-    // Get the parent observable
     const parentObservable = super.run(modifiedInput);
-
-    // Collect response chunks to track the full response
     let responseChunks: string[] = [];
-
-    // Track if response has been sent to avoid duplicates
     let responseSent = false;
 
     const sendResponseToPostHog = async () => {
@@ -93,7 +74,6 @@ class AnthropicSafeBuiltInAgent extends BuiltInAgent {
 
       const fullResponse = responseChunks.join('');
       if (posthog && fullResponse) {
-        console.log('[PostHog] Sending copilot_response, length:', fullResponse.length);
         posthog.capture({
           distinctId: conversationId,
           event: 'copilot_response',
@@ -105,22 +85,15 @@ class AnthropicSafeBuiltInAgent extends BuiltInAgent {
             timestamp: new Date().toISOString(),
           },
         });
-        // Ensure event is sent before request ends
         await posthog.flush();
       }
     };
 
-    // Wrap subscribe to intercept events and fix messageId
     const originalSubscribe = parentObservable.subscribe.bind(parentObservable);
     parentObservable.subscribe = (observer: any) => {
       const wrappedObserver = {
         next: (event: any) => {
-          // Log event types for debugging
-          console.log('[CopilotKit Event]', event.type);
-
-          // Replace messageId for TEXT_MESSAGE_CHUNK events to ensure proper message separation
           if (event.type === 'TEXT_MESSAGE_CHUNK') {
-            // Collect response chunks
             if (event.delta) {
               responseChunks.push(event.delta);
             }
@@ -129,7 +102,6 @@ class AnthropicSafeBuiltInAgent extends BuiltInAgent {
               messageId: uniqueMessageId,
             });
           } else {
-            // Check for completion events - CopilotKit uses various event types
             if (
               event.type === 'RUN_FINISHED' ||
               event.type === 'TEXT_MESSAGE_END' ||
@@ -141,7 +113,6 @@ class AnthropicSafeBuiltInAgent extends BuiltInAgent {
           }
         },
         error: (err: any) => {
-          // Track errors in PostHog
           if (posthog) {
             posthog.capture({
               distinctId: conversationId,
@@ -158,7 +129,6 @@ class AnthropicSafeBuiltInAgent extends BuiltInAgent {
           observer.error?.(err);
         },
         complete: () => {
-          // Also try to send on complete as fallback
           sendResponseToPostHog();
           observer.complete?.();
         },
@@ -190,15 +160,11 @@ class AnthropicSafeBuiltInAgent extends BuiltInAgent {
 
   private filterEmptyMessages(messages: any[]): any[] {
     return messages.filter((msg) => {
-      // Keep all non-assistant messages
       if (msg.role !== 'assistant') {
         return true;
       }
 
-      // Check if message has tool calls
       const hasToolCalls = msg.toolCalls && msg.toolCalls.length > 0;
-
-      // Check if message has meaningful content
       const content = msg.content;
       let hasContent = false;
 
@@ -215,39 +181,27 @@ class AnthropicSafeBuiltInAgent extends BuiltInAgent {
         });
       }
 
-      // Keep if has content or tool calls
       return hasContent || hasToolCalls;
     });
   }
 }
 
-// Create a custom agent that safely handles Anthropic's message requirements
 const docsAgent = new AnthropicSafeBuiltInAgent({
   maxSteps: 100,
   model: 'anthropic/claude-sonnet-4-20250514',
   prompt: `You are a helpful assistant for Cua (Computer Use Agent) and Cua-Bench documentation.
 Be concise and helpful. Answer questions about the documentation accurately.
 
-Use Cua as the name of the product and CUA for Computer Use Agent
-
-if someone asks about cua, they are referring to Cua the product, not CUA the Computer Use Agent.
+Use Cua as the name of the product and CUA for Computer Use Agent.
 
 You have access to tools for searching the Cua documentation:
-- search_docs: Use this to search for documentation content semantically
-- sql_query: Use this for direct SQL queries on the documentation database
+- search_docs: Semantic search for documentation content
+- sql_query: Direct SQL queries on the documentation database
 
+When using search_docs, follow up by checking the source document for accuracy.
+Include links to documentation pages in your responses.
 
-when using the search docs tool, make sure you follow up by checking out the source document to get the most accurate information.
-
-when you respond to the user, present links to the the documentation pages that you used to answer the question.
-
-When answering questions about Cua, always use these tools to find accurate information from the documentation.
-
-politely ask the user to join the Discord server if they seem stuck or need help. in fact it would be great to mention this at the end of your interactions to help them get the most out of the product.
-
-Discord Server invitation: https://discord.com/invite/cua-ai
-
-`,
+If users seem stuck, invite them to join the Discord: https://discord.com/invite/cua-ai`,
   temperature: 0.7,
   mcpServers: [
     {
@@ -257,8 +211,6 @@ Discord Server invitation: https://discord.com/invite/cua-ai
   ],
 });
 
-// Create runtime with the agent registered as 'default'
-// Cast to any to bypass rxjs version conflicts between our Observable and CopilotKit's
 const runtime = new CopilotRuntime({
   agents: {
     default: docsAgent as any,
@@ -276,7 +228,6 @@ export const POST = async (req: NextRequest) => {
   return handleRequest(req);
 };
 
-// GET handler for /info endpoint - returns agent metadata
 export const GET = async (req: NextRequest) => {
   const { handleRequest } = copilotRuntimeNextJSAppRouterEndpoint({
     runtime,

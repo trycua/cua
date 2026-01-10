@@ -1,10 +1,7 @@
 'use client';
 
-// IMPORTANT: Apply fetch patch BEFORE any CopilotKit imports
-// This patches window.fetch to cache info requests and prevent the infinite loop bug
 import { applyCopilotKitFetchPatch } from '@/lib/copilotkit-fetch-patch';
 
-// Apply patch immediately on module load (browser only)
 if (typeof window !== 'undefined') {
   applyCopilotKitFetchPatch();
 }
@@ -19,44 +16,31 @@ import '@copilotkit/react-ui/styles.css';
 import { ReactNode, useMemo, useState, useCallback, useEffect, useRef, memo } from 'react';
 import posthog from 'posthog-js';
 
-const DOCS_INSTRUCTIONS = `You are a helpful assistant for CUA (Computer Use Agent) and CUA-Bench documentation. Be concise and helpful.
-
-IMPORTANT: When responding to users, use clear paragraph breaks between different sections of your response. Do not run sentences together. Use proper formatting with line breaks between paragraphs.`;
+const DOCS_INSTRUCTIONS = `You are a helpful assistant for CUA (Computer Use Agent) and CUA-Bench documentation. Be concise and helpful. Use clear paragraph breaks between sections.`;
 
 interface CopilotKitProviderProps {
   children: ReactNode;
 }
 
-// Enable CopilotKit - the fetch patch handles request deduplication
 const COPILOTKIT_ENABLED = true;
 
-// Fix text concatenation by adding proper spacing between segments
 function fixTextConcatenation(content: string): string {
   if (!content) return content;
 
-  // Pattern to detect sentences that run together (period/colon followed immediately by capital letter)
-  // Examples: "documentation.Based" -> "documentation.\n\nBased"
-  //           "benchmarks:Let" -> "benchmarks:\n\nLet"
   let fixed = content
-    // Fix period followed by capital letter with no space
     .replace(/\.([A-Z])/g, '.\n\n$1')
-    // Fix colon followed by capital letter with no space (usually indicates new section)
     .replace(/:([A-Z])/g, ':\n\n$1')
-    // Fix exclamation/question mark followed by capital letter with no space
     .replace(/([!?])([A-Z])/g, '$1\n\n$2');
 
   return fixed;
 }
 
-// Custom AssistantMessage component that fixes text concatenation
 function CustomAssistantMessage(props: React.ComponentProps<typeof DefaultAssistantMessage>) {
   const { message, ...rest } = props;
 
-  // Process the message content to fix concatenation
   const processedMessage = useMemo(() => {
     if (!message) return message;
 
-    // Handle string content
     if (typeof message.content === 'string') {
       return {
         ...message,
@@ -64,7 +48,6 @@ function CustomAssistantMessage(props: React.ComponentProps<typeof DefaultAssist
       };
     }
 
-    // Handle array content (multipart messages)
     if (Array.isArray(message.content)) {
       const contentArray = message.content as unknown[];
       return {
@@ -95,9 +78,7 @@ function CustomAssistantMessage(props: React.ComponentProps<typeof DefaultAssist
   return <DefaultAssistantMessage {...rest} message={processedMessage as typeof message} />;
 }
 
-// Component to render tool call indicators
 function ToolCallIndicators() {
-  // Render indicator for search_docs tool
   useRenderToolCall({
     name: 'search_docs',
     description: 'Searches the CUA documentation',
@@ -138,7 +119,6 @@ function ToolCallIndicators() {
     },
   });
 
-  // Render indicator for sql_query tool
   useRenderToolCall({
     name: 'sql_query',
     description: 'Queries the documentation database',
@@ -182,7 +162,6 @@ function ToolCallIndicators() {
   return null;
 }
 
-// Copy icon component - exact match of CopilotKit's internal icon
 function CopyIcon() {
   return (
     <svg
@@ -204,7 +183,6 @@ function CopyIcon() {
   );
 }
 
-// Check icon for copied state - exact match of CopilotKit's internal icon
 function CheckIcon() {
   return (
     <svg
@@ -222,18 +200,13 @@ function CheckIcon() {
   );
 }
 
-// Helper function to extract messages from the DOM
 function extractMessagesFromDOM(): string {
-  // Find the CopilotKit messages container
   const messagesContainer = document.querySelector('.copilotKitMessages');
   if (!messagesContainer) {
-    console.log('No messages container found');
     return '';
   }
 
   const messages: string[] = [];
-
-  // Find all message elements - CopilotKit uses specific class patterns
   const allElements = messagesContainer.querySelectorAll(
     '[class*="copilotKitUserMessage"], [class*="copilotKitAssistantMessage"]'
   );
@@ -245,7 +218,6 @@ function extractMessagesFromDOM(): string {
 
     if (isUser || isAssistant) {
       const role = isUser ? '**User:**' : '**Assistant:**';
-      // Get text content, excluding action buttons
       const textContent = element.textContent?.trim() || '';
       if (textContent) {
         messages.push(`${role}\n\n${textContent}`);
@@ -256,7 +228,6 @@ function extractMessagesFromDOM(): string {
   return messages.join('\n\n---\n\n');
 }
 
-// Custom Header component with copy button
 function CustomHeader() {
   const { setOpen, icons, labels } = useChatContext();
   const [copied, setCopied] = useState(false);
@@ -265,7 +236,6 @@ function CustomHeader() {
     const markdown = extractMessagesFromDOM();
 
     if (!markdown) {
-      console.log('No messages to copy');
       return;
     }
 
@@ -273,8 +243,8 @@ function CustomHeader() {
       await navigator.clipboard.writeText(markdown);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
-    } catch (err) {
-      console.error('Failed to copy:', err);
+    } catch {
+      // Clipboard write failed
     }
   }, []);
 
@@ -283,6 +253,7 @@ function CustomHeader() {
       <div style={{ flex: 1 }}>{labels.title}</div>
       <div className="copilotKitHeaderControls">
         <button
+          type="button"
           onClick={handleCopy}
           className="copilotkit-copy-button"
           title="Copy chat as markdown"
@@ -291,6 +262,7 @@ function CustomHeader() {
           {copied ? <CheckIcon /> : <CopyIcon />}
         </button>
         <button
+          type="button"
           onClick={() => setOpen(false)}
           className="copilotKitHeaderCloseButton"
           aria-label="Close"
@@ -302,25 +274,22 @@ function CustomHeader() {
   );
 }
 
-// Generate a session-based conversation ID
 function getConversationId(): string {
   if (typeof window === 'undefined') return '';
   let id = sessionStorage.getItem('copilot_conversation_id');
   if (!id) {
-    id = `conv_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    id = `conv_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
     sessionStorage.setItem('copilot_conversation_id', id);
   }
   return id;
 }
 
-// Type for CopilotKit message (subset of properties we need)
 interface CopilotMessage {
   id: string;
   role?: string;
   content?: string | unknown;
 }
 
-// Wrapper component that has access to chat context for feedback tracking
 function CopilotPopupWithFeedback() {
   const { visibleMessages } = useCopilotChat();
   const [conversationId, setConversationId] = useState('');
@@ -406,7 +375,6 @@ Please refer to the source documentation for the most accurate information.`,
   );
 }
 
-// CSS styles for the CopilotKit customizations
 const customStyles = `
   .copilotKitHeader {
     display: flex;
@@ -615,7 +583,6 @@ const customStyles = `
   }
 `;
 
-// Memoized CopilotKit wrapper to prevent re-renders
 const CopilotKitWrapper = memo(function CopilotKitWrapper({ children }: { children: ReactNode }) {
   return (
     <CopilotKit runtimeUrl="/docs/api/copilotkit" showDevConsole={false}>

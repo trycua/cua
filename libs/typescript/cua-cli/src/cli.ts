@@ -26,8 +26,8 @@ export async function runCli() {
         '\n' +
         '  cua image <command>    Manage VM images in cloud storage\n' +
         '    list               View all images in your workspace\n' +
-        '    upload             Upload a VM image\n' +
-        '    download           Download a VM image\n' +
+        '    push               Push a VM image to cloud storage\n' +
+        '    pull               Pull a VM image from cloud storage\n' +
         '    delete             Delete an image version\n' +
         '\n' +
         'Documentation: https://docs.cua.ai/libraries/cua-cli/commands'

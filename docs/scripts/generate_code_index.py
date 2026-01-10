@@ -1,0 +1,471 @@
+"""
+Code index generator for CUA repository
+Indexes source code across all git tags for semantic and full-text search
+"""
+
+import json
+import re
+import shutil
+import sqlite3
+import subprocess
+from pathlib import Path
+from typing import Optional
+
+import lancedb
+from lancedb.embeddings import get_registry
+from lancedb.pydantic import LanceModel, Vector
+
+# Configuration
+REPO_URL = "https://github.com/anthropics/cua.git"
+CODE_DB_PATH = Path(__file__).parent.parent / "code_db"
+REPO_PATH = CODE_DB_PATH / "repo"
+SQLITE_PATH = CODE_DB_PATH / "code_index.sqlite"
+LANCEDB_PATH = CODE_DB_PATH / "code_index.lancedb"
+METADATA_PATH = CODE_DB_PATH / "metadata.json"
+
+# File extensions to index
+SOURCE_EXTENSIONS = {".py", ".ts", ".js", ".tsx"}
+
+# Size limits
+MAX_FILE_SIZE_SQLITE = 1_000_000  # 1MB for SQLite
+MAX_FILE_SIZE_EMBEDDINGS = 100_000  # 100KB for embeddings
+
+# Embedding model
+model = get_registry().get("sentence-transformers").create(name="all-MiniLM-L6-v2")
+
+
+class CodeFile(LanceModel):
+    """Schema for code files in LanceDB"""
+
+    text: str = model.SourceField()
+    vector: Vector(model.ndims()) = model.VectorField()
+    component: str
+    version: str
+    file_path: str
+    language: str
+
+
+def parse_tag(tag: str) -> tuple[str, str]:
+    """
+    Parse a git tag into component and version.
+
+    Examples:
+        agent-v0.7.3 → ("agent", "0.7.3")
+        computer-server-v0.3.0 → ("computer-server", "0.3.0")
+        v0.1.13 → ("cua", "0.1.13")
+    """
+    # Root package tags: v0.1.13 → ("cua", "0.1.13")
+    if tag.startswith("v") and len(tag) > 1 and tag[1].isdigit():
+        return ("cua", tag[1:])
+
+    # Component tags: component-v1.2.3 → ("component", "1.2.3")
+    match = re.match(r"^(.+)-v(\d+\.\d+\.\d+.*)$", tag)
+    if match:
+        return (match.group(1), match.group(2))
+
+    raise ValueError(f"Cannot parse tag: {tag}")
+
+
+def detect_language(file_path: str) -> str:
+    """Detect programming language from file extension"""
+    ext = Path(file_path).suffix.lower()
+    language_map = {
+        ".py": "python",
+        ".ts": "typescript",
+        ".tsx": "typescript",
+        ".js": "javascript",
+    }
+    return language_map.get(ext, "unknown")
+
+
+def is_binary_file(file_path: Path) -> bool:
+    """Check if a file is binary by looking for null bytes"""
+    try:
+        with open(file_path, "rb") as f:
+            chunk = f.read(1024)
+            return b"\x00" in chunk
+    except Exception:
+        return True
+
+
+def clone_or_pull_repo() -> Path:
+    """Clone the repo if it doesn't exist, otherwise pull latest"""
+    CODE_DB_PATH.mkdir(parents=True, exist_ok=True)
+
+    if REPO_PATH.exists():
+        print("Pulling latest changes...")
+        subprocess.run(
+            ["git", "fetch", "--all", "--tags"],
+            cwd=REPO_PATH,
+            check=True,
+            capture_output=True,
+        )
+    else:
+        print(f"Cloning {REPO_URL}...")
+        subprocess.run(
+            ["git", "clone", "--bare", REPO_URL, str(REPO_PATH)],
+            check=True,
+            capture_output=True,
+        )
+
+    return REPO_PATH
+
+
+def get_all_tags(repo_path: Path) -> list[str]:
+    """Get all git tags from the repository"""
+    result = subprocess.run(
+        ["git", "tag"],
+        cwd=repo_path,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    tags = [t.strip() for t in result.stdout.strip().split("\n") if t.strip()]
+    return tags
+
+
+def get_files_at_tag(repo_path: Path, tag: str) -> list[str]:
+    """Get list of source files at a specific tag"""
+    result = subprocess.run(
+        ["git", "ls-tree", "-r", "--name-only", tag],
+        cwd=repo_path,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    files = []
+    for line in result.stdout.strip().split("\n"):
+        file_path = line.strip()
+        if not file_path:
+            continue
+        ext = Path(file_path).suffix.lower()
+        if ext in SOURCE_EXTENSIONS:
+            files.append(file_path)
+
+    return files
+
+
+def get_file_content_at_tag(repo_path: Path, tag: str, file_path: str) -> Optional[str]:
+    """Get content of a file at a specific tag"""
+    try:
+        result = subprocess.run(
+            ["git", "show", f"{tag}:{file_path}"],
+            cwd=repo_path,
+            check=True,
+            capture_output=True,
+        )
+        # Try to decode as UTF-8, skip binary files
+        try:
+            content = result.stdout.decode("utf-8", errors="replace")
+            # Check for binary content
+            if "\x00" in content[:1024]:
+                return None
+            return content
+        except Exception:
+            return None
+    except subprocess.CalledProcessError:
+        return None
+
+
+def load_metadata() -> dict:
+    """Load indexing metadata"""
+    if METADATA_PATH.exists():
+        with open(METADATA_PATH, "r") as f:
+            return json.load(f)
+    return {"indexed_tags": [], "failed_tags": []}
+
+
+def save_metadata(metadata: dict):
+    """Save indexing metadata"""
+    with open(METADATA_PATH, "w") as f:
+        json.dump(metadata, f, indent=2)
+
+
+def init_sqlite() -> sqlite3.Connection:
+    """Initialize SQLite database with FTS5"""
+    SQLITE_PATH.parent.mkdir(parents=True, exist_ok=True)
+
+    # Remove existing database for full reindex
+    if SQLITE_PATH.exists():
+        SQLITE_PATH.unlink()
+
+    conn = sqlite3.connect(SQLITE_PATH)
+    cursor = conn.cursor()
+
+    # Create main code_files table
+    cursor.execute(
+        """
+        CREATE TABLE code_files (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            component TEXT NOT NULL,
+            version TEXT NOT NULL,
+            file_path TEXT NOT NULL,
+            content TEXT NOT NULL,
+            language TEXT NOT NULL,
+            UNIQUE(component, version, file_path)
+        )
+    """
+    )
+
+    # Create indexes for filtering
+    cursor.execute("CREATE INDEX idx_component ON code_files(component)")
+    cursor.execute("CREATE INDEX idx_version ON code_files(component, version)")
+
+    # Create FTS5 virtual table
+    cursor.execute(
+        """
+        CREATE VIRTUAL TABLE code_files_fts USING fts5(
+            content,
+            component UNINDEXED,
+            version UNINDEXED,
+            file_path UNINDEXED,
+            content='code_files',
+            content_rowid='id'
+        )
+    """
+    )
+
+    # Create triggers to keep FTS in sync
+    cursor.execute(
+        """
+        CREATE TRIGGER code_files_ai AFTER INSERT ON code_files BEGIN
+            INSERT INTO code_files_fts(rowid, content, component, version, file_path)
+            VALUES (new.id, new.content, new.component, new.version, new.file_path);
+        END;
+    """
+    )
+
+    cursor.execute(
+        """
+        CREATE TRIGGER code_files_ad AFTER DELETE ON code_files BEGIN
+            DELETE FROM code_files_fts WHERE rowid = old.id;
+        END;
+    """
+    )
+
+    cursor.execute(
+        """
+        CREATE TRIGGER code_files_au AFTER UPDATE ON code_files BEGIN
+            DELETE FROM code_files_fts WHERE rowid = old.id;
+            INSERT INTO code_files_fts(rowid, content, component, version, file_path)
+            VALUES (new.id, new.content, new.component, new.version, new.file_path);
+        END;
+    """
+    )
+
+    conn.commit()
+    return conn
+
+
+def init_lancedb() -> lancedb.DBConnection:
+    """Initialize LanceDB database"""
+    if LANCEDB_PATH.exists():
+        shutil.rmtree(LANCEDB_PATH)
+
+    db = lancedb.connect(LANCEDB_PATH)
+    db.create_table("code", schema=CodeFile, mode="overwrite")
+    return db
+
+
+def index_all_tags(incremental: bool = True):
+    """Index all git tags into SQLite and LanceDB"""
+    print("Setting up repository...")
+    repo_path = clone_or_pull_repo()
+
+    print("Getting all tags...")
+    all_tags = get_all_tags(repo_path)
+    print(f"Found {len(all_tags)} tags")
+
+    # Load metadata for incremental indexing
+    metadata = load_metadata()
+
+    if incremental:
+        tags_to_index = [t for t in all_tags if t not in metadata["indexed_tags"]]
+        if not tags_to_index:
+            print("All tags already indexed. Use incremental=False for full reindex.")
+            return
+        print(f"Indexing {len(tags_to_index)} new tags (incremental)")
+    else:
+        tags_to_index = all_tags
+        metadata = {"indexed_tags": [], "failed_tags": []}
+        print(f"Indexing all {len(tags_to_index)} tags (full reindex)")
+
+    # Initialize databases
+    print("Initializing databases...")
+    sqlite_conn = init_sqlite()
+    sqlite_cursor = sqlite_conn.cursor()
+    lance_db = init_lancedb()
+    lance_table = lance_db.open_table("code")
+
+    # Track stats
+    total_files = 0
+    total_embedded = 0
+    failed_tags = []
+
+    # Process each tag
+    for i, tag in enumerate(tags_to_index):
+        print(f"\n[{i + 1}/{len(tags_to_index)}] Processing tag: {tag}")
+
+        try:
+            component, version = parse_tag(tag)
+        except ValueError as e:
+            print(f"  Skipping: {e}")
+            failed_tags.append(tag)
+            continue
+
+        print(f"  Component: {component}, Version: {version}")
+
+        # Get files at this tag
+        try:
+            files = get_files_at_tag(repo_path, tag)
+        except subprocess.CalledProcessError as e:
+            print(f"  Failed to list files: {e}")
+            failed_tags.append(tag)
+            continue
+
+        print(f"  Found {len(files)} source files")
+
+        lance_batch = []
+        files_indexed = 0
+
+        for file_path in files:
+            content = get_file_content_at_tag(repo_path, tag, file_path)
+            if content is None:
+                continue
+
+            content_size = len(content)
+            language = detect_language(file_path)
+
+            # Add to SQLite (up to 1MB)
+            if content_size <= MAX_FILE_SIZE_SQLITE:
+                try:
+                    sqlite_cursor.execute(
+                        """
+                        INSERT OR REPLACE INTO code_files
+                        (component, version, file_path, content, language)
+                        VALUES (?, ?, ?, ?, ?)
+                    """,
+                        (component, version, file_path, content, language),
+                    )
+                    files_indexed += 1
+                except Exception as e:
+                    print(f"    SQLite error for {file_path}: {e}")
+
+            # Queue for LanceDB (up to 100KB for embeddings)
+            if content_size <= MAX_FILE_SIZE_EMBEDDINGS:
+                lance_batch.append(
+                    {
+                        "text": content,
+                        "component": component,
+                        "version": version,
+                        "file_path": file_path,
+                        "language": language,
+                    }
+                )
+
+        # Commit SQLite batch
+        sqlite_conn.commit()
+        total_files += files_indexed
+        print(f"  Indexed {files_indexed} files to SQLite")
+
+        # Add to LanceDB in batches
+        if lance_batch:
+            try:
+                lance_table.add(lance_batch)
+                total_embedded += len(lance_batch)
+                print(f"  Embedded {len(lance_batch)} files to LanceDB")
+            except Exception as e:
+                print(f"  LanceDB error: {e}")
+
+        # Update metadata
+        metadata["indexed_tags"].append(tag)
+
+    # Final cleanup
+    sqlite_conn.close()
+
+    # Save metadata
+    metadata["failed_tags"] = failed_tags
+    save_metadata(metadata)
+
+    # Print summary
+    print("\n" + "=" * 50)
+    print("Indexing complete!")
+    print(f"  Total tags processed: {len(tags_to_index)}")
+    print(f"  Failed tags: {len(failed_tags)}")
+    print(f"  Total files in SQLite: {total_files}")
+    print(f"  Total files embedded: {total_embedded}")
+    print(f"  SQLite database: {SQLITE_PATH}")
+    print(f"  LanceDB database: {LANCEDB_PATH}")
+
+
+def test_sqlite_search(query: str, component: str, version: str):
+    """Test SQLite FTS search"""
+    conn = sqlite3.connect(SQLITE_PATH)
+    cursor = conn.cursor()
+
+    print(f"\nFTS search for '{query}' in {component}@{version}")
+    print("-" * 50)
+
+    cursor.execute(
+        """
+        SELECT file_path, snippet(code_files_fts, 0, '>>>', '<<<', '...', 50) as snippet
+        FROM code_files_fts
+        WHERE code_files_fts MATCH ?
+          AND component = ?
+          AND version = ?
+        ORDER BY rank
+        LIMIT 5
+    """,
+        (query, component, version),
+    )
+
+    results = cursor.fetchall()
+    for file_path, snippet in results:
+        print(f"\n  {file_path}")
+        print(f"  Snippet: {snippet[:200]}...")
+
+    conn.close()
+
+
+def test_lance_search(query: str, component: str, version: str):
+    """Test LanceDB semantic search"""
+    db = lancedb.connect(LANCEDB_PATH)
+    table = db.open_table("code")
+
+    print(f"\nSemantic search for '{query}' in {component}@{version}")
+    print("-" * 50)
+
+    results = (
+        table.search(query)
+        .where(f"component = '{component}' AND version = '{version}'")
+        .limit(5)
+        .to_list()
+    )
+
+    for result in results:
+        print(f"\n  {result['file_path']}")
+        print(f"  Score: {result.get('_distance', 'N/A'):.4f}")
+        print(f"  Preview: {result['text'][:150]}...")
+
+
+def main():
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Index CUA repository code")
+    parser.add_argument(
+        "--full", action="store_true", help="Full reindex (ignore cached tags)"
+    )
+    parser.add_argument("--test", action="store_true", help="Run test searches")
+    args = parser.parse_args()
+
+    if args.test:
+        # Run test searches
+        test_sqlite_search("ComputerAgent", "agent", "0.7.3")
+        test_lance_search("how to take a screenshot", "agent", "0.7.3")
+    else:
+        index_all_tags(incremental=not args.full)
+
+
+if __name__ == "__main__":
+    main()

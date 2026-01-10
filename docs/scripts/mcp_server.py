@@ -1,6 +1,7 @@
 """
-FastMCP SSE HTTP Server for CUA Documentation
+FastMCP SSE HTTP Server for CUA Documentation and Code
 Provides semantic search (LanceDB) and full-text search (SQLite FTS5) over the documentation
+and versioned source code across all git tags.
 """
 
 import sqlite3
@@ -11,9 +12,16 @@ import lancedb
 from fastmcp import FastMCP
 from lancedb.embeddings import get_registry
 
-# Configuration
+from code_search import CodeSearch, CodeSearchError
+
+# Configuration - Documentation
 DB_PATH = Path(__file__).parent.parent / "docs_db"
 SQLITE_PATH = DB_PATH / "docs.sqlite"
+
+# Configuration - Code Index
+CODE_DB_PATH = Path(__file__).parent.parent / "code_db"
+CODE_SQLITE_PATH = CODE_DB_PATH / "code_index.sqlite"
+CODE_LANCEDB_PATH = CODE_DB_PATH / "code_index.lancedb"
 
 # Initialize the embedding model (same as used for indexing)
 model = get_registry().get("sentence-transformers").create(name="all-MiniLM-L6-v2")
@@ -21,7 +29,7 @@ model = get_registry().get("sentence-transformers").create(name="all-MiniLM-L6-v
 # Create FastMCP server
 mcp = FastMCP(
     name="CUA Docs",
-    instructions="""CUA Documentation Server - provides search and retrieval for Computer Use Agent (CUA) documentation.
+    instructions="""CUA Documentation and Code Server - provides search and retrieval for Computer Use Agent (CUA) documentation and versioned source code.
 
 Documentation covers:
 - CUA SDK: Python library for building computer-use agents with screen capture, mouse/keyboard control
@@ -30,7 +38,7 @@ Documentation covers:
 - Sandboxes: Docker and cloud VM environments for safe agent execution
 - Computer interfaces: Screen, mouse, keyboard, and bash interaction APIs
 
-Available tools:
+=== DOCUMENTATION TOOLS ===
 - search_docs: Semantic/vector search - best for conceptual queries like "how does X work?"
 - search_docs_fts: Full-text search - best for exact terms, code snippets, or specific keywords
 - get_page_content: Get full content of a specific page by URL
@@ -38,13 +46,46 @@ Available tools:
 - list_pages: Browse available documentation pages
 - get_doc_categories: See all documentation categories
 
-IMPORTANT: After performing search_docs or search_docs_fts queries, ALWAYS use get_page_content
-to retrieve the full page context before answering. Search results return snippets/chunks that
-may lack important context. The full page often contains setup instructions, prerequisites,
-code examples, and related information essential for complete answers.
+=== CODE SEARCH TOOLS ===
+Search across all versions of CUA source code. Component + version are REQUIRED for all searches.
 
-Always cite the source URL when providing information.""",
+Discovery:
+- list_components: See all indexed components (agent, computer, mcp-server, etc.)
+- list_versions: See all indexed versions for a component
+- list_code_files: See all source files in a component@version
+
+Search (requires component + version):
+- search_code: Semantic search - "how to take a screenshot", "authentication logic"
+- search_code_fts: Full-text search - exact function names, class names, keywords
+
+Retrieval:
+- get_code_file_content: Get full source file content
+
+Workflow example:
+1. list_components() -> see available components
+2. list_versions("agent") -> see versions for agent
+3. search_code("ComputerAgent initialization", "agent", "0.7.3") -> find relevant files
+4. get_code_file_content("agent", "0.7.3", "agent/computer_agent.py") -> get full file
+
+IMPORTANT: After performing search queries, ALWAYS retrieve full content before answering.
+Search results return snippets that may lack important context.
+
+Always cite source URLs for docs and component@version:path for code.""",
 )
+
+# Global code search instance
+_code_search: Optional[CodeSearch] = None
+
+
+def get_code_search() -> CodeSearch:
+    """Get or create CodeSearch instance"""
+    global _code_search
+    if _code_search is None:
+        _code_search = CodeSearch(
+            sqlite_path=CODE_SQLITE_PATH,
+            lancedb_path=CODE_LANCEDB_PATH,
+        )
+    return _code_search
 
 # Global database connections
 _lance_db: Optional[lancedb.DBConnection] = None
@@ -364,6 +405,157 @@ def search_by_url(url_pattern: str, limit: int = 10) -> list[dict]:
 
 
 # =============================================================================
+# Code Search Tools
+# =============================================================================
+
+
+@mcp.tool
+def list_components() -> list[dict]:
+    """
+    List all indexed code components with their version counts.
+
+    Returns:
+        List of components with version counts, e.g.:
+        [{"component": "agent", "version_count": 45}, {"component": "computer", "version_count": 30}]
+    """
+    try:
+        return get_code_search().list_components()
+    except CodeSearchError as e:
+        raise ValueError(str(e))
+
+
+@mcp.tool
+def list_versions(component: str) -> list[str]:
+    """
+    List all indexed versions for a component, sorted by semver descending (newest first).
+
+    Args:
+        component: The component name (e.g., "agent", "computer", "mcp-server")
+
+    Returns:
+        List of version strings, e.g.: ["0.7.3", "0.7.2", "0.7.1", ...]
+    """
+    try:
+        return get_code_search().list_versions(component)
+    except CodeSearchError as e:
+        raise ValueError(str(e))
+
+
+@mcp.tool
+def list_code_files(component: str, version: str) -> list[dict]:
+    """
+    List all source files for a specific component@version.
+
+    Args:
+        component: The component name (e.g., "agent")
+        version: The version string (e.g., "0.7.3")
+
+    Returns:
+        List of files with paths and languages, e.g.:
+        [{"path": "agent/core.py", "language": "python"}, ...]
+    """
+    try:
+        return get_code_search().list_files(component, version)
+    except CodeSearchError as e:
+        raise ValueError(str(e))
+
+
+@mcp.tool
+def search_code(query: str, component: str, version: str, limit: int = 10) -> list[dict]:
+    """
+    Semantic search over source code for a specific component@version.
+    Uses vector embeddings to find semantically similar code.
+
+    Best for natural language queries like:
+    - "how to take a screenshot"
+    - "authentication and login logic"
+    - "error handling patterns"
+
+    Args:
+        query: Natural language search query
+        component: The component name (REQUIRED, e.g., "agent")
+        version: The version string (REQUIRED, e.g., "0.7.3")
+        limit: Maximum results (default: 10, max: 20)
+
+    Returns:
+        List of matching files with content and relevance scores
+    """
+    limit = min(max(1, limit), 20)
+    try:
+        return get_code_search().search_code(query, component, version, limit)
+    except CodeSearchError as e:
+        raise ValueError(str(e))
+
+
+@mcp.tool
+def search_code_fts(
+    query: str, component: str, version: str, limit: int = 10, highlight: bool = True
+) -> list[dict]:
+    """
+    Full-text search over source code for a specific component@version.
+    Uses SQLite FTS5 for fast keyword matching.
+
+    Best for exact matches like:
+    - Function names: "ComputerAgent"
+    - Class names: "ScreenCapture"
+    - Specific keywords: "async def screenshot"
+
+    Supports FTS5 syntax:
+    - Phrases: '"async def"'
+    - AND/OR: "screenshot AND save"
+    - Prefix: "Computer*"
+
+    Args:
+        query: FTS5 search query
+        component: The component name (REQUIRED, e.g., "agent")
+        version: The version string (REQUIRED, e.g., "0.7.3")
+        limit: Maximum results (default: 10, max: 50)
+        highlight: Include highlighted snippets (default: True)
+
+    Returns:
+        List of matching files with snippets and relevance scores
+    """
+    limit = min(max(1, limit), 50)
+    try:
+        return get_code_search().search_code_fts(query, component, version, limit, highlight)
+    except CodeSearchError as e:
+        raise ValueError(str(e))
+
+
+@mcp.tool
+def get_code_file_content(component: str, version: str, file_path: str) -> dict:
+    """
+    Get the full content of a specific source file at component@version.
+
+    Args:
+        component: The component name (e.g., "agent")
+        version: The version string (e.g., "0.7.3")
+        file_path: Path to the file (e.g., "agent/computer_agent.py")
+
+    Returns:
+        Full file content with language and line count
+    """
+    try:
+        return get_code_search().get_file_content(component, version, file_path)
+    except CodeSearchError as e:
+        raise ValueError(str(e))
+
+
+@mcp.tool
+def get_code_index_stats() -> dict:
+    """
+    Get statistics about the code search index.
+
+    Returns:
+        Index statistics including total files, components, and versions
+    """
+    try:
+        return get_code_search().get_stats()
+    except CodeSearchError as e:
+        raise ValueError(str(e))
+
+
+# =============================================================================
 # Resources
 # =============================================================================
 
@@ -430,18 +622,26 @@ def main():
     if args.transport in ["sse", "http"]:
         print(f"URL: http://{args.host}:{args.port}")
 
-    # Verify databases exist
+    # Verify documentation databases exist
     try:
         get_lance_table()
-        print(f"LanceDB loaded from: {DB_PATH}")
+        print(f"Docs LanceDB loaded from: {DB_PATH}")
     except RuntimeError as e:
         print(f"Warning: {e}")
 
     try:
         get_sqlite_conn()
-        print(f"SQLite loaded from: {SQLITE_PATH}")
+        print(f"Docs SQLite loaded from: {SQLITE_PATH}")
     except RuntimeError as e:
         print(f"Warning: {e}")
+
+    # Verify code index databases exist
+    try:
+        code_search = get_code_search()
+        stats = code_search.get_stats()
+        print(f"Code index loaded: {stats['total_files']} files across {stats['total_components']} components")
+    except (CodeSearchError, Exception) as e:
+        print(f"Warning: Code index not available: {e}")
 
     mcp.run(transport=args.transport, host=args.host, port=args.port)
 

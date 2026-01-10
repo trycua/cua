@@ -920,7 +920,7 @@ def generate_code_index_parallel(max_concurrent: int = 4) -> dict:
         "components": results,
     }
 
-    print(f"\nParallel indexing complete:")
+    print("\nParallel indexing complete:")
     print(f"  Total files: {total_files}")
     print(f"  Total embedded: {total_embedded}")
     print(f"  Components indexed: {len(results)}")
@@ -1302,7 +1302,9 @@ IMPORTANT: Always cite sources - URLs for docs, component@version:path for code.
         if _code_sqlite_conn is None:
             components = discover_code_components()
             if not components:
-                raise RuntimeError("No code databases found. Run generate_code_index_parallel first.")
+                raise RuntimeError(
+                    "No code databases found. Run generate_code_index_parallel first."
+                )
 
             # Create in-memory database and attach all component databases
             _code_sqlite_conn = sqlite3.connect(":memory:")
@@ -1313,7 +1315,9 @@ IMPORTANT: Always cite sources - URLs for docs, component@version:path for code.
             # Check for legacy single database first
             legacy_path = db_dir / "code_index.sqlite"
             if legacy_path.exists() and "_legacy" in components:
-                _code_sqlite_conn.execute(f"ATTACH DATABASE 'file:{legacy_path}?mode=ro' AS code_legacy")
+                _code_sqlite_conn.execute(
+                    f"ATTACH DATABASE 'file:{legacy_path}?mode=ro' AS code_legacy"
+                )
 
             # Attach each component database
             attached = []

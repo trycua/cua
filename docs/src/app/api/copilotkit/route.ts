@@ -203,7 +203,7 @@ If users seem stuck, invite them to join the Discord: https://discord.com/invite
   mcpServers: [
     {
       type: 'sse',
-      url: 'https://doc-mcp.cua.ai/sse',
+      url: 'https://cuaai--cua-docs-mcp-web.modal.run/sse',
     },
   ],
 });

@@ -6,7 +6,12 @@ if (typeof window !== 'undefined') {
   applyCopilotKitFetchPatch();
 }
 
-import { CopilotKit, useRenderToolCall, useCopilotChat } from '@copilotkit/react-core';
+import {
+  CopilotKit,
+  useRenderToolCall,
+  useCopilotChat,
+  CatchAllActionRenderProps,
+} from '@copilotkit/react-core';
 import {
   CopilotPopup,
   AssistantMessage as DefaultAssistantMessage,
@@ -124,9 +129,14 @@ function ToolIndicator({ name, status }: { name: string; status: string }) {
 
 function ToolCallIndicators() {
   // Generic catch-all for any tool call using wildcard pattern
+  // Type assertion needed because useRenderToolCall's types don't properly handle name: '*'
+  // but CatchAllActionRenderProps includes the name property at runtime
   useRenderToolCall({
     name: '*',
-    render: ({ name, status }) => <ToolIndicator name={name} status={status} />,
+    render: (props) => {
+      const { name, status } = props as CatchAllActionRenderProps;
+      return <ToolIndicator name={name} status={status} />;
+    },
   });
 
   return null;

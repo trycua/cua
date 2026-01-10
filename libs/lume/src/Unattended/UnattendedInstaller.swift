@@ -36,7 +36,7 @@ final class UnattendedInstaller {
 
         Logger.info("Parsed boot commands", metadata: ["count": "\(commands.count)"])
 
-        // Start the VM in a background task (vm.run() blocks forever)
+        // Start the VM in a background task (vm.run() blocks forever on success)
         Logger.info("Starting VM for unattended setup (background task)")
         let vmTask = Task {
             try await vm.run(
@@ -50,12 +50,11 @@ final class UnattendedInstaller {
         }
 
         // Give the VM a moment to start up
+        // Note: Startup errors will be caught when attempting to connect to the VNC input
+        // client below, as that requires the VM to be successfully initialized with a
+        // responding VNC server. Task.isCancelled only returns true for explicitly cancelled
+        // tasks, not for tasks that threw errors, so checking it here would be ineffective.
         try await Task.sleep(nanoseconds: 2_000_000_000)  // 2 seconds
-
-        // Check if VM task failed immediately
-        if vmTask.isCancelled {
-            throw UnattendedError.vncAutomationFailed("VM failed to start")
-        }
 
         // Wait for initial boot
         Logger.info("Waiting for VM to boot", metadata: ["bootWait": "\(config.bootWait)s"])

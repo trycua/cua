@@ -20,25 +20,25 @@
 
 </div>
 
-**Cua** ("koo-ah") is an open-source platform for building computer-use agents—AI systems that see screens, click buttons, type, and complete tasks autonomously.
+**Cua** is an open-source ecosystem for computer-use AI—from building agents that automate desktops, to benchmarking models, to virtualizing macOS on Apple Silicon.
 
 <div align="center">
   <video src="https://github.com/user-attachments/assets/c619b4ea-bb8e-4382-860e-f3757e36af20" width="600" controls></video>
 </div>
 
-## The Cua Stack
+## Choose Your Path
 
-| Component | Description | Docs |
-|-----------|-------------|------|
-| **Desktop Sandboxes** | Isolated environments for safe agent execution—cloud, Docker, macOS VMs, or Windows Sandbox | [Set up a Sandbox](https://cua.ai/docs/cua/guide/get-started/set-up-sandbox) |
-| **Computer SDK** | Unified API for screenshots, mouse, keyboard, and file operations across all platforms | [Computer SDK](https://cua.ai/docs/cua/reference/computer-sdk) |
-| **Agent SDK** | Framework for 100+ vision-language models with composable grounding and planning | [Agent SDK](https://cua.ai/docs/cua/reference/agent-sdk) |
+| If you want to... | Check out | For |
+|-------------------|-----------|-----|
+| Build AI agents or run isolated code execution | [**Cua**](#cua---agentic-ui-automation--code-execution) | AI Engineers |
+| Benchmark computer-use models or train RL agents | [**Cua-Bench**](#cua-bench---benchmarks--rl-environments) | Researchers |
+| Run macOS/Linux VMs on Apple Silicon | [**Lume**](#lume---macos-virtualization) | Hackers, Sysadmins |
 
-## Quick Start
+---
 
-```bash
-pip install cua-agent[all] cua-computer
-```
+## Cua - Agentic UI Automation & Code Execution
+
+Build agents that see screens, click buttons, and complete tasks autonomously. Run isolated code execution environments for AI coding assistants like Claude Code, Codex CLI, or OpenCode.
 
 ```python
 from computer import Computer
@@ -51,20 +51,52 @@ async for result in agent.run([{"role": "user", "content": "Open Firefox and sea
     print(result)
 ```
 
-**Get started:**
-- [Clone a starter template](https://github.com/trycua/agent-template) and run in <1 min
-- [Full quickstart guide](https://cua.ai/docs/cua/guide/get-started/set-up-sandbox)
-- [Supported models](https://cua.ai/docs/cua/reference/agent-sdk/supported-models)
+**[Get Started](https://cua.ai/docs/cua/guide/get-started/set-up-sandbox)** | **[Examples](https://cua.ai/docs/cua/guide/examples)** | **[API Reference](https://cua.ai/docs/cua/reference/agent-sdk)**
+
+---
+
+## Cua-Bench - Benchmarks & RL Environments
+
+Evaluate computer-use agents on OSWorld, ScreenSpot, Windows Arena, and custom tasks. Export trajectories for training.
+
+```bash
+# Install and create base image
+git clone https://github.com/trycua/cua-bench.git && cd cua-bench
+uv tool install -e . && cb image create linux-docker
+
+# Run benchmark with agent
+cb run dataset datasets/cua-bench-basic --agent cua-agent --max-parallel 4
+```
+
+**[Get Started](https://cua.ai/docs/cuabench/guide/getting-started/first-steps)** | **[Registry](https://cuabench.ai/registry)** | **[CLI Reference](https://cua.ai/docs/cuabench/reference/cli-reference)**
+
+---
+
+## Lume - macOS Virtualization
+
+Create and manage macOS/Linux VMs with near-native performance on Apple Silicon using Apple's Virtualization.Framework.
+
+```bash
+# Install Lume
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/lume/scripts/install.sh)"
+
+# Pull & start a macOS VM
+lume run macos-sequoia-vanilla:latest
+```
+
+**[Get Started](https://cua.ai/docs/lume/guide/getting-started/installation)** | **[Prebuilt Images](https://cua.ai/docs/lume/guide/fundamentals/prebuilt-images)** | **[CLI Reference](https://cua.ai/docs/lume/reference/cli-reference)**
+
+---
 
 ## Packages
 
-| Package | Description | Docs |
-|---------|-------------|------|
-| [cua-agent](./libs/python/agent) | AI agent framework for computer-use tasks | [Guide](https://cua.ai/docs/cua/guide/fundamentals/agent-loop) |
-| [cua-computer](./libs/python/computer) | SDK for controlling desktop environments | [Guide](https://cua.ai/docs/cua/guide/fundamentals/computer-interface) |
-| [cua-mcp-server](./libs/python/mcp-server) | MCP server for Claude Desktop, Cursor, etc. | [Guide](https://cua.ai/docs/cua/reference/mcp-server) |
-| [lume](./libs/lume) | macOS/Linux VM management on Apple Silicon | [Docs](https://cua.ai/docs/lume) |
-| [lumier](./libs/lumier) | Docker-compatible interface for Lume VMs | [README](./libs/lumier/README.md) |
+| Package | Description |
+|---------|-------------|
+| [cua-agent](./libs/python/agent) | AI agent framework for computer-use tasks |
+| [cua-computer](./libs/python/computer) | SDK for controlling desktop environments |
+| [cua-bench](https://github.com/trycua/cua-bench) | Benchmarks and RL environments for computer-use |
+| [lume](./libs/lume) | macOS/Linux VM management on Apple Silicon |
+| [lumier](./libs/lumier) | Docker-compatible interface for Lume VMs |
 
 ## Python Version
 

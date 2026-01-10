@@ -1,4 +1,4 @@
-name: Build and Publish CUA Windows Container
+name: Build and Publish Cua Windows Container
 
 on:
   push:

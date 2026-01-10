@@ -1,4 +1,4 @@
-name: Build and Publish CUA Android Container
+name: Build and Publish Cua Android Container
 
 on:
   push:

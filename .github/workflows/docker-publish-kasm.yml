@@ -1,4 +1,4 @@
-name: Build and Publish CUA Ubuntu Container
+name: Build and Publish Cua Ubuntu Container
 
 on:
   push:

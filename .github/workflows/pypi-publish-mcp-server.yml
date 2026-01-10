@@ -158,14 +158,15 @@ jobs:
 
   create-release:
     needs: [prepare, publish]
-    uses: ./.github/workflows/github-release-reusable.yml
+    uses: ./.github/workflows/release-github-reusable.yml
     with:
       tag_name: "mcp-server-v${{ needs.prepare.outputs.version }}"
       release_name: "cua-mcp-server v${{ needs.prepare.outputs.version }}"
+      module_path: "libs/python/mcp-server"
       body: |
-        ## MCP Server for the Computer-Use Agent (CUA)
+        ## MCP Server for the Computer-Use Agent (Cua)
 
-        This package provides MCP (Model Context Protocol) integration for CUA agents, allowing them to be used with Claude Desktop, Cursor, and other MCP clients.
+        This package provides MCP (Model Context Protocol) integration for Cua agents, allowing them to be used with Claude Desktop, Cursor, and other MCP clients.
 
         ## Usage
 

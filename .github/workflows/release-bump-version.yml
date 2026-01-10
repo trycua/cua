@@ -17,6 +17,7 @@ on:
           - npm/cli
           - npm/computer
           - npm/core
+          - lume
       bump_type:
         description: "Version bump type"
         required: true
@@ -44,6 +45,7 @@ jobs:
       npm_cli_version: ${{ steps.npm_cli_version.outputs.version }}
       npm_computer_version: ${{ steps.npm_computer_version.outputs.version }}
       npm_core_version: ${{ steps.npm_core_version.outputs.version }}
+      lume_version: ${{ steps.lume_version.outputs.version }}
     steps:
       - name: Set package directory and type
         id: package
@@ -85,6 +87,10 @@ jobs:
               echo "directory=libs/typescript/core" >> $GITHUB_OUTPUT
               echo "type=npm" >> $GITHUB_OUTPUT
               ;;
+            "lume")
+              echo "directory=libs/lume" >> $GITHUB_OUTPUT
+              echo "type=lume" >> $GITHUB_OUTPUT
+              ;;
             *)
               echo "Unknown service: ${{ inputs.service }}"
               exit 1
@@ -98,51 +104,22 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Python
-        if: ${{ steps.package.outputs.type == 'python' }}
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
       - name: Install bump2version
-        if: ${{ steps.package.outputs.type == 'python' }}
         run: pip install bump2version
-
-      - name: Set up Node.js
-        if: ${{ steps.package.outputs.type == 'npm' }}
-        uses: actions/setup-node@v4
-        with:
-          node-version: "24.x"
-
-      - name: Setup pnpm
-        if: ${{ steps.package.outputs.type == 'npm' && inputs.service != 'npm/cli' }}
-        uses: pnpm/action-setup@v4
-        with:
-          package_json_file: ${{ steps.package.outputs.directory }}/package.json
-
-      - name: Setup Bun
-        if: ${{ inputs.service == 'npm/cli' }}
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: latest
 
       - name: Configure Git
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-      - name: Run bump2version (Python)
-        if: ${{ steps.package.outputs.type == 'python' }}
+      - name: Run bump2version
         run: |
           cd ${{ steps.package.outputs.directory }}
           bump2version ${{ inputs.bump_type }}
-
-      - name: Run npm version (NPM)
-        if: ${{ steps.package.outputs.type == 'npm' }}
-        run: |
-          cd ${{ steps.package.outputs.directory }}
-          npm version ${{ inputs.bump_type }} --no-git-tag-version
-          git add package.json
-          git commit -m "chore: bump ${{ inputs.service }} version to ${{ inputs.bump_type }}"
 
       - name: Also bump cua-agent
         if: ${{ inputs.service == 'pypi/computer' }}
@@ -208,8 +185,7 @@ jobs:
         if: ${{ inputs.service == 'npm/cli' }}
         id: npm_cli_version
         run: |
-          cd libs/typescript/cua-cli
-          VERSION=$(node -p "require('./package.json').version")
+          VERSION=$(grep -oP '"version": "\K[^"]+' libs/typescript/cua-cli/package.json)
           echo "npm/cli version: $VERSION"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
@@ -217,8 +193,7 @@ jobs:
         if: ${{ inputs.service == 'npm/computer' }}
         id: npm_computer_version
         run: |
-          cd libs/typescript/computer
-          VERSION=$(node -p "require('./package.json').version")
+          VERSION=$(grep -oP '"version": "\K[^"]+' libs/typescript/computer/package.json)
           echo "npm/computer version: $VERSION"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
@@ -226,9 +201,16 @@ jobs:
         if: ${{ inputs.service == 'npm/core' }}
         id: npm_core_version
         run: |
-          cd libs/typescript/core
-          VERSION=$(node -p "require('./package.json').version")
+          VERSION=$(grep -oP '"version": "\K[^"]+' libs/typescript/core/package.json)
           echo "npm/core version: $VERSION"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Capture bumped lume version
+        if: ${{ inputs.service == 'lume' }}
+        id: lume_version
+        run: |
+          VERSION=$(grep -oP 'static let current: String = "\K[^"]+' libs/lume/src/Main.swift)
+          echo "lume version: $VERSION"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Push changes
@@ -305,4 +287,12 @@ jobs:
     uses: ./.github/workflows/npm-publish-core.yml
     with:
       version: ${{ needs.bump-version.outputs.npm_core_version }}
+    secrets: inherit
+
+  publish-lume:
+    needs: bump-version
+    if: ${{ inputs.service == 'lume' }}
+    uses: ./.github/workflows/lume-publish.yml
+    with:
+      version: ${{ needs.bump-version.outputs.lume_version }}
     secrets: inherit

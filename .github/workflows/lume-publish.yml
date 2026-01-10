@@ -240,6 +240,36 @@ jobs:
           path: ./libs/lume/${{ steps.build_notarize.outputs.pkg_path }}
           if-no-files-found: error
 
+      - name: Generate path-filtered release notes
+        if: startsWith(github.ref, 'refs/tags/lume-v')
+        id: release-notes
+        run: |
+          # Find previous lume tag
+          PREV_TAG=$(git tag -l "lume-v*" --sort=-v:refname | grep -v "^${{ github.ref_name }}$" | head -n 1 || echo "")
+
+          echo "Current tag: ${{ github.ref_name }}"
+          echo "Previous tag: $PREV_TAG"
+
+          # Generate release notes filtered by libs/lume path
+          if [ -n "$PREV_TAG" ]; then
+            echo "Generating notes for commits between $PREV_TAG and HEAD in libs/lume"
+            NOTES=$(git log ${PREV_TAG}..HEAD --pretty=format:"* %s (%h) by @%an" -- "libs/lume" | head -50)
+          else
+            echo "No previous tag found, generating notes for recent commits in libs/lume"
+            NOTES=$(git log --pretty=format:"* %s (%h) by @%an" -- "libs/lume" | head -50)
+          fi
+
+          if [ -z "$NOTES" ]; then
+            NOTES="* Initial release or no path-specific changes found"
+          fi
+
+          # Store notes in output
+          echo "RELEASE_NOTES<<EOF" >> $GITHUB_OUTPUT
+          echo "## What's Changed" >> $GITHUB_OUTPUT
+          echo "" >> $GITHUB_OUTPUT
+          echo "$NOTES" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
       - name: Create Release
         if: startsWith(github.ref, 'refs/tags/lume-v')
         uses: softprops/action-gh-release@v1
@@ -252,11 +282,14 @@ jobs:
             ./libs/lume/.release/lume.tar.gz
             ./libs/lume/.release/lume.pkg.tar.gz
           body: |
+            ${{ steps.release-notes.outputs.RELEASE_NOTES }}
+
             ${{ steps.generate_checksums.outputs.checksums }}
 
             ### Installation with script
 
+            ```bash
             /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/lume/scripts/install.sh)"
             ```
-          generate_release_notes: true
+          generate_release_notes: false
           make_latest: true

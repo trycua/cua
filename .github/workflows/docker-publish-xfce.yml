@@ -1,4 +1,4 @@
-name: Build and Publish CUA XFCE Container
+name: Build and Publish Cua XFCE Container
 
 on:
   push:

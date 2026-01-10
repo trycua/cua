@@ -64,12 +64,13 @@ jobs:
 
   create-release:
     needs: [prepare, publish]
-    uses: ./.github/workflows/github-release-reusable.yml
+    uses: ./.github/workflows/release-github-reusable.yml
     with:
       tag_name: "core-v${{ needs.prepare.outputs.version }}"
       release_name: "cua-core v${{ needs.prepare.outputs.version }}"
+      module_path: "libs/python/core"
       body: |
-        ## Base package for CUA project with telemetry and core utilities
+        ## Base package for Cua project with telemetry and core utilities
 
         ## Installation
 

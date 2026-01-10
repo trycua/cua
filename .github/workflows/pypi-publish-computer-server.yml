@@ -81,12 +81,13 @@ jobs:
 
   create-release:
     needs: [prepare, publish]
-    uses: ./.github/workflows/github-release-reusable.yml
+    uses: ./.github/workflows/release-github-reusable.yml
     with:
       tag_name: "computer-server-v${{ needs.prepare.outputs.version }}"
       release_name: "cua-computer-server v${{ needs.prepare.outputs.version }}"
+      module_path: "libs/python/computer-server"
       body: |
-        ## Computer Server for the Computer Universal Automation (CUA) project
+        ## Computer Server for the Computer Universal Automation (Cua) project
 
         A FastAPI-based server implementation for computer control.
 

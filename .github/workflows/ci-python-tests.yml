@@ -4,13 +4,13 @@ on:
   pull_request:
     paths:
       - "libs/python/**"
-      - ".github/workflows/python-tests.yml"
+      - ".github/workflows/ci-python-tests.yml"
   push:
     branches:
       - main
     paths:
       - "libs/python/**"
-      - ".github/workflows/python-tests.yml"
+      - ".github/workflows/ci-python-tests.yml"
   workflow_dispatch: # Allow manual trigger
 
 jobs:

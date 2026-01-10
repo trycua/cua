@@ -5,11 +5,11 @@ on:
       - "main"
     paths:
       - "libs/lume/**"
-      - ".github/workflows/ci-lume.yml"
+      - ".github/workflows/lume-ci.yml"
   pull_request:
     paths:
       - "libs/lume/**"
-      - ".github/workflows/ci-lume.yml"
+      - ".github/workflows/lume-ci.yml"
 
 concurrency:
   group: lume-${{ github.workflow }}-${{ github.ref }}

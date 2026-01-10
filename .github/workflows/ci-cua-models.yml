@@ -1,7 +1,7 @@
-name: Test CUA Supporting Models
+name: Test Cua Supporting Models
 
-# This workflow tests all supported CUA models with API keys
-# Run manually using workflow_dispatch with test_models=true
+# This workflow tests all supported Cua models with API keys
+# Runs on changes to libs/python or manually via workflow_dispatch
 
 on:
   workflow_dispatch:
@@ -11,14 +11,20 @@ on:
         required: false
         default: true
         type: boolean
-  schedule:
-    # Runs at 3 PM UTC (8 AM PDT) daily
-    - cron: "0 15 * * *"
+  pull_request:
+    paths:
+      - "libs/python/**"
+      - ".github/workflows/ci-cua-models.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "libs/python/**"
+      - ".github/workflows/ci-cua-models.yml"
 
 jobs:
-  # Test all CUA models - runs on PRs, schedules, or when manually triggered
+  # Test all Cua models - runs on PRs, pushes to main, or when manually triggered
   test-all-models:
-    if: ${{ github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || fromJSON(inputs.test_models || 'false') }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -103,7 +109,7 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-uv-
 
-      - name: Install CUA dependencies (uv)
+      - name: Install Cua dependencies (uv)
         run: |
           # Remove existing venv if it exists (from cache restore) to avoid interactive prompt
           rm -rf .venv
@@ -178,7 +184,7 @@ jobs:
 
           # Prepare Slack message
           echo "TESTS_CONTENT<<EOF" >> $GITHUB_ENV
-          echo "*CUA Model Test Results*" >> $GITHUB_ENV
+          echo "*Cua Model Test Results*" >> $GITHUB_ENV
           echo "" >> $GITHUB_ENV
           echo "*Model:* ${{ matrix.model }}" >> $GITHUB_ENV
           echo "*Status:* ${STATUS_ICON} ${STATUS_TEXT}" >> $GITHUB_ENV
@@ -241,14 +247,14 @@ jobs:
       #   env:
       #     SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
       #     SLACK_CHANNEL: ${{ vars.SLACK_CHANNEL }}
-      #     SLACK_TITLE: CUA Model Test Update
+      #     SLACK_TITLE: Cua Model Test Update
       #     SLACK_COLOR: ${{ env.SLACK_COLOR }}
       #     SLACK_MESSAGE: |
       #       ${{ env.TESTS_CONTENT }}
 
   # Summary job that aggregates all model test results
   test-summary:
-    if: ${{ always() && (github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || fromJSON(inputs.test_models || 'false')) }}
+    if: ${{ always() }}
     needs: test-all-models
     runs-on: ubuntu-latest
     steps:
@@ -370,7 +376,7 @@ jobs:
         env:
           SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
           SLACK_CHANNEL: ${{ vars.SLACK_CHANNEL }}
-          SLACK_TITLE: CUA Models Test Summary
+          SLACK_TITLE: Cua Models Test Summary
           SLACK_COLOR: ${{ env.SLACK_COLOR }}
           SLACK_MESSAGE: |
             ${{ env.SUMMARY_MESSAGE }}

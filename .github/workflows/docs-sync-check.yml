@@ -5,7 +5,7 @@ on:
     paths:
       # Lume (Swift)
       - 'libs/lume/src/**'
-      # CUA CLI (TypeScript)
+      # Cua CLI (TypeScript)
       - 'libs/typescript/cua-cli/src/**'
       # MCP Server (Python)
       - 'libs/python/mcp-server/src/**'
@@ -60,7 +60,7 @@ jobs:
             GENERATORS="$GENERATORS lume"
           fi
 
-          # CUA CLI changes
+          # Cua CLI changes
           if echo "$CHANGED_FILES" | grep -q "^libs/typescript/cua-cli/src/"; then
             GENERATORS="$GENERATORS cua-cli"
           fi

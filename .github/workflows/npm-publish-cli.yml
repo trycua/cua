@@ -108,11 +108,12 @@ jobs:
       NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
 
   create-release:
-    needs: [prepare, publish-npm]
-    uses: ./.github/workflows/github-release-reusable.yml
+    needs: [prepare, publish-npm, build-binaries]
+    uses: ./.github/workflows/release-github-reusable.yml
     with:
       tag_name: ${{ needs.prepare.outputs.tag }}
       release_name: "cua-cli v${{ needs.prepare.outputs.version }}"
+      module_path: "libs/typescript/cua-cli"
       attach_artifacts: true
       body: |
         ## Installation

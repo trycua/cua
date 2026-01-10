@@ -16,7 +16,7 @@ import '@copilotkit/react-ui/styles.css';
 import { ReactNode, useMemo, useState, useCallback, useEffect, useRef, memo } from 'react';
 import posthog from 'posthog-js';
 
-const DOCS_INSTRUCTIONS = `You are a helpful assistant for CUA (Computer Use Agent) and CUA-Bench documentation. Be concise and helpful. Use clear paragraph breaks between sections.`;
+const DOCS_INSTRUCTIONS = `You are a helpful assistant for Cua, Cua-Bench and Lume documentation. Be concise and helpful. Use clear paragraph breaks between sections.`;
 
 interface CopilotKitProviderProps {
   children: ReactNode;
@@ -81,7 +81,7 @@ function CustomAssistantMessage(props: React.ComponentProps<typeof DefaultAssist
 function ToolCallIndicators() {
   useRenderToolCall({
     name: 'search_docs',
-    description: 'Searches the CUA documentation',
+    description: 'Searches the Cua documentation',
     parameters: [{ name: 'query', type: 'string', description: 'Search query', required: true }],
     render: ({ status, args }) => {
       if (status === 'inProgress') {
@@ -360,8 +360,8 @@ function CopilotPopupWithFeedback() {
     <CopilotPopup
       instructions={DOCS_INSTRUCTIONS}
       labels={{
-        title: 'CUA Docs Assistant',
-        initial: `Ask me anything about CUA!
+        title: 'Cua Docs Assistant',
+        initial: `Ask me anything about Cua!
 
 This is currently an **experimental** feature.
 

@@ -91,14 +91,14 @@ lume run macos-sequoia-vanilla:latest
 
 ## Packages
 
-| Package                                          | Description                                     |
-| ------------------------------------------------ | ----------------------------------------------- |
-| [cua-agent](./libs/python/agent)                 | AI agent framework for computer-use tasks       |
-| [cua-computer](./libs/python/computer)           | SDK for controlling desktop environments        |
-| [cua-computer-server](./libs/python/computer-server) | Server component environments        |
-| [cua-bench](https://github.com/trycua/cua-bench) | Benchmarks and RL environments for computer-use |
-| [lume](./libs/lume)                              | macOS/Linux VM management on Apple Silicon      |
-| [lumier](./libs/lumier)                          | Docker-compatible interface for Lume VMs        |
+| Package                                                        | Description                                     |
+| -------------------------------------------------------------- | ----------------------------------------------- |
+| [cua-agent](https://cua.ai/docs/cua/reference/agent-sdk)       | AI agent framework for computer-use tasks       |
+| [cua-computer](https://cua.ai/docs/cua/reference/computer-sdk) | SDK for controlling desktop environments        |
+| [cua-computer-server](https://cua.ai/docs/cua/reference/computer-server) | Server component for remote environments |
+| [cua-bench](https://cua.ai/docs/cua-bench)                     | Benchmarks and RL environments for computer-use |
+| [lume](https://cua.ai/docs/lume)                               | macOS/Linux VM management on Apple Silicon      |
+| [lumier](https://cua.ai/docs/lume/reference/lumier)            | Docker-compatible interface for Lume VMs        |
 
 ## Resources
 

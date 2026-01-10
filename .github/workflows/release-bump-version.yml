@@ -20,6 +20,12 @@ on:
           - npm/computer
           - npm/core
           - lume
+          - docker/kasm
+          - docker/xfce
+          - docker/lumier
+          - docker/qemu-android
+          - docker/qemu-linux
+          - docker/qemu-windows
       bump_type:
         description: "Version bump type"
         required: true
@@ -102,6 +108,30 @@ jobs:
             "lume")
               echo "directory=libs/lume" >> $GITHUB_OUTPUT
               echo "type=lume" >> $GITHUB_OUTPUT
+              ;;
+            "docker/kasm")
+              echo "directory=libs/kasm" >> $GITHUB_OUTPUT
+              echo "type=docker" >> $GITHUB_OUTPUT
+              ;;
+            "docker/xfce")
+              echo "directory=libs/xfce" >> $GITHUB_OUTPUT
+              echo "type=docker" >> $GITHUB_OUTPUT
+              ;;
+            "docker/lumier")
+              echo "directory=libs/lumier" >> $GITHUB_OUTPUT
+              echo "type=docker" >> $GITHUB_OUTPUT
+              ;;
+            "docker/qemu-android")
+              echo "directory=libs/qemu-docker/android" >> $GITHUB_OUTPUT
+              echo "type=docker" >> $GITHUB_OUTPUT
+              ;;
+            "docker/qemu-linux")
+              echo "directory=libs/qemu-docker/linux" >> $GITHUB_OUTPUT
+              echo "type=docker" >> $GITHUB_OUTPUT
+              ;;
+            "docker/qemu-windows")
+              echo "directory=libs/qemu-docker/windows" >> $GITHUB_OUTPUT
+              echo "type=docker" >> $GITHUB_OUTPUT
               ;;
             *)
               echo "Unknown service: ${{ inputs.service }}"

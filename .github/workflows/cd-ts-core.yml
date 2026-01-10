@@ -1,6 +1,9 @@
 name: "CD: @trycua/core (npm)"
 
 on:
+  push:
+    tags:
+      - "npm-core-v*"
   workflow_dispatch:
     inputs:
       version:
@@ -35,6 +38,14 @@ jobs:
           # Check inputs.version first (works for workflow_call)
           if [ -n "${{ inputs.version }}" ]; then
             VERSION="${{ inputs.version }}"
+          elif [ "${{ github.event_name }}" == "push" ]; then
+            # Extract version from tag
+            if [[ "${{ github.ref }}" =~ ^refs/tags/npm-core-v([0-9]+\.[0-9]+\.[0-9]+) ]]; then
+              VERSION=${BASH_REMATCH[1]}
+            else
+              echo "ERROR: Invalid tag format for npm-core"
+              exit 1
+            fi
           elif [ -n "${{ github.event.inputs.version }}" ]; then
             VERSION="${{ github.event.inputs.version }}"
           else

@@ -16,6 +16,181 @@ const posthog = process.env.NEXT_PUBLIC_POSTHOG_API_KEY
     })
   : null;
 
+// Prompt categorization types and helpers
+type PromptCategory =
+  | 'installation'
+  | 'configuration'
+  | 'usage'
+  | 'troubleshooting'
+  | 'conceptual'
+  | 'api_reference'
+  | 'integration'
+  | 'other';
+
+type QuestionType = 'how-to' | 'what-is' | 'why' | 'can-i' | 'where' | 'debug' | 'other';
+
+function categorizePrompt(prompt: string): PromptCategory {
+  const lowerPrompt = prompt.toLowerCase();
+
+  if (/\b(install|setup|pip|npm|brew|download|get started|quick\s?start)\b/.test(lowerPrompt)) {
+    return 'installation';
+  }
+
+  if (
+    /\b(config|configure|setting|env|environment|\.env|options?|parameters?)\b/.test(lowerPrompt)
+  ) {
+    return 'configuration';
+  }
+
+  if (
+    /\b(error|fail|issue|problem|not working|bug|crash|exception|fix|debug|broken)\b/.test(
+      lowerPrompt
+    )
+  ) {
+    return 'troubleshooting';
+  }
+
+  if (
+    /\b(api|endpoint|method|function|class|interface|type|schema|parameters?)\b/.test(lowerPrompt)
+  ) {
+    return 'api_reference';
+  }
+
+  if (/\b(integrat|connect|webhook|third.?party|external|with\s+\w+)\b/.test(lowerPrompt)) {
+    return 'integration';
+  }
+
+  if (
+    /\b(what\s+is|explain|concept|understand|how\s+does|architecture|overview)\b/.test(lowerPrompt)
+  ) {
+    return 'conceptual';
+  }
+
+  if (/\b(how\s+to|use|using|example|tutorial|guide)\b/.test(lowerPrompt)) {
+    return 'usage';
+  }
+
+  return 'other';
+}
+
+function detectQuestionType(prompt: string): QuestionType {
+  const lowerPrompt = prompt.toLowerCase().trim();
+
+  if (/^how\s+(do|can|to|would|should)/i.test(lowerPrompt)) return 'how-to';
+  if (/^what\s+(is|are|does)/i.test(lowerPrompt)) return 'what-is';
+  if (/^why\s+/i.test(lowerPrompt)) return 'why';
+  if (/^(can|could|is it possible)/i.test(lowerPrompt)) return 'can-i';
+  if (/^where\s+/i.test(lowerPrompt)) return 'where';
+  if (/\b(error|not working|fail|broken|debug)\b/i.test(lowerPrompt)) return 'debug';
+
+  return 'other';
+}
+
+function extractTopics(prompt: string): string[] {
+  const topics: string[] = [];
+  const lowerPrompt = prompt.toLowerCase();
+
+  const topicPatterns: Record<string, RegExp> = {
+    'computer-use': /\b(computer.?use|cua|agent)\b/,
+    lume: /\b(lume|vm|virtual.?machine)\b/,
+    mcp: /\b(mcp|model.?context|server)\b/,
+    benchmark: /\b(bench|benchmark|eval|score)\b/,
+    python: /\b(python|pip|pypi)\b/,
+    typescript: /\b(typescript|ts|npm|node)\b/,
+    macos: /\b(mac|macos|darwin)\b/,
+    linux: /\b(linux|ubuntu|debian)\b/,
+  };
+
+  for (const [topic, pattern] of Object.entries(topicPatterns)) {
+    if (pattern.test(lowerPrompt)) {
+      topics.push(topic);
+    }
+  }
+
+  return topics;
+}
+
+// Response analysis types and helpers
+type ResponseType =
+  | 'explanation'
+  | 'tutorial'
+  | 'code_example'
+  | 'troubleshooting'
+  | 'reference'
+  | 'clarification'
+  | 'other';
+
+interface ResponseAnalysis {
+  response_type: ResponseType;
+  has_code_snippet: boolean;
+  has_doc_links: boolean;
+  has_steps: boolean;
+  has_discord_invite: boolean;
+  code_languages: string[];
+}
+
+function analyzeResponse(response: string): ResponseAnalysis {
+  const lowerResponse = response.toLowerCase();
+
+  // Detect code snippets (markdown code blocks)
+  const codeBlockRegex = /```(\w+)?[\s\S]*?```/g;
+  const codeBlocks = response.match(codeBlockRegex) || [];
+  const hasCodeSnippet = codeBlocks.length > 0;
+
+  // Extract code languages from code blocks
+  const codeLanguages: string[] = [];
+  for (const block of codeBlocks) {
+    const langMatch = block.match(/```(\w+)/);
+    if (langMatch && langMatch[1]) {
+      const lang = langMatch[1].toLowerCase();
+      if (!codeLanguages.includes(lang)) {
+        codeLanguages.push(lang);
+      }
+    }
+  }
+
+  // Detect doc links
+  const hasDocLinks =
+    /\[.*?\]\(.*?(docs|documentation|\/docs).*?\)/i.test(response) ||
+    /https?:\/\/[^\s]*docs[^\s]*/i.test(response) ||
+    /trycua\.com/i.test(response);
+
+  // Detect step-by-step instructions
+  const hasSteps =
+    /\b(step\s*\d|first,|second,|third,|finally,|then,)\b/i.test(response) ||
+    /^\s*\d+\.\s+/m.test(response) ||
+    /^-\s+/m.test(response);
+
+  // Detect Discord invite
+  const hasDiscordInvite = /discord\.com\/invite/i.test(response);
+
+  // Determine response type
+  let responseType: ResponseType = 'other';
+
+  if (/\b(error|fix|issue|problem|solution|resolve|try\s+this)\b/i.test(lowerResponse)) {
+    responseType = 'troubleshooting';
+  } else if (hasSteps && hasCodeSnippet) {
+    responseType = 'tutorial';
+  } else if (hasCodeSnippet && !hasSteps) {
+    responseType = 'code_example';
+  } else if (/\b(what\s+is|means|refers\s+to|is\s+a|are\s+used\s+for)\b/i.test(lowerResponse)) {
+    responseType = 'explanation';
+  } else if (/\b(api|method|function|parameter|returns?|accepts?)\b/i.test(lowerResponse)) {
+    responseType = 'reference';
+  } else if (/\b(could\s+you\s+clarify|do\s+you\s+mean|more\s+specific)\b/i.test(lowerResponse)) {
+    responseType = 'clarification';
+  }
+
+  return {
+    response_type: responseType,
+    has_code_snippet: hasCodeSnippet,
+    has_doc_links: hasDocLinks,
+    has_steps: hasSteps,
+    has_discord_invite: hasDiscordInvite,
+    code_languages: codeLanguages,
+  };
+}
+
 /**
  * Custom agent that extends BuiltInAgent to fix issues with Anthropic and message ordering.
  *
@@ -57,6 +232,10 @@ class AnthropicSafeBuiltInAgent extends BuiltInAgent {
         event: 'copilot_user_prompt',
         properties: {
           prompt: userPrompt,
+          category: categorizePrompt(userPrompt),
+          question_type: detectQuestionType(userPrompt),
+          topics: extractTopics(userPrompt),
+          prompt_length: userPrompt.length,
           message_count: filteredMessages.length,
           conversation_id: conversationId,
           timestamp: new Date().toISOString(),
@@ -74,12 +253,25 @@ class AnthropicSafeBuiltInAgent extends BuiltInAgent {
 
       const fullResponse = responseChunks.join('');
       if (posthog && fullResponse) {
+        const responseAnalysis = analyzeResponse(fullResponse);
         posthog.capture({
           distinctId: conversationId,
           event: 'copilot_response',
           properties: {
             prompt: userPrompt,
             response: fullResponse,
+            // Prompt categorization
+            category: categorizePrompt(userPrompt),
+            question_type: detectQuestionType(userPrompt),
+            topics: extractTopics(userPrompt),
+            prompt_length: userPrompt.length,
+            // Response analysis
+            response_type: responseAnalysis.response_type,
+            has_code_snippet: responseAnalysis.has_code_snippet,
+            has_doc_links: responseAnalysis.has_doc_links,
+            has_steps: responseAnalysis.has_steps,
+            has_discord_invite: responseAnalysis.has_discord_invite,
+            code_languages: responseAnalysis.code_languages,
             response_length: fullResponse.length,
             conversation_id: conversationId,
             timestamp: new Date().toISOString(),
@@ -120,6 +312,8 @@ class AnthropicSafeBuiltInAgent extends BuiltInAgent {
               properties: {
                 error: err?.message || String(err),
                 prompt: userPrompt,
+                category: categorizePrompt(userPrompt),
+                question_type: detectQuestionType(userPrompt),
                 conversation_id: conversationId,
                 timestamp: new Date().toISOString(),
               },

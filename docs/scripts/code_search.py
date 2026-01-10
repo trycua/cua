@@ -144,7 +144,12 @@ class CodeSearch:
         def semver_key(v: str) -> tuple:
             try:
                 parts = v.split(".")
-                return tuple(int(p) for p in parts[:3])
+                # Extract numeric part before any non-numeric characters (e.g., "3-alpha" -> 3)
+                result = []
+                for p in parts[:3]:
+                    numeric_part = p.split('-')[0]
+                    result.append(int(numeric_part))
+                return tuple(result)
             except (ValueError, IndexError):
                 return (0, 0, 0)
 

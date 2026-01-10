@@ -1,0 +1,24 @@
+name: "CD: Container QEMU Linux"
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - "docker-cua-qemu-linux-v*.*.*"
+    paths:
+      - "libs/qemu-docker/linux/**"
+      - ".github/workflows/cd-container-qemu-linux.yml"
+      - ".github/workflows/docker-reusable-publish.yml"
+
+jobs:
+  publish:
+    uses: ./.github/workflows/docker-reusable-publish.yml
+    with:
+      image_name: cua-qemu-linux
+      context_dir: libs/qemu-docker/linux
+      dockerfile_path: Dockerfile
+      tag_prefix: docker-cua-qemu-linux-v
+      docker_hub_org: trycua
+    secrets:
+      DOCKER_HUB_TOKEN: ${{ secrets.DOCKER_HUB_TOKEN }}

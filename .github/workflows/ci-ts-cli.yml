@@ -1,0 +1,23 @@
+name: "CI: @trycua/cli"
+
+on:
+  pull_request:
+    paths:
+      - "libs/typescript/cua-cli/**"
+      - ".github/workflows/ci-ts-cli.yml"
+      - ".github/workflows/ts-reusable-build.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "libs/typescript/cua-cli/**"
+      - ".github/workflows/ci-ts-cli.yml"
+      - ".github/workflows/ts-reusable-build.yml"
+
+jobs:
+  build:
+    uses: ./.github/workflows/ts-reusable-build.yml
+    with:
+      package_name: "cli"
+      package_dir: "libs/typescript/cua-cli"
+      package_manager: "bun"

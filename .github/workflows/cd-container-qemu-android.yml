@@ -1,0 +1,24 @@
+name: "CD: Container QEMU Android"
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - "docker-cua-qemu-android-v*.*.*"
+    paths:
+      - "libs/qemu-docker/android/**"
+      - ".github/workflows/cd-container-qemu-android.yml"
+      - ".github/workflows/docker-reusable-publish.yml"
+
+jobs:
+  publish:
+    uses: ./.github/workflows/docker-reusable-publish.yml
+    with:
+      image_name: cua-qemu-android
+      context_dir: libs/qemu-docker/android
+      dockerfile_path: Dockerfile
+      tag_prefix: docker-cua-qemu-android-v
+      docker_hub_org: trycua
+    secrets:
+      DOCKER_HUB_TOKEN: ${{ secrets.DOCKER_HUB_TOKEN }}

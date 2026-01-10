@@ -1,0 +1,16 @@
+name: "CI: Container Lumier"
+
+on:
+  pull_request:
+    paths:
+      - "libs/lumier/**"
+      - ".github/workflows/ci-container-lumier.yml"
+      - ".github/workflows/docker-reusable-build.yml"
+
+jobs:
+  build:
+    uses: ./.github/workflows/docker-reusable-build.yml
+    with:
+      image_name: lumier
+      context_dir: libs/lumier
+      dockerfile_path: Dockerfile

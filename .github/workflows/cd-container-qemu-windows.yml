@@ -1,0 +1,24 @@
+name: "CD: Container QEMU Windows"
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - "docker-cua-qemu-windows-v*.*.*"
+    paths:
+      - "libs/qemu-docker/windows/**"
+      - ".github/workflows/cd-container-qemu-windows.yml"
+      - ".github/workflows/docker-reusable-publish.yml"
+
+jobs:
+  publish:
+    uses: ./.github/workflows/docker-reusable-publish.yml
+    with:
+      image_name: cua-qemu-windows
+      context_dir: libs/qemu-docker/windows
+      dockerfile_path: Dockerfile
+      tag_prefix: docker-cua-qemu-windows-v
+      docker_hub_org: trycua
+    secrets:
+      DOCKER_HUB_TOKEN: ${{ secrets.DOCKER_HUB_TOKEN }}

@@ -1,0 +1,23 @@
+name: "CI: @trycua/core"
+
+on:
+  pull_request:
+    paths:
+      - "libs/typescript/core/**"
+      - ".github/workflows/ci-ts-core.yml"
+      - ".github/workflows/ts-reusable-build.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "libs/typescript/core/**"
+      - ".github/workflows/ci-ts-core.yml"
+      - ".github/workflows/ts-reusable-build.yml"
+
+jobs:
+  build:
+    uses: ./.github/workflows/ts-reusable-build.yml
+    with:
+      package_name: "core"
+      package_dir: "libs/typescript/core"
+      package_manager: "pnpm"

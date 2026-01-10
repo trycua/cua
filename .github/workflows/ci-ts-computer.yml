@@ -1,0 +1,23 @@
+name: "CI: @trycua/computer"
+
+on:
+  pull_request:
+    paths:
+      - "libs/typescript/computer/**"
+      - ".github/workflows/ci-ts-computer.yml"
+      - ".github/workflows/ts-reusable-build.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "libs/typescript/computer/**"
+      - ".github/workflows/ci-ts-computer.yml"
+      - ".github/workflows/ts-reusable-build.yml"
+
+jobs:
+  build:
+    uses: ./.github/workflows/ts-reusable-build.yml
+    with:
+      package_name: "computer"
+      package_dir: "libs/typescript/computer"
+      package_manager: "pnpm"

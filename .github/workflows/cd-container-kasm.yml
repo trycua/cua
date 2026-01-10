@@ -1,0 +1,24 @@
+name: "CD: Container Kasm"
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - "docker-kasm-v*.*.*"
+    paths:
+      - "libs/kasm/**"
+      - ".github/workflows/cd-container-kasm.yml"
+      - ".github/workflows/docker-reusable-publish.yml"
+
+jobs:
+  publish:
+    uses: ./.github/workflows/docker-reusable-publish.yml
+    with:
+      image_name: cua-ubuntu
+      context_dir: libs/kasm
+      dockerfile_path: Dockerfile
+      tag_prefix: docker-kasm-v
+      docker_hub_org: trycua
+    secrets:
+      DOCKER_HUB_TOKEN: ${{ secrets.DOCKER_HUB_TOKEN }}

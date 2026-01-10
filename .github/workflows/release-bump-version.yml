@@ -235,7 +235,7 @@ jobs:
   publish-computer:
     needs: bump-version
     if: ${{ inputs.service == 'pypi/computer' }}
-    uses: ./.github/workflows/pypi-publish-computer.yml
+    uses: ./.github/workflows/cd-py-computer.yml
     with:
       version: ${{ needs.bump-version.outputs.computer_version }}
     secrets: inherit
@@ -243,7 +243,7 @@ jobs:
   publish-agent:
     needs: [bump-version, publish-computer]
     if: ${{ always() && (inputs.service == 'pypi/agent' || inputs.service == 'pypi/computer') && needs.bump-version.result == 'success' && (inputs.service == 'pypi/agent' || needs.publish-computer.result == 'success') }}
-    uses: ./.github/workflows/pypi-publish-agent.yml
+    uses: ./.github/workflows/cd-py-agent.yml
     with:
       version: ${{ needs.bump-version.outputs.agent_version }}
     secrets: inherit
@@ -251,7 +251,7 @@ jobs:
   publish-bench:
     needs: bump-version
     if: ${{ inputs.service == 'pypi/bench' }}
-    uses: ./.github/workflows/pypi-publish-bench.yml
+    uses: ./.github/workflows/cd-py-bench.yml
     with:
       version: ${{ needs.bump-version.outputs.bench_version }}
     secrets: inherit
@@ -259,7 +259,7 @@ jobs:
   publish-computer-server:
     needs: bump-version
     if: ${{ inputs.service == 'pypi/computer-server' }}
-    uses: ./.github/workflows/pypi-publish-computer-server.yml
+    uses: ./.github/workflows/cd-py-computer-server.yml
     with:
       version: ${{ needs.bump-version.outputs.computer_server_version }}
     secrets: inherit
@@ -267,7 +267,7 @@ jobs:
   publish-core:
     needs: bump-version
     if: ${{ inputs.service == 'pypi/core' }}
-    uses: ./.github/workflows/pypi-publish-core.yml
+    uses: ./.github/workflows/cd-py-core.yml
     with:
       version: ${{ needs.bump-version.outputs.core_version }}
     secrets: inherit
@@ -275,7 +275,7 @@ jobs:
   publish-mcp-server:
     needs: bump-version
     if: ${{ inputs.service == 'pypi/mcp-server' }}
-    uses: ./.github/workflows/pypi-publish-mcp-server.yml
+    uses: ./.github/workflows/cd-py-mcp-server.yml
     with:
       version: ${{ needs.bump-version.outputs.mcp_server_version }}
     secrets: inherit
@@ -283,7 +283,7 @@ jobs:
   publish-som:
     needs: bump-version
     if: ${{ inputs.service == 'pypi/som' }}
-    uses: ./.github/workflows/pypi-publish-som.yml
+    uses: ./.github/workflows/cd-py-som.yml
     with:
       version: ${{ needs.bump-version.outputs.som_version }}
     secrets: inherit
@@ -291,7 +291,7 @@ jobs:
   publish-cli:
     needs: bump-version
     if: ${{ inputs.service == 'npm/cli' }}
-    uses: ./.github/workflows/npm-publish-cli.yml
+    uses: ./.github/workflows/cd-ts-cli.yml
     with:
       version: ${{ needs.bump-version.outputs.npm_cli_version }}
     secrets: inherit
@@ -299,7 +299,7 @@ jobs:
   publish-npm-computer:
     needs: bump-version
     if: ${{ inputs.service == 'npm/computer' }}
-    uses: ./.github/workflows/npm-publish-computer.yml
+    uses: ./.github/workflows/cd-ts-computer.yml
     with:
       version: ${{ needs.bump-version.outputs.npm_computer_version }}
     secrets: inherit
@@ -307,7 +307,7 @@ jobs:
   publish-npm-core:
     needs: bump-version
     if: ${{ inputs.service == 'npm/core' }}
-    uses: ./.github/workflows/npm-publish-core.yml
+    uses: ./.github/workflows/cd-ts-core.yml
     with:
       version: ${{ needs.bump-version.outputs.npm_core_version }}
     secrets: inherit
@@ -315,7 +315,7 @@ jobs:
   publish-lume:
     needs: bump-version
     if: ${{ inputs.service == 'lume' }}
-    uses: ./.github/workflows/lume-publish.yml
+    uses: ./.github/workflows/cd-swift-lume.yml
     with:
       version: ${{ needs.bump-version.outputs.lume_version }}
     secrets: inherit

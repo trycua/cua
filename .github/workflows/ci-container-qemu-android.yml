@@ -1,0 +1,16 @@
+name: "CI: Container QEMU Android"
+
+on:
+  pull_request:
+    paths:
+      - "libs/qemu-docker/android/**"
+      - ".github/workflows/ci-container-qemu-android.yml"
+      - ".github/workflows/docker-reusable-build.yml"
+
+jobs:
+  build:
+    uses: ./.github/workflows/docker-reusable-build.yml
+    with:
+      image_name: cua-qemu-android
+      context_dir: libs/qemu-docker/android
+      dockerfile_path: Dockerfile

@@ -1,0 +1,16 @@
+name: "CI: Container XFCE"
+
+on:
+  pull_request:
+    paths:
+      - "libs/xfce/**"
+      - ".github/workflows/ci-container-xfce.yml"
+      - ".github/workflows/docker-reusable-build.yml"
+
+jobs:
+  build:
+    uses: ./.github/workflows/docker-reusable-build.yml
+    with:
+      image_name: cua-xfce
+      context_dir: libs/xfce
+      dockerfile_path: Dockerfile

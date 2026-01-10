@@ -1,0 +1,22 @@
+name: "CI: cua-agent"
+
+on:
+  pull_request:
+    paths:
+      - "libs/python/agent/**"
+      - ".github/workflows/ci-py-agent.yml"
+      - ".github/workflows/py-reusable-build.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "libs/python/agent/**"
+      - ".github/workflows/ci-py-agent.yml"
+      - ".github/workflows/py-reusable-build.yml"
+
+jobs:
+  build:
+    uses: ./.github/workflows/py-reusable-build.yml
+    with:
+      package_name: "agent"
+      package_dir: "libs/python/agent"

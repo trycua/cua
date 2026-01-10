@@ -89,6 +89,7 @@ def clone_or_pull_repo() -> Path:
             cwd=REPO_PATH,
             check=True,
             capture_output=True,
+            timeout=60,
         )
     else:
         print(f"Cloning {REPO_URL}...")
@@ -96,6 +97,7 @@ def clone_or_pull_repo() -> Path:
             ["git", "clone", "--bare", REPO_URL, str(REPO_PATH)],
             check=True,
             capture_output=True,
+            timeout=60,
         )
 
     return REPO_PATH
@@ -109,6 +111,7 @@ def get_all_tags(repo_path: Path) -> list[str]:
         check=True,
         capture_output=True,
         text=True,
+        timeout=60,
     )
     tags = [t.strip() for t in result.stdout.strip().split("\n") if t.strip()]
     return tags
@@ -122,6 +125,7 @@ def get_files_at_tag(repo_path: Path, tag: str) -> list[str]:
         check=True,
         capture_output=True,
         text=True,
+        timeout=60,
     )
 
     files = []
@@ -144,6 +148,7 @@ def get_file_content_at_tag(repo_path: Path, tag: str, file_path: str) -> Option
             cwd=repo_path,
             check=True,
             capture_output=True,
+            timeout=60,
         )
         # Try to decode as UTF-8, skip binary files
         try:

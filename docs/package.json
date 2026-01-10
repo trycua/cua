@@ -9,6 +9,11 @@
     "postinstall": "fumadocs-mdx"
   },
   "dependencies": {
+    "@ai-sdk/anthropic": "^3.0.9",
+    "@anthropic-ai/sdk": "^0.71.2",
+    "@copilotkit/react-core": "1.50.1",
+    "@copilotkit/react-ui": "1.50.1",
+    "@copilotkit/runtime": "1.50.1",
     "fumadocs-core": "16.0.8",
     "fumadocs-mdx": "13.0.8",
     "fumadocs-ui": "16.0.8",
@@ -16,7 +21,11 @@
     "mermaid": "^11.12.1",
     "next": "16.0.7",
     "next-themes": "^0.4.6",
+    "openai": "^4.104.0",
+    "pino": "^9.14.0",
+    "pino-pretty": "^11.3.0",
     "posthog-js": "^1.276.0",
+    "posthog-node": "^5.20.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "react-icons": "^5.5.0",

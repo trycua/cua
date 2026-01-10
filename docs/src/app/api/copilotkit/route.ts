@@ -286,6 +286,12 @@ class AnthropicSafeBuiltInAgent extends BuiltInAgent {
     parentObservable.subscribe = (observer: any) => {
       const wrappedObserver = {
         next: (event: any) => {
+          // Debug logging
+          if (process.env.NODE_ENV === 'development') {
+            const deltaPreview = event.delta ? `delta: ${String(event.delta).substring(0, 50)}...` : '';
+            console.log('[CopilotKit] Event:', event.type, deltaPreview);
+          }
+
           if (event.type === 'TEXT_MESSAGE_CHUNK') {
             if (event.delta) {
               responseChunks.push(event.delta);
@@ -306,6 +312,7 @@ class AnthropicSafeBuiltInAgent extends BuiltInAgent {
           }
         },
         error: (err: any) => {
+          console.error('[CopilotKit] Error:', err?.message || String(err), err?.stack);
           if (posthog) {
             posthog.capture({
               distinctId: conversationId,
@@ -389,12 +396,22 @@ Be concise and helpful. Answer questions about the documentation accurately.
 
 Use Cua as the name of the product and CUA for Computer Use Agent.
 
+You have access to tools for searching the Cua documentation and code:
+- search_docs: Semantic search for documentation content
+- sql_query: Direct SQL queries on the documentation database
+- list_components: List all indexed code components with version counts
+- list_versions: List all indexed versions for a component
+- search_code: Semantic search over source code
+- search_code_fts: Full-text search over source code
+- get_code_file_content: Get the content of a specific code file
+
 When using search_docs, follow up by checking the source document for accuracy.
 Include links to documentation pages in your responses.
-
-also you can reference code to help when providing examples, to make sure that you are providing the correct code.
+When providing code examples, use search_code or get_code_file_content to ensure accuracy.
 
 If users seem stuck, invite them to join the Discord: https://discord.com/invite/cua-ai`,
+  temperature: 0.7,
+  maxTokens: 8192 * 4,
   mcpServers: [
     {
       type: 'sse',

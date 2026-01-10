@@ -406,10 +406,7 @@ async def generate_vector_db():
             continue
 
         # Convert markdown to plain text
-        try:
-            text = clean_markdown(markdown)
-        except Exception:
-            text = markdown
+        text = clean_markdown(markdown)
 
         # Simple chunking by paragraphs
         paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
@@ -546,19 +543,13 @@ async def generate_sqlite_db():
             continue
 
         # Convert markdown to plain text
-        try:
-            text = clean_markdown(markdown)
-        except Exception:
-            text = markdown
+        text = clean_markdown(markdown)
 
-        try:
-            cursor.execute(
-                "INSERT OR REPLACE INTO pages (url, title, category, content) VALUES (?, ?, ?, ?)",
-                (url, title, category, text),
-            )
-            inserted += 1
-        except Exception as e:
-            print(f"Error inserting {url}: {e}")
+        cursor.execute(
+            "INSERT OR REPLACE INTO pages (url, title, category, content) VALUES (?, ?, ?, ?)",
+            (url, title, category, text),
+        )
+        inserted += 1
 
     # Create FTS triggers
     cursor.execute(
@@ -795,14 +786,11 @@ async def generate_code_index():
 
             # Add to SQLite
             if content_size <= MAX_FILE_SIZE_SQLITE:
-                try:
-                    cursor.execute(
-                        "INSERT OR REPLACE INTO code_files (component, version, file_path, content, language) VALUES (?, ?, ?, ?, ?)",
-                        (component, version, file_path, content, language),
-                    )
-                    total_files += 1
-                except Exception:
-                    pass
+                cursor.execute(
+                    "INSERT OR REPLACE INTO code_files (component, version, file_path, content, language) VALUES (?, ?, ?, ?, ?)",
+                    (component, version, file_path, content, language),
+                )
+                total_files += 1
 
             # Queue for LanceDB
             if content_size <= MAX_FILE_SIZE_EMBEDDINGS:
@@ -823,11 +811,8 @@ async def generate_code_index():
 
         # Add to LanceDB
         if lance_batch:
-            try:
-                lance_table.add(lance_batch)
-                total_embedded += len(lance_batch)
-            except Exception as e:
-                print(f"  LanceDB error: {e}")
+            lance_table.add(lance_batch)
+            total_embedded += len(lance_batch)
 
     # Final commit for any remaining tags
     conn.commit()

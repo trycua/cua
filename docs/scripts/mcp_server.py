@@ -151,10 +151,12 @@ def get_code_sqlite_conn():
         _code_sqlite_conn.row_factory = sqlite3.Row
 
         # Check for legacy single database first
+        has_legacy = False
         if CODE_SQLITE_PATH.exists() and "_legacy" in components:
             _code_sqlite_conn.execute(
                 f"ATTACH DATABASE 'file:{CODE_SQLITE_PATH}?mode=ro' AS code_legacy"
             )
+            has_legacy = True
 
         # Attach each component database
         attached = []
@@ -171,12 +173,21 @@ def get_code_sqlite_conn():
                 attached.append(safe_name)
 
         # Create unified view across all component databases
-        if attached:
+        if attached or has_legacy:
             union_parts = []
+
+            # Include legacy database if it exists
+            if has_legacy:
+                union_parts.append(
+                    "SELECT id, component, version, file_path, content, language FROM code_legacy.code_files"
+                )
+
+            # Include component databases
             for safe_name in attached:
                 union_parts.append(
                     f"SELECT id, component, version, file_path, content, language FROM code_{safe_name}.code_files"
                 )
+
             union_sql = " UNION ALL ".join(union_parts)
             _code_sqlite_conn.execute(f"CREATE VIEW code_files AS {union_sql}")
 
@@ -184,10 +195,19 @@ def get_code_sqlite_conn():
             # Note: This is a regular view, not an FTS table, so MATCH won't work on it
             # Users must query component-specific FTS tables like: code_agent.code_files_fts
             fts_union_parts = []
+
+            # Include legacy FTS if it exists
+            if has_legacy:
+                fts_union_parts.append(
+                    "SELECT rowid, content, component, version, file_path FROM code_legacy.code_files_fts"
+                )
+
+            # Include component FTS tables
             for safe_name in attached:
                 fts_union_parts.append(
                     f"SELECT rowid, content, component, version, file_path FROM code_{safe_name}.code_files_fts"
                 )
+
             fts_union_sql = " UNION ALL ".join(fts_union_parts)
             _code_sqlite_conn.execute(f"CREATE VIEW code_files_fts_union AS {fts_union_sql}")
 
@@ -493,7 +513,7 @@ def query_code_vectors(
 
     for comp_name, table in tables:
         # Skip if component filter specified and doesn't match
-        if component and comp_name != component and comp_name != "_legacy":
+        if component and comp_name != component:
             continue
 
         search = table.search(query).limit(limit)

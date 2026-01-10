@@ -11,7 +11,7 @@ Available databases:
 
 import sqlite3
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 import lancedb
 from fastmcp import FastMCP
@@ -115,7 +115,7 @@ def discover_code_components() -> list[str]:
     return _code_components
 
 
-def get_code_lance_tables() -> list[tuple[str, any]]:
+def get_code_lance_tables() -> list[tuple[str, Any]]:
     """Get LanceDB connections for all code components."""
     global _code_lance_tables
     components = discover_code_components()
@@ -143,7 +143,7 @@ def get_code_sqlite_conn():
         if not components:
             raise RuntimeError(
                 f"No code databases found at {CODE_DB_PATH}. "
-                "Run 'modal run docs/scripts/modal_app.py::generate_code_index_parallel' first to create the databases."
+                "Run 'modal run docs/scripts/modal_app.py' to create the databases."
             )
 
         # Create in-memory database and attach all component databases
@@ -181,13 +181,15 @@ def get_code_sqlite_conn():
             _code_sqlite_conn.execute(f"CREATE VIEW code_files AS {union_sql}")
 
             # Create unified FTS view (queries individual FTS tables)
+            # Note: This is a regular view, not an FTS table, so MATCH won't work on it
+            # Users must query component-specific FTS tables like: code_agent.code_files_fts
             fts_union_parts = []
             for safe_name in attached:
                 fts_union_parts.append(
                     f"SELECT rowid, content, component, version, file_path FROM code_{safe_name}.code_files_fts"
                 )
             fts_union_sql = " UNION ALL ".join(fts_union_parts)
-            _code_sqlite_conn.execute(f"CREATE VIEW code_files_fts AS {fts_union_sql}")
+            _code_sqlite_conn.execute(f"CREATE VIEW code_files_fts_union AS {fts_union_sql}")
 
     return _code_sqlite_conn
 
@@ -372,11 +374,15 @@ def query_code_db(sql: str) -> list[dict]:
     - idx_component ON code_files(component)
     - idx_version ON code_files(component, version)
 
-    Virtual Table: code_files_fts (FTS5 full-text search)
+    Virtual Table: code_files_fts (component-sharded FTS5 full-text search)
+    - Available in each component schema: code_agent.code_files_fts, code_computer.code_files_fts, etc.
     - content TEXT                     -- Full-text indexed content
     - component TEXT UNINDEXED         -- Component name for filtering
     - version TEXT UNINDEXED           -- Version for filtering
     - file_path TEXT UNINDEXED         -- File path for reference
+
+    Note: FTS5 MATCH queries must target component-specific tables (e.g., code_agent.code_files_fts).
+    For non-FTS queries, use the unified code_files view which aggregates all components.
 
     Example queries:
 
@@ -402,34 +408,30 @@ def query_code_db(sql: str) -> list[dict]:
        FROM code_files
        WHERE component = 'agent' AND version = '0.7.3' AND file_path = 'agent/core.py'
 
-    5. Full-text search (FTS5):
+    5. Full-text search in a specific component (FTS5):
        SELECT f.component, f.version, f.file_path, f.language,
-              snippet(code_files_fts, 0, '>>>', '<<<', '...', 64) as snippet
-       FROM code_files_fts
-       JOIN code_files f ON code_files_fts.rowid = f.id
-       WHERE code_files_fts MATCH 'ComputerAgent'
-         AND code_files_fts.component = 'agent'
+              snippet(fts, 0, '>>>', '<<<', '...', 64) as snippet
+       FROM code_agent.code_files_fts fts
+       JOIN code_files f ON fts.rowid = f.id AND f.component = 'agent'
+       WHERE fts MATCH 'ComputerAgent'
        ORDER BY rank
        LIMIT 10
 
-    6. Search for function definitions:
+    6. Search across all components using LIKE (slower but simpler):
+       SELECT component, version, file_path,
+              substr(content, 1, 200) as preview
+       FROM code_files
+       WHERE content LIKE '%ComputerAgent%'
+       LIMIT 10
+
+    7. Search for function definitions in a component:
        SELECT f.component, f.version, f.file_path,
-              snippet(code_files_fts, 0, '>>>', '<<<', '...', 100) as snippet
-       FROM code_files_fts
-       JOIN code_files f ON code_files_fts.rowid = f.id
-       WHERE code_files_fts MATCH '"def screenshot" OR "async def screenshot"'
+              snippet(fts, 0, '>>>', '<<<', '...', 100) as snippet
+       FROM code_agent.code_files_fts fts
+       JOIN code_files f ON fts.rowid = f.id AND f.component = 'agent'
+       WHERE fts MATCH '"def screenshot" OR "async def screenshot"'
        ORDER BY rank
        LIMIT 10
-
-    7. Search across all versions of a component:
-       SELECT f.version, f.file_path,
-              snippet(code_files_fts, 0, '>>>', '<<<', '...', 64) as snippet
-       FROM code_files_fts
-       JOIN code_files f ON code_files_fts.rowid = f.id
-       WHERE code_files_fts MATCH 'error handling'
-         AND code_files_fts.component = 'agent'
-       ORDER BY f.version DESC, rank
-       LIMIT 20
 
     Args:
         sql: SQL query to execute

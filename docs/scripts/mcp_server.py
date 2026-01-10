@@ -12,8 +12,6 @@ import lancedb
 from fastmcp import FastMCP
 from lancedb.embeddings import get_registry
 
-from code_search import CodeSearch, CodeSearchError
-
 # Configuration - Documentation
 DB_PATH = Path(__file__).parent.parent / "docs_db"
 SQLITE_PATH = DB_PATH / "docs.sqlite"
@@ -46,46 +44,24 @@ Documentation covers:
 - list_pages: Browse available documentation pages
 - get_doc_categories: See all documentation categories
 
-=== CODE SEARCH TOOLS ===
-Search across all versions of CUA source code. Component + version are REQUIRED for all searches.
+=== CODE SEARCH TOOL ===
+- query_code_search_db: Execute SQL queries against the code search database
 
-Discovery:
-- list_components: See all indexed components (agent, computer, mcp-server, etc.)
-- list_versions: See all indexed versions for a component
-- list_code_files: See all source files in a component@version
+The code search database contains versioned source code indexed across all git tags.
+Use SQL queries to search, filter, and retrieve code. The tool description includes
+full schema details and example queries.
 
-Search (requires component + version):
-- search_code: Semantic search - "how to take a screenshot", "authentication logic"
-- search_code_fts: Full-text search - exact function names, class names, keywords
-
-Retrieval:
-- get_code_file_content: Get full source file content
-
-Workflow example:
-1. list_components() -> see available components
-2. list_versions("agent") -> see versions for agent
-3. search_code("ComputerAgent initialization", "agent", "0.7.3") -> find relevant files
-4. get_code_file_content("agent", "0.7.3", "agent/computer_agent.py") -> get full file
+Workflow examples:
+1. List components: SELECT component, COUNT(DISTINCT version) as version_count FROM code_files GROUP BY component
+2. List versions: SELECT DISTINCT version FROM code_files WHERE component = 'agent' ORDER BY version DESC
+3. Search code: Use FTS5 full-text search on code_files_fts virtual table
+4. Get file: SELECT content FROM code_files WHERE component = 'agent' AND version = '0.7.3' AND file_path = 'agent/core.py'
 
 IMPORTANT: After performing search queries, ALWAYS retrieve full content before answering.
 Search results return snippets that may lack important context.
 
 Always cite source URLs for docs and component@version:path for code.""",
 )
-
-# Global code search instance
-_code_search: Optional[CodeSearch] = None
-
-
-def get_code_search() -> CodeSearch:
-    """Get or create CodeSearch instance"""
-    global _code_search
-    if _code_search is None:
-        _code_search = CodeSearch(
-            sqlite_path=CODE_SQLITE_PATH,
-            lancedb_path=CODE_LANCEDB_PATH,
-        )
-    return _code_search
 
 # Global database connections
 _lance_db: Optional[lancedb.DBConnection] = None
@@ -410,149 +386,111 @@ def search_by_url(url_pattern: str, limit: int = 10) -> list[dict]:
 
 
 @mcp.tool
-def list_components() -> list[dict]:
+def query_code_search_db(sql: str) -> list[dict]:
     """
-    List all indexed code components with their version counts.
-
-    Returns:
-        List of components with version counts, e.g.:
-        [{"component": "agent", "version_count": 45}, {"component": "computer", "version_count": 30}]
-    """
-    try:
-        return get_code_search().list_components()
-    except CodeSearchError as e:
-        raise ValueError(str(e))
-
-
-@mcp.tool
-def list_versions(component: str) -> list[str]:
-    """
-    List all indexed versions for a component, sorted by semver descending (newest first).
-
+    Execute a SQL query against the code search database.
+    
+    Database Schema:
+    
+    Table: code_files
+    - id INTEGER PRIMARY KEY AUTOINCREMENT
+    - component TEXT NOT NULL          -- Component name (e.g., "agent", "computer", "mcp-server")
+    - version TEXT NOT NULL            -- Version string (e.g., "0.7.3", "0.7.2")
+    - file_path TEXT NOT NULL          -- Path to file (e.g., "agent/computer_agent.py")
+    - content TEXT NOT NULL            -- Full source code content
+    - language TEXT NOT NULL           -- Programming language (e.g., "python", "typescript")
+    - UNIQUE(component, version, file_path)
+    
+    Indexes:
+    - idx_component ON code_files(component)
+    - idx_version ON code_files(component, version)
+    
+    Virtual Table: code_files_fts (FTS5 full-text search)
+    - content TEXT                     -- Full-text indexed content
+    - component TEXT UNINDEXED         -- Component name for filtering
+    - version TEXT UNINDEXED           -- Version for filtering
+    - file_path TEXT UNINDEXED         -- File path for reference
+    
+    Example queries:
+    
+    1. List all components with version counts:
+       SELECT component, COUNT(DISTINCT version) as version_count 
+       FROM code_files 
+       GROUP BY component 
+       ORDER BY component
+    
+    2. List versions for a component:
+       SELECT DISTINCT version 
+       FROM code_files 
+       WHERE component = 'agent' 
+       ORDER BY version DESC
+    
+    3. List files in a component@version:
+       SELECT file_path, language 
+       FROM code_files 
+       WHERE component = 'agent' AND version = '0.7.3'
+    
+    4. Get file content:
+       SELECT content, language 
+       FROM code_files 
+       WHERE component = 'agent' AND version = '0.7.3' AND file_path = 'agent/core.py'
+    
+    5. Full-text search (FTS5):
+       SELECT f.file_path, f.language, snippet(code_files_fts, 0, '>>>', '<<<', '...', 64) as snippet
+       FROM code_files_fts
+       JOIN code_files f ON code_files_fts.rowid = f.id
+       WHERE code_files_fts MATCH 'ComputerAgent'
+         AND code_files_fts.component = 'agent'
+         AND code_files_fts.version = '0.7.3'
+       ORDER BY rank
+       LIMIT 10
+    
+    6. Search for function definitions:
+       SELECT component, version, file_path, 
+              snippet(code_files_fts, 0, '>>>', '<<<', '...', 100) as snippet
+       FROM code_files_fts
+       JOIN code_files f ON code_files_fts.rowid = f.id
+       WHERE code_files_fts MATCH '"async def" OR "def screenshot"'
+       ORDER BY rank
+       LIMIT 10
+    
     Args:
-        component: The component name (e.g., "agent", "computer", "mcp-server")
-
+        sql: SQL query to execute (SELECT queries only)
+    
     Returns:
-        List of version strings, e.g.: ["0.7.3", "0.7.2", "0.7.1", ...]
+        List of dictionaries, one per row, with column names as keys
+    
+    Note: Only SELECT queries are allowed. INSERT, UPDATE, DELETE, etc. will be rejected.
     """
+    # Security: Only allow SELECT queries
+    sql_stripped = sql.strip().upper()
+    if not sql_stripped.startswith("SELECT"):
+        raise ValueError("Only SELECT queries are allowed")
+    
+    # Check for dangerous keywords
+    dangerous_keywords = ["DROP", "DELETE", "INSERT", "UPDATE", "ALTER", "CREATE", "PRAGMA"]
+    for keyword in dangerous_keywords:
+        if keyword in sql_stripped:
+            raise ValueError(f"Keyword '{keyword}' is not allowed in queries")
+    
     try:
-        return get_code_search().list_versions(component)
-    except CodeSearchError as e:
-        raise ValueError(str(e))
-
-
-@mcp.tool
-def list_code_files(component: str, version: str) -> list[dict]:
-    """
-    List all source files for a specific component@version.
-
-    Args:
-        component: The component name (e.g., "agent")
-        version: The version string (e.g., "0.7.3")
-
-    Returns:
-        List of files with paths and languages, e.g.:
-        [{"path": "agent/core.py", "language": "python"}, ...]
-    """
-    try:
-        return get_code_search().list_files(component, version)
-    except CodeSearchError as e:
-        raise ValueError(str(e))
-
-
-@mcp.tool
-def search_code(query: str, component: str, version: str, limit: int = 10) -> list[dict]:
-    """
-    Semantic search over source code for a specific component@version.
-    Uses vector embeddings to find semantically similar code.
-
-    Best for natural language queries like:
-    - "how to take a screenshot"
-    - "authentication and login logic"
-    - "error handling patterns"
-
-    Args:
-        query: Natural language search query
-        component: The component name (REQUIRED, e.g., "agent")
-        version: The version string (REQUIRED, e.g., "0.7.3")
-        limit: Maximum results (default: 10, max: 20)
-
-    Returns:
-        List of matching files with content and relevance scores
-    """
-    limit = min(max(1, limit), 20)
-    try:
-        return get_code_search().search_code(query, component, version, limit)
-    except CodeSearchError as e:
-        raise ValueError(str(e))
-
-
-@mcp.tool
-def search_code_fts(
-    query: str, component: str, version: str, limit: int = 10, highlight: bool = True
-) -> list[dict]:
-    """
-    Full-text search over source code for a specific component@version.
-    Uses SQLite FTS5 for fast keyword matching.
-
-    Best for exact matches like:
-    - Function names: "ComputerAgent"
-    - Class names: "ScreenCapture"
-    - Specific keywords: "async def screenshot"
-
-    Supports FTS5 syntax:
-    - Phrases: '"async def"'
-    - AND/OR: "screenshot AND save"
-    - Prefix: "Computer*"
-
-    Args:
-        query: FTS5 search query
-        component: The component name (REQUIRED, e.g., "agent")
-        version: The version string (REQUIRED, e.g., "0.7.3")
-        limit: Maximum results (default: 10, max: 50)
-        highlight: Include highlighted snippets (default: True)
-
-    Returns:
-        List of matching files with snippets and relevance scores
-    """
-    limit = min(max(1, limit), 50)
-    try:
-        return get_code_search().search_code_fts(query, component, version, limit, highlight)
-    except CodeSearchError as e:
-        raise ValueError(str(e))
-
-
-@mcp.tool
-def get_code_file_content(component: str, version: str, file_path: str) -> dict:
-    """
-    Get the full content of a specific source file at component@version.
-
-    Args:
-        component: The component name (e.g., "agent")
-        version: The version string (e.g., "0.7.3")
-        file_path: Path to the file (e.g., "agent/computer_agent.py")
-
-    Returns:
-        Full file content with language and line count
-    """
-    try:
-        return get_code_search().get_file_content(component, version, file_path)
-    except CodeSearchError as e:
-        raise ValueError(str(e))
-
-
-@mcp.tool
-def get_code_index_stats() -> dict:
-    """
-    Get statistics about the code search index.
-
-    Returns:
-        Index statistics including total files, components, and versions
-    """
-    try:
-        return get_code_search().get_stats()
-    except CodeSearchError as e:
-        raise ValueError(str(e))
+        conn = sqlite3.connect(CODE_SQLITE_PATH)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        
+        cursor.execute(sql)
+        rows = cursor.fetchall()
+        
+        # Convert rows to list of dicts
+        results = [dict(row) for row in rows]
+        
+        conn.close()
+        return results
+        
+    except sqlite3.Error as e:
+        raise ValueError(f"SQL error: {str(e)}")
+    except Exception as e:
+        raise ValueError(f"Query execution error: {str(e)}")
 
 
 # =============================================================================
@@ -637,10 +575,18 @@ def main():
 
     # Verify code index databases exist
     try:
-        code_search = get_code_search()
-        stats = code_search.get_stats()
-        print(f"Code index loaded: {stats['total_files']} files across {stats['total_components']} components")
-    except (CodeSearchError, Exception) as e:
+        if CODE_SQLITE_PATH.exists():
+            conn = sqlite3.connect(CODE_SQLITE_PATH)
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) FROM code_files")
+            total_files = cursor.fetchone()[0]
+            cursor.execute("SELECT COUNT(DISTINCT component) FROM code_files")
+            total_components = cursor.fetchone()[0]
+            conn.close()
+            print(f"Code index loaded: {total_files} files across {total_components} components")
+        else:
+            print(f"Warning: Code index not found at {CODE_SQLITE_PATH}")
+    except Exception as e:
         print(f"Warning: Code index not available: {e}")
 
     mcp.run(transport=args.transport, host=args.host, port=args.port)

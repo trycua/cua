@@ -1,7 +1,7 @@
 """
 Docker VM provider implementation.
 
-This provider uses Docker containers running the CUA Ubuntu image to create
+This provider uses Docker containers running the Cua Ubuntu image to create
 Linux VMs with computer-server. It handles VM lifecycle operations through Docker
 commands and container management.
 """
@@ -32,7 +32,7 @@ class DockerProvider(BaseVMProvider):
     """
     Docker VM Provider implementation using Docker containers.
 
-    This provider uses Docker to run containers with the CUA Ubuntu image
+    This provider uses Docker to run containers with the Cua Ubuntu image
     that includes computer-server for remote computer use.
     """
 
@@ -235,7 +235,7 @@ class DockerProvider(BaseVMProvider):
     async def list_vms(self) -> List[Dict[str, Any]]:
         """List all Docker containers managed by this provider."""
         try:
-            # List all containers (running and stopped) with the CUA image
+            # List all containers (running and stopped) with the Cua image
             cmd = ["docker", "ps", "-a", "--filter", f"ancestor={self.image}", "--format", "json"]
             result = subprocess.run(cmd, capture_output=True, text=True, check=True)
 

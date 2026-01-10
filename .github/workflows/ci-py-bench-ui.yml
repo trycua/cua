@@ -1,0 +1,22 @@
+name: "CI: cua-bench-ui"
+
+on:
+  pull_request:
+    paths:
+      - "libs/python/bench-ui/**"
+      - ".github/workflows/ci-py-bench-ui.yml"
+      - ".github/workflows/py-reusable-build.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "libs/python/bench-ui/**"
+      - ".github/workflows/ci-py-bench-ui.yml"
+      - ".github/workflows/py-reusable-build.yml"
+
+jobs:
+  build:
+    uses: ./.github/workflows/py-reusable-build.yml
+    with:
+      package_name: "bench-ui"
+      package_dir: "libs/python/bench-ui"

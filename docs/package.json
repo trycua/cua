@@ -6,7 +6,11 @@
     "build": "next build",
     "dev": "next dev --turbo -p 8090",
     "start": "next start -p 8090",
-    "postinstall": "fumadocs-mdx"
+    "postinstall": "fumadocs-mdx",
+    "docs:generate": "tsx ../scripts/docs-generators/runner.ts",
+    "docs:check": "tsx ../scripts/docs-generators/runner.ts --check",
+    "docs:list": "tsx ../scripts/docs-generators/runner.ts --list",
+    "docs:generate:lume": "tsx ../scripts/docs-generators/lume.ts"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^3.0.9",
@@ -44,6 +48,7 @@
     "postcss": "^8.5.4",
     "prettier": "^3.6.2",
     "tailwindcss": "^4.1.8",
+    "tsx": "^4.7.0",
     "typescript": "^5.8.3"
   },
   "pnpm": {

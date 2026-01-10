@@ -1,0 +1,43 @@
+---
+title: Lume
+description: CLI and framework for macOS VMs using Apple Virtualization Framework
+github:
+  - https://github.com/trycua/cua/tree/main/libs/lume
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+Lume is a lightweight CLI and local API server for creating, running, and managing **macOS and Linux virtual machines** with near-native performance on Apple Silicon.
+
+Built on Apple's [Virtualization.Framework](https://developer.apple.com/documentation/virtualization), Lume was the first open-source product released by trycua - providing the foundation for the Computer Use Agent SDK.
+
+## Key Features
+
+- **Near-native performance** - Run macOS VMs at native speed using Apple's Virtualization Framework
+- **Simple CLI** - Create, run, and manage VMs with intuitive commands
+- **Prebuilt images** - Get started quickly with ready-to-use macOS and Linux images
+- **HTTP API** - Integrate with your tools via the built-in REST API server
+- **Unattended setup** - Automate macOS installation with YAML configuration files
+
+## Quick Start
+
+```bash
+# Install Lume
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/lume/scripts/install.sh)"
+
+# Pull and run a prebuilt macOS image
+lume run macos-sequoia-vanilla:latest
+```
+
+<Callout title="System Requirements">
+  - Apple Silicon Mac (M1, M2, M3, M4, etc.) - macOS 13.0 or later - At least 8GB of RAM (16GB
+  recommended) - At least 30GB of free disk space
+</Callout>
+
+## Next Steps
+
+- [Installation Guide](/lume/guide/getting-started/installation) - Detailed installation options
+- [Quickstart](/lume/guide/getting-started/quickstart) - Create your first VM
+- [Prebuilt Images](/lume/guide/fundamentals/prebuilt-images) - Available images in the registry
+- [CLI Reference](/lume/reference/cli-reference) - Full command reference
+- [HTTP API Reference](/lume/reference/http-api) - REST API documentation

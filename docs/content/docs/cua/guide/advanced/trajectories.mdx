@@ -81,11 +81,11 @@ agent = ComputerAgent(
 
 **Options:**
 
-| Option | Default | Description |
-|--------|---------|-------------|
-| `trajectory_dir` | Required | Base directory for trajectories |
-| `reset_on_run` | `True` | Create new trajectory ID per run |
-| `screenshot_dir` | `None` | Optional separate directory for screenshots |
+| Option           | Default  | Description                                 |
+| ---------------- | -------- | ------------------------------------------- |
+| `trajectory_dir` | Required | Base directory for trajectories             |
+| `reset_on_run`   | `True`   | Create new trajectory ID per run            |
+| `screenshot_dir` | `None`   | Optional separate directory for screenshots |
 
 Setting `reset_on_run=False` appends to the same trajectory across multiple `agent.run()` calls, useful for multi-step workflows.
 
@@ -107,6 +107,7 @@ The viewer runs entirely in your browser—no data is uploaded to any server.
 Open the JSON files directly to see exactly what happened:
 
 **metadata.json:**
+
 ```json
 {
   "trajectory_id": "2025-01-03_claude_143022_a1b2",
@@ -114,13 +115,14 @@ Open the JSON files directly to see exactly what happened:
   "status": "completed",
   "total_usage": {
     "total_tokens": 5000,
-    "response_cost": 0.50
+    "response_cost": 0.5
   },
   "total_turns": 5
 }
 ```
 
 **agent_response.json:**
+
 ```json
 {
   "type": "computer_call",

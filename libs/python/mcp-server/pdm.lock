@@ -636,7 +636,7 @@ files = [
 name = "cua-agent"
 version = "0.4.12"
 requires_python = ">=3.11"
-summary = "CUA (Computer Use) Agent for AI-driven computer interaction"
+summary = "Cua (Computer Use) Agent for AI-driven computer interaction"
 groups = ["default"]
 dependencies = [
     "aiohttp>=3.9.3",
@@ -662,7 +662,7 @@ name = "cua-agent"
 version = "0.4.12"
 extras = ["all"]
 requires_python = ">=3.11"
-summary = "CUA (Computer Use) Agent for AI-driven computer interaction"
+summary = "Cua (Computer Use) Agent for AI-driven computer interaction"
 groups = ["default"]
 dependencies = [
     "accelerate",

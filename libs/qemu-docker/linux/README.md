@@ -1,12 +1,12 @@
-# CUA Linux Container
+# Cua Linux Container
 
-Containerized Ubuntu 22.04 LTS virtual desktop for Computer-Using Agents (CUA). Utilizes QEMU/KVM with Ubuntu Desktop and computer-server pre-installed for remote computer control.
+Containerized Ubuntu 22.04 LTS virtual desktop for Computer-Using Agents (Cua). Utilizes QEMU/KVM with Ubuntu Desktop and computer-server pre-installed for remote computer control.
 
 ## Features
 
 - Ubuntu 22.04 LTS Desktop running in QEMU/KVM
 - Automated installation via cloud-init autoinstall
-- Pre-installed CUA computer-server for remote computer control
+- Pre-installed Cua computer-server for remote computer control
 - Support for custom OEM scripts during setup
 - noVNC access for visual desktop interaction
 
@@ -55,8 +55,8 @@ docker run -it --rm \
 
 1. Ubuntu 22.04 Server installs automatically using cloud-init autoinstall
 2. Minimal desktop environment is installed with auto-login enabled
-3. OEM setup scripts install Python 3, create venv, and install CUA computer-server
-4. systemd service created for CUA server (runs automatically on login)
+3. OEM setup scripts install Python 3, create venv, and install Cua computer-server
+4. systemd service created for Cua server (runs automatically on login)
 5. X11 access configured for GUI automation
 6. Golden image is saved to `/storage` directory
 7. Container exits after setup completes
@@ -88,7 +88,7 @@ docker run -it --rm \
 
 ### Ports
 
-- **5000**: CUA computer-server API endpoint
+- **5000**: Cua computer-server API endpoint
 - **8006**: noVNC web interface for visual desktop access
 
 ### Environment Variables
@@ -115,7 +115,7 @@ docker run -it --rm \
 │  ┌────────────────────────────────────────────────────┐ │
 │  │  QEMU VM (Ubuntu 22.04)                            │ │
 │  │                                                    │ │
-│  │  • CUA computer-server listens on 5000             │ │
+│  │  • Cua computer-server listens on 5000             │ │
 │  │                                                    │ │
 │  └────────────────────────────────────────────────────┘ │
 │                                                         │
@@ -127,7 +127,7 @@ docker run -it --rm \
 1. External client → `localhost:5000` (host)
 2. Docker port mapping → Container's `localhost:5000`
 3. Container detects VM IP and waits for server to be ready
-4. CUA computer-server in Ubuntu VM processes request
+4. Cua computer-server in Ubuntu VM processes request
 
 ## Development
 
@@ -137,7 +137,7 @@ Setup scripts are in `src/vm/setup/`:
 
 - `install.sh`: Entry point called after cloud-init installation (runs OEM setup)
 - `setup.sh`: Main setup orchestration (copies scripts to /opt/oem)
-- `setup-cua-server.sh`: CUA server installation with isolated venv and systemd service
+- `setup-cua-server.sh`: Cua server installation with isolated venv and systemd service
 
 After modifying, rebuild the image:
 

@@ -1,4 +1,4 @@
-"""MCP Server for Computer-Use Agent (CUA)."""
+"""MCP Server for Computer-Use Agent (Cua)."""
 
 import os
 import sys

@@ -1,5 +1,5 @@
 /**
- * This module provides the core telemetry functionality for CUA libraries.
+ * This module provides the core telemetry functionality for Cua libraries.
  *
  * It provides a low-overhead way to collect anonymous usage data.
  */

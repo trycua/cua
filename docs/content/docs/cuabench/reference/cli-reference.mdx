@@ -11,14 +11,14 @@ Create and manage base images for environments.
 cb image <action> [options]
 ```
 
-| Command | Description |
-|---------|-------------|
-| `cb image create <platform>` | Create a base image |
-| `cb image list` | List all images |
-| `cb image info <name>` | Show image details |
-| `cb image clone <src> <dst>` | Clone/fork an image |
-| `cb image delete <name>` | Delete an image |
-| `cb image shell <name>` | Interactive shell into image (protected) |
+| Command                      | Description                              |
+| ---------------------------- | ---------------------------------------- |
+| `cb image create <platform>` | Create a base image                      |
+| `cb image list`              | List all images                          |
+| `cb image info <name>`       | Show image details                       |
+| `cb image clone <src> <dst>` | Clone/fork an image                      |
+| `cb image delete <name>`     | Delete an image                          |
+| `cb image shell <name>`      | Interactive shell into image (protected) |
 
 ### Create Options
 
@@ -26,20 +26,20 @@ cb image <action> [options]
 cb image create <platform> [options]
 ```
 
-| Option | Description |
-|--------|-------------|
-| `--download-iso` | Download Windows 11 ISO (~6GB) |
-| `--iso <path>` | Use existing Windows ISO |
-| `--name <name>` | Image name (default: same as platform) |
-| `--winarena-apps` | Install WinArena benchmark apps (Chrome, LibreOffice, VLC, etc.) |
-| `--memory <size>` | Memory (default: 8G) |
-| `--cpus <count>` | CPU cores (default: 8) |
-| `--disk <size>` | Disk size (default: 64G) |
-| `--detach`, `-d` | Run in background |
-| `--force` | Force recreation |
-| `--skip-pull` | Don't pull Docker image (use local) |
-| `--vnc-port <port>` | VNC port (default: auto-allocate from 8006) |
-| `--api-port <port>` | API port (default: auto-allocate from 5000) |
+| Option              | Description                                                      |
+| ------------------- | ---------------------------------------------------------------- |
+| `--download-iso`    | Download Windows 11 ISO (~6GB)                                   |
+| `--iso <path>`      | Use existing Windows ISO                                         |
+| `--name <name>`     | Image name (default: same as platform)                           |
+| `--winarena-apps`   | Install WinArena benchmark apps (Chrome, LibreOffice, VLC, etc.) |
+| `--memory <size>`   | Memory (default: 8G)                                             |
+| `--cpus <count>`    | CPU cores (default: 8)                                           |
+| `--disk <size>`     | Disk size (default: 64G)                                         |
+| `--detach`, `-d`    | Run in background                                                |
+| `--force`           | Force recreation                                                 |
+| `--skip-pull`       | Don't pull Docker image (use local)                              |
+| `--vnc-port <port>` | VNC port (default: auto-allocate from 8006)                      |
+| `--api-port <port>` | API port (default: auto-allocate from 5000)                      |
 
 ### List Options
 
@@ -47,10 +47,10 @@ cb image create <platform> [options]
 cb image list [options]
 ```
 
-| Option | Description |
-|--------|-------------|
-| `--format <fmt>` | Output format: table, json |
-| `--platform <type>` | Filter by platform type |
+| Option              | Description                |
+| ------------------- | -------------------------- |
+| `--format <fmt>`    | Output format: table, json |
+| `--platform <type>` | Filter by platform type    |
 
 ### Shell Options
 
@@ -60,18 +60,20 @@ Interactive shell into an image. By default uses an overlay to protect the golde
 cb image shell <name> [options]
 ```
 
-| Option | Description |
-|--------|-------------|
-| `--writable` | Modify golden image directly (dangerous!) |
+| Option              | Description                                 |
+| ------------------- | ------------------------------------------- |
+| `--writable`        | Modify golden image directly (dangerous!)   |
 | `--vnc-port <port>` | VNC port (default: auto-allocate from 8006) |
 | `--api-port <port>` | API port (default: auto-allocate from 5000) |
-| `--memory <size>` | Memory (default: 8G) |
-| `--cpus <count>` | CPU cores (default: 8) |
-| `--no-kvm` | Disable KVM acceleration |
-| `--detach`, `-d` | Run in background |
+| `--memory <size>`   | Memory (default: 8G)                        |
+| `--cpus <count>`    | CPU cores (default: 8)                      |
+| `--no-kvm`          | Disable KVM acceleration                    |
+| `--detach`, `-d`    | Run in background                           |
 
 <Callout title="Image Protection" type="info">
-  By default, `cb image shell` mounts the golden image read-only and uses an overlay for any changes. This protects your base images from accidental modification. Use `--writable` only when you intentionally want to modify the golden image.
+  By default, `cb image shell` mounts the golden image read-only and uses an overlay for any
+  changes. This protects your base images from accidental modification. Use `--writable` only when
+  you intentionally want to modify the golden image.
 </Callout>
 
 ## Platform Commands
@@ -82,8 +84,8 @@ View available platforms.
 cb platform list [options]
 ```
 
-| Option | Description |
-|--------|-------------|
+| Option           | Description                |
+| ---------------- | -------------------------- |
 | `--format <fmt>` | Output format: table, json |
 
 ## Status Commands
@@ -104,15 +106,15 @@ Run tasks with the 2-container architecture (agent container + environment conta
 cb run <subcommand> [options]
 ```
 
-| Command | Description |
-|---------|-------------|
-| `cb run task <path>` | Run a single task |
-| `cb run dataset <path>` | Run all tasks in a dataset (parallel) |
-| `cb run list` | List all runs with status |
-| `cb run status <id>` | Show detailed run status |
-| `cb run watch <id>` | Watch a run in real-time |
-| `cb run stop <id>` | Stop/cancel a run |
-| `cb run logs <id>` | View combined logs from a run or session |
+| Command                 | Description                              |
+| ----------------------- | ---------------------------------------- |
+| `cb run task <path>`    | Run a single task                        |
+| `cb run dataset <path>` | Run all tasks in a dataset (parallel)    |
+| `cb run list`           | List all runs with status                |
+| `cb run status <id>`    | Show detailed run status                 |
+| `cb run watch <id>`     | Watch a run in real-time                 |
+| `cb run stop <id>`      | Stop/cancel a run                        |
+| `cb run logs <id>`      | View combined logs from a run or session |
 
 ### Task Options
 
@@ -122,21 +124,21 @@ Tasks run **asynchronously by default** and return immediately with a run ID. Us
 cb run task <path> [options]
 ```
 
-| Option | Description |
-|--------|-------------|
-| `--wait`, `-w` | Wait for task completion (default: run async) |
-| `--debug` | Auto-allocate debug ports (VNC + API) |
-| `--variant-id <n>` | Task variant index (default: 0) |
-| `--agent <name>` | Agent to use (from `.cua/agents.yaml`) |
-| `--agent-import-path <path>` | Import path for custom agent |
-| `--model <model>` | Model to use (e.g., `anthropic/claude-sonnet-4-20250514`) |
-| `--oracle` | Run with oracle solution (no agent) |
-| `--max-steps <n>` | Maximum steps per task (default: 100) |
-| `--image <name>` | Use specific base image |
-| `--platform <type>` | Platform type: `linux-docker`, `windows-qemu`, `android-qemu` |
-| `--vnc-port <port>` | Expose VNC on host port (auto-allocated if not specified) |
-| `--api-port <port>` | Expose API on host port (auto-allocated if not specified) |
-| `--output-dir <dir>` | Output directory (default: `~/.local/share/cua-bench/runs/<run_id>/`) |
+| Option                       | Description                                                           |
+| ---------------------------- | --------------------------------------------------------------------- |
+| `--wait`, `-w`               | Wait for task completion (default: run async)                         |
+| `--debug`                    | Auto-allocate debug ports (VNC + API)                                 |
+| `--variant-id <n>`           | Task variant index (default: 0)                                       |
+| `--agent <name>`             | Agent to use (from `.cua/agents.yaml`)                                |
+| `--agent-import-path <path>` | Import path for custom agent                                          |
+| `--model <model>`            | Model to use (e.g., `anthropic/claude-sonnet-4-20250514`)             |
+| `--oracle`                   | Run with oracle solution (no agent)                                   |
+| `--max-steps <n>`            | Maximum steps per task (default: 100)                                 |
+| `--image <name>`             | Use specific base image                                               |
+| `--platform <type>`          | Platform type: `linux-docker`, `windows-qemu`, `android-qemu`         |
+| `--vnc-port <port>`          | Expose VNC on host port (auto-allocated if not specified)             |
+| `--api-port <port>`          | Expose API on host port (auto-allocated if not specified)             |
+| `--output-dir <dir>`         | Output directory (default: `~/.local/share/cua-bench/runs/<run_id>/`) |
 
 ### Dataset Options
 
@@ -144,18 +146,18 @@ cb run task <path> [options]
 cb run dataset <path> [options]
 ```
 
-| Option | Description |
-|--------|-------------|
-| `--max-parallel <n>` | Maximum parallel task runners (default: 4) |
-| `--max-variants <n>` | Maximum variants per task (default: all) |
-| `--task-filter <pattern>` | Filter tasks by name pattern (glob) |
-| `--agent <name>` | Agent to use (from `.cua/agents.yaml`) |
-| `--model <model>` | Model to use |
-| `--oracle` | Run with oracle solution (no agent) |
-| `--max-steps <n>` | Maximum steps per task (default: 100) |
-| `--image <name>` | Use specific base image |
-| `--platform <type>` | Platform type |
-| `--output-dir <dir>` | Output directory for results |
+| Option                    | Description                                |
+| ------------------------- | ------------------------------------------ |
+| `--max-parallel <n>`      | Maximum parallel task runners (default: 4) |
+| `--max-variants <n>`      | Maximum variants per task (default: all)   |
+| `--task-filter <pattern>` | Filter tasks by name pattern (glob)        |
+| `--agent <name>`          | Agent to use (from `.cua/agents.yaml`)     |
+| `--model <model>`         | Model to use                               |
+| `--oracle`                | Run with oracle solution (no agent)        |
+| `--max-steps <n>`         | Maximum steps per task (default: 100)      |
+| `--image <name>`          | Use specific base image                    |
+| `--platform <type>`       | Platform type                              |
+| `--output-dir <dir>`      | Output directory for results               |
 
 ### Examples
 
@@ -199,17 +201,17 @@ Interactive task mode with visible browser.
 cb interact <task> [options]
 ```
 
-| Option | Description |
-|--------|-------------|
-| `--variant-id <id>` | Task variant index (default: 0) |
-| `--dataset <name>` | Dataset name to resolve task from registry |
-| `--dataset-path <path>` | Path to dataset directory containing multiple tasks |
-| `--oracle` | Run the solution after setup |
-| `--max-steps <n>` | Maximum number of env.step() calls before stopping |
-| `--screenshot <path>` | Save screenshot to file |
-| `--trace-out <path>` | If set, start tracing and save dataset to this path on exit |
-| `--view` | Open a trace viewer when done |
-| `--no-wait` | Skip the interactive prompt (useful for SSH/CI testing) |
+| Option                  | Description                                                 |
+| ----------------------- | ----------------------------------------------------------- |
+| `--variant-id <id>`     | Task variant index (default: 0)                             |
+| `--dataset <name>`      | Dataset name to resolve task from registry                  |
+| `--dataset-path <path>` | Path to dataset directory containing multiple tasks         |
+| `--oracle`              | Run the solution after setup                                |
+| `--max-steps <n>`       | Maximum number of env.step() calls before stopping          |
+| `--screenshot <path>`   | Save screenshot to file                                     |
+| `--trace-out <path>`    | If set, start tracing and save dataset to this path on exit |
+| `--view`                | Open a trace viewer when done                               |
+| `--no-wait`             | Skip the interactive prompt (useful for SSH/CI testing)     |
 
 ## Task Commands
 
@@ -219,12 +221,12 @@ Manage task environments.
 cb task <action> [options]
 ```
 
-| Command | Description |
-|---------|-------------|
-| `cb task info <path>` | Show task details (provider, variants) |
-| `cb task list [path]` | List tasks in a directory |
-| `cb task create [path]` | Scaffold a new task environment |
-| `cb task generate "<prompt>"` | Generate a task using Claude |
+| Command                       | Description                            |
+| ----------------------------- | -------------------------------------- |
+| `cb task info <path>`         | Show task details (provider, variants) |
+| `cb task list [path]`         | List tasks in a directory              |
+| `cb task create [path]`       | Scaffold a new task environment        |
+| `cb task generate "<prompt>"` | Generate a task using Claude           |
 
 ### Generate Options
 
@@ -232,10 +234,10 @@ cb task <action> [options]
 cb task generate "<description>" [options]
 ```
 
-| Option | Description |
-|--------|-------------|
+| Option                  | Description                                                         |
+| ----------------------- | ------------------------------------------------------------------- |
 | `--output <path>`, `-o` | Output directory path. If not provided, auto-generates from prompt. |
-| `--no-interaction` | Skip prompts and run Claude non-interactively |
+| `--no-interaction`      | Skip prompts and run Claude non-interactively                       |
 
 ## Trace Commands
 
@@ -245,8 +247,8 @@ View and manage trace datasets.
 cb trace <action> <id>
 ```
 
-| Command            | Description                                                   |
-|--------------------|---------------------------------------------------------------|
+| Command              | Description                                                   |
+| -------------------- | ------------------------------------------------------------- |
 | `cb trace view <id>` | View a single trace in browser (accepts run_id or session_id) |
 | `cb trace grid <id>` | View all traces in a run as a grid (accepts run_id)           |
 
@@ -258,10 +260,10 @@ Manage datasets and build from outputs.
 cb dataset <action> [options]
 ```
 
-| Command | Description |
-|---------|-------------|
-| `cb dataset list` | List available datasets from registry |
-| `cb dataset build <outputs>` | Build a dataset from batch outputs |
+| Command                      | Description                           |
+| ---------------------------- | ------------------------------------- |
+| `cb dataset list`            | List available datasets from registry |
+| `cb dataset build <outputs>` | Build a dataset from batch outputs    |
 
 ### Build Options
 
@@ -269,13 +271,13 @@ cb dataset <action> [options]
 cb dataset build <outputs> [options]
 ```
 
-| Option | Description |
-|--------|-------------|
-| `--save-dir <dir>` | Output directory for datasets |
-| `--mode <mode>` | Processor mode: aguvis-stage-1, gui-r1 |
-| `--push-to-hub` | Push to Hugging Face Hub |
-| `--repo-id <id>` | Hugging Face repo ID |
-| `--private` | Create private repo on Hub |
+| Option             | Description                            |
+| ------------------ | -------------------------------------- |
+| `--save-dir <dir>` | Output directory for datasets          |
+| `--mode <mode>`    | Processor mode: aguvis-stage-1, gui-r1 |
+| `--push-to-hub`    | Push to Hugging Face Hub               |
+| `--repo-id <id>`   | Hugging Face repo ID                   |
+| `--private`        | Create private repo on Hub             |
 
 ## Prune Commands
 
@@ -287,15 +289,15 @@ cb prune [options]
 
 When called without options, shows an interactive overview of storage usage. Use flags to clean specific resources.
 
-| Option | Description |
-|--------|-------------|
-| `--all`, `-a` | Remove everything (images, overlays, runs, docker) |
-| `--images` | Remove only stored images |
-| `--overlays` | Remove only task overlays |
-| `--runs` | Remove only run logs and registry |
-| `--docker` | Remove only docker containers/images |
-| `--dry-run` | Show what would be deleted without deleting |
-| `--force`, `-f` | Skip confirmation prompts |
+| Option          | Description                                        |
+| --------------- | -------------------------------------------------- |
+| `--all`, `-a`   | Remove everything (images, overlays, runs, docker) |
+| `--images`      | Remove only stored images                          |
+| `--overlays`    | Remove only task overlays                          |
+| `--runs`        | Remove only run logs and registry                  |
+| `--docker`      | Remove only docker containers/images               |
+| `--dry-run`     | Show what would be deleted without deleting        |
+| `--force`, `-f` | Skip confirmation prompts                          |
 
 ### Examples
 

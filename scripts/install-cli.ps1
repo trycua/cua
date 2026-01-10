@@ -1,4 +1,4 @@
-# CUA CLI Installation Script for Windows
+# Cua CLI Installation Script for Windows
 $ErrorActionPreference = "Stop"
 
 function Get-LatestCuaTag {
@@ -30,7 +30,7 @@ function Get-LatestCuaTag {
 }
 
 function Install-WithBun {
-    Write-Host "Installing CUA CLI using Bun..." -ForegroundColor Yellow
+    Write-Host "Installing Cua CLI using Bun..." -ForegroundColor Yellow
     
     # Check if bun is already installed
     if (-not (Get-Command bun -ErrorAction SilentlyContinue)) {
@@ -91,7 +91,7 @@ function Install-WithBun {
     }
 }
 
-Write-Host "Installing CUA CLI..." -ForegroundColor Green
+Write-Host "Installing Cua CLI..." -ForegroundColor Green
 
 # Determine if this is a 64-bit system
 $is64Bit = [Environment]::Is64BitOperatingSystem
@@ -134,7 +134,7 @@ if (-not (Test-Path $installDir)) {
 $binaryPath = Join-Path $installDir "cua.exe"
 
 # Download the binary
-Write-Host "Downloading CUA CLI $version for Windows x64..." -ForegroundColor Cyan
+Write-Host "Downloading Cua CLI $version for Windows x64..." -ForegroundColor Cyan
 try {
     Invoke-WebRequest -Uri $binaryUrl -OutFile $binaryPath -ErrorAction Stop
 } catch {
@@ -165,7 +165,7 @@ if ($currentPath -notlike "*$installDir*") {
 
 # Verify installation
 if (Test-Path $binaryPath) {
-    Write-Host "Success: CUA CLI $version installed successfully to $binaryPath" -ForegroundColor Green
+    Write-Host "Success: Cua CLI $version installed successfully to $binaryPath" -ForegroundColor Green
     Write-Host ""
     Write-Host "Get started with:" -ForegroundColor Cyan
     Write-Host "   cua login"
@@ -176,7 +176,7 @@ if (Test-Path $binaryPath) {
     # Offer to add to PATH if not already there
     if (-not ($env:Path -like "*$installDir*")) {
         Write-Host ""
-        Write-Host "Note: Please restart your terminal or run the following command to use CUA CLI:" -ForegroundColor Yellow
+        Write-Host "Note: Please restart your terminal or run the following command to use Cua CLI:" -ForegroundColor Yellow
         Write-Host "   `$env:Path += ';$installDir'"
     }
 } else {

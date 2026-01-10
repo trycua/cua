@@ -227,7 +227,7 @@ async def chat_loop(
 async def main():
     """Main CLI function."""
     parser = argparse.ArgumentParser(
-        description="CUA Agent CLI - Interactive computer use assistant",
+        description="Cua Agent CLI - Interactive computer use assistant",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
@@ -321,8 +321,8 @@ Examples:
     if not container_name:
         if args.provider == "cloud":
             print_colored("CUA_CONTAINER_NAME not set.", dim=True)
-            print_colored("You can get a CUA container at https://cua.ai/", dim=True)
-            container_name = input("Enter your CUA container name: ").strip()
+            print_colored("You can get a Cua container at https://cua.ai/", dim=True)
+            container_name = input("Enter your Cua container name: ").strip()
             if not container_name:
                 print_colored("❌ Container name is required.")
                 sys.exit(1)
@@ -332,7 +332,7 @@ Examples:
     # Only require API key for cloud provider
     if args.provider == "cloud" and not cua_api_key:
         print_colored("CUA_API_KEY not set.", dim=True)
-        cua_api_key = input("Enter your CUA API key: ").strip()
+        cua_api_key = input("Enter your Cua API key: ").strip()
         if not cua_api_key:
             print_colored("❌ API key is required for cloud provider.")
             sys.exit(1)

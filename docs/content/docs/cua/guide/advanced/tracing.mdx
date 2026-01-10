@@ -88,6 +88,7 @@ trace_20250103_143052_abc123/
 ```
 
 **trace_metadata.json:**
+
 ```json
 {
   "trace_id": "trace_20250103_143052_abc123",
@@ -104,6 +105,7 @@ trace_20250103_143052_abc123/
 ```
 
 **API call event:**
+
 ```json
 {
   "type": "api_call",
@@ -111,7 +113,7 @@ trace_20250103_143052_abc123/
   "relative_time": 3.666,
   "data": {
     "method": "left_click",
-    "args": {"x": 100, "y": 200},
+    "args": { "x": 100, "y": 200 },
     "result": null,
     "error": null,
     "screenshot": "000002_after_left_click.png",
@@ -170,22 +172,24 @@ trace_path = await computer.tracing.stop()
 ```
 
 Now you have:
+
 - **Trajectory** - Agent's reasoning, API calls to the model, action decisions
 - **Trace** - Low-level computer interactions, screenshots, timing
 
 ## Tracing vs Trajectories
 
-| Feature | Tracing API | Trajectories |
-|---------|-------------|--------------|
-| Works with | Any Computer usage | ComputerAgent only |
-| Records | Computer interface calls | Agent reasoning + actions |
-| Screenshots | After each action | Per agent turn |
-| Accessibility data | Optional | No |
-| Custom metadata | Yes | No |
-| Output format | ZIP or directory | Directory with turns |
-| Real-time control | Start/stop anytime | Per agent run |
+| Feature            | Tracing API              | Trajectories              |
+| ------------------ | ------------------------ | ------------------------- |
+| Works with         | Any Computer usage       | ComputerAgent only        |
+| Records            | Computer interface calls | Agent reasoning + actions |
+| Screenshots        | After each action        | Per agent turn            |
+| Accessibility data | Optional                 | No                        |
+| Custom metadata    | Yes                      | No                        |
+| Output format      | ZIP or directory         | Directory with turns      |
+| Real-time control  | Start/stop anytime       | Per agent run             |
 
 **Use Tracing when:**
+
 - Building custom agents or scripts
 - Recording human demonstrations
 - Debugging computer interface issues
@@ -193,6 +197,7 @@ Now you have:
 - Want accessibility tree snapshots
 
 **Use Trajectories when:**
+
 - Using ComputerAgent
 - Need agent reasoning and model responses
 - Want turn-by-turn organization

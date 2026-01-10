@@ -1,4 +1,4 @@
-"""Playground server implementation for CUA agents."""
+"""Playground server implementation for Cua agents."""
 
 import asyncio
 import logging
@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 
 class PlaygroundServer:
-    """Playground server for running CUA agents via HTTP API."""
+    """Playground server for running Cua agents via HTTP API."""
 
     def __init__(self, agent_instance=None):
         """
@@ -30,8 +30,8 @@ class PlaygroundServer:
         """
         self.agent_instance = agent_instance
         self.app = FastAPI(
-            title="CUA Playground Server",
-            description="Playground server for CUA agents",
+            title="Cua Playground Server",
+            description="Playground server for Cua agents",
             version="0.1.0",
         )
         self._setup_middleware()

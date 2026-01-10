@@ -250,7 +250,7 @@ def launch_ui():
     """Standalone function to launch the Gradio app."""
     from agent.ui.gradio.ui_components import create_gradio_ui
 
-    print("Starting Gradio app for CUA Agent...")
+    print("Starting Gradio app for Cua Agent...")
     demo = create_gradio_ui()
     demo.launch(share=False, inbrowser=True)
 

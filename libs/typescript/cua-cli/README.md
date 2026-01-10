@@ -1,4 +1,4 @@
-# CUA CLI (Bun)
+# Cua CLI (Bun)
 
 ## Install
 

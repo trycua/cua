@@ -1,0 +1,392 @@
+name: Bump Version & Publish
+
+on:
+  workflow_dispatch:
+    inputs:
+      service:
+        description: "Service/Package to bump"
+        required: true
+        type: choice
+        options:
+          - pypi/agent
+          - pypi/bench
+          - pypi/bench-ui
+          - pypi/computer
+          - pypi/computer-server
+          - pypi/core
+          - pypi/mcp-server
+          - pypi/som
+          - npm/cli
+          - npm/computer
+          - npm/core
+          - lume
+          - docker/kasm
+          - docker/xfce
+          - docker/lumier
+          - docker/qemu-android
+          - docker/qemu-linux
+          - docker/qemu-windows
+      bump_type:
+        description: "Version bump type"
+        required: true
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+
+permissions:
+  contents: write
+  id-token: write
+  packages: write
+
+jobs:
+  bump-version:
+    runs-on: ubuntu-latest
+    outputs:
+      agent_version: ${{ steps.agent_version.outputs.version }}
+      bench_version: ${{ steps.bench_version.outputs.version }}
+      bench_ui_version: ${{ steps.bench_ui_version.outputs.version }}
+      computer_version: ${{ steps.computer_version.outputs.version }}
+      computer_server_version: ${{ steps.computer_server_version.outputs.version }}
+      core_version: ${{ steps.core_version.outputs.version }}
+      mcp_server_version: ${{ steps.mcp_server_version.outputs.version }}
+      som_version: ${{ steps.som_version.outputs.version }}
+      npm_cli_version: ${{ steps.npm_cli_version.outputs.version }}
+      npm_computer_version: ${{ steps.npm_computer_version.outputs.version }}
+      npm_core_version: ${{ steps.npm_core_version.outputs.version }}
+      lume_version: ${{ steps.lume_version.outputs.version }}
+    steps:
+      - name: Set package directory and type
+        id: package
+        run: |
+          case "${{ inputs.service }}" in
+            "pypi/agent")
+              echo "directory=libs/python/agent" >> $GITHUB_OUTPUT
+              echo "type=python" >> $GITHUB_OUTPUT
+              ;;
+            "pypi/bench")
+              echo "directory=libs/cua-bench" >> $GITHUB_OUTPUT
+              echo "type=python" >> $GITHUB_OUTPUT
+              ;;
+            "pypi/bench-ui")
+              echo "directory=libs/python/bench-ui" >> $GITHUB_OUTPUT
+              echo "type=python" >> $GITHUB_OUTPUT
+              ;;
+            "pypi/computer")
+              echo "directory=libs/python/computer" >> $GITHUB_OUTPUT
+              echo "type=python" >> $GITHUB_OUTPUT
+              ;;
+            "pypi/computer-server")
+              echo "directory=libs/python/computer-server" >> $GITHUB_OUTPUT
+              echo "type=python" >> $GITHUB_OUTPUT
+              ;;
+            "pypi/core")
+              echo "directory=libs/python/core" >> $GITHUB_OUTPUT
+              echo "type=python" >> $GITHUB_OUTPUT
+              ;;
+            "pypi/mcp-server")
+              echo "directory=libs/python/mcp-server" >> $GITHUB_OUTPUT
+              echo "type=python" >> $GITHUB_OUTPUT
+              ;;
+            "pypi/som")
+              echo "directory=libs/python/som" >> $GITHUB_OUTPUT
+              echo "type=python" >> $GITHUB_OUTPUT
+              ;;
+            "npm/cli")
+              echo "directory=libs/typescript/cua-cli" >> $GITHUB_OUTPUT
+              echo "type=npm" >> $GITHUB_OUTPUT
+              ;;
+            "npm/computer")
+              echo "directory=libs/typescript/computer" >> $GITHUB_OUTPUT
+              echo "type=npm" >> $GITHUB_OUTPUT
+              ;;
+            "npm/core")
+              echo "directory=libs/typescript/core" >> $GITHUB_OUTPUT
+              echo "type=npm" >> $GITHUB_OUTPUT
+              ;;
+            "lume")
+              echo "directory=libs/lume" >> $GITHUB_OUTPUT
+              echo "type=lume" >> $GITHUB_OUTPUT
+              ;;
+            "docker/kasm")
+              echo "directory=libs/kasm" >> $GITHUB_OUTPUT
+              echo "type=docker" >> $GITHUB_OUTPUT
+              ;;
+            "docker/xfce")
+              echo "directory=libs/xfce" >> $GITHUB_OUTPUT
+              echo "type=docker" >> $GITHUB_OUTPUT
+              ;;
+            "docker/lumier")
+              echo "directory=libs/lumier" >> $GITHUB_OUTPUT
+              echo "type=docker" >> $GITHUB_OUTPUT
+              ;;
+            "docker/qemu-android")
+              echo "directory=libs/qemu-docker/android" >> $GITHUB_OUTPUT
+              echo "type=docker" >> $GITHUB_OUTPUT
+              ;;
+            "docker/qemu-linux")
+              echo "directory=libs/qemu-docker/linux" >> $GITHUB_OUTPUT
+              echo "type=docker" >> $GITHUB_OUTPUT
+              ;;
+            "docker/qemu-windows")
+              echo "directory=libs/qemu-docker/windows" >> $GITHUB_OUTPUT
+              echo "type=docker" >> $GITHUB_OUTPUT
+              ;;
+            *)
+              echo "Unknown service: ${{ inputs.service }}"
+              exit 1
+              ;;
+          esac
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install bump2version
+        run: pip install bump2version
+
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Run bump2version
+        run: |
+          cd ${{ steps.package.outputs.directory }}
+          bump2version ${{ inputs.bump_type }}
+
+      - name: Also bump cua-computer (when bumping cua-core)
+        if: ${{ inputs.service == 'pypi/core' }}
+        run: |
+          cd libs/python/computer
+          bump2version ${{ inputs.bump_type }}
+
+      - name: Also bump cua-agent (when bumping cua-computer or cua-core)
+        if: ${{ inputs.service == 'pypi/computer' || inputs.service == 'pypi/core' }}
+        run: |
+          cd libs/python/agent
+          bump2version ${{ inputs.bump_type }}
+
+      - name: Also bump cua-agent (when bumping cua-som)
+        if: ${{ inputs.service == 'pypi/som' }}
+        run: |
+          cd libs/python/agent
+          bump2version ${{ inputs.bump_type }}
+
+      - name: Also bump @trycua/computer (when bumping @trycua/core)
+        if: ${{ inputs.service == 'npm/core' }}
+        run: |
+          cd libs/typescript/computer
+          bump2version ${{ inputs.bump_type }}
+
+      - name: Capture bumped agent version
+        if: ${{ inputs.service == 'pypi/agent' || inputs.service == 'pypi/computer' || inputs.service == 'pypi/core' || inputs.service == 'pypi/som' }}
+        id: agent_version
+        run: |
+          cd libs/python/agent
+          VERSION=$(python -c "import tomllib; from pathlib import Path; data = tomllib.loads(Path('pyproject.toml').read_text()); print(data['project']['version'])")
+          echo "Agent version: $VERSION"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Capture bumped bench version
+        if: ${{ inputs.service == 'pypi/bench' }}
+        id: bench_version
+        run: |
+          cd libs/cua-bench
+          VERSION=$(python -c "import tomllib; from pathlib import Path; data = tomllib.loads(Path('pyproject.toml').read_text()); print(data['project']['version'])")
+          echo "Bench version: $VERSION"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Capture bumped bench-ui version
+        if: ${{ inputs.service == 'pypi/bench-ui' }}
+        id: bench_ui_version
+        run: |
+          cd libs/python/bench-ui
+          VERSION=$(python -c "import tomllib; from pathlib import Path; data = tomllib.loads(Path('pyproject.toml').read_text()); print(data['project']['version'])")
+          echo "Bench-ui version: $VERSION"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Capture bumped computer version
+        if: ${{ inputs.service == 'pypi/computer' || inputs.service == 'pypi/core' }}
+        id: computer_version
+        run: |
+          cd libs/python/computer
+          VERSION=$(python -c "import tomllib; from pathlib import Path; data = tomllib.loads(Path('pyproject.toml').read_text()); print(data['project']['version'])")
+          echo "Computer version: $VERSION"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Capture bumped computer-server version
+        if: ${{ inputs.service == 'pypi/computer-server' }}
+        id: computer_server_version
+        run: |
+          cd libs/python/computer-server
+          VERSION=$(python -c "import tomllib; from pathlib import Path; data = tomllib.loads(Path('pyproject.toml').read_text()); print(data['project']['version'])")
+          echo "Computer-server version: $VERSION"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Capture bumped core version
+        if: ${{ inputs.service == 'pypi/core' }}
+        id: core_version
+        run: |
+          cd libs/python/core
+          VERSION=$(python -c "import tomllib; from pathlib import Path; data = tomllib.loads(Path('pyproject.toml').read_text()); print(data['project']['version'])")
+          echo "Core version: $VERSION"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Capture bumped mcp-server version
+        if: ${{ inputs.service == 'pypi/mcp-server' }}
+        id: mcp_server_version
+        run: |
+          cd libs/python/mcp-server
+          VERSION=$(python -c "import tomllib; from pathlib import Path; data = tomllib.loads(Path('pyproject.toml').read_text()); print(data['project']['version'])")
+          echo "MCP-server version: $VERSION"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Capture bumped som version
+        if: ${{ inputs.service == 'pypi/som' }}
+        id: som_version
+        run: |
+          cd libs/python/som
+          VERSION=$(python -c "import tomllib; from pathlib import Path; data = tomllib.loads(Path('pyproject.toml').read_text()); print(data['project']['version'])")
+          echo "SOM version: $VERSION"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Capture bumped npm/cli version
+        if: ${{ inputs.service == 'npm/cli' }}
+        id: npm_cli_version
+        run: |
+          VERSION=$(grep -oP '"version": "\K[^"]+' libs/typescript/cua-cli/package.json)
+          echo "npm/cli version: $VERSION"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Capture bumped npm/computer version
+        if: ${{ inputs.service == 'npm/computer' || inputs.service == 'npm/core' }}
+        id: npm_computer_version
+        run: |
+          VERSION=$(grep -oP '"version": "\K[^"]+' libs/typescript/computer/package.json)
+          echo "npm/computer version: $VERSION"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Capture bumped npm/core version
+        if: ${{ inputs.service == 'npm/core' }}
+        id: npm_core_version
+        run: |
+          VERSION=$(grep -oP '"version": "\K[^"]+' libs/typescript/core/package.json)
+          echo "npm/core version: $VERSION"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Capture bumped lume version
+        if: ${{ inputs.service == 'lume' }}
+        id: lume_version
+        run: |
+          VERSION=$(grep -oP 'static let current: String = "\K[^"]+' libs/lume/src/Main.swift)
+          echo "lume version: $VERSION"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Push changes
+        run: |
+          git push origin main --follow-tags
+
+  publish-computer:
+    needs: [bump-version, publish-core]
+    if: ${{ always() && (inputs.service == 'pypi/computer' || inputs.service == 'pypi/core') && needs.bump-version.result == 'success' && (inputs.service == 'pypi/computer' || needs.publish-core.result == 'success') }}
+    uses: ./.github/workflows/cd-py-computer.yml
+    with:
+      version: ${{ needs.bump-version.outputs.computer_version }}
+    secrets: inherit
+
+  publish-agent:
+    needs: [bump-version, publish-computer, publish-som]
+    if: ${{ always() && (inputs.service == 'pypi/agent' || inputs.service == 'pypi/computer' || inputs.service == 'pypi/core' || inputs.service == 'pypi/som') && needs.bump-version.result == 'success' && (inputs.service == 'pypi/agent' || inputs.service == 'pypi/som' || needs.publish-computer.result == 'success') && (inputs.service != 'pypi/som' || needs.publish-som.result == 'success') }}
+    uses: ./.github/workflows/cd-py-agent.yml
+    with:
+      version: ${{ needs.bump-version.outputs.agent_version }}
+    secrets: inherit
+
+  publish-bench:
+    needs: bump-version
+    if: ${{ inputs.service == 'pypi/bench' }}
+    uses: ./.github/workflows/cd-py-bench.yml
+    with:
+      version: ${{ needs.bump-version.outputs.bench_version }}
+    secrets: inherit
+
+  publish-bench-ui:
+    needs: bump-version
+    if: ${{ inputs.service == 'pypi/bench-ui' }}
+    uses: ./.github/workflows/cd-py-bench-ui.yml
+    with:
+      version: ${{ needs.bump-version.outputs.bench_ui_version }}
+    secrets: inherit
+
+  publish-computer-server:
+    needs: bump-version
+    if: ${{ inputs.service == 'pypi/computer-server' }}
+    uses: ./.github/workflows/cd-py-computer-server.yml
+    with:
+      version: ${{ needs.bump-version.outputs.computer_server_version }}
+    secrets: inherit
+
+  publish-core:
+    needs: bump-version
+    if: ${{ inputs.service == 'pypi/core' }}
+    uses: ./.github/workflows/cd-py-core.yml
+    with:
+      version: ${{ needs.bump-version.outputs.core_version }}
+    secrets: inherit
+
+  publish-mcp-server:
+    needs: bump-version
+    if: ${{ inputs.service == 'pypi/mcp-server' }}
+    uses: ./.github/workflows/cd-py-mcp-server.yml
+    with:
+      version: ${{ needs.bump-version.outputs.mcp_server_version }}
+    secrets: inherit
+
+  publish-som:
+    needs: bump-version
+    if: ${{ inputs.service == 'pypi/som' }}
+    uses: ./.github/workflows/cd-py-som.yml
+    with:
+      version: ${{ needs.bump-version.outputs.som_version }}
+    secrets: inherit
+
+  publish-cli:
+    needs: bump-version
+    if: ${{ inputs.service == 'npm/cli' }}
+    uses: ./.github/workflows/cd-ts-cli.yml
+    with:
+      version: ${{ needs.bump-version.outputs.npm_cli_version }}
+    secrets: inherit
+
+  publish-npm-computer:
+    needs: [bump-version, publish-npm-core]
+    if: ${{ always() && (inputs.service == 'npm/computer' || inputs.service == 'npm/core') && needs.bump-version.result == 'success' && (inputs.service == 'npm/computer' || needs.publish-npm-core.result == 'success') }}
+    uses: ./.github/workflows/cd-ts-computer.yml
+    with:
+      version: ${{ needs.bump-version.outputs.npm_computer_version }}
+    secrets: inherit
+
+  publish-npm-core:
+    needs: bump-version
+    if: ${{ inputs.service == 'npm/core' }}
+    uses: ./.github/workflows/cd-ts-core.yml
+    with:
+      version: ${{ needs.bump-version.outputs.npm_core_version }}
+    secrets: inherit
+
+  publish-lume:
+    needs: bump-version
+    if: ${{ inputs.service == 'lume' }}
+    uses: ./.github/workflows/cd-swift-lume.yml
+    with:
+      version: ${{ needs.bump-version.outputs.lume_version }}
+    secrets: inherit

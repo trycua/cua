@@ -1,4 +1,4 @@
-"""Playground server for CUA agents."""
+"""Playground server for Cua agents."""
 
 from .server import PlaygroundServer
 

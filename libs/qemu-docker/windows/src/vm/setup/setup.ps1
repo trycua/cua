@@ -29,7 +29,7 @@ if ($env:INSTALL_WINARENA_APPS -eq "true") {
 }
 
 Write-Host "============================================"
-Write-Host "CUA Windows Setup"
+Write-Host "Cua Windows Setup"
 Write-Host "============================================"
 Write-Host "Install Windows Arena Apps: $installWinarenaApps"
 Write-Host ""
@@ -53,12 +53,12 @@ if ($ChocoExe) {
     Write-Host "Chocolatey not available; skipping Git install"
 }
 
-# CUA Computer Server Setup
-Write-Host "Setting up CUA Computer Server..."
+# Cua Computer Server Setup
+Write-Host "Setting up Cua Computer Server..."
 $cuaServerSetupScript = Join-Path $scriptFolder -ChildPath "setup-cua-server.ps1"
 if (Test-Path $cuaServerSetupScript) {
     & $cuaServerSetupScript
-    Write-Host "CUA Computer Server setup completed."
+    Write-Host "Cua Computer Server setup completed."
 } else {
     Write-Host "ERROR: setup-cua-server.ps1 not found at $cuaServerSetupScript"
 }
@@ -246,5 +246,5 @@ if ($installWinarenaApps) {
 
 Write-Host ""
 Write-Host "============================================"
-Write-Host "CUA Windows Setup Complete!"
+Write-Host "Cua Windows Setup Complete!"
 Write-Host "============================================"

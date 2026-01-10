@@ -1,7 +1,7 @@
-import { setApiKey, clearApiKey } from '../storage';
-import { ensureApiKeyInteractive, loginViaBrowser } from '../auth';
-import { writeEnvFile } from '../util';
 import type { Argv } from 'yargs';
+import { ensureApiKeyInteractive, loginViaBrowser } from '../auth';
+import { clearApiKey, setApiKey } from '../storage';
+import { writeEnvFile } from '../util';
 
 // Command handlers
 const loginHandler = async (argv: Record<string, unknown>) => {
@@ -31,7 +31,7 @@ export function registerAuthCommands(y: Argv) {
   // Grouped structure: cua auth <command> (register first to appear first in help)
   y.command(
     'auth',
-    'Authenticate with CUA (login, logout, or export credentials)',
+    'Authenticate with Cua (login, logout, or export credentials)',
     (y) => {
       return y
         .command(

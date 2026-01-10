@@ -13,7 +13,7 @@ help: ## Show this help message
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-25s %s\n", $$1, $$2}'
 	@echo ""
 	@echo "⚠️  For production version bumps, use GitHub Actions:"
-	@echo "    https://github.com/trycua/cua/actions/workflows/bump-version.yml"
+	@echo "    https://github.com/trycua/cua/actions/workflows/release-bump-version.yml"
 
 # Dry run targets (test without making changes)
 dry-run-patch-%: ## Dry run for patch version bump (e.g., make dry-run-patch-core)

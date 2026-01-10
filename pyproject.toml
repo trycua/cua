@@ -4,7 +4,7 @@ dependencies = [
     "openai<1.100.0",
     "anthropic>=0.67.0",
 ]
-description = "CUA (Computer Use Agent) mono-repo"
+description = "Cua (Computer Use Agent) mono-repo"
 license = { text = "MIT" }
 name = "cua-workspace"
 readme = "README.md"

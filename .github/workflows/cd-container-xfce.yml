@@ -1,0 +1,17 @@
+name: "CD: Container XFCE"
+
+on:
+  push:
+    tags:
+      - "docker-xfce-v*.*.*"
+
+jobs:
+  publish:
+    uses: ./.github/workflows/docker-reusable-publish.yml
+    with:
+      image_name: cua-xfce
+      context_dir: libs/xfce
+      tag_prefix: docker-xfce-v
+      docker_hub_org: trycua
+    secrets:
+      DOCKER_HUB_TOKEN: ${{ secrets.DOCKER_HUB_TOKEN }}

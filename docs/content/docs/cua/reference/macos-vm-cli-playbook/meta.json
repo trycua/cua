@@ -2,5 +2,5 @@
   "title": "macOS VM CLI",
   "description": "CLI tools for macOS virtualization",
   "icon": "Terminal",
-  "pages": ["lume", "lumier"]
+  "pages": ["lumier"]
 }

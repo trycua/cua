@@ -1,0 +1,22 @@
+name: "CI: cua-som"
+
+on:
+  pull_request:
+    paths:
+      - "libs/python/som/**"
+      - ".github/workflows/ci-py-som.yml"
+      - ".github/workflows/py-reusable-build.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "libs/python/som/**"
+      - ".github/workflows/ci-py-som.yml"
+      - ".github/workflows/py-reusable-build.yml"
+
+jobs:
+  build:
+    uses: ./.github/workflows/py-reusable-build.yml
+    with:
+      package_name: "som"
+      package_dir: "libs/python/som"

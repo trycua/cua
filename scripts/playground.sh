@@ -115,14 +115,14 @@ if [[ "$USE_CLOUD" == "false" ]]; then
     fi
   fi
 
-  # Pull the macOS CUA image if not already present
+  # Pull the macOS Cua image if not already present
   if ! lume ls | grep -q "macos-sequoia-cua"; then
     # Check available disk space
     IMAGE_SIZE_GB=30
     AVAILABLE_SPACE_KB=$(df -k $HOME | tail -1 | awk '{print $4}')
     AVAILABLE_SPACE_GB=$(($AVAILABLE_SPACE_KB / 1024 / 1024))
     
-    echo "📊 The macOS CUA image will use approximately ${IMAGE_SIZE_GB}GB of disk space."
+    echo "📊 The macOS Cua image will use approximately ${IMAGE_SIZE_GB}GB of disk space."
     echo "   You currently have ${AVAILABLE_SPACE_GB}GB available on your system."
     
     # Prompt for confirmation
@@ -130,7 +130,7 @@ if [[ "$USE_CLOUD" == "false" ]]; then
     CONTINUE=${CONTINUE:-y}
     
     if [[ $CONTINUE =~ ^[Yy]$ ]]; then
-      echo "📥 Pulling macOS CUA image (this may take a while)..."
+      echo "📥 Pulling macOS Cua image (this may take a while)..."
       lume pull macos-sequoia-cua:latest
     else
       echo "❌ Installation cancelled."
@@ -226,7 +226,7 @@ else
 fi
 
 if [[ "$USE_CLOUD" == "true" ]]; then
-  # Add CUA API key to .env.local if not already present
+  # Add Cua API key to .env.local if not already present
   if ! grep -q "CUA_API_KEY" "$DEMO_DIR/.env.local"; then
     echo "CUA_API_KEY=$CUA_API_KEY" >> "$DEMO_DIR/.env.local"
     echo "🔑 Added CUA_API_KEY to .env.local"
@@ -266,7 +266,7 @@ load_dotenv(Path(__file__).parent / ".env.local")
 cua_api_key = os.environ.get("CUA_API_KEY", "")
 if not cua_api_key:
     print("\n❌ CUA_API_KEY not found in .env.local file.")
-    print("Please add your CUA API key to the .env.local file.")
+    print("Please add your Cua API key to the .env.local file.")
     exit(1)
 
 openai_key = os.environ.get("OPENAI_API_KEY", "")
@@ -276,7 +276,7 @@ if not openai_key and not anthropic_key:
     print("\n⚠️  No OpenAI or Anthropic API keys found in .env.local.")
     print("Please add at least one API key to use AI agents.")
 
-print("🚀 Starting CUA playground with Cloud Sandbox...")
+print("🚀 Starting Cua playground with Cloud Sandbox...")
 print("📝 Edit .env.local to update your API keys")
 
 # Launch the Gradio UI and open it in the browser
@@ -305,7 +305,7 @@ if not openai_key and not anthropic_key:
     print("\n⚠️  No OpenAI or Anthropic API keys found in .env.local.")
     print("Please add at least one API key to use AI agents.")
 
-print("🚀 Starting CUA playground with local macOS VMs...")
+print("🚀 Starting Cua playground with local macOS VMs...")
 print("📝 Edit .env.local to update your API keys")
 
 # Launch the Gradio UI and open it in the browser
@@ -314,23 +314,23 @@ app.launch(share=False, inbrowser=True)
 EOF
 fi
 
-echo "☁️  CUA Cloud Sandbox setup complete!"
+echo "☁️  Cua Cloud Sandbox setup complete!"
 echo "📝 Edit $DEMO_DIR/.env.local to update your API keys"
 echo "🖥️  Start the playground by running: $DEMO_DIR/start_ui.sh"
 
 # Check if the VM is running (only for local setup)
 if [[ "$USE_CLOUD" == "false" ]]; then
-  echo "🔍 Checking if the macOS CUA VM is running..."
+  echo "🔍 Checking if the macOS Cua VM is running..."
   VM_RUNNING=$(lume ls | grep "macos-sequoia-cua" | grep "running" || echo "")
 
   if [ -z "$VM_RUNNING" ]; then
-    echo "🚀 Starting the macOS CUA VM in the background..."
+    echo "🚀 Starting the macOS Cua VM in the background..."
     lume run macos-sequoia-cua:latest &
     # Wait a moment for the VM to initialize
     sleep 5
     echo "✅ VM started successfully."
   else
-    echo "✅ macOS CUA VM is already running."
+    echo "✅ macOS Cua VM is already running."
   fi
 fi
 

@@ -28,7 +28,7 @@ export async function runCli() {
   // Override the default --version behavior
   argv = argv.version(false).option('version', {
     alias: 'v',
-    describe: 'Show CUA CLI version',
+    describe: 'Show Cua CLI version',
     type: 'boolean',
     global: false,
   });

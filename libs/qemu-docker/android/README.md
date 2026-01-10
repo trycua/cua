@@ -1,11 +1,11 @@
 # QEMU Android
 
-Docker image that runs an Android emulator using QEMU/KVM with CUA Computer Server integration, enabling programmatic control of Android devices via HTTP API.
+Docker image that runs an Android emulator using QEMU/KVM with Cua Computer Server integration, enabling programmatic control of Android devices via HTTP API.
 
 ## Features
 
 - **Android 11 Emulator** - Based on budtmo/docker-android
-- **CUA Computer Server** - HTTP API for automation, file operations, window management
+- **Cua Computer Server** - HTTP API for automation, file operations, window management
 - **Custom Wallpaper Manager APK** - Programmatically set wallpapers without user interaction
 - **VNC Access** - View and interact with the Android screen via web browser
 

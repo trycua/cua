@@ -47,7 +47,7 @@ All prebuilt images use the default password `lume`. Change this immediately aft
 - Apple Silicon Mac (M1, M2, M3, etc.)
 - macOS 13.0 or later
 - At least 8GB of RAM (16GB recommended)
-- At least 50GB of free disk space
+- At least 30GB of free disk space
 
 ## Development
 
@@ -55,11 +55,11 @@ To get set up with Lume for development, read [these instructions](Development.m
 
 ## Docs
 
-- [Installation](https://cua.ai/docs/cua/reference/macos-vm-cli-playbook/lume/installation)
-- [Prebuilt Images](https://cua.ai/docs/cua/reference/macos-vm-cli-playbook/lume/prebuilt-images)
-- [CLI Reference](https://cua.ai/docs/cua/reference/macos-vm-cli-playbook/lume/cli-reference)
-- [HTTP API](https://cua.ai/docs/cua/reference/macos-vm-cli-playbook/lume/http-api)
-- [FAQ](https://cua.ai/docs/cua/reference/macos-vm-cli-playbook/lume/faq)
+- [Installation](https://cua.ai/docs/lume/guide/getting-started/installation)
+- [Prebuilt Images](https://cua.ai/docs/lume/guide/fundamentals/prebuilt-images)
+- [CLI Reference](https://cua.ai/docs/lume/reference/cli-reference)
+- [HTTP API](https://cua.ai/docs/lume/reference/http-api)
+- [FAQ](https://cua.ai/docs/lume/guide/advanced/faq)
 
 ## Contributing
 

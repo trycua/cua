@@ -1,4 +1,4 @@
-# CUA Windows Container
+# Cua Windows Container
 #
 # A Windows 11 VM with cua-computer-server for Computer-Use Agents.
 #

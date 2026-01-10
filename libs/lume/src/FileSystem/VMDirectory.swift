@@ -201,3 +201,71 @@ extension VMDirectory {
         try FileManager.default.removeItem(atPath: dir.path)
     }
 }
+
+// MARK: - Lightweight VM Details
+
+extension VMDirectory {
+    /// Get disk size information without loading the full VM
+    func getDiskSize() -> DiskSize {
+        do {
+            let resourceValues = try diskPath.url.resourceValues(forKeys: [
+                .totalFileAllocatedSizeKey,
+                .totalFileSizeKey,
+            ])
+
+            if let allocated = resourceValues.totalFileAllocatedSize,
+               let total = resourceValues.totalFileSize {
+                return DiskSize(allocated: UInt64(allocated), total: UInt64(total))
+            }
+        } catch {
+            // Fallback to config value
+        }
+
+        // Try to get from config as fallback
+        if let config = try? loadConfig() {
+            return DiskSize(allocated: 0, total: config.diskSize ?? 0)
+        }
+
+        return DiskSize(allocated: 0, total: 0)
+    }
+
+    /// Build VMDetails directly without instantiating a full VM object
+    /// This is much faster for listing VMs since it avoids:
+    /// - Creating ImageLoader instances
+    /// - Initializing virtualization services
+    /// - Building the full VM object graph
+    ///
+    /// - Parameters:
+    ///   - locationName: The storage location name for this VM
+    ///   - isRunning: Whether the VM is currently running
+    ///   - vncUrl: Optional VNC URL if running
+    ///   - ipAddress: Optional IP address if running
+    ///   - sshAvailable: Optional SSH availability status
+    /// - Returns: VMDetails or nil if config cannot be loaded
+    func getDetails(
+        locationName: String,
+        isRunning: Bool,
+        vncUrl: String?,
+        ipAddress: String?,
+        sshAvailable: Bool? = nil
+    ) -> VMDetails? {
+        guard let config = try? loadConfig() else {
+            return nil
+        }
+
+        return VMDetails(
+            name: name,
+            os: config.os,
+            cpuCount: config.cpuCount ?? 0,
+            memorySize: config.memorySize ?? 0,
+            diskSize: getDiskSize(),
+            display: config.display.string,
+            status: isRunning ? "running" : "stopped",
+            vncUrl: vncUrl,
+            ipAddress: ipAddress,
+            sshAvailable: sshAvailable,
+            locationName: locationName,
+            sharedDirectories: nil
+        )
+    }
+}

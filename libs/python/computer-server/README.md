@@ -16,13 +16,13 @@
 </h1>
 </div>
 
-**Computer Server** is the server component for the Computer-Use Interface (CUI) framework powering Cua for interacting with local macOS and Linux sandboxes, automation-compatible, and pluggable with any AI agent systems (Cua, Langchain, CrewAI, AutoGen).
+**Computer Server** is the server component for the Computer-Use Interface (CUI) framework powering Cua for interacting with local macOS and Linux sandboxes, with cross-platform automation, and pluggable with any AI agent systems (Cua, Langchain, CrewAI, AutoGen).
 
 ## Features
 
 - WebSocket API for computer-use
 - Cross-platform support (macOS, Linux)
-- Integration with CUA computer library for screen control, keyboard/mouse automation, and accessibility
+- Integration with Cua computer library for screen control, keyboard/mouse automation, and accessibility
 
 ## Install
 

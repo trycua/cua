@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Build script for CUA Desktop Extension (.mcpb file)
+Build script for Cua Desktop Extension (.mcpb file)
 
 This script:
 1. Creates a temporary build directory
@@ -50,7 +50,7 @@ def main():
         "session_manager.py",
     ]
 
-    print("Building CUA Desktop Extension...")
+    print("Building Cua Desktop Extension...")
     print(f"  Output: {output_file}")
 
     # Create temporary build directory

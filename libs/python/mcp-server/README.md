@@ -18,7 +18,7 @@
 
 # cua-mcp-server
 
-cua-mcp-server is an MCP server for the Computer-Use Agent (CUA). It enables CUA to run through MCP clients such as Claude Desktop and Cursor.
+cua-mcp-server is an MCP server for the Computer-Use Agent (Cua). It enables Cua to run through MCP clients such as Claude Desktop and Cursor.
 
 ## Prerequisites
 
@@ -104,7 +104,7 @@ Expected results:
 
 ## Desktop Extension
 
-CUA also provides a Claude Desktop Extension (`.mcpb` file) for easy one-click installation.
+Cua also provides a Claude Desktop Extension (`.mcpb` file) for easy one-click installation.
 
 ### Building the Desktop Extension
 

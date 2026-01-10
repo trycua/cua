@@ -1,0 +1,53 @@
+name: Reusable Package Build Workflow
+
+on:
+  workflow_call:
+    inputs:
+      package_name:
+        description: "Name of the package (e.g. computer, agent)"
+        required: true
+        type: string
+      package_dir:
+        description: "Directory containing the package relative to workspace root (e.g. libs/python/computer)"
+        required: true
+        type: string
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.11"
+
+      - name: Create root pdm.lock file
+        run: touch pdm.lock
+
+      - name: Install PDM
+        uses: pdm-project/setup-pdm@v3
+        with:
+          python-version: "3.11"
+          cache: true
+
+      - name: Initialize PDM in package directory
+        run: |
+          cd ${{ inputs.package_dir }}
+          if [ ! -f "pdm.lock" ]; then
+            echo "No pdm.lock found, initializing PDM project..."
+            pdm lock
+          fi
+
+      - name: Build package
+        run: |
+          cd ${{ inputs.package_dir }}
+          pdm build
+          echo "Successfully built ${{ inputs.package_name }}"
+
+      - name: Verify build artifacts
+        run: |
+          cd ${{ inputs.package_dir }}
+          ls -la dist/
+          echo "Build artifacts created successfully"

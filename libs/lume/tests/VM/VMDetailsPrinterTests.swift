@@ -76,7 +76,7 @@ struct VMDetailsPrinterTests {
         let headerParts = printedLines[0].split(whereSeparator: \.isWhitespace)
         #expect(
             headerParts == [
-                "name", "os", "cpu", "memory", "disk", "display", "status", "storage", "shared_dirs", "ip", "vnc",
+                "name", "os", "cpu", "memory", "disk", "display", "status", "storage", "shared_dirs", "ip", "ssh", "vnc",
             ])
 
         #expect(
@@ -84,6 +84,7 @@ struct VMDetailsPrinterTests {
                 "name", "os", "2", "0.00G", "24.0B/30.0B", "1024x768", "status", "mockLocation",
                 "-",
                 "0.0.0.0",
+                "-",
                 "vncUrl",
             ])
     }

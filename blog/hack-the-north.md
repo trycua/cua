@@ -67,7 +67,7 @@ Our slot landed at **2:30 a.m.** (_perks of the cheapest sponsor tier_). Thirty 
 
 ![hack-booth](./assets/hack-workshop.jpeg)
 
-_(Our CUA Workshop at 2:30 AM.)_
+_(Our Cua Workshop at 2:30 AM.)_
 
 ## Making it possible to focus on the work
 

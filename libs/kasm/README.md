@@ -1,6 +1,6 @@
-# CUA Ubuntu Container
+# Cua Ubuntu Container
 
-Containerized virtual desktop for Computer-Using Agents (CUA). Utilizes Kasm's MIT-licensed Ubuntu XFCE container as a base with computer-server pre-installed.
+Containerized virtual desktop for Computer-Using Agents (Cua). Utilizes Kasm's MIT-licensed Ubuntu XFCE container as a base with computer-server pre-installed.
 
 ## Features
 
@@ -38,9 +38,9 @@ docker run --rm -it --shm-size=512m -p 6901:6901 -p 8000:8000 -e VNCOPTIONS=-dis
 - **VNC Access**: Available at `http://localhost:6901`
 - **Computer Server API**: Available at `http://localhost:8000`
 
-### Using with CUA Docker Provider
+### Using with Cua Docker Provider
 
-This container is designed to work with the CUA Docker provider for automated container management:
+This container is designed to work with the Cua Docker provider for automated container management:
 
 ```python
 from computer.providers.factory import VMProviderFactory
@@ -100,9 +100,9 @@ docker run --rm -it --shm-size=512m -p 6901:6901 -p 8080:8080 -e VNCOPTIONS=-dis
 
 Memory snapshots are available using the experimental `docker checkpoint` command. [Docker Checkpoint Documentation](https://docs.docker.com/reference/cli/docker/checkpoint/)
 
-## Integration with CUA System
+## Integration with Cua System
 
-This container integrates seamlessly with the CUA computer provider system:
+This container integrates seamlessly with the Cua computer provider system:
 
 - **Automatic Management**: Use the Docker provider for lifecycle management
 - **Resource Control**: Configure memory, CPU, and storage limits

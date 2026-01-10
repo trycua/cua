@@ -184,7 +184,7 @@ async def main():
         else:
             code += """
         # Execute a single task
-        task = "Search for information about CUA on GitHub"
+        task = "Search for information about Cua on GitHub"
         print(f"Executing task: {task}")
         messages = [{"role": "user", "content": task}]
         async for result in agent.run(messages):
@@ -208,7 +208,7 @@ if __name__ == "__main__":
                 gr.HTML(
                     """
                     <div style="display: flex; justify-content: center; margin-bottom: 0.5em">
-                        <img alt="CUA Logo" style="width: 80px;"
+                        <img alt="Cua Logo" style="width: 80px;"
                              src="https://github.com/trycua/cua/blob/main/img/logo_white.png?raw=true" />
                     </div>
                     """
@@ -265,8 +265,8 @@ if __name__ == "__main__":
                     )
 
                     cua_cloud_api_key = gr.Textbox(
-                        label="CUA Cloud API Key",
-                        placeholder="Enter your CUA Cloud API key",
+                        label="Cua Cloud API Key",
+                        placeholder="Enter your Cua Cloud API key",
                         value=os.environ.get("CUA_API_KEY", ""),
                         type="password",
                         info="Required for cloud provider",

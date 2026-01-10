@@ -839,7 +839,7 @@ class ComputerAgent:
         Start the playground server and open it in the browser.
 
         This method starts a local HTTP server that exposes the /responses endpoint
-        and automatically opens the CUA playground interface in the default browser.
+        and automatically opens the Cua playground interface in the default browser.
 
         Args:
             port: Port to run the server on. If None, finds an available port automatically.

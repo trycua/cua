@@ -12,7 +12,7 @@
 
     <application
         android:allowBackup="false"
-        android:label="CUA Wallpaper Manager"
+        android:label="Cua Wallpaper Manager"
         android:supportsRtl="true"
         android:theme="@android:style/Theme.Translucent.NoTitleBar">
 

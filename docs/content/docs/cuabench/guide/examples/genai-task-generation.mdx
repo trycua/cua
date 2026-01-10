@@ -156,61 +156,65 @@ async def solve(task_cfg: cb.Task, session: cb.DesktopSession):
 ```html
 <!DOCTYPE html>
 <html>
-<head>
+  <head>
     <style>
-        body {
-            font-family: system-ui;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            padding: 20px;
-        }
+      body {
+        font-family: system-ui;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        padding: 20px;
+      }
 
-        h2 { margin-bottom: 20px; }
+      h2 {
+        margin-bottom: 20px;
+      }
 
-        .palette {
-            display: grid;
-            grid-template-columns: repeat(3, 1fr);
-            gap: 10px;
-        }
+      .palette {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 10px;
+      }
 
-        .color-box {
-            width: 80px;
-            height: 80px;
-            border: 3px solid #ccc;
-            border-radius: 8px;
-            cursor: pointer;
-        }
+      .color-box {
+        width: 80px;
+        height: 80px;
+        border: 3px solid #ccc;
+        border-radius: 8px;
+        cursor: pointer;
+      }
 
-        .color-box:hover { transform: scale(1.05); }
-        .color-box.selected { border-color: #000; }
+      .color-box:hover {
+        transform: scale(1.05);
+      }
+      .color-box.selected {
+        border-color: #000;
+      }
     </style>
-</head>
-<body>
+  </head>
+  <body>
     <h2>Select the red color</h2>
     <div class="palette">
-        <div class="color-box" data-color="red" style="background: #e74c3c;"></div>
-        <div class="color-box" data-color="blue" style="background: #3498db;"></div>
-        <div class="color-box" data-color="green" style="background: #2ecc71;"></div>
-        <div class="color-box" data-color="yellow" style="background: #f1c40f;"></div>
-        <div class="color-box" data-color="purple" style="background: #9b59b6;"></div>
-        <div class="color-box" data-color="orange" style="background: #e67e22;"></div>
+      <div class="color-box" data-color="red" style="background: #e74c3c;"></div>
+      <div class="color-box" data-color="blue" style="background: #3498db;"></div>
+      <div class="color-box" data-color="green" style="background: #2ecc71;"></div>
+      <div class="color-box" data-color="yellow" style="background: #f1c40f;"></div>
+      <div class="color-box" data-color="purple" style="background: #9b59b6;"></div>
+      <div class="color-box" data-color="orange" style="background: #e67e22;"></div>
     </div>
 
     <script>
-        window.__selectedColor = null;
+      window.__selectedColor = null;
 
-        document.querySelectorAll('.color-box').forEach(box => {
-            box.addEventListener('click', function() {
-                document.querySelectorAll('.color-box').forEach(b =>
-                    b.classList.remove('selected')
-                );
-                this.classList.add('selected');
-                window.__selectedColor = this.dataset.color;
-            });
+      document.querySelectorAll('.color-box').forEach((box) => {
+        box.addEventListener('click', function () {
+          document.querySelectorAll('.color-box').forEach((b) => b.classList.remove('selected'));
+          this.classList.add('selected');
+          window.__selectedColor = this.dataset.color;
         });
+      });
     </script>
-</body>
+  </body>
 </html>
 ```
 
@@ -231,6 +235,7 @@ cb interact tasks/color-picker-env --oracle --no-wait
 ```
 
 > **Note**: For headless servers, use `xvfb-run`:
+>
 > ```bash
 > xvfb-run -a cb interact tasks/color-picker-env --oracle --no-wait
 > ```

@@ -138,7 +138,7 @@ def serve() -> FastMCP:
     @server.tool(structured_output=False)
     async def run_cua_task(ctx: Context, task: str, session_id: Optional[str] = None) -> Any:
         """
-        Run a Computer-Use Agent (CUA) task in a MacOS VM and return (combined text, final screenshot).
+        Run a Computer-Use Agent (Cua) task in a MacOS VM and return (combined text, final screenshot).
 
         Args:
             task: The task description for the agent to execute
@@ -148,7 +148,7 @@ def serve() -> FastMCP:
         task_id = str(uuid.uuid4())
 
         try:
-            logger.info(f"Starting CUA task: {task} (task_id: {task_id})")
+            logger.info(f"Starting Cua task: {task} (task_id: {task_id})")
 
             async with session_manager.get_session(session_id) as session:
                 # Register this task with the session
@@ -233,8 +233,8 @@ def serve() -> FastMCP:
                                         or output.get("is_error", False),
                                     )
 
-                    logger.info("CUA task completed successfully")
-                    ctx.info("CUA task completed successfully")
+                    logger.info("Cua task completed successfully")
+                    ctx.info("Cua task completed successfully")
 
                     screenshot_image = Image(
                         format="png",
@@ -252,7 +252,7 @@ def serve() -> FastMCP:
                     await session_manager.unregister_task(session.session_id, task_id)
 
         except Exception as e:
-            error_msg = f"Error running CUA task: {str(e)}\n{traceback.format_exc()}"
+            error_msg = f"Error running Cua task: {str(e)}\n{traceback.format_exc()}"
             logger.error(error_msg)
             ctx.error(error_msg)
 
@@ -279,7 +279,7 @@ def serve() -> FastMCP:
         ctx: Context, tasks: List[str], session_id: Optional[str] = None, concurrent: bool = False
     ) -> Any:
         """
-        Run multiple CUA tasks and return a list of (combined text, screenshot).
+        Run multiple Cua tasks and return a list of (combined text, screenshot).
 
         Args:
             tasks: List of task descriptions to execute

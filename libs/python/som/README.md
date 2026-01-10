@@ -16,7 +16,7 @@
 </h1>
 </div>
 
-**Som** (Set-of-Mark) is a visual grounding component for the Computer-Use Agent (CUA) framework powering Cua, for detecting and analyzing UI elements in screenshots. Optimized for macOS Silicon with Metal Performance Shaders (MPS), it combines YOLO-based icon detection with EasyOCR text recognition to provide comprehensive UI element analysis.
+**Som** (Set-of-Mark) is a visual grounding component for the Computer-Use Agent (Cua) framework powering Cua, for detecting and analyzing UI elements in screenshots. Optimized for macOS Silicon with Metal Performance Shaders (MPS), it combines YOLO-based icon detection with EasyOCR text recognition to provide comprehensive UI element analysis.
 
 ## Features
 

@@ -1,8 +1,8 @@
 #!/bin/bash
 set -e
 
-# CUA CLI Installation Script for macOS/Linux
-echo "🚀 Installing CUA CLI..."
+# Cua CLI Installation Script for macOS/Linux
+echo "🚀 Installing Cua CLI..."
 
 # Function to print success message
 print_success() {
@@ -10,7 +10,7 @@ print_success() {
     local version="$2"
     local config_file="$3"
     
-    printf "\033[32m✅  CUA CLI %s was installed successfully to %s\033[0m\n" "$version" "$bin_path"
+    printf "\033[32m✅  Cua CLI %s was installed successfully to %s\033[0m\n" "$version" "$bin_path"
     printf "\033[90mAdded \"%s\" to \$PATH in \"%s\"\033[0m\n" "$bin_path" "$config_file"
     printf "\n\033[90mTo get started, run:\033[0m\n"
     printf "  source %s\n" "$config_file"
@@ -20,7 +20,7 @@ print_success() {
 
 # Function to install with bun as fallback
 install_with_bun() {
-    echo "📦 Installing CUA CLI using Bun..."
+    echo "📦 Installing Cua CLI using Bun..."
     
     # Check if bun is already installed
     if ! command -v bun &> /dev/null; then
@@ -44,7 +44,7 @@ install_with_bun() {
         exit 1
     fi
 
-    echo "📦 Installing CUA CLI..."
+    echo "📦 Installing Cua CLI..."
     if ! bun add -g @trycua/cli; then
         echo "❌ Failed to install with Bun, trying npm..."
         if ! npm install -g @trycua/cli; then
@@ -153,7 +153,7 @@ INSTALL_DIR="$HOME/.cua/bin"
 mkdir -p "$INSTALL_DIR"
 
 # Download the binary
-echo "📥 Downloading CUA CLI $VERSION for ${OS}-${ARCH}..."
+echo "📥 Downloading Cua CLI $VERSION for ${OS}-${ARCH}..."
 echo "📍 Downloading from: $BINARY_URL"
 
 # Download with progress bar and proper error handling

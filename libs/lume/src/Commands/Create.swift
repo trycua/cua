@@ -43,11 +43,35 @@ struct Create: AsyncParsableCommand {
     @Option(name: .customLong("storage"), help: "VM storage location to use or direct path to VM location")
     var storage: String?
 
+    @Option(
+        name: .customLong("unattended"),
+        help: "[Preview] Preset name or path to YAML config file for unattended macOS Setup Assistant automation. Built-in presets: tahoe. Only supported for macOS VMs.",
+        completion: .file(extensions: ["yml", "yaml"])
+    )
+    var unattended: String?
+
     init() {
     }
 
     @MainActor
     func run() async throws {
+        // Validate unattended is only used with macOS
+        if unattended != nil && os.lowercased() != "macos" {
+            throw ValidationError("--unattended is only supported for macOS VMs")
+        }
+
+        // Load unattended config if provided
+        var unattendedConfig: UnattendedConfig?
+        if let unattendedArg = unattended {
+            Logger.info("[Preview] Unattended setup is an experimental feature")
+            let isPreset = UnattendedConfig.isPreset(name: unattendedArg)
+            unattendedConfig = try UnattendedConfig.load(from: unattendedArg)
+            Logger.info("Loaded unattended config", metadata: [
+                "source": isPreset ? "preset:\(unattendedArg)" : unattendedArg,
+                "commands": "\(unattendedConfig?.bootCommands.count ?? 0)"
+            ])
+        }
+
         let controller = LumeController()
         try await controller.create(
             name: name,
@@ -57,7 +81,8 @@ struct Create: AsyncParsableCommand {
             memorySize: memory,
             display: display.string,
             ipsw: ipsw,
-            storage: storage
+            storage: storage,
+            unattendedConfig: unattendedConfig
         )
     }
 }

@@ -53,10 +53,10 @@ finally:
     await session.close()
 ```
 
-| Method | Description |
-|--------|-------------|
+| Method                      | Description                                      |
+| --------------------------- | ------------------------------------------------ |
 | `start(config?, headless?)` | Start the session and connect to the environment |
-| `close()` | Close the session and cleanup resources |
+| `close()`                   | Close the session and cleanup resources          |
 
 ---
 
@@ -71,10 +71,10 @@ snapshot = await session.get_snapshot()
 # Returns: Snapshot(windows: List[WindowSnapshot])
 ```
 
-| Method | Return Type | Description |
-|--------|-------------|-------------|
-| `screenshot()` | `bytes` | Capture screen as PNG bytes |
-| `get_snapshot()` | `Snapshot` | Get lightweight snapshot of desktop state (windows, geometry, metadata) |
+| Method           | Return Type | Description                                                             |
+| ---------------- | ----------- | ----------------------------------------------------------------------- |
+| `screenshot()`   | `bytes`     | Capture screen as PNG bytes                                             |
+| `get_snapshot()` | `Snapshot`  | Get lightweight snapshot of desktop state (windows, geometry, metadata) |
 
 ---
 
@@ -95,15 +95,15 @@ await session.drag(from_x, from_y, to_x, to_y)  # Drag gesture
 await session.scroll(direction="down", amount=100)  # Scroll up/down
 ```
 
-| Method | Parameters | Description |
-|--------|------------|-------------|
-| `click(x, y)` | x: int, y: int | Left click at coordinates |
-| `right_click(x, y)` | x: int, y: int | Right click at coordinates |
-| `double_click(x, y)` | x: int, y: int | Double click at coordinates |
-| `middle_click(x, y)` | x: int, y: int | Middle click at coordinates |
-| `move_to(x, y)` | x: int, y: int | Move cursor to coordinates |
+| Method                             | Parameters                                     | Description                       |
+| ---------------------------------- | ---------------------------------------------- | --------------------------------- |
+| `click(x, y)`                      | x: int, y: int                                 | Left click at coordinates         |
+| `right_click(x, y)`                | x: int, y: int                                 | Right click at coordinates        |
+| `double_click(x, y)`               | x: int, y: int                                 | Double click at coordinates       |
+| `middle_click(x, y)`               | x: int, y: int                                 | Middle click at coordinates       |
+| `move_to(x, y)`                    | x: int, y: int                                 | Move cursor to coordinates        |
 | `drag(from_x, from_y, to_x, to_y)` | from_x: int, from_y: int, to_x: int, to_y: int | Drag from one position to another |
-| `scroll(direction, amount)` | direction: "up" \| "down", amount: int | Scroll in given direction |
+| `scroll(direction, amount)`        | direction: "up" \| "down", amount: int         | Scroll in given direction         |
 
 ---
 
@@ -124,11 +124,11 @@ await session.hotkey(["ctrl", "v"])     # Paste
 await session.hotkey(["ctrl", "shift", "t"])  # Multiple modifiers
 ```
 
-| Method | Parameters | Description |
-|--------|------------|-------------|
-| `type(text)` | text: str | Type a string of text |
-| `key(key)` | key: str | Press a single key (e.g., "Enter", "Escape", "Tab") |
-| `hotkey(keys)` | keys: List[str] | Press a key combination (e.g., ["ctrl", "c"]) |
+| Method         | Parameters      | Description                                         |
+| -------------- | --------------- | --------------------------------------------------- |
+| `type(text)`   | text: str       | Type a string of text                               |
+| `key(key)`     | key: str        | Press a single key (e.g., "Enter", "Escape", "Tab") |
+| `hotkey(keys)` | keys: List[str] | Press a key combination (e.g., ["ctrl", "c"])       |
 
 ---
 
@@ -154,12 +154,12 @@ rect = await session.get_element_rect(pid, ".button-class")
 await session.close_all_windows()
 ```
 
-| Method | Parameters | Return Type | Description |
-|--------|------------|-------------|-------------|
-| `launch_window(url?, html?, folder?, ...)` | Various options for window creation | `int \| str` | Launch a window and return its process ID |
-| `execute_javascript(pid, js)` | pid: int \| str, js: str | `Any` | Execute JavaScript in a specific window |
-| `get_element_rect(pid, selector)` | pid: int \| str, selector: str | `dict \| None` | Get element rectangle in window or screen space |
-| `close_all_windows()` | - | `None` | Close or clear all open windows |
+| Method                                     | Parameters                          | Return Type    | Description                                     |
+| ------------------------------------------ | ----------------------------------- | -------------- | ----------------------------------------------- |
+| `launch_window(url?, html?, folder?, ...)` | Various options for window creation | `int \| str`   | Launch a window and return its process ID       |
+| `execute_javascript(pid, js)`              | pid: int \| str, js: str            | `Any`          | Execute JavaScript in a specific window         |
+| `get_element_rect(pid, selector)`          | pid: int \| str, selector: str      | `dict \| None` | Get element rectangle in window or screen space |
+| `close_all_windows()`                      | -                                   | `None`         | Close or clear all open windows                 |
 
 ---
 
@@ -191,20 +191,20 @@ await session.execute_action(HotkeyAction(keys=["ctrl", "c"]))
 
 **Available Action Types:**
 
-| Action Class | Fields | Description |
-|--------------|--------|-------------|
-| `ClickAction` | x: int, y: int | Left click at position |
-| `RightClickAction` | x: int, y: int | Right click at position |
-| `DoubleClickAction` | x: int, y: int | Double click at position |
-| `MiddleClickAction` | x: int, y: int | Middle click at position |
-| `DragAction` | from_x: int, from_y: int, to_x: int, to_y: int, duration: float | Drag gesture |
-| `MoveToAction` | x: int, y: int, duration: float | Move cursor |
-| `ScrollAction` | direction: "up" \| "down", amount: int | Scroll action |
-| `TypeAction` | text: str | Type text |
-| `KeyAction` | key: str | Press single key |
-| `HotkeyAction` | keys: List[str] | Key combination |
-| `WaitAction` | seconds: float | Wait/pause |
-| `DoneAction` | - | Signal completion |
+| Action Class        | Fields                                                          | Description              |
+| ------------------- | --------------------------------------------------------------- | ------------------------ |
+| `ClickAction`       | x: int, y: int                                                  | Left click at position   |
+| `RightClickAction`  | x: int, y: int                                                  | Right click at position  |
+| `DoubleClickAction` | x: int, y: int                                                  | Double click at position |
+| `MiddleClickAction` | x: int, y: int                                                  | Middle click at position |
+| `DragAction`        | from_x: int, from_y: int, to_x: int, to_y: int, duration: float | Drag gesture             |
+| `MoveToAction`      | x: int, y: int, duration: float                                 | Move cursor              |
+| `ScrollAction`      | direction: "up" \| "down", amount: int                          | Scroll action            |
+| `TypeAction`        | text: str                                                       | Type text                |
+| `KeyAction`         | key: str                                                        | Press single key         |
+| `HotkeyAction`      | keys: List[str]                                                 | Key combination          |
+| `WaitAction`        | seconds: float                                                  | Wait/pause               |
+| `DoneAction`        | -                                                               | Signal completion        |
 
 ---
 

@@ -163,14 +163,32 @@ jobs:
           cd ${{ steps.package.outputs.directory }}
           bump2version ${{ inputs.bump_type }}
 
-      - name: Also bump cua-agent
-        if: ${{ inputs.service == 'pypi/computer' }}
+      - name: Also bump cua-computer (when bumping cua-core)
+        if: ${{ inputs.service == 'pypi/core' }}
+        run: |
+          cd libs/python/computer
+          bump2version ${{ inputs.bump_type }}
+
+      - name: Also bump cua-agent (when bumping cua-computer or cua-core)
+        if: ${{ inputs.service == 'pypi/computer' || inputs.service == 'pypi/core' }}
         run: |
           cd libs/python/agent
           bump2version ${{ inputs.bump_type }}
 
+      - name: Also bump cua-agent (when bumping cua-som)
+        if: ${{ inputs.service == 'pypi/som' }}
+        run: |
+          cd libs/python/agent
+          bump2version ${{ inputs.bump_type }}
+
+      - name: Also bump @trycua/computer (when bumping @trycua/core)
+        if: ${{ inputs.service == 'npm/core' }}
+        run: |
+          cd libs/typescript/computer
+          bump2version ${{ inputs.bump_type }}
+
       - name: Capture bumped agent version
-        if: ${{ inputs.service == 'pypi/agent' || inputs.service == 'pypi/computer' }}
+        if: ${{ inputs.service == 'pypi/agent' || inputs.service == 'pypi/computer' || inputs.service == 'pypi/core' || inputs.service == 'pypi/som' }}
         id: agent_version
         run: |
           cd libs/python/agent
@@ -197,7 +215,7 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Capture bumped computer version
-        if: ${{ inputs.service == 'pypi/computer' }}
+        if: ${{ inputs.service == 'pypi/computer' || inputs.service == 'pypi/core' }}
         id: computer_version
         run: |
           cd libs/python/computer
@@ -250,7 +268,7 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Capture bumped npm/computer version
-        if: ${{ inputs.service == 'npm/computer' }}
+        if: ${{ inputs.service == 'npm/computer' || inputs.service == 'npm/core' }}
         id: npm_computer_version
         run: |
           VERSION=$(grep -oP '"version": "\K[^"]+' libs/typescript/computer/package.json)
@@ -278,16 +296,16 @@ jobs:
           git push origin main --follow-tags
 
   publish-computer:
-    needs: bump-version
-    if: ${{ inputs.service == 'pypi/computer' }}
+    needs: [bump-version, publish-core]
+    if: ${{ always() && (inputs.service == 'pypi/computer' || inputs.service == 'pypi/core') && needs.bump-version.result == 'success' && (inputs.service == 'pypi/computer' || needs.publish-core.result == 'success') }}
     uses: ./.github/workflows/cd-py-computer.yml
     with:
       version: ${{ needs.bump-version.outputs.computer_version }}
     secrets: inherit
 
   publish-agent:
-    needs: [bump-version, publish-computer]
-    if: ${{ always() && (inputs.service == 'pypi/agent' || inputs.service == 'pypi/computer') && needs.bump-version.result == 'success' && (inputs.service == 'pypi/agent' || needs.publish-computer.result == 'success') }}
+    needs: [bump-version, publish-computer, publish-som]
+    if: ${{ always() && (inputs.service == 'pypi/agent' || inputs.service == 'pypi/computer' || inputs.service == 'pypi/core' || inputs.service == 'pypi/som') && needs.bump-version.result == 'success' && (inputs.service == 'pypi/agent' || inputs.service == 'pypi/som' || needs.publish-computer.result == 'success') && (inputs.service != 'pypi/som' || needs.publish-som.result == 'success') }}
     uses: ./.github/workflows/cd-py-agent.yml
     with:
       version: ${{ needs.bump-version.outputs.agent_version }}
@@ -350,8 +368,8 @@ jobs:
     secrets: inherit
 
   publish-npm-computer:
-    needs: bump-version
-    if: ${{ inputs.service == 'npm/computer' }}
+    needs: [bump-version, publish-npm-core]
+    if: ${{ always() && (inputs.service == 'npm/computer' || inputs.service == 'npm/core') && needs.bump-version.result == 'success' && (inputs.service == 'npm/computer' || needs.publish-npm-core.result == 'success') }}
     uses: ./.github/workflows/cd-ts-computer.yml
     with:
       version: ${{ needs.bump-version.outputs.npm_computer_version }}

@@ -96,9 +96,9 @@ async def main():
     ) as computer:
         agent = ComputerAgent(
             # Supported models:
-            # == OpenAI CUA (computer-use-preview) ==
+            # == OpenAI Cua (computer-use-preview) ==
             model="openai/computer-use-preview",
-            # == Anthropic CUA (Claude > 3.5) ==
+            # == Anthropic Cua (Claude > 3.5) ==
             # model="anthropic/claude-opus-4-20250514",
             # model="anthropic/claude-sonnet-4-20250514",
             # model="anthropic/claude-3-7-sonnet-20250219",

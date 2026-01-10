@@ -1,7 +1,7 @@
-# Setup script for Windows Sandbox CUA Computer provider
+# Setup script for Windows Sandbox Cua Computer provider
 # This script runs when the sandbox starts
 
-Write-Host "Starting CUA Computer setup in Windows Sandbox..."
+Write-Host "Starting Cua Computer setup in Windows Sandbox..."
 
 # Function to find the mapped Python installation from pywinsandbox
 function Find-MappedPython {

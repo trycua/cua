@@ -1,6 +1,6 @@
-# CUA Docker XFCE Container
+# Cua Docker XFCE Container
 
-Vanilla XFCE desktop container for Computer-Using Agents (CUA) with noVNC and computer-server. This is a lightweight alternative to the Kasm-based container with minimal dependencies.
+Vanilla XFCE desktop container for Computer-Using Agents (Cua) with noVNC and computer-server. This is a lightweight alternative to the Kasm-based container with minimal dependencies.
 
 ## Features
 
@@ -30,7 +30,7 @@ Vanilla XFCE desktop container for Computer-Using Agents (CUA) with noVNC and co
 │  noVNC Web Interface (Port 6901)        │
 │  └── WebSocket proxy to VNC             │
 ├─────────────────────────────────────────┤
-│  CUA Computer Server (Port 8000)        │
+│  Cua Computer Server (Port 8000)        │
 │  └── WebSocket API for automation       │
 └─────────────────────────────────────────┘
 ```
@@ -100,9 +100,9 @@ docker run --rm -it \
 - **VNC Client**: Connect to `localhost:5901` (no password required)
 - **Computer Server API**: Available at `http://localhost:8000`
 
-## Using with CUA Docker Provider
+## Using with Cua Docker Provider
 
-This container is designed to work with the CUA Docker provider. Simply specify the xfce image:
+This container is designed to work with the Cua Docker provider. Simply specify the xfce image:
 
 ```python
 from computer import Computer
@@ -124,7 +124,7 @@ async with computer:
 
     # Click and type
     await computer.interface.left_click(100, 100)
-    await computer.interface.type_text("Hello from CUA!")
+    await computer.interface.type_text("Hello from Cua!")
 
     # Run commands
     result = await computer.interface.run_command("ls -la")
@@ -217,7 +217,7 @@ The container uses `supervisord` to manage three main processes:
 
 1. **VNC Server** (Priority 10): TigerVNC with XFCE desktop
 2. **noVNC** (Priority 20): WebSocket proxy for browser access
-3. **Computer Server** (Priority 30): CUA automation API
+3. **Computer Server** (Priority 30): Cua automation API
 
 All processes are automatically restarted on failure.
 
@@ -254,7 +254,7 @@ docker exec <container_id> tail -f /var/log/supervisor/supervisord.log
 docker exec <container_id> supervisorctl status
 ```
 
-## Integration with CUA System
+## Integration with Cua System
 
 This container provides the same functionality as the Kasm container but with:
 
@@ -265,7 +265,7 @@ This container provides the same functionality as the Kasm container but with:
 
 The container integrates seamlessly with:
 
-- CUA Computer library (via WebSocket API)
+- Cua Computer library (via WebSocket API)
 - Docker provider for lifecycle management
 - Standard VNC clients for debugging
 - Web browsers for visual monitoring

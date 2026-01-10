@@ -1,16 +1,16 @@
-# CUA Windows Container
+# Cua Windows Container
 
-Containerized Windows 11 virtual desktop for Computer-Using Agents (CUA). Utilizes QEMU/KVM with Windows 11 and computer-server pre-installed for remote computer control.
+Containerized Windows 11 virtual desktop for Computer-Using Agents (Cua). Utilizes QEMU/KVM with Windows 11 and computer-server pre-installed for remote computer control.
 
 ## Features
 
 - Windows 11 Enterprise running in QEMU/KVM
-- Pre-installed CUA computer-server for remote computer control
+- Pre-installed Cua computer-server for remote computer control
 - Caddy reverse proxy (port 9222 → 1337) for browser automation
 - noVNC access for visual desktop interaction
 - Automated setup via unattended installation
 - Support for both dev (shared folder) and azure (OEM folder) deployment modes
-- Python 3.12 with isolated virtual environment for CUA computer-server
+- Python 3.12 with isolated virtual environment for Cua computer-server
 - Services run hidden in background via Windows scheduled tasks
 - Essential tools pre-installed (Chrome, LibreOffice, VLC, GIMP, VSCode, Thunderbird)
 
@@ -61,8 +61,8 @@ docker run -it --rm \
 **What happens during first run:**
 
 1. Windows 11 installs automatically using unattended configuration
-2. Setup scripts install Python 3.12, Git, and CUA computer-server in isolated venv
-3. Windows scheduled tasks created for CUA server and Caddy proxy (run hidden in background)
+2. Setup scripts install Python 3.12, Git, and Cua computer-server in isolated venv
+3. Windows scheduled tasks created for Cua server and Caddy proxy (run hidden in background)
 4. Golden image is saved to `/storage` directory
 5. Container exits after setup completes
 
@@ -94,7 +94,7 @@ docker run -it --rm \
 
 ### Ports
 
-- **5000**: CUA computer-server API endpoint
+- **5000**: Cua computer-server API endpoint
 - **8006**: noVNC web interface for visual desktop access
 
 ### Environment Variables
@@ -121,7 +121,7 @@ docker run -it --rm \
 │  ┌────────────────────────────────────────────────────┐ │
 │  │  QEMU VM (Windows 11)                              │ │
 │  │                                                    │ │
-│  │  • CUA computer-server listens on 5000             │ │
+│  │  • Cua computer-server listens on 5000             │ │
 │  │                                                    │ │
 │  └────────────────────────────────────────────────────┘ │
 │                                                         │
@@ -133,7 +133,7 @@ docker run -it --rm \
 1. External client → `localhost:5000` (host)
 2. Docker port mapping → Container's `localhost:5000`
 3. socat port forwarding → `20.20.20.21:5000` (VM)
-4. CUA computer-server in Windows VM processes request
+4. Cua computer-server in Windows VM processes request
 
 ## Development
 
@@ -143,7 +143,7 @@ Setup scripts are in `src/vm/setup/`:
 
 - `install.bat`: Entry point called by Windows setup
 - `setup.ps1`: Main setup orchestration (installs software, configures Windows)
-- `setup-cua-server.ps1`: CUA server installation with isolated venv
+- `setup-cua-server.ps1`: Cua server installation with isolated venv
 - `on-logon.ps1`: Runs on user logon (starts scheduled tasks)
 - `setup-utils.psm1`: Helpers functions for setup
 

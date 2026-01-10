@@ -1,6 +1,6 @@
-# CUA Desktop Extension
+# Cua Desktop Extension
 
-This directory contains the build artifacts for the CUA Desktop Extension (`.mcpb` file).
+This directory contains the build artifacts for the Cua Desktop Extension (`.mcpb` file).
 
 ## Building the Extension
 

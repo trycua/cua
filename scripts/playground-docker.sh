@@ -128,7 +128,7 @@ if [[ "$CHOICE" == "1" ]]; then
       exit 1
     fi
   else
-    print_success "Found existing CUA API key"
+    print_success "Found existing Cua API key"
   fi
   
   USE_CLOUD=true
@@ -215,7 +215,7 @@ else
 fi
 
 if [[ "$USE_CLOUD" == "true" ]]; then
-  # Add CUA API key to .env.local if not already present
+  # Add Cua API key to .env.local if not already present
   if ! grep -q "CUA_API_KEY" "$ENV_FILE"; then
     echo "CUA_API_KEY=$CUA_API_KEY" >> "$ENV_FILE"
     print_success "Added CUA_API_KEY to .env.local"
@@ -247,14 +247,14 @@ if [[ "$USE_CLOUD" == "false" && "$COMPUTER_TYPE" == "macos" ]]; then
     fi
   fi
 
-  # Pull the macOS CUA image if not already present
+  # Pull the macOS Cua image if not already present
   if ! lume ls | grep -q "macos-sequoia-cua"; then
     # Check available disk space
     IMAGE_SIZE_GB=30
     AVAILABLE_SPACE_KB=$(df -k $HOME | tail -1 | awk '{print $4}')
     AVAILABLE_SPACE_GB=$(($AVAILABLE_SPACE_KB / 1024 / 1024))
     
-    echo "📊 The macOS CUA image will use approximately ${IMAGE_SIZE_GB}GB of disk space."
+    echo "📊 The macOS Cua image will use approximately ${IMAGE_SIZE_GB}GB of disk space."
     echo "   You currently have ${AVAILABLE_SPACE_GB}GB available on your system."
     
     # Prompt for confirmation
@@ -262,7 +262,7 @@ if [[ "$USE_CLOUD" == "false" && "$COMPUTER_TYPE" == "macos" ]]; then
     CONTINUE=${CONTINUE:-y}
     
     if [[ $CONTINUE =~ ^[Yy]$ ]]; then
-      print_info "Pulling macOS CUA image (this may take a while)..."
+      print_info "Pulling macOS Cua image (this may take a while)..."
       
       # Use caffeinate on macOS to prevent system sleep during the pull
       if command -v caffeinate &> /dev/null; then
@@ -278,17 +278,17 @@ if [[ "$USE_CLOUD" == "false" && "$COMPUTER_TYPE" == "macos" ]]; then
   fi
 
   # Check if the VM is running
-  print_info "Checking if the macOS CUA VM is running..."
+  print_info "Checking if the macOS Cua VM is running..."
   VM_RUNNING=$(lume ls | grep "macos-sequoia-cua" | grep "running" || echo "")
 
   if [ -z "$VM_RUNNING" ]; then
-    print_info "Starting the macOS CUA VM in the background..."
+    print_info "Starting the macOS Cua VM in the background..."
     lume run macos-sequoia-cua:latest &
     # Wait a moment for the VM to initialize
     sleep 5
     print_success "VM started successfully."
   else
-    print_success "macOS CUA VM is already running."
+    print_success "macOS Cua VM is already running."
   fi
 fi
 

@@ -20,7 +20,7 @@
 
 </div>
 
-**Cua** is an open-source ecosystem for computer-use AI—from building agents that automate desktops, to benchmarking models, to virtualizing macOS on Apple Silicon.
+**Cua** is an open-source platform for building, benchmarking, and deploying AI that can use any computer.
 
 <div align="center">
   <video src="https://github.com/user-attachments/assets/c619b4ea-bb8e-4382-860e-f3757e36af20" width="600" controls></video>
@@ -32,7 +32,7 @@
 |-------------------|-----------|-----|
 | Build AI agents or run isolated code execution | [**Cua**](#cua---agentic-ui-automation--code-execution) | AI Engineers |
 | Benchmark computer-use models or train RL agents | [**Cua-Bench**](#cua-bench---benchmarks--rl-environments) | Researchers |
-| Run macOS/Linux VMs on Apple Silicon | [**Lume**](#lume---macos-virtualization) | Hackers, Sysadmins |
+| Run macOS/Linux VMs on Apple Silicon | [**Lume**](#lume---macos-virtualization) | Users, Developers, System Engineers |
 
 ---
 
@@ -41,6 +41,7 @@
 Build agents that see screens, click buttons, and complete tasks autonomously. Run isolated code execution environments for AI coding assistants like Claude Code, Codex CLI, or OpenCode.
 
 ```python
+# Requires Python 3.12 or 3.13
 from computer import Computer
 from agent import ComputerAgent
 
@@ -61,7 +62,7 @@ Evaluate computer-use agents on OSWorld, ScreenSpot, Windows Arena, and custom t
 
 ```bash
 # Install and create base image
-git clone https://github.com/trycua/cua-bench.git && cd cua-bench
+cd cua-bench
 uv tool install -e . && cb image create linux-docker
 
 # Run benchmark with agent
@@ -97,10 +98,6 @@ lume run macos-sequoia-vanilla:latest
 | [cua-bench](https://github.com/trycua/cua-bench) | Benchmarks and RL environments for computer-use |
 | [lume](./libs/lume) | macOS/Linux VM management on Apple Silicon |
 | [lumier](./libs/lumier) | Docker-compatible interface for Lume VMs |
-
-## Python Version
-
-Cua requires **Python 3.12 or 3.13**. Python 3.14 is not yet supported.
 
 ## Resources
 

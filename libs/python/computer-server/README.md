@@ -22,7 +22,7 @@
 
 - WebSocket API for computer-use
 - Cross-platform support (macOS, Linux)
-- Integration with CUA computer library for screen control, keyboard/mouse automation, and accessibility
+- Integration with Cua computer library for screen control, keyboard/mouse automation, and accessibility
 
 ## Install
 

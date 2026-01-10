@@ -1,12 +1,12 @@
 # QEMU Docker Containers
 
-Docker containers running desktop operating systems via QEMU/KVM for Computer-Using Agents (CUA).
+Docker containers running desktop operating systems via QEMU/KVM for Computer-Using Agents (Cua).
 
 ## Structure
 
 ```
 qemu-docker/
-└── windows/          # Windows 11 container with CUA computer-server
+└── windows/          # Windows 11 container with Cua computer-server
 ```
 
 ## Windows Container

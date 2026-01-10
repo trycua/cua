@@ -1,4 +1,4 @@
-"""CUA Computer Interface for cross-platform computer control."""
+"""Cua Computer Interface for cross-platform computer control."""
 
 import logging
 import sys

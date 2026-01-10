@@ -1,6 +1,6 @@
 # @trycua/agent
 
-TypeScript SDK for CUA agent interaction. Connect to CUA agent proxies via HTTP/HTTPS or peer-to-peer (WebRTC) connections.
+TypeScript SDK for Cua agent interaction. Connect to Cua agent proxies via HTTP/HTTPS or peer-to-peer (WebRTC) connections.
 
 ## Installation
 
@@ -185,7 +185,7 @@ The `usage` object provides token counts and cost information for the request.
 
 ### HTTP/HTTPS
 
-Connect to a CUA agent proxy server:
+Connect to a Cua agent proxy server:
 
 ```typescript
 // Local

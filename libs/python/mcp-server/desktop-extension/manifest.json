@@ -1,10 +1,10 @@
 {
   "manifest_version": "0.2",
   "name": "cua-mcp-server",
-  "display_name": "CUA Computer-Use Agent",
+  "display_name": "Cua Computer-Use Agent",
   "version": "1.0.0",
-  "description": "Computer-Use Agent (CUA) MCP server for desktop automation and interaction",
-  "long_description": "The CUA Computer-Use Agent extension provides powerful desktop automation capabilities through Claude Desktop. It can take screenshots, interact with applications, and execute complex computer tasks using AI agents. Perfect for automating repetitive desktop workflows, testing applications, and performing computer-based tasks through natural language instructions.",
+  "description": "Computer-Use Agent (Cua) MCP server for desktop automation and interaction",
+  "long_description": "The Cua Computer-Use Agent extension provides powerful desktop automation capabilities through Claude Desktop. It can take screenshots, interact with applications, and execute complex computer tasks using AI agents. Perfect for automating repetitive desktop workflows, testing applications, and performing computer-based tasks through natural language instructions.",
   "author": {
     "name": "Cua",
     "email": "hello@trycua.com",
@@ -23,7 +23,9 @@
     "entry_point": "server.py",
     "mcp_config": {
       "command": "${__dirname}/run_server.sh",
-      "args": ["${__dirname}/server.py"],
+      "args": [
+        "${__dirname}/server.py"
+      ],
       "env": {
         "PYTHONPATH": "${__dirname}",
         "API_KEY": "${user_config.api_key}",
@@ -54,7 +56,13 @@
       "description": "Cleanup a specific session and release its resources"
     }
   ],
-  "keywords": ["automation", "computer-use", "desktop", "ai-agent", "productivity"],
+  "keywords": [
+    "automation",
+    "computer-use",
+    "desktop",
+    "ai-agent",
+    "productivity"
+  ],
   "license": "MIT",
   "user_config": {
     "api_key": {

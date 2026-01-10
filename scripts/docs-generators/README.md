@@ -1,6 +1,6 @@
 # Documentation Generators
 
-This directory contains auto-documentation generators for the CUA libraries. These generators ensure that documentation stays synchronized with source code.
+This directory contains auto-documentation generators for the Cua libraries. These generators ensure that documentation stays synchronized with source code.
 
 ## Architecture
 
@@ -9,7 +9,7 @@ scripts/docs-generators/
 ├── config.json         # Central configuration for all generators
 ├── runner.ts           # Main orchestrator that runs generators
 ├── lume.ts             # Lume (Swift) generator
-├── cua-cli.ts          # CUA CLI (TypeScript) generator (planned)
+├── cua-cli.ts          # Cua CLI (TypeScript) generator (planned)
 ├── mcp-server.ts       # MCP Server (Python) generator (planned)
 ├── python-sdk.ts       # Python SDK generator (planned)
 ├── typescript-sdk.ts   # TypeScript SDK generator (planned)

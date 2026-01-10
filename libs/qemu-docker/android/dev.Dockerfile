@@ -39,7 +39,7 @@ FROM budtmo/docker-android:emulator_11.0
 
 USER root
 
-# Set environment variable to identify this as CUA Android container
+# Set environment variable to identify this as Cua Android container
 ENV IS_CUA_ANDROID=true
 
 # Copy wallpaper-manager APK from builder stage

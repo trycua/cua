@@ -1,4 +1,4 @@
-"""Cloud VM provider implementation using CUA Public API.
+"""Cloud VM provider implementation using Cua Public API.
 
 Implements the following public API endpoints:
 
@@ -152,7 +152,7 @@ class CloudProvider(BaseVMProvider):
                     logger.warning("Unexpected response for list_vms; expected list")
                     return []
                 elif resp.status == 401:
-                    logger.error("Unauthorized: invalid CUA API key for list_vms")
+                    logger.error("Unauthorized: invalid Cua API key for list_vms")
                     return []
                 else:
                     text = await resp.text()

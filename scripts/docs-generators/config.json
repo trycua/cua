@@ -32,7 +32,7 @@
       "enabled": true
     },
     "cua-cli": {
-      "name": "CUA CLI",
+      "name": "Cua CLI",
       "language": "typescript",
       "sourcePath": "libs/typescript/cua-cli/src",
       "docsOutputPath": "docs/content/docs/cua/reference/cli-playbook",

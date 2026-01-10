@@ -82,4 +82,4 @@ Refer to this example for a step-by-step guide on how to use the Computer-Use In
 
 ## License
 
-[MIT](./LICENSE) License 2025 [CUA](https://github.com/trycua)
+[MIT](./LICENSE) License 2025 [Cua](https://github.com/trycua)

@@ -16,7 +16,7 @@ So last month, we started working on Windows support for [RPA (Robotic Process A
   <video src="https://github.com/user-attachments/assets/7abbdaf4-054f-4965-8260-81dab497c6ba" width="600" controls></video>
 </div>
 
-## Our Journey to Windows CUA Support
+## Our Journey to Windows Cua Support
 
 When we started Cua, we focused on making computer-use agents work everywhere - we built [Lume for macOS](https://github.com/trycua/cua/tree/main/libs/lume), created cloud infrastructure, and worked on Linux support. But no matter what we built, Windows kept coming up in every enterprise conversation.
 

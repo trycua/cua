@@ -1,4 +1,4 @@
-# CUA Docker XFCE Container
+# Cua Docker XFCE Container
 # Vanilla XFCE desktop with noVNC and computer-server
 
 FROM ubuntu:22.04

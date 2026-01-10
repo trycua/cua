@@ -52,6 +52,55 @@ lume --version
 lume --help
 ```
 
+## Managing the Background Service
+
+If you installed with the background service (default), you can manage it with these commands:
+
+```bash
+# Check if the daemon is running
+launchctl list | grep com.trycua.lume_daemon
+
+# View daemon logs
+tail -f /tmp/lume_daemon.log
+
+# Manually start the Lume API service
+lume serve
+```
+
+## Uninstall Lume
+
+### Remove the Background Service
+
+If you installed Lume with the background service, first remove the daemon:
+
+```bash
+launchctl unload "/Users/$(whoami)/Library/LaunchAgents/com.trycua.lume_daemon.plist"
+rm "/Users/$(whoami)/Library/LaunchAgents/com.trycua.lume_daemon.plist"
+```
+
+### Remove Lume Binary
+
+First, locate the Lume binary:
+
+```bash
+which lume
+```
+
+Then remove it:
+
+```bash
+rm $(which lume)
+```
+
+### Clean Up VM Images
+
+Optionally, remove downloaded VM images:
+
+```bash
+# Remove all Lume VM images
+rm -rf ~/.cache/lume-images
+```
+
 ## Next Steps
 
 - [Quickstart](/lume/guide/getting-started/quickstart) - Create your first VM

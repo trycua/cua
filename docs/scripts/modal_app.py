@@ -744,6 +744,7 @@ async def generate_code_index():
     total_files = 0
     total_embedded = 0
     failed_tags = []
+    COMMIT_BATCH_SIZE = 10  # Commit every 10 tags for better performance
 
     for i, tag in enumerate(all_tags):
         print(f"[{i + 1}/{len(all_tags)}] Processing {tag}")
@@ -815,7 +816,10 @@ async def generate_code_index():
                     }
                 )
 
-        conn.commit()
+        # Batch commits: commit every COMMIT_BATCH_SIZE tags
+        if (i + 1) % COMMIT_BATCH_SIZE == 0:
+            conn.commit()
+            print(f"  Committed batch at tag {i + 1}/{len(all_tags)}")
 
         # Add to LanceDB
         if lance_batch:
@@ -825,6 +829,8 @@ async def generate_code_index():
             except Exception as e:
                 print(f"  LanceDB error: {e}")
 
+    # Final commit for any remaining tags
+    conn.commit()
     conn.close()
 
     # Copy LanceDB to volume

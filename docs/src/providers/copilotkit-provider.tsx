@@ -78,125 +78,55 @@ function CustomAssistantMessage(props: React.ComponentProps<typeof DefaultAssist
   return <DefaultAssistantMessage {...rest} message={processedMessage as typeof message} />;
 }
 
+// Tool display name mapping - add new tools here
+const TOOL_DISPLAY_NAMES: Record<string, string> = {
+  query_docs_db: 'Querying documentation database',
+  query_docs_vectors: 'Searching documentation',
+  query_code_db: 'Querying code database',
+  query_code_vectors: 'Searching code',
+};
+
+function ToolIndicator({ name, status }: { name: string; status: string }) {
+  if (status !== 'inProgress') {
+    return null;
+  }
+
+  const displayName = TOOL_DISPLAY_NAMES[name] || `Running ${name}`;
+
+  return (
+    <div className="copilotkit-tool-indicator">
+      <div className="copilotkit-tool-indicator-icon">
+        <svg
+          className="copilotkit-spinner"
+          viewBox="0 0 24 24"
+          fill="none"
+          xmlns="http://www.w3.org/2000/svg"
+        >
+          <circle
+            className="opacity-25"
+            cx="12"
+            cy="12"
+            r="10"
+            stroke="currentColor"
+            strokeWidth="4"
+          ></circle>
+          <path
+            className="opacity-75"
+            fill="currentColor"
+            d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+          ></path>
+        </svg>
+      </div>
+      <span className="copilotkit-tool-indicator-text">{displayName}...</span>
+    </div>
+  );
+}
+
 function ToolCallIndicators() {
-  // Documentation Tools
+  // Generic catch-all for any tool call using wildcard pattern
   useRenderToolCall({
-    name: 'search_docs',
-    description: 'Searches the Cua documentation',
-    parameters: [{ name: 'query', type: 'string', description: 'Search query', required: true }],
-    render: ({ status, args }) => {
-      if (status === 'inProgress') {
-        return (
-          <div className="copilotkit-tool-indicator">
-            <div className="copilotkit-tool-indicator-icon">
-              <svg
-                className="copilotkit-spinner"
-                viewBox="0 0 24 24"
-                fill="none"
-                xmlns="http://www.w3.org/2000/svg"
-              >
-                <circle
-                  className="opacity-25"
-                  cx="12"
-                  cy="12"
-                  r="10"
-                  stroke="currentColor"
-                  strokeWidth="4"
-                ></circle>
-                <path
-                  className="opacity-75"
-                  fill="currentColor"
-                  d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                ></path>
-              </svg>
-            </div>
-            <span className="copilotkit-tool-indicator-text">
-              Searching documentation{args?.query ? `: "${args.query}"` : '...'}
-            </span>
-          </div>
-        );
-      }
-      return <></>;
-    },
-  });
-
-  // Code Tools
-  useRenderToolCall({
-    name: 'query_code_db',
-    description: 'Queries the code database with SQL',
-    parameters: [{ name: 'sql', type: 'string', description: 'SQL query', required: true }],
-    render: ({ status }) => {
-      if (status === 'inProgress') {
-        return (
-          <div className="copilotkit-tool-indicator">
-            <div className="copilotkit-tool-indicator-icon">
-              <svg
-                className="copilotkit-spinner"
-                viewBox="0 0 24 24"
-                fill="none"
-                xmlns="http://www.w3.org/2000/svg"
-              >
-                <circle
-                  className="opacity-25"
-                  cx="12"
-                  cy="12"
-                  r="10"
-                  stroke="currentColor"
-                  strokeWidth="4"
-                ></circle>
-                <path
-                  className="opacity-75"
-                  fill="currentColor"
-                  d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                ></path>
-              </svg>
-            </div>
-            <span className="copilotkit-tool-indicator-text">Querying code database...</span>
-          </div>
-        );
-      }
-      return <></>;
-    },
-  });
-
-  useRenderToolCall({
-    name: 'query_code_vectors',
-    description: 'Semantic search over source code',
-    parameters: [{ name: 'query', type: 'string', description: 'Search query', required: true }],
-    render: ({ status, args }) => {
-      if (status === 'inProgress') {
-        return (
-          <div className="copilotkit-tool-indicator">
-            <div className="copilotkit-tool-indicator-icon">
-              <svg
-                className="copilotkit-spinner"
-                viewBox="0 0 24 24"
-                fill="none"
-                xmlns="http://www.w3.org/2000/svg"
-              >
-                <circle
-                  className="opacity-25"
-                  cx="12"
-                  cy="12"
-                  r="10"
-                  stroke="currentColor"
-                  strokeWidth="4"
-                ></circle>
-                <path
-                  className="opacity-75"
-                  fill="currentColor"
-                  d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                ></path>
-              </svg>
-            </div>
-            <span className="copilotkit-tool-indicator-text">
-              Searching code{args?.query ? `: "${args.query}"` : '...'}
-            </span>
-          </div>
-        );
-      }
-      return <></>;
-    },
+    name: '*',
+    render: ({ name, status }) => <ToolIndicator name={name} status={status} />,
   });
 
   return null;

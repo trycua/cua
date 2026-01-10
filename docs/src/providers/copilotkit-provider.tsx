@@ -441,7 +441,11 @@ function CopilotPopupWithFeedback() {
       instructions={DOCS_INSTRUCTIONS}
       labels={{
         title: 'CUA Docs Assistant',
-        initial: `Ask me anything about CUA!
+        initial: `Hello!
+
+I'm an agent that can search cua's docs and code to help answer questions
+
+Ask me anything about CUA!
 
 This is currently an **experimental** feature.
 

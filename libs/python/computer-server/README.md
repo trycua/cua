@@ -16,7 +16,7 @@
 </h1>
 </div>
 
-**Computer Server** is the server component for the Computer-Use Interface (CUI) framework powering Cua for interacting with local macOS and Linux sandboxes, automation-compatible, and pluggable with any AI agent systems (Cua, Langchain, CrewAI, AutoGen).
+**Computer Server** is the server component for the Computer-Use Interface (CUI) framework powering Cua for interacting with local macOS and Linux sandboxes, with cross-platform automation, and pluggable with any AI agent systems (Cua, Langchain, CrewAI, AutoGen).
 
 ## Features
 

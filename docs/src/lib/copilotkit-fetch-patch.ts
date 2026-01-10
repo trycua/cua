@@ -87,8 +87,7 @@ export function applyCopilotKitFetchPatch(): boolean {
 
     // Only intercept POST requests to the copilotkit endpoint
     const isPostRequest = init?.method?.toUpperCase() === 'POST';
-    const isCopilotKitEndpoint =
-      url.includes('/api/copilotkit') || url.endsWith('/api/copilotkit');
+    const isCopilotKitEndpoint = url.includes('/api/copilotkit') || url.endsWith('/api/copilotkit');
 
     if (isPostRequest && isCopilotKitEndpoint) {
       // Get the request body

@@ -59,7 +59,9 @@ export default function Layout({ children }: { children: ReactNode }) {
           </Suspense>
           <AnalyticsTracker />
           <CopilotKitProvider>
-            <RootProvider search={{ options: { api: '/docs/api/search' } }}>{children}</RootProvider>
+            <RootProvider search={{ options: { api: '/docs/api/search' } }}>
+              {children}
+            </RootProvider>
             <Footer />
           </CopilotKitProvider>
           <CookieConsent />

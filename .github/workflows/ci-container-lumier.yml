@@ -13,4 +13,3 @@ jobs:
     with:
       image_name: lumier
       context_dir: libs/lumier
-      dockerfile_path: Dockerfile

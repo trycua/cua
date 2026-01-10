@@ -17,7 +17,6 @@ jobs:
     with:
       image_name: cua-xfce
       context_dir: libs/xfce
-      dockerfile_path: Dockerfile
       tag_prefix: docker-xfce-v
       docker_hub_org: trycua
     secrets:

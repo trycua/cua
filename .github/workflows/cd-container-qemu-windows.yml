@@ -17,7 +17,6 @@ jobs:
     with:
       image_name: cua-qemu-windows
       context_dir: libs/qemu-docker/windows
-      dockerfile_path: Dockerfile
       tag_prefix: docker-cua-qemu-windows-v
       docker_hub_org: trycua
     secrets:

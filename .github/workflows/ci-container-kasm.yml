@@ -13,4 +13,3 @@ jobs:
     with:
       image_name: cua-ubuntu
       context_dir: libs/kasm
-      dockerfile_path: Dockerfile

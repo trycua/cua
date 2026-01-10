@@ -13,4 +13,3 @@ jobs:
     with:
       image_name: cua-qemu-linux
       context_dir: libs/qemu-docker/linux
-      dockerfile_path: Dockerfile

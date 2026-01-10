@@ -17,7 +17,6 @@ jobs:
     with:
       image_name: cua-ubuntu
       context_dir: libs/kasm
-      dockerfile_path: Dockerfile
       tag_prefix: docker-kasm-v
       docker_hub_org: trycua
     secrets:

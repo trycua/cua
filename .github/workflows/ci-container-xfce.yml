@@ -13,4 +13,3 @@ jobs:
     with:
       image_name: cua-xfce
       context_dir: libs/xfce
-      dockerfile_path: Dockerfile

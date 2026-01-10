@@ -16,7 +16,7 @@ from lancedb.embeddings import get_registry
 from lancedb.pydantic import LanceModel, Vector
 
 # Configuration
-REPO_URL = "https://github.com/anthropics/cua.git"
+REPO_URL = "https://github.com/trycua/cua.git"
 CODE_DB_PATH = Path(__file__).parent.parent / "code_db"
 REPO_PATH = CODE_DB_PATH / "repo"
 SQLITE_PATH = CODE_DB_PATH / "code_index.sqlite"

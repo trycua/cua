@@ -881,40 +881,49 @@ def web():
     # Initialize the MCP server
     mcp = FastMCP(
         name="CUA Docs & Code",
-        instructions="""CUA Documentation and Code Server - provides search and retrieval for Computer Use Agent (CUA) documentation and versioned source code.
+        instructions="""CUA Documentation and Code Server - provides direct read-only query access to Computer Use Agent (CUA) documentation and versioned source code.
 
-Documentation covers:
-- CUA SDK: Python library for building computer-use agents with screen capture, mouse/keyboard control
+=== AVAILABLE TOOLS ===
+
+Documentation:
+- query_docs_db: Execute SQL queries against the documentation SQLite database
+- query_docs_vectors: Execute vector similarity searches against the documentation LanceDB
+
+Code:
+- query_code_db: Execute SQL queries against the code search SQLite database
+- query_code_vectors: Execute vector similarity searches against the code LanceDB
+
+All tools are READ-ONLY. Only SELECT queries are allowed for SQL databases.
+
+=== DOCUMENTATION DATABASE ===
+
+The documentation database contains crawled pages from cua.ai/docs covering:
+- CUA SDK: Python library for building computer-use agents
 - CUA Bench: Benchmarking framework for evaluating computer-use agents
 - Agent Loop: Core execution loop for autonomous agent operation
 - Sandboxes: Docker and cloud VM environments for safe agent execution
 - Computer interfaces: Screen, mouse, keyboard, and bash interaction APIs
 
-=== DOCUMENTATION TOOLS ===
-- search_docs: Semantic/vector search - best for conceptual queries
-- sql_query: Direct SQL/FTS5 queries for exact keyword matches
+=== CODE DATABASE ===
 
-=== CODE SEARCH TOOLS ===
-Search across all versions of CUA source code. Component + version are REQUIRED.
+The code database contains versioned source code indexed across all git tags.
+Components include: agent, computer, mcp-server, som, etc.
 
-Discovery:
-- list_components: See all indexed components (agent, computer, mcp-server, etc.)
-- list_versions: See all indexed versions for a component
+=== WORKFLOW EXAMPLES ===
 
-Search (requires component + version):
-- search_code: Semantic search - "how to take a screenshot"
-- search_code_fts: Full-text search - exact function/class names
+1. Find documentation about a topic:
+   - Use query_docs_vectors with a natural language query for semantic search
+   - Use query_docs_db with FTS5 MATCH for keyword search
 
-Retrieval:
-- get_code_file_content: Get full source file content
+2. Explore code across versions:
+   - List components: SELECT component, COUNT(DISTINCT version) FROM code_files GROUP BY component
+   - Search code: Use query_code_db with FTS5 on code_files_fts
+   - Get file content: SELECT content FROM code_files WHERE component='agent' AND version='0.7.3' AND file_path='...'
 
-Workflow:
-1. list_components() -> see available components
-2. list_versions("agent") -> see versions
-3. search_code("ComputerAgent init", "agent", "0.7.3") -> find files
-4. get_code_file_content("agent", "0.7.3", "agent/computer_agent.py") -> full file
+3. Semantic code search:
+   - Use query_code_vectors with natural language queries like "screenshot capture implementation"
 
-Always cite sources: URLs for docs, component@version:path for code.""",
+IMPORTANT: Always cite sources - URLs for docs, component@version:path for code.""",
     )
 
     # Initialize embedding model
@@ -972,158 +981,203 @@ Always cite sources: URLs for docs, component@version:path for code.""",
             _code_sqlite_conn.row_factory = sqlite3.Row
         return _code_sqlite_conn
 
-    # =================== DOCUMENTATION TOOLS ===================
+    # =================== DOCUMENTATION QUERY TOOLS (READ-ONLY) ===================
 
     @mcp.tool()
-    def search_docs(query: str, limit: int = 5, category: Optional[str] = None) -> list[dict]:
+    def query_docs_db(sql: str) -> list[dict]:
         """
-        Semantic search over CUA documentation using vector embeddings.
-        Best for conceptual queries like "how does the agent loop work?"
-        """
-        limit = min(max(1, limit), 20)
-        table = get_lance_table()
-        search = table.search(query).limit(limit)
-        if category:
-            safe_category = category.replace("'", "''")
-            search = search.where(f"category = '{safe_category}'")
-        results = search.to_list()
-        return [
-            {
-                "text": r.get("text", ""),
-                "url": r.get("url", ""),
-                "title": r.get("title", ""),
-                "category": r.get("category", ""),
-                "score": float(r.get("_distance", 0.0)),
-            }
-            for r in results
-        ]
+        Execute a SQL query against the documentation database.
+        The database is READ-ONLY.
 
-    @mcp.tool()
-    def sql_query(query: str) -> list[dict]:
-        """
-        Execute a read-only SQL query on the documentation database.
-        Tables: pages (id, url, title, category, content), pages_fts (FTS5)
+        Database Schema:
+
+        Table: pages
+        - id INTEGER PRIMARY KEY AUTOINCREMENT
+        - url TEXT NOT NULL UNIQUE         -- Full URL of the documentation page
+        - title TEXT NOT NULL              -- Page title
+        - category TEXT NOT NULL           -- Category (e.g., 'cua', 'cuabench', 'llms.txt')
+        - content TEXT NOT NULL            -- Plain text content (markdown stripped)
+
+        Virtual Table: pages_fts (FTS5 full-text search)
+        - content TEXT                     -- Full-text indexed content
+        - url TEXT UNINDEXED
+        - title TEXT UNINDEXED
+        - category TEXT UNINDEXED
+
+        Example queries:
+
+        1. List all pages: SELECT url, title, category FROM pages ORDER BY category, title
+
+        2. Full-text search with snippets:
+           SELECT p.url, p.title, snippet(pages_fts, 0, '>>>', '<<<', '...', 64) as snippet
+           FROM pages_fts JOIN pages p ON pages_fts.rowid = p.id
+           WHERE pages_fts MATCH 'agent loop' ORDER BY rank LIMIT 10
+
+        3. Get page content: SELECT url, title, content FROM pages WHERE url LIKE '%quickstart%'
+
+        Args:
+            sql: SQL query to execute
+
+        Returns:
+            List of dictionaries, one per row, with column names as keys
         """
         conn = get_sqlite_conn()
         cursor = conn.cursor()
-        try:
-            cursor.execute(query)
-            results = cursor.fetchall()
-            return [dict(row) for row in results]
-        except sqlite3.Error as e:
-            return [{"error": str(e)}]
-
-    # =================== CODE SEARCH TOOLS ===================
+        cursor.execute(sql)
+        return [dict(row) for row in cursor.fetchall()]
 
     @mcp.tool()
-    def list_components() -> list[dict]:
-        """List all indexed code components with version counts."""
-        try:
-            conn = get_code_sqlite_conn()
-            cursor = conn.cursor()
-            cursor.execute(
-                "SELECT component, COUNT(DISTINCT version) as version_count FROM code_files GROUP BY component ORDER BY component"
-            )
-            return [
-                {"component": r["component"], "version_count": r["version_count"]}
-                for r in cursor.fetchall()
-            ]
-        except Exception as e:
-            return [{"error": str(e)}]
-
-    @mcp.tool()
-    def list_versions(component: str) -> list[str]:
-        """List all indexed versions for a component, sorted by semver descending."""
-        try:
-            conn = get_code_sqlite_conn()
-            cursor = conn.cursor()
-            cursor.execute(
-                "SELECT DISTINCT version FROM code_files WHERE component = ?", (component,)
-            )
-            versions = [r["version"] for r in cursor.fetchall()]
-
-            def semver_key(v):
-                try:
-                    parts = v.split(".")
-                    return tuple(int(p) for p in parts[:3])
-                except:
-                    return (0, 0, 0)
-
-            versions.sort(key=semver_key, reverse=True)
-            return versions
-        except Exception as e:
-            return [f"error: {e}"]
-
-    @mcp.tool()
-    def search_code(query: str, component: str, version: str, limit: int = 10) -> list[dict]:
+    def query_docs_vectors(
+        query: str,
+        limit: int = 10,
+        where: Optional[str] = None,
+        select: Optional[list[str]] = None,
+    ) -> list[dict]:
         """
-        Semantic search over source code for a specific component@version.
-        Best for natural language queries like "how to take a screenshot".
+        Execute a vector similarity search against the documentation LanceDB (read-only).
+
+        Schema:
+        - text TEXT           -- The document chunk text
+        - vector VECTOR       -- Embedding vector (all-MiniLM-L6-v2, 384 dimensions)
+        - url TEXT            -- Source URL
+        - title TEXT          -- Document title
+        - category TEXT       -- Category (e.g., 'cua', 'cuabench')
+        - chunk_index INT     -- Index of chunk within document
+
+        Args:
+            query: Natural language query to embed and search for
+            limit: Maximum number of results (default: 10, max: 100)
+            where: Optional SQL-like filter (e.g., "category = 'cua'")
+            select: Optional list of columns to return (default: all except vector)
+
+        Returns:
+            List of matching documents with similarity scores (_distance field)
         """
-        limit = min(max(1, limit), 20)
-        try:
-            table = get_code_lance_table()
-            where_clause = f"component = '{component}' AND version = '{version}'"
-            results = table.search(query).where(where_clause).limit(limit).to_list()
-            return [
-                {
-                    "file_path": r["file_path"],
-                    "content": r["text"][:2000] + "..." if len(r["text"]) > 2000 else r["text"],
-                    "language": r["language"],
-                    "score": round(1 - r.get("_distance", 0), 4),
-                }
-                for r in results
-            ]
-        except Exception as e:
-            return [{"error": str(e)}]
+        limit = min(max(1, limit), 100)
+        table = get_lance_table()
+
+        search = table.search(query).limit(limit)
+
+        if where:
+            search = search.where(where)
+        if select:
+            search = search.select(select)
+
+        results = search.to_list()
+
+        formatted = []
+        for r in results:
+            result = {}
+            for key, value in r.items():
+                if key == "vector":
+                    continue
+                result[key] = value
+            formatted.append(result)
+
+        return formatted
+
+    # =================== CODE QUERY TOOLS (READ-ONLY) ===================
 
     @mcp.tool()
-    def search_code_fts(query: str, component: str, version: str, limit: int = 10) -> list[dict]:
+    def query_code_db(sql: str) -> list[dict]:
         """
-        Full-text search over source code for a specific component@version.
-        Best for exact matches like function names, class names, keywords.
+        Execute a SQL query against the code search database.
+        The database is READ-ONLY.
+
+        Database Schema:
+
+        Table: code_files
+        - id INTEGER PRIMARY KEY AUTOINCREMENT
+        - component TEXT NOT NULL          -- Component name (e.g., "agent", "computer")
+        - version TEXT NOT NULL            -- Version string (e.g., "0.7.3")
+        - file_path TEXT NOT NULL          -- Path to file
+        - content TEXT NOT NULL            -- Full source code content
+        - language TEXT NOT NULL           -- Programming language
+        - UNIQUE(component, version, file_path)
+
+        Virtual Table: code_files_fts (FTS5 full-text search)
+        - content TEXT                     -- Full-text indexed content
+        - component TEXT UNINDEXED
+        - version TEXT UNINDEXED
+        - file_path TEXT UNINDEXED
+
+        Example queries:
+
+        1. List components: SELECT component, COUNT(DISTINCT version) as version_count
+           FROM code_files GROUP BY component ORDER BY component
+
+        2. List versions: SELECT DISTINCT version FROM code_files
+           WHERE component = 'agent' ORDER BY version DESC
+
+        3. Full-text search:
+           SELECT f.component, f.version, f.file_path,
+                  snippet(code_files_fts, 0, '>>>', '<<<', '...', 64) as snippet
+           FROM code_files_fts JOIN code_files f ON code_files_fts.rowid = f.id
+           WHERE code_files_fts MATCH 'ComputerAgent' ORDER BY rank LIMIT 10
+
+        4. Get file content: SELECT content, language FROM code_files
+           WHERE component = 'agent' AND version = '0.7.3' AND file_path = 'agent/core.py'
+
+        Args:
+            sql: SQL query to execute
+
+        Returns:
+            List of dictionaries, one per row, with column names as keys
         """
-        limit = min(max(1, limit), 50)
-        try:
-            conn = get_code_sqlite_conn()
-            cursor = conn.cursor()
-            cursor.execute(
-                """
-                SELECT file_path, snippet(code_files_fts, 0, '>>>', '<<<', '...', 64) as snippet, language
-                FROM code_files_fts
-                JOIN code_files f ON code_files_fts.rowid = f.id
-                WHERE code_files_fts MATCH ? AND code_files_fts.component = ? AND code_files_fts.version = ?
-                ORDER BY rank LIMIT ?
-                """,
-                (query, component, version, limit),
-            )
-            return [
-                {"file_path": r["file_path"], "snippet": r["snippet"], "language": r["language"]}
-                for r in cursor.fetchall()
-            ]
-        except Exception as e:
-            return [{"error": str(e)}]
+        conn = get_code_sqlite_conn()
+        cursor = conn.cursor()
+        cursor.execute(sql)
+        return [dict(row) for row in cursor.fetchall()]
 
     @mcp.tool()
-    def get_code_file_content(component: str, version: str, file_path: str) -> dict:
-        """Get the full content of a specific source file at component@version."""
-        try:
-            conn = get_code_sqlite_conn()
-            cursor = conn.cursor()
-            cursor.execute(
-                "SELECT content, language FROM code_files WHERE component = ? AND version = ? AND file_path = ?",
-                (component, version, file_path),
-            )
-            row = cursor.fetchone()
-            if not row:
-                return {"error": f"File not found: {file_path} in {component}@{version}"}
-            return {
-                "content": row["content"],
-                "language": row["language"],
-                "lines": row["content"].count("\n") + 1,
-            }
-        except Exception as e:
-            return {"error": str(e)}
+    def query_code_vectors(
+        query: str,
+        limit: int = 10,
+        where: Optional[str] = None,
+        select: Optional[list[str]] = None,
+    ) -> list[dict]:
+        """
+        Execute a vector similarity search against the code LanceDB (read-only).
+
+        Schema:
+        - text TEXT           -- The source code content
+        - vector VECTOR       -- Embedding vector (all-MiniLM-L6-v2, 384 dimensions)
+        - component TEXT      -- Component name (e.g., "agent", "computer")
+        - version TEXT        -- Version string (e.g., "0.7.3")
+        - file_path TEXT      -- Path to file within the component
+        - language TEXT       -- Programming language
+
+        Args:
+            query: Natural language query to embed and search for
+            limit: Maximum number of results (default: 10, max: 100)
+            where: Optional SQL-like filter (e.g., "component = 'agent' AND version = '0.7.3'")
+            select: Optional list of columns to return (default: all except vector)
+
+        Returns:
+            List of matching code files with similarity scores (_distance field)
+        """
+        limit = min(max(1, limit), 100)
+        table = get_code_lance_table()
+
+        search = table.search(query).limit(limit)
+
+        if where:
+            search = search.where(where)
+        if select:
+            search = search.select(select)
+
+        results = search.to_list()
+
+        formatted = []
+        for r in results:
+            result = {}
+            for key, value in r.items():
+                if key == "vector":
+                    continue
+                result[key] = value
+            formatted.append(result)
+
+        return formatted
 
     # Create SSE app directly - endpoints at /sse (GET) and /messages (POST)
     from starlette.middleware import Middleware

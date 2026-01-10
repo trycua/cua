@@ -95,7 +95,7 @@ lume run macos-sequoia-vanilla:latest
 | -------------------------------------------------------------- | ----------------------------------------------- |
 | [cua-agent](https://cua.ai/docs/cua/reference/agent-sdk)       | AI agent framework for computer-use tasks       |
 | [cua-computer](https://cua.ai/docs/cua/reference/computer-sdk) | SDK for controlling desktop environments        |
-| [cua-computer-server](https://cua.ai/docs/cua/reference/computer-server) | Server component for remote environments |
+| [cua-computer-server](https://cua.ai/docs/cua/reference/computer-server) | Driver for UI interactions and code execution in sandboxes |
 | [cua-bench](https://cua.ai/docs/cua-bench)                     | Benchmarks and RL environments for computer-use |
 | [lume](https://cua.ai/docs/lume)                               | macOS/Linux VM management on Apple Silicon      |
 | [lumier](https://cua.ai/docs/lume/reference/lumier)            | Docker-compatible interface for Lume VMs        |

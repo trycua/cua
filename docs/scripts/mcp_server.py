@@ -105,7 +105,7 @@ def get_code_lance_table():
         if not CODE_LANCEDB_PATH.exists():
             raise RuntimeError(
                 f"Code LanceDB not found at {CODE_LANCEDB_PATH}. "
-                "Run generate_code_index.py first to create the database."
+                "Run 'modal run docs/scripts/modal_app.py::generate_code_index' first to create the database."
             )
         _code_lance_db = lancedb.connect(CODE_LANCEDB_PATH)
         _code_lance_table = _code_lance_db.open_table("code")

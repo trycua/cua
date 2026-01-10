@@ -826,8 +826,6 @@ async def generate_code_index():
                 except Exception as e:
                     print(f"  LanceDB error: {e}")
 
-        conn.close()
-
         # Copy LanceDB to volume
         del lance_table
         del lance_db
@@ -836,7 +834,9 @@ async def generate_code_index():
         if lance_dest.exists():
             shutil.rmtree(lance_dest)
         shutil.copytree(TMP_LANCE_DIR, lance_dest)
-        # Temporary directory is automatically cleaned up when exiting context
+        # Note: Temporary directory is automatically cleaned up when exiting the context manager
+
+    conn.close()
 
     code_volume.commit()
 

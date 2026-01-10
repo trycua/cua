@@ -329,18 +329,15 @@ def index_all_tags(incremental: bool = True):
 
             # Add to SQLite (up to 1MB)
             if content_size <= MAX_FILE_SIZE_SQLITE:
-                try:
-                    sqlite_cursor.execute(
-                        """
-                        INSERT OR REPLACE INTO code_files
-                        (component, version, file_path, content, language)
-                        VALUES (?, ?, ?, ?, ?)
-                    """,
-                        (component, version, file_path, content, language),
-                    )
-                    files_indexed += 1
-                except Exception as e:
-                    print(f"    SQLite error for {file_path}: {e}")
+                sqlite_cursor.execute(
+                    """
+                    INSERT OR REPLACE INTO code_files
+                    (component, version, file_path, content, language)
+                    VALUES (?, ?, ?, ?, ?)
+                """,
+                    (component, version, file_path, content, language),
+                )
+                files_indexed += 1
 
             # Queue for LanceDB (up to 100KB for embeddings)
             if content_size <= MAX_FILE_SIZE_EMBEDDINGS:

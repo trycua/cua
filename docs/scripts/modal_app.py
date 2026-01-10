@@ -1024,7 +1024,10 @@ Always cite sources: URLs for docs, component@version:path for code.""",
             cursor.execute(
                 "SELECT component, COUNT(DISTINCT version) as version_count FROM code_files GROUP BY component ORDER BY component"
             )
-            return [{"component": r["component"], "version_count": r["version_count"]} for r in cursor.fetchall()]
+            return [
+                {"component": r["component"], "version_count": r["version_count"]}
+                for r in cursor.fetchall()
+            ]
         except Exception as e:
             return [{"error": str(e)}]
 

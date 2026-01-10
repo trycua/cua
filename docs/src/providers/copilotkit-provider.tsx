@@ -190,9 +190,7 @@ function ToolCallIndicators() {
                 ></path>
               </svg>
             </div>
-            <span className="copilotkit-tool-indicator-text">
-              Loading indexed components...
-            </span>
+            <span className="copilotkit-tool-indicator-text">Loading indexed components...</span>
           </div>
         );
       }
@@ -203,7 +201,9 @@ function ToolCallIndicators() {
   useRenderToolCall({
     name: 'list_versions',
     description: 'List all indexed versions for a component',
-    parameters: [{ name: 'component', type: 'string', description: 'Component name', required: true }],
+    parameters: [
+      { name: 'component', type: 'string', description: 'Component name', required: true },
+    ],
     render: ({ status, args }) => {
       if (status === 'inProgress') {
         return (
@@ -275,7 +275,8 @@ function ToolCallIndicators() {
               </svg>
             </div>
             <span className="copilotkit-tool-indicator-text">
-              Searching code{args?.component && args?.version ? ` in ${args.component}@${args.version}` : ''}
+              Searching code
+              {args?.component && args?.version ? ` in ${args.component}@${args.version}` : ''}
               {args?.query ? `: "${args.query}"` : '...'}
             </span>
           </div>
@@ -320,7 +321,8 @@ function ToolCallIndicators() {
               </svg>
             </div>
             <span className="copilotkit-tool-indicator-text">
-              Text search{args?.component && args?.version ? ` in ${args.component}@${args.version}` : ''}
+              Text search
+              {args?.component && args?.version ? ` in ${args.component}@${args.version}` : ''}
               {args?.query ? `: "${args.query}"` : '...'}
             </span>
           </div>

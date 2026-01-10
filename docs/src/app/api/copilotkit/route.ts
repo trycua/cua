@@ -10,10 +10,10 @@ import { PostHog } from 'posthog-node';
 
 const posthog = process.env.NEXT_PUBLIC_POSTHOG_API_KEY
   ? new PostHog(process.env.NEXT_PUBLIC_POSTHOG_API_KEY, {
-    host: process.env.NEXT_PUBLIC_POSTHOG_HOST || 'https://us.i.posthog.com',
-    flushAt: 1,
-    flushInterval: 0,
-  })
+      host: process.env.NEXT_PUBLIC_POSTHOG_HOST || 'https://us.i.posthog.com',
+      flushAt: 1,
+      flushInterval: 0,
+    })
   : null;
 
 /**
@@ -95,7 +95,9 @@ class AnthropicSafeBuiltInAgent extends BuiltInAgent {
         next: (event: any) => {
           // Debug logging
           if (process.env.NODE_ENV === 'development') {
-            const deltaPreview = event.delta ? `delta: ${String(event.delta).substring(0, 50)}...` : '';
+            const deltaPreview = event.delta
+              ? `delta: ${String(event.delta).substring(0, 50)}...`
+              : '';
             console.log('[CopilotKit] Event:', event.type, deltaPreview);
           }
 
@@ -195,7 +197,7 @@ class AnthropicSafeBuiltInAgent extends BuiltInAgent {
 
 const docsAgent = new AnthropicSafeBuiltInAgent({
   maxSteps: 100,
-  model: 'anthropic/claude-sonnet-4-20250514',
+  model: 'anthropic/claude-haiku-4-5-20251001',
   prompt: `You are a helpful assistant for Cua (Computer Use Agent) and Cua-Bench documentation.
 Be concise and helpful. Answer questions about the documentation accurately.
 

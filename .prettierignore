@@ -33,3 +33,6 @@ uv.lock
 
 # Docs with complex JSX formatting
 docs/content/docs/get-started/quickstart.mdx
+
+# Git worktrees (separate branches)
+.worktrees/

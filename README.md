@@ -7,7 +7,7 @@
     </picture>
   </a>
 
-  <p align="center">Build and deploy AI agents that can reason, plan and act on any Computers</p>
+  <p align="center">Any OS. Any agent. Self-hostable.</p>
 
   <p align="center">
     <a href="https://cua.ai" target="_blank" rel="noopener noreferrer"><img src="https://img.shields.io/badge/cua.ai-0ea5e9" alt="cua.ai"></a>
@@ -20,7 +20,7 @@
 
 </div>
 
-**Cua** is an open-source platform for building, benchmarking, and deploying AI that can use any computer.
+**Cua** is an open-source platform for building, benchmarking, and deploying agents that can use any computer, with isolated, self-hostable sandboxes (Docker, QEMU, Apple Vz).
 
 <div align="center">
   <video src="https://github.com/user-attachments/assets/c619b4ea-bb8e-4382-860e-f3757e36af20" width="600" controls></video>
@@ -31,8 +31,8 @@
 | If you want to...                                | Check out                                                 | For                                 |
 | ------------------------------------------------ | --------------------------------------------------------- | ----------------------------------- |
 | Build AI agents or run isolated code execution   | [**Cua**](#cua---agentic-ui-automation--code-execution)   | AI Engineers                        |
-| Benchmark computer-use models or train RL agents | [**Cua-Bench**](#cua-bench---benchmarks--rl-environments) | Researchers                         |
-| Run macOS/Linux VMs on Apple Silicon             | [**Lume**](#lume---macos-virtualization)                  | Users, Developers, System Engineers |
+| Benchmark or train computer-use models with RL | [**Cua-Bench**](#cua-bench---benchmarks--rl-environments) | Researchers                         |
+| Run macOS/Linux VMs on Apple Silicon             | [**Lume**](#lume---macos-virtualization)                  | Developers, System Engineers |
 
 ---
 
@@ -95,6 +95,7 @@ lume run macos-sequoia-vanilla:latest
 | ------------------------------------------------ | ----------------------------------------------- |
 | [cua-agent](./libs/python/agent)                 | AI agent framework for computer-use tasks       |
 | [cua-computer](./libs/python/computer)           | SDK for controlling desktop environments        |
+| [cua-computer-server](./libs/python/computer-server) | Server component environments        |
 | [cua-bench](https://github.com/trycua/cua-bench) | Benchmarks and RL environments for computer-use |
 | [lume](./libs/lume)                              | macOS/Linux VM management on Apple Silicon      |
 | [lumier](./libs/lumier)                          | Docker-compatible interface for Lume VMs        |

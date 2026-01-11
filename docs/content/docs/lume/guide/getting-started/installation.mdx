@@ -20,7 +20,9 @@ Install Lume with a single command:
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/lume/scripts/install.sh)"
 ```
 
-By default, Lume is installed as a background service that starts automatically on login.
+By default, Lume is installed with:
+- A **background service** that starts automatically on login
+- An **auto-updater** that checks for updates at login and every 24 hours
 
 ### Manual Start (No Background Service)
 
@@ -35,6 +37,20 @@ If you prefer to start the Lume API service manually when needed, use the `--no-
   your terminal whenever you need to use tools or libraries that rely on the Lume API (such as the
   Computer Use Agent).
 </Callout>
+
+### Disable Auto-Updates
+
+If you prefer to manage updates manually, use the `--no-auto-updater` option:
+
+```bash
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/lume/scripts/install.sh)" -- --no-auto-updater
+```
+
+You can combine options to disable both the background service and auto-updates:
+
+```bash
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/lume/scripts/install.sh)" -- --no-background-service --no-auto-updater
+```
 
 ## Manual Download and Installation
 
@@ -67,6 +83,31 @@ tail -f /tmp/lume_daemon.log
 lume serve
 ```
 
+## Managing Auto-Updates
+
+If you installed with auto-updates enabled (default), Lume will automatically check for and install updates at login and every 24 hours.
+
+```bash
+# Check if the auto-updater is running
+launchctl list | grep com.trycua.lume_updater
+
+# View auto-updater logs
+tail -f /tmp/lume_updater.log
+
+# Manually run an update check
+~/.local/bin/lume-update
+```
+
+### Disable Auto-Updates After Installation
+
+To disable auto-updates after installation:
+
+```bash
+launchctl unload ~/Library/LaunchAgents/com.trycua.lume_updater.plist
+rm ~/Library/LaunchAgents/com.trycua.lume_updater.plist
+rm ~/.local/bin/lume-update
+```
+
 ## Uninstall Lume
 
 ### Remove the Background Service
@@ -74,8 +115,18 @@ lume serve
 If you installed Lume with the background service, first remove the daemon:
 
 ```bash
-launchctl unload "/Users/$(whoami)/Library/LaunchAgents/com.trycua.lume_daemon.plist"
-rm "/Users/$(whoami)/Library/LaunchAgents/com.trycua.lume_daemon.plist"
+launchctl unload ~/Library/LaunchAgents/com.trycua.lume_daemon.plist
+rm ~/Library/LaunchAgents/com.trycua.lume_daemon.plist
+```
+
+### Remove the Auto-Updater
+
+If you installed with auto-updates enabled, remove the updater:
+
+```bash
+launchctl unload ~/Library/LaunchAgents/com.trycua.lume_updater.plist
+rm ~/Library/LaunchAgents/com.trycua.lume_updater.plist
+rm ~/.local/bin/lume-update
 ```
 
 ### Remove Lume Binary

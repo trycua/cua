@@ -271,7 +271,11 @@ final class LumeController {
         display: String,
         ipsw: String?,
         storage: String? = nil,
-        unattendedConfig: UnattendedConfig? = nil
+        unattendedConfig: UnattendedConfig? = nil,
+        debug: Bool = false,
+        debugDir: String? = nil,
+        noDisplay: Bool = true,
+        vncPort: Int = 0
     ) async throws {
         Logger.info(
             "Creating VM",
@@ -285,6 +289,8 @@ final class LumeController {
                 "display": display,
                 "ipsw": ipsw ?? "none",
                 "unattended": unattendedConfig != nil ? "yes" : "no",
+                "debug": "\(debug)",
+                "noDisplay": "\(noDisplay)",
             ])
 
         do {
@@ -312,6 +318,11 @@ final class LumeController {
 
             // Run unattended setup if config is provided
             if let config = unattendedConfig, os.lowercased() == "macos" {
+                // Wait for the installation VZVirtualMachine to fully release auxiliary storage locks.
+                // The VM created during IPSW installation holds a lock on the auxiliary storage file.
+                // Swift's ARC may not immediately deallocate it, so we wait to ensure the lock is released.
+                Logger.info("Waiting for installation resources to be released before unattended setup")
+                try await Task.sleep(nanoseconds: 3_000_000_000)  // 3 seconds
                 Logger.info("Starting unattended Setup Assistant automation", metadata: ["name": name])
 
                 // Load the finalized VM
@@ -319,7 +330,14 @@ final class LumeController {
 
                 // Run the unattended installer
                 let installer = UnattendedInstaller()
-                try await installer.install(vm: finalVM, config: config)
+                try await installer.install(
+                    vm: finalVM,
+                    config: config,
+                    vncPort: vncPort,
+                    noDisplay: noDisplay,
+                    debug: debug,
+                    debugDir: debugDir
+                )
 
                 Logger.info("Unattended setup completed", metadata: ["name": name])
             }
@@ -700,9 +718,9 @@ final class LumeController {
                 storage: storage
             )
 
-            let imageContainerRegistry = ImageContainerRegistry(
+            let imageRegistry = try RegistryFactory.createRegistry(
                 registry: registry, organization: organization)
-            let _ = try await imageContainerRegistry.pull(
+            let _ = try await imageRegistry.pull(
                 image: actualImage,
                 name: vmName,
                 locationName: storage)
@@ -775,11 +793,11 @@ final class LumeController {
             // Get the VM directory
             let vmDir = try home.getVMDirectory(name, storage: actualLocation)
 
-            // Use ImageContainerRegistry to push the VM
-            let imageContainerRegistry = ImageContainerRegistry(
+            // Use configured registry to push the VM
+            let imageRegistry = try RegistryFactory.createRegistry(
                 registry: registry, organization: organization)
 
-            try await imageContainerRegistry.push(
+            try await imageRegistry.push(
                 vmDirPath: vmDir.dir.path,
                 imageName: imageName,
                 tags: tags,
@@ -842,9 +860,8 @@ final class LumeController {
     public func getImages(organization: String = "trycua") async throws -> ImageList {
         Logger.info("Listing local images", metadata: ["organization": organization])
 
-        let imageContainerRegistry = ImageContainerRegistry(
-            registry: "ghcr.io", organization: organization)
-        let cachedImages = try await imageContainerRegistry.getImages()
+        let imageRegistry = try RegistryFactory.createRegistry(organization: organization)
+        let cachedImages = try await imageRegistry.getImages()
 
         let imageInfos = cachedImages.map { image in
             ImageInfo(

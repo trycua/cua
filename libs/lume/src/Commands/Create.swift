@@ -50,6 +50,27 @@ struct Create: AsyncParsableCommand {
     )
     var unattended: String?
 
+    @Flag(
+        name: .customLong("debug"),
+        help: "Enable debug mode for unattended setup - saves screenshots with click coordinates")
+    var debug: Bool = false
+
+    @Option(
+        name: .customLong("debug-dir"),
+        help: "Custom directory for debug screenshots (defaults to unique folder in system temp)",
+        completion: .directory)
+    var debugDir: String?
+
+    @Flag(
+        name: .customLong("no-display"),
+        help: "Do not open the VNC client during unattended setup (default: true for unattended)")
+    var noDisplay: Bool = false
+
+    @Option(
+        name: .customLong("vnc-port"),
+        help: "Port to use for the VNC server during unattended setup. Defaults to 0 (auto-assign)")
+    var vncPort: Int = 0
+
     init() {
     }
 
@@ -82,7 +103,11 @@ struct Create: AsyncParsableCommand {
             display: display.string,
             ipsw: ipsw,
             storage: storage,
-            unattendedConfig: unattendedConfig
+            unattendedConfig: unattendedConfig,
+            debug: debug,
+            debugDir: debugDir,
+            noDisplay: unattendedConfig != nil ? true : noDisplay,  // Default to no-display for unattended
+            vncPort: vncPort
         )
     }
 }

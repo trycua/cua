@@ -6,6 +6,7 @@ struct LumeSettings: Codable, Sendable {
     var defaultLocationName: String
     var cacheDirectory: String
     var cachingEnabled: Bool
+    var registry: RegistryConfig?
 
     var defaultLocation: VMLocation? {
         vmLocations.first { $0.name == defaultLocationName }
@@ -22,7 +23,8 @@ struct LumeSettings: Codable, Sendable {
         ],
         defaultLocationName: "default",
         cacheDirectory: "~/.lume/cache",
-        cachingEnabled: true
+        cachingEnabled: true,
+        registry: .defaultConfig
     )
 
     /// Gets all locations sorted by name
@@ -81,7 +83,8 @@ final class SettingsManager: @unchecked Sendable {
             ],
             defaultLocationName: "default",
             cacheDirectory: "~/.lume/cache",
-            cachingEnabled: true
+            cachingEnabled: true,
+            registry: .defaultConfig
         )
 
         // Try to save default settings
@@ -110,6 +113,20 @@ final class SettingsManager: @unchecked Sendable {
         for location in settings.vmLocations {
             yamlContent += "  - name: \"\(location.name)\"\n"
             yamlContent += "    path: \"\(location.path)\"\n"
+        }
+
+        // Registry configuration
+        if let registry = settings.registry {
+            yamlContent += "\n# Registry Configuration\nregistry:\n"
+            yamlContent += "  type: \"\(registry.type.rawValue)\"\n"
+            yamlContent += "  ghcr:\n"
+            yamlContent += "    registry: \"\(registry.ghcr.registry)\"\n"
+            yamlContent += "    organization: \"\(registry.ghcr.organization)\"\n"
+            if let gcs = registry.gcs {
+                yamlContent += "  gcs:\n"
+                yamlContent += "    apiUrl: \"\(gcs.apiUrl)\"\n"
+                yamlContent += "    apiKey: \"\(gcs.apiKey)\"\n"
+            }
         }
 
         // Write YAML content to file
@@ -283,7 +300,22 @@ final class SettingsManager: @unchecked Sendable {
         var cachingEnabled = true  // default to true for backward compatibility
         var vmLocations: [VMLocation] = []
 
-        var inLocationsSection = false
+        // Registry config parsing state
+        var registryType: RegistryType = .ghcr
+        var ghcrRegistry = "ghcr.io"
+        var ghcrOrganization = "trycua"
+        var gcsApiUrl: String?
+        var gcsApiKey: String?
+
+        enum ParserSection {
+            case top
+            case vmLocations
+            case registry
+            case registryGhcr
+            case registryGcs
+        }
+
+        var currentSection: ParserSection = .top
         var currentLocation: (name: String?, path: String?) = (nil, nil)
 
         let lines = yamlString.split(separator: "\n")
@@ -296,14 +328,37 @@ final class SettingsManager: @unchecked Sendable {
                 continue
             }
 
-            // Check for section marker
+            // Check for section markers
             if trimmedLine == "vmLocations:" {
-                inLocationsSection = true
+                // Save any pending location before switching sections
+                if let name = currentLocation.name, let path = currentLocation.path {
+                    vmLocations.append(VMLocation(name: name, path: path))
+                }
+                currentLocation = (nil, nil)
+                currentSection = .vmLocations
+                continue
+            } else if trimmedLine == "registry:" {
+                // Save any pending location before switching sections
+                if let name = currentLocation.name, let path = currentLocation.path {
+                    vmLocations.append(VMLocation(name: name, path: path))
+                }
+                currentLocation = (nil, nil)
+                currentSection = .registry
+                continue
+            } else if trimmedLine == "ghcr:" && currentSection == .registry {
+                currentSection = .registryGhcr
+                continue
+            } else if trimmedLine == "gcs:" && currentSection == .registry {
+                currentSection = .registryGcs
                 continue
             }
 
-            // In the locations section, handle line indentation more carefully
-            if inLocationsSection {
+            // Handle indentation-based section detection
+            let lineIndent = line.prefix(while: { $0 == " " }).count
+
+            // Process based on current section
+            switch currentSection {
+            case .vmLocations:
                 if trimmedLine.hasPrefix("-") || trimmedLine.contains("- name:") {
                     // Process the previous location before starting a new one
                     if let name = currentLocation.name, let path = currentLocation.path {
@@ -325,8 +380,63 @@ final class SettingsManager: @unchecked Sendable {
                         currentLocation.path = value
                     }
                 }
-            } else {
-                // Process top-level keys outside the locations section
+
+            case .registry:
+                if let colonIndex = trimmedLine.firstIndex(of: ":") {
+                    let key = trimmedLine[..<colonIndex].trimmingCharacters(in: .whitespaces)
+                    let rawValue = trimmedLine[trimmedLine.index(after: colonIndex)...]
+                        .trimmingCharacters(in: .whitespaces)
+                    let value = extractValueFromYaml(rawValue)
+
+                    if key == "type" {
+                        registryType = RegistryType(rawValue: value) ?? .ghcr
+                    }
+                }
+
+            case .registryGhcr:
+                if lineIndent < 4 && !trimmedLine.isEmpty {
+                    // Back to registry section or new section
+                    if trimmedLine == "gcs:" {
+                        currentSection = .registryGcs
+                        continue
+                    } else if !trimmedLine.hasPrefix("registry") && !trimmedLine.hasPrefix("organization") {
+                        currentSection = .top
+                    }
+                }
+
+                if let colonIndex = trimmedLine.firstIndex(of: ":") {
+                    let key = trimmedLine[..<colonIndex].trimmingCharacters(in: .whitespaces)
+                    let rawValue = trimmedLine[trimmedLine.index(after: colonIndex)...]
+                        .trimmingCharacters(in: .whitespaces)
+                    let value = extractValueFromYaml(rawValue)
+
+                    if key == "registry" {
+                        ghcrRegistry = value
+                    } else if key == "organization" {
+                        ghcrOrganization = value
+                    }
+                }
+
+            case .registryGcs:
+                if lineIndent < 4 && !trimmedLine.isEmpty && !trimmedLine.hasPrefix("apiUrl") && !trimmedLine.hasPrefix("apiKey") {
+                    currentSection = .top
+                }
+
+                if let colonIndex = trimmedLine.firstIndex(of: ":") {
+                    let key = trimmedLine[..<colonIndex].trimmingCharacters(in: .whitespaces)
+                    let rawValue = trimmedLine[trimmedLine.index(after: colonIndex)...]
+                        .trimmingCharacters(in: .whitespaces)
+                    let value = extractValueFromYaml(rawValue)
+
+                    if key == "apiUrl" {
+                        gcsApiUrl = value
+                    } else if key == "apiKey" {
+                        gcsApiKey = value
+                    }
+                }
+
+            case .top:
+                // Process top-level keys
                 if let colonIndex = trimmedLine.firstIndex(of: ":") {
                     let key = trimmedLine[..<colonIndex].trimmingCharacters(in: .whitespaces)
                     let rawValue = trimmedLine[trimmedLine.index(after: colonIndex)...]
@@ -354,11 +464,20 @@ final class SettingsManager: @unchecked Sendable {
             vmLocations.append(VMLocation(name: "default", path: "~/.lume"))
         }
 
+        // Build registry config
+        let ghcrConfig = GHCRConfig(registry: ghcrRegistry, organization: ghcrOrganization)
+        var gcsConfig: GCSConfig?
+        if let apiUrl = gcsApiUrl, let apiKey = gcsApiKey {
+            gcsConfig = GCSConfig(apiUrl: apiUrl, apiKey: apiKey)
+        }
+        let registryConfig = RegistryConfig(type: registryType, ghcr: ghcrConfig, gcs: gcsConfig)
+
         return LumeSettings(
             vmLocations: vmLocations,
             defaultLocationName: defaultLocationName,
             cacheDirectory: cacheDirectory,
-            cachingEnabled: cachingEnabled
+            cachingEnabled: cachingEnabled,
+            registry: registryConfig
         )
     }
 

@@ -33,7 +33,7 @@ actor VNCClient {
         connection = NWConnection(to: endpoint, using: .tcp)
 
         return try await withCheckedThrowingContinuation { continuation in
-            connection?.stateUpdateHandler = { [weak self] state in
+            connection?.stateUpdateHandler = { state in
                 Task { @MainActor in
                     switch state {
                     case .ready:
@@ -55,7 +55,7 @@ actor VNCClient {
 
     /// Perform the VNC handshake (RFB protocol)
     func handshake() async throws {
-        guard let conn = connection else {
+        guard connection != nil else {
             throw VNCClientError.notConnected
         }
 

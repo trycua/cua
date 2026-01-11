@@ -197,18 +197,18 @@ export default function LandingPage() {
         <div className="mb-8 flex items-center justify-between">
           <div>
             <h2
-              className="text-2xl font-bold text-white dark:text-white md:text-3xl"
+              className="text-2xl font-bold md:text-3xl"
               style={{ fontFamily: 'var(--font-urbanist)' }}
             >
               Featured Examples
             </h2>
-            <p className="mt-2 text-white/70 dark:text-white/70">
+            <p className="mt-2 text-fd-muted-foreground">
               Real-world examples to get you started quickly
             </p>
           </div>
           <Link
             href="/cua/examples/automation/form-filling"
-            className="hidden items-center gap-1 text-sm font-medium text-white/60 transition-colors hover:text-white dark:text-white/60 dark:hover:text-white sm:inline-flex"
+            className="hidden items-center gap-1 text-sm font-medium text-fd-muted-foreground transition-colors hover:text-fd-foreground sm:inline-flex"
           >
             View all
             <ChevronRight className="h-4 w-4" />

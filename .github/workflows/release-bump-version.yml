@@ -339,7 +339,8 @@ jobs:
           echo "Created PR: $PR_URL"
 
           # Enable auto-merge (will merge once requirements are met)
-          gh pr merge "$PR_URL" --auto --squash
+          # This may fail if auto-merge is not enabled for the repository
+          gh pr merge "$PR_URL" --auto --squash || echo "Auto-merge not available, PR will need manual merge"
 
   publish-computer:
     needs: [bump-version, publish-core]

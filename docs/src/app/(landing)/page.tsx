@@ -197,7 +197,7 @@ export default function LandingPage() {
         <div className="mb-8 flex items-center justify-between">
           <div>
             <h2
-              className="text-2xl font-bold md:text-3xl"
+              className="text-2xl font-bold text-fd-foreground md:text-3xl"
               style={{ fontFamily: 'var(--font-urbanist)' }}
             >
               Featured Examples

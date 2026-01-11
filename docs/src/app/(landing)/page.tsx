@@ -158,7 +158,7 @@ export default function LandingPage() {
       </section>
 
       {/* Navigation Cards Section */}
-      <section className="container mx-auto px-6 py-12 lg:px-8">
+      <section className="relative container mx-auto px-6 py-12 lg:px-8">
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           {navCards.map((card) => {
             const Icon = card.icon;
@@ -193,7 +193,7 @@ export default function LandingPage() {
       </section>
 
       {/* Featured Examples Section */}
-      <section className="container mx-auto px-6 py-12 lg:px-8">
+      <section className="relative container mx-auto px-6 py-12 lg:px-8">
         <div className="mb-8 flex items-center justify-between">
           <div>
             <h2
@@ -266,7 +266,7 @@ export default function LandingPage() {
       </section>
 
       {/* Quick links section */}
-      <section className="container mx-auto px-6 py-12 lg:px-8">
+      <section className="relative container mx-auto px-6 py-12 lg:px-8">
         <div className="rounded-xl border border-fd-border bg-gradient-to-br from-fd-card/50 to-fd-card p-8 backdrop-blur-sm">
           <div className="mx-auto max-w-2xl text-center">
             <h2

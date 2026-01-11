@@ -15,12 +15,6 @@ on:
     paths:
       - "libs/python/**"
       - ".github/workflows/ci-test-models.yml"
-  push:
-    branches:
-      - main
-    paths:
-      - "libs/python/**"
-      - ".github/workflows/ci-test-models.yml"
 
 jobs:
   # Test all Cua models - runs on PRs, pushes to main, or when manually triggered

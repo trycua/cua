@@ -6,13 +6,6 @@ on:
       - "libs/python/**"
       - "pyproject.toml"
       - ".github/workflows/ci-lint-python.yml"
-  push:
-    branches:
-      - main
-    paths:
-      - "libs/python/**"
-      - "pyproject.toml"
-      - ".github/workflows/ci-lint-python.yml"
 
 jobs:
   lint:

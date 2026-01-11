@@ -6,13 +6,6 @@ on:
       - "libs/python/mcp-server/**"
       - ".github/workflows/ci-py-mcp-server.yml"
       - ".github/workflows/py-reusable-build.yml"
-  push:
-    branches:
-      - main
-    paths:
-      - "libs/python/mcp-server/**"
-      - ".github/workflows/ci-py-mcp-server.yml"
-      - ".github/workflows/py-reusable-build.yml"
 
 jobs:
   build:

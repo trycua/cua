@@ -1,11 +1,5 @@
 name: "CI: Lume"
 on:
-  push:
-    branches:
-      - "main"
-    paths:
-      - "libs/lume/**"
-      - ".github/workflows/ci-swift-lume.yml"
   pull_request:
     paths:
       - "libs/lume/**"

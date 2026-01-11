@@ -5,12 +5,6 @@ on:
     paths:
       - "libs/python/**"
       - ".github/workflows/ci-test-python.yml"
-  push:
-    branches:
-      - main
-    paths:
-      - "libs/python/**"
-      - ".github/workflows/ci-test-python.yml"
   workflow_dispatch: # Allow manual trigger
 
 jobs:

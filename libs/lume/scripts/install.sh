@@ -401,20 +401,23 @@ apply_update() {
 if version_gt "$LATEST_VERSION" "$CURRENT_VERSION"; then
   log "New version available: $LATEST_VERSION (current: $CURRENT_VERSION)"
 
-  # Check if --apply flag was passed (for manual/scripted updates)
-  if [ "${1:-}" = "--apply" ]; then
-    apply_update
-  else
-    # Show dialog asking user if they want to update
-    RESPONSE=$(osascript -e "display dialog \"Lume $LATEST_VERSION is available (current: $CURRENT_VERSION).\" buttons {\"Later\", \"Update Now\"} default button \"Update Now\" with title \"Lume Update\"" 2>/dev/null || echo "")
-
-    if echo "$RESPONSE" | grep -q "Update Now"; then
-      log "User chose to update"
+  case "${1:-}" in
+    --apply|--silent)
+      # Silent mode: update immediately without dialog (used by login LaunchAgent)
       apply_update
-    else
-      log "User chose to skip update"
-    fi
-  fi
+      ;;
+    *)
+      # Interactive mode: show dialog asking user if they want to update (used by cron)
+      RESPONSE=$(osascript -e "display dialog \"Lume $LATEST_VERSION is available (current: $CURRENT_VERSION).\" buttons {\"Later\", \"Update Now\"} default button \"Update Now\" with title \"Lume Update\"" 2>/dev/null || echo "")
+
+      if echo "$RESPONSE" | grep -q "Update Now"; then
+        log "User chose to update"
+        apply_update
+      else
+        log "User chose to skip update"
+      fi
+      ;;
+  esac
 else
   log "Already up to date (version $CURRENT_VERSION)"
 fi
@@ -581,7 +584,7 @@ EOF
         launchctl unload "$UPDATER_PLIST_PATH" 2>/dev/null || true
       fi
 
-      # Create LaunchAgent that runs updater at login (not persistent)
+      # Create LaunchAgent that runs updater at login (not persistent, silent mode)
       cat <<EOF > "$UPDATER_PLIST_PATH"
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -592,6 +595,7 @@ EOF
     <key>ProgramArguments</key>
     <array>
         <string>$UPDATER_SCRIPT</string>
+        <string>--silent</string>
     </array>
     <key>RunAtLoad</key>
     <true/>

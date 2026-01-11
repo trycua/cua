@@ -291,9 +291,29 @@ jobs:
           echo "lume version: $VERSION"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
-      - name: Push changes
+      - name: Create release branch and PR
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          git push origin main --follow-tags
+          # Get the tag that was created by bump2version
+          TAG=$(git describe --tags --abbrev=0)
+          BRANCH_NAME="release/${TAG}"
+
+          # Create and push the release branch
+          git checkout -b "$BRANCH_NAME"
+          git push origin "$BRANCH_NAME" --follow-tags
+
+          # Create PR and enable auto-merge
+          PR_URL=$(gh pr create \
+            --title "chore: bump version to ${TAG}" \
+            --body "Automated version bump to ${TAG}" \
+            --base main \
+            --head "$BRANCH_NAME")
+
+          echo "Created PR: $PR_URL"
+
+          # Enable auto-merge (will merge once requirements are met)
+          gh pr merge "$PR_URL" --auto --squash
 
   publish-computer:
     needs: [bump-version, publish-core]

@@ -202,13 +202,13 @@ export default function LandingPage() {
             >
               Featured Examples
             </h2>
-            <p className="mt-2 text-fd-muted-foreground">
+            <p className="mt-2 text-fd-foreground/70">
               Real-world examples to get you started quickly
             </p>
           </div>
           <Link
             href="/cua/examples/automation/form-filling"
-            className="hidden items-center gap-1 text-sm font-medium text-fd-muted-foreground transition-colors hover:text-fd-foreground sm:inline-flex"
+            className="hidden items-center gap-1 text-sm font-medium text-fd-foreground/60 transition-colors hover:text-fd-foreground sm:inline-flex"
           >
             View all
             <ChevronRight className="h-4 w-4" />

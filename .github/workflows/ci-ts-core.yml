@@ -6,13 +6,6 @@ on:
       - "libs/typescript/core/**"
       - ".github/workflows/ci-ts-core.yml"
       - ".github/workflows/ts-reusable-build.yml"
-  push:
-    branches:
-      - main
-    paths:
-      - "libs/typescript/core/**"
-      - ".github/workflows/ci-ts-core.yml"
-      - ".github/workflows/ts-reusable-build.yml"
 
 jobs:
   build:

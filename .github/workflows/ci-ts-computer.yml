@@ -6,13 +6,6 @@ on:
       - "libs/typescript/computer/**"
       - ".github/workflows/ci-ts-computer.yml"
       - ".github/workflows/ts-reusable-build.yml"
-  push:
-    branches:
-      - main
-    paths:
-      - "libs/typescript/computer/**"
-      - ".github/workflows/ci-ts-computer.yml"
-      - ".github/workflows/ts-reusable-build.yml"
 
 jobs:
   build:

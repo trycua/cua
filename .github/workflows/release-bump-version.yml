@@ -1,4 +1,4 @@
-name: Bump Version & Publish
+name: "CD: Bump & Publish"
 
 on:
   workflow_dispatch:

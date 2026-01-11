@@ -6,13 +6,6 @@ on:
       - "libs/python/computer/**"
       - ".github/workflows/ci-py-computer.yml"
       - ".github/workflows/py-reusable-build.yml"
-  push:
-    branches:
-      - main
-    paths:
-      - "libs/python/computer/**"
-      - ".github/workflows/ci-py-computer.yml"
-      - ".github/workflows/py-reusable-build.yml"
 
 jobs:
   build:

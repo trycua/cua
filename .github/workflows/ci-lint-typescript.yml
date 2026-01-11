@@ -5,12 +5,6 @@ on:
     paths:
       - "libs/typescript/**"
       - ".github/workflows/ci-lint-typescript.yml"
-  push:
-    branches:
-      - main
-    paths:
-      - "libs/typescript/**"
-      - ".github/workflows/ci-lint-typescript.yml"
 
 jobs:
   lint:

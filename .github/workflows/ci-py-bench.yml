@@ -6,13 +6,6 @@ on:
       - "libs/cua-bench/**"
       - ".github/workflows/ci-py-bench.yml"
       - ".github/workflows/py-reusable-build.yml"
-  push:
-    branches:
-      - main
-    paths:
-      - "libs/cua-bench/**"
-      - ".github/workflows/ci-py-bench.yml"
-      - ".github/workflows/py-reusable-build.yml"
 
 jobs:
   build:

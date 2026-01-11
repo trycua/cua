@@ -309,11 +309,21 @@ jobs:
 
       - name: Create release branch and PR
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.PR_TOKEN }}
         run: |
           # Get the tag that was created by bump2version
           TAG=$(git describe --tags --abbrev=0)
           BRANCH_NAME="release/${TAG}"
+
+          # Clean up any existing release branch from previous failed runs
+          git push origin --delete "$BRANCH_NAME" 2>/dev/null || true
+
+          # Close any existing PR for this branch
+          EXISTING_PR=$(gh pr list --head "$BRANCH_NAME" --json number --jq '.[0].number' 2>/dev/null || true)
+          if [ -n "$EXISTING_PR" ]; then
+            echo "Closing existing PR #$EXISTING_PR"
+            gh pr close "$EXISTING_PR" --delete-branch 2>/dev/null || true
+          fi
 
           # Create and push the release branch
           git checkout -b "$BRANCH_NAME"

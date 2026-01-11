@@ -398,74 +398,16 @@ UPDATER_EOF
   echo "Auto-updater script installed."
 }
 
-# Setup the auto-updater LaunchAgent
-setup_auto_updater() {
+# Remove legacy auto-updater LaunchAgent if it exists (now integrated into daemon)
+cleanup_legacy_updater() {
   UPDATER_SERVICE_NAME="com.trycua.lume_updater"
   UPDATER_PLIST_PATH="$HOME/Library/LaunchAgents/$UPDATER_SERVICE_NAME.plist"
-  UPDATER_SCRIPT="$INSTALL_DIR/lume-update"
 
-  echo ""
-  echo "Setting up auto-updater LaunchAgent..."
-
-  # Create LaunchAgents directory if it doesn't exist
-  mkdir -p "$HOME/Library/LaunchAgents"
-
-  # Unload existing service if present
   if [ -f "$UPDATER_PLIST_PATH" ]; then
-    echo "Existing updater LaunchAgent found. Unloading..."
+    echo "Removing legacy auto-updater LaunchAgent (now integrated into daemon)..."
     launchctl unload "$UPDATER_PLIST_PATH" 2>/dev/null || true
+    rm "$UPDATER_PLIST_PATH"
   fi
-
-  # Create the plist file
-  # RunAtLoad: run when loaded (at login)
-  # StartInterval: also check every 24 hours (86400 seconds)
-  cat <<EOF > "$UPDATER_PLIST_PATH"
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>Label</key>
-    <string>$UPDATER_SERVICE_NAME</string>
-    <key>ProgramArguments</key>
-    <array>
-        <string>$UPDATER_SCRIPT</string>
-    </array>
-    <key>RunAtLoad</key>
-    <true/>
-    <key>StartInterval</key>
-    <integer>86400</integer>
-    <key>WorkingDirectory</key>
-    <string>$HOME</string>
-    <key>EnvironmentVariables</key>
-    <dict>
-        <key>PATH</key>
-        <string>/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$HOME/.local/bin</string>
-        <key>HOME</key>
-        <string>$HOME</string>
-    </dict>
-    <key>StandardOutPath</key>
-    <string>/tmp/lume_updater.log</string>
-    <key>StandardErrorPath</key>
-    <string>/tmp/lume_updater.error.log</string>
-</dict>
-</plist>
-EOF
-
-  # Set permissions
-  chmod 644 "$UPDATER_PLIST_PATH"
-  touch /tmp/lume_updater.log /tmp/lume_updater.error.log
-  chmod 644 /tmp/lume_updater.log /tmp/lume_updater.error.log
-
-  # Load the LaunchAgent
-  echo "Loading auto-updater LaunchAgent..."
-  launchctl load "$UPDATER_PLIST_PATH"
-
-  echo "${GREEN}Auto-updater installed! Lume will check for updates at login and every 24 hours.${NORMAL}"
-  echo "To view update logs: tail -f /tmp/lume_updater.log"
-  echo ""
-  echo "To disable auto-updates, run:"
-  echo "  launchctl unload \"$UPDATER_PLIST_PATH\""
-  echo "  rm \"$UPDATER_PLIST_PATH\""
 }
 
 # Remove auto-updater if it exists
@@ -504,6 +446,8 @@ main() {
     SERVICE_NAME="com.trycua.lume_daemon"
     PLIST_PATH="$HOME/Library/LaunchAgents/$SERVICE_NAME.plist"
     LUME_BIN="$INSTALL_DIR/lume"
+    WRAPPER_SCRIPT="$INSTALL_DIR/lume-daemon"
+    UPDATER_SCRIPT="$INSTALL_DIR/lume-update"
 
     echo ""
     echo "Setting up LaunchAgent to run lume daemon on login..."
@@ -517,6 +461,25 @@ main() {
       launchctl unload "$PLIST_PATH" 2>/dev/null || true
     fi
 
+    # Create the daemon wrapper script (checks for updates, then runs daemon)
+    cat <<WRAPPER_EOF > "$WRAPPER_SCRIPT"
+#!/bin/bash
+# Lume Daemon Wrapper - checks for updates then runs daemon
+
+LUME_BIN="$LUME_BIN"
+UPDATER_SCRIPT="$UPDATER_SCRIPT"
+LUME_PORT="$LUME_PORT"
+
+# Check for updates in background (don't block daemon startup)
+if [ -x "\$UPDATER_SCRIPT" ]; then
+  "\$UPDATER_SCRIPT" &
+fi
+
+# Run the daemon
+exec "\$LUME_BIN" serve --port "\$LUME_PORT"
+WRAPPER_EOF
+    chmod +x "$WRAPPER_SCRIPT"
+
     # Create the plist file
     cat <<EOF > "$PLIST_PATH"
 <?xml version="1.0" encoding="UTF-8"?>
@@ -527,10 +490,7 @@ main() {
     <string>$SERVICE_NAME</string>
     <key>ProgramArguments</key>
     <array>
-        <string>$LUME_BIN</string>
-        <string>serve</string>
-        <string>--port</string>
-        <string>$LUME_PORT</string>
+        <string>$WRAPPER_SCRIPT</string>
     </array>
     <key>RunAtLoad</key>
     <true/>
@@ -587,13 +547,12 @@ EOF
     fi
   fi
 
-  # Setup auto-updater
+  # Install updater script (used by daemon wrapper) and cleanup legacy updater
   if [ "$INSTALL_AUTO_UPDATER" = true ]; then
     install_updater_script
-    setup_auto_updater
-  else
-    remove_auto_updater
+    echo "${GREEN}Auto-updater integrated into daemon. Updates check at startup and every 24 hours.${NORMAL}"
   fi
+  cleanup_legacy_updater
 }
 
 # Run the installation

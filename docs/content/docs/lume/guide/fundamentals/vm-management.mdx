@@ -132,8 +132,49 @@ lume clone source-vm dest-vm --source-storage default --dest-storage external-ss
 lume delete source-vm --storage default
 ```
 
+## Image Caching
+
+When pulling VM images from the registry, Lume can cache the downloaded layers locally to speed up future pulls of the same or similar images. **Caching is disabled by default** to save disk space.
+
+### Enable Caching
+
+If you frequently pull images and want faster downloads:
+
+```bash
+# Enable image caching
+lume config set cachingEnabled true
+
+# Set custom cache directory (optional)
+lume config set cacheDirectory /path/to/cache
+```
+
+### View Cache Settings
+
+```bash
+# View current configuration
+lume config get
+```
+
+This displays:
+- Default VM storage location
+- Cache directory path
+- Whether caching is enabled
+
+### Clear Cache
+
+To free up disk space used by cached image layers:
+
+```bash
+# Remove cached images
+lume prune
+```
+
+<Callout type="info">
+  With caching disabled (default), each `lume pull` downloads all image layers fresh. Enable caching if you frequently pull the same images or images that share common base layers.
+</Callout>
+
 ## Next Steps
 
-- [Unattended Setup](/lume/guide/advanced/unattended-setup) - Automate macOS setup
+- [Unattended Setup](/lume/guide/fundamentals/unattended-setup) - Automate macOS setup
 - [HTTP Server](/lume/guide/advanced/http-server) - Use the REST API
 - [CLI Reference](/lume/reference/cli-reference) - Full command reference

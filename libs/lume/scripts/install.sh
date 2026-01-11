@@ -461,26 +461,13 @@ main() {
       launchctl unload "$PLIST_PATH" 2>/dev/null || true
     fi
 
-    # Create the daemon wrapper script (checks for updates, then runs daemon)
-    cat <<WRAPPER_EOF > "$WRAPPER_SCRIPT"
-#!/bin/bash
-# Lume Daemon Wrapper - checks for updates then runs daemon
+    # Clean up old wrapper script if it exists (no longer needed)
+    if [ -f "$WRAPPER_SCRIPT" ]; then
+      rm -f "$WRAPPER_SCRIPT"
+    fi
 
-LUME_BIN="$LUME_BIN"
-UPDATER_SCRIPT="$UPDATER_SCRIPT"
-LUME_PORT="$LUME_PORT"
-
-# Check for updates in background (don't block daemon startup)
-if [ -x "\$UPDATER_SCRIPT" ]; then
-  "\$UPDATER_SCRIPT" &
-fi
-
-# Run the daemon
-exec "\$LUME_BIN" serve --port "\$LUME_PORT"
-WRAPPER_EOF
-    chmod +x "$WRAPPER_SCRIPT"
-
-    # Create the plist file
+    # Create the plist file - runs signed lume binary directly (no wrapper)
+    # This ensures proper code signing identity shows in Login Items
     cat <<EOF > "$PLIST_PATH"
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -490,7 +477,10 @@ WRAPPER_EOF
     <string>$SERVICE_NAME</string>
     <key>ProgramArguments</key>
     <array>
-        <string>$WRAPPER_SCRIPT</string>
+        <string>$LUME_BIN</string>
+        <string>serve</string>
+        <string>--port</string>
+        <string>$LUME_PORT</string>
     </array>
     <key>RunAtLoad</key>
     <true/>
@@ -547,10 +537,14 @@ EOF
     fi
   fi
 
-  # Install updater script (used by daemon wrapper) and cleanup legacy updater
+  # Install updater script and cleanup legacy updater
   if [ "$INSTALL_AUTO_UPDATER" = true ]; then
     install_updater_script
-    echo "${GREEN}Auto-updater integrated into daemon. Updates check at startup and every 24 hours.${NORMAL}"
+    # Run updater once after installation to check for updates
+    if [ -x "$INSTALL_DIR/lume-update" ]; then
+      "$INSTALL_DIR/lume-update" &
+    fi
+    echo "${GREEN}Auto-updater installed. Run 'lume-update' to check for updates.${NORMAL}"
   fi
   cleanup_legacy_updater
 }

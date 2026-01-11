@@ -62,15 +62,6 @@ boot_commands:
   - "<click 'Not Now'>"
   - "<delay 2>"
 
-  # Network selection - "How Do You Connect?"
-  # VMs use NAT networking which appears as "Local network (Ethernet)"
-  - "<wait 'How Do You Connect'>"
-  - "<delay 1>"
-  - "<click 'Local network'>"
-  - "<delay 1>"
-  - "<click 'Continue'>"
-  - "<delay 2>"
-
   # Data & Privacy screen
   - "<wait 'Data & Privacy'>"
   - "<delay 1>"

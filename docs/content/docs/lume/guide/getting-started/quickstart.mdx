@@ -8,8 +8,8 @@ import { Callout } from 'fumadocs-ui/components/callout';
 This guide walks you through creating and running your first macOS VM with Lume.
 
 <Callout type="warn">
-  **Registry Maintenance Notice**: The prebuilt images in the trycua registry are no longer actively
-  maintained. For new setups, we recommend building custom images using the [Unattended Setup](/lume/guide/advanced/unattended-setup) feature
+  **Registry Maintenance Notice**: The prebuilt images in the [trycua registry](https://github.com/orgs/trycua/packages) are no longer actively
+  maintained. For new setups, we recommend building custom images using the [Unattended Setup](/lume/guide/fundamentals/unattended-setup) feature
   to configure macOS VMs according to your specific needs.
 </Callout>
 
@@ -74,8 +74,22 @@ Create a copy of an existing VM:
 lume clone my-vm my-vm-copy
 ```
 
+## Automate VM Configuration
+
+Use unattended setup to automatically configure a fresh VM with user account, settings, and software:
+
+```bash
+# Create and configure a VM automatically
+lume create my-vm --os macos --ipsw latest \
+  --username lume \
+  --password lume \
+  --auto-run
+```
+
+This creates the VM and runs the initial macOS setup wizard automatically. See [Unattended Setup](/lume/guide/fundamentals/unattended-setup) for more options.
+
 ## Next Steps
 
 - [VM Management](/lume/guide/fundamentals/vm-management) - Learn more VM operations
-- [Unattended Setup](/lume/guide/advanced/unattended-setup) - Automate VM configuration
+- [Unattended Setup](/lume/guide/fundamentals/unattended-setup) - Automate VM configuration
 - [CLI Reference](/lume/reference/cli-reference) - Full command reference

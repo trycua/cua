@@ -3,5 +3,5 @@
   "description": "Get up and running with Lume",
   "icon": "Rocket",
   "defaultOpen": true,
-  "pages": ["introduction", "installation", "quickstart"]
+  "pages": ["introduction", "installation", "quickstart", "faq"]
 }

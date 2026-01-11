@@ -15,9 +15,8 @@ Built on Apple's [Virtualization.Framework](https://developer.apple.com/document
 
 - **Near-native performance** - Run macOS VMs at native speed using Apple's Virtualization Framework
 - **Simple CLI** - Create, run, and manage VMs with intuitive commands
-- **Prebuilt images** - Get started quickly with ready-to-use macOS and Linux images
+- **Unattended setup** - Automate macOS installation and configuration with YAML files
 - **HTTP API** - Integrate with your tools via the built-in REST API server
-- **Unattended setup** - Automate macOS installation with YAML configuration files
 
 ## Quick Start
 
@@ -25,8 +24,11 @@ Built on Apple's [Virtualization.Framework](https://developer.apple.com/document
 # Install Lume
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/lume/scripts/install.sh)"
 
-# Pull and run a prebuilt macOS image
-lume run macos-sequoia-vanilla:latest
+# Create a custom macOS VM
+lume create my-vm --os macos --ipsw latest
+
+# Run the VM
+lume run my-vm
 ```
 
 <Callout title="System Requirements">
@@ -38,6 +40,6 @@ lume run macos-sequoia-vanilla:latest
 
 - [Installation Guide](/lume/guide/getting-started/installation) - Detailed installation options
 - [Quickstart](/lume/guide/getting-started/quickstart) - Create your first VM
-- [Prebuilt Images](/lume/guide/fundamentals/prebuilt-images) - Available images in the registry
+- [Unattended Setup](/lume/guide/advanced/unattended-setup) - Automate VM configuration
 - [CLI Reference](/lume/reference/cli-reference) - Full command reference
 - [HTTP API Reference](/lume/reference/http-api) - REST API documentation

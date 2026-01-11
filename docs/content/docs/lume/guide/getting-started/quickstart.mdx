@@ -7,24 +7,10 @@ import { Callout } from 'fumadocs-ui/components/callout';
 
 This guide walks you through creating and running your first macOS VM with Lume.
 
-## Run a Prebuilt Image
-
-The fastest way to get started is with a prebuilt image:
-
-```bash
-# Pull and run a prebuilt macOS image
-lume run macos-sequoia-vanilla:latest
-```
-
-This command:
-
-1. Downloads the `macos-sequoia-vanilla:latest` image from the registry
-2. Creates a VM named `macos-sequoia-vanilla`
-3. Starts the VM with a display window
-
-<Callout title="Security Note">
-  All prebuilt images use the default password `lume`. Change this immediately after your first
-  login using the `passwd` command.
+<Callout type="warn">
+  **Registry Maintenance Notice**: The prebuilt images in the trycua registry are no longer actively
+  maintained. For new setups, we recommend building custom images using the [Unattended Setup](/lume/guide/advanced/unattended-setup) feature
+  to configure macOS VMs according to your specific needs.
 </Callout>
 
 ## Create a Custom VM
@@ -91,5 +77,5 @@ lume clone my-vm my-vm-copy
 ## Next Steps
 
 - [VM Management](/lume/guide/fundamentals/vm-management) - Learn more VM operations
-- [Prebuilt Images](/lume/guide/fundamentals/prebuilt-images) - Available images
+- [Unattended Setup](/lume/guide/advanced/unattended-setup) - Automate VM configuration
 - [CLI Reference](/lume/reference/cli-reference) - Full command reference

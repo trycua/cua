@@ -1,0 +1,80 @@
+---
+title: QEMU Windows
+description: Windows 11 container with QEMU/KVM for Computer-Using Agents
+---
+
+Containerized Windows 11 virtual desktop for Computer-Using Agents (Cua). Utilizes QEMU/KVM with Windows 11 and computer-server pre-installed for remote computer control.
+
+## Features
+
+- Windows 11 Enterprise running in QEMU/KVM
+- Pre-installed Cua computer-server for remote computer control
+- noVNC access for visual desktop interaction
+- Memory snapshots support
+- Essential tools pre-installed (Chrome, LibreOffice, VLC, GIMP, VSCode, Thunderbird)
+
+## Requirements
+
+- Linux host with KVM support
+- Docker with `--device=/dev/kvm` access
+
+## Quick Start
+
+```bash
+docker pull trycua/cua-qemu-windows:latest
+
+mkdir -p ./storage
+
+docker run -it --rm \
+  --device=/dev/kvm \
+  --cap-add NET_ADMIN \
+  -v $(pwd)/storage:/storage \
+  -p 8006:8006 \
+  -p 5000:5000 \
+  -e RAM_SIZE=8G \
+  -e CPU_CORES=4 \
+  trycua/cua-qemu-windows:latest
+```
+
+**Access Points:**
+- **Computer Server API**: `http://localhost:5000`
+- **noVNC Browser**: `http://localhost:8006`
+
+## Configuration
+
+### Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `RAM_SIZE` | `8G` | RAM allocated to Windows VM |
+| `CPU_CORES` | `8` | CPU cores allocated to VM |
+| `DISK_SIZE` | `30G` | VM disk size (minimum: 20G) |
+
+### Ports
+
+- **5000**: Cua computer-server API endpoint
+- **8006**: noVNC web interface for visual desktop access
+
+### Volumes
+
+- `/storage`: Persistent VM storage (golden image, disk, firmware)
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────────┐
+│  Docker Container (Linux host)                          │
+│                                                         │
+│  • Port forwarding: localhost:5000 → VM:5000            │
+│  • Exposes: 5000 (API), 8006 (noVNC)                    │
+│                                                         │
+│  ┌────────────────────────────────────────────────────┐ │
+│  │  QEMU VM (Windows 11)                              │ │
+│  │  • Cua computer-server listens on 5000             │ │
+│  └────────────────────────────────────────────────────┘ │
+└─────────────────────────────────────────────────────────┘
+```
+
+## Building from Source
+
+To build the image manually (including creating a golden image from a Windows ISO), see the [qemu-docker/windows source code](https://github.com/trycua/cua/tree/main/libs/qemu-docker/windows).

@@ -1,14 +1,9 @@
 ---
-title: Unattended Setup (Preview)
+title: Unattended Setup
 description: Automate macOS Setup Assistant with YAML configuration files
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
-
-<Callout type="info">
-  **Preview Feature**: Unattended setup is an experimental feature. The API and behavior may change
-  in future releases.
-</Callout>
 
 Lume supports unattended setup automation to configure macOS VMs without manual interaction. This uses VNC-based automation with OCR (Optical Character Recognition) to navigate through the Setup Assistant and perform post-setup configuration.
 
@@ -249,70 +244,6 @@ health_check:
   timeout: 30
   retries: 5
   retry_delay: 10
-```
-
-## Example: Enable SSH on Existing VM
-
-Run this on a VM that has already completed Setup Assistant:
-
-```yaml
-boot_wait: 30
-
-boot_commands:
-  # Click desktop for focus
-  - '<click_at 960,540>'
-  - '<delay 1>'
-
-  # Open Terminal via Spotlight
-  - '<cmd+space>'
-  - '<delay 2>'
-  - "<type 'Terminal'>"
-  - '<enter>'
-  - '<delay 3>'
-
-  # Enable SSH
-  - "<type 'sudo launchctl load -w /System/Library/LaunchDaemons/ssh.plist'>"
-  - '<enter>'
-  - "<type 'lume'>" # Password
-  - '<enter>'
-  - '<delay 2>'
-
-  # Enable auto-login
-  - "<type 'sudo sysadminctl -autologin set -userName lume -password lume'>"
-  - '<enter>'
-  - '<delay 2>'
-
-  # Enable full keyboard navigation for Tab to work everywhere
-  - "<type 'defaults write NSGlobalDomain AppleKeyboardUIMode -int 3'>"
-  - '<enter>'
-  - '<delay 1>'
-
-  # Close Terminal
-  - '<cmd+q>'
-
-  # Enable Full Disk Access for SSH via System Settings
-  - '<cmd+space>'
-  - "<type 'System Settings'>"
-  - '<enter>'
-  - '<delay 3>'
-
-  - "<click 'Search'>"
-  - "<type 'Remote'>"
-  - '<delay 2>'
-  - "<click 'Remote Login'>"
-  - '<delay 2>'
-
-  # Toggle "Allow full disk access"
-  - '<tab>'
-  - '<space>'
-  - '<delay 2>'
-
-  - '<cmd+q>'
-
-health_check:
-  type: ssh
-  user: lume
-  password: lume
 ```
 
 ## Debugging

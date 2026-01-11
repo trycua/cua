@@ -357,35 +357,48 @@ version_gt() {
 
 if version_gt "$LATEST_VERSION" "$CURRENT_VERSION"; then
   log "New version available: $LATEST_VERSION (current: $CURRENT_VERSION)"
-  log "Downloading update..."
 
-  TEMP_DIR=$(mktemp -d)
-  trap 'rm -rf "$TEMP_DIR"' EXIT
+  # Check if --apply flag was passed
+  if [ "${1:-}" = "--apply" ]; then
+    log "Downloading and applying update..."
 
-  DOWNLOAD_URL="https://github.com/$GITHUB_REPO/releases/download/$LATEST_TAG/lume.tar.gz"
+    TEMP_DIR=$(mktemp -d)
+    trap 'rm -rf "$TEMP_DIR"' EXIT
 
-  if curl -sL "$DOWNLOAD_URL" -o "$TEMP_DIR/lume.tar.gz"; then
-    if tar -tzf "$TEMP_DIR/lume.tar.gz" > /dev/null 2>&1; then
-      tar -xzf "$TEMP_DIR/lume.tar.gz" -C "$TEMP_DIR"
+    DOWNLOAD_URL="https://github.com/$GITHUB_REPO/releases/download/$LATEST_TAG/lume.tar.gz"
 
-      # Stop the daemon before updating
-      launchctl unload "$HOME/Library/LaunchAgents/com.trycua.lume_daemon.plist" 2>/dev/null || true
+    if curl -sL "$DOWNLOAD_URL" -o "$TEMP_DIR/lume.tar.gz"; then
+      if tar -tzf "$TEMP_DIR/lume.tar.gz" > /dev/null 2>&1; then
+        tar -xzf "$TEMP_DIR/lume.tar.gz" -C "$TEMP_DIR"
 
-      # Install new binary
-      mv "$TEMP_DIR/lume" "$INSTALL_DIR/"
-      chmod +x "$INSTALL_DIR/lume"
+        # Stop the daemon before updating
+        launchctl unload "$HOME/Library/LaunchAgents/com.trycua.lume_daemon.plist" 2>/dev/null || true
 
-      # Restart the daemon
-      launchctl load "$HOME/Library/LaunchAgents/com.trycua.lume_daemon.plist" 2>/dev/null || true
+        # Install new binary
+        mv "$TEMP_DIR/lume" "$INSTALL_DIR/"
+        chmod +x "$INSTALL_DIR/lume"
 
-      log "Successfully updated lume to version $LATEST_VERSION"
+        # Restart the daemon
+        launchctl load "$HOME/Library/LaunchAgents/com.trycua.lume_daemon.plist" 2>/dev/null || true
+
+        log "Successfully updated lume to version $LATEST_VERSION"
+
+        # Show macOS notification
+        osascript -e "display notification \"Updated to version $LATEST_VERSION\" with title \"Lume Updated\"" 2>/dev/null || true
+      else
+        log "ERROR: Downloaded file is not a valid archive"
+        exit 1
+      fi
     else
-      log "ERROR: Downloaded file is not a valid archive"
+      log "ERROR: Failed to download update"
       exit 1
     fi
   else
-    log "ERROR: Failed to download update"
-    exit 1
+    # Just notify, don't auto-apply
+    log "Run 'lume-update --apply' to install the update"
+
+    # Show macOS notification about available update
+    osascript -e "display notification \"Version $LATEST_VERSION available. Run lume-update --apply to install.\" with title \"Lume Update Available\"" 2>/dev/null || true
   fi
 else
   log "Already up to date (version $CURRENT_VERSION)"

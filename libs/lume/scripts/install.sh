@@ -36,6 +36,9 @@ INSTALL_BACKGROUND_SERVICE=true
 # Option to skip auto-updater setup (default: install it)
 INSTALL_AUTO_UPDATER=true
 
+# Option to run updater at login (default: false, uses cron instead)
+UPDATE_ON_LOGIN=false
+
 # Default port for lume serve (default: 7777)
 LUME_PORT=7777
 
@@ -56,6 +59,9 @@ while [ "$#" -gt 0 ]; do
     --no-auto-updater)
       INSTALL_AUTO_UPDATER=false
       ;;
+    --update-on-login)
+      UPDATE_ON_LOGIN=true
+      ;;
     --help)
       echo "${BOLD}${BLUE}Lume Installer${NORMAL}"
       echo "Usage: $0 [OPTIONS]"
@@ -64,7 +70,8 @@ while [ "$#" -gt 0 ]; do
       echo "  --install-dir DIR         Install to the specified directory (default: $DEFAULT_INSTALL_DIR)"
       echo "  --port PORT               Specify the port for lume serve (default: 7777)"
       echo "  --no-background-service   Do not setup the Lume background service (LaunchAgent)"
-      echo "  --no-auto-updater         Do not setup automatic updates at login"
+      echo "  --no-auto-updater         Do not setup automatic updates"
+      echo "  --update-on-login         Check for updates at login (adds second Login Item)"
       echo "  --help                    Display this help message"
       echo ""
       echo "Examples:"
@@ -355,9 +362,8 @@ version_gt() {
   [ "$(printf '%s\n' "$1" "$2" | sort -V | tail -n1)" = "$1" ] && [ "$1" != "$2" ]
 }
 
-if version_gt "$LATEST_VERSION" "$CURRENT_VERSION"; then
-  log "New version available: $LATEST_VERSION (current: $CURRENT_VERSION)"
-  log "Downloading update..."
+apply_update() {
+  log "Downloading and applying update..."
 
   TEMP_DIR=$(mktemp -d)
   trap 'rm -rf "$TEMP_DIR"' EXIT
@@ -379,6 +385,9 @@ if version_gt "$LATEST_VERSION" "$CURRENT_VERSION"; then
       launchctl load "$HOME/Library/LaunchAgents/com.trycua.lume_daemon.plist" 2>/dev/null || true
 
       log "Successfully updated lume to version $LATEST_VERSION"
+
+      # Show macOS notification
+      osascript -e "display notification \"Updated to version $LATEST_VERSION\" with title \"Lume Updated\"" 2>/dev/null || true
     else
       log "ERROR: Downloaded file is not a valid archive"
       exit 1
@@ -387,6 +396,28 @@ if version_gt "$LATEST_VERSION" "$CURRENT_VERSION"; then
     log "ERROR: Failed to download update"
     exit 1
   fi
+}
+
+if version_gt "$LATEST_VERSION" "$CURRENT_VERSION"; then
+  log "New version available: $LATEST_VERSION (current: $CURRENT_VERSION)"
+
+  case "${1:-}" in
+    --apply|--silent)
+      # Silent mode: update immediately without dialog (used by login LaunchAgent)
+      apply_update
+      ;;
+    *)
+      # Interactive mode: show dialog asking user if they want to update (used by cron)
+      RESPONSE=$(osascript -e "display dialog \"Lume $LATEST_VERSION is available (current: $CURRENT_VERSION).\" buttons {\"Later\", \"Update Now\"} default button \"Update Now\" with title \"Lume Update\"" 2>/dev/null || echo "")
+
+      if echo "$RESPONSE" | grep -q "Update Now"; then
+        log "User chose to update"
+        apply_update
+      else
+        log "User chose to skip update"
+      fi
+      ;;
+  esac
 else
   log "Already up to date (version $CURRENT_VERSION)"
 fi
@@ -461,26 +492,13 @@ main() {
       launchctl unload "$PLIST_PATH" 2>/dev/null || true
     fi
 
-    # Create the daemon wrapper script (checks for updates, then runs daemon)
-    cat <<WRAPPER_EOF > "$WRAPPER_SCRIPT"
-#!/bin/bash
-# Lume Daemon Wrapper - checks for updates then runs daemon
+    # Clean up old wrapper script if it exists (no longer needed)
+    if [ -f "$WRAPPER_SCRIPT" ]; then
+      rm -f "$WRAPPER_SCRIPT"
+    fi
 
-LUME_BIN="$LUME_BIN"
-UPDATER_SCRIPT="$UPDATER_SCRIPT"
-LUME_PORT="$LUME_PORT"
-
-# Check for updates in background (don't block daemon startup)
-if [ -x "\$UPDATER_SCRIPT" ]; then
-  "\$UPDATER_SCRIPT" &
-fi
-
-# Run the daemon
-exec "\$LUME_BIN" serve --port "\$LUME_PORT"
-WRAPPER_EOF
-    chmod +x "$WRAPPER_SCRIPT"
-
-    # Create the plist file
+    # Create the plist file - runs signed lume binary directly (no wrapper)
+    # This ensures proper code signing identity shows in Login Items
     cat <<EOF > "$PLIST_PATH"
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -490,7 +508,10 @@ WRAPPER_EOF
     <string>$SERVICE_NAME</string>
     <key>ProgramArguments</key>
     <array>
-        <string>$WRAPPER_SCRIPT</string>
+        <string>$LUME_BIN</string>
+        <string>serve</string>
+        <string>--port</string>
+        <string>$LUME_PORT</string>
     </array>
     <key>RunAtLoad</key>
     <true/>
@@ -547,12 +568,69 @@ EOF
     fi
   fi
 
-  # Install updater script (used by daemon wrapper) and cleanup legacy updater
+  # Install updater script and setup update checks
   if [ "$INSTALL_AUTO_UPDATER" = true ]; then
     install_updater_script
-    echo "${GREEN}Auto-updater integrated into daemon. Updates check at startup and every 24 hours.${NORMAL}"
+    UPDATER_SCRIPT="$INSTALL_DIR/lume-update"
+    UPDATER_SERVICE_NAME="com.trycua.lume_updater"
+    UPDATER_PLIST_PATH="$HOME/Library/LaunchAgents/$UPDATER_SERVICE_NAME.plist"
+
+    if [ "$UPDATE_ON_LOGIN" = true ]; then
+      # Remove cron job if switching to login-based updates
+      crontab -l 2>/dev/null | grep -v "lume-update" | crontab - 2>/dev/null || true
+
+      # Unload existing updater service if present
+      if [ -f "$UPDATER_PLIST_PATH" ]; then
+        launchctl unload "$UPDATER_PLIST_PATH" 2>/dev/null || true
+      fi
+
+      # Create LaunchAgent that runs updater at login (not persistent, silent mode)
+      cat <<EOF > "$UPDATER_PLIST_PATH"
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>$UPDATER_SERVICE_NAME</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>$UPDATER_SCRIPT</string>
+        <string>--silent</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>/tmp/lume_updater.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/lume_updater.error.log</string>
+</dict>
+</plist>
+EOF
+      chmod 644 "$UPDATER_PLIST_PATH"
+      launchctl load "$UPDATER_PLIST_PATH"
+      echo "${GREEN}Auto-updater installed. Checks at login.${NORMAL}"
+    else
+      # Clean up any LaunchAgent updater (we use cron by default)
+      cleanup_legacy_updater
+
+      # Setup cron job for daily update check (doesn't show in Login Items)
+      CRON_ENTRY="0 10 * * * $UPDATER_SCRIPT >/tmp/lume_updater.log 2>&1"
+      EXISTING_CRON=$(crontab -l 2>/dev/null || echo "")
+      NEW_CRON=$(echo "$EXISTING_CRON" | grep -v "lume-update" || echo "")
+      echo "${NEW_CRON}${NEW_CRON:+
+}${CRON_ENTRY}" | crontab -
+      echo "${GREEN}Auto-updater installed. Checks daily at 10am via cron.${NORMAL}"
+    fi
+
+    # Run updater once after installation
+    if [ -x "$UPDATER_SCRIPT" ]; then
+      "$UPDATER_SCRIPT" &
+    fi
+  else
+    # Remove updater cron job and LaunchAgent if auto-updater is disabled
+    crontab -l 2>/dev/null | grep -v "lume-update" | crontab - 2>/dev/null || true
+    cleanup_legacy_updater
   fi
-  cleanup_legacy_updater
 }
 
 # Run the installation

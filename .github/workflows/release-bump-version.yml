@@ -319,6 +319,9 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
+          # Configure git to use the app token
+          git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git"
+
           # Verify the token works
           echo "Verifying GitHub App token..."
           gh auth status
@@ -326,21 +329,31 @@ jobs:
           # Get current commit SHA and tag
           COMMIT_SHA=$(git rev-parse HEAD)
           TAG=$(git describe --tags --abbrev=0)
+          TEMP_BRANCH="temp-release-${TAG}"
 
           echo "Commit SHA: $COMMIT_SHA"
           echo "Tag: $TAG"
+          echo "Temp branch: $TEMP_BRANCH"
 
-          # Create tag using API
+          # Step 1: Push to a temp branch (to get commit on remote)
+          echo "Pushing to temp branch..."
+          git push origin "HEAD:refs/heads/${TEMP_BRANCH}" --force
+
+          # Step 2: Create tag via API
           echo "Creating tag via API..."
           gh api /repos/${{ github.repository }}/git/refs \
             -f ref="refs/tags/${TAG}" \
             -f sha="${COMMIT_SHA}" || echo "Tag may already exist"
 
-          # Update main branch ref using API (bypasses branch protection)
+          # Step 3: Update main branch ref using API (bypasses branch protection)
           echo "Updating main branch via API..."
           gh api -X PATCH /repos/${{ github.repository }}/git/refs/heads/main \
             -f sha="${COMMIT_SHA}" \
             -F force=false
+
+          # Step 4: Clean up temp branch
+          echo "Cleaning up temp branch..."
+          git push origin --delete "${TEMP_BRANCH}" || true
 
   publish-computer:
     needs: [bump-version, publish-core]

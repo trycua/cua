@@ -76,17 +76,14 @@ lume clone my-vm my-vm-copy
 
 ## Automate VM Configuration
 
-Use unattended setup to automatically configure a fresh VM with user account, settings, and software:
+Use unattended setup to automatically run through the macOS Setup Assistant:
 
 ```bash
-# Create and configure a VM automatically
-lume create my-vm --os macos --ipsw latest \
-  --username lume \
-  --password lume \
-  --auto-run
+# Create VM and auto-configure with the tahoe preset
+lume create my-vm --os macos --ipsw latest --unattended tahoe
 ```
 
-This creates the VM and runs the initial macOS setup wizard automatically. See [Unattended Setup](/lume/guide/fundamentals/unattended-setup) for more options.
+This creates a VM with user `lume` (password: `lume`) and configures common settings automatically. See [Unattended Setup](/lume/guide/fundamentals/unattended-setup) for custom configurations.
 
 ## Next Steps
 

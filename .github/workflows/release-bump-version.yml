@@ -161,10 +161,10 @@ jobs:
       - name: Clean existing tag if present
         run: |
           cd ${{ steps.package.outputs.directory }}
-          # Get the new version that bump2version would create
-          NEW_VERSION=$(bump2version --dry-run --list ${{ inputs.bump_type }} 2>&1 | grep new_version | sed 's/new_version=//')
+          # Get the new version that bump2version would create (capture only first match, ignore stderr)
+          NEW_VERSION=$(bump2version --dry-run --list ${{ inputs.bump_type }} 2>/dev/null | grep -m1 '^new_version=' | sed 's/new_version=//')
           # Get tag name pattern from .bumpversion.cfg
-          TAG_NAME=$(grep 'tag_name' .bumpversion.cfg | sed 's/tag_name = //' | sed "s/{new_version}/$NEW_VERSION/")
+          TAG_NAME=$(grep -m1 '^tag_name' .bumpversion.cfg | sed 's/tag_name *= *//' | sed "s|{new_version}|$NEW_VERSION|")
 
           echo "Checking for existing tag: $TAG_NAME"
 

@@ -23,7 +23,7 @@ struct LumeSettings: Codable, Sendable {
         ],
         defaultLocationName: "default",
         cacheDirectory: "~/.lume/cache",
-        cachingEnabled: true,
+        cachingEnabled: false,
         registry: .defaultConfig
     )
 
@@ -83,7 +83,7 @@ final class SettingsManager: @unchecked Sendable {
             ],
             defaultLocationName: "default",
             cacheDirectory: "~/.lume/cache",
-            cachingEnabled: true,
+            cachingEnabled: false,
             registry: .defaultConfig
         )
 
@@ -297,7 +297,7 @@ final class SettingsManager: @unchecked Sendable {
 
         var defaultLocationName = "default"
         var cacheDirectory = "~/.lume/cache"
-        var cachingEnabled = true  // default to true for backward compatibility
+        var cachingEnabled = false  // default to false to save disk space
         var vmLocations: [VMLocation] = []
 
         // Registry config parsing state

@@ -1,6 +1,7 @@
 name: Reusable Docker Build Workflow
 
 on:
+  workflow_dispatch:  # Prevents phantom runs on push, allows manual testing
   workflow_call:
     inputs:
       image_name:

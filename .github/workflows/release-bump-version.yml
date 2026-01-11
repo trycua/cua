@@ -158,6 +158,21 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
+      - name: Clean existing tag if present
+        run: |
+          cd ${{ steps.package.outputs.directory }}
+          # Get the new version that bump2version would create
+          NEW_VERSION=$(bump2version --dry-run --list ${{ inputs.bump_type }} 2>&1 | grep new_version | sed 's/new_version=//')
+          # Get tag name pattern from .bumpversion.cfg
+          TAG_NAME=$(grep 'tag_name' .bumpversion.cfg | sed 's/tag_name = //' | sed "s/{new_version}/$NEW_VERSION/")
+
+          echo "Checking for existing tag: $TAG_NAME"
+
+          # Delete local tag if exists
+          git tag -d "$TAG_NAME" 2>/dev/null || true
+          # Delete remote tag if exists
+          git push origin ":refs/tags/$TAG_NAME" 2>/dev/null || true
+
       - name: Run bump2version
         run: |
           cd ${{ steps.package.outputs.directory }}

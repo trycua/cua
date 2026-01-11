@@ -61,8 +61,8 @@ class VMProviderFactory:
 
                 if not HAS_LUME:
                     raise ImportError(
-                        "The pylume package is required for LumeProvider. "
-                        "Please install it with 'pip install cua-computer[lume]'"
+                        "LumeProvider requires curl and the Lume CLI. "
+                        "Please install Lume from https://github.com/trycua/cua/tree/main/libs/lume"
                     )
                 return LumeProvider(
                     provider_port=provider_port,
@@ -74,8 +74,8 @@ class VMProviderFactory:
             except ImportError as e:
                 logger.error(f"Failed to import LumeProvider: {e}")
                 raise ImportError(
-                    "The pylume package is required for LumeProvider. "
-                    "Please install it with 'pip install cua-computer[lume]'"
+                    "LumeProvider requires curl and the Lume CLI. "
+                    "Please install Lume from https://github.com/trycua/cua/tree/main/libs/lume"
                 ) from e
         elif provider_type == VMProviderType.LUMIER:
             try:

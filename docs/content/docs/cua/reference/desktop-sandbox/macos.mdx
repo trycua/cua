@@ -1,0 +1,81 @@
+---
+title: macOS Sandbox
+description: macOS virtual machines for Computer-Using Agents on Apple Silicon
+---
+
+macOS sandbox environments run native macOS virtual machines on Apple Silicon using Apple's Virtualization Framework. These provide near-native performance for running Computer-Using Agents on macOS.
+
+## Options
+
+| Option | Description | Best For |
+|--------|-------------|----------|
+| [Lume](/lume) | Native CLI for creating and managing macOS VMs | Direct VM management, development |
+| [Lumier](/lume/guide/advanced/lumier) | Docker wrapper around Lume | Containerized deployments |
+
+## Requirements
+
+- **Apple Silicon Mac** (M1, M2, M3, M4, etc.)
+- **macOS 13.0 or later**
+- At least 8GB RAM (16GB recommended)
+- At least 30GB free disk space
+
+## Quick Start with Lume
+
+```bash
+# Install Lume
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/lume/scripts/install.sh)"
+
+# Create and run a macOS VM
+lume create my-vm --os macos --ipsw latest
+lume run my-vm
+```
+
+## Quick Start with Lumier (Docker)
+
+```bash
+# Run macOS VM in Docker container
+docker run -it --rm \
+    --name macos-vm \
+    -p 8006:8006 \
+    -e VM_NAME=macos-vm \
+    -e CPU_CORES=4 \
+    -e RAM_SIZE=8192 \
+    trycua/lumier:latest
+```
+
+Access your VM at `http://localhost:8006`.
+
+## Using with Cua
+
+```python
+from computer import Computer
+
+# Create computer with macOS VM
+computer = Computer(
+    os_type="macos",
+    provider_type="lume",
+    display="1920x1080",
+    memory="8GB",
+    cpu="4"
+)
+
+async with computer:
+    screenshot = await computer.interface.screenshot()
+    await computer.interface.left_click(100, 100)
+    await computer.interface.type_text("Hello from Cua!")
+```
+
+## Comparison with Other Platforms
+
+| Feature | macOS (Lume) | Linux Container | QEMU VM |
+|---------|--------------|-----------------|---------|
+| Performance | Near-native | Native | Virtualized |
+| Host OS | macOS only | Any with Docker | Any with KVM |
+| Setup Time | Minutes | Seconds | 15-30 min (first run) |
+| Windows Support | No | No | Yes |
+
+## Related Documentation
+
+- [Lume Documentation](/lume) - Full Lume CLI reference
+- [Lumier Documentation](/lume/guide/advanced/lumier) - Docker-based macOS VMs
+- [Unattended Setup](/lume/guide/advanced/unattended-setup) - Automate macOS VM configuration

@@ -1,0 +1,59 @@
+---
+title: Desktop Sandbox
+description: Isolated desktop environments for Computer-Using Agents
+---
+
+Desktop sandbox environments provide isolated desktops for running Computer-Using Agents. Each environment includes a pre-installed computer-server for remote control via HTTP API.
+
+## Sandbox Options
+
+### [macOS Sandbox](/cua/reference/desktop-sandbox/macos)
+
+Native macOS virtual machines on Apple Silicon using Apple's Virtualization Framework. Near-native performance for macOS automation.
+
+- **Lume** - Native CLI for VM management
+- **Lumier** - Docker wrapper for containerized deployments
+
+### [Linux Container](/cua/reference/desktop-sandbox/linux-container)
+
+Docker containers running Linux desktops. Fast startup, low resource usage.
+
+| Container | Description |
+|-----------|-------------|
+| [Kasm](/cua/reference/desktop-sandbox/linux-container/kasm) | KasmWeb-based Ubuntu with XFCE |
+| [XFCE](/cua/reference/desktop-sandbox/linux-container/xfce) | Vanilla XFCE, minimal dependencies |
+
+### [QEMU Container](/cua/reference/desktop-sandbox/qemu-container)
+
+Full virtual machines running in Docker via QEMU/KVM. Complete OS isolation, supports Windows.
+
+| Container | OS | Description |
+|-----------|-----|-------------|
+| [Windows](/cua/reference/desktop-sandbox/qemu-container/windows) | Windows 11 | Windows desktop with KVM |
+| [Linux](/cua/reference/desktop-sandbox/qemu-container/linux) | Ubuntu 22.04 | Full Ubuntu VM |
+| [Android](/cua/reference/desktop-sandbox/qemu-container/android) | Android 11 | Android emulator |
+
+## Quick Comparison
+
+| Feature | macOS (Lume) | Linux Container | QEMU VM |
+|---------|--------------|-----------------|---------|
+| Performance | Near-native | Native | Virtualized |
+| Startup Time | Minutes | Seconds | 30s-2min |
+| Host Requirements | Apple Silicon | Docker | KVM support |
+| Windows Support | No | No | Yes |
+| Resource Usage | Medium | Low | High |
+| Memory Snapshots | Yes | No | Yes |
+| Filesystem Snapshots | Yes | Yes | Yes |
+
+### Snapshot Capabilities
+
+**macOS (Lume)** and **QEMU containers** support full memory snapshots, allowing you to save and restore the complete VM state including running processes and memory contents. This is useful for creating checkpoints during long-running tasks or reverting to a known state.
+
+**Linux containers** (Kasm, XFCE) only support filesystem snapshots via `docker commit`, which saves the disk state but not running processes or memory. The container must be restarted after restoring.
+
+## Common Access Points
+
+All environments expose:
+
+- **Computer Server API** - HTTP API for automation (port 5000 or 8000)
+- **VNC/noVNC** - Visual desktop access via browser (port 6901 or 8006)

@@ -1,0 +1,75 @@
+---
+title: QEMU Android
+description: Android emulator container with QEMU/KVM for Computer-Using Agents
+---
+
+Docker image that runs an Android emulator using QEMU/KVM with Cua Computer Server integration, enabling programmatic control of Android devices via HTTP API.
+
+## Features
+
+- Android 11 Emulator (based on budtmo/docker-android)
+- Cua Computer Server for automation via HTTP API
+- VNC access for visual interaction via web browser
+- Memory snapshots support
+
+## Requirements
+
+- Linux host with KVM support
+- Docker with `--device=/dev/kvm` access
+
+## Quick Start
+
+```bash
+docker pull trycua/cua-qemu-android:latest
+
+docker run -d \
+  -p 6080:6080 \
+  -p 8000:8000 \
+  -e EMULATOR_DEVICE="Samsung Galaxy S10" \
+  -e WEB_VNC=true \
+  --device /dev/kvm \
+  --name android-container \
+  trycua/cua-qemu-android:latest
+```
+
+**Access Points:**
+- **VNC Web UI**: `http://localhost:6080`
+- **Computer Server API**: `http://localhost:8000`
+- **API Documentation**: `http://localhost:8000/docs`
+
+## API Examples
+
+```bash
+# Get screen size
+curl -X POST http://localhost:8000/cmd \
+  -H "Content-Type: application/json" \
+  -d '{"command": "get_screen_size", "params": {}}'
+
+# Launch app
+curl -X POST http://localhost:8000/cmd \
+  -H "Content-Type: application/json" \
+  -d '{"command": "launch", "params": {"app": "com.android.settings"}}'
+
+# Set wallpaper
+curl -X POST http://localhost:8000/cmd \
+  -H "Content-Type: application/json" \
+  -d '{"command": "set_wallpaper", "params": {"path": "/sdcard/image.jpg", "target": "home"}}'
+```
+
+## Configuration
+
+### Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `EMULATOR_DEVICE` | - | Device profile (e.g., "Samsung Galaxy S10") |
+| `WEB_VNC` | `true` | Enable VNC web interface |
+
+### Ports
+
+- **6080**: VNC web interface
+- **8000**: Computer Server API
+
+## Building from Source
+
+To build the image manually, see the [qemu-docker/android source code](https://github.com/trycua/cua/tree/main/libs/qemu-docker/android).

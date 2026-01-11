@@ -27,7 +27,6 @@ jobs:
           - computer
           - computer-server
           - mcp-server
-          - pylume
           - som
 
     steps:

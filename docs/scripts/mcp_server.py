@@ -11,7 +11,7 @@ Available databases:
 
 import sqlite3
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 import lancedb
 from fastmcp import FastMCP
@@ -23,6 +23,7 @@ SQLITE_PATH = DB_PATH / "docs.sqlite"
 
 # Configuration - Code Index
 CODE_DB_PATH = Path(__file__).parent.parent / "code_db"
+# Legacy paths (for backward compatibility)
 CODE_SQLITE_PATH = CODE_DB_PATH / "code_index.sqlite"
 CODE_LANCEDB_PATH = CODE_DB_PATH / "code_index.lancedb"
 
@@ -81,8 +82,9 @@ IMPORTANT: Always cite sources - URLs for docs, component@version:path for code.
 _lance_db: Optional[lancedb.DBConnection] = None
 _lance_table = None
 _sqlite_conn: Optional[sqlite3.Connection] = None
-_code_lance_db: Optional[lancedb.DBConnection] = None
-_code_lance_table = None
+_code_lance_tables: dict = {}  # component -> (db, table)
+_code_sqlite_conn = None
+_code_components: list[str] = []
 
 
 def get_lance_table():
@@ -98,18 +100,118 @@ def get_lance_table():
     return _lance_table
 
 
-def get_code_lance_table():
-    """Get or create code LanceDB connection"""
-    global _code_lance_db, _code_lance_table
-    if _code_lance_table is None:
-        if not CODE_LANCEDB_PATH.exists():
+def discover_code_components() -> list[str]:
+    """Discover available component databases."""
+    global _code_components
+    if not _code_components:
+        if CODE_DB_PATH.exists():
+            # Find all component SQLite databases
+            for db_file in CODE_DB_PATH.glob("code_index_*.sqlite"):
+                component = db_file.stem.replace("code_index_", "")
+                _code_components.append(component)
+            # Fallback to legacy single database
+            if not _code_components and CODE_SQLITE_PATH.exists():
+                _code_components.append("_legacy")
+    return _code_components
+
+
+def get_code_lance_tables() -> list[tuple[str, Any]]:
+    """Get LanceDB connections for all code components."""
+    global _code_lance_tables
+    components = discover_code_components()
+
+    for component in components:
+        if component not in _code_lance_tables:
+            if component == "_legacy":
+                db_path = CODE_LANCEDB_PATH
+            else:
+                db_path = CODE_DB_PATH / f"code_index_{component}.lancedb"
+
+            if db_path.exists():
+                db = lancedb.connect(db_path)
+                table = db.open_table("code")
+                _code_lance_tables[component] = (db, table)
+
+    return [(comp, tbl) for comp, (_, tbl) in _code_lance_tables.items()]
+
+
+def get_code_sqlite_conn():
+    """Get SQLite connection with all component databases attached."""
+    global _code_sqlite_conn
+    if _code_sqlite_conn is None:
+        components = discover_code_components()
+        if not components:
             raise RuntimeError(
-                f"Code LanceDB not found at {CODE_LANCEDB_PATH}. "
-                "Run 'modal run docs/scripts/modal_app.py::generate_code_index' first to create the database."
+                f"No code databases found at {CODE_DB_PATH}. "
+                "Run 'modal run docs/scripts/modal_app.py' to create the databases."
             )
-        _code_lance_db = lancedb.connect(CODE_LANCEDB_PATH)
-        _code_lance_table = _code_lance_db.open_table("code")
-    return _code_lance_table
+
+        # Create in-memory database and attach all component databases
+        _code_sqlite_conn = sqlite3.connect(":memory:")
+        _code_sqlite_conn.row_factory = sqlite3.Row
+
+        # Check for legacy single database first
+        has_legacy = False
+        if CODE_SQLITE_PATH.exists() and "_legacy" in components:
+            _code_sqlite_conn.execute(
+                f"ATTACH DATABASE 'file:{CODE_SQLITE_PATH}?mode=ro' AS code_legacy"
+            )
+            has_legacy = True
+
+        # Attach each component database
+        attached = []
+        for component in components:
+            if component == "_legacy":
+                continue
+            db_path = CODE_DB_PATH / f"code_index_{component}.sqlite"
+            if db_path.exists():
+                # SQLite schema names can't have hyphens
+                safe_name = component.replace("-", "_")
+                _code_sqlite_conn.execute(
+                    f"ATTACH DATABASE 'file:{db_path}?mode=ro' AS code_{safe_name}"
+                )
+                attached.append(safe_name)
+
+        # Create unified view across all component databases
+        if attached or has_legacy:
+            union_parts = []
+
+            # Include legacy database if it exists
+            if has_legacy:
+                union_parts.append(
+                    "SELECT id, component, version, file_path, content, language FROM code_legacy.code_files"
+                )
+
+            # Include component databases
+            for safe_name in attached:
+                union_parts.append(
+                    f"SELECT id, component, version, file_path, content, language FROM code_{safe_name}.code_files"
+                )
+
+            union_sql = " UNION ALL ".join(union_parts)
+            _code_sqlite_conn.execute(f"CREATE VIEW code_files AS {union_sql}")
+
+            # Create unified FTS view (queries individual FTS tables)
+            # Note: This is a regular view, not an FTS table, so MATCH won't work on it
+            # Users must query component-specific FTS tables like: code_agent.code_files_fts
+            fts_union_parts = []
+
+            # Include legacy FTS if it exists
+            if has_legacy:
+                fts_union_parts.append(
+                    "SELECT rowid, content, component, version, file_path FROM code_legacy.code_files_fts"
+                )
+
+            # Include component FTS tables
+            for safe_name in attached:
+                fts_union_parts.append(
+                    f"SELECT rowid, content, component, version, file_path FROM code_{safe_name}.code_files_fts"
+                )
+
+            fts_union_sql = " UNION ALL ".join(fts_union_parts)
+            _code_sqlite_conn.execute(f"CREATE VIEW code_files_fts_union AS {fts_union_sql}")
+
+    return _code_sqlite_conn
 
 
 def get_sqlite_conn() -> sqlite3.Connection:
@@ -292,11 +394,15 @@ def query_code_db(sql: str) -> list[dict]:
     - idx_component ON code_files(component)
     - idx_version ON code_files(component, version)
 
-    Virtual Table: code_files_fts (FTS5 full-text search)
+    Virtual Table: code_files_fts (component-sharded FTS5 full-text search)
+    - Available in each component schema: code_agent.code_files_fts, code_computer.code_files_fts, etc.
     - content TEXT                     -- Full-text indexed content
     - component TEXT UNINDEXED         -- Component name for filtering
     - version TEXT UNINDEXED           -- Version for filtering
     - file_path TEXT UNINDEXED         -- File path for reference
+
+    Note: FTS5 MATCH queries must target component-specific tables (e.g., code_agent.code_files_fts).
+    For non-FTS queries, use the unified code_files view which aggregates all components.
 
     Example queries:
 
@@ -322,34 +428,30 @@ def query_code_db(sql: str) -> list[dict]:
        FROM code_files
        WHERE component = 'agent' AND version = '0.7.3' AND file_path = 'agent/core.py'
 
-    5. Full-text search (FTS5):
+    5. Full-text search in a specific component (FTS5):
        SELECT f.component, f.version, f.file_path, f.language,
-              snippet(code_files_fts, 0, '>>>', '<<<', '...', 64) as snippet
-       FROM code_files_fts
-       JOIN code_files f ON code_files_fts.rowid = f.id
-       WHERE code_files_fts MATCH 'ComputerAgent'
-         AND code_files_fts.component = 'agent'
+              snippet(fts, 0, '>>>', '<<<', '...', 64) as snippet
+       FROM code_agent.code_files_fts fts
+       JOIN code_files f ON fts.rowid = f.id AND f.component = 'agent'
+       WHERE fts MATCH 'ComputerAgent'
        ORDER BY rank
        LIMIT 10
 
-    6. Search for function definitions:
+    6. Search across all components using LIKE (slower but simpler):
+       SELECT component, version, file_path,
+              substr(content, 1, 200) as preview
+       FROM code_files
+       WHERE content LIKE '%ComputerAgent%'
+       LIMIT 10
+
+    7. Search for function definitions in a component:
        SELECT f.component, f.version, f.file_path,
-              snippet(code_files_fts, 0, '>>>', '<<<', '...', 100) as snippet
-       FROM code_files_fts
-       JOIN code_files f ON code_files_fts.rowid = f.id
-       WHERE code_files_fts MATCH '"def screenshot" OR "async def screenshot"'
+              snippet(fts, 0, '>>>', '<<<', '...', 100) as snippet
+       FROM code_agent.code_files_fts fts
+       JOIN code_files f ON fts.rowid = f.id AND f.component = 'agent'
+       WHERE fts MATCH '"def screenshot" OR "async def screenshot"'
        ORDER BY rank
        LIMIT 10
-
-    7. Search across all versions of a component:
-       SELECT f.version, f.file_path,
-              snippet(code_files_fts, 0, '>>>', '<<<', '...', 64) as snippet
-       FROM code_files_fts
-       JOIN code_files f ON code_files_fts.rowid = f.id
-       WHERE code_files_fts MATCH 'error handling'
-         AND code_files_fts.component = 'agent'
-       ORDER BY f.version DESC, rank
-       LIMIT 20
 
     Args:
         sql: SQL query to execute
@@ -357,12 +459,10 @@ def query_code_db(sql: str) -> list[dict]:
     Returns:
         List of dictionaries, one per row, with column names as keys
     """
-    conn = sqlite3.connect(f"file:{CODE_SQLITE_PATH}?mode=ro", uri=True)
-    conn.row_factory = sqlite3.Row
+    conn = get_code_sqlite_conn()
     cursor = conn.cursor()
     cursor.execute(sql)
     results = [dict(row) for row in cursor.fetchall()]
-    conn.close()
     return results
 
 
@@ -372,12 +472,12 @@ def query_code_vectors(
     limit: int = 10,
     where: Optional[str] = None,
     select: Optional[list[str]] = None,
+    component: Optional[str] = None,
 ) -> list[dict]:
     """
-    Execute a vector similarity search against the code LanceDB (read-only).
+    Execute a vector similarity search against code LanceDBs (read-only).
 
-    This provides direct access to the vector database for semantic code search.
-    The query is embedded using all-MiniLM-L6-v2 and compared against code embeddings.
+    Searches across all component databases and returns merged results sorted by similarity.
 
     Schema:
     - text TEXT           -- The source code content
@@ -394,6 +494,7 @@ def query_code_vectors(
         where: Optional SQL-like filter (e.g., "component = 'agent'", "version = '0.7.3'",
                "component = 'agent' AND version = '0.7.3'")
         select: Optional list of columns to return (default: all columns except vector)
+        component: Optional component to search (if not specified, searches all)
 
     Returns:
         List of matching code files with similarity scores (_distance field,
@@ -401,30 +502,37 @@ def query_code_vectors(
 
     Example usage:
     - query="mouse click implementation", limit=5
-    - query="screenshot capture", where="component = 'computer'"
+    - query="screenshot capture", component="computer"
     - query="agent loop error handling", where="component = 'agent' AND version = '0.7.3'"
     - query="async task execution", select=["component", "version", "file_path", "text"]
     """
     limit = min(max(1, limit), 100)
+    tables = get_code_lance_tables()
 
-    table = get_code_lance_table()
+    all_results = []
 
-    # Build search query
-    search = table.search(query).limit(limit)
+    for comp_name, table in tables:
+        # Skip if component filter specified and doesn't match
+        if component and comp_name != component:
+            continue
 
-    # Apply where filter if specified
-    if where:
-        search = search.where(where)
+        search = table.search(query).limit(limit)
 
-    # Apply column selection if specified
-    if select:
-        search = search.select(select)
+        if where:
+            search = search.where(where)
+        if select:
+            search = search.select(select)
 
-    results = search.to_list()
+        results = search.to_list()
+        all_results.extend(results)
+
+    # Sort by distance and take top results
+    all_results.sort(key=lambda x: x.get("_distance", float("inf")))
+    all_results = all_results[:limit]
 
     # Format results - include all fields except vector
     formatted = []
-    for r in results:
+    for r in all_results:
         result = {}
         for key, value in r.items():
             # Skip the vector field as it's large and not useful to return

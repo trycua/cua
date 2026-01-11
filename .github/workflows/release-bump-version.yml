@@ -39,7 +39,6 @@ permissions:
   contents: write
   id-token: write
   packages: write
-  pull-requests: write
 
 jobs:
   bump-version:
@@ -307,40 +306,13 @@ jobs:
           echo "lume version: $VERSION"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
-      - name: Create release branch and PR
+      - name: Push release to main
         env:
-          GH_TOKEN: ${{ secrets.PR_TOKEN }}
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
         run: |
-          # Get the tag that was created by bump2version
           TAG=$(git describe --tags --abbrev=0)
-          BRANCH_NAME="release/${TAG}"
-
-          # Clean up any existing release branch from previous failed runs
-          git push origin --delete "$BRANCH_NAME" 2>/dev/null || true
-
-          # Close any existing PR for this branch
-          EXISTING_PR=$(gh pr list --head "$BRANCH_NAME" --json number --jq '.[0].number' 2>/dev/null || true)
-          if [ -n "$EXISTING_PR" ]; then
-            echo "Closing existing PR #$EXISTING_PR"
-            gh pr close "$EXISTING_PR" --delete-branch 2>/dev/null || true
-          fi
-
-          # Create and push the release branch
-          git checkout -b "$BRANCH_NAME"
-          git push origin "$BRANCH_NAME" --follow-tags
-
-          # Create PR and enable auto-merge
-          PR_URL=$(gh pr create \
-            --title "chore: bump version to ${TAG}" \
-            --body "Automated version bump to ${TAG}" \
-            --base main \
-            --head "$BRANCH_NAME")
-
-          echo "Created PR: $PR_URL"
-
-          # Enable auto-merge (will merge once requirements are met)
-          # This may fail if auto-merge is not enabled for the repository
-          gh pr merge "$PR_URL" --auto --squash || echo "Auto-merge not available, PR will need manual merge"
+          echo "Pushing version bump to main with tag: $TAG"
+          git push origin HEAD:main --follow-tags
 
   publish-computer:
     needs: [bump-version, publish-core]

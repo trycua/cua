@@ -537,16 +537,32 @@ EOF
     fi
   fi
 
-  # Install updater script and cleanup legacy updater
+  # Install updater script and setup periodic update checks
   if [ "$INSTALL_AUTO_UPDATER" = true ]; then
     install_updater_script
-    # Run updater once after installation to check for updates
-    if [ -x "$INSTALL_DIR/lume-update" ]; then
-      "$INSTALL_DIR/lume-update" &
+    UPDATER_SCRIPT="$INSTALL_DIR/lume-update"
+
+    # Clean up any legacy LaunchAgent updater (we use cron now)
+    cleanup_legacy_updater
+
+    # Setup cron job for daily update check (doesn't show in Login Items)
+    # Remove any existing lume-update cron entries, then add new one
+    CRON_ENTRY="0 10 * * * $UPDATER_SCRIPT >/tmp/lume_updater.log 2>&1"
+    EXISTING_CRON=$(crontab -l 2>/dev/null || echo "")
+    NEW_CRON=$(echo "$EXISTING_CRON" | grep -v "lume-update" || echo "")
+    echo "${NEW_CRON}${NEW_CRON:+
+}${CRON_ENTRY}" | crontab -
+
+    # Run updater once after installation
+    if [ -x "$UPDATER_SCRIPT" ]; then
+      "$UPDATER_SCRIPT" &
     fi
-    echo "${GREEN}Auto-updater installed. Run 'lume-update' to check for updates.${NORMAL}"
+    echo "${GREEN}Auto-updater installed. Checks daily at 10am via cron.${NORMAL}"
+  else
+    # Remove updater cron job if auto-updater is disabled
+    crontab -l 2>/dev/null | grep -v "lume-update" | crontab - 2>/dev/null || true
+    cleanup_legacy_updater
   fi
-  cleanup_legacy_updater
 }
 
 # Run the installation

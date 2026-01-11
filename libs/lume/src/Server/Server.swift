@@ -314,6 +314,13 @@ final class Server {
                     guard let self else { throw HTTPError.internalError }
                     return try await self.handlePush(request.body)
                 }),
+            // Host status endpoint for orchestrator health checks
+            Route(
+                method: "GET", path: "/lume/host/status",
+                handler: { [weak self] _ in
+                    guard let self else { throw HTTPError.internalError }
+                    return try await self.handleGetHostStatus()
+                }),
         ]
     }
 

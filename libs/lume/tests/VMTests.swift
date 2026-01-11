@@ -46,6 +46,7 @@ private func setupVMDirectory(_ tempDir: URL) throws -> VMDirectory {
 @Test("VM initialization and configuration")
 func testVMInitialization() async throws {
     let tempDir = try createTempDirectory()
+    defer { try? FileManager.default.removeItem(at: tempDir) }
     let vmDir = try setupVMDirectory(tempDir)
     var config = try VMConfig(
         os: "mock-os",
@@ -76,6 +77,7 @@ func testVMInitialization() async throws {
 @Test("VM run and stop operations")
 func testVMRunAndStop() async throws {
     let tempDir = try createTempDirectory()
+    defer { try? FileManager.default.removeItem(at: tempDir) }
     let vmDir = try setupVMDirectory(tempDir)
     var config = try VMConfig(
         os: "mock-os",
@@ -113,6 +115,7 @@ func testVMRunAndStop() async throws {
 @Test("VM configuration updates")
 func testVMConfigurationUpdates() async throws {
     let tempDir = try createTempDirectory()
+    defer { try? FileManager.default.removeItem(at: tempDir) }
     let vmDir = try setupVMDirectory(tempDir)
     var config = try VMConfig(
         os: "mock-os",
@@ -148,6 +151,7 @@ func testVMConfigurationUpdates() async throws {
 @Test("VM setup process")
 func testVMSetup() async throws {
     let tempDir = try createTempDirectory()
+    defer { try? FileManager.default.removeItem(at: tempDir) }
     let vmDir = try setupVMDirectory(tempDir)
     var config = try VMConfig(
         os: "mock-os",

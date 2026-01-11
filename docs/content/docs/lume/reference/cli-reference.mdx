@@ -43,6 +43,13 @@ Create a new virtual machine
 - `--ipsw` - Path to IPSW file or 'latest' for macOS VMs
 - `--storage` - VM storage location to use
 - `--unattended` - [Preview] Preset name or path to YAML config file for unattended macOS Setup Assistant automation. Built-in presets: tahoe. Only supported for macOS VMs.
+- `--debug-dir` - Custom directory for debug screenshots during unattended setup (defaults to unique folder in system temp)
+- `--vnc-port` - Port to use for the VNC server during unattended setup. Defaults to 0 (auto-assign) (default: 0)
+
+**Flags:**
+
+- `--debug` - Enable debug mode for unattended setup - saves screenshots with click coordinates
+- `--no-display` - Do not open the VNC client during unattended setup (default: true for unattended)
 
 ### lume clone
 

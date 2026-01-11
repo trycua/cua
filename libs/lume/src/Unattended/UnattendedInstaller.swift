@@ -37,24 +37,53 @@ final class UnattendedInstaller {
         Logger.info("Parsed boot commands", metadata: ["count": "\(commands.count)"])
 
         // Start the VM in a background task (vm.run() blocks forever on success)
+        // We use retry logic to handle cases where auxiliary storage is still locked
+        // from a previous IPSW installation (race condition with VZVirtualMachine deallocation)
         Logger.info("Starting VM for unattended setup (background task)")
+        var vmStartError: Error?
         let vmTask = Task {
-            try await vm.run(
-                noDisplay: noDisplay,
-                sharedDirectories: [],
-                mount: nil,
-                vncPort: vncPort,
-                recoveryMode: false,
-                usbMassStoragePaths: []
-            )
+            var attempts = 0
+            let maxAttempts = 3
+            while attempts < maxAttempts {
+                do {
+                    try await vm.run(
+                        noDisplay: noDisplay,
+                        sharedDirectories: [],
+                        mount: nil,
+                        vncPort: vncPort,
+                        recoveryMode: false,
+                        usbMassStoragePaths: []
+                    )
+                    return  // VM started successfully
+                } catch {
+                    let errorDescription = error.localizedDescription
+                    // Check if this is the auxiliary storage lock error
+                    if errorDescription.contains("auxiliary storage") || errorDescription.contains("Failed to lock") {
+                        attempts += 1
+                        if attempts < maxAttempts {
+                            Logger.info("VM start failed due to auxiliary storage lock, retrying", metadata: [
+                                "attempt": "\(attempts)/\(maxAttempts)",
+                                "waitTime": "5s"
+                            ])
+                            try await Task.sleep(nanoseconds: 5_000_000_000)  // Wait 5 seconds before retry
+                            continue
+                        }
+                    }
+                    // For other errors or after max retries, store and rethrow
+                    vmStartError = error
+                    throw error
+                }
+            }
         }
 
-        // Give the VM a moment to start up
-        // Note: Startup errors will be caught when attempting to connect to the VNC input
-        // client below, as that requires the VM to be successfully initialized with a
-        // responding VNC server. Task.isCancelled only returns true for explicitly cancelled
-        // tasks, not for tasks that threw errors, so checking it here would be ineffective.
+        // Give the VM a moment to start up and check for early failures
         try await Task.sleep(nanoseconds: 2_000_000_000)  // 2 seconds
+
+        // Check if VM start failed early (e.g., auxiliary storage lock error)
+        if let error = vmStartError {
+            Logger.error("VM failed to start", metadata: ["error": error.localizedDescription])
+            throw error
+        }
 
         // Wait for initial boot
         Logger.info("Waiting for VM to boot", metadata: ["bootWait": "\(config.bootWait)s"])

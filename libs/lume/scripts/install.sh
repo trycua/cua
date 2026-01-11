@@ -33,6 +33,9 @@ LATEST_RELEASE_URL="https://api.github.com/repos/$GITHUB_REPO/releases/latest"
 # Option to skip background service setup (default: install it)
 INSTALL_BACKGROUND_SERVICE=true
 
+# Option to skip auto-updater setup (default: install it)
+INSTALL_AUTO_UPDATER=true
+
 # Default port for lume serve (default: 7777)
 LUME_PORT=7777
 
@@ -50,14 +53,18 @@ while [ "$#" -gt 0 ]; do
     --no-background-service)
       INSTALL_BACKGROUND_SERVICE=false
       ;;
+    --no-auto-updater)
+      INSTALL_AUTO_UPDATER=false
+      ;;
     --help)
       echo "${BOLD}${BLUE}Lume Installer${NORMAL}"
       echo "Usage: $0 [OPTIONS]"
       echo ""
       echo "Options:"
       echo "  --install-dir DIR         Install to the specified directory (default: $DEFAULT_INSTALL_DIR)"
-      echo "  --port PORT              Specify the port for lume serve (default: 7777)"
+      echo "  --port PORT               Specify the port for lume serve (default: 7777)"
       echo "  --no-background-service   Do not setup the Lume background service (LaunchAgent)"
+      echo "  --no-auto-updater         Do not setup automatic updates at login"
       echo "  --help                    Display this help message"
       echo ""
       echo "Examples:"
@@ -272,6 +279,214 @@ install_binary() {
   fi
 }
 
+# Install the auto-updater script
+install_updater_script() {
+  UPDATER_SCRIPT="$INSTALL_DIR/lume-update"
+
+  echo "Installing auto-updater script to $UPDATER_SCRIPT..."
+
+  cat <<'UPDATER_EOF' > "$UPDATER_SCRIPT"
+#!/bin/bash
+# Lume Auto-Updater
+# This script checks for updates and installs them if available
+
+set -e
+
+LOG_FILE="/tmp/lume_updater.log"
+GITHUB_REPO="trycua/cua"
+
+log() {
+  echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" >> "$LOG_FILE"
+}
+
+log "Starting Lume update check..."
+
+# Find lume binary location
+LUME_BIN=$(command -v lume 2>/dev/null || echo "$HOME/.local/bin/lume")
+INSTALL_DIR=$(dirname "$LUME_BIN")
+
+if [ ! -x "$LUME_BIN" ]; then
+  log "ERROR: lume binary not found at $LUME_BIN"
+  exit 1
+fi
+
+# Get current version
+CURRENT_VERSION=$("$LUME_BIN" --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo "0.0.0")
+log "Current version: $CURRENT_VERSION"
+
+# Get latest release tag from GitHub
+get_latest_tag() {
+  local page=1
+  local per_page=100
+  local max_pages=5
+
+  while [ $page -le $max_pages ]; do
+    local response=$(curl -s "https://api.github.com/repos/$GITHUB_REPO/tags?per_page=$per_page&page=$page")
+
+    if [ -z "$response" ]; then
+      return 1
+    fi
+
+    local tag=$(echo "$response" | grep '"name": "lume-' | head -n 1 | cut -d '"' -f 4)
+
+    if [ -n "$tag" ]; then
+      echo "$tag"
+      return 0
+    fi
+
+    page=$((page + 1))
+  done
+
+  return 1
+}
+
+LATEST_TAG=$(get_latest_tag)
+if [ -z "$LATEST_TAG" ]; then
+  log "ERROR: Could not fetch latest release tag"
+  exit 1
+fi
+
+# Extract version from tag (lume-vX.Y.Z -> X.Y.Z)
+LATEST_VERSION=$(echo "$LATEST_TAG" | sed 's/lume-v//' | sed 's/lume-//')
+log "Latest version: $LATEST_VERSION"
+
+# Compare versions (simple string comparison works for semver)
+version_gt() {
+  [ "$(printf '%s\n' "$1" "$2" | sort -V | tail -n1)" = "$1" ] && [ "$1" != "$2" ]
+}
+
+if version_gt "$LATEST_VERSION" "$CURRENT_VERSION"; then
+  log "New version available: $LATEST_VERSION (current: $CURRENT_VERSION)"
+  log "Downloading update..."
+
+  TEMP_DIR=$(mktemp -d)
+  trap 'rm -rf "$TEMP_DIR"' EXIT
+
+  DOWNLOAD_URL="https://github.com/$GITHUB_REPO/releases/download/$LATEST_TAG/lume.tar.gz"
+
+  if curl -sL "$DOWNLOAD_URL" -o "$TEMP_DIR/lume.tar.gz"; then
+    if tar -tzf "$TEMP_DIR/lume.tar.gz" > /dev/null 2>&1; then
+      tar -xzf "$TEMP_DIR/lume.tar.gz" -C "$TEMP_DIR"
+
+      # Stop the daemon before updating
+      launchctl unload "$HOME/Library/LaunchAgents/com.trycua.lume_daemon.plist" 2>/dev/null || true
+
+      # Install new binary
+      mv "$TEMP_DIR/lume" "$INSTALL_DIR/"
+      chmod +x "$INSTALL_DIR/lume"
+
+      # Restart the daemon
+      launchctl load "$HOME/Library/LaunchAgents/com.trycua.lume_daemon.plist" 2>/dev/null || true
+
+      log "Successfully updated lume to version $LATEST_VERSION"
+    else
+      log "ERROR: Downloaded file is not a valid archive"
+      exit 1
+    fi
+  else
+    log "ERROR: Failed to download update"
+    exit 1
+  fi
+else
+  log "Already up to date (version $CURRENT_VERSION)"
+fi
+
+log "Update check complete"
+UPDATER_EOF
+
+  chmod +x "$UPDATER_SCRIPT"
+  echo "Auto-updater script installed."
+}
+
+# Setup the auto-updater LaunchAgent
+setup_auto_updater() {
+  UPDATER_SERVICE_NAME="com.trycua.lume_updater"
+  UPDATER_PLIST_PATH="$HOME/Library/LaunchAgents/$UPDATER_SERVICE_NAME.plist"
+  UPDATER_SCRIPT="$INSTALL_DIR/lume-update"
+
+  echo ""
+  echo "Setting up auto-updater LaunchAgent..."
+
+  # Create LaunchAgents directory if it doesn't exist
+  mkdir -p "$HOME/Library/LaunchAgents"
+
+  # Unload existing service if present
+  if [ -f "$UPDATER_PLIST_PATH" ]; then
+    echo "Existing updater LaunchAgent found. Unloading..."
+    launchctl unload "$UPDATER_PLIST_PATH" 2>/dev/null || true
+  fi
+
+  # Create the plist file
+  # RunAtLoad: run when loaded (at login)
+  # StartInterval: also check every 24 hours (86400 seconds)
+  cat <<EOF > "$UPDATER_PLIST_PATH"
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>$UPDATER_SERVICE_NAME</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>$UPDATER_SCRIPT</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>StartInterval</key>
+    <integer>86400</integer>
+    <key>WorkingDirectory</key>
+    <string>$HOME</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$HOME/.local/bin</string>
+        <key>HOME</key>
+        <string>$HOME</string>
+    </dict>
+    <key>StandardOutPath</key>
+    <string>/tmp/lume_updater.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/lume_updater.error.log</string>
+</dict>
+</plist>
+EOF
+
+  # Set permissions
+  chmod 644 "$UPDATER_PLIST_PATH"
+  touch /tmp/lume_updater.log /tmp/lume_updater.error.log
+  chmod 644 /tmp/lume_updater.log /tmp/lume_updater.error.log
+
+  # Load the LaunchAgent
+  echo "Loading auto-updater LaunchAgent..."
+  launchctl load "$UPDATER_PLIST_PATH"
+
+  echo "${GREEN}Auto-updater installed! Lume will check for updates at login and every 24 hours.${NORMAL}"
+  echo "To view update logs: tail -f /tmp/lume_updater.log"
+  echo ""
+  echo "To disable auto-updates, run:"
+  echo "  launchctl unload \"$UPDATER_PLIST_PATH\""
+  echo "  rm \"$UPDATER_PLIST_PATH\""
+}
+
+# Remove auto-updater if it exists
+remove_auto_updater() {
+  UPDATER_SERVICE_NAME="com.trycua.lume_updater"
+  UPDATER_PLIST_PATH="$HOME/Library/LaunchAgents/$UPDATER_SERVICE_NAME.plist"
+  UPDATER_SCRIPT="$INSTALL_DIR/lume-update"
+
+  if [ -f "$UPDATER_PLIST_PATH" ]; then
+    echo "Removing existing auto-updater LaunchAgent..."
+    launchctl unload "$UPDATER_PLIST_PATH" 2>/dev/null || true
+    rm "$UPDATER_PLIST_PATH"
+  fi
+
+  if [ -f "$UPDATER_SCRIPT" ]; then
+    rm "$UPDATER_SCRIPT"
+  fi
+
+  echo "Auto-updater removed."
+}
+
 # Main installation flow
 main() {
   check_permissions
@@ -370,6 +585,14 @@ EOF
     else
       echo "Skipping Lume background service (LaunchAgent) setup as requested (use --no-background-service)."
     fi
+  fi
+
+  # Setup auto-updater
+  if [ "$INSTALL_AUTO_UPDATER" = true ]; then
+    install_updater_script
+    setup_auto_updater
+  else
+    remove_auto_updater
   fi
 }
 

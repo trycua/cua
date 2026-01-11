@@ -744,6 +744,52 @@ extension Server {
         }
     }
 
+    // MARK: - Host Status Handler
+
+    /// Response structure for host status endpoint
+    struct HostStatusResponse: Codable {
+        let status: String
+        let vmCount: Int
+        let maxVMs: Int
+        let availableSlots: Int
+        let version: String
+
+        enum CodingKeys: String, CodingKey {
+            case status
+            case vmCount = "vm_count"
+            case maxVMs = "max_vms"
+            case availableSlots = "available_slots"
+            case version
+        }
+    }
+
+    /// Handle GET /lume/host/status - Report host capacity and health for orchestrator
+    func handleGetHostStatus() async throws -> HTTPResponse {
+        do {
+            let vmController = LumeController()
+
+            // Get all VMs across all storage locations
+            let vms = try vmController.list(storage: nil)
+
+            // Count running VMs (Apple policy: max 2 VMs per host)
+            let runningVMs = vms.filter { $0.status == "running" }
+            let maxVMs = 2  // Apple Virtualization Framework limit
+
+            let response = HostStatusResponse(
+                status: "healthy",
+                vmCount: runningVMs.count,
+                maxVMs: maxVMs,
+                availableSlots: max(0, maxVMs - runningVMs.count),
+                version: "1.0.0"  // Could be derived from build info
+            )
+
+            return try .json(response)
+        } catch {
+            Logger.error("Failed to get host status", metadata: ["error": error.localizedDescription])
+            return .badRequest(message: error.localizedDescription)
+        }
+    }
+
     // MARK: - Private Helper Methods
 
     nonisolated private func startVM(

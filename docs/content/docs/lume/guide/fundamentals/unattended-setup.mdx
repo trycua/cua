@@ -27,13 +27,25 @@ lume create my-vm --os macOS --ipsw latest --unattended tahoe
 
 # Using a custom config file
 lume create my-vm --os macOS --ipsw latest --unattended path/to/config.yml
+
+# With debug mode enabled
+lume create my-vm --os macOS --ipsw latest --unattended tahoe --debug
 ```
 
 This will:
 
 1. Create the VM and install macOS from the IPSW
-2. Boot the VM
+2. Boot the VM (without opening VNC client by default)
 3. Automatically run through the Setup Assistant using your configuration
+
+**Additional options for `lume create --unattended`:**
+
+| Option | Description |
+| ------ | ----------- |
+| `--debug` | Save screenshots with OCR annotations for debugging |
+| `--debug-dir` | Custom directory for debug screenshots |
+| `--no-display` | Don't open VNC client (default: true for unattended) |
+| `--vnc-port` | VNC server port (default: 0 for auto-assign) |
 
 ### Option 2: On an Existing VM
 
@@ -248,15 +260,21 @@ health_check:
 
 ## Debugging
 
-Enable debug mode to save screenshots with OCR annotations:
+Enable debug mode to save screenshots with OCR annotations. Debug flags work with both `lume setup` and `lume create --unattended`:
 
 ```bash
-# Save screenshots to default location (unique folder in system temp, e.g. /tmp/unattended-<uuid>)
+# Using lume setup
 lume setup my-vm --unattended tahoe --debug
 
-# Save screenshots to custom directory
+# Using lume create with unattended setup
+lume create my-vm --os macOS --ipsw latest --unattended tahoe --debug
+
+# Save screenshots to custom directory (both commands support this)
 lume setup my-vm --unattended tahoe --debug --debug-dir /path/to/debug
+lume create my-vm --os macOS --ipsw latest --unattended tahoe --debug --debug-dir /path/to/debug
 ```
+
+By default, debug screenshots are saved to a unique folder in the system temp directory (e.g., `/tmp/unattended-<uuid>`).
 
 Debug screenshots show:
 

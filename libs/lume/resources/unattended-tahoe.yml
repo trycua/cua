@@ -43,17 +43,10 @@ boot_commands:
 
   # Transfer Your Data to This Mac (Migration Assistant)
   - "<wait 'Transfer Your Data'>"
-  - "<delay 20>" # wait for refresh
+  - "<delay 30>" # wait for refresh
   # Use tab navigation to select "Set up as new" (4th option)
-  # Tab order: From a Mac -> From Windows PC -> Set up with iPhone -> Set up as new
-  - "<tab>"
+  - "<click 'Set up as new'>"
   - "<delay 2>"
-  - "<tab>"
-  - "<delay 2>"
-  - "<tab>"
-  - "<delay 2>"
-  - "<space>"
-  - "<delay 1>"
   - "<click 'Continue'>"
   - "<delay 2>"
 

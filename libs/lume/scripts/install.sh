@@ -36,6 +36,9 @@ INSTALL_BACKGROUND_SERVICE=true
 # Option to skip auto-updater setup (default: install it)
 INSTALL_AUTO_UPDATER=true
 
+# Option to run updater at login (default: false, uses cron instead)
+UPDATE_ON_LOGIN=false
+
 # Default port for lume serve (default: 7777)
 LUME_PORT=7777
 
@@ -56,6 +59,9 @@ while [ "$#" -gt 0 ]; do
     --no-auto-updater)
       INSTALL_AUTO_UPDATER=false
       ;;
+    --update-on-login)
+      UPDATE_ON_LOGIN=true
+      ;;
     --help)
       echo "${BOLD}${BLUE}Lume Installer${NORMAL}"
       echo "Usage: $0 [OPTIONS]"
@@ -64,7 +70,8 @@ while [ "$#" -gt 0 ]; do
       echo "  --install-dir DIR         Install to the specified directory (default: $DEFAULT_INSTALL_DIR)"
       echo "  --port PORT               Specify the port for lume serve (default: 7777)"
       echo "  --no-background-service   Do not setup the Lume background service (LaunchAgent)"
-      echo "  --no-auto-updater         Do not setup automatic updates at login"
+      echo "  --no-auto-updater         Do not setup automatic updates"
+      echo "  --update-on-login         Check for updates at login (adds second Login Item)"
       echo "  --help                    Display this help message"
       echo ""
       echo "Examples:"
@@ -550,29 +557,65 @@ EOF
     fi
   fi
 
-  # Install updater script and setup periodic update checks
+  # Install updater script and setup update checks
   if [ "$INSTALL_AUTO_UPDATER" = true ]; then
     install_updater_script
     UPDATER_SCRIPT="$INSTALL_DIR/lume-update"
+    UPDATER_SERVICE_NAME="com.trycua.lume_updater"
+    UPDATER_PLIST_PATH="$HOME/Library/LaunchAgents/$UPDATER_SERVICE_NAME.plist"
 
-    # Clean up any legacy LaunchAgent updater (we use cron now)
-    cleanup_legacy_updater
+    if [ "$UPDATE_ON_LOGIN" = true ]; then
+      # Remove cron job if switching to login-based updates
+      crontab -l 2>/dev/null | grep -v "lume-update" | crontab - 2>/dev/null || true
 
-    # Setup cron job for daily update check (doesn't show in Login Items)
-    # Remove any existing lume-update cron entries, then add new one
-    CRON_ENTRY="0 10 * * * $UPDATER_SCRIPT >/tmp/lume_updater.log 2>&1"
-    EXISTING_CRON=$(crontab -l 2>/dev/null || echo "")
-    NEW_CRON=$(echo "$EXISTING_CRON" | grep -v "lume-update" || echo "")
-    echo "${NEW_CRON}${NEW_CRON:+
+      # Unload existing updater service if present
+      if [ -f "$UPDATER_PLIST_PATH" ]; then
+        launchctl unload "$UPDATER_PLIST_PATH" 2>/dev/null || true
+      fi
+
+      # Create LaunchAgent that runs updater at login (not persistent)
+      cat <<EOF > "$UPDATER_PLIST_PATH"
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>$UPDATER_SERVICE_NAME</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>$UPDATER_SCRIPT</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>/tmp/lume_updater.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/lume_updater.error.log</string>
+</dict>
+</plist>
+EOF
+      chmod 644 "$UPDATER_PLIST_PATH"
+      launchctl load "$UPDATER_PLIST_PATH"
+      echo "${GREEN}Auto-updater installed. Checks at login.${NORMAL}"
+    else
+      # Clean up any LaunchAgent updater (we use cron by default)
+      cleanup_legacy_updater
+
+      # Setup cron job for daily update check (doesn't show in Login Items)
+      CRON_ENTRY="0 10 * * * $UPDATER_SCRIPT >/tmp/lume_updater.log 2>&1"
+      EXISTING_CRON=$(crontab -l 2>/dev/null || echo "")
+      NEW_CRON=$(echo "$EXISTING_CRON" | grep -v "lume-update" || echo "")
+      echo "${NEW_CRON}${NEW_CRON:+
 }${CRON_ENTRY}" | crontab -
+      echo "${GREEN}Auto-updater installed. Checks daily at 10am via cron.${NORMAL}"
+    fi
 
     # Run updater once after installation
     if [ -x "$UPDATER_SCRIPT" ]; then
       "$UPDATER_SCRIPT" &
     fi
-    echo "${GREEN}Auto-updater installed. Checks daily at 10am via cron.${NORMAL}"
   else
-    # Remove updater cron job if auto-updater is disabled
+    # Remove updater cron job and LaunchAgent if auto-updater is disabled
     crontab -l 2>/dev/null | grep -v "lume-update" | crontab - 2>/dev/null || true
     cleanup_legacy_updater
   fi

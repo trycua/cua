@@ -312,6 +312,8 @@ jobs:
         with:
           app-id: ${{ secrets.RELEASE_APP_ID }}
           private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
 
       - name: Push release to main
         env:
@@ -319,6 +321,10 @@ jobs:
         run: |
           # Configure git to use the app token for pushing
           git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git"
+
+          # Verify the token works
+          echo "Verifying GitHub App token..."
+          gh auth status
 
           TAG=$(git describe --tags --abbrev=0)
           echo "Pushing version bump to main with tag: $TAG"

@@ -103,23 +103,27 @@ jobs:
 
       - name: Prepare release body
         id: prepare-body
+        env:
+          # Use env vars to avoid shell interpretation of backticks in commit messages
+          RELEASE_NOTES: ${{ steps.release-notes.outputs.RELEASE_NOTES }}
+          CUSTOM_BODY: ${{ inputs.body }}
         run: |
           # Combine path-filtered notes with custom body
           BODY=""
 
           # Add path-filtered notes if available
-          if [ -n "${{ steps.release-notes.outputs.RELEASE_NOTES }}" ]; then
-            BODY="${{ steps.release-notes.outputs.RELEASE_NOTES }}"
+          if [ -n "$RELEASE_NOTES" ]; then
+            BODY="$RELEASE_NOTES"
           fi
 
           # Add custom body if provided
-          if [ -n "${{ inputs.body }}" ]; then
+          if [ -n "$CUSTOM_BODY" ]; then
             if [ -n "$BODY" ]; then
-              BODY="${BODY}
+              BODY="$BODY
 
-          ${{ inputs.body }}"
+          $CUSTOM_BODY"
             else
-              BODY="${{ inputs.body }}"
+              BODY="$CUSTOM_BODY"
             fi
           fi
 

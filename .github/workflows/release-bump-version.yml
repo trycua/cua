@@ -1,4 +1,4 @@
-name: "CD: Bump & Publish"
+name: "CD: Bump Version"
 
 on:
   workflow_dispatch:
@@ -37,25 +37,10 @@ on:
 
 permissions:
   contents: write
-  id-token: write
-  packages: write
 
 jobs:
   bump-version:
     runs-on: ubuntu-latest
-    outputs:
-      agent_version: ${{ steps.agent_version.outputs.version }}
-      bench_version: ${{ steps.bench_version.outputs.version }}
-      bench_ui_version: ${{ steps.bench_ui_version.outputs.version }}
-      computer_version: ${{ steps.computer_version.outputs.version }}
-      computer_server_version: ${{ steps.computer_server_version.outputs.version }}
-      core_version: ${{ steps.core_version.outputs.version }}
-      mcp_server_version: ${{ steps.mcp_server_version.outputs.version }}
-      som_version: ${{ steps.som_version.outputs.version }}
-      npm_cli_version: ${{ steps.npm_cli_version.outputs.version }}
-      npm_computer_version: ${{ steps.npm_computer_version.outputs.version }}
-      npm_core_version: ${{ steps.npm_core_version.outputs.version }}
-      lume_version: ${{ steps.lume_version.outputs.version }}
     steps:
       - name: Set package directory and type
         id: package
@@ -355,98 +340,6 @@ jobs:
           echo "Cleaning up temp branch..."
           git push origin --delete "${TEMP_BRANCH}" || true
 
-  publish-computer:
-    needs: [bump-version, publish-core]
-    if: ${{ always() && (inputs.service == 'pypi/computer' || inputs.service == 'pypi/core') && needs.bump-version.result == 'success' && (inputs.service == 'pypi/computer' || needs.publish-core.result == 'success') }}
-    uses: ./.github/workflows/cd-py-computer.yml
-    with:
-      version: ${{ needs.bump-version.outputs.computer_version }}
-    secrets: inherit
-
-  publish-agent:
-    needs: [bump-version, publish-computer, publish-som]
-    if: ${{ always() && (inputs.service == 'pypi/agent' || inputs.service == 'pypi/computer' || inputs.service == 'pypi/core' || inputs.service == 'pypi/som') && needs.bump-version.result == 'success' && (inputs.service == 'pypi/agent' || inputs.service == 'pypi/som' || needs.publish-computer.result == 'success') && (inputs.service != 'pypi/som' || needs.publish-som.result == 'success') }}
-    uses: ./.github/workflows/cd-py-agent.yml
-    with:
-      version: ${{ needs.bump-version.outputs.agent_version }}
-    secrets: inherit
-
-  publish-bench:
-    needs: bump-version
-    if: ${{ inputs.service == 'pypi/bench' }}
-    uses: ./.github/workflows/cd-py-bench.yml
-    with:
-      version: ${{ needs.bump-version.outputs.bench_version }}
-    secrets: inherit
-
-  publish-bench-ui:
-    needs: bump-version
-    if: ${{ inputs.service == 'pypi/bench-ui' }}
-    uses: ./.github/workflows/cd-py-bench-ui.yml
-    with:
-      version: ${{ needs.bump-version.outputs.bench_ui_version }}
-    secrets: inherit
-
-  publish-computer-server:
-    needs: bump-version
-    if: ${{ inputs.service == 'pypi/computer-server' }}
-    uses: ./.github/workflows/cd-py-computer-server.yml
-    with:
-      version: ${{ needs.bump-version.outputs.computer_server_version }}
-    secrets: inherit
-
-  publish-core:
-    needs: bump-version
-    if: ${{ inputs.service == 'pypi/core' }}
-    uses: ./.github/workflows/cd-py-core.yml
-    with:
-      version: ${{ needs.bump-version.outputs.core_version }}
-    secrets: inherit
-
-  publish-mcp-server:
-    needs: bump-version
-    if: ${{ inputs.service == 'pypi/mcp-server' }}
-    uses: ./.github/workflows/cd-py-mcp-server.yml
-    with:
-      version: ${{ needs.bump-version.outputs.mcp_server_version }}
-    secrets: inherit
-
-  publish-som:
-    needs: bump-version
-    if: ${{ inputs.service == 'pypi/som' }}
-    uses: ./.github/workflows/cd-py-som.yml
-    with:
-      version: ${{ needs.bump-version.outputs.som_version }}
-    secrets: inherit
-
-  publish-cli:
-    needs: bump-version
-    if: ${{ inputs.service == 'npm/cli' }}
-    uses: ./.github/workflows/cd-ts-cli.yml
-    with:
-      version: ${{ needs.bump-version.outputs.npm_cli_version }}
-    secrets: inherit
-
-  publish-npm-computer:
-    needs: [bump-version, publish-npm-core]
-    if: ${{ always() && (inputs.service == 'npm/computer' || inputs.service == 'npm/core') && needs.bump-version.result == 'success' && (inputs.service == 'npm/computer' || needs.publish-npm-core.result == 'success') }}
-    uses: ./.github/workflows/cd-ts-computer.yml
-    with:
-      version: ${{ needs.bump-version.outputs.npm_computer_version }}
-    secrets: inherit
-
-  publish-npm-core:
-    needs: bump-version
-    if: ${{ inputs.service == 'npm/core' }}
-    uses: ./.github/workflows/cd-ts-core.yml
-    with:
-      version: ${{ needs.bump-version.outputs.npm_core_version }}
-    secrets: inherit
-
-  publish-lume:
-    needs: bump-version
-    if: ${{ inputs.service == 'lume' }}
-    uses: ./.github/workflows/cd-swift-lume.yml
-    with:
-      version: ${{ needs.bump-version.outputs.lume_version }}
-    secrets: inherit
+  # NOTE: Publishing is handled by tag-triggered workflows (cd-py-*.yml, cd-ts-*.yml, cd-swift-lume.yml)
+  # When bump-version pushes a tag (e.g., agent-v0.7.10), the corresponding CD workflow
+  # is automatically triggered by the tag push event. No need to call them here.

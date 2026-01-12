@@ -109,9 +109,9 @@ jobs:
         with:
           images: ${{ inputs.docker_hub_org }}/${{ inputs.image_name }}
           tags: |
-            type=semver,pattern={{version}},prefix=${{ inputs.tag_prefix }}
-            type=semver,pattern={{major}}.{{minor}},prefix=${{ inputs.tag_prefix }}
-            type=semver,pattern={{major}},prefix=${{ inputs.tag_prefix }}
+            type=match,pattern=${{ inputs.tag_prefix }}(\d+\.\d+\.\d+),group=1
+            type=match,pattern=${{ inputs.tag_prefix }}(\d+\.\d+),group=1
+            type=match,pattern=${{ inputs.tag_prefix }}(\d+),group=1
             type=raw,value=latest
 
       - name: Build & push digest (semver)
@@ -185,9 +185,9 @@ jobs:
         with:
           images: ${{ inputs.docker_hub_org }}/${{ inputs.image_name }}
           tags: |
-            type=semver,pattern={{version}},prefix=${{ inputs.tag_prefix }}
-            type=semver,pattern={{major}}.{{minor}},prefix=${{ inputs.tag_prefix }}
-            type=semver,pattern={{major}},prefix=${{ inputs.tag_prefix }}
+            type=match,pattern=${{ inputs.tag_prefix }}(\d+\.\d+\.\d+),group=1
+            type=match,pattern=${{ inputs.tag_prefix }}(\d+\.\d+),group=1
+            type=match,pattern=${{ inputs.tag_prefix }}(\d+),group=1
             type=raw,value=latest
 
       - name: Download all digest artifacts

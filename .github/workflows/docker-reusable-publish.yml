@@ -38,13 +38,14 @@ on:
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
-    if: ${{ !(inputs.skip_arm64 && matrix.platform == 'linux/arm64') }}
     strategy:
       fail-fast: false
       matrix:
         platform:
           - linux/amd64
           - linux/arm64
+        exclude:
+          - platform: ${{ inputs.skip_arm64 && 'linux/arm64' || 'none' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4

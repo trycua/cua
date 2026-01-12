@@ -311,34 +311,75 @@ jobs:
           echo "Verifying GitHub App token..."
           gh auth status
 
-          # Get current commit SHA and tag
-          COMMIT_SHA=$(git rev-parse HEAD)
+          # Get the tag name from bump2version (it creates a local tag)
           TAG=$(git describe --tags --abbrev=0)
           TEMP_BRANCH="temp-release-${TAG}"
 
-          echo "Commit SHA: $COMMIT_SHA"
           echo "Tag: $TAG"
           echo "Temp branch: $TEMP_BRANCH"
 
-          # Step 1: Push to a temp branch (to get commit on remote)
-          echo "Pushing to temp branch..."
-          git push origin "HEAD:refs/heads/${TEMP_BRANCH}" --force
+          # Retry loop for handling concurrent bumps
+          MAX_RETRIES=5
+          RETRY_COUNT=0
 
-          # Step 2: Create tag via API (uses GitHub App token to bypass branch protection)
-          echo "Creating tag via API..."
-          gh api /repos/${{ github.repository }}/git/refs \
-            -f ref="refs/tags/${TAG}" \
-            -f sha="${COMMIT_SHA}" || echo "Tag may already exist"
+          while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
+            RETRY_COUNT=$((RETRY_COUNT + 1))
+            echo ""
+            echo "=== Attempt $RETRY_COUNT/$MAX_RETRIES ==="
 
-          # Step 3: Update main branch ref using API (bypasses branch protection)
-          echo "Updating main branch via API..."
-          gh api -X PATCH /repos/${{ github.repository }}/git/refs/heads/main \
-            -f sha="${COMMIT_SHA}" \
-            -F force=false
+            # Fetch latest main to check if we need to rebase
+            git fetch origin main
 
-          # Step 4: Clean up temp branch
-          echo "Cleaning up temp branch..."
-          git push origin --delete "${TEMP_BRANCH}" || true
+            # Check if our HEAD is a descendant of origin/main (fast-forward possible)
+            if ! git merge-base --is-ancestor origin/main HEAD; then
+              echo "Main branch has moved forward, rebasing..."
+
+              # Rebase our commit(s) onto the latest main
+              git rebase origin/main
+
+              # Update the local tag to point to the new rebased commit
+              git tag -f "$TAG" HEAD
+            fi
+
+            # Get the current commit SHA (may have changed after rebase)
+            COMMIT_SHA=$(git rev-parse HEAD)
+            echo "Commit SHA: $COMMIT_SHA"
+
+            # Push to temp branch
+            echo "Pushing to temp branch..."
+            git push origin "HEAD:refs/heads/${TEMP_BRANCH}" --force
+
+            # Try to update main branch via API
+            echo "Updating main branch via API..."
+            if gh api -X PATCH /repos/${{ github.repository }}/git/refs/heads/main \
+              -f sha="${COMMIT_SHA}" \
+              -F force=false 2>&1; then
+
+              echo "Successfully updated main branch!"
+
+              # Now create the tag via API (only after main is successfully updated)
+              echo "Creating tag via API..."
+              # Delete existing remote tag if present (in case of retry with different SHA)
+              gh api -X DELETE /repos/${{ github.repository }}/git/refs/tags/${TAG} 2>/dev/null || true
+              gh api /repos/${{ github.repository }}/git/refs \
+                -f ref="refs/tags/${TAG}" \
+                -f sha="${COMMIT_SHA}"
+
+              echo "Tag created successfully!"
+
+              # Clean up temp branch
+              echo "Cleaning up temp branch..."
+              git push origin --delete "${TEMP_BRANCH}" || true
+
+              exit 0
+            fi
+
+            echo "Failed to update main (not a fast-forward), will retry..."
+            sleep 2
+          done
+
+          echo "ERROR: Failed to update main branch after $MAX_RETRIES attempts"
+          exit 1
 
   # NOTE: Publishing is handled by tag-triggered workflows (cd-py-*.yml, cd-ts-*.yml, cd-swift-lume.yml)
   # When bump-version pushes a tag (e.g., agent-v0.7.10), the corresponding CD workflow

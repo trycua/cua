@@ -22,12 +22,17 @@ from markdown_it import MarkdownIt
 # Define the Modal app
 app = modal.App("cua-docs-mcp")
 
-# Create a persistent volume for storing crawled data and databases
+# Create persistent volumes for storing data
 docs_volume = modal.Volume.from_name("cua-docs-data", create_if_missing=True)
+code_volume = modal.Volume.from_name("cua-code-index", create_if_missing=True)
+
+# GitHub token secret for cloning
+github_secret = modal.Secret.from_name("github-secret", required_keys=["GITHUB_TOKEN"])
 
 # Define the container image with all dependencies
 image = (
     modal.Image.debian_slim(python_version="3.12")
+    .apt_install("git")
     .pip_install(
         "crawl4ai>=0.4.0",
         "playwright>=1.40.0",
@@ -44,10 +49,15 @@ image = (
     .run_commands("playwright install --with-deps chromium")
 )
 
-# Volume mount path
+# Volume mount paths
 VOLUME_PATH = "/data"
 CRAWLED_DATA_PATH = f"{VOLUME_PATH}/crawled_data"
 DB_PATH = f"{VOLUME_PATH}/docs_db"
+
+# Code index volume mount path
+CODE_VOLUME_PATH = "/code_data"
+CODE_REPO_PATH = f"{CODE_VOLUME_PATH}/repo"
+CODE_DB_PATH = f"{CODE_VOLUME_PATH}/code_db"
 
 
 # =============================================================================
@@ -396,10 +406,7 @@ async def generate_vector_db():
             continue
 
         # Convert markdown to plain text
-        try:
-            text = clean_markdown(markdown)
-        except Exception:
-            text = markdown
+        text = clean_markdown(markdown)
 
         # Simple chunking by paragraphs
         paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
@@ -536,19 +543,13 @@ async def generate_sqlite_db():
             continue
 
         # Convert markdown to plain text
-        try:
-            text = clean_markdown(markdown)
-        except Exception:
-            text = markdown
+        text = clean_markdown(markdown)
 
-        try:
-            cursor.execute(
-                "INSERT OR REPLACE INTO pages (url, title, category, content) VALUES (?, ?, ?, ?)",
-                (url, title, category, text),
-            )
-            inserted += 1
-        except Exception as e:
-            print(f"Error inserting {url}: {e}")
+        cursor.execute(
+            "INSERT OR REPLACE INTO pages (url, title, category, content) VALUES (?, ?, ?, ?)",
+            (url, title, category, text),
+        )
+        inserted += 1
 
     # Create FTS triggers
     cursor.execute(
@@ -589,13 +590,585 @@ async def generate_sqlite_db():
 
 
 # =============================================================================
+# Code Index Generation Functions
+# =============================================================================
+
+# Source file extensions to index
+SOURCE_EXTENSIONS = {".py", ".ts", ".js", ".tsx"}
+MAX_FILE_SIZE_SQLITE = 1_000_000  # 1MB for SQLite
+MAX_FILE_SIZE_EMBEDDINGS = 100_000  # 100KB for embeddings
+
+
+def parse_tag(tag: str) -> tuple[str, str]:
+    """Parse a git tag into component and version."""
+    if tag.startswith("v") and len(tag) > 1 and tag[1].isdigit():
+        return ("cua", tag[1:])
+    match = re.match(r"^(.+)-v(\d+\.\d+\.\d+.*)$", tag)
+    if match:
+        return (match.group(1), match.group(2))
+    raise ValueError(f"Cannot parse tag: {tag}")
+
+
+def detect_language(file_path: str) -> str:
+    """Detect programming language from file extension."""
+    ext = Path(file_path).suffix.lower()
+    return {".py": "python", ".ts": "typescript", ".tsx": "typescript", ".js": "javascript"}.get(
+        ext, "unknown"
+    )
+
+
+def group_tags_by_component(tags: list[str]) -> dict[str, list[str]]:
+    """Group git tags by their component."""
+    grouped: dict[str, list[str]] = {}
+    for tag in tags:
+        try:
+            component, _ = parse_tag(tag)
+            if component not in grouped:
+                grouped[component] = []
+            grouped[component].append(tag)
+        except ValueError:
+            continue
+    return grouped
+
+
+@app.function(
+    image=image,
+    volumes={CODE_VOLUME_PATH: code_volume},
+    secrets=[github_secret],
+    timeout=1800,  # 30 minutes per component
+    cpu=2.0,
+    memory=8192,
+)
+def index_component(component: str, tags: list[str], repo_path: str) -> dict:
+    """Index a single component's tags into its own SQLite and LanceDB.
+
+    Each component gets its own databases to enable parallel processing.
+
+    Args:
+        component: The component name (e.g., "agent", "computer")
+        tags: List of git tags for this component
+        repo_path: Path to the bare git repository
+
+    Returns:
+        Dict with indexing statistics
+    """
+    import shutil
+    import subprocess
+    import tempfile
+
+    import lancedb
+    from lancedb.embeddings import get_registry
+    from lancedb.pydantic import LanceModel, Vector
+
+    print(f"[{component}] Starting indexing of {len(tags)} tags...")
+
+    DB_DIR = Path(CODE_DB_PATH)
+    DB_DIR.mkdir(parents=True, exist_ok=True)
+
+    # Component-specific database paths
+    SQLITE_PATH = DB_DIR / f"code_index_{component}.sqlite"
+    TMP_LANCE_DIR = Path(tempfile.mkdtemp(prefix=f"code_lancedb_{component}_"))
+
+    # Initialize SQLite for this component
+    if SQLITE_PATH.exists():
+        SQLITE_PATH.unlink()
+
+    conn = sqlite3.connect(SQLITE_PATH)
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        CREATE TABLE code_files (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            component TEXT NOT NULL,
+            version TEXT NOT NULL,
+            file_path TEXT NOT NULL,
+            content TEXT NOT NULL,
+            language TEXT NOT NULL,
+            UNIQUE(component, version, file_path)
+        )
+    """
+    )
+    cursor.execute("CREATE INDEX idx_component ON code_files(component)")
+    cursor.execute("CREATE INDEX idx_version ON code_files(component, version)")
+
+    cursor.execute(
+        """
+        CREATE VIRTUAL TABLE code_files_fts USING fts5(
+            content,
+            component UNINDEXED,
+            version UNINDEXED,
+            file_path UNINDEXED,
+            content='code_files',
+            content_rowid='id'
+        )
+    """
+    )
+
+    cursor.execute(
+        """
+        CREATE TRIGGER code_files_ai AFTER INSERT ON code_files BEGIN
+            INSERT INTO code_files_fts(rowid, content, component, version, file_path)
+            VALUES (new.id, new.content, new.component, new.version, new.file_path);
+        END;
+    """
+    )
+    conn.commit()
+
+    # Initialize LanceDB
+    model = get_registry().get("sentence-transformers").create(name="all-MiniLM-L6-v2")
+
+    class CodeFile(LanceModel):
+        text: str = model.SourceField()
+        vector: Vector(model.ndims()) = model.VectorField()
+        component: str
+        version: str
+        file_path: str
+        language: str
+
+    lance_db = lancedb.connect(TMP_LANCE_DIR)
+    lance_table = lance_db.create_table("code", schema=CodeFile, mode="overwrite")
+
+    # Process tags for this component
+    total_files = 0
+    total_embedded = 0
+    failed_tags = []
+    COMMIT_BATCH_SIZE = 10
+
+    for i, tag in enumerate(tags):
+        print(f"[{component}] [{i + 1}/{len(tags)}] Processing {tag}")
+
+        try:
+            _, version = parse_tag(tag)
+        except ValueError as e:
+            print(f"[{component}]   Skipping: {e}")
+            failed_tags.append(tag)
+            continue
+
+        # Get files at this tag
+        try:
+            result = subprocess.run(
+                ["git", "ls-tree", "-r", "--name-only", tag],
+                cwd=repo_path,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            files = [
+                f.strip()
+                for f in result.stdout.strip().split("\n")
+                if f.strip() and Path(f.strip()).suffix.lower() in SOURCE_EXTENSIONS
+            ]
+        except subprocess.CalledProcessError:
+            failed_tags.append(tag)
+            continue
+
+        lance_batch = []
+
+        for file_path in files:
+            try:
+                result = subprocess.run(
+                    ["git", "show", f"{tag}:{file_path}"],
+                    cwd=repo_path,
+                    check=True,
+                    capture_output=True,
+                )
+                content = result.stdout.decode("utf-8", errors="replace")
+                if "\x00" in content[:1024]:
+                    continue  # Skip binary
+            except (subprocess.CalledProcessError, UnicodeDecodeError):
+                continue
+
+            language = detect_language(file_path)
+            content_size = len(content)
+
+            # Add to SQLite
+            if content_size <= MAX_FILE_SIZE_SQLITE:
+                cursor.execute(
+                    "INSERT OR REPLACE INTO code_files (component, version, file_path, content, language) VALUES (?, ?, ?, ?, ?)",
+                    (component, version, file_path, content, language),
+                )
+                total_files += 1
+
+            # Queue for LanceDB
+            if content_size <= MAX_FILE_SIZE_EMBEDDINGS:
+                lance_batch.append(
+                    {
+                        "text": content,
+                        "component": component,
+                        "version": version,
+                        "file_path": file_path,
+                        "language": language,
+                    }
+                )
+
+        # Batch commits
+        if (i + 1) % COMMIT_BATCH_SIZE == 0:
+            conn.commit()
+            print(f"[{component}]   Committed batch at tag {i + 1}/{len(tags)}")
+
+        # Add to LanceDB
+        if lance_batch:
+            lance_table.add(lance_batch)
+            total_embedded += len(lance_batch)
+
+    # Final commit
+    conn.commit()
+    conn.close()
+
+    # Copy LanceDB to volume
+    lance_dest = DB_DIR / f"code_index_{component}.lancedb"
+    if lance_dest.exists():
+        shutil.rmtree(lance_dest)
+    shutil.copytree(TMP_LANCE_DIR, lance_dest)
+    shutil.rmtree(TMP_LANCE_DIR)
+
+    # Clean up LanceDB resources
+    del lance_table
+    del lance_db
+
+    print(f"[{component}] Complete: {total_files} files, {total_embedded} embedded")
+    return {
+        "component": component,
+        "files": total_files,
+        "embedded": total_embedded,
+        "failed_tags": len(failed_tags),
+        "tags_processed": len(tags),
+    }
+
+
+@app.function(
+    image=image,
+    volumes={CODE_VOLUME_PATH: code_volume},
+    secrets=[github_secret],
+    timeout=3600,  # 1 hour
+    cpu=1.0,
+    memory=4096,
+)
+def generate_code_index_parallel(max_concurrent: int = 4) -> dict:
+    """Generate code search index with parallel component processing.
+
+    This function:
+    1. Clones/updates the git repository
+    2. Groups tags by component
+    3. Dispatches parallel workers to index each component
+    4. Each component gets its own SQLite and LanceDB
+
+    Args:
+        max_concurrent: Maximum number of concurrent component indexing jobs
+
+    Returns:
+        Aggregated statistics from all component workers
+    """
+    import os
+    import subprocess
+
+    print(f"Starting parallel code indexing (max {max_concurrent} concurrent)...")
+
+    # Build authenticated URL
+    github_token = os.environ.get("GITHUB_TOKEN", "")
+    if github_token:
+        REPO_URL = f"https://{github_token}@github.com/trycua/cua.git"
+        print("Using authenticated GitHub URL")
+    else:
+        REPO_URL = "https://github.com/trycua/cua.git"
+        print("Warning: No GITHUB_TOKEN found")
+
+    REPO_PATH = Path(CODE_REPO_PATH)
+
+    # Clone or update repo
+    if REPO_PATH.exists():
+        print("Fetching latest tags...")
+        subprocess.run(["git", "fetch", "--all", "--tags"], cwd=REPO_PATH, check=True)
+    else:
+        print("Cloning repository...")
+        REPO_PATH.parent.mkdir(parents=True, exist_ok=True)
+        subprocess.run(["git", "clone", "--bare", REPO_URL, str(REPO_PATH)], check=True)
+
+    # Get all tags
+    result = subprocess.run(
+        ["git", "tag"], cwd=REPO_PATH, check=True, capture_output=True, text=True
+    )
+    all_tags = [t.strip() for t in result.stdout.strip().split("\n") if t.strip()]
+    print(f"Found {len(all_tags)} tags")
+
+    # Group tags by component
+    component_tags = group_tags_by_component(all_tags)
+    print(f"Components found: {list(component_tags.keys())}")
+    for comp, tags in component_tags.items():
+        print(f"  {comp}: {len(tags)} tags")
+
+    # Dispatch parallel workers using Modal's map
+    repo_path_str = str(REPO_PATH)
+    args = [(comp, tags, repo_path_str) for comp, tags in component_tags.items()]
+
+    print(f"Dispatching {len(args)} parallel indexing jobs...")
+    results = list(index_component.starmap(args, order_outputs=False))
+
+    # Commit all changes to volume
+    code_volume.commit()
+
+    # Aggregate results
+    total_files = sum(r["files"] for r in results)
+    total_embedded = sum(r["embedded"] for r in results)
+    total_failed = sum(r["failed_tags"] for r in results)
+
+    summary = {
+        "total_files": total_files,
+        "total_embedded": total_embedded,
+        "total_failed_tags": total_failed,
+        "components": results,
+    }
+
+    print("\nParallel indexing complete:")
+    print(f"  Total files: {total_files}")
+    print(f"  Total embedded: {total_embedded}")
+    print(f"  Components indexed: {len(results)}")
+
+    return summary
+
+
+@app.function(
+    image=image,
+    volumes={CODE_VOLUME_PATH: code_volume},
+    secrets=[github_secret],
+    timeout=3600,  # 1 hour
+    cpu=2.0,
+    memory=8192,
+)
+async def generate_code_index():
+    """Generate code search index from all git tags"""
+    import os
+    import shutil
+    import subprocess
+    import tempfile
+
+    import lancedb
+    from lancedb.embeddings import get_registry
+    from lancedb.pydantic import LanceModel, Vector
+
+    print("Generating code search index...")
+
+    # Build authenticated URL using GitHub token
+    github_token = os.environ.get("GITHUB_TOKEN", "")
+    if github_token:
+        REPO_URL = f"https://{github_token}@github.com/trycua/cua.git"
+        print("Using authenticated GitHub URL")
+    else:
+        REPO_URL = "https://github.com/trycua/cua.git"
+        print("Warning: No GITHUB_TOKEN found, using unauthenticated URL")
+
+    REPO_PATH = Path(CODE_REPO_PATH)
+    DB_DIR = Path(CODE_DB_PATH)
+    SQLITE_PATH = DB_DIR / "code_index.sqlite"
+
+    DB_DIR.mkdir(parents=True, exist_ok=True)
+
+    # Clone or update repo (bare clone for efficiency)
+    if REPO_PATH.exists():
+        print("Fetching latest tags...")
+        subprocess.run(["git", "fetch", "--all", "--tags"], cwd=REPO_PATH, check=True)
+    else:
+        print("Cloning repository...")
+        REPO_PATH.parent.mkdir(parents=True, exist_ok=True)
+        subprocess.run(["git", "clone", "--bare", REPO_URL, str(REPO_PATH)], check=True)
+
+    # Get all tags
+    result = subprocess.run(
+        ["git", "tag"], cwd=REPO_PATH, check=True, capture_output=True, text=True
+    )
+    all_tags = [t.strip() for t in result.stdout.strip().split("\n") if t.strip()]
+    print(f"Found {len(all_tags)} tags")
+
+    # Initialize SQLite
+    if SQLITE_PATH.exists():
+        SQLITE_PATH.unlink()
+
+    conn = sqlite3.connect(SQLITE_PATH)
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        CREATE TABLE code_files (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            component TEXT NOT NULL,
+            version TEXT NOT NULL,
+            file_path TEXT NOT NULL,
+            content TEXT NOT NULL,
+            language TEXT NOT NULL,
+            UNIQUE(component, version, file_path)
+        )
+    """
+    )
+    cursor.execute("CREATE INDEX idx_component ON code_files(component)")
+    cursor.execute("CREATE INDEX idx_version ON code_files(component, version)")
+
+    cursor.execute(
+        """
+        CREATE VIRTUAL TABLE code_files_fts USING fts5(
+            content,
+            component UNINDEXED,
+            version UNINDEXED,
+            file_path UNINDEXED,
+            content='code_files',
+            content_rowid='id'
+        )
+    """
+    )
+
+    # FTS triggers
+    cursor.execute(
+        """
+        CREATE TRIGGER code_files_ai AFTER INSERT ON code_files BEGIN
+            INSERT INTO code_files_fts(rowid, content, component, version, file_path)
+            VALUES (new.id, new.content, new.component, new.version, new.file_path);
+        END;
+    """
+    )
+    conn.commit()
+
+    # Initialize LanceDB in temp directory
+    TMP_LANCE_DIR = Path(tempfile.mkdtemp(prefix="code_lancedb_"))
+    model = get_registry().get("sentence-transformers").create(name="all-MiniLM-L6-v2")
+
+    class CodeFile(LanceModel):
+        text: str = model.SourceField()
+        vector: Vector(model.ndims()) = model.VectorField()
+        component: str
+        version: str
+        file_path: str
+        language: str
+
+    lance_db = lancedb.connect(TMP_LANCE_DIR)
+    lance_table = lance_db.create_table("code", schema=CodeFile, mode="overwrite")
+
+    # Process each tag
+    total_files = 0
+    total_embedded = 0
+    failed_tags = []
+    COMMIT_BATCH_SIZE = 10  # Commit every 10 tags for better performance
+
+    for i, tag in enumerate(all_tags):
+        print(f"[{i + 1}/{len(all_tags)}] Processing {tag}")
+
+        try:
+            component, version = parse_tag(tag)
+        except ValueError as e:
+            print(f"  Skipping: {e}")
+            failed_tags.append(tag)
+            continue
+
+        # Get files at this tag
+        try:
+            result = subprocess.run(
+                ["git", "ls-tree", "-r", "--name-only", tag],
+                cwd=REPO_PATH,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            files = [
+                f.strip()
+                for f in result.stdout.strip().split("\n")
+                if f.strip() and Path(f.strip()).suffix.lower() in SOURCE_EXTENSIONS
+            ]
+        except subprocess.CalledProcessError:
+            failed_tags.append(tag)
+            continue
+
+        lance_batch = []
+
+        for file_path in files:
+            try:
+                result = subprocess.run(
+                    ["git", "show", f"{tag}:{file_path}"],
+                    cwd=REPO_PATH,
+                    check=True,
+                    capture_output=True,
+                )
+                content = result.stdout.decode("utf-8", errors="replace")
+                if "\x00" in content[:1024]:
+                    continue  # Skip binary
+            except (subprocess.CalledProcessError, UnicodeDecodeError):
+                continue
+
+            language = detect_language(file_path)
+            content_size = len(content)
+
+            # Add to SQLite
+            if content_size <= MAX_FILE_SIZE_SQLITE:
+                cursor.execute(
+                    "INSERT OR REPLACE INTO code_files (component, version, file_path, content, language) VALUES (?, ?, ?, ?, ?)",
+                    (component, version, file_path, content, language),
+                )
+                total_files += 1
+
+            # Queue for LanceDB
+            if content_size <= MAX_FILE_SIZE_EMBEDDINGS:
+                lance_batch.append(
+                    {
+                        "text": content,
+                        "component": component,
+                        "version": version,
+                        "file_path": file_path,
+                        "language": language,
+                    }
+                )
+
+        # Batch commits: commit every COMMIT_BATCH_SIZE tags
+        if (i + 1) % COMMIT_BATCH_SIZE == 0:
+            conn.commit()
+            print(f"  Committed batch at tag {i + 1}/{len(all_tags)}")
+
+        # Add to LanceDB
+        if lance_batch:
+            lance_table.add(lance_batch)
+            total_embedded += len(lance_batch)
+
+    # Final commit for any remaining tags
+    conn.commit()
+    conn.close()
+
+    # Copy LanceDB to volume
+    try:
+        lance_dest = DB_DIR / "code_index.lancedb"
+        if lance_dest.exists():
+            shutil.rmtree(lance_dest)
+        shutil.copytree(TMP_LANCE_DIR, lance_dest)
+        shutil.rmtree(TMP_LANCE_DIR)
+    finally:
+        # Ensure LanceDB resources are released even if an exception occurs
+        del lance_table
+        del lance_db
+    code_volume.commit()
+
+    print(f"Code index complete: {total_files} files in SQLite, {total_embedded} embedded")
+    return {"files": total_files, "embedded": total_embedded, "failed_tags": len(failed_tags)}
+
+
+@app.function(
+    image=image,
+    volumes={CODE_VOLUME_PATH: code_volume},
+    secrets=[github_secret],
+    schedule=modal.Cron("0 5 * * *"),  # Daily at 5 AM UTC (before docs crawl)
+    timeout=3600,
+)
+async def scheduled_code_index():
+    """Scheduled daily code index generation (uses parallel processing)"""
+    print("Running scheduled code indexing (parallel)...")
+    result = await generate_code_index_parallel.remote.aio()
+    print(f"Code indexing complete: {result}")
+    return result
+
+
+# =============================================================================
 # MCP Server
 # =============================================================================
 
 
 @app.function(
     image=image,
-    volumes={VOLUME_PATH: docs_volume},
+    volumes={VOLUME_PATH: docs_volume, CODE_VOLUME_PATH: code_volume},
     cpu=1.0,
     memory=2048,
 )
@@ -610,27 +1183,50 @@ def web():
 
     # Initialize the MCP server
     mcp = FastMCP(
-        name="CUA Docs",
-        instructions="""CUA Documentation Server - provides search and retrieval for Computer Use Agent (CUA) documentation.
+        name="CUA Docs & Code",
+        instructions="""CUA Documentation and Code Server - provides direct read-only query access to Computer Use Agent (CUA) documentation and versioned source code.
 
-Documentation covers:
-- CUA SDK: Python library for building computer-use agents with screen capture, mouse/keyboard control
+=== AVAILABLE TOOLS ===
+
+Documentation:
+- query_docs_db: Execute SQL queries against the documentation SQLite database
+- query_docs_vectors: Execute vector similarity searches against the documentation LanceDB
+
+Code:
+- query_code_db: Execute SQL queries against the code search SQLite database
+- query_code_vectors: Execute vector similarity searches against the code LanceDB
+
+All tools are READ-ONLY. Only SELECT queries are allowed for SQL databases.
+
+=== DOCUMENTATION DATABASE ===
+
+The documentation database contains crawled pages from cua.ai/docs covering:
+- CUA SDK: Python library for building computer-use agents
 - CUA Bench: Benchmarking framework for evaluating computer-use agents
 - Agent Loop: Core execution loop for autonomous agent operation
 - Sandboxes: Docker and cloud VM environments for safe agent execution
 - Computer interfaces: Screen, mouse, keyboard, and bash interaction APIs
 
-Available tools:
-- search_docs: Semantic/vector search - best for conceptual queries like "how does X work?"
-- sql_query: Direct SQL/FTS5 queries for exact keyword matches and advanced filtering
+=== CODE DATABASE ===
 
-IMPORTANT: After performing search_docs queries, ALWAYS use sql_query to retrieve the full page content
-before answering. Search results return snippets/chunks that may lack important context. Example:
-  sql_query("SELECT url, title, content FROM pages WHERE url LIKE '%installation%'")
-The full page often contains setup instructions, prerequisites, code examples, and related information
-essential for complete answers.
+The code database contains versioned source code indexed across all git tags.
+Components include: agent, computer, mcp-server, som, etc.
 
-Always cite the source URL when providing information.""",
+=== WORKFLOW EXAMPLES ===
+
+1. Find documentation about a topic:
+   - Use query_docs_vectors with a natural language query for semantic search
+   - Use query_docs_db with FTS5 MATCH for keyword search
+
+2. Explore code across versions:
+   - List components: SELECT component, COUNT(DISTINCT version) FROM code_files GROUP BY component
+   - Search code: Use query_code_db with FTS5 on code_files_fts
+   - Get file content: SELECT content FROM code_files WHERE component='agent' AND version='0.7.3' AND file_path='...'
+
+3. Semantic code search:
+   - Use query_code_vectors with natural language queries like "screenshot capture implementation"
+
+IMPORTANT: Always cite sources - URLs for docs, component@version:path for code.""",
     )
 
     # Initialize embedding model
@@ -640,9 +1236,27 @@ Always cite the source URL when providing information.""",
     _lance_db = None
     _lance_table = None
     _sqlite_conn = None
+    _code_lance_tables: dict = {}  # component -> (db, table)
+    _code_sqlite_conn = None
+    _code_components: list[str] = []
+
+    def discover_code_components() -> list[str]:
+        """Discover available component databases."""
+        nonlocal _code_components
+        if not _code_components:
+            db_dir = Path(CODE_DB_PATH)
+            if db_dir.exists():
+                # Find all component SQLite databases
+                for db_file in db_dir.glob("code_index_*.sqlite"):
+                    component = db_file.stem.replace("code_index_", "")
+                    _code_components.append(component)
+                # Fallback to legacy single database
+                if not _code_components and (db_dir / "code_index.sqlite").exists():
+                    _code_components.append("_legacy")
+        return _code_components
 
     def get_lance_table():
-        """Get or create LanceDB connection"""
+        """Get or create LanceDB connection for docs"""
         nonlocal _lance_db, _lance_table
         if _lance_table is None:
             db_path = Path(DB_PATH)
@@ -653,83 +1267,306 @@ Always cite the source URL when providing information.""",
         return _lance_table
 
     def get_sqlite_conn():
-        """Get or create read-only SQLite connection"""
+        """Get or create read-only SQLite connection for docs"""
         nonlocal _sqlite_conn
         if _sqlite_conn is None:
             sqlite_path = Path(DB_PATH) / "docs.sqlite"
             if not sqlite_path.exists():
                 raise RuntimeError("SQLite database not found.")
-            # Open in read-only mode
             _sqlite_conn = sqlite3.connect(f"file:{sqlite_path}?mode=ro", uri=True)
             _sqlite_conn.row_factory = sqlite3.Row
         return _sqlite_conn
 
+    def get_code_lance_tables() -> list[tuple[str, any]]:
+        """Get LanceDB connections for all code components."""
+        nonlocal _code_lance_tables
+        components = discover_code_components()
+
+        for component in components:
+            if component not in _code_lance_tables:
+                if component == "_legacy":
+                    db_path = Path(CODE_DB_PATH) / "code_index.lancedb"
+                else:
+                    db_path = Path(CODE_DB_PATH) / f"code_index_{component}.lancedb"
+
+                if db_path.exists():
+                    db = lancedb.connect(db_path)
+                    table = db.open_table("code")
+                    _code_lance_tables[component] = (db, table)
+
+        return [(comp, tbl) for comp, (_, tbl) in _code_lance_tables.items()]
+
+    def get_code_sqlite_conn():
+        """Get SQLite connection with all component databases attached."""
+        nonlocal _code_sqlite_conn
+        if _code_sqlite_conn is None:
+            components = discover_code_components()
+            if not components:
+                raise RuntimeError(
+                    "No code databases found. Run generate_code_index_parallel first."
+                )
+
+            # Create in-memory database and attach all component databases
+            _code_sqlite_conn = sqlite3.connect(":memory:")
+            _code_sqlite_conn.row_factory = sqlite3.Row
+
+            db_dir = Path(CODE_DB_PATH)
+
+            # Check for legacy single database first
+            legacy_path = db_dir / "code_index.sqlite"
+            if legacy_path.exists() and "_legacy" in components:
+                _code_sqlite_conn.execute(
+                    f"ATTACH DATABASE 'file:{legacy_path}?mode=ro' AS code_legacy"
+                )
+
+            # Attach each component database
+            attached = []
+            for component in components:
+                if component == "_legacy":
+                    continue
+                db_path = db_dir / f"code_index_{component}.sqlite"
+                if db_path.exists():
+                    # SQLite schema names can't have hyphens
+                    safe_name = component.replace("-", "_")
+                    _code_sqlite_conn.execute(
+                        f"ATTACH DATABASE 'file:{db_path}?mode=ro' AS code_{safe_name}"
+                    )
+                    attached.append(safe_name)
+
+            # Create unified view across all component databases
+            if attached:
+                union_parts = []
+                for safe_name in attached:
+                    union_parts.append(
+                        f"SELECT id, component, version, file_path, content, language FROM code_{safe_name}.code_files"
+                    )
+                union_sql = " UNION ALL ".join(union_parts)
+                _code_sqlite_conn.execute(f"CREATE VIEW code_files AS {union_sql}")
+
+                # Create unified FTS view (queries individual FTS tables)
+                fts_union_parts = []
+                for safe_name in attached:
+                    fts_union_parts.append(
+                        f"SELECT rowid, content, component, version, file_path FROM code_{safe_name}.code_files_fts"
+                    )
+                fts_union_sql = " UNION ALL ".join(fts_union_parts)
+                _code_sqlite_conn.execute(f"CREATE VIEW code_files_fts_union AS {fts_union_sql}")
+
+        return _code_sqlite_conn
+
+    # =================== DOCUMENTATION QUERY TOOLS (READ-ONLY) ===================
+
     @mcp.tool()
-    def search_docs(query: str, limit: int = 5, category: Optional[str] = None) -> list[dict]:
+    def query_docs_db(sql: str) -> list[dict]:
         """
-        Semantic search over CUA documentation using vector embeddings.
-        Best for conceptual queries like "how does the agent loop work?"
+        Execute a SQL query against the documentation database.
+        The database is READ-ONLY.
+
+        Database Schema:
+
+        Table: pages
+        - id INTEGER PRIMARY KEY AUTOINCREMENT
+        - url TEXT NOT NULL UNIQUE         -- Full URL of the documentation page
+        - title TEXT NOT NULL              -- Page title
+        - category TEXT NOT NULL           -- Category (e.g., 'cua', 'cuabench', 'llms.txt')
+        - content TEXT NOT NULL            -- Plain text content (markdown stripped)
+
+        Virtual Table: pages_fts (FTS5 full-text search)
+        - content TEXT                     -- Full-text indexed content
+        - url TEXT UNINDEXED
+        - title TEXT UNINDEXED
+        - category TEXT UNINDEXED
+
+        Example queries:
+
+        1. List all pages: SELECT url, title, category FROM pages ORDER BY category, title
+
+        2. Full-text search with snippets:
+           SELECT p.url, p.title, snippet(pages_fts, 0, '>>>', '<<<', '...', 64) as snippet
+           FROM pages_fts JOIN pages p ON pages_fts.rowid = p.id
+           WHERE pages_fts MATCH 'agent loop' ORDER BY rank LIMIT 10
+
+        3. Get page content: SELECT url, title, content FROM pages WHERE url LIKE '%quickstart%'
 
         Args:
-            query: Natural language search query
-            limit: Maximum number of results (default: 5, max: 20)
-            category: Optional category filter (e.g., 'cua', 'cuabench')
+            sql: SQL query to execute
 
         Returns:
-            List of relevant documentation chunks with URLs and content
-        """
-        limit = min(max(1, limit), 20)
-
-        table = get_lance_table()
-        search = table.search(query).limit(limit)
-
-        if category:
-            safe_category = category.replace("'", "''")
-            search = search.where(f"category = '{safe_category}'")
-
-        results = search.to_list()
-
-        return [
-            {
-                "text": r.get("text", ""),
-                "url": r.get("url", ""),
-                "title": r.get("title", ""),
-                "category": r.get("category", ""),
-                "score": float(r.get("_distance", 0.0)),
-            }
-            for r in results
-        ]
-
-    @mcp.tool()
-    def sql_query(query: str) -> list[dict]:
-        """
-        Execute a read-only SQL query on the documentation database.
-
-        Tables:
-        - pages: id, url, title, category, content
-        - pages_fts: FTS5 virtual table for full-text search (content, url, title, category)
-
-        FTS5 examples:
-        - SELECT * FROM pages_fts WHERE pages_fts MATCH 'agent' LIMIT 10
-        - SELECT p.*, snippet(pages_fts, 0, '**', '**', '...', 32) as snippet
-          FROM pages_fts JOIN pages p ON pages_fts.rowid = p.id
-          WHERE pages_fts MATCH 'computer use' ORDER BY rank LIMIT 5
-
-        Args:
-            query: SQL query (SELECT only, connection is read-only)
-
-        Returns:
-            List of result rows as dictionaries
+            List of dictionaries, one per row, with column names as keys
         """
         conn = get_sqlite_conn()
         cursor = conn.cursor()
+        cursor.execute(sql)
+        return [dict(row) for row in cursor.fetchall()]
 
-        try:
-            cursor.execute(query)
-            results = cursor.fetchall()
-            return [dict(row) for row in results]
-        except sqlite3.Error as e:
-            return [{"error": str(e)}]
+    @mcp.tool()
+    def query_docs_vectors(
+        query: str,
+        limit: int = 10,
+        where: Optional[str] = None,
+        select: Optional[list[str]] = None,
+    ) -> list[dict]:
+        """
+        Execute a vector similarity search against the documentation LanceDB (read-only).
+
+        Schema:
+        - text TEXT           -- The document chunk text
+        - vector VECTOR       -- Embedding vector (all-MiniLM-L6-v2, 384 dimensions)
+        - url TEXT            -- Source URL
+        - title TEXT          -- Document title
+        - category TEXT       -- Category (e.g., 'cua', 'cuabench')
+        - chunk_index INT     -- Index of chunk within document
+
+        Args:
+            query: Natural language query to embed and search for
+            limit: Maximum number of results (default: 10, max: 100)
+            where: Optional SQL-like filter (e.g., "category = 'cua'")
+            select: Optional list of columns to return (default: all except vector)
+
+        Returns:
+            List of matching documents with similarity scores (_distance field)
+        """
+        limit = min(max(1, limit), 100)
+        table = get_lance_table()
+
+        search = table.search(query).limit(limit)
+
+        if where:
+            search = search.where(where)
+        if select:
+            search = search.select(select)
+
+        results = search.to_list()
+
+        formatted = []
+        for r in results:
+            result = {}
+            for key, value in r.items():
+                if key == "vector":
+                    continue
+                result[key] = value
+            formatted.append(result)
+
+        return formatted
+
+    # =================== CODE QUERY TOOLS (READ-ONLY) ===================
+
+    @mcp.tool()
+    def query_code_db(sql: str) -> list[dict]:
+        """
+        Execute a SQL query against the code search database.
+        The database is READ-ONLY.
+
+        Database Schema:
+
+        Table: code_files
+        - id INTEGER PRIMARY KEY AUTOINCREMENT
+        - component TEXT NOT NULL          -- Component name (e.g., "agent", "computer")
+        - version TEXT NOT NULL            -- Version string (e.g., "0.7.3")
+        - file_path TEXT NOT NULL          -- Path to file
+        - content TEXT NOT NULL            -- Full source code content
+        - language TEXT NOT NULL           -- Programming language
+        - UNIQUE(component, version, file_path)
+
+        Virtual Table: code_files_fts (FTS5 full-text search)
+        - content TEXT                     -- Full-text indexed content
+        - component TEXT UNINDEXED
+        - version TEXT UNINDEXED
+        - file_path TEXT UNINDEXED
+
+        Example queries:
+
+        1. List components: SELECT component, COUNT(DISTINCT version) as version_count
+           FROM code_files GROUP BY component ORDER BY component
+
+        2. List versions: SELECT DISTINCT version FROM code_files
+           WHERE component = 'agent' ORDER BY version DESC
+
+        3. Full-text search:
+           SELECT f.component, f.version, f.file_path,
+                  snippet(code_files_fts, 0, '>>>', '<<<', '...', 64) as snippet
+           FROM code_files_fts JOIN code_files f ON code_files_fts.rowid = f.id
+           WHERE code_files_fts MATCH 'ComputerAgent' ORDER BY rank LIMIT 10
+
+        4. Get file content: SELECT content, language FROM code_files
+           WHERE component = 'agent' AND version = '0.7.3' AND file_path = 'agent/core.py'
+
+        Args:
+            sql: SQL query to execute
+
+        Returns:
+            List of dictionaries, one per row, with column names as keys
+        """
+        conn = get_code_sqlite_conn()
+        cursor = conn.cursor()
+        cursor.execute(sql)
+        return [dict(row) for row in cursor.fetchall()]
+
+    @mcp.tool()
+    def query_code_vectors(
+        query: str,
+        limit: int = 10,
+        where: Optional[str] = None,
+        select: Optional[list[str]] = None,
+        component: Optional[str] = None,
+    ) -> list[dict]:
+        """
+        Execute a vector similarity search against code LanceDBs (read-only).
+
+        Searches across all component databases and returns merged results sorted by similarity.
+
+        Schema:
+        - text TEXT           -- The source code content
+        - vector VECTOR       -- Embedding vector (all-MiniLM-L6-v2, 384 dimensions)
+        - component TEXT      -- Component name (e.g., "agent", "computer")
+        - version TEXT        -- Version string (e.g., "0.7.3")
+        - file_path TEXT      -- Path to file within the component
+        - language TEXT       -- Programming language
+
+        Args:
+            query: Natural language query to embed and search for
+            limit: Maximum number of results (default: 10, max: 100)
+            where: Optional SQL-like filter (e.g., "version = '0.7.3'")
+            select: Optional list of columns to return (default: all except vector)
+            component: Optional component to search (if not specified, searches all)
+
+        Returns:
+            List of matching code files with similarity scores (_distance field)
+        """
+        limit = min(max(1, limit), 100)
+        tables = get_code_lance_tables()
+
+        all_results = []
+
+        for comp_name, table in tables:
+            # Skip if component filter specified and doesn't match
+            if component and comp_name != component and comp_name != "_legacy":
+                continue
+
+            search = table.search(query).limit(limit)
+
+            if where:
+                search = search.where(where)
+            if select:
+                search = search.select(select)
+
+            results = search.to_list()
+            all_results.extend(results)
+
+        # Sort by distance and take top results
+        all_results.sort(key=lambda x: x.get("_distance", float("inf")))
+        all_results = all_results[:limit]
+
+        formatted = []
+        for r in all_results:
+            result = {}
+            for key, value in r.items():
+                if key == "vector":
+                    continue
+                result[key] = value
+            formatted.append(result)
+
+        return formatted
 
     # Create SSE app directly - endpoints at /sse (GET) and /messages (POST)
     from starlette.middleware import Middleware
@@ -756,18 +1593,43 @@ Always cite the source URL when providing information.""",
 
 
 @app.local_entrypoint()
-def main():
-    """Run initial crawl and database generation"""
-    print("Running initial crawl...")
-    summary = crawl_docs.remote()
-    print(f"Crawl summary: {summary}")
+def main(
+    skip_docs: bool = False,
+    skip_code: bool = False,
+    parallel: bool = True,
+    code_only: bool = False,
+):
+    """Run initial crawl and database generation
 
-    print("Generating vector database...")
-    vector_result = generate_vector_db.remote()
-    print(f"Vector DB: {vector_result}")
+    Args:
+        skip_docs: Skip documentation crawl and indexing
+        skip_code: Skip code indexing
+        parallel: Use parallel code indexing (default: True)
+        code_only: Only run code indexing (shortcut for --skip-docs)
+    """
+    if code_only:
+        skip_docs = True
 
-    print("Generating SQLite database...")
-    sqlite_result = generate_sqlite_db.remote()
-    print(f"SQLite DB: {sqlite_result}")
+    if not skip_docs:
+        print("Running initial crawl...")
+        summary = crawl_docs.remote()
+        print(f"Crawl summary: {summary}")
+
+        print("Generating vector database...")
+        vector_result = generate_vector_db.remote()
+        print(f"Vector DB: {vector_result}")
+
+        print("Generating SQLite database...")
+        sqlite_result = generate_sqlite_db.remote()
+        print(f"SQLite DB: {sqlite_result}")
+
+    if not skip_code:
+        if parallel:
+            print("Generating code index (parallel)...")
+            code_result = generate_code_index_parallel.remote()
+        else:
+            print("Generating code index (sequential)...")
+            code_result = generate_code_index.remote()
+        print(f"Code index: {code_result}")
 
     print("Done! Deploy with: modal deploy docs/scripts/modal_app.py")

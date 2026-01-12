@@ -4,8 +4,8 @@ import {
   copilotRuntimeNextJSAppRouterEndpoint,
 } from '@copilotkit/runtime';
 import { BuiltInAgent, InMemoryAgentRunner } from '@copilotkit/runtime/v2';
-import { NextRequest } from 'next/server';
 import { randomUUID } from 'crypto';
+import { NextRequest } from 'next/server';
 import { PostHog } from 'posthog-node';
 
 const posthog = process.env.NEXT_PUBLIC_POSTHOG_API_KEY
@@ -286,6 +286,14 @@ class AnthropicSafeBuiltInAgent extends BuiltInAgent {
     parentObservable.subscribe = (observer: any) => {
       const wrappedObserver = {
         next: (event: any) => {
+          // Debug logging
+          if (process.env.NODE_ENV === 'development') {
+            const deltaPreview = event.delta
+              ? `delta: ${String(event.delta).substring(0, 50)}...`
+              : '';
+            console.log('[CopilotKit] Event:', event.type, deltaPreview);
+          }
+
           if (event.type === 'TEXT_MESSAGE_CHUNK') {
             if (event.delta) {
               responseChunks.push(event.delta);
@@ -306,6 +314,7 @@ class AnthropicSafeBuiltInAgent extends BuiltInAgent {
           }
         },
         error: (err: any) => {
+          console.error('[CopilotKit] Error:', err?.message || String(err), err?.stack);
           if (posthog) {
             posthog.capture({
               distinctId: conversationId,
@@ -383,21 +392,25 @@ class AnthropicSafeBuiltInAgent extends BuiltInAgent {
 
 const docsAgent = new AnthropicSafeBuiltInAgent({
   maxSteps: 100,
-  model: 'anthropic/claude-sonnet-4-20250514',
+  model: 'anthropic/claude-haiku-4-5-20251001',
   prompt: `You are a helpful assistant for Cua (Computer Use Agent) and Cua-Bench documentation.
 Be concise and helpful. Answer questions about the documentation accurately.
 
 Use Cua as the name of the product and CUA for Computer Use Agent.
 
-You have access to tools for searching the Cua documentation:
-- search_docs: Semantic search for documentation content
-- sql_query: Direct SQL queries on the documentation database
+You have access to tools for searching the Cua documentation and code:
+- query_docs_db: SQL queries on the documentation database (full-text search via FTS5)
+- query_docs_vectors: Semantic vector search over documentation
+- query_code_db: SQL queries on the code database (full-text search, file content, versions)
+- query_code_vectors: Semantic vector search over source code
 
-When using search_docs, follow up by checking the source document for accuracy.
+When using query_docs_vectors, follow up by checking the source document for accuracy.
 Include links to documentation pages in your responses.
+When providing code examples, use query_code_db or query_code_vectors to ensure accuracy.
 
 If users seem stuck, invite them to join the Discord: https://discord.com/invite/cua-ai`,
   temperature: 0.7,
+  maxTokens: 8192 * 4,
   mcpServers: [
     {
       type: 'sse',

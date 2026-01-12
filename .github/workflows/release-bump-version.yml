@@ -324,11 +324,9 @@ jobs:
           echo "Pushing to temp branch..."
           git push origin "HEAD:refs/heads/${TEMP_BRANCH}" --force
 
-          # Step 2: Create tag via API
-          echo "Creating tag via API..."
-          gh api /repos/${{ github.repository }}/git/refs \
-            -f ref="refs/tags/${TAG}" \
-            -f sha="${COMMIT_SHA}" || echo "Tag may already exist"
+          # Step 2: Push tag via git (triggers tag-based workflows)
+          echo "Pushing tag via git..."
+          git push origin "refs/tags/${TAG}" --force
 
           # Step 3: Update main branch ref using API (bypasses branch protection)
           echo "Updating main branch via API..."

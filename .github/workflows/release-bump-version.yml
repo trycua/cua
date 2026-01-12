@@ -324,7 +324,7 @@ jobs:
           echo "Pushing to temp branch..."
           git push origin "HEAD:refs/heads/${TEMP_BRANCH}" --force
 
-          # Step 2: Create tag via API
+          # Step 2: Create tag via API (uses GitHub App token to bypass branch protection)
           echo "Creating tag via API..."
           gh api /repos/${{ github.repository }}/git/refs \
             -f ref="refs/tags/${TAG}" \

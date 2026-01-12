@@ -35,6 +35,7 @@ from .callbacks import (
     ImageRetentionCallback,
     LoggingCallback,
     OperatorNormalizerCallback,
+    OtelCallback,
     PromptInstructionsCallback,
     TelemetryCallback,
     TrajectorySaverCallback,
@@ -299,12 +300,18 @@ class ComputerAgent:
             self.agent_loop = config_info.agent_class()
             self.agent_config_info = config_info
 
-        # Add telemetry callback AFTER agent_loop is set so it can capture the correct agent_type
+        # Add telemetry callbacks AFTER agent_loop is set so they can capture the correct agent_type
         if self.telemetry_enabled:
+            # PostHog telemetry (product analytics)
             if isinstance(self.telemetry_enabled, bool):
                 self.callbacks.append(TelemetryCallback(self))
             else:
                 self.callbacks.append(TelemetryCallback(self, **self.telemetry_enabled))
+
+            # OpenTelemetry callback (operational metrics - Four Golden Signals)
+            # This is enabled alongside PostHog when telemetry_enabled is True
+            # Users can disable via CUA_TELEMETRY_DISABLED=true env var
+            self.callbacks.append(OtelCallback(self))
 
         self.tool_schemas = []
         self.computer_handler = None

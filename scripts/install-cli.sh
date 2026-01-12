@@ -1,8 +1,8 @@
 #!/bin/bash
 set -e
 
-# CUA CLI Installation Script for macOS/Linux
-echo "🚀 Installing CUA CLI..."
+# Cua CLI Installation Script for macOS/Linux
+echo "🚀 Installing Cua CLI..."
 
 # Function to print success message
 print_success() {
@@ -10,7 +10,7 @@ print_success() {
     local version="$2"
     local config_file="$3"
     
-    printf "\033[32m✅  CUA CLI %s was installed successfully to %s\033[0m\n" "$version" "$bin_path"
+    printf "\033[32m✅  Cua CLI %s was installed successfully to %s\033[0m\n" "$version" "$bin_path"
     printf "\033[90mAdded \"%s\" to \$PATH in \"%s\"\033[0m\n" "$bin_path" "$config_file"
     printf "\n\033[90mTo get started, run:\033[0m\n"
     printf "  source %s\n" "$config_file"
@@ -20,7 +20,7 @@ print_success() {
 
 # Function to install with bun as fallback
 install_with_bun() {
-    echo "📦 Installing CUA CLI using Bun..."
+    echo "📦 Installing Cua CLI using Bun..."
     
     # Check if bun is already installed
     if ! command -v bun &> /dev/null; then
@@ -44,7 +44,7 @@ install_with_bun() {
         exit 1
     fi
 
-    echo "📦 Installing CUA CLI..."
+    echo "📦 Installing Cua CLI..."
     if ! bun add -g @trycua/cli; then
         echo "❌ Failed to install with Bun, trying npm..."
         if ! npm install -g @trycua/cli; then
@@ -92,6 +92,33 @@ case "$ARCH" in
     *) ARCH="$ARCH" ;;
 esac
 
+# Function to get the latest cua release tag
+get_latest_cua_tag() {
+    local page=1
+    local per_page=100
+    local max_pages=10
+    local CUA_TAG=""
+
+    while [ $page -le $max_pages ]; do
+        local response=$(curl -s "https://api.github.com/repos/trycua/cua/tags?per_page=$per_page&page=$page")
+
+        if [ -z "$response" ] || [ "$(echo "$response" | grep -c '"name":')" -eq 0 ]; then
+            return 1
+        fi
+
+        CUA_TAG=$(echo "$response" | grep '"name": "cua-' | head -n 1 | cut -d '"' -f 4)
+
+        if [ -n "$CUA_TAG" ]; then
+            echo "$CUA_TAG"
+            return 0
+        fi
+
+        page=$((page + 1))
+    done
+
+    return 1
+}
+
 # Determine the binary name
 BINARY_NAME="cua-${OS}-${ARCH}"
 if [ "$OS" = "darwin" ] && [ "$ARCH" = "arm64" ]; then
@@ -106,35 +133,27 @@ else
     exit 0
 fi
 
-# Get the latest release version
-LATEST_RELEASE=$(curl -s https://api.github.com/repos/trycua/cua/releases/latest)
-if [ -z "$LATEST_RELEASE" ]; then
-    echo "⚠️  Could not fetch latest release, falling back to Bun installation"
+# Get the latest cua release tag
+TAG_NAME=$(get_latest_cua_tag)
+if [ -z "$TAG_NAME" ]; then
+    echo "⚠️  Could not find latest cua release, falling back to Bun installation"
     install_with_bun
     exit 0
 fi
 
 # Extract version number (remove 'cua-v' prefix)
-TAG_NAME=$(echo "$LATEST_RELEASE" | grep 'tag_name' | cut -d '"' -f 4)
 VERSION=${TAG_NAME#cua-v}
 
-# Find the binary URL in the release assets
-BINARY_URL=$(echo "$LATEST_RELEASE" | grep -o 'https://.*/download/[^"]*/'${BINARY_NAME}'"' | head -1)
-BINARY_URL="${BINARY_URL%\"}"
+# Construct download URL using the specific cua release tag
+BINARY_URL="https://github.com/trycua/cua/releases/download/${TAG_NAME}/${BINARY_NAME}"
 printf "\033[90mBINARY_URL: %s\033[0m\n" "$BINARY_URL"
-
-if [ -z "$BINARY_URL" ]; then
-    echo "⚠️  Could not find ${BINARY_NAME} in release assets, falling back to Bun installation"
-    install_with_bun
-    exit 0
-fi
 
 # Create ~/.cua/bin directory if it doesn't exist
 INSTALL_DIR="$HOME/.cua/bin"
 mkdir -p "$INSTALL_DIR"
 
 # Download the binary
-echo "📥 Downloading CUA CLI $VERSION for ${OS}-${ARCH}..."
+echo "📥 Downloading Cua CLI $VERSION for ${OS}-${ARCH}..."
 echo "📍 Downloading from: $BINARY_URL"
 
 # Download with progress bar and proper error handling

@@ -41,7 +41,7 @@ A few papers stand out for their immediate relevance to anyone building or deplo
 
 ## Meet Us at NeurIPS
 
-We'll be at NeurIPS in San Diego. If you're working on computer-use agents, building applications on top of CUA infrastructure, or just curious about where this space is heading, we'd love to connect.
+We'll be at NeurIPS in San Diego. If you're working on computer-use agents, building applications on top of Cua infrastructure, or just curious about where this space is heading, we'd love to connect.
 
 - **Book a Meeting**: [cal.com/cua/neurips-slot](https://cal.com/cua/neurips-slot)
 - **X/Twitter**: [@trycua](https://x.com/trycua)

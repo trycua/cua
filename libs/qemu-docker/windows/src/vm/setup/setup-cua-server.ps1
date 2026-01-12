@@ -1,4 +1,4 @@
-# Setup CUA Computer Server on Windows 11
+# Setup Cua Computer Server on Windows 11
 # Creates a scheduled task to run computer server in background
 
 Set-StrictMode -Version Latest
@@ -14,7 +14,7 @@ if (!(Test-Path $LogDir)) { New-Item -ItemType Directory -Force -Path $LogDir | 
 $RunId = (Get-Date -Format 'yyyyMMdd_HHmmss') + "_" + $PID
 $script:LogFile = Join-Path $LogDir ("setup_cua_server_" + $RunId + ".log")
 
-Write-Log -LogFile $script:LogFile -Message "=== Installing CUA Computer Server ==="
+Write-Log -LogFile $script:LogFile -Message "=== Installing Cua Computer Server ==="
 
 # Ensure Chocolatey and Python 3.12 are present
 try {
@@ -79,7 +79,7 @@ try {
 # Open firewall for port 5000
 Write-Log -LogFile $script:LogFile -Message "Opening firewall for port 5000"
 try {
-  netsh advfirewall firewall add rule name="CUA Computer Server 5000" dir=in action=allow protocol=TCP localport=5000 | Out-Null
+  netsh advfirewall firewall add rule name="Cua Computer Server 5000" dir=in action=allow protocol=TCP localport=5000 | Out-Null
   Write-Log -LogFile $script:LogFile -Message "Firewall rule added successfully"
 } catch {
   Write-Log -LogFile $script:LogFile -Message "Firewall rule warning: $($_.Exception.Message)"
@@ -102,7 +102,7 @@ function Start-Server {
     & `$ActivateScript
     & `$PipExe install --upgrade cua-computer-server 2>&1 | Out-File -FilePath `$LogFile -Append
 
-    Write-Output "Starting CUA Computer Server on port 5000..." | Out-File -FilePath `$LogFile -Append
+    Write-Output "Starting Cua Computer Server on port 5000..." | Out-File -FilePath `$LogFile -Append
     & `$Python -m computer_server --port 5000 2>&1 | Out-File -FilePath `$LogFile -Append
     return `$LASTEXITCODE
 }
@@ -129,7 +129,7 @@ Write-Log -LogFile $script:LogFile -Message "VBScript wrapper created at $VbsWra
 
 # Create scheduled task to run at logon
 try {
-  $TaskName = 'CUA-Computer-Server'
+  $TaskName = 'Cua-Computer-Server'
   $Username = 'Docker'  # Default user for Dockur Windows
 
   # Remove existing task if present
@@ -146,8 +146,8 @@ try {
   $UserId = "$env:COMPUTERNAME\$Username"
   $Trigger = New-ScheduledTaskTrigger -AtLogOn -User $UserId
 
-  # Principal: Run in background without window (S4U = Service For User)
-  $Principal = New-ScheduledTaskPrincipal -UserId $UserId -LogonType S4U -RunLevel Highest
+  # Principal: Run in user's interactive session (required for screen capture)
+  $Principal = New-ScheduledTaskPrincipal -UserId $UserId -LogonType Interactive -RunLevel Highest
 
   # Task settings - hide window
   $Settings = New-ScheduledTaskSettingsSet `
@@ -176,5 +176,5 @@ try {
   throw
 }
 
-Write-Log -LogFile $script:LogFile -Message "=== CUA Computer Server setup completed ==="
+Write-Log -LogFile $script:LogFile -Message "=== Cua Computer Server setup completed ==="
 exit 0

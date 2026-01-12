@@ -72,6 +72,11 @@ class TelemetryCallback(AsyncCallbackHandler):
             **SYSTEM_INFO,
         }
 
+        # Include VM name if available
+        vm_name = self._get_vm_name()
+        if vm_name:
+            agent_info["vm_name"] = vm_name
+
         record_event("agent_session_start", agent_info)
 
     async def on_run_start(self, kwargs: Dict[str, Any], old_items: List[Dict[str, Any]]) -> None:
@@ -93,6 +98,11 @@ class TelemetryCallback(AsyncCallbackHandler):
             "input_context_size": input_context_size,
             "num_existing_messages": len(old_items),
         }
+
+        # Include VM name if available
+        vm_name = self._get_vm_name()
+        if vm_name:
+            run_data["vm_name"] = vm_name
 
         # Log trajectory if opted in
         if self.log_trajectory:
@@ -122,6 +132,11 @@ class TelemetryCallback(AsyncCallbackHandler):
             "num_steps": self.step_count,
             "total_usage": self.total_usage.copy(),
         }
+
+        # Include VM name if available
+        vm_name = self._get_vm_name()
+        if vm_name:
+            run_data["vm_name"] = vm_name
 
         # Log trajectory if opted in
         if self.log_trajectory:
@@ -176,6 +191,20 @@ class TelemetryCallback(AsyncCallbackHandler):
             step_data["duration_seconds"] = step_duration
 
         record_event("agent_step", step_data)
+
+    def _get_vm_name(self) -> Optional[str]:
+        """Extract VM name from agent's computer handler if available."""
+        try:
+            if hasattr(self.agent, "computer_handler") and self.agent.computer_handler:
+                handler = self.agent.computer_handler
+                # Check if it's a cuaComputerHandler with a cua_computer
+                if hasattr(handler, "cua_computer"):
+                    computer = handler.cua_computer
+                    if hasattr(computer, "config") and hasattr(computer.config, "name"):
+                        return computer.config.name
+        except Exception:
+            pass
+        return None
 
     def _calculate_context_size(self, items: List[Dict[str, Any]]) -> int:
         """Calculate approximate context size in tokens/characters."""

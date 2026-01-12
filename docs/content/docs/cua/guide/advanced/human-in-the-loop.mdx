@@ -1,0 +1,121 @@
+---
+title: Human-in-the-Loop
+description: Use humans as agents for evaluation, demonstrations, and interactive control
+---
+
+**Human-in-the-loop** lets you use a human operator as the agent instead of an AI model. This is useful for creating training data, evaluating agent performance, or taking manual control when automation needs guidance.
+
+## Setup
+
+Start the human agent tool:
+
+```bash
+python -m agent.human_tool
+```
+
+This opens a UI that shows pending completions. Select a completion to take control.
+
+## Basic Usage
+
+Use `human/human` as the model:
+
+```python
+from computer import Computer
+from agent import ComputerAgent
+
+computer = Computer(os_type="linux", provider_type="docker", image="trycua/cua-xfce:latest")
+await computer.run()
+
+agent = ComputerAgent(
+    model="human/human",
+    tools=[computer]
+)
+
+async for result in agent.run("Navigate to settings and enable dark mode"):
+    print(result)
+```
+
+The agent waits for a human to perform each action through the UI.
+
+## Composed with Grounding
+
+Combine human planning with automated grounding:
+
+```python
+agent = ComputerAgent(
+    model="huggingface-local/HelloKKMe/GTA1-7B+human/human",
+    tools=[computer]
+)
+
+async for result in agent.run("Click the submit button"):
+    print(result)
+```
+
+The grounding model finds UI elements, then the human decides which to interact with.
+
+## Use Cases
+
+### Creating Training Data
+
+Record human demonstrations to train or fine-tune models:
+
+```python
+agent = ComputerAgent(
+    model="human/human",
+    tools=[computer],
+    trajectory_dir="demonstrations"
+)
+
+# Human performs task, trajectory is saved
+async for result in agent.run("Complete the checkout flow"):
+    pass
+```
+
+The saved trajectory contains the human's actions and screenshots, ready for training.
+
+### Evaluating Agent Performance
+
+Compare AI agent outputs to human ground truth:
+
+```python
+# Run AI agent
+ai_agent = ComputerAgent(model="anthropic/claude-sonnet-4-5-20250929", tools=[computer])
+async for result in ai_agent.run(task):
+    ai_results.append(result)
+
+# Run human agent on same task
+human_agent = ComputerAgent(model="human/human", tools=[computer])
+async for result in human_agent.run(task):
+    human_results.append(result)
+
+# Compare trajectories
+```
+
+### Interactive Control
+
+Take over when automated agents get stuck:
+
+```python
+try:
+    async for result in ai_agent.run(task):
+        process(result)
+except AgentStuckError:
+    # Switch to human control
+    async for result in human_agent.run("Continue from here"):
+        process(result)
+```
+
+### Testing and Debugging
+
+Manually validate tool and environment behavior:
+
+```python
+agent = ComputerAgent(
+    model="human/human",
+    tools=[computer, custom_tool]
+)
+
+# Human can test each tool manually
+async for result in agent.run("Test the database query tool"):
+    print(result)
+```

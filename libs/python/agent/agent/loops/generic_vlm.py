@@ -258,8 +258,31 @@ class GenericVlmConfig(AsyncAgentConfig):
             allow_images_in_tool_results=False,
         )
 
+        # Build function schemas from tools array
+        function_schemas = []
+        if tools:
+            from ..computers import is_agent_computer
+
+            for tool in tools:
+                tool_type = tool.get("type")
+
+                if tool_type == "computer":
+                    # For computer tools, use QWEN3_COMPUTER_TOOL schema
+                    computer = tool.get("computer")
+                    if computer and is_agent_computer(computer):
+                        function_schemas.append(QWEN3_COMPUTER_TOOL["function"])
+                elif tool_type == "function":
+                    # For function tools, use the provided function schema
+                    function_schema = tool.get("function")
+                    if function_schema:
+                        function_schemas.append(function_schema)
+
+        # If no tools provided or no computer tool found, use default QWEN3_COMPUTER_TOOL
+        if not function_schemas:
+            function_schemas = [QWEN3_COMPUTER_TOOL["function"]]
+
         # Prepend Nous-generated system if available
-        nous_system = _build_nous_system([QWEN3_COMPUTER_TOOL["function"]])
+        nous_system = _build_nous_system(function_schemas)
         completion_messages = ([nous_system] if nous_system else []) + converted_msgs
 
         # If there is no screenshot in the conversation, take one now and inject it.
@@ -271,6 +294,20 @@ class GenericVlmConfig(AsyncAgentConfig):
                     for p in content:
                         if isinstance(p, dict) and p.get("type") == "image_url":
                             return True
+            return False
+
+        def _has_screenshot_message(msgs: List[Dict[str, Any]]) -> bool:
+            """Check if messages already contain the 'Taking a screenshot' text."""
+            screenshot_text = "Taking a screenshot to see the current computer screen."
+            for m in msgs:
+                content = m.get("content")
+                if isinstance(content, str) and screenshot_text in content:
+                    return True
+                if isinstance(content, list):
+                    for p in content:
+                        if isinstance(p, dict) and p.get("type") == "text":
+                            if screenshot_text in (p.get("text") or ""):
+                                return True
             return False
 
         pre_output_items: List[Dict[str, Any]] = []
@@ -295,19 +332,20 @@ class GenericVlmConfig(AsyncAgentConfig):
                     ],
                 }
             )
-            # Add assistant message to outputs to reflect the action, similar to composed_grounded.py
-            pre_output_items.append(
-                {
-                    "type": "message",
-                    "role": "assistant",
-                    "content": [
-                        {
-                            "type": "text",
-                            "text": "Taking a screenshot to see the current computer screen.",
-                        }
-                    ],
-                }
-            )
+            # Add assistant message to outputs to reflect the action, only if not already present
+            if not _has_screenshot_message(messages):
+                pre_output_items.append(
+                    {
+                        "type": "message",
+                        "role": "assistant",
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": "Taking a screenshot to see the current computer screen.",
+                            }
+                        ],
+                    }
+                )
 
         # Smart-resize all screenshots and attach min/max pixel hints. Fail fast if deps missing.
         # Also record the last resized width/height to unnormalize coordinates later.

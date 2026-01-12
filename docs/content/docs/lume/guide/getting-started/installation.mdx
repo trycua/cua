@@ -1,0 +1,158 @@
+---
+title: Installation
+description: Installation instructions for Lume
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+## System Requirements
+
+- Apple Silicon Mac (M1, M2, M3, M4, etc.)
+- macOS 13.0 or later
+- At least 8GB of RAM (16GB recommended)
+- At least 30GB of free disk space
+
+## Install with Script
+
+Install Lume with a single command:
+
+```bash
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/lume/scripts/install.sh)"
+```
+
+By default, Lume is installed with:
+- A **background service** that starts automatically on login
+- An **auto-updater** that checks for updates at login and every 24 hours
+
+### Manual Start (No Background Service)
+
+If you prefer to start the Lume API service manually when needed, use the `--no-background-service` option:
+
+```bash
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/lume/scripts/install.sh)" -- --no-background-service
+```
+
+<Callout title="Note">
+  With this option, you'll need to manually start the Lume API service by running `lume serve` in
+  your terminal whenever you need to use tools or libraries that rely on the Lume API (such as the
+  Computer Use Agent).
+</Callout>
+
+### Disable Auto-Updates
+
+If you prefer to manage updates manually, use the `--no-auto-updater` option:
+
+```bash
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/lume/scripts/install.sh)" -- --no-auto-updater
+```
+
+You can combine options to disable both the background service and auto-updates:
+
+```bash
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/lume/scripts/install.sh)" -- --no-background-service --no-auto-updater
+```
+
+## Manual Download and Installation
+
+You can also download the `lume.pkg.tar.gz` archive from the [latest release](https://github.com/trycua/cua/releases?q=lume&expanded=true), extract it, and install the package manually.
+
+## Verify Installation
+
+After installation, verify Lume is working:
+
+```bash
+# Check version
+lume --version
+
+# List available commands
+lume --help
+```
+
+## Managing the Background Service
+
+If you installed with the background service (default), you can manage it with these commands:
+
+```bash
+# Check if the daemon is running
+launchctl list | grep com.trycua.lume_daemon
+
+# View daemon logs
+tail -f /tmp/lume_daemon.log
+
+# Manually start the Lume API service
+lume serve
+```
+
+## Managing Auto-Updates
+
+If you installed with auto-updates enabled (default), Lume will automatically check for and install updates at login and every 24 hours.
+
+```bash
+# Check if the auto-updater is running
+launchctl list | grep com.trycua.lume_updater
+
+# View auto-updater logs
+tail -f /tmp/lume_updater.log
+
+# Manually run an update check
+~/.local/bin/lume-update
+```
+
+### Disable Auto-Updates After Installation
+
+To disable auto-updates after installation:
+
+```bash
+launchctl unload ~/Library/LaunchAgents/com.trycua.lume_updater.plist
+rm ~/Library/LaunchAgents/com.trycua.lume_updater.plist
+rm ~/.local/bin/lume-update
+```
+
+## Uninstall Lume
+
+### Remove the Background Service
+
+If you installed Lume with the background service, first remove the daemon:
+
+```bash
+launchctl unload ~/Library/LaunchAgents/com.trycua.lume_daemon.plist
+rm ~/Library/LaunchAgents/com.trycua.lume_daemon.plist
+```
+
+### Remove the Auto-Updater
+
+If you installed with auto-updates enabled, remove the updater:
+
+```bash
+launchctl unload ~/Library/LaunchAgents/com.trycua.lume_updater.plist
+rm ~/Library/LaunchAgents/com.trycua.lume_updater.plist
+rm ~/.local/bin/lume-update
+```
+
+### Remove Lume Binary
+
+First, locate the Lume binary:
+
+```bash
+which lume
+```
+
+Then remove it:
+
+```bash
+rm $(which lume)
+```
+
+### Clean Up VM Images
+
+Optionally, remove downloaded VM images:
+
+```bash
+# Remove all Lume VM images
+rm -rf ~/.cache/lume-images
+```
+
+## Next Steps
+
+- [Quickstart](/lume/guide/getting-started/quickstart) - Create your first VM
+- [Prebuilt Images](/lume/guide/fundamentals/prebuilt-images) - Available images in the registry

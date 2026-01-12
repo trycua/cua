@@ -1,0 +1,59 @@
+name: Reusable Docker Build Workflow
+
+on:
+  workflow_dispatch:  # Prevents phantom runs on push, allows manual testing
+  workflow_call:
+    inputs:
+      image_name:
+        description: "Name of the Docker image (e.g. cua-ubuntu, cua-xfce)"
+        required: true
+        type: string
+      context_dir:
+        description: "Directory containing the Dockerfile relative to workspace root (e.g. libs/kasm, libs/xfce)"
+        required: true
+        type: string
+      dockerfile_path:
+        description: "Path to Dockerfile relative to context_dir (e.g. Dockerfile)"
+        required: false
+        type: string
+        default: "Dockerfile"
+      skip_arm64:
+        description: "Skip arm64 build (for images that don't support arm64)"
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    if: ${{ !(inputs.skip_arm64 && matrix.platform == 'linux/arm64') }}
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - linux/amd64
+          - linux/arm64
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Prepare platform tag
+        id: platform
+        run: |
+          TAG=$(echo "${{ matrix.platform }}" | sed 's/\//-/g')
+          echo "tag=${TAG}" >> $GITHUB_OUTPUT
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./${{ inputs.context_dir }}
+          file: ./${{ inputs.context_dir }}/${{ inputs.dockerfile_path }}
+          push: false
+          platforms: ${{ matrix.platform }}
+
+      - name: Verify build
+        run: |
+          echo "Successfully built ${{ inputs.image_name }} for ${{ matrix.platform }}"

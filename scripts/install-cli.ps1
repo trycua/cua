@@ -1,8 +1,36 @@
-# CUA CLI Installation Script for Windows
+# Cua CLI Installation Script for Windows
 $ErrorActionPreference = "Stop"
 
+function Get-LatestCuaTag {
+    $page = 1
+    $perPage = 100
+    $maxPages = 10
+
+    while ($page -le $maxPages) {
+        try {
+            $response = Invoke-RestMethod -Uri "https://api.github.com/repos/trycua/cua/tags?per_page=$perPage&page=$page" -ErrorAction Stop
+
+            if (-not $response -or $response.Count -eq 0) {
+                return $null
+            }
+
+            $cuaTag = $response | Where-Object { $_.name -like "cua-*" } | Select-Object -First 1
+
+            if ($cuaTag) {
+                return $cuaTag.name
+            }
+
+            $page++
+        } catch {
+            return $null
+        }
+    }
+
+    return $null
+}
+
 function Install-WithBun {
-    Write-Host "Installing CUA CLI using Bun..." -ForegroundColor Yellow
+    Write-Host "Installing Cua CLI using Bun..." -ForegroundColor Yellow
     
     # Check if bun is already installed
     if (-not (Get-Command bun -ErrorAction SilentlyContinue)) {
@@ -63,7 +91,7 @@ function Install-WithBun {
     }
 }
 
-Write-Host "Installing CUA CLI..." -ForegroundColor Green
+Write-Host "Installing Cua CLI..." -ForegroundColor Green
 
 # Determine if this is a 64-bit system
 $is64Bit = [Environment]::Is64BitOperatingSystem
@@ -78,20 +106,10 @@ if (-not $is64Bit) {
     }
 }
 
-# Get the latest release version
-try {
-    $release = Invoke-RestMethod -Uri "https://api.github.com/repos/trycua/cua/releases/latest" -ErrorAction Stop
-    $version = $release.tag_name -replace '^cua-v', ''
-    # Look for the windows binary in the release assets
-    $windowsAsset = $release.assets | Where-Object { $_.name -eq 'cua-windows-x64.exe' }
-    
-    if (-not $windowsAsset) {
-        throw "Windows binary not found in release assets"
-    }
-    
-    $binaryUrl = $windowsAsset.browser_download_url
-} catch {
-    Write-Host "Warning: Could not fetch latest release, falling back to Bun installation" -ForegroundColor Yellow
+# Get the latest cua release tag
+$tagName = Get-LatestCuaTag
+if (-not $tagName) {
+    Write-Host "Warning: Could not find latest cua release, falling back to Bun installation" -ForegroundColor Yellow
     if (Install-WithBun) {
         exit 0
     } else {
@@ -100,6 +118,12 @@ try {
         exit 1
     }
 }
+
+# Extract version number (remove 'cua-v' prefix)
+$version = $tagName -replace '^cua-v', ''
+
+# Construct download URL using the specific cua release tag
+$binaryUrl = "https://github.com/trycua/cua/releases/download/$tagName/cua-windows-x64.exe"
 
 # Create installation directory
 $installDir = "$env:USERPROFILE\.cua\bin"
@@ -110,7 +134,7 @@ if (-not (Test-Path $installDir)) {
 $binaryPath = Join-Path $installDir "cua.exe"
 
 # Download the binary
-Write-Host "Downloading CUA CLI $version for Windows x64..." -ForegroundColor Cyan
+Write-Host "Downloading Cua CLI $version for Windows x64..." -ForegroundColor Cyan
 try {
     Invoke-WebRequest -Uri $binaryUrl -OutFile $binaryPath -ErrorAction Stop
 } catch {
@@ -141,7 +165,7 @@ if ($currentPath -notlike "*$installDir*") {
 
 # Verify installation
 if (Test-Path $binaryPath) {
-    Write-Host "Success: CUA CLI $version installed successfully to $binaryPath" -ForegroundColor Green
+    Write-Host "Success: Cua CLI $version installed successfully to $binaryPath" -ForegroundColor Green
     Write-Host ""
     Write-Host "Get started with:" -ForegroundColor Cyan
     Write-Host "   cua login"
@@ -152,7 +176,7 @@ if (Test-Path $binaryPath) {
     # Offer to add to PATH if not already there
     if (-not ($env:Path -like "*$installDir*")) {
         Write-Host ""
-        Write-Host "Note: Please restart your terminal or run the following command to use CUA CLI:" -ForegroundColor Yellow
+        Write-Host "Note: Please restart your terminal or run the following command to use Cua CLI:" -ForegroundColor Yellow
         Write-Host "   `$env:Path += ';$installDir'"
     }
 } else {

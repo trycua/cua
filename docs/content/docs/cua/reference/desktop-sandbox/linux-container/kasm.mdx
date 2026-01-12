@@ -1,0 +1,89 @@
+---
+title: Kasm Container
+description: Kasm-based Ubuntu desktop container for Computer-Using Agents
+---
+
+Containerized virtual desktop for Computer-Using Agents (Cua). Utilizes Kasm's MIT-licensed Ubuntu XFCE container as a base with computer-server pre-installed.
+
+## Features
+
+- Ubuntu 22.04 (Jammy) with XFCE desktop environment
+- Pre-installed computer-server for remote computer control
+- VNC access for visual desktop interaction
+- Python 3.11 with necessary libraries
+- Screen capture tools (gnome-screenshot, wmctrl, ffmpeg)
+- Clipboard utilities (xclip, socat)
+
+## Quick Start
+
+```bash
+docker pull trycua/cua-ubuntu:latest
+
+docker run --rm -it \
+  --shm-size=512m \
+  -p 6901:6901 \
+  -p 8000:8000 \
+  -e VNCOPTIONS=-disableBasicAuth \
+  trycua/cua-ubuntu:latest
+```
+
+**Access Points:**
+- **VNC Web Interface**: `http://localhost:6901`
+- **Computer Server API**: `http://localhost:8000`
+
+## Using with Cua
+
+```python
+from computer import Computer
+
+computer = Computer(
+    os_type="linux",
+    provider_type="docker",
+    image="trycua/cua-ubuntu:latest",
+    display="1024x768",
+    memory="4GB",
+    cpu="2"
+)
+
+async with computer:
+    screenshot = await computer.interface.screenshot()
+    await computer.interface.left_click(100, 100)
+    await computer.interface.type_text("Hello from Cua!")
+```
+
+## Configuration
+
+### Ports
+
+- **6901**: VNC web interface (noVNC)
+- **8000**: Computer-server API endpoint
+
+### Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `VNC_PW` | `password` | VNC password |
+| `DISPLAY` | `:0` | X11 display |
+
+### Volumes
+
+- `/home/kasm-user/storage`: Persistent storage mount point
+- `/home/kasm-user/shared`: Shared folder mount point
+
+## Creating Snapshots
+
+Create a filesystem snapshot of the container:
+
+```bash
+docker commit <container_id> cua-ubuntu-snapshot:latest
+```
+
+Then run the snapshot:
+
+```bash
+docker run --rm -it --shm-size=512m -p 6901:6901 -p 8000:8000 -e VNCOPTIONS=-disableBasicAuth cua-ubuntu-snapshot:latest
+```
+
+## Building from Source
+
+To build the image manually, see the [kasm source code](https://github.com/trycua/cua/tree/main/libs/kasm).

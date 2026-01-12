@@ -6,7 +6,7 @@ In one of our original posts, we explored building Computer-Use Operators on mac
 
 Today, we're excited to announce the release of the **`@trycua/computer` Web SDK** - a new library that allows you to control your Cua cloud containers from any JavaScript or TypeScript project. With this library, you can click, type, and grab screenshots from your cloud containers - no extra servers required.
 
-With this new SDK, you can easily develop CUA experiences like the one below, which we will release soon as open source.
+With this new SDK, you can easily develop Cua experiences like the one below, which we will release soon as open source.
 
 <div align="center">
   <video src="https://github.com/user-attachments/assets/e213d6c3-73b6-48dd-a7d9-ed761ed74f89" width="600" controls></video>
@@ -207,7 +207,7 @@ export async function executeAction(
       const { keys } = action;
       for (const key of keys) {
         console.log(`Pressing key: ${key}.`);
-        // Map common key names to CUA equivalents
+        // Map common key names to Cua equivalents
         if (key.toLowerCase() === 'enter') {
           await computer.interface.pressKey('return');
         } else if (key.toLowerCase() === 'space') {

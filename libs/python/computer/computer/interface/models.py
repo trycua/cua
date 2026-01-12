@@ -31,7 +31,7 @@ FunctionKey = Literal["f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "f9", "f10
 class Key(Enum):
     """Keyboard keys that can be used with press_key.
 
-    These key names map to PyAutoGUI's expected key names.
+    These key names follow a consistent cross-platform keyboard key naming convention.
     """
 
     # Navigation

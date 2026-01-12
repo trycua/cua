@@ -413,7 +413,7 @@ actor TaskCounter {
     func current() -> Int { count }
 }
 
-class ImageContainerRegistry: @unchecked Sendable {
+class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
     private let registry: String
     private let organization: String
     private let downloadProgress = ProgressTracker()  // Renamed for clarity

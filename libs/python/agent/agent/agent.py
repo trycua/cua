@@ -23,7 +23,13 @@ import litellm
 import litellm.utils
 from litellm.responses.utils import Usage
 
-from .adapters import CUAAdapter, HuggingFaceLocalAdapter, HumanAdapter, MLXVLMAdapter
+from .adapters import (
+    AzureMLAdapter,
+    CUAAdapter,
+    HuggingFaceLocalAdapter,
+    HumanAdapter,
+    MLXVLMAdapter,
+)
 from .callbacks import (
     BudgetManagerCallback,
     ImageRetentionCallback,
@@ -39,6 +45,7 @@ from .responses import (
     make_tool_error_item,
     replace_failed_computer_calls_with_function_calls,
 )
+from .tools.base import BaseComputerTool, BaseTool
 from .types import AgentCapability, IllegalArgumentError, Messages, ToolError
 
 
@@ -268,11 +275,13 @@ class ComputerAgent:
         human_adapter = HumanAdapter()
         mlx_adapter = MLXVLMAdapter()
         cua_adapter = CUAAdapter()
+        azure_ml_adapter = AzureMLAdapter()
         litellm.custom_provider_map = [
             {"provider": "huggingface-local", "custom_handler": hf_adapter},
             {"provider": "human", "custom_handler": human_adapter},
             {"provider": "mlx", "custom_handler": mlx_adapter},
             {"provider": "cua", "custom_handler": cua_adapter},
+            {"provider": "azure_ml", "custom_handler": azure_ml_adapter},
         ]
         litellm.suppress_debug_info = True
 
@@ -308,10 +317,20 @@ class ComputerAgent:
 
             # Find computer tool and create interface adapter
             computer_handler = None
-            for schema in self.tool_schemas:
-                if schema["type"] == "computer":
-                    computer_handler = await make_computer_handler(schema["computer"])
+
+            # First check if any tool is a BaseComputerTool instance
+            for tool in self.tools:
+                if isinstance(tool, BaseComputerTool):
+                    computer_handler = tool
                     break
+
+            # If no BaseComputerTool found, look for traditional computer objects
+            if computer_handler is None:
+                for schema in self.tool_schemas:
+                    if schema["type"] == "computer":
+                        computer_handler = await make_computer_handler(schema["computer"])
+                        break
+
             self.computer_handler = computer_handler
 
     def _process_input(self, input: Messages) -> List[Dict[str, Any]]:
@@ -329,6 +348,14 @@ class ComputerAgent:
             if is_agent_computer(tool):
                 # This is a computer tool - will be handled by agent loop
                 schemas.append({"type": "computer", "computer": tool})
+            elif isinstance(tool, BaseTool):
+                # BaseTool instance - extract schema from its properties
+                function_schema = {
+                    "name": tool.name,
+                    "description": tool.description,
+                    "parameters": tool.parameters,
+                }
+                schemas.append({"type": "function", "function": function_schema})
             elif callable(tool):
                 # Use litellm.utils.function_to_dict to extract schema from docstring
                 try:
@@ -341,10 +368,14 @@ class ComputerAgent:
 
         return schemas
 
-    def _get_tool(self, name: str) -> Optional[Callable]:
+    def _get_tool(self, name: str) -> Optional[Union[Callable, BaseTool]]:
         """Get a tool by name"""
         for tool in self.tools:
-            if hasattr(tool, "__name__") and tool.__name__ == name:
+            # Check if it's a BaseTool instance
+            if isinstance(tool, BaseTool) and tool.name == name:
+                return tool
+            # Check if it's a regular callable
+            elif hasattr(tool, "__name__") and tool.__name__ == name:
                 return tool
             elif hasattr(tool, "func") and tool.func.__name__ == name:
                 return tool
@@ -568,14 +599,19 @@ class ComputerAgent:
 
                 args = json.loads(item.get("arguments"))
 
-                # Validate arguments before execution
-                assert_callable_with(function, **args)
-
-                # Execute function - use asyncio.to_thread for non-async functions
-                if inspect.iscoroutinefunction(function):
-                    result = await function(**args)
+                # Handle BaseTool instances
+                if isinstance(function, BaseTool):
+                    # BaseTool.call() handles its own execution
+                    result = function.call(args)
                 else:
-                    result = await asyncio.to_thread(function, **args)
+                    # Validate arguments before execution for regular callables
+                    assert_callable_with(function, **args)
+
+                    # Execute function - use asyncio.to_thread for non-async functions
+                    if inspect.iscoroutinefunction(function):
+                        result = await function(**args)
+                    else:
+                        result = await asyncio.to_thread(function, **args)
 
                 # Create function call output
                 call_output = {
@@ -673,6 +709,36 @@ class ComputerAgent:
                 **merged_kwargs,
             }
 
+            # ---- Ollama image input guard ----
+            if isinstance(self.model, str) and (
+                "ollama/" in self.model or "ollama_chat/" in self.model
+            ):
+
+                def contains_image_content(msgs):
+                    for m in msgs:
+                        # 1️⃣ Check regular message content
+                        content = m.get("content")
+                        if isinstance(content, list):
+                            for item in content:
+                                if isinstance(item, dict) and item.get("type") == "image_url":
+                                    return True
+
+                        # 2️⃣ Check computer_call_output screenshots
+                        if m.get("type") == "computer_call_output":
+                            output = m.get("output", {})
+                            if output.get("type") == "input_image" and "image_url" in output:
+                                return True
+
+                    return False
+
+                if contains_image_content(preprocessed_messages):
+                    raise ValueError(
+                        "Ollama models do not support image inputs required by ComputerAgent. "
+                        "Please use a vision-capable model (e.g., OpenAI or Anthropic) "
+                        "or remove computer/screenshot actions."
+                    )
+            # ---------------------------------
+
             # Run agent loop iteration
             result = await self.agent_loop.predict_step(
                 **loop_kwargs,
@@ -767,3 +833,22 @@ class ComputerAgent:
         if hasattr(self.agent_loop, "get_capabilities"):
             return self.agent_loop.get_capabilities()
         return ["step"]  # Default capability
+
+    def open(self, port: Optional[int] = None):
+        """
+        Start the playground server and open it in the browser.
+
+        This method starts a local HTTP server that exposes the /responses endpoint
+        and automatically opens the Cua playground interface in the default browser.
+
+        Args:
+            port: Port to run the server on. If None, finds an available port automatically.
+
+        Example:
+            >>> agent = ComputerAgent(model="claude-sonnet-4")
+            >>> agent.open()  # Starts server and opens browser
+        """
+        from .playground import PlaygroundServer
+
+        server = PlaygroundServer(agent_instance=self)
+        server.start(port=port, open_browser=True)

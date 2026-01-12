@@ -432,12 +432,12 @@ def take_screenshot() -> Image.Image:
         PIL Image of the screenshot
     """
     try:
-        import pyautogui
+        from PIL import ImageGrab
 
-        screenshot = pyautogui.screenshot()
+        screenshot = ImageGrab.grab()
         return screenshot
     except ImportError:
-        print("pyautogui not installed. Please install it with: pip install pyautogui")
+        print("PIL/Pillow not installed. Please install it with: pip install pillow")
         raise
     except Exception as e:
         print(f"Error taking screenshot: {e}")

@@ -1,6 +1,6 @@
-# CUA TypeScript Libraries
+# Cua TypeScript Libraries
 
-This repository contains TypeScript implementations of the CUA libraries:
+This repository contains TypeScript implementations of the Cua libraries:
 
 - `@trycua/core`: Core functionality including telemetry and logging
 - `@trycua/computer`: Computer interaction SDK for VM management and control
@@ -90,7 +90,7 @@ pnpm lint:fix:all
 
 ### @trycua/core
 
-Core functionality for CUA libraries including:
+Core functionality for Cua libraries including:
 
 - Telemetry with PostHog integration
 - Common utilities and types

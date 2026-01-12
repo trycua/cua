@@ -47,6 +47,7 @@ final class LumeController {
     // MARK: - Public VM Management Methods
 
     /// Lists all virtual machines in the system
+    /// Uses a lightweight path that reads config directly without instantiating full VM objects
     @MainActor
     public func list(storage: String? = nil) throws -> [VMDetails] {
         do {
@@ -58,66 +59,100 @@ final class LumeController {
                         // Return empty array if the path doesn't exist
                         return []
                     }
-                    
+
                     // Try to get all VMs from the specified path
-                    // We need to check which subdirectories are valid VM dirs
                     let directoryURL = URL(fileURLWithPath: storage)
                     let contents = try FileManager.default.contentsOfDirectory(
                         at: directoryURL,
                         includingPropertiesForKeys: [.isDirectoryKey],
                         options: .skipsHiddenFiles
                     )
-                    
-                    let statuses = try contents.compactMap { subdir -> VMDetails? in
-                        guard let isDirectory = try subdir.resourceValues(forKeys: [.isDirectoryKey]).isDirectory,
+
+                    let statuses = contents.compactMap { subdir -> VMDetails? in
+                        guard let isDirectory = try? subdir.resourceValues(forKeys: [.isDirectoryKey]).isDirectory,
                               isDirectory else {
                             return nil
                         }
-                        
+
                         let vmName = subdir.lastPathComponent
-                        // Check if it's a valid VM directory
-                        let vmDir = try home.getVMDirectoryFromPath(vmName, storagePath: storage)
-                        if !vmDir.initialized() {
+                        guard let vmDir = try? home.getVMDirectoryFromPath(vmName, storagePath: storage),
+                              vmDir.initialized() else {
                             return nil
                         }
-                        
-                        do {
-                            let vm = try self.get(name: vmName, storage: storage)
-                            return vm.details
-                        } catch {
-                            // Skip invalid VM directories
-                            return nil
-                        }
+
+                        return getVMDetailsLightweight(vmDir: vmDir, locationName: storage)
                     }
-                    return statuses
+                    return statuses.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
                 } else {
                     // Named storage
                     let vmsWithLoc = try home.getAllVMDirectories()
-                    let statuses = try vmsWithLoc.compactMap { vmWithLoc -> VMDetails? in
+                    let statuses = vmsWithLoc.compactMap { vmWithLoc -> VMDetails? in
                         // Only include VMs from the specified location
                         if vmWithLoc.locationName != storage {
                             return nil
                         }
-                        let vm = try self.get(
-                            name: vmWithLoc.directory.name, storage: vmWithLoc.locationName)
-                        return vm.details
+                        return getVMDetailsLightweight(
+                            vmDir: vmWithLoc.directory,
+                            locationName: vmWithLoc.locationName
+                        )
                     }
-                    return statuses
+                    return statuses.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
                 }
             } else {
                 // No storage filter - get all VMs
                 let vmsWithLoc = try home.getAllVMDirectories()
-                let statuses = try vmsWithLoc.compactMap { vmWithLoc -> VMDetails? in
-                    let vm = try self.get(
-                        name: vmWithLoc.directory.name, storage: vmWithLoc.locationName)
-                    return vm.details
+                let statuses = vmsWithLoc.compactMap { vmWithLoc -> VMDetails? in
+                    return getVMDetailsLightweight(
+                        vmDir: vmWithLoc.directory,
+                        locationName: vmWithLoc.locationName
+                    )
                 }
-                return statuses
+                return statuses.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
             }
         } catch {
             Logger.error("Failed to list VMs", metadata: ["error": error.localizedDescription])
             throw error
         }
+    }
+
+    /// Get VM details using lightweight path (no VM object instantiation)
+    /// Checks SharedVM cache for running status and gets VNC/IP info if running
+    @MainActor
+    private func getVMDetailsLightweight(vmDir: VMDirectory, locationName: String) -> VMDetails? {
+        let vmName = vmDir.name
+
+        // Check if VM is running via SharedVM cache
+        let runningVM = SharedVM.shared.getVM(name: vmName)
+        let isRunning = runningVM != nil
+
+        // Get VNC URL and IP address only if running
+        var vncUrl: String? = nil
+        var ipAddress: String? = nil
+        var sshAvailable: Bool? = nil
+
+        if isRunning {
+            // Try to get VNC URL from session file
+            vncUrl = try? vmDir.loadSession().url
+
+            // Try to get IP address from DHCP lease if we have MAC address
+            if let config = try? vmDir.loadConfig(),
+               let macAddress = config.macAddress {
+                ipAddress = DHCPLeaseParser.getIPAddress(forMAC: macAddress)
+
+                // Check if SSH is available
+                if let ip = ipAddress {
+                    sshAvailable = NetworkUtils.isSSHAvailable(ipAddress: ip)
+                }
+            }
+        }
+
+        return vmDir.getDetails(
+            locationName: locationName,
+            isRunning: isRunning,
+            vncUrl: vncUrl,
+            ipAddress: ipAddress,
+            sshAvailable: sshAvailable
+        )
     }
 
     @MainActor
@@ -235,7 +270,12 @@ final class LumeController {
         memorySize: UInt64,
         display: String,
         ipsw: String?,
-        storage: String? = nil
+        storage: String? = nil,
+        unattendedConfig: UnattendedConfig? = nil,
+        debug: Bool = false,
+        debugDir: String? = nil,
+        noDisplay: Bool = true,
+        vncPort: Int = 0
     ) async throws {
         Logger.info(
             "Creating VM",
@@ -248,6 +288,9 @@ final class LumeController {
                 "memory_size": "\(memorySize / 1024 / 1024)MB",
                 "display": display,
                 "ipsw": ipsw ?? "none",
+                "unattended": unattendedConfig != nil ? "yes" : "no",
+                "debug": "\(debug)",
+                "noDisplay": "\(noDisplay)",
             ])
 
         do {
@@ -272,8 +315,77 @@ final class LumeController {
             try vm.finalize(to: name, home: home, storage: storage)
 
             Logger.info("VM created successfully", metadata: ["name": name])
+
+            // Run unattended setup if config is provided
+            if let config = unattendedConfig, os.lowercased() == "macos" {
+                // Wait for the installation VZVirtualMachine to fully release auxiliary storage locks.
+                // The VM created during IPSW installation holds a lock on the auxiliary storage file.
+                // Swift's ARC may not immediately deallocate it, so we wait to ensure the lock is released.
+                Logger.info("Waiting for installation resources to be released before unattended setup")
+                try await Task.sleep(nanoseconds: 3_000_000_000)  // 3 seconds
+                Logger.info("Starting unattended Setup Assistant automation", metadata: ["name": name])
+
+                // Load the finalized VM
+                let finalVM = try get(name: name, storage: storage)
+
+                // Run the unattended installer
+                let installer = UnattendedInstaller()
+                try await installer.install(
+                    vm: finalVM,
+                    config: config,
+                    vncPort: vncPort,
+                    noDisplay: noDisplay,
+                    debug: debug,
+                    debugDir: debugDir
+                )
+
+                Logger.info("Unattended setup completed", metadata: ["name": name])
+            }
         } catch {
             Logger.error("Failed to create VM", metadata: ["error": error.localizedDescription])
+            throw error
+        }
+    }
+
+    /// Run unattended Setup Assistant automation on an existing macOS VM
+    @MainActor
+    public func setup(
+        name: String,
+        config: UnattendedConfig,
+        storage: String? = nil,
+        vncPort: Int = 0,
+        noDisplay: Bool = false,
+        debug: Bool = false,
+        debugDir: String? = nil
+    ) async throws {
+        let normalizedName = normalizeVMName(name: name)
+        Logger.info(
+            "Running unattended setup",
+            metadata: [
+                "name": normalizedName,
+                "storage": storage ?? "default",
+                "bootWait": "\(config.bootWait)s",
+                "commands": "\(config.bootCommands.count)",
+                "debug": "\(debug)",
+                "debugDir": debugDir ?? "default"
+            ])
+
+        do {
+            // Get the VM
+            let vm = try get(name: normalizedName, storage: storage)
+
+            // Check if it's a macOS VM
+            guard vm.config.os.lowercased() == "macos" else {
+                throw VMError.unsupportedOS("Unattended setup is only supported for macOS VMs, got: \(vm.config.os)")
+            }
+
+            // Run the unattended installer
+            let installer = UnattendedInstaller()
+            try await installer.install(vm: vm, config: config, vncPort: vncPort, noDisplay: noDisplay, debug: debug, debugDir: debugDir)
+
+            Logger.info("Unattended setup completed", metadata: ["name": normalizedName])
+        } catch {
+            Logger.error("Failed to run unattended setup", metadata: ["error": error.localizedDescription])
             throw error
         }
     }
@@ -606,9 +718,9 @@ final class LumeController {
                 storage: storage
             )
 
-            let imageContainerRegistry = ImageContainerRegistry(
+            let imageRegistry = try RegistryFactory.createRegistry(
                 registry: registry, organization: organization)
-            let _ = try await imageContainerRegistry.pull(
+            let _ = try await imageRegistry.pull(
                 image: actualImage,
                 name: vmName,
                 locationName: storage)
@@ -681,11 +793,11 @@ final class LumeController {
             // Get the VM directory
             let vmDir = try home.getVMDirectory(name, storage: actualLocation)
 
-            // Use ImageContainerRegistry to push the VM
-            let imageContainerRegistry = ImageContainerRegistry(
+            // Use configured registry to push the VM
+            let imageRegistry = try RegistryFactory.createRegistry(
                 registry: registry, organization: organization)
 
-            try await imageContainerRegistry.push(
+            try await imageRegistry.push(
                 vmDirPath: vmDir.dir.path,
                 imageName: imageName,
                 tags: tags,
@@ -748,9 +860,8 @@ final class LumeController {
     public func getImages(organization: String = "trycua") async throws -> ImageList {
         Logger.info("Listing local images", metadata: ["organization": organization])
 
-        let imageContainerRegistry = ImageContainerRegistry(
-            registry: "ghcr.io", organization: organization)
-        let cachedImages = try await imageContainerRegistry.getImages()
+        let imageRegistry = try RegistryFactory.createRegistry(organization: organization)
+        let cachedImages = try await imageRegistry.getImages()
 
         let imageInfos = cachedImages.map { image in
             ImageInfo(

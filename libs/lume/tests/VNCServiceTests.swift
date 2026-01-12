@@ -5,6 +5,7 @@ import Testing
 @Test("VNCService starts correctly")
 func testVNCServiceStart() async throws {
     let tempDir = try createTempDirectory()
+    defer { try? FileManager.default.removeItem(at: tempDir) }
     let vmDir = VMDirectory(Path(tempDir.path))
     let service = await MockVNCService(vmDirectory: vmDir)
     
@@ -23,6 +24,7 @@ func testVNCServiceStart() async throws {
 @Test("VNCService stops correctly")
 func testVNCServiceStop() async throws {
     let tempDir = try createTempDirectory()
+    defer { try? FileManager.default.removeItem(at: tempDir) }
     let vmDir = VMDirectory(Path(tempDir.path))
     let service = await MockVNCService(vmDirectory: vmDir)
     try await service.start(port: 5900, virtualMachine: nil)
@@ -37,6 +39,7 @@ func testVNCServiceStop() async throws {
 @Test("VNCService handles client operations")
 func testVNCServiceClient() async throws {
     let tempDir = try createTempDirectory()
+    defer { try? FileManager.default.removeItem(at: tempDir) }
     let vmDir = VMDirectory(Path(tempDir.path))
     let service = await MockVNCService(vmDirectory: vmDir)
     
@@ -70,6 +73,7 @@ func testVNCServiceClient() async throws {
 @Test("VNCService handles virtual machine attachment")
 func testVNCServiceVMAttachment() async throws {
     let tempDir = try createTempDirectory()
+    defer { try? FileManager.default.removeItem(at: tempDir) }
     let vmDir = VMDirectory(Path(tempDir.path))
     let service = await MockVNCService(vmDirectory: vmDir)
     let mockVM = "mock_vm"

@@ -5,6 +5,7 @@ const withMDX = createMDX();
 /** @type {import('next').NextConfig} */
 const config = {
   reactStrictMode: true,
+  serverExternalPackages: ['pino', 'pino-pretty', 'thread-stream'],
   trailingSlash: false,
   basePath: '/docs',
   assetPrefix: '/docs',
@@ -38,20 +39,12 @@ const config = {
         permanent: true, // 301 redirect to preserve SEO authority
         basePath: false,
       },
-      // Redirects for documentation restructure (PR #568)
-      // Moved quickstart-devs to get-started section
+      // Redirects for old URLs
       {
         source: '/quickstart-devs',
         destination: '/get-started/quickstart',
         permanent: true,
       },
-      // Moved telemetry to agent-sdk section
-      {
-        source: '/telemetry',
-        destination: '/agent-sdk/telemetry',
-        permanent: true,
-      },
-      // Removed quickstart-cli, consolidated into main quickstart
       {
         source: '/quickstart-cli',
         destination: '/get-started/quickstart',

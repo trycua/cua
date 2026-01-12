@@ -39,7 +39,7 @@ class VM {
 
     @MainActor
     private var virtualizationService: VMVirtualizationService?
-    private let vncService: VNCService
+    internal let vncService: VNCService
     internal let virtualizationServiceFactory:
         (VMVirtualizationServiceContext) throws -> VMVirtualizationService
     private let vncServiceFactory: (VMDirectory) -> VNCService
@@ -61,6 +61,14 @@ class VM {
         // Initialize VNC service
         self.vncService = vncServiceFactory(vmDirContext.dir)
     }
+
+    // MARK: - Public Accessors
+
+    /// The VM name
+    var name: String { vmDirContext.name }
+
+    /// The VM configuration
+    var config: VMConfig { vmDirContext.config }
 
     // MARK: - VM State Management
 
@@ -103,6 +111,9 @@ class VM {
         let ipAddress: String? =
             isRunning && macAddress != nil ? DHCPLeaseParser.getIPAddress(forMAC: macAddress!) : nil
 
+        // Check if SSH is available (only if we have an IP)
+        let sshAvailable: Bool? = ipAddress != nil ? NetworkUtils.isSSHAvailable(ipAddress: ipAddress!) : nil
+
         return VMDetails(
             name: vmDirContext.name,
             os: getOSType(),
@@ -113,6 +124,7 @@ class VM {
             status: isRunning ? "running" : "stopped",
             vncUrl: vncUrl,
             ipAddress: ipAddress,
+            sshAvailable: sshAvailable,
             locationName: vmDirContext.storage ?? "default"
         )
     }

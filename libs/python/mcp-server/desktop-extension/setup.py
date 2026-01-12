@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Setup script for CUA Desktop Extension
+Setup script for Cua Desktop Extension
 Installs required dependencies if not available
 """
 
@@ -30,7 +30,7 @@ def check_and_install_package(package_name, import_name=None):
 
 def main():
     """Install required packages."""
-    print("Setting up CUA Desktop Extension dependencies...")
+    print("Setting up Cua Desktop Extension dependencies...")
 
     # Required packages
     packages = [

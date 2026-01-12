@@ -1,9 +1,8 @@
-import platform
-import subprocess
-from typing import Tuple, Type
+from typing import Tuple
 
 from computer_server.diorama.base import BaseDioramaHandler
 
+from ..utils.helpers import get_current_os
 from .base import (
     BaseAccessibilityHandler,
     BaseAutomationHandler,
@@ -12,15 +11,23 @@ from .base import (
     BaseWindowHandler,
 )
 
-# Conditionally import platform-specific handlers
-system = platform.system().lower()
-if system == "darwin":
+OS_TYPE = get_current_os()
+
+if OS_TYPE == "android":
+    from .android import (
+        AndroidAccessibilityHandler,
+        AndroidAutomationHandler,
+        AndroidDesktopHandler,
+        AndroidFileHandler,
+        AndroidWindowHandler,
+    )
+elif OS_TYPE == "darwin":
     from computer_server.diorama.macos import MacOSDioramaHandler
 
     from .macos import MacOSAccessibilityHandler, MacOSAutomationHandler
-elif system == "linux":
+elif OS_TYPE == "linux":
     from .linux import LinuxAccessibilityHandler, LinuxAutomationHandler
-elif system == "windows":
+elif OS_TYPE == "windows":
     from .windows import WindowsAccessibilityHandler, WindowsAutomationHandler
 
 from .generic import GenericDesktopHandler, GenericFileHandler, GenericWindowHandler
@@ -28,31 +35,6 @@ from .generic import GenericDesktopHandler, GenericFileHandler, GenericWindowHan
 
 class HandlerFactory:
     """Factory for creating OS-specific handlers."""
-
-    @staticmethod
-    def _get_current_os() -> str:
-        """Determine the current OS.
-
-        Returns:
-            str: The OS type ('darwin' for macOS, 'linux' for Linux, or 'windows' for Windows)
-
-        Raises:
-            RuntimeError: If unable to determine the current OS
-        """
-        try:
-            # Use platform.system() as primary method
-            system = platform.system().lower()
-            if system in ["darwin", "linux", "windows"]:
-                return system
-
-            # Fallback to uname if platform.system() doesn't return expected values (Unix-like systems only)
-            result = subprocess.run(["uname", "-s"], capture_output=True, text=True)
-            if result.returncode == 0:
-                return result.stdout.strip().lower()
-
-            raise RuntimeError(f"Unsupported OS: {system}")
-        except Exception as e:
-            raise RuntimeError(f"Failed to determine current OS: {str(e)}")
 
     @staticmethod
     def create_handlers() -> Tuple[
@@ -73,9 +55,16 @@ class HandlerFactory:
             NotImplementedError: If the current OS is not supported
             RuntimeError: If unable to determine the current OS
         """
-        os_type = HandlerFactory._get_current_os()
-
-        if os_type == "darwin":
+        if OS_TYPE == "android":
+            return (
+                AndroidAccessibilityHandler(),
+                AndroidAutomationHandler(),
+                BaseDioramaHandler(),
+                AndroidFileHandler(),
+                AndroidDesktopHandler(),
+                AndroidWindowHandler(),
+            )
+        elif OS_TYPE == "darwin":
             return (
                 MacOSAccessibilityHandler(),
                 MacOSAutomationHandler(),
@@ -84,7 +73,7 @@ class HandlerFactory:
                 GenericDesktopHandler(),
                 GenericWindowHandler(),
             )
-        elif os_type == "linux":
+        elif OS_TYPE == "linux":
             return (
                 LinuxAccessibilityHandler(),
                 LinuxAutomationHandler(),
@@ -93,7 +82,7 @@ class HandlerFactory:
                 GenericDesktopHandler(),
                 GenericWindowHandler(),
             )
-        elif os_type == "windows":
+        elif OS_TYPE == "windows":
             return (
                 WindowsAccessibilityHandler(),
                 WindowsAutomationHandler(),
@@ -103,4 +92,4 @@ class HandlerFactory:
                 GenericWindowHandler(),
             )
         else:
-            raise NotImplementedError(f"OS '{os_type}' is not supported")
+            raise NotImplementedError(f"OS '{OS_TYPE}' is not supported")

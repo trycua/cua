@@ -1,0 +1,6 @@
+{
+  "title": "Reference",
+  "description": "CLI and API reference",
+  "icon": "FileText",
+  "pages": ["cli-reference", "sdk-reference"]
+}

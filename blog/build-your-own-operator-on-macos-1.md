@@ -38,7 +38,7 @@ By the end of this tutorial, you'll be able to:
 
 ## Introduction to Computer-Use Agents
 
-Last March OpenAI released a fine-tuned version of GPT-4o, namely [CUA](https://openai.com/index/computer-using-agent/), introducing pixel-level vision capabilities with advanced reasoning through reinforcement learning. This fine-tuning enables the computer-use model to interpret screenshots and interact with graphical user interfaces on a pixel-level such as buttons, menus, and text fields - mimicking human interactions on a computer screen. It scores a remarkable 38.1% success rate on [OSWorld](https://os-world.github.io) - a benchmark for Computer-Use agents on Linux and Windows. This is the 2nd available model after Anthropic's [Claude 3.5 Sonnet](https://www.anthropic.com/news/3-5-models-and-computer-use) to support computer-use capabilities natively with no external models (e.g. accessory [SoM (Set-of-Mark)](https://arxiv.org/abs/2310.11441) and OCR runs).
+Last March OpenAI released a fine-tuned version of GPT-4o, namely [Cua](https://openai.com/index/computer-using-agent/), introducing pixel-level vision capabilities with advanced reasoning through reinforcement learning. This fine-tuning enables the computer-use model to interpret screenshots and interact with graphical user interfaces on a pixel-level such as buttons, menus, and text fields - mimicking human interactions on a computer screen. It scores a remarkable 38.1% success rate on [OSWorld](https://os-world.github.io) - a benchmark for Computer-Use agents on Linux and Windows. This is the 2nd available model after Anthropic's [Claude 3.5 Sonnet](https://www.anthropic.com/news/3-5-models-and-computer-use) to support computer-use capabilities natively with no external models (e.g. accessory [SoM (Set-of-Mark)](https://arxiv.org/abs/2310.11441) and OCR runs).
 
 Professor Ethan Mollick provides an excellent explanation of computer-use agents in this article: [When you give a Claude a mouse](https://www.oneusefulthing.org/p/when-you-give-a-claude-a-mouse).
 
@@ -209,7 +209,7 @@ Each response contains:
 3. **Safety Checks**: Any potential risks to review
 4. **Status**: Whether everything worked as planned
 
-## CUA-Computer Interface
+## Cua-Computer Interface
 
 ### Architecture Overview
 
@@ -365,7 +365,7 @@ import openai
 from computer import Computer
 ```
 
-#### Mapping API Actions to CUA Methods
+#### Mapping API Actions to Cua Methods
 
 The following helper function converts a `computer_call` action from the OpenAI Responses API into corresponding commands on the CUI interface. For example, if the API instructs a `click` action, we move the cursor and perform a left click on the lume VM Sandbox. We will use the computer interface to execute the actions.
 
@@ -402,7 +402,7 @@ async def execute_action(computer, action):
         keys = action.keys
         for key in keys:
             print(f"Pressing key: {key}")
-            # Map common key names to CUA equivalents
+            # Map common key names to Cua equivalents
             if key.lower() == "enter":
                 await computer.interface.press_key("return")
             elif key.lower() == "space":
@@ -559,7 +559,7 @@ This structured approach allows the API to maintain context and continuity throu
 
 This blogpost demonstrates a single iteration of a OpenAI Computer-Use loop where:
 
-- A macOS sandbox is controlled using the CUA interface.
+- A macOS sandbox is controlled using the Cua interface.
 - A screenshot and prompt are sent to the OpenAI Responses API.
 - The returned action (e.g. a click or type command) is executed via the CUI interface.
 

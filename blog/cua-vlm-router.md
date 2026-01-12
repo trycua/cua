@@ -106,10 +106,12 @@ Same code structure. No other changes needed.
 
 ## Direct API Access
 
-The router exposes an OpenAI-compatible API at `https://inference.cua.ai/v1`:
+The router exposes an provider specific API at `https://inference.cua.ai/v1`:
+
+### Anthropic-compatible Messages
 
 ```bash
-curl -X POST https://inference.cua.ai/v1/chat/completions \
+curl -X POST https://inference.cua.ai/v1/messages \
   -H "Authorization: Bearer ${CUA_API_KEY}" \
   -H "Content-Type: application/json" \
   -d '{
@@ -118,8 +120,6 @@ curl -X POST https://inference.cua.ai/v1/chat/completions \
     "stream": true
   }'
 ```
-
-Works with any OpenAI-compatible client library.
 
 ## FAQs
 
@@ -140,7 +140,7 @@ Requests are billed in credits, deducted from your Cua account balance. Every re
 <details>
 <summary><strong>Can I still use my own Anthropic key (BYOK)?</strong></summary>
 
-Yes. The agent SDK still supports direct provider access. Just use `anthropic/claude-sonnet-4-5-20250929` instead of the `cua/` prefix and set your `ANTHROPIC_API_KEY`. See [Supported Model Providers](https://cua.ai/docs/agent-sdk/supported-model-providers/) for details.
+Yes. The agent SDK still supports direct provider access. Just use `anthropic/claude-sonnet-4-5-20250929` instead of the `cua/` prefix and set your `ANTHROPIC_API_KEY`. See [Supported Model Providers](https://cua.ai/docs/cua/guide/fundamentals/vlms) for details.
 
 </details>
 
@@ -171,10 +171,10 @@ If there's a model or feature you need, let us know in [Discord](https://discord
 
 ## Need Help?
 
-- **Documentation**: [cua.ai/docs/agent-sdk/supported-model-providers/cua-vlm-router](https://cua.ai/docs/agent-sdk/supported-model-providers/cua-vlm-router)
-- **Quickstart Guide**: [cua.ai/docs/get-started/quickstart](https://cua.ai/docs/get-started/quickstart)
+- **Documentation**: [cua.ai/docs/cua/guide/fundamentals/cua-vlm-router](https://cua.ai/docs/cua/guide/fundamentals/cua-vlm-router)
+- **Quickstart Guide**: [cua.ai/docs/cua/guide/get-started/using-agent-sdk](https://cua.ai/docs/cua/guide/get-started/using-agent-sdk)
 - **Discord Community**: [discord.gg/cua-ai](https://discord.gg/cua-ai)
 
 ---
 
-Get started at [cua.ai](https://cua.ai) or check out the [VLM Router docs](https://cua.ai/docs/agent-sdk/supported-model-providers/cua-vlm-router).
+Get started at [cua.ai](https://cua.ai) or check out the [VLM Router docs](https://cua.ai/docs/cua/guide/fundamentals/cua-vlm-router).

@@ -21,11 +21,15 @@ from ..types import AgentCapability, AgentResponse, Messages, Tools
 from .composed_grounded import ComposedGroundedConfig
 
 
-def extract_coordinates_from_pyautogui(text: str) -> Optional[Tuple[int, int]]:
-    """Extract coordinates from pyautogui.click(x=..., y=...) format."""
+def extract_coordinates_from_click(text: str) -> Optional[Tuple[int, int]]:
+    """Extract coordinates from click(x=..., y=...) or pyautogui.click(x=..., y=...) format.
+
+    This function supports parsing both generic click() and legacy pyautogui.click() formats
+    for backwards compatibility with models that may still output pyautogui format.
+    """
     try:
-        # Look for pyautogui.click(x=1443, y=343) pattern
-        pattern = r"pyautogui\.click\(x=(\d+),\s*y=(\d+)\)"
+        # Look for click(x=1443, y=343) or pyautogui.click(x=1443, y=343) pattern
+        pattern = r"(?:pyautogui\.)?click\(x=(\d+),\s*y=(\d+)\)"
         match = re.search(pattern, text)
         if match:
             x, y = int(match.group(1)), int(match.group(2))
@@ -90,7 +94,7 @@ class OpenCUAConfig(ComposedGroundedConfig):
         # Prepare system message
         system_prompt = (
             "You are a GUI agent. You are given a task and a screenshot of the screen. "
-            "You need to perform a series of pyautogui actions to complete the task."
+            "You need to perform a series of click actions to complete the task."
         )
 
         system_message = {"role": "system", "content": system_prompt}
@@ -120,8 +124,8 @@ class OpenCUAConfig(ComposedGroundedConfig):
         output_text = response.choices[0].message.content
         # print(output_text)
 
-        # Extract coordinates from pyautogui format
-        coordinates = extract_coordinates_from_pyautogui(output_text)
+        # Extract coordinates from click format (supports both click() and pyautogui.click() for backwards compatibility)
+        coordinates = extract_coordinates_from_click(output_text)
 
         return coordinates
 

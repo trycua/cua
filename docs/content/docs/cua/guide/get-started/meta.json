@@ -1,0 +1,15 @@
+{
+  "title": "Get Started",
+  "description": "Get started with Cua",
+  "defaultOpen": true,
+  "icon": "Rocket",
+  "pages": [
+    "what-is-cua",
+    "what-is-computer-use-agent",
+    "what-is-desktop-sandbox",
+    "set-up-sandbox",
+    "using-computer-sdk",
+    "using-agent-sdk",
+    "using-cloud-cli"
+  ]
+}

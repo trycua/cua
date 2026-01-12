@@ -1,0 +1,144 @@
+---
+title: Agent Traces
+description: Recording and viewing agent execution traces
+---
+
+When running tasks with agents, **cua-bench** automatically records detailed traces of agent execution. These traces capture screenshots, actions, reasoning, and metadata—essential for debugging, evaluation, and dataset creation.
+
+## Trace Output Locations
+
+After running a task with an agent, traces are saved to `~/.local/share/cua-bench/runs/<run_id>/<task>_v<variant>/`:
+
+```
+~/.local/share/cua-bench/runs/96d41b51/slack_env_v0/
+├── run.log                     # Execution logs
+├── task_0_agent_logs/          # CUA Agent SDK trajectories (if using cua-agent)
+│   └── trajectories/
+│       └── 2026-01-07_claudesonnet4_210819_2a23/
+│           ├── metadata.json   # Agent turns, model responses, usage
+│           ├── turn_000/       # Screenshots and data per turn
+│           ├── turn_001/
+│           └── ...
+└── task_0_trace/               # cua-bench trace dataset
+    ├── data-00000-of-00001.arrow  # HuggingFace Dataset format
+    ├── dataset_info.json
+    └── state.json
+```
+
+## cua-bench Trace Format
+
+The cua-bench trace format uses **HuggingFace Datasets** with Apache Arrow for efficient storage and loading. Each trace contains:
+
+### Dataset Schema
+
+```python
+{
+  "event_name": str,          # Event type: "reset", "agent_step", "agent_action", etc.
+  "data_json": str,           # JSON-encoded event metadata
+  "data_images": [Image],     # List of screenshots (PIL Images)
+  "trajectory_id": str,       # Unique trajectory identifier
+  "timestamp": str            # ISO 8601 timestamp
+}
+```
+
+### Event Types
+
+| Event            | Description              | Images                  | Metadata                         |
+| ---------------- | ------------------------ | ----------------------- | -------------------------------- |
+| `reset`          | Task setup complete      | Initial screenshot      | Task config, index               |
+| `agent_step`     | Agent reasoning step     | Screenshot              | Step number, model usage, output |
+| `agent_action`   | Agent performed action   | Screenshot after action | Action type, arguments           |
+| `agent_thinking` | Model thinking/response  | Screenshot              | Thinking text (truncated)        |
+| `solve`          | Oracle solution complete | Final screenshot        | Completion status                |
+| `evaluate`       | Task evaluation          | -                       | Evaluation result                |
+
+### Loading Traces Programmatically
+
+```python
+from datasets import load_from_disk
+
+# Load a trace dataset
+trace = load_from_disk("~/.local/share/cua-bench/runs/96d41b51/slack_env_v0/task_0_trace")
+
+# Iterate through events
+for event in trace:
+    print(f"Event: {event['event_name']}")
+    print(f"Time: {event['timestamp']}")
+
+    # Parse metadata
+    import json
+    data = json.loads(event['data_json'])
+    print(f"Data: {data}")
+
+    # Access screenshots
+    for img in event['data_images']:
+        img.show()  # PIL Image
+```
+
+## Viewing Traces
+
+Use the **cua-bench trace viewer** to visualize traces in your browser:
+
+### View Single Trace
+
+```bash
+# View a specific task trace
+cb trace view <run_id>/<task>_v<variant>
+
+# Example
+cb trace view 96d41b51/slack_env_v0
+```
+
+Opens an interactive viewer showing:
+
+- Timeline of events
+- Screenshots at each step
+- Action details and metadata
+- Agent reasoning (if available)
+
+### View All Traces in a Run
+
+```bash
+# View all task traces in a grid
+cb trace grid <run_id>
+
+# Example
+cb trace grid 96d41b51
+```
+
+Shows a grid view of all task traces in the run, useful for:
+
+- Comparing agent performance across variants
+- Quickly identifying failures
+- Reviewing oracle solutions
+
+## Recording Custom Events
+
+When building custom agents, you can record your own events to the trace:
+
+```python
+from cua_bench.agents.base import BaseAgent, AgentResult
+
+class MyAgent(BaseAgent):
+    async def perform_task(
+        self,
+        task_description: str,
+        session,
+        logging_dir=None,
+        tracer=None,  # Tracer is passed automatically
+    ) -> AgentResult:
+        # Record custom event
+        if tracer:
+            screenshot = await session.screenshot()
+            tracer.record(
+                "my_custom_event",
+                {
+                    "step": 1,
+                    "reasoning": "Analyzing the screen...",
+                    "confidence": 0.95,
+                },
+                [screenshot]
+            )
+
+        # Your agent logic...
+```

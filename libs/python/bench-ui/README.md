@@ -1,6 +1,6 @@
-# CUA Bench UI
+# Cua Bench UI
 
-Lightweight webUI window controller for CUA bench environments using pywebview
+Lightweight webUI window controller for Cua bench environments using pywebview
 
 ## Usage
 

@@ -1,0 +1,201 @@
+---
+title: Trajectories
+description: Save and analyze agent execution for debugging and training
+---
+
+**Trajectories** record everything your agent does—every API call, response, screenshot, and action. Use them to debug issues, understand agent behavior, or create training data.
+
+## Saving Trajectories
+
+Enable trajectory saving with the `trajectory_dir` parameter:
+
+```python
+from agent import ComputerAgent
+
+agent = ComputerAgent(
+    model="anthropic/claude-sonnet-4-5-20250929",
+    tools=[computer],
+    trajectory_dir="trajectories"
+)
+
+await agent.run("Open Firefox and search for Cua documentation")
+```
+
+This creates a directory structure with everything the agent did:
+
+```
+trajectories/
+└── 2025-01-03_claude_143022_a1b2/
+    ├── metadata.json
+    ├── turn_000/
+    │   ├── 0000_api_start.json
+    │   ├── 0001_api_result.json
+    │   ├── 0002_screenshot.png
+    │   ├── 0003_agent_response.json
+    │   ├── 0004_computer_call_result.json
+    │   └── 0005_screenshot_action.png
+    └── turn_001/
+        └── ...
+```
+
+## What Gets Saved
+
+Each trajectory includes:
+
+- **metadata.json** - Run info, timestamps, total token usage, and costs
+- **API calls** - The exact messages sent to the model
+- **Model responses** - What the model decided to do
+- **Screenshots** - Raw screenshots at each step
+- **Action screenshots** - Screenshots with crosshairs showing where actions occurred
+- **Computer call results** - Outcomes of clicks, typing, and other actions
+
+## Trajectory Structure
+
+The trajectory ID encodes useful information:
+
+```
+2025-01-03_claude_143022_a1b2
+│          │      │      └── Unique ID (first 4 chars of UUID)
+│          │      └── Time (HHMMSS)
+│          └── Model name
+└── Date (YYYY-MM-DD)
+```
+
+Each turn (iteration of the agent loop) gets its own directory with sequentially numbered artifacts.
+
+## Configuration Options
+
+Control trajectory behavior with a config dict:
+
+```python
+agent = ComputerAgent(
+    model="anthropic/claude-sonnet-4-5-20250929",
+    tools=[computer],
+    trajectory_dir={
+        "trajectory_dir": "trajectories",
+        "reset_on_run": False,         # Continue same trajectory across runs
+        "screenshot_dir": "screenshots" # Save screenshots separately
+    }
+)
+```
+
+**Options:**
+
+| Option           | Default  | Description                                 |
+| ---------------- | -------- | ------------------------------------------- |
+| `trajectory_dir` | Required | Base directory for trajectories             |
+| `reset_on_run`   | `True`   | Create new trajectory ID per run            |
+| `screenshot_dir` | `None`   | Optional separate directory for screenshots |
+
+Setting `reset_on_run=False` appends to the same trajectory across multiple `agent.run()` calls, useful for multi-step workflows.
+
+## Viewing Trajectories
+
+### Online Viewer
+
+Upload your trajectory folder to the [Cua Trajectory Viewer](https://cua.ai/trajectory-viewer) for interactive exploration:
+
+- Timeline slider to step through actions
+- Screenshot gallery with action annotations
+- API call and response inspection
+- Usage statistics
+
+The viewer runs entirely in your browser—no data is uploaded to any server.
+
+### Manual Inspection
+
+Open the JSON files directly to see exactly what happened:
+
+**metadata.json:**
+
+```json
+{
+  "trajectory_id": "2025-01-03_claude_143022_a1b2",
+  "created_at": "2025-01-03T14:30:22Z",
+  "status": "completed",
+  "total_usage": {
+    "total_tokens": 5000,
+    "response_cost": 0.5
+  },
+  "total_turns": 5
+}
+```
+
+**agent_response.json:**
+
+```json
+{
+  "type": "computer_call",
+  "action": {
+    "type": "click",
+    "coordinate": [500, 300]
+  },
+  "call_id": "call_abc123"
+}
+```
+
+## Action Crosshairs
+
+Screenshots are saved twice: once raw, once with crosshairs showing where the agent clicked. The `_action.png` suffix indicates an annotated screenshot:
+
+- `0002_screenshot.png` - Original screenshot
+- `0005_screenshot_action.png` - Screenshot with red crosshair at click location
+
+This makes it easy to see exactly where the agent intended to click, which is invaluable for debugging misclicks.
+
+## Using Trajectories for Debugging
+
+When an agent fails, trajectories help you understand why:
+
+1. **Open the trajectory folder** and find the turn where things went wrong
+2. **Check the screenshot** to see what the agent saw
+3. **Check the action screenshot** to see where it clicked
+4. **Read the API result** to see what the model decided
+5. **Compare to the computer_call_result** to see what actually happened
+
+Common issues trajectories help identify:
+
+- **Wrong element clicked** - Crosshair shows the agent clicked the wrong button
+- **Element not visible** - Screenshot shows the target was off-screen or hidden
+- **Timing issue** - Screenshot shows page wasn't fully loaded
+- **Misinterpretation** - Model response shows incorrect reasoning
+
+## Example: Saving and Analyzing
+
+```python
+from agent import ComputerAgent
+from pathlib import Path
+import json
+
+agent = ComputerAgent(
+    model="anthropic/claude-sonnet-4-5-20250929",
+    tools=[computer],
+    trajectory_dir="trajectories"
+)
+
+await agent.run("Log into the admin panel and export user data")
+
+# Find the latest trajectory
+trajectories = sorted(Path("trajectories").iterdir())
+latest = trajectories[-1]
+
+# Load metadata
+with open(latest / "metadata.json") as f:
+    metadata = json.load(f)
+
+print(f"Trajectory: {metadata['trajectory_id']}")
+print(f"Status: {metadata['status']}")
+print(f"Turns: {metadata['total_turns']}")
+print(f"Cost: ${metadata['total_usage']['response_cost']:.4f}")
+```
+
+## Training Data
+
+Trajectories can be used as training data for fine-tuning computer-use models. The structured format includes:
+
+- Input screenshots
+- Model decisions
+- Action coordinates
+- Outcomes
+
+This is the same format used for collecting human demonstrations for training.

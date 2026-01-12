@@ -1,20 +1,5 @@
 {
   "title": "Home",
   "description": "Documentation Home",
-  "root": true,
-  "defaultOpen": true,
-  "pages": [
-    "---[Rocket]Get Started---",
-    "...get-started",
-    "---[ChefHat]Cookbook---",
-    "...example-usecases",
-    "---[BookCopy]Computer Playbook---",
-    "...computer-sdk",
-    "---[Bot]Agent Playbook---",
-    "...agent-sdk",
-    "---[Terminal]Cloud CLI Playbook---",
-    "...cli-playbook",
-    "---[Terminal]macOS VM CLI Playbook---",
-    "...macos-vm-cli-playbook"
-  ]
+  "pages": ["cua", "cuabench", "lume"]
 }

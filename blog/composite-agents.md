@@ -6,7 +6,7 @@ _Published on August 26, 2025 by Dillon DuPont_
 
 So you want to build an agent that can use a computer. Great! You've probably discovered that there are now dozens of different AI models that claim they can click GUI buttons and fill out forms. Less great: actually getting them to work together is like trying to coordinate a group project where everyone speaks a different language and has invented seventeen different ways to say "click here".
 
-Here's the thing about new GUI models: they're all special snowflakes. One model wants you to feed it images and expects coordinates back as percentages from 0 to 1. Another wants absolute pixel coordinates. A third model has invented its own numeral system with `<|loc095|><|loc821|>` tokens inside tool calls. Some models output Python code that calls `pyautogui.click(x, y)`. Others will start hallucinating coordinates if you forget to format all previous messages within a very specific GUI system prompt.
+Here's the thing about new GUI models: they're all special snowflakes. One model wants you to feed it images and expects coordinates back as percentages from 0 to 1. Another wants absolute pixel coordinates. A third model has invented its own numeral system with `<|loc095|><|loc821|>` tokens inside tool calls. Some models output Python code that calls `click(x, y)`. Others will start hallucinating coordinates if you forget to format all previous messages within a very specific GUI system prompt.
 
 This is the kind of problem that makes you wonder if we're building the future of computing or just recreating the Tower of Babel with more GPUs.
 
@@ -67,7 +67,7 @@ If you try out version 0.4.x, we'd love to hear how it goes. Join us on Discord 
 
 ## Links
 
-- **Composite Agent Docs:** [https://cua.ai/docs/agent-sdk/supported-agents/composed-agents](https://cua.ai/docs/agent-sdk/supported-agents/composed-agents)
+- **Composite Agent Docs:** [https://cua.ai/docs/cua/guide/advanced/composed-models](https://cua.ai/docs/cua/guide/advanced/composed-models)
 - **Discord:** [https://discord.gg/cua-ai](https://discord.gg/cua-ai)
 
 Questions or weird edge cases? Ping us on Discord—we’re curious to see what you build.

@@ -1,5 +1,0 @@
-{
-  "title": "Cloud CLI",
-  "description": "Command-line interface for CUA Cloud",
-  "pages": ["index", "commands"]
-}

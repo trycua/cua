@@ -1,0 +1,123 @@
+---
+title: XFCE Container
+description: Vanilla XFCE desktop container for Computer-Using Agents
+---
+
+Vanilla XFCE desktop container for Computer-Using Agents (Cua) with noVNC and computer-server. This is a lightweight alternative to the Kasm-based container with minimal dependencies.
+
+## Features
+
+- Ubuntu 22.04 (Jammy) with vanilla XFCE desktop environment
+- TigerVNC server for remote desktop access
+- noVNC for web-based VNC access (no client required)
+- Pre-installed computer-server for remote computer control
+- Python 3.11 with necessary libraries
+- Firefox browser with telemetry disabled
+
+## Quick Start
+
+```bash
+docker pull trycua/cua-xfce:latest
+
+docker run --rm -it \
+  --shm-size=512m \
+  -p 5901:5901 \
+  -p 6901:6901 \
+  -p 8000:8000 \
+  trycua/cua-xfce:latest
+```
+
+**Access Points:**
+- **noVNC Web Interface**: `http://localhost:6901` (no password required)
+- **VNC Client**: `localhost:5901` (no password required)
+- **Computer Server API**: `http://localhost:8000`
+
+### With Custom Resolution
+
+```bash
+docker run --rm -it \
+  --shm-size=512m \
+  -p 6901:6901 \
+  -p 8000:8000 \
+  -e VNC_RESOLUTION=1280x720 \
+  trycua/cua-xfce:latest
+```
+
+### With Persistent Storage
+
+```bash
+docker run --rm -it \
+  --shm-size=512m \
+  -p 6901:6901 \
+  -p 8000:8000 \
+  -v $(pwd)/storage:/home/cua/storage \
+  trycua/cua-xfce:latest
+```
+
+## Using with Cua
+
+```python
+from computer import Computer
+
+computer = Computer(
+    os_type="linux",
+    provider_type="docker",
+    image="trycua/cua-xfce:latest",
+    display="1024x768",
+    memory="4GB",
+    cpu="2"
+)
+
+async with computer:
+    screenshot = await computer.interface.screenshot()
+    await computer.interface.left_click(100, 100)
+    await computer.interface.type_text("Hello from Cua!")
+```
+
+## Configuration
+
+### Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `VNC_RESOLUTION` | `1024x768` | Screen resolution |
+| `VNC_COL_DEPTH` | `24` | Color depth |
+| `VNC_PORT` | `5901` | VNC server port |
+| `NOVNC_PORT` | `6901` | noVNC web interface port |
+| `API_PORT` | `8000` | Computer-server API port |
+
+### Ports
+
+- **5901**: TigerVNC server
+- **6901**: noVNC web interface
+- **8000**: Computer-server WebSocket API
+
+### Volumes
+
+- `/home/cua/storage`: Persistent storage mount point
+- `/home/cua/shared`: Shared folder mount point
+
+### User Credentials
+
+- **Username**: `cua`
+- **Password**: `password` (for shell login only)
+- **Sudo access**: Enabled without password
+
+## Creating Snapshots
+
+```bash
+docker commit <container_id> cua-xfce-snapshot:latest
+```
+
+## Comparison with Kasm Container
+
+| Feature | Kasm Container | XFCE Container |
+|---------|----------------|----------------|
+| Base Image | KasmWeb Ubuntu | Vanilla Ubuntu |
+| VNC Server | KasmVNC | TigerVNC |
+| Dependencies | Higher | Lower |
+| Size | Larger | Smaller |
+
+## Building from Source
+
+To build the image manually, see the [xfce source code](https://github.com/trycua/cua/tree/main/libs/xfce).

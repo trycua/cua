@@ -1,6 +1,6 @@
 #!/bin/bash
 # Main Setup Script for Linux
-# Installs dependencies and sets up CUA Computer Server
+# Installs dependencies and sets up Cua Computer Server
 
 set -e
 
@@ -21,11 +21,11 @@ sudo apt-get update
 log "Installing Git..."
 sudo apt-get install -y git
 
-# Setup CUA Computer Server
-log "Setting up CUA Computer Server..."
+# Setup Cua Computer Server
+log "Setting up Cua Computer Server..."
 if [ -f "$SCRIPT_DIR/setup-cua-server.sh" ]; then
     bash "$SCRIPT_DIR/setup-cua-server.sh" 2>&1 | tee -a "$LOG_FILE"
-    log "CUA Computer Server setup completed."
+    log "Cua Computer Server setup completed."
 else
     log "ERROR: setup-cua-server.sh not found at $SCRIPT_DIR/setup-cua-server.sh"
 fi

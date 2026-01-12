@@ -1,0 +1,6 @@
+{
+  "title": "Integrations",
+  "description": "Third-party tools and integrations",
+  "icon": "Plug",
+  "pages": ["laminar", "hud", "benchmarks"]
+}

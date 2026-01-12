@@ -1,8 +1,8 @@
 """
 Linux implementation of automation and accessibility handlers.
 
-This implementation attempts to use pyautogui for GUI automation when available.
-If running in a headless environment without X11, it will fall back to simulated responses.
+This implementation uses pynput for GUI automation. For screenshots and screen size,
+it uses PIL's ImageGrab (works with X11/Xvfb) and provides simulated fallbacks where needed.
 To use GUI automation in a headless environment:
 1. Install Xvfb: sudo apt-get install xvfb
 2. Run with virtual display: xvfb-run python -m computer_server
@@ -17,19 +17,11 @@ import subprocess
 from io import BytesIO
 from typing import Any, Dict, List, Optional, Tuple
 
+from PIL import Image, ImageGrab
+
 # Configure logger
 logger = logging.getLogger(__name__)
 
-# Try to import pyautogui, but don't fail if it's not available
-# This allows the server to run in headless environments
-try:
-    import pyautogui
-
-    pyautogui.FAILSAFE = False
-
-    logger.info("pyautogui successfully imported, GUI automation available")
-except Exception as e:
-    logger.warning(f"pyautogui import failed: {str(e)}. GUI operations will be simulated.")
 
 from pynput.keyboard import Controller as KeyboardController
 from pynput.keyboard import Key
@@ -88,36 +80,38 @@ class LinuxAccessibilityHandler(BaseAccessibilityHandler):
 
         Returns:
             Tuple[int, int]: The x and y coordinates of the cursor position.
-                           Returns (0, 0) if pyautogui is not available.
+                           Returns (0, 0) if cursor position cannot be determined.
         """
         try:
-            pos = pyautogui.position()
-            return pos.x, pos.y
-        except Exception as e:
-            logger.warning(f"Failed to get cursor position with pyautogui: {e}")
+            # Use pynput mouse controller
+            from pynput.mouse import Controller as MouseController
 
-        logger.info("Getting cursor position (simulated)")
-        return 0, 0
+            m = MouseController()
+            x, y = m.position
+            return int(x), int(y)
+        except Exception as e:
+            logger.warning(f"Failed to get cursor position: {e}")
+            logger.info("Getting cursor position (simulated)")
+            return 0, 0
 
     def get_screen_size(self) -> Tuple[int, int]:
         """Get the screen size.
 
         Returns:
             Tuple[int, int]: The width and height of the screen in pixels.
-                           Returns (1920, 1080) if pyautogui is not available.
+                           Returns (1920, 1080) if screen size cannot be determined.
         """
         try:
-            size = pyautogui.size()
-            return size.width, size.height
+            img = ImageGrab.grab()
+            return img.width, img.height
         except Exception as e:
-            logger.warning(f"Failed to get screen size with pyautogui: {e}")
-
-        logger.info("Getting screen size (simulated)")
-        return 1920, 1080
+            logger.warning(f"Failed to get screen size via ImageGrab: {e}")
+            logger.info("Getting screen size (simulated)")
+            return 1920, 1080
 
 
 class LinuxAutomationHandler(BaseAutomationHandler):
-    """Linux implementation of automation handler using pyautogui."""
+    """Linux implementation of automation handler using pynput."""
 
     keyboard = KeyboardController()
     mouse = MouseController()
@@ -138,8 +132,11 @@ class LinuxAutomationHandler(BaseAutomationHandler):
         """
         try:
             if x is not None and y is not None:
-                pyautogui.moveTo(x, y)
-            pyautogui.mouseDown(button=button)
+                self.mouse.position = (x, y)
+            from pynput.mouse import Button
+
+            btn = getattr(Button, button if button in ["left", "right", "middle"] else "left")
+            self.mouse.press(btn)
             return {"success": True}
         except Exception as e:
             return {"success": False, "error": str(e)}
@@ -159,8 +156,11 @@ class LinuxAutomationHandler(BaseAutomationHandler):
         """
         try:
             if x is not None and y is not None:
-                pyautogui.moveTo(x, y)
-            pyautogui.mouseUp(button=button)
+                self.mouse.position = (x, y)
+            from pynput.mouse import Button
+
+            btn = getattr(Button, button if button in ["left", "right", "middle"] else "left")
+            self.mouse.release(btn)
             return {"success": True}
         except Exception as e:
             return {"success": False, "error": str(e)}
@@ -176,7 +176,7 @@ class LinuxAutomationHandler(BaseAutomationHandler):
             Dict[str, Any]: A dictionary with success status and error message if failed.
         """
         try:
-            pyautogui.moveTo(x, y)
+            self.mouse.position = (x, y)
             return {"success": True}
         except Exception as e:
             return {"success": False, "error": str(e)}
@@ -192,9 +192,11 @@ class LinuxAutomationHandler(BaseAutomationHandler):
             Dict[str, Any]: A dictionary with success status and error message if failed.
         """
         try:
+            from pynput.mouse import Button
+
             if x is not None and y is not None:
-                pyautogui.moveTo(x, y)
-            pyautogui.click()
+                self.mouse.position = (x, y)
+            self.mouse.click(Button.left, 1)
             return {"success": True}
         except Exception as e:
             return {"success": False, "error": str(e)}
@@ -210,9 +212,11 @@ class LinuxAutomationHandler(BaseAutomationHandler):
             Dict[str, Any]: A dictionary with success status and error message if failed.
         """
         try:
+            from pynput.mouse import Button
+
             if x is not None and y is not None:
-                pyautogui.moveTo(x, y)
-            pyautogui.rightClick()
+                self.mouse.position = (x, y)
+            self.mouse.click(Button.right, 1)
             return {"success": True}
         except Exception as e:
             return {"success": False, "error": str(e)}
@@ -230,9 +234,11 @@ class LinuxAutomationHandler(BaseAutomationHandler):
             Dict[str, Any]: A dictionary with success status and error message if failed.
         """
         try:
+            from pynput.mouse import Button
+
             if x is not None and y is not None:
-                pyautogui.moveTo(x, y)
-            pyautogui.doubleClick(interval=0.1)
+                self.mouse.position = (x, y)
+            self.mouse.click(Button.left, 2)
             return {"success": True}
         except Exception as e:
             return {"success": False, "error": str(e)}
@@ -251,9 +257,12 @@ class LinuxAutomationHandler(BaseAutomationHandler):
             Dict[str, Any]: A dictionary with success status and error message if failed.
         """
         try:
+            from pynput.mouse import Button
+
             if x is not None and y is not None:
-                pyautogui.moveTo(x, y)
-            pyautogui.click(button=button)
+                self.mouse.position = (x, y)
+            btn = getattr(Button, button if button in ["left", "right", "middle"] else "left")
+            self.mouse.click(btn, 1)
             return {"success": True}
         except Exception as e:
             return {"success": False, "error": str(e)}
@@ -273,34 +282,17 @@ class LinuxAutomationHandler(BaseAutomationHandler):
             Dict[str, Any]: A dictionary with success status and error message if failed.
         """
         try:
-            pyautogui.dragTo(x, y, duration=duration, button=button)
+            from pynput.mouse import Button
+
+            btn = getattr(Button, button if button in ["left", "right", "middle"] else "left")
+            self.mouse.press(btn)
+            self.mouse.position = (x, y)
+            self.mouse.release(btn)
             return {"success": True}
         except Exception as e:
             return {"success": False, "error": str(e)}
 
     async def drag(
-        self, start_x: int, start_y: int, end_x: int, end_y: int, button: str = "left"
-    ) -> Dict[str, Any]:
-        """Drag from start coordinates to end coordinates.
-
-        Args:
-            start_x: The starting x coordinate.
-            start_y: The starting y coordinate.
-            end_x: The ending x coordinate.
-            end_y: The ending y coordinate.
-            button: The mouse button to use for dragging.
-
-        Returns:
-            Dict[str, Any]: A dictionary with success status and error message if failed.
-        """
-        try:
-            pyautogui.moveTo(start_x, start_y)
-            pyautogui.dragTo(end_x, end_y, duration=0.5, button=button)
-            return {"success": True}
-        except Exception as e:
-            return {"success": False, "error": str(e)}
-
-    async def drag_path(
         self, path: List[Tuple[int, int]], button: str = "left", duration: float = 0.5
     ) -> Dict[str, Any]:
         """Drag along a path defined by a list of coordinates.
@@ -314,11 +306,16 @@ class LinuxAutomationHandler(BaseAutomationHandler):
             Dict[str, Any]: A dictionary with success status and error message if failed.
         """
         try:
+            from pynput.mouse import Button
+
             if not path:
                 return {"success": False, "error": "Path is empty"}
-            pyautogui.moveTo(*path[0])
+            btn = getattr(Button, button if button in ["left", "right", "middle"] else "left")
+            self.mouse.position = path[0]
             for x, y in path[1:]:
-                pyautogui.dragTo(x, y, duration=duration, button=button)
+                self.mouse.press(btn)
+                self.mouse.position = (x, y)
+                self.mouse.release(btn)
             return {"success": True}
         except Exception as e:
             return {"success": False, "error": str(e)}
@@ -334,7 +331,12 @@ class LinuxAutomationHandler(BaseAutomationHandler):
             Dict[str, Any]: A dictionary with success status and error message if failed.
         """
         try:
-            pyautogui.keyDown(key)
+            from pynput.keyboard import Key
+
+            k = getattr(Key, key) if hasattr(Key, key) else (key if len(key) == 1 else None)
+            if k is None:
+                return {"success": False, "error": f"Unknown key: {key}"}
+            self.keyboard.press(k)
             return {"success": True}
         except Exception as e:
             return {"success": False, "error": str(e)}
@@ -349,7 +351,12 @@ class LinuxAutomationHandler(BaseAutomationHandler):
             Dict[str, Any]: A dictionary with success status and error message if failed.
         """
         try:
-            pyautogui.keyUp(key)
+            from pynput.keyboard import Key
+
+            k = getattr(Key, key) if hasattr(Key, key) else (key if len(key) == 1 else None)
+            if k is None:
+                return {"success": False, "error": f"Unknown key: {key}"}
+            self.keyboard.release(k)
             return {"success": True}
         except Exception as e:
             return {"success": False, "error": str(e)}
@@ -380,7 +387,13 @@ class LinuxAutomationHandler(BaseAutomationHandler):
             Dict[str, Any]: A dictionary with success status and error message if failed.
         """
         try:
-            pyautogui.press(key)
+            from pynput.keyboard import Key
+
+            k = getattr(Key, key) if hasattr(Key, key) else (key if len(key) == 1 else None)
+            if k is None:
+                return {"success": False, "error": f"Unknown key: {key}"}
+            self.keyboard.press(k)
+            self.keyboard.release(k)
             return {"success": True}
         except Exception as e:
             return {"success": False, "error": str(e)}
@@ -395,7 +408,21 @@ class LinuxAutomationHandler(BaseAutomationHandler):
             Dict[str, Any]: A dictionary with success status and error message if failed.
         """
         try:
-            pyautogui.hotkey(*keys)
+            from pynput.keyboard import Key
+
+            seq = []
+            for k in keys:
+                kk = getattr(Key, k) if hasattr(Key, k) else (k if len(k) == 1 else None)
+                if kk is None:
+                    return {"success": False, "error": f"Unknown key in hotkey: {k}"}
+                seq.append(kk)
+            for k in seq[:-1]:
+                self.keyboard.press(k)
+            last = seq[-1]
+            self.keyboard.press(last)
+            self.keyboard.release(last)
+            for k in reversed(seq[:-1]):
+                self.keyboard.release(k)
             return {"success": True}
         except Exception as e:
             return {"success": False, "error": str(e)}
@@ -427,7 +454,7 @@ class LinuxAutomationHandler(BaseAutomationHandler):
             Dict[str, Any]: A dictionary with success status and error message if failed.
         """
         try:
-            pyautogui.scroll(-clicks)
+            self.mouse.scroll(0, -abs(clicks))
             return {"success": True}
         except Exception as e:
             return {"success": False, "error": str(e)}
@@ -442,7 +469,7 @@ class LinuxAutomationHandler(BaseAutomationHandler):
             Dict[str, Any]: A dictionary with success status and error message if failed.
         """
         try:
-            pyautogui.scroll(clicks)
+            self.mouse.scroll(0, abs(clicks))
             return {"success": True}
         except Exception as e:
             return {"success": False, "error": str(e)}
@@ -456,9 +483,7 @@ class LinuxAutomationHandler(BaseAutomationHandler):
                            or error message if failed.
         """
         try:
-            from PIL import Image
-
-            screenshot = pyautogui.screenshot()
+            screenshot = ImageGrab.grab()
             if not isinstance(screenshot, Image.Image):
                 return {"success": False, "error": "Failed to capture screenshot"}
             buffered = BytesIO()
@@ -477,8 +502,8 @@ class LinuxAutomationHandler(BaseAutomationHandler):
                            or error message if failed.
         """
         try:
-            size = pyautogui.size()
-            return {"success": True, "size": {"width": size.width, "height": size.height}}
+            img = ImageGrab.grab()
+            return {"success": True, "size": {"width": img.width, "height": img.height}}
         except Exception as e:
             return {"success": False, "error": str(e)}
 
@@ -490,8 +515,11 @@ class LinuxAutomationHandler(BaseAutomationHandler):
                            or error message if failed.
         """
         try:
-            pos = pyautogui.position()
-            return {"success": True, "position": {"x": pos.x, "y": pos.y}}
+            from pynput.mouse import Controller as MouseController
+
+            m = MouseController()
+            x, y = m.position
+            return {"success": True, "position": {"x": int(x), "y": int(y)}}
         except Exception as e:
             return {"success": False, "error": str(e)}
 

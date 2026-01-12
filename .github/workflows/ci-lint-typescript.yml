@@ -1,0 +1,35 @@
+name: "CI: Lint TypeScript"
+
+on:
+  pull_request:
+    paths:
+      - "libs/typescript/**"
+      - ".github/workflows/ci-lint-typescript.yml"
+
+jobs:
+  lint:
+    name: TypeScript Lint & Format
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: 20
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Install Node dependencies
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm -C libs/typescript install --frozen-lockfile
+
+      - name: TypeScript typecheck
+        run: node ./scripts/typescript-typecheck.js
+
+      - name: Prettier check
+        run: pnpm prettier --check "**/*.{ts,tsx,js,jsx,json,md,yaml,yml}"

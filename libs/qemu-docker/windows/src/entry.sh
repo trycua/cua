@@ -18,13 +18,23 @@ if [ -d "/storage" -a ! -f "/storage/windows.boot" ]; then
   touch /storage/windows.boot
 fi
 
+# Generate install_config.json from Docker environment variable
+# This allows the INSTALL_WINARENA_APPS env var to be passed to the Windows guest
+if [ "$INSTALL_WINARENA_APPS" = "true" ]; then
+  echo "Creating install_config.json with INSTALL_WINARENA_APPS=true..."
+  echo '{"INSTALL_WINARENA_APPS": true}' > /oem/install_config.json
+else
+  echo "Creating install_config.json with INSTALL_WINARENA_APPS=false..."
+  echo '{"INSTALL_WINARENA_APPS": false}' > /oem/install_config.json
+fi
+
 # Start the VM in the background
 echo "Starting Windows VM..."
 /usr/bin/tini -s /run/entry.sh &
 VM_PID=$!
 echo "Live stream accessible at localhost:8006"
 
-echo "Waiting for Windows to boot and CUA computer-server to start..."
+echo "Waiting for Windows to boot and Cua computer-server to start..."
 
 VM_IP=""
 while true; do
@@ -47,11 +57,11 @@ while true; do
     break
   fi
 
-  echo "Waiting for CUA computer-server to be ready. This might take a while..."
+  echo "Waiting for Cua computer-server to be ready. This might take a while..."
   sleep 5
 done
 
-echo "VM is up and running, and the CUA Computer Server is ready!"
+echo "VM is up and running, and the Cua Computer Server is ready!"
 
 echo "Computer server accessible at localhost:5000"
 

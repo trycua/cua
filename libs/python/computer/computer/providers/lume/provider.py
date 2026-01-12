@@ -1,7 +1,6 @@
 """Lume VM provider implementation using curl commands.
 
-This provider uses direct curl commands to interact with the Lume API,
-removing the dependency on the pylume Python package.
+This provider uses direct curl commands to interact with the Lume API.
 """
 
 import asyncio
@@ -32,8 +31,7 @@ logger = logging.getLogger(__name__)
 class LumeProvider(BaseVMProvider):
     """Lume VM provider implementation using direct curl commands.
 
-    This provider uses curl to interact with the Lume API server,
-    removing the dependency on the pylume Python package.
+    This provider uses curl to interact with the Lume API server.
     """
 
     def __init__(

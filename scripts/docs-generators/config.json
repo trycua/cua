@@ -1,0 +1,147 @@
+{
+  "$schema": "./config.schema.json",
+  "description": "Configuration for auto-generating documentation from source code",
+  "generators": {
+    "lume": {
+      "name": "Lume VM Manager",
+      "language": "swift",
+      "sourcePath": "libs/lume/src",
+      "docsOutputPath": "docs/content/docs/lume/reference",
+      "generatorScript": "scripts/docs-generators/lume.ts",
+      "watchPaths": [
+        "libs/lume/src/Commands/**/*.swift",
+        "libs/lume/src/Server/**/*.swift",
+        "libs/lume/src/Utils/CommandDocExtractor.swift",
+        "libs/lume/src/Server/APIDocExtractor.swift"
+      ],
+      "buildCommand": "swift build -c release",
+      "buildDirectory": "libs/lume",
+      "extractionMethod": "dump-docs",
+      "outputs": [
+        {
+          "type": "cli",
+          "outputFile": "cli-reference.mdx",
+          "extractCommand": ".build/release/lume dump-docs --type cli"
+        },
+        {
+          "type": "api",
+          "outputFile": "http-api.mdx",
+          "extractCommand": ".build/release/lume dump-docs --type api"
+        }
+      ],
+      "enabled": true
+    },
+    "cua-cli": {
+      "name": "Cua CLI",
+      "language": "typescript",
+      "sourcePath": "libs/typescript/cua-cli/src",
+      "docsOutputPath": "docs/content/docs/cua/reference/cli-playbook",
+      "generatorScript": "scripts/docs-generators/cua-cli.ts",
+      "watchPaths": ["libs/typescript/cua-cli/src/**/*.ts"],
+      "buildCommand": null,
+      "buildDirectory": "libs/typescript/cua-cli",
+      "extractionMethod": "yargs-parse",
+      "outputs": [
+        {
+          "type": "cli",
+          "outputFile": "commands.mdx",
+          "extractCommand": null
+        }
+      ],
+      "enabled": false,
+      "notes": "Requires yargs introspection or AST parsing - to be implemented"
+    },
+    "mcp-server": {
+      "name": "MCP Server",
+      "language": "python",
+      "sourcePath": "libs/python/mcp-server/src",
+      "docsOutputPath": "docs/content/docs/cua/reference/mcp-server",
+      "generatorScript": "scripts/docs-generators/mcp-server.ts",
+      "watchPaths": ["libs/python/mcp-server/src/**/*.py"],
+      "buildCommand": null,
+      "buildDirectory": "libs/python/mcp-server",
+      "extractionMethod": "mcp-introspection",
+      "outputs": [
+        {
+          "type": "tools",
+          "outputFile": "tools.mdx",
+          "extractCommand": null
+        }
+      ],
+      "enabled": false,
+      "notes": "Requires MCP tool introspection - to be implemented"
+    },
+    "computer-sdk-python": {
+      "name": "Computer SDK (Python)",
+      "language": "python",
+      "sourcePath": "libs/python/computer/src",
+      "docsOutputPath": "docs/content/docs/cua/reference/computer-sdk",
+      "generatorScript": "scripts/docs-generators/python-sdk.ts",
+      "watchPaths": ["libs/python/computer/src/**/*.py"],
+      "extractionMethod": "sphinx-autodoc",
+      "outputs": [
+        {
+          "type": "api",
+          "outputFile": "python-api.mdx",
+          "extractCommand": null
+        }
+      ],
+      "enabled": false,
+      "notes": "Requires Sphinx or pydoc introspection - to be implemented"
+    },
+    "computer-sdk-typescript": {
+      "name": "Computer SDK (TypeScript)",
+      "language": "typescript",
+      "sourcePath": "libs/typescript/computer/src",
+      "docsOutputPath": "docs/content/docs/cua/reference/computer-sdk",
+      "generatorScript": "scripts/docs-generators/typescript-sdk.ts",
+      "watchPaths": ["libs/typescript/computer/src/**/*.ts"],
+      "extractionMethod": "typedoc",
+      "outputs": [
+        {
+          "type": "api",
+          "outputFile": "typescript-api.mdx",
+          "extractCommand": null
+        }
+      ],
+      "enabled": false,
+      "notes": "Requires TypeDoc or ts-morph introspection - to be implemented"
+    },
+    "agent-sdk-python": {
+      "name": "Agent SDK (Python)",
+      "language": "python",
+      "sourcePath": "libs/python/agent/src",
+      "docsOutputPath": "docs/content/docs/cua/reference/agent-sdk",
+      "generatorScript": "scripts/docs-generators/python-sdk.ts",
+      "watchPaths": ["libs/python/agent/src/**/*.py"],
+      "extractionMethod": "sphinx-autodoc",
+      "outputs": [
+        {
+          "type": "api",
+          "outputFile": "python-api.mdx",
+          "extractCommand": null
+        }
+      ],
+      "enabled": false,
+      "notes": "Requires Sphinx or pydoc introspection - to be implemented"
+    },
+    "agent-sdk-typescript": {
+      "name": "Agent SDK (TypeScript)",
+      "language": "typescript",
+      "sourcePath": "libs/typescript/agent/src",
+      "docsOutputPath": "docs/content/docs/cua/reference/agent-sdk",
+      "generatorScript": "scripts/docs-generators/typescript-sdk.ts",
+      "watchPaths": ["libs/typescript/agent/src/**/*.ts"],
+      "extractionMethod": "typedoc",
+      "outputs": [
+        {
+          "type": "api",
+          "outputFile": "typescript-api.mdx",
+          "extractCommand": null
+        }
+      ],
+      "enabled": false,
+      "notes": "Requires TypeDoc or ts-morph introspection - to be implemented"
+    }
+  }
+}

@@ -1,0 +1,109 @@
+name: Reusable NPM Package Publish Workflow
+
+on:
+  workflow_call:
+    inputs:
+      package_name:
+        description: "Name of the package (e.g., cli, computer, core)"
+        required: true
+        type: string
+      package_dir:
+        description: "Directory containing the package relative to workspace root (e.g., libs/typescript/cua-cli)"
+        required: true
+        type: string
+      package_manager:
+        description: "Package manager to use (pnpm or bun)"
+        required: true
+        type: string
+      version:
+        description: "Version to publish (optional - will check version diff if not provided)"
+        required: false
+        type: string
+        default: ""
+    secrets:
+      NPM_TOKEN:
+        required: true
+
+jobs:
+  publish:
+    permissions:
+      id-token: write
+      contents: read
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Use Node.js 24.x
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24.x"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Setup pnpm
+        if: inputs.package_manager == 'pnpm'
+        uses: pnpm/action-setup@v4
+        with:
+          package_json_file: ${{ inputs.package_dir }}/package.json
+
+      - name: Setup Bun
+        if: inputs.package_manager == 'bun'
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Verify version consistency
+        if: inputs.version != ''
+        run: |
+          EXPECTED_VERSION="${{ inputs.version }}"
+          ACTUAL_VERSION=$(node -p "require('./${{ inputs.package_dir }}/package.json').version")
+
+          if [ "$ACTUAL_VERSION" != "$EXPECTED_VERSION" ]; then
+            echo "ERROR: Version mismatch!"
+            echo "Expected version: $EXPECTED_VERSION"
+            echo "Actual version in package.json: $ACTUAL_VERSION"
+            exit 1
+          fi
+
+          echo "Version validation passed: $ACTUAL_VERSION"
+          echo "should_publish=true" >> $GITHUB_OUTPUT
+        id: verify-version
+
+      - name: Check if version changed
+        if: steps.verify-version.outputs.should_publish != 'true'
+        id: check-version
+        uses: EndBug/version-check@v2
+        with:
+          file-name: ${{ inputs.package_dir }}/package.json
+          diff-search: true
+
+      - name: Install dependencies
+        if: steps.verify-version.outputs.should_publish == 'true' || steps.check-version.outputs.changed == 'true'
+        working-directory: ./${{ inputs.package_dir }}
+        run: |
+          if [ "${{ inputs.package_manager }}" = "bun" ]; then
+            bun install --frozen-lockfile
+          else
+            pnpm install --frozen-lockfile
+          fi
+
+      - name: Build package
+        if: steps.verify-version.outputs.should_publish == 'true' || steps.check-version.outputs.changed == 'true'
+        working-directory: ./${{ inputs.package_dir }}
+        run: |
+          if [ "${{ inputs.package_manager }}" = "bun" ]; then
+            # Bun doesn't support --if-present, check if build script exists
+            if grep -q '"build"' package.json; then
+              bun run build
+            fi
+          else
+            pnpm run build --if-present
+          fi
+
+      - name: Publish to npm
+        if: steps.verify-version.outputs.should_publish == 'true' || steps.check-version.outputs.changed == 'true'
+        working-directory: ./${{ inputs.package_dir }}
+        run: npm publish --access public --provenance
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

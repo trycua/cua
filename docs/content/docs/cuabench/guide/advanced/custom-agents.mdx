@@ -1,0 +1,245 @@
+---
+title: Custom Agents
+description: Define and run custom agents with Docker images or Python import paths
+---
+
+# Custom Agents
+
+Cua-Bench supports custom agents through the `.cua/agents.yaml` configuration file. Agents can be defined as Docker images (cloud-ready) or Python import paths (local development).
+
+## Architecture
+
+Cua-Bench uses a **2-container architecture** where the agent and environment run in separate Docker containers communicating via Docker network:
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  Docker Network: cua-task-{id}                              │
+│                                                             │
+│  ┌─────────────────────┐    ┌─────────────────────────────┐│
+│  │  cua-agent-{id}     │    │  cua-env-{id}               ││
+│  │                     │    │                             ││
+│  │  Your agent image   │───►│  trycua/cua-qemu-windows    ││
+│  │  (or default)       │HTTP│  (or linux-docker, etc.)    ││
+│  │                     │    │                             ││
+│  │  Runs your agent    │    │  cua-computer-server:5000   ││
+│  └─────────────────────┘    └─────────────────────────────┘│
+└─────────────────────────────────────────────────────────────┘
+```
+
+This architecture mirrors cloud deployments (Cloud Run Jobs + Azure Batch) for consistent behavior between local and production.
+
+## Agent Configuration
+
+Create a `.cua/agents.yaml` file in your project:
+
+```yaml
+# .cua/agents.yaml
+agents:
+  # Built-in agents (use default cua-agent image)
+  - name: cua-agent
+    builtin: true
+    defaults:
+      model: anthropic/claude-sonnet-4-20250514
+      max_steps: 50
+
+  - name: gemini
+    builtin: true
+    defaults:
+      model: gemini-2.0-flash
+      max_steps: 50
+
+  # Custom Docker image agent (cloud-ready)
+  - name: my-agent
+    image: myregistry/my-agent:latest
+    command: ['python', '-m', 'my_agent.main']
+    defaults:
+      model: gpt-4o
+      max_steps: 100
+
+  # Import path agent (local development)
+  - name: dev-agent
+    import_path: my_agents.custom:CustomAgent
+    defaults:
+      model: claude-sonnet-4-20250514
+```
+
+## Agent Types
+
+### 1. Docker Image Agents (Cloud-Ready)
+
+Best for production and CI/CD. Your agent is fully self-contained in a Docker image.
+
+```yaml
+- name: my-agent
+  image: myregistry/my-agent:latest
+  command: ['python', '-m', 'my_agent.main'] # Optional
+  defaults:
+    model: gpt-4o
+```
+
+Your Docker image can include **any dependencies** - the only requirement is that it can:
+
+1. Read environment variables (to know where to connect)
+2. Make HTTP requests (to communicate with the environment)
+
+### 2. Import Path Agents (Local Development)
+
+Best for rapid iteration during development. No Docker build needed.
+
+```yaml
+- name: dev-agent
+  import_path: my_agents.custom:CustomAgent
+```
+
+The import path format is `module.path:ClassName`. Your agent class runs inside the default `trycua/cua-agent` container with your code mounted.
+
+### 3. Built-in Agents
+
+Use the pre-configured agents without any setup:
+
+```yaml
+- name: cua-agent
+  builtin: true
+  defaults:
+    model: anthropic/claude-sonnet-4-20250514
+```
+
+## Environment Variables
+
+Custom Docker image agents receive these environment variables:
+
+| Variable            | Description                  | Example                       |
+| ------------------- | ---------------------------- | ----------------------------- |
+| `CUA_ENV_API_URL`   | API endpoint for environment | `http://cua-env:5000`         |
+| `CUA_ENV_VNC_URL`   | VNC endpoint for debugging   | `http://cua-env:8006`         |
+| `CUA_ENV_TYPE`      | OS type                      | `linux`, `windows`, `android` |
+| `CUA_TASK_PATH`     | Mounted task config path     | `/app/env`                    |
+| `CUA_TASK_INDEX`    | Task index to run            | `0`                           |
+| `CUA_MODEL`         | Model to use (if specified)  | `gpt-4o`                      |
+| `ANTHROPIC_API_KEY` | Passed through from host     | `sk-...`                      |
+| `OPENAI_API_KEY`    | Passed through from host     | `sk-...`                      |
+| `GOOGLE_API_KEY`    | Passed through from host     | `...`                         |
+
+## Building a Docker Image Agent
+
+### Dockerfile
+
+```dockerfile
+FROM python:3.12-slim
+WORKDIR /app
+
+# Install any dependencies you need
+RUN pip install httpx pillow anthropic openai
+
+# Copy your agent code
+COPY my_agent/ /app/my_agent/
+
+# Entry point
+CMD ["python", "-m", "my_agent.main"]
+```
+
+### Agent Implementation
+
+```python
+# my_agent/main.py
+import os
+import base64
+import httpx
+from PIL import Image
+from io import BytesIO
+
+# Read environment variables
+API_URL = os.environ["CUA_ENV_API_URL"]
+TASK_INDEX = int(os.environ["CUA_TASK_INDEX"])
+
+def screenshot():
+    """Get screenshot from environment."""
+    r = httpx.post(f"{API_URL}/screenshot")
+    b64 = r.json()["screenshot"]
+    return Image.open(BytesIO(base64.b64decode(b64)))
+
+def click(x, y):
+    """Click at coordinates."""
+    httpx.post(f"{API_URL}/execute", json={
+        "action": "click",
+        "coordinate": [x, y]
+    })
+
+def type_text(text):
+    """Type text."""
+    httpx.post(f"{API_URL}/execute", json={
+        "action": "type",
+        "text": text
+    })
+
+def main():
+    import anthropic
+
+    client = anthropic.Anthropic()
+
+    for step in range(50):
+        img = screenshot()
+
+        # Your agent logic here...
+        # Call LLM, parse response, execute action
+
+        response = client.messages.create(
+            model="claude-sonnet-4-20250514",
+            messages=[...],
+        )
+
+        action = parse_response(response)
+        if action["type"] == "click":
+            click(action["x"], action["y"])
+        elif action["type"] == "type":
+            type_text(action["text"])
+        elif action["type"] == "done":
+            break
+
+if __name__ == "__main__":
+    main()
+```
+
+### Build and Register
+
+```bash
+# Build image
+docker build -t myregistry/my-agent:latest .
+
+# Push to registry (for cloud deployment)
+docker push myregistry/my-agent:latest
+```
+
+## Running Custom Agents
+
+```bash
+# Run with your custom agent
+cb run task tasks/my_task --task-index 0 --eval --agent my-agent
+
+# Run with VNC debugging
+cb run task tasks/my_task --task-index 0 --eval --agent my-agent --vnc-port 8006
+
+# Override model
+cb run task tasks/my_task --eval --agent my-agent --model gpt-4-turbo
+```
+
+## What You Can Include
+
+Since you control the Docker image, you can include any dependencies:
+
+| Use Case               | Dependencies                                 |
+| ---------------------- | -------------------------------------------- |
+| Vision model agent     | `torch`, `transformers`, CUDA runtime        |
+| Browser automation     | `playwright`, `selenium`, Chrome             |
+| OCR-based agent        | `tesseract`, `pytesseract`, `opencv`         |
+| Multi-modal LLM        | `openai`, `anthropic`, `google-generativeai` |
+| Local LLM              | `llama-cpp-python`, GGUF models              |
+| Reinforcement learning | `stable-baselines3`, `gymnasium`             |
+
+## Best Practices
+
+1. **Start with import paths** for rapid development, then containerize for production
+2. **Handle connection retries** - the environment may take a few seconds to start
+3. **Log to stdout** - container logs are captured automatically
+4. **Exit with code 0** on success, non-zero on failure
+5. **Read task config** from `/app/env/main.py` if needed

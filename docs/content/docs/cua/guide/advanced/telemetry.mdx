@@ -1,0 +1,111 @@
+---
+title: Telemetry
+description: Understanding and controlling Cua's anonymous usage collection
+---
+
+Cua collects anonymous usage statistics to improve the product. No personal data, screenshots, or conversation content is collected by default. You can opt out completely at any time.
+
+## What's Collected
+
+### By Default (Opt-Out)
+
+Basic performance metrics:
+
+- **System info** - OS, OS version, Python version
+- **Module initialization** - When packages are imported and their versions
+- **Performance** - Agent run durations, step counts, token usage, API costs
+- **Session tracking** - Anonymous UUIDs for sessions and runs
+
+### Opt-In Only
+
+**Trajectory logging** captures full conversation history and must be explicitly enabled:
+
+- User messages and agent responses
+- Computer actions and outputs
+- Agent reasoning traces
+
+### Never Collected
+
+- Personal information or user identifiers
+- API keys or credentials
+- File contents or application data
+- Screenshots (unless trajectory logging is enabled)
+- Text being typed or model outputs (unless trajectory logging is enabled)
+
+## Disabling Telemetry
+
+### Environment Variable
+
+Set `CUA_TELEMETRY_ENABLED` to disable globally:
+
+```bash
+export CUA_TELEMETRY_ENABLED=false
+```
+
+### Per Instance
+
+Disable on individual objects:
+
+```python
+from computer import Computer
+from agent import ComputerAgent
+
+# Disable for Computer
+computer = Computer(
+    os_type="linux",
+    provider_type="docker",
+    telemetry_enabled=False
+)
+
+# Disable for Agent
+agent = ComputerAgent(
+    model="anthropic/claude-sonnet-4-5-20250929",
+    tools=[computer],
+    telemetry_enabled=False
+)
+```
+
+### Check Status
+
+```python
+print(computer.telemetry_enabled)  # True or False
+print(agent.telemetry_enabled)     # True, False, or dict
+```
+
+## Enabling Trajectory Logging
+
+To opt in to full conversation logging:
+
+```python
+agent = ComputerAgent(
+    model="anthropic/claude-sonnet-4-5-20250929",
+    tools=[computer],
+    telemetry_enabled={"log_trajectory": True}
+)
+```
+
+This sends complete conversation items to help improve Cua's models.
+
+## Events Reference
+
+### Computer SDK Events
+
+| Event                  | Data                                 | Trigger                   |
+| ---------------------- | ------------------------------------ | ------------------------- |
+| `computer_initialized` | OS, OS version, Python version       | Computer instance created |
+| `module_init`          | Module name, version, Python version | Package first imported    |
+
+### Agent SDK Events
+
+| Event                 | Data                                       | Trigger                 |
+| --------------------- | ------------------------------------------ | ----------------------- |
+| `module_init`         | Module name, version, Python version       | Package first imported  |
+| `agent_session_start` | Session ID, agent type, model, system info | Agent instantiated      |
+| `agent_run_start`     | Session/run IDs, input size, message count | `agent.run()` called    |
+| `agent_run_end`       | Session/run IDs, duration, steps, usage    | `agent.run()` completes |
+| `agent_step`          | Session/run IDs, step number, timestamp    | Each agent iteration    |
+| `agent_usage`         | Session/run IDs, token counts, cost        | Usage info received     |
+
+## Questions
+
+Questions about telemetry? Open an issue on [GitHub](https://github.com/trycua/cua).

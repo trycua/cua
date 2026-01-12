@@ -1,0 +1,80 @@
+---
+title: QEMU Linux
+description: Ubuntu 22.04 container with QEMU/KVM for Computer-Using Agents
+---
+
+Containerized Ubuntu 22.04 LTS virtual desktop for Computer-Using Agents (Cua). Utilizes QEMU/KVM with Ubuntu Desktop and computer-server pre-installed for remote computer control.
+
+## Features
+
+- Ubuntu 22.04 LTS Desktop running in QEMU/KVM
+- Pre-installed Cua computer-server for remote computer control
+- noVNC access for visual desktop interaction
+- Memory snapshots support
+- Full VM isolation
+
+## Requirements
+
+- Linux host with KVM support
+- Docker with `--device=/dev/kvm` access
+
+## Quick Start
+
+```bash
+docker pull trycua/cua-qemu-linux:latest
+
+mkdir -p ./storage
+
+docker run -it --rm \
+  --device=/dev/kvm \
+  --cap-add NET_ADMIN \
+  -v $(pwd)/storage:/storage \
+  -p 8006:8006 \
+  -p 5000:5000 \
+  -e RAM_SIZE=8G \
+  -e CPU_CORES=4 \
+  trycua/cua-qemu-linux:latest
+```
+
+**Access Points:**
+- **Computer Server API**: `http://localhost:5000`
+- **noVNC Browser**: `http://localhost:8006`
+
+## Configuration
+
+### Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `RAM_SIZE` | `8G` | RAM allocated to Ubuntu VM |
+| `CPU_CORES` | `8` | CPU cores allocated to VM |
+| `DISK_SIZE` | `64G` | VM disk size (minimum: 32G) |
+
+### Ports
+
+- **5000**: Cua computer-server API endpoint
+- **8006**: noVNC web interface for visual desktop access
+
+### Volumes
+
+- `/storage`: Persistent VM storage (golden image, disk)
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────────┐
+│  Docker Container (Linux host)                          │
+│                                                         │
+│  • Port forwarding: localhost:5000 → VM:5000            │
+│  • Exposes: 5000 (API), 8006 (noVNC)                    │
+│                                                         │
+│  ┌────────────────────────────────────────────────────┐ │
+│  │  QEMU VM (Ubuntu 22.04)                            │ │
+│  │  • Cua computer-server listens on 5000             │ │
+│  └────────────────────────────────────────────────────┘ │
+└─────────────────────────────────────────────────────────┘
+```
+
+## Building from Source
+
+To build the image manually (including creating a golden image from an Ubuntu ISO), see the [qemu-docker/linux source code](https://github.com/trycua/cua/tree/main/libs/qemu-docker/linux).

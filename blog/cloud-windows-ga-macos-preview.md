@@ -1,6 +1,6 @@
 # Cloud Windows Sandboxes GA + macOS Preview
 
-If you've been building with our `cua` libraries, you might've hit a limitation with local computer-use sandboxes: to run agents on Windows or macOS, you need to be on that OS - Windows Sandbox for Windows, Apple Virtualization for macOS. The only cross-platform option is Linux on Docker, which limits you to virtualizing Linux environments ([see all local options here](https://cua.ai/docs/computer-sdk/computers)).
+If you've been building with our `cua` libraries, you might've hit a limitation with local computer-use sandboxes: to run agents on Windows or macOS, you need to be on that OS - Windows Sandbox for Windows, Apple Virtualization for macOS. The only cross-platform option is Linux on Docker, which limits you to virtualizing Linux environments ([see all local options here](https://cua.ai/docs/cua/reference/computer-sdk)).
 
 Today the story changes - we're announcing general availability of **Cloud Windows Sandboxes** and opening early preview access for **Cloud macOS Sandboxes**.
 

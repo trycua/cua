@@ -21,7 +21,7 @@ By the end of this tutorial, you'll be able to:
 
 **Prerequisites:**
 
-- Completed setup from Part 1 ([lume CLI installed](https://github.com/trycua/cua?tab=readme-ov-file#option-2-full-computer-use-agent-capabilities), macOS CUA image already pulled)
+- Completed setup from Part 1 ([lume CLI installed](https://github.com/trycua/cua?tab=readme-ov-file#option-2-full-computer-use-agent-capabilities), macOS Cua image already pulled)
 - Python 3.10+. We recommend using Conda (or Anaconda) to create an ad hoc Python environment.
 - API keys for OpenAI and/or Anthropic (optional for local models)
 
@@ -144,7 +144,7 @@ The loop handles all the complex error handling, retries, context management, an
 While the core concept remains the same across all agent loops, different AI models require specialized handling for optimal performance. To address this, the framework provides 4 different agent loop implementations, each designed for different computer-use modalities.
 | Agent Loop | Supported Models | Description | Set-Of-Marks |
 |:-----------|:-----------------|:------------|:-------------|
-| `AgentLoop.OPENAI` | • `computer_use_preview` | Use OpenAI Operator CUA Preview model | Not Required |
+| `AgentLoop.OPENAI` | • `computer_use_preview` | Use OpenAI Operator Cua Preview model | Not Required |
 | `AgentLoop.ANTHROPIC` | • `claude-sonnet-4-5-20250929`<br>• `claude-3-7-sonnet-20250219` | Use Anthropic Computer-Use Beta Tools | Not Required |
 | `AgentLoop.UITARS` | • `ByteDance-Seed/UI-TARS-1.5-7B` | Uses ByteDance's UI-TARS 1.5 model | Not Required |
 | `AgentLoop.OMNI` | • `claude-sonnet-4-5-20250929`<br>• `claude-3-7-sonnet-20250219`<br>• `gpt-4.5-preview`<br>• `gpt-4o`<br>• `gpt-4`<br>• `phi4`<br>• `phi4-mini`<br>• `gemma3`<br>• `...`<br>• `Any Ollama or OpenAI-compatible model` | Use OmniParser for element pixel-detection (SoM) and any VLMs for UI Grounding and Reasoning | OmniParser |
@@ -159,7 +159,7 @@ Each loop handles the same basic pattern we implemented manually in Part 1:
 
 ### Why Different Agent Loops?
 
-The `cua-agent` framework provides multiple agent loop implementations to abstract away the complexity of interacting with different CUA models. Each provider has unique API structures, response formats, conventions and capabilities that require specialized handling:
+The `cua-agent` framework provides multiple agent loop implementations to abstract away the complexity of interacting with different Cua models. Each provider has unique API structures, response formats, conventions and capabilities that require specialized handling:
 
 - **OpenAI Loop**: Uses the Responses API with a specific `computer_call_output` format for sending screenshots after actions. Requires handling safety checks and maintains a chain of requests using `previous_response_id`.
 
@@ -179,7 +179,7 @@ Choosing the right agent loop depends not only on your API access and technical 
 
 The performance of different Computer-Use models varies significantly across tasks. These benchmark evaluations measure an agent's ability to follow instructions and complete real-world tasks in different computing environments.
 
-| Benchmark type   | Benchmark                                                          | UI-TARS-1.5 | OpenAI CUA | Claude 3.7 | Previous SOTA   | Human |
+| Benchmark type   | Benchmark                                                          | UI-TARS-1.5 | OpenAI Cua | Claude 3.7 | Previous SOTA   | Human |
 | ---------------- | ------------------------------------------------------------------ | ----------- | ---------- | ---------- | --------------- | ----- |
 | **Computer Use** | [OSworld](https://arxiv.org/abs/2404.07972) (100 steps)            | **42.5**    | 36.4       | 28         | 38.1 (200 step) | 72.4  |
 |                  | [Windows Agent Arena](https://arxiv.org/abs/2409.08264) (50 steps) | **42.1**    | -          | -          | 29.8            | -     |

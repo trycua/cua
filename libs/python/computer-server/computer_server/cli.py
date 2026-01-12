@@ -116,7 +116,7 @@ def main() -> None:
         watchdog_thread.start()
 
     # Create and start the server
-    logger.info(f"Starting CUA Computer API server on {args.host}:{args.port}...")
+    logger.info(f"Starting Cua Computer API server on {args.host}:{args.port}...")
 
     # Handle SSL configuration
     ssl_args = {}

@@ -1,0 +1,92 @@
+---
+title: Installation
+description: Getting started with Cua-Bench
+---
+
+Cua-Bench provides a CLI for running the benchmark, creating tasks, and generating training data.
+
+## Install Dependencies
+
+Cua-Bench requires `git` and `Docker` to be installed on your system.
+
+## Install the CLI
+
+Install Cua-Bench using `uv`:
+
+```bash
+# uv tool install cua-bench
+
+# Clone the repo
+git clone https://github.com/trycua/cua.git
+cd cua/libs/cua-bench
+
+# Install cua-bench CLI
+uv tool install -e .[all]
+
+# Install playwright
+uv run python -m playwright install chromium
+
+# Build cua-bench Docker image
+docker build -t cua-bench:latest .
+```
+
+After installation, you can run the CLI using `cua-bench` or `cb` for convenience.
+
+## Install a default Base Image
+
+Base images are reproducible computer environments for running tasks. Create at least one:
+
+```bash
+# Quick setup (Linux container, no KVM required)
+cb image create linux-docker
+
+# Or for Windows Arena benchmarks (~1-2 hours)
+cb image create windows-qemu --download-iso
+```
+
+| Type           | Description                | Requirements  |
+| -------------- | -------------------------- | ------------- |
+| `linux-docker` | Linux GUI container (XFCE) | Docker        |
+| `linux-qemu`   | Linux VM with QEMU/KVM     | Docker + KVM  |
+| `windows-qemu` | Windows 11 VM              | Docker + KVM  |
+| `android-qemu` | Android VM                 | Docker + KVM  |
+| `macos-lume`   | macOS VM via Lume          | Apple Silicon |
+
+See [Base Images](/cuabench/guide/advanced/images) for more options.
+
+## Verify Installation
+
+Run the help command to verify the installation:
+
+```bash
+cb --help
+```
+
+You should see output similar to:
+
+```
+     ⠀⣀⣀⡀⠀⠀⠀⠀⢀⣀⣀⣀⡀⠘⠋⢉⠙⣷⠀⠀ ⠀
+ ⠀⠀⢀⣴⣿⡿⠋⣉⠁⣠⣾⣿⣿⣿⣿⡿⠿⣦⡈⠀⣿⡇⠃⠀
+ ⠀⠀⠀⣽⣿⣧⠀⠃⢰⣿⣿⡏⠙⣿⠿⢧⣀⣼⣷⠀⡿⠃⠀⠀
+ ⠀⠀⠀⠉⣿⣿⣦⠀⢿⣿⣿⣷⣾⡏⠀⠀⢹⣿⣿⠀⠀⠀⠀⠀⠀
+ ⠀⠀⠀⠀⠀⠉⠛⠁⠈⠿⣿⣿⣿⣷⣄⣠⡼⠟⠁⠀cua-bench==v0.4.0
+           toolkit for computer-use RL environments and benchmarks
+
+Commands:
+                        Available commands
+    run                 Run tasks with optional agent evaluation
+    interact            Interactively run a task with browser visible
+    agent               Agent management commands
+    platform            Show available platform configurations
+    image               Manage stored base images
+    status              Show system status dashboard
+    task                Inspect and manage task environments
+    trace               View and manage trace datasets
+    dataset             Manage datasets and build from outputs
+    prune               Clean up cua-bench data, images, and Docker resources
+    login               Authenticate with CUA Cloud to get API token
+
+Options:
+  -h, --help       Show this help message and exit
+  --version        Show version
+```

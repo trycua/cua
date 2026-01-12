@@ -250,6 +250,74 @@ extension Server {
         }
     }
 
+    func handleSetupVM(name: String, body: Data?) async throws -> HTTPResponse {
+        Logger.info("Setting up VM", metadata: ["name": name])
+
+        guard let body = body else {
+            return HTTPResponse(
+                statusCode: .badRequest,
+                headers: ["Content-Type": "application/json"],
+                body: try JSONEncoder().encode(APIError(message: "Request body is required"))
+            )
+        }
+
+        do {
+            let request = try JSONDecoder().decode(SetupVMRequest.self, from: body)
+
+            // Load config from path or parse YAML directly
+            let config: UnattendedConfig
+            if let configPath = request.configPath {
+                config = try UnattendedConfig.load(from: configPath)
+            } else if let configYaml = request.configYaml {
+                config = try UnattendedConfig.parse(yaml: configYaml)
+            } else {
+                return HTTPResponse(
+                    statusCode: .badRequest,
+                    headers: ["Content-Type": "application/json"],
+                    body: try JSONEncoder().encode(APIError(message: "Either configPath or configYaml is required"))
+                )
+            }
+
+            // Run setup in background task since it can take a long time
+            Task {
+                do {
+                    let vmController = LumeController()
+                    try await vmController.setup(
+                        name: name,
+                        config: config,
+                        storage: request.storage,
+                        vncPort: request.vncPort ?? 0,
+                        noDisplay: request.noDisplay ?? true,
+                        debug: request.debug ?? false,
+                        debugDir: request.debugDir
+                    )
+                    Logger.info("Unattended setup completed", metadata: ["name": name])
+                } catch {
+                    Logger.error("Unattended setup failed", metadata: [
+                        "name": name,
+                        "error": error.localizedDescription
+                    ])
+                }
+            }
+
+            return HTTPResponse(
+                statusCode: .accepted,
+                headers: ["Content-Type": "application/json"],
+                body: try JSONEncoder().encode(["message": "Setup started", "name": name])
+            )
+        } catch {
+            Logger.error("Failed to start setup", metadata: [
+                "name": name,
+                "error": error.localizedDescription
+            ])
+            return HTTPResponse(
+                statusCode: .badRequest,
+                headers: ["Content-Type": "application/json"],
+                body: try JSONEncoder().encode(APIError(message: error.localizedDescription))
+            )
+        }
+    }
+
     func handleRunVM(name: String, body: Data?) async throws -> HTTPResponse {
         Logger.info("Running VM", metadata: ["name": name])
 
@@ -672,6 +740,52 @@ extension Server {
 
             return try .json(response)
         } catch {
+            return .badRequest(message: error.localizedDescription)
+        }
+    }
+
+    // MARK: - Host Status Handler
+
+    /// Response structure for host status endpoint
+    struct HostStatusResponse: Codable {
+        let status: String
+        let vmCount: Int
+        let maxVMs: Int
+        let availableSlots: Int
+        let version: String
+
+        enum CodingKeys: String, CodingKey {
+            case status
+            case vmCount = "vm_count"
+            case maxVMs = "max_vms"
+            case availableSlots = "available_slots"
+            case version
+        }
+    }
+
+    /// Handle GET /lume/host/status - Report host capacity and health for orchestrator
+    func handleGetHostStatus() async throws -> HTTPResponse {
+        do {
+            let vmController = LumeController()
+
+            // Get all VMs across all storage locations
+            let vms = try vmController.list(storage: nil)
+
+            // Count running VMs (Apple policy: max 2 VMs per host)
+            let runningVMs = vms.filter { $0.status == "running" }
+            let maxVMs = 2  // Apple Virtualization Framework limit
+
+            let response = HostStatusResponse(
+                status: "healthy",
+                vmCount: runningVMs.count,
+                maxVMs: maxVMs,
+                availableSlots: max(0, maxVMs - runningVMs.count),
+                version: "1.0.0"  // Could be derived from build info
+            )
+
+            return try .json(response)
+        } catch {
+            Logger.error("Failed to get host status", metadata: ["error": error.localizedDescription])
             return .badRequest(message: error.localizedDescription)
         }
     }

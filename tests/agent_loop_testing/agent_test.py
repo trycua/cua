@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Simple CUA Agent Test
+Simple Cua Agent Test
 
-Tests the actual CUA ComputerAgent SDK with a mock computer.
+Tests the actual Cua ComputerAgent SDK with a mock computer.
 Only provides screenshot functionality - no complex computer actions.
 """
 
@@ -51,7 +51,7 @@ class MockComputer:
     async def get_dimensions(self) -> tuple[int, int]:
         return (1920, 1080)
 
-    # All other methods are no-ops (required by CUA interface)
+    # All other methods are no-ops (required by Cua interface)
     async def click(self, x: int, y: int, button: str = "left") -> None:
         await asyncio.sleep(0.1)
 
@@ -109,21 +109,21 @@ class MockComputer:
 
 
 async def test_cua_agent(model_name: str):
-    """Test CUA agent with mock computer."""
-    print(f"🤖 Testing CUA Agent: {model_name}")
+    """Test Cua agent with mock computer."""
+    print(f"🤖 Testing Cua Agent: {model_name}")
     print("=" * 50)
 
     try:
-        # Import the real CUA agent
+        # Import the real Cua agent
         from agent import ComputerAgent
 
         # Create mock computer
         mock_computer = MockComputer()
 
-        # Create the real CUA ComputerAgent
+        # Create the real Cua ComputerAgent
         agent = ComputerAgent(model=model_name, tools=[mock_computer], max_trajectory_budget=5.0)
 
-        print("✅ CUA Agent created")
+        print("✅ Cua Agent created")
         print("✅ Mock computer ready")
         print("🚀 Running agent...")
         print()
@@ -172,7 +172,7 @@ async def test_cua_agent(model_name: str):
 
     except ImportError as e:
         print(f"❌ Import error: {e}")
-        print("💡 Install CUA: pip install -e libs/python/agent -e libs/python/computer")
+        print("💡 Install Cua: pip install -e libs/python/agent -e libs/python/computer")
         return False
     except Exception as e:
         print(f"❌ Test failed: {e}")
@@ -182,9 +182,9 @@ async def test_cua_agent(model_name: str):
 if __name__ == "__main__":
     import argparse
 
-    parser = argparse.ArgumentParser(description="Test CUA Agent with mock computer")
+    parser = argparse.ArgumentParser(description="Test Cua Agent with mock computer")
     parser.add_argument(
-        "--model", default="anthropic/claude-sonnet-4-5-20250929", help="CUA model to test"
+        "--model", default="anthropic/claude-sonnet-4-5-20250929", help="Cua model to test"
     )
     args = parser.parse_args()
 

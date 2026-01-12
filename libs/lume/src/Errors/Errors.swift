@@ -225,3 +225,38 @@ enum VmrunError: Error, LocalizedError {
         }
     }
 }
+
+enum UnattendedError: Error, LocalizedError {
+    case configLoadFailed(String)
+    case textNotFound(text: String, timeout: TimeInterval)
+    case ocrFailed(String)
+    case vncAutomationFailed(String)
+    case framebufferCaptureFailed(String)
+    case inputSimulationFailed(String)
+    case commandExecutionFailed(String)
+    case timeout(String)
+    case healthCheckFailed(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .configLoadFailed(let reason):
+            return "Failed to load unattended config: \(reason)"
+        case .textNotFound(let text, let timeout):
+            return "Text '\(text)' not found on screen after \(Int(timeout)) seconds"
+        case .ocrFailed(let reason):
+            return "OCR text recognition failed: \(reason)"
+        case .vncAutomationFailed(let reason):
+            return "VNC automation failed: \(reason)"
+        case .framebufferCaptureFailed(let reason):
+            return "Failed to capture VNC framebuffer: \(reason)"
+        case .inputSimulationFailed(let reason):
+            return "Failed to simulate input: \(reason)"
+        case .commandExecutionFailed(let command):
+            return "Failed to execute boot command: \(command)"
+        case .timeout(let operation):
+            return "Timeout during unattended operation: \(operation)"
+        case .healthCheckFailed(let reason):
+            return "Health check failed: \(reason)"
+        }
+    }
+}

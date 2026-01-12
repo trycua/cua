@@ -59,6 +59,86 @@ function Add-ToEnvPath {
     $env:PATH += ";${newPath}"
 }
 
+# =============================================================================
+# Tools Config Helpers (for Windows Arena apps)
+# =============================================================================
+
+function Get-Tools {
+    param(
+        [string]$toolsConfigJson
+    )
+    $toolsList = $toolsConfigJson | ConvertFrom-Json
+    return $toolsList
+}
+
+function Get-ToolDetails {
+    param(
+        $toolsList,
+        [string]$toolName
+    )
+    if ($toolsList.PSObject.Properties.Name -contains $toolName) {
+        return $toolsList.$toolName
+    } else {
+        Write-Host "Tool '$toolName' not found in config."
+        return $null
+    }
+}
+
+function Invoke-DownloadFileFromAvailableMirrors {
+    param (
+        [string[]]$mirrorUrls,
+        [string]$outfile
+    )
+    foreach ($url in $mirrorUrls) {
+        try {
+            $result = Invoke-DownloadFile -url $url -outfile $outfile
+            if ($result -eq $true) {
+                Write-Host "Downloaded using $url"
+                return $true
+            }
+        } catch {
+            Write-Host "Error downloading from $url"
+        }
+    }
+    Write-Host "All mirrors failed for $outfile"
+    return $false
+}
+
+function Invoke-DownloadFile {
+    param (
+        [string]$url,
+        [string]$outfile
+    )
+    $ProgressPreference = "SilentlyContinue"
+    $retryCount = 0
+    $maxRetries = 3
+    $sleepSeconds = 2
+    $userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+
+    $directory = Split-Path -Path $outfile -Parent
+    if ($directory -and -Not (Test-Path -Path $directory)) {
+        New-Item -Path $directory -ItemType Directory -Force | Out-Null
+    }
+
+    while ($retryCount -lt $maxRetries) {
+        try {
+            Invoke-RestMethod -Uri $url -OutFile $outfile -Headers @{"User-Agent" = $userAgent}
+            Write-Host "Download successful: $outfile"
+            return $true
+        } catch {
+            $retryCount++
+            Write-Host "Attempt $retryCount of $maxRetries failed: $($_.Exception.Message)"
+            Start-Sleep -Seconds $sleepSeconds
+            $sleepSeconds = [Math]::Min($sleepSeconds * 2, 10)
+        }
+    }
+    return $false
+}
+
+# =============================================================================
+# Scheduled Task Helpers
+# =============================================================================
+
 function Register-LogonTask {
     param(
 

@@ -1,6 +1,6 @@
-# CUA Agent Test
+# Cua Agent Test
 
-Simple test for CUA ComputerAgent SDK with mock computer.
+Simple test for Cua ComputerAgent SDK with mock computer.
 
 ## Run Test
 
@@ -10,7 +10,7 @@ python tests/agent_loop_testing/agent_test.py --model anthropic/claude-sonnet-4-
 
 ## What It Does
 
-- Tests real CUA ComputerAgent SDK
+- Tests real Cua ComputerAgent SDK
 - Uses mock computer (only screenshots, no real actions)
 - Agent tries to "Open Safari browser"
 - Runs up to 5 iterations
@@ -41,9 +41,9 @@ export ANTHROPIC_API_KEY="your-key"
 ## Example Output
 
 ```
-🤖 Testing CUA Agent: anthropic/claude-sonnet-4-20250514
+🤖 Testing Cua Agent: anthropic/claude-sonnet-4-20250514
 ==================================================
-✅ CUA Agent created
+✅ Cua Agent created
 ✅ Mock computer ready
 🚀 Running agent...
 

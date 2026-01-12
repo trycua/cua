@@ -1,0 +1,6 @@
+{
+  "title": "Reference",
+  "description": "CLI and API reference documentation",
+  "icon": "FileText",
+  "pages": ["cli-reference", "http-api"]
+}

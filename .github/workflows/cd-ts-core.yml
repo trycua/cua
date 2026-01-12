@@ -1,0 +1,83 @@
+name: "CD: @trycua/core (npm)"
+
+on:
+  push:
+    tags:
+      - "npm-core-v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to publish (default: from package.json)"
+        required: false
+        default: ""
+  workflow_call:
+    inputs:
+      version:
+        description: "Version to publish (default: from package.json)"
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  id-token: write
+  contents: write
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.get-version.outputs.version }}
+      tag: ${{ steps.get-version.outputs.tag }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Determine version
+        id: get-version
+        run: |
+          # Check inputs.version first (works for workflow_call)
+          if [ -n "${{ inputs.version }}" ]; then
+            VERSION="${{ inputs.version }}"
+          elif [ "${{ github.event_name }}" == "push" ]; then
+            # Extract version from tag
+            if [[ "${{ github.ref }}" =~ ^refs/tags/npm-core-v([0-9]+\.[0-9]+\.[0-9]+) ]]; then
+              VERSION=${BASH_REMATCH[1]}
+            else
+              echo "ERROR: Invalid tag format for npm-core"
+              exit 1
+            fi
+          elif [ -n "${{ github.event.inputs.version }}" ]; then
+            VERSION="${{ github.event.inputs.version }}"
+          else
+            # Read from package.json
+            VERSION=$(node -p "require('./libs/typescript/core/package.json').version")
+          fi
+
+          echo "Core version: $VERSION"
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "tag=npm-core-v${VERSION}" >> $GITHUB_OUTPUT
+
+  publish:
+    needs: prepare
+    uses: ./.github/workflows/ts-reusable-publish.yml
+    with:
+      package_name: "core"
+      package_dir: "libs/typescript/core"
+      package_manager: "pnpm"
+      version: ${{ needs.prepare.outputs.version }}
+    secrets:
+      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  create-release:
+    needs: [prepare, publish]
+    uses: ./.github/workflows/release-github-reusable.yml
+    with:
+      tag_name: ${{ needs.prepare.outputs.tag }}
+      release_name: "@trycua/core v${{ needs.prepare.outputs.version }}"
+      module_path: "libs/typescript/core"
+      body: |
+        ## Installation
+
+        ```bash
+        npm install @trycua/core
+        ```

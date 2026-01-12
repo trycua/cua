@@ -22,11 +22,7 @@
 }
 
 .dark body {
-  background-image: linear-gradient(
-    rgba(14, 165, 233, 0.1),
-    transparent 20rem,
-    transparent
-  );
+  background-image: linear-gradient(rgba(14, 165, 233, 0.1), transparent 20rem, transparent);
   background-repeat: no-repeat;
 }
 
@@ -39,4 +35,23 @@
 #nd-toc > div {
   overflow-y: auto;
   overflow-x: hidden;
+}
+
+/* Push search dialog below the fixed header on mobile */
+[data-radix-dialog-content] {
+  top: 4rem !important;
+}
+
+/* CopilotKit chat UI - consistent border radius */
+.copilotKitCodeBlock {
+  border-radius: 0.75rem !important;
+}
+
+.copilotKitCodeBlockToolbar {
+  border-top-left-radius: 0.75rem !important;
+  border-top-right-radius: 0.75rem !important;
+}
+
+.copilotKitMessage {
+  border-radius: 1rem !important;
 }

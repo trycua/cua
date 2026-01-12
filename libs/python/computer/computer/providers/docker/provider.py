@@ -1,7 +1,7 @@
 """
 Docker VM provider implementation.
 
-This provider uses Docker containers running the CUA Ubuntu image to create
+This provider uses Docker containers running the Cua Ubuntu image to create
 Linux VMs with computer-server. It handles VM lifecycle operations through Docker
 commands and container management.
 """
@@ -12,6 +12,7 @@ import logging
 import re
 import subprocess
 import time
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from ..base import BaseVMProvider, VMProviderType
@@ -31,7 +32,7 @@ class DockerProvider(BaseVMProvider):
     """
     Docker VM Provider implementation using Docker containers.
 
-    This provider uses Docker to run containers with the CUA Ubuntu image
+    This provider uses Docker to run containers with the Cua Ubuntu image
     that includes computer-server for remote computer use.
     """
 
@@ -56,6 +57,9 @@ class DockerProvider(BaseVMProvider):
                    Supported images:
                    - "trycua/cua-ubuntu:latest" (Kasm-based)
                    - "trycua/cua-xfce:latest" (vanilla XFCE)
+                   - "trycua/cua-qemu-linux:latest" (QEMU-based, only supports Ubuntu for now)
+                   - "trycua/cua-qemu-windows:latest" (QEMU-based, only supports Windows 11 Enterprise for now)
+                   - "trycua/cua-qemu-android:latest" (QEMU-based Android 11 emulator)
             verbose: Enable verbose logging
             ephemeral: Use ephemeral (temporary) storage
             vnc_port: Port for VNC interface (default: 6901)
@@ -66,12 +70,6 @@ class DockerProvider(BaseVMProvider):
         self.vnc_port = vnc_port
         self.ephemeral = ephemeral
 
-        # Handle ephemeral storage (temporary directory)
-        if ephemeral:
-            self.storage = "ephemeral"
-        else:
-            self.storage = storage
-
         self.shared_path = shared_path
         self.image = image
         self.verbose = verbose
@@ -81,13 +79,40 @@ class DockerProvider(BaseVMProvider):
         # Detect image type and configure user directory accordingly
         self._detect_image_config()
 
+        # QEMU Linux/Windows images require golden image storage
+        if self._image_type in ("qemu-linux", "qemu-windows"):
+            if not storage or Path(storage).is_dir() is False:
+                raise ValueError(
+                    "Golden image storage path must be provided for QEMU-based Linux/Windows images."
+                )
+            self.storage = storage
+        elif ephemeral:
+            self.storage = "ephemeral"  # Handle ephemeral storage (temporary directory)
+        else:
+            self.storage = storage
+
     def _detect_image_config(self):
         """Detect image type and configure paths accordingly."""
-        # Detect if this is a docker-xfce image or Kasm image
+        # Detect if this is a XFCE, Kasm, or QEMU-based image
         if "docker-xfce" in self.image.lower() or "xfce" in self.image.lower():
             self._home_dir = "/home/cua"
             self._image_type = "docker-xfce"
             logger.info(f"Detected docker-xfce image: using {self._home_dir}")
+        elif "qemu-linux" in self.image.lower():
+            # QEMU-based Linux images
+            self._home_dir = ""
+            self._image_type = "qemu-linux"
+            logger.info("Detected QEMU Linux image: using /")
+        elif "qemu-windows" in self.image.lower():
+            # QEMU-based Windows images
+            self._home_dir = ""
+            self._image_type = "qemu-windows"
+            logger.info("Detected QEMU Windows image: using /")
+        elif "qemu-android" in self.image.lower():
+            # QEMU-based Android images
+            self._home_dir = "/home/androidusr"
+            self._image_type = "qemu-android"
+            logger.info("Detected QEMU Android image: using /home/androidusr")
         else:
             # Default to Kasm configuration
             self._home_dir = "/home/kasm-user"
@@ -210,7 +235,7 @@ class DockerProvider(BaseVMProvider):
     async def list_vms(self) -> List[Dict[str, Any]]:
         """List all Docker containers managed by this provider."""
         try:
-            # List all containers (running and stopped) with the CUA image
+            # List all containers (running and stopped) with the Cua image
             cmd = ["docker", "ps", "-a", "--filter", f"ancestor={self.image}", "--format", "json"]
             result = subprocess.run(cmd, capture_output=True, text=True, check=True)
 
@@ -289,15 +314,53 @@ class DockerProvider(BaseVMProvider):
                 cpu_count = str(run_opts["cpu"])
                 cmd.extend(["--cpus", cpu_count])
 
+            # Add devices if specified (e.g., /dev/kvm for QEMU and Android)
+            has_kvm = False
+            if "devices" in run_opts:
+                devices = run_opts["devices"]
+                has_kvm = "/dev/kvm" in devices
+                for device in devices:
+                    cmd.extend(["--device", device])
+            elif "device" in run_opts:
+                has_kvm = run_opts["device"] == "/dev/kvm"
+                cmd.extend(["--device", run_opts["device"]])
+
+            # QEMU Android requires /dev/kvm
+            if self._image_type == "qemu-android" and not has_kvm:
+                raise ValueError(
+                    "Android images requires KVM. "
+                    'Add run_opts={"devices": ["/dev/kvm"]} to your Computer configuration.'
+                )
+
+            if self._image_type in ("qemu-linux", "qemu-windows") and not has_kvm:
+                logger.warning(
+                    "/dev/kvm device is recommended for QEMU images for better performance."
+                )
+
+            # Add NET_ADMIN capability for QEMU Linux/Windows images
+            if self._image_type in ("qemu-linux", "qemu-windows"):
+                cmd.extend(["--cap-add", "NET_ADMIN"])
+
             # Add port mappings
             vnc_port = run_opts.get("vnc_port", self.vnc_port)
             api_port = run_opts.get("api_port", self.api_port)
 
+            # Port mappings differ by image type
+            if self._image_type in ("qemu-linux", "qemu-windows"):
+                internal_vnc_port = 8006
+                internal_api_port = 5000
+            elif self._image_type == "qemu-android":
+                internal_vnc_port = 6080
+                internal_api_port = 8000
+            else:
+                # Kasm/XFCE images
+                internal_vnc_port = 6901
+                internal_api_port = 8000
+
             if vnc_port:
-                cmd.extend(["-p", f"{vnc_port}:6901"])  # VNC port
+                cmd.extend(["-p", f"{vnc_port}:{internal_vnc_port}"])  # VNC port
             if api_port:
-                # Map the API port to container port 8000 (computer-server default)
-                cmd.extend(["-p", f"{api_port}:8000"])  # computer-server API port
+                cmd.extend(["-p", f"{api_port}:{internal_api_port}"])  # computer-server API port
 
             # Add volume mounts if storage is specified
             storage_path = storage or self.storage
@@ -313,6 +376,18 @@ class DockerProvider(BaseVMProvider):
             # Add environment variables
             cmd.extend(["-e", "VNC_PW=password"])  # Set VNC password
             cmd.extend(["-e", "VNCOPTIONS=-disableBasicAuth"])  # Disable VNC basic auth
+
+            # Add Android-specific default environment variables
+            if self._image_type == "qemu-android":
+                if "env" not in run_opts:
+                    run_opts["env"] = {}
+                run_opts["env"].setdefault("EMULATOR_DEVICE", "Samsung Galaxy S10")
+                run_opts["env"]["WEB_VNC"] = "true"
+
+            # Add custom environment variables from run_opts
+            if "env" in run_opts and isinstance(run_opts["env"], dict):
+                for key, value in run_opts["env"].items():
+                    cmd.extend(["-e", f"{key}={value}"])
 
             # Apply display resolution if provided (e.g., "1024x768")
             display_resolution = run_opts.get("display")

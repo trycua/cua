@@ -16,7 +16,11 @@ RUN add-apt-repository ppa:deadsnakes/ppa
 RUN apt install -y python3.11 python3-pip python3-tk python3-dev \
 gnome-screenshot wmctrl ffmpeg socat xclip
 
-RUN pip install cua-computer-server
+# Install UV for fast package management
+RUN pip install uv
+
+# Install cua-computer-server using UV
+RUN uv pip install --system cua-computer-server
 
 # Install Firefox
 ENV DEBIAN_FRONTEND=noninteractive \

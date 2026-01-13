@@ -18,30 +18,32 @@ log() {
 
 log "=== Installing Cua Computer Server ==="
 
-# Install Python 3 and venv
+# Install Python 3 and venv (note: UV is installed directly, not via pip)
 log "Installing Python 3 and dependencies..."
-sudo apt-get install -y python3 python3-venv python3-pip python3-tk python3-dev gnome-screenshot
+sudo apt-get install -y python3 python3-venv python3-tk python3-dev gnome-screenshot curl
+
+# Install UV package manager
+log "Installing UV package manager..."
+curl -LsSf https://astral.sh/uv/install.sh | sh
+export PATH="$HOME/.local/bin:$PATH"
 
 # Create Cua directory
 log "Creating Cua directory at $CUA_DIR..."
 sudo mkdir -p "$CUA_DIR"
 sudo chown "$USER_NAME:$USER_NAME" "$CUA_DIR"
 
-# Create virtual environment
+# Create virtual environment using UV
 if [ -f "$VENV_DIR/bin/python" ]; then
     log "Existing venv detected; skipping creation"
 else
-    log "Creating Python virtual environment at $VENV_DIR..."
-    python3 -m venv "$VENV_DIR"
+    log "Creating Python virtual environment with UV at $VENV_DIR..."
+    uv venv "$VENV_DIR"
     log "Virtual environment created successfully"
 fi
 
-# Activate and install packages
-log "Upgrading pip, setuptools, and wheel..."
-"$VENV_DIR/bin/pip" install --upgrade pip setuptools wheel
-
-log "Installing cua-computer-server..."
-"$VENV_DIR/bin/pip" install --upgrade cua-computer-server "Pillow>=9.2.0"
+# Install packages using UV
+log "Installing cua-computer-server with UV..."
+uv pip install --project "$VENV_DIR" cua-computer-server "Pillow>=9.2.0"
 log "cua-computer-server installed successfully"
 
 # Open firewall for port 5000 (if ufw is available)
@@ -65,7 +67,9 @@ LOG_FILE="$CUA_DIR/server.log"
 
 start_server() {
     echo "$(date '+%Y-%m-%d %H:%M:%S') Updating cua-computer-server..." >> "$LOG_FILE"
-    "$VENV_DIR/bin/pip" install --upgrade cua-computer-server >> "$LOG_FILE" 2>&1
+    # Ensure UV is in PATH
+    export PATH="$HOME/.local/bin:$PATH"
+    uv pip install --project "$VENV_DIR" --upgrade cua-computer-server >> "$LOG_FILE" 2>&1
 
     echo "$(date '+%Y-%m-%d %H:%M:%S') Starting Cua Computer Server on port 5000..." >> "$LOG_FILE"
     "$VENV_DIR/bin/python" -m computer_server --port 5000 >> "$LOG_FILE" 2>&1

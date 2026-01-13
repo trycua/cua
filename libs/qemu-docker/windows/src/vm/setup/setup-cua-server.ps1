@@ -53,23 +53,18 @@ if (Test-Path -LiteralPath $ExistingVenvPython) {
   }
 }
 
-$PyExe  = Join-Path $VenvDir 'Scripts\python.exe'
-$PipExe = Join-Path $VenvDir 'Scripts\pip.exe'
-$ActivateScript = Join-Path $VenvDir 'Scripts\Activate.ps1'
-
-Write-Log -LogFile $script:LogFile -Message "Activating virtual environment"
-& $ActivateScript
-
-Write-Log -LogFile $script:LogFile -Message "Upgrading pip, setuptools, and wheel"
+Write-Log -LogFile $script:LogFile -Message "Installing UV package manager"
 try {
-  & $PipExe install --upgrade pip setuptools wheel 2>&1 | Tee-Object -FilePath $script:LogFile -Append | Out-Null
+  # Install UV using the official standalone installer
+  powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex" 2>&1 | Tee-Object -FilePath $script:LogFile -Append | Out-Null
+  Write-Log -LogFile $script:LogFile -Message "UV installed successfully"
 } catch {
-  Write-Log -LogFile $script:LogFile -Message "pip bootstrap warning: $($_.Exception.Message)"
+  Write-Log -LogFile $script:LogFile -Message "UV install warning: $($_.Exception.Message)"
 }
 
-Write-Log -LogFile $script:LogFile -Message "Installing cua-computer-server"
+Write-Log -LogFile $script:LogFile -Message "Installing cua-computer-server with UV"
 try {
-  & $PipExe install --upgrade cua-computer-server 2>&1 | Tee-Object -FilePath $script:LogFile -Append | Out-Null
+  uv pip install --project $VenvDir cua-computer-server 2>&1 | Tee-Object -FilePath $script:LogFile -Append | Out-Null
   Write-Log -LogFile $script:LogFile -Message "cua-computer-server installed successfully"
 } catch {
   Write-Log -LogFile $script:LogFile -Message "Server install error: $($_.Exception.Message)"
@@ -93,17 +88,13 @@ param()
 `$env:PYTHONUNBUFFERED = '1'
 
 `$LogFile = Join-Path '$CuaDir' 'server.log'
-`$ActivateScript = '$ActivateScript'
-`$PipExe = '$PipExe'
-`$Python = '$PyExe'
 
 function Start-Server {
-    Write-Output "Activating virtual environment and updating cua-computer-server..." | Out-File -FilePath `$LogFile -Append
-    & `$ActivateScript
-    & `$PipExe install --upgrade cua-computer-server 2>&1 | Out-File -FilePath `$LogFile -Append
+    Write-Output "Updating cua-computer-server with UV..." | Out-File -FilePath `$LogFile -Append
+    uv pip install --project '$VenvDir' --upgrade cua-computer-server 2>&1 | Out-File -FilePath `$LogFile -Append
 
     Write-Output "Starting Cua Computer Server on port 5000..." | Out-File -FilePath `$LogFile -Append
-    & `$Python -m computer_server --port 5000 2>&1 | Out-File -FilePath `$LogFile -Append
+    & '$VenvDir\Scripts\python.exe' -m computer_server --port 5000 2>&1 | Out-File -FilePath `$LogFile -Append
     return `$LASTEXITCODE
 }
 

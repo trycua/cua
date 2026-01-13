@@ -80,6 +80,7 @@ RUN add-apt-repository -y ppa:deadsnakes/ppa && \
     && \
     python3.12 -m ensurepip --upgrade && \
     python3.12 -m pip install --upgrade pip setuptools wheel && \
+    python3.12 -m pip install uv && \
     rm -rf /var/lib/apt/lists/*
 
 # Ensure 'python' points to Python 3.12
@@ -120,8 +121,8 @@ RUN git clone https://github.com/novnc/noVNC.git /opt/noVNC && \
 RUN mkdir -p /home/cua/.cache && \
     chown -R cua:cua /home/cua/.cache
 
-# Install computer-server using Python 3.12 pip
-RUN python3.12 -m pip install cua-computer-server
+# Install computer-server using UV
+RUN uv pip install --system cua-computer-server
 
 # Install GTK and WebKit dependencies for pywebview
 RUN apt-get update && apt-get install -y \
@@ -136,11 +137,11 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Install pywebview with GTK backend, used by cua-bench for web UIs
-RUN python3.12 -m pip install "pywebview[gtk]"
-RUN python3.12 -m pip install cua-bench-ui>=0.7.0 --no-cache-dir
+RUN uv pip install --system "pywebview[gtk]"
+RUN uv pip install --system cua-bench-ui>=0.7.0 --no-cache-dir
 
 # Install playwright and Firefox dependencies
-RUN python3.12 -m pip install playwright && \
+RUN uv pip install --system playwright && \
     python3.12 -m playwright install --with-deps firefox
 
 # Fix any cache files created by pip

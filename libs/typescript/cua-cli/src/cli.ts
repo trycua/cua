@@ -46,40 +46,70 @@ export async function runCli() {
         '\n' +
         'Documentation: https://docs.cua.ai/libraries/cua-cli/commands'
     )
-    .completion('completion', 'Generate shell completion script', async function (current, argv) {
-      // Provide dynamic completions for sandbox names
-      const commands = ['auth', 'sandbox', 'sb', 'completion'];
-      const authCommands = ['login', 'env', 'logout'];
-      const sbCommands = ['list', 'ls', 'ps', 'create', 'delete', 'start', 'stop', 'restart', 'suspend', 'vnc', 'open', 'get'];
+    .completion(
+      'completion',
+      'Generate shell completion script',
+      async function (current, argv) {
+        // Provide dynamic completions for sandbox names
+        const commands = ['auth', 'sandbox', 'sb', 'completion'];
+        const authCommands = ['login', 'env', 'logout'];
+        const sbCommands = [
+          'list',
+          'ls',
+          'ps',
+          'create',
+          'delete',
+          'start',
+          'stop',
+          'restart',
+          'suspend',
+          'vnc',
+          'open',
+          'get',
+        ];
 
-      // If completing a sandbox name argument
-      const args = process.argv.slice(2);
-      const needsSandboxName = ['delete', 'start', 'stop', 'restart', 'suspend', 'vnc', 'open', 'get'];
+        // If completing a sandbox name argument
+        const args = process.argv.slice(2);
+        const needsSandboxName = [
+          'delete',
+          'start',
+          'stop',
+          'restart',
+          'suspend',
+          'vnc',
+          'open',
+          'get',
+        ];
 
-      // Check if we're completing after a command that needs a sandbox name
-      if (args.length >= 2) {
-        const lastCmd = args[args.length - 2];
-        if (needsSandboxName.includes(lastCmd) ||
-            (args.length >= 3 && args[0] === 'sb' && needsSandboxName.includes(args[1]))) {
-          return await getSandboxNames();
+        // Check if we're completing after a command that needs a sandbox name
+        if (args.length >= 2) {
+          const lastCmd = args[args.length - 2];
+          if (
+            needsSandboxName.includes(lastCmd) ||
+            (args.length >= 3 &&
+              args[0] === 'sb' &&
+              needsSandboxName.includes(args[1]))
+          ) {
+            return await getSandboxNames();
+          }
         }
-      }
 
-      // Top-level completion
-      if (args.length <= 1) {
-        return commands;
-      }
+        // Top-level completion
+        if (args.length <= 1) {
+          return commands;
+        }
 
-      // Sub-command completion
-      if (args[0] === 'auth') {
-        return authCommands;
-      }
-      if (args[0] === 'sandbox' || args[0] === 'sb') {
-        return sbCommands;
-      }
+        // Sub-command completion
+        if (args[0] === 'auth') {
+          return authCommands;
+        }
+        if (args[0] === 'sandbox' || args[0] === 'sb') {
+          return sbCommands;
+        }
 
-      return [];
-    });
+        return [];
+      }
+    );
   // Override the default --version behavior
   argv = argv.version(false).option('version', {
     alias: 'v',

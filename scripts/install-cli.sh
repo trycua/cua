@@ -18,22 +18,58 @@ print_success() {
     printf "\033[90m📚 For more help, visit: https://docs.cua.ai/libraries/cua-cli\033[0m\n"
 }
 
+# Helper function to add line to profile if not present (idempotent)
+add_to_profile_if_missing() {
+    local file="$1"
+    local line="$2"
+    local description="$3"
+
+    if [ -f "$file" ]; then
+        if ! grep -qF "$line" "$file" 2>/dev/null; then
+            echo "$line" >> "$file"
+            echo "$description"
+        fi
+    fi
+}
+
+# Install shell completions (idempotent)
+install_completions_for_path() {
+    local cua_bin="$1"
+    local COMPLETIONS_DIR="$HOME/.cua/completions"
+    mkdir -p "$COMPLETIONS_DIR"
+
+    # Generate completions script
+    local COMPLETION_SCRIPT="$COMPLETIONS_DIR/cua.bash"
+    "$cua_bin" completion > "$COMPLETION_SCRIPT" 2>/dev/null || true
+
+    if [ -s "$COMPLETION_SCRIPT" ]; then
+        local SOURCE_LINE="[ -f \"$COMPLETION_SCRIPT\" ] && source \"$COMPLETION_SCRIPT\""
+
+        add_to_profile_if_missing "$HOME/.bashrc" "$SOURCE_LINE" "Added shell completions to ~/.bashrc"
+
+        # For zsh, also add to .zshrc
+        if [ -f "$HOME/.zshrc" ]; then
+            add_to_profile_if_missing "$HOME/.zshrc" "$SOURCE_LINE" "Added shell completions to ~/.zshrc"
+        fi
+    fi
+}
+
 # Function to install with bun as fallback
 install_with_bun() {
     echo "📦 Installing Cua CLI using Bun..."
-    
+
     # Check if bun is already installed
     if ! command -v bun &> /dev/null; then
         echo "📦 Installing Bun..."
         curl -fsSL https://bun.sh/install | bash
-        
+
         # Source the shell profile to make bun available
         if [ -f "$HOME/.bashrc" ]; then
             source "$HOME/.bashrc"
         elif [ -f "$HOME/.zshrc" ]; then
             source "$HOME/.zshrc"
         fi
-        
+
         # Add bun to PATH for this session
         export PATH="$HOME/.bun/bin:$PATH"
     fi
@@ -70,6 +106,8 @@ install_with_bun() {
         local INSTALL_DIR="$HOME/.cua/bin"
         mkdir -p "$INSTALL_DIR"
         echo "$VERSION_BUN" > "$INSTALL_DIR/.version"
+        # Install completions
+        install_completions_for_path "$(command -v cua)"
         # Print success and exit
         print_success "$(command -v cua)" "$VERSION_BUN" "$config_file"
         exit 0
@@ -188,27 +226,23 @@ chmod +x "$INSTALL_DIR/cua"
 # Write version file
 echo "$VERSION" > "$INSTALL_DIR/.version"
 
-# Add ~/.cua/bin to PATH if not already in PATH
+# Add ~/.cua/bin to PATH if not already in PATH (idempotent)
+PATH_EXPORT="export PATH=\"$INSTALL_DIR:\$PATH\""
+
 if [[ ":$PATH:" != *":$INSTALL_DIR:"* ]]; then
-    # Add to .bashrc, .zshrc, or .profile
-    if [ -f "$HOME/.bashrc" ]; then
-        echo "export PATH=\"$INSTALL_DIR:\$PATH\"" >> "$HOME/.bashrc"
-        echo "Added $INSTALL_DIR to PATH in ~/.bashrc"
+    add_to_profile_if_missing "$HOME/.bashrc" "$PATH_EXPORT" "Added $INSTALL_DIR to PATH in ~/.bashrc"
+    add_to_profile_if_missing "$HOME/.zshrc" "$PATH_EXPORT" "Added $INSTALL_DIR to PATH in ~/.zshrc"
+
+    if [ ! -f "$HOME/.bashrc" ] && [ ! -f "$HOME/.zshrc" ]; then
+        add_to_profile_if_missing "$HOME/.profile" "$PATH_EXPORT" "Added $INSTALL_DIR to PATH in ~/.profile"
     fi
-    
-    if [ -f "$HOME/.zshrc" ]; then
-        echo "export PATH=\"$INSTALL_DIR:\$PATH\"" >> "$HOME/.zshrc"
-        echo "Added $INSTALL_DIR to PATH in ~/.zshrc"
-    fi
-    
-    if [ -f "$HOME/.profile" ] && [ ! -f "$HOME/.bashrc" ] && [ ! -f "$HOME/.zshrc" ]; then
-        echo "export PATH=\"$INSTALL_DIR:\$PATH\"" >> "$HOME/.profile"
-        echo "Added $INSTALL_DIR to PATH in ~/.profile"
-    fi
-    
+
     # Add to current session
     export PATH="$INSTALL_DIR:$PATH"
 fi
+
+# Install shell completions
+install_completions_for_path "$INSTALL_DIR/cua"
 
 # Verify installation
 if command -v cua &> /dev/null; then

@@ -2,18 +2,22 @@
 Request handlers for the proxy endpoints.
 """
 
-import asyncio
 import json
 import logging
 import os
+import re
 from contextlib import contextmanager
 from typing import Any, Dict, List, Optional, Union
 
 from computer import Computer
 
 from ..agent import ComputerAgent
+from ..tools.browser_tool import BrowserTool
 
 logger = logging.getLogger(__name__)
+
+# Pattern to detect FARA models (case-insensitive)
+FARA_MODEL_PATTERN = re.compile(r"(?i).*fara.*")
 
 
 class ResponsesHandler:
@@ -91,27 +95,37 @@ class ResponsesHandler:
         agent_key_payload = {"model": model, **agent_kwargs_for_key}
         agent_key = _stable_key(agent_key_payload)
 
+        # Determine the appropriate tool based on model type
+        # FARA models require BrowserTool instead of Computer for browser-specific actions
+        # (visit_url, web_search, terminate, history_back, etc.)
+        is_fara_model = bool(FARA_MODEL_PATTERN.match(model))
+        if is_fara_model and computer is not None:
+            tool = BrowserTool(interface=computer.interface)
+            logger.info(f"Using BrowserTool for FARA model: {model}")
+        else:
+            tool = computer
+
         agent = self._agent_cache.get(agent_key)
         if agent is None:
             # Default agent configuration
             default_a_config: Dict[str, Any] = {"model": model}
             if not has_custom_tools:
-                default_a_config["tools"] = [computer]
+                default_a_config["tools"] = [tool]
             # Apply user overrides, but keep tools unless user explicitly sets
             if agent_kwargs:
                 if not has_custom_tools:
-                    agent_kwargs.setdefault("tools", [computer])
+                    agent_kwargs.setdefault("tools", [tool])
                 default_a_config.update(agent_kwargs)
             # JSON-derived kwargs may have loose types; ignore static arg typing here
             agent = ComputerAgent(**default_a_config)  # type: ignore[arg-type]
             self._agent_cache[agent_key] = agent
             logger.info(f"Agent created and cached with key={agent_key} model={model}")
         else:
-            # Ensure cached agent uses the current computer tool (in case object differs)
+            # Ensure cached agent uses the current tool (in case object differs)
             # Only update if tools not explicitly provided in agent_kwargs
             if not has_custom_tools:
                 try:
-                    agent.tools = [computer]
+                    agent.tools = [tool]
                 except Exception:
                     pass
             logger.info(f"Reusing cached agent for key={agent_key}")

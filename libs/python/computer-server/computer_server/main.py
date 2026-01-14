@@ -616,10 +616,27 @@ async def agent_response_endpoint(
             await self._auto.move_cursor(x, y)
 
         async def keypress(self, keys: Union[List[str], str]) -> None:
+            from computer.interface.models import Key
+
+            def normalize_key(key: str) -> str:
+                """Normalize key name using SDK's Key.from_string()."""
+                result = Key.from_string(key)
+                if isinstance(result, Key):
+                    # SDK mapped it to a Key enum, use its value
+                    return result.value
+                else:
+                    # SDK didn't map it - lowercase for pynput compatibility
+                    # (pynput uses lowercase: Key.tab, Key.space, etc.)
+                    return key.lower() if len(key) > 1 else key
+
             if isinstance(keys, str):
                 parts = keys.replace("-", "+").split("+") if len(keys) > 1 else [keys]
             else:
                 parts = keys
+
+            # Normalize all key parts using SDK's Key mapping
+            parts = [normalize_key(p) for p in parts]
+
             if len(parts) == 1:
                 await self._auto.press_key(parts[0])
             else:

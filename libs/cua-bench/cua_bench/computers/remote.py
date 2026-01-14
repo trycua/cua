@@ -15,8 +15,11 @@ from __future__ import annotations
 import asyncio
 import time
 from pathlib import Path
-from typing import Any, Dict, Literal, Optional
+from typing import TYPE_CHECKING, Any, Dict, Literal, Optional
 from urllib.parse import urlparse
+
+if TYPE_CHECKING:
+    from ..apps.registry import AppsProxy
 
 from ..types import (
     Action,
@@ -681,6 +684,23 @@ class RemoteDesktopSession:
             return self._vnc_url
         # Generate URL from port
         return f"http://localhost:{self._vnc_port}/?autoconnect=true"
+
+    @property
+    def apps(self) -> "AppsProxy":
+        """Access registered apps via session.apps.{app_name}.
+
+        Provides a clean API for working with native applications:
+            await session.apps.chrome.install()
+            await session.apps.chrome.launch(url="https://example.com")
+            url = await session.apps.chrome.get_current_url()
+
+        Returns:
+            AppsProxy that provides access to bound app instances
+        """
+        if not hasattr(self, "_apps_proxy"):
+            from ..apps.registry import AppsProxy
+            self._apps_proxy = AppsProxy(self)
+        return self._apps_proxy
 
     async def click_element(self, pid: int | str, selector: str) -> None:
         """Find element by CSS selector and click its center.

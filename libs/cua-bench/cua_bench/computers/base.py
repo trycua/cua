@@ -1,8 +1,11 @@
 from __future__ import annotations
 
-from typing import Any, List, Literal, Optional, Protocol, TypedDict
+from typing import TYPE_CHECKING, Any, List, Literal, Optional, Protocol, TypedDict
 
 from ..types import Snapshot
+
+if TYPE_CHECKING:
+    from ..apps.registry import AppsProxy
 
 _DEFAULT_SESSION_NAME = "simulated"
 
@@ -169,6 +172,20 @@ class DesktopSession(Protocol):
     @property
     def vnc_url(self) -> str:
         """Return the VNC URL for accessing the desktop environment."""
+        ...
+
+    @property
+    def apps(self) -> "AppsProxy":
+        """Access registered apps via session.apps.{app_name}.
+
+        Provides a clean API for working with native applications:
+            await session.apps.chrome.install()
+            await session.apps.chrome.launch(url="https://example.com")
+            url = await session.apps.chrome.get_current_url()
+
+        Returns:
+            AppsProxy that provides access to bound app instances
+        """
         ...
 
     # --- Playwright-like Automation API ---

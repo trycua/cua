@@ -113,23 +113,6 @@ def _get_env_type_from_task(env_path: Path) -> str:
         # Default to linux-docker for linux and other types
         return "linux-docker"
 
-
-def _get_env_type_from_provider(provider: str) -> str:
-    """Map provider type to env_type for task runner (deprecated, use _get_env_type_from_task).
-
-    Args:
-        provider: Provider type (simulated, webtop, native, computer)
-
-    Returns:
-        env_type for task runner (linux-docker, windows-qemu, etc.)
-    """
-    # For native providers, default to linux-docker
-    # This is a fallback - prefer _get_env_type_from_task which reads os_type
-    if provider in ("native", "computer"):
-        return "linux-docker"
-    return "linux-docker"
-
-
 async def _execute_async(args):
     """Execute the interact command asynchronously."""
     from .registry import resolve_task_path

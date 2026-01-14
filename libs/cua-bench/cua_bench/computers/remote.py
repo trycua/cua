@@ -15,8 +15,11 @@ from __future__ import annotations
 import asyncio
 import time
 from pathlib import Path
-from typing import Any, Dict, Literal, Optional
+from typing import TYPE_CHECKING, Any, Dict, Literal, Optional
 from urllib.parse import urlparse
+
+if TYPE_CHECKING:
+    from ..apps.registry import AppsProxy
 
 from ..types import (
     Action,
@@ -682,6 +685,23 @@ class RemoteDesktopSession:
         # Generate URL from port
         return f"http://localhost:{self._vnc_port}/?autoconnect=true"
 
+    @property
+    def apps(self) -> "AppsProxy":
+        """Access registered apps via session.apps.{app_name}.
+
+        Provides a clean API for working with native applications:
+            await session.apps.chrome.install()
+            await session.apps.chrome.launch(url="https://example.com")
+            url = await session.apps.chrome.get_current_url()
+
+        Returns:
+            AppsProxy that provides access to bound app instances
+        """
+        if not hasattr(self, "_apps_proxy"):
+            from ..apps.registry import AppsProxy
+            self._apps_proxy = AppsProxy(self)
+        return self._apps_proxy
+
     async def click_element(self, pid: int | str, selector: str) -> None:
         """Find element by CSS selector and click its center.
 
@@ -716,23 +736,45 @@ class RemoteDesktopSession:
         except (AttributeError, NotImplementedError):
             return {}
 
-    async def shell_command(self, command: str) -> Dict[str, Any]:
+    async def shell_command(
+        self,
+        command: str,
+        *,
+        check: bool = True,
+    ) -> Dict[str, Any]:
         """Execute a shell command.
 
         Args:
             command: Shell command to execute
+            check: If True (default), raise an exception if the command fails
+                   (non-zero return code). If False, return the result regardless.
 
         Returns:
             Command result with stdout/stderr
+
+        Raises:
+            RuntimeError: If check=True and command returns non-zero exit code
         """
         await self._ensure_computer()
         result = await self.interface.run_command(command)
         # Convert CommandResult to dict
+        return_code = result.return_code if hasattr(result, "return_code") else 0
+        stdout = result.stdout if hasattr(result, "stdout") else str(result)
+        stderr = result.stderr if hasattr(result, "stderr") else ""
+
+        if check and return_code != 0:
+            raise RuntimeError(
+                f"Command failed with return code {return_code}.\n"
+                f"Command: {command}\n"
+                f"Stdout: {stdout}\n"
+                f"Stderr: {stderr}"
+            )
+
         return {
-            "success": result.return_code == 0 if hasattr(result, "return_code") else True,
-            "stdout": result.stdout if hasattr(result, "stdout") else str(result),
-            "stderr": result.stderr if hasattr(result, "stderr") else "",
-            "return_code": result.return_code if hasattr(result, "return_code") else 0,
+            "success": return_code == 0,
+            "stdout": stdout,
+            "stderr": stderr,
+            "return_code": return_code,
         }
 
     async def read_file(self, path: str) -> str:
@@ -770,9 +812,26 @@ class RemoteDesktopSession:
         await self._ensure_computer()
         return await self.interface.list_dir(path)
 
-    async def run_command(self, command: str) -> Dict[str, Any]:
-        """Execute a shell command (alias for shell_command)."""
-        return await self.shell_command(command)
+    async def run_command(
+        self,
+        command: str,
+        *,
+        check: bool = True,
+    ) -> Dict[str, Any]:
+        """Execute a shell command (alias for shell_command).
+
+        Args:
+            command: Shell command to execute
+            check: If True (default), raise an exception if the command fails
+                   (non-zero return code). If False, return the result regardless.
+
+        Returns:
+            Command result with stdout/stderr
+
+        Raises:
+            RuntimeError: If check=True and command returns non-zero exit code
+        """
+        return await self.shell_command(command, check=check)
 
     async def launch_application(self, app_name: str) -> None:
         """Launch an application by name."""
@@ -855,6 +914,69 @@ class RemoteDesktopSession:
     async def drag(self, from_x: int, from_y: int, to_x: int, to_y: int) -> None:
         """Drag from one position to another."""
         await self.execute_action(DragAction(from_x=from_x, from_y=from_y, to_x=to_x, to_y=to_y))
+
+    # =========================================================================
+    # App Registry Integration
+    # =========================================================================
+
+    @property
+    def os_type(self) -> str:
+        """Return the OS type for this session."""
+        return self._os_type
+
+    async def install_app(
+        self,
+        app_name: str,
+        *,
+        with_shortcut: bool = True,
+        **kwargs,
+    ) -> None:
+        """Install a registered app on the native desktop environment.
+
+        Uses the app registry to find platform-specific install functions.
+
+        Args:
+            app_name: Name of the app to install (e.g., "godot", "firefox")
+            with_shortcut: Create desktop shortcut (default True)
+            **kwargs: App-specific arguments (e.g., version="4.2.1")
+
+        Raises:
+            ValueError: If app is not registered
+            NotImplementedError: If app doesn't support the current platform
+
+        Example:
+            await session.install_app("godot", version="4.2.1")
+            await session.install_app("firefox", with_shortcut=True)
+        """
+        await self._ensure_computer()
+        from ..apps import AppRegistry
+
+        await AppRegistry.install_app(self, app_name, with_shortcut=with_shortcut, **kwargs)
+
+    async def launch_app(
+        self,
+        app_name: str,
+        **kwargs,
+    ) -> None:
+        """Launch a registered app on the native desktop environment.
+
+        Uses the app registry to find platform-specific launch functions.
+
+        Args:
+            app_name: Name of the app to launch
+            **kwargs: App-specific arguments (e.g., project_path="/path")
+
+        Raises:
+            ValueError: If app is not registered
+            NotImplementedError: If app doesn't support the current platform
+
+        Example:
+            await session.launch_app("godot", project_path="~/project", editor=True)
+        """
+        await self._ensure_computer()
+        from ..apps import AppRegistry
+
+        await AppRegistry.launch_app(self, app_name, **kwargs)
 
 
 def create_remote_session(

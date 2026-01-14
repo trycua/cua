@@ -1179,7 +1179,7 @@ def _shell_qemu(args, info, name, writable: bool) -> int:
     for vol in volumes:
         docker_cmd.extend(["-v", vol])
 
-    if os.path.exists("/dev/kvm") and not getattr(args, "no_kvm", False):
+    if check_kvm() and not getattr(args, "no_kvm", False):
         docker_cmd.extend(["--device=/dev/kvm"])
     else:
         docker_cmd.extend(["-e", "KVM=N"])

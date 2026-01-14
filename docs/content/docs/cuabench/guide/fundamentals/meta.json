@@ -2,5 +2,5 @@
   "title": "Fundamentals",
   "description": "Core concepts of tasks and environments",
   "icon": "Lightbulb",
-  "pages": ["tasks", "universal-gui", "simulated-desktop", "agent-traces", "adapters", "registry"]
+  "pages": ["tasks", "app-helpers", "universal-gui", "simulated-desktop", "agent-traces", "adapters", "registry"]
 }

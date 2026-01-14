@@ -1,8 +1,11 @@
 from __future__ import annotations
 
-from typing import Any, List, Literal, Optional, Protocol, TypedDict
+from typing import TYPE_CHECKING, Any, List, Literal, Optional, Protocol, TypedDict
 
 from ..types import Snapshot
+
+if TYPE_CHECKING:
+    from ..apps.registry import AppsProxy
 
 _DEFAULT_SESSION_NAME = "simulated"
 
@@ -171,6 +174,20 @@ class DesktopSession(Protocol):
         """Return the VNC URL for accessing the desktop environment."""
         ...
 
+    @property
+    def apps(self) -> "AppsProxy":
+        """Access registered apps via session.apps.{app_name}.
+
+        Provides a clean API for working with native applications:
+            await session.apps.chrome.install()
+            await session.apps.chrome.launch(url="https://example.com")
+            url = await session.apps.chrome.get_current_url()
+
+        Returns:
+            AppsProxy that provides access to bound app instances
+        """
+        ...
+
     # --- Playwright-like Automation API ---
 
     async def click_element(self, pid: int | str, selector: str) -> None:
@@ -193,3 +210,96 @@ class DesktopSession(Protocol):
             selector: CSS selector for the element
         """
         ...
+
+    # --- Native Provider Commands ---
+
+    async def run_command(
+        self,
+        command: str,
+        *,
+        timeout: Optional[float] = None,
+        check: bool = True,
+    ) -> "CommandResult":
+        """Execute a shell command on the native desktop environment.
+
+        This method is only available with the native provider (Docker/QEMU).
+        It will raise NotImplementedError on simulated sessions.
+
+        Args:
+            command: Shell command to execute
+            timeout: Optional timeout in seconds
+            check: If True (default), raise an exception if the command fails
+                   (non-zero return code). If False, return the result regardless.
+
+        Returns:
+            CommandResult with stdout, stderr, and return_code
+
+        Raises:
+            NotImplementedError: If called on simulated provider
+            RuntimeError: If check=True and command returns non-zero exit code
+
+        Example:
+            result = await session.run_command("ls -la /home/user")
+            print(result.stdout)
+        """
+        ...
+
+    # --- App Management ---
+
+    async def install_app(
+        self,
+        app_name: str,
+        *,
+        with_shortcut: bool = True,
+        **kwargs,
+    ) -> None:
+        """Install a registered app on the native desktop environment.
+
+        Uses the app registry to find platform-specific install functions.
+        This method is only available with the native provider (Docker/QEMU).
+
+        Args:
+            app_name: Name of the app to install (e.g., "godot", "firefox")
+            with_shortcut: Create desktop shortcut (default True)
+            **kwargs: App-specific arguments (e.g., version="4.2.1")
+
+        Raises:
+            ValueError: If app is not registered
+            NotImplementedError: If app doesn't support the current platform
+
+        Example:
+            await session.install_app("godot", version="4.2.1")
+            await session.install_app("firefox", with_shortcut=True)
+        """
+        ...
+
+    async def launch_app(
+        self,
+        app_name: str,
+        **kwargs,
+    ) -> None:
+        """Launch a registered app on the native desktop environment.
+
+        Uses the app registry to find platform-specific launch functions.
+        This method is only available with the native provider (Docker/QEMU).
+
+        Args:
+            app_name: Name of the app to launch
+            **kwargs: App-specific arguments (e.g., project_path="/path")
+
+        Raises:
+            ValueError: If app is not registered
+            NotImplementedError: If app doesn't support the current platform
+
+        Example:
+            await session.launch_app("godot", project_path="~/project", editor=True)
+        """
+        ...
+
+
+class CommandResult(TypedDict):
+    """Result from run_command execution."""
+
+    stdout: str
+    stderr: str
+    return_code: int

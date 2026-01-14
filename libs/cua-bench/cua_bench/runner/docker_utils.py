@@ -1,6 +1,7 @@
 """Docker utilities for 2-container task execution."""
 
 import asyncio
+import platform
 import shutil
 import subprocess
 import uuid
@@ -13,7 +14,8 @@ def create_overlay_copy(golden_path: Path, overlay_path: Path, verbose: bool = F
     """Copy golden image to overlay directory for COW-like behavior.
 
     This is a temporary workaround until proper QEMU overlay support is added.
-    Uses native `cp -a` for speed (5x faster than Python shutil).
+    Uses native `cp -a` on Unix for speed (5x faster than Python shutil).
+    Falls back to shutil.copytree on Windows.
 
     WIP: https://github.com/trycua/cua/issues/699
 
@@ -36,12 +38,27 @@ def create_overlay_copy(golden_path: Path, overlay_path: Path, verbose: bool = F
         print("   (This may take a while for large images)")
         print("   WIP: https://github.com/trycua/cua/issues/699")
 
-    # Use native cp -a for speed (5x faster than Python shutil)
-    result = subprocess.run(
-        ["cp", "-a", f"{golden_path}/.", str(overlay_path)], capture_output=True, text=True
-    )
-    if result.returncode != 0:
-        raise RuntimeError(f"Failed to create overlay: {result.stderr or 'cp failed'}")
+    # Use platform-specific copy method
+    if platform.system() == "Windows":
+        # On Windows, use shutil.copytree (robocopy would be faster but more complex)
+        try:
+            # copytree expects dest to not exist, but we need to copy contents into it
+            for item in golden_path.iterdir():
+                src = golden_path / item.name
+                dst = overlay_path / item.name
+                if src.is_dir():
+                    shutil.copytree(src, dst)
+                else:
+                    shutil.copy2(src, dst)
+        except Exception as e:
+            raise RuntimeError(f"Failed to create overlay: {e}")
+    else:
+        # On Unix, use native cp -a for speed (5x faster than Python shutil)
+        result = subprocess.run(
+            ["cp", "-a", f"{golden_path}/.", str(overlay_path)], capture_output=True, text=True
+        )
+        if result.returncode != 0:
+            raise RuntimeError(f"Failed to create overlay: {result.stderr or 'cp failed'}")
 
 
 def find_free_port(start: int = 5000, end: int = 9000) -> int:

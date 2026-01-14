@@ -21,28 +21,30 @@ def execute(args):
     return asyncio.run(_execute_async(args))
 
 
-def _detect_provider_type(env_path: Path) -> str:
-    """Detect provider type from task configuration.
+def _detect_task_config(env_path: Path) -> dict:
+    """Detect provider type and os_type from task configuration.
 
     Args:
         env_path: Path to task environment directory
 
     Returns:
-        Provider type ("simulated", "webtop", "native", "computer", or "unknown")
+        Dict with "provider" and "os_type" keys
     """
     import importlib.util
     import sys
+
+    result = {"provider": "unknown", "os_type": "linux"}
 
     # Try to import and inspect the task
     try:
         # Load main.py module
         main_file = env_path / "main.py"
         if not main_file.exists():
-            return "unknown"
+            return result
 
         spec = importlib.util.spec_from_file_location("env_module", main_file)
         if spec is None or spec.loader is None:
-            return "unknown"
+            return result
 
         module = importlib.util.module_from_spec(spec)
 
@@ -61,10 +63,11 @@ def _detect_provider_type(env_path: Path) -> str:
                         if tasks and len(tasks) > 0:
                             task = tasks[0]
                             if hasattr(task, "computer") and task.computer:
-                                provider = task.computer.get("provider", "unknown")
-                                return provider
+                                result["provider"] = task.computer.get("provider", "unknown")
+                                setup_config = task.computer.get("setup_config", {})
+                                result["os_type"] = setup_config.get("os_type", "linux")
 
-            return "unknown"
+            return result
 
         finally:
             sys.path.pop(0)
@@ -73,12 +76,46 @@ def _detect_provider_type(env_path: Path) -> str:
                 del sys.modules["env_module"]
 
     except Exception as e:
-        print(f"{YELLOW}Warning: Could not detect provider type: {e}{RESET}")
-        return "unknown"
+        print(f"{YELLOW}Warning: Could not detect task config: {e}{RESET}")
+        return result
+
+
+def _detect_provider_type(env_path: Path) -> str:
+    """Detect provider type from task configuration.
+
+    Args:
+        env_path: Path to task environment directory
+
+    Returns:
+        Provider type ("simulated", "webtop", "native", "computer", or "unknown")
+    """
+    return _detect_task_config(env_path)["provider"]
+
+
+def _get_env_type_from_task(env_path: Path) -> str:
+    """Get env_type for task runner based on task configuration.
+
+    Args:
+        env_path: Path to task environment directory
+
+    Returns:
+        env_type for task runner (linux-docker, windows-qemu, etc.)
+    """
+    config = _detect_task_config(env_path)
+    os_type = config.get("os_type", "linux")
+
+    # Map os_type to env_type
+    if os_type in ("windows", "win11", "win10", "win7", "winxp", "win98"):
+        return "windows-qemu"
+    elif os_type == "android":
+        return "android-qemu"
+    else:
+        # Default to linux-docker for linux and other types
+        return "linux-docker"
 
 
 def _get_env_type_from_provider(provider: str) -> str:
-    """Map provider type to env_type for task runner.
+    """Map provider type to env_type for task runner (deprecated, use _get_env_type_from_task).
 
     Args:
         provider: Provider type (simulated, webtop, native, computer)
@@ -87,7 +124,7 @@ def _get_env_type_from_provider(provider: str) -> str:
         env_type for task runner (linux-docker, windows-qemu, etc.)
     """
     # For native providers, default to linux-docker
-    # Users can override via platform detection or args
+    # This is a fallback - prefer _get_env_type_from_task which reads os_type
     if provider in ("native", "computer"):
         return "linux-docker"
     return "linux-docker"
@@ -268,8 +305,8 @@ async def _execute_native_interactive(args, env_path: Path, provider_type: str) 
     from cua_bench.runner.task_runner import TaskRunner
 
     try:
-        # Determine env_type (linux-docker, windows-qemu, etc.)
-        env_type = getattr(args, "env_type", None) or _get_env_type_from_provider(provider_type)
+        # Determine env_type (linux-docker, windows-qemu, etc.) from task's os_type config
+        env_type = getattr(args, "env_type", None) or _get_env_type_from_task(env_path)
 
         print(f"{CYAN}Starting environment with task runner (env_type: {env_type})...{RESET}")
 

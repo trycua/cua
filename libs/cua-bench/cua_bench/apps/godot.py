@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Optional
 
 from .registry import App, install, launch, uninstall
+
+if TYPE_CHECKING:
+    from .registry import BoundApp
 
 
 class Godot(App):
@@ -34,7 +37,7 @@ class Godot(App):
 
     @install("linux")
     async def install_linux(
-        session: Any,
+        self: "BoundApp",
         *,
         with_shortcut: bool = True,
         version: str = "4.2.1",
@@ -50,25 +53,27 @@ class Godot(App):
         )
 
         # Download and extract
-        await session.run_command(
+        await self.session.run_command(
             f"cd ~/Desktop && "
             f"wget -q {download_url} && "
             f"unzip -q {zip_file} && "
-            f"rm {zip_file}"
+            f"rm {zip_file}",
+            check=False,
         )
 
         # Make executable
-        await session.run_command(f"chmod +x ~/Desktop/{filename}")
+        await self.session.run_command(f"chmod +x ~/Desktop/{filename}", check=False)
 
         if with_shortcut:
             # Create a simpler symlink name
-            await session.run_command(
-                f"ln -sf ~/Desktop/{filename} ~/Desktop/Godot"
+            await self.session.run_command(
+                f"ln -sf ~/Desktop/{filename} ~/Desktop/Godot",
+                check=False,
             )
 
     @launch("linux")
     async def launch_linux(
-        session: Any,
+        self: "BoundApp",
         *,
         project_path: Optional[str] = None,
         editor: bool = True,
@@ -87,14 +92,15 @@ class Godot(App):
         if scene:
             cmd += f" {scene}"
 
-        await session.run_command(f"{cmd} &")
+        await self.session.run_command(f"{cmd} &", check=False)
         await asyncio.sleep(3)  # Wait for Godot to start
 
     @uninstall("linux")
-    async def uninstall_linux(session: Any, **kwargs) -> None:
+    async def uninstall_linux(self: "BoundApp", **kwargs) -> None:
         """Uninstall Godot from Linux."""
-        await session.run_command(
-            "rm -f ~/Desktop/Godot ~/Desktop/Godot_v*"
+        await self.session.run_command(
+            "rm -f ~/Desktop/Godot ~/Desktop/Godot_v*",
+            check=False,
         )
 
     # =========================================================================
@@ -103,7 +109,7 @@ class Godot(App):
 
     @install("windows")
     async def install_windows(
-        session: Any,
+        self: "BoundApp",
         *,
         with_shortcut: bool = True,
         version: str = "4.2.1",
@@ -125,23 +131,25 @@ class Godot(App):
         )
 
         # Download and extract to Desktop
-        await session.run_command(
+        await self.session.run_command(
             f'cd %USERPROFILE%\\Desktop && '
             f'curl -L -o {zip_file} {download_url} && '
             f'tar -xf {zip_file} && '
-            f'del {zip_file}'
+            f'del {zip_file}',
+            check=False,
         )
 
         if with_shortcut:
             # Rename to simpler name
             exe_name = f"Godot_v{version}-stable_win64.exe"
-            await session.run_command(
-                f'ren "%USERPROFILE%\\Desktop\\{exe_name}" "Godot.exe"'
+            await self.session.run_command(
+                f'ren "%USERPROFILE%\\Desktop\\{exe_name}" "Godot.exe"',
+                check=False,
             )
 
     @launch("windows")
     async def launch_windows(
-        session: Any,
+        self: "BoundApp",
         *,
         project_path: Optional[str] = None,
         editor: bool = True,
@@ -160,14 +168,15 @@ class Godot(App):
         if scene:
             cmd += f" {scene}"
 
-        await session.run_command(f"start /B {cmd}")
+        await self.session.run_command(f"start /B {cmd}", check=False)
         await asyncio.sleep(3)
 
     @uninstall("windows")
-    async def uninstall_windows(session: Any, **kwargs) -> None:
+    async def uninstall_windows(self: "BoundApp", **kwargs) -> None:
         """Uninstall Godot from Windows."""
-        await session.run_command(
-            'del "%USERPROFILE%\\Desktop\\Godot*.exe"'
+        await self.session.run_command(
+            'del "%USERPROFILE%\\Desktop\\Godot*.exe"',
+            check=False,
         )
 
     # =========================================================================
@@ -176,7 +185,7 @@ class Godot(App):
 
     @install("macos")
     async def install_macos(
-        session: Any,
+        self: "BoundApp",
         *,
         with_shortcut: bool = True,
         version: str = "4.2.1",
@@ -192,22 +201,24 @@ class Godot(App):
         )
 
         # Download and extract
-        await session.run_command(
+        await self.session.run_command(
             f"cd ~/Desktop && "
             f"curl -L -o {zip_file} {download_url} && "
             f"unzip -q {zip_file} && "
-            f"rm {zip_file}"
+            f"rm {zip_file}",
+            check=False,
         )
 
         if with_shortcut:
             # Create alias
-            await session.run_command(
-                f'ln -sf ~/Desktop/Godot.app ~/Desktop/Godot'
+            await self.session.run_command(
+                f'ln -sf ~/Desktop/Godot.app ~/Desktop/Godot',
+                check=False,
             )
 
     @launch("macos")
     async def launch_macos(
-        session: Any,
+        self: "BoundApp",
         *,
         project_path: Optional[str] = None,
         editor: bool = True,
@@ -226,12 +237,13 @@ class Godot(App):
         if scene:
             cmd += f" {scene}"
 
-        await session.run_command(cmd)
+        await self.session.run_command(cmd, check=False)
         await asyncio.sleep(3)
 
     @uninstall("macos")
-    async def uninstall_macos(session: Any, **kwargs) -> None:
+    async def uninstall_macos(self: "BoundApp", **kwargs) -> None:
         """Uninstall Godot from macOS."""
-        await session.run_command(
-            "rm -rf ~/Desktop/Godot.app ~/Desktop/Godot"
+        await self.session.run_command(
+            "rm -rf ~/Desktop/Godot.app ~/Desktop/Godot",
+            check=False,
         )

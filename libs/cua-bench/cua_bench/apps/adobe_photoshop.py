@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Optional
 
 from .registry import App, install, launch, uninstall
+
+if TYPE_CHECKING:
+    from .registry import BoundApp
 
 
 class AdobePhotoshop(App):
@@ -35,7 +38,7 @@ class AdobePhotoshop(App):
 
     @install("linux")
     async def install_linux(
-        session: Any,
+        self: "BoundApp",
         *,
         with_shortcut: bool = True,
         version: str = "cs6",
@@ -49,18 +52,20 @@ class AdobePhotoshop(App):
         3. Photoshop CS6 Portable (user must provide installer or use portable)
         """
         # Install WINE and winetricks
-        await session.run_command(
+        await self.session.run_command(
             "sudo dpkg --add-architecture i386 && "
             "sudo apt-get update && "
-            "sudo apt-get install -y wine64 wine32 winetricks cabextract"
+            "sudo apt-get install -y wine64 wine32 winetricks cabextract",
+            check=False,
         )
 
         # Create dedicated WINE prefix for Photoshop
-        await session.run_command(f"mkdir -p {wine_prefix}")
+        await self.session.run_command(f"mkdir -p {wine_prefix}", check=False)
 
         # Initialize 64-bit WINE prefix
-        await session.run_command(
-            f"WINEPREFIX={wine_prefix} WINEARCH=win64 wineboot --init"
+        await self.session.run_command(
+            f"WINEPREFIX={wine_prefix} WINEARCH=win64 wineboot --init",
+            check=False,
         )
         await asyncio.sleep(5)  # Wait for wineboot to complete
 
@@ -79,26 +84,29 @@ class AdobePhotoshop(App):
         ]
 
         for dep in deps:
-            await session.run_command(
-                f"WINEPREFIX={wine_prefix} winetricks -q {dep}"
+            await self.session.run_command(
+                f"WINEPREFIX={wine_prefix} winetricks -q {dep}",
+                check=False,
             )
             await asyncio.sleep(2)
 
         # Set Windows version to Windows 10 for better compatibility
-        await session.run_command(
-            f"WINEPREFIX={wine_prefix} winetricks -q win10"
+        await self.session.run_command(
+            f"WINEPREFIX={wine_prefix} winetricks -q win10",
+            check=False,
         )
 
         # Create Photoshop directory
         photoshop_dir = f"{wine_prefix}/drive_c/Program Files/Adobe/Photoshop"
-        await session.run_command(f'mkdir -p "{photoshop_dir}"')
+        await self.session.run_command(f'mkdir -p "{photoshop_dir}"', check=False)
 
         # Download Photoshop CS6 Portable (using a common portable distribution)
         # Note: In production, this would point to a legitimate source
         # For now, we'll set up the structure and user can copy files manually
-        await session.run_command(
+        await self.session.run_command(
             f'echo "Place Photoshop.exe and required files in {photoshop_dir}" > '
-            f'"{photoshop_dir}/README.txt"'
+            f'"{photoshop_dir}/README.txt"',
+            check=False,
         )
 
         # Try to download a portable version if available from a configured source
@@ -113,9 +121,10 @@ cd "{photoshop_dir}"
 wine64 Photoshop.exe "$@"
 """
 
-        await session.run_command(
+        await self.session.run_command(
             f"echo '{launcher_script}' > ~/Desktop/photoshop.sh && "
-            f"chmod +x ~/Desktop/photoshop.sh"
+            f"chmod +x ~/Desktop/photoshop.sh",
+            check=False,
         )
 
         if with_shortcut:
@@ -129,14 +138,15 @@ Categories=Graphics;2DGraphics;RasterGraphics;
 Icon=photoshop
 Terminal=false
 """
-            await session.run_command(
+            await self.session.run_command(
                 f"echo '{desktop_entry}' > ~/.local/share/applications/photoshop.desktop && "
-                f"cp ~/.local/share/applications/photoshop.desktop ~/Desktop/"
+                f"cp ~/.local/share/applications/photoshop.desktop ~/Desktop/",
+                check=False,
             )
 
     @launch("linux")
     async def launch_linux(
-        session: Any,
+        self: "BoundApp",
         *,
         file_path: Optional[str] = None,
         wine_prefix: str = "~/.wine-photoshop",
@@ -153,21 +163,22 @@ Terminal=false
             # Convert Linux path to Windows path for WINE
             cmd += f' "Z:{file_path}"'
 
-        await session.run_command(f"{cmd} &")
+        await self.session.run_command(f"{cmd} &", check=False)
         await asyncio.sleep(8)  # Photoshop takes longer to start via WINE
 
     @uninstall("linux")
     async def uninstall_linux(
-        session: Any,
+        self: "BoundApp",
         *,
         wine_prefix: str = "~/.wine-photoshop",
     ) -> None:
         """Uninstall Photoshop from Linux."""
-        await session.run_command(
+        await self.session.run_command(
             f"rm -rf {wine_prefix} && "
             f"rm -f ~/Desktop/photoshop.sh && "
             f"rm -f ~/Desktop/photoshop.desktop && "
-            f"rm -f ~/.local/share/applications/photoshop.desktop"
+            f"rm -f ~/.local/share/applications/photoshop.desktop",
+            check=False,
         )
 
     # =========================================================================
@@ -176,7 +187,7 @@ Terminal=false
 
     @install("windows")
     async def install_windows(
-        session: Any,
+        self: "BoundApp",
         *,
         with_shortcut: bool = True,
         version: str = "cs6",
@@ -190,23 +201,25 @@ Terminal=false
         """
         # For WinArena-style tasks, Photoshop is typically pre-installed
         # This just verifies it exists
-        result = await session.run_command(
+        result = await self.session.run_command(
             'if exist "%ProgramFiles%\\Adobe\\Adobe Photoshop*\\Photoshop.exe" '
-            '(echo FOUND) else (echo NOT_FOUND)'
+            '(echo FOUND) else (echo NOT_FOUND)',
+            check=False,
         )
 
         stdout = result.get("stdout", "") if isinstance(result, dict) else str(result)
         if "NOT_FOUND" in stdout:
             # Could attempt to install via chocolatey or other means
             # For now, just note that it needs manual installation
-            await session.run_command(
+            await self.session.run_command(
                 'echo Photoshop not found. Please install manually. > '
-                '%USERPROFILE%\\Desktop\\photoshop_install_note.txt'
+                '%USERPROFILE%\\Desktop\\photoshop_install_note.txt',
+                check=False,
             )
 
     @launch("windows")
     async def launch_windows(
-        session: Any,
+        self: "BoundApp",
         *,
         file_path: Optional[str] = None,
     ) -> None:
@@ -217,14 +230,15 @@ Terminal=false
         if file_path:
             cmd += f' "{file_path}"'
 
-        await session.run_command(cmd)
+        await self.session.run_command(cmd, check=False)
         await asyncio.sleep(5)
 
     @uninstall("windows")
-    async def uninstall_windows(session: Any, **kwargs) -> None:
+    async def uninstall_windows(self: "BoundApp", **kwargs) -> None:
         """Uninstall Photoshop from Windows."""
         # Use Adobe's uninstaller
-        await session.run_command(
+        await self.session.run_command(
             'if exist "%ProgramFiles%\\Common Files\\Adobe\\Installers\\*\\Setup.exe" '
-            '("%ProgramFiles%\\Common Files\\Adobe\\Installers\\*\\Setup.exe" /uninstall)'
+            '("%ProgramFiles%\\Common Files\\Adobe\\Installers\\*\\Setup.exe" /uninstall)',
+            check=False,
         )

@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Optional
 
 from .registry import App, install, launch, uninstall
+
+if TYPE_CHECKING:
+    from .registry import BoundApp
 
 
 class Unity(App):
@@ -34,7 +37,7 @@ class Unity(App):
 
     @install("linux")
     async def install_linux(
-        session: Any,
+        self: "BoundApp",
         *,
         with_shortcut: bool = True,
         version: str = "2022.3.0f1",
@@ -44,20 +47,22 @@ class Unity(App):
         Unity is typically installed via Unity Hub which manages versions.
         """
         # Install Unity Hub via .deb package
-        await session.run_command(
+        await self.session.run_command(
             "wget -qO - https://hub.unity3d.com/linux/keys/public | sudo apt-key add - && "
             'sudo sh -c \'echo "deb https://hub.unity3d.com/linux/repos/deb stable main" > '
             "/etc/apt/sources.list.d/unityhub.list' && "
             "sudo apt-get update && "
-            "sudo apt-get install -y unityhub"
+            "sudo apt-get install -y unityhub",
+            check=False,
         )
 
         if with_shortcut:
             # Download Unity icon and create .desktop file
-            await session.run_command(
+            await self.session.run_command(
                 "mkdir -p ~/.local/share/icons && "
                 "wget -q -O ~/.local/share/icons/unity-hub.png "
-                "'https://img.icons8.com/ios-filled/512/unity.png'"
+                "'https://img.icons8.com/ios-filled/512/unity.png'",
+                check=False,
             )
 
             desktop_entry = """[Desktop Entry]
@@ -69,14 +74,15 @@ Type=Application
 Categories=Development;IDE;
 Terminal=false
 """
-            await session.run_command(
+            await self.session.run_command(
                 f"echo '{desktop_entry}' > ~/Desktop/UnityHub.desktop && "
-                f"chmod +x ~/Desktop/UnityHub.desktop"
+                f"chmod +x ~/Desktop/UnityHub.desktop",
+                check=False,
             )
 
     @launch("linux")
     async def launch_linux(
-        session: Any,
+        self: "BoundApp",
         *,
         project_path: Optional[str] = None,
         create_project: bool = False,
@@ -99,15 +105,16 @@ Terminal=false
             if execute_method:
                 cmd += f" -executeMethod {execute_method}"
 
-        await session.run_command(f"{cmd} &")
+        await self.session.run_command(f"{cmd} &", check=False)
         await asyncio.sleep(5)
 
     @uninstall("linux")
-    async def uninstall_linux(session: Any, **kwargs) -> None:
+    async def uninstall_linux(self: "BoundApp", **kwargs) -> None:
         """Uninstall Unity from Linux."""
-        await session.run_command(
+        await self.session.run_command(
             "sudo apt-get remove -y unityhub && "
-            "rm -f ~/Desktop/UnityHub"
+            "rm -f ~/Desktop/UnityHub",
+            check=False,
         )
 
     # =========================================================================
@@ -116,7 +123,7 @@ Terminal=false
 
     @install("windows")
     async def install_windows(
-        session: Any,
+        self: "BoundApp",
         *,
         with_shortcut: bool = True,
         version: str = "2022.3.0f1",
@@ -126,24 +133,26 @@ Terminal=false
         Uses winget or direct download of Unity Hub installer.
         """
         # Try winget first
-        result = await session.run_command(
-            "winget install -e --id Unity.UnityHub --accept-package-agreements --accept-source-agreements"
+        result = await self.session.run_command(
+            "winget install -e --id Unity.UnityHub --accept-package-agreements --accept-source-agreements",
+            check=False,
         )
 
-        stdout = result.stdout if hasattr(result, "stdout") else str(result)
+        stdout = result.get("stdout", "") if isinstance(result, dict) else str(result)
 
         # If winget fails, try direct download
         if "error" in stdout.lower() or "failed" in stdout.lower():
-            await session.run_command(
+            await self.session.run_command(
                 'curl -L -o "%TEMP%\\UnityHubSetup.exe" '
                 '"https://public-cdn.cloud.unity3d.com/hub/prod/UnityHubSetup.exe" && '
-                '"%TEMP%\\UnityHubSetup.exe" /S'
+                '"%TEMP%\\UnityHubSetup.exe" /S',
+                check=False,
             )
             await asyncio.sleep(30)  # Wait for installation
 
     @launch("windows")
     async def launch_windows(
-        session: Any,
+        self: "BoundApp",
         *,
         project_path: Optional[str] = None,
         create_project: bool = False,
@@ -167,20 +176,22 @@ Terminal=false
             if execute_method:
                 cmd += f" -executeMethod {execute_method}"
 
-            await session.run_command(f"start /B {cmd}")
+            await self.session.run_command(f"start /B {cmd}", check=False)
         else:
             # Launch Unity Hub
-            await session.run_command(
-                'start "" "%ProgramFiles%\\Unity Hub\\Unity Hub.exe"'
+            await self.session.run_command(
+                'start "" "%ProgramFiles%\\Unity Hub\\Unity Hub.exe"',
+                check=False,
             )
 
         await asyncio.sleep(5)
 
     @uninstall("windows")
-    async def uninstall_windows(session: Any, **kwargs) -> None:
+    async def uninstall_windows(self: "BoundApp", **kwargs) -> None:
         """Uninstall Unity from Windows."""
-        await session.run_command(
-            'winget uninstall -e --id Unity.UnityHub'
+        await self.session.run_command(
+            'winget uninstall -e --id Unity.UnityHub',
+            check=False,
         )
 
     # =========================================================================
@@ -189,30 +200,32 @@ Terminal=false
 
     @install("macos")
     async def install_macos(
-        session: Any,
+        self: "BoundApp",
         *,
         with_shortcut: bool = True,
         version: str = "2022.3.0f1",
     ) -> None:
         """Install Unity Hub on macOS."""
         # Download Unity Hub DMG
-        await session.run_command(
+        await self.session.run_command(
             "curl -L -o ~/Downloads/UnityHubSetup.dmg "
             '"https://public-cdn.cloud.unity3d.com/hub/prod/UnityHubSetup.dmg" && '
             "hdiutil attach ~/Downloads/UnityHubSetup.dmg && "
             'cp -R "/Volumes/Unity Hub/Unity Hub.app" /Applications/ && '
             'hdiutil detach "/Volumes/Unity Hub" && '
-            "rm ~/Downloads/UnityHubSetup.dmg"
+            "rm ~/Downloads/UnityHubSetup.dmg",
+            check=False,
         )
 
         if with_shortcut:
-            await session.run_command(
-                'ln -sf "/Applications/Unity Hub.app" ~/Desktop/UnityHub'
+            await self.session.run_command(
+                'ln -sf "/Applications/Unity Hub.app" ~/Desktop/UnityHub',
+                check=False,
             )
 
     @launch("macos")
     async def launch_macos(
-        session: Any,
+        self: "BoundApp",
         *,
         project_path: Optional[str] = None,
         create_project: bool = False,
@@ -235,15 +248,16 @@ Terminal=false
             if execute_method:
                 cmd += f" -executeMethod {execute_method}"
 
-            await session.run_command(cmd)
+            await self.session.run_command(cmd, check=False)
         else:
-            await session.run_command('open -a "Unity Hub"')
+            await self.session.run_command('open -a "Unity Hub"', check=False)
 
         await asyncio.sleep(5)
 
     @uninstall("macos")
-    async def uninstall_macos(session: Any, **kwargs) -> None:
+    async def uninstall_macos(self: "BoundApp", **kwargs) -> None:
         """Uninstall Unity from macOS."""
-        await session.run_command(
-            'rm -rf "/Applications/Unity Hub.app" ~/Desktop/UnityHub'
+        await self.session.run_command(
+            'rm -rf "/Applications/Unity Hub.app" ~/Desktop/UnityHub',
+            check=False,
         )

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import (
+    TYPE_CHECKING,
     Any,
     Callable,
     Dict,
@@ -13,6 +14,9 @@ from typing import (
     TypeVar,
     Union,
 )
+
+if TYPE_CHECKING:
+    from ..computers.base import DesktopSession
 
 Platform = Literal["linux", "windows", "macos"]
 ALL_PLATFORMS: Set[Platform] = {"linux", "windows", "macos"}
@@ -34,8 +38,9 @@ class AppMethod:
         self.platforms = platforms
         self.func = func
 
-    async def __call__(self, session: Any, **kwargs) -> Any:
-        return await self.func(session, **kwargs)
+    async def __call__(self, bound_app: "BoundApp", **kwargs) -> Any:
+        """Call the method with bound app context."""
+        return await self.func(bound_app, **kwargs)
 
 
 def _platform_decorator(method_type: str):
@@ -149,6 +154,127 @@ def list_apps() -> List[str]:
     return list(_registry.keys())
 
 
+class BoundApp:
+    """An app instance bound to a specific session.
+
+    Provides access to `self.session` and `self.platform` in app methods,
+    and exposes all app methods directly (install, launch, custom getters, etc.).
+
+    Usage:
+        url = await session.apps.chrome.get_current_url()
+        await session.apps.chrome.install(with_shortcut=True)
+    """
+
+    def __init__(self, app: App, session: Any):
+        self._app = app
+        self._session = session
+        self._platform = _get_platform(session)
+
+    @property
+    def session(self) -> Any:
+        """The bound session."""
+        return self._session
+
+    @property
+    def platform(self) -> Platform:
+        """The current platform (linux, windows, macos)."""
+        return self._platform
+
+    @property
+    def name(self) -> str:
+        """App name."""
+        return self._app.name
+
+    @property
+    def description(self) -> str:
+        """App description."""
+        return self._app.description
+
+    async def install(self, *, with_shortcut: bool = True, **kwargs) -> None:
+        """Install the app."""
+        method = self._app.get_install(self._platform)
+        if method is None:
+            raise NotImplementedError(
+                f"App '{self._app.name}' does not support install on {self._platform}. "
+                f"Supported: {self._app.supported_platforms('install')}"
+            )
+        await method(self, with_shortcut=with_shortcut, **kwargs)
+
+    async def launch(self, **kwargs) -> None:
+        """Launch the app."""
+        method = self._app.get_launch(self._platform)
+        if method is None:
+            raise NotImplementedError(
+                f"App '{self._app.name}' does not support launch on {self._platform}. "
+                f"Supported: {self._app.supported_platforms('launch')}"
+            )
+        await method(self, **kwargs)
+
+    async def uninstall(self, **kwargs) -> None:
+        """Uninstall the app."""
+        method = self._app.get_uninstall(self._platform)
+        if method is None:
+            raise NotImplementedError(
+                f"App '{self._app.name}' does not support uninstall on {self._platform}. "
+                f"Supported: {self._app.supported_platforms('uninstall')}"
+            )
+        await method(self, **kwargs)
+
+    def __getattr__(self, name: str) -> Any:
+        """Proxy custom methods from the app.
+
+        Allows accessing custom getters like:
+            await session.apps.chrome.get_current_url()
+        """
+        # Check if the app has this attribute
+        attr = getattr(self._app, name, None)
+        if attr is None:
+            raise AttributeError(
+                f"App '{self._app.name}' has no attribute '{name}'"
+            )
+
+        # If it's a callable (custom method), wrap it to pass self (BoundApp)
+        if callable(attr):
+            async def bound_method(**kwargs):
+                return await attr(self, **kwargs)
+            return bound_method
+
+        return attr
+
+
+class AppsProxy:
+    """Proxy for accessing apps via session.apps.{app_name}.
+
+    Usage:
+        await session.apps.chrome.install()
+        await session.apps.chrome.get_current_url()
+        await session.apps.godot.launch(project_path="~/project")
+    """
+
+    def __init__(self, session: Any):
+        self._session = session
+        self._cache: Dict[str, BoundApp] = {}
+
+    def __getattr__(self, name: str) -> BoundApp:
+        """Get a bound app by name."""
+        if name.startswith("_"):
+            raise AttributeError(name)
+
+        if name not in self._cache:
+            app = get_app(name)
+            if app is None:
+                raise AttributeError(
+                    f"Unknown app: '{name}'. Available: {list_apps()}"
+                )
+            self._cache[name] = BoundApp(app, self._session)
+
+        return self._cache[name]
+
+    def __dir__(self) -> List[str]:
+        """List available apps."""
+        return list_apps()
+
+
 class AppRegistry:
     """Registry access for DesktopSession integration.
 
@@ -187,7 +313,9 @@ class AppRegistry:
                 f"Supported: {app.supported_platforms('install')}"
             )
 
-        await method(session, with_shortcut=with_shortcut, **kwargs)
+        # Create BoundApp wrapper for the method call
+        bound_app = BoundApp(app, session)
+        await method(bound_app, with_shortcut=with_shortcut, **kwargs)
 
     @staticmethod
     async def launch_app(
@@ -217,7 +345,9 @@ class AppRegistry:
                 f"Supported: {app.supported_platforms('launch')}"
             )
 
-        await method(session, **kwargs)
+        # Create BoundApp wrapper for the method call
+        bound_app = BoundApp(app, session)
+        await method(bound_app, **kwargs)
 
     @staticmethod
     async def uninstall_app(
@@ -247,7 +377,9 @@ class AppRegistry:
                 f"Supported: {app.supported_platforms('uninstall')}"
             )
 
-        await method(session, **kwargs)
+        # Create BoundApp wrapper for the method call
+        bound_app = BoundApp(app, session)
+        await method(bound_app, **kwargs)
 
 
 def _get_platform(session: Any) -> Platform:

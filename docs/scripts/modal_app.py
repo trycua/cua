@@ -1173,7 +1173,7 @@ async def scheduled_code_index():
     memory=2048,
 )
 @modal.concurrent(max_inputs=10)
-@modal.asgi_app()
+@modal.asgi_app(custom_domains=["docs-mcp.cua.ai"])
 def web():
     """ASGI web endpoint for the MCP server"""
     import lancedb

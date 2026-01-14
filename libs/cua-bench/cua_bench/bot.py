@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
 
 from .types import ClickAction, RightClickAction
 
 
 class Bot:
     """Helper class for writing trajectories for task solutions."""
+
     def __init__(self, env: Any):
         self.env = env
 
@@ -22,7 +23,7 @@ class Bot:
         cx = int(rect["x"] + rect["width"] / 2)
         cy = int(rect["y"] + rect["height"] / 2)
         self.env.step(ClickAction(x=cx, y=cy))
-    
+
     def right_click_element(self, pid: int, selector: str) -> None:
         rect = self.env.get_element_rect(pid, selector, space="screen")
         if not rect:
@@ -30,4 +31,3 @@ class Bot:
         cx = int(rect["x"] + rect["width"] / 2)
         cy = int(rect["y"] + rect["height"] / 2)
         self.env.step(RightClickAction(x=cx, y=cy))
-        

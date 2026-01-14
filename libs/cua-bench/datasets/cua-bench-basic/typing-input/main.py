@@ -1,10 +1,12 @@
-import cua_bench as cb
 from pathlib import Path
+
+import cua_bench as cb
+
 
 # Called once per batch
 @cb.tasks_config(split="train")
 def load():
-    os_types = ["linux"] # ["macos", "win11", "win10"]
+    os_types = ["linux"]  # ["macos", "win11", "win10"]
 
     # Different typing scenarios with various text inputs
     typing_scenarios = [
@@ -28,17 +30,19 @@ def load():
                     "os_type": os_type,
                     "width": 1024,
                     "height": 768,
-                    "background": '#c0c0c0'
-                }
-            }
+                    "background": "#c0c0c0",
+                },
+            },
         )
         for os_type in os_types
         for scenario in typing_scenarios
     ]
 
+
 # All code below will be running in a separate process per task
 
 pid = None
+
 
 # Called at start of task
 @cb.setup_task(split="train")
@@ -47,7 +51,7 @@ async def start(task_cfg: cb.Task, session: cb.DesktopSession):
 
     # Setup steps:
     # 1. Create a webview window with dynamic field label
-    html_template = (Path(__file__).parent / "gui/index.html").read_text('utf-8')
+    html_template = (Path(__file__).parent / "gui/index.html").read_text("utf-8")
     html = html_template.replace("{{FIELD_LABEL}}", task_cfg.metadata["field_label"])
 
     pid = await session.launch_window(
@@ -56,6 +60,7 @@ async def start(task_cfg: cb.Task, session: cb.DesktopSession):
         width=400,
         height=300,
     )
+
 
 # Called at end of task
 @cb.evaluate_task(split="train")
@@ -70,6 +75,7 @@ async def evaluate(task_cfg: cb.Task, session: cb.DesktopSession) -> list[float]
     expected_text = task_cfg.metadata["text"]
     return [1.0] if input_value == expected_text else [0.0]
 
+
 # Called after setup_task if run_solution is True
 @cb.solve_task(split="train")
 async def solve(task_cfg: cb.Task, session: cb.DesktopSession):
@@ -81,6 +87,7 @@ async def solve(task_cfg: cb.Task, session: cb.DesktopSession):
 
     # 2. Type the text
     await session.execute_action(cb.TypeAction(text=task_cfg.metadata["text"]))
+
 
 if __name__ == "__main__":
     cb.interact(__file__)

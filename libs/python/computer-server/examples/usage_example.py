@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Example showing how to use the CUA Computer API as an imported package.
+Example showing how to use the Cua Computer API as an imported package.
 """
 
 import asyncio

@@ -146,55 +146,12 @@ final class Home {
 
         // Loop through all locations
         let settings = settingsManager.getSettings()
-        
-        // Also check ephemeral directory (macOS temporary directory)
-        let tmpDir = ProcessInfo.processInfo.environment["TMPDIR"] ?? "/tmp"
-        let cleanPath = tmpDir.hasSuffix("/") ? String(tmpDir.dropLast()) : tmpDir
-        
-        // If tmp directory exists, check for VMs there
-        if fileExists(at: cleanPath) {
-            let tmpDirPath = Path(cleanPath)
-            do {
-                let directoryURL = URL(fileURLWithPath: cleanPath)
-                let contents = try FileManager.default.contentsOfDirectory(
-                    at: directoryURL,
-                    includingPropertiesForKeys: [.isDirectoryKey],
-                    options: .skipsHiddenFiles
-                )
-                
-                for subdir in contents {
-                    do {
-                        guard let isDirectory = try subdir.resourceValues(forKeys: [.isDirectoryKey]).isDirectory,
-                              isDirectory else {
-                            continue
-                        }
-                        
-                        let vmName = subdir.lastPathComponent
-                        let vmDir = VMDirectory(tmpDirPath.directory(vmName))
-                        
-                        // Only include if it's a valid VM directory
-                        if vmDir.initialized() {
-                            results.append(VMDirectoryWithLocation(
-                                directory: vmDir,
-                                locationName: "ephemeral"
-                            ))
-                        }
-                    } catch {
-                        // Skip any directories we can't access
-                        continue
-                    }
-                }
-            } catch {
-                Logger.error(
-                    "Failed to access ephemeral directory",
-                    metadata: [
-                        "path": cleanPath,
-                        "error": error.localizedDescription,
-                    ]
-                )
-                // Continue to regular locations rather than failing completely
-            }
-        }
+
+        // Note: We intentionally do NOT scan TMPDIR for ephemeral VMs.
+        // Ephemeral VMs are short-lived and should be explicitly managed by the code
+        // that creates them, not automatically discovered. Scanning TMPDIR would pick up
+        // test leftovers and other temporary directories that happen to look like VMs.
+
         for location in settings.vmLocations {
             let locationPath = Path(location.expandedPath)
 

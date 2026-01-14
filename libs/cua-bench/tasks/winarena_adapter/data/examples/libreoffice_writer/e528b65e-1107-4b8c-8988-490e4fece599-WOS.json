@@ -3,7 +3,7 @@
   "snapshot": "libreoffice_writer",
   "instruction": "Please help me make the first letter of each word to uppercase.",
   "source": "https://www.youtube.com/watch?v=l25Evu4ohKg",
-  "_comments":"source does not show how to capitalize every first letter of each word",
+  "_comments": "source does not show how to capitalize every first letter of each word",
   "config": [
     {
       "type": "download",
@@ -24,9 +24,7 @@
     }
   ],
   "trajectory": "trajectories/",
-  "related_apps": [
-    "libreoffice_writer"
-  ],
+  "related_apps": ["libreoffice_writer"],
   "evaluator": {
     "postconfig": [
       {

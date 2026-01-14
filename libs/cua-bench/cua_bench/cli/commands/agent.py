@@ -285,7 +285,9 @@ def create_agent_scaffold(name: str, output_dir: str | None = None) -> int:
     # Validate agent name
     if not re.match(r"^[a-zA-Z][a-zA-Z0-9_-]*$", name):
         print(f"{RED}Error: Invalid agent name '{name}'{RESET}")
-        print("Agent name must start with a letter and contain only letters, numbers, underscores, and hyphens.")
+        print(
+            "Agent name must start with a letter and contain only letters, numbers, underscores, and hyphens."
+        )
         return 1
 
     # Determine output directory

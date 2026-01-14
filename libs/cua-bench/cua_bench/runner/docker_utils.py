@@ -33,14 +33,12 @@ def create_overlay_copy(golden_path: Path, overlay_path: Path, verbose: bool = F
     if verbose:
         print(f"   Source:  {golden_path}")
         print(f"   Overlay: {overlay_path}")
-        print(f"   (This may take a while for large images)")
-        print(f"   WIP: https://github.com/trycua/cua/issues/699")
+        print("   (This may take a while for large images)")
+        print("   WIP: https://github.com/trycua/cua/issues/699")
 
     # Use native cp -a for speed (5x faster than Python shutil)
     result = subprocess.run(
-        ["cp", "-a", f"{golden_path}/.", str(overlay_path)],
-        capture_output=True,
-        text=True
+        ["cp", "-a", f"{golden_path}/.", str(overlay_path)], capture_output=True, text=True
     )
     if result.returncode != 0:
         raise RuntimeError(f"Failed to create overlay: {result.stderr or 'cp failed'}")
@@ -101,6 +99,7 @@ def allocate_ports(vnc_default: int = 8006, api_default: int = 5000) -> tuple[in
 @dataclass
 class ContainerInfo:
     """Information about a running container."""
+
     container_id: str
     container_name: str
     network: str
@@ -117,7 +116,10 @@ async def create_network(name: str) -> str:
         Network name (same as input)
     """
     process = await asyncio.create_subprocess_exec(
-        "docker", "network", "create", name,
+        "docker",
+        "network",
+        "create",
+        name,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
@@ -139,7 +141,10 @@ async def remove_network(name: str) -> None:
         name: Network name to remove
     """
     process = await asyncio.create_subprocess_exec(
-        "docker", "network", "rm", name,
+        "docker",
+        "network",
+        "rm",
+        name,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
@@ -293,7 +298,10 @@ async def remove_container(name: str) -> None:
         name: Container name
     """
     process = await asyncio.create_subprocess_exec(
-        "docker", "rm", "-f", name,
+        "docker",
+        "rm",
+        "-f",
+        name,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
@@ -383,11 +391,14 @@ async def stream_container_logs_to_file(name: str, output_file: Path) -> asyncio
     output_file.parent.mkdir(parents=True, exist_ok=True)
 
     # Open log file for writing
-    log_handle = open(output_file, 'w', encoding='utf-8', buffering=1)
+    log_handle = open(output_file, "w", encoding="utf-8", buffering=1)
 
     # Start docker logs -f process
     process = await asyncio.create_subprocess_exec(
-        "docker", "logs", "-f", name,
+        "docker",
+        "logs",
+        "-f",
+        name,
         stdout=log_handle,
         stderr=asyncio.subprocess.STDOUT,
     )
@@ -405,7 +416,11 @@ async def container_is_running(name: str) -> bool:
         True if container is running
     """
     process = await asyncio.create_subprocess_exec(
-        "docker", "inspect", "-f", "{{.State.Running}}", name,
+        "docker",
+        "inspect",
+        "-f",
+        "{{.State.Running}}",
+        name,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
@@ -437,8 +452,13 @@ async def cleanup_stale_containers(prefix: str = "cua-") -> int:
     """
     # List all containers (including stopped) with the prefix
     process = await asyncio.create_subprocess_exec(
-        "docker", "ps", "-a", "--filter", f"name={prefix}",
-        "--format", "{{.Names}}",
+        "docker",
+        "ps",
+        "-a",
+        "--filter",
+        f"name={prefix}",
+        "--format",
+        "{{.Names}}",
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
@@ -467,8 +487,13 @@ async def cleanup_stale_networks(prefix: str = "cua-task-") -> int:
         Number of networks removed
     """
     process = await asyncio.create_subprocess_exec(
-        "docker", "network", "ls", "--filter", f"name={prefix}",
-        "--format", "{{.Name}}",
+        "docker",
+        "network",
+        "ls",
+        "--filter",
+        f"name={prefix}",
+        "--format",
+        "{{.Name}}",
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
@@ -495,7 +520,10 @@ async def remove_image(image: str) -> bool:
         True if image was removed, False if not found or error
     """
     process = await asyncio.create_subprocess_exec(
-        "docker", "rmi", "-f", image,
+        "docker",
+        "rmi",
+        "-f",
+        image,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )

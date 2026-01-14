@@ -2,7 +2,9 @@
 """Take screenshots of all Slack environment views."""
 
 import asyncio
+
 from playwright.async_api import async_playwright
+
 
 async def take_screenshots():
     async with async_playwright() as p:
@@ -15,24 +17,24 @@ async def take_screenshots():
         await asyncio.sleep(0.5)
 
         # Add some reactions to messages for the screenshots
-        messages = await page.query_selector_all('.message')
+        messages = await page.query_selector_all(".message")
         if len(messages) >= 3:
             # Add reactions to first message
             await messages[0].hover()
             await asyncio.sleep(0.2)
-            react_btn = await messages[0].query_selector('.react-btn')
+            react_btn = await messages[0].query_selector(".react-btn")
             await react_btn.click()
             await asyncio.sleep(0.2)
-            emoji_picker = await messages[0].query_selector('.emoji-picker.open')
+            emoji_picker = await messages[0].query_selector(".emoji-picker.open")
             thumbs_up = await emoji_picker.query_selector('[data-emoji="👍"]')
             await thumbs_up.click()
             await asyncio.sleep(0.2)
 
             # Add another reaction to first message
-            add_btn = await messages[0].query_selector('.add-reaction-btn')
+            add_btn = await messages[0].query_selector(".add-reaction-btn")
             await add_btn.click()
             await asyncio.sleep(0.2)
-            emoji_picker = await messages[0].query_selector('.emoji-picker.open')
+            emoji_picker = await messages[0].query_selector(".emoji-picker.open")
             heart = await emoji_picker.query_selector('[data-emoji="❤️"]')
             await heart.click()
             await asyncio.sleep(0.2)
@@ -40,10 +42,10 @@ async def take_screenshots():
             # Add reaction to second message
             await messages[1].hover()
             await asyncio.sleep(0.2)
-            react_btn = await messages[1].query_selector('.react-btn')
+            react_btn = await messages[1].query_selector(".react-btn")
             await react_btn.click()
             await asyncio.sleep(0.2)
-            emoji_picker = await messages[1].query_selector('.emoji-picker.open')
+            emoji_picker = await messages[1].query_selector(".emoji-picker.open")
             fire = await emoji_picker.query_selector('[data-emoji="🔥"]')
             await fire.click()
             await asyncio.sleep(0.2)
@@ -51,10 +53,10 @@ async def take_screenshots():
             # Add reaction to third message
             await messages[2].hover()
             await asyncio.sleep(0.2)
-            react_btn = await messages[2].query_selector('.react-btn')
+            react_btn = await messages[2].query_selector(".react-btn")
             await react_btn.click()
             await asyncio.sleep(0.2)
-            emoji_picker = await messages[2].query_selector('.emoji-picker.open')
+            emoji_picker = await messages[2].query_selector(".emoji-picker.open")
             eyes = await emoji_picker.query_selector('[data-emoji="👀"]')
             await eyes.click()
             await asyncio.sleep(0.2)
@@ -97,23 +99,23 @@ async def take_screenshots():
         await page.click('[data-nav="home"]')
         await asyncio.sleep(0.3)
         # Hover on a message to show react button
-        messages = await page.query_selector_all('.message')
+        messages = await page.query_selector_all(".message")
         if messages:
             await messages[0].hover()
             await asyncio.sleep(0.2)
-            react_btn = await messages[0].query_selector('.react-btn')
+            react_btn = await messages[0].query_selector(".react-btn")
             await react_btn.click()
             await asyncio.sleep(0.3)
             await page.screenshot(path="screenshots/07_emoji_picker.png")
             print("✓ Captured Emoji picker view")
             # Close picker
-            await page.click('body', position={'x': 10, 'y': 10})
+            await page.click("body", position={"x": 10, "y": 10})
             await asyncio.sleep(0.2)
 
         # Screenshot 8: Thread view
-        messages = await page.query_selector_all('.message')
+        messages = await page.query_selector_all(".message")
         if messages:
-            reply_btn = await messages[0].query_selector('.reply-btn')
+            reply_btn = await messages[0].query_selector(".reply-btn")
             await messages[0].hover()
             await asyncio.sleep(0.2)
             await reply_btn.click()
@@ -123,6 +125,7 @@ async def take_screenshots():
 
         await browser.close()
         print("\nAll screenshots saved to screenshots/ directory")
+
 
 if __name__ == "__main__":
     asyncio.run(take_screenshots())

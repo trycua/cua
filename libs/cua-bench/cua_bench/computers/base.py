@@ -1,9 +1,11 @@
 from __future__ import annotations
 
-from typing import Any, Optional, Protocol, TypedDict, Literal, List
+from typing import Any, List, Literal, Optional, Protocol, TypedDict
+
 from ..types import Snapshot
 
 _DEFAULT_SESSION_NAME = "simulated"
+
 
 def get_session(name: Optional[str] = None) -> type[DesktopSession]:
     """Return session class by name.
@@ -22,11 +24,13 @@ def get_session(name: Optional[str] = None) -> type[DesktopSession]:
     # Simulated desktop (Playwright-based)
     if sess in ("simulated", "webtop"):
         from .webtop import WebDesktopSession
+
         return WebDesktopSession
 
     # Native desktop (Docker/QEMU-based) - uses RemoteDesktopSession with cua-computer SDK
     if sess in ("native", "computer"):
         from .remote import RemoteDesktopSession
+
         return RemoteDesktopSession
 
     raise ValueError(
@@ -34,11 +38,13 @@ def get_session(name: Optional[str] = None) -> type[DesktopSession]:
         f"Available: 'simulated' (Playwright), 'native' (Docker/QEMU)"
     )
 
+
 class DesktopSetupConfig(TypedDict, total=False):
     """Configuration for desktop setup provided to providers.
 
     Fields mirror high-level desktop appearance and workspace options.
     """
+
     os_type: Literal[
         "win11",
         "win10",
@@ -63,6 +69,7 @@ class DesktopSetupConfig(TypedDict, total=False):
     cpu: str  # VM CPU allocation (e.g., "4")
     provider_type: str  # Provider type ("docker", "lume", "cloud")
 
+
 class DesktopSession(Protocol):
     """Desktop session interface for environment backends.
 
@@ -80,8 +87,7 @@ class DesktopSession(Protocol):
             await session.close()
     """
 
-    def __init__(self, env: Any):
-        ...
+    def __init__(self, env: Any): ...
 
     # =========================================================================
     # Async Context Manager & Lifecycle
@@ -108,8 +114,7 @@ class DesktopSession(Protocol):
         """
         ...
 
-    async def serve_static(self, url_path: str, local_path: str) -> None:
-        ...
+    async def serve_static(self, url_path: str, local_path: str) -> None: ...
 
     async def launch_window(
         self,
@@ -129,17 +134,20 @@ class DesktopSession(Protocol):
         """Launch a window and return its process ID."""
         ...
 
-    async def get_element_rect(self, pid: int | str, selector: str, *, space: Literal["window", "screen"] = "window", timeout: float = 0.5) -> dict[str, Any] | None:
-        ...
+    async def get_element_rect(
+        self,
+        pid: int | str,
+        selector: str,
+        *,
+        space: Literal["window", "screen"] = "window",
+        timeout: float = 0.5,
+    ) -> dict[str, Any] | None: ...
 
-    async def execute_javascript(self, pid: int | str, javascript: str) -> Any:
-        ...
+    async def execute_javascript(self, pid: int | str, javascript: str) -> Any: ...
 
-    async def execute_action(self, action: Any) -> None:
-        ...
+    async def execute_action(self, action: Any) -> None: ...
 
-    async def screenshot(self) -> bytes:
-        ...
+    async def screenshot(self) -> bytes: ...
 
     async def get_snapshot(self) -> Snapshot:
         """Return a lightweight snapshot of the desktop state (windows, etc.).
@@ -149,16 +157,14 @@ class DesktopSession(Protocol):
         """
         ...
 
-    async def close(self) -> None:
-        ...
+    async def close(self) -> None: ...
 
     async def close_all_windows(self) -> None:
         """Close or clear all open windows in the desktop environment."""
         ...
 
     @property
-    def page(self) -> Any:
-        ...
+    def page(self) -> Any: ...
 
     @property
     def vnc_url(self) -> str:
@@ -166,22 +172,22 @@ class DesktopSession(Protocol):
         ...
 
     # --- Playwright-like Automation API ---
-    
+
     async def click_element(self, pid: int | str, selector: str) -> None:
         """Find element by CSS selector and click its center.
 
         Uses the session's get_element_rect to fetch element rect in screen space
         and then dispatches a ClickAction.
-        
+
         Args:
             pid: Process ID of the window
             selector: CSS selector for the element
         """
         ...
-    
+
     async def right_click_element(self, pid: int | str, selector: str) -> None:
         """Find element by CSS selector and right-click its center.
-        
+
         Args:
             pid: Process ID of the window
             selector: CSS selector for the element

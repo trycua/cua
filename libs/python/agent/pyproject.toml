@@ -4,8 +4,8 @@ build-backend = "pdm.backend"
 
 [project]
 name = "cua-agent"
-version = "0.7.3"
-description = "CUA (Computer Use) Agent for AI-driven computer interaction"
+version = "0.7.12"
+description = "Cua (Computer Use) Agent for AI-driven computer interaction"
 readme = "README.md"
 authors = [
     { name = "TryCua", email = "gh@trycua.com" }

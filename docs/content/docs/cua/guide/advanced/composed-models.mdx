@@ -64,21 +64,21 @@ agent = ComputerAgent(
 
 These models locate UI elements but can't reason about actions:
 
-| Model | Description |
-|-------|-------------|
-| `huggingface-local/HelloKKMe/GTA1-7B` | General-purpose grounding |
-| `omniparser` | Microsoft's UI element detection |
-| `moondream3` | Lightweight, fast grounding |
+| Model                                 | Description                      |
+| ------------------------------------- | -------------------------------- |
+| `huggingface-local/HelloKKMe/GTA1-7B` | General-purpose grounding        |
+| `omniparser`                          | Microsoft's UI element detection |
+| `moondream3`                          | Lightweight, fast grounding      |
 
 ## Planning Models
 
 Any full computer-use model can serve as a planner:
 
-| Model | Description |
-|-------|-------------|
+| Model                                  | Description                        |
+| -------------------------------------- | ---------------------------------- |
 | `anthropic/claude-sonnet-4-5-20250929` | Best balance of speed and accuracy |
-| `anthropic/claude-haiku-4-5-20250929` | Faster, lower cost |
-| `openai/gpt-4o` | Strong reasoning capabilities |
+| `anthropic/claude-haiku-4-5-20251001`  | Faster, lower cost                 |
+| `openai/gpt-4o`                        | Strong reasoning capabilities      |
 
 ## When to Use Composed Models
 

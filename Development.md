@@ -1,6 +1,6 @@
 # Development Guide
 
-This guide covers setting up and developing the CUA (Computer Use Agent) monorepo.
+This guide covers setting up and developing the Cua monorepo.
 
 ## Project Structure
 
@@ -297,7 +297,7 @@ Cua uses an automated GitHub Actions workflow to bump package versions and publi
 
 ### Version Bump & Publish Workflow
 
-All packages are managed through a single consolidated workflow: [Bump Version & Publish](https://github.com/trycua/cua/actions/workflows/bump-version.yml)
+All packages are managed through a single consolidated workflow: [Bump Version & Publish](https://github.com/trycua/cua/actions/workflows/release-bump-version.yml)
 
 **Supported packages:**
 
@@ -313,13 +313,13 @@ All packages are managed through a single consolidated workflow: [Bump Version &
 
 **JavaScript/TypeScript (NPM):**
 
-- `npm/cli` - CUA command-line interface
+- `npm/cli` - Cua command-line interface
 - `npm/computer` - Computer client for TypeScript
 - `npm/core` - Core TypeScript utilities
 
 **How to use:**
 
-1. Navigate to the [Bump Version & Publish workflow](https://github.com/trycua/cua/actions/workflows/bump-version.yml)
+1. Navigate to the [Bump Version & Publish workflow](https://github.com/trycua/cua/actions/workflows/release-bump-version.yml)
 2. Click the "Run workflow" button in the GitHub UI
 3. Select the **service/package** from the dropdown (e.g., `pypi/computer` or `npm/cli`)
 4. Select the **bump type** (patch/minor/major) from the second dropdown
@@ -352,52 +352,6 @@ make show-versions
 </details>
 
 ---
-
-<details>
-<summary>Rolling Back a Version Bump</summary>
-
-### Rolling Back a Version Bump
-
-If you need to revert a version bump, follow these steps:
-
-**Step 1: Find the version bump commit**
-
-```bash
-# List recent commits
-git log --oneline | grep "Bump"
-
-# Example output:
-# a1b2c3d Bump cua-core to v0.1.9
-```
-
-**Step 2: Revert the commit**
-
-```bash
-# Revert the specific commit
-git revert <commit-hash>
-
-# Example:
-# git revert a1b2c3d
-```
-
-**Step 3: Delete the git tag**
-
-```bash
-# List tags to find the version tag
-git tag -l
-
-# Delete the tag locally (use the correct package-specific format)
-git tag -d core-v0.1.9
-
-# Delete the tag remotely
-git push origin :refs/tags/core-v0.1.9
-```
-
-**Step 4: Push the revert**
-
-```bash
-git push origin main
-```
 
 <details>
 <summary>Per-package tag patterns</summary>

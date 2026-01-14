@@ -1,6 +1,7 @@
 name: Reusable Docker Publish Workflow
 
 on:
+  workflow_dispatch: # Prevents phantom runs on push, allows manual testing
   workflow_call:
     inputs:
       image_name:
@@ -25,6 +26,11 @@ on:
         required: false
         type: string
         default: "trycua"
+      skip_arm64:
+        description: "Skip arm64 build (for images that don't support arm64)"
+        required: false
+        type: boolean
+        default: false
     secrets:
       DOCKER_HUB_TOKEN:
         required: true
@@ -38,6 +44,8 @@ jobs:
         platform:
           - linux/amd64
           - linux/arm64
+        exclude:
+          - platform: ${{ inputs.skip_arm64 && 'linux/arm64' || 'none' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -57,30 +65,17 @@ jobs:
           username: ${{ inputs.docker_hub_org }}
           password: ${{ secrets.DOCKER_HUB_TOKEN }}
 
-      - name: Extract metadata (PR)
-        if: github.event_name == 'pull_request'
-        id: meta-pr
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ inputs.docker_hub_org }}/${{ inputs.image_name }}
-          tags: |
-            type=raw,value=${{ github.sha }}
-
-      - name: Build & push digest (PR)
+      - name: Build only (PR) - validate Dockerfile without pushing
         if: github.event_name == 'pull_request'
         id: build-pr
-        continue-on-error: true
         uses: docker/build-push-action@v5
         with:
           context: ./${{ inputs.context_dir }}
           file: ./${{ inputs.context_dir }}/${{ inputs.dockerfile_path }}
-          push: true
+          push: false
           platforms: ${{ matrix.platform }}
-          outputs: type=registry,name=${{ inputs.docker_hub_org }}/${{ inputs.image_name }},push-by-digest=true
-          labels: ${{ steps.meta-pr.outputs.labels }}
           cache-from: |
             type=registry,ref=${{ inputs.docker_hub_org }}/${{ inputs.image_name }}:buildcache-${{ steps.platform.outputs.tag }}
-          cache-to: type=registry,ref=${{ inputs.docker_hub_org }}/${{ inputs.image_name }}:buildcache-${{ steps.platform.outputs.tag }},mode=max
 
       - name: Extract metadata (main)
         if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
@@ -114,9 +109,9 @@ jobs:
         with:
           images: ${{ inputs.docker_hub_org }}/${{ inputs.image_name }}
           tags: |
-            type=semver,pattern={{version}},prefix=${{ inputs.tag_prefix }}
-            type=semver,pattern={{major}}.{{minor}},prefix=${{ inputs.tag_prefix }}
-            type=semver,pattern={{major}},prefix=${{ inputs.tag_prefix }}
+            type=match,pattern=${{ inputs.tag_prefix }}(\d+\.\d+\.\d+),group=1
+            type=match,pattern=${{ inputs.tag_prefix }}(\d+\.\d+),group=1
+            type=match,pattern=${{ inputs.tag_prefix }}(\d+),group=1
             type=raw,value=latest
 
       - name: Build & push digest (semver)
@@ -138,12 +133,12 @@ jobs:
       - name: Export digest
         id: export-digest
         if: |
-          (steps.build-pr.outcome == 'success') ||
-          (steps.build-main.outcome == 'success') ||
-          (steps.build-semver.outcome == 'success')
+          github.event_name != 'pull_request' &&
+          ((steps.build-main.outcome == 'success') ||
+          (steps.build-semver.outcome == 'success'))
         run: |
           mkdir -p /tmp/digests
-          digest="${{ steps.build-pr.outputs.digest || steps.build-main.outputs.digest || steps.build-semver.outputs.digest }}"
+          digest="${{ steps.build-main.outputs.digest || steps.build-semver.outputs.digest }}"
           if [ -n "$digest" ]; then
             echo "$digest" > "/tmp/digests/${{ steps.platform.outputs.tag }}.txt"
             echo "Digest exported for platform ${{ matrix.platform }}: $digest"
@@ -164,7 +159,7 @@ jobs:
     runs-on: ubuntu-latest
     needs:
       - build-and-push
-    if: success() || failure() # Run even if some platform builds failed
+    if: github.event_name != 'pull_request' && (success() || failure()) # Skip on PRs, run on push/tag even if some builds failed
 
     steps:
       - name: Set up Docker Buildx
@@ -175,15 +170,6 @@ jobs:
         with:
           username: ${{ inputs.docker_hub_org }}
           password: ${{ secrets.DOCKER_HUB_TOKEN }}
-
-      - name: Extract final metadata (PR)
-        if: github.event_name == 'pull_request'
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ inputs.docker_hub_org }}/${{ inputs.image_name }}
-          tags: |
-            type=ref,event=pr
-            type=sha
 
       - name: Extract final metadata (main)
         if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
@@ -199,9 +185,9 @@ jobs:
         with:
           images: ${{ inputs.docker_hub_org }}/${{ inputs.image_name }}
           tags: |
-            type=semver,pattern={{version}},prefix=${{ inputs.tag_prefix }}
-            type=semver,pattern={{major}}.{{minor}},prefix=${{ inputs.tag_prefix }}
-            type=semver,pattern={{major}},prefix=${{ inputs.tag_prefix }}
+            type=match,pattern=${{ inputs.tag_prefix }}(\d+\.\d+\.\d+),group=1
+            type=match,pattern=${{ inputs.tag_prefix }}(\d+\.\d+),group=1
+            type=match,pattern=${{ inputs.tag_prefix }}(\d+),group=1
             type=raw,value=latest
 
       - name: Download all digest artifacts

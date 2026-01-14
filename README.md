@@ -7,7 +7,7 @@
     </picture>
   </a>
 
-  <p align="center">Build and deploy AI agents that can reason, plan and act on any Computers</p>
+  <p align="center">Any OS. Any agent. Self-hostable.</p>
 
   <p align="center">
     <a href="https://cua.ai" target="_blank" rel="noopener noreferrer"><img src="https://img.shields.io/badge/cua.ai-0ea5e9" alt="cua.ai"></a>
@@ -20,411 +20,119 @@
 
 </div>
 
-**Cua** ("koo-ah") is an open-source framework for Computer-Use Agents - enabling AI systems to autonomously operate computers through visual understanding and action execution. Used for research, evaluation, and production deployment of desktop, browser, and mobile automation agents.
-
-## What are Computer-Use Agents?
-
-Computer-Use Agents (CUAs) are AI systems that can autonomously interact with computer interfaces through visual understanding and action execution. Unlike traditional automation tools that rely on brittle selectors or APIs, CUAs use vision-language models to perceive screen content and reason about interface interactions - enabling them to adapt to UI changes and handle complex, multi-step workflows across applications.
+**Cua** is an open-source platform for building, benchmarking, and deploying agents that can use any computer, with isolated, self-hostable sandboxes (Docker, QEMU, Apple Vz).
 
 <div align="center">
   <video src="https://github.com/user-attachments/assets/c619b4ea-bb8e-4382-860e-f3757e36af20" width="600" controls></video>
 </div>
 
-With the [Computer SDK](#computer-sdk), you can:
+## Choose Your Path
 
-- automate Windows, Linux, and macOS VMs with a consistent, [GUI automation API](https://cua.ai/docs/cua/reference/computer-sdk)
-- create & manage VMs [locally](https://cua.ai/docs/cua/guide/get-started/using-computer-sdk) or using [Cua cloud](https://www.cua.ai/)
+| If you want to...                              | Check out                                                 | For                          |
+| ---------------------------------------------- | --------------------------------------------------------- | ---------------------------- |
+| Build AI agents or run isolated code execution | [**Cua**](#cua---agentic-ui-automation--code-execution)   | AI Engineers                 |
+| Benchmark or train computer-use models with RL | [**Cua-Bench**](#cua-bench---benchmarks--rl-environments) | Researchers                  |
+| Run macOS/Linux VMs on Apple Silicon           | [**Lume**](#lume---macos-virtualization)                  | Developers, System Engineers |
 
-With the [Agent SDK](#agent-sdk), you can:
+---
 
-- run computer-use models with a [consistent schema](https://cua.ai/docs/cua/guide/advanced/message-format)
-- benchmark on OSWorld-Verified (369 tasks), SheetBench-V2, and ScreenSpot [with a single line of code using HUD](https://cua.ai/docs/cua/guide/integrations/hud) - see [benchmark results](#research--benchmarks) ([Notebook](https://github.com/trycua/cua/blob/main/notebooks/eval_osworld.ipynb))
-- combine UI grounding models with any LLM using [composed agents](https://cua.ai/docs/cua/guide/advanced/composed-models)
-- use new UI agent models and UI grounding models from the Model Zoo below with just a model string (e.g., `ComputerAgent(model="openai/computer-use-preview")`)
-- use API or local inference by changing a prefix (e.g., `openai/`, `openrouter/`, `ollama/`, `huggingface-local/`, `mlx/`, [etc.](https://docs.litellm.ai/docs/providers))
+## Cua - Agentic UI Automation & Code Execution
 
-# Modules
-
-<table>
-<tr>
-<td width="25%" align="center" valign="top">
-
-[**Agent**](#agent-sdk)<br />
-AI agent framework for automating tasks
-
-</td>
-<td width="25%" align="center" valign="top">
-
-**[Computer](#computer-sdk)**<br />
-TypeScript/Python SDK for controlling Cua environments
-
-</td>
-<td width="25%" align="center" valign="top">
-
-**[MCP Server](#mcp-server)**<br />
-MCP server for using Cua agents and computers
-
-</td>
-<td width="25%" align="center" valign="top">
-
-**[Computer Server](#computer-server)**<br />
-Server component that runs on Cua environments
-
-</td>
-</tr>
-</table>
-
-<table>
-<tr>
-<td width="25%" align="center" valign="top">
-
-**[Lume](#lume)**<br />
-VM management for macOS
-
-</td>
-<td width="25%" align="center" valign="top">
-
-**[Lumier](#lumier)**<br />
-Docker interface for macOS/Linux VMs
-
-</td>
-<td width="25%" align="center" valign="top">
-
-**[SOM](#som)**<br />
-Set-of-Mark library for Agent
-
-</td>
-<td width="25%" align="center" valign="top">
-
-**[Core](#core)**<br />
-Core utilities for Cua
-
-</td>
-</tr>
-</table>
-
-# Quick Start
-
-- [Clone a starter template and run the code in <1 min](https://github.com/trycua/agent-template)
-- [Get started with the Cua SDKs](https://cua.ai/docs/cua/guide/get-started/using-agent-sdk)
-- [Get started with the Cua CLI](https://cua.ai/docs/cua/guide/get-started/using-cloud-cli)
-
-## Python Version Compatibility
-
-Cua packages require **Python 3.12 or 3.13**. Python 3.14 is not currently supported due to dependency compatibility issues (pydantic-core/PyO3 compatibility). If you encounter build errors on Python 3.14, please use Python 3.13 or earlier.
-
-# Agent SDK
-
-Install the agent SDK:
-
-```bash
-pip install cua-agent[all]
-```
-
-Initialize a computer agent using a [model configuration string](#model-configuration) and a [computer instance](#computer-usage):
+Build agents that see screens, click buttons, and complete tasks autonomously. Run isolated code execution environments for AI coding assistants like Claude Code, Codex CLI, or OpenCode.
 
 ```python
+# Requires Python 3.12 or 3.13
+from computer import Computer
 from agent import ComputerAgent
 
-# ComputerAgent works with any computer initialized with the Computer SDK
+computer = Computer(os_type="linux", provider_type="cloud")
+agent = ComputerAgent(model="anthropic/claude-sonnet-4-5-20250929", computer=computer)
 
-agent = ComputerAgent(
-    model="anthropic/claude-sonnet-4-5-20250929",
-    tools=[computer],
-    max_trajectory_budget=5.0
-)
-
-messages = [{"role": "user", "content": "Take a screenshot and tell me what you see"}]
-
-async for result in agent.run(messages):
-    for item in result["output"]:
-        if item["type"] == "message":
-            print(item["content"][0]["text"])
+async for result in agent.run([{"role": "user", "content": "Open Firefox and search for Cua"}]):
+    print(result)
 ```
 
-## Output format
+**[Get Started](https://cua.ai/docs/cua/guide/get-started/set-up-sandbox)** | **[Examples](https://cua.ai/docs/cua/guide/examples)** | **[API Reference](https://cua.ai/docs/cua/reference/agent-sdk)**
 
-Cua uses the OpenAI Agent response format.
+---
 
-<details>
-<summary>Example</summary>
+## Cua-Bench - Benchmarks & RL Environments
 
-```json
-{
-  "output": [
-    {
-      "role": "user",
-      "content": "go to trycua on gh"
-    },
-    {
-      "summary": [
-        {
-          "text": "Searching Firefox for Trycua GitHub",
-          "type": "summary_text"
-        }
-      ],
-      "type": "reasoning"
-    },
-    {
-      "action": {
-        "text": "Trycua GitHub",
-        "type": "type"
-      },
-      "call_id": "call_QI6OsYkXxl6Ww1KvyJc4LKKq",
-      "status": "completed",
-      "type": "computer_call"
-    },
-    {
-      "type": "computer_call_output",
-      "call_id": "call_QI6OsYkXxl6Ww1KvyJc4LKKq",
-      "output": {
-        "type": "input_image",
-        "image_url": "data:image/png;base64,..."
-      }
-    },
-    {
-      "type": "message",
-      "role": "assistant",
-      "content": [
-        {
-          "text": "Success! The Trycua GitHub page has been opened.",
-          "type": "output_text"
-        }
-      ]
-    }
-  ],
-  "usage": {
-    "prompt_tokens": 150,
-    "completion_tokens": 75,
-    "total_tokens": 225,
-    "response_cost": 0.01
-  }
-}
-```
-
-</details>
-
-## Model Configuration
-
-These are the valid model configurations for `ComputerAgent(model="...")`:
-
-| Configuration                            | Description                                                                                                                        |
-| ---------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| `{computer-use-model}`                   | A single model to perform all computer-use tasks                                                                                   |
-| `{grounding-model}+{any-vlm-with-tools}` | [Composed](https://cua.ai/docs/cua/guide/advanced/composed-models) with VLM for captioning and grounding LLM for element detection |
-| `moondream3+{any-llm-with-tools}`        | [Composed](https://cua.ai/docs/cua/guide/advanced/composed-models) with Moondream3 for captioning and UI element detection         |
-| `human/human`                            | A [human-in-the-loop](https://cua.ai/docs/cua/guide/advanced/human-in-the-loop) in place of a model                                |
-
-### Model Capabilities
-
-The following table shows which capabilities are supported by each model:
-
-| Model                                                                                                                            | Computer-Use | Grounding | Tools | VLM | Cloud |
-| -------------------------------------------------------------------------------------------------------------------------------- | :----------: | :-------: | :---: | :-: | :---: |
-| [Claude Sonnet/Haiku](https://docs.claude.com/en/docs/agents-and-tools/tool-use/computer-use-tool#how-to-implement-computer-use) |      🖥️      |    🎯     |  🛠️   | 👁️  |  ☁️   |
-| [Claude Opus](https://docs.claude.com/en/docs/agents-and-tools/tool-use/computer-use-tool#how-to-implement-computer-use)         |      🖥️      |    🎯     |  🛠️   | 👁️  |  ☁️   |
-| [OpenAI CU Preview](https://platform.openai.com/docs/models/computer-use-preview)                                                |      🖥️      |    🎯     |       | 👁️  |       |
-| [Qwen3 VL](https://huggingface.co/collections/Qwen/qwen3-vl)                                                                     |      🖥️      |    🎯     |  🛠️   | 👁️  |  ☁️   |
-| [GLM-V](https://huggingface.co/THUDM/glm-4v-9b)                                                                                  |      🖥️      |    🎯     |  🛠️   | 👁️  |       |
-| [Gemini CU Preview](https://ai.google.dev/gemini-api/docs/computer-use)                                                          |      🖥️      |    🎯     |       | 👁️  |       |
-| [InternVL](https://huggingface.co/OpenGVLab/InternVL3_5-1B)                                                                      |      🖥️      |    🎯     |  🛠️   | 👁️  |       |
-| [UI-TARS](https://huggingface.co/ByteDance-Seed/UI-TARS-1.5-7B)                                                                  |      🖥️      |    🎯     |  🛠️   | 👁️  |       |
-| [UI-TARS-2](https://cua.ai/dashboard/vlm-router)                                                                                 |      🖥️      |    🎯     |  🛠️   | 👁️  |  ☁️   |
-| [OpenCUA](https://huggingface.co/xlangai/OpenCUA-7B)                                                                             |              |    🎯     |       |     |       |
-| [GTA](https://huggingface.co/HelloKKMe/GTA1-7B)                                                                                  |              |    🎯     |       |     |       |
-| [Holo](https://huggingface.co/Hcompany/Holo1.5-3B)                                                                               |              |    🎯     |       |     |       |
-| [Moondream](https://huggingface.co/moondream/moondream3-preview)                                                                 |              |    🎯     |       |     |       |
-| [OmniParser](https://github.com/microsoft/OmniParser)                                                                            |              |    🎯     |       |     |       |
-
-**Legend:**
-
-- 🖥️ **Computer-Use**: Full agentic loop with planning and execution
-- 🎯 **Grounding**: UI element detection and click coordinate prediction
-- 🛠️ **Tools**: Support for function calling beyond screen interaction
-- 👁️ **VLM**: Vision-language understanding
-- ☁️ **Cloud**: Supported on Cua VLM
-
-**Composition Examples:**
-
-See more examples on our [composition docs](https://cua.ai/docs/cua/guide/advanced/composed-models).
-
-```python
-# Use OpenAI's GPT-5 for planning with specialized grounding
-agent = ComputerAgent(model="huggingface-local/HelloKKMe/GTA1-7B+openai/gpt-5")
-
-# Composition via OmniParser
-agent = ComputerAgent(model="omniparser+openai/gpt-4o")
-
-# Combine state-of-the-art grounding with powerful reasoning
-agent = ComputerAgent(model="huggingface-local/HelloKKMe/GTA1-7B+anthropic/claude-sonnet-4-5-20250929")
-
-# Combine two different vision models for enhanced capabilities
-agent = ComputerAgent(model="huggingface-local/ByteDance-Seed/UI-TARS-1.5-7B+openai/gpt-4o")
-
-# Use the built-in Moondream3 grounding with any planning mode.
-agent = ComputerAgent(model="moondream3+openai/gpt-4o")
-```
-
-### Model IDs
-
-<details>
-<summary>Examples of valid model IDs</summary>
-
-| Model                                                                                                                            | Model IDs                                                        |
-| -------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
-| [Claude Sonnet/Haiku](https://docs.claude.com/en/docs/agents-and-tools/tool-use/computer-use-tool#how-to-implement-computer-use) | `anthropic/claude-sonnet-4-5`, `anthropic/claude-haiku-4-5`      |
-| [OpenAI CU Preview](https://platform.openai.com/docs/models/computer-use-preview)                                                | `openai/computer-use-preview`                                    |
-| [GLM-V](https://huggingface.co/THUDM/glm-4v-9b)                                                                                  | `openrouter/z-ai/glm-4.5v`, `huggingface-local/zai-org/GLM-4.5V` |
-| [Qwen3 VL](https://huggingface.co/collections/Qwen/qwen3-vl)                                                                     | `openrouter/qwen/qwen3-vl-235b-a22b-instruct`                    |
-| [Gemini CU Preview](https://ai.google.dev/gemini-api/docs/computer-use)                                                          | `gemini-2.5-computer-use-preview`                                |
-| [InternVL](https://huggingface.co/OpenGVLab/InternVL3_5-1B)                                                                      | `huggingface-local/OpenGVLab/InternVL3_5-{1B,2B,4B,8B,...}`      |
-| [UI-TARS](https://huggingface.co/ByteDance-Seed/UI-TARS-1.5-7B)                                                                  | `huggingface-local/ByteDance-Seed/UI-TARS-1.5-7B`                |
-| [UI-TARS-2](https://cua.ai/dashboard/vlm-router)                                                                                 | `cua/bytedance/ui-tars-2`                                        |
-| [OpenCUA](https://huggingface.co/xlangai/OpenCUA-7B)                                                                             | `huggingface-local/xlangai/OpenCUA-{7B,32B}`                     |
-| [GTA](https://huggingface.co/HelloKKMe/GTA1-7B)                                                                                  | `huggingface-local/HelloKKMe/GTA1-{7B,32B,72B}`                  |
-| [Holo](https://huggingface.co/Hcompany/Holo1.5-3B)                                                                               | `huggingface-local/Hcompany/Holo1.5-{3B,7B,72B}`                 |
-| [Moondream](https://huggingface.co/moondream/moondream3-preview)                                                                 | `moondream3`                                                     |
-| [OmniParser](https://github.com/microsoft/OmniParser)                                                                            | `omniparser`                                                     |
-
-</details>
-
-Missing a model? Create a [feature request](https://github.com/trycua/cua/issues/new?assignees=&labels=enhancement&projects=&title=%5BAgent%5D%3A+Add+model+support+for+) or [contribute](https://github.com/trycua/cua/blob/main/CONTRIBUTING.md)!
-
-Learn more in the [Agent SDK documentation](./libs/python/agent/README.md).
-
-# Computer SDK
-
-Install the computer SDK:
+Evaluate computer-use agents on OSWorld, ScreenSpot, Windows Arena, and custom tasks. Export trajectories for training.
 
 ```bash
-pip install cua-computer
+# Install and create base image
+cd cua-bench
+uv tool install -e . && cb image create linux-docker
+
+# Run benchmark with agent
+cb run dataset datasets/cua-bench-basic --agent cua-agent --max-parallel 4
 ```
 
-Initialize a computer:
+**[Get Started](https://cua.ai/docs/cuabench/guide/getting-started/first-steps)** | **[Registry](https://cuabench.ai/registry)** | **[CLI Reference](https://cua.ai/docs/cuabench/reference/cli-reference)**
 
-```python
-from computer import Computer
+---
 
-computer = Computer(
-    os_type="linux",  # or "macos", "windows"
-    provider_type="cloud",  # or "lume", "docker", "windows_sandbox"
-    name="your-sandbox-name",
-    api_key="your-api-key"  # only for cloud
-    # or use_host_computer_server=True for host desktop
-)
+## Lume - macOS Virtualization
 
-try:
-    await computer.run()
+Create and manage macOS/Linux VMs with near-native performance on Apple Silicon using Apple's Virtualization.Framework.
 
-    # Take a screenshot
-    screenshot = await computer.interface.screenshot()
+```bash
+# Install Lume
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/lume/scripts/install.sh)"
 
-    # Click and type
-    await computer.interface.left_click(100, 100)
-    await computer.interface.type_text("Hello!")
-finally:
-    await computer.close()
+# Pull & start a macOS VM
+lume run macos-sequoia-vanilla:latest
 ```
 
-Learn more in the [Computer SDK documentation](./libs/python/computer/README.md).
+**[Get Started](https://cua.ai/docs/lume/guide/getting-started/installation)** | **[Prebuilt Images](https://cua.ai/docs/lume/guide/fundamentals/prebuilt-images)** | **[CLI Reference](https://cua.ai/docs/lume/reference/cli-reference)**
 
-# Recent Updates
+---
 
-## 2025
+## Packages
 
-### December 2025
+| Package                                                                  | Description                                                |
+| ------------------------------------------------------------------------ | ---------------------------------------------------------- |
+| [cua-agent](https://cua.ai/docs/cua/reference/agent-sdk)                 | AI agent framework for computer-use tasks                  |
+| [cua-computer](https://cua.ai/docs/cua/reference/computer-sdk)           | SDK for controlling desktop environments                   |
+| [cua-computer-server](https://cua.ai/docs/cua/reference/computer-server) | Driver for UI interactions and code execution in sandboxes |
+| [cua-bench](https://cua.ai/docs/cuabench)                                | Benchmarks and RL environments for computer-use            |
+| [lume](https://cua.ai/docs/lume)                                         | macOS/Linux VM management on Apple Silicon                 |
+| [lumier](https://cua.ai/docs/lume/reference/lumier)                      | Docker-compatible interface for Lume VMs                   |
 
-- **Cloud VLM Platform**: Support for Claude Opus, Qwen3 VL 235B, and UI-TARS-2 on Cua VLM cloud infrastructure
-- **QEMU Container Support**: Native Linux and Windows container execution via QEMU virtualization
+## Resources
 
-### November 2025
+- [Documentation](https://cua.ai/docs) — Guides, examples, and API reference
+- [Blog](https://www.cua.ai/blog) — Tutorials, updates, and research
+- [Discord](https://discord.com/invite/mVnXXpdE85) — Community support and discussions
+- [GitHub Issues](https://github.com/trycua/cua/issues) — Bug reports and feature requests
 
-- **Generic VLM Provider**: Expanded support for custom VLM providers and model configurations
-- **NeurIPS 2025**: Coverage of computer-use agent research papers and developments ([Blog Post](https://cua.ai/blog/neurips-2025-cua-papers))
+## Contributing
 
-### October 2025
+We welcome contributions! See our [Contributing Guidelines](CONTRIBUTING.md) for details.
 
-- **Agent SDK Improvements**: Enhanced model support and configuration options
+## License
 
-### September 2025
+MIT License — see [LICENSE](LICENSE.md) for details.
 
-- **Hack the North Competition**: First benchmark-driven hackathon track with guaranteed YC interview prize. Winner achieved 68.3% on OSWorld-Tiny ([Blog Post](https://www.cua.ai/blog/hack-the-north))
-- **Global Hackathon Launch**: Ollama × Cua global online competition for creative local/hybrid agents
+Third-party components have their own licenses:
 
-### August 2025
-
-- **v0.4 Release - Composite Agents**: Mix grounding + planning models with `+` operator (e.g., `"GTA-7B+GPT-4o"`) ([Blog Post](https://www.cua.ai/blog/composite-agents))
-- **HUD Integration**: One-line benchmarking on OSWorld-Verified with live trace visualization ([Blog Post](https://www.cua.ai/blog/hud-agent-evals))
-- **Human-in-the-Loop**: Interactive agent mode with `human/human` model string
-- **Web-Based Computer Use**: Browser-based agent execution ([Blog Post](https://www.cua.ai/blog/bringing-computer-use-to-the-web))
-
-### June 2025
-
-- **Windows Sandbox Support**: Native Windows agent execution ([Blog Post](https://www.cua.ai/blog/windows-sandbox))
-- **Containerization Evolution**: From Lume to full Docker support ([Blog Post](https://www.cua.ai/blog/lume-to-containerization))
-- **Sandboxed Python Execution**: Secure code execution in agent workflows
-
-### May 2025
-
-- **Cua Cloud Containers**: Production-ready cloud deployment with elastic scaling ([Blog Post](https://www.cua.ai/blog/introducing-cua-cloud-containers))
-- **Trajectory Viewer**: Visual debugging tool for agent actions ([Blog Post](https://www.cua.ai/blog/trajectory-viewer))
-- **Training Data Collection**: Tools for creating computer-use training datasets ([Blog Post](https://www.cua.ai/blog/training-computer-use-models-trajectories-1))
-- **App-Use Framework**: Mobile and desktop app automation capabilities
-
-### April 2025
-
-- **Agent Framework v0.4**: Unified API for 100+ model configurations
-- **UI-TARS Integration**: Local inference support for ByteDance's desktop-optimized model
-- **Blog Series**: "Build Your Own Operator" tutorials ([Part 1](https://www.cua.ai/blog/build-your-own-operator-on-macos-1) | [Part 2](https://www.cua.ai/blog/build-your-own-operator-on-macos-2))
-
-### March 2025
-
-- **Initial Public Release**: Core Agent SDK and Computer SDK
-- **Lume VM Manager**: macOS VM management tool for local development
-
-# Resources
-
-- [Cua Blog](https://www.cua.ai/blog)
-- [Cua Docs](https://cua.ai/docs)
-
-# Community and Contributions
-
-We welcome contributions to Cua! Please refer to our [Contributing Guidelines](CONTRIBUTING.md) for details.
-
-Join our [Discord community](https://discord.com/invite/mVnXXpdE85) to discuss ideas, get assistance, or share your demos!
-
-# License
-
-Cua is open-sourced under the MIT License - see the [LICENSE](LICENSE.md) file for details.
-
-Portions of this project, specifically components adapted from Kasm Technologies Inc., are also licensed under the MIT License. See [libs/kasm/LICENSE](libs/kasm/LICENSE) for details.
-
-Microsoft's OmniParser, which is used in this project, is licensed under the Creative Commons Attribution 4.0 International License (CC-BY-4.0). See the [OmniParser LICENSE](https://github.com/microsoft/OmniParser/blob/master/LICENSE) for details.
-
-## Third-Party Licenses and Optional Components
-
-Some optional extras for this project depend on third-party packages that are licensed under terms different from the MIT License.
-
-- The optional "omni" extra (installed via `pip install "cua-agent[omni]"`) installs the `cua-som` module, which includes `ultralytics` and is licensed under the AGPL-3.0.
-
-When you choose to install and use such optional extras, your use, modification, and distribution of those third-party components are governed by their respective licenses (e.g., AGPL-3.0 for `ultralytics`).
+- [Kasm](libs/kasm/LICENSE) (MIT)
+- [OmniParser](https://github.com/microsoft/OmniParser/blob/master/LICENSE) (CC-BY-4.0)
+- Optional `cua-agent[omni]` includes ultralytics (AGPL-3.0)
 
 ## Trademarks
 
-Apple, macOS, and Apple Silicon are trademarks of Apple Inc.  
-Ubuntu and Canonical are registered trademarks of Canonical Ltd.  
-Microsoft is a registered trademark of Microsoft Corporation.
+Apple, macOS, Ubuntu, Canonical, and Microsoft are trademarks of their respective owners. This project is not affiliated with or endorsed by these companies.
 
-This project is not affiliated with, endorsed by, or sponsored by Apple Inc., Canonical Ltd., Microsoft Corporation, or Kasm Technologies.
+---
 
-# Stargazers
-
-Thank you to all our supporters!
+<div align="center">
 
 [![Stargazers over time](https://starchart.cc/trycua/cua.svg?variant=adaptive)](https://starchart.cc/trycua/cua)
-
-# Sponsors
 
 Thank you to all our [GitHub Sponsors](https://github.com/sponsors/trycua)!
 
 <img width="300" alt="coderabbit-cli" src="https://github.com/user-attachments/assets/23a98e38-7897-4043-8ef7-eb990520dccc" />
+
+</div>

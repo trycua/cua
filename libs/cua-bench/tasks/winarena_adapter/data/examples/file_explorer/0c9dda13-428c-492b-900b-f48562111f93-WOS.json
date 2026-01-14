@@ -22,10 +22,7 @@
     {
       "type": "launch",
       "parameters": {
-        "command": [
-          "explorer",
-          "C:\\Users\\Docker\\Documents"
-        ]
+        "command": ["explorer", "C:\\Users\\Docker\\Documents"]
       }
     },
     {
@@ -36,9 +33,7 @@
     }
   ],
   "trajectory": "trajectories/",
-  "related_apps": [
-    "file_explorer"
-  ],
+  "related_apps": ["file_explorer"],
   "evaluator": {
     "postconfig": [
       {

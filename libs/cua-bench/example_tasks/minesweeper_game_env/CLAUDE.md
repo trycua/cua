@@ -10,6 +10,7 @@ cua-bench is a toolkit for building computer-use RL environments and benchmarks.
 This file is auto-loaded by Claude Code to give you immediate context when you work inside this template.
 
 ## Decorator cheat sheet
+
 - @cb.tasks_config(split="train")
   - Returns list[cb.Task]
   - Each Task can include: description: str, metadata: dict
@@ -23,6 +24,7 @@ This file is auto-loaded by Claude Code to give you immediate context when you w
   - Return list[float] rewards, e.g. [1.0] if success else [0.0]
 
 ## Common env APIs (minimal)
+
 - env.create_sandbox(provider, setup_config)
   - Example: provider="native" or "simulated"
   - setup_config keys: os_type (e.g. "linux", "win11", "macos"), width, height, background
@@ -35,18 +37,21 @@ This file is auto-loaded by Claude Code to give you immediate context when you w
   - Minimal automation helper; see env.bot for more actions
 
 ## OS targets
+
 - Desktop examples: linux, win11, win10, macos
 - Mobile examples (when using provider="simulated" with mobile profiles): ios, android
 
 ## Starter pattern
+
 - main.py: entry point with cua-bench decorators
   - tasks_config varies OS and button_text metadata
   - setup_task creates a sandbox + small webview
   - solve_task clicks a button
-  - evaluate_task checks a JS flag window.__submitted
+  - evaluate_task checks a JS flag window.\_\_submitted
 - gui/index.html: minimalist page for the example task
 
 ## Tips for modifying this starter
+
 - Keep tasks_config fast and deterministic (pure function)
 - Put runtime work in setup_task/solve_task/evaluate_task
 - Use metadata to parameterize per-task variants (e.g. os_type, ids)
@@ -55,11 +60,13 @@ This file is auto-loaded by Claude Code to give you immediate context when you w
 - Prefer normalized, minimal outputs and clear rewards
 
 ## Working with Claude
+
 - Claude can quickly transform this starter into your target prompt (e.g., “Modify this starter to be a 2048 game”).
 - Provide: target behavior, UI changes (HTML/CSS/JS), evaluation logic, and any required assets.
 - Use concise diffs and keep main.py small; push large data or UI assets into gui/.
 
 ## Code style
+
 - Python ≥ 3.11, type hints preferred
 - Keep functions small and focused
 - No heavy comments required here; favor readable code and simple names

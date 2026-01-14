@@ -22,8 +22,7 @@ async def get_vm_folder_exists_in_documents(session, config: Dict[str, Any]) -> 
         return False
 
     result = await run_powershell(
-        session,
-        f"Test-Path -Path \"$env:USERPROFILE\\Documents\\{folder_name}\""
+        session, f'Test-Path -Path "$env:USERPROFILE\\Documents\\{folder_name}"'
     )
 
     return result["stdout"].strip().lower() == "true"
@@ -43,8 +42,7 @@ async def get_vm_file_exists_in_desktop(session, config: Dict[str, Any]) -> bool
         return False
 
     result = await run_powershell(
-        session,
-        f"Test-Path -Path \"$env:USERPROFILE\\Desktop\\{file_name}\""
+        session, f'Test-Path -Path "$env:USERPROFILE\\Desktop\\{file_name}"'
     )
 
     return result["stdout"].strip().lower() == "true"
@@ -82,7 +80,7 @@ async def get_is_file_hidden(session, config: Dict[str, Any]) -> int:
 
     result = await run_powershell(
         session,
-        f"(Get-Item -Path '{path}' -Force).Attributes -band [System.IO.FileAttributes]::Hidden"
+        f"(Get-Item -Path '{path}' -Force).Attributes -band [System.IO.FileAttributes]::Hidden",
     )
 
     # If result is non-empty and not "0", file is hidden
@@ -114,7 +112,7 @@ files = [(f, os.path.getmtime(os.path.join(r'{directory}', f)))
          if os.path.isfile(os.path.join(r'{directory}', f))]
 sorted_files = sorted(files, key=lambda x: x[1], reverse=True)
 print('true' if files == sorted_files else 'false')
-"""
+""",
     )
 
     return result["stdout"].strip().lower() == "true"
@@ -147,7 +145,7 @@ async def get_all_png_file_names(session, config: Dict[str, Any]) -> list:
 
     result = await run_powershell(
         session,
-        f"Get-ChildItem -Path '{directory}' -Filter '*.png' | Select-Object -ExpandProperty Name"
+        f"Get-ChildItem -Path '{directory}' -Filter '*.png' | Select-Object -ExpandProperty Name",
     )
 
     if result["exit_code"] == 0 and result["stdout"]:
@@ -163,7 +161,7 @@ async def get_zipped_folder_in_desktop(session, config: Dict[str, Any]) -> Optio
     """
     result = await run_powershell(
         session,
-        "Get-ChildItem -Path \"$env:USERPROFILE\\Desktop\" -Filter '*.zip' | Select-Object -First 1 -ExpandProperty Name"
+        "Get-ChildItem -Path \"$env:USERPROFILE\\Desktop\" -Filter '*.zip' | Select-Object -First 1 -ExpandProperty Name",
     )
 
     if result["exit_code"] == 0 and result["stdout"]:
@@ -201,7 +199,7 @@ foreach ($file in $docxFiles) {{
     }}
 }}
 Write-Output $allInArchive
-"""
+""",
     )
 
     return result["stdout"].strip().lower() == "true"
@@ -225,7 +223,7 @@ async def get_is_directory_read_only_for_user(session, config: Dict[str, Any]) -
 
     result = await run_powershell(
         session,
-        f"(Get-Acl '{directory}').Access | Where-Object {{ $_.IdentityReference -like '*{user}*' }} | Select-Object -ExpandProperty FileSystemRights"
+        f"(Get-Acl '{directory}').Access | Where-Object {{ $_.IdentityReference -like '*{user}*' }} | Select-Object -ExpandProperty FileSystemRights",
     )
 
     if result["exit_code"] == 0:
@@ -281,7 +279,7 @@ $library = $shell.NameSpace('shell:::{{{library_name}}}')
 if ($library) {{
     $library.Items() | ForEach-Object {{ $_.Path }}
 }}
-"""
+""",
     )
 
     if result["exit_code"] == 0 and result["stdout"]:
@@ -304,8 +302,7 @@ async def get_is_files_moved_downloads(session, config: Dict[str, Any]) -> bool:
 
     for file_name in file_names:
         result = await run_powershell(
-            session,
-            f"Test-Path -Path \"$env:USERPROFILE\\Downloads\\{file_name}\""
+            session, f'Test-Path -Path "$env:USERPROFILE\\Downloads\\{file_name}"'
         )
         if result["stdout"].strip().lower() != "true":
             return False

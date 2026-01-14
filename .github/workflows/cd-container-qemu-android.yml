@@ -1,0 +1,18 @@
+name: "CD: Container QEMU Android"
+
+on:
+  push:
+    tags:
+      - "docker-cua-qemu-android-v*.*.*"
+
+jobs:
+  publish:
+    uses: ./.github/workflows/docker-reusable-publish.yml
+    with:
+      image_name: cua-qemu-android
+      context_dir: libs/qemu-docker/android
+      tag_prefix: docker-cua-qemu-android-v
+      docker_hub_org: trycua
+      skip_arm64: true # Android QEMU image is not buildable on arm64
+    secrets:
+      DOCKER_HUB_TOKEN: ${{ secrets.DOCKER_HUB_TOKEN }}

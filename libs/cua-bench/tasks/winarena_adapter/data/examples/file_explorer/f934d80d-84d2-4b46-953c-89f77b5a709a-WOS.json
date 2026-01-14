@@ -7,18 +7,18 @@
     {
       "type": "download",
       "parameters": {
-          "files": [
-              {
-                  "url": "https://raw.githubusercontent.com/rogeriobonatti/winarenafiles/main/task_files/file_explorer/f934d80d-84d2-4b46-953c-89f77b5a709a-WOS/config/SampleText.txt",
-                  "path": "C:\\Users\\Docker\\Desktop\\example.txt"
-              }
-          ]
+        "files": [
+          {
+            "url": "https://raw.githubusercontent.com/rogeriobonatti/winarenafiles/main/task_files/file_explorer/f934d80d-84d2-4b46-953c-89f77b5a709a-WOS/config/SampleText.txt",
+            "path": "C:\\Users\\Docker\\Desktop\\example.txt"
+          }
+        ]
       }
     },
     {
       "type": "recycle_file",
       "parameters": {
-          "path": "C:\\Users\\Docker\\Desktop\\example.txt"
+        "path": "C:\\Users\\Docker\\Desktop\\example.txt"
       }
     },
     {
@@ -29,20 +29,18 @@
     }
   ],
   "trajectory": "trajectories/",
-  "related_apps": [
-    "file_explorer"
-  ],
+  "related_apps": ["file_explorer"],
   "evaluator": {
     "func": "exact_match",
     "result": {
-        "type": "is_file_desktop",
-        "filename": "example.txt"
+      "type": "is_file_desktop",
+      "filename": "example.txt"
     },
     "expected": {
-        "type": "rule",
-        "rules": {
-            "expected": "true"
-        }
+      "type": "rule",
+      "rules": {
+        "expected": "true"
+      }
     }
-}
+  }
 }

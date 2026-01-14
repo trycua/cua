@@ -7,18 +7,12 @@
     {
       "type": "launch",
       "parameters": {
-        "command": [
-          "start",
-          "msedge",
-          "https://www.mathsisfun.com/games/2048.html"
-        ]
+        "command": ["start", "msedge", "https://www.mathsisfun.com/games/2048.html"]
       }
     }
   ],
   "trajectory": "trajectories\\",
-  "related_apps": [
-    "msedge"
-  ],
+  "related_apps": ["msedge"],
   "evaluator": {
     "func": "is_url_shortcut_on_desktop",
     "result": {

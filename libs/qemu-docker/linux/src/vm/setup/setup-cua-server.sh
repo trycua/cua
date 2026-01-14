@@ -1,5 +1,5 @@
 #!/bin/bash
-# Setup CUA Computer Server on Linux
+# Setup Cua Computer Server on Linux
 # Creates a system-level systemd service to run computer server in background
 
 set -e
@@ -16,14 +16,14 @@ log() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" | tee -a "$LOG_FILE"
 }
 
-log "=== Installing CUA Computer Server ==="
+log "=== Installing Cua Computer Server ==="
 
 # Install Python 3 and venv
 log "Installing Python 3 and dependencies..."
 sudo apt-get install -y python3 python3-venv python3-pip python3-tk python3-dev gnome-screenshot
 
-# Create CUA directory
-log "Creating CUA directory at $CUA_DIR..."
+# Create Cua directory
+log "Creating Cua directory at $CUA_DIR..."
 sudo mkdir -p "$CUA_DIR"
 sudo chown "$USER_NAME:$USER_NAME" "$CUA_DIR"
 
@@ -57,7 +57,7 @@ log "Creating start script at $START_SCRIPT..."
 
 cat > "$START_SCRIPT" << 'EOF'
 #!/bin/bash
-# CUA Computer Server Start Script with auto-restart
+# Cua Computer Server Start Script with auto-restart
 
 CUA_DIR="/opt/cua-server"
 VENV_DIR="$CUA_DIR/venv"
@@ -67,7 +67,7 @@ start_server() {
     echo "$(date '+%Y-%m-%d %H:%M:%S') Updating cua-computer-server..." >> "$LOG_FILE"
     "$VENV_DIR/bin/pip" install --upgrade cua-computer-server >> "$LOG_FILE" 2>&1
 
-    echo "$(date '+%Y-%m-%d %H:%M:%S') Starting CUA Computer Server on port 5000..." >> "$LOG_FILE"
+    echo "$(date '+%Y-%m-%d %H:%M:%S') Starting Cua Computer Server on port 5000..." >> "$LOG_FILE"
     "$VENV_DIR/bin/python" -m computer_server --port 5000 >> "$LOG_FILE" 2>&1
     return $?
 }
@@ -87,7 +87,7 @@ log "Start script created"
 log "Creating xhost script..."
 sudo tee /etc/X11/Xsession.d/99xauth > /dev/null << 'EOF'
 #!/bin/sh
-# Grant local X11 access for CUA Computer Server
+# Grant local X11 access for Cua Computer Server
 export DISPLAY=:0
 xhost +local: 2>/dev/null || true
 EOF
@@ -99,7 +99,7 @@ log "Creating systemd system service..."
 
 sudo tee /etc/systemd/system/$SERVICE_NAME.service > /dev/null << EOF
 [Unit]
-Description=CUA Computer Server
+Description=Cua Computer Server
 After=graphical.target
 
 [Service]
@@ -119,7 +119,7 @@ EOF
 
 log "Systemd service created at /etc/systemd/system/$SERVICE_NAME.service"
 
-# Ensure proper ownership of CUA directory
+# Ensure proper ownership of Cua directory
 log "Setting ownership of $CUA_DIR to $USER_NAME..."
 sudo chown -R "$USER_NAME:$USER_NAME" "$CUA_DIR"
 
@@ -128,8 +128,8 @@ log "Enabling systemd service..."
 sudo systemctl daemon-reload
 sudo systemctl enable "$SERVICE_NAME.service"
 
-log "Starting CUA Computer Server service..."
+log "Starting Cua Computer Server service..."
 sudo systemctl start "$SERVICE_NAME.service" || true
 
-log "=== CUA Computer Server setup completed ==="
+log "=== Cua Computer Server setup completed ==="
 log "Service status: $(sudo systemctl is-active $SERVICE_NAME.service 2>/dev/null || echo 'unknown')"

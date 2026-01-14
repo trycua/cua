@@ -10,7 +10,7 @@ Welcome to the next chapter in our Computer-Use Agent journey! In [Part 1](./bui
 
 ## What is Cua Cloud?
 
-Think of Cua Cloud as **Docker for Computer-Use Agents**. Instead of managing VMs, installing dependencies, and configuring environments, you can launch pre-configured Cloud Sandbox instances with a single command. Each sandbox comes with a **full desktop environment** accessible via browser (via noVNC), all CUA-related dependencies pre-configured (with an automation-compatible server), and **pay-per-use pricing** that scales with your needs.
+Think of Cua Cloud as **Docker for Computer-Use Agents**. Instead of managing VMs, installing dependencies, and configuring environments, you can launch pre-configured Cloud Sandbox instances with a single command. Each sandbox comes with a **full desktop environment** accessible via browser (via noVNC), all Cua-related dependencies pre-configured (with a built-in automation server), and **pay-per-use pricing** that scales with your needs.
 
 ## Why Cua Cloud Sandbox?
 

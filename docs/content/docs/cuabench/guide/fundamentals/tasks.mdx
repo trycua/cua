@@ -65,7 +65,8 @@ async def start(task_cfg: cb.Task, session: cb.DesktopSession | cb.MobileSession
 ```
 
 <Callout title="Async Required" type="warn">
-  All task functions (setup, evaluate, solve) must be `async` functions, and session methods must be called with `await`.
+  All task functions (setup, evaluate, solve) must be `async` functions, and session methods must be
+  called with `await`.
 </Callout>
 
 ### 3. Evaluation (`@cb.evaluate_task`)
@@ -164,7 +165,8 @@ await session.run_command("sudo apt update && sudo apt install firefox")
 ```
 
 <Callout title="Compatibility Warning" type="warn">
-  This feature is only supported by `VMDesktopSession` and not `WebDesktopSession`. Avoid using this API for writing tasks unless you cannot create your task with the other provided environment APIs.
+  This feature is only supported by `VMDesktopSession` and not `WebDesktopSession`. Avoid using this
+  API for writing tasks unless you cannot create your task with the other provided environment APIs.
 </Callout>
 
 ## Structuring your task folders

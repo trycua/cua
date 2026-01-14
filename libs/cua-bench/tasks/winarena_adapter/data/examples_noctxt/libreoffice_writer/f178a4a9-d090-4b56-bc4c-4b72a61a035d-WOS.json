@@ -24,35 +24,33 @@
     }
   ],
   "trajectory": "trajectories/",
-  "related_apps": [
-    "libreoffice_writer"
-  ],
+  "related_apps": ["libreoffice_writer"],
   "evaluator": {
     "postconfig": [
-        {
-          "type": "activate_window",
-          "parameters": {
-            "window_name": "loa-one-time-submission-sealand.docx — LibreOffice Writer",
-            "strict": true
-          }
-        },
-        {
-          "type": "sleep",
-          "parameters": {
-            "seconds": 0.5
-          }
-        },
-        {
-          "type": "execute",
-          "parameters": {
-            "command": [
-              "python",
-              "-c",
-              "import pyautogui; import time; pyautogui.hotkey('ctrl', 's'); time.sleep(0.5); "
-            ]
-          }
+      {
+        "type": "activate_window",
+        "parameters": {
+          "window_name": "loa-one-time-submission-sealand.docx — LibreOffice Writer",
+          "strict": true
         }
-      ],    
+      },
+      {
+        "type": "sleep",
+        "parameters": {
+          "seconds": 0.5
+        }
+      },
+      {
+        "type": "execute",
+        "parameters": {
+          "command": [
+            "python",
+            "-c",
+            "import pyautogui; import time; pyautogui.hotkey('ctrl', 's'); time.sleep(0.5); "
+          ]
+        }
+      }
+    ],
     "func": "find_default_font",
     "expected": {
       "type": "rule",

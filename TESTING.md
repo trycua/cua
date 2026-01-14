@@ -1,4 +1,4 @@
-# Testing Guide for CUA
+# Testing Guide for Cua
 
 Quick guide to running tests and understanding the test architecture.
 
@@ -77,7 +77,7 @@ def mock_api():
 
 ## 🔄 CI/CD
 
-Tests run automatically on every PR via GitHub Actions (`.github/workflows/python-tests.yml`):
+Tests run automatically on every PR via GitHub Actions (`.github/workflows/ci-python-tests.yml`):
 
 - Matrix strategy: each package tested separately
 - Python 3.12

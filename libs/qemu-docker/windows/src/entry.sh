@@ -34,7 +34,7 @@ echo "Starting Windows VM..."
 VM_PID=$!
 echo "Live stream accessible at localhost:8006"
 
-echo "Waiting for Windows to boot and CUA computer-server to start..."
+echo "Waiting for Windows to boot and Cua computer-server to start..."
 
 VM_IP=""
 while true; do
@@ -57,11 +57,11 @@ while true; do
     break
   fi
 
-  echo "Waiting for CUA computer-server to be ready. This might take a while..."
+  echo "Waiting for Cua computer-server to be ready. This might take a while..."
   sleep 5
 done
 
-echo "VM is up and running, and the CUA Computer Server is ready!"
+echo "VM is up and running, and the Cua Computer Server is ready!"
 
 echo "Computer server accessible at localhost:5000"
 

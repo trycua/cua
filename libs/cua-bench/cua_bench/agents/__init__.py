@@ -5,7 +5,7 @@ from __future__ import annotations
 import importlib
 from typing import TYPE_CHECKING
 
-from .base import BaseAgent, AgentResult, FailureMode
+from .base import AgentResult, BaseAgent, FailureMode
 
 if TYPE_CHECKING:
     from cua_bench.config import ConfigLoader
@@ -16,9 +16,11 @@ _AGENT_REGISTRY = {}
 
 def register_agent(name: str):
     """Decorator to register an agent class with a given name."""
+
     def decorator(cls):
         _AGENT_REGISTRY[name] = cls
         return cls
+
     return decorator
 
 
@@ -38,8 +40,7 @@ def load_agent_from_path(import_path: str) -> type[BaseAgent]:
     """
     if ":" not in import_path:
         raise ValueError(
-            f"Invalid agent import path: {import_path}. "
-            "Expected format: 'module.path:ClassName'"
+            f"Invalid agent import path: {import_path}. " "Expected format: 'module.path:ClassName'"
         )
 
     module_path, class_name = import_path.split(":", 1)
@@ -94,9 +95,10 @@ def list_agents(config_loader: "ConfigLoader | None" = None) -> list[str]:
 
     return sorted(agents)
 
+
 # Import agents (they will self-register via decorators)
-from .cua_agent import CuaAgent
-from .gemini import GeminiAgent
+from .cua_agent import CuaAgent  # noqa: E402
+from .gemini import GeminiAgent  # noqa: E402
 
 __all__ = [
     "BaseAgent",

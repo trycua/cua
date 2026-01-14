@@ -837,7 +837,7 @@ class GeminiComputerUseConfig(AsyncAgentConfig):
         instruction: str,
         **kwargs,
     ) -> Optional[Tuple[float, float]]:
-        """Ask Gemini CUA to output a single click action for the given instruction.
+        """Ask Gemini Cua to output a single click action for the given instruction.
 
         For Gemini 2.5: Excludes all predefined tools except `click_at` and sends the screenshot.
         For Gemini 3: Uses only the click_at function declaration.

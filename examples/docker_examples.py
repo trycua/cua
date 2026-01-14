@@ -9,7 +9,7 @@ async def main():
     # # Create docker provider
     # provider = VMProviderFactory.create_provider(
     #     provider_type="docker",
-    #     image="cua-ubuntu:latest",  # Your CUA Ubuntu image
+    #     image="cua-ubuntu:latest",  # Your Cua Ubuntu image
     #     port=8080,
     #     vnc_port=6901
     # )

@@ -4,7 +4,7 @@ build-backend = "pdm.backend"
 
 [project]
 name = "cua-mcp-server"
-description = "MCP Server for Computer-Use Agent (CUA)"
+description = "MCP Server for Computer-Use Agent (Cua)"
 readme = "README.md"
 requires-python = ">=3.12,<3.14"
 version = "0.1.15"

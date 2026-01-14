@@ -1,0 +1,148 @@
+name: Reusable GitHub Release Workflow
+
+on:
+  workflow_call:
+    inputs:
+      tag_name:
+        description: "Git tag name (e.g., computer-v0.5.0)"
+        required: true
+        type: string
+      release_name:
+        description: "Release display name (e.g., cua-computer v0.5.0)"
+        required: true
+        type: string
+      module_path:
+        description: "Path to the module for filtering commits (e.g., libs/python/agent)"
+        required: false
+        type: string
+        default: ""
+      generate_notes:
+        description: "Auto-generate release notes with attribution"
+        required: false
+        type: boolean
+        default: true
+      body:
+        description: "Custom release notes content (appended to auto-generated notes)"
+        required: false
+        type: string
+        default: ""
+      attach_artifacts:
+        description: "Whether to download and attach workflow artifacts to the release"
+        required: false
+        type: boolean
+        default: false
+      draft:
+        description: "Create as draft release"
+        required: false
+        type: boolean
+        default: false
+      prerelease:
+        description: "Mark as pre-release"
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  create-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Generate path-filtered release notes
+        if: inputs.module_path != '' && inputs.generate_notes
+        id: release-notes
+        run: |
+          # Extract tag prefix to find previous release (e.g., "pypi-agent-v" from "pypi-agent-v0.5.0")
+          TAG_PREFIX=$(echo "${{ inputs.tag_name }}" | sed 's/[0-9]*\.[0-9]*\.[0-9]*$//')
+
+          # Find previous tag with same prefix
+          PREV_TAG=$(git tag -l "${TAG_PREFIX}*" --sort=-v:refname | grep -v "^${{ inputs.tag_name }}$" | head -n 1 || echo "")
+
+          echo "Current tag: ${{ inputs.tag_name }}"
+          echo "Tag prefix: $TAG_PREFIX"
+          echo "Previous tag: $PREV_TAG"
+
+          # Generate release notes
+          if [ -n "$PREV_TAG" ]; then
+            echo "Generating notes for commits between $PREV_TAG and HEAD in ${{ inputs.module_path }}"
+            NOTES=$(git log ${PREV_TAG}..HEAD --pretty=format:"* %s (%h) by @%an" -- "${{ inputs.module_path }}" | head -50)
+          else
+            echo "No previous tag found, generating notes for all commits in ${{ inputs.module_path }}"
+            NOTES=$(git log --pretty=format:"* %s (%h) by @%an" -- "${{ inputs.module_path }}" | head -50)
+          fi
+
+          if [ -z "$NOTES" ]; then
+            NOTES="* Initial release or no path-specific changes found"
+          fi
+
+          # Store notes in output (handle multiline)
+          echo "RELEASE_NOTES<<EOF" >> $GITHUB_OUTPUT
+          echo "## What's Changed" >> $GITHUB_OUTPUT
+          echo "" >> $GITHUB_OUTPUT
+          echo "$NOTES" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Download artifacts
+        if: inputs.attach_artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: List downloaded artifacts
+        if: inputs.attach_artifacts
+        run: |
+          echo "Downloaded artifacts:"
+          ls -lah release-assets/
+
+      - name: Prepare release body
+        id: prepare-body
+        env:
+          # Use env vars to avoid shell interpretation of backticks in commit messages
+          RELEASE_NOTES: ${{ steps.release-notes.outputs.RELEASE_NOTES }}
+          CUSTOM_BODY: ${{ inputs.body }}
+        run: |
+          # Combine path-filtered notes with custom body
+          BODY=""
+
+          # Add path-filtered notes if available
+          if [ -n "$RELEASE_NOTES" ]; then
+            BODY="$RELEASE_NOTES"
+          fi
+
+          # Add custom body if provided
+          if [ -n "$CUSTOM_BODY" ]; then
+            if [ -n "$BODY" ]; then
+              BODY="$BODY
+
+          $CUSTOM_BODY"
+            else
+              BODY="$CUSTOM_BODY"
+            fi
+          fi
+
+          # Store in output
+          echo "BODY<<EOF" >> $GITHUB_OUTPUT
+          echo "$BODY" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.tag_name }}
+          name: ${{ inputs.release_name }}
+          body: ${{ steps.prepare-body.outputs.BODY }}
+          draft: ${{ inputs.draft }}
+          prerelease: ${{ inputs.prerelease }}
+          # Only use GitHub auto-generated notes if module_path is not specified
+          generate_release_notes: ${{ inputs.module_path == '' && inputs.generate_notes }}
+          files: |
+            release-assets/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

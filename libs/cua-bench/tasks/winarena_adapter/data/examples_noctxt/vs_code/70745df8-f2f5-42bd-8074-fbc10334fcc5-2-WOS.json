@@ -5,18 +5,15 @@
   "source": "https://download.microsoft.com/download/8/A/4/8A48E46A-C355-4E5C-8417-E6ACD8A207D4/VisualStudioCode-TipsAndTricks-Vol.1.pdf",
   "_comments": "removing parts of the config because they are not relevant to task (downloading and extracting some random file)",
   "config": [
-   
     {
-        "type": "sleep",
-        "parameters": {
-          "seconds": 2
-        }
+      "type": "sleep",
+      "parameters": {
+        "seconds": 2
       }
+    }
   ],
   "trajectory": "trajectories/",
-  "related_apps": [
-    "vscode"
-  ],
+  "related_apps": ["vscode"],
   "evaluator": {
     "func": "check_json_settings",
     "expected": {

@@ -3,8 +3,6 @@
 import logging
 from typing import Any, Dict, Optional
 
-from .base import run_powershell
-
 logger = logging.getLogger("winarena.getters_async.general")
 
 

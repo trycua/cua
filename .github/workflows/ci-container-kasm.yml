@@ -1,0 +1,15 @@
+name: "CI: Container Kasm"
+
+on:
+  pull_request:
+    paths:
+      - "libs/kasm/**"
+      - ".github/workflows/ci-container-kasm.yml"
+      - ".github/workflows/docker-reusable-build.yml"
+
+jobs:
+  build:
+    uses: ./.github/workflows/docker-reusable-build.yml
+    with:
+      image_name: cua-ubuntu
+      context_dir: libs/kasm

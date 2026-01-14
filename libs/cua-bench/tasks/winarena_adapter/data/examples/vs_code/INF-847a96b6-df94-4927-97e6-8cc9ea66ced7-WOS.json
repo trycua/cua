@@ -8,14 +8,14 @@
       "type": "command",
       "parameters": {
         "command": [
-            "powershell",
-            "-Command",
-            "New-Item", 
-            "-ItemType", 
-            "Directory", 
-            "-Force", 
-            "-Path", 
-            "C:\\Users\\Docker\\Downloads\\project1"
+          "powershell",
+          "-Command",
+          "New-Item",
+          "-ItemType",
+          "Directory",
+          "-Force",
+          "-Path",
+          "C:\\Users\\Docker\\Downloads\\project1"
         ]
       }
     },
@@ -23,14 +23,14 @@
       "type": "command",
       "parameters": {
         "command": [
-            "powershell",
-            "-Command",            
-            "New-Item", 
-            "-ItemType", 
-            "Directory", 
-            "-Force", 
-            "-Path", 
-            "C:\\Users\\Docker\\Downloads\\project2"
+          "powershell",
+          "-Command",
+          "New-Item",
+          "-ItemType",
+          "Directory",
+          "-Force",
+          "-Path",
+          "C:\\Users\\Docker\\Downloads\\project2"
         ]
       }
     },
@@ -52,17 +52,15 @@
     {
       "type": "launch",
       "parameters": {
-        "command": [
-          "code"
-        ]
+        "command": ["code"]
       }
     },
     {
-        "type": "sleep",
-        "parameters": {
-          "seconds": 2
-        }
-      },
+      "type": "sleep",
+      "parameters": {
+        "seconds": 2
+      }
+    },
     {
       "type": "activate_window",
       "parameters": {
@@ -71,9 +69,7 @@
     }
   ],
   "trajectory": "trajectories/",
-  "related_apps": [
-    "vscode"
-  ],
+  "related_apps": ["vscode"],
   "evaluator": {
     "func": "infeasible"
   }

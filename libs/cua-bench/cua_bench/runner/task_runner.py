@@ -7,16 +7,14 @@ communicating via Docker network.
 import asyncio
 import os
 import shutil
-import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional
 
+from ..sessions.providers.local_environment import check_image_exists, pull_image
 from .docker_utils import (
     ContainerInfo,
     allocate_ports,
-    cleanup_stale_containers,
-    cleanup_stale_networks,
     create_network,
     create_overlay_copy,
     full_cleanup,
@@ -29,8 +27,6 @@ from .docker_utils import (
     stop_container,
     wait_for_container,
 )
-from ..sessions.providers.local_environment import check_image_exists, pull_image
-
 
 # =============================================================================
 # Configuration
@@ -75,6 +71,7 @@ ENV_CONFIGS = {
 # Default agent image
 DEFAULT_AGENT_IMAGE = "cua-bench:latest"
 
+
 # XDG data directory
 def get_data_dir() -> Path:
     """Get XDG data directory for cua-bench."""
@@ -96,9 +93,11 @@ def get_overlays_path() -> Path:
 # Data Types
 # =============================================================================
 
+
 @dataclass
 class TaskResult:
     """Result of a task execution."""
+
     success: bool
     exit_code: int
     agent_logs: str
@@ -110,6 +109,7 @@ class TaskResult:
 # =============================================================================
 # Task Runner
 # =============================================================================
+
 
 class TaskRunner:
     """Orchestrates 2-container task execution.
@@ -251,7 +251,9 @@ class TaskRunner:
 
         # Validate env_type (skip validation for simulated since we don't use it)
         if not is_simulated and env_type not in ENV_CONFIGS:
-            raise ValueError(f"Unknown env_type: {env_type}. Valid types: {list(ENV_CONFIGS.keys())}")
+            raise ValueError(
+                f"Unknown env_type: {env_type}. Valid types: {list(ENV_CONFIGS.keys())}"
+            )
 
         config = ENV_CONFIGS.get(env_type, {}) if not is_simulated else {}
         golden_name = golden_name or env_type if not is_simulated else "simulated"
@@ -287,9 +289,8 @@ class TaskRunner:
             await create_network(network_name)
 
             # 2. Start environment container (skip for simulated providers)
-            env_container = None
             if not is_simulated:
-                env_container = await self._start_env_container(
+                await self._start_env_container(
                     task_id=task_id,
                     network_name=network_name,
                     env_type=env_type,
@@ -303,7 +304,7 @@ class TaskRunner:
                 )
 
             # 3. Start agent container (agent handles waiting for env)
-            agent_container = await self._start_agent_container(
+            await self._start_agent_container(
                 task_id=task_id,
                 network_name=network_name,
                 env_path=env_path,
@@ -323,10 +324,10 @@ class TaskRunner:
             # 3.5. Start streaming agent logs to file if requested
             if stream_agent_logs and output_dir:
                 from .docker_utils import stream_container_logs_to_file
+
                 log_file = Path(output_dir) / "run.log"
                 log_stream_process = await stream_container_logs_to_file(
-                    agent_container_name,
-                    log_file
+                    agent_container_name, log_file
                 )
 
             # 4. Wait for agent to complete
@@ -460,7 +461,9 @@ class TaskRunner:
 
         # Validate env_type
         if env_type not in ENV_CONFIGS:
-            raise ValueError(f"Unknown env_type: {env_type}. Valid types: {list(ENV_CONFIGS.keys())}")
+            raise ValueError(
+                f"Unknown env_type: {env_type}. Valid types: {list(ENV_CONFIGS.keys())}"
+            )
 
         config = ENV_CONFIGS[env_type]
         golden_name = golden_name or env_type
@@ -523,9 +526,10 @@ class TaskRunner:
 
         if env_path and env_path.exists() and api_url:
             try:
+                import time
+
                 from cua_bench import make
                 from cua_bench.computers.remote import RemoteDesktopSession
-                import time
 
                 # Load task definition
                 env_obj = make(str(env_path))
@@ -536,9 +540,11 @@ class TaskRunner:
                     if tasks and len(tasks) > task_index:
                         task_cfg = tasks[task_index]
                         task_config = {
-                            'description': task_cfg.description if hasattr(task_cfg, 'description') else None,
-                            'metadata': task_cfg.metadata if hasattr(task_cfg, 'metadata') else {},
-                            '_task_cfg': task_cfg,  # Store for evaluation
+                            "description": (
+                                task_cfg.description if hasattr(task_cfg, "description") else None
+                            ),
+                            "metadata": task_cfg.metadata if hasattr(task_cfg, "metadata") else {},
+                            "_task_cfg": task_cfg,  # Store for evaluation
                         }
 
                         # Create remote session
@@ -559,10 +565,11 @@ class TaskRunner:
                             _elapsed = time.perf_counter() - _t0
 
                             # Store setup time in task_config for display
-                            task_config['_setup_time'] = _elapsed
-                            task_config['_screenshot_size'] = len(screenshot)
+                            task_config["_setup_time"] = _elapsed
+                            task_config["_screenshot_size"] = len(screenshot)
             except Exception as e:
                 import traceback
+
                 print(f"Warning: Failed to run task setup: {e}")
                 traceback.print_exc()
 
@@ -659,7 +666,11 @@ class TaskRunner:
         print(f"  Source: {agent_path}")
 
         process = await asyncio.create_subprocess_exec(
-            "docker", "build", "-t", image_tag, ".",
+            "docker",
+            "build",
+            "-t",
+            image_tag,
+            ".",
             cwd=agent_path,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
@@ -667,7 +678,7 @@ class TaskRunner:
         stdout, stderr = await process.communicate()
 
         if process.returncode != 0:
-            print(f"Failed to build agent image:")
+            print("Failed to build agent image:")
             print(stderr.decode())
             return False
 
@@ -788,8 +799,12 @@ class TaskRunner:
             agent_command = resolved_command
 
         # Build API URL using network hostname (not used for simulated, but set for consistency)
-        api_url = f"http://{self.env_hostname}:{config.get('internal_api_port', 5000)}" if config else ""
-        vnc_url = f"http://{self.env_hostname}:{config.get('internal_vnc_port', 8006)}" if config else ""
+        api_url = (
+            f"http://{self.env_hostname}:{config.get('internal_api_port', 5000)}" if config else ""
+        )
+        vnc_url = (
+            f"http://{self.env_hostname}:{config.get('internal_vnc_port', 8006)}" if config else ""
+        )
 
         # Build environment variables (available to all agent images)
         env_vars = {

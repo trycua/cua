@@ -1,0 +1,66 @@
+name: Reusable NPM Package Build Workflow
+
+on:
+  workflow_call:
+    inputs:
+      package_name:
+        description: "Name of the package (e.g., cli, computer, core)"
+        required: true
+        type: string
+      package_dir:
+        description: "Directory containing the package relative to workspace root (e.g., libs/typescript/cua-cli)"
+        required: true
+        type: string
+      package_manager:
+        description: "Package manager to use (pnpm or bun)"
+        required: true
+        type: string
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Use Node.js 24.x
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24.x"
+
+      - name: Setup pnpm
+        if: inputs.package_manager == 'pnpm'
+        uses: pnpm/action-setup@v4
+        with:
+          package_json_file: ${{ inputs.package_dir }}/package.json
+
+      - name: Setup Bun
+        if: inputs.package_manager == 'bun'
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        working-directory: ./${{ inputs.package_dir }}
+        run: |
+          if [ "${{ inputs.package_manager }}" = "bun" ]; then
+            bun install --frozen-lockfile
+          else
+            pnpm install --frozen-lockfile
+          fi
+
+      - name: Build package
+        working-directory: ./${{ inputs.package_dir }}
+        run: |
+          if [ "${{ inputs.package_manager }}" = "bun" ]; then
+            if grep -q '"build"' package.json; then
+              bun run build
+            fi
+          else
+            pnpm run build --if-present
+          fi
+
+      - name: Verify build
+        working-directory: ./${{ inputs.package_dir }}
+        run: |
+          echo "Successfully built @trycua/${{ inputs.package_name }}"
+          ls -la

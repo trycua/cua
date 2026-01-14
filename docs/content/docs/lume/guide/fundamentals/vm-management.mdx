@@ -1,0 +1,180 @@
+---
+title: VM Management
+description: Managing virtual machines with Lume
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+This guide covers the core operations for managing VMs with Lume.
+
+## Listing VMs
+
+```bash
+# List all VMs
+lume ls
+
+# Output includes: name, state, CPU, memory, disk size
+```
+
+## Getting VM Details
+
+```bash
+# Get detailed information about a VM
+lume get my-vm
+```
+
+This shows:
+
+- VM state (running, stopped)
+- Resource allocation (CPU, memory, disk)
+- Network configuration
+- Display settings
+
+## Running VMs
+
+```bash
+# Run with display window
+lume run my-vm
+
+# Run headless (no display)
+lume run my-vm --no-display
+
+# Run with shared directory
+lume run my-vm --shared-dir /path/to/local/folder
+
+# Run with USB storage device
+lume run my-vm --usb-storage /path/to/disk.img
+```
+
+## Stopping VMs
+
+```bash
+# Graceful stop (sends shutdown signal)
+lume stop my-vm
+
+# Force stop (immediate termination)
+lume stop my-vm --force
+```
+
+## Modifying VM Settings
+
+```bash
+# Change CPU allocation
+lume set my-vm --cpu 8
+
+# Change memory
+lume set my-vm --memory 16GB
+
+# Resize disk (can only increase)
+lume set my-vm --disk-size 100GB
+
+# Change display resolution
+lume set my-vm --display 1920x1080
+```
+
+<Callout type="warn">
+  The VM must be stopped before changing settings. Disk size can only be increased, not decreased.
+</Callout>
+
+## Cloning VMs
+
+Create a copy of an existing VM:
+
+```bash
+# Clone within same storage
+lume clone source-vm cloned-vm
+
+# Clone to different storage location
+lume clone source-vm cloned-vm --source-storage default --dest-storage external-ssd
+```
+
+## Deleting VMs
+
+```bash
+# Delete a VM
+lume delete my-vm
+
+# Delete from specific storage
+lume delete my-vm --storage external-ssd
+```
+
+## Multiple Storage Locations
+
+Lume supports storing VMs in different locations (e.g., internal drive, external SSD).
+
+### Configure Storage
+
+```bash
+# List storage locations
+lume config storage list
+
+# Add a new storage location
+lume config storage add external-ssd /Volumes/ExternalSSD/lume
+
+# Set default storage
+lume config storage default external-ssd
+
+# Remove a storage location
+lume config storage remove old-storage
+```
+
+### Using Storage Locations
+
+```bash
+# Create VM in specific storage
+lume create my-vm --os macos --ipsw latest --storage external-ssd
+
+# Run VM from specific storage
+lume run my-vm --storage external-ssd
+
+# Move VM between storage locations
+lume clone source-vm dest-vm --source-storage default --dest-storage external-ssd
+lume delete source-vm --storage default
+```
+
+## Image Caching
+
+When pulling VM images from the registry, Lume can cache the downloaded layers locally to speed up future pulls of the same or similar images. **Caching is disabled by default** to save disk space.
+
+### Enable Caching
+
+If you frequently pull images and want faster downloads:
+
+```bash
+# Enable image caching
+lume config set cachingEnabled true
+
+# Set custom cache directory (optional)
+lume config set cacheDirectory /path/to/cache
+```
+
+### View Cache Settings
+
+```bash
+# View current configuration
+lume config get
+```
+
+This displays:
+- Default VM storage location
+- Cache directory path
+- Whether caching is enabled
+
+### Clear Cache
+
+To free up disk space used by cached image layers:
+
+```bash
+# Remove cached images
+lume prune
+```
+
+<Callout type="info">
+  With caching disabled (default), each `lume pull` downloads all image layers fresh. Enable caching if you frequently pull the same images or images that share common base layers.
+</Callout>
+
+## Next Steps
+
+- [Unattended Setup](/lume/guide/fundamentals/unattended-setup) - Automate macOS setup
+- [HTTP Server](/lume/guide/advanced/http-server) - Use the REST API
+- [CLI Reference](/lume/reference/cli-reference) - Full command reference

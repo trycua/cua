@@ -35,6 +35,7 @@ from .callbacks import (
     ImageRetentionCallback,
     LoggingCallback,
     OperatorNormalizerCallback,
+    OtelCallback,
     PromptInstructionsCallback,
     TelemetryCallback,
     TrajectorySaverCallback,
@@ -299,12 +300,18 @@ class ComputerAgent:
             self.agent_loop = config_info.agent_class()
             self.agent_config_info = config_info
 
-        # Add telemetry callback AFTER agent_loop is set so it can capture the correct agent_type
+        # Add telemetry callbacks AFTER agent_loop is set so they can capture the correct agent_type
         if self.telemetry_enabled:
+            # PostHog telemetry (product analytics)
             if isinstance(self.telemetry_enabled, bool):
                 self.callbacks.append(TelemetryCallback(self))
             else:
                 self.callbacks.append(TelemetryCallback(self, **self.telemetry_enabled))
+
+            # OpenTelemetry callback (operational metrics - Four Golden Signals)
+            # This is enabled alongside PostHog when telemetry_enabled is True
+            # Users can disable via CUA_TELEMETRY_DISABLED=true env var
+            self.callbacks.append(OtelCallback(self))
 
         self.tool_schemas = []
         self.computer_handler = None
@@ -709,6 +716,36 @@ class ComputerAgent:
                 **merged_kwargs,
             }
 
+            # ---- Ollama image input guard ----
+            if isinstance(self.model, str) and (
+                "ollama/" in self.model or "ollama_chat/" in self.model
+            ):
+
+                def contains_image_content(msgs):
+                    for m in msgs:
+                        # 1️⃣ Check regular message content
+                        content = m.get("content")
+                        if isinstance(content, list):
+                            for item in content:
+                                if isinstance(item, dict) and item.get("type") == "image_url":
+                                    return True
+
+                        # 2️⃣ Check computer_call_output screenshots
+                        if m.get("type") == "computer_call_output":
+                            output = m.get("output", {})
+                            if output.get("type") == "input_image" and "image_url" in output:
+                                return True
+
+                    return False
+
+                if contains_image_content(preprocessed_messages):
+                    raise ValueError(
+                        "Ollama models do not support image inputs required by ComputerAgent. "
+                        "Please use a vision-capable model (e.g., OpenAI or Anthropic) "
+                        "or remove computer/screenshot actions."
+                    )
+            # ---------------------------------
+
             # Run agent loop iteration
             result = await self.agent_loop.predict_step(
                 **loop_kwargs,
@@ -809,7 +846,7 @@ class ComputerAgent:
         Start the playground server and open it in the browser.
 
         This method starts a local HTTP server that exposes the /responses endpoint
-        and automatically opens the CUA playground interface in the default browser.
+        and automatically opens the Cua playground interface in the default browser.
 
         Args:
             port: Port to run the server on. If None, finds an available port automatically.

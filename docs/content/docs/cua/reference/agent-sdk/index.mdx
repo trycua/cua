@@ -32,17 +32,17 @@ async for result in agent.run("Open Firefox and search for Cua"):
 
 ### Constructor Parameters
 
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `model` | `str` | Required | Model identifier (see [VLMs](/cua/guide/fundamentals/vlms)) |
-| `tools` | `list` | Required | Tools the agent can use |
-| `api_key` | `str` | Provider env var | API key for the model provider |
-| `callbacks` | `list` | `[]` | List of callback handlers |
-| `instructions` | `str` | `None` | Custom instructions prepended to prompts |
-| `verbosity` | `int` | `None` | Logging level (e.g., `logging.INFO`) |
-| `max_trajectory_budget` | `float` | `None` | Maximum cost in dollars |
-| `only_n_most_recent_images` | `int` | `None` | Limit retained screenshots |
-| `trajectory_dir` | `str` \| `dict` | `None` | Directory for saving trajectories |
+| Parameter                   | Type            | Default          | Description                                                 |
+| --------------------------- | --------------- | ---------------- | ----------------------------------------------------------- |
+| `model`                     | `str`           | Required         | Model identifier (see [VLMs](/cua/guide/fundamentals/vlms)) |
+| `tools`                     | `list`          | Required         | Tools the agent can use                                     |
+| `api_key`                   | `str`           | Provider env var | API key for the model provider                              |
+| `callbacks`                 | `list`          | `[]`             | List of callback handlers                                   |
+| `instructions`              | `str`           | `None`           | Custom instructions prepended to prompts                    |
+| `verbosity`                 | `int`           | `None`           | Logging level (e.g., `logging.INFO`)                        |
+| `max_trajectory_budget`     | `float`         | `None`           | Maximum cost in dollars                                     |
+| `only_n_most_recent_images` | `int`           | `None`           | Limit retained screenshots                                  |
+| `trajectory_dir`            | `str` \| `dict` | `None`           | Directory for saving trajectories                           |
 
 ### Methods
 
@@ -58,10 +58,10 @@ async for result in agent.run("Click the submit button"):
         print(f"Action: {result.action}")
 ```
 
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `task` | `str` | Required | Natural language task description |
-| `chat_history` | `list` | `[]` | Previous conversation messages |
+| Parameter      | Type   | Default  | Description                       |
+| -------------- | ------ | -------- | --------------------------------- |
+| `task`         | `str`  | Required | Natural language task description |
+| `chat_history` | `list` | `[]`     | Previous conversation messages    |
 
 **Yields:** `AgentResult` objects containing model responses and actions.
 
@@ -97,14 +97,14 @@ async for result in agent.run("Search for documentation"):
 
 ### Properties
 
-| Property | Type | Description |
-|----------|------|-------------|
-| `text` | `str \| None` | Text response from the model |
-| `action` | `Action \| None` | Computer action taken |
-| `screenshot` | `PIL.Image \| None` | Screenshot after action |
-| `usage` | `Usage \| None` | Token and cost information |
-| `error` | `str \| None` | Error message if action failed |
-| `done` | `bool` | True if agent considers task complete |
+| Property     | Type                | Description                           |
+| ------------ | ------------------- | ------------------------------------- |
+| `text`       | `str \| None`       | Text response from the model          |
+| `action`     | `Action \| None`    | Computer action taken                 |
+| `screenshot` | `PIL.Image \| None` | Screenshot after action               |
+| `usage`      | `Usage \| None`     | Token and cost information            |
+| `error`      | `str \| None`       | Error message if action failed        |
+| `done`       | `bool`              | True if agent considers task complete |
 
 ### Action Types
 
@@ -134,14 +134,14 @@ async for result in agent.run("Complete this form"):
 
 ### Properties
 
-| Property | Type | Description |
-|----------|------|-------------|
-| `input_tokens` | `int` | Tokens in the prompt |
-| `output_tokens` | `int` | Tokens in the response |
-| `total_tokens` | `int` | Total tokens used |
-| `response_cost` | `float` | Cost in dollars |
-| `cache_creation_input_tokens` | `int` | Tokens written to cache |
-| `cache_read_input_tokens` | `int` | Tokens read from cache |
+| Property                      | Type    | Description             |
+| ----------------------------- | ------- | ----------------------- |
+| `input_tokens`                | `int`   | Tokens in the prompt    |
+| `output_tokens`               | `int`   | Tokens in the response  |
+| `total_tokens`                | `int`   | Total tokens used       |
+| `response_cost`               | `float` | Cost in dollars         |
+| `cache_creation_input_tokens` | `int`   | Tokens written to cache |
+| `cache_read_input_tokens`     | `int`   | Tokens read from cache  |
 
 ---
 
@@ -166,9 +166,9 @@ agent = ComputerAgent(
 )
 ```
 
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `level` | `int` | `logging.INFO` | Logging level |
+| Parameter | Type  | Default        | Description   |
+| --------- | ----- | -------------- | ------------- |
+| `level`   | `int` | `logging.INFO` | Logging level |
 
 #### BudgetManagerCallback
 
@@ -188,11 +188,11 @@ agent = ComputerAgent(
 )
 ```
 
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `max_budget` | `float` | Required | Maximum cost in dollars |
-| `reset_after_each_run` | `bool` | `True` | Reset budget per run |
-| `raise_error` | `bool` | `False` | Raise exception vs graceful stop |
+| Parameter              | Type    | Default  | Description                      |
+| ---------------------- | ------- | -------- | -------------------------------- |
+| `max_budget`           | `float` | Required | Maximum cost in dollars          |
+| `reset_after_each_run` | `bool`  | `True`   | Reset budget per run             |
+| `raise_error`          | `bool`  | `False`  | Raise exception vs graceful stop |
 
 #### ImageRetentionCallback
 
@@ -208,8 +208,8 @@ agent = ComputerAgent(
 )
 ```
 
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
+| Parameter                   | Type  | Default  | Description               |
+| --------------------------- | ----- | -------- | ------------------------- |
 | `only_n_most_recent_images` | `int` | Required | Max screenshots to retain |
 
 #### TrajectorySaverCallback
@@ -230,11 +230,11 @@ agent = ComputerAgent(
 )
 ```
 
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `trajectory_dir` | `str` | Required | Base directory for trajectories |
-| `reset_on_run` | `bool` | `True` | Create new trajectory per run |
-| `screenshot_dir` | `str` | `None` | Separate directory for screenshots |
+| Parameter        | Type   | Default  | Description                        |
+| ---------------- | ------ | -------- | ---------------------------------- |
+| `trajectory_dir` | `str`  | Required | Base directory for trajectories    |
+| `reset_on_run`   | `bool` | `True`   | Create new trajectory per run      |
+| `screenshot_dir` | `str`  | `None`   | Separate directory for screenshots |
 
 #### PromptInstructionsCallback
 
@@ -486,12 +486,12 @@ agent = ComputerAgent(
 
 ### Environment Variables
 
-| Variable | Description |
-|----------|-------------|
-| `ANTHROPIC_API_KEY` | API key for Anthropic models |
-| `OPENAI_API_KEY` | API key for OpenAI models |
-| `GOOGLE_API_KEY` | API key for Google models |
-| `OLLAMA_HOST` | Host for Ollama (default: `localhost:11434`) |
+| Variable            | Description                                  |
+| ------------------- | -------------------------------------------- |
+| `ANTHROPIC_API_KEY` | API key for Anthropic models                 |
+| `OPENAI_API_KEY`    | API key for OpenAI models                    |
+| `GOOGLE_API_KEY`    | API key for Google models                    |
+| `OLLAMA_HOST`       | Host for Ollama (default: `localhost:11434`) |
 
 ---
 
@@ -552,12 +552,12 @@ except AgentError as e:
 
 ### Error Types
 
-| Error | Description |
-|-------|-------------|
-| `AgentError` | Base class for agent errors |
-| `BudgetExceededError` | Cost limit exceeded |
-| `ModelError` | Model API error |
-| `ToolError` | Tool execution error |
+| Error                 | Description                 |
+| --------------------- | --------------------------- |
+| `AgentError`          | Base class for agent errors |
+| `BudgetExceededError` | Cost limit exceeded         |
+| `ModelError`          | Model API error             |
+| `ToolError`           | Tool execution error        |
 
 ---
 
@@ -577,8 +577,8 @@ agent = ComputerAgent(
 )
 ```
 
-| Option | Default | Description |
-|--------|---------|-------------|
-| `trajectory_dir` | Required | Base directory |
-| `reset_on_run` | `True` | Create new ID per run |
-| `screenshot_dir` | `None` | Separate screenshot directory |
+| Option           | Default  | Description                   |
+| ---------------- | -------- | ----------------------------- |
+| `trajectory_dir` | Required | Base directory                |
+| `reset_on_run`   | `True`   | Create new ID per run         |
+| `screenshot_dir` | `None`   | Separate screenshot directory |

@@ -1,4 +1,4 @@
-"""Windows Sandbox provider for CUA Computer."""
+"""Windows Sandbox provider for Cua Computer."""
 
 try:
     import winsandbox

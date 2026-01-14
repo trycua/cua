@@ -1,0 +1,15 @@
+name: "CI: cua-computer-server"
+
+on:
+  pull_request:
+    paths:
+      - "libs/python/computer-server/**"
+      - ".github/workflows/ci-py-computer-server.yml"
+      - ".github/workflows/py-reusable-build.yml"
+
+jobs:
+  build:
+    uses: ./.github/workflows/py-reusable-build.yml
+    with:
+      package_name: "computer-server"
+      package_dir: "libs/python/computer-server"

@@ -73,8 +73,8 @@ Connect to a computer server running on a different machine:
 ```python
 computer = Computer(
     use_host_computer_server=True,
-    computer_server_host="192.168.1.100",
-    computer_server_port=8000
+    api_host="192.168.1.100",
+    api_port=8000
 )
 ```
 
@@ -106,8 +106,8 @@ For VMs you manage yourself (e.g., Windows behind a VPN), install the computer s
 # Connect to Windows VM running computer-server
 computer = Computer(
     use_host_computer_server=True,
-    computer_server_host="windows-vm.local",
-    computer_server_port=8000
+    api_host="windows-vm.local",
+    api_port=8000
 )
 ```
 

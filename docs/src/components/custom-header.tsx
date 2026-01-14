@@ -64,6 +64,32 @@ const docsSites = [
       },
     ],
   },
+  {
+    name: 'Lume',
+    label: 'Docs',
+    href: '/lume/guide/getting-started/introduction',
+    prefix: '/lume',
+    isDefault: false,
+    description: 'macOS VM CLI and Framework',
+    logoBlack: null,
+    logoWhite: null,
+    iconWidth: 0,
+    iconHeight: 0,
+    dropdownIconWidth: 0,
+    dropdownIconHeight: 0,
+    navTabs: [
+      {
+        name: 'Guide',
+        href: '/lume/guide/getting-started/introduction',
+        prefix: '/lume/guide',
+      },
+      {
+        name: 'API Reference',
+        href: '/lume/reference/cli-reference',
+        prefix: '/lume/reference',
+      },
+    ],
+  },
 ];
 
 export function CustomHeader() {
@@ -100,29 +126,31 @@ export function CustomHeader() {
               className="flex items-center gap-2 rounded-lg px-2 py-1.5 transition-colors hover:bg-fd-accent"
             >
               {/* Logo */}
-              <div
-                className="relative flex h-6 items-center justify-center"
-                style={{ width: currentSite.iconWidth }}
-              >
-                <Image
-                  width={currentSite.iconWidth}
-                  height={currentSite.iconHeight}
-                  src={currentSite.logoBlack}
-                  aria-label="Logo"
-                  className="block dark:hidden"
-                  style={{ width: currentSite.iconWidth, height: currentSite.iconHeight }}
-                  alt="Logo"
-                />
-                <Image
-                  width={currentSite.iconWidth}
-                  height={currentSite.iconHeight}
-                  src={currentSite.logoWhite}
-                  aria-label="Logo"
-                  className="hidden dark:block"
-                  style={{ width: currentSite.iconWidth, height: currentSite.iconHeight }}
-                  alt="Logo"
-                />
-              </div>
+              {currentSite.logoBlack && currentSite.logoWhite && (
+                <div
+                  className="relative flex h-6 items-center justify-center"
+                  style={{ width: currentSite.iconWidth }}
+                >
+                  <Image
+                    width={currentSite.iconWidth}
+                    height={currentSite.iconHeight}
+                    src={currentSite.logoBlack}
+                    aria-label="Logo"
+                    className="block dark:hidden"
+                    style={{ width: currentSite.iconWidth, height: currentSite.iconHeight }}
+                    alt="Logo"
+                  />
+                  <Image
+                    width={currentSite.iconWidth}
+                    height={currentSite.iconHeight}
+                    src={currentSite.logoWhite}
+                    aria-label="Logo"
+                    className="hidden dark:block"
+                    style={{ width: currentSite.iconWidth, height: currentSite.iconHeight }}
+                    alt="Logo"
+                  />
+                </div>
+              )}
               {/* Site name and label */}
               <span className="font-semibold" style={{ fontFamily: 'var(--font-urbanist)' }}>
                 {currentSite.name}
@@ -152,30 +180,38 @@ export function CustomHeader() {
                       >
                         {/* Site logo in dropdown */}
                         <div className="flex h-5 w-8 shrink-0 items-center justify-center">
-                          <Image
-                            width={site.dropdownIconWidth}
-                            height={site.dropdownIconHeight}
-                            src={site.logoBlack}
-                            aria-label={`${site.name} logo`}
-                            className="block dark:hidden"
-                            style={{
-                              width: site.dropdownIconWidth,
-                              height: site.dropdownIconHeight,
-                            }}
-                            alt={`${site.name} logo`}
-                          />
-                          <Image
-                            width={site.dropdownIconWidth}
-                            height={site.dropdownIconHeight}
-                            src={site.logoWhite}
-                            aria-label={`${site.name} logo`}
-                            className="hidden dark:block"
-                            style={{
-                              width: site.dropdownIconWidth,
-                              height: site.dropdownIconHeight,
-                            }}
-                            alt={`${site.name} logo`}
-                          />
+                          {site.logoBlack && site.logoWhite ? (
+                            <>
+                              <Image
+                                width={site.dropdownIconWidth}
+                                height={site.dropdownIconHeight}
+                                src={site.logoBlack}
+                                aria-label={`${site.name} logo`}
+                                className="block dark:hidden"
+                                style={{
+                                  width: site.dropdownIconWidth,
+                                  height: site.dropdownIconHeight,
+                                }}
+                                alt={`${site.name} logo`}
+                              />
+                              <Image
+                                width={site.dropdownIconWidth}
+                                height={site.dropdownIconHeight}
+                                src={site.logoWhite}
+                                aria-label={`${site.name} logo`}
+                                className="hidden dark:block"
+                                style={{
+                                  width: site.dropdownIconWidth,
+                                  height: site.dropdownIconHeight,
+                                }}
+                                alt={`${site.name} logo`}
+                              />
+                            </>
+                          ) : (
+                            <span className="text-sm font-medium text-fd-muted-foreground">
+                              {site.name.charAt(0)}
+                            </span>
+                          )}
                         </div>
                         <div className="flex-1">
                           <div className="font-medium text-fd-foreground">{site.name}</div>

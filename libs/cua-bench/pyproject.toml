@@ -1,6 +1,6 @@
 [project]
 name = "cua-bench"
-version = "0.2.2"
+version = "0.2.3"
 description = "Toolkit for computer-use RL environments and benchmarks"
 readme = "README.md"
 license = "MIT"
@@ -145,7 +145,7 @@ line-length = 100
 target-version = "py312"
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "W"]
+select = ["E", "F", "W"]
 ignore = ["E501"]
 
 # Pytest configuration

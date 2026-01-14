@@ -13,7 +13,6 @@ The session provides async methods that make HTTP calls to cua-computer-server:
 """
 
 import logging
-import os
 import tempfile
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -64,7 +63,7 @@ async def run_python(session, code: str) -> Dict[str, Any]:
         Dict with 'stdout', 'stderr', 'exit_code'
     """
     # Escape quotes and newlines
-    escaped = code.replace('"', '\\"').replace('\n', '; ')
+    escaped = code.replace('"', '\\"').replace("\n", "; ")
     cmd = f'python -c "{escaped}"'
 
     result = await session.run_command(cmd)
@@ -88,8 +87,7 @@ async def get_registry_value(session, key_path: str, value_name: str) -> Optiona
         The value as a string, or None if not found
     """
     result = await run_powershell(
-        session,
-        f"Get-ItemPropertyValue -Path '{key_path}' -Name '{value_name}'"
+        session, f"Get-ItemPropertyValue -Path '{key_path}' -Name '{value_name}'"
     )
 
     if result["exit_code"] == 0 and result["stdout"]:
@@ -111,7 +109,7 @@ async def get_registry_binary(session, key_path: str, value_name: str) -> Option
     # Get binary value as comma-separated bytes
     result = await run_powershell(
         session,
-        f"(Get-ItemProperty -Path '{key_path}' -Name '{value_name}').{value_name} -join ','"
+        f"(Get-ItemProperty -Path '{key_path}' -Name '{value_name}').{value_name} -join ','",
     )
 
     if result["exit_code"] == 0 and result["stdout"]:

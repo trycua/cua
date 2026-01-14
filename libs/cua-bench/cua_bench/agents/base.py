@@ -12,6 +12,7 @@ if TYPE_CHECKING:
 
 class FailureMode(Enum):
     """Failure mode for agent execution."""
+
     UNSET = "unset"
     NONE = "none"
     UNKNOWN = "unknown"
@@ -21,6 +22,7 @@ class FailureMode(Enum):
 @dataclass
 class AgentResult:
     """Result of agent execution."""
+
     total_input_tokens: int = 0
     total_output_tokens: int = 0
     failure_mode: FailureMode = FailureMode.UNSET
@@ -110,10 +112,11 @@ class BaseAgent(ABC):
             return instruction
 
         from jinja2 import Template
+
         template_path = Path(self.prompt_template)
         if not template_path.exists():
             raise FileNotFoundError(f"Template file not found: {template_path}")
-        
+
         template = Template(template_path.read_text())
         return template.render(instruction=instruction)
 
@@ -123,7 +126,7 @@ class BaseAgent(ABC):
         task_description: str,
         session: "DesktopSession",
         logging_dir: Path | None = None,
-        tracer = None,
+        tracer=None,
     ) -> AgentResult:
         """
         Perform a task using the agent.

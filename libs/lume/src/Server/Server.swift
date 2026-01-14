@@ -201,6 +201,21 @@ final class Server {
                     return try await self.handleStopVM(name: name, storage: storage)
                 }),
             Route(
+                method: "POST", path: "/lume/vms/:name/setup",
+                handler: { [weak self] request in
+                    guard let self else { throw HTTPError.internalError }
+                    let params = Route(
+                        method: "POST", path: "/lume/vms/:name/setup",
+                        handler: { _ in
+                            HTTPResponse(statusCode: .ok, body: "")
+                        }
+                    ).extractParams(request)
+                    guard let name = params["name"] else {
+                        return HTTPResponse(statusCode: .badRequest, body: "Missing VM name")
+                    }
+                    return try await self.handleSetupVM(name: name, body: request.body)
+                }),
+            Route(
                 method: "GET", path: "/lume/ipsw",
                 handler: { [weak self] _ in
                     guard let self else { throw HTTPError.internalError }
@@ -298,6 +313,13 @@ final class Server {
                 handler: { [weak self] request in
                     guard let self else { throw HTTPError.internalError }
                     return try await self.handlePush(request.body)
+                }),
+            // Host status endpoint for orchestrator health checks
+            Route(
+                method: "GET", path: "/lume/host/status",
+                handler: { [weak self] _ in
+                    guard let self else { throw HTTPError.internalError }
+                    return try await self.handleGetHostStatus()
                 }),
         ]
     }

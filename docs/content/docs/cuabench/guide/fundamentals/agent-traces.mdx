@@ -43,14 +43,14 @@ The cua-bench trace format uses **HuggingFace Datasets** with Apache Arrow for e
 
 ### Event Types
 
-| Event | Description | Images | Metadata |
-|-------|-------------|--------|----------|
-| `reset` | Task setup complete | Initial screenshot | Task config, index |
-| `agent_step` | Agent reasoning step | Screenshot | Step number, model usage, output |
-| `agent_action` | Agent performed action | Screenshot after action | Action type, arguments |
-| `agent_thinking` | Model thinking/response | Screenshot | Thinking text (truncated) |
-| `solve` | Oracle solution complete | Final screenshot | Completion status |
-| `evaluate` | Task evaluation | - | Evaluation result |
+| Event            | Description              | Images                  | Metadata                         |
+| ---------------- | ------------------------ | ----------------------- | -------------------------------- |
+| `reset`          | Task setup complete      | Initial screenshot      | Task config, index               |
+| `agent_step`     | Agent reasoning step     | Screenshot              | Step number, model usage, output |
+| `agent_action`   | Agent performed action   | Screenshot after action | Action type, arguments           |
+| `agent_thinking` | Model thinking/response  | Screenshot              | Thinking text (truncated)        |
+| `solve`          | Oracle solution complete | Final screenshot        | Completion status                |
+| `evaluate`       | Task evaluation          | -                       | Evaluation result                |
 
 ### Loading Traces Programmatically
 
@@ -90,6 +90,7 @@ cb trace view 96d41b51/slack_env_v0
 ```
 
 Opens an interactive viewer showing:
+
 - Timeline of events
 - Screenshots at each step
 - Action details and metadata
@@ -106,6 +107,7 @@ cb trace grid 96d41b51
 ```
 
 Shows a grid view of all task traces in the run, useful for:
+
 - Comparing agent performance across variants
 - Quickly identifying failures
 - Reviewing oracle solutions

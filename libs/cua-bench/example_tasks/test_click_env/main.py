@@ -1,7 +1,9 @@
 """Simple click test task for native environments (Linux Docker or Windows QEMU)."""
-import cua_bench as cb
-from pathlib import Path
+
 import asyncio
+from pathlib import Path
+
+import cua_bench as cb
 
 
 @cb.tasks_config(split="train")
@@ -18,8 +20,8 @@ def load():
                     "os_type": os_type,
                     "width": 1024,
                     "height": 768,
-                }
-            }
+                },
+            },
         )
         for os_type in os_types
     ]
@@ -33,7 +35,7 @@ async def start(task_cfg, session: cb.DesktopSession):
     """Initialize the task - launch a webview with a button."""
     global pid
     pid = await session.launch_window(
-        html=(Path(__file__).parent / "gui/index.html").read_text('utf-8'),
+        html=(Path(__file__).parent / "gui/index.html").read_text("utf-8"),
         title="Click Test",
         width=400,
         height=300,

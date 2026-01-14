@@ -103,6 +103,16 @@ struct CloneRequest: Codable {
     let destLocation: String?
 }
 
+struct SetupVMRequest: Codable {
+    let configPath: String?
+    let configYaml: String?
+    let storage: String?
+    let vncPort: Int?
+    let noDisplay: Bool?
+    let debug: Bool?
+    let debugDir: String?
+}
+
 struct PushRequest: Codable {
     let name: String // Name of the local VM
     let imageName: String // Base name for the image in the registry

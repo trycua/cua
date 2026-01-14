@@ -8,7 +8,9 @@ This task tests real Windows application interaction WITHOUT webview/bench_ui:
 
 No webview, no HTML - just real Windows app automation.
 """
+
 import asyncio
+
 import cua_bench as cb
 
 
@@ -29,8 +31,8 @@ def load():
                     "os_type": "windows",
                     "width": 1920,
                     "height": 1080,
-                }
-            }
+                },
+            },
         ),
         cb.Task(
             description='Open Notepad, type "Testing 123", and save as "numbers.txt" on the Desktop.',
@@ -45,8 +47,8 @@ def load():
                     "os_type": "windows",
                     "width": 1920,
                     "height": 1080,
-                }
-            }
+                },
+            },
         ),
     ]
 

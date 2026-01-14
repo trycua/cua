@@ -34,7 +34,7 @@ export async function executeAction(
       const { keys } = action;
       for (const key of keys) {
         console.log(`Pressing key: ${key}.`);
-        // Map common key names to CUA equivalents
+        // Map common key names to Cua equivalents
         if (key.toLowerCase() === 'enter') {
           await computer.interface.pressKey('return');
         } else if (key.toLowerCase() === 'space') {

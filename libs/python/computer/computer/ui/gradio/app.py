@@ -1215,8 +1215,8 @@ def create_gradio_ui():
 
                         # API key field for cloud provider (visible only if no env key and cloud selected)
                         api_key_field = gr.Textbox(
-                            label="CUA API Key",
-                            placeholder="Enter your CUA API key",
+                            label="Cua API Key",
+                            placeholder="Enter your Cua API key",
                             type="password",
                             visible=False,
                             info="Required for cloud provider. Set CUA_API_KEY environment variable to hide this field.",

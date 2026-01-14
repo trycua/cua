@@ -14,7 +14,7 @@ from .custom import CustomComputerHandler
 
 
 def is_agent_computer(computer):
-    """Check if the given computer is a ComputerHandler or CUA Computer."""
+    """Check if the given computer is a ComputerHandler or Cua Computer."""
     return (
         isinstance(computer, AsyncComputerHandler)
         or isinstance(computer, cuaComputer)

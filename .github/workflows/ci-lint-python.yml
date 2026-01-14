@@ -1,0 +1,35 @@
+name: "CI: Lint Python"
+
+on:
+  pull_request:
+    paths:
+      - "libs/python/**"
+      - "pyproject.toml"
+      - ".github/workflows/ci-lint-python.yml"
+
+jobs:
+  lint:
+    name: Python Lint & Format
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: 3.12
+
+      - name: Install Python dependencies
+        run: |
+          pip install uv
+          uv sync
+
+      - name: Python lint & typecheck
+        run: |
+          uv run isort --check-only .
+          uv run black --check .
+          uv run ruff check .
+          # Temporarily disabled due to untyped codebase
+          # uv run mypy .

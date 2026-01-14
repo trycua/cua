@@ -1,0 +1,17 @@
+name: "CD: Container Lumier"
+
+on:
+  push:
+    tags:
+      - "docker-lumier-v*.*.*"
+
+jobs:
+  publish:
+    uses: ./.github/workflows/docker-reusable-publish.yml
+    with:
+      image_name: lumier
+      context_dir: libs/lumier
+      tag_prefix: docker-lumier-v
+      docker_hub_org: trycua
+    secrets:
+      DOCKER_HUB_TOKEN: ${{ secrets.DOCKER_HUB_TOKEN }}

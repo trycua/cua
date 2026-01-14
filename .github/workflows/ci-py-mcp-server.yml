@@ -1,0 +1,15 @@
+name: "CI: cua-mcp-server"
+
+on:
+  pull_request:
+    paths:
+      - "libs/python/mcp-server/**"
+      - ".github/workflows/ci-py-mcp-server.yml"
+      - ".github/workflows/py-reusable-build.yml"
+
+jobs:
+  build:
+    uses: ./.github/workflows/py-reusable-build.yml
+    with:
+      package_name: "mcp-server"
+      package_dir: "libs/python/mcp-server"

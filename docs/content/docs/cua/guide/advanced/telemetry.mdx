@@ -90,21 +90,21 @@ This sends complete conversation items to help improve Cua's models.
 
 ### Computer SDK Events
 
-| Event | Data | Trigger |
-|-------|------|---------|
-| `computer_initialized` | OS, OS version, Python version | Computer instance created |
-| `module_init` | Module name, version, Python version | Package first imported |
+| Event                  | Data                                 | Trigger                   |
+| ---------------------- | ------------------------------------ | ------------------------- |
+| `computer_initialized` | OS, OS version, Python version       | Computer instance created |
+| `module_init`          | Module name, version, Python version | Package first imported    |
 
 ### Agent SDK Events
 
-| Event | Data | Trigger |
-|-------|------|---------|
-| `module_init` | Module name, version, Python version | Package first imported |
-| `agent_session_start` | Session ID, agent type, model, system info | Agent instantiated |
-| `agent_run_start` | Session/run IDs, input size, message count | `agent.run()` called |
-| `agent_run_end` | Session/run IDs, duration, steps, usage | `agent.run()` completes |
-| `agent_step` | Session/run IDs, step number, timestamp | Each agent iteration |
-| `agent_usage` | Session/run IDs, token counts, cost | Usage info received |
+| Event                 | Data                                       | Trigger                 |
+| --------------------- | ------------------------------------------ | ----------------------- |
+| `module_init`         | Module name, version, Python version       | Package first imported  |
+| `agent_session_start` | Session ID, agent type, model, system info | Agent instantiated      |
+| `agent_run_start`     | Session/run IDs, input size, message count | `agent.run()` called    |
+| `agent_run_end`       | Session/run IDs, duration, steps, usage    | `agent.run()` completes |
+| `agent_step`          | Session/run IDs, step number, timestamp    | Each agent iteration    |
+| `agent_usage`         | Session/run IDs, token counts, cost        | Usage info received     |
 
 ## Questions
 

@@ -26,9 +26,9 @@ import os
 import shutil
 import subprocess
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Dict, Optional
 
 if TYPE_CHECKING:
     import aiohttp
@@ -37,6 +37,7 @@ if TYPE_CHECKING:
 # =============================================================================
 # Data Types
 # =============================================================================
+
 
 @dataclass
 class EnvironmentInfo:
@@ -72,8 +73,8 @@ PLATFORM_CONFIGS = {
         "requires_kvm": False,
         "image_marker": None,
         "os_type": "linux",
-        "boot_timeout": 60,       # Fast, no VM boot
-        "use_overlays": False,    # Stateless container
+        "boot_timeout": 60,  # Fast, no VM boot
+        "use_overlays": False,  # Stateless container
     },
     "linux-qemu": {
         "image": "trycua/cua-qemu-linux:latest",
@@ -82,8 +83,8 @@ PLATFORM_CONFIGS = {
         "requires_kvm": True,
         "image_marker": "linux.boot",
         "os_type": "linux",
-        "boot_timeout": 120,      # QEMU VM boot
-        "use_overlays": True,     # Enable QCOW2 overlays for fast reset
+        "boot_timeout": 120,  # QEMU VM boot
+        "use_overlays": True,  # Enable QCOW2 overlays for fast reset
     },
     "windows-qemu": {
         "image": "trycua/cua-qemu-windows:latest",
@@ -92,8 +93,8 @@ PLATFORM_CONFIGS = {
         "requires_kvm": True,
         "image_marker": "windows.boot",
         "os_type": "windows",
-        "boot_timeout": 180,      # Windows is slow to boot
-        "use_overlays": True,     # Enable QCOW2 overlays for fast reset
+        "boot_timeout": 180,  # Windows is slow to boot
+        "use_overlays": True,  # Enable QCOW2 overlays for fast reset
     },
     "android-qemu": {
         "image": "trycua/cua-qemu-android:latest",
@@ -102,8 +103,8 @@ PLATFORM_CONFIGS = {
         "requires_kvm": True,
         "image_marker": "android.boot",
         "os_type": "android",
-        "boot_timeout": 120,      # Android VM boot
-        "use_overlays": True,     # Enable QCOW2 overlays for fast reset
+        "boot_timeout": 120,  # Android VM boot
+        "use_overlays": True,  # Enable QCOW2 overlays for fast reset
     },
 }
 
@@ -111,6 +112,7 @@ PLATFORM_CONFIGS = {
 # =============================================================================
 # Helper Functions
 # =============================================================================
+
 
 def get_data_dir() -> Path:
     """Get XDG data directory for cua-bench."""
@@ -145,11 +147,7 @@ def find_free_port(start: int = 5000, end: int = 9000) -> int:
 def check_docker() -> bool:
     """Check if Docker is running."""
     try:
-        result = subprocess.run(
-            ["docker", "info"],
-            capture_output=True,
-            timeout=10
-        )
+        result = subprocess.run(["docker", "info"], capture_output=True, timeout=10)
         return result.returncode == 0
     except Exception:
         return False
@@ -162,7 +160,7 @@ def check_container_running(container_name: str) -> bool:
             ["docker", "ps", "-q", "-f", f"name=^{container_name}$"],
             capture_output=True,
             text=True,
-            timeout=10
+            timeout=10,
         )
         return bool(result.stdout.strip())
     except Exception:
@@ -173,10 +171,7 @@ def check_image_exists(image_name: str) -> bool:
     """Check if a Docker image exists locally."""
     try:
         result = subprocess.run(
-            ["docker", "images", "-q", image_name],
-            capture_output=True,
-            text=True,
-            timeout=10
+            ["docker", "images", "-q", image_name], capture_output=True, text=True, timeout=10
         )
         return bool(result.stdout.strip())
     except Exception:
@@ -191,6 +186,7 @@ def pull_image(image_name: str) -> None:
 # =============================================================================
 # Local Environment Provider
 # =============================================================================
+
 
 class LocalEnvironmentProvider:
     """Manages sandbox containers for local task execution.
@@ -228,6 +224,7 @@ class LocalEnvironmentProvider:
     async def _ensure_aiohttp_session(self) -> "aiohttp.ClientSession":
         """Ensure aiohttp session exists."""
         import aiohttp
+
         if self._aiohttp_session is None or self._aiohttp_session.closed:
             self._aiohttp_session = aiohttp.ClientSession()
         return self._aiohttp_session
@@ -331,8 +328,7 @@ class LocalEnvironmentProvider:
         """
         if platform not in PLATFORM_CONFIGS:
             raise ValueError(
-                f"Unknown platform: {platform}. "
-                f"Supported: {list(PLATFORM_CONFIGS.keys())}"
+                f"Unknown platform: {platform}. " f"Supported: {list(PLATFORM_CONFIGS.keys())}"
             )
 
         if not check_docker():
@@ -449,22 +445,38 @@ class LocalEnvironmentProvider:
         if platform == "linux-docker":
             # Simple container, no QEMU
             return [
-                "docker", "run", "-d", "--rm",
-                "-p", f"{vnc_port}:{internal_vnc}",
-                "-p", f"{api_port}:{internal_api}",
-                "--name", container_name,
+                "docker",
+                "run",
+                "-d",
+                "--rm",
+                "-p",
+                f"{vnc_port}:{internal_vnc}",
+                "-p",
+                f"{api_port}:{internal_api}",
+                "--name",
+                container_name,
                 docker_image,
             ]
         else:
             # QEMU-based container
             cmd = [
-                "docker", "run", "-d", "-t", "--rm",
-                "-p", f"{vnc_port}:{internal_vnc}",
-                "-p", f"{api_port}:{internal_api}",
-                "--name", container_name,
-                "--platform", "linux/amd64",
-                "--cap-add", "NET_ADMIN",
-                "--stop-timeout", "120",
+                "docker",
+                "run",
+                "-d",
+                "-t",
+                "--rm",
+                "-p",
+                f"{vnc_port}:{internal_vnc}",
+                "-p",
+                f"{api_port}:{internal_api}",
+                "--name",
+                container_name,
+                "--platform",
+                "linux/amd64",
+                "--cap-add",
+                "NET_ADMIN",
+                "--stop-timeout",
+                "120",
             ]
 
             # Mount storage: worker overlay (writable) over image (base)
@@ -530,12 +542,12 @@ class LocalEnvironmentProvider:
             return False
 
         import aiohttp
+
         session = await self._ensure_aiohttp_session()
 
         try:
             async with session.get(
-                f"{env_info.api_url}/status",
-                timeout=aiohttp.ClientTimeout(total=5)
+                f"{env_info.api_url}/status", timeout=aiohttp.ClientTimeout(total=5)
             ) as response:
                 return response.status == 200
         except Exception:
@@ -558,6 +570,7 @@ class LocalEnvironmentProvider:
             True if environment became ready, False if timeout
         """
         import time
+
         start = time.time()
 
         while time.time() - start < timeout:

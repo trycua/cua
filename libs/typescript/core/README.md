@@ -50,4 +50,4 @@ pnpm build
 
 ## License
 
-[MIT](./LICENSE) License 2025 [CUA](https://github.com/trycua)
+[MIT](./LICENSE) License 2025 [Cua](https://github.com/trycua)

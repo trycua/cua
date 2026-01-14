@@ -670,6 +670,17 @@ class WindowsAutomationHandler(BaseAutomationHandler):
                            Structure: {"success": bool, "stdout": str, "stderr": str, "return_code": int} or
                                     {"success": bool, "error": str}
         """
+        def decode_output(data: bytes) -> str:
+            if not data:
+                return ""
+            encodings = ['utf-8', 'gbk', 'gb2312', 'cp936', 'latin1']
+            for enc in encodings:
+                try:
+                    return data.decode(enc)
+                except (UnicodeDecodeError, LookupError):
+                    continue
+            return data.decode('utf-8', errors='replace')
+
         try:
             # Create subprocess
             process = await asyncio.create_subprocess_shell(
@@ -680,8 +691,9 @@ class WindowsAutomationHandler(BaseAutomationHandler):
             # Return decoded output
             return {
                 "success": True,
-                "stdout": stdout.decode() if stdout else "",
-                "stderr": stderr.decode() if stderr else "",
+                "stdout": decode_output(stdout),
+                "stderr": decode_output(stderr),
+
                 "return_code": process.returncode,
             }
         except Exception as e:

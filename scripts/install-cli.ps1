@@ -29,6 +29,56 @@ function Get-LatestCuaTag {
     return $null
 }
 
+# Install shell completions (idempotent)
+function Install-Completions {
+    param([string]$CuaBinaryPath)
+
+    $completionsDir = "$env:USERPROFILE\.cua\completions"
+    if (-not (Test-Path $completionsDir)) {
+        New-Item -ItemType Directory -Path $completionsDir -Force | Out-Null
+    }
+
+    $completionScript = Join-Path $completionsDir "cua.ps1"
+
+    # Generate completion script
+    try {
+        $completionContent = & $CuaBinaryPath completion 2>$null
+        if ($completionContent) {
+            Set-Content -Path $completionScript -Value $completionContent -Force
+        }
+    } catch {
+        return
+    }
+
+    if (-not (Test-Path $completionScript)) {
+        return
+    }
+
+    # Add to PowerShell profile (idempotent)
+    $profilePath = $PROFILE.CurrentUserAllHosts
+    if (-not $profilePath) {
+        $profilePath = $PROFILE
+    }
+
+    $sourceLine = ". `"$completionScript`""
+
+    # Create profile if it doesn't exist
+    if (-not (Test-Path $profilePath)) {
+        $profileDir = Split-Path $profilePath -Parent
+        if (-not (Test-Path $profileDir)) {
+            New-Item -ItemType Directory -Path $profileDir -Force | Out-Null
+        }
+        New-Item -ItemType File -Path $profilePath -Force | Out-Null
+    }
+
+    # Check if line already exists
+    $profileContent = Get-Content $profilePath -Raw -ErrorAction SilentlyContinue
+    if ($profileContent -notlike "*$completionScript*") {
+        Add-Content -Path $profilePath -Value "`n# Cua CLI completions`n$sourceLine"
+        Write-Host "Success: Added shell completions to PowerShell profile" -ForegroundColor Green
+    }
+}
+
 function Install-WithBun {
     Write-Host "Installing Cua CLI using Bun..." -ForegroundColor Yellow
     
@@ -69,6 +119,9 @@ function Install-WithBun {
         $installDir = "$env:USERPROFILE\.cua\bin"
         if (-not (Test-Path $installDir)) { New-Item -ItemType Directory -Path $installDir -Force | Out-Null }
         Set-Content -Path (Join-Path $installDir ".version") -Value $bunVersion -NoNewline
+        # Install completions
+        $cuaPath = Get-Command cua -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source
+        if ($cuaPath) { Install-Completions -CuaBinaryPath $cuaPath }
         return $true
     } catch {
         Write-Host "Warning: Failed to install with Bun, trying npm..." -ForegroundColor Yellow
@@ -83,6 +136,9 @@ function Install-WithBun {
             $installDir = "$env:USERPROFILE\.cua\bin"
             if (-not (Test-Path $installDir)) { New-Item -ItemType Directory -Path $installDir -Force | Out-Null }
             Set-Content -Path (Join-Path $installDir ".version") -Value $npmVersion -NoNewline
+            # Install completions
+            $cuaPath = Get-Command cua -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source
+            if ($cuaPath) { Install-Completions -CuaBinaryPath $cuaPath }
             return $true
         } catch {
             Write-Host "Error: Installation failed with npm as well." -ForegroundColor Red
@@ -163,16 +219,19 @@ if ($currentPath -notlike "*$installDir*") {
     Write-Host "Success: Added $installDir to your PATH" -ForegroundColor Green
 }
 
+# Install shell completions
+Install-Completions -CuaBinaryPath $binaryPath
+
 # Verify installation
 if (Test-Path $binaryPath) {
     Write-Host "Success: Cua CLI $version installed successfully to $binaryPath" -ForegroundColor Green
     Write-Host ""
     Write-Host "Get started with:" -ForegroundColor Cyan
     Write-Host "   cua login"
-    Write-Host "   cua create --os linux --configuration small --region north-america"
+    Write-Host "   cua create --os linux --size small --region north-america"
     Write-Host ""
     Write-Host "For more help, visit: https://docs.cua.ai/libraries/cua-cli" -ForegroundColor Cyan
-    
+
     # Offer to add to PATH if not already there
     if (-not ($env:Path -like "*$installDir*")) {
         Write-Host ""

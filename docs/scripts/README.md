@@ -151,6 +151,7 @@ Code indexing uses **parallel sharded processing** for performance:
 ```
 
 Each component gets its own databases:
+
 - `code_index_{component}.sqlite` - FTS5 full-text search
 - `code_index_{component}.lancedb/` - Vector embeddings for semantic search
 
@@ -175,6 +176,7 @@ modal run docs/scripts/modal_app.py --skip-code
 The MCP server automatically discovers and queries across all component databases:
 
 **SQLite Queries** - Uses `ATTACH DATABASE` to create a unified view:
+
 ```sql
 -- This queries across ALL component databases
 SELECT component, version, file_path
@@ -187,6 +189,7 @@ WHERE code_files_fts MATCH 'ComputerAgent'
 ```
 
 **Vector Search** - Queries all LanceDBs and merges results by similarity:
+
 ```python
 # Searches all component databases, returns top results
 query_code_vectors("screenshot capture implementation", limit=10)

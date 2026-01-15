@@ -121,6 +121,19 @@ curl -X POST https://inference.cua.ai/v1/messages \
   }'
 ```
 
+### OpenAI-compatible Chat Completions
+
+```bash
+curl -X POST https://inference.cua.ai/v1/chat/completions \
+  -H "Authorization: Bearer ${CUA_API_KEY}" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "microsoft/fara-7b",
+    "messages": [{"role": "user", "content": "Hello!"}],
+    "max_tokens": 100
+  }'
+```
+
 ## FAQs
 
 <details>

@@ -37,6 +37,10 @@ RUN python3.12 -m pip install uv
 # Install cua-computer-server using UV
 RUN uv pip install --system cua-computer-server
 
+# Install playwright and Firefox dependencies
+RUN uv pip install --system playwright && \
+    python3.12 -m playwright install --with-deps firefox
+
 # Disable SSL requirement
 RUN sed -i 's/require_ssl: true/require_ssl: false/g' /usr/share/kasmvnc/kasmvnc_defaults.yaml
 RUN sed -i 's/-sslOnly//g' /dockerstartup/vnc_startup.sh

@@ -1,0 +1,92 @@
+---
+title: App Helpers
+description: Reusable primitives for installing, launching, and evaluating native apps
+---
+
+App helpers provide reusable methods for working with native applications. Beyond install/launch, apps can define custom getters and utilities that simplify writing evaluators.
+
+## Basic Usage
+
+```python
+@cb.setup_task(split="train")
+async def start(task_cfg: cb.Task, session: cb.DesktopSession):
+    await session.apps.chrome.install(with_shortcut=True)
+    await session.apps.chrome.launch(url="https://example.com")
+
+@cb.evaluate_task(split="train")
+async def evaluate(task_cfg: cb.Task, session: cb.DesktopSession) -> list[float]:
+    # Use app-specific getters for evaluation
+    current_url = await session.apps.chrome.get_current_url()
+    tabs = await session.apps.chrome.get_open_tabs()
+    bookmarks = await session.apps.chrome.get_bookmarks()
+
+    if "google.com" in current_url and len(tabs) >= 3:
+        return [1.0]
+    return [0.0]
+```
+
+## Available Apps
+
+| App | Name | Platforms |
+|-----|------|-----------|
+| Godot | `godot` | Linux, Windows, macOS |
+| Unity | `unity` | Linux, Windows, macOS |
+| Adobe Photoshop | `adobe_photoshop` | Linux (WINE), Windows |
+
+## Contributing Apps
+
+Apps live in `cua_bench/apps/`. Each app can define:
+
+- **install** - Install the application
+- **launch** - Launch with options
+- **uninstall** - Remove the application
+- **Custom methods** - Getters/utilities for evaluators
+
+```python
+from .registry import App, install, launch
+
+class Chrome(App):
+    name = "chrome"
+    description = "Google Chrome browser"
+
+    @install("linux")
+    async def install_linux(self, *, with_shortcut=True):
+        await self.session.run_command("sudo apt install -y google-chrome-stable")
+
+    @launch("linux", "windows")
+    async def launch_app(self, *, url=None):
+        cmd = "google-chrome &" if self.platform == "linux" else "start chrome.exe"
+        if url:
+            cmd = f"{cmd} {url}"
+        await self.session.run_command(cmd)
+
+    # Custom getters for evaluators
+    async def get_current_url(self) -> str:
+        """Get Chrome's current URL."""
+        result = await self.session.run_command("xdotool getactivewindow getwindowname")
+        return result["stdout"].strip()
+
+    async def get_open_tabs(self) -> list[str]:
+        """Get list of open tab titles."""
+        ...
+
+    async def get_bookmarks(self) -> list[dict]:
+        """Get user's bookmarks."""
+        ...
+```
+
+Register in `cua_bench/apps/__init__.py`:
+
+```python
+from . import chrome  # noqa: F401
+```
+
+## Platform Matrix
+
+| Method | Linux | Windows | macOS |
+|--------|-------|---------|-------|
+| `install` | ✅ | ✅ | ✅ |
+| `launch` | ✅ | ✅ | ✅ |
+| `uninstall` | ✅ | ⚠️ | ⚠️ |
+
+✅ = Supported, ⚠️ = Partial support

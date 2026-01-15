@@ -94,8 +94,26 @@ def check_docker() -> bool:
 
 
 def check_kvm() -> bool:
-    """Check if KVM is available."""
-    return os.path.exists("/dev/kvm")
+    """Check if KVM is available.
+
+    On Linux: checks /dev/kvm directly
+    On Windows/macOS with Docker: checks if KVM is available inside Docker's VM
+    (Docker Desktop with WSL2 backend may have KVM available)
+    """
+    # On Linux, check directly
+    if sys_platform.system() == "Linux":
+        return os.path.exists("/dev/kvm")
+
+    # On Windows/macOS, check if Docker can access KVM (WSL2 or Docker VM)
+    try:
+        result = subprocess.run(
+            ["docker", "run", "--rm", "--device=/dev/kvm", "alpine", "test", "-e", "/dev/kvm"],
+            capture_output=True,
+            timeout=30,
+        )
+        return result.returncode == 0
+    except Exception:
+        return False
 
 
 def check_lume() -> bool:

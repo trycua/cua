@@ -903,27 +903,64 @@ def generate_code_index_parallel(max_concurrent: int = 4) -> dict:
     args = [(comp, tags, repo_path_str) for comp, tags in component_tags.items()]
 
     print(f"Dispatching {len(args)} parallel indexing jobs...")
-    results = list(index_component.starmap(args, order_outputs=False))
 
-    # Commit all changes to volume
+    # Process results with error handling for individual component failures
+    results = []
+    failed_components = []
+
+    try:
+        # Use return_exceptions=True to get results even when some workers fail
+        for i, result in enumerate(index_component.starmap(args, order_outputs=False, return_exceptions=True)):
+            comp_name = args[i][0] if i < len(args) else f"component_{i}"
+            if isinstance(result, Exception):
+                # Handle individual component failures
+                error_msg = str(result)
+                print(f"[{comp_name}] Component indexing failed: {error_msg}")
+                failed_components.append({
+                    "component": comp_name,
+                    "error": error_msg,
+                    "files": 0,
+                    "embedded": 0,
+                    "failed_tags": len(args[i][1]) if i < len(args) else 0,
+                })
+            else:
+                results.append(result)
+                print(f"[{comp_name}] Component indexing succeeded")
+    except Exception as e:
+        # Handle catastrophic failures (e.g., all workers failed)
+        print(f"Error during parallel indexing: {e}")
+        # Still try to commit any partial results
+        pass
+
+    # Commit all changes to volume (including partial results)
     code_volume.commit()
 
-    # Aggregate results
+    # Aggregate results from successful components
     total_files = sum(r["files"] for r in results)
     total_embedded = sum(r["embedded"] for r in results)
     total_failed = sum(r["failed_tags"] for r in results)
+
+    # Add failed component stats
+    total_failed += sum(f["failed_tags"] for f in failed_components)
 
     summary = {
         "total_files": total_files,
         "total_embedded": total_embedded,
         "total_failed_tags": total_failed,
         "components": results,
+        "failed_components": failed_components,
+        "success_count": len(results),
+        "failure_count": len(failed_components),
     }
 
     print("\nParallel indexing complete:")
     print(f"  Total files: {total_files}")
     print(f"  Total embedded: {total_embedded}")
     print(f"  Components indexed: {len(results)}")
+    if failed_components:
+        print(f"  Components failed: {len(failed_components)}")
+        for fc in failed_components:
+            print(f"    - {fc['component']}: {fc['error'][:100]}")
 
     return summary
 
@@ -1155,10 +1192,46 @@ async def generate_code_index():
 )
 async def scheduled_code_index():
     """Scheduled daily code index generation (uses parallel processing)"""
+    import modal.exception
+
     print("Running scheduled code indexing (parallel)...")
-    result = await generate_code_index_parallel.remote.aio()
-    print(f"Code indexing complete: {result}")
-    return result
+    try:
+        result = await generate_code_index_parallel.remote.aio()
+        print(f"Code indexing complete: {result}")
+
+        # Log summary of any failed components
+        if result.get("failed_components"):
+            print(f"Warning: {len(result['failed_components'])} component(s) failed during indexing")
+            for fc in result["failed_components"]:
+                print(f"  - {fc['component']}: {fc['error'][:200]}")
+
+        return result
+    except modal.exception.FunctionTimeoutError as e:
+        print(f"Code indexing timed out: {e}")
+        # Return a partial result indicating the timeout
+        return {
+            "total_files": 0,
+            "total_embedded": 0,
+            "total_failed_tags": 0,
+            "components": [],
+            "failed_components": [],
+            "error": f"Function timed out: {str(e)}",
+            "success_count": 0,
+            "failure_count": 0,
+        }
+    except Exception as e:
+        print(f"Code indexing failed with error: {e}")
+        # Return error information instead of crashing
+        return {
+            "total_files": 0,
+            "total_embedded": 0,
+            "total_failed_tags": 0,
+            "components": [],
+            "failed_components": [],
+            "error": str(e),
+            "success_count": 0,
+            "failure_count": 0,
+        }
 
 
 # =============================================================================

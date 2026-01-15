@@ -9,7 +9,6 @@ This directory contains scripts for crawling, indexing, and serving CUA document
 - **crawl_docs.py**: Crawls cua.ai/docs using crawl4ai
 - **generate_db.py**: Creates LanceDB vector database for semantic search
 - **generate_sqlite.py**: Creates SQLite FTS5 database for full-text search
-- **mcp_server.py**: FastMCP SSE HTTP server exposing search tools
 
 ### Modal Deployment
 
@@ -43,18 +42,6 @@ uv run docs/scripts/generate_db.py
 # Generate SQLite FTS5 database for full-text search
 uv run docs/scripts/generate_sqlite.py
 ```
-
-#### 3. Run MCP Server
-
-```bash
-uv run docs/scripts/mcp_server.py
-```
-
-The MCP server will be available at `http://localhost:8000` and provides:
-
-- Semantic search over documentation
-- Full-text search capabilities
-- Page content retrieval
 
 ### Option 2: Modal Deployment (Production)
 

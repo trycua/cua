@@ -635,7 +635,7 @@ def group_tags_by_component(tags: list[str]) -> dict[str, list[str]]:
     image=image,
     volumes={CODE_VOLUME_PATH: code_volume},
     secrets=[github_secret],
-    timeout=1800,  # 30 minutes per component
+    timeout=3600,  # 1 hour per component
     cpu=2.0,
     memory=8192,
 )

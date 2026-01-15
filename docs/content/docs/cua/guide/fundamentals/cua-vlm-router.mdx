@@ -35,6 +35,8 @@ Get your API key at [cua.ai](https://cua.ai/signin).
 | `cua/anthropic/claude-opus-4.5`     | Most capable                  |
 | `cua/google/gemini-3-flash-preview` | Fastest, cheapest             |
 | `cua/google/gemini-3-pro-preview`   | Most powerful                 |
+| `cua/microsoft/fara-7b`             | Good at browser use           |
+| `cua/qwen/qwen3-vl-30b`             | Open source & powerful        |
 
 ## Benefits
 
@@ -57,7 +59,7 @@ async for result in agent.run(messages):
 
 Use the router directly via HTTP for integrations outside Python:
 
-### Messages
+### Anthropic-compatible Messages
 
 ```bash
 curl -X POST https://inference.cua.ai/v1/messages \
@@ -65,6 +67,19 @@ curl -X POST https://inference.cua.ai/v1/messages \
   -H "Content-Type: application/json" \
   -d '{
     "model": "anthropic/claude-sonnet-4.5",
+    "messages": [{"role": "user", "content": "Hello!"}],
+    "max_tokens": 100
+  }'
+```
+
+### OpenAI-compatible Chat Completions
+
+```bash
+curl -X POST https://inference.cua.ai/v1/chat/completions \
+  -H "Authorization: Bearer $CUA_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "microsoft/fara-7b",
     "messages": [{"role": "user", "content": "Hello!"}],
     "max_tokens": 100
   }'

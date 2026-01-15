@@ -37,4 +37,3 @@ show-versions: ## Show current versions of all packages
 	@echo "  cua-som:            $$(grep 'current_version' libs/python/som/.bumpversion.cfg | cut -d' ' -f3)"
 	@echo "  cua-agent:          $$(grep 'current_version' libs/python/agent/.bumpversion.cfg | cut -d' ' -f3)"
 	@echo "  cua-computer-server: $$(grep 'current_version' libs/python/computer-server/.bumpversion.cfg | cut -d' ' -f3)"
-	@echo "  cua-mcp-server:     $$(grep 'current_version' libs/python/mcp-server/.bumpversion.cfg | cut -d' ' -f3)"

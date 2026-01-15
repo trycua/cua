@@ -2,5 +2,5 @@
   "title": "Reference",
   "description": "SDK and CLI API reference",
   "icon": "FileText",
-  "pages": ["desktop-sandbox", "computer-sdk", "agent-sdk", "mcp-server", "cloud-cli"]
+  "pages": ["desktop-sandbox", "computer-sdk", "agent-sdk", "cloud-cli"]
 }

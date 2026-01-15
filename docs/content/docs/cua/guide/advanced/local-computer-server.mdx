@@ -10,7 +10,6 @@ The **computer server** is a local HTTP service that exposes your desktop for pr
 - **Development/debugging** - Test agents on your real desktop
 - **Self-hosted VMs** - Connect to Windows/Linux VMs you manage yourself
 - **Air-gapped environments** - Run everything locally without cloud dependencies
-- **MCP integrations** - Let Claude Desktop control your computer
 
 ## Installation
 
@@ -112,34 +111,6 @@ computer = Computer(
 ```
 
 See the [Windows App Behind VPN](/cua/examples/platform-specific/windows-app-behind-vpn) example for a complete walkthrough.
-
-## MCP Server Integration
-
-To use with Claude Desktop, start the computer server and configure the MCP server:
-
-```bash
-# Terminal 1: Start computer server
-python -m computer_server --log-level debug
-```
-
-```json
-// Claude Desktop config
-{
-  "mcpServers": {
-    "cua-agent": {
-      "command": "/bin/bash",
-      "args": ["~/.cua/start_mcp_server.sh"],
-      "env": {
-        "CUA_MODEL_NAME": "anthropic/claude-sonnet-4-20250514",
-        "ANTHROPIC_API_KEY": "your-key",
-        "CUA_USE_HOST_COMPUTER_SERVER": "true"
-      }
-    }
-  }
-}
-```
-
-See [MCP Server Installation](/cua/reference/mcp-server/installation) for full setup instructions.
 
 ## Security Warning
 

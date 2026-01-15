@@ -21,7 +21,6 @@ dev = [
     "cua-computer",
     "cua-computer-server",
     "cua-som",
-    "cua-mcp-server",
     "black>=23.0.0",
     "ipykernel>=6.29.5",
     "jedi>=0.19.2",
@@ -71,7 +70,6 @@ members = [
     "libs/python/computer",
     "libs/python/computer-server",
     "libs/python/som",
-    "libs/python/mcp-server",
     "libs/python/bench-ui",
 ]
 
@@ -81,7 +79,6 @@ cua-core = { workspace = true }
 cua-computer = { workspace = true }
 cua-computer-server = { workspace = true }
 cua-som = { workspace = true }
-cua-mcp-server = { workspace = true }
 cua-bench-ui = { workspace = true }
 
 [tool.black]

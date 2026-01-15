@@ -14,7 +14,6 @@ on:
           - pypi/computer
           - pypi/computer-server
           - pypi/core
-          - pypi/mcp-server
           - pypi/som
           - npm/cli
           - npm/computer
@@ -68,10 +67,6 @@ jobs:
               ;;
             "pypi/core")
               echo "directory=libs/python/core" >> $GITHUB_OUTPUT
-              echo "type=python" >> $GITHUB_OUTPUT
-              ;;
-            "pypi/mcp-server")
-              echo "directory=libs/python/mcp-server" >> $GITHUB_OUTPUT
               echo "type=python" >> $GITHUB_OUTPUT
               ;;
             "pypi/som")
@@ -239,15 +234,6 @@ jobs:
           cd libs/python/core
           VERSION=$(python -c "import tomllib; from pathlib import Path; data = tomllib.loads(Path('pyproject.toml').read_text()); print(data['project']['version'])")
           echo "Core version: $VERSION"
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-
-      - name: Capture bumped mcp-server version
-        if: ${{ inputs.service == 'pypi/mcp-server' }}
-        id: mcp_server_version
-        run: |
-          cd libs/python/mcp-server
-          VERSION=$(python -c "import tomllib; from pathlib import Path; data = tomllib.loads(Path('pyproject.toml').read_text()); print(data['project']['version'])")
-          echo "MCP-server version: $VERSION"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Capture bumped som version

@@ -1210,7 +1210,7 @@ The documentation database contains crawled pages from cua.ai/docs covering:
 === CODE DATABASE ===
 
 The code database contains versioned source code indexed across all git tags.
-Components include: agent, computer, mcp-server, som, etc.
+Components include: agent, computer, som, etc.
 
 === WORKFLOW EXAMPLES ===
 

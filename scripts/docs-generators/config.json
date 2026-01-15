@@ -51,26 +51,6 @@
       "enabled": false,
       "notes": "Requires yargs introspection or AST parsing - to be implemented"
     },
-    "mcp-server": {
-      "name": "MCP Server",
-      "language": "python",
-      "sourcePath": "libs/python/mcp-server/src",
-      "docsOutputPath": "docs/content/docs/cua/reference/mcp-server",
-      "generatorScript": "scripts/docs-generators/mcp-server.ts",
-      "watchPaths": ["libs/python/mcp-server/src/**/*.py"],
-      "buildCommand": null,
-      "buildDirectory": "libs/python/mcp-server",
-      "extractionMethod": "mcp-introspection",
-      "outputs": [
-        {
-          "type": "tools",
-          "outputFile": "tools.mdx",
-          "extractCommand": null
-        }
-      ],
-      "enabled": false,
-      "notes": "Requires MCP tool introspection - to be implemented"
-    },
     "computer-sdk-python": {
       "name": "Computer SDK (Python)",
       "language": "python",

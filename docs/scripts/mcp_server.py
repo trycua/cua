@@ -59,7 +59,7 @@ The documentation database contains crawled pages from cua.ai/docs covering:
 === CODE DATABASE ===
 
 The code database contains versioned source code indexed across all git tags.
-Components include: agent, computer, mcp-server, som, etc.
+Components include: agent, computer, som, etc.
 
 === WORKFLOW EXAMPLES ===
 
@@ -383,7 +383,7 @@ def query_code_db(sql: str) -> list[dict]:
 
     Table: code_files
     - id INTEGER PRIMARY KEY AUTOINCREMENT
-    - component TEXT NOT NULL          -- Component name (e.g., "agent", "computer", "mcp-server")
+    - component TEXT NOT NULL          -- Component name (e.g., "agent", "computer", "som")
     - version TEXT NOT NULL            -- Version string (e.g., "0.7.3", "0.7.2")
     - file_path TEXT NOT NULL          -- Path to file (e.g., "agent/computer_agent.py")
     - content TEXT NOT NULL            -- Full source code content

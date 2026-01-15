@@ -7,8 +7,6 @@ on:
       - "libs/lume/src/**"
       # Cua CLI (TypeScript)
       - "libs/typescript/cua-cli/src/**"
-      # MCP Server (Python)
-      - "libs/python/mcp-server/src/**"
       # Computer SDK
       - "libs/python/computer/src/**"
       - "libs/typescript/computer/src/**"
@@ -61,11 +59,6 @@ jobs:
           # Cua CLI changes
           if echo "$CHANGED_FILES" | grep -q "^libs/typescript/cua-cli/src/"; then
             GENERATORS="$GENERATORS cua-cli"
-          fi
-
-          # MCP Server changes
-          if echo "$CHANGED_FILES" | grep -q "^libs/python/mcp-server/src/"; then
-            GENERATORS="$GENERATORS mcp-server"
           fi
 
           # Computer SDK changes

@@ -13,7 +13,6 @@ The project is organized as a monorepo with these main packages:
 - `agent/` - AI agent library with multi-provider support
 - `som/` - Set-of-Mark parser
 - `computer-server/` - Server component for VM
-- `mcp-server/` - MCP server implementation
 - `bench-ui/` - Benchmark UI utilities
 
 **Other Packages**:
@@ -308,7 +307,6 @@ All packages are managed through a single consolidated workflow: [Bump Version &
 - `pypi/computer` - Computer-use interface library
 - `pypi/computer-server` - Server component for VM
 - `pypi/core` - Base package with telemetry
-- `pypi/mcp-server` - MCP server implementation
 - `pypi/som` - Set-of-Mark parser
 
 **JavaScript/TypeScript (NPM):**
@@ -363,7 +361,6 @@ Each package uses its own tag format defined in `.bumpversion.cfg`:
 - **cua-computer**: `computer-v{version}` (e.g., `computer-v0.4.7`)
 - **cua-computer-server**: `computer-server-v{version}` (e.g., `computer-server-v0.1.27`)
 - **cua-core**: `core-v{version}` (e.g., `core-v0.1.9`)
-- **cua-mcp-server**: `mcp-server-v{version}` (e.g., `mcp-server-v0.1.14`)
 - **cua-som**: `som-v{version}` (e.g., `som-v0.1.3`)
 
 </details>

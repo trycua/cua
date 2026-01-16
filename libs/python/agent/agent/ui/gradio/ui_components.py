@@ -562,7 +562,7 @@ if __name__ == "__main__":
                     "Ask me to perform tasks in a virtual environment.<br>Built with <a href='https://github.com/trycua/cua' target='_blank'>github.com/trycua/cua</a>."
                 )
 
-                chatbot_history = gr.Chatbot(type="messages")
+                chatbot_history = gr.Chatbot()
                 msg = gr.Textbox(placeholder="Ask me to perform tasks in a virtual environment")
                 clear = gr.Button("Clear")
                 cancel_button = gr.Button("Cancel", variant="stop")

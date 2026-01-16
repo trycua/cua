@@ -343,6 +343,50 @@ async def scheduled_crawl():
 # =============================================================================
 # Database Generation Functions
 # =============================================================================
+#
+# The MCP server provides access to two types of query databases:
+#
+# 1. DOCUMENTATION DATABASES (from cua.ai/docs crawl):
+#    - SQLite FTS5 Database (docs.sqlite):
+#      * `pages` table: stores URL, title, category, and plain-text content
+#      * `pages_fts` virtual table: FTS5 full-text search index
+#      * Triggers keep FTS index synchronized with pages table
+#      * Built by: generate_sqlite_db()
+#
+#    - LanceDB Vector Database (docs.lance/):
+#      * DocsChunk schema: text, vector (384-dim), url, title, category, chunk_index
+#      * Uses sentence-transformers/all-MiniLM-L6-v2 for embeddings
+#      * Chunks documents by paragraph for semantic search
+#      * Built by: generate_vector_db()
+#
+# 2. CODE INDEX DATABASES (from git tags):
+#    - SQLite FTS5 Database (code_index_<component>.sqlite per component):
+#      * `code_files` table: component, version, file_path, content, language
+#      * `code_files_fts` virtual table: FTS5 full-text search index
+#      * Indexes source files (.py, .ts, .js, .tsx) from all git tags
+#      * Built by: index_component() called from generate_code_index_parallel()
+#
+#    - LanceDB Vector Database (code_index_<component>.lancedb/ per component):
+#      * CodeFile schema: text, vector (384-dim), component, version, file_path, language
+#      * Only embeds files under 100KB to avoid memory issues
+#      * Built by: index_component() called from generate_code_index_parallel()
+#
+# Database Build Process:
+# 1. scheduled_crawl() runs daily at 6 AM UTC:
+#    - Calls crawl_docs() to crawl cua.ai/docs
+#    - Calls generate_vector_db() to build LanceDB from crawled markdown
+#    - Calls generate_sqlite_db() to build SQLite FTS from crawled content
+#
+# 2. scheduled_code_index() runs daily at 5 AM UTC (before docs):
+#    - Calls generate_code_index_parallel() which:
+#      a. Clones/updates the git repository (bare clone)
+#      b. Groups all git tags by component (agent, computer, etc.)
+#      c. Dispatches parallel index_component() workers per component
+#      d. Each worker builds its own SQLite + LanceDB
+#
+# Note: Modal volumes don't support atomic rename operations, so LanceDB is
+# built in a temp directory first, then copied to the volume.
+# =============================================================================
 
 
 @app.function(
@@ -524,34 +568,10 @@ async def generate_sqlite_db():
     """
     )
 
-    # Load and insert data
-    json_files = list(CRAWLED_DIR.glob("*.json"))
-    json_files = [f for f in json_files if not f.name.startswith("_")]
-
-    inserted = 0
-
-    for json_file in json_files:
-        with open(json_file, "r", encoding="utf-8") as f:
-            page_data = json.load(f)
-
-        url = page_data.get("url", "")
-        title = page_data.get("title", "")
-        markdown = page_data.get("markdown", "")
-        category = page_data.get("path_info", {}).get("category", "unknown")
-
-        if not markdown:
-            continue
-
-        # Convert markdown to plain text
-        text = clean_markdown(markdown)
-
-        cursor.execute(
-            "INSERT OR REPLACE INTO pages (url, title, category, content) VALUES (?, ?, ?, ?)",
-            (url, title, category, text),
-        )
-        inserted += 1
-
-    # Create FTS triggers
+    # Create FTS triggers BEFORE inserting data
+    # This is critical: since pages_fts uses external content (content='pages'),
+    # the FTS index is only populated via these triggers. If triggers are created
+    # after data insertion, the FTS table will be empty.
     cursor.execute(
         """
         CREATE TRIGGER pages_ai AFTER INSERT ON pages BEGIN
@@ -578,6 +598,35 @@ async def generate_sqlite_db():
         END;
     """
     )
+
+    conn.commit()
+
+    # Load and insert data (triggers will populate FTS automatically)
+    json_files = list(CRAWLED_DIR.glob("*.json"))
+    json_files = [f for f in json_files if not f.name.startswith("_")]
+
+    inserted = 0
+
+    for json_file in json_files:
+        with open(json_file, "r", encoding="utf-8") as f:
+            page_data = json.load(f)
+
+        url = page_data.get("url", "")
+        title = page_data.get("title", "")
+        markdown = page_data.get("markdown", "")
+        category = page_data.get("path_info", {}).get("category", "unknown")
+
+        if not markdown:
+            continue
+
+        # Convert markdown to plain text
+        text = clean_markdown(markdown)
+
+        cursor.execute(
+            "INSERT OR REPLACE INTO pages (url, title, category, content) VALUES (?, ?, ?, ?)",
+            (url, title, category, text),
+        )
+        inserted += 1
 
     conn.commit()
     conn.close()

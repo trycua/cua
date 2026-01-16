@@ -177,6 +177,15 @@ class WindowsAutomationHandler(BaseAutomationHandler):
     mouse = MouseController()
     keyboard = KeyboardController()
 
+    def is_desktop_locked(self) -> bool:
+        try:
+            import ctypes
+            user32 = ctypes.windll.user32
+            hwnd = user32.GetForegroundWindow()
+            return hwnd == 0
+        except Exception:
+            return False
+
     def _map_button(self, button: str) -> MouseButton:
         """Map a string button name to pynput MouseButton."""
         b = (button or "left").lower()
@@ -253,6 +262,12 @@ class WindowsAutomationHandler(BaseAutomationHandler):
         Returns:
             Dict[str, Any]: A dictionary with success status and optional error message.
         """
+
+        if self.is_desktop_locked():
+            return {
+                "success": False,
+                "error": "Windows desktop is locked. Automation input is blocked by OS security."
+            }
         try:
             if x is not None and y is not None:
                 self.mouse.position = (x, y)
@@ -274,6 +289,12 @@ class WindowsAutomationHandler(BaseAutomationHandler):
         Returns:
             Dict[str, Any]: A dictionary with success status and optional error message.
         """
+        if self.is_desktop_locked():
+            return {
+                "success": False,
+                "error": "Windows desktop is locked. Automation input is blocked by OS security."
+            }
+
         try:
             if x is not None and y is not None:
                 self.mouse.position = (x, y)
@@ -292,6 +313,11 @@ class WindowsAutomationHandler(BaseAutomationHandler):
         Returns:
             Dict[str, Any]: A dictionary with success status and optional error message.
         """
+        if self.is_desktop_locked():
+            return {
+                "success": False,
+                "error": "Windows desktop is locked. Automation input is blocked by OS security."
+            }
         try:
             self.mouse.position = (x, y)
             return {"success": True}
@@ -308,6 +334,11 @@ class WindowsAutomationHandler(BaseAutomationHandler):
         Returns:
             Dict[str, Any]: A dictionary with success status and optional error message.
         """
+        if self.is_desktop_locked():
+            return {
+                "success": False,
+                "error": "Windows desktop is locked. Automation input is blocked by OS security."
+            }
         try:
             if x is not None and y is not None:
                 self.mouse.position = (x, y)
@@ -326,6 +357,11 @@ class WindowsAutomationHandler(BaseAutomationHandler):
         Returns:
             Dict[str, Any]: A dictionary with success status and optional error message.
         """
+        if self.is_desktop_locked():
+            return {
+                "success": False,
+                "error": "Windows desktop is locked. Automation input is blocked by OS security."
+            }
         try:
             if x is not None and y is not None:
                 self.mouse.position = (x, y)
@@ -346,6 +382,11 @@ class WindowsAutomationHandler(BaseAutomationHandler):
         Returns:
             Dict[str, Any]: A dictionary with success status and optional error message.
         """
+        if self.is_desktop_locked():
+            return {
+                "success": False,
+                "error": "Windows desktop is locked. Automation input is blocked by OS security."
+            }
         try:
             if x is not None and y is not None:
                 self.mouse.position = (x, y)
@@ -368,6 +409,11 @@ class WindowsAutomationHandler(BaseAutomationHandler):
         Returns:
             Dict[str, Any]: A dictionary with success status and optional error message.
         """
+        if self.is_desktop_locked():
+            return {
+                "success": False,
+                "error": "Windows desktop is locked. Automation input is blocked by OS security."
+            }
         try:
             # simple drag implementation
             self.mouse.press(self._map_button(button))
@@ -390,6 +436,11 @@ class WindowsAutomationHandler(BaseAutomationHandler):
         Returns:
             Dict[str, Any]: A dictionary with success status and optional error message.
         """
+        if self.is_desktop_locked():
+            return {
+                "success": False,
+                "error": "Windows desktop is locked. Automation input is blocked by OS security."
+            }
         try:
             if not path:
                 return {"success": False, "error": "Path is empty"}
@@ -417,6 +468,11 @@ class WindowsAutomationHandler(BaseAutomationHandler):
         Returns:
             Dict[str, Any]: A dictionary with success status and optional error message.
         """
+        if self.is_desktop_locked():
+            return {
+                "success": False,
+                "error": "Windows desktop is locked. Automation input is blocked by OS security."
+            }
         try:
             k = self._key_from_string(key)
             if k is None:
@@ -435,6 +491,11 @@ class WindowsAutomationHandler(BaseAutomationHandler):
         Returns:
             Dict[str, Any]: A dictionary with success status and optional error message.
         """
+        if self.is_desktop_locked():
+            return {
+                "success": False,
+                "error": "Windows desktop is locked. Automation input is blocked by OS security."
+            }
         try:
             k = self._key_from_string(key)
             if k is None:
@@ -453,6 +514,11 @@ class WindowsAutomationHandler(BaseAutomationHandler):
         Returns:
             Dict[str, Any]: A dictionary with success status and optional error message.
         """
+        if self.is_desktop_locked():
+            return {
+                "success": False,
+                "error": "Windows desktop is locked. Automation input is blocked by OS security."
+            }
         try:
             # use pynput for Unicode support
             self.keyboard.type(text)
@@ -469,6 +535,11 @@ class WindowsAutomationHandler(BaseAutomationHandler):
         Returns:
             Dict[str, Any]: A dictionary with success status and optional error message.
         """
+        if self.is_desktop_locked():
+            return {
+                "success": False,
+                "error": "Windows desktop is locked. Automation input is blocked by OS security."
+            }
         try:
             k = self._key_from_string(key)
             if k is None:
@@ -488,6 +559,11 @@ class WindowsAutomationHandler(BaseAutomationHandler):
         Returns:
             Dict[str, Any]: A dictionary with success status and optional error message.
         """
+        if self.is_desktop_locked():
+            return {
+                "success": False,
+                "error": "Windows desktop is locked. Automation input is blocked by OS security."
+            }
         try:
             # press keys sequentially while holding modifiers
             resolved = [self._key_from_string(k) for k in keys]
@@ -521,6 +597,11 @@ class WindowsAutomationHandler(BaseAutomationHandler):
         Returns:
             Dict[str, Any]: A dictionary with success status and optional error message.
         """
+        if self.is_desktop_locked():
+            return {
+                "success": False,
+                "error": "Windows desktop is locked. Automation input is blocked by OS security."
+            }
         try:
             self.mouse.scroll(x, y)
             return {"success": True}
@@ -536,6 +617,11 @@ class WindowsAutomationHandler(BaseAutomationHandler):
         Returns:
             Dict[str, Any]: A dictionary with success status and optional error message.
         """
+        if self.is_desktop_locked():
+            return {
+                "success": False,
+                "error": "Windows desktop is locked. Automation input is blocked by OS security."
+            }
         try:
             # negative y to scroll down
             self.mouse.scroll(0, -abs(clicks))
@@ -552,6 +638,11 @@ class WindowsAutomationHandler(BaseAutomationHandler):
         Returns:
             Dict[str, Any]: A dictionary with success status and optional error message.
         """
+        if self.is_desktop_locked():
+            return {
+                "success": False,
+                "error": "Windows desktop is locked. Automation input is blocked by OS security."
+            }
         try:
             self.mouse.scroll(0, abs(clicks))
             return {"success": True}

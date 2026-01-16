@@ -176,7 +176,13 @@ class ComputerTracing:
         if output_format == "zip":
             # Create zip file
             if custom_path:
-                zip_path = Path(custom_path)
+                zip_path = Path(custom_path).resolve()
+                # Check if path exists as a directory
+                if zip_path.exists() and zip_path.is_dir():
+                    raise ValueError(
+                        f"Cannot create zip file at '{custom_path}': path exists as a directory. "
+                        "Please specify a file path (e.g., 'traces/my_trace.zip') or use format='dir'."
+                    )
             else:
                 zip_path = self._trace_dir.parent / f"{self._trace_id}.zip"
 
@@ -186,7 +192,25 @@ class ComputerTracing:
             # Return directory path
             if custom_path:
                 # Move directory to custom path
-                custom_dir = Path(custom_path)
+                custom_dir = Path(custom_path).resolve()
+                trace_dir_resolved = self._trace_dir.resolve()
+
+                # Check if custom_dir is an ancestor of the trace directory
+                is_subdirectory = False
+                try:
+                    trace_dir_resolved.relative_to(custom_dir)
+                    is_subdirectory = True
+                except ValueError:
+                    # relative_to raises ValueError if not a subdirectory, which is what we want
+                    pass
+
+                if is_subdirectory:
+                    raise ValueError(
+                        f"Cannot move trace directory to '{custom_path}': it would be moved into itself. "
+                        f"Trace is currently at '{self._trace_dir}'. "
+                        "Please specify a different target directory."
+                    )
+
                 if custom_dir.exists():
                     import shutil
 

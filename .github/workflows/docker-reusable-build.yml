@@ -24,15 +24,26 @@ on:
         default: false
 
 jobs:
-  build:
+  setup:
     runs-on: ubuntu-latest
-    if: ${{ !(inputs.skip_arm64 && matrix.platform == 'linux/arm64') }}
+    outputs:
+      platforms: ${{ steps.set-platforms.outputs.platforms }}
+    steps:
+      - id: set-platforms
+        run: |
+          if [ "${{ inputs.skip_arm64 }}" == "true" ]; then
+            echo 'platforms=["linux/amd64"]' >> $GITHUB_OUTPUT
+          else
+            echo 'platforms=["linux/amd64", "linux/arm64"]' >> $GITHUB_OUTPUT
+          fi
+
+  build:
+    needs: setup
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        platform:
-          - linux/amd64
-          - linux/arm64
+        platform: ${{ fromJSON(needs.setup.outputs.platforms) }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4

@@ -2,5 +2,5 @@
   "title": "Integrations",
   "description": "Third-party tools and integrations",
   "icon": "Plug",
-  "pages": ["docs-mcp", "laminar", "hud", "benchmarks"]
+  "pages": ["laminar", "hud", "benchmarks"]
 }

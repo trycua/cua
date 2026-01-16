@@ -1135,9 +1135,9 @@ def aggregate_code_databases() -> dict:
         total_rows += rows_copied
         print(f"    Copied {rows_copied} rows from {component_name}")
 
-        # Detach
-        cursor.execute("DETACH DATABASE comp")
+        # Commit before detaching to release locks on the attached database
         conn.commit()
+        cursor.execute("DETACH DATABASE comp")
 
     conn.close()
     print(f"SQLite aggregation complete: {total_rows} total rows")

@@ -778,15 +778,16 @@ class ComputerAgent:
                 )
                 new_items += partial_items
 
-                # Yield partial response
-                yield {
-                    "output": partial_items,
-                    "usage": Usage(
-                        prompt_tokens=0,
-                        completion_tokens=0,
-                        total_tokens=0,
-                    ),
-                }
+                # Yield partial response if any
+                if partial_items:
+                    yield {
+                        "output": partial_items,
+                        "usage": Usage(
+                            prompt_tokens=0,
+                            completion_tokens=0,
+                            total_tokens=0,
+                        ),
+                    }
 
         await self._on_run_end(loop_kwargs, old_items, new_items)
 

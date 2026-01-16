@@ -343,6 +343,57 @@ async def scheduled_crawl():
 # =============================================================================
 # Database Generation Functions
 # =============================================================================
+#
+# The MCP server provides access to two types of query databases:
+#
+# 1. DOCUMENTATION DATABASES (from cua.ai/docs crawl):
+#    - SQLite FTS5 Database (docs.sqlite):
+#      * `pages` table: stores URL, title, category, and plain-text content
+#      * `pages_fts` virtual table: FTS5 full-text search index
+#      * Triggers keep FTS index synchronized with pages table
+#      * Built by: generate_sqlite_db()
+#
+#    - LanceDB Vector Database (docs.lance/):
+#      * DocsChunk schema: text, vector (384-dim), url, title, category, chunk_index
+#      * Uses sentence-transformers/all-MiniLM-L6-v2 for embeddings
+#      * Chunks documents by paragraph for semantic search
+#      * Built by: generate_vector_db()
+#
+# 2. CODE INDEX DATABASES (from git tags):
+#    Per-component databases (built in parallel):
+#    - SQLite FTS5 Database (code_index_<component>.sqlite per component):
+#      * `code_files` table: component, version, file_path, content, language
+#      * `code_files_fts` virtual table: FTS5 full-text search index
+#      * Indexes source files (.py, .ts, .js, .tsx) from all git tags
+#      * Built by: index_component() called from generate_code_index_parallel()
+#
+#    - LanceDB Vector Database (code_index_<component>.lancedb/ per component):
+#      * CodeFile schema: text, vector (384-dim), component, version, file_path, language
+#      * Only embeds files under 100KB to avoid memory issues
+#      * Built by: index_component() called from generate_code_index_parallel()
+#
+#    Aggregated databases (for MCP server queries):
+#    - code_index.sqlite: Unified SQLite with all components' data + FTS5 index
+#    - code_index.lancedb: Unified LanceDB with all components' vectors
+#    - Built by: aggregate_code_databases() after parallel indexing completes
+#
+# Database Build Process:
+# 1. scheduled_crawl() runs daily at 6 AM UTC:
+#    - Calls crawl_docs() to crawl cua.ai/docs
+#    - Calls generate_vector_db() to build LanceDB from crawled markdown
+#    - Calls generate_sqlite_db() to build SQLite FTS from crawled content
+#
+# 2. scheduled_code_index() runs daily at 5 AM UTC (before docs):
+#    - Calls generate_code_index_parallel() which:
+#      a. Clones/updates the git repository (bare clone)
+#      b. Groups all git tags by component (agent, computer, etc.)
+#      c. Dispatches parallel index_component() workers per component
+#      d. Each worker builds its own SQLite + LanceDB
+#    - Calls aggregate_code_databases() to merge per-component DBs into unified DBs
+#
+# Note: Modal volumes don't support atomic rename operations, so LanceDB is
+# built in a temp directory first, then copied to the volume.
+# =============================================================================
 
 
 @app.function(
@@ -524,34 +575,10 @@ async def generate_sqlite_db():
     """
     )
 
-    # Load and insert data
-    json_files = list(CRAWLED_DIR.glob("*.json"))
-    json_files = [f for f in json_files if not f.name.startswith("_")]
-
-    inserted = 0
-
-    for json_file in json_files:
-        with open(json_file, "r", encoding="utf-8") as f:
-            page_data = json.load(f)
-
-        url = page_data.get("url", "")
-        title = page_data.get("title", "")
-        markdown = page_data.get("markdown", "")
-        category = page_data.get("path_info", {}).get("category", "unknown")
-
-        if not markdown:
-            continue
-
-        # Convert markdown to plain text
-        text = clean_markdown(markdown)
-
-        cursor.execute(
-            "INSERT OR REPLACE INTO pages (url, title, category, content) VALUES (?, ?, ?, ?)",
-            (url, title, category, text),
-        )
-        inserted += 1
-
-    # Create FTS triggers
+    # Create FTS triggers BEFORE inserting data
+    # This is critical: since pages_fts uses external content (content='pages'),
+    # the FTS index is only populated via these triggers. If triggers are created
+    # after data insertion, the FTS table will be empty.
     cursor.execute(
         """
         CREATE TRIGGER pages_ai AFTER INSERT ON pages BEGIN
@@ -578,6 +605,35 @@ async def generate_sqlite_db():
         END;
     """
     )
+
+    conn.commit()
+
+    # Load and insert data (triggers will populate FTS automatically)
+    json_files = list(CRAWLED_DIR.glob("*.json"))
+    json_files = [f for f in json_files if not f.name.startswith("_")]
+
+    inserted = 0
+
+    for json_file in json_files:
+        with open(json_file, "r", encoding="utf-8") as f:
+            page_data = json.load(f)
+
+        url = page_data.get("url", "")
+        title = page_data.get("title", "")
+        markdown = page_data.get("markdown", "")
+        category = page_data.get("path_info", {}).get("category", "unknown")
+
+        if not markdown:
+            continue
+
+        # Convert markdown to plain text
+        text = clean_markdown(markdown)
+
+        cursor.execute(
+            "INSERT OR REPLACE INTO pages (url, title, category, content) VALUES (?, ?, ?, ?)",
+            (url, title, category, text),
+        )
+        inserted += 1
 
     conn.commit()
     conn.close()
@@ -635,7 +691,7 @@ def group_tags_by_component(tags: list[str]) -> dict[str, list[str]]:
     image=image,
     volumes={CODE_VOLUME_PATH: code_volume},
     secrets=[github_secret],
-    timeout=1800,  # 30 minutes per component
+    timeout=3600,  # 1 hour per component
     cpu=2.0,
     memory=8192,
 )
@@ -903,29 +959,256 @@ def generate_code_index_parallel(max_concurrent: int = 4) -> dict:
     args = [(comp, tags, repo_path_str) for comp, tags in component_tags.items()]
 
     print(f"Dispatching {len(args)} parallel indexing jobs...")
-    results = list(index_component.starmap(args, order_outputs=False))
 
-    # Commit all changes to volume
+    # Process results with error handling for individual component failures
+    results = []
+    failed_components = []
+
+    try:
+        # Use return_exceptions=True to get results even when some workers fail
+        for i, result in enumerate(index_component.starmap(args, order_outputs=False, return_exceptions=True)):
+            comp_name = args[i][0] if i < len(args) else f"component_{i}"
+            if isinstance(result, Exception):
+                # Handle individual component failures
+                error_msg = str(result)
+                print(f"[{comp_name}] Component indexing failed: {error_msg}")
+                failed_components.append({
+                    "component": comp_name,
+                    "error": error_msg,
+                    "files": 0,
+                    "embedded": 0,
+                    "failed_tags": len(args[i][1]) if i < len(args) else 0,
+                })
+            else:
+                results.append(result)
+                print(f"[{comp_name}] Component indexing succeeded")
+    except Exception as e:
+        # Handle catastrophic failures (e.g., all workers failed)
+        print(f"Error during parallel indexing: {e}")
+        # Still try to commit any partial results
+        pass
+
+    # Commit all changes to volume (including partial results)
     code_volume.commit()
 
-    # Aggregate results
+    # Aggregate results from successful components
     total_files = sum(r["files"] for r in results)
     total_embedded = sum(r["embedded"] for r in results)
     total_failed = sum(r["failed_tags"] for r in results)
+
+    # Add failed component stats
+    total_failed += sum(f["failed_tags"] for f in failed_components)
 
     summary = {
         "total_files": total_files,
         "total_embedded": total_embedded,
         "total_failed_tags": total_failed,
         "components": results,
+        "failed_components": failed_components,
+        "success_count": len(results),
+        "failure_count": len(failed_components),
     }
 
     print("\nParallel indexing complete:")
     print(f"  Total files: {total_files}")
     print(f"  Total embedded: {total_embedded}")
     print(f"  Components indexed: {len(results)}")
+    if failed_components:
+        print(f"  Components failed: {len(failed_components)}")
+        for fc in failed_components:
+            print(f"    - {fc['component']}: {fc['error'][:100]}")
 
     return summary
+
+
+@app.function(
+    image=image,
+    volumes={CODE_VOLUME_PATH: code_volume},
+    timeout=1800,  # 30 minutes
+    cpu=2.0,
+    memory=8192,
+)
+def aggregate_code_databases() -> dict:
+    """Aggregate per-component databases into unified SQLite and LanceDB.
+
+    This function runs after parallel indexing to create single aggregated
+    databases that the MCP server can query directly, avoiding runtime
+    aggregation overhead.
+
+    Creates:
+    - code_index.sqlite: Unified SQLite with FTS5 from all components
+    - code_index.lancedb: Unified LanceDB with vectors from all components
+
+    Returns:
+        Dict with aggregation statistics
+    """
+    import shutil
+    import tempfile
+
+    import lancedb
+    from lancedb.embeddings import get_registry
+    from lancedb.pydantic import LanceModel, Vector
+
+    print("Aggregating component databases...")
+
+    DB_DIR = Path(CODE_DB_PATH)
+    if not DB_DIR.exists():
+        print("No database directory found")
+        return {"error": "No database directory"}
+
+    # Find all component SQLite databases
+    component_dbs = list(DB_DIR.glob("code_index_*.sqlite"))
+    if not component_dbs:
+        print("No component databases found to aggregate")
+        return {"error": "No component databases found"}
+
+    print(f"Found {len(component_dbs)} component databases to aggregate")
+
+    # === Aggregate SQLite databases ===
+    AGGREGATED_SQLITE = DB_DIR / "code_index.sqlite"
+    if AGGREGATED_SQLITE.exists():
+        AGGREGATED_SQLITE.unlink()
+        print("Removed existing aggregated SQLite database")
+
+    conn = sqlite3.connect(AGGREGATED_SQLITE)
+    cursor = conn.cursor()
+
+    # Create main table
+    cursor.execute(
+        """
+        CREATE TABLE code_files (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            component TEXT NOT NULL,
+            version TEXT NOT NULL,
+            file_path TEXT NOT NULL,
+            content TEXT NOT NULL,
+            language TEXT NOT NULL,
+            UNIQUE(component, version, file_path)
+        )
+    """
+    )
+    cursor.execute("CREATE INDEX idx_component ON code_files(component)")
+    cursor.execute("CREATE INDEX idx_version ON code_files(component, version)")
+
+    # Create FTS5 virtual table
+    cursor.execute(
+        """
+        CREATE VIRTUAL TABLE code_files_fts USING fts5(
+            content,
+            component UNINDEXED,
+            version UNINDEXED,
+            file_path UNINDEXED,
+            content='code_files',
+            content_rowid='id'
+        )
+    """
+    )
+
+    # Create FTS triggers BEFORE inserting data
+    cursor.execute(
+        """
+        CREATE TRIGGER code_files_ai AFTER INSERT ON code_files BEGIN
+            INSERT INTO code_files_fts(rowid, content, component, version, file_path)
+            VALUES (new.id, new.content, new.component, new.version, new.file_path);
+        END;
+    """
+    )
+    conn.commit()
+
+    # Copy data from each component database
+    total_rows = 0
+    for db_path in component_dbs:
+        component_name = db_path.stem.replace("code_index_", "")
+        print(f"  Aggregating {component_name}...")
+
+        # Attach component database
+        cursor.execute(f"ATTACH DATABASE 'file:{db_path}?mode=ro' AS comp")
+
+        # Copy data (triggers will populate FTS automatically)
+        cursor.execute(
+            """
+            INSERT INTO code_files (component, version, file_path, content, language)
+            SELECT component, version, file_path, content, language FROM comp.code_files
+        """
+        )
+        rows_copied = cursor.rowcount
+        total_rows += rows_copied
+        print(f"    Copied {rows_copied} rows from {component_name}")
+
+        # Commit before detaching to release locks on the attached database
+        conn.commit()
+        cursor.execute("DETACH DATABASE comp")
+
+    conn.close()
+    print(f"SQLite aggregation complete: {total_rows} total rows")
+
+    # === Aggregate LanceDB databases ===
+    TMP_LANCE_DIR = Path(tempfile.mkdtemp(prefix="code_lancedb_agg_"))
+
+    # Initialize embedding model and schema
+    model = get_registry().get("sentence-transformers").create(name="all-MiniLM-L6-v2")
+
+    class CodeFile(LanceModel):
+        text: str = model.SourceField()
+        vector: Vector(model.ndims()) = model.VectorField()
+        component: str
+        version: str
+        file_path: str
+        language: str
+
+    lance_db = lancedb.connect(TMP_LANCE_DIR)
+    lance_table = lance_db.create_table("code", schema=CodeFile, mode="overwrite")
+
+    # Find and aggregate all component LanceDBs
+    component_lance_dirs = list(DB_DIR.glob("code_index_*.lancedb"))
+    total_vectors = 0
+
+    for lance_dir in component_lance_dirs:
+        component_name = lance_dir.stem.replace("code_index_", "").replace(".lancedb", "")
+        print(f"  Aggregating vectors from {component_name}...")
+
+        try:
+            comp_db = lancedb.connect(lance_dir)
+            comp_table = comp_db.open_table("code")
+
+            # Read all data from component table (excluding vector column for re-embedding)
+            # Actually, we want to preserve the vectors, so read everything
+            data = comp_table.to_pandas()
+
+            if len(data) > 0:
+                # Convert to list of dicts, preserving vectors
+                records = data.to_dict("records")
+                lance_table.add(records)
+                total_vectors += len(records)
+                print(f"    Added {len(records)} vectors from {component_name}")
+
+            del comp_table
+            del comp_db
+        except Exception as e:
+            print(f"    Error aggregating {component_name}: {e}")
+            continue
+
+    # Close and copy to volume
+    del lance_table
+    del lance_db
+
+    AGGREGATED_LANCE = DB_DIR / "code_index.lancedb"
+    if AGGREGATED_LANCE.exists():
+        shutil.rmtree(AGGREGATED_LANCE)
+    shutil.copytree(TMP_LANCE_DIR, AGGREGATED_LANCE)
+    shutil.rmtree(TMP_LANCE_DIR)
+
+    # Commit changes to volume
+    code_volume.commit()
+
+    print(f"LanceDB aggregation complete: {total_vectors} total vectors")
+    print("Aggregation complete!")
+
+    return {
+        "sqlite_rows": total_rows,
+        "lance_vectors": total_vectors,
+        "components_aggregated": len(component_dbs),
+    }
 
 
 @app.function(
@@ -1151,14 +1434,56 @@ async def generate_code_index():
     volumes={CODE_VOLUME_PATH: code_volume},
     secrets=[github_secret],
     schedule=modal.Cron("0 5 * * *"),  # Daily at 5 AM UTC (before docs crawl)
-    timeout=3600,
+    timeout=7200,  # 2 hours (includes aggregation time)
 )
 async def scheduled_code_index():
     """Scheduled daily code index generation (uses parallel processing)"""
+    import modal.exception
+
     print("Running scheduled code indexing (parallel)...")
-    result = await generate_code_index_parallel.remote.aio()
-    print(f"Code indexing complete: {result}")
-    return result
+    try:
+        result = await generate_code_index_parallel.remote.aio()
+        print(f"Code indexing complete: {result}")
+
+        # Log summary of any failed components
+        if result.get("failed_components"):
+            print(f"Warning: {len(result['failed_components'])} component(s) failed during indexing")
+            for fc in result["failed_components"]:
+                print(f"  - {fc['component']}: {fc['error'][:200]}")
+
+        # Aggregate component databases into unified DBs for the MCP server
+        print("Aggregating component databases...")
+        agg_result = aggregate_code_databases.remote()
+        print(f"Aggregation complete: {agg_result}")
+        result["aggregation"] = agg_result
+
+        return result
+    except modal.exception.FunctionTimeoutError as e:
+        print(f"Code indexing timed out: {e}")
+        # Return a partial result indicating the timeout
+        return {
+            "total_files": 0,
+            "total_embedded": 0,
+            "total_failed_tags": 0,
+            "components": [],
+            "failed_components": [],
+            "error": f"Function timed out: {str(e)}",
+            "success_count": 0,
+            "failure_count": 0,
+        }
+    except Exception as e:
+        print(f"Code indexing failed with error: {e}")
+        # Return error information instead of crashing
+        return {
+            "total_files": 0,
+            "total_embedded": 0,
+            "total_failed_tags": 0,
+            "components": [],
+            "failed_components": [],
+            "error": str(e),
+            "success_count": 0,
+            "failure_count": 0,
+        }
 
 
 # =============================================================================
@@ -1229,129 +1554,63 @@ Components include: agent, computer, mcp-server, som, etc.
 IMPORTANT: Always cite sources - URLs for docs, component@version:path for code.""",
     )
 
-    # Initialize embedding model
+    # Initialize embedding model (unused but kept for potential future use)
     model = get_registry().get("sentence-transformers").create(name="all-MiniLM-L6-v2")
 
-    # Global database connections
-    _lance_db = None
-    _lance_table = None
-    _sqlite_conn = None
-    _code_lance_tables: dict = {}  # component -> (db, table)
+    # Global database connections (lazy-initialized, cached for reuse)
+    _docs_lance_db = None
+    _docs_lance_table = None
+    _docs_sqlite_conn = None
+    _code_lance_db = None
+    _code_lance_table = None
     _code_sqlite_conn = None
-    _code_components: list[str] = []
-
-    def discover_code_components() -> list[str]:
-        """Discover available component databases."""
-        nonlocal _code_components
-        if not _code_components:
-            db_dir = Path(CODE_DB_PATH)
-            if db_dir.exists():
-                # Find all component SQLite databases
-                for db_file in db_dir.glob("code_index_*.sqlite"):
-                    component = db_file.stem.replace("code_index_", "")
-                    _code_components.append(component)
-                # Fallback to legacy single database
-                if not _code_components and (db_dir / "code_index.sqlite").exists():
-                    _code_components.append("_legacy")
-        return _code_components
 
     def get_lance_table():
         """Get or create LanceDB connection for docs"""
-        nonlocal _lance_db, _lance_table
-        if _lance_table is None:
+        nonlocal _docs_lance_db, _docs_lance_table
+        if _docs_lance_table is None:
             db_path = Path(DB_PATH)
             if not db_path.exists():
                 raise RuntimeError("Database not found. Run crawl and generation functions first.")
-            _lance_db = lancedb.connect(db_path)
-            _lance_table = _lance_db.open_table("docs")
-        return _lance_table
+            _docs_lance_db = lancedb.connect(db_path)
+            _docs_lance_table = _docs_lance_db.open_table("docs")
+        return _docs_lance_table
 
     def get_sqlite_conn():
         """Get or create read-only SQLite connection for docs"""
-        nonlocal _sqlite_conn
-        if _sqlite_conn is None:
+        nonlocal _docs_sqlite_conn
+        if _docs_sqlite_conn is None:
             sqlite_path = Path(DB_PATH) / "docs.sqlite"
             if not sqlite_path.exists():
                 raise RuntimeError("SQLite database not found.")
-            _sqlite_conn = sqlite3.connect(f"file:{sqlite_path}?mode=ro", uri=True)
-            _sqlite_conn.row_factory = sqlite3.Row
-        return _sqlite_conn
+            _docs_sqlite_conn = sqlite3.connect(f"file:{sqlite_path}?mode=ro", uri=True)
+            _docs_sqlite_conn.row_factory = sqlite3.Row
+        return _docs_sqlite_conn
 
-    def get_code_lance_tables() -> list[tuple[str, any]]:
-        """Get LanceDB connections for all code components."""
-        nonlocal _code_lance_tables
-        components = discover_code_components()
-
-        for component in components:
-            if component not in _code_lance_tables:
-                if component == "_legacy":
-                    db_path = Path(CODE_DB_PATH) / "code_index.lancedb"
-                else:
-                    db_path = Path(CODE_DB_PATH) / f"code_index_{component}.lancedb"
-
-                if db_path.exists():
-                    db = lancedb.connect(db_path)
-                    table = db.open_table("code")
-                    _code_lance_tables[component] = (db, table)
-
-        return [(comp, tbl) for comp, (_, tbl) in _code_lance_tables.items()]
+    def get_code_lance_table():
+        """Get LanceDB connection for the aggregated code database."""
+        nonlocal _code_lance_db, _code_lance_table
+        if _code_lance_table is None:
+            db_path = Path(CODE_DB_PATH) / "code_index.lancedb"
+            if not db_path.exists():
+                raise RuntimeError(
+                    "Code LanceDB not found. Run generate_code_index_parallel and aggregate_code_databases first."
+                )
+            _code_lance_db = lancedb.connect(db_path)
+            _code_lance_table = _code_lance_db.open_table("code")
+        return _code_lance_table
 
     def get_code_sqlite_conn():
-        """Get SQLite connection with all component databases attached."""
+        """Get read-only SQLite connection for the aggregated code database."""
         nonlocal _code_sqlite_conn
         if _code_sqlite_conn is None:
-            components = discover_code_components()
-            if not components:
+            sqlite_path = Path(CODE_DB_PATH) / "code_index.sqlite"
+            if not sqlite_path.exists():
                 raise RuntimeError(
-                    "No code databases found. Run generate_code_index_parallel first."
+                    "Code SQLite database not found. Run generate_code_index_parallel and aggregate_code_databases first."
                 )
-
-            # Create in-memory database and attach all component databases
-            _code_sqlite_conn = sqlite3.connect(":memory:")
+            _code_sqlite_conn = sqlite3.connect(f"file:{sqlite_path}?mode=ro", uri=True)
             _code_sqlite_conn.row_factory = sqlite3.Row
-
-            db_dir = Path(CODE_DB_PATH)
-
-            # Check for legacy single database first
-            legacy_path = db_dir / "code_index.sqlite"
-            if legacy_path.exists() and "_legacy" in components:
-                _code_sqlite_conn.execute(
-                    f"ATTACH DATABASE 'file:{legacy_path}?mode=ro' AS code_legacy"
-                )
-
-            # Attach each component database
-            attached = []
-            for component in components:
-                if component == "_legacy":
-                    continue
-                db_path = db_dir / f"code_index_{component}.sqlite"
-                if db_path.exists():
-                    # SQLite schema names can't have hyphens
-                    safe_name = component.replace("-", "_")
-                    _code_sqlite_conn.execute(
-                        f"ATTACH DATABASE 'file:{db_path}?mode=ro' AS code_{safe_name}"
-                    )
-                    attached.append(safe_name)
-
-            # Create unified view across all component databases
-            if attached:
-                union_parts = []
-                for safe_name in attached:
-                    union_parts.append(
-                        f"SELECT id, component, version, file_path, content, language FROM code_{safe_name}.code_files"
-                    )
-                union_sql = " UNION ALL ".join(union_parts)
-                _code_sqlite_conn.execute(f"CREATE VIEW code_files AS {union_sql}")
-
-                # Create unified FTS view (queries individual FTS tables)
-                fts_union_parts = []
-                for safe_name in attached:
-                    fts_union_parts.append(
-                        f"SELECT rowid, content, component, version, file_path FROM code_{safe_name}.code_files_fts"
-                    )
-                fts_union_sql = " UNION ALL ".join(fts_union_parts)
-                _code_sqlite_conn.execute(f"CREATE VIEW code_files_fts_union AS {fts_union_sql}")
-
         return _code_sqlite_conn
 
     # =================== DOCUMENTATION QUERY TOOLS (READ-ONLY) ===================
@@ -1511,9 +1770,7 @@ IMPORTANT: Always cite sources - URLs for docs, component@version:path for code.
         component: Optional[str] = None,
     ) -> list[dict]:
         """
-        Execute a vector similarity search against code LanceDBs (read-only).
-
-        Searches across all component databases and returns merged results sorted by similarity.
+        Execute a vector similarity search against the code LanceDB (read-only).
 
         Schema:
         - text TEXT           -- The source code content
@@ -1528,37 +1785,32 @@ IMPORTANT: Always cite sources - URLs for docs, component@version:path for code.
             limit: Maximum number of results (default: 10, max: 100)
             where: Optional SQL-like filter (e.g., "version = '0.7.3'")
             select: Optional list of columns to return (default: all except vector)
-            component: Optional component to search (if not specified, searches all)
+            component: Optional component to filter by (if not specified, searches all)
 
         Returns:
             List of matching code files with similarity scores (_distance field)
         """
         limit = min(max(1, limit), 100)
-        tables = get_code_lance_tables()
+        table = get_code_lance_table()
 
-        all_results = []
+        search = table.search(query).limit(limit)
 
-        for comp_name, table in tables:
-            # Skip if component filter specified and doesn't match
-            if component and comp_name != component and comp_name != "_legacy":
-                continue
+        # Build where clause, adding component filter if specified
+        where_clauses = []
+        if component:
+            where_clauses.append(f"component = '{component}'")
+        if where:
+            where_clauses.append(where)
 
-            search = table.search(query).limit(limit)
+        if where_clauses:
+            search = search.where(" AND ".join(where_clauses))
+        if select:
+            search = search.select(select)
 
-            if where:
-                search = search.where(where)
-            if select:
-                search = search.select(select)
-
-            results = search.to_list()
-            all_results.extend(results)
-
-        # Sort by distance and take top results
-        all_results.sort(key=lambda x: x.get("_distance", float("inf")))
-        all_results = all_results[:limit]
+        results = search.to_list()
 
         formatted = []
-        for r in all_results:
+        for r in results:
             result = {}
             for key, value in r.items():
                 if key == "vector":
@@ -1631,5 +1883,10 @@ def main(
             print("Generating code index (sequential)...")
             code_result = generate_code_index.remote()
         print(f"Code index: {code_result}")
+
+        # Aggregate component databases for the MCP server
+        print("Aggregating code databases...")
+        agg_result = aggregate_code_databases.remote()
+        print(f"Aggregation: {agg_result}")
 
     print("Done! Deploy with: modal deploy docs/scripts/modal_app.py")

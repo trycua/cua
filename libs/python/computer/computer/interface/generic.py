@@ -854,7 +854,9 @@ class GenericComputerInterface(BaseComputerInterface):
                 # Only log connection lost warnings at most once every min_warning_interval seconds
                 if current_time - last_warning_time >= min_warning_interval:
                     self.logger.warning(
-                        "Computer API Server connection lost. Will retry automatically."
+                        f"Computer API Server connection lost while attempting to connect to "
+                        f"{self.ip_address or 'localhost'}. "
+                        "The server may not be running or is not reachable yet. Retrying..."
                     )
                     last_warning_time = current_time
                 else:
@@ -1077,7 +1079,15 @@ class GenericComputerInterface(BaseComputerInterface):
         except Exception as e:
             if isinstance(e, TimeoutError):
                 raise
-            error_msg = f"Error while waiting for server: {str(e)}"
+
+            target = f"{self.ip_address}:{self._api_port}" if self._api_port else self.ip_address
+            
+            error_msg = (
+                f"Failed to connect to Computer API Server at {target}. "
+                f"Reason: {str(e)}. "
+                "Ensure the server is running and reachable. "
+                "If using Lume or Docker, verify the VM has started and the API port is open."
+            )
             self.logger.error(error_msg)
             raise RuntimeError(error_msg)
 

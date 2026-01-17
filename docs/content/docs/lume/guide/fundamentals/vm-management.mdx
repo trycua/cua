@@ -45,6 +45,37 @@ Mount a disk image as USB storage (macOS 15+ only):
 lume run my-vm --usb-storage /path/to/disk.img
 ```
 
+## Linux VMs
+
+Lume supports Linux VMs using ARM64 ISO images. The workflow differs slightly from macOS.
+
+### Create and install
+
+```bash
+# Create empty VM configured for Linux
+lume create ubuntu-vm --os linux --cpu 4 --memory 8GB --disk-size 50GB
+
+# First boot: mount installer ISO
+lume run ubuntu-vm --mount ~/Downloads/ubuntu-24.04-live-server-arm64.iso
+
+# After installation: run normally
+lume run ubuntu-vm
+```
+
+Complete the installation in the VNC window, shut down, then run without the ISO.
+
+### Supported distributions
+
+Any ARM64 Linux distribution works. Download the ARM64 (aarch64) ISO, not x86_64:
+
+- **Ubuntu** - [ubuntu.com/download](https://ubuntu.com/download)
+- **Debian** - [debian.org](https://www.debian.org/)
+- **Fedora** - [fedoraproject.org](https://fedoraproject.org/)
+
+<Callout type="info">
+Linux VMs have no licensing restrictions—run as many concurrent instances as your hardware supports. Only macOS VMs are limited to 2 per Mac.
+</Callout>
+
 ## Stop a VM
 
 ```bash

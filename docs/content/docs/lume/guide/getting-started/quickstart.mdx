@@ -41,13 +41,61 @@ lume create my-vm --os macos --ipsw latest
 The IPSW file is ~15GB. If you plan to create multiple VMs, downloading manually and reusing the file saves time and bandwidth.
 </Callout>
 
+## Configure VM storage location (optional)
+
+By default, VMs are stored in `~/.lume`. You can configure custom storage locations before creating VMs—useful for external drives or organizing VMs by project.
+
+```bash
+# Add an external drive as a storage location
+lume config storage add external /Volumes/MySSD/lume
+
+# Set it as the default for new VMs
+lume config storage default external
+
+# View all configured storage locations
+lume config storage list
+```
+
+When creating a VM, specify which storage to use:
+
+```bash
+# Use a named storage location
+lume create my-vm --os macos --ipsw latest --storage external
+
+# Or use a direct path
+lume create my-vm --os macos --ipsw latest --storage /path/to/vm/directory
+```
+
+<Callout type="info">
+VM disk images can grow large (~50GB+). Using an external SSD keeps your internal storage free and can improve performance for I/O-heavy workloads.
+</Callout>
+
+## Create a Linux VM
+
+Lume also supports Linux VMs using ISO images:
+
+```bash
+# Create an empty Linux VM
+lume create ubuntu-vm --os linux
+
+# First boot: mount the installer ISO
+lume run ubuntu-vm --mount ~/Downloads/ubuntu-24.04-live-server-arm64.iso
+
+# After installation completes, run normally
+lume run ubuntu-vm
+```
+
+<Callout type="info">
+Linux VMs require ARM64 ISO images (not x86). Ubuntu, Debian, and Fedora all provide ARM64 server and desktop images.
+</Callout>
+
 ## Run your VM
 
 ```bash
 lume run my-vm
 ```
 
-A VNC window opens with the macOS Setup Assistant. Complete the setup manually, or use [Unattended Setup](/lume/guide/fundamentals/unattended-setup) to automate it.
+A VNC window opens. For macOS VMs, you'll see the Setup Assistant—complete it manually or use [Unattended Setup](/lume/guide/fundamentals/unattended-setup) to automate it.
 
 ## Create a VM with custom resources
 

@@ -85,7 +85,7 @@ Create and manage macOS/Linux VMs with near-native performance on Apple Silicon 
 lume run macos-sequoia-vanilla:latest
 ```
 
-**[Get Started](https://cua.ai/docs/lume/guide/getting-started/installation)** | **[Prebuilt Images](https://cua.ai/docs/lume/guide/fundamentals/prebuilt-images)** | **[CLI Reference](https://cua.ai/docs/lume/reference/cli-reference)**
+**[Get Started](https://cua.ai/docs/lume)** | **[FAQ](https://cua.ai/docs/lume/guide/getting-started/faq)** | **[CLI Reference](https://cua.ai/docs/lume/reference/cli-reference)**
 
 ---
 

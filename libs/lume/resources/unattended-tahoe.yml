@@ -73,19 +73,8 @@ boot_commands:
   # Need to tab 6 times to reach Full Name field
   # Field order after avatar: Full Name -> Account Name (auto-filled) -> Password -> Verify Password -> Hint -> Checkbox -> Continue
   - "<wait 'Create a Mac Account'>"
-  - "<delay 1>"
-  # Tab past avatar picker icons (6 tabs)
-  - "<tab>"
-  - "<delay 1>"
-  - "<tab>"
-  - "<delay 1>"
-  - "<tab>"
-  - "<delay 1>"
-  - "<tab>"
-  - "<delay 1>"
-  - "<tab>"
-  - "<delay 1>"
-  - "<tab>"
+  - "<delay 10>"
+  - "<click 'Full Name'>"
   # Type Full Name
   - "<type 'lume'>"
   - "<tab>"

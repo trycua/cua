@@ -4,7 +4,7 @@ build-backend = "pdm.backend"
 
 [project]
 name = "cua-core"
-version = "0.1.15"
+version = "0.1.16"
 description = "Core functionality for Cua including telemetry and shared utilities"
 readme = "README.md"
 authors = [

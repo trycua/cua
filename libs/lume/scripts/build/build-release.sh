@@ -1,6 +1,12 @@
 #!/bin/sh
 
-pushd ../../
+# Get the directory where this script is located
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+# Navigate to the lume root directory (two levels up from scripts/build/)
+LUME_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
+
+cd "$LUME_DIR"
 
 swift build -c release --product lume
 codesign --force --entitlement ./resources/lume.entitlements --sign - .build/release/lume
@@ -17,5 +23,3 @@ cp -f ./.release/lume "$USER_BIN/lume"
 if ! echo "$PATH" | grep -q "$USER_BIN"; then
   echo "[lume build] Note: $USER_BIN is not in your PATH. Add 'export PATH=\"$USER_BIN:\$PATH\"' to your shell profile."
 fi
-
-popd

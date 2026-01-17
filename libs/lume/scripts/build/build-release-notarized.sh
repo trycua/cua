@@ -1,5 +1,11 @@
 #!/bin/bash
 
+# Get the directory where this script is located
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+# Navigate to the lume root directory (two levels up from scripts/build/)
+LUME_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
+
 # Set default log level if not provided
 LOG_LEVEL=${LOG_LEVEL:-"normal"}
 
@@ -7,7 +13,7 @@ LOG_LEVEL=${LOG_LEVEL:-"normal"}
 log() {
   local level=$1
   local message=$2
-  
+
   case "$LOG_LEVEL" in
     "minimal")
       # Only show essential or error messages
@@ -48,7 +54,7 @@ done
 VERSION=${VERSION:-"0.1.0"}
 
 # Move to the project root directory
-pushd ../../ > /dev/null
+cd "$LUME_DIR"
 
 # Ensure .release directory exists and is clean
 mkdir -p .release
@@ -99,7 +105,7 @@ if [ "$LOG_LEVEL" = "minimal" ] || [ "$LOG_LEVEL" = "none" ]; then
       --team-id "${TEAM_ID}" \
       --password "${APP_SPECIFIC_PASSWORD}" \
       --wait 2>&1)
-  
+
   # Check if notarization was successful
   if echo "$NOTARY_OUTPUT" | grep -q "status: Accepted"; then
     log "essential" "Notarization successful!"
@@ -201,8 +207,6 @@ ls -la "$RELEASE_DIR"
 
 # Ensure correct permissions
 chmod 644 "$RELEASE_DIR"/*.tar.gz "$RELEASE_DIR"/*.pkg.tar.gz "$RELEASE_DIR"/checksums.txt
-
-popd > /dev/null
 
 # Clean up
 rm -rf "$TEMP_ROOT"

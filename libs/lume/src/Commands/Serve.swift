@@ -10,8 +10,13 @@ struct Serve: AsyncParsableCommand {
     var port: UInt16 = 7777
     
     func run() async throws {
+        // Record telemetry
+        TelemetryClient.shared.record(event: TelemetryEvent.serve, properties: [
+            "port": port
+        ])
+
         let server = await Server(port: port)
-        
+
         Logger.info("Starting server", metadata: ["port": "\(port)"])
         
         // Using custom error handling to prevent ArgumentParser from printing additional error messages

@@ -7,39 +7,50 @@ github:
 
 import { Callout } from 'fumadocs-ui/components/callout';
 
-Lume is a lightweight CLI and local API server for creating, running, and managing **macOS and Linux virtual machines** with near-native performance on Apple Silicon.
-
-Built on Apple's [Virtualization.Framework](https://developer.apple.com/documentation/virtualization), Lume was the first open-source product released by trycua - providing the foundation for the Computer Use Agent SDK.
-
-## Key Features
-
-- **Near-native performance** - Run macOS VMs at native speed using Apple's Virtualization Framework
-- **Simple CLI** - Create, run, and manage VMs with intuitive commands
-- **Unattended setup** - Automate macOS installation and configuration with YAML files
-- **HTTP API** - Integrate with your tools via the built-in REST API server
-
-## Quick Start
+Lume lets you create and run macOS and Linux VMs on Apple Silicon—no Docker, no Kubernetes, no cloud account required. Just a CLI that works.
 
 ```bash
 # Install Lume
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/lume/scripts/install.sh)"
 
-# Create a custom macOS VM
+# Create and run a macOS VM
 lume create my-vm --os macos --ipsw latest
-
-# Run the VM
 lume run my-vm
 ```
 
-<Callout title="System Requirements">
-  - Apple Silicon Mac (M1, M2, M3, M4, etc.) - macOS 13.0 or later - At least 8GB of RAM (16GB
-  recommended) - At least 30GB of free disk space
+That's it. Your VM boots in seconds, running at native speed through Apple's [Virtualization Framework](https://developer.apple.com/documentation/virtualization)—the same technology that powers [Claude Cowork](https://www.anthropic.com/news/cowork)'s sandboxed execution environment.
+
+## What you can do
+
+- **Run macOS VMs** at native speed on your M1/M2/M3/M4 Mac
+- **Automate setup** with YAML configs that handle the Setup Assistant for you
+- **Integrate with your tools** via CLI or the built-in HTTP API
+- **Script everything**—no manual clicking required
+
+## Get started
+
+The fastest path: install Lume, create a VM with the `--unattended tahoe` flag, and you'll have a fully-configured macOS VM with SSH enabled in minutes.
+
+```bash
+lume create dev-vm --os macos --ipsw latest --unattended tahoe
+lume run dev-vm --no-display
+```
+
+This creates a VM with user `lume` (password: `lume`) ready for automation.
+
+For step-by-step instructions, see the [Installation Guide](/lume/guide/getting-started/installation). To understand how Lume fits into the bigger picture, read [What is Lume?](/lume/guide/getting-started/introduction).
+
+<Callout type="info" title="Requirements">
+Apple Silicon Mac (M1 or later), macOS 13.0+, 8GB RAM minimum (16GB recommended), 30GB free disk space.
 </Callout>
 
-## Next Steps
+## Learn more
 
-- [Installation Guide](/lume/guide/getting-started/installation) - Detailed installation options
-- [Quickstart](/lume/guide/getting-started/quickstart) - Create your first VM
-- [Unattended Setup](/lume/guide/advanced/unattended-setup) - Automate VM configuration
-- [CLI Reference](/lume/reference/cli-reference) - Full command reference
-- [HTTP API Reference](/lume/reference/http-api) - REST API documentation
+| Guide | Description |
+|-------|-------------|
+| [Quickstart](/lume/guide/getting-started/quickstart) | Create your first VM |
+| [VM Management](/lume/guide/fundamentals/vm-management) | Run, stop, clone, and configure VMs |
+| [Unattended Setup](/lume/guide/fundamentals/unattended-setup) | Automate macOS configuration |
+| [HTTP API](/lume/guide/advanced/http-server) | Integrate via REST |
+| [CLI Reference](/lume/reference/cli-reference) | All commands |
+| [API Reference](/lume/reference/http-api) | All endpoints |

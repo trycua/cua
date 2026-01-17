@@ -11,7 +11,7 @@ enum VMDetailsPrinter {
 
     /// Configuration for all columns in the status table
     private static let columns: [Column] = [
-        Column(header: "name", width: 34, getValue: { $0.name }),
+        Column(header: "name", width: 40, getValue: { $0.name }),
         Column(header: "os", width: 8, getValue: { $0.os }),
         Column(header: "cpu", width: 8, getValue: { String($0.cpuCount) }),
         Column(

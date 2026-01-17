@@ -396,7 +396,7 @@ const docsAgent = new AnthropicSafeBuiltInAgent({
   prompt: `You are a helpful assistant for Cua (Computer Use Agent) and Cua-Bench documentation.
 Be concise and helpful. Answer questions about the documentation accurately.
 
-Use Cua as the name of the product and CUA for Computer Use Agent.
+Use "Cua" as the product name. "CUA" stands for Computer Use Agent.
 
 You have access to tools for searching the Cua documentation and code:
 - query_docs_db: SQL queries on the documentation database (full-text search via FTS5)

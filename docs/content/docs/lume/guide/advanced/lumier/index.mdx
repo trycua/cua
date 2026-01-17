@@ -5,24 +5,63 @@ github:
   - https://github.com/trycua/cua/tree/main/libs/lumier
 ---
 
-**Lumier** is an interface for running macOS virtual machines with minimal setup. It uses Docker as a packaging system to deliver a pre-configured environment that connects to the `lume` virtualization service running on your host machine. With Lumier, you get:
+import { Callout } from 'fumadocs-ui/components/callout';
 
-- A ready-to-use macOS or Linux virtual machine in minutes
-- Browser-based VNC access to your VM
-- Easy file sharing between your host and VM
-- Simple configuration through environment variables
+Lumier wraps Lume in a Docker container, giving you browser-based access to macOS VMs with zero configuration.
 
-## How It Works
+```bash
+docker run -it --rm \
+  -p 8006:8006 \
+  -e VM_NAME=my-vm \
+  -e VERSION=ghcr.io/trycua/macos-sequoia-cua:latest \
+  trycua/lumier:latest
+```
 
-<Callout title="Note">
-  We're using Docker primarily as a convenient delivery mechanism, not as an isolation layer. Unlike
-  traditional Docker containers, Lumier leverages the Apple Virtualization Framework (Apple Vz)
-  through the `lume` CLI to create true virtual machines.
+Open `http://localhost:8006` in your browser—you'll see a macOS desktop.
+
+## When to use Lumier vs Lume directly
+
+| Use Lumier when... | Use Lume directly when... |
+|--------------------|---------------------------|
+| You want browser-based VNC access | You prefer native VNC clients |
+| You're distributing VM environments | You're running locally for development |
+| You want Docker Compose orchestration | You need maximum performance |
+| You're building Docker-based workflows | You want full CLI control |
+
+## How it works
+
+<Callout type="info">
+Docker is the delivery mechanism, not an isolation layer. Lumier connects to the Lume service on your host Mac to create real VMs using Apple's Virtualization Framework.
 </Callout>
 
-Here's what's happening behind the scenes:
+```
+┌─────────────────────────────────────┐
+│         Docker Container            │
+│  ┌─────────────────────────────┐    │
+│  │    Lumier + noVNC server    │    │
+│  └──────────────┬──────────────┘    │
+└─────────────────┼───────────────────┘
+                  │ connects to
+┌─────────────────▼───────────────────┐
+│     Lume service (port 7777)        │
+│            on host Mac              │
+└─────────────────┬───────────────────┘
+                  │ creates
+┌─────────────────▼───────────────────┐
+│   macOS VM (Virtualization.framework) │
+└─────────────────────────────────────┘
+```
 
-1. The Docker container provides a consistent environment to run the Lumier interface
-2. Lumier connects to the Lume service running on your host Mac
-3. Lume uses Apple's Virtualization Framework to create a true macOS virtual machine
-4. The VM runs with hardware acceleration using your Mac's native virtualization capabilities
+The Docker container provides:
+- noVNC server for browser access
+- Environment variable configuration
+- Lifecycle hooks for automation
+
+The actual VM runs natively on your Mac with hardware acceleration.
+
+## Get started
+
+1. [Install prerequisites](/lume/guide/advanced/lumier/installation) — Docker and Lume
+2. [Run with Docker](/lume/guide/advanced/lumier/docker) — Basic usage and persistent storage
+3. [Use Docker Compose](/lume/guide/advanced/lumier/docker-compose) — Multi-container setups
+4. [Build from source](/lume/guide/advanced/lumier/building-lumier) — Customize the container

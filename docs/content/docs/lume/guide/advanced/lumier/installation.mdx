@@ -1,15 +1,72 @@
 ---
 title: Installation
+description: Prerequisites for running Lumier
 ---
 
-Before using Lumier, make sure you have:
+import { Callout } from 'fumadocs-ui/components/callout';
 
-1. **Docker for Apple Silicon** - download it [here](https://desktop.docker.com/mac/main/arm64/Docker.dmg) and follow the installation instructions.
+Lumier needs two things: Docker and Lume.
 
-2. **Lume** - This is the virtualization CLI that powers Lumier. Install it with this command:
+## 1. Install Docker
+
+Download [Docker Desktop for Apple Silicon](https://desktop.docker.com/mac/main/arm64/Docker.dmg) and install it.
+
+Verify it's running:
+
+```bash
+docker --version
+# Docker version 24.0.0, build ...
+```
+
+## 2. Install Lume
 
 ```bash
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/lume/scripts/install.sh)"
 ```
 
-After installation, Lume runs as a background service and listens on port 7777. This service allows Lumier to create and manage virtual machines. If port 7777 is already in use on your system, you can specify a different port with the `--port` option when running the `install.sh` script.
+Verify the Lume service is running:
+
+```bash
+curl http://localhost:7777/lume/vms
+# Should return [] or a list of VMs
+```
+
+<Callout type="info">
+Lume runs as a background service on port 7777. Lumier connects to this service to create and manage VMs.
+</Callout>
+
+## Verify everything works
+
+Pull and run Lumier:
+
+```bash
+docker run -it --rm \
+  -p 8006:8006 \
+  -e VM_NAME=test-vm \
+  -e VERSION=ghcr.io/trycua/macos-sequoia-cua:latest \
+  trycua/lumier:latest
+```
+
+Open `http://localhost:8006` in your browser. You should see a macOS desktop loading.
+
+## Troubleshooting
+
+**"Cannot connect to Lume service"** — The Lume background service isn't running. Start it:
+
+```bash
+lume serve
+```
+
+Or check if the daemon is loaded:
+
+```bash
+launchctl list | grep com.trycua.lume_daemon
+```
+
+**Port 7777 in use** — Another service is using the port. Either stop that service or reinstall Lume with a different port:
+
+```bash
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/lume/scripts/install.sh)" -- --port 7778
+```
+
+Then update your Lumier commands to use the new port via the `LUME_PORT` environment variable.

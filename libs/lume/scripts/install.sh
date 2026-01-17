@@ -262,10 +262,17 @@ install_binary() {
   
   # Move the binary to the installation directory
   mv "$TEMP_DIR/lume" "$INSTALL_DIR/"
-  
+
   # Make the binary executable
   chmod +x "$INSTALL_DIR/lume"
-  
+
+  # Move the resource bundle if it exists (contains unattended presets)
+  if [ -d "$TEMP_DIR/lume_lume.bundle" ]; then
+    rm -rf "$INSTALL_DIR/lume_lume.bundle"
+    mv "$TEMP_DIR/lume_lume.bundle" "$INSTALL_DIR/"
+    echo "Resource bundle installed to ${BOLD}$INSTALL_DIR/lume_lume.bundle${NORMAL}"
+  fi
+
   echo "${GREEN}Installation complete!${NORMAL}"
   echo "Lume has been installed to ${BOLD}$INSTALL_DIR/lume${NORMAL}"
   
@@ -387,6 +394,13 @@ apply_update() {
       # Install new binary
       mv "$TEMP_DIR/lume" "$INSTALL_DIR/"
       chmod +x "$INSTALL_DIR/lume"
+
+      # Install resource bundle if it exists (contains unattended presets)
+      if [ -d "$TEMP_DIR/lume_lume.bundle" ]; then
+        rm -rf "$INSTALL_DIR/lume_lume.bundle"
+        mv "$TEMP_DIR/lume_lume.bundle" "$INSTALL_DIR/"
+        log "Resource bundle installed"
+      fi
 
       # Restart the daemon
       launchctl load "$HOME/Library/LaunchAgents/com.trycua.lume_daemon.plist" 2>/dev/null || true

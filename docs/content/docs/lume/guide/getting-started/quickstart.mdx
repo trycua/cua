@@ -41,6 +41,35 @@ lume create my-vm --os macos --ipsw latest
 The IPSW file is ~15GB. If you plan to create multiple VMs, downloading manually and reusing the file saves time and bandwidth.
 </Callout>
 
+## Configure VM storage location (optional)
+
+By default, VMs are stored in `~/.lume`. You can configure custom storage locations before creating VMs—useful for external drives or organizing VMs by project.
+
+```bash
+# Add an external drive as a storage location
+lume config storage add external /Volumes/MySSD/lume
+
+# Set it as the default for new VMs
+lume config storage default external
+
+# View all configured storage locations
+lume config storage list
+```
+
+When creating a VM, specify which storage to use:
+
+```bash
+# Use a named storage location
+lume create my-vm --os macos --ipsw latest --storage external
+
+# Or use a direct path
+lume create my-vm --os macos --ipsw latest --storage /path/to/vm/directory
+```
+
+<Callout type="info">
+VM disk images can grow large (~50GB+). Using an external SSD keeps your internal storage free and can improve performance for I/O-heavy workloads.
+</Callout>
+
 ## Run your VM
 
 ```bash

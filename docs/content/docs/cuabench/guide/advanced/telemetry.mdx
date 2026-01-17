@@ -1,31 +1,24 @@
-# Telemetry
+---
+title: Telemetry
+description: Understanding and controlling cua-bench's anonymous usage collection
+---
 
-cua-bench collects anonymous usage statistics to help improve the product. No personal data, file contents, or sensitive information is collected. You can opt out completely at any time.
+cua-bench collects anonymous usage statistics to improve the product. No personal data, file contents, or sensitive information is collected. You can opt out completely at any time.
 
 ## What's Collected
 
 ### Enabled by Default
 
-Telemetry is **enabled by default**. You can disable it anytime (see "Disabling Telemetry" below).
+Telemetry is **enabled by default**. You can disable it anytime (see [Disabling Telemetry](#disabling-telemetry) below).
 
-**System info:**
+We collect basic usage metrics:
 
-- OS name and version
-- Python version
-- cua-bench version
-- Whether running in CI environment
-
-**Usage metrics:**
-
-- CLI commands used (e.g., `run`, `interact`, `trace`)
-- Task execution metadata (environment name, provider type, OS type)
-- Performance data (duration, step counts, success/failure)
-- Batch job configuration (task count, parallelism level)
-
-**Session tracking:**
-
-- Anonymous installation UUID (persisted locally)
-- No personal identifiers
+- **System info** - OS, OS version, Python version, cua-bench version
+- **CLI commands** - Which commands are used (e.g., `run`, `interact`, `trace`)
+- **Task metadata** - Environment name, provider type, OS type (not file paths)
+- **Performance** - Task duration, step counts, success/failure rates
+- **Batch configuration** - Task count, parallelism level
+- **Session tracking** - Anonymous installation UUID
 
 ### Never Collected
 
@@ -40,8 +33,16 @@ Telemetry is **enabled by default**. You can disable it anytime (see "Disabling 
 
 ### Environment Variable
 
+Set `CUA_TELEMETRY_ENABLED` to disable globally:
+
 ```bash
 export CUA_TELEMETRY_ENABLED=false
+```
+
+Add to your shell profile (`.bashrc`, `.zshrc`) to make permanent:
+
+```bash
+echo 'export CUA_TELEMETRY_ENABLED=false' >> ~/.zshrc
 ```
 
 ### Check Status
@@ -50,6 +51,18 @@ export CUA_TELEMETRY_ENABLED=false
 from cua_bench.telemetry import is_telemetry_enabled
 print(is_telemetry_enabled())  # True or False
 ```
+
+## Debug Mode
+
+To see exactly what telemetry is being sent:
+
+```bash
+export CUA_TELEMETRY_DEBUG=on
+export CUA_TELEMETRY_ENABLED=true
+cb platform list
+```
+
+This prints PostHog debug output showing exact event payloads.
 
 ## Events Reference
 
@@ -86,20 +99,8 @@ This data helps us:
 ## Data Storage
 
 - **Installation ID:** Stored locally at `~/.cua-bench/installation_id`
-- **Events:** Sent to PostHog (EU region: `eu.posthog.com`)
-- **Retention:** Standard PostHog data retention policies
-
-## Debug Mode
-
-To see what's being sent:
-
-```bash
-export CUA_TELEMETRY_DEBUG=on
-export CUA_TELEMETRY_ENABLED=true
-cb platform list
-```
-
-You'll see PostHog debug output showing exact event payloads.
+- **Events:** Sent to PostHog (EU region)
+- **No PII:** Only anonymous usage data
 
 ## Questions
 

@@ -168,6 +168,12 @@ log "normal" "Using release directory: $RELEASE_DIR"
 # Copy extracted lume to the release directory
 cp -f usr/local/bin/lume "$RELEASE_DIR/lume"
 
+# Copy the resource bundle (contains unattended presets) from the build directory
+BUILD_BUNDLE="$LUME_DIR/.build/release/lume_lume.bundle"
+if [ -d "$BUILD_BUNDLE" ]; then
+  cp -rf "$BUILD_BUNDLE" "$RELEASE_DIR/"
+fi
+
 # Install to user-local bin directory (standard location)
 USER_BIN="$HOME/.local/bin"
 mkdir -p "$USER_BIN"
@@ -191,8 +197,12 @@ rm -f lume-*.tar.gz lume-*.pkg.tar.gz
 
 # Create version-specific archives
 log "essential" "Creating version-specific archives (${VERSION})..."
-# Package the binary
-tar -czf "lume-${VERSION}-${OS_IDENTIFIER}.tar.gz" lume > /dev/null 2>&1
+# Package the binary and resource bundle
+if [ -d "lume_lume.bundle" ]; then
+  tar -czf "lume-${VERSION}-${OS_IDENTIFIER}.tar.gz" lume lume_lume.bundle > /dev/null 2>&1
+else
+  tar -czf "lume-${VERSION}-${OS_IDENTIFIER}.tar.gz" lume > /dev/null 2>&1
+fi
 # Package the installer
 tar -czf "lume-${VERSION}-${OS_IDENTIFIER}.pkg.tar.gz" lume.pkg > /dev/null 2>&1
 

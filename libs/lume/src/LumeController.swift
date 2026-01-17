@@ -304,15 +304,31 @@ final class LumeController {
                 display: display
             )
 
-            try await vm.setup(
-                ipswPath: ipsw ?? "none",
-                cpuCount: cpuCount,
-                memorySize: memorySize,
-                diskSize: diskSize,
-                display: display
-            )
+            // Track the temp directory for cleanup on failure
+            let tempVMDir = vm.vmDirContext.dir
 
-            try vm.finalize(to: name, home: home, storage: storage)
+            do {
+                try await vm.setup(
+                    ipswPath: ipsw ?? "none",
+                    cpuCount: cpuCount,
+                    memorySize: memorySize,
+                    diskSize: diskSize,
+                    display: display
+                )
+
+                try vm.finalize(to: name, home: home, storage: storage)
+            } catch {
+                // Clean up the temporary VM directory on setup/finalize failure
+                Logger.info("Cleaning up temporary VM directory after failed creation",
+                           metadata: ["path": tempVMDir.dir.path])
+                do {
+                    try tempVMDir.delete()
+                } catch let cleanupError {
+                    Logger.error("Failed to clean up temporary VM directory",
+                               metadata: ["error": cleanupError.localizedDescription])
+                }
+                throw error
+            }
 
             Logger.info("VM created successfully", metadata: ["name": name])
 
@@ -330,14 +346,28 @@ final class LumeController {
 
                 // Run the unattended installer
                 let installer = UnattendedInstaller()
-                try await installer.install(
-                    vm: finalVM,
-                    config: config,
-                    vncPort: vncPort,
-                    noDisplay: noDisplay,
-                    debug: debug,
-                    debugDir: debugDir
-                )
+                do {
+                    try await installer.install(
+                        vm: finalVM,
+                        config: config,
+                        vncPort: vncPort,
+                        noDisplay: noDisplay,
+                        debug: debug,
+                        debugDir: debugDir
+                    )
+                } catch {
+                    // Clean up the finalized VM directory on unattended setup failure
+                    Logger.info("Cleaning up VM after failed unattended setup",
+                               metadata: ["name": name])
+                    do {
+                        let vmDir = try home.getVMDirectory(name, storage: storage)
+                        try vmDir.delete()
+                    } catch let cleanupError {
+                        Logger.error("Failed to clean up VM after unattended setup failure",
+                                   metadata: ["error": cleanupError.localizedDescription])
+                    }
+                    throw error
+                }
 
                 Logger.info("Unattended setup completed", metadata: ["name": name])
             }
@@ -944,6 +974,20 @@ final class LumeController {
         try SettingsManager.shared.setCachingEnabled(enabled)
 
         Logger.info("Caching setting updated", metadata: ["enabled": "\(enabled)"])
+    }
+
+    // MARK: - Telemetry Management
+
+    public func isTelemetryEnabled() -> Bool {
+        return SettingsManager.shared.isTelemetryEnabled()
+    }
+
+    public func setTelemetryEnabled(_ enabled: Bool) throws {
+        Logger.info("Setting telemetry enabled", metadata: ["enabled": "\(enabled)"])
+
+        try SettingsManager.shared.setTelemetryEnabled(enabled)
+
+        Logger.info("Telemetry setting updated", metadata: ["enabled": "\(enabled)"])
     }
 
     // MARK: - Private Helper Methods

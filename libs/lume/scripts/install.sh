@@ -91,7 +91,14 @@ while [ "$#" -gt 0 ]; do
   shift
 done
 
-echo "${BOLD}${BLUE}Lume Installer${NORMAL}"
+echo "${BOLD}${BLUE}"
+echo "  ⠀⣀⣀⡀⠀⠀⠀⠀⢀⣀⣀⣀⡀⠘⠋⢉⠙⣷⠀⠀ ⠀"
+echo " ⠀⠀⢀⣴⣿⡿⠋⣉⠁⣠⣾⣿⣿⣿⣿⡿⠿⣦⡈⠀⣿⡇⠃⠀"
+echo " ⠀⠀⠀⣽⣿⣧⠀⠃⢰⣿⣿⡏⠙⣿⠿⢧⣀⣼⣷⠀⡿⠃⠀⠀"
+echo " ⠀⠀⠀⠉⣿⣿⣦⠀⢿⣿⣿⣷⣾⡏⠀⠀⢹⣿⣿⠀⠀⠀⠀⠀⠀"
+echo " ⠀⠀⠀⠀⠀⠉⠛⠁⠈⠿⣿⣿⣿⣷⣄⣠⡼⠟⠁${NORMAL}${BOLD}  Lume Installer${NORMAL}"
+echo "${BLUE}           macOS VM CLI and server${NORMAL}"
+echo ""
 echo "This script will install Lume to your system."
 
 # Check if we're running with appropriate permissions

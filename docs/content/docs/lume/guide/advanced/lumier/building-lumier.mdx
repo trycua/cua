@@ -1,42 +1,79 @@
 ---
 title: Building Lumier
+description: Build Lumier from source or customize the container
 ---
 
-If you want to customize the Lumier container or build it from source, you can follow these steps:
+Build Lumier from source to customize packages, hooks, or configuration.
+
+## Build from source
 
 ```bash
-# 1. Navigate to the Lumier directory
-cd libs/lumier
+# Clone the repo (if you haven't)
+git clone https://github.com/trycua/cua.git
+cd cua/libs/lumier
 
-# 2. Build the Docker image locally
+# Build
 docker build -t lumier-custom:latest .
 
-# 3. Run your custom build
+# Run your build
 docker run -it --rm \
-    --name lumier-vm \
-    -p 8006:8006 \
-    -e VM_NAME=lumier-vm \
-    -e VERSION=ghcr.io/trycua/macos-sequoia-cua:latest \
-    -e CPU_CORES=4 \
-    -e RAM_SIZE=8192 \
-    lumier-custom:latest
+  -p 8006:8006 \
+  -e VM_NAME=my-vm \
+  -e VERSION=ghcr.io/trycua/macos-sequoia-cua:latest \
+  -e CPU_CORES=4 \
+  -e RAM_SIZE=8192 \
+  lumier-custom:latest
 ```
 
-### Customization Options
+## Customization points
 
-The Dockerfile provides several customization points:
+| Location | What to customize |
+|----------|-------------------|
+| `Dockerfile` | Base image, installed packages |
+| `/run/hooks/` | Scripts that run during VM lifecycle |
+| `/run/config/constants.sh` | Default settings |
 
-1. **Base image**: The container uses Debian Bullseye Slim as the base. You can modify this if needed.
-2. **Installed packages**: You can add or remove packages in the apt-get install list.
-3. **Hooks**: Check the `/run/hooks/` directory for scripts that run at specific points during VM lifecycle.
-4. **Configuration**: Review `/run/config/constants.sh` for default settings.
+### Change the base image
 
-After making your modifications, you can build and push your custom image to your own Docker Hub repository:
+The default is Debian Bullseye Slim. To use a different base, edit the first line of `Dockerfile`:
+
+```dockerfile
+FROM debian:bookworm-slim
+```
+
+### Add packages
+
+Add to the `apt-get install` list in the Dockerfile:
+
+```dockerfile
+RUN apt-get update && apt-get install -y \
+  your-package-here \
+  ...
+```
+
+### Add lifecycle hooks
+
+Scripts in `/run/hooks/` run at specific points. Create your own to customize behavior.
+
+## Publish your build
+
+Push to Docker Hub or another registry:
 
 ```bash
-# Build with a custom tag
+# Tag for your registry
 docker build -t yourusername/lumier:custom .
 
-# Push to Docker Hub (after docker login)
+# Login and push
+docker login
 docker push yourusername/lumier:custom
+```
+
+Then use your image:
+
+```bash
+docker run -it --rm \
+  -p 8006:8006 \
+  -e VM_NAME=my-vm \
+  -e VERSION=ghcr.io/trycua/macos-sequoia-cua:latest \
+  yourusername/lumier:custom
 ```

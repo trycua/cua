@@ -22,6 +22,9 @@ struct Clone: AsyncParsableCommand {
 
     @MainActor
     func run() async throws {
+        // Record telemetry
+        TelemetryClient.shared.record(event: TelemetryEvent.clone)
+
         let vmController = LumeController()
         try vmController.clone(
             name: name,

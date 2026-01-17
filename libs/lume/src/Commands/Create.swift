@@ -45,7 +45,7 @@ struct Create: AsyncParsableCommand {
 
     @Option(
         name: .customLong("unattended"),
-        help: "[Preview] Preset name or path to YAML config file for unattended macOS Setup Assistant automation. Built-in presets: tahoe. Only supported for macOS VMs.",
+        help: "[Preview] Preset name or path to YAML config file for unattended macOS Setup Assistant automation. Built-in presets: sequoia, tahoe. Only supported for macOS VMs.",
         completion: .file(extensions: ["yml", "yaml"])
     )
     var unattended: String?
@@ -92,6 +92,15 @@ struct Create: AsyncParsableCommand {
                 "commands": "\(unattendedConfig?.bootCommands.count ?? 0)"
             ])
         }
+
+        // Record telemetry
+        TelemetryClient.shared.record(event: TelemetryEvent.create, properties: [
+            "os_type": os.lowercased(),
+            "cpu": cpu,
+            "memory_gb": memory / (1024 * 1024 * 1024),
+            "disk_size_gb": diskSize / (1024 * 1024 * 1024),
+            "has_unattended": unattendedConfig != nil
+        ])
 
         let controller = LumeController()
         try await controller.create(

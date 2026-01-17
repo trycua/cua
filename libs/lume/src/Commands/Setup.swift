@@ -19,7 +19,7 @@ struct Setup: AsyncParsableCommand {
 
     @Option(
         name: .customLong("unattended"),
-        help: "Preset name or path to YAML config file for unattended macOS Setup Assistant automation. Built-in presets: tahoe.",
+        help: "Preset name or path to YAML config file for unattended macOS Setup Assistant automation. Built-in presets: sequoia, tahoe.",
         completion: .file(extensions: ["yml", "yaml"]))
     var unattended: String
 
@@ -68,6 +68,11 @@ struct Setup: AsyncParsableCommand {
         } catch {
             throw UnattendedError.configLoadFailed("Failed to load config from \(unattended): \(error.localizedDescription)")
         }
+
+        // Record telemetry
+        TelemetryClient.shared.record(event: TelemetryEvent.setup, properties: [
+            "preset_name": isPreset ? unattended : "custom"
+        ])
 
         try await LumeController().setup(
             name: name,

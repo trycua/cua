@@ -7,6 +7,9 @@ extension Server {
     // MARK: - VM Management Handlers
 
     func handleListVMs(storage: String? = nil) async throws -> HTTPResponse {
+        // Record telemetry
+        TelemetryClient.shared.record(event: TelemetryEvent.apiVMList)
+
         do {
             let vmController = LumeController()
             let vms = try vmController.list(storage: storage)
@@ -20,6 +23,9 @@ extension Server {
     }
 
     func handleGetVM(name: String, storage: String? = nil) async throws -> HTTPResponse {
+        // Record telemetry
+        TelemetryClient.shared.record(event: TelemetryEvent.apiVMGet)
+
         print("Getting VM details: name=\(name), storage=\(String(describing: storage))")
 
         do {
@@ -76,6 +82,14 @@ extension Server {
             )
         }
 
+        // Record telemetry
+        TelemetryClient.shared.record(event: TelemetryEvent.apiVMCreate, properties: [
+            "os_type": request.os.lowercased(),
+            "cpu": request.cpu,
+            "memory": request.memory,
+            "disk_size": request.diskSize
+        ])
+
         do {
             let sizes = try request.parse()
             let vmController = LumeController()
@@ -107,6 +121,9 @@ extension Server {
     }
 
     func handleDeleteVM(name: String, storage: String? = nil) async throws -> HTTPResponse {
+        // Record telemetry
+        TelemetryClient.shared.record(event: TelemetryEvent.apiVMDelete)
+
         do {
             let vmController = LumeController()
             try await vmController.delete(name: name, storage: storage)
@@ -129,6 +146,9 @@ extension Server {
                 body: try JSONEncoder().encode(APIError(message: "Invalid request body"))
             )
         }
+
+        // Record telemetry
+        TelemetryClient.shared.record(event: TelemetryEvent.apiVMClone)
 
         do {
             let vmController = LumeController()
@@ -170,6 +190,9 @@ extension Server {
             )
         }
 
+        // Record telemetry
+        TelemetryClient.shared.record(event: TelemetryEvent.apiVMUpdate)
+
         do {
             let vmController = LumeController()
             let sizes = try request.parse()
@@ -197,6 +220,9 @@ extension Server {
     }
 
     func handleStopVM(name: String, storage: String? = nil) async throws -> HTTPResponse {
+        // Record telemetry
+        TelemetryClient.shared.record(event: TelemetryEvent.apiVMStop)
+
         Logger.info(
             "Stopping VM", metadata: ["name": name, "storage": String(describing: storage)])
 
@@ -335,6 +361,11 @@ extension Server {
                 ?? RunVMRequest(
                     noDisplay: nil, sharedDirectories: nil, recoveryMode: nil, storage: nil)
 
+            // Record telemetry
+            TelemetryClient.shared.record(event: TelemetryEvent.apiVMRun, properties: [
+                "headless": request.noDisplay ?? false
+            ])
+
             Logger.info(
                 "Parsed request",
                 metadata: [
@@ -417,6 +448,12 @@ extension Server {
             )
         }
 
+        // Record telemetry - strip version tag from image name for privacy
+        let imageName = request.image.split(separator: ":").first.map(String.init) ?? request.image
+        TelemetryClient.shared.record(event: TelemetryEvent.apiPull, properties: [
+            "image_name": imageName
+        ])
+
         do {
             let vmController = LumeController()
             try await vmController.pullImage(
@@ -474,6 +511,9 @@ extension Server {
             )
         }
 
+        // Record telemetry
+        TelemetryClient.shared.record(event: TelemetryEvent.apiPush)
+
         // Trigger push asynchronously, return Accepted immediately
         Task.detached { @MainActor @Sendable in
             do {
@@ -513,6 +553,9 @@ extension Server {
     }
 
     func handleGetImages(_ request: HTTPRequest) async throws -> HTTPResponse {
+        // Record telemetry
+        TelemetryClient.shared.record(event: TelemetryEvent.apiImages)
+
         let pathAndQuery = request.path.split(separator: "?", maxSplits: 1)
         let queryParams =
             pathAndQuery.count > 1

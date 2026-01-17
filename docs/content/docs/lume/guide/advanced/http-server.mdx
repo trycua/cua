@@ -5,41 +5,32 @@ description: Using the Lume REST API server
 
 import { Callout } from 'fumadocs-ui/components/callout';
 
-Lume includes a built-in HTTP server that exposes a REST API for managing VMs. This enables integration with automation tools, scripts, and the Computer Use Agent SDK.
-
-## Starting the Server
+Lume's HTTP API lets you manage VMs programmatically—useful for automation scripts, CI/CD pipelines, and the Computer Use Agent SDK.
 
 ```bash
-# Start on default port (7777)
+# Start the server
 lume serve
 
-# Start on custom port
+# Or on a custom port
 lume serve --port 8080
 ```
 
-<Callout>
-  If you installed Lume with the default settings, the server runs as a background service and
-  starts automatically on login. You don't need to manually run `lume serve`.
+<Callout type="info">
+If you installed Lume with default settings, the server runs as a background service on port 7777. No need to start it manually.
 </Callout>
 
-## Default URL
+## Base URL
 
 ```
 http://localhost:7777
 ```
 
-## Quick Examples
+## Quick examples
 
 ### List VMs
 
 ```bash
 curl http://localhost:7777/lume/vms
-```
-
-### Get VM Details
-
-```bash
-curl http://localhost:7777/lume/vms/my-vm
 ```
 
 ### Run a VM
@@ -70,46 +61,68 @@ curl -X POST http://localhost:7777/lume/vms \
   }'
 ```
 
-## Integration with Computer Use Agent
+### Get VM details
 
-The Cua Computer Use Agent SDK uses the Lume HTTP API to manage VMs. When using `cua-computer`, ensure the Lume server is running:
+```bash
+curl http://localhost:7777/lume/vms/my-vm
+```
+
+## Common workflows
+
+### Automation script
+
+```bash
+#!/bin/bash
+# Start a VM, wait for it, run tests, stop it
+
+curl -X POST localhost:7777/lume/vms/test-vm/run -d '{"noDisplay": true}'
+sleep 30  # Wait for boot
+
+# Run your tests here
+ssh lume@$(curl -s localhost:7777/lume/vms/test-vm | jq -r '.ip') 'run-tests.sh'
+
+curl -X POST localhost:7777/lume/vms/test-vm/stop
+```
+
+### Python integration
+
+The Computer Use Agent SDK connects to Lume's HTTP API:
 
 ```python
 from cua import Computer
 
-# The Computer class connects to lume serve at localhost:7777
 async with Computer() as computer:
     await computer.run("my-vm")
-    # ... perform automation
+    # Perform automation...
     await computer.stop()
 ```
 
-## Background Service Management
-
-If installed as a background service:
+## Managing the background service
 
 ```bash
-# Check service status (macOS)
-launchctl list | grep lume
+# Check if running
+launchctl list | grep com.trycua.lume_daemon
 
-# Stop the service
-launchctl unload ~/Library/LaunchAgents/com.trycua.lume.plist
+# Stop
+launchctl unload ~/Library/LaunchAgents/com.trycua.lume_daemon.plist
 
-# Start the service
-launchctl load ~/Library/LaunchAgents/com.trycua.lume.plist
+# Start
+launchctl load ~/Library/LaunchAgents/com.trycua.lume_daemon.plist
+
+# View logs
+tail -f /tmp/lume_daemon.log
 ```
 
-## Server Configuration
+## Configuration
 
-The server respects Lume's configuration file for:
+The server uses settings from `~/.config/lume/config.yaml`:
 
 - VM storage locations
 - Cache settings
 - Default resource allocations
 
-See the [FAQ](/lume/guide/advanced/faq) for configuration file locations.
+See the [FAQ](/lume/guide/getting-started/faq) for more on configuration.
 
-## Next Steps
+## Full API reference
 
-- [HTTP API Reference](/lume/reference/http-api) - Full API documentation
-- [CLI Reference](/lume/reference/cli-reference) - CLI command reference
+For all endpoints, request/response formats, and language-specific examples, see the [HTTP API Reference](/lume/reference/http-api).

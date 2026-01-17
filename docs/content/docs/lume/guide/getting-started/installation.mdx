@@ -1,18 +1,9 @@
 ---
 title: Installation
-description: Installation instructions for Lume
+description: Install Lume on your Mac
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
-
-## System Requirements
-
-- Apple Silicon Mac (M1, M2, M3, M4, etc.)
-- macOS 13.0 or later
-- At least 8GB of RAM (16GB recommended)
-- At least 30GB of free disk space
-
-## Install with Script
 
 Install Lume with a single command:
 
@@ -20,139 +11,128 @@ Install Lume with a single command:
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/lume/scripts/install.sh)"
 ```
 
-By default, Lume is installed with:
-- A **background service** that starts automatically on login
-- An **auto-updater** that checks for updates at login and every 24 hours
+This installs Lume with a background service (starts on login) and auto-updater (checks every 24 hours).
 
-### Manual Start (No Background Service)
+### Verify it worked
 
-If you prefer to start the Lume API service manually when needed, use the `--no-background-service` option:
+```bash
+lume --version
+# Lume 0.2.27
+
+lume --help
+# OVERVIEW: Lume - CLI and framework for macOS VMs...
+```
+
+If you see version output, you're ready to [create your first VM](/lume/guide/getting-started/quickstart).
+
+## Requirements
+
+- Apple Silicon Mac (M1/M2/M3/M4)
+- macOS 13.0 or later
+- 8GB RAM minimum (16GB recommended)
+- 30GB free disk space
+
+## Installation options
+
+The default install includes a background service and auto-updater. You can disable either:
+
+| Option | Command |
+|--------|---------|
+| No background service | `install.sh -- --no-background-service` |
+| No auto-updates | `install.sh -- --no-auto-updater` |
+| Neither | `install.sh -- --no-background-service --no-auto-updater` |
+
+Full command with options:
 
 ```bash
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/lume/scripts/install.sh)" -- --no-background-service
 ```
 
-<Callout title="Note">
-  With this option, you'll need to manually start the Lume API service by running `lume serve` in
-  your terminal whenever you need to use tools or libraries that rely on the Lume API (such as the
-  Computer Use Agent).
+<Callout type="info">
+Without the background service, you'll need to run `lume serve` manually when using tools that rely on the Lume API (like the Computer Use Agent).
 </Callout>
 
-### Disable Auto-Updates
+## Manual installation
 
-If you prefer to manage updates manually, use the `--no-auto-updater` option:
+Download `lume.pkg.tar.gz` from the [latest release](https://github.com/trycua/cua/releases?q=lume&expanded=true), extract it, and install the package.
 
-```bash
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/lume/scripts/install.sh)" -- --no-auto-updater
-```
+## Managing services
 
-You can combine options to disable both the background service and auto-updates:
+### Background service
 
 ```bash
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/lume/scripts/install.sh)" -- --no-background-service --no-auto-updater
-```
-
-## Manual Download and Installation
-
-You can also download the `lume.pkg.tar.gz` archive from the [latest release](https://github.com/trycua/cua/releases?q=lume&expanded=true), extract it, and install the package manually.
-
-## Verify Installation
-
-After installation, verify Lume is working:
-
-```bash
-# Check version
-lume --version
-
-# List available commands
-lume --help
-```
-
-## Managing the Background Service
-
-If you installed with the background service (default), you can manage it with these commands:
-
-```bash
-# Check if the daemon is running
+# Check if running
 launchctl list | grep com.trycua.lume_daemon
 
-# View daemon logs
+# View logs
 tail -f /tmp/lume_daemon.log
 
-# Manually start the Lume API service
+# Start manually (if service disabled)
 lume serve
 ```
 
-## Managing Auto-Updates
-
-If you installed with auto-updates enabled (default), Lume will automatically check for and install updates at login and every 24 hours.
+### Auto-updater
 
 ```bash
-# Check if the auto-updater is running
+# Check if running
 launchctl list | grep com.trycua.lume_updater
 
-# View auto-updater logs
+# View logs
 tail -f /tmp/lume_updater.log
 
-# Manually run an update check
+# Manual update check
 ~/.local/bin/lume-update
 ```
-
-### Disable Auto-Updates After Installation
 
 To disable auto-updates after installation:
 
 ```bash
 launchctl unload ~/Library/LaunchAgents/com.trycua.lume_updater.plist
 rm ~/Library/LaunchAgents/com.trycua.lume_updater.plist
-rm ~/.local/bin/lume-update
 ```
 
-## Uninstall Lume
+## Uninstall
 
-### Remove the Background Service
-
-If you installed Lume with the background service, first remove the daemon:
+Remove Lume completely:
 
 ```bash
-launchctl unload ~/Library/LaunchAgents/com.trycua.lume_daemon.plist
-rm ~/Library/LaunchAgents/com.trycua.lume_daemon.plist
+# Stop and remove background service
+launchctl unload ~/Library/LaunchAgents/com.trycua.lume_daemon.plist 2>/dev/null
+rm -f ~/Library/LaunchAgents/com.trycua.lume_daemon.plist
+
+# Stop and remove auto-updater
+launchctl unload ~/Library/LaunchAgents/com.trycua.lume_updater.plist 2>/dev/null
+rm -f ~/Library/LaunchAgents/com.trycua.lume_updater.plist
+rm -f ~/.local/bin/lume-update
+
+# Optional: Remove cached images (run before removing binary)
+lume prune
+
+# Remove Lume binary
+rm -f $(which lume)
+
+# Optional: Remove VMs and config
+rm -rf ~/.lume
+rm -rf ~/.config/lume
 ```
 
-### Remove the Auto-Updater
+## Troubleshooting
 
-If you installed with auto-updates enabled, remove the updater:
+**`lume: command not found`** — The install location (`~/.local/bin`) isn't in your PATH. Add it:
 
 ```bash
-launchctl unload ~/Library/LaunchAgents/com.trycua.lume_updater.plist
-rm ~/Library/LaunchAgents/com.trycua.lume_updater.plist
-rm ~/.local/bin/lume-update
+echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc
+source ~/.zshrc
 ```
 
-### Remove Lume Binary
-
-First, locate the Lume binary:
+**Background service not starting** — Check the daemon logs:
 
 ```bash
-which lume
+tail -50 /tmp/lume_daemon.log
 ```
 
-Then remove it:
+**Permission errors** — The installer needs to create files in `~/.local/bin` and `~/Library/LaunchAgents`. Ensure you have write access to these directories.
 
-```bash
-rm $(which lume)
-```
+**Intel Mac or Linux** — Lume requires Apple Silicon. It won't work on Intel Macs or other platforms.
 
-### Clean Up VM Images
-
-Optionally, remove downloaded VM images:
-
-```bash
-# Remove all Lume VM images
-rm -rf ~/.cache/lume-images
-```
-
-## Next Steps
-
-- [Quickstart](/lume/guide/getting-started/quickstart) - Create your first VM
-- [Prebuilt Images](/lume/guide/fundamentals/prebuilt-images) - Available images in the registry
+Ready to create a VM? Head to the [Quickstart](/lume/guide/getting-started/quickstart).

@@ -8,6 +8,7 @@ import asyncio
 import os
 import shutil
 from dataclasses import dataclass
+from enum import Enum
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -27,6 +28,18 @@ from .docker_utils import (
     stop_container,
     wait_for_container,
 )
+
+# =============================================================================
+# Provider Type Enum
+# =============================================================================
+
+class ProviderType(Enum):
+    """Provider type enumeration."""
+    SIMULATED = "simulated"
+    WEBTOP = "webtop"
+    NATIVE = "native"
+    COMPUTER = "computer"
+
 
 # =============================================================================
 # Configuration
@@ -246,22 +259,40 @@ class TaskRunner:
         if cleanup_before:
             await full_cleanup()
 
-        # Determine if this is a simulated provider
-        is_simulated = provider_type in ("simulated", "webtop")
+        # Determine provider type
+        # Priority: explicit arg > env var > default native
+        provider_value = provider_type or os.environ.get("CUA_PROVIDER", "native")
+        try:
+            provider = ProviderType(provider_value)
+        except ValueError:
+            provider = ProviderType.NATIVE
+        
+        is_simulated = provider in (ProviderType.SIMULATED, ProviderType.WEBTOP)
+        is_computer = provider == ProviderType.COMPUTER
 
-        # Validate env_type (skip validation for simulated since we don't use it)
-        if not is_simulated and env_type not in ENV_CONFIGS:
+        # Pre-flight check: ensure required env vars for computer provider
+        if is_computer:
+            if not os.environ.get("CUA_ENV_API_URL"):
+                raise ValueError(
+                    "For computer provider, CUA_ENV_API_URL must be set. "
+                    "Example: export CUA_ENV_API_URL=http://localhost:5000"
+                )
+
+        # Validate env_type (skip validation for simulated/computer since we don't manage the env)
+        if not is_simulated and not is_computer and env_type not in ENV_CONFIGS:
             raise ValueError(
                 f"Unknown env_type: {env_type}. Valid types: {list(ENV_CONFIGS.keys())}"
             )
 
-        config = ENV_CONFIGS.get(env_type, {}) if not is_simulated else {}
-        golden_name = golden_name or env_type if not is_simulated else "simulated"
+        config = ENV_CONFIGS.get(env_type, {}) if (not is_simulated and not is_computer) else {}
+        golden_name = golden_name or env_type if (not is_simulated and not is_computer) else "external"
 
         # Generate unique task ID
         task_id = generate_task_id()
-        network_name = f"cua-task-{task_id}"
-        env_container_name = f"cua-env-{task_id}"
+        
+        # Create network only for native provider
+        network_name = f"cua-task-{task_id}" if not is_simulated and not is_computer else None
+        env_container_name = f"cua-env-{task_id}" if not is_simulated and not is_computer else None
         agent_container_name = f"cua-agent-{task_id}"
 
         # Create task overlay for QEMU types (protects golden image)
@@ -272,24 +303,25 @@ class TaskRunner:
         # Track task for cleanup
         self._running_tasks[task_id] = {
             "network": network_name,
-            "env_container": env_container_name if not is_simulated else None,
+            "env_container": env_container_name if (not is_simulated and not is_computer) else None,
             "agent_container": agent_container_name,
-            "env_image": config.get("image") if not is_simulated else None,
+            "env_image": config.get("image") if (not is_simulated and not is_computer) else None,
             "agent_image": self.agent_image,
             "remove_images": remove_images_after,
             "overlay_path": overlay_path,
             "is_simulated": is_simulated,
+            "is_computer": is_computer,
         }
 
         # Track log streaming process for cleanup
         log_stream_process = None
 
         try:
-            # 1. Create network
-            await create_network(network_name)
+            if not is_simulated and not is_computer:
+                # 1. Create network
+                await create_network(network_name)
 
-            # 2. Start environment container (skip for simulated providers)
-            if not is_simulated:
+                # 2. Start environment container (skip for simulated/computer providers)
                 await self._start_env_container(
                     task_id=task_id,
                     network_name=network_name,
@@ -318,7 +350,7 @@ class TaskRunner:
                 max_steps=max_steps,
                 oracle=oracle,
                 output_dir=output_dir,
-                is_simulated=is_simulated,
+                provider=provider,
             )
 
             # 3.5. Start streaming agent logs to file if requested
@@ -755,15 +787,15 @@ class TaskRunner:
         env_path: Path,
         task_index: int,
         config: dict,
-        agent: Optional[str],
-        agent_image: Optional[str],
-        agent_command: Optional[List[str]],
-        agent_import_path: Optional[str],
-        model: Optional[str],
-        max_steps: int,
-        oracle: bool,
-        output_dir: Optional[str],
-        is_simulated: bool = False,
+        agent: Optional[str] = None,
+        agent_image: Optional[str] = None,
+        agent_command: Optional[List[str]] = None,
+        agent_import_path: Optional[str] = None,
+        model: Optional[str] = None,
+        max_steps: int = 100,
+        oracle: bool = False,
+        output_dir: Optional[str] = None,
+        provider: ProviderType = ProviderType.NATIVE,
     ) -> ContainerInfo:
         """Start the agent container.
 
@@ -798,20 +830,25 @@ class TaskRunner:
         if resolved_command is not None:
             agent_command = resolved_command
 
-        # Build API URL using network hostname (not used for simulated, but set for consistency)
-        api_url = (
-            f"http://{self.env_hostname}:{config.get('internal_api_port', 5000)}" if config else ""
-        )
-        vnc_url = (
-            f"http://{self.env_hostname}:{config.get('internal_vnc_port', 8006)}" if config else ""
-        )
+        # Build API URL. For computer providers, use the host's environment variables.
+        # For local providers, use the internal network hostname.
+        if provider == ProviderType.COMPUTER:
+            api_url = os.environ.get("CUA_ENV_API_URL", "")
+            vnc_url = os.environ.get("CUA_ENV_VNC_URL", "")
+        else:
+            api_url = (
+                f"http://{self.env_hostname}:{config.get('internal_api_port', 5000)}" if config else ""
+            )
+            vnc_url = (
+                f"http://{self.env_hostname}:{config.get('internal_vnc_port', 8006)}" if config else ""
+            )
 
         # Build environment variables (available to all agent images)
         env_vars = {
             "CUA_ENV_API_URL": api_url,
             "CUA_ENV_VNC_URL": vnc_url,
-            "CUA_ENV_TYPE": config.get("os_type", "linux") if config else "linux",
-            "CUA_PROVIDER": "simulated" if is_simulated else "remote",
+            "CUA_ENV_TYPE": os.environ.get("CUA_ENV_TYPE") or (config.get("os_type", "linux") if config else "linux"),
+            "CUA_PROVIDER": provider.value,
             "CUA_TASK_PATH": "/app/env",
             "CUA_TASK_INDEX": str(task_index),
             "BATCH_TASK_INDEX": str(task_index),  # Legacy compat
@@ -875,10 +912,13 @@ class TaskRunner:
                     command.extend(["--max-steps", str(max_steps)])
 
         # Start container (not detached - we want to wait for it)
+        # For computer provider, use host network to access remote API
+        container_network = network_name if network_name else "host"
+        
         return await start_container(
             image=image,
             name=container_name,
-            network=network_name,
+            network=container_network,
             hostname=self.agent_hostname,
             env_vars=env_vars,
             volumes=volumes,

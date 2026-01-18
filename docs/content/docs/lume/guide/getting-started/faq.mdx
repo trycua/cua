@@ -92,6 +92,12 @@ Apple's macOS Software License Agreement (section 2.B.iii) limits you to **2 con
 
 Linux VMs have no such limitation. You can run as many as your hardware supports.
 
+### Can I run VMs inside a VM (nested virtualization)?
+
+**macOS VMs**: No. Apple's Virtualization Framework doesn't support nested virtualization for macOS guests. If you try to run `lume create` inside a macOS VM, you'll get "Virtualization is not available on this hardware."
+
+**Linux VMs**: Yes, on macOS 15+. Linux guests can run VMs inside them using KVM or other hypervisors. This is useful for testing Kubernetes, Docker, or other virtualization workloads.
+
 ## Images
 
 ### How do I get the latest macOS IPSW URL?

@@ -165,14 +165,16 @@ lume config storage remove old-location
 
 ### Use storage in commands
 
-Most commands accept `--storage` to target a specific location:
+Most commands accept `--storage` to target a specific location. You can use either a **named location** or a **direct path**:
 
 ```bash
-# Create in specific storage
+# Use a named storage location
 lume create my-vm --os macos --ipsw latest --storage external-ssd
-
-# Run from specific storage
 lume run my-vm --storage external-ssd
+
+# Or use a direct path
+lume create my-vm --os macos --ipsw latest --storage /Volumes/MySSD/vms
+lume run my-vm --storage /Volumes/MySSD/vms/my-vm
 ```
 
 Without `--storage`, Lume uses the default location or searches all locations.

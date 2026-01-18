@@ -135,6 +135,21 @@ lume run linux-vm --mount /path/to/ubuntu.iso
 lume run linux-vm
 ```
 
+## VM Status
+
+### What do the different VM statuses mean?
+
+Check VM status with `lume ls`:
+
+| Status | Description |
+|--------|-------------|
+| `stopped` | VM is not running and ready to start |
+| `running` | VM is running |
+| `provisioning (ipsw_install)` | VM is being created—downloading and installing macOS |
+| `provisioning (unattended_setup)` | VM is being created—running automated Setup Assistant |
+
+VMs in `provisioning` status are being created asynchronously. Wait for status to change to `stopped` before starting them.
+
 ## Troubleshooting
 
 ### VM won't start
@@ -142,7 +157,8 @@ lume run linux-vm
 1. Check if another VM is running: `lume ls`
 2. Stop any running VMs: `lume stop <name>`
 3. Check available disk space
-4. Try running with `--no-display` to see if it's a VNC issue
+4. If VM shows `provisioning`, wait for creation to complete
+5. Try running with `--no-display` to see if it's a VNC issue
 
 ### Can't connect to VM via SSH
 

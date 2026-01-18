@@ -4,7 +4,7 @@ description: Step-by-step tutorials and use cases for Lume
 ---
 
 import { Card, Cards } from 'fumadocs-ui/components/card';
-import { Box, Cloud, Terminal } from 'lucide-react';
+import { Bot, Terminal } from 'lucide-react';
 
 # Examples
 
@@ -12,18 +12,34 @@ Explore real-world examples and tutorials for using Lume to create and manage ma
 
 <Cards>
   <Card
-    icon={<Cloud className="w-6 h-6" />}
-    href="/lume/examples/claude-cowork-sandbox"
-    title="Claude Cowork Sandbox"
-    description="Run Claude Code in an isolated macOS VM sandbox"
+    icon={<Terminal className="w-6 h-6" />}
+    href="/lume/examples/claude-code"
+    title="Claude Code"
+    description="Run Claude Code CLI in isolated macOS VMs using SSH"
+  />
+  <Card
+    icon={<Bot className="w-6 h-6" />}
+    href="/lume/examples/claude-cowork"
+    title="Claude Cowork"
+    description="Use Claude Cowork with Lume MCP connector"
   />
 </Cards>
 
 ## Available Examples
 
-### Development Environments
+### Claude Code
 
-- **[Claude Cowork Sandbox](/lume/examples/claude-cowork-sandbox)** - Set up a sandboxed macOS environment for running Claude Code safely with full system access
+Run the Claude Code CLI in isolated macOS sandboxes using SSH:
+
+- **[Sandbox Setup](/lume/examples/claude-code/sandbox)** — Create and configure a sandboxed macOS VM
+- **[Homebrew Testing](/lume/examples/claude-code/homebrew-testing)** — Test Homebrew formulas in a clean environment
+
+### Claude Cowork
+
+Use Claude Cowork with the Lume MCP connector for native VM management:
+
+- **[Sandbox with MCP](/lume/examples/claude-cowork/sandbox)** — Configure the MCP connector for VM lifecycle control
+- **[Stock Analysis with Numbers](/lume/examples/claude-cowork/numbers-stock-analysis)** — Use macOS-only apps like Numbers.app
 
 ## Coming Soon
 

@@ -26,9 +26,13 @@ enum VMDetailsPrinter {
             }),
         Column(header: "display", width: 12, getValue: { $0.display }),
         Column(
-            header: "status", width: 16,
-            getValue: {
-                $0.status
+            header: "status", width: 28,
+            getValue: { vm in
+                // Show operation type for provisioning status
+                if vm.status == "provisioning", let op = vm.provisioningOperation {
+                    return "provisioning (\(op))"
+                }
+                return vm.status
             }),
         Column(header: "storage", width: 16, getValue: { $0.locationName }),
         Column(

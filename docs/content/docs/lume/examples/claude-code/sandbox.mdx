@@ -1,11 +1,11 @@
 ---
-title: Claude Code in a macOS Sandbox
-description: Run Claude Code safely in an isolated macOS VM
+title: Sandbox Setup
+description: Run Claude Code CLI safely in an isolated macOS VM
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
 
-[Claude Cowork](https://www.anthropic.com/news/cowork) uses Apple's Virtualization Framework to run AI agents in an isolated sandbox. You can build the same setup with Lume—run [Claude Code](https://claude.ai/code) on your host while it executes commands inside a sandboxed macOS VM.
+Run [Claude Code](https://docs.anthropic.com/en/docs/claude-code) on your host while it executes commands inside a sandboxed macOS VM via SSH. No MCP required—just the `lume` CLI and SSH.
 
 ## Why sandbox Claude Code?
 
@@ -15,7 +15,7 @@ Claude Code is powerful—it can read files, run commands, install packages, and
 - **Isolate risky operations** — Test destructive commands, untrusted code, or experimental changes
 - **Reset instantly** — Clone a fresh VM to undo everything Claude did
 
-## What we're building
+## Architecture
 
 ```
 ┌─────────────────────────────────────────────────────┐
@@ -73,7 +73,7 @@ curl -fsSL https://claude.ai/install.sh | bash
 brew install --cask claude-code
 ```
 
-See [Claude Code docs](https://code.claude.com/docs) for other installation methods.
+See [Claude Code docs](https://docs.anthropic.com/en/docs/claude-code) for other installation methods.
 
 ## Step 5: Use Claude Code with the sandbox
 
@@ -175,7 +175,7 @@ But it can:
 
 ## Next steps
 
+- [Homebrew Testing](/lume/examples/claude-code/homebrew-testing) — Test packages in a clean environment
+- [Claude Cowork with MCP](/lume/examples/claude-cowork/sandbox) — Use MCP for native VM integration
 - [Unattended Setup](/lume/guide/fundamentals/unattended-setup) — Customize the VM configuration
-- [HTTP API](/lume/guide/advanced/http-server) — Automate VM control programmatically
-- [Lumier](/lume/guide/advanced/lumier) — Docker-based ephemeral VMs that reset automatically
-- [Claude Code docs](https://code.claude.com/docs) — Learn more about Claude Code's capabilities
+- [Claude Code docs](https://docs.anthropic.com/en/docs/claude-code) — Learn more about Claude Code's capabilities

@@ -11,6 +11,12 @@
   --color-fd-accent: hsl(152, 76%, 92%); /* emerald-100 */
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
+  --font-heading: var(--font-urbanist);
+}
+
+/* Urbanist for headings */
+h1, h2, h3, h4 {
+  font-family: var(--font-heading), var(--font-sans), sans-serif;
 }
 
 .dark {

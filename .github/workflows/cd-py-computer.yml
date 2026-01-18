@@ -144,7 +144,6 @@ jobs:
       package_name: "computer"
       package_dir: "libs/python/computer"
       version: ${{ needs.prepare.outputs.version }}
-      is_lume_package: false
       base_package_name: "cua-computer"
     secrets:
       PYPI_TOKEN: ${{ secrets.PYPI_TOKEN }}

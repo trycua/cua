@@ -564,6 +564,12 @@ const customStyles = `
       display: none !important;
     }
   }
+
+  /* Ensure popup appears above header */
+  .copilotKitPopup,
+  [class*="copilotKitPopup"] {
+    z-index: 9999 !important;
+  }
 `;
 
 const CopilotKitWrapper = memo(function CopilotKitWrapper({ children }: { children: ReactNode }) {

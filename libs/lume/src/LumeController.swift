@@ -179,6 +179,18 @@ final class LumeController {
         )
     }
 
+
+    /// Validates that a VM is not currently being provisioned
+    /// - Parameters:
+    ///   - vmDir: The VM directory to check
+    ///   - name: The VM name (for error message)
+    /// - Throws: VMError.stillProvisioning if the VM has a provisioning marker
+    private func validateNotProvisioning(_ vmDir: VMDirectory, name: String) throws {
+        if vmDir.loadProvisioningMarker() != nil {
+            throw VMError.stillProvisioning(name)
+        }
+    }
+
     @MainActor
     public func clone(
         name: String, newName: String, sourceLocation: String? = nil, destLocation: String? = nil
@@ -196,7 +208,11 @@ final class LumeController {
 
         do {
             // Validate source VM exists
-            _ = try self.validateVMExists(normalizedName, storage: sourceLocation)
+            let actualSourceLocation = try self.validateVMExists(normalizedName, storage: sourceLocation)
+
+            // Check if source VM is still being provisioned
+            let sourceVmDir = try home.getVMDirectory(normalizedName, storage: actualSourceLocation)
+            try validateNotProvisioning(sourceVmDir, name: normalizedName)
 
             // Get the source VM and check if it's running
             let sourceVM = try get(name: normalizedName, storage: sourceLocation)
@@ -614,6 +630,7 @@ final class LumeController {
         }
     }
 
+
     /// Run unattended Setup Assistant automation on an existing macOS VM
     @MainActor
     public func setup(
@@ -764,6 +781,10 @@ final class LumeController {
             let actualLocation = try self.validateVMExists(
                 normalizedName, storage: storage)
 
+            // Check if VM is still being provisioned
+            let vmDir = try home.getVMDirectory(normalizedName, storage: actualLocation)
+            try validateNotProvisioning(vmDir, name: normalizedName)
+
             // Try to get VM from cache first
             let vm: VM
             if let cachedVM = SharedVM.shared.getVM(name: normalizedName) {
@@ -869,6 +890,9 @@ final class LumeController {
                         "actual": actualLocationName ?? "default",
                     ])
             }
+
+            // Check if VM is still being provisioned
+            try validateNotProvisioning(vmDir, name: normalizedName)
 
             // Validate parameters using the located VMDirectory
             try validateRunParameters(

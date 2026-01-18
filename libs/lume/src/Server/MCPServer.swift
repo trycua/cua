@@ -16,17 +16,21 @@ final class LumeMCPServer {
         mcpServer = MCP.Server(
             name: "lume",
             version: "1.0.0",
-            capabilities: .init(tools: .init(listChanged: false))
+            capabilities: .init(
+                prompts: .init(listChanged: false),
+                resources: .init(subscribe: false, listChanged: false),
+                tools: .init(listChanged: false)
+            )
         )
 
-        await registerTools()
+        await registerHandlers()
 
         let transport = StdioTransport()
         try await mcpServer?.start(transport: transport)
         await mcpServer?.waitUntilCompleted()
     }
 
-    private func registerTools() async {
+    private func registerHandlers() async {
         // Register ListTools handler
         await mcpServer?.withMethodHandler(ListTools.self) { [weak self] _ in
             guard let self = self else {
@@ -43,6 +47,268 @@ final class LumeMCPServer {
                 return CallTool.Result(content: [.text("Server not available")], isError: true)
             }
             return await self.handleToolCall(params)
+        }
+
+        // Register ListResources handler
+        await mcpServer?.withMethodHandler(ListResources.self) { [weak self] _ in
+            guard let self = self else {
+                return ListResources.Result(resources: [])
+            }
+            return await MainActor.run {
+                ListResources.Result(resources: self.resourceDefinitions)
+            }
+        }
+
+        // Register ReadResource handler
+        await mcpServer?.withMethodHandler(ReadResource.self) { [weak self] params in
+            guard let self = self else {
+                return ReadResource.Result(contents: [])
+            }
+            return await MainActor.run {
+                self.handleReadResource(params)
+            }
+        }
+
+        // Register ListPrompts handler
+        await mcpServer?.withMethodHandler(ListPrompts.self) { [weak self] _ in
+            guard let self = self else {
+                return ListPrompts.Result(prompts: [])
+            }
+            return await MainActor.run {
+                ListPrompts.Result(prompts: self.promptDefinitions)
+            }
+        }
+
+        // Register GetPrompt handler
+        await mcpServer?.withMethodHandler(GetPrompt.self) { [weak self] params in
+            guard let self = self else {
+                return GetPrompt.Result(description: nil, messages: [])
+            }
+            return await MainActor.run {
+                self.handleGetPrompt(params)
+            }
+        }
+    }
+
+    // MARK: - Resource Definitions
+
+    private var resourceDefinitions: [Resource] {
+        [
+            Resource(
+                name: "Lume Usage Guide",
+                uri: "lume://usage-guide",
+                description: "Best practices and workflows for managing macOS VMs with Lume",
+                mimeType: "text/markdown"
+            ),
+            Resource(
+                name: "Default Credentials",
+                uri: "lume://credentials",
+                description: "Default SSH credentials for VMs created with unattended setup",
+                mimeType: "text/plain"
+            )
+        ]
+    }
+
+    private func handleReadResource(_ params: ReadResource.Parameters) -> ReadResource.Result {
+        switch params.uri {
+        case "lume://usage-guide":
+            return ReadResource.Result(contents: [
+                .text(usageGuideContent, uri: params.uri, mimeType: "text/markdown")
+            ])
+        case "lume://credentials":
+            return ReadResource.Result(contents: [
+                .text(credentialsContent, uri: params.uri, mimeType: "text/plain")
+            ])
+        default:
+            return ReadResource.Result(contents: [])
+        }
+    }
+
+    private var usageGuideContent: String {
+        """
+        # Lume VM Management Guide
+
+        ## Overview
+        Lume manages macOS virtual machines on Apple Silicon. Use these tools to create, run, and manage VMs for sandboxed development and testing.
+
+        ## Typical Workflow
+
+        ### 1. Check Existing VMs
+        Always start by listing VMs to see what's available:
+        ```
+        lume_list_vms
+        ```
+
+        ### 2. Create a New VM (if needed)
+        Creating a VM takes 15-30 minutes. Use `unattended: "tahoe"` for automatic setup with SSH enabled:
+        ```
+        lume_create_vm(name: "sandbox", unattended: "tahoe")
+        ```
+        The tool returns immediately. Poll `lume_list_vms` to monitor progress—status changes from `provisioning (ipsw_install)` → `provisioning (unattended_setup)` → `stopped`.
+
+        ### 3. Start the VM
+        Start with optional shared directory for file access:
+        ```
+        lume_run_vm(name: "sandbox", shared_dir: "~/project", no_display: true)
+        ```
+        Shared files appear in the VM at `/Volumes/My Shared Files/`.
+
+        ### 4. Execute Commands
+        Run commands via SSH (requires `sshpass` installed on host):
+        ```
+        lume_exec(name: "sandbox", command: "cd /Volumes/My\\\\ Shared\\\\ Files && npm test")
+        ```
+
+        ### 5. Stop the VM
+        ```
+        lume_stop_vm(name: "sandbox")
+        ```
+
+        ## Best Practices
+
+        ### VM Naming
+        - Use descriptive names: `dev-sandbox`, `test-runner`, `build-agent`
+        - Avoid spaces and special characters
+
+        ### Resource Allocation
+        - Default: 4 CPU cores, 8GB RAM, 64GB disk
+        - For builds: Consider 8 CPU cores, 16GB RAM
+        - Disk grows dynamically (sparse files)
+
+        ### Unattended Presets
+        - `tahoe`: macOS Tahoe with SSH enabled, user `lume`/`lume`
+        - `sequoia`: macOS Sequoia with SSH enabled, user `lume`/`lume`
+
+        ### Golden Images
+        Create a fully configured VM, then clone it for fast resets:
+        ```
+        lume_clone_vm(name: "configured-vm", new_name: "fresh-sandbox")
+        ```
+
+        ### Shared Directories
+        - Read-write by default
+        - Path in VM: `/Volumes/My Shared Files/`
+        - Escape spaces in commands: `My\\ Shared\\ Files`
+
+        ## Status Reference
+
+        | Status | Meaning |
+        |--------|---------|
+        | `stopped` | Ready to start |
+        | `running` | VM is active |
+        | `provisioning (ipsw_install)` | Installing macOS |
+        | `provisioning (unattended_setup)` | Running Setup Assistant |
+
+        ## Limitations
+        - Max 2 macOS VMs running simultaneously (Apple licensing)
+        - Linux VMs: Unlimited
+        - Nested virtualization: Not supported for macOS guests
+        """
+    }
+
+    private var credentialsContent: String {
+        """
+        Default credentials for VMs created with --unattended tahoe or sequoia:
+
+        Username: lume
+        Password: lume
+
+        SSH is enabled automatically. Connect with:
+        ssh lume@<vm-ip-address>
+
+        Get VM IP with lume_get_vm(name: "vm-name")
+        """
+    }
+
+    // MARK: - Prompt Definitions
+
+    private var promptDefinitions: [Prompt] {
+        [
+            Prompt(
+                name: "create-sandbox",
+                description: "Create a new macOS sandbox VM with unattended setup",
+                arguments: [
+                    .init(name: "name", description: "Name for the new VM", required: true)
+                ]
+            ),
+            Prompt(
+                name: "run-in-sandbox",
+                description: "Run a command in an existing sandbox VM",
+                arguments: [
+                    .init(name: "vm_name", description: "Name of the VM", required: true),
+                    .init(name: "command", description: "Command to execute", required: true)
+                ]
+            ),
+            Prompt(
+                name: "reset-sandbox",
+                description: "Reset a sandbox by cloning from a golden image",
+                arguments: [
+                    .init(name: "golden_image", description: "Name of the golden image VM", required: true),
+                    .init(name: "sandbox_name", description: "Name for the fresh sandbox", required: true)
+                ]
+            )
+        ]
+    }
+
+    private func handleGetPrompt(_ params: GetPrompt.Parameters) -> GetPrompt.Result {
+        switch params.name {
+        case "create-sandbox":
+            let vmName = params.arguments?["name"] ?? "sandbox"
+            return GetPrompt.Result(
+                description: "Create a macOS sandbox VM",
+                messages: [
+                    .user("""
+                        Create a new macOS sandbox VM named '\(vmName)' with these requirements:
+                        1. Use unattended setup (tahoe preset) for automatic configuration
+                        2. The VM should have SSH enabled with credentials lume/lume
+                        3. Monitor the provisioning status until complete
+                        4. Once ready, start the VM in headless mode
+                        5. Verify SSH connectivity by running a simple command
+                        """)
+                ]
+            )
+
+        case "run-in-sandbox":
+            let vmName = params.arguments?["vm_name"] ?? "sandbox"
+            let command = params.arguments?["command"] ?? "echo 'Hello from sandbox'"
+            return GetPrompt.Result(
+                description: "Run command in sandbox VM",
+                messages: [
+                    .user("""
+                        Run this command in the '\(vmName)' VM:
+                        ```
+                        \(command)
+                        ```
+
+                        Steps:
+                        1. First check if the VM exists and is running (lume_list_vms)
+                        2. If stopped, start it with lume_run_vm
+                        3. Wait for it to get an IP address (lume_get_vm)
+                        4. Execute the command with lume_exec
+                        5. Report the output
+                        """)
+                ]
+            )
+
+        case "reset-sandbox":
+            let goldenImage = params.arguments?["golden_image"] ?? "golden"
+            let sandboxName = params.arguments?["sandbox_name"] ?? "sandbox"
+            return GetPrompt.Result(
+                description: "Reset sandbox from golden image",
+                messages: [
+                    .user("""
+                        Reset the sandbox by cloning from the golden image:
+                        1. Stop '\(sandboxName)' if it's running
+                        2. Delete '\(sandboxName)' if it exists
+                        3. Clone '\(goldenImage)' to '\(sandboxName)'
+                        4. Start the new '\(sandboxName)' VM
+                        5. Verify it's working with a simple SSH command
+                        """)
+                ]
+            )
+
+        default:
+            return GetPrompt.Result(description: nil, messages: [])
         }
     }
 

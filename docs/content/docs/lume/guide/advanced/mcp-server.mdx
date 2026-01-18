@@ -71,6 +71,25 @@ Ask Claude:
 | `lume_delete_vm` | Delete a VM and its files |
 | `lume_exec` | Execute commands inside a VM via SSH |
 
+## Resources
+
+The MCP server provides documentation resources that AI agents can read:
+
+| Resource | Description |
+|----------|-------------|
+| `lume://usage-guide` | Comprehensive guide with workflows, best practices, and status reference |
+| `lume://credentials` | Default SSH credentials for VMs created with unattended setup |
+
+## Prompts
+
+Pre-defined workflow prompts guide AI agents through common tasks:
+
+| Prompt | Description |
+|--------|-------------|
+| `create-sandbox` | Create a new macOS VM with unattended setup |
+| `run-in-sandbox` | Execute a command in an existing VM |
+| `reset-sandbox` | Reset a sandbox by cloning from a golden image |
+
 ## Creating VMs
 
 The `lume_create_vm` tool creates new macOS VMs asynchronously. Since VM creation takes 15-30 minutes (downloading IPSW, installing macOS, optional unattended setup), the tool returns immediately while provisioning continues in the background.

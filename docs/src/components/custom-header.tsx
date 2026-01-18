@@ -12,6 +12,8 @@ import LogoBlack from '@/assets/logo-black.svg';
 import LogoWhite from '@/assets/logo-white.svg';
 import CuaBenchLogoBlack from '@/assets/cuabench-logo-black.svg';
 import CuaBenchLogoWhite from '@/assets/cuabench-logo-white.svg';
+import McpBlack from '@/assets/mcp-black.svg';
+import McpWhite from '@/assets/mcp-white.svg';
 
 const docsSites = [
   {
@@ -31,7 +33,6 @@ const docsSites = [
       { name: 'Guide', href: '/cua/guide/get-started/what-is-cua', prefix: '/cua/guide' },
       { name: 'Examples', href: '/cua/examples/automation/form-filling', prefix: '/cua/examples' },
       { name: 'Reference', href: '/cua/reference/computer-sdk', prefix: '/cua/reference' },
-      { name: 'Vibe Coding MCP', href: '/cua/vibe-coding-mcp', prefix: '/cua/vibe-coding-mcp' },
     ],
   },
   {
@@ -63,11 +64,6 @@ const docsSites = [
         href: '/cuabench/reference/cli-reference',
         prefix: '/cuabench/reference',
       },
-      {
-        name: 'Vibe Coding MCP',
-        href: '/cua/vibe-coding-mcp',
-        prefix: '/cua/vibe-coding-mcp',
-      },
     ],
   },
   {
@@ -90,14 +86,14 @@ const docsSites = [
         prefix: '/lume/guide',
       },
       {
+        name: 'Examples',
+        href: '/lume/examples',
+        prefix: '/lume/examples',
+      },
+      {
         name: 'Reference',
         href: '/lume/reference/cli-reference',
         prefix: '/lume/reference',
-      },
-      {
-        name: 'Vibe Coding MCP',
-        href: '/cua/vibe-coding-mcp',
-        prefix: '/cua/vibe-coding-mcp',
       },
     ],
   },
@@ -262,6 +258,29 @@ export function CustomHeader() {
         {/* Right: Search, Theme, Icons */}
         <div className="flex items-center gap-2">
           <SearchToggle />
+
+          {/* MCP */}
+          <Link
+            href="/cua/vibe-coding-mcp"
+            className="inline-flex h-9 w-9 items-center justify-center rounded-md text-fd-muted-foreground transition-colors hover:bg-fd-accent hover:text-fd-foreground"
+            title="Vibe Coding MCP"
+          >
+            <Image
+              src={McpBlack}
+              alt="MCP"
+              width={20}
+              height={20}
+              className="block dark:hidden"
+            />
+            <Image
+              src={McpWhite}
+              alt="MCP"
+              width={20}
+              height={20}
+              className="hidden dark:block"
+            />
+          </Link>
+
           <ThemeToggle />
 
           {/* Discord */}

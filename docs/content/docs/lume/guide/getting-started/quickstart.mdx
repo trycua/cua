@@ -151,9 +151,12 @@ lume run my-vm
 
 # Headless (for automation, CI/CD)
 lume run my-vm --no-display
+
+# Run in background (doesn't block terminal)
+lume run my-vm &
 ```
 
-When running headless, connect via SSH (if enabled) or VNC client.
+When running headless or in background, connect via SSH (if enabled) or VNC client. Use `lume ls` to see running VMs and their connection details.
 
 ## Common operations
 

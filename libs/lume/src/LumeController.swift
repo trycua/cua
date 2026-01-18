@@ -614,6 +614,239 @@ final class LumeController {
         }
     }
 
+    /// Creates a VM asynchronously, returning immediately while the VM is being provisioned.
+    /// The VM will appear with status "provisioning" in `lume ls` until creation completes.
+    /// Poll VM status to check progress.
+    ///
+    /// - Parameters:
+    ///   - name: Name for the new VM
+    ///   - os: Operating system type ("macos" or "linux")
+    ///   - diskSize: Disk size in bytes
+    ///   - cpuCount: Number of CPU cores
+    ///   - memorySize: Memory size in bytes
+    ///   - display: Display resolution string (e.g., "1920x1080")
+    ///   - ipsw: Path to IPSW file or "latest" for macOS
+    ///   - storage: Optional storage location name or path
+    ///   - unattendedConfig: Optional unattended setup configuration
+    @MainActor
+    public func createAsync(
+        name: String,
+        os: String,
+        diskSize: UInt64,
+        cpuCount: Int,
+        memorySize: UInt64,
+        display: String,
+        ipsw: String?,
+        storage: String? = nil,
+        unattendedConfig: UnattendedConfig? = nil
+    ) throws {
+        Logger.info(
+            "Starting async VM creation",
+            metadata: [
+                "name": name,
+                "os": os,
+                "location": storage ?? "default",
+                "unattended": unattendedConfig != nil ? "yes" : "no",
+            ])
+
+        // Validate parameters upfront (this checks VM doesn't already exist)
+        try validateCreateParameters(name: name, os: os, ipsw: ipsw, storage: storage)
+
+        Logger.info("Spawning background task for VM creation", metadata: ["name": name])
+
+        // All parameters passed to Task are value types (Sendable)
+        // The Task will create its own LumeController instance
+        Task.detached { @MainActor @Sendable in
+            // Create a new controller for the background task
+            let controller = LumeController()
+
+            // Get the VM directory
+            let vmDir: VMDirectory
+            do {
+                vmDir = try controller.home.getVMDirectory(name, storage: storage)
+            } catch {
+                Logger.error("Failed to get VM directory",
+                            metadata: ["name": name, "error": error.localizedDescription])
+                return
+            }
+
+            // Create the VM directory and write provisioning marker first
+            // so VM appears in list immediately
+            do {
+                try FileManager.default.createDirectory(
+                    atPath: vmDir.dir.path,
+                    withIntermediateDirectories: true
+                )
+
+                // Create minimal config so VM shows up in list
+                let config = try VMConfig(
+                    os: os,
+                    cpuCount: cpuCount,
+                    memorySize: memorySize,
+                    diskSize: diskSize,
+                    display: display
+                )
+                try vmDir.saveConfig(config)
+
+                // Write provisioning marker
+                try vmDir.saveProvisioningMarker(ProvisioningMarker(operation: "ipsw_install"))
+                Logger.info("Provisioning marker created", metadata: ["name": name])
+            } catch {
+                Logger.error("Failed to create provisioning marker",
+                            metadata: ["name": name, "error": error.localizedDescription])
+                return
+            }
+
+            do {
+                // Run the internal create which does all the work
+                // (skips validation since we already validated)
+                try await controller.createInternal(
+                    name: name,
+                    os: os,
+                    diskSize: diskSize,
+                    cpuCount: cpuCount,
+                    memorySize: memorySize,
+                    display: display,
+                    ipsw: ipsw,
+                    storage: storage,
+                    unattendedConfig: unattendedConfig,
+                    vmDir: vmDir
+                )
+
+                // Clear marker on success
+                vmDir.clearProvisioningMarker()
+                Logger.info("Async VM creation completed successfully", metadata: ["name": name])
+
+            } catch {
+                // Clear marker and cleanup on failure
+                vmDir.clearProvisioningMarker()
+                do {
+                    try vmDir.delete()
+                } catch let cleanupError {
+                    Logger.error("Failed to clean up VM directory after async creation failure",
+                               metadata: ["error": cleanupError.localizedDescription])
+                }
+                Logger.error("Async VM creation failed",
+                            metadata: ["name": name, "error": error.localizedDescription])
+            }
+        }
+    }
+
+    /// Internal create method that skips validation (used by createAsync)
+    @MainActor
+    private func createInternal(
+        name: String,
+        os: String,
+        diskSize: UInt64,
+        cpuCount: Int,
+        memorySize: UInt64,
+        display: String,
+        ipsw: String?,
+        storage: String? = nil,
+        unattendedConfig: UnattendedConfig? = nil,
+        debug: Bool = false,
+        debugDir: String? = nil,
+        noDisplay: Bool = true,
+        vncPort: Int = 0,
+        vmDir: VMDirectory? = nil
+    ) async throws {
+        Logger.info(
+            "Creating VM (internal)",
+            metadata: [
+                "name": name,
+                "os": os,
+                "location": storage ?? "default",
+            ])
+
+        let vm = try await createTempVMConfig(
+            os: os,
+            cpuCount: cpuCount,
+            memorySize: memorySize,
+            diskSize: diskSize,
+            display: display
+        )
+
+        // Track the temp directory for cleanup on failure
+        let tempVMDir = vm.vmDirContext.dir
+
+        do {
+            try await vm.setup(
+                ipswPath: ipsw ?? "none",
+                cpuCount: cpuCount,
+                memorySize: memorySize,
+                diskSize: diskSize,
+                display: display
+            )
+
+            // If vmDir was pre-created (async flow), we need to handle finalization differently
+            if let existingVmDir = vmDir {
+                // Delete the pre-created directory (with just config and marker)
+                // and let finalize create it fresh with all the VM files
+                try existingVmDir.delete()
+            }
+
+            try vm.finalize(to: name, home: home, storage: storage)
+        } catch {
+            // Clean up the temporary VM directory on setup/finalize failure
+            Logger.info("Cleaning up temporary VM directory after failed creation",
+                       metadata: ["path": tempVMDir.dir.path])
+            do {
+                try tempVMDir.delete()
+            } catch let cleanupError {
+                Logger.error("Failed to clean up temporary VM directory",
+                           metadata: ["error": cleanupError.localizedDescription])
+            }
+            throw error
+        }
+
+        Logger.info("VM created successfully", metadata: ["name": name])
+
+        // Run unattended setup if config is provided
+        if let config = unattendedConfig, os.lowercased() == "macos" {
+            // Update provisioning marker for unattended phase (only if async flow)
+            if vmDir != nil {
+                // Re-get the vmDir since we deleted and recreated it
+                let updatedVmDir = try home.getVMDirectory(name, storage: storage)
+                try updatedVmDir.saveProvisioningMarker(ProvisioningMarker(operation: "unattended_setup"))
+            }
+
+            // Wait for the installation VZVirtualMachine to fully release auxiliary storage locks.
+            Logger.info("Waiting for installation resources to be released before unattended setup")
+            try await Task.sleep(nanoseconds: 3_000_000_000)  // 3 seconds
+            Logger.info("Starting unattended Setup Assistant automation", metadata: ["name": name])
+
+            // Load the finalized VM
+            let finalVM = try get(name: name, storage: storage)
+
+            // Run the unattended installer
+            let installer = UnattendedInstaller()
+            do {
+                try await installer.install(
+                    vm: finalVM,
+                    config: config,
+                    vncPort: vncPort,
+                    noDisplay: noDisplay,
+                    debug: debug,
+                    debugDir: debugDir
+                )
+            } catch {
+                // Clean up the finalized VM directory on unattended setup failure
+                Logger.info("Cleaning up VM after failed unattended setup",
+                           metadata: ["name": name])
+                do {
+                    let vmDirToDelete = try home.getVMDirectory(name, storage: storage)
+                    try vmDirToDelete.delete()
+                } catch let cleanupError {
+                    Logger.error("Failed to clean up VM after unattended setup failure",
+                               metadata: ["error": cleanupError.localizedDescription])
+                }
+                throw error
+            }
+
+            Logger.info("Unattended setup completed", metadata: ["name": name])
+        }
+    }
+
     /// Run unattended Setup Assistant automation on an existing macOS VM
     @MainActor
     public func setup(

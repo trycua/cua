@@ -133,16 +133,37 @@ final class LumeController {
     private func getVMDetailsLightweight(vmDir: VMDirectory, locationName: String) -> VMDetails? {
         let vmName = vmDir.name
 
-        // Check provisioning marker FIRST - if present, VM is being created
+        // Check provisioning marker FIRST - if present, VM may be in creation
         if let marker = vmDir.loadProvisioningMarker() {
-            return vmDir.getDetails(
-                locationName: locationName,
-                status: "provisioning",
-                provisioningOperation: marker.operation,
-                vncUrl: nil,
-                ipAddress: nil,
-                sshAvailable: nil
-            )
+            // Check if VM is actually complete (has all required files)
+            // If complete, the marker is stale and should be auto-cleaned
+            let hasRequiredFiles = vmDir.diskPath.exists() && vmDir.nvramPath.exists()
+            
+            if hasRequiredFiles {
+                // VM is complete but marker wasn't cleaned up (e.g., after unattended setup)
+                // Auto-cleanup the stale marker
+                vmDir.clearProvisioningMarker()
+                Logger.info("Auto-cleaned stale provisioning marker for complete VM", metadata: ["name": vmName])
+                // Fall through to normal status check below
+            } else {
+                // VM is still being provisioned
+                let status = marker.isStale() ? "provisioning (stale)" : "provisioning"
+                if marker.isStale() {
+                    Logger.info("VM provisioning may be stuck", metadata: [
+                        "name": vmName,
+                        "operation": marker.operation,
+                        "hint": "If creation was interrupted, delete with: lume delete \(vmName)"
+                    ])
+                }
+                return vmDir.getDetails(
+                    locationName: locationName,
+                    status: status,
+                    provisioningOperation: marker.operation,
+                    vncUrl: nil,
+                    ipAddress: nil,
+                    sshAvailable: nil
+                )
+            }
         }
 
         // Check if VM is running via SharedVM cache (same-process fast path)
@@ -314,7 +335,7 @@ final class LumeController {
             Logger.error(
                 "Failed to get VM",
                 metadata: [
-                    "vmName": normalizedName, "storage": storage ?? "default",
+                    "vmName": normalizedName, "storage": storage ?? "home",
                     "error": error.localizedDescription,
                 ])
             // Re-throw the original error to preserve its type
@@ -343,7 +364,7 @@ final class LumeController {
             metadata: [
                 "name": name,
                 "os": os,
-                "location": storage ?? "default",
+                "location": storage ?? "home",
                 "disk_size": "\(diskSize / 1024 / 1024)MB",
                 "cpu_count": "\(cpuCount)",
                 "memory_size": "\(memorySize / 1024 / 1024)MB",
@@ -449,7 +470,7 @@ final class LumeController {
             metadata: [
                 "name": name,
                 "os": os,
-                "location": storage ?? "default",
+                "location": storage ?? "home",
                 "unattended": unattendedConfig != nil ? "yes" : "no",
             ])
 
@@ -559,7 +580,7 @@ final class LumeController {
             metadata: [
                 "name": name,
                 "os": os,
-                "location": storage ?? "default",
+                "location": storage ?? "home",
             ])
 
         let vm = try await createTempVMConfig(
@@ -607,12 +628,9 @@ final class LumeController {
 
         // Run unattended setup if config is provided
         if let config = unattendedConfig, os.lowercased() == "macos" {
-            // Update provisioning marker for unattended phase (only if async flow)
-            if vmDir != nil {
-                // Re-get the vmDir since we deleted and recreated it
-                let updatedVmDir = try home.getVMDirectory(name, storage: storage)
-                try updatedVmDir.saveProvisioningMarker(ProvisioningMarker(operation: "unattended_setup"))
-            }
+            // Note: We don't write a provisioning marker for unattended setup.
+            // The VM has disk + nvram at this point, so it's "running" during
+            // the setup automation, not "provisioning".
 
             // Wait for the installation VZVirtualMachine to fully release auxiliary storage locks.
             Logger.info("Waiting for installation resources to be released before unattended setup")
@@ -668,7 +686,7 @@ final class LumeController {
             "Running unattended setup",
             metadata: [
                 "name": normalizedName,
-                "storage": storage ?? "default",
+                "storage": storage ?? "home",
                 "bootWait": "\(config.bootWait)s",
                 "commands": "\(config.bootCommands.count)",
                 "debug": "\(debug)",
@@ -702,7 +720,7 @@ final class LumeController {
             "Deleting VM",
             metadata: [
                 "name": normalizedName,
-                "location": storage ?? "default",
+                "location": storage ?? "home",
             ])
 
         do {
@@ -757,7 +775,7 @@ final class LumeController {
             "Updating VM settings",
             metadata: [
                 "name": normalizedName,
-                "location": storage ?? "default",
+                "location": storage ?? "home",
                 "cpu": cpu.map { "\($0)" } ?? "unchanged",
                 "memory": memory.map { "\($0 / 1024 / 1024)MB" } ?? "unchanged",
                 "disk_size": diskSize.map { "\($0 / 1024 / 1024)MB" } ?? "unchanged",
@@ -850,7 +868,7 @@ final class LumeController {
                 "mount": mount?.path ?? "none",
                 "vnc_port": "\(vncPort)",
                 "recovery_mode": "\(recoveryMode)",
-                "storage_param": storage ?? "default", // Log the original param
+                "storage_param": storage ?? "home", // Log the original param
                 "usb_storage_devices": "\(usbMassStoragePaths?.count ?? 0)",
             ])
 
@@ -907,7 +925,7 @@ final class LumeController {
                 Logger.info(
                     "Using named storage location",
                     metadata: [
-                        "requested": storage ?? "default",
+                        "requested": storage ?? "home",
                         "actual": actualLocationName ?? "default",
                     ])
             }
@@ -1019,7 +1037,7 @@ final class LumeController {
                     "name": vmName,
                     "registry": registry,
                     "organization": organization,
-                    "location": storage ?? "default",
+                    "location": storage ?? "home",
                 ])
 
             try self.validatePullParameters(
@@ -1041,7 +1059,7 @@ final class LumeController {
                 "Setting new VM mac address",
                 metadata: [
                     "vm_name": vmName,
-                    "location": storage ?? "default",
+                    "location": storage ?? "home",
                 ])
 
             // Update MAC address in the cloned VM to ensure uniqueness
@@ -1055,7 +1073,7 @@ final class LumeController {
                     "name": vmName,
                     "registry": registry,
                     "organization": organization,
-                    "location": storage ?? "default",
+                    "location": storage ?? "home",
                 ])
         } catch {
             Logger.error("Failed to pull image", metadata: ["error": error.localizedDescription])
@@ -1085,7 +1103,7 @@ final class LumeController {
                     "tags": "\(tags.joined(separator: ", "))",
                     "registry": registry,
                     "organization": organization,
-                    "location": storage ?? "default",
+                    "location": storage ?? "home",
                     "chunk_size": "\(chunkSizeMb)MB",
                     "dry_run": "\(dryRun)",
                     "reassemble": "\(reassemble)",

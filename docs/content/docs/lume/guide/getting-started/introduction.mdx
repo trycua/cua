@@ -7,6 +7,10 @@ import { Callout } from 'fumadocs-ui/components/callout';
 
 Lume is a VM runtime for building AI agents, running CI/CD pipelines, and automating macOS. It uses Apple's native Virtualization Framework to run macOS and Linux VMs at near-native speed on Apple Silicon.
 
+<Callout type="info" title="Cloud macOS Sandboxes">
+We're piloting a managed service for customers who want to run cloud macOS sandboxes for CI/CD and agent workloads. [Book a demo](https://cal.com/cua/cua-demo?overlayCalendar=true) if you're interested.
+</Callout>
+
 ```bash
 lume create test-vm --os macos --ipsw latest
 lume run test-vm
@@ -49,9 +53,7 @@ Apple's Virtualization Framework—the same technology Lume is built on—powers
 
 ## What Lume doesn't do
 
-Lume runs VMs locally on your Mac. It's not a cloud service, container runtime, or cluster orchestrator. If you need to run VMs in the cloud or across multiple machines, look elsewhere.
-
-Lume also requires Apple Silicon—it won't work on Intel Macs or other platforms.
+Lume requires Apple Silicon—it won't work on Intel Macs or other platforms.
 
 ## Get started
 

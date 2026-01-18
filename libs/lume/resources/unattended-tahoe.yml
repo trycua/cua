@@ -73,19 +73,8 @@ boot_commands:
   # Need to tab 6 times to reach Full Name field
   # Field order after avatar: Full Name -> Account Name (auto-filled) -> Password -> Verify Password -> Hint -> Checkbox -> Continue
   - "<wait 'Create a Mac Account'>"
-  - "<delay 1>"
-  # Tab past avatar picker icons (6 tabs)
-  - "<tab>"
-  - "<delay 1>"
-  - "<tab>"
-  - "<delay 1>"
-  - "<tab>"
-  - "<delay 1>"
-  - "<tab>"
-  - "<delay 1>"
-  - "<tab>"
-  - "<delay 1>"
-  - "<tab>"
+  - "<delay 10>"
+  - "<click 'Full Name'>"
   # Type Full Name
   - "<type 'lume'>"
   - "<tab>"
@@ -265,27 +254,35 @@ boot_commands:
 
   # Close Terminal
   - "<cmd+q>"
+  - "<delay 2>"
+
+  # Click on desktop to ensure keyboard focus before Spotlight
+  - "<click_at 960,540>"
   - "<delay 1>"
 
   # Open Spotlight and search for System Settings
   - "<cmd+space>"
   - "<delay 2>"
   - "<type 'System Settings'>"
-  - "<delay 1>"
+  - "<delay 2>"
   - "<enter>"
-  - "<delay 3>"
+  - "<delay 5>"
 
-  # Click on the search bar, then search for Remote Login
-  - "<click 'Search'>"
+  # Wait for System Settings to fully load (sidebar shows General)
+  - "<wait 'General', timeout=30>"
+  - "<delay 2>"
+
+  # Use keyboard shortcut to focus search field (more reliable than clicking)
+  - "<cmd+f>"
   - "<delay 1>"
-  - "<type 'Remote'>"
+  - "<type 'Remote Login'>"
   - "<delay 2>"
   - "<click 'Remote Login'>"
-  - "<delay 2>"
+  - "<delay 3>"
 
-  # Tab twice to reach the "Allow full disk access" toggle, then Space to toggle
+  # Tab to reach the "Allow full disk access" toggle, then Space to toggle
   - "<tab>"
-  - "<delay 0.3>"
+  - "<delay 0.5>"
   - "<space>"
   - "<delay 2>"
 

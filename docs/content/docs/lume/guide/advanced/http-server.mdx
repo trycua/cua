@@ -49,6 +49,8 @@ curl -X POST http://localhost:7777/lume/vms/my-vm/stop
 
 ### Create a VM
 
+VM creation is asynchronous—returns immediately with 202 Accepted while provisioning runs in the background:
+
 ```bash
 curl -X POST http://localhost:7777/lume/vms \
   -H "Content-Type: application/json" \
@@ -57,8 +59,26 @@ curl -X POST http://localhost:7777/lume/vms \
     "os": "macOS",
     "cpu": 4,
     "memory": "8GB",
-    "diskSize": "50GB"
+    "diskSize": "50GB",
+    "ipsw": "latest",
+    "unattended": "tahoe"
   }'
+```
+
+Response:
+```json
+{
+  "message": "VM creation started",
+  "name": "my-vm",
+  "status": "provisioning"
+}
+```
+
+Poll the list endpoint to check provisioning status:
+
+```bash
+# Check status (will show "provisioning (ipsw_install)" or "provisioning (unattended_setup)")
+curl http://localhost:7777/lume/vms | jq '.[] | select(.name == "my-vm") | .status'
 ```
 
 ### Get VM details

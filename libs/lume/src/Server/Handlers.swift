@@ -93,7 +93,15 @@ extension Server {
         do {
             let sizes = try request.parse()
             let vmController = LumeController()
-            try await vmController.create(
+
+            // Load unattended config if specified
+            var unattendedConfig: UnattendedConfig? = nil
+            if let unattendedArg = request.unattended {
+                unattendedConfig = try UnattendedConfig.load(from: unattendedArg)
+            }
+
+            // Use async create - returns immediately while VM is provisioned in background
+            try vmController.createAsync(
                 name: request.name,
                 os: request.os,
                 diskSize: sizes.diskSize,
@@ -101,14 +109,18 @@ extension Server {
                 memorySize: sizes.memory,
                 display: request.display,
                 ipsw: request.ipsw,
-                storage: request.storage
+                storage: request.storage,
+                unattendedConfig: unattendedConfig
             )
 
+            // Return 202 Accepted - VM creation is in progress
             return HTTPResponse(
-                statusCode: .ok,
+                statusCode: .accepted,
                 headers: ["Content-Type": "application/json"],
                 body: try JSONEncoder().encode([
-                    "message": "VM created successfully", "name": request.name,
+                    "message": "VM creation started",
+                    "name": request.name,
+                    "status": "provisioning",
                 ])
             )
         } catch {

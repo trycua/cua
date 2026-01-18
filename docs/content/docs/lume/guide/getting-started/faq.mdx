@@ -70,6 +70,20 @@ lume config cache set /path/to/cache
 lume prune
 ```
 
+### How do I change the display resolution?
+
+By default, VMs use 1024x768. Change it with `lume set`:
+
+```bash
+lume set my-vm --display 1920x1080
+```
+
+The VM must be stopped for this to work. After restarting the VM, go to **System Settings → Displays**, enable **Show all resolutions**, and select your new resolution. You can also set display resolution during creation:
+
+```bash
+lume create my-vm --os macos --ipsw latest --display 1920x1080
+```
+
 ## Limits
 
 ### How many macOS VMs can I run at once?
@@ -77,6 +91,12 @@ lume prune
 Apple's macOS Software License Agreement (section 2.B.iii) limits you to **2 concurrent macOS VMs** per physical Mac. This is a licensing restriction, not a technical one—the Virtualization Framework enforces it automatically.
 
 Linux VMs have no such limitation. You can run as many as your hardware supports.
+
+### Can I run VMs inside a VM (nested virtualization)?
+
+**macOS VMs**: No. Apple's Virtualization Framework doesn't support nested virtualization for macOS guests. If you try to run `lume create` inside a macOS VM, you'll get "Virtualization is not available on this hardware."
+
+**Linux VMs**: Yes, on macOS 15+. Linux guests can run VMs inside them using KVM or other hypervisors. This is useful for testing Kubernetes, Docker, or other virtualization workloads.
 
 ## Images
 
@@ -115,6 +135,21 @@ lume run linux-vm --mount /path/to/ubuntu.iso
 lume run linux-vm
 ```
 
+## VM Status
+
+### What do the different VM statuses mean?
+
+Check VM status with `lume ls`:
+
+| Status | Description |
+|--------|-------------|
+| `stopped` | VM is not running and ready to start |
+| `running` | VM is running |
+| `provisioning (ipsw_install)` | VM is being created—downloading and installing macOS |
+| `provisioning (unattended_setup)` | VM is being created—running automated Setup Assistant |
+
+VMs in `provisioning` status are being created asynchronously. Wait for status to change to `stopped` before starting them.
+
 ## Troubleshooting
 
 ### VM won't start
@@ -122,7 +157,8 @@ lume run linux-vm
 1. Check if another VM is running: `lume ls`
 2. Stop any running VMs: `lume stop <name>`
 3. Check available disk space
-4. Try running with `--no-display` to see if it's a VNC issue
+4. If VM shows `provisioning`, wait for creation to complete
+5. Try running with `--no-display` to see if it's a VNC issue
 
 ### Can't connect to VM via SSH
 

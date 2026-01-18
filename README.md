@@ -7,7 +7,7 @@
     </picture>
   </a>
 
-  <p align="center">Any OS. Any agent. Self-hostable.</p>
+  <p align="center">Build, benchmark, and deploy agents that use computers</p>
 
   <p align="center">
     <a href="https://cua.ai" target="_blank" rel="noopener noreferrer"><img src="https://img.shields.io/badge/cua.ai-0ea5e9" alt="cua.ai"></a>
@@ -28,17 +28,36 @@
 
 ## Choose Your Path
 
-| If you want to...                              | Check out                                                 | For                          |
-| ---------------------------------------------- | --------------------------------------------------------- | ---------------------------- |
-| Build AI agents or run isolated code execution | [**Cua**](#cua---agentic-ui-automation--code-execution)   | AI Engineers                 |
-| Benchmark or train computer-use models with RL | [**Cua-Bench**](#cua-bench---benchmarks--rl-environments) | Researchers                  |
-| Run macOS/Linux VMs on Apple Silicon           | [**Lume**](#lume---macos-virtualization)                  | Developers, System Engineers |
+<table width="100%">
+  <tr>
+    <th width="180"></th>
+    <th align="left">If you want to...</th>
+    <th width="120">Check out</th>
+  </tr>
+  <tr>
+    <td><a href="#cua---agentic-ui-automation--code-execution"><img src="img/cua-architecture.png" width="180"></a></td>
+    <td>Build AI agents that interact with any desktop, or run isolated code execution environments for AI coding assistants</td>
+    <td><a href="#cua---agentic-ui-automation--code-execution"><strong>Cua</strong></a></td>
+  </tr>
+  <tr>
+    <td><a href="#cua-bench---benchmarks--rl-environments"><img src="img/cua-bench-architecture.png" width="180"></a></td>
+    <td>Benchmark computer-use models on standardized tasks, or train agents with reinforcement learning</td>
+    <td><a href="#cua-bench---benchmarks--rl-environments"><strong>Cua-Bench</strong></a></td>
+  </tr>
+  <tr>
+    <td><a href="#lume---macos-virtualization"><img src="img/lume-architecture.png" width="180"></a></td>
+    <td>Run macOS and Linux VMs at near-native speed on Apple Silicon for CI/CD, testing, or agent workloads</td>
+    <td><a href="#lume---macos-virtualization"><strong>Lume</strong></a></td>
+  </tr>
+</table>
 
 ---
 
 ## Cua - Agentic UI Automation & Code Execution
 
 Build agents that see screens, click buttons, and complete tasks autonomously. Run isolated code execution environments for AI coding assistants like Claude Code, Codex CLI, or OpenCode.
+
+<img src="img/cua-architecture.png" alt="Cua Architecture" width="100%">
 
 ```python
 # Requires Python 3.12 or 3.13
@@ -60,6 +79,8 @@ async for result in agent.run([{"role": "user", "content": "Open Firefox and sea
 
 Evaluate computer-use agents on OSWorld, ScreenSpot, Windows Arena, and custom tasks. Export trajectories for training.
 
+<img src="img/cua-bench-architecture.png" alt="Cua-Bench Architecture" width="100%">
+
 ```bash
 # Install and create base image
 cd cua-bench
@@ -76,6 +97,8 @@ cb run dataset datasets/cua-bench-basic --agent cua-agent --max-parallel 4
 ## Lume - macOS Virtualization
 
 Create and manage macOS/Linux VMs with near-native performance on Apple Silicon using Apple's Virtualization.Framework.
+
+<img src="img/lume-architecture.png" alt="Lume Architecture" width="100%">
 
 ```bash
 # Install Lume

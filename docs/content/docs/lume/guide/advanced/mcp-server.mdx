@@ -1,0 +1,263 @@
+---
+title: MCP Server
+description: Integrate Lume with AI agents via Model Context Protocol
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+Lume supports the [Model Context Protocol (MCP)](https://modelcontextprotocol.io/), allowing AI agents like Claude Desktop and Claude Cowork to manage VMs directly through native tool integration.
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                      Your Mac (Host)                            │
+│                                                                 │
+│  ┌──────────────────┐           ┌───────────────────────────┐  │
+│  │ Claude Desktop   │◄── MCP ──►│ Lume MCP Server           │  │
+│  │ or Claude Cowork │  (stdio)  │ (lume serve --mcp)        │  │
+│  └──────────────────┘           └─────────────┬─────────────┘  │
+│                                               │                 │
+│                                               │ VM Control      │
+│                                               ▼                 │
+│  ┌─────────────────────────────────────────────────────────────┐│
+│  │                   macOS VM Sandbox                          ││
+│  │  Claude can: create, list, run, stop, clone, delete, exec   ││
+│  └─────────────────────────────────────────────────────────────┘│
+└─────────────────────────────────────────────────────────────────┘
+```
+
+## Quick setup
+
+### 1. Configure Claude Desktop
+
+Edit `~/Library/Application Support/Claude/claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "lume": {
+      "command": "lume",
+      "args": ["serve", "--mcp"]
+    }
+  }
+}
+```
+
+<Callout type="info">
+If `lume` isn't in your PATH, use the full path: `/Users/yourname/.local/bin/lume`
+</Callout>
+
+### 2. Restart Claude Desktop
+
+Claude will now have access to Lume's VM management tools.
+
+### 3. Try it out
+
+Ask Claude:
+- "List my VMs"
+- "Start the sandbox VM"
+- "Run `ls -la` in the sandbox VM"
+- "Stop the sandbox VM"
+
+## Available tools
+
+| Tool | Description |
+|------|-------------|
+| `lume_create_vm` | Create a new macOS VM (async, returns immediately) |
+| `lume_list_vms` | List all VMs with status, IP addresses, and resource allocation |
+| `lume_get_vm` | Get detailed VM info (IP, VNC URL, SSH availability) |
+| `lume_run_vm` | Start a VM with optional shared directory |
+| `lume_stop_vm` | Stop a running VM gracefully |
+| `lume_clone_vm` | Clone a VM (useful for golden images) |
+| `lume_delete_vm` | Delete a VM and its files |
+| `lume_exec` | Execute commands inside a VM via SSH |
+
+## Creating VMs
+
+The `lume_create_vm` tool creates new macOS VMs asynchronously. Since VM creation takes 15-30 minutes (downloading IPSW, installing macOS, optional unattended setup), the tool returns immediately while provisioning continues in the background.
+
+### Parameters
+
+| Parameter | Required | Default | Description |
+|-----------|----------|---------|-------------|
+| `name` | Yes | - | Name for the new VM |
+| `ipsw` | No | `latest` | IPSW path or "latest" to download |
+| `unattended` | No | - | Preset name (e.g., "tahoe", "sequoia") for automatic setup |
+| `cpu` | No | 4 | Number of CPU cores |
+| `memory` | No | `8GB` | Memory size (e.g., "8GB", "16GB") |
+| `disk_size` | No | `64GB` | Disk size (e.g., "64GB", "128GB") |
+| `storage` | No | - | Storage location name or path |
+
+### Provisioning status
+
+During creation, VMs show a `provisioning` status with the current operation:
+
+```
+NAME      STATUS                           IP
+sandbox   provisioning (ipsw_install)      -
+dev-vm    running                          192.168.64.3
+test      stopped                          -
+```
+
+The operation progresses through:
+1. `ipsw_install` — Downloading and installing macOS
+2. `unattended_setup` — Running Setup Assistant automation (if `unattended` specified)
+
+Poll `lume_list_vms` or `lume_get_vm` to monitor progress. Once complete, status changes to `stopped`.
+
+### Example
+
+```
+You: Create a new sandbox VM with unattended setup
+
+Claude: I'll create a new macOS VM with automatic configuration.
+
+[Calls lume_create_vm with name="sandbox", unattended="tahoe"]
+
+VM 'sandbox' creation started. Status: provisioning.
+I'll monitor the progress...
+
+[Calls lume_list_vms periodically]
+Status: provisioning (ipsw_install)...
+Status: provisioning (unattended_setup)...
+Status: stopped
+
+The sandbox VM is ready! Would you like me to start it?
+```
+
+## Command execution
+
+The `lume_exec` tool runs commands inside VMs via SSH. It requires:
+
+1. **SSH enabled** in the VM (automatic with `--unattended tahoe`)
+2. **sshpass installed** on your host for password-based auth
+
+```bash
+# Install sshpass
+brew install hudochenkov/sshpass/sshpass
+```
+
+For VMs created with `--unattended tahoe`:
+- Username: `lume`
+- Password: `lume`
+
+## Example workflow
+
+Here's what an AI agent interaction looks like:
+
+```
+You: Create a sandbox VM and run my tests
+
+Claude: I'll set up a sandbox and run your tests.
+
+[Calls lume_list_vms to check existing VMs]
+
+No sandbox VM exists. I'll create one with unattended setup.
+
+[Calls lume_create_vm with name="sandbox", unattended="tahoe"]
+
+VM creation started. This will take 15-30 minutes.
+I'll monitor the progress and let you know when it's ready.
+
+[Polls lume_list_vms until status changes from "provisioning" to "stopped"]
+
+The sandbox is ready! Now starting it with your project directory shared.
+
+[Calls lume_run_vm with name="sandbox", shared_dir="~/project"]
+[Calls lume_get_vm to get IP address]
+[Calls lume_exec with command="cd /Volumes/My\ Shared\ Files && npm test"]
+
+Tests completed! Here are the results:
+✓ 42 tests passed
+✗ 2 tests failed
+...
+```
+
+## MCP vs HTTP API
+
+| Feature | MCP Server | HTTP Server |
+|---------|-----------|-------------|
+| Command | `lume serve --mcp` | `lume serve` |
+| Transport | stdio (spawned by client) | HTTP (port 7777) |
+| Use case | AI agent integration | Scripts, CI/CD, SDKs |
+| Lifecycle | On-demand, client-managed | Background daemon |
+
+Use MCP for AI agent integration. Use HTTP for programmatic access from scripts and applications.
+
+## Testing with MCP Inspector
+
+Debug your MCP setup with the official inspector:
+
+```bash
+npx @modelcontextprotocol/inspector lume serve --mcp
+```
+
+This opens a web UI where you can:
+- See all available tools
+- Test tool calls interactively
+- Inspect request/response payloads
+
+## Troubleshooting
+
+### Claude doesn't see Lume tools
+
+1. Check the config file path is correct
+2. Verify `lume` is accessible (try running `lume --version`)
+3. Restart Claude Desktop completely (quit and reopen)
+
+### lume_exec fails with "sshpass not found"
+
+Install sshpass:
+
+```bash
+brew install hudochenkov/sshpass/sshpass
+```
+
+### lume_exec fails with "no IP address"
+
+The VM might not be running or hasn't acquired an IP yet:
+
+```bash
+# Check VM status
+lume ls
+
+# Start the VM if needed
+lume run my-vm --no-display
+
+# Wait a few seconds for IP assignment
+lume get my-vm
+```
+
+### SSH connection refused
+
+Ensure SSH is enabled in the VM. For existing VMs:
+
+```bash
+# Connect via VNC and enable in System Settings > Sharing > Remote Login
+# Or if you can SSH with a different method:
+ssh lume@<ip> "sudo launchctl load -w /System/Library/LaunchDaemons/ssh.plist"
+```
+
+New VMs created with `--unattended tahoe` have SSH enabled automatically.
+
+## Security considerations
+
+<Callout type="warn">
+The MCP server gives AI agents direct control over your VMs. Only use it with trusted AI applications.
+</Callout>
+
+The MCP server:
+- Runs locally (stdio transport, no network exposure)
+- Has full access to VM lifecycle operations
+- Can execute commands inside VMs with SSH access
+
+Consider:
+- Using dedicated sandbox VMs for AI agent tasks
+- Cloning VMs before letting agents modify them
+- Reviewing agent actions in Claude's interface
+
+## Related
+
+- [Claude Cowork Sandbox](/lume/examples/claude-cowork/sandbox) — MCP-based sandbox workflow
+- [Claude Code Sandbox](/lume/examples/claude-code/sandbox) — SSH-based sandbox setup
+- [HTTP Server](/lume/guide/advanced/http-server) — REST API for scripts and CI/CD
+- [Unattended Setup](/lume/guide/fundamentals/unattended-setup) — Automated VM configuration

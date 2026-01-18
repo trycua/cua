@@ -114,6 +114,23 @@ lume create dev-vm --os macos --ipsw latest \
 | Memory | 8GB | Leave headroom for your host |
 | Disk | 50GB | Uses sparse files—only consumes actual usage |
 
+## Change display resolution
+
+By default, VMs use a 1024x768 display resolution. You can change it with `lume set`:
+
+```bash
+lume set my-vm --display 1920x1080
+```
+
+The change takes effect on the next VM start. After starting the VM, go to **System Settings → Displays**, enable **Show all resolutions**, and select your new resolution. Common resolutions:
+
+| Resolution | Aspect Ratio | Use Case |
+|------------|--------------|----------|
+| 1024x768 | 4:3 | Default, low resource usage |
+| 1280x800 | 16:10 | MacBook-style |
+| 1920x1080 | 16:9 | Full HD |
+| 2560x1440 | 16:9 | QHD |
+
 ## Automate the Setup Assistant
 
 Skip manual setup entirely with the `--unattended` flag:
@@ -134,9 +151,12 @@ lume run my-vm
 
 # Headless (for automation, CI/CD)
 lume run my-vm --no-display
+
+# Run in background (doesn't block terminal)
+lume run my-vm > /dev/null 2>&1 &
 ```
 
-When running headless, connect via SSH (if enabled) or VNC client.
+When running headless or in background, connect via SSH (if enabled) or VNC client. Use `lume ls` to see running VMs and their connection details.
 
 ## Common operations
 
@@ -174,3 +194,4 @@ Now that you have a VM running, you can:
 - Learn more [VM operations](/lume/guide/fundamentals/vm-management) like modifying resources and managing storage locations
 - Set up [automated configuration](/lume/guide/fundamentals/unattended-setup) with custom YAML files
 - Integrate with your tools via the [HTTP API](/lume/guide/advanced/http-server)
+- Connect AI agents like Claude Desktop via [MCP](/lume/guide/advanced/mcp-server)

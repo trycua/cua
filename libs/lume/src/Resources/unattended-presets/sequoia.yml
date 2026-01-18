@@ -231,7 +231,35 @@ boot_commands:
   - "<delay 2>"
 
   # ============================================
-  # 3. Enable Full Disk Access for Remote Users
+  # 3. Disable Screen Lock and Sleep
+  # ============================================
+  # Disable screen saver
+  - "<type 'defaults -currentHost write com.apple.screensaver idleTime -int 0'>"
+  - "<enter>"
+  - "<delay 1>"
+
+  # Disable require password after sleep/screen saver
+  - "<type 'defaults write com.apple.screensaver askForPassword -int 0'>"
+  - "<enter>"
+  - "<delay 1>"
+
+  # Prevent display from sleeping (never)
+  - "<type 'sudo pmset -a displaysleep 0'>"
+  - "<enter>"
+  - "<delay 1>"
+
+  # Prevent system sleep (never)
+  - "<type 'sudo pmset -a sleep 0'>"
+  - "<enter>"
+  - "<delay 1>"
+
+  # Disable auto-logout
+  - "<type 'sudo defaults write /Library/Preferences/.GlobalPreferences com.apple.autologout.AutoLogOutDelay -int 0'>"
+  - "<enter>"
+  - "<delay 1>"
+
+  # ============================================
+  # 4. Enable Full Disk Access for Remote Users
   # ============================================
   # This requires navigating System Settings GUI since TCC.db is SIP-protected
 
@@ -275,6 +303,7 @@ boot_commands:
   # ============================================
   # SSH is now enabled - Connect with: ssh lume@<ip-address> (password: lume)
   # Auto-login is enabled - VM will boot directly to desktop
+  # Screen lock and sleep are disabled - VM stays awake and unlocked
   # Full disk access for remote users is enabled via TCC database
 
 # Health check to verify setup was successful

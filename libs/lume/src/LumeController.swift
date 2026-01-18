@@ -317,85 +317,65 @@ final class LumeController {
                 "noDisplay": "\(noDisplay)",
             ])
 
-        do {
-            try validateCreateParameters(name: name, os: os, ipsw: ipsw, storage: storage)
+        // Validate parameters upfront
+        try validateCreateParameters(name: name, os: os, ipsw: ipsw, storage: storage)
 
-            let vm = try await createTempVMConfig(
+        // Create target VM directory early with provisioning marker
+        // so VM appears in list immediately with "provisioning" status
+        let vmDir = try home.getVMDirectory(name, storage: storage)
+
+        do {
+            try FileManager.default.createDirectory(
+                atPath: vmDir.dir.path,
+                withIntermediateDirectories: true
+            )
+
+            // Create minimal config so VM shows up in list
+            let config = try VMConfig(
                 os: os,
                 cpuCount: cpuCount,
                 memorySize: memorySize,
                 diskSize: diskSize,
                 display: display
             )
+            try vmDir.saveConfig(config)
 
-            // Track the temp directory for cleanup on failure
-            let tempVMDir = vm.vmDirContext.dir
-
-            do {
-                try await vm.setup(
-                    ipswPath: ipsw ?? "none",
-                    cpuCount: cpuCount,
-                    memorySize: memorySize,
-                    diskSize: diskSize,
-                    display: display
-                )
-
-                try vm.finalize(to: name, home: home, storage: storage)
-            } catch {
-                // Clean up the temporary VM directory on setup/finalize failure
-                Logger.info("Cleaning up temporary VM directory after failed creation",
-                           metadata: ["path": tempVMDir.dir.path])
-                do {
-                    try tempVMDir.delete()
-                } catch let cleanupError {
-                    Logger.error("Failed to clean up temporary VM directory",
-                               metadata: ["error": cleanupError.localizedDescription])
-                }
-                throw error
-            }
-
-            Logger.info("VM created successfully", metadata: ["name": name])
-
-            // Run unattended setup if config is provided
-            if let config = unattendedConfig, os.lowercased() == "macos" {
-                // Wait for the installation VZVirtualMachine to fully release auxiliary storage locks.
-                // The VM created during IPSW installation holds a lock on the auxiliary storage file.
-                // Swift's ARC may not immediately deallocate it, so we wait to ensure the lock is released.
-                Logger.info("Waiting for installation resources to be released before unattended setup")
-                try await Task.sleep(nanoseconds: 3_000_000_000)  // 3 seconds
-                Logger.info("Starting unattended Setup Assistant automation", metadata: ["name": name])
-
-                // Load the finalized VM
-                let finalVM = try get(name: name, storage: storage)
-
-                // Run the unattended installer
-                let installer = UnattendedInstaller()
-                do {
-                    try await installer.install(
-                        vm: finalVM,
-                        config: config,
-                        vncPort: vncPort,
-                        noDisplay: noDisplay,
-                        debug: debug,
-                        debugDir: debugDir
-                    )
-                } catch {
-                    // Clean up the finalized VM directory on unattended setup failure
-                    Logger.info("Cleaning up VM after failed unattended setup",
-                               metadata: ["name": name])
-                    do {
-                        let vmDir = try home.getVMDirectory(name, storage: storage)
-                        try vmDir.delete()
-                    } catch let cleanupError {
-                        Logger.error("Failed to clean up VM after unattended setup failure",
-                                   metadata: ["error": cleanupError.localizedDescription])
-                    }
-                    throw error
-                }
-
-                Logger.info("Unattended setup completed", metadata: ["name": name])
-            }
+            // Write provisioning marker
+            try vmDir.saveProvisioningMarker(ProvisioningMarker(operation: "ipsw_install"))
+            Logger.info("Provisioning marker created", metadata: ["name": name])
         } catch {
+            // Clean up if we fail to set up provisioning marker
+            try? vmDir.delete()
+            Logger.error("Failed to create VM", metadata: ["error": error.localizedDescription])
+            throw error
+        }
+
+        do {
+            // Use createInternal which handles all the actual work
+            try await createInternal(
+                name: name,
+                os: os,
+                diskSize: diskSize,
+                cpuCount: cpuCount,
+                memorySize: memorySize,
+                display: display,
+                ipsw: ipsw,
+                storage: storage,
+                unattendedConfig: unattendedConfig,
+                debug: debug,
+                debugDir: debugDir,
+                noDisplay: noDisplay,
+                vncPort: vncPort,
+                vmDir: vmDir
+            )
+
+            // Clear provisioning marker on success
+            vmDir.clearProvisioningMarker()
+            Logger.info("Provisioning marker cleared", metadata: ["name": name])
+
+        } catch {
+            // Clear provisioning marker on failure (vmDir may have been deleted by createInternal)
+            vmDir.clearProvisioningMarker()
             Logger.error("Failed to create VM", metadata: ["error": error.localizedDescription])
             throw error
         }

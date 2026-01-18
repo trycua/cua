@@ -28,11 +28,28 @@
 
 ## Choose Your Path
 
-|  | If you want to...                              | Check out                                                 |
-| - | ---------------------------------------------- | --------------------------------------------------------- |
-| [<img src="img/cua-architecture.png" width="150">](#cua---agentic-ui-automation--code-execution) | Build AI agents or run isolated code execution | [**Cua**](#cua---agentic-ui-automation--code-execution)   |
-| [<img src="img/cua-bench-architecture.png" width="150">](#cua-bench---benchmarks--rl-environments) | Benchmark or train computer-use models with RL | [**Cua-Bench**](#cua-bench---benchmarks--rl-environments) |
-| [<img src="img/lume-architecture.png" width="150">](#lume---macos-virtualization) | Run macOS/Linux VMs on Apple Silicon           | [**Lume**](#lume---macos-virtualization)                  |
+<table width="100%">
+  <tr>
+    <th width="180"></th>
+    <th align="left">If you want to...</th>
+    <th width="120">Check out</th>
+  </tr>
+  <tr>
+    <td><a href="#cua---agentic-ui-automation--code-execution"><img src="img/cua-architecture.png" width="180"></a></td>
+    <td>Build AI agents that interact with any desktop, or run isolated code execution environments for AI coding assistants</td>
+    <td><a href="#cua---agentic-ui-automation--code-execution"><strong>Cua</strong></a></td>
+  </tr>
+  <tr>
+    <td><a href="#cua-bench---benchmarks--rl-environments"><img src="img/cua-bench-architecture.png" width="180"></a></td>
+    <td>Benchmark computer-use models on standardized tasks, or train agents with reinforcement learning</td>
+    <td><a href="#cua-bench---benchmarks--rl-environments"><strong>Cua-Bench</strong></a></td>
+  </tr>
+  <tr>
+    <td><a href="#lume---macos-virtualization"><img src="img/lume-architecture.png" width="180"></a></td>
+    <td>Run macOS and Linux VMs at near-native speed on Apple Silicon for CI/CD, testing, or agent workloads</td>
+    <td><a href="#lume---macos-virtualization"><strong>Lume</strong></a></td>
+  </tr>
+</table>
 
 ---
 

@@ -32,7 +32,9 @@ enum NetworkUtils {
     static func isPortOpen(ipAddress: String, port: UInt16, timeout: TimeInterval = 2) -> Bool {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/nc")
-        process.arguments = ["-z", "-G", "\(Int(timeout))", ipAddress, "\(port)"]
+        // Use -w (timeout) instead of -G (connection timeout) as -G doesn't work
+        // reliably with VM networking on macOS
+        process.arguments = ["-z", "-w", "\(Int(timeout))", ipAddress, "\(port)"]
 
         let pipe = Pipe()
         process.standardOutput = pipe

@@ -49,27 +49,27 @@ struct VMDirectory: Sendable {
 // MARK: - VM State Management
 
 extension VMDirectory {
-    /// Checks if the VM directory is fully initialized with all required files
+    /// Checks if the VM directory is initialized (either fully ready or provisioning)
+    /// A VM is considered initialized if it has:
+    /// - All required files (config + disk + nvram), OR
+    /// - Config + provisioning marker (VM is being created)
     func initialized() -> Bool {
-        // Add detailed logging for debugging
         let configExists = configPath.exists()
         let diskExists = diskPath.exists()
         let nvramExists = nvramPath.exists()
-        
-        // Logger.info(
-        //     "VM directory initialization check", 
-        //     metadata: [
-        //         "directory": dir.path,
-        //         "config_path": configPath.path,
-        //         "config_exists": "\(configExists)",
-        //         "disk_path": diskPath.path,
-        //         "disk_exists": "\(diskExists)",
-        //         "nvram_path": nvramPath.path,
-        //         "nvram_exists": "\(nvramExists)"
-        //     ]
-        // )
-        
-        return configExists && diskExists && nvramExists
+        let provisioningExists = provisioningPath.exists()
+
+        // Fully initialized VM
+        if configExists && diskExists && nvramExists {
+            return true
+        }
+
+        // VM being provisioned (has config and provisioning marker)
+        if configExists && provisioningExists {
+            return true
+        }
+
+        return false
     }
 
     /// Checks if the VM directory exists

@@ -73,7 +73,6 @@ case "$1" in
                 -v "$(pwd):/app" \
                 -e PYTHONPATH=${PYTHONPATH} \
                 -e DISPLAY=${DISPLAY:-:0} \
-                -e PYLUME_HOST="host.docker.internal" \
                 -p 7860:7860 \
                 ${IMAGE_NAME} bash
         else
@@ -91,7 +90,6 @@ case "$1" in
                 -v "$(pwd):/app" \
                 -e PYTHONPATH=${PYTHONPATH} \
                 -e DISPLAY=${DISPLAY:-:0} \
-                -e PYLUME_HOST="host.docker.internal" \
                 -p 7860:7860 \
                 ${IMAGE_NAME} python "/app/examples/$2"
         fi

@@ -29,7 +29,7 @@ $PYTHON --version
 echo ""
 
 # Set up environment
-export PYTHONPATH="$CUA_REPO_DIR/libs/python/mcp-server:$CUA_REPO_DIR/libs/python/agent:$CUA_REPO_DIR/libs/python/computer:$CUA_REPO_DIR/libs/python/core:$CUA_REPO_DIR/libs/python/pylume"
+export PYTHONPATH="$CUA_REPO_DIR/libs/python/mcp-server:$CUA_REPO_DIR/libs/python/agent:$CUA_REPO_DIR/libs/python/computer:$CUA_REPO_DIR/libs/python/core"
 export CUA_MODEL_NAME="${CUA_MODEL_NAME:-anthropic/claude-sonnet-4-5-20250929}"
 
 echo "Environment:"

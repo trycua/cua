@@ -15,20 +15,10 @@ on:
         description: "Version to publish"
         required: true
         type: string
-      is_lume_package:
-        description: "Whether this package includes the lume binary"
-        required: false
-        type: boolean
-        default: false
       base_package_name:
         description: "PyPI package name (e.g. cua-agent)"
         required: true
         type: string
-      make_latest:
-        description: "Whether to mark this release as latest (should only be true for lume)"
-        required: false
-        type: boolean
-        default: false
     secrets:
       PYPI_TOKEN:
         required: true
@@ -100,40 +90,6 @@ jobs:
             pdm lock
           fi
 
-      # Conditional step for lume binary download (only for pylume package)
-      - name: Download and setup lume binary
-        if: inputs.is_lume_package
-        run: |
-          # Create a temporary directory for extraction
-          mkdir -p temp_lume
-
-          # Download the latest lume release directly
-          echo "Downloading latest lume version..."
-          curl -sL "https://github.com/trycua/lume/releases/latest/download/lume.tar.gz" -o temp_lume/lume.tar.gz
-
-          # Extract the tar file (ignore ownership and suppress warnings)
-          cd temp_lume && tar --no-same-owner -xzf lume.tar.gz
-
-          # Make the binary executable
-          chmod +x lume
-
-          # Copy the lume binary to the correct location in the pylume package
-          mkdir -p "${GITHUB_WORKSPACE}/${{ inputs.package_dir }}/pylume"
-          cp lume "${GITHUB_WORKSPACE}/${{ inputs.package_dir }}/pylume/lume"
-
-          # Verify the binary exists and is executable
-          test -x "${GITHUB_WORKSPACE}/${{ inputs.package_dir }}/pylume/lume" || { echo "lume binary not found or not executable"; exit 1; }
-
-          # Get the version from the downloaded binary for reference
-          LUME_VERSION=$(./lume --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' || echo "unknown")
-          echo "Using lume version: $LUME_VERSION"
-
-          # Cleanup
-          cd "${GITHUB_WORKSPACE}" && rm -rf temp_lume
-
-          # Save the lume version for reference
-          echo "LUME_VERSION=${LUME_VERSION}" >> $GITHUB_ENV
-
       - name: Build and publish
         env:
           PYPI_TOKEN: ${{ secrets.PYPI_TOKEN }}
@@ -142,18 +98,7 @@ jobs:
           # Build with PDM
           pdm build
 
-          # For pylume package, verify the binary is in the wheel
-          if [ "${{ inputs.is_lume_package }}" = "true" ]; then
-            python -m pip install wheel
-            wheel unpack dist/*.whl --dest temp_wheel
-            echo "Listing contents of wheel directory:"
-            find temp_wheel -type f
-            test -f temp_wheel/pylume-*/pylume/lume || { echo "lume binary not found in wheel"; exit 1; }
-            rm -rf temp_wheel
-            echo "Publishing ${{ inputs.base_package_name }} ${VERSION} with lume ${LUME_VERSION}"
-          else
-            echo "Publishing ${{ inputs.base_package_name }} ${VERSION}"
-          fi
+          echo "Publishing ${{ inputs.base_package_name }} ${VERSION}"
 
           # Install and use twine directly instead of PDM publish
           echo "Installing twine for direct publishing..."

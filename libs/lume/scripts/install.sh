@@ -279,24 +279,38 @@ install_binary() {
   # Check if the installation directory is in PATH
   if [ -n "${PATH##*$INSTALL_DIR*}" ]; then
     SHELL_NAME=$(basename "$SHELL")
-    echo "${YELLOW}Warning: $INSTALL_DIR is not in your PATH.${NORMAL}"
+    echo ""
+    echo "${YELLOW}╔════════════════════════════════════════════════════════════════╗${NORMAL}"
+    echo "${YELLOW}║  ${BOLD}ACTION REQUIRED:${NORMAL}${YELLOW} $INSTALL_DIR is not in your PATH${NORMAL}"
+    echo "${YELLOW}╚════════════════════════════════════════════════════════════════╝${NORMAL}"
+    echo ""
     case "$SHELL_NAME" in
       zsh)
-        echo "To add it, run:"
-        echo "  echo 'export PATH=\"\$PATH:$INSTALL_DIR\"' >> ~/.zprofile"
+        echo "Run these commands:"
+        echo "  ${BOLD}echo 'export PATH=\"\$PATH:$INSTALL_DIR\"' >> ~/.zprofile${NORMAL}"
+        echo "  ${BOLD}source ~/.zprofile${NORMAL}"
+        echo ""
+        echo "Or restart your terminal after running the first command."
         ;;
       bash)
-        echo "To add it, run:"
-        echo "  echo 'export PATH=\"\$PATH:$INSTALL_DIR\"' >> ~/.bash_profile"
+        echo "Run these commands:"
+        echo "  ${BOLD}echo 'export PATH=\"\$PATH:$INSTALL_DIR\"' >> ~/.bash_profile${NORMAL}"
+        echo "  ${BOLD}source ~/.bash_profile${NORMAL}"
+        echo ""
+        echo "Or restart your terminal after running the first command."
         ;;
       fish)
-        echo "To add it, run:"
-        echo "  echo 'fish_add_path $INSTALL_DIR' >> ~/.config/fish/config.fish"
+        echo "Run this command:"
+        echo "  ${BOLD}echo 'fish_add_path $INSTALL_DIR' >> ~/.config/fish/config.fish${NORMAL}"
+        echo ""
+        echo "Then restart your terminal."
         ;;
       *)
-        echo "Add $INSTALL_DIR to your PATH in your shell profile file."
+        echo "Add $INSTALL_DIR to your PATH in your shell profile file,"
+        echo "then restart your terminal or source your profile."
         ;;
     esac
+    echo ""
   fi
 }
 

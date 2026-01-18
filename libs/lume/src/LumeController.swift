@@ -121,18 +121,29 @@ final class LumeController {
     private func getVMDetailsLightweight(vmDir: VMDirectory, locationName: String) -> VMDetails? {
         let vmName = vmDir.name
 
-        // Check if VM is running via SharedVM cache
+        // Check if VM is running via SharedVM cache (same-process fast path)
         let runningVM = SharedVM.shared.getVM(name: vmName)
-        let isRunning = runningVM != nil
+        var isRunning = runningVM != nil
 
         // Get VNC URL and IP address only if running
         var vncUrl: String? = nil
         var ipAddress: String? = nil
         var sshAvailable: Bool? = nil
 
+        // If not in cache, check if session file exists (cross-process fallback)
+        // Session files are created when VM starts and deleted when VM stops
+        if !isRunning {
+            if let session = try? vmDir.loadSession() {
+                isRunning = true
+                vncUrl = session.url
+            }
+        }
+
         if isRunning {
-            // Try to get VNC URL from session file
-            vncUrl = try? vmDir.loadSession().url
+            // Try to get VNC URL from session file (if not already loaded)
+            if vncUrl == nil {
+                vncUrl = try? vmDir.loadSession().url
+            }
 
             // Try to get IP address from DHCP lease if we have MAC address
             if let config = try? vmDir.loadConfig(),

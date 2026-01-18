@@ -70,6 +70,20 @@ lume config cache set /path/to/cache
 lume prune
 ```
 
+### How do I change the display resolution?
+
+By default, VMs use 1024x768. Change it with `lume set`:
+
+```bash
+lume set my-vm --display 1920x1080
+```
+
+The VM must be stopped for this to work. Restart the VM to apply the new resolution. You can also set display resolution during creation:
+
+```bash
+lume create my-vm --os macos --ipsw latest --display 1920x1080
+```
+
 ## Limits
 
 ### How many macOS VMs can I run at once?

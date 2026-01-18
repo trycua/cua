@@ -114,6 +114,23 @@ lume create dev-vm --os macos --ipsw latest \
 | Memory | 8GB | Leave headroom for your host |
 | Disk | 50GB | Uses sparse files—only consumes actual usage |
 
+## Change display resolution
+
+By default, VMs use a 1024x768 display resolution. You can change it with `lume set`:
+
+```bash
+lume set my-vm --display 1920x1080
+```
+
+The change takes effect on the next VM start. Common resolutions:
+
+| Resolution | Aspect Ratio | Use Case |
+|------------|--------------|----------|
+| 1024x768 | 4:3 | Default, low resource usage |
+| 1280x800 | 16:10 | MacBook-style |
+| 1920x1080 | 16:9 | Full HD |
+| 2560x1440 | 16:9 | QHD |
+
 ## Automate the Setup Assistant
 
 Skip manual setup entirely with the `--unattended` flag:

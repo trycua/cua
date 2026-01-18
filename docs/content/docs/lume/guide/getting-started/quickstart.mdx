@@ -153,7 +153,7 @@ lume run my-vm
 lume run my-vm --no-display
 
 # Run in background (doesn't block terminal)
-lume run my-vm &
+lume run my-vm > /dev/null 2>&1 &
 ```
 
 When running headless or in background, connect via SSH (if enabled) or VNC client. Use `lume ls` to see running VMs and their connection details.

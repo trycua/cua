@@ -287,8 +287,8 @@ install_binary() {
     case "$SHELL_NAME" in
       zsh)
         echo "Run these commands:"
-        echo "  ${BOLD}echo 'export PATH=\"\$PATH:$INSTALL_DIR\"' >> ~/.zprofile${NORMAL}"
-        echo "  ${BOLD}source ~/.zprofile${NORMAL}"
+        echo "  ${BOLD}echo 'export PATH=\"\$PATH:$INSTALL_DIR\"' >> ~/.zshrc${NORMAL}"
+        echo "  ${BOLD}source ~/.zshrc${NORMAL}"
         echo ""
         echo "Or restart your terminal after running the first command."
         ;;

@@ -17,8 +17,8 @@ This installs Lume with a background service (starts on login) and auto-updater 
 **First-time install?** If `~/.local/bin` isn't in your PATH (common on fresh macOS), add it:
 
 ```bash
-echo 'export PATH="$PATH:$HOME/.local/bin"' >> ~/.zprofile
-source ~/.zprofile
+echo 'export PATH="$PATH:$HOME/.local/bin"' >> ~/.zshrc
+source ~/.zshrc
 ```
 
 Or restart your terminal after the first command.
@@ -132,8 +132,8 @@ rm -rf ~/.config/lume
 **`lume: command not found`** — The install location (`~/.local/bin`) isn't in your PATH. Add it and reload:
 
 ```bash
-echo 'export PATH="$PATH:$HOME/.local/bin"' >> ~/.zprofile
-source ~/.zprofile
+echo 'export PATH="$PATH:$HOME/.local/bin"' >> ~/.zshrc
+source ~/.zshrc
 ```
 
 Or restart your terminal after the first command.

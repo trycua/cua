@@ -265,11 +265,11 @@ class TaskRunner:
         try:
             provider = ProviderType(provider_value)
         except ValueError:
-            provider = ProviderType.NATIVE
+            raise ValueError(f"Unknown provider type: {provider_value}")
         
         is_simulated = provider in (ProviderType.SIMULATED, ProviderType.WEBTOP)
         is_computer = provider == ProviderType.COMPUTER
-
+        is_native = provider == ProviderType.NATIVE
         # Pre-flight check: ensure required env vars for computer provider
         if is_computer:
             if not os.environ.get("CUA_ENV_API_URL"):
@@ -279,20 +279,20 @@ class TaskRunner:
                 )
 
         # Validate env_type (skip validation for simulated/computer since we don't manage the env)
-        if not is_simulated and not is_computer and env_type not in ENV_CONFIGS:
+        if is_native and env_type not in ENV_CONFIGS:
             raise ValueError(
                 f"Unknown env_type: {env_type}. Valid types: {list(ENV_CONFIGS.keys())}"
             )
 
-        config = ENV_CONFIGS.get(env_type, {}) if (not is_simulated and not is_computer) else {}
-        golden_name = golden_name or env_type if (not is_simulated and not is_computer) else "external"
+        config = ENV_CONFIGS.get(env_type, {}) if is_native else {}
+        golden_name = golden_name or env_type if is_native else None
 
         # Generate unique task ID
         task_id = generate_task_id()
         
         # Create network only for native provider
-        network_name = f"cua-task-{task_id}" if not is_simulated and not is_computer else None
-        env_container_name = f"cua-env-{task_id}" if not is_simulated and not is_computer else None
+        network_name = f"cua-task-{task_id}" if is_native else None
+        env_container_name = f"cua-env-{task_id}" if is_native else None
         agent_container_name = f"cua-agent-{task_id}"
 
         # Create task overlay for QEMU types (protects golden image)
@@ -303,9 +303,9 @@ class TaskRunner:
         # Track task for cleanup
         self._running_tasks[task_id] = {
             "network": network_name,
-            "env_container": env_container_name if (not is_simulated and not is_computer) else None,
+            "env_container": env_container_name if is_native else None,
             "agent_container": agent_container_name,
-            "env_image": config.get("image") if (not is_simulated and not is_computer) else None,
+            "env_image": config.get("image") if is_native else None,
             "agent_image": self.agent_image,
             "remove_images": remove_images_after,
             "overlay_path": overlay_path,
@@ -317,7 +317,7 @@ class TaskRunner:
         log_stream_process = None
 
         try:
-            if not is_simulated and not is_computer:
+            if is_native:
                 # 1. Create network
                 await create_network(network_name)
 

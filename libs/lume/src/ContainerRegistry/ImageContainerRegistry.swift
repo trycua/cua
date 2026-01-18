@@ -746,7 +746,7 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
             metadata: [
                 "image": image,
                 "name": vmName,
-                "location": locationName ?? "default",
+                "location": locationName ?? "home",
                 "registry": registry,
                 "organization": organization,
             ])
@@ -1047,7 +1047,7 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
             "Moving files to VM directory",
             metadata: [
                 "destination": vmDir.dir.path,
-                "location": locationName ?? "default",
+                "location": locationName ?? "home",
             ])
 
         // Move files to final location

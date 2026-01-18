@@ -198,6 +198,19 @@ extension VMDirectory {
 struct ProvisioningMarker: Codable {
     /// The type of operation being performed (e.g., "ipsw_install", "unattended_setup")
     let operation: String
+    /// When the provisioning started (Unix timestamp)
+    let startedAt: Double
+    
+    init(operation: String) {
+        self.operation = operation
+        self.startedAt = Date().timeIntervalSince1970
+    }
+    
+    /// Returns true if provisioning started more than the specified hours ago
+    func isStale(hours: Double = 8.0) -> Bool {
+        let elapsed = Date().timeIntervalSince1970 - startedAt
+        return elapsed > (hours * 3600)
+    }
 }
 
 extension VMDirectory {

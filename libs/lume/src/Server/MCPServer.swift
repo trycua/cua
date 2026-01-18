@@ -144,7 +144,7 @@ final class LumeMCPServer {
         ```
         lume_create_vm(name: "sandbox", unattended: "tahoe")
         ```
-        The tool returns immediately. Poll `lume_list_vms` to monitor progress—status changes from `provisioning (ipsw_install)` → `provisioning (unattended_setup)` → `stopped`.
+        The tool returns immediately. Poll `lume_list_vms` to monitor progress—status changes from `provisioning (ipsw_install)` → `running` (during unattended setup) → `stopped`.
 
         ### 3. Start the VM
         Start with optional shared directory for file access:
@@ -197,7 +197,7 @@ final class LumeMCPServer {
         | `stopped` | Ready to start |
         | `running` | VM is active |
         | `provisioning (ipsw_install)` | Installing macOS |
-        | `provisioning (unattended_setup)` | Running Setup Assistant |
+        | `running` | VM is running (including during unattended setup) |
 
         ## Limitations
         - Max 2 macOS VMs running simultaneously (Apple licensing)

@@ -20,9 +20,9 @@ struct LumeSettings: Codable, Sendable {
 
     static let defaultSettings = LumeSettings(
         vmLocations: [
-            VMLocation(name: "default", path: "~/.lume")
+            VMLocation(name: "home", path: "~/.lume")
         ],
-        defaultLocationName: "default",
+        defaultLocationName: "home",
         cacheDirectory: "~/.lume/cache",
         cachingEnabled: false,
         registry: .defaultConfig,
@@ -81,9 +81,9 @@ final class SettingsManager: @unchecked Sendable {
         // No settings file found, use defaults
         let defaultSettings = LumeSettings(
             vmLocations: [
-                VMLocation(name: "default", path: "~/.lume")
+                VMLocation(name: "home", path: "~/.lume")
             ],
-            defaultLocationName: "default",
+            defaultLocationName: "home",
             cacheDirectory: "~/.lume/cache",
             cachingEnabled: false,
             registry: .defaultConfig,
@@ -211,15 +211,15 @@ final class SettingsManager: @unchecked Sendable {
     func setHomeDirectory(path: String) throws {
         var settings = getSettings()
 
-        let defaultLocation = VMLocation(name: "default", path: path)
+        let defaultLocation = VMLocation(name: "home", path: path)
         try defaultLocation.validate()
 
         // Replace default location
-        if let index = settings.vmLocations.firstIndex(where: { $0.name == "default" }) {
+        if let index = settings.vmLocations.firstIndex(where: { $0.name == "home" }) {
             settings.vmLocations[index] = defaultLocation
         } else {
             settings.vmLocations.append(defaultLocation)
-            settings.defaultLocationName = "default"
+            settings.defaultLocationName = "home"
         }
 
         try saveSettings(settings)
@@ -313,7 +313,7 @@ final class SettingsManager: @unchecked Sendable {
         // This is a very basic YAML parser for our specific config format
         // A real implementation would use a proper YAML library
 
-        var defaultLocationName = "default"
+        var defaultLocationName = "home"
         var cacheDirectory = "~/.lume/cache"
         var cachingEnabled = false  // default to false to save disk space
         var telemetryEnabled = true  // default to true for anonymous usage tracking
@@ -482,7 +482,7 @@ final class SettingsManager: @unchecked Sendable {
 
         // Ensure at least one location exists
         if vmLocations.isEmpty {
-            vmLocations.append(VMLocation(name: "default", path: "~/.lume"))
+            vmLocations.append(VMLocation(name: "home", path: "~/.lume"))
         }
 
         // Build registry config

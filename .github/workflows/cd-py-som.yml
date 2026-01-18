@@ -64,7 +64,6 @@ jobs:
       package_name: "som"
       package_dir: "libs/python/som"
       version: ${{ needs.determine-version.outputs.version }}
-      is_lume_package: false
       base_package_name: "cua-som"
     secrets:
       PYPI_TOKEN: ${{ secrets.PYPI_TOKEN }}

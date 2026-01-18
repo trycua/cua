@@ -60,7 +60,6 @@ jobs:
       package_name: "bench"
       package_dir: "libs/cua-bench"
       version: ${{ needs.prepare.outputs.version }}
-      is_lume_package: false
       base_package_name: "cua-bench"
     secrets:
       PYPI_TOKEN: ${{ secrets.PYPI_TOKEN }}

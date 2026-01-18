@@ -30,7 +30,8 @@ const docsSites = [
     navTabs: [
       { name: 'Guide', href: '/cua/guide/get-started/what-is-cua', prefix: '/cua/guide' },
       { name: 'Examples', href: '/cua/examples/automation/form-filling', prefix: '/cua/examples' },
-      { name: 'API Reference', href: '/cua/reference/computer-sdk', prefix: '/cua/reference' },
+      { name: 'Reference', href: '/cua/reference/computer-sdk', prefix: '/cua/reference' },
+      { name: 'Vibe Coding MCP', href: '/cua/vibe-coding-mcp', prefix: '/cua/vibe-coding-mcp' },
     ],
   },
   {
@@ -58,9 +59,14 @@ const docsSites = [
         prefix: '/cuabench/guide/examples',
       },
       {
-        name: 'API Reference',
+        name: 'Reference',
         href: '/cuabench/reference/cli-reference',
         prefix: '/cuabench/reference',
+      },
+      {
+        name: 'Vibe Coding MCP',
+        href: '/cua/vibe-coding-mcp',
+        prefix: '/cua/vibe-coding-mcp',
       },
     ],
   },
@@ -84,9 +90,14 @@ const docsSites = [
         prefix: '/lume/guide',
       },
       {
-        name: 'API Reference',
+        name: 'Reference',
         href: '/lume/reference/cli-reference',
         prefix: '/lume/reference',
+      },
+      {
+        name: 'Vibe Coding MCP',
+        href: '/cua/vibe-coding-mcp',
+        prefix: '/cua/vibe-coding-mcp',
       },
     ],
   },

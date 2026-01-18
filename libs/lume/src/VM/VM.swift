@@ -125,7 +125,7 @@ class VM {
             vncUrl: vncUrl,
             ipAddress: ipAddress,
             sshAvailable: sshAvailable,
-            locationName: vmDirContext.storage ?? "default"
+            locationName: vmDirContext.storage ?? "home"
         )
     }
 
@@ -753,7 +753,7 @@ class VM {
                     "\(ByteCountFormatter.string(fromByteCount: Int64(diskSize), countStyle: .file))",
                 "diskPermissions": diskPermissions,
                 "dirPermissions": dirPermsString,
-                "locationName": vmDirContext.storage ?? "default",
+                "locationName": vmDirContext.storage ?? "home",
             ])
 
         if !diskExists {

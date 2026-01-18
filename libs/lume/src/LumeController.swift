@@ -115,6 +115,18 @@ final class LumeController {
         }
     }
 
+    /// Parses the VNC port from a VNC URL
+    /// - Parameter url: VNC URL like "vnc://:password@127.0.0.1:62295"
+    /// - Returns: The port number if successfully parsed, nil otherwise
+    private func parseVNCPort(from url: String) -> UInt16? {
+        // URL format: vnc://:password@host:port
+        guard let urlComponents = URLComponents(string: url.replacingOccurrences(of: "vnc://", with: "http://")),
+              let port = urlComponents.port else {
+            return nil
+        }
+        return UInt16(port)
+    }
+
     /// Get VM details using lightweight path (no VM object instantiation)
     /// Checks provisioning marker first, then SharedVM cache for running status
     @MainActor
@@ -144,10 +156,19 @@ final class LumeController {
 
         // If not in cache, check if session file exists (cross-process fallback)
         // Session files are created when VM starts and deleted when VM stops
+        // Validate that the VNC port is actually in use to detect stale sessions
         if !isRunning {
             if let session = try? vmDir.loadSession() {
-                isRunning = true
-                vncUrl = session.url
+                // Parse VNC port from URL like "vnc://:password@127.0.0.1:62295"
+                if let port = parseVNCPort(from: session.url),
+                   NetworkUtils.isLocalPortInUse(port: port) {
+                    isRunning = true
+                    vncUrl = session.url
+                } else {
+                    // Stale session file - VNC port not in use, clean it up
+                    vmDir.clearSession()
+                    Logger.info("Cleaned up stale session file", metadata: ["name": vmName])
+                }
             }
         }
 

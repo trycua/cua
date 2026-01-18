@@ -14,7 +14,7 @@ const redirects: Record<string, string> = {
   '/cuabench/reference': '/docs/cuabench/reference/cli-reference',
   '/lume': '/docs/lume/guide/getting-started/introduction',
   '/lume/guide': '/docs/lume/guide/getting-started/introduction',
-  '/lume/examples': '/docs/lume/examples/claude-cowork-sandbox',
+  '/lume/examples': '/docs/lume/examples/claude-code/sandbox',
   '/lume/reference': '/docs/lume/reference/cli-reference',
   // Legacy redirects for old URLs without /cua prefix
   '/guide': '/docs/cua/guide/get-started/what-is-cua',

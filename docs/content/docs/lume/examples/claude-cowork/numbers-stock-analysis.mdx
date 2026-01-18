@@ -1,0 +1,174 @@
+---
+title: Stock Analysis with Numbers
+description: Create financial reports using macOS-only Numbers.app via MCP
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+This example demonstrates a task that **requires macOS**: creating a stock analysis report using Apple's Numbers spreadsheet app. Numbers is only available on macOS—this workflow wouldn't work in Docker or a Linux VM.
+
+Using the Lume MCP connector, Claude Cowork can execute commands in the VM without manual SSH setup.
+
+## Why macOS?
+
+Numbers.app is Apple's spreadsheet application, comparable to Excel but with tighter macOS integration. It's perfect for:
+
+- Financial reports with charts
+- Data visualization
+- PDF export for sharing
+
+Since Numbers only runs on macOS, this task showcases the unique value of macOS VM sandboxes.
+
+## Prerequisites
+
+- [Lume MCP connector configured](/lume/examples/claude-cowork/sandbox)
+- Sandbox VM created with `--unattended tahoe`
+
+## Example prompt
+
+Ask Cowork:
+
+> "Start the sandbox VM with ~/reports shared. Fetch Apple (AAPL) stock prices for the last 30 days, create a spreadsheet in Numbers with the data and a line chart, then export it as a PDF to the shared folder."
+
+## What Cowork does
+
+1. **Starts the VM** via `lume_run_vm` with shared directory
+2. **Fetches stock data** via `lume_exec` using curl or Python
+3. **Creates a Numbers spreadsheet** via `lume_exec` with AppleScript
+4. **Exports to PDF** at `/Volumes/My Shared Files/aapl-analysis.pdf`
+
+## Example session
+
+```
+You: Start the sandbox with ~/reports shared, then create a stock analysis
+     report for AAPL in Numbers and export it as PDF.
+
+Cowork: I'll start the sandbox and create the stock analysis report.
+
+[Calls lume_run_vm with name="sandbox", shared_dir="~/reports", no_display=true]
+VM 'sandbox' started successfully.
+
+[Calls lume_exec with name="sandbox", command="python3 << 'EOF'
+import urllib.request
+import json
+import csv
+
+# Fetch stock data from a free API
+url = \"https://query1.finance.yahoo.com/v8/finance/chart/AAPL?interval=1d&range=1mo\"
+req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+data = json.loads(urllib.request.urlopen(req).read())
+
+# Extract timestamps and prices
+timestamps = data['chart']['result'][0]['timestamp']
+closes = data['chart']['result'][0]['indicators']['quote'][0]['close']
+
+# Write to CSV
+with open('/tmp/aapl_data.csv', 'w', newline='') as f:
+    writer = csv.writer(f)
+    writer.writerow(['Date', 'Close'])
+    for ts, close in zip(timestamps, closes):
+        from datetime import datetime
+        date = datetime.fromtimestamp(ts).strftime('%Y-%m-%d')
+        writer.writerow([date, f'{close:.2f}'])
+
+print('Data saved to /tmp/aapl_data.csv')
+EOF"]
+Data saved to /tmp/aapl_data.csv
+
+Now I'll create a Numbers spreadsheet using AppleScript:
+
+[Calls lume_exec with name="sandbox", command="osascript << 'EOF'
+tell application \"Numbers\"
+    activate
+    set newDoc to make new document
+    tell table 1 of sheet 1 of newDoc
+        set csvData to read POSIX file \"/tmp/aapl_data.csv\"
+        set csvLines to paragraphs of csvData
+        repeat with i from 1 to count of csvLines
+            set csvLine to item i of csvLines
+            set AppleScript's text item delimiters to \",\"
+            set parts to text items of csvLine
+            set AppleScript's text item delimiters to \"\"
+            set value of cell 1 of row i to item 1 of parts
+            set value of cell 2 of row i to item 2 of parts
+        end repeat
+    end tell
+    tell sheet 1 of newDoc
+        set newChart to make new chart with properties {chart type:line_2d}
+    end tell
+    export newDoc to POSIX file \"/Volumes/My Shared Files/aapl-analysis.pdf\" as PDF
+    close newDoc saving no
+end tell
+EOF"]
+Success
+
+Done! I've created the stock analysis report. You can find it at:
+~/reports/aapl-analysis.pdf (via the shared folder)
+
+The report contains:
+- 30 days of AAPL closing prices
+- A line chart showing price trends
+- Data table with dates and values
+```
+
+## Key techniques
+
+### Automating Numbers with AppleScript
+
+Numbers can be controlled via AppleScript through `lume_exec`:
+
+```applescript
+tell application "Numbers"
+    -- Create documents
+    set newDoc to make new document
+
+    -- Manipulate cells
+    tell table 1 of sheet 1 of newDoc
+        set value of cell 1 of row 1 to "Hello"
+    end tell
+
+    -- Add charts
+    make new chart with properties {chart type:line_2d}
+
+    -- Export
+    export newDoc to POSIX file "/path/to/output.pdf" as PDF
+end tell
+```
+
+### Fetching financial data
+
+Many free APIs provide stock data:
+
+```bash
+# Yahoo Finance (unofficial)
+curl "https://query1.finance.yahoo.com/v8/finance/chart/AAPL?interval=1d&range=1mo"
+
+# Alpha Vantage (requires free API key)
+curl "https://www.alphavantage.co/query?function=TIME_SERIES_DAILY&symbol=AAPL&apikey=YOUR_KEY"
+```
+
+## Variations
+
+Try these related tasks:
+
+- "Create a portfolio tracker comparing AAPL, GOOGL, and MSFT"
+- "Generate a monthly expense report from this CSV in Numbers"
+- "Create a chart in Numbers showing my app's download stats"
+
+## Why this matters
+
+This example shows why macOS sandboxes are valuable:
+
+| Approach | Can use Numbers.app? | Native macOS automation? |
+|----------|---------------------|-------------------------|
+| Docker | No | No |
+| Linux VM | No | No |
+| **macOS VM** | **Yes** | **Yes** |
+
+Tasks requiring Numbers, Keynote, Pages, or other macOS-only apps need a macOS environment. Lume provides that in an isolated sandbox.
+
+## Next steps
+
+- [Sandbox with MCP](/lume/examples/claude-cowork/sandbox) — MCP connector setup
+- [Claude Code Sandbox](/lume/examples/claude-code/sandbox) — SSH-based alternative
+- [Homebrew Testing](/lume/examples/claude-code/homebrew-testing) — Test packages in a clean environment

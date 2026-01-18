@@ -2,5 +2,5 @@
   "title": "Advanced",
   "description": "Advanced features and automation",
   "icon": "Wrench",
-  "pages": ["http-server", "lumier"]
+  "pages": ["http-server", "mcp-server", "lumier"]
 }

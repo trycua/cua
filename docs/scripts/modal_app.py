@@ -1496,6 +1496,7 @@ async def scheduled_code_index():
     volumes={VOLUME_PATH: docs_volume, CODE_VOLUME_PATH: code_volume},
     cpu=1.0,
     memory=2048,
+    keep_warm=1,  # Keep one container warm to avoid cold start latency
 )
 @modal.concurrent(max_inputs=10)
 @modal.asgi_app(custom_domains=["docs-mcp.cua.ai"])
@@ -1554,63 +1555,87 @@ Components include: agent, computer, mcp-server, som, etc.
 IMPORTANT: Always cite sources - URLs for docs, component@version:path for code.""",
     )
 
-    # Initialize embedding model (unused but kept for potential future use)
+    # Initialize embedding model - load eagerly to avoid cold start on first search
+    print("Initializing embedding model...")
     model = get_registry().get("sentence-transformers").create(name="all-MiniLM-L6-v2")
 
-    # Global database connections (lazy-initialized, cached for reuse)
+    # Eagerly initialize database connections at startup to reduce first-request latency
+    print("Initializing database connections...")
+
+    # Docs LanceDB
     _docs_lance_db = None
     _docs_lance_table = None
-    _docs_sqlite_conn = None
-    _code_lance_db = None
-    _code_lance_table = None
-    _code_sqlite_conn = None
-
-    def get_lance_table():
-        """Get or create LanceDB connection for docs"""
-        nonlocal _docs_lance_db, _docs_lance_table
-        if _docs_lance_table is None:
-            db_path = Path(DB_PATH)
-            if not db_path.exists():
-                raise RuntimeError("Database not found. Run crawl and generation functions first.")
+    db_path = Path(DB_PATH)
+    if db_path.exists():
+        try:
             _docs_lance_db = lancedb.connect(db_path)
             _docs_lance_table = _docs_lance_db.open_table("docs")
+            print(f"  Docs LanceDB loaded from {db_path}")
+        except Exception as e:
+            print(f"  Warning: Could not load docs LanceDB: {e}")
+
+    # Docs SQLite
+    _docs_sqlite_conn = None
+    sqlite_path = Path(DB_PATH) / "docs.sqlite"
+    if sqlite_path.exists():
+        try:
+            _docs_sqlite_conn = sqlite3.connect(f"file:{sqlite_path}?mode=ro", uri=True)
+            _docs_sqlite_conn.row_factory = sqlite3.Row
+            print(f"  Docs SQLite loaded from {sqlite_path}")
+        except Exception as e:
+            print(f"  Warning: Could not load docs SQLite: {e}")
+
+    # Code LanceDB
+    _code_lance_db = None
+    _code_lance_table = None
+    code_lance_path = Path(CODE_DB_PATH) / "code_index.lancedb"
+    if code_lance_path.exists():
+        try:
+            _code_lance_db = lancedb.connect(code_lance_path)
+            _code_lance_table = _code_lance_db.open_table("code")
+            print(f"  Code LanceDB loaded from {code_lance_path}")
+        except Exception as e:
+            print(f"  Warning: Could not load code LanceDB: {e}")
+
+    # Code SQLite
+    _code_sqlite_conn = None
+    code_sqlite_path = Path(CODE_DB_PATH) / "code_index.sqlite"
+    if code_sqlite_path.exists():
+        try:
+            _code_sqlite_conn = sqlite3.connect(f"file:{code_sqlite_path}?mode=ro", uri=True)
+            _code_sqlite_conn.row_factory = sqlite3.Row
+            print(f"  Code SQLite loaded from {code_sqlite_path}")
+        except Exception as e:
+            print(f"  Warning: Could not load code SQLite: {e}")
+
+    print("Database initialization complete.")
+
+    def get_lance_table():
+        """Get LanceDB connection for docs (eagerly loaded)"""
+        if _docs_lance_table is None:
+            raise RuntimeError("Database not found. Run crawl and generation functions first.")
         return _docs_lance_table
 
     def get_sqlite_conn():
-        """Get or create read-only SQLite connection for docs"""
-        nonlocal _docs_sqlite_conn
+        """Get read-only SQLite connection for docs (eagerly loaded)"""
         if _docs_sqlite_conn is None:
-            sqlite_path = Path(DB_PATH) / "docs.sqlite"
-            if not sqlite_path.exists():
-                raise RuntimeError("SQLite database not found.")
-            _docs_sqlite_conn = sqlite3.connect(f"file:{sqlite_path}?mode=ro", uri=True)
-            _docs_sqlite_conn.row_factory = sqlite3.Row
+            raise RuntimeError("SQLite database not found.")
         return _docs_sqlite_conn
 
     def get_code_lance_table():
-        """Get LanceDB connection for the aggregated code database."""
-        nonlocal _code_lance_db, _code_lance_table
+        """Get LanceDB connection for the aggregated code database (eagerly loaded)."""
         if _code_lance_table is None:
-            db_path = Path(CODE_DB_PATH) / "code_index.lancedb"
-            if not db_path.exists():
-                raise RuntimeError(
-                    "Code LanceDB not found. Run generate_code_index_parallel and aggregate_code_databases first."
-                )
-            _code_lance_db = lancedb.connect(db_path)
-            _code_lance_table = _code_lance_db.open_table("code")
+            raise RuntimeError(
+                "Code LanceDB not found. Run generate_code_index_parallel and aggregate_code_databases first."
+            )
         return _code_lance_table
 
     def get_code_sqlite_conn():
-        """Get read-only SQLite connection for the aggregated code database."""
-        nonlocal _code_sqlite_conn
+        """Get read-only SQLite connection for the aggregated code database (eagerly loaded)."""
         if _code_sqlite_conn is None:
-            sqlite_path = Path(CODE_DB_PATH) / "code_index.sqlite"
-            if not sqlite_path.exists():
-                raise RuntimeError(
-                    "Code SQLite database not found. Run generate_code_index_parallel and aggregate_code_databases first."
-                )
-            _code_sqlite_conn = sqlite3.connect(f"file:{sqlite_path}?mode=ro", uri=True)
-            _code_sqlite_conn.row_factory = sqlite3.Row
+            raise RuntimeError(
+                "Code SQLite database not found. Run generate_code_index_parallel and aggregate_code_databases first."
+            )
         return _code_sqlite_conn
 
     # =================== DOCUMENTATION QUERY TOOLS (READ-ONLY) ===================

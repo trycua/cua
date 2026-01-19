@@ -550,10 +550,11 @@ final class LumeMCPServer {
         }
         let storage = args?["storage"]?.stringValue
 
-        let vm = try controller.get(name: name, storage: storage)
+        // Use getDetails() for consistent status including provisioning state
+        let vmDetails = try controller.getDetails(name: name, storage: storage)
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        let json = try encoder.encode(vm.details)
+        let json = try encoder.encode(vmDetails)
         return CallTool.Result(content: [.text(String(data: json, encoding: .utf8) ?? "{}")])
     }
 

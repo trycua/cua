@@ -520,6 +520,36 @@ final class LumeController {
         // Validate parameters upfront (this checks VM doesn't already exist)
         try validateCreateParameters(name: name, os: os, ipsw: ipsw, storage: storage)
 
+        // Create VM directory and provisioning marker BEFORE spawning background task
+        // so VM appears in list immediately with "provisioning" status
+        let vmDir = try home.getVMDirectory(name, storage: storage)
+
+        do {
+            try FileManager.default.createDirectory(
+                atPath: vmDir.dir.path,
+                withIntermediateDirectories: true
+            )
+
+            // Create minimal config so VM shows up in list
+            let config = try VMConfig(
+                os: os,
+                cpuCount: cpuCount,
+                memorySize: memorySize,
+                diskSize: diskSize,
+                display: display
+            )
+            try vmDir.saveConfig(config)
+
+            // Write provisioning marker
+            try vmDir.saveProvisioningMarker(ProvisioningMarker(operation: "ipsw_install"))
+            Logger.info("Provisioning marker created", metadata: ["name": name])
+        } catch {
+            // Clean up if we fail to set up provisioning marker
+            try? vmDir.delete()
+            Logger.error("Failed to create VM", metadata: ["error": error.localizedDescription])
+            throw error
+        }
+
         Logger.info("Spawning background task for VM creation", metadata: ["name": name])
 
         // All parameters passed to Task are value types (Sendable)
@@ -527,43 +557,6 @@ final class LumeController {
         Task.detached { @MainActor @Sendable in
             // Create a new controller for the background task
             let controller = LumeController()
-
-            // Get the VM directory
-            let vmDir: VMDirectory
-            do {
-                vmDir = try controller.home.getVMDirectory(name, storage: storage)
-            } catch {
-                Logger.error("Failed to get VM directory",
-                            metadata: ["name": name, "error": error.localizedDescription])
-                return
-            }
-
-            // Create the VM directory and write provisioning marker first
-            // so VM appears in list immediately
-            do {
-                try FileManager.default.createDirectory(
-                    atPath: vmDir.dir.path,
-                    withIntermediateDirectories: true
-                )
-
-                // Create minimal config so VM shows up in list
-                let config = try VMConfig(
-                    os: os,
-                    cpuCount: cpuCount,
-                    memorySize: memorySize,
-                    diskSize: diskSize,
-                    display: display
-                )
-                try vmDir.saveConfig(config)
-
-                // Write provisioning marker
-                try vmDir.saveProvisioningMarker(ProvisioningMarker(operation: "ipsw_install"))
-                Logger.info("Provisioning marker created", metadata: ["name": name])
-            } catch {
-                Logger.error("Failed to create provisioning marker",
-                            metadata: ["name": name, "error": error.localizedDescription])
-                return
-            }
 
             do {
                 // Run the internal create which does all the work

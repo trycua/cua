@@ -1,0 +1,6 @@
+{
+  "title": "Examples",
+  "description": "Step-by-step tutorials and use cases",
+  "icon": "Blocks",
+  "pages": ["claude-code", "claude-cowork"]
+}

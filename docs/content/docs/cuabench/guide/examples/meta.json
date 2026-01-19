@@ -1,6 +1,0 @@
-{
-  "title": "Examples",
-  "description": "Step-by-step tutorials for common workflows",
-  "icon": "Blocks",
-  "pages": ["universal-task", "native-task", "genai-task-generation", "custom-agent"]
-}

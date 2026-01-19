@@ -98,6 +98,11 @@ struct Run: AsyncParsableCommand {
 
     @MainActor
     func run() async throws {
+        // Record telemetry
+        TelemetryClient.shared.record(event: TelemetryEvent.run, properties: [
+            "headless": noDisplay
+        ])
+
         try await LumeController().runVM(
             name: name,
             noDisplay: noDisplay,

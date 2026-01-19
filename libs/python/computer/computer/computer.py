@@ -109,7 +109,7 @@ class Computer:
         provider_port: Optional[int] = 7777,
         noVNC_port: Optional[int] = 8006,
         api_port: Optional[int] = None,
-        host: str = os.environ.get("PYLUME_HOST", "localhost"),
+        host: str = "localhost",
         api_host: Optional[str] = None,
         storage: Optional[str] = None,
         ephemeral: bool = False,

@@ -7,10 +7,10 @@ if (typeof window !== 'undefined') {
 }
 
 import {
-  CopilotKit,
-  useRenderToolCall,
-  useCopilotChat,
   CatchAllActionRenderProps,
+  CopilotKit,
+  useCopilotChat,
+  useRenderToolCall,
 } from '@copilotkit/react-core';
 import {
   CopilotPopup,
@@ -18,10 +18,10 @@ import {
   useChatContext,
 } from '@copilotkit/react-ui';
 import '@copilotkit/react-ui/styles.css';
-import { ReactNode, useMemo, useState, useCallback, useEffect, useRef, memo } from 'react';
 import posthog from 'posthog-js';
+import { memo, ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-const DOCS_INSTRUCTIONS = `You are a helpful assistant for Cua, Cua-Bench and Lume documentation. Be concise and helpful. Use clear paragraph breaks between sections.`;
+const DOCS_INSTRUCTIONS = `You are a helpful assistant for Cua, Cua-Bench, and Lume documentation. Be concise and helpful. Use clear paragraph breaks between sections.`;
 
 interface CopilotKitProviderProps {
   children: ReactNode;
@@ -341,16 +341,14 @@ function CopilotPopupWithFeedback() {
     <CopilotPopup
       instructions={DOCS_INSTRUCTIONS}
       labels={{
-        title: 'CUA Docs Assistant',
+        title: 'Cua Docs Assistant',
         initial: `Hello!
 
-I'm an agent that can search cua's docs and code to help answer questions
+I can search Cua's documentation and code to answer your questions.
 
-Ask me anything about CUA!
+Ask me anything about Cua!
 
-This is currently an **experimental** feature.
-
-Please refer to the source documentation for the most accurate information.`,
+This is an **experimental** feature. Refer to the source documentation for the most accurate information.`,
       }}
       AssistantMessage={CustomAssistantMessage}
       Header={CustomHeader}
@@ -565,6 +563,12 @@ const customStyles = `
     [class*="copilotKitPopup"] {
       display: none !important;
     }
+  }
+
+  /* Ensure popup appears above header */
+  .copilotKitPopup,
+  [class*="copilotKitPopup"] {
+    z-index: 9999 !important;
   }
 `;
 

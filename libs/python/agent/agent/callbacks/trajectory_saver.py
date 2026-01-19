@@ -140,6 +140,10 @@ class TrajectorySaverCallback(AsyncCallbackHandler):
         # Ensure trajectory directory exists
         self.trajectory_dir.mkdir(parents=True, exist_ok=True)
 
+        # Ensure screenshot directory exists if specified
+        if self.screenshot_dir:
+            self.screenshot_dir.mkdir(parents=True, exist_ok=True)
+
     def _get_turn_dir(self) -> Path:
         """Get the directory for the current turn."""
         if not self.trajectory_id:

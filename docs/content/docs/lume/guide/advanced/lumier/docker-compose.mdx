@@ -1,8 +1,13 @@
 ---
 title: Docker Compose
+description: Running Lumier with Docker Compose
 ---
 
-You can also use Docker Compose to run Lumier with a simple configuration file. Create a `docker-compose.yml` file with the following content:
+For easier management, use Docker Compose instead of raw `docker run` commands.
+
+## Setup
+
+Create `docker-compose.yml`:
 
 ```yaml
 version: '3'
@@ -13,10 +18,10 @@ services:
     container_name: lumier-vm
     restart: unless-stopped
     ports:
-      - '8006:8006' # Port for VNC access
+      - '8006:8006'
     volumes:
-      - ./storage:/storage # VM persistent storage
-      - ./shared:/shared # Shared folder accessible in the VM
+      - ./storage:/storage
+      - ./shared:/shared
     environment:
       - VM_NAME=lumier-vm
       - VERSION=ghcr.io/trycua/macos-sequoia-cua:latest
@@ -28,18 +33,59 @@ services:
     stop_grace_period: 2m
 ```
 
-Then run Lumier using:
+## Run it
 
 ```bash
-# First create the required directories
+# Create directories
 mkdir -p storage shared
 
-# Start the container
+# Start in background
 docker-compose up -d
 
-# View the logs
+# View logs
 docker-compose logs -f
 
-# Stop the container when done
+# Stop
 docker-compose down
 ```
+
+Access at `http://localhost:8006`.
+
+## Configuration options
+
+| Field | Description |
+|-------|-------------|
+| `restart: unless-stopped` | Auto-restart unless manually stopped |
+| `stop_grace_period: 2m` | Wait 2 minutes for graceful shutdown |
+| `stop_signal: SIGINT` | Send interrupt signal to stop |
+
+## Multiple VMs
+
+Run multiple VMs by adding services:
+
+```yaml
+version: '3'
+
+services:
+  dev-vm:
+    image: trycua/lumier:latest
+    ports:
+      - '8006:8006'
+    environment:
+      - VM_NAME=dev-vm
+      - VERSION=ghcr.io/trycua/macos-sequoia-cua:latest
+      - CPU_CORES=4
+      - RAM_SIZE=8192
+
+  test-vm:
+    image: trycua/lumier:latest
+    ports:
+      - '8007:8006'
+    environment:
+      - VM_NAME=test-vm
+      - VERSION=ghcr.io/trycua/macos-sequoia-cua:latest
+      - CPU_CORES=2
+      - RAM_SIZE=4096
+```
+
+Access at `localhost:8006` and `localhost:8007`.

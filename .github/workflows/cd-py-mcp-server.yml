@@ -145,7 +145,6 @@ jobs:
       package_name: "mcp-server"
       package_dir: "libs/python/mcp-server"
       version: ${{ needs.prepare.outputs.version }}
-      is_lume_package: false
       base_package_name: "cua-mcp-server"
     secrets:
       PYPI_TOKEN: ${{ secrets.PYPI_TOKEN }}

@@ -475,7 +475,7 @@ def create_ui():
                             )
 
                     conversation_chatbot = gr.Chatbot(
-                        label="Conversation", type="messages", height=500, show_copy_button=True
+                        label="Conversation", height=500, buttons=["copy"]
                     )
 
             with gr.Column(scale=1):

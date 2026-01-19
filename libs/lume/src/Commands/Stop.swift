@@ -17,6 +17,9 @@ struct Stop: AsyncParsableCommand {
 
     @MainActor
     func run() async throws {
+        // Record telemetry
+        TelemetryClient.shared.record(event: TelemetryEvent.stop)
+
         let vmController = LumeController()
         try await vmController.stopVM(name: name, storage: storage)
     }

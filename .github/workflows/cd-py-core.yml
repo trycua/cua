@@ -60,7 +60,6 @@ jobs:
       package_name: "core"
       package_dir: "libs/python/core"
       version: ${{ needs.prepare.outputs.version }}
-      is_lume_package: false
       base_package_name: "cua-core"
     secrets:
       PYPI_TOKEN: ${{ secrets.PYPI_TOKEN }}

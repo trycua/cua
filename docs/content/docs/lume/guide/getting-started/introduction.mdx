@@ -5,73 +5,60 @@ description: Introduction to Lume - the macOS VM CLI and framework
 
 import { Callout } from 'fumadocs-ui/components/callout';
 
-Lume is a lightweight Command Line Interface and local API server for creating, running, and managing **macOS and Linux virtual machines** with near-native performance on Apple Silicon, using Apple's [Virtualization.Framework](https://developer.apple.com/documentation/virtualization).
+Lume is a VM runtime for building AI agents, running CI/CD pipelines, and automating macOS. It uses Apple's native Virtualization Framework to run macOS and Linux VMs at near-native speed on Apple Silicon.
 
-## Why Lume?
+<Callout type="info" title="MIT License">
+Lume is open-source and MIT licensed. If you find it useful, we'd appreciate a [star on GitHub](https://github.com/trycua/cua)!
+</Callout>
 
-Before Lume, running macOS VMs on Apple Silicon required complex setup or expensive commercial tools. Lume provides:
+<Callout type="info" title="Cloud macOS Sandboxes">
+We're piloting a managed service for customers who want to run cloud macOS sandboxes for CI/CD and agent workloads. [Book a demo](https://cal.com/cua/cua-demo?overlayCalendar=true) if you're interested.
+</Callout>
 
-- **Simple CLI** - Intuitive commands for VM lifecycle management
-- **Near-native performance** - Built on Apple's Virtualization Framework
-- **Prebuilt images** - Ready-to-use macOS and Linux images
-- **HTTP API** - RESTful API for tool integration
-- **Open source** - MIT licensed, community-driven
+```bash
+lume create test-vm --os macos --ipsw latest
+lume run test-vm
+```
 
-## How It Works
-
-Lume leverages Apple's Virtualization Framework to create hardware-accelerated VMs that run at near-native speed. The framework provides:
-
-- **Para-virtualized devices** - High-performance network and storage
-- **GPU acceleration** - Hardware graphics support
-- **Rosetta 2 support** - Run x86 Linux binaries on ARM VMs
+A single binary with an HTTP API. Create a VM, run it headlessly, control it programmatically.
 
 ## Architecture
 
-```
-┌─────────────────────────────────────────────────┐
-│                  Your Tools                      │
-│     (Cua Agent, Scripts, CI/CD, etc.)           │
-└───────────────────┬─────────────────────────────┘
-                    │
-          ┌─────────▼─────────┐
-          │   Lume HTTP API   │  ← lume serve (port 7777)
-          │   (REST Server)   │
-          └─────────┬─────────┘
-                    │
-          ┌─────────▼─────────┐
-          │     Lume CLI      │  ← lume create, run, stop...
-          └─────────┬─────────┘
-                    │
-    ┌───────────────▼───────────────┐
-    │  Apple Virtualization.Framework  │
-    └───────────────┬───────────────┘
-                    │
-    ┌───────────────▼───────────────┐
-    │      macOS / Linux VMs        │
-    └───────────────────────────────┘
-```
+![Lume Architecture](/img/lume-architecture.png)
 
-## Use Cases
+You can use Lume directly via CLI, or run `lume serve` to expose an HTTP API for programmatic access. The [Computer SDK](/cua/reference/computer-sdk) uses this API to automate macOS interactions.
 
-### Development and Testing
+## How it works
 
-- Test software on different macOS versions
-- Isolate development environments
-- Run CI/CD pipelines locally
+Lume is a thin layer over Apple's [Virtualization Framework](https://developer.apple.com/documentation/virtualization), which provides hardware-accelerated virtualization on Apple Silicon. This gives you:
 
-### Automation
+- **Native speed** — CPU instructions execute directly via hardware virtualization
+- **Paravirtualized graphics** — Basic GPU support via Apple's virtualization layer (limited to GPU Family 5)
+- **Efficient storage** — Sparse disk files only consume actual usage, not allocated size
+- **Rosetta 2 support** — Run x86 Linux binaries in ARM Linux VMs
+- **Automated golden images** — Go from IPSW to fully configured macOS VM without manual intervention
+- **Registry support** — Pull and push VM images from GHCR or GCS registries
 
-- Automate macOS setup with unattended configurations
-- Script VM operations via CLI or API
-- Integrate with Computer Use Agent for UI automation
+## When to use Lume
 
-### Sandboxing
+**Testing across macOS versions** — Spin up a VM with a specific macOS version, test your software, tear it down. No need to maintain multiple physical machines.
 
-- Create disposable environments
-- Test potentially risky operations safely
-- Reset to clean state instantly
+**Automating macOS tasks** — Combine Lume with [Unattended Setup](/lume/guide/fundamentals/unattended-setup) to create pre-configured VMs. The setup automation uses VNC and OCR to click through the Setup Assistant without manual intervention.
 
-## Next Steps
+**Running CI/CD locally** — Test your macOS builds in isolated VMs before pushing to remote CI. The `--no-display` flag runs VMs headlessly.
 
-- [Installation](/lume/guide/getting-started/installation) - Install Lume on your Mac
-- [Quickstart](/lume/guide/getting-started/quickstart) - Create your first VM
+**Sandboxing risky operations** — Need to test untrusted software or destructive scripts? Run them in a VM, then delete it. Clone a known-good VM to reset to a clean state instantly.
+
+**Building AI agents** — Lume powers the [Cua Computer SDK](/cua/reference/computer-sdk), providing VMs that AI models can interact with through screenshots and input simulation.
+
+<Callout type="info" title="Used by Anthropic">
+Apple's Virtualization Framework—the same technology Lume is built on—powers [Claude Cowork](https://support.claude.com/en/articles/13345190-getting-started-with-cowork), Anthropic's sandboxed environment for Claude Code. It downloads a Linux root filesystem and boots it in an isolated VM where Claude can safely execute commands without access to your broader system.
+</Callout>
+
+## What Lume doesn't do
+
+Lume requires Apple Silicon—it won't work on Intel Macs or other platforms.
+
+## Get started
+
+Ready to try it? [Install Lume](/lume/guide/getting-started/installation) and create your first VM in the [Quickstart](/lume/guide/getting-started/quickstart).

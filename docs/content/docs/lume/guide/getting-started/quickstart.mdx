@@ -5,88 +5,193 @@ description: Create and run your first VM with Lume
 
 import { Callout } from 'fumadocs-ui/components/callout';
 
-This guide walks you through creating and running your first macOS VM with Lume.
+In under 5 minutes, you'll have a macOS VM running on your Mac.
 
-<Callout type="warn">
-  **Registry Maintenance Notice**: The prebuilt images in the [trycua registry](https://github.com/orgs/trycua/packages) are no longer actively
-  maintained. For new setups, we recommend building custom images using the [Unattended Setup](/lume/guide/fundamentals/unattended-setup) feature
-  to configure macOS VMs according to your specific needs.
-</Callout>
+## Get the macOS restore image
 
-## Create a Custom VM
+Before creating a VM, you need a macOS restore image (IPSW). You have two options:
 
-For more control, create a VM from scratch:
+### Option 1: Download manually (recommended)
+
+Get the download URL and download the IPSW file yourself:
 
 ```bash
-# Create a new macOS VM using the latest IPSW
-lume create my-vm --os macos --ipsw latest
+# Get the latest IPSW download URL
+lume ipsw
+# Output: https://updates.cdn-apple.com/...
 
-# Run the VM
+# Download it (using curl, wget, or your browser)
+curl -L -o ~/Downloads/macos.ipsw "$(lume ipsw)"
+
+# Create the VM with the downloaded file
+lume create my-vm --os macos --ipsw ~/Downloads/macos.ipsw
+```
+
+This approach is better for slower connections since you can resume downloads and reuse the IPSW for multiple VMs.
+
+### Option 2: Let Lume download it
+
+Use `--ipsw latest` and Lume will download the restore image automatically:
+
+```bash
+lume create my-vm --os macos --ipsw latest
+```
+
+<Callout type="info">
+The IPSW file is ~15GB. If you plan to create multiple VMs, downloading manually and reusing the file saves time and bandwidth.
+</Callout>
+
+## Configure VM storage location (optional)
+
+By default, VMs are stored in `~/.lume`. You can configure custom storage locations before creating VMs—useful for external drives or organizing VMs by project.
+
+```bash
+# Add an external drive as a storage location
+lume config storage add external /Volumes/MySSD/lume
+
+# Set it as the default for new VMs
+lume config storage default external
+
+# View all configured storage locations
+lume config storage list
+```
+
+When creating a VM, specify which storage to use:
+
+```bash
+# Use a named storage location
+lume create my-vm --os macos --ipsw latest --storage external
+
+# Or use a direct path
+lume create my-vm --os macos --ipsw latest --storage /path/to/vm/directory
+```
+
+<Callout type="info">
+VM disk images can grow large (~50GB+). Using an external SSD keeps your internal storage free and can improve performance for I/O-heavy workloads.
+</Callout>
+
+## Create a Linux VM
+
+Lume also supports Linux VMs using ISO images:
+
+```bash
+# Create an empty Linux VM
+lume create ubuntu-vm --os linux
+
+# First boot: mount the installer ISO
+lume run ubuntu-vm --mount ~/Downloads/ubuntu-24.04-live-server-arm64.iso
+
+# After installation completes, run normally
+lume run ubuntu-vm
+```
+
+<Callout type="info">
+Linux VMs require ARM64 ISO images (not x86). Ubuntu, Debian, and Fedora all provide ARM64 server and desktop images.
+</Callout>
+
+## Run your VM
+
+```bash
 lume run my-vm
 ```
 
-### Customize Resources
+A VNC window opens. For macOS VMs, you'll see the Setup Assistant—complete it manually or use [Unattended Setup](/lume/guide/fundamentals/unattended-setup) to automate it.
+
+## Create a VM with custom resources
+
+By default, Lume creates VMs with 4 CPU cores, 8GB memory, and a 50GB disk. Override any of these:
 
 ```bash
-# Create with custom resources
-lume create my-vm --os macos --ipsw latest \
-  --cpu 4 \
-  --memory 8GB \
+lume create dev-vm --os macos --ipsw latest \
+  --cpu 8 \
+  --memory 16GB \
   --disk-size 100GB
 ```
 
-Default values:
+| Resource | Default | Notes |
+|----------|---------|-------|
+| CPU | 4 cores | Max is your Mac's core count |
+| Memory | 8GB | Leave headroom for your host |
+| Disk | 50GB | Uses sparse files—only consumes actual usage |
 
-- **CPU**: 4 cores
-- **Memory**: 8GB
-- **Disk**: 50GB
+## Change display resolution
 
-## Basic VM Operations
+By default, VMs use a 1024x768 display resolution. You can change it with `lume set`:
+
+```bash
+lume set my-vm --display 1920x1080
+```
+
+The change takes effect on the next VM start. After starting the VM, go to **System Settings → Displays**, enable **Show all resolutions**, and select your new resolution. Common resolutions:
+
+| Resolution | Aspect Ratio | Use Case |
+|------------|--------------|----------|
+| 1024x768 | 4:3 | Default, low resource usage |
+| 1280x800 | 16:10 | MacBook-style |
+| 1920x1080 | 16:9 | Full HD |
+| 2560x1440 | 16:9 | QHD |
+
+## Automate the Setup Assistant
+
+Skip manual setup entirely with the `--unattended` flag:
+
+```bash
+lume create my-vm --os macos --ipsw latest --unattended tahoe
+```
+
+The `tahoe` preset runs through the Setup Assistant automatically, creating a user `lume` with password `lume` and enabling SSH. This takes 10-15 minutes but requires no interaction.
+
+For custom configurations, see [Unattended Setup](/lume/guide/fundamentals/unattended-setup).
+
+## Run a VM
+
+```bash
+# With display (VNC window opens)
+lume run my-vm
+
+# Headless (for automation, CI/CD)
+lume run my-vm --no-display
+
+# Run in background (doesn't block terminal)
+lume run my-vm > /dev/null 2>&1 &
+```
+
+When running headless or in background, connect via SSH (if enabled) or VNC client. Use `lume ls` to see running VMs and their connection details.
+
+## Common operations
 
 ```bash
 # List all VMs
 lume ls
 
-# Get VM details
+# Get details about a VM
 lume get my-vm
 
 # Stop a running VM
 lume stop my-vm
 
+# Clone a VM
+lume clone my-vm my-vm-backup
+
 # Delete a VM
 lume delete my-vm
 ```
 
-## Run Without Display
+## Share files with your VM
 
-For headless operation (automation, CI/CD):
-
-```bash
-# Run without opening a display window
-lume run my-vm --no-display
-```
-
-## Clone a VM
-
-Create a copy of an existing VM:
+Mount a host directory inside the VM:
 
 ```bash
-lume clone my-vm my-vm-copy
+lume run my-vm --shared-dir ~/Projects
 ```
 
-## Automate VM Configuration
+Inside the VM, find your files at `/Volumes/My Shared Files`.
 
-Use unattended setup to automatically run through the macOS Setup Assistant:
+## What's next
 
-```bash
-# Create VM and auto-configure with the tahoe preset
-lume create my-vm --os macos --ipsw latest --unattended tahoe
-```
+Now that you have a VM running, you can:
 
-This creates a VM with user `lume` (password: `lume`) and configures common settings automatically. See [Unattended Setup](/lume/guide/fundamentals/unattended-setup) for custom configurations.
-
-## Next Steps
-
-- [VM Management](/lume/guide/fundamentals/vm-management) - Learn more VM operations
-- [Unattended Setup](/lume/guide/fundamentals/unattended-setup) - Automate VM configuration
-- [CLI Reference](/lume/reference/cli-reference) - Full command reference
+- Learn more [VM operations](/lume/guide/fundamentals/vm-management) like modifying resources and managing storage locations
+- Set up [automated configuration](/lume/guide/fundamentals/unattended-setup) with custom YAML files
+- Integrate with your tools via the [HTTP API](/lume/guide/advanced/http-server)
+- Connect AI agents like Claude Desktop via [MCP](/lume/guide/advanced/mcp-server)

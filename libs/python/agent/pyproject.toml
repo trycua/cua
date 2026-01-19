@@ -4,7 +4,7 @@ build-backend = "pdm.backend"
 
 [project]
 name = "cua-agent"
-version = "0.7.12"
+version = "0.7.17"
 description = "Cua (Computer Use) Agent for AI-driven computer interaction"
 readme = "README.md"
 authors = [
@@ -71,7 +71,7 @@ moondream3 = [
     "transformers>=4.55.0"
 ]
 ui = [
-    "gradio>=5.23.3",
+    "gradio>=6.0.0",
     "python-dotenv>=1.0.1",
 ]
 cli = [
@@ -96,7 +96,7 @@ all = [
     "tiktoken>=0.11.0",
     "blobfile>=3.0.0",
     # ui requirements
-    "gradio>=5.23.3",
+    "gradio>=6.0.0",
     "python-dotenv>=1.0.1",
     # cli requirements
     "yaspin>=3.1.0",

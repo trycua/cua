@@ -5,7 +5,7 @@ struct Config: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "config",
         abstract: "Get or set lume configuration",
-        subcommands: [Get.self, Storage.self, Cache.self, Caching.self],
+        subcommands: [Get.self, Storage.self, Cache.self, Caching.self, Telemetry.self],
         defaultSubcommand: Get.self
     )
 
@@ -31,6 +31,9 @@ struct Config: ParsableCommand {
 
             // Display caching enabled status
             print("Caching enabled: \(settings.cachingEnabled)")
+
+            // Display telemetry status
+            print("Telemetry enabled: \(settings.telemetryEnabled)")
 
             // Display all locations
             if !settings.vmLocations.isEmpty {
@@ -218,6 +221,71 @@ struct Config: ParsableCommand {
                 let controller = LumeController()
                 try controller.setDefaultLocation(name: name)
                 print("Set default VM storage location to: \(name)")
+            }
+        }
+    }
+
+    // MARK: - Telemetry Management Subcommands
+
+    struct Telemetry: ParsableCommand {
+        static let configuration = CommandConfiguration(
+            commandName: "telemetry",
+            abstract: "Manage anonymous telemetry settings",
+            subcommands: [Status.self, Enable.self, Disable.self],
+            defaultSubcommand: Status.self
+        )
+
+        struct Status: ParsableCommand {
+            static let configuration = CommandConfiguration(
+                commandName: "status",
+                abstract: "Show current telemetry status"
+            )
+
+            func run() throws {
+                let controller = LumeController()
+                let settings = controller.getSettings()
+                let envOverride = ProcessInfo.processInfo.environment["LUME_TELEMETRY_ENABLED"]
+
+                print("Telemetry enabled: \(settings.telemetryEnabled)")
+
+                if let envValue = envOverride {
+                    let lowercased = envValue.lowercased()
+                    let envEnabled = ["1", "true", "yes", "on"].contains(lowercased)
+                    let envDisabled = ["0", "false", "no", "off"].contains(lowercased)
+                    if envEnabled || envDisabled {
+                        print("  (overridden by LUME_TELEMETRY_ENABLED=\(envValue))")
+                    }
+                }
+
+                print("\nTelemetry collects anonymous usage data to help improve Lume.")
+                print("No personal information or VM contents are ever collected.")
+            }
+        }
+
+        struct Enable: ParsableCommand {
+            static let configuration = CommandConfiguration(
+                commandName: "enable",
+                abstract: "Enable anonymous telemetry"
+            )
+
+            func run() throws {
+                let controller = LumeController()
+                try controller.setTelemetryEnabled(true)
+                print("Telemetry enabled")
+                print("Thank you for helping improve Lume!")
+            }
+        }
+
+        struct Disable: ParsableCommand {
+            static let configuration = CommandConfiguration(
+                commandName: "disable",
+                abstract: "Disable anonymous telemetry"
+            )
+
+            func run() throws {
+                let controller = LumeController()
+                try controller.setTelemetryEnabled(false)
+                print("Telemetry disabled")
             }
         }
     }

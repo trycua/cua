@@ -159,7 +159,6 @@ jobs:
       package_name: "agent"
       package_dir: "libs/python/agent"
       version: ${{ needs.prepare.outputs.version }}
-      is_lume_package: false
       base_package_name: "cua-agent"
     secrets:
       PYPI_TOKEN: ${{ secrets.PYPI_TOKEN }}

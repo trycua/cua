@@ -7,11 +7,33 @@ for accessibility and system operations.
 
 import asyncio
 import base64
+import functools
 import logging
 import os
 import subprocess
 from io import BytesIO
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Tuple, TypeVar, Union
+
+F = TypeVar("F", bound=Callable[..., Any])
+
+
+def require_unlocked_desktop(func: F) -> F:
+    """Decorator that checks if the Windows desktop is locked before executing.
+
+    Returns an error response if the desktop is locked, preventing automation
+    actions that would silently fail on the Windows Secure Desktop.
+    """
+
+    @functools.wraps(func)
+    async def wrapper(self: "WindowsAutomationHandler", *args: Any, **kwargs: Any) -> Dict[str, Any]:
+        if self.is_desktop_locked():
+            return {
+                "success": False,
+                "error": "Windows desktop is locked. Automation input is blocked by OS security.",
+            }
+        return await func(self, *args, **kwargs)
+
+    return wrapper  # type: ignore[return-value]
 
 from PIL import Image, ImageGrab
 from pynput.keyboard import Controller as KeyboardController
@@ -177,6 +199,15 @@ class WindowsAutomationHandler(BaseAutomationHandler):
     mouse = MouseController()
     keyboard = KeyboardController()
 
+    def is_desktop_locked(self) -> bool:
+        try:
+            import ctypes
+            user32 = ctypes.windll.user32
+            hwnd = user32.GetForegroundWindow()
+            return hwnd == 0
+        except Exception:
+            return False
+
     def _map_button(self, button: str) -> MouseButton:
         """Map a string button name to pynput MouseButton."""
         b = (button or "left").lower()
@@ -240,6 +271,7 @@ class WindowsAutomationHandler(BaseAutomationHandler):
         return None
 
     # Mouse Actions
+    @require_unlocked_desktop
     async def mouse_down(
         self, x: Optional[int] = None, y: Optional[int] = None, button: str = "left"
     ) -> Dict[str, Any]:
@@ -261,6 +293,7 @@ class WindowsAutomationHandler(BaseAutomationHandler):
         except Exception as e:
             return {"success": False, "error": str(e)}
 
+    @require_unlocked_desktop
     async def mouse_up(
         self, x: Optional[int] = None, y: Optional[int] = None, button: str = "left"
     ) -> Dict[str, Any]:
@@ -282,6 +315,7 @@ class WindowsAutomationHandler(BaseAutomationHandler):
         except Exception as e:
             return {"success": False, "error": str(e)}
 
+    @require_unlocked_desktop
     async def move_cursor(self, x: int, y: int) -> Dict[str, Any]:
         """Move the mouse cursor to the specified coordinates.
 
@@ -298,6 +332,7 @@ class WindowsAutomationHandler(BaseAutomationHandler):
         except Exception as e:
             return {"success": False, "error": str(e)}
 
+    @require_unlocked_desktop
     async def left_click(self, x: Optional[int] = None, y: Optional[int] = None) -> Dict[str, Any]:
         """Perform a left mouse click at the specified coordinates.
 
@@ -316,6 +351,7 @@ class WindowsAutomationHandler(BaseAutomationHandler):
         except Exception as e:
             return {"success": False, "error": str(e)}
 
+    @require_unlocked_desktop
     async def right_click(self, x: Optional[int] = None, y: Optional[int] = None) -> Dict[str, Any]:
         """Perform a right mouse click at the specified coordinates.
 
@@ -334,6 +370,7 @@ class WindowsAutomationHandler(BaseAutomationHandler):
         except Exception as e:
             return {"success": False, "error": str(e)}
 
+    @require_unlocked_desktop
     async def double_click(
         self, x: Optional[int] = None, y: Optional[int] = None
     ) -> Dict[str, Any]:
@@ -354,6 +391,7 @@ class WindowsAutomationHandler(BaseAutomationHandler):
         except Exception as e:
             return {"success": False, "error": str(e)}
 
+    @require_unlocked_desktop
     async def drag_to(
         self, x: int, y: int, button: str = "left", duration: float = 0.5
     ) -> Dict[str, Any]:
@@ -377,6 +415,7 @@ class WindowsAutomationHandler(BaseAutomationHandler):
         except Exception as e:
             return {"success": False, "error": str(e)}
 
+    @require_unlocked_desktop
     async def drag(
         self, path: List[Tuple[int, int]], button: str = "left", duration: float = 0.5
     ) -> Dict[str, Any]:
@@ -408,6 +447,7 @@ class WindowsAutomationHandler(BaseAutomationHandler):
             return {"success": False, "error": str(e)}
 
     # Keyboard Actions
+    @require_unlocked_desktop
     async def key_down(self, key: str) -> Dict[str, Any]:
         """Press and hold a keyboard key.
 
@@ -426,6 +466,7 @@ class WindowsAutomationHandler(BaseAutomationHandler):
         except Exception as e:
             return {"success": False, "error": str(e)}
 
+    @require_unlocked_desktop
     async def key_up(self, key: str) -> Dict[str, Any]:
         """Release a keyboard key.
 
@@ -444,6 +485,7 @@ class WindowsAutomationHandler(BaseAutomationHandler):
         except Exception as e:
             return {"success": False, "error": str(e)}
 
+    @require_unlocked_desktop
     async def type_text(self, text: str) -> Dict[str, Any]:
         """Type the specified text.
 
@@ -460,6 +502,7 @@ class WindowsAutomationHandler(BaseAutomationHandler):
         except Exception as e:
             return {"success": False, "error": str(e)}
 
+    @require_unlocked_desktop
     async def press_key(self, key: str) -> Dict[str, Any]:
         """Press and release a keyboard key.
 
@@ -479,6 +522,7 @@ class WindowsAutomationHandler(BaseAutomationHandler):
         except Exception as e:
             return {"success": False, "error": str(e)}
 
+    @require_unlocked_desktop
     async def hotkey(self, keys: List[str]) -> Dict[str, Any]:
         """Press a combination of keys simultaneously.
 
@@ -511,6 +555,7 @@ class WindowsAutomationHandler(BaseAutomationHandler):
             return {"success": False, "error": str(e)}
 
     # Scrolling Actions
+    @require_unlocked_desktop
     async def scroll(self, x: int, y: int) -> Dict[str, Any]:
         """Scroll vertically at the current cursor position.
 
@@ -527,6 +572,7 @@ class WindowsAutomationHandler(BaseAutomationHandler):
         except Exception as e:
             return {"success": False, "error": str(e)}
 
+    @require_unlocked_desktop
     async def scroll_down(self, clicks: int = 1) -> Dict[str, Any]:
         """Scroll down by the specified number of clicks.
 
@@ -543,6 +589,7 @@ class WindowsAutomationHandler(BaseAutomationHandler):
         except Exception as e:
             return {"success": False, "error": str(e)}
 
+    @require_unlocked_desktop
     async def scroll_up(self, clicks: int = 1) -> Dict[str, Any]:
         """Scroll up by the specified number of clicks.
 
@@ -559,6 +606,7 @@ class WindowsAutomationHandler(BaseAutomationHandler):
             return {"success": False, "error": str(e)}
 
     # Screen Actions
+    @require_unlocked_desktop
     async def screenshot(self) -> Dict[str, Any]:
         """Capture a screenshot of the entire screen.
 

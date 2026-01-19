@@ -26,6 +26,12 @@ struct Pull: AsyncParsableCommand {
 
     @MainActor
     func run() async throws {
+        // Record telemetry - only capture image name without tag for privacy
+        let imageName = image.split(separator: ":").first.map(String.init) ?? image
+        TelemetryClient.shared.record(event: TelemetryEvent.pull, properties: [
+            "image_name": imageName
+        ])
+
         let controller = LumeController()
         try await controller.pullImage(
             image: image,

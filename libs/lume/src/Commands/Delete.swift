@@ -31,6 +31,9 @@ struct Delete: AsyncParsableCommand {
             }
         }
 
+        // Record telemetry
+        TelemetryClient.shared.record(event: TelemetryEvent.delete)
+
         let vmController = LumeController()
         try await vmController.delete(name: name, storage: storage)
     }

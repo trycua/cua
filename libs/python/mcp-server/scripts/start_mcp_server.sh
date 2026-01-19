@@ -29,7 +29,7 @@ if [[ -z "${PYTHON_PATH}" ]]; then
 fi
 
 # --- Export PYTHONPATH so module imports work during dev ---
-export PYTHONPATH="$CUA_REPO_DIR/libs/python/mcp-server:$CUA_REPO_DIR/libs/python/agent:$CUA_REPO_DIR/libs/python/computer:$CUA_REPO_DIR/libs/python/core:$CUA_REPO_DIR/libs/python/pylume"
+export PYTHONPATH="$CUA_REPO_DIR/libs/python/mcp-server:$CUA_REPO_DIR/libs/python/agent:$CUA_REPO_DIR/libs/python/computer:$CUA_REPO_DIR/libs/python/core"
 
 # --- Helpful startup log for Claude's mcp.log ---
 >&2 echo "[cua-mcp] using python: $PYTHON_PATH"

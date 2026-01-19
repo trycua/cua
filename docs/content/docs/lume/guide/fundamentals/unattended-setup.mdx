@@ -5,249 +5,194 @@ description: Automate macOS Setup Assistant with YAML configuration files
 
 import { Callout } from 'fumadocs-ui/components/callout';
 
-Lume supports unattended setup automation to configure macOS VMs without manual interaction. This uses VNC-based automation with OCR (Optical Character Recognition) to navigate through the Setup Assistant and perform post-setup configuration.
+The macOS Setup Assistant takes 10+ minutes of clicking through screens. Unattended setup does it for you—using VNC and OCR to navigate the UI automatically.
+
+```bash
+lume create my-vm --os macos --ipsw latest --unattended tahoe
+```
+
+This creates a VM, installs macOS, and runs through the entire Setup Assistant. When it's done, you have a configured VM with user `lume` (password `lume`) and SSH enabled.
 
 <Callout type="warn">
-  **Version Compatibility**: Unattended configurations are specific to macOS versions. The Setup
-  Assistant screens, button labels, and navigation flow can change between macOS releases. A
-  configuration built for macOS Tahoe may not work on Sequoia or future versions.
+Unattended configs are macOS version-specific. The `tahoe` preset works with macOS Tahoe (15.x). Setup Assistant changes between versions, so configs may need updating for new releases.
 </Callout>
 
-## Quick Start
+## Quick start
 
-There are two ways to use unattended setup:
+### Use the built-in preset
 
-### Option 1: During VM Creation
-
-Use the `--unattended` flag with `lume create` to install from IPSW and automatically run the Setup Assistant:
+The `tahoe` preset handles macOS Tahoe's Setup Assistant:
 
 ```bash
-# Using a built-in preset
-lume create my-vm --os macOS --ipsw latest --unattended tahoe
+# During VM creation
+lume create my-vm --os macos --ipsw latest --unattended tahoe
 
-# Using a custom config file
-lume create my-vm --os macOS --ipsw latest --unattended path/to/config.yml
-
-# With debug mode enabled
-lume create my-vm --os macOS --ipsw latest --unattended tahoe --debug
-```
-
-This will:
-
-1. Create the VM and install macOS from the IPSW
-2. Boot the VM (without opening VNC client by default)
-3. Automatically run through the Setup Assistant using your configuration
-
-**Additional options for `lume create --unattended`:**
-
-| Option | Description |
-| ------ | ----------- |
-| `--debug` | Save screenshots with OCR annotations for debugging |
-| `--debug-dir` | Custom directory for debug screenshots |
-| `--no-display` | Don't open VNC client (default: true for unattended) |
-| `--vnc-port` | VNC server port (default: 0 for auto-assign) |
-
-### Option 2: On an Existing VM
-
-Use the `lume setup` command on a freshly created VM that hasn't completed the Setup Assistant:
-
-```bash
-# First, create a VM without unattended setup
-lume create my-vm --os macOS --ipsw latest
-
-# Later, run the unattended setup with a preset
+# Or on an existing VM that's at the Setup Assistant
 lume setup my-vm --unattended tahoe
-
-# Or with a custom config file
-lume setup my-vm --unattended path/to/config.yml
 ```
 
-This is useful when you want to:
+### Use a custom config
 
-- Reuse a VM that failed during setup
-- Apply different configurations to cloned VMs
-- Debug setup issues interactively before automating
-
-## Built-in Presets
-
-Lume includes built-in configuration presets that you can reference by name:
-
-| Preset  | Description                                                                                         |
-| ------- | --------------------------------------------------------------------------------------------------- |
-| `tahoe` | Full macOS Tahoe Setup Assistant automation (creates user `lume` with password `lume`, enables SSH) |
+Point to your YAML file:
 
 ```bash
-# Use the tahoe preset during creation
-lume create my-vm --os macOS --ipsw latest --unattended tahoe
+lume create my-vm --os macos --ipsw latest --unattended ./my-config.yml
 ```
 
-## YAML Schema
+### Debug mode
 
-The unattended configuration file uses YAML format with three main sections:
+Save screenshots showing what the automation sees:
+
+```bash
+lume create my-vm --os macos --ipsw latest --unattended tahoe --debug
+```
+
+Screenshots go to `/tmp/unattended-<uuid>` by default, or specify `--debug-dir /path/to/folder`.
+
+## How it works
+
+1. VM boots and reaches the Setup Assistant
+2. Lume waits `boot_wait` seconds for the UI to stabilize
+3. Commands execute sequentially: click text, type strings, press keys
+4. OCR finds text on screen; VNC sends input
+5. Optional health check verifies success (e.g., SSH connection)
+
+## Writing a config file
+
+A config has three parts:
 
 ```yaml
-# Seconds to wait after VM boots before starting automation
-boot_wait: 30
+boot_wait: 30           # Seconds to wait after boot
 
-# Sequence of commands to execute
-boot_commands:
-  - '<command>'
-  - '<command>'
-  # ...
+boot_commands:          # Sequence of automation commands
+  - "<wait 'Continue'>"
+  - "<click 'Continue'>"
+  - "<type 'lume'>"
+  - "<enter>"
 
-# Optional health check to verify setup success
-health_check:
+health_check:           # Optional verification
   type: ssh
   user: lume
   password: lume
 ```
 
-### Configuration Fields
+## Commands
 
-| Field           | Type    | Required | Default | Description                                               |
-| --------------- | ------- | -------- | ------- | --------------------------------------------------------- |
-| `boot_wait`     | integer | No       | 60      | Seconds to wait for VM to boot before starting automation |
-| `boot_commands` | array   | Yes      | -       | List of automation commands to execute                    |
-| `health_check`  | object  | No       | -       | Health check configuration to verify setup success        |
+### Wait for text (OCR)
 
-### Health Check Configuration
+```yaml
+- "<wait 'Continue'>"              # Wait up to 120s (default)
+- "<wait 'Loading...', timeout=300>"  # Custom timeout
+```
 
-| Field         | Type    | Required | Default | Description                         |
-| ------------- | ------- | -------- | ------- | ----------------------------------- |
-| `type`        | string  | Yes      | -       | Type of health check (`ssh`)        |
-| `user`        | string  | No       | -       | Username for SSH authentication     |
-| `password`    | string  | No       | -       | Password for SSH authentication     |
-| `timeout`     | integer | No       | 30      | Timeout in seconds for each attempt |
-| `retries`     | integer | No       | 3       | Number of retry attempts            |
-| `retry_delay` | integer | No       | 5       | Seconds to wait between retries     |
+### Click text
 
-## Boot Commands
+```yaml
+- "<click 'Continue'>"             # Click first occurrence
+- "<click 'Agree', index=-1>"      # Click last occurrence
+- "<click 'Label', xoffset=50>"    # Click 50px right of text
+- "<click_at 960,540>"             # Click exact coordinates
+```
 
-Boot commands are strings enclosed in angle brackets that control mouse, keyboard, and timing.
+When text appears multiple times (like "Agree" in license text and button), use `index`:
+- `index=0` — first (top)
+- `index=-1` — last (bottom)
 
-### Timing Commands
+### Type text
 
-| Command                    | Description                              | Example                      |
-| -------------------------- | ---------------------------------------- | ---------------------------- |
-| `<delay N>`                | Wait N seconds (supports decimals)       | `<delay 2>`, `<delay 0.5>`   |
-| `<wait 'text'>`            | Wait for text to appear on screen (OCR)  | `<wait 'Continue'>`          |
-| `<wait 'text', timeout=N>` | Wait with custom timeout (default: 120s) | `<wait 'Siri', timeout=300>` |
+```yaml
+- "<type 'username'>"
+- "<type 'my-password'>"
+```
 
-### Mouse Commands
+### Press keys
 
-| Command                     | Description                             | Example                        |
-| --------------------------- | --------------------------------------- | ------------------------------ |
-| `<click 'text'>`            | Click on detected text                  | `<click 'Continue'>`           |
-| `<click 'text', index=N>`   | Click Nth occurrence (0=first, -1=last) | `<click 'Agree', index=-1>`    |
-| `<click 'text', xoffset=N>` | Click with horizontal offset            | `<click 'Option', xoffset=50>` |
-| `<click 'text', yoffset=N>` | Click with vertical offset              | `<click 'Label', yoffset=30>`  |
-| `<click_at X,Y>`            | Click at exact coordinates              | `<click_at 960,540>`           |
+```yaml
+- "<enter>"          # or <return>
+- "<tab>"
+- "<space>"
+- "<esc>"
+- "<backspace>"
+- "<delete>"
+- "<up>" "<down>" "<left>" "<right>"
+- "<f1>" through "<f12>"
+```
 
-**Index parameter**: When text appears multiple times on screen (e.g., "Agree" in both license text and button), use `index` to select which occurrence:
+### Hotkey combinations
 
-- `index=0` - First (topmost) occurrence
-- `index=1` - Second occurrence
-- `index=-1` - Last (bottommost) occurrence
-- `index=-2` - Second to last occurrence
+```yaml
+- "<cmd+space>"      # Spotlight
+- "<cmd+c>"          # Copy
+- "<cmd+v>"          # Paste
+- "<cmd+q>"          # Quit
+- "<shift+cmd+3>"    # Screenshot
+- "<ctrl+alt+delete>"
+```
 
-### Keyboard Commands
+Modifiers: `cmd`/`command`/`super`, `shift`, `alt`/`option`, `ctrl`/`control`
 
-#### Special Keys
+### Delays
 
-| Command                               | Description            |
-| ------------------------------------- | ---------------------- |
-| `<enter>` or `<return>`               | Press Enter/Return key |
-| `<tab>`                               | Press Tab key          |
-| `<space>`                             | Press Spacebar         |
-| `<esc>` or `<escape>`                 | Press Escape key       |
-| `<backspace>`                         | Press Backspace key    |
-| `<delete>`                            | Press Delete key       |
-| `<up>`, `<down>`, `<left>`, `<right>` | Arrow keys             |
-| `<f1>` through `<f12>`                | Function keys          |
+```yaml
+- "<delay 2>"        # Wait 2 seconds
+- "<delay 0.5>"      # Decimals work
+```
 
-#### Text Input
+## Example: Complete Setup Assistant
 
-| Command         | Description           | Example             |
-| --------------- | --------------------- | ------------------- |
-| `<type 'text'>` | Type a string of text | `<type 'username'>` |
-
-#### Hotkey Combinations
-
-Combine modifier keys with `+`:
-
-| Modifier | Aliases                   |
-| -------- | ------------------------- |
-| Command  | `cmd`, `command`, `super` |
-| Shift    | `shift`                   |
-| Option   | `alt`, `option`           |
-| Control  | `ctrl`, `control`         |
-
-**Examples:**
-
-- `<cmd+space>` - Open Spotlight
-- `<cmd+q>` - Quit application
-- `<cmd+c>` - Copy
-- `<cmd+v>` - Paste
-- `<ctrl+alt+delete>` - Multi-key combo
-- `<shift+cmd+3>` - Screenshot
-
-## Example: Full macOS Setup
-
-This example walks through macOS Tahoe's Setup Assistant:
+This walks through macOS Tahoe's Setup Assistant:
 
 ```yaml
 boot_wait: 30
 
 boot_commands:
-  # Dismiss greeting screen
-  - '<delay 5>'
-  - '<space>'
-  - '<delay 2>'
+  # Dismiss greeting
+  - "<delay 5>"
+  - "<space>"
+  - "<delay 2>"
 
-  # Language selection
+  # Language
   - "<wait 'English', timeout=120>"
   - "<type 'English'>"
-  - '<delay 1>'
-  - '<enter>'
-  - '<delay 2>'
+  - "<delay 1>"
+  - "<enter>"
+  - "<delay 2>"
 
-  # Country/Region
+  # Country
   - "<wait 'Country or Region'>"
-  - '<click_at 960,900>' # Click list to focus
+  - "<click_at 960,900>"
   - "<type 'United States'>"
-  - '<enter>'
+  - "<enter>"
   - "<click 'Continue'>"
-  - '<delay 2>'
+  - "<delay 2>"
 
-  # Transfer Your Data - select "Set up as new"
+  # Transfer - select "Set up as new"
   - "<wait 'Transfer Your Data'>"
-  - '<delay 20>'
-  - '<tab>'
-  - '<tab>'
-  - '<tab>'
-  - '<space>' # Select "Set up as new"
+  - "<delay 20>"
+  - "<tab><tab><tab>"
+  - "<space>"
   - "<click 'Continue'>"
 
-  # Skip remaining screens...
+  # Accessibility
   - "<wait 'Accessibility'>"
   - "<click 'Not Now'>"
 
-  # Create account
+  # Account creation
   - "<wait 'Create a Mac Account'>"
-  - '<tab><tab><tab><tab><tab><tab>' # Tab to Full Name field
+  - "<tab><tab><tab><tab><tab><tab>"
   - "<type 'lume'>"
-  - '<tab><tab>' # Skip to Password
+  - "<tab><tab>"
   - "<type 'lume'>"
-  - '<tab>'
-  - "<type 'lume'>" # Verify password
-  - '<tab><tab><space>' # Uncheck Apple Account reset
+  - "<tab>"
+  - "<type 'lume'>"
+  - "<tab><tab><space>"
   - "<click 'Continue'>"
 
-  # Terms and Conditions
+  # Terms
   - "<wait 'Terms and Conditions'>"
-  - "<click 'Agree', index=-1>" # Click button, not text
+  - "<click 'Agree', index=-1>"
   - "<wait 'I have read and agree'>"
-  - "<click 'Agree', index=0>" # Click modal button
+  - "<click 'Agree', index=0>"
 
 health_check:
   type: ssh
@@ -258,79 +203,76 @@ health_check:
   retry_delay: 10
 ```
 
-## Debugging
+## Health checks
 
-Enable debug mode to save screenshots with OCR annotations. Debug flags work with both `lume setup` and `lume create --unattended`:
-
-```bash
-# Using lume setup
-lume setup my-vm --unattended tahoe --debug
-
-# Using lume create with unattended setup
-lume create my-vm --os macOS --ipsw latest --unattended tahoe --debug
-
-# Save screenshots to custom directory (both commands support this)
-lume setup my-vm --unattended tahoe --debug --debug-dir /path/to/debug
-lume create my-vm --os macOS --ipsw latest --unattended tahoe --debug --debug-dir /path/to/debug
-```
-
-By default, debug screenshots are saved to a unique folder in the system temp directory (e.g., `/tmp/unattended-<uuid>`).
-
-Debug screenshots show:
-
-- OCR-detected text with bounding boxes
-- Click target coordinates
-- Command being executed
-
-## Tips for Writing Configurations
-
-### Handling Timing
-
-- Use generous `<delay>` values between commands
-- Increase `boot_wait` if automation starts before the VM is ready
-- Use `<wait 'text', timeout=N>` for screens that load slowly
-
-### OCR Text Matching
-
-- Text matching is case-sensitive
-- Wait for unique text that identifies the screen before clicking
-- If text appears multiple times, use `index` parameter
-
-### Keyboard Navigation
-
-macOS requires full keyboard access to Tab through all UI elements:
+Verify setup succeeded by testing SSH connectivity:
 
 ```yaml
-- "<type 'defaults write NSGlobalDomain AppleKeyboardUIMode -int 3'>"
-- '<enter>'
+health_check:
+  type: ssh
+  user: lume
+  password: lume
+  timeout: 30      # Seconds per attempt
+  retries: 5       # Number of attempts
+  retry_delay: 10  # Seconds between retries
 ```
 
-### System Settings Automation
+The automation waits for the VM to become reachable via SSH before declaring success.
 
-Some settings can only be changed through GUI (protected by SIP):
+## Tips
 
-- Full Disk Access requires navigating System Settings
-- Use Spotlight (`<cmd+space>`) to search for specific settings
+**Timing issues** — If commands run before the screen is ready, increase `boot_wait` or add `<delay>` commands. Use `<wait 'text'>` to sync with specific screens.
 
-### Screen Coordinates
+**Text not found** — OCR is case-sensitive. Check exact spelling. If text is unreliable, use `<click_at X,Y>` with coordinates.
 
-- Default VM resolution is 1920x1440 (Retina-scaled)
-- Use `<click_at X,Y>` when text detection is unreliable
-- Center of screen is approximately `<click_at 960,720>`
+**Multiple occurrences** — When "Agree" appears in both license text and the button, use `<click 'Agree', index=-1>` to click the button (usually last).
+
+**Keyboard navigation** — macOS doesn't Tab through all elements by default. Enable full keyboard access:
+
+```yaml
+- "<cmd+space>"
+- "<type 'Keyboard'>"
+- "<delay 2>"
+- "<enter>"
+# Then enable "Keyboard navigation" in settings
+```
+
+**Screen coordinates** — Default resolution is 1920x1440. Center is roughly `<click_at 960,720>`.
 
 ## Troubleshooting
 
-| Issue                         | Solution                                                             |
-| ----------------------------- | -------------------------------------------------------------------- |
-| Commands execute too early    | Increase `boot_wait` or add `<delay>` commands                       |
-| Text not found                | Check exact spelling/case, increase timeout, use coordinates instead |
-| Wrong element clicked         | Use `index` parameter to select correct occurrence                   |
-| Hotkeys don't work            | Click on desktop first to give it focus                              |
-| Tab navigation skips elements | Enable full keyboard access with `AppleKeyboardUIMode`               |
+| Problem | Solution |
+|---------|----------|
+| Commands run too early | Increase `boot_wait`, add `<delay>` |
+| Text not found | Check spelling/case, increase timeout, use coordinates |
+| Wrong element clicked | Use `index` to select correct occurrence |
+| Hotkeys ignored | Click desktop first to focus |
+| Tab skips elements | Enable keyboard navigation in System Settings |
 
 ## Limitations
 
-1. **OCR accuracy**: Text detection depends on screen resolution and font rendering
-2. **Version-specific**: Setup Assistant flow changes between macOS versions
-3. **No conditional logic**: Commands execute sequentially without branching
-4. **Single display**: Coordinates assume single display at native resolution
+- **OCR depends on resolution** — Text detection accuracy varies with display settings
+- **Version-specific** — Setup Assistant changes between macOS releases
+- **No conditionals** — Commands run sequentially; can't branch based on screen state
+- **Single display** — Coordinates assume one display at native resolution
+
+## Reference
+
+### Config fields
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `boot_wait` | integer | 60 | Seconds to wait before starting |
+| `boot_commands` | array | required | List of commands |
+| `health_check` | object | optional | Verification config |
+
+### Health check fields
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `type` | string | required | `ssh` |
+| `user` | string | — | SSH username |
+| `password` | string | — | SSH password |
+| `timeout` | integer | 30 | Seconds per attempt |
+| `retries` | integer | 3 | Number of attempts |
+| `retry_delay` | integer | 5 | Seconds between retries |

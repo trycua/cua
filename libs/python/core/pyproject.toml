@@ -11,9 +11,7 @@ authors = [
     { name = "TryCua", email = "gh@trycua.com" }
 ]
 dependencies = [
-    "pydantic>=2.0.0",
-    "httpx>=0.24.0",
-    "posthog>=3.20.0"
+    "posthog>=3.20.0",
 ]
 requires-python = ">=3.12,<3.14"
 

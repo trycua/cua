@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import inspect
+import time
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Callable, Dict, Literal, Optional, Tuple
@@ -11,6 +12,18 @@ from .bot import Bot
 from .computers import DesktopSession, DesktopSetupConfig, get_session
 from .tracing import Tracing
 from .types import Action
+
+# Telemetry imports (optional)
+try:
+    from cua_bench.telemetry import (
+        track_task_evaluation_completed,
+        track_task_execution_failed,
+        track_task_execution_started,
+    )
+
+    _telemetry_available = True
+except ImportError:
+    _telemetry_available = False
 
 
 async def _call_function(func, *args, **kwargs):
@@ -46,6 +59,10 @@ class Environment:
     # step counter
     step_count: int = 0
     max_steps: Optional[int] = None
+
+    # Telemetry tracking
+    _execution_start_time: Optional[float] = None
+    _run_id: Optional[str] = None
 
     def __init__(
         self,
@@ -136,15 +153,19 @@ class Environment:
         self.bot = Bot(self)
 
     # --- Lifecycle API ---
-    async def reset(self, task_id: Optional[int] = None) -> Tuple[bytes, Dict]:
+    async def reset(
+        self, task_id: Optional[int] = None, run_id: Optional[str] = None
+    ) -> Tuple[bytes, Dict]:
         # Reset session state
         if self.session is not None:
             self.session.close()
             self.session = None
             self.page = None
 
-        # Reset step counter
+        # Reset step counter and telemetry tracking
         self.step_count = 0
+        self._execution_start_time = time.time()
+        self._run_id = run_id
 
         # Get tasks
         if self.tasks is None and self.tasks_config_fn is not None:
@@ -167,7 +188,33 @@ class Environment:
 
         # Setup current task
         if self.current_task is not None and self.setup_task_fn is not None:
-            await _call_function(self.setup_task_fn, self.current_task, self.session)
+            try:
+                await _call_function(self.setup_task_fn, self.current_task, self.session)
+            except Exception as e:
+                # Track setup failure
+                if _telemetry_available:
+                    track_task_execution_failed(
+                        env_name=self.env_name or "unknown",
+                        task_index=task_id or 0,
+                        error_type=type(e).__name__,
+                        error_message=str(e),
+                        stage="setup",
+                        run_id=self._run_id,
+                    )
+                raise
+
+        # Track task execution started
+        if _telemetry_available:
+            provider_type = self.session_name if self.session_name else None
+            os_type = self.setup_config.get("os_type") if self.setup_config else None
+            track_task_execution_started(
+                env_name=self.env_name or "unknown",
+                task_index=task_id or 0,
+                provider_type=provider_type,
+                os_type=os_type,
+                max_steps=self.max_steps,
+                run_id=self._run_id,
+            )
 
         # Return screenshot and task
         if self.session is None:
@@ -239,7 +286,20 @@ class Environment:
         if not dry_run:
             if self.print_actions:
                 print(f"Executing action: {action}")
-            await self.session.execute_action(action)
+            try:
+                await self.session.execute_action(action)
+            except Exception as e:
+                # Track step failure
+                if _telemetry_available:
+                    track_task_execution_failed(
+                        env_name=self.env_name or "unknown",
+                        task_index=0,
+                        error_type=type(e).__name__,
+                        error_message=str(e),
+                        stage="step",
+                        run_id=self._run_id,
+                    )
+                raise
 
         # take screenshot, record trace event, and return
         screenshot = await self.session.screenshot()
@@ -283,6 +343,18 @@ class Environment:
         except MaxStepsExceeded:
             # Gracefully stop solving when the step budget is exhausted
             pass
+        except Exception as e:
+            # Track solve failure (not MaxStepsExceeded)
+            if _telemetry_available:
+                track_task_execution_failed(
+                    env_name=self.env_name or "unknown",
+                    task_index=0,
+                    error_type=type(e).__name__,
+                    error_message=str(e),
+                    stage="solve",
+                    run_id=self._run_id,
+                )
+            raise
 
         # validate session
         if self.session is None:
@@ -301,12 +373,48 @@ class Environment:
             raise RuntimeError("No evaluate_task_fn provided")
 
         # evaluate task, return score
-        result = await _call_function(self.evaluate_task_fn, self.current_task, self.session)
+        try:
+            result = await _call_function(self.evaluate_task_fn, self.current_task, self.session)
+        except Exception as e:
+            # Track evaluate failure
+            if _telemetry_available:
+                track_task_execution_failed(
+                    env_name=self.env_name or "unknown",
+                    task_index=0,
+                    error_type=type(e).__name__,
+                    error_message=str(e),
+                    stage="evaluate",
+                    run_id=self._run_id,
+                )
+            raise
+
         if self.tracing is not None:
             self.tracing.record(
                 "evaluate",
                 {"result": result},
             )
+
+        # Track task evaluation completed
+        if _telemetry_available:
+            duration = time.time() - self._execution_start_time if self._execution_start_time else 0
+            success = False
+            if isinstance(result, (int, float)):
+                success = result >= 0.5  # Common threshold for success
+            elif isinstance(result, bool):
+                success = result
+            elif isinstance(result, dict) and "success" in result:
+                success = result["success"]
+
+            track_task_evaluation_completed(
+                env_name=self.env_name or "unknown",
+                task_index=0,  # We don't track which variant was selected
+                result=result,
+                success=success,
+                total_steps=self.step_count,
+                duration_seconds=duration,
+                run_id=self._run_id,
+            )
+
         return result
 
     async def close(self) -> None:

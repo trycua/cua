@@ -1,6 +1,7 @@
 """Main CLI entry point for cua-bench."""
 
 import argparse
+import atexit
 import sys
 from importlib import metadata as _metadata
 
@@ -17,6 +18,17 @@ from .commands import (
     task,
     trace,
 )
+
+# Telemetry imports
+try:
+    from cua_bench.telemetry import (
+        flush_telemetry,
+        track_command_invoked,
+    )
+
+    _telemetry_available = True
+except ImportError:
+    _telemetry_available = False
 
 
 def _get_version() -> str:
@@ -299,6 +311,33 @@ def main():
     if args.command is None:
         parser.print_help()
         sys.exit(1)
+
+    # Track command invocation with telemetry
+    if _telemetry_available:
+        # Register flush on exit
+        atexit.register(flush_telemetry)
+
+        # Extract subcommand for run command
+        subcommand = None
+        if args.command == "run" and hasattr(args, "run_command"):
+            subcommand = args.run_command
+
+        # Collect safe args for analytics
+        cmd_args = {}
+        for key in [
+            "agent",
+            "model",
+            "max_steps",
+            "platform",
+            "oracle",
+            "wait",
+            "debug",
+            "max_parallel",
+        ]:
+            if hasattr(args, key) and getattr(args, key) is not None:
+                cmd_args[key] = getattr(args, key)
+
+        track_command_invoked(args.command, subcommand, cmd_args)
 
     # Execute command
     if args.command == "run":

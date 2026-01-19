@@ -26,47 +26,12 @@ extension Server {
         // Record telemetry
         TelemetryClient.shared.record(event: TelemetryEvent.apiVMGet)
 
-        print("Getting VM details: name=\(name), storage=\(String(describing: storage))")
-
         do {
             let vmController = LumeController()
-            print("Created VM controller, attempting to get VM")
-            let vm = try vmController.get(name: name, storage: storage)
-            print("Successfully retrieved VM")
-
-            // Check for nil values that might cause crashes
-            if vm.vmDirContext.config.macAddress == nil {
-                print("ERROR: VM has nil macAddress")
-                return .badRequest(message: "VM configuration is invalid (nil macAddress)")
-            }
-            print("MacAddress check passed")
-
-            // Log that we're about to access details
-            print("Preparing VM details response")
-
-            // Print the full details object for debugging
-            let details = vm.details
-            print("VM DETAILS: \(details)")
-            print("  name: \(details.name)")
-            print("  os: \(details.os)")
-            print("  cpuCount: \(details.cpuCount)")
-            print("  memorySize: \(details.memorySize)")
-            print("  diskSize: \(details.diskSize)")
-            print("  display: \(details.display)")
-            print("  status: \(details.status)")
-            print("  vncUrl: \(String(describing: details.vncUrl))")
-            print("  ipAddress: \(String(describing: details.ipAddress))")
-            print("  locationName: \(details.locationName)")
-
-            // Serialize the VM details
-            print("About to serialize VM details")
-            let response = try HTTPResponse.json(vm.details)
-            print("Successfully serialized VM details")
-            return response
-
+            // Use getDetails() for consistent status including provisioning state
+            let details = try vmController.getDetails(name: name, storage: storage)
+            return try HTTPResponse.json(details)
         } catch {
-            // This will catch errors from both vmController.get and the json serialization
-            print("ERROR: Failed to get VM details: \(error.localizedDescription)")
             return .badRequest(message: error.localizedDescription)
         }
     }

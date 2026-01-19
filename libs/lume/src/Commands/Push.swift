@@ -40,6 +40,9 @@ struct Push: AsyncParsableCommand {
 
     @MainActor
     func run() async throws {
+        // Record telemetry
+        TelemetryClient.shared.record(event: TelemetryEvent.push)
+
         let controller = LumeController()
 
         // Parse primary image name and tag

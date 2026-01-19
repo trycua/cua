@@ -3,128 +3,179 @@ title: FAQ
 description: Frequently asked questions about Lume
 ---
 
-### What is the default VM password?
+Common questions about using Lume. For detailed guides, see [VM Management](/lume/guide/fundamentals/vm-management) and [Unattended Setup](/lume/guide/fundamentals/unattended-setup).
+
+## Credentials
+
+### What's the default password?
+
+For VMs created with `--unattended tahoe`:
 
 - **Username**: `lume`
 - **Password**: `lume`
 
-### Where are the VMs stored?
+For manually configured VMs, you set credentials during the Setup Assistant.
 
-VMs are stored in `~/.lume` by default. You can configure additional storage locations using the `lume config` command.
+## Storage
 
-### How are images cached?
+### Where are VMs stored?
 
-Images are cached in `~/.lume/cache`. When doing `lume pull <image>`, it will check if the image is already cached. If not, it will download the image and cache it, removing any older versions.
+Default location: `~/.lume`
 
-### Where is the configuration file stored?
-
-Lume follows the XDG Base Directory specification for the configuration file:
-
-- Configuration is stored in `$XDG_CONFIG_HOME/lume/config.yaml` (defaults to `~/.config/lume/config.yaml`)
-
-By default, other data is stored in:
-
-- VM data: `~/.lume`
-- Cache files: `~/.lume/cache`
-
-The config file contains settings for:
-
-- VM storage locations and the default location
-- Cache directory location
-- Whether caching is enabled
-
-You can view and modify these settings using the `lume config` commands:
+Add more locations with:
 
 ```bash
-# View current configuration
+lume config storage add external /Volumes/External/lume
+lume config storage list
+```
+
+### Do VM disks use their full allocated size?
+
+No. macOS uses sparse files—a 50GB disk might only use 20GB on your actual drive, growing as needed.
+
+### How do I move a VM to another drive?
+
+Clone it to the new location, then delete the original:
+
+```bash
+lume clone my-vm my-vm --source-storage default --dest-storage external
+lume delete my-vm --storage default
+```
+
+## Configuration
+
+### Where's the config file?
+
+`~/.config/lume/config.yaml` (follows XDG Base Directory spec)
+
+View settings with:
+
+```bash
 lume config get
-
-# Manage VM storage locations
-lume config storage list                 # List all VM storage locations
-lume config storage add <name> <path>    # Add a new VM storage location
-lume config storage remove <name>        # Remove a VM storage location
-lume config storage default <name>       # Set the default VM storage location
-
-# Manage cache settings
-lume config cache get                    # Get current cache directory
-lume config cache set <path>             # Set cache directory
-
-# Manage image caching settings
-lume config caching get                  # Show current caching status
-lume config caching set <boolean>        # Enable or disable image caching
 ```
 
-### How do I use multiple VM storage locations?
-
-Lume supports storing VMs in different locations (e.g., internal drive, external SSD). After configuring storage locations, you can specify which location to use with the `--storage` parameter in various commands:
+### How do I manage cache settings?
 
 ```bash
-# Create a VM in a specific storage location
-lume create my-vm --os macos --ipsw latest --storage ssd
+# Check caching status
+lume config caching get
 
-# Run a VM from a specific storage location
-lume run my-vm --storage ssd
+# Enable/disable caching
+lume config caching set true
 
-# Delete a VM from a specific storage location
-lume delete my-vm --storage ssd
+# Set cache directory
+lume config cache set /path/to/cache
 
-# Pull an image to a specific storage location
-lume pull macos-sequoia-vanilla:latest --name my-vm --storage ssd
-
-# Clone a VM between storage locations
-lume clone source-vm cloned-vm --source-storage default --dest-storage ssd
+# Clear cache
+lume prune
 ```
 
-If you don't specify a storage location, Lume will use the default one or search across all configured locations.
+### How do I change the display resolution?
 
-### Are VM disks taking up all the disk space?
+By default, VMs use 1024x768. Change it with `lume set`:
 
-No, macOS uses sparse files, which only allocate space as needed. For example, VM disks totaling 50 GB may only use 20 GB on disk.
+```bash
+lume set my-vm --display 1920x1080
+```
 
-### How do I get the latest macOS restore image URL?
+The VM must be stopped for this to work. After restarting the VM, go to **System Settings → Displays**, enable **Show all resolutions**, and select your new resolution. You can also set display resolution during creation:
+
+```bash
+lume create my-vm --os macos --ipsw latest --display 1920x1080
+```
+
+## Limits
+
+### How many macOS VMs can I run at once?
+
+Apple's macOS Software License Agreement (section 2.B.iii) limits you to **2 concurrent macOS VMs** per physical Mac. This is a licensing restriction, not a technical one—the Virtualization Framework enforces it automatically.
+
+Linux VMs have no such limitation. You can run as many as your hardware supports.
+
+### Can I run VMs inside a VM (nested virtualization)?
+
+**macOS VMs**: No. Apple's Virtualization Framework doesn't support nested virtualization for macOS guests. If you try to run `lume create` inside a macOS VM, you'll get "Virtualization is not available on this hardware."
+
+**Linux VMs**: Yes, on macOS 15+. Linux guests can run VMs inside them using KVM or other hypervisors. This is useful for testing Kubernetes, Docker, or other virtualization workloads.
+
+## Images
+
+### How do I get the latest macOS IPSW URL?
 
 ```bash
 lume ipsw
 ```
 
-### Where can I download older macOS IPSW versions?
+### Where can I get older macOS versions?
 
-Apple only provides the latest IPSW through official channels. For older versions, searching for "macOS IPSW download" will find community resources that archive previous releases. Make sure to download UniversalMac IPSW files (for Apple Silicon).
+Apple only provides the latest IPSW officially. Community archives exist—search "macOS IPSW download" and ensure you get UniversalMac files (for Apple Silicon).
 
-### How do I delete a VM?
+### How do I install from a specific IPSW?
+
+Download the IPSW first, then:
 
 ```bash
-lume delete <name>
+lume create my-vm --os macos --ipsw /path/to/downloaded.ipsw
 ```
 
-### How to Install macOS from an IPSW Image
+## Linux VMs
 
-#### Create a new macOS VM using the latest supported IPSW image:
+### How do I create a Linux VM?
 
-Run the following command to create a new macOS virtual machine using the latest available IPSW image:
+Linux uses ISO images instead of IPSW. Create the VM, boot with the installer mounted, then run normally:
 
 ```bash
-lume create <name> --os macos --ipsw latest
+# Create empty Linux VM
+lume create linux-vm --os linux
+
+# First boot: mount installer ISO
+lume run linux-vm --mount /path/to/ubuntu.iso
+
+# After installation: run normally
+lume run linux-vm
 ```
 
-#### Create a new macOS VM using a specific IPSW image:
+## VM Status
 
-To create a macOS virtual machine from an older or specific IPSW file, first download the desired IPSW (UniversalMac) from a trusted source.
+### What do the different VM statuses mean?
 
-Then, use the downloaded IPSW path:
+Check VM status with `lume ls`:
+
+| Status | Description |
+|--------|-------------|
+| `stopped` | VM is not running and ready to start |
+| `running` | VM is running |
+| `provisioning (ipsw_install)` | VM is being created—downloading and installing macOS |
+| `provisioning (unattended_setup)` | VM is being created—running automated Setup Assistant |
+
+VMs in `provisioning` status are being created asynchronously. Wait for status to change to `stopped` before starting them.
+
+## Troubleshooting
+
+### VM won't start
+
+1. Check if another VM is running: `lume ls`
+2. Stop any running VMs: `lume stop <name>`
+3. Check available disk space
+4. If VM shows `provisioning`, wait for creation to complete
+5. Try running with `--no-display` to see if it's a VNC issue
+
+### Can't connect to VM via SSH
+
+1. Ensure SSH is enabled in the VM (System Settings → Sharing → Remote Login)
+2. Get the VM's IP: `lume get my-vm`
+3. Try: `ssh lume@<ip-address>`
+
+For VMs created with `--unattended tahoe`, SSH is enabled automatically.
+
+### `lume serve` port already in use
+
+Another Lume instance is running. Either use it or kill it:
 
 ```bash
-lume create <name> --os macos --ipsw <downloaded_ipsw_path>
-```
+# Check what's using port 7777
+lsof -i :7777
 
-### How do I install a custom Linux image?
-
-The process for creating a custom Linux image differs than macOS, with IPSW restore files not being used. You need to create a linux VM first, then mount a setup image file to the VM for the first boot.
-
-```bash
-lume create <name> --os linux
-
-lume run <name> --mount <path-to-setup-image>
-
-lume run <name>
+# Kill the process
+kill <pid>
 ```

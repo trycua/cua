@@ -65,6 +65,8 @@ struct CreateVMRequest: Codable {
     let display: String
     let ipsw: String?
     let storage: String?
+    /// Preset name or path to YAML config file for unattended macOS Setup Assistant automation
+    let unattended: String?
 
     func parse() throws -> (memory: UInt64, diskSize: UInt64) {
         return (

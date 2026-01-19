@@ -1,0 +1,186 @@
+---
+title: Sandbox with MCP
+description: Use Claude Cowork with Lume MCP connector for VM management
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+[Claude Cowork](https://support.claude.com/en/articles/13345190-getting-started-with-cowork) can manage macOS VMs natively using Lume's MCP connector. Instead of manually starting VMs and providing SSH credentials, Cowork uses MCP tools to control the full VM lifecycle.
+
+## How it works
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                      Your Mac (Host)                            │
+│                                                                 │
+│  ┌──────────────────┐           ┌───────────────────────────┐  │
+│  │ Claude Cowork    │◄── MCP ──►│ Lume MCP Server           │  │
+│  │ (Desktop app)    │  (stdio)  │ (lume serve --mcp)        │  │
+│  └──────────────────┘           └─────────────┬─────────────┘  │
+│                                               │                 │
+│                                               │ VM Control      │
+│                                               ▼                 │
+│  ┌─────────────────────────────────────────────────────────────┐│
+│  │                   macOS VM Sandbox                          ││
+│  │  Cowork can: list, run, stop, clone, delete, exec commands  ││
+│  └─────────────────────────────────────────────────────────────┘│
+└─────────────────────────────────────────────────────────────────┘
+```
+
+## Prerequisites
+
+1. **Lume installed** with MCP support
+2. **A sandbox VM** created with `--unattended tahoe`
+3. **sshpass** for command execution: `brew install hudochenkov/sshpass/sshpass`
+
+## Setup
+
+### 1. Configure Claude Desktop
+
+Add the Lume MCP server to your Claude Desktop config:
+
+**`~/Library/Application Support/Claude/claude_desktop_config.json`**
+
+```json
+{
+  "mcpServers": {
+    "lume": {
+      "command": "lume",
+      "args": ["serve", "--mcp"]
+    }
+  }
+}
+```
+
+<Callout type="info">
+If `lume` isn't in your PATH, use the full path: `/Users/yourname/.local/bin/lume`
+</Callout>
+
+### 2. Restart Claude Desktop
+
+After saving the config, restart Claude Desktop. The Lume tools will now be available to Cowork.
+
+### 3. Create a sandbox VM
+
+If you haven't already:
+
+```bash
+lume create sandbox --os macos --ipsw latest --unattended tahoe
+```
+
+## Available MCP tools
+
+| Tool | Description |
+|------|-------------|
+| `lume_list_vms` | List all VMs with status and IP addresses |
+| `lume_get_vm` | Get detailed VM info |
+| `lume_run_vm` | Start a VM with optional shared directory |
+| `lume_stop_vm` | Stop a running VM |
+| `lume_clone_vm` | Clone a VM (for golden images) |
+| `lume_delete_vm` | Delete a VM |
+| `lume_exec` | Execute commands inside the VM |
+
+## Example workflow
+
+Ask Cowork:
+
+> "Start my sandbox VM with ~/project shared, then run the tests in the shared folder."
+
+Cowork will:
+
+```
+[Calls lume_run_vm with name="sandbox", shared_dir="~/project"]
+VM 'sandbox' started successfully.
+
+[Calls lume_exec with name="sandbox", command="cd /Volumes/My\\ Shared\\ Files && npm test"]
+
+> test@1.0.0 test
+> jest
+
+PASS  src/app.test.js
+  42 passing (1.2s)
+
+All tests passed!
+```
+
+## Example session
+
+```
+You: List my VMs and start the sandbox with my project folder shared.
+
+Cowork: I'll check your VMs and start the sandbox.
+
+[Calls lume_list_vms]
+Found 2 VMs:
+- sandbox (stopped)
+- dev-vm (running, IP: 192.168.64.3)
+
+[Calls lume_run_vm with name="sandbox", shared_dir="~/my-project", no_display=true]
+VM 'sandbox' started successfully.
+
+[Calls lume_get_vm with name="sandbox"]
+sandbox:
+  State: running
+  IP: 192.168.64.5
+  SSH: available
+
+The sandbox is now running. Your project files are available at /Volumes/My Shared Files
+inside the VM. What would you like me to do next?
+```
+
+## Resetting the sandbox
+
+Ask Cowork:
+
+> "Reset the sandbox to a clean state using the golden image."
+
+```
+[Calls lume_stop_vm with name="sandbox"]
+VM stopped.
+
+[Calls lume_delete_vm with name="sandbox"]
+VM deleted.
+
+[Calls lume_clone_vm with name="sandbox-golden", new_name="sandbox"]
+VM cloned successfully.
+
+[Calls lume_run_vm with name="sandbox", no_display=true]
+VM 'sandbox' started from clean state.
+```
+
+## Advantages over SSH
+
+| Feature | SSH (Claude Code) | MCP (Claude Cowork) |
+|---------|------------------|---------------------|
+| VM lifecycle | Manual (`lume run/stop`) | Automated via tools |
+| IP lookup | Manual (`lume get`) | Automatic |
+| Credentials | User provides | Configured once |
+| Reset workflow | Script required | Natural language |
+
+With MCP, Cowork can manage the entire VM lifecycle through conversation.
+
+## Troubleshooting
+
+### Cowork doesn't see Lume tools
+
+1. Check `claude_desktop_config.json` syntax
+2. Verify `lume serve --mcp` works: `npx @modelcontextprotocol/inspector lume serve --mcp`
+3. Restart Claude Desktop completely
+
+### lume_exec fails
+
+Ensure sshpass is installed:
+
+```bash
+brew install hudochenkov/sshpass/sshpass
+```
+
+### VM has no IP address
+
+The VM might not be fully booted. Wait a few seconds and try again, or check with `lume get sandbox`.
+
+## Next steps
+
+- [Stock Analysis with Numbers](/lume/examples/claude-cowork/numbers-stock-analysis) — Use macOS-only apps via MCP
+- [MCP Server Reference](/lume/guide/advanced/mcp-server) — Full MCP documentation
+- [Claude Code Sandbox](/lume/examples/claude-code/sandbox) — SSH-based alternative

@@ -171,6 +171,7 @@ enum VMError: Error, LocalizedError {
     case internalError(String)
     case unsupportedOS(String)
     case invalidDisplayResolution(String)
+    case stillProvisioning(String)
     var errorDescription: String? {
         switch self {
         case .alreadyExists(let name):
@@ -202,6 +203,8 @@ enum VMError: Error, LocalizedError {
             return "Unsupported operating system: \(os)"
         case .invalidDisplayResolution(let resolution):
             return "Invalid display resolution: \(resolution)"
+        case .stillProvisioning(let name):
+            return "Virtual machine is still being provisioned: \(name)"
         }
     }
 }

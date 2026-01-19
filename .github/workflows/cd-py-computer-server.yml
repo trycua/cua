@@ -69,7 +69,6 @@ jobs:
       package_name: "computer-server"
       package_dir: "libs/python/computer-server"
       version: ${{ needs.prepare.outputs.version }}
-      is_lume_package: false
       base_package_name: "cua-computer-server"
     secrets:
       PYPI_TOKEN: ${{ secrets.PYPI_TOKEN }}

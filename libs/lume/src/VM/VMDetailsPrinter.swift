@@ -11,7 +11,7 @@ enum VMDetailsPrinter {
 
     /// Configuration for all columns in the status table
     private static let columns: [Column] = [
-        Column(header: "name", width: 34, getValue: { $0.name }),
+        Column(header: "name", width: 40, getValue: { $0.name }),
         Column(header: "os", width: 8, getValue: { $0.os }),
         Column(header: "cpu", width: 8, getValue: { String($0.cpuCount) }),
         Column(
@@ -26,9 +26,13 @@ enum VMDetailsPrinter {
             }),
         Column(header: "display", width: 12, getValue: { $0.display }),
         Column(
-            header: "status", width: 16,
-            getValue: {
-                $0.status
+            header: "status", width: 28,
+            getValue: { vm in
+                // Show operation type for provisioning status
+                if vm.status == "provisioning", let op = vm.provisioningOperation {
+                    return "provisioning (\(op))"
+                }
+                return vm.status
             }),
         Column(header: "storage", width: 16, getValue: { $0.locationName }),
         Column(

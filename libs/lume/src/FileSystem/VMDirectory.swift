@@ -16,6 +16,7 @@ struct VMDirectory: Sendable {
         static let disk = "disk.img"
         static let config = "config.json"
         static let sessions = "sessions.json"
+        static let provisioning = ".provisioning"
     }
     
     // MARK: - Properties
@@ -25,6 +26,7 @@ struct VMDirectory: Sendable {
     let diskPath: Path
     let configPath: Path
     let sessionsPath: Path
+    let provisioningPath: Path
     
     /// The name of the VM directory
     var name: String { dir.name }
@@ -40,33 +42,34 @@ struct VMDirectory: Sendable {
         self.diskPath = dir.file(FileNames.disk)
         self.configPath = dir.file(FileNames.config)
         self.sessionsPath = dir.file(FileNames.sessions)
+        self.provisioningPath = dir.file(FileNames.provisioning)
     }
 }
 
 // MARK: - VM State Management
 
 extension VMDirectory {
-    /// Checks if the VM directory is fully initialized with all required files
+    /// Checks if the VM directory is initialized (either fully ready or provisioning)
+    /// A VM is considered initialized if it has:
+    /// - All required files (config + disk + nvram), OR
+    /// - Config + provisioning marker (VM is being created)
     func initialized() -> Bool {
-        // Add detailed logging for debugging
         let configExists = configPath.exists()
         let diskExists = diskPath.exists()
         let nvramExists = nvramPath.exists()
-        
-        // Logger.info(
-        //     "VM directory initialization check", 
-        //     metadata: [
-        //         "directory": dir.path,
-        //         "config_path": configPath.path,
-        //         "config_exists": "\(configExists)",
-        //         "disk_path": diskPath.path,
-        //         "disk_exists": "\(diskExists)",
-        //         "nvram_path": nvramPath.path,
-        //         "nvram_exists": "\(nvramExists)"
-        //     ]
-        // )
-        
-        return configExists && diskExists && nvramExists
+        let provisioningExists = provisioningPath.exists()
+
+        // Fully initialized VM
+        if configExists && diskExists && nvramExists {
+            return true
+        }
+
+        // VM being provisioned (has config and provisioning marker)
+        if configExists && provisioningExists {
+            return true
+        }
+
+        return false
     }
 
     /// Checks if the VM directory exists
@@ -189,6 +192,65 @@ extension VMDirectory {
     }
 }
 
+// MARK: - Provisioning Marker Management
+
+/// Represents the provisioning state of a VM during long-running operations
+struct ProvisioningMarker: Codable {
+    /// The type of operation being performed (e.g., "ipsw_install", "unattended_setup")
+    let operation: String
+    /// When the provisioning started (Unix timestamp)
+    let startedAt: Double
+    
+    init(operation: String) {
+        self.operation = operation
+        self.startedAt = Date().timeIntervalSince1970
+    }
+    
+    /// Returns true if provisioning started more than the specified hours ago
+    func isStale(hours: Double = 8.0) -> Bool {
+        let elapsed = Date().timeIntervalSince1970 - startedAt
+        return elapsed > (hours * 3600)
+    }
+}
+
+extension VMDirectory {
+    /// Saves a provisioning marker to indicate the VM is being created/configured
+    /// - Parameter marker: The provisioning marker containing operation type
+    /// - Throws: VMDirectoryError if the save operation fails
+    func saveProvisioningMarker(_ marker: ProvisioningMarker) throws {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .prettyPrinted
+
+        do {
+            let data = try encoder.encode(marker)
+            guard FileManager.default.createFile(atPath: provisioningPath.path, contents: data) else {
+                throw VMDirectoryError.fileCreationFailed(provisioningPath.path)
+            }
+        } catch {
+            throw VMDirectoryError.fileCreationFailed(provisioningPath.path)
+        }
+    }
+
+    /// Loads the provisioning marker if it exists
+    /// - Returns: The provisioning marker, or nil if not in provisioning state
+    func loadProvisioningMarker() -> ProvisioningMarker? {
+        guard let data = FileManager.default.contents(atPath: provisioningPath.path) else {
+            return nil
+        }
+        return try? JSONDecoder().decode(ProvisioningMarker.self, from: data)
+    }
+
+    /// Removes the provisioning marker after creation completes
+    func clearProvisioningMarker() {
+        try? FileManager.default.removeItem(atPath: provisioningPath.path)
+    }
+
+    /// Checks if the VM is currently being provisioned
+    func isProvisioning() -> Bool {
+        provisioningPath.exists()
+    }
+}
+
 // MARK: - CustomStringConvertible
 extension VMDirectory: CustomStringConvertible {
     var description: String {
@@ -237,14 +299,16 @@ extension VMDirectory {
     ///
     /// - Parameters:
     ///   - locationName: The storage location name for this VM
-    ///   - isRunning: Whether the VM is currently running
+    ///   - status: The VM status ("running", "stopped", or "provisioning")
+    ///   - provisioningOperation: Optional operation type if status is "provisioning"
     ///   - vncUrl: Optional VNC URL if running
     ///   - ipAddress: Optional IP address if running
     ///   - sshAvailable: Optional SSH availability status
     /// - Returns: VMDetails or nil if config cannot be loaded
     func getDetails(
         locationName: String,
-        isRunning: Bool,
+        status: String,
+        provisioningOperation: String? = nil,
         vncUrl: String?,
         ipAddress: String?,
         sshAvailable: Bool? = nil
@@ -260,7 +324,8 @@ extension VMDirectory {
             memorySize: config.memorySize ?? 0,
             diskSize: getDiskSize(),
             display: config.display.string,
-            status: isRunning ? "running" : "stopped",
+            status: status,
+            provisioningOperation: provisioningOperation,
             vncUrl: vncUrl,
             ipAddress: ipAddress,
             sshAvailable: sshAvailable,

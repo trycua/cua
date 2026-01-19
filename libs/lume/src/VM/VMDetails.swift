@@ -37,6 +37,8 @@ struct VMDetails: Codable {
     let diskSize: DiskSize
     let display: String
     let status: String
+    /// Operation type when status is "provisioning" (e.g., "ipsw_install", "unattended_setup")
+    let provisioningOperation: String?
     let vncUrl: String?
     let ipAddress: String?
     let sshAvailable: Bool?
@@ -45,7 +47,7 @@ struct VMDetails: Codable {
 
     enum CodingKeys: String, CodingKey {
         case name, os, cpuCount, memorySize, diskSize, display, status
-        case vncUrl, ipAddress, sshAvailable, locationName, sharedDirectories
+        case provisioningOperation, vncUrl, ipAddress, sshAvailable, locationName, sharedDirectories
     }
 
     init(
@@ -56,6 +58,7 @@ struct VMDetails: Codable {
         diskSize: DiskSize,
         display: String,
         status: String,
+        provisioningOperation: String? = nil,
         vncUrl: String?,
         ipAddress: String?,
         sshAvailable: Bool? = nil,
@@ -69,6 +72,7 @@ struct VMDetails: Codable {
         self.diskSize = diskSize
         self.display = display
         self.status = status
+        self.provisioningOperation = provisioningOperation
         self.vncUrl = vncUrl
         self.ipAddress = ipAddress
         self.sshAvailable = sshAvailable
@@ -86,6 +90,7 @@ struct VMDetails: Codable {
         try container.encode(diskSize, forKey: .diskSize)
         try container.encode(display, forKey: .display)
         try container.encode(status, forKey: .status)
+        try container.encode(provisioningOperation, forKey: .provisioningOperation)
         try container.encode(vncUrl, forKey: .vncUrl)
         try container.encode(ipAddress, forKey: .ipAddress)
         try container.encode(sshAvailable, forKey: .sshAvailable)

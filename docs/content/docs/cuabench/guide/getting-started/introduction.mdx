@@ -19,10 +19,19 @@ Examples of Cua-Bench tasks are:
 - Installing design software and editing images to remove backgrounds
 - Using office applications to format and merge multiple documents
 
-Cua-Bench consists of two parts:
+Cua-Bench consists of three parts:
 
-1. **A dataset of tasks** - Verifiable, dynamic computer-use environments across multiple operating systems
-2. **An evaluation/training harness** - Tools for running benchmarks, generating data, and testing agents
+<div className="not-prose relative rounded-xl overflow-hidden my-8 w-full">
+  <img
+    src="/docs/img/cua-bench-architecture.png"
+    alt="Cua-Bench Architecture"
+    className="w-full h-auto rounded-xl"
+  />
+</div>
+
+1. **Base images** - Pre-packaged Windows, Linux, macOS, and Android environments with apps and dependencies needed for benchmark runs
+2. **A dataset of tasks** - Verifiable, dynamic computer-use environments across multiple operating systems
+3. **An evaluation/training harness** - Tools for running benchmarks, generating data, and testing agents
 
 # Dataset of tasks
 

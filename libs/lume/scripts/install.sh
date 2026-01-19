@@ -91,7 +91,14 @@ while [ "$#" -gt 0 ]; do
   shift
 done
 
-echo "${BOLD}${BLUE}Lume Installer${NORMAL}"
+echo "${BOLD}${BLUE}"
+echo "  ⠀⣀⣀⡀⠀⠀⠀⠀⢀⣀⣀⣀⡀⠘⠋⢉⠙⣷⠀⠀ ⠀"
+echo " ⠀⠀⢀⣴⣿⡿⠋⣉⠁⣠⣾⣿⣿⣿⣿⡿⠿⣦⡈⠀⣿⡇⠃⠀"
+echo " ⠀⠀⠀⣽⣿⣧⠀⠃⢰⣿⣿⡏⠙⣿⠿⢧⣀⣼⣷⠀⡿⠃⠀⠀"
+echo " ⠀⠀⠀⠉⣿⣿⣦⠀⢿⣿⣿⣷⣾⡏⠀⠀⢹⣿⣿⠀⠀⠀⠀⠀⠀"
+echo " ⠀⠀⠀⠀⠀⠉⠛⠁⠈⠿⣿⣿⣿⣷⣄⣠⡼⠟⠁${NORMAL}${BOLD}  Lume Installer${NORMAL}"
+echo "${BLUE}           macOS VM CLI and server${NORMAL}"
+echo ""
 echo "This script will install Lume to your system."
 
 # Check if we're running with appropriate permissions
@@ -255,34 +262,55 @@ install_binary() {
   
   # Move the binary to the installation directory
   mv "$TEMP_DIR/lume" "$INSTALL_DIR/"
-  
+
   # Make the binary executable
   chmod +x "$INSTALL_DIR/lume"
-  
+
+  # Move the resource bundle if it exists (contains unattended presets)
+  if [ -d "$TEMP_DIR/lume_lume.bundle" ]; then
+    rm -rf "$INSTALL_DIR/lume_lume.bundle"
+    mv "$TEMP_DIR/lume_lume.bundle" "$INSTALL_DIR/"
+    echo "Resource bundle installed to ${BOLD}$INSTALL_DIR/lume_lume.bundle${NORMAL}"
+  fi
+
   echo "${GREEN}Installation complete!${NORMAL}"
   echo "Lume has been installed to ${BOLD}$INSTALL_DIR/lume${NORMAL}"
   
   # Check if the installation directory is in PATH
   if [ -n "${PATH##*$INSTALL_DIR*}" ]; then
     SHELL_NAME=$(basename "$SHELL")
-    echo "${YELLOW}Warning: $INSTALL_DIR is not in your PATH.${NORMAL}"
+    echo ""
+    echo "${YELLOW}╔════════════════════════════════════════════════════════════════╗${NORMAL}"
+    echo "${YELLOW}║  ${BOLD}ACTION REQUIRED:${NORMAL}${YELLOW} $INSTALL_DIR is not in your PATH${NORMAL}"
+    echo "${YELLOW}╚════════════════════════════════════════════════════════════════╝${NORMAL}"
+    echo ""
     case "$SHELL_NAME" in
       zsh)
-        echo "To add it, run:"
-        echo "  echo 'export PATH=\"\$PATH:$INSTALL_DIR\"' >> ~/.zprofile"
+        echo "Run these commands:"
+        echo "  ${BOLD}echo 'export PATH=\"\$PATH:$INSTALL_DIR\"' >> ~/.zshrc${NORMAL}"
+        echo "  ${BOLD}source ~/.zshrc${NORMAL}"
+        echo ""
+        echo "Or restart your terminal after running the first command."
         ;;
       bash)
-        echo "To add it, run:"
-        echo "  echo 'export PATH=\"\$PATH:$INSTALL_DIR\"' >> ~/.bash_profile"
+        echo "Run these commands:"
+        echo "  ${BOLD}echo 'export PATH=\"\$PATH:$INSTALL_DIR\"' >> ~/.bash_profile${NORMAL}"
+        echo "  ${BOLD}source ~/.bash_profile${NORMAL}"
+        echo ""
+        echo "Or restart your terminal after running the first command."
         ;;
       fish)
-        echo "To add it, run:"
-        echo "  echo 'fish_add_path $INSTALL_DIR' >> ~/.config/fish/config.fish"
+        echo "Run this command:"
+        echo "  ${BOLD}echo 'fish_add_path $INSTALL_DIR' >> ~/.config/fish/config.fish${NORMAL}"
+        echo ""
+        echo "Then restart your terminal."
         ;;
       *)
-        echo "Add $INSTALL_DIR to your PATH in your shell profile file."
+        echo "Add $INSTALL_DIR to your PATH in your shell profile file,"
+        echo "then restart your terminal or source your profile."
         ;;
     esac
+    echo ""
   fi
 }
 
@@ -380,6 +408,13 @@ apply_update() {
       # Install new binary
       mv "$TEMP_DIR/lume" "$INSTALL_DIR/"
       chmod +x "$INSTALL_DIR/lume"
+
+      # Install resource bundle if it exists (contains unattended presets)
+      if [ -d "$TEMP_DIR/lume_lume.bundle" ]; then
+        rm -rf "$INSTALL_DIR/lume_lume.bundle"
+        mv "$TEMP_DIR/lume_lume.bundle" "$INSTALL_DIR/"
+        log "Resource bundle installed"
+      fi
 
       # Restart the daemon
       launchctl load "$HOME/Library/LaunchAgents/com.trycua.lume_daemon.plist" 2>/dev/null || true

@@ -1,0 +1,205 @@
+---
+title: Homebrew Testing
+description: Test Homebrew formulas in a clean, isolated macOS environment
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+This example demonstrates testing Homebrew packages in a **clean, isolated macOS environment**. Unlike your host machine cluttered with dependencies, a fresh VM sandbox ensures reproducible testing conditions.
+
+## Why use a sandbox?
+
+Testing Homebrew formulas on your host has problems:
+
+- **Dependency pollution** — Existing packages may mask missing dependencies
+- **State accumulation** — Previous installs leave behind configs and files
+- **Risk of breakage** — Testing can corrupt your development environment
+
+A macOS VM sandbox solves these:
+
+- **Clean slate** — Every test starts from a known state
+- **Isolation** — Bad installs don't affect your host
+- **Reproducibility** — Others can replicate your exact environment
+
+## Prerequisites
+
+- [Sandbox VM set up](/lume/examples/claude-code/sandbox)
+- A "golden image" VM for quick resets
+
+### Create a golden image
+
+Before testing, create a clean snapshot you can restore:
+
+```bash
+# Stop the sandbox if running
+lume stop sandbox
+
+# Create a golden image
+lume clone sandbox sandbox-golden
+
+# Now you can always reset to this clean state
+```
+
+## Example prompt
+
+Ask Claude Code:
+
+> "SSH into the sandbox. Install the 'jq' Homebrew formula, verify it works by parsing some JSON, then tell me if it installed correctly."
+
+## What Claude does
+
+1. **Connects to the sandbox** via SSH
+2. **Installs the formula** with `brew install`
+3. **Tests the installation** with sample data
+4. **Reports results** including version and functionality
+
+## Example session
+
+```
+You: SSH into lume@192.168.64.5. Test the 'jq' Homebrew formula -
+     install it, verify it parses JSON correctly, and report the results.
+
+Claude: I'll connect to the sandbox and test the jq formula.
+
+[Runs: ssh lume@192.168.64.5]
+
+First, let me check if Homebrew is installed:
+
+[Runs: brew --version]
+Homebrew 4.2.0
+
+Now installing jq:
+
+[Runs: brew install jq]
+==> Downloading https://ghcr.io/v2/homebrew/core/jq/manifests/1.7.1
+==> Fetching jq
+==> Installing jq
+==> Pouring jq--1.7.1.arm64_sonoma.bottle.tar.gz
+/opt/homebrew/Cellar/jq/1.7.1: 19 files, 1.4MB
+
+Verifying the installation:
+
+[Runs: jq --version]
+jq-1.7.1
+
+Testing JSON parsing:
+
+[Runs: echo '{"name": "test", "values": [1, 2, 3]}' | jq '.name']
+"test"
+
+[Runs: echo '{"name": "test", "values": [1, 2, 3]}' | jq '.values | add']
+6
+
+Testing with a more complex query:
+
+[Runs: curl -s https://api.github.com/repos/jqlang/jq | jq '{name, stars: .stargazers_count, language}']
+{
+  "name": "jq",
+  "stars": 28534,
+  "language": "C"
+}
+
+Test Results:
+- Installation: Success
+- Version: jq-1.7.1
+- Basic parsing: Working
+- Array operations: Working
+- API response parsing: Working
+
+The jq formula installed correctly and all functionality tests passed.
+```
+
+## Resetting for the next test
+
+After testing, reset the sandbox to the clean state:
+
+```bash
+# Stop and delete the modified sandbox
+lume stop sandbox
+lume delete sandbox
+
+# Restore from golden image
+lume clone sandbox-golden sandbox
+
+# Start fresh for the next test
+lume run sandbox --no-display --shared-dir ~/my-project
+```
+
+Or automate it in a script:
+
+```bash
+#!/bin/bash
+# reset-sandbox.sh
+
+VM_NAME="sandbox"
+GOLDEN_IMAGE="sandbox-golden"
+
+lume stop $VM_NAME 2>/dev/null
+lume delete $VM_NAME 2>/dev/null
+lume clone $GOLDEN_IMAGE $VM_NAME
+lume run $VM_NAME --no-display
+
+echo "Sandbox reset complete"
+```
+
+## Testing your own formula
+
+If you're developing a Homebrew formula:
+
+```
+You: SSH into the sandbox. Install my formula from ./my-formula.rb in the shared folder
+     and verify it works.
+
+Claude: I'll test your local formula.
+
+[Runs: ssh lume@192.168.64.5]
+[Runs: cd /Volumes/My\ Shared\ Files]
+[Runs: brew install --formula ./my-formula.rb]
+
+# Claude tests the installed tool and reports any issues
+```
+
+## Common testing scenarios
+
+### Test a formula with dependencies
+
+```
+You: Install 'ffmpeg' and verify video conversion works.
+```
+
+Claude will install ffmpeg with all its dependencies and test encoding.
+
+### Test formula upgrades
+
+```
+You: The sandbox has jq 1.6. Upgrade to 1.7 and verify nothing breaks.
+```
+
+### Test conflicting packages
+
+```
+You: Try installing both 'python@3.11' and 'python@3.12', then test importing
+     packages in each version.
+```
+
+### Verify formula uninstallation
+
+```
+You: Install jq, uninstall it, and verify it's completely removed with no leftover files.
+```
+
+## Why this matters
+
+| Testing Approach | Clean Environment | Isolated | Resettable |
+|-----------------|-------------------|----------|------------|
+| Host machine | No | No | No |
+| Docker | Yes | Yes | Yes (but no macOS) |
+| **macOS VM** | **Yes** | **Yes** | **Yes** |
+
+Homebrew is macOS-specific. Testing Homebrew formulas requires macOS, and testing them properly requires isolation.
+
+## Next steps
+
+- [Sandbox Setup](/lume/examples/claude-code/sandbox) — Initial VM configuration
+- [Claude Cowork with MCP](/lume/examples/claude-cowork/sandbox) — Use MCP for native VM integration
+- [Unattended Setup](/lume/guide/fundamentals/unattended-setup) — Pre-configure VMs with Homebrew

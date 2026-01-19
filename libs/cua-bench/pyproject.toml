@@ -53,18 +53,13 @@ dependencies = [
     "docker>=7.0.0",
     # CUA SDK
     "cua-computer>=0.4.19",
+    "cua-core",
 ]
 
 [project.optional-dependencies]
 # Full installation with all features
 all = [
-    "cua-bench[browser,agents,cloud,telemetry]",
-]
-
-# Telemetry support (PostHog analytics)
-telemetry = [
-    "cua-core>=0.1.8",
-    "posthog>=3.20.0",
+    "cua-bench[browser,agents,cloud]",
 ]
 
 # Browser automation (for simulated environments)

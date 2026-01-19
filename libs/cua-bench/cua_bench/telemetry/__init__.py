@@ -1,7 +1,8 @@
 """Telemetry module for cua-bench.
 
 This module provides analytics for tracking feature usage, user workflows,
-and system performance. It uses the same PostHog infrastructure as cua-core.
+and system performance. All telemetry is routed through cua-core's PostHog
+infrastructure for consistency across the CUA ecosystem.
 
 Events tracked:
 - Tier 1 (Core): command_invoked, task_execution_started, task_evaluation_completed, batch_job_started

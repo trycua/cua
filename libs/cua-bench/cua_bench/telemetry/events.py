@@ -1,10 +1,13 @@
 """Telemetry events for cua-bench.
 
-This module implements tracking events using PostHog for product analytics.
+This module implements tracking events using cua-core's telemetry infrastructure.
 Events are designed to help understand:
 - What features are people using?
 - How are people using these features?
 - User segmentation based on usage patterns
+
+All telemetry is routed through cua-core's PostHog client for consistency
+across the CUA ecosystem.
 """
 
 from __future__ import annotations
@@ -13,100 +16,22 @@ import functools
 import logging
 import os
 import platform
-import uuid
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any, Callable, Dict, Optional
+
+from core.telemetry import is_telemetry_enabled as _core_is_telemetry_enabled
+from core.telemetry import record_event as _core_record_event
+from core.telemetry.posthog import PostHogTelemetryClient
 
 logger = logging.getLogger("cua_bench.telemetry")
 
-# Try to import from cua-core first, fall back to local implementation
-_posthog_client = None
-_installation_id: Optional[str] = None
-
-
-def _get_installation_id() -> str:
-    """Get or create installation ID for this user."""
-    global _installation_id
-    if _installation_id:
-        return _installation_id
-
-    # Try to use cua-core's installation ID for consistency
-    try:
-        from core.telemetry.posthog import PostHogTelemetryClient
-
-        client = PostHogTelemetryClient.get_client()
-        _installation_id = client.installation_id
-        return _installation_id
-    except ImportError:
-        pass
-
-    # Fall back to our own storage
-    storage_dir = Path.home() / ".cua-bench"
-    storage_dir.mkdir(exist_ok=True)
-    id_file = storage_dir / "installation_id"
-
-    if id_file.exists():
-        try:
-            _installation_id = id_file.read_text().strip()
-            if _installation_id:
-                return _installation_id
-        except Exception:
-            pass
-
-    # Create new ID
-    _installation_id = str(uuid.uuid4())
-    try:
-        id_file.write_text(_installation_id)
-    except Exception:
-        pass
-
-    return _installation_id
-
 
 def is_telemetry_enabled() -> bool:
-    """Check if telemetry is enabled."""
-    return os.environ.get("CUA_TELEMETRY_ENABLED", "true").lower() in {
-        "1",
-        "true",
-        "yes",
-        "on",
-    }
+    """Check if telemetry is enabled.
 
-
-def _get_posthog_client():
-    """Get or initialize PostHog client."""
-    global _posthog_client
-
-    if not is_telemetry_enabled():
-        return None
-
-    if _posthog_client is not None:
-        return _posthog_client
-
-    # Try to use cua-core's client first
-    try:
-        from core.telemetry.posthog import PostHogTelemetryClient
-
-        _posthog_client = PostHogTelemetryClient.get_client()
-        return _posthog_client
-    except ImportError:
-        pass
-
-    # Fall back to direct PostHog usage
-    try:
-        import posthog
-
-        # Use same credentials as cua-core
-        posthog.api_key = "phc_eSkLnbLxsnYFaXksif1ksbrNzYlJShr35miFLDppF14"
-        posthog.host = "https://eu.i.posthog.com"
-        posthog.debug = os.environ.get("CUA_TELEMETRY_DEBUG", "").lower() == "on"
-
-        _posthog_client = posthog
-        return _posthog_client
-    except ImportError:
-        logger.debug("PostHog not available, telemetry disabled")
-        return None
+    Delegates to cua-core's telemetry check.
+    """
+    return _core_is_telemetry_enabled()
 
 
 def _get_version() -> str:
@@ -120,9 +45,9 @@ def _get_version() -> str:
 
 
 def _get_common_properties() -> Dict[str, Any]:
-    """Get common properties for all events."""
+    """Get common properties for all cua-bench events."""
     return {
-        "version": _get_version(),
+        "bench_version": _get_version(),
         "python_version": platform.python_version(),
         "os": platform.system(),
         "os_version": platform.release(),
@@ -134,6 +59,8 @@ def _get_common_properties() -> Dict[str, Any]:
 def record_event(event_name: str, properties: Optional[Dict[str, Any]] = None) -> None:
     """Record a telemetry event.
 
+    Routes through cua-core's telemetry infrastructure.
+
     Args:
         event_name: Name of the event (e.g., "cb_command_invoked")
         properties: Optional dict of event properties
@@ -141,43 +68,26 @@ def record_event(event_name: str, properties: Optional[Dict[str, Any]] = None) -
     if not is_telemetry_enabled():
         return
 
-    client = _get_posthog_client()
-    if client is None:
-        return
-
     # Merge common properties with event-specific ones
     event_props = _get_common_properties()
     if properties:
         event_props.update(properties)
 
-    installation_id = _get_installation_id()
-
     try:
-        # Check if client is cua-core's PostHogTelemetryClient or raw posthog module
-        if hasattr(client, "record_event"):
-            # cua-core client
-            client.record_event(event_name, event_props)
-        else:
-            # Raw posthog module
-            client.capture(
-                distinct_id=installation_id,
-                event=event_name,
-                properties=event_props,
-            )
+        _core_record_event(event_name, event_props)
         logger.debug(f"Recorded event: {event_name}")
     except Exception as e:
         logger.debug(f"Failed to record event {event_name}: {e}")
 
 
 def flush_telemetry() -> None:
-    """Flush pending telemetry events."""
-    client = _get_posthog_client()
-    if client is None:
-        return
+    """Flush pending telemetry events.
 
+    Delegates to cua-core's PostHog client.
+    """
     try:
-        if hasattr(client, "flush"):
-            client.flush()
+        client = PostHogTelemetryClient.get_client()
+        client.flush()
     except Exception as e:
         logger.debug(f"Failed to flush telemetry: {e}")
 

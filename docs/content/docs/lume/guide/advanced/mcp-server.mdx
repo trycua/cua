@@ -29,13 +29,28 @@ Lume supports the [Model Context Protocol (MCP)](https://modelcontextprotocol.io
 
 ### 1. Configure Claude Desktop
 
-Edit `~/Library/Application Support/Claude/claude_desktop_config.json`:
+Run this command to automatically configure Claude Desktop:
+
+```bash
+mkdir -p ~/Library/Application\ Support/Claude && cat > ~/Library/Application\ Support/Claude/claude_desktop_config.json << EOF
+{
+  "mcpServers": {
+    "lume": {
+      "command": "$(which lume)",
+      "args": ["serve", "--mcp"]
+    }
+  }
+}
+EOF
+```
+
+Or manually edit `~/Library/Application Support/Claude/claude_desktop_config.json`:
 
 ```json
 {
   "mcpServers": {
     "lume": {
-      "command": "lume",
+      "command": "/Users/yourname/.local/bin/lume",
       "args": ["serve", "--mcp"]
     }
   }
@@ -43,7 +58,7 @@ Edit `~/Library/Application Support/Claude/claude_desktop_config.json`:
 ```
 
 <Callout type="info">
-If `lume` isn't in your PATH, use the full path: `/Users/yourname/.local/bin/lume`
+If editing manually, replace `/Users/yourname/.local/bin/lume` with the actual path to your lume binary. You can find it by running `which lume` in your terminal.
 </Callout>
 
 ### 2. Restart Claude Desktop

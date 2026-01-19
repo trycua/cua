@@ -343,6 +343,49 @@ final class LumeController {
         }
     }
 
+    /// Gets VM details using the lightweight path (includes provisioning status)
+    /// Use this instead of get().details when you need accurate status including provisioning state
+    @MainActor
+    public func getDetails(name: String, storage: String? = nil) throws -> VMDetails {
+        let normalizedName = normalizeVMName(name: name)
+        do {
+            let vmDir: VMDirectory
+            let locationName: String
+
+            if let storagePath = storage, storagePath.contains("/") || storagePath.contains("\\") {
+                // Storage is a direct path
+                vmDir = try home.getVMDirectoryFromPath(normalizedName, storagePath: storagePath)
+                guard vmDir.initialized() else {
+                    if vmDir.exists() {
+                        throw VMError.notInitialized(normalizedName)
+                    } else {
+                        throw VMError.notFound(normalizedName)
+                    }
+                }
+                locationName = storagePath
+            } else {
+                // Storage is nil or a named location - find the VM
+                let actualLocation = try self.validateVMExists(normalizedName, storage: storage)
+                vmDir = try home.getVMDirectory(normalizedName, storage: actualLocation)
+                locationName = actualLocation ?? "home"
+            }
+
+            // Use the lightweight path that includes provisioning status
+            guard let details = getVMDetailsLightweight(vmDir: vmDir, locationName: locationName) else {
+                throw VMError.notFound(normalizedName)
+            }
+            return details
+        } catch {
+            Logger.error(
+                "Failed to get VM details",
+                metadata: [
+                    "vmName": normalizedName, "storage": storage ?? "home",
+                    "error": error.localizedDescription,
+                ])
+            throw error
+        }
+    }
+
     @MainActor
     public func create(
         name: String,

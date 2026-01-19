@@ -1,0 +1,99 @@
+---
+title: Comparison
+description: How Lume compares to other macOS virtualization tools
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+This page compares Lume with other macOS virtualization tools. All of these are quality projects—the best choice depends on your use case.
+
+## Quick Comparison
+
+| Feature | Lume | Tart | Lima | UTM |
+|---------|------|------|------|-----|
+| **License** | MIT | Fair Source | Apache 2.0 | Apache 2.0 |
+| **macOS VMs** | Yes | Yes | No | Yes |
+| **Linux VMs** | Yes | Yes | Yes | Yes |
+| **HTTP API** | Yes | No | No | No |
+| **MCP Server** | Yes | No | No | No |
+| **Unattended Setup** | Yes (VNC + OCR) | Via Packer | N/A | No |
+| **Registry Support** | GHCR, GCS | OCI registries | N/A | No |
+| **Primary Use Case** | Agent automation, CI/CD | CI/CD | Linux containers | General desktop |
+
+## Tart
+
+[Tart](https://github.com/cirruslabs/tart) is a mature CLI tool for macOS and Linux VMs on Apple Silicon. Like Lume, it uses Apple's Virtualization Framework, so core VM performance is identical.
+
+**Key differences:**
+
+- **Licensing**: Tart uses a [Fair Source](https://fair.io/) license, which is source-available but not fully open source. Lume is MIT licensed.
+
+- **API access**: Lume includes an HTTP server (`lume serve`) for programmatic VM control. Tart is CLI-only—integrating it into applications requires wrapping CLI commands.
+
+- **Unattended setup**: Lume automates the macOS Setup Assistant via VNC and OCR, creating ready-to-use VMs without manual clicking. Tart relies on Packer plugins for automation.
+
+- **MCP integration**: Lume ships with an [MCP server](/lume/guide/advanced/mcp-server) for AI agent integration. Tart doesn't have this.
+
+- **Ecosystem**: Tart has a larger community and extensive CI/CD integrations (Cirrus CI, GitHub Actions). Lume integrates with the [Cua agent framework](/cua/guide/get-started/what-is-cua) for computer-use agents.
+
+**When to choose Tart**: If you need proven CI/CD integrations, want OCI-compatible registry workflows, or prefer a larger community.
+
+**When to choose Lume**: If you need an HTTP API, MCP server integration, fully automated VM provisioning, or are building AI agents that interact with macOS.
+
+## Lima
+
+[Lima](https://github.com/lima-vm/lima) is primarily designed for running Linux containers on macOS, similar to how Docker Desktop works.
+
+**Key differences:**
+
+- Lima doesn't support macOS VMs—it's focused on providing a Linux environment for container workloads.
+- Lima automatically sets up file sharing and port forwarding between host and guest.
+- Lima integrates with containerd and nerdctl for Docker-compatible workflows.
+
+**When to choose Lima**: If you need Linux containers on macOS and want a Docker-like experience. Lima isn't suitable if you need macOS VMs.
+
+## UTM
+
+[UTM](https://mac.getutm.app/) provides a graphical interface for running VMs on macOS, supporting both Apple Silicon (via Virtualization Framework) and Intel emulation (via QEMU).
+
+**Key differences:**
+
+- UTM emphasizes GUI-based VM management, while Lume is CLI and API-first.
+- UTM can emulate x86 systems on Apple Silicon (slower), while Lume only supports native ARM virtualization.
+- UTM supports a wider range of guest operating systems via QEMU emulation.
+
+**When to choose UTM**: If you prefer a graphical interface, need to run x86 operating systems, or want broad guest OS compatibility.
+
+## OrbStack
+
+[OrbStack](https://orbstack.dev/) is a fast, lightweight alternative to Docker Desktop for running containers and Linux machines on macOS.
+
+**Key differences:**
+
+- OrbStack focuses on Linux containers and doesn't support macOS VMs.
+- OrbStack has excellent integration with Docker and Kubernetes workflows.
+- OrbStack is a commercial product with a free tier.
+
+**When to choose OrbStack**: If you're primarily working with Docker/Linux containers and want the best performance for that use case.
+
+## VirtualBuddy
+
+[VirtualBuddy](https://github.com/insidegui/VirtualBuddy) is a native macOS app for creating and managing macOS and Linux VMs with a focus on simplicity.
+
+**Key differences:**
+
+- VirtualBuddy is GUI-first with no CLI or API.
+- Built for desktop use, not automation or CI/CD.
+- Excellent for manually testing on different macOS versions.
+
+**When to choose VirtualBuddy**: If you want a simple, native Mac app for occasional VM use without automation needs.
+
+## Summary
+
+Choose Lume if you need:
+- An HTTP API for programmatic VM control
+- MCP server integration for AI agents
+- Fully automated macOS VM provisioning
+- MIT-licensed tooling
+
+The Virtualization Framework means all Swift-based tools (Lume, Tart, VirtualBuddy) have the same underlying VM performance. The differences are in the interfaces, automation capabilities, and ecosystem integration.

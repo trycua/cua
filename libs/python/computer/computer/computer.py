@@ -1144,7 +1144,7 @@ class Computer:
             create_cmd = f'if not exist "{venv_path}" uv init --vcs none --no-readme --no-workspace --no-pin-python "{venv_path}"'
             await self.interface.run_command(ensure_dir_cmd)
             await self.interface.run_command(create_cmd)
-            # Install packages using uv add
+            # Install packages
             if requirements_str := " ".join(requirements):
                 install_cmd = f'uv add --directory "{venv_path}" {requirements_str}'
                 return await self.interface.run_command(install_cmd)
@@ -1155,7 +1155,7 @@ class Computer:
             # Initialize UV project if it doesn't exist
             create_cmd = f'mkdir -p "$HOME/.venvs" && (test -d "{venv_path}" || uv init --vcs none --no-readme --no-workspace --no-pin-python "{venv_path}")'
             await self.interface.run_command(create_cmd)
-            # Install packages using uv add
+            # Install packages
             if requirements_str := " ".join(requirements):
                 install_cmd = f'uv add --directory "{venv_path}" {requirements_str}'
                 return await self.interface.run_command(install_cmd)
@@ -1174,7 +1174,6 @@ class Computer:
         if not requirements:
             return await self.interface.run_command("echo No requirements to install")
 
-        # Use UV for system-level installation
         reqs = " ".join(requirements)
         install_cmd = f"uv pip install --system {reqs}"
         return await self.interface.run_command(install_cmd)
@@ -1191,27 +1190,29 @@ class Computer:
         """
         if self.os_type == "windows":
             # Windows (cmd.exe)
-            venv_path = f"%USERPROFILE%\\.venvs\\{venv_name}"
+            project_path = f"%USERPROFILE%\\.venvs\\{venv_name}"
             # Check existence and signal if missing
-            check_cmd = f'if not exist "{venv_path}" (echo VENV_NOT_FOUND) else (echo VENV_FOUND)'
+            check_cmd = (
+                f'if not exist "{project_path}" (echo VENV_NOT_FOUND) else (echo VENV_FOUND)'
+            )
             result = await self.interface.run_command(check_cmd)
             if "VENV_NOT_FOUND" in getattr(result, "stdout", ""):
                 # Auto-create the UV project with no requirements
                 await self.venv_install(venv_name, [])
-            # Use uv run to execute command in project
-            full_command = f'uv run --directory "{venv_path}" {command}'
+            # Execute command in project
+            full_command = f'uv run --directory "{project_path}" {command}'
             return await self.interface.run_command(full_command)
         else:
             # POSIX (macOS/Linux)
-            venv_path = f"$HOME/.venvs/{venv_name}"
+            project_path = f"$HOME/.venvs/{venv_name}"
             # Check if UV project exists
-            check_cmd = f'test -d "{venv_path}"'
+            check_cmd = f'test -d "{project_path}"'
             result = await self.interface.run_command(check_cmd)
             if result.stderr or "test:" in result.stdout:  # project doesn't exist
                 # Auto-create the UV project with no requirements
                 await self.venv_install(venv_name, [])
-            # Use uv run to execute command in project
-            full_command = f'uv run --directory "{venv_path}" {command}'
+            # Execute command in project
+            full_command = f'uv run --directory "{project_path}" {command}'
             return await self.interface.run_command(full_command)
 
     async def venv_exec(self, venv_name: str, python_func, *args, **kwargs):
@@ -1476,7 +1477,7 @@ with open("{log}", "ab", buffering=0) as f:
 print(p.pid)
 """
             launcher_b64 = base64.b64encode(launcher_code.encode("utf-8")).decode("ascii")
-            # Use UV to run the launcher code in the project
+            # Run the launcher code in the project
             cmd = f"uv run --directory \"{venv_path}\" python -c \"import base64; exec(base64.b64decode('{launcher_b64}').decode('utf-8'))\""
             result = await self.interface.run_command(cmd)
             stdout_lines = (result.stdout or "").strip().splitlines()

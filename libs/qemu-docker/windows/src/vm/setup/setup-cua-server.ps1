@@ -137,7 +137,7 @@ if (Test-Path `$uvPath) {
 `$LogFile = Join-Path `$ProjectDir 'server.log'
 
 function Start-Server {
-    Write-Output "Updating cua-computer-server with UV..." | Out-File -FilePath `$LogFile -Append
+    Write-Output "Updating cua-computer-server..." | Out-File -FilePath `$LogFile -Append
     & uv add --directory `$ProjectDir cua-computer-server 2>&1 | Out-File -FilePath `$LogFile -Append
 
     Write-Output "Starting Cua Computer Server on port 5000..." | Out-File -FilePath `$LogFile -Append

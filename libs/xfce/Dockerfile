@@ -121,7 +121,7 @@ RUN git clone https://github.com/novnc/noVNC.git /opt/noVNC && \
 RUN mkdir -p /home/cua/.cache && \
     chown -R cua:cua /home/cua/.cache
 
-# Install computer-server using UV
+# Install computer-server
 RUN uv pip install --system cua-computer-server
 
 # Install GTK and WebKit dependencies for pywebview

@@ -104,7 +104,7 @@ else
 fi
 
 # Install packages using UV as the service user
-log "Installing cua-computer-server with UV..."
+log "Installing cua-computer-server..."
 sudo -u "$USER_NAME" uv add --directory "$PROJECT_DIR" cua-computer-server "Pillow>=9.2.0"
 log "cua-computer-server installed successfully"
 
@@ -132,7 +132,7 @@ PROJECT_DIR="/opt/cua-server"
 LOG_FILE="$PROJECT_DIR/server.log"
 
 start_server() {
-    echo "$(date '+%Y-%m-%d %H:%M:%S') Updating cua-computer-server with UV..." >> "$LOG_FILE"
+    echo "$(date '+%Y-%m-%d %H:%M:%S') Updating cua-computer-server..." >> "$LOG_FILE"
     uv add --directory "$PROJECT_DIR" cua-computer-server >> "$LOG_FILE" 2>&1
 
     echo "$(date '+%Y-%m-%d %H:%M:%S') Starting Cua Computer Server on port 5000..." >> "$LOG_FILE"

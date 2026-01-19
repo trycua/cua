@@ -21,7 +21,7 @@ struct Get: AsyncParsableCommand {
     @MainActor
     func run() async throws {
         let vmController = LumeController()
-        let vm = try vmController.get(name: name, storage: storage)
-        try VMDetailsPrinter.printStatus([vm.details], format: self.format)
+        let vmDetails = try vmController.getDetails(name: name, storage: storage)
+        try VMDetailsPrinter.printStatus([vmDetails], format: self.format)
     }
 }

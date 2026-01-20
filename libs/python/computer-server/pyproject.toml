@@ -78,5 +78,5 @@ dev = [
 ]
 
 [tool.pdm.scripts]
-# Mode is auto-detected: TTY → HTTP server, pipe → MCP stdio
+# Starts HTTP server with MCP at /mcp endpoint
 api = "python -m computer_server"

@@ -6,15 +6,10 @@ Server component for the Computer-Use Interface (CUI) framework providing low-le
 
 ## Interfaces
 
-The Computer Server supports multiple interfaces with **automatic mode detection**:
+The Computer Server exposes multiple interfaces simultaneously:
 
-- **HTTP/WebSocket** - REST API and WebSocket for programmatic access (interactive terminal)
-- **MCP via HTTP** - Model Context Protocol over streamable HTTP at `/mcp` endpoint (interactive terminal)
-- **MCP via stdio** - Model Context Protocol for Claude Code, OpenCode, Cursor, and other MCP-compatible tools (auto-detected when run as subprocess)
-
-The server automatically detects how it's being run:
-- **Interactive terminal** (stdin is TTY) → HTTP server with MCP at `/mcp`
-- **Subprocess** (stdin is pipe, e.g., spawned by Claude Code) → MCP stdio mode
+- **HTTP/WebSocket** - REST API and WebSocket for programmatic access
+- **MCP via HTTP** - Model Context Protocol over streamable HTTP at `/mcp` endpoint
 
 ## Installation
 
@@ -22,15 +17,11 @@ The server automatically detects how it's being run:
 # Basic installation (HTTP/WebSocket only)
 pip install cua-computer-server
 
-# With MCP support (enables both HTTP and stdio modes)
+# With MCP support
 pip install cua-computer-server[mcp]
 ```
 
 ## Usage
-
-### Interactive Mode (run from terminal)
-
-When you run the server from a terminal, it starts HTTP + MCP:
 
 ```bash
 # Start the server on default port 8000
@@ -38,6 +29,9 @@ python -m computer_server
 
 # Or with custom port
 python -m computer_server --port 8080
+
+# With resolution scaling (useful for Retina displays or VMs)
+python -m computer_server --width 1512 --height 982
 ```
 
 This provides:
@@ -45,16 +39,6 @@ This provides:
 - MCP server at `/mcp` endpoint (requires `fastmcp` package)
 
 MCP clients can connect via streamable HTTP at `http://localhost:8000/mcp`.
-
-### Subprocess Mode (Claude Code integration)
-
-When spawned as a subprocess (e.g., by Claude Code), the server automatically uses MCP stdio mode:
-
-```bash
-# Resolution options work in both modes
-python -m computer_server --detect-resolution
-python -m computer_server --width 1512 --height 982
-```
 
 #### Resolution Scaling
 
@@ -68,24 +52,14 @@ This ensures the AI model sees consistent coordinates between screenshots and mo
 
 #### Claude Code Integration
 
-Add to your Claude Code configuration:
-
+1. Start the server (or run as a service/LaunchAgent):
 ```bash
-# Add the MCP server (auto-detects stdio mode when spawned as subprocess)
-claude mcp add cua-computer-server -- python -m computer_server
+python -m computer_server --port 8000
 ```
 
-Or manually add to `~/.claude/claude_desktop_config.json`:
-
-```json
-{
-  "mcpServers": {
-    "cua-computer-server": {
-      "command": "python",
-      "args": ["-m", "computer_server"]
-    }
-  }
-}
+2. Add the MCP server URL to Claude Code:
+```bash
+claude mcp add cua-computer-server --transport http http://localhost:8000/mcp
 ```
 
 ## Available MCP Tools

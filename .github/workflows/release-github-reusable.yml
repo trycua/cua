@@ -57,6 +57,8 @@ jobs:
       - name: Generate path-filtered release notes
         if: inputs.module_path != '' && inputs.generate_notes
         id: release-notes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           # Extract tag prefix to find previous release (e.g., "pypi-agent-v" from "pypi-agent-v0.5.0")
           TAG_PREFIX=$(echo "${{ inputs.tag_name }}" | sed 's/[0-9]*\.[0-9]*\.[0-9]*$//')
@@ -68,14 +70,37 @@ jobs:
           echo "Tag prefix: $TAG_PREFIX"
           echo "Previous tag: $PREV_TAG"
 
-          # Generate release notes
+          # Generate release notes with GitHub username attribution
+          NOTES=""
+
           if [ -n "$PREV_TAG" ]; then
             echo "Generating notes for commits between $PREV_TAG and HEAD in ${{ inputs.module_path }}"
-            NOTES=$(git log ${PREV_TAG}..HEAD --pretty=format:"* %s (%h) by @%an" -- "${{ inputs.module_path }}" | head -50)
+            COMMIT_RANGE="${PREV_TAG}..HEAD"
           else
             echo "No previous tag found, generating notes for all commits in ${{ inputs.module_path }}"
-            NOTES=$(git log --pretty=format:"* %s (%h) by @%an" -- "${{ inputs.module_path }}" | head -50)
+            COMMIT_RANGE="HEAD"
           fi
+
+          # Get commits and process each one to fetch GitHub username
+          while IFS='|' read -r sha subject; do
+            # Try to get GitHub username via API
+            USERNAME=$(gh api repos/${{ github.repository }}/commits/${sha} --jq '.author.login' 2>/dev/null || echo "")
+
+            # If API call fails or no author found (empty or "null"), fall back to commit author email
+            if [ -z "$USERNAME" ] || [ "$USERNAME" = "null" ]; then
+              AUTHOR_EMAIL=$(git show -s --format='%ae' ${sha})
+              # Try to extract username from GitHub noreply email format
+              if [[ "$AUTHOR_EMAIL" =~ ^([0-9]+\+)?([^@]+)@users\.noreply\.github\.com$ ]]; then
+                USERNAME="${BASH_REMATCH[2]}"
+              else
+                # Last resort: use author name without @ symbol
+                USERNAME=$(git show -s --format='%an' ${sha})
+              fi
+            fi
+
+            SHORT_SHA=$(echo ${sha} | cut -c1-7)
+            NOTES="${NOTES}* ${subject} (${SHORT_SHA}) by @${USERNAME}"$'\n'
+          done < <(git log ${COMMIT_RANGE} --pretty=format:"%H|%s" -- "${{ inputs.module_path }}" | head -50)
 
           if [ -z "$NOTES" ]; then
             NOTES="* Initial release or no path-specific changes found"

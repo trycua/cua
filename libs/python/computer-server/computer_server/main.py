@@ -51,12 +51,25 @@ logger.setLevel(logging.INFO)
 # Configure WebSocket with larger message size
 WEBSOCKET_MAX_SIZE = 1024 * 1024 * 10  # 10MB limit
 
-# Configure application with WebSocket settings
+# Create MCP app first if available (needed for lifespan)
+_mcp_http_app = None
+if HAS_MCP:
+    try:
+        mcp_server = create_mcp_server()
+        # Configure FastMCP to use "/" as its internal path, then mount at /mcp
+        # This results in endpoint at /mcp (mount) + / (internal) = /mcp
+        _mcp_http_app = mcp_server.http_app(path="/")
+        logger.info("MCP server created for /mcp endpoint (streamable HTTP transport)")
+    except Exception as e:
+        logger.warning(f"Failed to create MCP server: {e}")
+
+# Configure application with WebSocket settings and MCP lifespan
 app = FastAPI(
     title="Computer API",
     description="API for the Computer project",
     version="0.1.0",
     websocket_max_size=WEBSOCKET_MAX_SIZE,
+    lifespan=_mcp_http_app.lifespan if _mcp_http_app else None,
 )
 
 # CORS configuration
@@ -69,15 +82,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Mount MCP server at /mcp if fastmcp is available
-if HAS_MCP:
-    try:
-        mcp_server = create_mcp_server()
-        # Use http_app() which is the modern approach (sse_app is deprecated)
-        app.mount("/mcp", mcp_server.http_app())
-        logger.info("MCP server mounted at /mcp (streamable HTTP transport)")
-    except Exception as e:
-        logger.warning(f"Failed to mount MCP server: {e}")
+# Mount MCP server at /mcp - FastMCP's internal path is "/" so endpoint is /mcp
+if _mcp_http_app:
+    app.mount("/mcp", _mcp_http_app)
 
 protocol_version = 1
 try:

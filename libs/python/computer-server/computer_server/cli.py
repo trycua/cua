@@ -86,45 +86,6 @@ def main() -> None:
         stream=sys.stderr,  # Use stderr for MCP compatibility
     )
 
-    # Auto-detect mode based on stdin:
-    # - If stdin is a pipe (FIFO), we're being run as a subprocess with IPC (e.g., by Claude Code)
-    #   → use MCP stdio mode for direct communication
-    # - Otherwise (TTY, /dev/null, closed, regular file, etc.)
-    #   → use HTTP server with MCP available at /mcp endpoint
-    #
-    # This distinction matters because:
-    # - Claude Code connects stdin to a pipe for JSON-RPC communication
-    # - LaunchAgents/systemd typically connect stdin to /dev/null (not a pipe)
-    # - Interactive terminals are TTYs (not pipes)
-    import stat
-    try:
-        stdin_mode = os.fstat(sys.stdin.fileno()).st_mode
-        use_mcp_stdio = stat.S_ISFIFO(stdin_mode)  # True only if stdin is a pipe
-    except (OSError, AttributeError):
-        # stdin might be closed or invalid - use HTTP mode
-        use_mcp_stdio = False
-
-    if use_mcp_stdio:
-        logger.info("Detected subprocess mode (stdin is pipe) - starting MCP stdio server...")
-        try:
-            from .mcp_server import run_mcp_server
-            run_mcp_server(
-                target_width=args.width,
-                target_height=args.height,
-                detect_resolution=args.detect_resolution,
-            )
-        except ImportError as e:
-            logger.error(f"MCP stdio mode requires fastmcp package: {e}")
-            logger.error("Install with: pip install 'cua-computer-server[mcp]'")
-            sys.exit(1)
-        except KeyboardInterrupt:
-            logger.info("MCP server stopped by user")
-            sys.exit(0)
-        except Exception as e:
-            logger.error(f"Error running MCP server: {e}")
-            sys.exit(1)
-        return
-
     # Check if watchdog should be enabled
     container_name = os.environ.get("CONTAINER_NAME")
     enable_watchdog = (args.watchdog or bool(container_name)) and not sys.platform.startswith("win")

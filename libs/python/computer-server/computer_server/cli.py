@@ -87,11 +87,22 @@ def main() -> None:
     )
 
     # Auto-detect mode based on stdin:
-    # - If stdin is NOT a TTY (it's a pipe), we're being run as a subprocess (e.g., by Claude Code)
+    # - If stdin is a pipe (FIFO), we're being run as a subprocess with IPC (e.g., by Claude Code)
     #   → use MCP stdio mode for direct communication
-    # - If stdin IS a TTY (interactive terminal), user is running from command line
+    # - Otherwise (TTY, /dev/null, closed, regular file, etc.)
     #   → use HTTP server with MCP available at /mcp endpoint
-    use_mcp_stdio = not sys.stdin.isatty()
+    #
+    # This distinction matters because:
+    # - Claude Code connects stdin to a pipe for JSON-RPC communication
+    # - LaunchAgents/systemd typically connect stdin to /dev/null (not a pipe)
+    # - Interactive terminals are TTYs (not pipes)
+    import stat
+    try:
+        stdin_mode = os.fstat(sys.stdin.fileno()).st_mode
+        use_mcp_stdio = stat.S_ISFIFO(stdin_mode)  # True only if stdin is a pipe
+    except (OSError, AttributeError):
+        # stdin might be closed or invalid - use HTTP mode
+        use_mcp_stdio = False
 
     if use_mcp_stdio:
         logger.info("Detected subprocess mode (stdin is pipe) - starting MCP stdio server...")

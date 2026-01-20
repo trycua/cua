@@ -46,20 +46,23 @@ Example - Using in a task:
         await session.launch_app("godot", project_path="~/project")
 """
 
+# macOS first-party apps (use osascript for getters)
+# Import app modules to trigger auto-registration via AppMeta metaclass
+from . import adobe_photoshop  # noqa: F401
+from . import calendar  # noqa: F401
+from . import godot  # noqa: F401
+from . import notes  # noqa: F401
+from . import reminders  # noqa: F401
+from . import unity  # noqa: F401
 from .registry import (
     App,
+    AppRegistry,
+    get_app,
     install,
     launch,
-    uninstall,
-    get_app,
     list_apps,
-    AppRegistry,
+    uninstall,
 )
-
-# Import app modules to trigger auto-registration via AppMeta metaclass
-from . import godot  # noqa: F401
-from . import adobe_photoshop  # noqa: F401
-from . import unity  # noqa: F401
 
 __all__ = [
     "App",

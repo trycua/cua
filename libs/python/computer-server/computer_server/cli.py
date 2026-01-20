@@ -86,34 +86,6 @@ def main() -> None:
         stream=sys.stderr,  # Use stderr for MCP compatibility
     )
 
-    # Auto-detect mode based on stdin:
-    # - If stdin is NOT a TTY (it's a pipe), we're being run as a subprocess (e.g., by Claude Code)
-    #   → use MCP stdio mode for direct communication
-    # - If stdin IS a TTY (interactive terminal), user is running from command line
-    #   → use HTTP server with MCP available at /mcp endpoint
-    use_mcp_stdio = not sys.stdin.isatty()
-
-    if use_mcp_stdio:
-        logger.info("Detected subprocess mode (stdin is pipe) - starting MCP stdio server...")
-        try:
-            from .mcp_server import run_mcp_server
-            run_mcp_server(
-                target_width=args.width,
-                target_height=args.height,
-                detect_resolution=args.detect_resolution,
-            )
-        except ImportError as e:
-            logger.error(f"MCP stdio mode requires fastmcp package: {e}")
-            logger.error("Install with: pip install 'cua-computer-server[mcp]'")
-            sys.exit(1)
-        except KeyboardInterrupt:
-            logger.info("MCP server stopped by user")
-            sys.exit(0)
-        except Exception as e:
-            logger.error(f"Error running MCP server: {e}")
-            sys.exit(1)
-        return
-
     # Check if watchdog should be enabled
     container_name = os.environ.get("CONTAINER_NAME")
     enable_watchdog = (args.watchdog or bool(container_name)) and not sys.platform.startswith("win")

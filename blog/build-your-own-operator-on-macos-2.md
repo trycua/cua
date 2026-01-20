@@ -163,7 +163,7 @@ The `cua-agent` framework provides multiple agent loop implementations to abstra
 
 - **OpenAI Loop**: Uses the Responses API with a specific `computer_call_output` format for sending screenshots after actions. Requires handling safety checks and maintains a chain of requests using `previous_response_id`.
 
-- **Anthropic Loop**: Implements a [multi-agent loop pattern](https://docs.anthropic.com/en/docs/agents-and-tools/computer-use#understanding-the-multi-agent-loop) with a sophisticated message handling system, supporting various API providers (Anthropic, Bedrock, Vertex) with token management and prompt caching capabilities.
+- **Anthropic Loop**: Implements a [multi-agent loop pattern](https://platform.claude.com/docs/en/agents-and-tools/tool-use/computer-use-tool#understanding-the-multi-agent-loop) with a sophisticated message handling system, supporting various API providers (Anthropic, Bedrock, Vertex) with token management and prompt caching capabilities.
 
 - **UI-TARS Loop**: Requires custom message formatting and specialized parsing to extract actions from text responses using a "box token" system for UI element identification.
 
@@ -191,7 +191,7 @@ The performance of different Computer-Use models varies significantly across tas
 
 - **AgentLoop.OPENAI**: Choose when you have OpenAI Tier 3 access and need the most capable computer-use agent for web-based tasks. Uses the same [OpenAI Computer-Use Loop](https://platform.openai.com/docs/guides/tools-computer-use) as Part 1, delivering strong performance on browser-based benchmarks.
 
-- **AgentLoop.ANTHROPIC**: Ideal for users with Anthropic API access who need strong reasoning capabilities with computer-use abilities. Works with `claude-sonnet-4-5-20250929` and `claude-3-7-sonnet-20250219` models following [Anthropic's Computer-Use tools](https://docs.anthropic.com/en/docs/agents-and-tools/computer-use#understanding-the-multi-agent-loop).
+- **AgentLoop.ANTHROPIC**: Ideal for users with Anthropic API access who need strong reasoning capabilities with computer-use abilities. Works with `claude-sonnet-4-5-20250929` and `claude-3-7-sonnet-20250219` models following [Anthropic's Computer-Use tools](https://platform.claude.com/docs/en/agents-and-tools/tool-use/computer-use-tool#understanding-the-multi-agent-loop).
 
 - **AgentLoop.UITARS**: Best for scenarios requiring more powerful OS/desktop, and latency-sensitive automation, as UI-TARS-1.5 leads in OS capabilities benchmarks. Requires running the model locally or accessing it through compatible endpoints (e.g. on Hugging Face).
 
@@ -677,6 +677,6 @@ With the basics covered, you might want to explore:
 - [cua-agent GitHub repository](https://github.com/trycua/cua/tree/main/libs/python/agent)
 - [Agent Notebook Examples](https://github.com/trycua/cua/blob/main/notebooks/agent_nb.ipynb)
 - [OpenAI Agent SDK Specification](https://platform.openai.com/docs/api-reference/responses)
-- [Anthropic API Documentation](https://docs.anthropic.com/en/api/getting-started)
+- [Anthropic API Documentation](https://platform.claude.com/docs/en/api/overview)
 - [UI-TARS GitHub](https://github.com/ByteDance/UI-TARS)
 - [OmniParser GitHub](https://github.com/microsoft/OmniParser)

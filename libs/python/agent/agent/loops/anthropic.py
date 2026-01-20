@@ -683,7 +683,7 @@ def _convert_completion_to_responses_items(response: Any) -> List[Dict[str, Any]
                         action_type = tool_input.get("action")
 
                         # Action reference:
-                        # https://docs.anthropic.com/en/docs/agents-and-tools/tool-use/computer-use-tool#available-actions
+                        # https://platform.claude.com/docs/en/agents-and-tools/tool-use/computer-use-tool#available-actions
 
                         try:
                             # Basic actions (all versions)

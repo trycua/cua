@@ -56,7 +56,8 @@ _mcp_http_app = None
 if HAS_MCP:
     try:
         mcp_server = create_mcp_server()
-        _mcp_http_app = mcp_server.http_app()
+        # Set path="/" so when mounted at /mcp, the endpoint is /mcp (not /mcp/mcp)
+        _mcp_http_app = mcp_server.http_app(path="/")
         logger.info("MCP server created for /mcp endpoint (streamable HTTP transport)")
     except Exception as e:
         logger.warning(f"Failed to create MCP server: {e}")

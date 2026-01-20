@@ -19,6 +19,26 @@ def parse_args(args: Optional[List[str]] = None) -> argparse.Namespace:
     """Parse command-line arguments."""
     parser = argparse.ArgumentParser(description="Start the Computer API server")
     parser.add_argument(
+        "--mcp",
+        action="store_true",
+        help="Start in MCP (Model Context Protocol) mode for Claude Code integration",
+    )
+    parser.add_argument(
+        "--width",
+        type=int,
+        help="Target width for screenshots (coordinates will be scaled accordingly)",
+    )
+    parser.add_argument(
+        "--height",
+        type=int,
+        help="Target height for screenshots (coordinates will be scaled accordingly)",
+    )
+    parser.add_argument(
+        "--detect-resolution",
+        action="store_true",
+        help="Auto-detect and log the actual screen resolution at startup",
+    )
+    parser.add_argument(
         "--host", default="0.0.0.0", help="Host to bind the server to (default: 0.0.0.0)"
     )
     parser.add_argument(
@@ -68,7 +88,30 @@ def main() -> None:
     logging.basicConfig(
         level=getattr(logging, args.log_level.upper()),
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        stream=sys.stderr,  # Use stderr for MCP compatibility
     )
+
+    # Handle MCP mode
+    if args.mcp:
+        logger.info("Starting in MCP (Model Context Protocol) mode...")
+        try:
+            from .mcp_server import run_mcp_server
+            run_mcp_server(
+                target_width=args.width,
+                target_height=args.height,
+                detect_resolution=args.detect_resolution,
+            )
+        except ImportError as e:
+            logger.error(f"MCP mode requires fastmcp package: {e}")
+            logger.error("Install with: pip install 'cua-computer-server[mcp]'")
+            sys.exit(1)
+        except KeyboardInterrupt:
+            logger.info("MCP server stopped by user")
+            sys.exit(0)
+        except Exception as e:
+            logger.error(f"Error running MCP server: {e}")
+            sys.exit(1)
+        return
 
     # Check if watchdog should be enabled
     container_name = os.environ.get("CONTAINER_NAME")

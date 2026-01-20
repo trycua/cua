@@ -56,8 +56,9 @@ _mcp_http_app = None
 if HAS_MCP:
     try:
         mcp_server = create_mcp_server()
-        # Mount at root so MCP endpoint is /mcp (FastMCP default path)
-        _mcp_http_app = mcp_server.http_app()
+        # Configure FastMCP to use "/" as its internal path, then mount at /mcp
+        # This results in endpoint at /mcp (mount) + / (internal) = /mcp
+        _mcp_http_app = mcp_server.http_app(path="/")
         logger.info("MCP server created for /mcp endpoint (streamable HTTP transport)")
     except Exception as e:
         logger.warning(f"Failed to create MCP server: {e}")
@@ -81,9 +82,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Mount MCP server at root so endpoint is /mcp (FastMCP's default path)
+# Mount MCP server at /mcp - FastMCP's internal path is "/" so endpoint is /mcp
 if _mcp_http_app:
-    app.mount("/", _mcp_http_app)
+    app.mount("/mcp", _mcp_http_app)
 
 protocol_version = 1
 try:

@@ -4,7 +4,7 @@ build-backend = "pdm.backend"
 
 [project]
 name = "cua-computer-server"
-version = "0.3.5"
+version = "0.3.6"
 
 description = "Server component for the Computer-Use Interface (CUI) framework powering Cua"
 authors = [

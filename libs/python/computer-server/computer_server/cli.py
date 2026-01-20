@@ -19,11 +19,6 @@ def parse_args(args: Optional[List[str]] = None) -> argparse.Namespace:
     """Parse command-line arguments."""
     parser = argparse.ArgumentParser(description="Start the Computer API server")
     parser.add_argument(
-        "--mcp",
-        action="store_true",
-        help="Start in MCP (Model Context Protocol) mode for Claude Code integration",
-    )
-    parser.add_argument(
         "--width",
         type=int,
         help="Target width for screenshots (coordinates will be scaled accordingly)",
@@ -91,9 +86,15 @@ def main() -> None:
         stream=sys.stderr,  # Use stderr for MCP compatibility
     )
 
-    # Handle MCP mode
-    if args.mcp:
-        logger.info("Starting in MCP (Model Context Protocol) mode...")
+    # Auto-detect mode based on stdin:
+    # - If stdin is NOT a TTY (it's a pipe), we're being run as a subprocess (e.g., by Claude Code)
+    #   → use MCP stdio mode for direct communication
+    # - If stdin IS a TTY (interactive terminal), user is running from command line
+    #   → use HTTP server with MCP available at /mcp endpoint
+    use_mcp_stdio = not sys.stdin.isatty()
+
+    if use_mcp_stdio:
+        logger.info("Detected subprocess mode (stdin is pipe) - starting MCP stdio server...")
         try:
             from .mcp_server import run_mcp_server
             run_mcp_server(
@@ -102,7 +103,7 @@ def main() -> None:
                 detect_resolution=args.detect_resolution,
             )
         except ImportError as e:
-            logger.error(f"MCP mode requires fastmcp package: {e}")
+            logger.error(f"MCP stdio mode requires fastmcp package: {e}")
             logger.error("Install with: pip install 'cua-computer-server[mcp]'")
             sys.exit(1)
         except KeyboardInterrupt:
@@ -160,6 +161,8 @@ def main() -> None:
 
     # Create and start the server
     logger.info(f"Starting Cua Computer API server on {args.host}:{args.port}...")
+    logger.info("HTTP API available at /ws, /cmd, /status endpoints")
+    logger.info("MCP server available at /mcp endpoint (if fastmcp installed)")
 
     # Handle SSL configuration
     ssl_args = {}

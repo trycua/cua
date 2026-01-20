@@ -27,6 +27,13 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from .browser import get_browser_manager
 from .handlers.factory import OS_TYPE, HandlerFactory
 
+# Try to import MCP server for SSE integration
+try:
+    from .mcp_server import create_mcp_server
+    HAS_MCP = True
+except ImportError:
+    HAS_MCP = False
+
 # Authentication session TTL (in seconds). Override via env var CUA_AUTH_TTL_SECONDS. Default: 60s
 AUTH_SESSION_TTL_SECONDS: int = int(os.environ.get("CUA_AUTH_TTL_SECONDS", "60"))
 
@@ -61,6 +68,16 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Mount MCP server at /mcp if fastmcp is available
+if HAS_MCP:
+    try:
+        mcp_server = create_mcp_server()
+        # Use http_app() which is the modern approach (sse_app is deprecated)
+        app.mount("/mcp", mcp_server.http_app())
+        logger.info("MCP server mounted at /mcp (streamable HTTP transport)")
+    except Exception as e:
+        logger.warning(f"Failed to mount MCP server: {e}")
 
 protocol_version = 1
 try:
@@ -266,6 +283,8 @@ async def status():
     features = []
     if HAS_AGENT:
         features.append("agent")
+    if HAS_MCP:
+        features.append("mcp")
     return {"status": "ok", "os_type": OS_TYPE, "features": features}
 
 

@@ -1252,7 +1252,7 @@ provides-extras = ["lume", "lumier", "ui", "all"]
 
 [[package]]
 name = "cua-computer-server"
-version = "0.3.4"
+version = "0.3.5"
 source = { editable = "libs/python/computer-server" }
 dependencies = [
     { name = "aiohttp" },
@@ -1274,49 +1274,47 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
-dev = [
-    { name = "mypy" },
-    { name = "ruff" },
+linux = [
+    { name = "python-xlib" },
 ]
-format = [
-    { name = "black" },
-    { name = "isort" },
+macos = [
+    { name = "pyobjc-framework-applicationservices" },
+    { name = "pyobjc-framework-cocoa" },
+    { name = "pyobjc-framework-quartz" },
 ]
 mcp = [
     { name = "fastmcp" },
 ]
-test = [
-    { name = "pytest" },
-    { name = "pytest-asyncio" },
+windows = [
+    { name = "pywin32" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "aiohttp", specifier = ">=3.9.1" },
-    { name = "black", marker = "extra == 'format'", specifier = ">=23.0.0" },
     { name = "fastapi", specifier = ">=0.111.0" },
     { name = "fastmcp", marker = "extra == 'mcp'", specifier = ">=2.0,<3" },
-    { name = "isort", marker = "extra == 'format'", specifier = ">=5.12.0" },
-    { name = "mypy", marker = "extra == 'dev'", specifier = ">=0.971" },
     { name = "pillow", specifier = ">=10.2.0" },
     { name = "playwright", specifier = ">=1.40.0" },
     { name = "pydantic", specifier = ">=2.0.0" },
     { name = "pynput", specifier = ">=1.8.1" },
     { name = "pyobjc-framework-applicationservices", marker = "sys_platform == 'darwin'", specifier = ">=10.1" },
+    { name = "pyobjc-framework-applicationservices", marker = "extra == 'macos'", specifier = ">=10.1" },
     { name = "pyobjc-framework-cocoa", marker = "sys_platform == 'darwin'", specifier = ">=10.1" },
+    { name = "pyobjc-framework-cocoa", marker = "extra == 'macos'", specifier = ">=10.1" },
     { name = "pyobjc-framework-quartz", marker = "sys_platform == 'darwin'", specifier = ">=10.1" },
+    { name = "pyobjc-framework-quartz", marker = "extra == 'macos'", specifier = ">=10.1" },
     { name = "pyperclip", specifier = ">=1.9.0" },
-    { name = "pytest", marker = "extra == 'test'", specifier = ">=7.0.0" },
-    { name = "pytest-asyncio", marker = "extra == 'test'", specifier = ">=0.23.0" },
     { name = "python-certifi-win32", marker = "sys_platform == 'win32'" },
     { name = "python-xlib", marker = "sys_platform == 'linux'", specifier = ">=0.33" },
+    { name = "python-xlib", marker = "extra == 'linux'", specifier = ">=0.33" },
     { name = "pywin32", marker = "sys_platform == 'win32'", specifier = ">=310" },
+    { name = "pywin32", marker = "extra == 'windows'", specifier = ">=310" },
     { name = "pywinctl", specifier = ">=0.4.1" },
-    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.0.241" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.27.0" },
     { name = "websockets", specifier = ">=12.0" },
 ]
-provides-extras = ["dev", "format", "mcp", "test"]
+provides-extras = ["mcp", "macos", "linux", "windows"]
 
 [[package]]
 name = "cua-core"
@@ -6044,10 +6042,10 @@ name = "pyobjc-framework-applicationservices"
 version = "12.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "pyobjc-core", marker = "(python_full_version < '3.13' and sys_platform != 'win32') or sys_platform == 'darwin'" },
-    { name = "pyobjc-framework-cocoa", marker = "(python_full_version < '3.13' and sys_platform != 'win32') or sys_platform == 'darwin'" },
-    { name = "pyobjc-framework-coretext", marker = "(python_full_version < '3.13' and sys_platform != 'win32') or sys_platform == 'darwin'" },
-    { name = "pyobjc-framework-quartz", marker = "(python_full_version < '3.13' and sys_platform != 'win32') or sys_platform == 'darwin'" },
+    { name = "pyobjc-core" },
+    { name = "pyobjc-framework-cocoa" },
+    { name = "pyobjc-framework-coretext" },
+    { name = "pyobjc-framework-quartz" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/be/6a/d4e613c8e926a5744fc47a9e9fea08384a510dc4f27d844f7ad7a2d793bd/pyobjc_framework_applicationservices-12.1.tar.gz", hash = "sha256:c06abb74f119bc27aeb41bf1aef8102c0ae1288aec1ac8665ea186a067a8945b", size = 103247, upload-time = "2025-11-14T10:08:52.18Z" }
 wheels = [
@@ -6345,7 +6343,7 @@ name = "pyobjc-framework-cocoa"
 version = "12.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "pyobjc-core", marker = "(python_full_version < '3.13' and sys_platform != 'win32') or sys_platform == 'darwin'" },
+    { name = "pyobjc-core" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/02/a3/16ca9a15e77c061a9250afbae2eae26f2e1579eb8ca9462ae2d2c71e1169/pyobjc_framework_cocoa-12.1.tar.gz", hash = "sha256:5556c87db95711b985d5efdaaf01c917ddd41d148b1e52a0c66b1a2e2c5c1640", size = 2772191, upload-time = "2025-11-14T10:13:02.069Z" }
 wheels = [
@@ -6625,9 +6623,9 @@ name = "pyobjc-framework-coretext"
 version = "12.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "pyobjc-core", marker = "(python_full_version < '3.13' and sys_platform != 'win32') or sys_platform == 'darwin'" },
-    { name = "pyobjc-framework-cocoa", marker = "(python_full_version < '3.13' and sys_platform != 'win32') or sys_platform == 'darwin'" },
-    { name = "pyobjc-framework-quartz", marker = "(python_full_version < '3.13' and sys_platform != 'win32') or sys_platform == 'darwin'" },
+    { name = "pyobjc-core" },
+    { name = "pyobjc-framework-cocoa" },
+    { name = "pyobjc-framework-quartz" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/29/da/682c9c92a39f713bd3c56e7375fa8f1b10ad558ecb075258ab6f1cdd4a6d/pyobjc_framework_coretext-12.1.tar.gz", hash = "sha256:e0adb717738fae395dc645c9e8a10bb5f6a4277e73cba8fa2a57f3b518e71da5", size = 90124, upload-time = "2025-11-14T10:14:38.596Z" }
 wheels = [
@@ -7710,8 +7708,8 @@ name = "pyobjc-framework-quartz"
 version = "12.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "pyobjc-core", marker = "(python_full_version < '3.13' and sys_platform != 'win32') or sys_platform == 'darwin'" },
-    { name = "pyobjc-framework-cocoa", marker = "(python_full_version < '3.13' and sys_platform != 'win32') or sys_platform == 'darwin'" },
+    { name = "pyobjc-core" },
+    { name = "pyobjc-framework-cocoa" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/94/18/cc59f3d4355c9456fc945eae7fe8797003c4da99212dd531ad1b0de8a0c6/pyobjc_framework_quartz-12.1.tar.gz", hash = "sha256:27f782f3513ac88ec9b6c82d9767eef95a5cf4175ce88a1e5a65875fee799608", size = 3159099, upload-time = "2025-11-14T10:21:24.31Z" }
 wheels = [

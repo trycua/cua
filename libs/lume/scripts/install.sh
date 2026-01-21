@@ -171,9 +171,9 @@ get_latest_lume_tag() {
   while [ $page -le $max_pages ]; do
     echo "Checking page $page..." >&2
 
-    local response=$(curl -s "https://api.github.com/repos/$GITHUB_REPO/tags?per_page=$per_page&page=$page")
+    local response=$(curl -s "https://api.github.com/repos/$GITHUB_REPO/releases?per_page=$per_page&page=$page")
 
-    if [ -z "$response" ] || [ "$(echo "$response" | grep -c '"name":')" -eq 0 ]; then
+    if [ -z "$response" ] || [ "$(echo "$response" | grep -c '"tag_name"')" -eq 0 ]; then
       if [ $page -eq 1 ]; then
         echo "${RED}Error: Failed to fetch tags from GitHub API.${NORMAL}" >&2
         exit 1
@@ -184,7 +184,7 @@ get_latest_lume_tag() {
     fi
 
     LUME_TAG=$(echo "$response" \
-      | grep '"name": "lume-' \
+      | grep -oE '"tag_name":\s*"lume-[^"]*"' \
       | head -n 1 \
       | cut -d '"' -f 4)
 
@@ -356,13 +356,13 @@ get_latest_tag() {
   local max_pages=5
 
   while [ $page -le $max_pages ]; do
-    local response=$(curl -s "https://api.github.com/repos/$GITHUB_REPO/tags?per_page=$per_page&page=$page")
+    local response=$(curl -s "https://api.github.com/repos/$GITHUB_REPO/releases?per_page=$per_page&page=$page")
 
     if [ -z "$response" ]; then
       return 1
     fi
 
-    local tag=$(echo "$response" | grep '"name": "lume-' | head -n 1 | cut -d '"' -f 4)
+    local tag=$(echo "$response" | grep -oE '"tag_name":\s*"lume-[^"]*"' | head -n 1 | cut -d '"' -f 4)
 
     if [ -n "$tag" ]; then
       echo "$tag"

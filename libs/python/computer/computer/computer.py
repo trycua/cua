@@ -34,7 +34,7 @@ from core.telemetry import is_telemetry_enabled, record_event
 from PIL import Image
 
 from . import helpers
-from .interface.factory import InterfaceFactory
+from .interface.factory import InterfaceFactory, OSType
 from .logger import Logger, LogLevel
 from .models import Computer as ComputerConfig
 from .models import Display
@@ -69,8 +69,6 @@ SYSTEM_INFO = {
 # Import provider related modules
 from .providers.base import VMProviderType
 from .providers.factory import VMProviderFactory
-
-OSType = Literal["macos", "linux", "windows", "android"]
 
 
 class Computer:
@@ -128,7 +126,7 @@ class Computer:
                     Defaults to "1024x768"
             memory: The VM memory allocation. Defaults to "8GB"
             cpu: The VM CPU allocation. Defaults to "4"
-            os_type: The operating system type ('macos' or 'linux')
+            os_type: The operating system type ('macos', 'linux', 'windows', 'android')
             name: The VM name
             image: The VM image name
             shared_directories: Optional list of directory paths to share with the VM
@@ -1149,6 +1147,17 @@ class Computer:
                 install_cmd = f'uv add --directory "{venv_path}" {requirements_str}'
                 return await self.interface.run_command(install_cmd)
             return await self.interface.run_command("echo No requirements to install")
+        elif self.os_type == "android":
+            # Android: Use hardcoded path as $HOME may not be set
+            venv_path = f"/home/androidusr/.venvs/{venv_name}"
+            # Initialize UV project if it doesn't exist
+            create_cmd = f'mkdir -p "/home/androidusr/.venvs" && (test -d "{venv_path}" || uv init --vcs none --no-readme --no-workspace --no-pin-python "{venv_path}")'
+            await self.interface.run_command(create_cmd)
+            # Install packages
+            if requirements_str := " ".join(requirements):
+                install_cmd = f'uv add --directory "{venv_path}" {requirements_str}'
+                return await self.interface.run_command(install_cmd)
+            return await self.interface.run_command("echo No requirements to install")
         else:
             # POSIX (macOS/Linux)
             venv_path = f"$HOME/.venvs/{venv_name}"
@@ -1197,6 +1206,18 @@ class Computer:
             )
             result = await self.interface.run_command(check_cmd)
             if "VENV_NOT_FOUND" in getattr(result, "stdout", ""):
+                # Auto-create the UV project with no requirements
+                await self.venv_install(venv_name, [])
+            # Execute command in project
+            full_command = f'uv run --directory "{project_path}" {command}'
+            return await self.interface.run_command(full_command)
+        elif self.os_type == "android":
+            # Android: Use hardcoded path as $HOME may not be set
+            project_path = f"/home/androidusr/.venvs/{venv_name}"
+            # Check if UV project exists
+            check_cmd = f'test -d "{project_path}"'
+            result = await self.interface.run_command(check_cmd)
+            if result.stderr or "test:" in result.stdout:  # project doesn't exist
                 # Auto-create the UV project with no requirements
                 await self.venv_install(venv_name, [])
             # Execute command in project
@@ -1453,6 +1474,31 @@ print(p.pid)
 """
             launcher_b64 = base64.b64encode(launcher_code.encode("utf-8")).decode("ascii")
             # Use UV to run the launcher code in the project
+            cmd = f"uv run --directory \"{venv_path}\" python -c \"import base64; exec(base64.b64decode('{launcher_b64}').decode('utf-8'))\""
+            result = await self.interface.run_command(cmd)
+            stdout_lines = (result.stdout or "").strip().splitlines()
+            if not stdout_lines:
+                raise Exception(
+                    f"Failed to launch background process. No output received.\n"
+                    f"stdout: {result.stdout}\n"
+                    f"stderr: {result.stderr}"
+                )
+            pid_str = stdout_lines[-1].strip()
+            return int(pid_str)
+        elif self.os_type == "android":
+            log = f"/tmp/cua_bg_{int(_time.time())}.log"
+            venv_path = f"/home/androidusr/.venvs/{venv_name}"
+            launcher_code = f"""
+import base64, subprocess, os, sys
+code = base64.b64decode("{payload_b64}").decode("utf-8")
+# Use hardcoded path for Android
+venv_path = "/home/androidusr/.venvs/{venv_name}"
+with open("{log}", "ab", buffering=0) as f:
+    p = subprocess.Popen(["uv", "run", "--directory", venv_path, "python", "-c", code], stdout=f, stderr=subprocess.STDOUT, preexec_fn=getattr(os, "setsid", None), cwd=venv_path)
+print(p.pid)
+"""
+            launcher_b64 = base64.b64encode(launcher_code.encode("utf-8")).decode("ascii")
+            # Run the launcher code in the project
             cmd = f"uv run --directory \"{venv_path}\" python -c \"import base64; exec(base64.b64decode('{launcher_b64}').decode('utf-8'))\""
             result = await self.interface.run_command(cmd)
             stdout_lines = (result.stdout or "").strip().splitlines()

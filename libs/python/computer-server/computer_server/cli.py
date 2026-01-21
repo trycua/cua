@@ -19,6 +19,21 @@ def parse_args(args: Optional[List[str]] = None) -> argparse.Namespace:
     """Parse command-line arguments."""
     parser = argparse.ArgumentParser(description="Start the Computer API server")
     parser.add_argument(
+        "--width",
+        type=int,
+        help="Target width for screenshots (coordinates will be scaled accordingly)",
+    )
+    parser.add_argument(
+        "--height",
+        type=int,
+        help="Target height for screenshots (coordinates will be scaled accordingly)",
+    )
+    parser.add_argument(
+        "--detect-resolution",
+        action="store_true",
+        help="Auto-detect and log the actual screen resolution at startup",
+    )
+    parser.add_argument(
         "--host", default="0.0.0.0", help="Host to bind the server to (default: 0.0.0.0)"
     )
     parser.add_argument(
@@ -68,6 +83,7 @@ def main() -> None:
     logging.basicConfig(
         level=getattr(logging, args.log_level.upper()),
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        stream=sys.stderr,  # Use stderr for MCP compatibility
     )
 
     # Check if watchdog should be enabled
@@ -117,6 +133,8 @@ def main() -> None:
 
     # Create and start the server
     logger.info(f"Starting Cua Computer API server on {args.host}:{args.port}...")
+    logger.info("HTTP API available at /ws, /cmd, /status endpoints")
+    logger.info("MCP server available at /mcp endpoint (if fastmcp installed)")
 
     # Handle SSL configuration
     ssl_args = {}

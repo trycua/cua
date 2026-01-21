@@ -27,6 +27,13 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from .browser import get_browser_manager
 from .handlers.factory import OS_TYPE, HandlerFactory
 
+# Try to import MCP server for SSE integration
+try:
+    from .mcp_server import create_mcp_server
+    HAS_MCP = True
+except ImportError:
+    HAS_MCP = False
+
 # Authentication session TTL (in seconds). Override via env var CUA_AUTH_TTL_SECONDS. Default: 60s
 AUTH_SESSION_TTL_SECONDS: int = int(os.environ.get("CUA_AUTH_TTL_SECONDS", "60"))
 
@@ -44,12 +51,25 @@ logger.setLevel(logging.INFO)
 # Configure WebSocket with larger message size
 WEBSOCKET_MAX_SIZE = 1024 * 1024 * 10  # 10MB limit
 
-# Configure application with WebSocket settings
+# Create MCP app first if available (needed for lifespan)
+_mcp_http_app = None
+if HAS_MCP:
+    try:
+        mcp_server = create_mcp_server()
+        # Configure FastMCP to use "/" as its internal path, then mount at /mcp
+        # This results in endpoint at /mcp (mount) + / (internal) = /mcp
+        _mcp_http_app = mcp_server.http_app(path="/")
+        logger.info("MCP server created for /mcp endpoint (streamable HTTP transport)")
+    except Exception as e:
+        logger.warning(f"Failed to create MCP server: {e}")
+
+# Configure application with WebSocket settings and MCP lifespan
 app = FastAPI(
     title="Computer API",
     description="API for the Computer project",
     version="0.1.0",
     websocket_max_size=WEBSOCKET_MAX_SIZE,
+    lifespan=_mcp_http_app.lifespan if _mcp_http_app else None,
 )
 
 # CORS configuration
@@ -61,6 +81,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Mount MCP server at /mcp - FastMCP's internal path is "/" so endpoint is /mcp
+if _mcp_http_app:
+    app.mount("/mcp", _mcp_http_app)
 
 protocol_version = 1
 try:
@@ -84,6 +108,44 @@ except Exception:
     desktop_handler,
     window_handler,
 ) = HandlerFactory.create_handlers()
+# Helper function for direction-based scrolling
+async def _scroll_direction_handler(direction: str, clicks: int = 1) -> Dict[str, Any]:
+    """
+    Scroll in a specified direction.
+
+    Args:
+        direction: One of 'up', 'down', 'left', 'right'
+        clicks: Number of scroll clicks (default: 1)
+    """
+    direction = direction.lower()
+    if direction == "down":
+        return await automation_handler.scroll_down(clicks)
+    elif direction == "up":
+        return await automation_handler.scroll_up(clicks)
+    elif direction in ("left", "right"):
+        # For horizontal scrolling, use scroll with x amount
+        x_amount = -300 if direction == "left" else 300
+        return await automation_handler.scroll(x_amount * clicks, 0)
+    else:
+        raise ValueError(f"Invalid direction: {direction}. Use 'up', 'down', 'left', or 'right'.")
+
+
+# Command aliases for common alternative names
+COMMAND_ALIASES = {
+    "type": "type_text",
+    "key": "press_key",
+    "tap": "left_click",
+    "click": "left_click",
+    "shell": "run_command",
+    "exec": "run_command",
+    "read_file": "read_text",
+    "write_file": "write_text",
+    "ls": "list_dir",
+    "mkdir": "create_dir",
+    "rm": "delete_file",
+    "rmdir": "delete_dir",
+}
+
 handlers = {
     "version": lambda: {"protocol": protocol_version, "package": package_version},
     # App-Use commands
@@ -141,6 +203,7 @@ handlers = {
     "scroll": automation_handler.scroll,
     "scroll_down": automation_handler.scroll_down,
     "scroll_up": automation_handler.scroll_up,
+    "scroll_direction": _scroll_direction_handler,
     # Screen actions
     "screenshot": automation_handler.screenshot,
     "get_cursor_position": automation_handler.get_cursor_position,
@@ -260,13 +323,68 @@ manager = ConnectionManager()
 auth_manager = AuthenticationManager()
 
 
+def _resolve_command(command: str) -> str:
+    """Resolve command aliases to their canonical names."""
+    return COMMAND_ALIASES.get(command, command)
+
+
+def _suggest_similar_commands(command: str) -> List[str]:
+    """Suggest similar commands for typos."""
+    all_commands = list(handlers.keys()) + list(COMMAND_ALIASES.keys())
+    suggestions = []
+    command_lower = command.lower()
+    for cmd in all_commands:
+        # Simple similarity: starts with same letter or contains the input
+        if cmd.lower().startswith(command_lower[:2]) or command_lower in cmd.lower():
+            suggestions.append(cmd)
+    return suggestions[:5]
+
+
 @app.get("/status")
 async def status():
     # get computer-server features
     features = []
     if HAS_AGENT:
         features.append("agent")
+    if HAS_MCP:
+        features.append("mcp")
     return {"status": "ok", "os_type": OS_TYPE, "features": features}
+
+
+@app.get("/commands")
+async def list_commands():
+    """List all available commands and their aliases."""
+    commands_info = {}
+    for cmd_name, handler_func in handlers.items():
+        try:
+            sig = inspect.signature(handler_func)
+            params = [
+                {
+                    "name": p.name,
+                    "required": p.default == inspect.Parameter.empty,
+                    "default": None if p.default == inspect.Parameter.empty else p.default,
+                }
+                for p in sig.parameters.values()
+            ]
+        except (ValueError, TypeError):
+            params = []
+        commands_info[cmd_name] = {"params": params}
+
+    # Add alias information
+    aliases_by_command: Dict[str, List[str]] = {}
+    for alias, canonical in COMMAND_ALIASES.items():
+        if canonical not in aliases_by_command:
+            aliases_by_command[canonical] = []
+        aliases_by_command[canonical].append(alias)
+
+    for cmd_name in commands_info:
+        if cmd_name in aliases_by_command:
+            commands_info[cmd_name]["aliases"] = aliases_by_command[cmd_name]
+
+    return {
+        "commands": commands_info,
+        "aliases": COMMAND_ALIASES,
+    }
 
 
 @app.websocket("/ws", name="websocket_endpoint")
@@ -340,10 +458,15 @@ async def websocket_endpoint(websocket: WebSocket):
                 command = data.get("command")
                 params = data.get("params", {})
 
+                # Resolve command aliases
+                command = _resolve_command(command)
+
                 if command not in handlers:
-                    await websocket.send_json(
-                        {"success": False, "error": f"Unknown command: {command}"}
-                    )
+                    suggestions = _suggest_similar_commands(command)
+                    error_msg = f"Unknown command: {command}"
+                    if suggestions:
+                        error_msg += f". Did you mean: {', '.join(suggestions)}?"
+                    await websocket.send_json({"success": False, "error": error_msg})
                     continue
 
                 try:
@@ -422,6 +545,9 @@ async def cmd_endpoint(
     if not command:
         raise HTTPException(status_code=400, detail="Command is required")
 
+    # Resolve command aliases
+    command = _resolve_command(command)
+
     # Check if CONTAINER_NAME is set (indicating cloud provider)
     server_container_name = os.environ.get("CONTAINER_NAME")
 
@@ -444,7 +570,11 @@ async def cmd_endpoint(
             raise HTTPException(status_code=401, detail="Authentication failed")
 
     if command not in handlers:
-        raise HTTPException(status_code=400, detail=f"Unknown command: {command}")
+        suggestions = _suggest_similar_commands(command)
+        error_msg = f"Unknown command: {command}"
+        if suggestions:
+            error_msg += f". Did you mean: {', '.join(suggestions)}?"
+        raise HTTPException(status_code=400, detail=error_msg)
 
     async def generate_response():
         """Generate streaming response for the command execution"""

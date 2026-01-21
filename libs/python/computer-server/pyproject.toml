@@ -4,7 +4,7 @@ build-backend = "pdm.backend"
 
 [project]
 name = "cua-computer-server"
-version = "0.3.4"
+version = "0.3.11"
 
 description = "Server component for the Computer-Use Interface (CUI) framework powering Cua"
 authors = [
@@ -24,6 +24,7 @@ dependencies = [
     "websockets>=12.0",
     "pywinctl>=0.4.1",
     "playwright>=1.40.0",
+    "fastmcp>=2.0,<3",
     # OS-specific runtime deps
     "pyobjc-framework-Cocoa>=10.1; sys_platform == 'darwin'",
     "pyobjc-framework-Quartz>=10.1; sys_platform == 'darwin'",
@@ -75,4 +76,5 @@ dev = [
 ]
 
 [tool.pdm.scripts]
+# Starts HTTP server with MCP at /mcp endpoint
 api = "python -m computer_server"

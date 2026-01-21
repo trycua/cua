@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Virtualization
 
@@ -214,15 +215,25 @@ final class DarwinVirtualizationService: BaseVirtualizationService {
         vzConfig.bootLoader = VZMacOSBootLoader()
 
         // Graphics configuration
+        // Use host screen-based display configuration when available for better
+        // display compositor integration (helps with screenshot capture in VMs)
         let display = VMDisplayResolution(string: config.display)!
         let graphics = VZMacGraphicsDeviceConfiguration()
-        graphics.displays = [
-            VZMacGraphicsDisplayConfiguration(
-                widthInPixels: display.width,
-                heightInPixels: display.height,
-                pixelsPerInch: 220  // Retina display density
-            )
-        ]
+        if let hostMainScreen = NSScreen.main {
+            let vmScreenSize = NSSize(width: display.width, height: display.height)
+            graphics.displays = [
+                VZMacGraphicsDisplayConfiguration(for: hostMainScreen, sizeInPoints: vmScreenSize)
+            ]
+        } else {
+            // Fallback to pixel-based configuration if no host screen available
+            graphics.displays = [
+                VZMacGraphicsDisplayConfiguration(
+                    widthInPixels: display.width,
+                    heightInPixels: display.height,
+                    pixelsPerInch: 220
+                )
+            ]
+        }
         vzConfig.graphicsDevices = [graphics]
 
         // Common configurations

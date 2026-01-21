@@ -1325,9 +1325,29 @@ class MacOSAutomationHandler(BaseAutomationHandler):
             Dictionary containing success status and base64-encoded image data or error message
         """
         try:
-            screenshot = ImageGrab.grab()
-            if not isinstance(screenshot, Image.Image):
-                return {"success": False, "error": "Failed to capture screenshot"}
+            import tempfile
+            import os
+            from Quartz import CGWindowListCreateImage, kCGWindowListOptionOnScreenOnly, kCGNullWindowID, CGRectNull
+            from Quartz import CGImageDestinationCreateWithURL, CGImageDestinationAddImage, CGImageDestinationFinalize
+
+            # Capture screenshot using Quartz (more reliable than ImageGrab on macOS VMs)
+            cg_image = CGWindowListCreateImage(CGRectNull, kCGWindowListOptionOnScreenOnly, kCGNullWindowID, 0)
+            if not cg_image:
+                return {"success": False, "error": "Failed to capture screenshot - no image returned"}
+
+            # Save to temporary file
+            tmp_path = tempfile.mktemp(suffix=".png")
+            url = Foundation.NSURL.fileURLWithPath_(tmp_path)
+            dest = CGImageDestinationCreateWithURL(url, "public.png", 1, None)
+            if not dest:
+                return {"success": False, "error": "Failed to create image destination"}
+            CGImageDestinationAddImage(dest, cg_image, None)
+            if not CGImageDestinationFinalize(dest):
+                return {"success": False, "error": "Failed to finalize image"}
+
+            # Read with PIL
+            from PIL import Image
+            screenshot = Image.open(tmp_path)
 
             # Resize image to reduce size (max width 1920, maintain aspect ratio)
             max_width = 1920
@@ -1341,6 +1361,13 @@ class MacOSAutomationHandler(BaseAutomationHandler):
             screenshot.save(buffered, format="PNG", optimize=True)
             buffered.seek(0)
             image_data = base64.b64encode(buffered.getvalue()).decode()
+
+            # Clean up temp file
+            try:
+                os.unlink(tmp_path)
+            except:
+                pass
+
             return {"success": True, "image_data": image_data}
         except Exception as e:
             return {"success": False, "error": f"Screenshot error: {str(e)}"}
@@ -1352,8 +1379,9 @@ class MacOSAutomationHandler(BaseAutomationHandler):
             Dictionary containing success status and screen size or error message
         """
         try:
-            img = ImageGrab.grab()
-            return {"success": True, "size": {"width": img.width, "height": img.height}}
+            from Quartz import CGDisplayBounds, CGMainDisplayID
+            bounds = CGDisplayBounds(CGMainDisplayID())
+            return {"success": True, "size": {"width": int(bounds.size.width), "height": int(bounds.size.height)}}
         except Exception as e:
             return {"success": False, "error": str(e)}
 

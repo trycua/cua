@@ -37,13 +37,122 @@ class AndroidAccessibilityHandler(BaseAccessibilityHandler):
 
     async def get_accessibility_tree(self) -> Dict[str, Any]:
         """Get the accessibility tree using uiautomator dump."""
-        raise NotImplementedError("get_accessibility_tree not yet implemented for Android")
+        import xml.etree.ElementTree as ET
+
+        # Dump UI hierarchy to file and read it
+        success, output = await adb_exec.run(
+            "shell", "uiautomator dump /sdcard/ui_dump.xml && cat /sdcard/ui_dump.xml",
+            decode=True
+        )
+        if not success or not output:
+            raise RuntimeError(f"Failed to dump UI hierarchy: {output}")
+
+        # Clean up the dump file
+        await adb_exec.run("shell", "rm", "/sdcard/ui_dump.xml", decode=True)
+
+        try:
+            # Parse XML
+            root = ET.fromstring(output.strip())
+            return {"tree": self._parse_accessibility_node(root)}
+        except ET.ParseError as e:
+            raise RuntimeError(f"Failed to parse UI hierarchy XML: {e}")
+
+    def _parse_accessibility_node(self, node) -> Dict[str, Any]:
+        """Parse a UI Automator XML node into accessibility tree format."""
+        result: Dict[str, Any] = {}
+
+        # Extract attributes
+        attrs = node.attrib
+        if attrs.get("text"):
+            result["text"] = attrs["text"]
+        if attrs.get("resource-id"):
+            result["resource_id"] = attrs["resource-id"]
+        if attrs.get("class"):
+            result["class"] = attrs["class"]
+        if attrs.get("content-desc"):
+            result["description"] = attrs["content-desc"]
+        if attrs.get("package"):
+            result["package"] = attrs["package"]
+
+        # Parse bounds "[x1,y1][x2,y2]" format
+        bounds_str = attrs.get("bounds", "")
+        if bounds_str:
+            import re
+            match = re.match(r"\[(\d+),(\d+)\]\[(\d+),(\d+)\]", bounds_str)
+            if match:
+                x1, y1, x2, y2 = map(int, match.groups())
+                result["bounds"] = {
+                    "x": x1,
+                    "y": y1,
+                    "width": x2 - x1,
+                    "height": y2 - y1,
+                    "center_x": (x1 + x2) // 2,
+                    "center_y": (y1 + y2) // 2,
+                }
+
+        # Boolean attributes
+        for attr in ["clickable", "enabled", "focused", "scrollable", "checkable", "checked"]:
+            if attrs.get(attr) == "true":
+                result[attr] = True
+
+        # Parse children recursively
+        children = [self._parse_accessibility_node(child) for child in node]
+        if children:
+            result["children"] = children
+
+        return result
 
     async def find_element(
         self, role: Optional[str] = None, title: Optional[str] = None, value: Optional[str] = None
     ) -> Dict[str, Any]:
-        """Find an element in the UI hierarchy."""
-        raise NotImplementedError("find_element not yet implemented for Android")
+        """Find an element in the UI hierarchy by role (class), title (text/content-desc), or value (resource-id)."""
+        tree_result = await self.get_accessibility_tree()
+        tree = tree_result.get("tree", {})
+
+        matches = []
+        self._find_elements_recursive(tree, role, title, value, matches)
+
+        if not matches:
+            return {"found": False, "elements": []}
+
+        return {"found": True, "elements": matches}
+
+    def _find_elements_recursive(
+        self,
+        node: Dict[str, Any],
+        role: Optional[str],
+        title: Optional[str],
+        value: Optional[str],
+        matches: List[Dict[str, Any]],
+    ):
+        """Recursively search for elements matching criteria."""
+        is_match = True
+
+        # Match by role (class name)
+        if role:
+            node_class = node.get("class", "")
+            if role.lower() not in node_class.lower():
+                is_match = False
+
+        # Match by title (text or content-desc)
+        if title and is_match:
+            node_text = node.get("text", "")
+            node_desc = node.get("description", "")
+            if title.lower() not in node_text.lower() and title.lower() not in node_desc.lower():
+                is_match = False
+
+        # Match by value (resource-id)
+        if value and is_match:
+            node_id = node.get("resource_id", "")
+            if value.lower() not in node_id.lower():
+                is_match = False
+
+        if is_match and (role or title or value):
+            matches.append(node)
+
+        # Search children
+        for child in node.get("children", []):
+            self._find_elements_recursive(child, role, title, value, matches)
 
 
 class AndroidAutomationHandler(BaseAutomationHandler):

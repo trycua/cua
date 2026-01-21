@@ -140,28 +140,51 @@ def create_mcp_server() -> FastMCP:
         Returns the current screen state as an image. Always call this first
         to see what's on screen before performing any actions.
         """
+        from PIL import Image as PILImage
+        from io import BytesIO
+
         _, automation_handler, _, _, _, _ = _get_handlers()
         result = await automation_handler.screenshot()
         image_data = base64.b64decode(result["image_data"])
 
-        # If target resolution is set, resize the screenshot
+        # Decode the image
+        img = PILImage.open(BytesIO(image_data))
+
+        # If target resolution is set, resize to that
         if _target_width and _target_height and (_scale_x != 1.0 or _scale_y != 1.0):
-            from PIL import Image as PILImage
-            from io import BytesIO
-
-            # Decode the image
-            img = PILImage.open(BytesIO(image_data))
-
-            # Resize to target resolution
             img = img.resize((_target_width, _target_height), PILImage.Resampling.LANCZOS)
+        else:
+            # Resize large images to keep under 1MB limit
+            # Max dimension of 1280 is a good balance for visibility and size
+            max_dimension = 1280
+            width, height = img.size
+            if width > max_dimension or height > max_dimension:
+                if width > height:
+                    new_width = max_dimension
+                    new_height = int(height * max_dimension / width)
+                else:
+                    new_height = max_dimension
+                    new_width = int(width * max_dimension / height)
+                img = img.resize((new_width, new_height), PILImage.Resampling.LANCZOS)
 
-            # Encode back to PNG
+        # Convert to RGB if necessary (for JPEG compatibility)
+        if img.mode in ('RGBA', 'P'):
+            img = img.convert('RGB')
+
+        # Use JPEG with quality setting to ensure small file size
+        buffered = BytesIO()
+        img.save(buffered, format="JPEG", quality=85, optimize=True)
+        buffered.seek(0)
+        image_data = buffered.getvalue()
+
+        # If still too large, reduce quality further
+        if len(image_data) > 900000:  # 900KB threshold
             buffered = BytesIO()
-            img.save(buffered, format="PNG", optimize=True)
+            img.save(buffered, format="JPEG", quality=70, optimize=True)
             buffered.seek(0)
             image_data = buffered.getvalue()
 
-        return Image(data=image_data, format="png")
+        return Image(data=image_data, format="jpeg")
 
     @mcp.tool
     async def computer_get_screen_size() -> Dict[str, Any]:

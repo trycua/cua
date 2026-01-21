@@ -158,25 +158,85 @@ class AndroidAccessibilityHandler(BaseAccessibilityHandler):
 class AndroidAutomationHandler(BaseAutomationHandler):
     """Android automation handler using ADB input commands."""
 
+    _cached_screen_size: Optional[Dict[str, int]] = None
+
+    async def _get_cached_screen_size(self) -> Dict[str, int]:
+        """Get screen size with caching to avoid repeated ADB calls."""
+        if self._cached_screen_size is None:
+            result = await self.get_screen_size()
+            self._cached_screen_size = {"width": result["width"], "height": result["height"]}
+        return self._cached_screen_size
+
+    async def _scale_coordinates(
+        self,
+        x: int,
+        y: int,
+        target_width: Optional[int] = None,
+        target_height: Optional[int] = None,
+    ) -> Tuple[int, int]:
+        """Scale coordinates from target resolution to actual device resolution.
+
+        If target_width and target_height are provided, coordinates are scaled
+        proportionally. Otherwise, coordinates are returned unchanged.
+
+        Args:
+            x: X coordinate in target resolution
+            y: Y coordinate in target resolution
+            target_width: Width of the coordinate space (e.g., screenshot width)
+            target_height: Height of the coordinate space (e.g., screenshot height)
+
+        Returns:
+            Tuple of (scaled_x, scaled_y) in actual device resolution
+        """
+        if target_width is None or target_height is None:
+            return x, y
+
+        screen_size = await self._get_cached_screen_size()
+        actual_width = screen_size["width"]
+        actual_height = screen_size["height"]
+
+        # Scale proportionally
+        scaled_x = int(x * actual_width / target_width)
+        scaled_y = int(y * actual_height / target_height)
+
+        return scaled_x, scaled_y
+
     # Mouse Actions
     async def mouse_down(
-        self, x: Optional[int] = None, y: Optional[int] = None, button: str = "left"
+        self,
+        x: Optional[int] = None,
+        y: Optional[int] = None,
+        button: str = "left",
+        target_width: Optional[int] = None,
+        target_height: Optional[int] = None,
     ) -> Dict[str, Any]:
         """Simulate mouse down (touch down) at position.
         Note: Android doesn't support separate touch down/up via ADB.
-        This is a simulated implementation."""
+        This is a simulated implementation.
+
+        Args:
+            x: X coordinate
+            y: Y coordinate
+            button: Mouse button (ignored on Android)
+            target_width: If provided with target_height, coordinates are scaled
+            target_height: If provided with target_width, coordinates are scaled
+        """
         if x is None or y is None:
             raise ValueError("x and y coordinates are required for mouse_down on Android")
+
+        # Scale coordinates if target resolution is provided
+        scaled_x, scaled_y = await self._scale_coordinates(x, y, target_width, target_height)
+
         # Android doesn't support separate touch down/up through ADB
         # We simulate by doing a very short tap
         success, output = await adb_exec.run(
             "shell",
             "input",
             "swipe",
-            str(x),
-            str(y),
-            str(x),
-            str(y),
+            str(scaled_x),
+            str(scaled_y),
+            str(scaled_x),
+            str(scaled_y),
             "100",
             decode=True,
         )
@@ -195,31 +255,65 @@ class AndroidAutomationHandler(BaseAutomationHandler):
         # This is essentially a no-op as mouse_down already completes the touch
         return {}
 
-    async def left_click(self, x: Optional[int] = None, y: Optional[int] = None) -> Dict[str, Any]:
-        """Perform a tap at the specified position."""
+    async def left_click(
+        self,
+        x: Optional[int] = None,
+        y: Optional[int] = None,
+        target_width: Optional[int] = None,
+        target_height: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """Perform a tap at the specified position.
+
+        Args:
+            x: X coordinate
+            y: Y coordinate
+            target_width: If provided with target_height, coordinates are scaled from
+                         this resolution to actual device resolution
+            target_height: If provided with target_width, coordinates are scaled from
+                          this resolution to actual device resolution
+        """
         if x is None or y is None:
             raise ValueError("x and y coordinates are required for left_click on Android")
 
-        success, output = await adb_exec.run("shell", "input", "tap", str(x), str(y), decode=True)
+        # Scale coordinates if target resolution is provided
+        scaled_x, scaled_y = await self._scale_coordinates(x, y, target_width, target_height)
+
+        success, output = await adb_exec.run("shell", "input", "tap", str(scaled_x), str(scaled_y), decode=True)
         if success:
             return {}
         else:
             raise RuntimeError(f"Tap failed: {output}")
 
-    async def right_click(self, x: Optional[int] = None, y: Optional[int] = None) -> Dict[str, Any]:
-        """Simulate right click (long press) at position."""
+    async def right_click(
+        self,
+        x: Optional[int] = None,
+        y: Optional[int] = None,
+        target_width: Optional[int] = None,
+        target_height: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """Simulate right click (long press) at position.
+
+        Args:
+            x: X coordinate
+            y: Y coordinate
+            target_width: If provided with target_height, coordinates are scaled
+            target_height: If provided with target_width, coordinates are scaled
+        """
         if x is None or y is None:
             raise ValueError("x and y coordinates are required for right_click on Android")
+
+        # Scale coordinates if target resolution is provided
+        scaled_x, scaled_y = await self._scale_coordinates(x, y, target_width, target_height)
 
         # Long press: swipe with long duration simulates touch and hold
         success, output = await adb_exec.run(
             "shell",
             "input",
             "swipe",
-            str(x),
-            str(y),
-            str(x),
-            str(y),
+            str(scaled_x),
+            str(scaled_y),
+            str(scaled_x),
+            str(scaled_y),
             "1000",
             decode=True,
         )
@@ -229,16 +323,30 @@ class AndroidAutomationHandler(BaseAutomationHandler):
             raise RuntimeError(f"Long press failed: {output}")
 
     async def double_click(
-        self, x: Optional[int] = None, y: Optional[int] = None
+        self,
+        x: Optional[int] = None,
+        y: Optional[int] = None,
+        target_width: Optional[int] = None,
+        target_height: Optional[int] = None,
     ) -> Dict[str, Any]:
-        """Perform a double tap at the specified position."""
+        """Perform a double tap at the specified position.
+
+        Args:
+            x: X coordinate
+            y: Y coordinate
+            target_width: If provided with target_height, coordinates are scaled
+            target_height: If provided with target_width, coordinates are scaled
+        """
         if x is None or y is None:
             raise ValueError("x and y coordinates are required for double_click on Android")
+
+        # Scale coordinates if target resolution is provided
+        scaled_x, scaled_y = await self._scale_coordinates(x, y, target_width, target_height)
 
         # Perform two taps in quick succession
         for _ in range(2):
             success, output = await adb_exec.run(
-                "shell", "input", "tap", str(x), str(y), decode=True
+                "shell", "input", "tap", str(scaled_x), str(scaled_y), decode=True
             )
             if not success:
                 raise RuntimeError(f"Double tap failed: {output}")
@@ -263,15 +371,32 @@ class AndroidAutomationHandler(BaseAutomationHandler):
         )
 
     async def drag(
-        self, path: List[Tuple[int, int]], button: str = "left", duration: float = 0.5
+        self,
+        path: List[Tuple[int, int]],
+        button: str = "left",
+        duration: float = 0.5,
+        target_width: Optional[int] = None,
+        target_height: Optional[int] = None,
     ) -> Dict[str, Any]:
-        """Drag along a path of coordinates."""
+        """Drag along a path of coordinates.
+
+        Args:
+            path: List of (x, y) coordinate tuples
+            button: Mouse button (ignored on Android)
+            duration: Drag duration in seconds
+            target_width: If provided with target_height, coordinates are scaled
+            target_height: If provided with target_width, coordinates are scaled
+        """
         if len(path) < 2:
             raise ValueError("Path must contain at least 2 coordinates for drag")
 
         # Use first and last points for swipe gesture
         start_x, start_y = path[0]
         end_x, end_y = path[-1]
+
+        # Scale coordinates if target resolution is provided
+        start_x, start_y = await self._scale_coordinates(start_x, start_y, target_width, target_height)
+        end_x, end_y = await self._scale_coordinates(end_x, end_y, target_width, target_height)
 
         # Convert duration to milliseconds
         duration_ms = int(duration * 1000)
@@ -426,11 +551,27 @@ class AndroidAutomationHandler(BaseAutomationHandler):
 
     # Screen Actions
     async def screenshot(self) -> Dict[str, Any]:
-        """Take a screenshot and return base64 encoded image."""
+        """Take a screenshot and return base64 encoded image.
+
+        Returns:
+            Dict with:
+                - image_data: Base64 encoded PNG image
+                - width: Image width (actual device resolution)
+                - height: Image height (actual device resolution)
+
+            Use width/height as target_width/target_height when passing
+            coordinates from this screenshot to click/tap commands.
+        """
         success, output = await adb_exec.run("shell", "screencap", "-p")
         if success and output:
             image_b64 = base64.b64encode(output).decode("utf-8")
-            return {"image_data": image_b64}
+            # Get screen size to include in response
+            screen_size = await self._get_cached_screen_size()
+            return {
+                "image_data": image_b64,
+                "width": screen_size["width"],
+                "height": screen_size["height"],
+            }
         else:
             raise RuntimeError(f"Screenshot failed: {output.decode('utf-8')}")
 

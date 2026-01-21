@@ -42,26 +42,42 @@ COPY --from=builder /build/wallpaper-manager/app/build/outputs/apk/debug/app-deb
 
 RUN apt-get update && \
     apt-get install -y \
-    python3 \
-    python3-pip \
-    python3-venv \
-    python3-dev \
-    python3-tk \
+    software-properties-common \
     build-essential \
     curl \
+    gcc \
+    && add-apt-repository -y ppa:deadsnakes/ppa && \
+    apt-get update && \
+    apt-get install -y \
+    python3.12 \
+    python3.12-venv \
+    python3.12-dev \
+    python3.12-tk \
     && rm -rf /var/lib/apt/lists/*
 
-RUN python3 -m venv /opt/venv
-ENV PATH="/opt/venv/bin:$PATH"
+# Install UV package manager
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh && \
+    chmod 755 /root /root/.local /root/.local/bin /root/.local/bin/uv && \
+    ln -sf /root/.local/bin/uv /usr/local/bin/uv && \
+    uv --version
 
-RUN /opt/venv/bin/pip install --no-cache-dir --upgrade pip && \
-    /opt/venv/bin/pip install --no-cache-dir cua-computer-server
+# Set Python 3.12 as default python3
+RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.12 1 && \
+    update-alternatives --set python3 /usr/bin/python3.12
+
+# Create UV project for cua-computer-server
+RUN mkdir -p /opt/cua-server && \
+    uv init --vcs none --no-readme --no-workspace --no-pin-python /opt/cua-server && \
+    uv add --directory /opt/cua-server cua-computer-server
 
 COPY src/entry.sh /usr/local/bin/entry.sh
 RUN chmod +x /usr/local/bin/entry.sh
 
-# Make venv accessible to androidusr
-RUN chown -R 1300:1301 /opt/venv
+# Make UV project accessible to androidusr
+RUN chown -R 1300:1301 /opt/cua-server
+
+# Ensure UV is accessible in PATH for androidusr
+ENV PATH="/usr/local/bin:$PATH"
 
 EXPOSE 8000
 

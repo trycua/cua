@@ -24,6 +24,7 @@ dependencies = [
     "websockets>=12.0",
     "pywinctl>=0.4.1",
     "playwright>=1.40.0",
+    "fastmcp>=2.0,<3",
     # OS-specific runtime deps
     "pyobjc-framework-Cocoa>=10.1; sys_platform == 'darwin'",
     "pyobjc-framework-Quartz>=10.1; sys_platform == 'darwin'",
@@ -34,9 +35,6 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-mcp = [
-    "fastmcp>=2.0,<3"
-]
 macos = [
     "pyobjc-framework-Cocoa>=10.1",
     "pyobjc-framework-Quartz>=10.1",

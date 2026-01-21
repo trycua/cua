@@ -551,27 +551,11 @@ class AndroidAutomationHandler(BaseAutomationHandler):
 
     # Screen Actions
     async def screenshot(self) -> Dict[str, Any]:
-        """Take a screenshot and return base64 encoded image.
-
-        Returns:
-            Dict with:
-                - image_data: Base64 encoded PNG image
-                - width: Image width (actual device resolution)
-                - height: Image height (actual device resolution)
-
-            Use width/height as target_width/target_height when passing
-            coordinates from this screenshot to click/tap commands.
-        """
+        """Take a screenshot and return base64 encoded image."""
         success, output = await adb_exec.run("shell", "screencap", "-p")
         if success and output:
             image_b64 = base64.b64encode(output).decode("utf-8")
-            # Get screen size to include in response
-            screen_size = await self._get_cached_screen_size()
-            return {
-                "image_data": image_b64,
-                "width": screen_size["width"],
-                "height": screen_size["height"],
-            }
+            return {"image_data": image_b64}
         else:
             raise RuntimeError(f"Screenshot failed: {output.decode('utf-8')}")
 

@@ -42,12 +42,27 @@ def _get_handlers():
     return _handlers
 
 
-def _detect_actual_resolution() -> Tuple[int, int]:
-    """Detect the actual screen resolution using PIL ImageGrab."""
+async def _detect_actual_resolution_async() -> Tuple[int, int]:
+    """Detect the actual screen resolution using the automation handler."""
     try:
-        from PIL import ImageGrab
-        img = ImageGrab.grab()
-        return img.width, img.height
+        _, automation_handler, _, _, _, _ = _get_handlers()
+        result = await automation_handler.get_screen_size()
+        return result["width"], result["height"]
+    except Exception as e:
+        logger.warning(f"Failed to detect resolution via handler: {e}")
+        return 1920, 1080  # Default fallback
+
+
+def _detect_actual_resolution() -> Tuple[int, int]:
+    """Detect the actual screen resolution (sync wrapper)."""
+    import asyncio
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            # If called from async context, can't use run_until_complete
+            # Return default and let async init handle it
+            return 1920, 1080
+        return loop.run_until_complete(_detect_actual_resolution_async())
     except Exception as e:
         logger.warning(f"Failed to detect resolution: {e}")
         return 1920, 1080  # Default fallback
@@ -159,13 +174,9 @@ def create_mcp_server() -> FastMCP:
         # Return target resolution if scaling is configured
         if _target_width is not None and _target_height is not None:
             return {"width": int(_target_width), "height": int(_target_height)}
-        # Fallback: detect resolution directly
-        try:
-            from PIL import ImageGrab
-            img = ImageGrab.grab()
-            return {"width": img.width, "height": img.height}
-        except Exception:
-            return {"width": 1920, "height": 1080}
+        # Use handler to get screen size
+        _, automation_handler, _, _, _, _ = _get_handlers()
+        return await automation_handler.get_screen_size()
 
     @mcp.tool
     async def computer_get_cursor_position() -> Dict[str, Any]:
@@ -175,16 +186,13 @@ def create_mcp_server() -> FastMCP:
         Returns:
             Dictionary with 'x' and 'y' coordinates.
         """
-        # Get cursor position using pynput directly for reliability
-        try:
-            from pynput.mouse import Controller
-            mouse = Controller()
-            x, y = mouse.position
-            # Scale to target coordinates if scaling is configured
-            scaled_x, scaled_y = _scale_to_target(int(x), int(y))
+        _, automation_handler, _, _, _, _ = _get_handlers()
+        result = await automation_handler.get_cursor_position()
+        # Scale to target coordinates if scaling is configured
+        if "x" in result and "y" in result:
+            scaled_x, scaled_y = _scale_to_target(int(result["x"]), int(result["y"]))
             return {"x": scaled_x, "y": scaled_y}
-        except Exception:
-            return {"x": 0, "y": 0}
+        return result
 
     @mcp.tool
     async def computer_click(

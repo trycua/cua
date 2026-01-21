@@ -4,13 +4,15 @@ from typing import Literal, Optional
 
 from .base import BaseComputerInterface
 
+OSType = Literal["macos", "linux", "windows", "android"]
+
 
 class InterfaceFactory:
     """Factory for creating OS-specific computer interfaces."""
 
     @staticmethod
     def create_interface_for_os(
-        os: Literal["macos", "linux", "windows"],
+        os: OSType,
         ip_address: str,
         api_port: Optional[int] = None,
         api_key: Optional[str] = None,
@@ -31,21 +33,29 @@ class InterfaceFactory:
         Raises:
             ValueError: If the OS type is not supported
         """
-        # Import implementations here to avoid circular imports
-        from .linux import LinuxComputerInterface
-        from .macos import MacOSComputerInterface
-        from .windows import WindowsComputerInterface
 
         if os == "macos":
+            from .macos import MacOSComputerInterface
+
             return MacOSComputerInterface(
                 ip_address, api_key=api_key, vm_name=vm_name, api_port=api_port
             )
         elif os == "linux":
+            from .linux import LinuxComputerInterface
+
             return LinuxComputerInterface(
                 ip_address, api_key=api_key, vm_name=vm_name, api_port=api_port
             )
         elif os == "windows":
+            from .windows import WindowsComputerInterface
+
             return WindowsComputerInterface(
+                ip_address, api_key=api_key, vm_name=vm_name, api_port=api_port
+            )
+        elif os == "android":
+            from .android import AndroidComputerInterface
+
+            return AndroidComputerInterface(
                 ip_address, api_key=api_key, vm_name=vm_name, api_port=api_port
             )
         else:

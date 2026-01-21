@@ -30,8 +30,12 @@ timeout=600
 while [ $counter -lt $timeout ]; do
     # Check if emulator device is listed
     emulator_found=$(adb devices 2>/dev/null | grep -c "emulator" 2>/dev/null || echo "0")
-    # Ensure emulator_found is a valid integer
-    emulator_found=${emulator_found:-0}
+    # Strip whitespace and ensure it's a valid integer
+    emulator_found=$(echo "$emulator_found" | tr -d '\n\r' | tr -d ' ')
+    # Default to 0 if empty or not a number
+    if ! [[ "$emulator_found" =~ ^[0-9]+$ ]]; then
+        emulator_found=0
+    fi
     if [ "$emulator_found" -gt 0 ]; then
         # Check if boot is complete
         boot_completed=$(adb shell getprop sys.boot_completed 2>&1 | tr -d '\r\n' | grep -o "1" || echo "0")

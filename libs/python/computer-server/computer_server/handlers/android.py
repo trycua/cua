@@ -41,8 +41,7 @@ class AndroidAccessibilityHandler(BaseAccessibilityHandler):
 
         # Dump UI hierarchy to file and read it
         success, output = await adb_exec.run(
-            "shell", "uiautomator dump /sdcard/ui_dump.xml && cat /sdcard/ui_dump.xml",
-            decode=True
+            "shell", "uiautomator dump /sdcard/ui_dump.xml && cat /sdcard/ui_dump.xml", decode=True
         )
         if not success or not output:
             raise RuntimeError(f"Failed to dump UI hierarchy: {output}")
@@ -84,6 +83,7 @@ class AndroidAccessibilityHandler(BaseAccessibilityHandler):
         bounds_str = attrs.get("bounds", "")
         if bounds_str:
             import re
+
             match = re.match(r"\[(\d+),(\d+)\]\[(\d+),(\d+)\]", bounds_str)
             if match:
                 x1, y1, x2, y2 = map(int, match.groups())
@@ -433,23 +433,30 @@ class AndroidAutomationHandler(BaseAutomationHandler):
     # Screen Actions
     async def screenshot(self) -> Dict[str, Any]:
         """Take a screenshot and return base64 encoded image."""
-        success, output = await adb_exec.run("shell", "screencap", "-p")
-        if success and output:
-            image_b64 = base64.b64encode(output).decode("utf-8")
-            return {"image_data": image_b64}
-        else:
-            raise RuntimeError(f"Screenshot failed: {output.decode('utf-8')}")
+        try:
+            success, output = await adb_exec.run("shell", "screencap", "-p")
+            if success and output:
+                image_b64 = base64.b64encode(output).decode("utf-8")
+                return {"success": True, "image_data": image_b64}
+            else:
+                error_msg = output.decode("utf-8") if isinstance(output, bytes) else str(output)
+                return {"success": False, "error": f"Screenshot failed: {error_msg}"}
+        except Exception as e:
+            return {"success": False, "error": f"Screenshot error: {str(e)}"}
 
     async def get_screen_size(self) -> Dict[str, Any]:
         """Get the screen size of the Android device."""
-        success, output = await adb_exec.run("shell", "wm", "size", decode=True)
-        if success and "x" in output:
-            # Parse "Physical size: 1080x1920"
-            size_str = output.split(":")[-1].strip()
-            width, height = map(int, size_str.split("x"))
-            return {"width": width, "height": height}
-        else:
-            raise RuntimeError(f"Failed to get screen size: {output}")
+        try:
+            success, output = await adb_exec.run("shell", "wm", "size", decode=True)
+            if success and "x" in output:
+                # Parse "Physical size: 1080x1920"
+                size_str = output.split(":")[-1].strip()
+                width, height = map(int, size_str.split("x"))
+                return {"success": True, "size": {"width": width, "height": height}}
+            else:
+                return {"success": False, "error": f"Failed to get screen size: {output}"}
+        except Exception as e:
+            return {"success": False, "error": f"Get screen size error: {str(e)}"}
 
     async def get_cursor_position(self) -> Dict[str, Any]:
         """Get cursor position - not supported on touch devices."""
@@ -460,23 +467,31 @@ class AndroidAutomationHandler(BaseAutomationHandler):
     # Clipboard Actions
     async def copy_to_clipboard(self) -> Dict[str, Any]:
         """Get clipboard content."""
-        # Android 10+ supports clipboard via cmd
-        success, output = await adb_exec.run("shell", "cmd", "clipboard", "get-text", decode=True)
-        if success:
-            return {"text": output.strip()}
-        else:
-            raise RuntimeError(f"Failed to get clipboard: {output}")
+        try:
+            # Android 10+ supports clipboard via cmd
+            success, output = await adb_exec.run(
+                "shell", "cmd", "clipboard", "get-text", decode=True
+            )
+            if success:
+                return {"success": True, "content": output.strip()}
+            else:
+                return {"success": False, "error": f"Failed to get clipboard: {output}"}
+        except Exception as e:
+            return {"success": False, "error": f"Get clipboard error: {str(e)}"}
 
     async def set_clipboard(self, text: str) -> Dict[str, Any]:
         """Set clipboard content."""
-        # Android 10+ supports clipboard via cmd
-        success, output = await adb_exec.run(
-            "shell", "cmd", "clipboard", "set-text", text, decode=True
-        )
-        if success:
-            return {}
-        else:
-            raise RuntimeError(f"Failed to set clipboard: {output}")
+        try:
+            # Android 10+ supports clipboard via cmd
+            success, output = await adb_exec.run(
+                "shell", "cmd", "clipboard", "set-text", text, decode=True
+            )
+            if success:
+                return {"success": True}
+            else:
+                return {"success": False, "error": f"Failed to set clipboard: {output}"}
+        except Exception as e:
+            return {"success": False, "error": f"Set clipboard error: {str(e)}"}
 
     # Other
     async def run_command(self, command: str) -> Dict[str, Any]:

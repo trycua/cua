@@ -11,18 +11,19 @@ CUA sandboxes include a [noVNC fork](https://github.com/trycua/novnc) with built
 
 ## Manual Recording
 
-### 1. Start a sandbox with the VNC UI
+### 1. Start a sandbox and open the VNC UI
 
-```bash
-./utils/novnc_proxy --vnc localhost:5900 --listen localhost:6081
-```
+Start a sandbox using [Docker](/docs/cua/guide/get-started/set-up-sandbox) or [Cua Cloud](/docs/cua/guide/get-started/cloud-quick-start). The VNC UI will be available at:
+
+- **Docker**: `http://localhost:8006`
+- **Cloud**: `https://{sandbox-name}.sandbox.cua.ai/vnc.html`
 
 ### 2. Enable recording
 
-Add `autorecord=1` to the URL to automatically start recording when you connect:
+Add `autorecord=1` to the VNC URL to automatically start recording when you connect:
 
 ```
-http://localhost:6081/vnc.html?host=localhost&port=6081&autoconnect=1&autorecord=1
+http://localhost:8006/vnc.html?autoconnect=1&autorecord=1
 ```
 
 Or click the **record button** in the control bar before connecting.
@@ -37,32 +38,41 @@ Click **Stop Recording**, then **Download** to save the session as a `.js` file.
 
 ### 5. Replay the recording
 
-Open the playback UI with your recording:
+Open the playback UI with your recording file:
 
 ```
-http://localhost:6081/tests/vnc_playback.html?data=../recordings/your-recording.js
+http://localhost:8006/tests/vnc_playback.html?data=../recordings/your-recording.js
 ```
 
 ## Streaming to External Server
 
-For automated pipelines, stream recordings directly to a custom server using the `record_url` parameter:
+For automated pipelines, stream recordings directly to a custom server using the `record_url` parameter. Here's a simple recording server:
 
-```bash
-# Start the recording server
-python3 utils/recording_server.py --port 6090 --output demo.bin --js
+```python
+import asyncio
+import websockets
 
-# Connect with streaming enabled
-http://localhost:6081/vnc.html?host=localhost&port=6081&autoconnect=1&autorecord=1&record_url=ws://localhost:6090
+async def handle_recording(websocket):
+    with open("recording.bin", "wb") as f:
+        async for message in websocket:
+            f.write(message)
+    print("Recording saved")
+
+async def main():
+    async with websockets.serve(handle_recording, "localhost", 6090):
+        print("Recording server running on ws://localhost:6090")
+        await asyncio.Future()
+
+asyncio.run(main())
 ```
 
-Or use the integrated novnc_proxy flags:
+Then connect with streaming enabled:
 
-```bash
-./utils/novnc_proxy --vnc localhost:5900 --listen localhost:6081 \
-    --autoconnect --record-server --record-output demo.bin --record-js
+```
+http://localhost:8006/vnc.html?autoconnect=1&autorecord=1&record_url=ws://localhost:6090
 ```
 
-Recording data streams to disk in real-time via WebSocket.
+Recording data streams to disk in real-time via WebSocket, so the file is ready immediately when the session ends.
 
 ## URL Parameters
 

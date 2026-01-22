@@ -355,3 +355,130 @@ def convert_qwen_tool_args_to_computer_action(args: Dict[str, Any]) -> Optional[
 
     # Non-UI or terminal actions: terminate/answer -> not mapped here
     return None
+
+
+def convert_fara_args_to_browser_tool_format(args: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Convert FARA model output format to BrowserTool compatible format.
+
+    FARA model may output extra parameters that BrowserTool methods don't accept.
+    This function cleans up the arguments and maps them to the correct format.
+
+    Examples:
+        Input:  {"action": "click", "button": "left", "x": 378, "y": 144}
+        Output: {"action": "left_click", "coordinate": [378, 144]}
+
+        Input:  {"action": "visit_url", "url": "https://...", "text": "..."}
+        Output: {"action": "visit_url", "url": "https://..."}
+
+        Input:  {"action": "terminate", "url": "...", "text": "...", "status": "success"}
+        Output: {"action": "terminate", "status": "success"}
+    """
+    if not isinstance(args, dict):
+        return args
+
+    action = args.get("action", "")
+    if not isinstance(action, str):
+        return args
+
+    a = action.lower()
+    result: Dict[str, Any] = {"action": a}
+
+    # Handle coordinate-based actions
+    # Check for both coordinate array and separate x/y fields
+    coord = args.get("coordinate")
+    x = args.get("x")
+    y = args.get("y")
+
+    if coord and isinstance(coord, (list, tuple)) and len(coord) >= 2:
+        x, y = coord[0], coord[1]
+
+    # Click actions - normalize to left_click with coordinate
+    if a in {"click", "left_click"}:
+        if x is not None and y is not None:
+            result["action"] = "left_click"
+            result["coordinate"] = [x, y]
+        return result
+
+    if a in {"right_click", "middle_click", "double_click", "triple_click"}:
+        if x is not None and y is not None:
+            result["coordinate"] = [x, y]
+        return result
+
+    if a == "mouse_move":
+        if x is not None and y is not None:
+            result["coordinate"] = [x, y]
+        return result
+
+    if a == "left_click_drag":
+        if x is not None and y is not None:
+            result["coordinate"] = [x, y]
+        # Also handle start/end coordinates if present
+        start_coord = args.get("start_coordinate")
+        end_coord = args.get("end_coordinate")
+        if start_coord:
+            result["start_coordinate"] = start_coord
+        if end_coord:
+            result["end_coordinate"] = end_coord
+        return result
+
+    # Keyboard actions
+    if a == "key":
+        keys = args.get("keys")
+        if keys:
+            result["keys"] = keys
+        return result
+
+    if a == "type":
+        text = args.get("text")
+        if text:
+            result["text"] = text
+        # Include coordinate if typing at a specific location
+        if x is not None and y is not None:
+            result["coordinate"] = [x, y]
+        return result
+
+    # Scroll actions
+    if a in {"scroll", "hscroll"}:
+        pixels = args.get("pixels")
+        if pixels is not None:
+            result["pixels"] = pixels
+        if x is not None and y is not None:
+            result["coordinate"] = [x, y]
+        return result
+
+    # Browser-specific actions
+    if a == "visit_url":
+        url = args.get("url")
+        if url:
+            result["url"] = url
+        return result
+
+    if a == "web_search":
+        query = args.get("query")
+        if query:
+            result["query"] = query
+        return result
+
+    if a == "history_back":
+        return result
+
+    # Wait action
+    if a == "wait":
+        time_val = args.get("time")
+        if time_val is not None:
+            result["time"] = time_val
+        return result
+
+    # Screenshot action
+    if a == "screenshot":
+        return result
+
+    # Terminate action
+    if a == "terminate":
+        status = args.get("status", "success")
+        result["status"] = status
+        return result
+
+    # For any other action, return cleaned args (just action + known fields)
+    return result

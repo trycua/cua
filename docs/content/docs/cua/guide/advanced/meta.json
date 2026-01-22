@@ -8,6 +8,7 @@
     "sandboxed-python",
     "local-computer-server",
     "human-in-the-loop",
+    "demonstration-recorder",
     "trajectories",
     "tracing",
     "chat-history",

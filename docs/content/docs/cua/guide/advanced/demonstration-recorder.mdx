@@ -38,10 +38,24 @@ Click **Stop Recording**, then **Download** to save the session as a `.js` file.
 
 ### 5. Replay the recording
 
-Open the playback UI with your recording file:
+Start the playback UI:
+
+```bash
+# Clone the noVNC fork
+git clone https://github.com/trycua/novnc
+cd novnc
+
+# Move your recording into the recordings folder
+mv ~/Downloads/vnc-recording-*.js ./recordings/
+
+# Start the local server
+./utils/novnc_proxy
+```
+
+Then open the playback URL:
 
 ```
-http://localhost:8006/tests/vnc_playback.html?data=../recordings/your-recording.js
+http://localhost:6080/tests/vnc_playback.html?data=../recordings/your-recording.js
 ```
 
 ## Streaming to External Server

@@ -1,0 +1,87 @@
+---
+title: Demonstration-Guided Agents
+description: Use human demonstrations to guide agent behavior and improve task completion
+---
+
+Human demonstrations provide powerful context for guiding agent behavior. By showing an agent how a task is performed once, it can learn the workflow pattern and generalize to similar tasks with different inputs.
+
+## Overview
+
+The demonstration-guided workflow consists of three stages:
+
+1. **Record** - Capture a human performing the task via [noVNC recording](/docs/cua/guide/advanced/demonstration-recorder)
+2. **Process** - Convert the recording into semantic action traces with VLM captions
+3. **Prompt** - Use the processed trajectory to guide agent execution
+
+This approach enables:
+
+- **One-shot learning**: Teach a workflow once, execute it many times
+- **Reduced errors**: Agents follow demonstrated patterns instead of discovering them
+- **Complex workflows**: Handle multi-step tasks that require specific sequences
+
+## Example: Using a Demonstration to Guide an Agent
+
+First, record and process a demonstration:
+
+```bash
+python -m agent.process_demonstration vnc-recording.js \
+  --task "Book a flight from NYC to LA" \
+  --output flight_booking.json
+```
+
+Then use the generated `skill_prompt` to guide an agent:
+
+```python
+import json
+from agent import ComputerAgent
+
+# Load processed demonstration
+with open("flight_booking.json") as f:
+    demo = json.load(f)
+
+agent = ComputerAgent(loop="anthropic")
+
+# Use skill_prompt as context, then give the actual task
+messages = [
+    {"role": "user", "content": demo["skill_prompt"]},
+    {"role": "user", "content": "Book a flight from Boston to Chicago for next Friday"}
+]
+
+async for result in agent.run(messages):
+    print(result)
+```
+
+The `skill_prompt` contains a natural language description of the demonstrated workflow, allowing the agent to follow the same pattern while adapting to the new parameters (Boston→Chicago instead of NYC→LA).
+
+## Output Format
+
+The processor outputs a JSON file with the following structure:
+
+```json
+{
+  "trajectory": [
+    {
+      "step_idx": 1,
+      "screenshot": "base64...",
+      "cropped_screenshot": "base64...",
+      "caption": {
+        "observation": "The screen shows a login form with email and password fields",
+        "think": "User intends to enter credentials to access the application",
+        "action": "Click on the email input field",
+        "expectation": "Field becomes focused and ready for text input"
+      },
+      "raw_event": {
+        "timestamp": 1234,
+        "type": "click",
+        "data": { "x": 450, "y": 320, "button": "left" }
+      }
+    }
+  ],
+  "skill_prompt": "You have been shown a demonstration of how to perform this task...",
+  "metadata": {
+    "recording_file": "vnc-recording-2026-01-22.js",
+    "task_description": "Login to email",
+    "total_steps": 12
+  }
+}
+```

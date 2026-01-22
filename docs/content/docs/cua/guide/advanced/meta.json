@@ -9,6 +9,7 @@
     "local-computer-server",
     "human-in-the-loop",
     "demonstration-recorder",
+    "demonstration-guided-agents",
     "trajectories",
     "tracing",
     "chat-history",

@@ -95,8 +95,64 @@ Recording data streams to disk in real-time via WebSocket, so the file is ready 
 | `autorecord=1`        | Start recording when connection is established |
 | `record_url=ws://...` | Stream recording to external WebSocket server  |
 
-## Using Demonstrations to Prompt Agents
+## Processing Demonstrations
 
-Recordings are raw noVNC data streams, but they can be processed into semantic action traces that improve agent planning and execution. An example of an agent that will support this capability is [ShowUI-Aloha](https://github.com/showlab/ShowUI-Aloha), which learns workflows from human demonstrations and generalizes to new task variants.
+Recordings are raw noVNC data streams containing VNC protocol messages. The CUA agent SDK includes a processor that converts these into semantic action traces suitable for agent prompting.
 
-_Coming soon_
+### Parse a Recording
+
+```bash
+# Basic parsing - extracts events and generates captions
+python -m agent.process_demonstration vnc-recording-2026-01-22.js
+
+# Add task context
+python -m agent.process_demonstration vnc-recording-2026-01-22.js \
+  --task "Login to email and compose a new message" \
+  --output email_workflow.json
+
+# Use OpenAI instead of Anthropic for captions
+python -m agent.process_demonstration recording.js \
+  --provider openai \
+  --model gpt-4o
+```
+
+### Output Format
+
+The processor outputs a JSON file with the following structure:
+
+```json
+{
+  "trajectory": [
+    {
+      "step_idx": 1,
+      "screenshot": "base64...",
+      "cropped_screenshot": "base64...",
+      "caption": {
+        "observation": "The screen shows a login form with email and password fields",
+        "think": "User intends to enter credentials to access the application",
+        "action": "Click on the email input field",
+        "expectation": "Field becomes focused and ready for text input"
+      },
+      "raw_event": {
+        "timestamp": 1234,
+        "type": "click",
+        "data": { "x": 450, "y": 320, "button": "left" }
+      }
+    }
+  ],
+  "skill_prompt": "You have been shown a demonstration of how to perform this task...",
+  "metadata": {
+    "recording_file": "vnc-recording-2026-01-22.js",
+    "task_description": "Login to email",
+    "total_steps": 12
+  }
+}
+```
+
+For more details on prompting agents with demonstrations, see [Demonstration-Guided Agents](/docs/cua/guide/advanced/demonstration-guided-agents).
+
+## Reference
+
+For related capabilities, see:
+
+- [ShowUI-Aloha](https://github.com/showlab/ShowUI-Aloha) - Human-taught GUI agent that learns from demonstrations

@@ -111,7 +111,7 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/*
 
 # Install noVNC
-RUN git clone https://github.com/novnc/noVNC.git /opt/noVNC && \
+RUN git clone https://github.com/trycua/noVNC.git /opt/noVNC && \
     git clone https://github.com/novnc/websockify /opt/noVNC/utils/websockify && \
     ln -s /opt/noVNC/vnc.html /opt/noVNC/index.html
 

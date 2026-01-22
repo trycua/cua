@@ -421,3 +421,96 @@ class BrowserTool(BaseComputerTool):
         else:
             error = result.get("error", "Unknown error")
             raise RuntimeError(f"Failed to get current URL: {error}")
+
+    # FARA-compatible action methods
+    # These methods accept parameters in the format that FARA model outputs
+    # and agent.py passes via **action_args
+
+    async def left_click(self, coordinate=None, **kwargs) -> dict:
+        """Left click at coordinates. FARA-compatible."""
+        return await self._action_left_click({"coordinate": coordinate})
+
+    async def right_click(self, coordinate=None, **kwargs) -> dict:
+        """Right click at coordinates. FARA-compatible."""
+        if not coordinate or len(coordinate) != 2:
+            return {"success": False, "error": "coordinate parameter [x, y] is required"}
+        # Use playwright_exec for right click
+        result = await self.interface.playwright_exec(
+            "click", {"x": coordinate[0], "y": coordinate[1], "button": "right"}
+        )
+        return result
+
+    async def middle_click(self, coordinate=None, **kwargs) -> dict:
+        """Middle click at coordinates. FARA-compatible."""
+        if not coordinate or len(coordinate) != 2:
+            return {"success": False, "error": "coordinate parameter [x, y] is required"}
+        result = await self.interface.playwright_exec(
+            "click", {"x": coordinate[0], "y": coordinate[1], "button": "middle"}
+        )
+        return result
+
+    async def double_click(self, coordinate=None, **kwargs) -> dict:
+        """Double click at coordinates. FARA-compatible."""
+        if not coordinate or len(coordinate) != 2:
+            return {"success": False, "error": "coordinate parameter [x, y] is required"}
+        result = await self.interface.playwright_exec(
+            "dblclick", {"x": coordinate[0], "y": coordinate[1]}
+        )
+        return result
+
+    async def triple_click(self, coordinate=None, **kwargs) -> dict:
+        """Triple click at coordinates. FARA-compatible."""
+        if not coordinate or len(coordinate) != 2:
+            return {"success": False, "error": "coordinate parameter [x, y] is required"}
+        # Triple click is approximated as double click
+        return await self.double_click(coordinate=coordinate)
+
+    async def mouse_move(self, coordinate=None, **kwargs) -> dict:
+        """Move mouse to coordinates. FARA-compatible."""
+        return await self._action_mouse_move({"coordinate": coordinate})
+
+    async def left_click_drag(
+        self, coordinate=None, start_coordinate=None, end_coordinate=None, **kwargs
+    ) -> dict:
+        """Drag from start to end coordinates. FARA-compatible."""
+        if start_coordinate and end_coordinate:
+            # Use start/end coordinates if provided
+            await self.interface.interface.move_cursor(start_coordinate[0], start_coordinate[1])
+            await self.interface.interface.mouse_down(start_coordinate[0], start_coordinate[1])
+            await self.interface.interface.move_cursor(end_coordinate[0], end_coordinate[1])
+            await self.interface.interface.mouse_up(end_coordinate[0], end_coordinate[1])
+            return {
+                "success": True,
+                "message": f"Dragged from {start_coordinate} to {end_coordinate}",
+            }
+        elif coordinate:
+            # Just move to coordinate
+            await self.interface.interface.move_cursor(coordinate[0], coordinate[1])
+            return {"success": True, "message": f"Moved to {coordinate}"}
+        return {
+            "success": False,
+            "error": "start_coordinate and end_coordinate or coordinate required",
+        }
+
+    async def key(self, keys=None, **kwargs) -> dict:
+        """Press keys. FARA-compatible."""
+        return await self._action_key({"keys": keys})
+
+    async def hscroll(self, pixels=None, coordinate=None, **kwargs) -> dict:
+        """Horizontal scroll. FARA-compatible."""
+        if pixels is None:
+            return {"success": False, "error": "pixels parameter is required"}
+        result = await self.interface.playwright_exec("scroll", {"delta_x": pixels, "delta_y": 0})
+        return result
+
+    async def wait(self, time=None, **kwargs) -> dict:
+        """Wait for specified seconds. FARA-compatible."""
+        return await self._action_wait({"time": time})
+
+    async def history_back(self, **kwargs) -> dict:
+        """Go back in browser history. FARA-compatible."""
+        return await self._action_history_back({})
+
+    async def terminate(self, status=None, **kwargs) -> dict:
+        """Terminate and report status. FARA-compatible."""
+        return await self._action_terminate({"status": status or "success"})

@@ -21,6 +21,7 @@ from ...responses import (
 from ...types import AgentCapability
 from .helpers import (
     build_nous_system,
+    convert_fara_args_to_browser_tool_format,
     convert_qwen_tool_args_to_computer_action,
     parse_tool_call_from_text,
     unnormalize_coordinate,
@@ -89,19 +90,19 @@ class FaraVlmConfig(AsyncAgentConfig):
                 tool_type = tool.get("type")
 
                 if tool_type == "computer":
-                    # For computer tools, use QWEN3_COMPUTER_TOOL schema
+                    # For computer tools, use FARA_COMPUTER_TOOL schema
                     computer = tool.get("computer")
                     if computer and is_agent_computer(computer):
-                        function_schemas.append(QWEN3_COMPUTER_TOOL["function"])
+                        function_schemas.append(FARA_COMPUTER_TOOL["function"])
                 elif tool_type == "function":
                     # For function tools, use the provided function schema
                     function_schema = tool.get("function")
                     if function_schema:
                         function_schemas.append(function_schema)
 
-        # If no tools provided or no computer tool found, use default QWEN3_COMPUTER_TOOL
+        # If no tools provided or no computer tool found, use default FARA_COMPUTER_TOOL
         if not function_schemas:
-            function_schemas = [QWEN3_COMPUTER_TOOL["function"]]
+            function_schemas = [FARA_COMPUTER_TOOL["function"]]
 
         # Prepend Nous-generated system if available
         nous_system = build_nous_system(function_schemas)
@@ -244,6 +245,9 @@ class FaraVlmConfig(AsyncAgentConfig):
                 )
             args = await unnormalize_coordinate(raw_args, (last_rw, last_rh))
 
+            # Convert FARA model output format to BrowserTool compatible format
+            args = convert_fara_args_to_browser_tool_format(args)
+
             # Extract thoughts (text before <tool_call> tag)
             thoughts = ""
             if "<tool_call>" in content_text:
@@ -281,11 +285,9 @@ class FaraVlmConfig(AsyncAgentConfig):
                     if "coordinate" in args and last_rw is not None and last_rh is not None:
                         args = await unnormalize_coordinate(args, (last_rw, last_rh))
 
-                    # Convert Qwen format to Computer Calls format if this is a computer tool
-                    if fn_name == "computer":
-                        converted_action = convert_qwen_tool_args_to_computer_action(args)
-                        if converted_action:
-                            args = converted_action
+                    # Convert FARA model output format to BrowserTool compatible format
+                    if fn_name in ("computer", "computer_use"):
+                        args = convert_fara_args_to_browser_tool_format(args)
 
                     processed_tool_calls.append(
                         {
@@ -359,7 +361,7 @@ class FaraVlmConfig(AsyncAgentConfig):
         reduced_tool = {
             "type": "function",
             "function": {
-                **QWEN3_COMPUTER_TOOL["function"],
+                **FARA_COMPUTER_TOOL["function"],
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -439,8 +441,9 @@ class FaraVlmConfig(AsyncAgentConfig):
         return None
 
 
-# ComputerUse tool schema (OpenAI function tool format)
-QWEN3_COMPUTER_TOOL: dict[str, Any] = {
+# FARA-specific ComputerUse tool schema (OpenAI function tool format)
+# This schema is tailored for FARA-7B model and includes browser-specific actions
+FARA_COMPUTER_TOOL: dict[str, Any] = {
     "type": "function",
     "function": {
         "name": "computer",
@@ -451,7 +454,8 @@ QWEN3_COMPUTER_TOOL: dict[str, Any] = {
             "* The screen's resolution is 1000x1000.\n"
             "* Whenever you intend to move the cursor to click on an element like an icon, you should consult a screenshot to determine the coordinates of the element before moving the cursor.\n"
             "* If you tried clicking on a program or link but it failed to load, even after waiting, try adjusting your cursor position so that the tip of the cursor visually falls on the element that you want to click.\n"
-            "* Make sure to click any buttons, links, icons, etc with the cursor tip in the center of the element. Don't click boxes on their edges."
+            "* Make sure to click any buttons, links, icons, etc with the cursor tip in the center of the element. Don't click boxes on their edges.\n"
+            "* Use terminate action when you have completed the task or cannot proceed further."
         ),
         "parameters": {
             "type": "object",
@@ -472,6 +476,10 @@ QWEN3_COMPUTER_TOOL: dict[str, Any] = {
                         "hscroll",
                         "screenshot",
                         "wait",
+                        "visit_url",
+                        "web_search",
+                        "history_back",
+                        "terminate",
                     ],
                     "type": "string",
                 },
@@ -481,7 +489,7 @@ QWEN3_COMPUTER_TOOL: dict[str, Any] = {
                     "items": {"type": "string"},
                 },
                 "text": {
-                    "description": "Required only by action=type and action=answer.",
+                    "description": "Required only by action=type.",
                     "type": "string",
                 },
                 "coordinate": {
@@ -498,6 +506,19 @@ QWEN3_COMPUTER_TOOL: dict[str, Any] = {
                 "time": {
                     "description": "Seconds to wait (action=wait).",
                     "type": "number",
+                },
+                "url": {
+                    "description": "The URL to visit. Required only by action=visit_url.",
+                    "type": "string",
+                },
+                "query": {
+                    "description": "The search query. Required only by action=web_search.",
+                    "type": "string",
+                },
+                "status": {
+                    "description": "Task completion status. Required only by action=terminate.",
+                    "type": "string",
+                    "enum": ["success", "failure"],
                 },
             },
             "required": ["action"],

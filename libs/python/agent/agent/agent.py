@@ -537,10 +537,10 @@ class ComputerAgent:
 
                 # Perform computer actions
                 action = item.get("action")
-                action_type = action.get("type")
-                if action_type is None:
+                action_type = action.get("type") if action else None
+                if not action_type:
                     print(
-                        f"Action type cannot be `None`: action={action}, action_type={action_type}"
+                        f"Action type is empty or None: action={action}, action_type={action_type}"
                     )
                     return []
 
@@ -551,17 +551,24 @@ class ComputerAgent:
 
                 # Execute the computer action
                 computer_method = getattr(computer, action_type, None)
+                action_result = None
                 if computer_method:
                     assert_callable_with(computer_method, **action_args)
-                    await computer_method(**action_args)
+                    action_result = await computer_method(**action_args)
                 else:
                     raise ToolError(f"Unknown computer action: {action_type}")
 
-                # Take screenshot after action
-                if self.screenshot_delay and self.screenshot_delay > 0:
-                    await asyncio.sleep(self.screenshot_delay)
-                screenshot_base64 = await computer.screenshot()
-                await self._on_screenshot(screenshot_base64, "screenshot_after")
+                # Check if this was a terminate action
+                is_terminate = action_type == "terminate" or (
+                    isinstance(action_result, dict) and action_result.get("terminated")
+                )
+
+                # Take screenshot after action (skip for terminate)
+                if not is_terminate:
+                    if self.screenshot_delay and self.screenshot_delay > 0:
+                        await asyncio.sleep(self.screenshot_delay)
+                    screenshot_base64 = await computer.screenshot()
+                    await self._on_screenshot(screenshot_base64, "screenshot_after")
 
                 # Handle safety checks
                 pending_checks = item.get("pending_safety_checks", [])
@@ -576,15 +583,24 @@ class ComputerAgent:
                     #     raise ValueError(f"Safety check failed: {check_message}")
 
                 # Create call output
-                call_output = {
-                    "type": "computer_call_output",
-                    "call_id": item.get("call_id"),
-                    "acknowledged_safety_checks": acknowledged_checks,
-                    "output": {
-                        "type": "input_image",
-                        "image_url": f"data:image/png;base64,{screenshot_base64}",
-                    },
-                }
+                if is_terminate:
+                    # For terminate action, include the terminated flag
+                    call_output = {
+                        "type": "computer_call_output",
+                        "call_id": item.get("call_id"),
+                        "acknowledged_safety_checks": acknowledged_checks,
+                        "output": action_result if action_result else {"terminated": True},
+                    }
+                else:
+                    call_output = {
+                        "type": "computer_call_output",
+                        "call_id": item.get("call_id"),
+                        "acknowledged_safety_checks": acknowledged_checks,
+                        "output": {
+                            "type": "input_image",
+                            "image_url": f"data:image/png;base64,{screenshot_base64}",
+                        },
+                    }
 
                 # # Additional URL safety checks for browser environments
                 # if await computer.get_environment() == "browser":

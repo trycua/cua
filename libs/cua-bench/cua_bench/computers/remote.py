@@ -175,6 +175,13 @@ class RemoteDesktopSession:
         # Track PIDs of windows launched via bench_ui (pywebview)
         self._webview_pids: set[int] = set()
 
+    @property
+    def computer(self):
+        """Get the Computer SDK instance for advanced operations."""
+        if self._computer is None:
+            raise RuntimeError("Session not initialized. Call start() first.")
+        return self._computer
+
     async def step(self, action: Action) -> None:
         """Execute an action (alias for execute_action, for env.step() compatibility)."""
         await self.execute_action(action)

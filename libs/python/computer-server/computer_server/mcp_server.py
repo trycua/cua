@@ -42,12 +42,27 @@ def _get_handlers():
     return _handlers
 
 
-def _detect_actual_resolution() -> Tuple[int, int]:
-    """Detect the actual screen resolution using PIL ImageGrab."""
+async def _detect_actual_resolution_async() -> Tuple[int, int]:
+    """Detect the actual screen resolution using the automation handler."""
     try:
-        from PIL import ImageGrab
-        img = ImageGrab.grab()
-        return img.width, img.height
+        _, automation_handler, _, _, _, _ = _get_handlers()
+        result = await automation_handler.get_screen_size()
+        return result["width"], result["height"]
+    except Exception as e:
+        logger.warning(f"Failed to detect resolution via handler: {e}")
+        return 1920, 1080  # Default fallback
+
+
+def _detect_actual_resolution() -> Tuple[int, int]:
+    """Detect the actual screen resolution (sync wrapper)."""
+    import asyncio
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            # If called from async context, can't use run_until_complete
+            # Return default and let async init handle it
+            return 1920, 1080
+        return loop.run_until_complete(_detect_actual_resolution_async())
     except Exception as e:
         logger.warning(f"Failed to detect resolution: {e}")
         return 1920, 1080  # Default fallback
@@ -125,28 +140,51 @@ def create_mcp_server() -> FastMCP:
         Returns the current screen state as an image. Always call this first
         to see what's on screen before performing any actions.
         """
+        from PIL import Image as PILImage
+        from io import BytesIO
+
         _, automation_handler, _, _, _, _ = _get_handlers()
         result = await automation_handler.screenshot()
         image_data = base64.b64decode(result["image_data"])
 
-        # If target resolution is set, resize the screenshot
+        # Decode the image
+        img = PILImage.open(BytesIO(image_data))
+
+        # If target resolution is set, resize to that
         if _target_width and _target_height and (_scale_x != 1.0 or _scale_y != 1.0):
-            from PIL import Image as PILImage
-            from io import BytesIO
-
-            # Decode the image
-            img = PILImage.open(BytesIO(image_data))
-
-            # Resize to target resolution
             img = img.resize((_target_width, _target_height), PILImage.Resampling.LANCZOS)
+        else:
+            # Resize large images to keep under 1MB limit
+            # Max dimension of 1280 is a good balance for visibility and size
+            max_dimension = 1280
+            width, height = img.size
+            if width > max_dimension or height > max_dimension:
+                if width > height:
+                    new_width = max_dimension
+                    new_height = int(height * max_dimension / width)
+                else:
+                    new_height = max_dimension
+                    new_width = int(width * max_dimension / height)
+                img = img.resize((new_width, new_height), PILImage.Resampling.LANCZOS)
 
-            # Encode back to PNG
+        # Convert to RGB if necessary (for JPEG compatibility)
+        if img.mode in ('RGBA', 'P'):
+            img = img.convert('RGB')
+
+        # Use JPEG with quality setting to ensure small file size
+        buffered = BytesIO()
+        img.save(buffered, format="JPEG", quality=85, optimize=True)
+        buffered.seek(0)
+        image_data = buffered.getvalue()
+
+        # If still too large, reduce quality further
+        if len(image_data) > 900000:  # 900KB threshold
             buffered = BytesIO()
-            img.save(buffered, format="PNG", optimize=True)
+            img.save(buffered, format="JPEG", quality=70, optimize=True)
             buffered.seek(0)
             image_data = buffered.getvalue()
 
-        return Image(data=image_data, format="png")
+        return Image(data=image_data, format="jpeg")
 
     @mcp.tool
     async def computer_get_screen_size() -> Dict[str, Any]:
@@ -159,13 +197,9 @@ def create_mcp_server() -> FastMCP:
         # Return target resolution if scaling is configured
         if _target_width is not None and _target_height is not None:
             return {"width": int(_target_width), "height": int(_target_height)}
-        # Fallback: detect resolution directly
-        try:
-            from PIL import ImageGrab
-            img = ImageGrab.grab()
-            return {"width": img.width, "height": img.height}
-        except Exception:
-            return {"width": 1920, "height": 1080}
+        # Use handler to get screen size
+        _, automation_handler, _, _, _, _ = _get_handlers()
+        return await automation_handler.get_screen_size()
 
     @mcp.tool
     async def computer_get_cursor_position() -> Dict[str, Any]:
@@ -175,16 +209,13 @@ def create_mcp_server() -> FastMCP:
         Returns:
             Dictionary with 'x' and 'y' coordinates.
         """
-        # Get cursor position using pynput directly for reliability
-        try:
-            from pynput.mouse import Controller
-            mouse = Controller()
-            x, y = mouse.position
-            # Scale to target coordinates if scaling is configured
-            scaled_x, scaled_y = _scale_to_target(int(x), int(y))
+        _, automation_handler, _, _, _, _ = _get_handlers()
+        result = await automation_handler.get_cursor_position()
+        # Scale to target coordinates if scaling is configured
+        if "x" in result and "y" in result:
+            scaled_x, scaled_y = _scale_to_target(int(result["x"]), int(result["y"]))
             return {"x": scaled_x, "y": scaled_y}
-        except Exception:
-            return {"x": 0, "y": 0}
+        return result
 
     @mcp.tool
     async def computer_click(

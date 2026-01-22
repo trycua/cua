@@ -1,0 +1,102 @@
+---
+title: Human Demonstration Recorder
+description: Record human demonstrations from CUA sandboxes for training and evaluation
+---
+
+CUA sandboxes include a [noVNC fork](https://github.com/trycua/novnc) with built-in recording capabilities. This lets you capture human demonstrations as replayable session files for training data collection, evaluation baselines, or debugging.
+
+<video controls width="100%">
+  <source src="/docs/videos/demonstration-recorder.mp4" type="video/mp4" />
+</video>
+
+## Manual Recording
+
+### 1. Start a sandbox and open the VNC UI
+
+Start a sandbox using [Docker](/docs/cua/guide/get-started/set-up-sandbox) or [Cua Cloud](/docs/cua/guide/get-started/set-up-sandbox). The VNC UI will be available at:
+
+- **Docker**: `http://localhost:8006`
+- **Cloud**: `https://{sandbox-name}.sandbox.cua.ai/vnc.html`
+
+### 2. Enable recording
+
+Add `autorecord=1` to the VNC URL to automatically start recording when you connect:
+
+```
+http://localhost:8006/vnc.html?autoconnect=1&autorecord=1
+```
+
+Or click the **record button** in the control bar before connecting.
+
+### 3. Perform your demonstration
+
+Interact with the sandbox normally. All VNC traffic (screen updates and input events) is captured.
+
+### 4. Download the recording
+
+Click **Stop Recording**, then **Download** to save the session as a `.js` file.
+
+### 5. Replay the recording
+
+Start the playback UI:
+
+```bash
+# Clone the noVNC fork
+git clone https://github.com/trycua/novnc
+cd novnc
+
+# Move your recording into the recordings folder
+mv ~/Downloads/vnc-recording-*.js ./recordings/
+
+# Start the local server
+./utils/novnc_proxy
+```
+
+Then open the playback URL:
+
+```
+http://localhost:6080/tests/vnc_playback.html?data=../recordings/your-recording.js
+```
+
+## Streaming to External Server
+
+For automated pipelines, stream recordings directly to a custom server using the `record_url` parameter. Here's a simple recording server:
+
+```python
+import asyncio
+import websockets
+
+async def handle_recording(websocket):
+    with open("recording.bin", "wb") as f:
+        async for message in websocket:
+            f.write(message)
+    print("Recording saved")
+
+async def main():
+    async with websockets.serve(handle_recording, "localhost", 6090):
+        print("Recording server running on ws://localhost:6090")
+        await asyncio.Future()
+
+asyncio.run(main())
+```
+
+Then connect with streaming enabled:
+
+```
+http://localhost:8006/vnc.html?autoconnect=1&autorecord=1&record_url=ws://localhost:6090
+```
+
+Recording data streams to disk in real-time via WebSocket, so the file is ready immediately when the session ends.
+
+## URL Parameters
+
+| Parameter             | Description                                    |
+| --------------------- | ---------------------------------------------- |
+| `autorecord=1`        | Start recording when connection is established |
+| `record_url=ws://...` | Stream recording to external WebSocket server  |
+
+## Using Demonstrations to Prompt Agents
+
+Recordings are raw noVNC data streams, but they can be processed into semantic action traces that improve agent planning and execution. An example of an agent that will support this capability is [ShowUI-Aloha](https://github.com/showlab/ShowUI-Aloha), which learns workflows from human demonstrations and generalizes to new task variants.
+
+_Coming soon_

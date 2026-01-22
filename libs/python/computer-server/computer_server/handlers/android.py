@@ -50,8 +50,14 @@ class AndroidAccessibilityHandler(BaseAccessibilityHandler):
         await adb_exec.run("shell", "rm", "/sdcard/ui_dump.xml", decode=True)
 
         try:
+            # Strip the status message prefix (e.g., "UI hierchary dumped to: /sdcard/ui_dump.xml\n")
+            xml_start = output.find("<?xml")
+            if xml_start == -1:
+                raise RuntimeError(f"No XML found in UI dump output: {output[:200]}")
+            xml_content = output[xml_start:].strip()
+
             # Parse XML
-            root = ET.fromstring(output.strip())
+            root = ET.fromstring(xml_content)
             return {"tree": self._parse_accessibility_node(root)}
         except ET.ParseError as e:
             raise RuntimeError(f"Failed to parse UI hierarchy XML: {e}")

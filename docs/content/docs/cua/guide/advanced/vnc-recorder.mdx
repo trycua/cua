@@ -1,5 +1,5 @@
 ---
-title: Human Demonstration Recorder
+title: VNC Recorder
 description: Record human demonstrations from CUA sandboxes for training and evaluation
 ---
 
@@ -108,7 +108,9 @@ http://localhost:6080/tests/vnc_playback.html?data=../recordings/your-recording.
 
 ## Streaming to External Server
 
-For automated pipelines, stream recordings directly to a custom server using the `record_url` parameter. Here's a simple recording server:
+For automated pipelines, stream recordings directly to a custom server using the `record_url` parameter. The recording data is streamed as a websockify stream over WebSocket.
+
+Here's a simple recording server:
 
 ```python
 import asyncio
@@ -143,61 +145,7 @@ Recording data streams to disk in real-time via WebSocket, so the file is ready 
 | `autorecord=1`        | Start recording when connection is established |
 | `record_url=ws://...` | Stream recording to external WebSocket server  |
 
-## Processing Demonstrations
-
-Recordings are raw noVNC data streams containing VNC protocol messages. The CUA agent SDK includes a processor that converts these into semantic action traces suitable for agent prompting.
-
-### Parse a Recording
-
-```bash
-# Basic parsing - extracts events and generates captions
-python -m agent.process_demonstration vnc-recording-2026-01-22.js
-
-# Add task context
-python -m agent.process_demonstration vnc-recording-2026-01-22.js \
-  --task "Login to email and compose a new message" \
-  --output email_workflow.json
-
-# Use OpenAI instead of Anthropic for captions
-python -m agent.process_demonstration recording.js \
-  --provider openai \
-  --model gpt-4o
-```
-
-### Output Format
-
-The processor outputs a JSON file with the following structure:
-
-```json
-{
-  "trajectory": [
-    {
-      "step_idx": 1,
-      "screenshot": "base64...",
-      "cropped_screenshot": "base64...",
-      "caption": {
-        "observation": "The screen shows a login form with email and password fields",
-        "think": "User intends to enter credentials to access the application",
-        "action": "Click on the email input field",
-        "expectation": "Field becomes focused and ready for text input"
-      },
-      "raw_event": {
-        "timestamp": 1234,
-        "type": "click",
-        "data": { "x": 450, "y": 320, "button": "left" }
-      }
-    }
-  ],
-  "skill_prompt": "You have been shown a demonstration of how to perform this task...",
-  "metadata": {
-    "recording_file": "vnc-recording-2026-01-22.js",
-    "task_description": "Login to email",
-    "total_steps": 12
-  }
-}
-```
-
-For more details on prompting agents with demonstrations, see [Demonstration-Guided Agents](/docs/cua/guide/advanced/demonstration-guided-agents).
+For more details on prompting agents with demonstrations, see [Demonstration-Guided Skills](/docs/cua/guide/advanced/demonstration-guided-skills).
 
 ## Reference
 

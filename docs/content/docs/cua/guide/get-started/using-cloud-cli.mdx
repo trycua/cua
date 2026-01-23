@@ -10,19 +10,13 @@ The Cua Cloud CLI lets you create, manage, and connect to cloud sandboxes direct
 
 ## Installation
 
-Install the CLI globally using npm or bun:
-
-<Tabs items={['npm', 'bun']}>
-  <Tab value="npm">
-  ```bash
-  npm install -g @trycua/cli
-  ```
+<Tabs items={['macOS/Linux', 'Windows', 'bun']}>
+  <Tab value="macOS/Linux">```bash curl -LsSf https://cua.ai/cli/install.sh | sh ```</Tab>
+  <Tab value="Windows">
+    ```powershell powershell -ExecutionPolicy ByPass -c "irm https://cua.ai/cli/install.ps1 | iex"
+    ```
   </Tab>
-  <Tab value="bun">
-  ```bash
-  bun install -g @trycua/cli
-  ```
-  </Tab>
+  <Tab value="bun">```bash bun install -g @trycua/cli ```</Tab>
 </Tabs>
 
 Verify the installation:

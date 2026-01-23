@@ -1,5 +1,5 @@
 ---
-title: Human Demonstration Recorder
+title: VNC Recorder
 description: Record human demonstrations from CUA sandboxes for training and evaluation
 ---
 
@@ -8,6 +8,54 @@ CUA sandboxes include a [noVNC fork](https://github.com/trycua/novnc) with built
 <video controls width="100%">
   <source src="/docs/videos/demonstration-recorder.mp4" type="video/mp4" />
 </video>
+
+## Recording with the CUA CLI
+
+The easiest way to record demonstrations is with the `cua skills` command.
+
+### 1. Start recording
+
+Connect to a sandbox and start recording:
+
+```bash
+# Record from a CUA Cloud sandbox
+cua skills record --sandbox my-sandbox
+
+# Or record from any VNC URL
+cua skills record --vnc-url http://localhost:8006/vnc.html
+```
+
+This opens the VNC interface with recording enabled. You'll be prompted for a skill name and description after recording.
+
+### 2. Perform your demonstration
+
+Interact with the sandbox normally. All mouse and keyboard input is captured along with video.
+
+### 3. Stop and save
+
+Click **Stop Recording** in the VNC panel. The CLI processes the recording, generates captions using a VLM, and saves the skill to `~/.cua/skills/<name>/`.
+
+### 4. Replay
+
+View the recorded video:
+
+```bash
+cua skills replay my-skill
+```
+
+List all saved skills:
+
+```bash
+cua skills list
+```
+
+Read a skill's prompt:
+
+```bash
+cua skills read my-skill
+```
+
+---
 
 ## Manual Recording
 
@@ -60,7 +108,9 @@ http://localhost:6080/tests/vnc_playback.html?data=../recordings/your-recording.
 
 ## Streaming to External Server
 
-For automated pipelines, stream recordings directly to a custom server using the `record_url` parameter. Here's a simple recording server:
+For automated pipelines, stream recordings directly to a custom server using the `record_url` parameter. The recording data is streamed as a websockify stream over WebSocket.
+
+Here's a simple recording server:
 
 ```python
 import asyncio
@@ -95,8 +145,10 @@ Recording data streams to disk in real-time via WebSocket, so the file is ready 
 | `autorecord=1`        | Start recording when connection is established |
 | `record_url=ws://...` | Stream recording to external WebSocket server  |
 
-## Using Demonstrations to Prompt Agents
+For more details on prompting agents with demonstrations, see [Demonstration-Guided Skills](/docs/cua/guide/advanced/demonstration-guided-skills).
 
-Recordings are raw noVNC data streams, but they can be processed into semantic action traces that improve agent planning and execution. An example of an agent that will support this capability is [ShowUI-Aloha](https://github.com/showlab/ShowUI-Aloha), which learns workflows from human demonstrations and generalizes to new task variants.
+## Reference
 
-_Coming soon_
+For related capabilities, see:
+
+- [ShowUI-Aloha](https://github.com/showlab/ShowUI-Aloha) - Human-taught GUI agent that learns from demonstrations

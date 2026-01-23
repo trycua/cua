@@ -3,6 +3,8 @@ import { hideBin } from 'yargs/helpers';
 import { registerAuthCommands } from './commands/auth';
 import { registerSandboxCommands } from './commands/sandbox';
 import { registerImageCommands } from './commands/image';
+import { registerSkillsCommands } from './commands/skills';
+import { registerServeMcpCommands } from './commands/serve-mcp';
 import { http } from './http';
 import { getApiKey } from './storage';
 import type { SandboxItem } from './util';
@@ -49,6 +51,16 @@ export async function runCli() {
         '    pull               Pull a VM image from cloud storage\n' +
         '    delete             Delete an image version\n' +
         '\n' +
+        '  cua skills <command>   Create and manage demonstration skills\n' +
+        '    record             Record a demonstration and create a skill\n' +
+        '    list               View all saved skills\n' +
+        '    read               Read a skill as JSON or Markdown\n' +
+        '    replay             Open the video recording for a skill\n' +
+        '    delete             Delete a skill\n' +
+        '    clean              Delete all skills (with confirmation)\n' +
+        '\n' +
+        '  cua serve-mcp          Start an MCP server for Claude Code integration\n' +
+        '\n' +
         'Documentation: https://docs.cua.ai/libraries/cua-cli/commands'
     )
     .completion(
@@ -56,8 +68,27 @@ export async function runCli() {
       'Generate shell completion script',
       async function (current, argv) {
         // Provide dynamic completions for sandbox names
-        const commands = ['auth', 'sandbox', 'sb', 'completion'];
+        const commands = [
+          'auth',
+          'sandbox',
+          'sb',
+          'image',
+          'img',
+          'skills',
+          'serve-mcp',
+          'completion',
+        ];
         const authCommands = ['login', 'env', 'logout'];
+        const imageCommands = ['list', 'ls', 'push', 'pull', 'delete'];
+        const skillsCommands = [
+          'record',
+          'list',
+          'ls',
+          'read',
+          'replay',
+          'delete',
+          'clean',
+        ];
         const sbCommands = [
           'list',
           'ls',
@@ -111,6 +142,12 @@ export async function runCli() {
         if (args[0] === 'sandbox' || args[0] === 'sb') {
           return sbCommands;
         }
+        if (args[0] === 'image' || args[0] === 'img') {
+          return imageCommands;
+        }
+        if (args[0] === 'skills') {
+          return skillsCommands;
+        }
 
         return [];
       }
@@ -125,6 +162,8 @@ export async function runCli() {
   argv = registerAuthCommands(argv);
   argv = registerSandboxCommands(argv);
   argv = registerImageCommands(argv);
+  argv = registerSkillsCommands(argv);
+  argv = registerServeMcpCommands(argv);
 
   // Check for version flag before command validation
   const args = process.argv.slice(2);

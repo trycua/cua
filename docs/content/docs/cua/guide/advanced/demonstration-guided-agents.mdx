@@ -21,29 +21,39 @@ This approach enables:
 
 ## Example: Using a Demonstration to Guide an Agent
 
-First, record and process a demonstration:
+### 1. Record a demonstration
 
 ```bash
-python -m agent.process_demonstration vnc-recording.js \
-  --task "Book a flight from NYC to LA" \
-  --output flight_booking.json
+cua skills record --sandbox my-sandbox
 ```
 
-Then use the generated `skill_prompt` to guide an agent:
+When prompted, name it `flight-booking` and describe it as "Book a flight from NYC to LA".
+
+### 2. View the saved skill
+
+The skill is saved to `~/.cua/skills/flight-booking/SKILL.md`:
+
+```bash
+cua skills read flight-booking
+```
+
+### 3. Use the skill to guide an agent
+
+Read the SKILL.md file and prefix it to your prompt:
 
 ```python
-import json
+from pathlib import Path
 from agent import ComputerAgent
 
-# Load processed demonstration
-with open("flight_booking.json") as f:
-    demo = json.load(f)
+# Load the skill prompt from SKILL.md
+skill_path = Path.home() / ".cua/skills/flight-booking/SKILL.md"
+skill_prompt = skill_path.read_text()
 
 agent = ComputerAgent(loop="anthropic")
 
-# Use skill_prompt as context, then give the actual task
+# Prefix the skill as context, then give the actual task
 messages = [
-    {"role": "user", "content": demo["skill_prompt"]},
+    {"role": "user", "content": skill_prompt},
     {"role": "user", "content": "Book a flight from Boston to Chicago for next Friday"}
 ]
 
@@ -51,37 +61,55 @@ async for result in agent.run(messages):
     print(result)
 ```
 
-The `skill_prompt` contains a natural language description of the demonstrated workflow, allowing the agent to follow the same pattern while adapting to the new parameters (Boston→Chicago instead of NYC→LA).
+The skill contains a natural language description of the demonstrated workflow, allowing the agent to follow the same pattern while adapting to the new parameters (Boston→Chicago instead of NYC→LA).
 
-## Output Format
+## Skill Format
 
-The processor outputs a JSON file with the following structure:
+Each skill is saved to `~/.cua/skills/<name>/` with the following structure:
 
-```json
-{
-  "trajectory": [
-    {
-      "step_idx": 1,
-      "screenshot": "base64...",
-      "cropped_screenshot": "base64...",
-      "caption": {
-        "observation": "The screen shows a login form with email and password fields",
-        "think": "User intends to enter credentials to access the application",
-        "action": "Click on the email input field",
-        "expectation": "Field becomes focused and ready for text input"
-      },
-      "raw_event": {
-        "timestamp": 1234,
-        "type": "click",
-        "data": { "x": 450, "y": 320, "button": "left" }
-      }
-    }
-  ],
-  "skill_prompt": "You have been shown a demonstration of how to perform this task...",
-  "metadata": {
-    "recording_file": "vnc-recording-2026-01-22.js",
-    "task_description": "Login to email",
-    "total_steps": 12
-  }
-}
+```
+~/.cua/skills/flight-booking/
+├── SKILL.md              # Skill description and agent prompt
+└── trajectory/
+    ├── trajectory.json   # Raw events and captions
+    ├── events.json       # Input events
+    ├── flight-booking.mp4 # Video recording
+    ├── step_1_full.jpg   # Full screenshot for step 1
+    ├── step_1_crop.jpg   # Cropped screenshot with marker
+    └── ...
+```
+
+The `SKILL.md` file contains the skill metadata, step descriptions, and agent prompt:
+
+```markdown
+---
+name: flight-booking
+description: Book a flight from NYC to LA
+---
+
+# flight-booking
+
+Book a flight from NYC to LA
+
+## Steps
+
+### Step 1: Click on the departure city field
+
+**Context:** A flight booking form with empty departure and arrival fields...
+**Intent:** User wants to enter the departure city
+**Expected Result:** Field becomes focused for text input
+
+### Step 2: Type "NYC"
+
+...
+
+## Agent Prompt
+
+You have been shown a demonstration of how to perform this task:
+Book a flight from NYC to LA
+
+The demonstration consisted of the following steps:
+Step 1: Click on the departure city field
+Step 2: Type "NYC"
+...
 ```

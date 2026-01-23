@@ -9,6 +9,54 @@ CUA sandboxes include a [noVNC fork](https://github.com/trycua/novnc) with built
   <source src="/docs/videos/demonstration-recorder.mp4" type="video/mp4" />
 </video>
 
+## Recording with the CUA CLI
+
+The easiest way to record demonstrations is with the `cua skills` command.
+
+### 1. Start recording
+
+Connect to a sandbox and start recording:
+
+```bash
+# Record from a CUA Cloud sandbox
+cua skills record --sandbox my-sandbox
+
+# Or record from any VNC URL
+cua skills record --vnc-url http://localhost:8006/vnc.html
+```
+
+This opens the VNC interface with recording enabled. You'll be prompted for a skill name and description after recording.
+
+### 2. Perform your demonstration
+
+Interact with the sandbox normally. All mouse and keyboard input is captured along with video.
+
+### 3. Stop and save
+
+Click **Stop Recording** in the VNC panel. The CLI processes the recording, generates captions using a VLM, and saves the skill to `~/.cua/skills/<name>/`.
+
+### 4. Replay
+
+View the recorded video:
+
+```bash
+cua skills replay my-skill
+```
+
+List all saved skills:
+
+```bash
+cua skills list
+```
+
+Read a skill's prompt:
+
+```bash
+cua skills read my-skill
+```
+
+---
+
 ## Manual Recording
 
 ### 1. Start a sandbox and open the VNC UI

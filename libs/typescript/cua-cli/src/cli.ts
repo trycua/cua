@@ -119,12 +119,12 @@ export async function runCli() {
 
         // Check if we're completing after a command that needs a sandbox name
         if (args.length >= 2) {
-          const lastCmd = args[args.length - 2];
+          const lastCmd = args[args.length - 2]!;
           if (
             needsSandboxName.includes(lastCmd) ||
             (args.length >= 3 &&
               args[0] === 'sb' &&
-              needsSandboxName.includes(args[1]))
+              needsSandboxName.includes(args[1]!))
           ) {
             return await getSandboxNames();
           }

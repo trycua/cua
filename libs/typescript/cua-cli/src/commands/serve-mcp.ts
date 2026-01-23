@@ -625,12 +625,44 @@ async function runMcpServer(permissions: Set<Permission>) {
           .describe('Mouse button to click'),
       },
       async ({ sandbox, x, y, button }) => {
-        const result = await sendCommand(
-          sandbox,
-          'left_click',
-          { x, y, button },
-          token
-        );
+        // Use the appropriate click command based on button
+        let command: string;
+        if (button === 'right') {
+          command = 'right_click';
+        } else if (button === 'middle') {
+          // Middle click is mouse_down + mouse_up with middle button
+          await sendCommand(
+            sandbox,
+            'mouse_down',
+            { x, y, button: 'middle' },
+            token
+          );
+          const result = await sendCommand(
+            sandbox,
+            'mouse_up',
+            { x, y, button: 'middle' },
+            token
+          );
+          if (!result.success) {
+            return {
+              content: [
+                { type: 'text', text: result.error || 'Middle click failed' },
+              ],
+            };
+          }
+          return {
+            content: [
+              {
+                type: 'text',
+                text: `Middle-clicked at (${x}, ${y})`,
+              },
+            ],
+          };
+        } else {
+          command = 'left_click';
+        }
+
+        const result = await sendCommand(sandbox, command, { x, y }, token);
         if (!result.success) {
           return {
             content: [{ type: 'text', text: result.error || 'Click failed' }],
@@ -700,6 +732,124 @@ async function runMcpServer(permissions: Set<Permission>) {
         };
       }
     );
+
+    server.tool(
+      'computer_mousedown',
+      'Press and hold a mouse button at the specified coordinates',
+      {
+        sandbox: z.string().describe('Name of the sandbox'),
+        x: z
+          .number()
+          .optional()
+          .describe(
+            'X coordinate in pixels (uses current position if not specified)'
+          ),
+        y: z
+          .number()
+          .optional()
+          .describe(
+            'Y coordinate in pixels (uses current position if not specified)'
+          ),
+        button: z
+          .enum(['left', 'right', 'middle'])
+          .optional()
+          .default('left')
+          .describe('Mouse button to press'),
+      },
+      async ({ sandbox, x, y, button }) => {
+        const params: Record<string, unknown> = { button };
+        if (x !== undefined) params.x = x;
+        if (y !== undefined) params.y = y;
+        const result = await sendCommand(sandbox, 'mouse_down', params, token);
+        if (!result.success) {
+          return {
+            content: [
+              { type: 'text', text: result.error || 'Mouse down failed' },
+            ],
+          };
+        }
+        const posStr =
+          x !== undefined && y !== undefined ? ` at (${x}, ${y})` : '';
+        return {
+          content: [
+            { type: 'text', text: `Mouse ${button} button pressed${posStr}` },
+          ],
+        };
+      }
+    );
+
+    server.tool(
+      'computer_mouseup',
+      'Release a mouse button at the specified coordinates',
+      {
+        sandbox: z.string().describe('Name of the sandbox'),
+        x: z
+          .number()
+          .optional()
+          .describe(
+            'X coordinate in pixels (uses current position if not specified)'
+          ),
+        y: z
+          .number()
+          .optional()
+          .describe(
+            'Y coordinate in pixels (uses current position if not specified)'
+          ),
+        button: z
+          .enum(['left', 'right', 'middle'])
+          .optional()
+          .default('left')
+          .describe('Mouse button to release'),
+      },
+      async ({ sandbox, x, y, button }) => {
+        const params: Record<string, unknown> = { button };
+        if (x !== undefined) params.x = x;
+        if (y !== undefined) params.y = y;
+        const result = await sendCommand(sandbox, 'mouse_up', params, token);
+        if (!result.success) {
+          return {
+            content: [
+              { type: 'text', text: result.error || 'Mouse up failed' },
+            ],
+          };
+        }
+        const posStr =
+          x !== undefined && y !== undefined ? ` at (${x}, ${y})` : '';
+        return {
+          content: [
+            { type: 'text', text: `Mouse ${button} button released${posStr}` },
+          ],
+        };
+      }
+    );
+
+    server.tool(
+      'computer_mousemove',
+      'Move the mouse cursor to the specified coordinates without clicking',
+      {
+        sandbox: z.string().describe('Name of the sandbox'),
+        x: z.number().describe('X coordinate in pixels'),
+        y: z.number().describe('Y coordinate in pixels'),
+      },
+      async ({ sandbox, x, y }) => {
+        const result = await sendCommand(
+          sandbox,
+          'move_cursor',
+          { x, y },
+          token
+        );
+        if (!result.success) {
+          return {
+            content: [
+              { type: 'text', text: result.error || 'Mouse move failed' },
+            ],
+          };
+        }
+        return {
+          content: [{ type: 'text', text: `Mouse moved to (${x}, ${y})` }],
+        };
+      }
+    );
   }
 
   if (permissions.has('computer_type')) {
@@ -742,6 +892,46 @@ async function runMcpServer(permissions: Set<Permission>) {
           };
         }
         return { content: [{ type: 'text', text: `Pressed key: ${key}` }] };
+      }
+    );
+
+    server.tool(
+      'computer_keydown',
+      'Press and hold a key (use with computer_keyup to release)',
+      {
+        sandbox: z.string().describe('Name of the sandbox'),
+        key: z
+          .string()
+          .describe('The key to hold down (e.g., shift, ctrl, alt, cmd)'),
+      },
+      async ({ sandbox, key }) => {
+        const result = await sendCommand(sandbox, 'key_down', { key }, token);
+        if (!result.success) {
+          return {
+            content: [
+              { type: 'text', text: result.error || 'Key down failed' },
+            ],
+          };
+        }
+        return { content: [{ type: 'text', text: `Key held down: ${key}` }] };
+      }
+    );
+
+    server.tool(
+      'computer_keyup',
+      'Release a held key',
+      {
+        sandbox: z.string().describe('Name of the sandbox'),
+        key: z.string().describe('The key to release'),
+      },
+      async ({ sandbox, key }) => {
+        const result = await sendCommand(sandbox, 'key_up', { key }, token);
+        if (!result.success) {
+          return {
+            content: [{ type: 'text', text: result.error || 'Key up failed' }],
+          };
+        }
+        return { content: [{ type: 'text', text: `Key released: ${key}` }] };
       }
     );
   }

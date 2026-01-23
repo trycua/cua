@@ -255,8 +255,8 @@ If there's a feature you need, let us know in [Discord](https://discord.gg/cua-a
 
 ## Need Help?
 
-- **Documentation**: [https://cua.ai/docs/cua/reference/cli-playbook/commands](https://cua.ai/docs/cua/reference/cli-playbook/commands)
-- **Installation Guide**: [https://cua.ai/docs/cua/reference/cli-playbook](https://cua.ai/docs/cua/reference/cli-playbook)
+- **Documentation**: [https://cua.ai/docs/cua/reference/cloud-cli/commands](https://cua.ai/docs/cua/reference/cloud-cli/commands)
+- **Installation Guide**: [https://cua.ai/docs/cua/reference/cloud-cli](https://cua.ai/docs/cua/reference/cloud-cli)
 - **Discord Community**: [https://discord.gg/cua-ai](https://discord.gg/cua-ai)
 
 ---

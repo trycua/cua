@@ -1,0 +1,106 @@
+---
+title: Prompting Claude Code with Human Demonstrations
+description: Record human workflows and use them to guide Claude Code agents
+---
+
+import { Step, Steps } from 'fumadocs-ui/components/steps';
+import { Callout } from 'fumadocs-ui/components/callout';
+
+## Overview
+
+Human demonstrations let you record a workflow once and replay it with AI assistance. This guide shows how to connect the CUA MCP server to Claude Code, record a demonstration, and use it to guide automated agents.
+
+---
+
+## Add the CUA MCP Server
+
+Connect Claude Code to your CUA sandboxes:
+
+```bash
+claude mcp add cua-mcp -- cua serve-mcp
+```
+
+Verify the connection:
+
+```bash
+claude mcp list
+```
+
+<Callout type="info">
+  Run `cua auth login` first if you haven't authenticated with your CUA API key.
+</Callout>
+
+---
+
+## Prompts to Try
+
+Once connected, try these prompts in sequence:
+
+<Steps>
+
+<Step>
+
+### Create a Sandbox
+
+```
+Create a Linux sandbox in north-america with size medium
+```
+
+Claude Code uses the `create_sandbox` tool to provision a new cloud sandbox.
+
+</Step>
+
+<Step>
+
+### Record a Demonstration
+
+```
+Record a demonstration on my-sandbox called "login-flow" that shows how to log into the admin panel
+```
+
+Claude Code opens the VNC interface with recording enabled. Perform your workflow, then click **Stop Recording**. The recording is processed and saved as a skill.
+
+</Step>
+
+<Step>
+
+### Replay the Demonstration
+
+```
+Read the login-flow skill and replay those steps on my-sandbox
+```
+
+Claude Code reads the skill from `~/.cua/skills/login-flow/SKILL.md` and executes each step using the computer control tools (`computer_click`, `computer_type`, etc.).
+
+</Step>
+
+</Steps>
+
+---
+
+## Managing Skills
+
+```bash
+# List all skills
+cua skills list
+
+# Read a skill's full content
+cua skills read my-skill
+
+# Read as JSON (includes trajectory data)
+cua skills read my-skill --format json
+
+# Replay the recorded video
+cua skills replay my-skill
+
+# Delete a skill
+cua skills delete my-skill
+```
+
+---
+
+## Next Steps
+
+- Learn about [Agent Loops](/cua/guide/fundamentals/agent-loops) for understanding how agents process tasks
+- See [Trajectories](/cua/guide/advanced/trajectories) for debugging and analyzing agent behavior
+- Explore [Custom Tools](/cua/guide/advanced/custom-tools) to extend agent capabilities

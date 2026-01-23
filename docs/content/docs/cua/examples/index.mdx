@@ -4,13 +4,19 @@ description: Real-world examples of building with Cua
 ---
 
 import { Card, Cards } from 'fumadocs-ui/components/card';
-import { Workflow, Laptop, Brain } from 'lucide-react';
+import { Workflow, Laptop, Brain, Terminal } from 'lucide-react';
 
 # Examples
 
 Explore real-world examples of building computer-use agents with Cua. These examples demonstrate various use cases across different platforms and AI models.
 
 <Cards>
+  <Card
+    icon={<Terminal className="w-6 h-6" />}
+    href="/cua/examples/claude-code/human-demonstrations"
+    title="Claude Code"
+    description="Use human demonstrations to guide Claude Code agents"
+  />
   <Card
     icon={<Workflow className="w-6 h-6" />}
     href="/cua/examples/automation/form-filling"
@@ -32,6 +38,10 @@ Explore real-world examples of building computer-use agents with Cua. These exam
 </Cards>
 
 ## Featured Examples
+
+### Claude Code
+
+- **[Human Demonstrations](/cua/examples/claude-code/human-demonstrations)** - Record workflows and use them to guide Claude Code agents
 
 ### Automation
 

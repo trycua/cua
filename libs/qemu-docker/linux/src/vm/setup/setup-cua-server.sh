@@ -7,8 +7,7 @@ set -e
 USER_NAME="docker"
 USER_HOME="/home/$USER_NAME"
 SCRIPT_DIR="/opt/oem"
-CUA_DIR="/opt/cua-server"
-VENV_DIR="$CUA_DIR/venv"
+PROJECT_DIR="/opt/cua-server"
 SERVICE_NAME="cua-computer-server"
 LOG_FILE="$SCRIPT_DIR/setup.log"
 
@@ -18,31 +17,101 @@ log() {
 
 log "=== Installing Cua Computer Server ==="
 
-# Install Python 3 and venv
-log "Installing Python 3 and dependencies..."
-sudo apt-get install -y python3 python3-venv python3-pip python3-tk python3-dev gnome-screenshot
+# Install Python 3.12 and dependencies
+log "Installing Python 3.12 and dependencies..."
+sudo apt-get update
+sudo apt-get install -y software-properties-common gnome-screenshot curl
+sudo add-apt-repository -y ppa:deadsnakes/ppa
+sudo apt-get update
+sudo apt-get install -y python3.12 python3.12-venv python3.12-tk python3.12-dev build-essential linux-headers-$(uname -r) gcc
 
-# Create Cua directory
-log "Creating Cua directory at $CUA_DIR..."
-sudo mkdir -p "$CUA_DIR"
-sudo chown "$USER_NAME:$USER_NAME" "$CUA_DIR"
+# Wait for network to be ready
+log "Checking network connectivity..."
+NETWORK_RETRIES=30
+NETWORK_DELAY=2
+NETWORK_READY=false
 
-# Create virtual environment
-if [ -f "$VENV_DIR/bin/python" ]; then
-    log "Existing venv detected; skipping creation"
-else
-    log "Creating Python virtual environment at $VENV_DIR..."
-    python3 -m venv "$VENV_DIR"
-    log "Virtual environment created successfully"
+for i in $(seq 1 $NETWORK_RETRIES); do
+    if curl -s --connect-timeout 3 https://astral.sh > /dev/null 2>&1; then
+        log "Network is ready"
+        NETWORK_READY=true
+        break
+    fi
+    if [ $i -lt $NETWORK_RETRIES ]; then
+        log "Network not ready, waiting... (attempt $i/$NETWORK_RETRIES)"
+        sleep $NETWORK_DELAY
+    fi
+done
+
+if [ "$NETWORK_READY" = false ]; then
+    log "Network failed to become ready after $NETWORK_RETRIES attempts"
+    exit 1
 fi
 
-# Activate and install packages
-log "Upgrading pip, setuptools, and wheel..."
-"$VENV_DIR/bin/pip" install --upgrade pip setuptools wheel
+# Install UV package manager as the service user (with retry logic)
+log "Installing UV package manager for user $USER_NAME..."
+MAX_RETRIES=3
+RETRY_DELAY=5
+UV_INSTALLED=false
 
+for i in $(seq 1 $MAX_RETRIES); do
+    log "UV installation attempt $i of $MAX_RETRIES"
+    if sudo -u "$USER_NAME" bash -c "curl -LsSf https://astral.sh/uv/install.sh | sh"; then
+        UV_PATH="$USER_HOME/.local/bin/uv"
+        if [ -f "$UV_PATH" ]; then
+            log "UV installed successfully at $UV_PATH"
+            UV_INSTALLED=true
+            break
+        fi
+    fi
+    if [ $i -lt $MAX_RETRIES ]; then
+        log "UV install attempt $i failed. Retrying in $RETRY_DELAY seconds..."
+        sleep $RETRY_DELAY
+        RETRY_DELAY=$((RETRY_DELAY * 2))
+    fi
+done
+
+if [ "$UV_INSTALLED" = false ]; then
+    log "UV installation failed after $MAX_RETRIES attempts"
+    exit 1
+fi
+
+# Add UV to PATH for subsequent commands in this script
+export PATH="$USER_HOME/.local/bin:$PATH"
+
+# Create system-wide symlink for UV so it's available as 'uv' command
+log "Creating system-wide symlink for UV..."
+sudo ln -sf "$USER_HOME/.local/bin/uv" /usr/local/bin/uv
+log "UV is now available system-wide"
+
+# Set Python 3.12 as default python3 (after all apt operations are complete)
+log "Setting Python 3.12 as default python3..."
+sudo update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.12 1
+sudo update-alternatives --set python3 /usr/bin/python3.12
+
+# Create UV project directory
+log "Creating UV project at $PROJECT_DIR..."
+sudo mkdir -p "$PROJECT_DIR"
+sudo chown "$USER_NAME:$USER_NAME" "$PROJECT_DIR"
+
+PROJECT_FILE="$PROJECT_DIR/pyproject.toml"
+if [ -f "$PROJECT_FILE" ]; then
+    log "Existing UV project detected; skipping creation"
+else
+    log "Creating UV project..."
+    sudo -u "$USER_NAME" uv init --vcs none --no-readme --no-workspace --no-pin-python "$PROJECT_DIR"
+    log "UV project created successfully"
+fi
+
+# Install packages using UV as the service user
 log "Installing cua-computer-server..."
-"$VENV_DIR/bin/pip" install --upgrade cua-computer-server "Pillow>=9.2.0"
+sudo -u "$USER_NAME" uv add --directory "$PROJECT_DIR" cua-computer-server "Pillow>=9.2.0"
 log "cua-computer-server installed successfully"
+
+log "Installing playwright & firefox browser..."
+sudo -u "$USER_NAME" uv add --directory "$PROJECT_DIR" playwright
+sudo -u "$USER_NAME" uv run --directory "$PROJECT_DIR" playwright install firefox
+log "playwright installed successfully"
 
 # Open firewall for port 5000 (if ufw is available)
 if command -v ufw &> /dev/null; then
@@ -52,23 +121,22 @@ if command -v ufw &> /dev/null; then
 fi
 
 # Create start script with auto-restart
-START_SCRIPT="$CUA_DIR/start-server.sh"
+START_SCRIPT="$PROJECT_DIR/start-server.sh"
 log "Creating start script at $START_SCRIPT..."
 
 cat > "$START_SCRIPT" << 'EOF'
 #!/bin/bash
 # Cua Computer Server Start Script with auto-restart
 
-CUA_DIR="/opt/cua-server"
-VENV_DIR="$CUA_DIR/venv"
-LOG_FILE="$CUA_DIR/server.log"
+PROJECT_DIR="/opt/cua-server"
+LOG_FILE="$PROJECT_DIR/server.log"
 
 start_server() {
     echo "$(date '+%Y-%m-%d %H:%M:%S') Updating cua-computer-server..." >> "$LOG_FILE"
-    "$VENV_DIR/bin/pip" install --upgrade cua-computer-server >> "$LOG_FILE" 2>&1
+    uv add --directory "$PROJECT_DIR" cua-computer-server >> "$LOG_FILE" 2>&1
 
     echo "$(date '+%Y-%m-%d %H:%M:%S') Starting Cua Computer Server on port 5000..." >> "$LOG_FILE"
-    "$VENV_DIR/bin/python" -m computer_server --port 5000 >> "$LOG_FILE" 2>&1
+    uv run --directory "$PROJECT_DIR" python -m computer_server --port 5000 >> "$LOG_FILE" 2>&1
     return $?
 }
 
@@ -111,7 +179,7 @@ Environment=PYTHONUNBUFFERED=1
 Environment=DISPLAY=:0
 Environment=XAUTHORITY=$USER_HOME/.Xauthority
 User=$USER_NAME
-WorkingDirectory=$CUA_DIR
+WorkingDirectory=$PROJECT_DIR
 
 [Install]
 WantedBy=graphical.target
@@ -119,9 +187,9 @@ EOF
 
 log "Systemd service created at /etc/systemd/system/$SERVICE_NAME.service"
 
-# Ensure proper ownership of Cua directory
-log "Setting ownership of $CUA_DIR to $USER_NAME..."
-sudo chown -R "$USER_NAME:$USER_NAME" "$CUA_DIR"
+# Ensure proper ownership of project directory
+log "Setting ownership of $PROJECT_DIR to $USER_NAME..."
+sudo chown -R "$USER_NAME:$USER_NAME" "$PROJECT_DIR"
 
 # Enable and start the service
 log "Enabling systemd service..."

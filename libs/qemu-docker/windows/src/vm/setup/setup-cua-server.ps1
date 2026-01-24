@@ -33,46 +33,81 @@ try {
   Write-Log -LogFile $script:LogFile -Message "Chocolatey bootstrap warning: $($_.Exception.Message)"
 }
 
-# Create venv
-$HomeDir = $env:USERPROFILE
-$CuaDir  = Join-Path $HomeDir '.cua-server'
-$VenvDir = Join-Path $CuaDir 'venv'
-New-Item -ItemType Directory -Force -Path $CuaDir | Out-Null
+# Install UV package manager first (with retry logic)
+Write-Log -LogFile $script:LogFile -Message "Installing UV package manager"
+$maxRetries = 3
+$retryDelay = 5
+$uvInstalled = $false
 
-Write-Log -LogFile $script:LogFile -Message "Creating Python virtual environment at $VenvDir"
-$ExistingVenvPython = Join-Path $VenvDir 'Scripts\python.exe'
-if (Test-Path -LiteralPath $ExistingVenvPython) {
-  Write-Log -LogFile $script:LogFile -Message "Existing venv detected; skipping creation"
+for ($i = 1; $i -le $maxRetries; $i++) {
+  try {
+    Write-Log -LogFile $script:LogFile -Message "UV installation attempt $i of $maxRetries"
+    # Install UV using the official standalone installer
+    powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex" 2>&1 | Tee-Object -FilePath $script:LogFile -Append | Out-Null
+
+    # Add UV to PATH for current session
+    $uvPath = Join-Path $env:USERPROFILE ".local\bin"
+    if (Test-Path $uvPath) {
+      $env:Path = "$uvPath;$env:Path"
+      Write-Log -LogFile $script:LogFile -Message "UV installed successfully and added to PATH"
+      $uvInstalled = $true
+      break
+    } else {
+      Write-Log -LogFile $script:LogFile -Message "UV installed but path not found at $uvPath"
+      $uvInstalled = $true
+      break
+    }
+  } catch {
+    Write-Log -LogFile $script:LogFile -Message "UV install attempt $i failed: $($_.Exception.Message)"
+    if ($i -lt $maxRetries) {
+      Write-Log -LogFile $script:LogFile -Message "Retrying in $retryDelay seconds..."
+      Start-Sleep -Seconds $retryDelay
+      $retryDelay = $retryDelay * 2  # Exponential backoff
+    }
+  }
+}
+
+if (-not $uvInstalled) {
+  Write-Log -LogFile $script:LogFile -Message "UV installation failed after $maxRetries attempts"
+  throw "Failed to install UV package manager"
+}
+
+# Create UV project directory
+$HomeDir = $env:USERPROFILE
+$ProjectDir = Join-Path $HomeDir 'cua-server'
+
+Write-Log -LogFile $script:LogFile -Message "Creating UV project at $ProjectDir"
+$ProjectFile = Join-Path $ProjectDir 'pyproject.toml'
+if (Test-Path -LiteralPath $ProjectFile) {
+  Write-Log -LogFile $script:LogFile -Message "Existing UV project detected; skipping creation"
 } else {
   try {
-    & py -m venv $VenvDir
-    Write-Log -LogFile $script:LogFile -Message "Virtual environment created successfully"
+    # Create parent directory if it doesn't exist
+    New-Item -ItemType Directory -Force -Path $ProjectDir | Out-Null
+    & uv init --vcs none --no-readme --no-workspace --no-pin-python $ProjectDir 2>&1 | Tee-Object -FilePath $script:LogFile -Append | Out-Null
+    Write-Log -LogFile $script:LogFile -Message "UV project created successfully"
   } catch {
-    Write-Log -LogFile $script:LogFile -Message "venv creation error: $($_.Exception.Message)"
+    Write-Log -LogFile $script:LogFile -Message "UV project creation error: $($_.Exception.Message)"
     throw
   }
 }
 
-$PyExe  = Join-Path $VenvDir 'Scripts\python.exe'
-$PipExe = Join-Path $VenvDir 'Scripts\pip.exe'
-$ActivateScript = Join-Path $VenvDir 'Scripts\Activate.ps1'
-
-Write-Log -LogFile $script:LogFile -Message "Activating virtual environment"
-& $ActivateScript
-
-Write-Log -LogFile $script:LogFile -Message "Upgrading pip, setuptools, and wheel"
-try {
-  & $PipExe install --upgrade pip setuptools wheel 2>&1 | Tee-Object -FilePath $script:LogFile -Append | Out-Null
-} catch {
-  Write-Log -LogFile $script:LogFile -Message "pip bootstrap warning: $($_.Exception.Message)"
-}
-
 Write-Log -LogFile $script:LogFile -Message "Installing cua-computer-server"
 try {
-  & $PipExe install --upgrade cua-computer-server 2>&1 | Tee-Object -FilePath $script:LogFile -Append | Out-Null
+  & uv add --directory $ProjectDir cua-computer-server 2>&1 | Tee-Object -FilePath $script:LogFile -Append | Out-Null
   Write-Log -LogFile $script:LogFile -Message "cua-computer-server installed successfully"
 } catch {
   Write-Log -LogFile $script:LogFile -Message "Server install error: $($_.Exception.Message)"
+  throw
+}
+
+Write-Log -LogFile $script:LogFile -Message "Installing playwright & firefox browser"
+try {
+  & uv add --directory $ProjectDir playwright 2>&1 | Tee-Object -FilePath $script:LogFile -Append | Out-Null
+  & uv run --directory $ProjectDir playwright install firefox 2>&1 | Tee-Object -FilePath $script:LogFile -Append | Out-Null
+  Write-Log -LogFile $script:LogFile -Message "playwright installed successfully"
+} catch {
+  Write-Log -LogFile $script:LogFile -Message "Playwright install error: $($_.Exception.Message)"
   throw
 }
 
@@ -86,24 +121,27 @@ try {
 }
 
 # Create start script with auto-restart
-$StartScript = Join-Path $CuaDir 'start-server.ps1'
+$StartScript = Join-Path $ProjectDir 'start-server.ps1'
 $StartScriptContent = @"
 param()
 
 `$env:PYTHONUNBUFFERED = '1'
 
-`$LogFile = Join-Path '$CuaDir' 'server.log'
-`$ActivateScript = '$ActivateScript'
-`$PipExe = '$PipExe'
-`$Python = '$PyExe'
+# Ensure UV is in PATH
+`$uvPath = Join-Path `$env:USERPROFILE '.local\bin'
+if (Test-Path `$uvPath) {
+    `$env:Path = "`$uvPath;`$env:Path"
+}
+
+`$ProjectDir = '$ProjectDir'
+`$LogFile = Join-Path `$ProjectDir 'server.log'
 
 function Start-Server {
-    Write-Output "Activating virtual environment and updating cua-computer-server..." | Out-File -FilePath `$LogFile -Append
-    & `$ActivateScript
-    & `$PipExe install --upgrade cua-computer-server 2>&1 | Out-File -FilePath `$LogFile -Append
+    Write-Output "Updating cua-computer-server..." | Out-File -FilePath `$LogFile -Append
+    & uv add --directory `$ProjectDir cua-computer-server 2>&1 | Out-File -FilePath `$LogFile -Append
 
     Write-Output "Starting Cua Computer Server on port 5000..." | Out-File -FilePath `$LogFile -Append
-    & `$Python -m computer_server --port 5000 2>&1 | Out-File -FilePath `$LogFile -Append
+    & uv run --directory `$ProjectDir python -m computer_server --port 5000 2>&1 | Out-File -FilePath `$LogFile -Append
     return `$LASTEXITCODE
 }
 
@@ -119,7 +157,7 @@ Set-Content -Path $StartScript -Value $StartScriptContent -Encoding UTF8
 Write-Log -LogFile $script:LogFile -Message "Start script created at $StartScript"
 
 # Create VBScript wrapper to launch PowerShell hidden
-$VbsWrapper = Join-Path $CuaDir 'start-server-hidden.vbs'
+$VbsWrapper = Join-Path $ProjectDir 'start-server-hidden.vbs'
 $VbsContent = @"
 Set objShell = CreateObject("WScript.Shell")
 objShell.Run "powershell.exe -NoProfile -ExecutionPolicy Bypass -File ""$StartScript""", 0, False

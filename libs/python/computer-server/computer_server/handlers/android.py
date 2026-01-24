@@ -495,9 +495,53 @@ class AndroidAutomationHandler(BaseAutomationHandler):
 
     # Other
     async def run_command(self, command: str) -> Dict[str, Any]:
-        """Run a shell command on Android device."""
-        success, output = await adb_exec.run("shell", command, decode=True)
-        return {"output": output, "success": success}
+        """Run a shell command.
+
+        Commands containing 'uv', 'python', or '/home/androidusr' run on the container host.
+        Other commands run in the Android emulator via adb shell.
+        """
+        # Check if this command should run on the host
+        should_run_on_host = any(
+            keyword in command for keyword in ["uv", "python", "/home/androidusr"]
+        )
+
+        if should_run_on_host:
+            # Run on container host
+            import os
+            import subprocess
+
+            try:
+                # Clear VIRTUAL_ENV to avoid UV conflicts
+                env = os.environ.copy()
+                env.pop("VIRTUAL_ENV", None)
+
+                result = subprocess.run(
+                    command, shell=True, capture_output=True, text=True, timeout=300, env=env
+                )
+                return {
+                    "stdout": result.stdout,
+                    "stderr": result.stderr,
+                    "return_code": result.returncode,
+                    "success": result.returncode == 0,
+                }
+            except subprocess.TimeoutExpired:
+                return {
+                    "stdout": "",
+                    "stderr": "Command timed out",
+                    "return_code": -1,
+                    "success": False,
+                }
+            except Exception as e:
+                return {"stdout": "", "stderr": str(e), "return_code": -1, "success": False}
+        else:
+            # Run in Android emulator via adb shell
+            success, output = await adb_exec.run("shell", command, decode=True)
+            return {
+                "stdout": output if success else "",
+                "stderr": "" if success else output,
+                "return_code": 0 if success else 1,
+                "success": success,
+            }
 
 
 class AndroidFileHandler(BaseFileHandler):

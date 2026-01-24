@@ -66,6 +66,7 @@ def _detect_task_config(env_path: Path) -> dict:
                                 result["provider"] = task.computer.get("provider", "unknown")
                                 setup_config = task.computer.get("setup_config", {})
                                 result["os_type"] = setup_config.get("os_type", "linux")
+                                result["setup_config"] = setup_config
 
             return result
 
@@ -112,6 +113,7 @@ def _get_env_type_from_task(env_path: Path) -> str:
     else:
         # Default to linux-docker for linux and other types
         return "linux-docker"
+
 
 async def _execute_async(args):
     """Execute the interact command asynchronously."""
@@ -288,6 +290,10 @@ async def _execute_native_interactive(args, env_path: Path, provider_type: str) 
     from cua_bench.runner.task_runner import TaskRunner
 
     try:
+        # Get full task config including setup_config
+        task_detection = _detect_task_config(env_path)
+        setup_config = task_detection.get("setup_config", {})
+
         # Determine env_type (linux-docker, windows-qemu, etc.) from task's os_type config
         env_type = getattr(args, "env_type", None) or _get_env_type_from_task(env_path)
 
@@ -306,6 +312,7 @@ async def _execute_native_interactive(args, env_path: Path, provider_type: str) 
             task_index=task_index,
             memory=getattr(args, "memory", "8G"),
             cpus=getattr(args, "cpus", "8"),
+            setup_config=setup_config,
         )
 
         print(f"{GREEN}✓ Environment started{RESET}")

@@ -15,6 +15,10 @@ dependencies = [
     "mcp>=1.6.0,<2.0.0",
     "cua-agent[all]>=0.4.0,<0.5.0",
     "cua-computer>=0.4.0,<0.5.0",
+    # OpenTelemetry for Four Golden Signals monitoring
+    "opentelemetry-api>=1.25.0",
+    "opentelemetry-sdk>=1.25.0",
+    "opentelemetry-exporter-otlp-proto-http>=1.25.0",
 ]
 
 [project.scripts]

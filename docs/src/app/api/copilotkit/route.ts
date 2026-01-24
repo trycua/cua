@@ -7,6 +7,13 @@ import { BuiltInAgent, InMemoryAgentRunner } from '@copilotkit/runtime/v2';
 import { randomUUID } from 'crypto';
 import { NextRequest } from 'next/server';
 import { PostHog } from 'posthog-node';
+import {
+  getMetrics,
+  recordCopilotInteraction,
+  recordToolExecution,
+  updateSaturation,
+  type CopilotAttributes,
+} from '@/lib/otel';
 
 const posthog = process.env.NEXT_PUBLIC_POSTHOG_API_KEY
   ? new PostHog(process.env.NEXT_PUBLIC_POSTHOG_API_KEY, {
@@ -15,6 +22,10 @@ const posthog = process.env.NEXT_PUBLIC_POSTHOG_API_KEY
       flushInterval: 0,
     })
   : null;
+
+// Concurrent request tracking for saturation metrics
+let concurrentCopilotRequests = 0;
+let copilotQueueDepth = 0;
 
 // Prompt categorization types and helpers
 type PromptCategory =
@@ -227,6 +238,13 @@ class AnthropicSafeBuiltInAgent extends BuiltInAgent {
     const latestUserMessage = userMessages[userMessages.length - 1];
     const userPrompt = this.extractMessageContent(latestUserMessage);
 
+    // OTEL: Track request start time for latency measurement
+    const requestStartTime = performance.now();
+
+    // OTEL: Increment concurrent requests (saturation)
+    concurrentCopilotRequests++;
+    updateSaturation(concurrentCopilotRequests, copilotQueueDepth);
+
     if (posthog && userPrompt) {
       posthog.capture({
         distinctId: conversationId,
@@ -252,9 +270,30 @@ class AnthropicSafeBuiltInAgent extends BuiltInAgent {
       if (responseSent) return;
       responseSent = true;
 
+      // OTEL: Calculate latency and decrement concurrent requests
+      const responseTimeMs = performance.now() - requestStartTime;
+      concurrentCopilotRequests = Math.max(0, concurrentCopilotRequests - 1);
+      updateSaturation(concurrentCopilotRequests, copilotQueueDepth);
+
       const fullResponse = responseChunks.join('');
+      const category = categorizePrompt(userPrompt);
+      const questionType = detectQuestionType(userPrompt);
+      const responseAnalysis = analyzeResponse(fullResponse);
+
+      // OTEL: Record Four Golden Signals for successful response
+      recordCopilotInteraction(
+        {
+          category,
+          question_type: questionType,
+          response_type: responseAnalysis.response_type,
+          has_code_snippet: responseAnalysis.has_code_snippet,
+          conversation_id: conversationId,
+        },
+        responseTimeMs,
+        false // not an error
+      );
+
       if (posthog && fullResponse) {
-        const responseAnalysis = analyzeResponse(fullResponse);
         posthog.capture({
           distinctId: conversationId,
           event: 'copilot_response',
@@ -262,8 +301,8 @@ class AnthropicSafeBuiltInAgent extends BuiltInAgent {
             prompt: userPrompt,
             response: fullResponse,
             // Prompt categorization
-            category: categorizePrompt(userPrompt),
-            question_type: detectQuestionType(userPrompt),
+            category,
+            question_type: questionType,
             topics: extractTopics(userPrompt),
             prompt_length: userPrompt.length,
             // Response analysis
@@ -276,6 +315,8 @@ class AnthropicSafeBuiltInAgent extends BuiltInAgent {
             response_length: fullResponse.length,
             conversation_id: conversationId,
             timestamp: new Date().toISOString(),
+            // OTEL: Include latency for correlation
+            response_time_ms: responseTimeMs,
           },
         });
         await posthog.flush();
@@ -315,17 +356,43 @@ class AnthropicSafeBuiltInAgent extends BuiltInAgent {
         },
         error: (err: any) => {
           console.error('[CopilotKit] Error:', err?.message || String(err), err?.stack);
+
+          // OTEL: Calculate latency and decrement concurrent requests for error case
+          const errorTimeMs = performance.now() - requestStartTime;
+          concurrentCopilotRequests = Math.max(0, concurrentCopilotRequests - 1);
+          updateSaturation(concurrentCopilotRequests, copilotQueueDepth);
+
+          const category = categorizePrompt(userPrompt);
+          const questionType = detectQuestionType(userPrompt);
+          const errorType = err?.code || err?.name || 'unknown_error';
+
+          // OTEL: Record Four Golden Signals for error
+          recordCopilotInteraction(
+            {
+              category,
+              question_type: questionType,
+              response_type: 'error',
+              has_code_snippet: false,
+              conversation_id: conversationId,
+            },
+            errorTimeMs,
+            true, // is error
+            errorType
+          );
+
           if (posthog) {
             posthog.capture({
               distinctId: conversationId,
               event: 'copilot_error',
               properties: {
                 error: err?.message || String(err),
+                error_type: errorType,
                 prompt: userPrompt,
-                category: categorizePrompt(userPrompt),
-                question_type: detectQuestionType(userPrompt),
+                category,
+                question_type: questionType,
                 conversation_id: conversationId,
                 timestamp: new Date().toISOString(),
+                response_time_ms: errorTimeMs,
               },
             });
             posthog.flush();

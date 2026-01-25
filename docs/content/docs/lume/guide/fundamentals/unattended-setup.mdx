@@ -17,6 +17,16 @@ This creates a VM, installs macOS, and runs through the entire Setup Assistant. 
 Unattended configs are macOS version-specific. The `tahoe` preset works with macOS Tahoe (15.x). Setup Assistant changes between versions, so configs may need updating for new releases.
 </Callout>
 
+## Prerequisites
+
+If your config includes an SSH health check (like the built-in presets do), you need `sshpass` installed:
+
+```bash
+brew install sshpass
+```
+
+Without it, the setup will complete but the health check will fail with `sshpass: No such file or directory`.
+
 ## Quick start
 
 ### Use the built-in preset

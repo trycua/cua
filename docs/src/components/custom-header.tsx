@@ -8,12 +8,14 @@ import { cn } from 'fumadocs-ui/utils/cn';
 import { SearchToggle } from 'fumadocs-ui/components/layout/search-toggle';
 import { ThemeToggle } from 'fumadocs-ui/components/layout/theme-toggle';
 import { ChevronsUpDown, Check } from 'lucide-react';
-import LogoBlack from '@/assets/logo-black.svg';
-import LogoWhite from '@/assets/logo-white.svg';
+import LogoBlack from '@/assets/cuala-icon-black.svg';
+import LogoWhite from '@/assets/cuala-icon-white.svg';
 import CuaBenchLogoBlack from '@/assets/cuabench-logo-black.svg';
 import CuaBenchLogoWhite from '@/assets/cuabench-logo-white.svg';
 import McpBlack from '@/assets/mcp-black.svg';
 import McpWhite from '@/assets/mcp-white.svg';
+import LumeIconBlack from '@/assets/lume-icon-black.svg';
+import LumeIconWhite from '@/assets/lume-icon-white.svg';
 
 const docsSites = [
   {
@@ -73,12 +75,12 @@ const docsSites = [
     prefix: '/lume',
     isDefault: false,
     description: 'macOS VM CLI and Framework',
-    logoBlack: null,
-    logoWhite: null,
-    iconWidth: 0,
-    iconHeight: 0,
-    dropdownIconWidth: 0,
-    dropdownIconHeight: 0,
+    logoBlack: LumeIconBlack,
+    logoWhite: LumeIconWhite,
+    iconWidth: 24,
+    iconHeight: 24,
+    dropdownIconWidth: 20,
+    dropdownIconHeight: 20,
     navTabs: [
       {
         name: 'Guide',

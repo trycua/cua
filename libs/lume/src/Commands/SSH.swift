@@ -23,7 +23,7 @@ struct SSH: AsyncParsableCommand {
     @Argument(help: "Name of the virtual machine", completion: .custom(completeVMName))
     var name: String
 
-    @Argument(parsing: .captureForPassthrough, help: "Command to execute (omit for interactive shell)")
+    @Argument(parsing: .remaining, help: "Command to execute (omit for interactive shell)")
     var command: [String] = []
 
     @Option(name: [.short, .long], help: "SSH username (default: lume)")

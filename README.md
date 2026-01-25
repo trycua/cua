@@ -20,7 +20,7 @@
 
 </div>
 
-**Cua** is an open-source platform for building, benchmarking, and deploying agents that can use any computer, with isolated, self-hostable sandboxes (Docker, QEMU, Apple Vz).
+**Cua** is an open-source platform for building, benchmarking, and deploying agents that can use any computer, with isolated, self-hostable sandboxes (Docker, QEMU, Apple Virtualization).
 
 <div align="center">
   <video src="https://github.com/user-attachments/assets/c619b4ea-bb8e-4382-860e-f3757e36af20" width="600" controls></video>

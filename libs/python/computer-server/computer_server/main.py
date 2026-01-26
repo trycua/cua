@@ -13,6 +13,7 @@ from typing import Any, Dict, List, Literal, Optional, Union, cast
 
 import aiohttp
 import uvicorn
+from core.telemetry import record_event
 from fastapi import (
     FastAPI,
     Header,
@@ -30,6 +31,7 @@ from .handlers.factory import OS_TYPE, HandlerFactory
 # Try to import MCP server for SSE integration
 try:
     from .mcp_server import create_mcp_server
+
     HAS_MCP = True
 except ImportError:
     HAS_MCP = False
@@ -108,6 +110,8 @@ except Exception:
     desktop_handler,
     window_handler,
 ) = HandlerFactory.create_handlers()
+
+
 # Helper function for direction-based scrolling
 async def _scroll_direction_handler(direction: str, clicks: int = 1) -> Dict[str, Any]:
     """
@@ -444,6 +448,17 @@ async def websocket_endpoint(websocket: WebSocket):
             logger.info(f"Authentication successful for VM: {client_container_name}")
             await websocket.send_json({"success": True, "message": "Authentication successful"})
 
+            # Emit vm_session_started event for funnel tracking
+            api_key_hash = hashlib.sha256(client_api_key.encode()).hexdigest()
+            record_event(
+                "vm_session_started",
+                {
+                    "api_key_hash": api_key_hash,
+                    "vm_id": client_container_name,
+                    "connection_type": "websocket",
+                },
+            )
+
         except Exception as e:
             logger.error(f"Error during authentication handshake: {str(e)}")
             await websocket.send_json({"success": False, "error": "Authentication failed"})
@@ -568,6 +583,17 @@ async def cmd_endpoint(
         is_authenticated = await auth_manager.auth(container_name, api_key)
         if not is_authenticated:
             raise HTTPException(status_code=401, detail="Authentication failed")
+
+        # Emit vm_session_started event for funnel tracking
+        api_key_hash = hashlib.sha256(api_key.encode()).hexdigest()
+        record_event(
+            "vm_session_started",
+            {
+                "api_key_hash": api_key_hash,
+                "vm_id": container_name,
+                "connection_type": "http",
+            },
+        )
 
     if command not in handlers:
         suggestions = _suggest_similar_commands(command)

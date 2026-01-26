@@ -3,6 +3,7 @@ ComputerAgent - Main agent class that selects and runs agent loops
 """
 
 import asyncio
+import hashlib
 import inspect
 import json
 from pathlib import Path
@@ -21,6 +22,7 @@ from typing import (
 
 import litellm
 import litellm.utils
+from core.telemetry import is_telemetry_enabled, record_event
 from litellm.responses.utils import Usage
 
 from .adapters import (
@@ -165,6 +167,13 @@ def get_output_call_ids(messages: List[Dict[str, Any]]) -> List[str]:
         ):
             call_ids.append(message.get("call_id"))
     return call_ids
+
+
+def hash_api_key(api_key: Optional[str]) -> Optional[str]:
+    """Hash API key using SHA256 for secure telemetry identification."""
+    if not api_key:
+        return None
+    return hashlib.sha256(api_key.encode()).hexdigest()
 
 
 class ComputerAgent:
@@ -315,6 +324,53 @@ class ComputerAgent:
 
         self.tool_schemas = []
         self.computer_handler = None
+
+        # Track agent initialization with args provided
+        if self.telemetry_enabled and is_telemetry_enabled():
+            # Collect which args were explicitly provided (non-default values)
+            args_provided = []
+            if tools:
+                args_provided.append("tools")
+            if custom_loop:
+                args_provided.append("custom_loop")
+            if only_n_most_recent_images:
+                args_provided.append("only_n_most_recent_images")
+            if callbacks:
+                args_provided.append("callbacks")
+            if instructions:
+                args_provided.append("instructions")
+            if verbosity is not None:
+                args_provided.append("verbosity")
+            if trajectory_dir:
+                args_provided.append("trajectory_dir")
+            if max_retries != 3:  # non-default
+                args_provided.append("max_retries")
+            if screenshot_delay != 0.5:  # non-default
+                args_provided.append("screenshot_delay")
+            if use_prompt_caching:
+                args_provided.append("use_prompt_caching")
+            if max_trajectory_budget:
+                args_provided.append("max_trajectory_budget")
+            if not telemetry_enabled:  # explicitly disabled
+                args_provided.append("telemetry_enabled")
+            if trust_remote_code:
+                args_provided.append("trust_remote_code")
+            if api_key:
+                args_provided.append("api_key")
+            if api_base:
+                args_provided.append("api_base")
+            if additional_generation_kwargs:
+                args_provided.extend(additional_generation_kwargs.keys())
+
+            event_data = {
+                "model": model,
+                "args_provided": args_provided,
+            }
+            # Add hashed API key
+            if api_key:
+                event_data["api_key_hash"] = hash_api_key(api_key)
+
+            record_event("agent_init", event_data)
 
     async def _initialize_computers(self):
         """Initialize computer objects"""
@@ -558,6 +614,22 @@ class ComputerAgent:
                 else:
                     raise ToolError(f"Unknown computer action: {action_type}")
 
+                # Track computer action execution
+                if self.telemetry_enabled and is_telemetry_enabled():
+                    record_event(
+                        "computer_action_executed",
+                        {
+                            "action_type": action_type,
+                        },
+                    )
+                    record_event(
+                        "agent_tool_executed",
+                        {
+                            "tool_type": "computer",
+                            "tool_name": action_type,
+                        },
+                    )
+
                 # Check if this was a terminate action
                 is_terminate = action_type == "terminate" or (
                     isinstance(action_result, dict) and action_result.get("terminated")
@@ -635,6 +707,16 @@ class ComputerAgent:
                         result = await function(**args)
                     else:
                         result = await asyncio.to_thread(function, **args)
+
+                # Track function tool execution
+                if self.telemetry_enabled and is_telemetry_enabled():
+                    record_event(
+                        "agent_tool_executed",
+                        {
+                            "tool_type": "function",
+                            "tool_name": item.get("name"),
+                        },
+                    )
 
                 # Create function call output
                 call_output = {

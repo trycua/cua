@@ -1,7 +1,16 @@
+import { createHash } from 'node:crypto';
 import pino from 'pino';
+import { v4 as uuidv4 } from 'uuid';
 import { type BaseComputerInterface, InterfaceFactory } from '../../interface/index';
 import type { CloudComputerConfig, VMProviderType } from '../types';
 import { BaseComputer } from './base';
+
+/**
+ * Hash API key using SHA256 for secure telemetry identification.
+ */
+function hashApiKey(apiKey: string): string {
+  return createHash('sha256').update(apiKey).digest('hex');
+}
 
 const DEFAULT_API_BASE = process.env.CUA_API_BASE || 'https://api.cua.ai';
 
@@ -22,12 +31,19 @@ export class CloudComputer extends BaseComputer {
   private cachedHost?: string;
   private apiBase: string;
 
+  // Session tracking
+  private sessionId: string;
+  private sessionStartTime?: number;
+  private apiKeyHash: string;
+
   protected logger = pino({ name: 'computer.provider_cloud' });
 
   constructor(config: CloudComputerConfig) {
     super(config);
     this.apiKey = config.apiKey;
     this.apiBase = DEFAULT_API_BASE;
+    this.sessionId = uuidv4();
+    this.apiKeyHash = hashApiKey(config.apiKey);
   }
 
   /**
@@ -97,6 +113,16 @@ export class CloudComputer extends BaseComputer {
       await this.iface.waitForReady();
 
       this.initialized = true;
+      this.sessionStartTime = Date.now();
+
+      // Track session start with hashed API key
+      this.telemetry.recordEvent('ts_session_start', {
+        session_id: this.sessionId,
+        os_type: this.osType,
+        connection_type: 'cloud',
+        api_key_hash: this.apiKeyHash,
+      });
+
       this.logger.info('Cloud computer ready');
     } catch (error) {
       this.logger.error(`Failed to initialize cloud computer: ${error}`);
@@ -109,6 +135,16 @@ export class CloudComputer extends BaseComputer {
    */
   async stop(): Promise<void> {
     this.logger.info('Disconnecting from cloud computer...');
+
+    // Track session end with hashed API key
+    if (this.sessionStartTime) {
+      const durationSeconds = (Date.now() - this.sessionStartTime) / 1000;
+      this.telemetry.recordEvent('ts_session_end', {
+        session_id: this.sessionId,
+        duration_seconds: durationSeconds,
+        api_key_hash: this.apiKeyHash,
+      });
+    }
 
     if (this.iface) {
       this.iface.disconnect();

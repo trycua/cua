@@ -3,7 +3,9 @@
  */
 
 import pino from 'pino';
+import { v4 as uuidv4 } from 'uuid';
 import WebSocket from 'ws';
+import { Telemetry } from '@trycua/core';
 import type { ScreenSize } from '../types';
 
 export type MouseButton = 'left' | 'middle' | 'right';
@@ -42,6 +44,10 @@ export abstract class BaseComputerInterface {
 
   protected logger = pino({ name: 'computer.interface-base' });
 
+  // Telemetry
+  protected telemetry: Telemetry;
+  protected sessionId: string;
+
   constructor(
     ipAddress: string,
     username = 'lume',
@@ -54,6 +60,10 @@ export abstract class BaseComputerInterface {
     this.password = password;
     this.apiKey = apiKey;
     this.vmName = vmName;
+
+    // Initialize telemetry
+    this.telemetry = new Telemetry();
+    this.sessionId = uuidv4();
 
     // Initialize WebSocket with headers if needed
     const headers: { [key: string]: string } = {};
@@ -216,6 +226,12 @@ export abstract class BaseComputerInterface {
     command: string,
     params: { [key: string]: unknown } = {}
   ): Promise<{ [key: string]: unknown }> {
+    // Track action execution
+    this.telemetry.recordEvent('ts_action_executed', {
+      action_type: command,
+      session_id: this.sessionId,
+    });
+
     // Create a new promise for this specific command
     const commandPromise = new Promise<{ [key: string]: unknown }>((resolve, reject) => {
       // Chain it to the previous commands

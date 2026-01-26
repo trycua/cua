@@ -281,8 +281,12 @@ def run_benchmark(
                     print(f"{BLUE}Average reset time: {reset_time_total / reset_count:.2f}s{RESET}")
                 if step_count > 0:
                     print(f"{BLUE}Average step time: {step_time_total / step_count:.2f}s{RESET}")
-                    throughput = step_count / step_time_total
-                    print(f"{BLUE}Step throughput: {throughput:.2f} steps/sec{RESET}")
+                    per_worker_throughput = step_count / step_time_total
+                    total_throughput = per_worker_throughput * num_workers
+                    print(
+                        f"{BLUE}Step throughput (per worker): {per_worker_throughput:.2f} steps/sec{RESET}"
+                    )
+                    print(f"{BLUE}Step throughput (total): {total_throughput:.2f} steps/sec{RESET}")
                 if finish_count > 0:
                     print(
                         f"{BLUE}Average finish time: {finish_time_total / finish_count:.2f}s{RESET}"

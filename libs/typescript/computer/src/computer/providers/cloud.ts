@@ -1,4 +1,5 @@
 import pino from 'pino';
+import { v4 as uuidv4 } from 'uuid';
 import { type BaseComputerInterface, InterfaceFactory } from '../../interface/index';
 import type { CloudComputerConfig, VMProviderType } from '../types';
 import { BaseComputer } from './base';
@@ -22,12 +23,17 @@ export class CloudComputer extends BaseComputer {
   private cachedHost?: string;
   private apiBase: string;
 
+  // Session tracking
+  private sessionId: string;
+  private sessionStartTime?: number;
+
   protected logger = pino({ name: 'computer.provider_cloud' });
 
   constructor(config: CloudComputerConfig) {
     super(config);
     this.apiKey = config.apiKey;
     this.apiBase = DEFAULT_API_BASE;
+    this.sessionId = uuidv4();
   }
 
   /**
@@ -97,6 +103,15 @@ export class CloudComputer extends BaseComputer {
       await this.iface.waitForReady();
 
       this.initialized = true;
+      this.sessionStartTime = Date.now();
+
+      // Track session start
+      this.telemetry.recordEvent('ts_session_start', {
+        session_id: this.sessionId,
+        os_type: this.osType,
+        connection_type: 'cloud',
+      });
+
       this.logger.info('Cloud computer ready');
     } catch (error) {
       this.logger.error(`Failed to initialize cloud computer: ${error}`);
@@ -109,6 +124,15 @@ export class CloudComputer extends BaseComputer {
    */
   async stop(): Promise<void> {
     this.logger.info('Disconnecting from cloud computer...');
+
+    // Track session end
+    if (this.sessionStartTime) {
+      const durationSeconds = (Date.now() - this.sessionStartTime) / 1000;
+      this.telemetry.recordEvent('ts_session_end', {
+        session_id: this.sessionId,
+        duration_seconds: durationSeconds,
+      });
+    }
 
     if (this.iface) {
       this.iface.disconnect();

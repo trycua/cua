@@ -30,6 +30,16 @@ export abstract class BaseComputer {
       os_version: os.version(),
       node_version: process.version,
     });
+
+    // Track which config args were provided
+    const argsProvided: string[] = ['name', 'osType']; // required args
+    if ('apiKey' in config) argsProvided.push('apiKey');
+    if ('apiBase' in config) argsProvided.push('apiBase');
+
+    this.telemetry.recordEvent('ts_computer_init', {
+      os_type: config.osType,
+      args_provided: argsProvided,
+    });
   }
 
   /**

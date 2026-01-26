@@ -52,6 +52,7 @@ import re
 from typing import Any, Dict, Iterator, List, Optional, Tuple, Type
 
 import numpy as np
+from cua_bench.actions import action_to_dict, parse_action_string
 
 try:
     import torch
@@ -821,10 +822,9 @@ class MultiTurnDataloader:
     def _extract_action_from_response(self, response_str: str) -> Dict[str, Any]:
         """Extract action dict from model response string.
 
-        Parses action strings like:
-        - <|action_start|>click(0.5,0.5)<|action_end|>
-        - <|action_start|>type("hello")<|action_end|>
-        - <|action_start|>done()<|action_end|>
+        Parses action strings in either format:
+        - Snake_case: <|action_start|>click(0.5,0.5)<|action_end|>
+        - Repr: <|action_start|>ClickAction(x=100, y=200)<|action_end|>
 
         Args:
             response_str: Full response string from model
@@ -843,97 +843,13 @@ class MultiTurnDataloader:
 
         action_str = action_match.group(1).strip()
 
-        # Parse different action types
-        # click(x, y)
-        click_match = re.match(r"click\s*\(\s*([\d.]+)\s*,\s*([\d.]+)\s*\)", action_str)
-        if click_match:
-            return {
-                "type": "ClickAction",
-                "x": float(click_match.group(1)),
-                "y": float(click_match.group(2)),
-            }
-
-        # right_click(x, y)
-        right_click_match = re.match(r"right_click\s*\(\s*([\d.]+)\s*,\s*([\d.]+)\s*\)", action_str)
-        if right_click_match:
-            return {
-                "type": "RightClickAction",
-                "x": float(right_click_match.group(1)),
-                "y": float(right_click_match.group(2)),
-            }
-
-        # double_click(x, y)
-        double_click_match = re.match(
-            r"double_click\s*\(\s*([\d.]+)\s*,\s*([\d.]+)\s*\)", action_str
-        )
-        if double_click_match:
-            return {
-                "type": "DoubleClickAction",
-                "x": float(double_click_match.group(1)),
-                "y": float(double_click_match.group(2)),
-            }
-
-        # drag(from_x, from_y, to_x, to_y)
-        drag_match = re.match(
-            r"drag\s*\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)\s*\)", action_str
-        )
-        if drag_match:
-            return {
-                "type": "DragAction",
-                "from_x": float(drag_match.group(1)),
-                "from_y": float(drag_match.group(2)),
-                "to_x": float(drag_match.group(3)),
-                "to_y": float(drag_match.group(4)),
-            }
-
-        # scroll(direction, amount)
-        scroll_match = re.match(r"scroll\s*\(\s*(\w+)\s*,\s*(\d+)\s*\)", action_str)
-        if scroll_match:
-            return {
-                "type": "ScrollAction",
-                "direction": scroll_match.group(1),
-                "amount": int(scroll_match.group(2)),
-            }
-
-        # type("text")
-        type_match = re.match(r'type\s*\(\s*["\'](.*)["\']\s*\)', action_str)
-        if type_match:
-            return {
-                "type": "TypeAction",
-                "text": type_match.group(1),
-            }
-
-        # key(key_name)
-        key_match = re.match(r"key\s*\(\s*(\w+)\s*\)", action_str)
-        if key_match:
-            return {
-                "type": "KeyAction",
-                "key": key_match.group(1),
-            }
-
-        # hotkey(key1+key2+...)
-        hotkey_match = re.match(r"hotkey\s*\(\s*([\w+]+)\s*\)", action_str)
-        if hotkey_match:
-            keys = hotkey_match.group(1).split("+")
-            return {
-                "type": "HotkeyAction",
-                "keys": keys,
-            }
-
-        # wait(seconds)
-        wait_match = re.match(r"wait\s*\(\s*([\d.]+)\s*\)", action_str)
-        if wait_match:
-            return {
-                "type": "WaitAction",
-                "seconds": float(wait_match.group(1)),
-            }
-
-        # done()
-        if re.match(r"done\s*\(\s*\)", action_str):
+        try:
+            # Use the unified parser from actions.py (supports both formats)
+            action = parse_action_string(action_str)
+            return action_to_dict(action)
+        except ValueError:
+            # Unknown action, return as done
             return {"type": "DoneAction"}
-
-        # Unknown action, return as done
-        return {"type": "DoneAction"}
 
     def _make_indices(self, ready_envs: List[bool], n: int) -> List[int]:
         """Select n environment indices from ready environments.

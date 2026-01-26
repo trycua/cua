@@ -66,3 +66,26 @@ uv run --with pytest --with pytest-cov pytest cua_bench/tests/ -v --cov=cua_benc
 - **E2E tests** use real simulated (Playwright) environments. The `simulated` provider is fast enough for testing.
 - **Mock server tests** (`test_worker_client.py`) mock HTTP responses to test client logic in isolation.
 - **Mock model** (`test_worker_manager.py`) uses a mock model that returns simple actions to test the dataloader training loop without requiring a real ML model.
+
+## Benchmarking
+
+Measure parallel worker throughput:
+
+```bash
+uv run python -m cua_bench.scripts.benchmark_workers --num_workers 16 --num_steps 10
+```
+
+Options:
+
+| Flag            | Default | Description                                    |
+| --------------- | ------- | ---------------------------------------------- |
+| `--num_workers` | 16      | Number of parallel workers                     |
+| `--num_steps`   | 10      | Steps per worker                               |
+| `--task_path`   | None    | Path to task directory (creates temp if empty) |
+
+Output:
+
+- Average reset time
+- Average step time
+- Average finish time
+- Step throughput (steps/sec)

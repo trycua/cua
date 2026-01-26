@@ -3,6 +3,7 @@ ComputerAgent - Main agent class that selects and runs agent loops
 """
 
 import asyncio
+import hashlib
 import inspect
 import json
 from pathlib import Path
@@ -166,6 +167,13 @@ def get_output_call_ids(messages: List[Dict[str, Any]]) -> List[str]:
         ):
             call_ids.append(message.get("call_id"))
     return call_ids
+
+
+def hash_api_key(api_key: Optional[str]) -> Optional[str]:
+    """Hash API key using SHA256 for secure telemetry identification."""
+    if not api_key:
+        return None
+    return hashlib.sha256(api_key.encode()).hexdigest()
 
 
 class ComputerAgent:
@@ -354,13 +362,15 @@ class ComputerAgent:
             if additional_generation_kwargs:
                 args_provided.extend(additional_generation_kwargs.keys())
 
-            record_event(
-                "agent_init",
-                {
-                    "model": model,
-                    "args_provided": args_provided,
-                },
-            )
+            event_data = {
+                "model": model,
+                "args_provided": args_provided,
+            }
+            # Add hashed API key for secure identity association (cloud users only)
+            if api_key:
+                event_data["api_key_hash"] = hash_api_key(api_key)
+
+            record_event("agent_init", event_data)
 
     async def _initialize_computers(self):
         """Initialize computer objects"""

@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import os from 'node:os';
 import { Telemetry } from '@trycua/core';
 import pino from 'pino';
@@ -5,6 +6,14 @@ import type { OSType } from '../../types';
 import type { BaseComputerConfig, Display, VMProviderType } from '../types';
 
 const logger = pino({ name: 'computer.provider_base' });
+
+/**
+ * Hash API key using SHA256 for secure telemetry identification.
+ */
+function hashApiKey(apiKey: string | undefined): string | undefined {
+  if (!apiKey) return undefined;
+  return createHash('sha256').update(apiKey).digest('hex');
+}
 
 /**
  * Base Computer class with shared functionality
@@ -33,13 +42,20 @@ export abstract class BaseComputer {
 
     // Track which config args were provided
     const argsProvided: string[] = ['name', 'osType']; // required args
-    if ('apiKey' in config) argsProvided.push('apiKey');
+    const apiKey = 'apiKey' in config ? (config as { apiKey?: string }).apiKey : undefined;
+    if (apiKey) argsProvided.push('apiKey');
     if ('apiBase' in config) argsProvided.push('apiBase');
 
-    this.telemetry.recordEvent('ts_computer_init', {
+    const initEventData: Record<string, unknown> = {
       os_type: config.osType,
       args_provided: argsProvided,
-    });
+    };
+    // Add hashed API key for secure identity association (cloud users only)
+    if (apiKey) {
+      initEventData.api_key_hash = hashApiKey(apiKey);
+    }
+
+    this.telemetry.recordEvent('ts_computer_init', initEventData);
   }
 
   /**

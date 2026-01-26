@@ -32,7 +32,6 @@ from cua_bench.workers.worker_manager import (
     WorkerPool,
     cleanup_workers,
     create_workers,
-    get_worker_urls,
 )
 
 # Simple HTML for test tasks
@@ -98,36 +97,6 @@ class MockTokenizer:
                 "attention_mask": torch.tensor(attention_mask),
             }
         return {"input_ids": encoded, "attention_mask": attention_mask}
-
-
-class TestGetWorkerUrls:
-    """Tests for get_worker_urls function."""
-
-    def test_get_worker_urls_default(self):
-        """Test getting worker URLs with defaults."""
-        urls = get_worker_urls(n_workers=4)
-        assert urls == [
-            "http://localhost:8001",
-            "http://localhost:8002",
-            "http://localhost:8003",
-            "http://localhost:8004",
-        ]
-
-    def test_get_worker_urls_custom_port(self):
-        """Test getting worker URLs with custom base port."""
-        urls = get_worker_urls(n_workers=2, base_port=9000)
-        assert urls == [
-            "http://localhost:9000",
-            "http://localhost:9001",
-        ]
-
-    def test_get_worker_urls_custom_host(self):
-        """Test getting worker URLs with custom host."""
-        urls = get_worker_urls(n_workers=2, host="10.0.0.5")
-        assert urls == [
-            "http://10.0.0.5:8001",
-            "http://10.0.0.5:8002",
-        ]
 
 
 class TestReplayBuffer:
@@ -304,13 +273,11 @@ class TestWorkerPoolInit:
         pool = WorkerPool(
             n_workers=4,
             allowed_ips=["127.0.0.1"],
-            base_port=8001,
             startup_timeout=30.0,
         )
 
         assert pool.n_workers == 4
         assert pool.allowed_ips == ["127.0.0.1"]
-        assert pool.base_port == 8001
         assert pool.startup_timeout == 30.0
 
 
@@ -399,7 +366,6 @@ class TestWorkerClientE2E:
         workers = await create_workers(
             n_workers=1,
             allowed_ips=["127.0.0.1"],
-            base_port=19001,  # Use high port to avoid conflicts
             startup_timeout=30.0,
         )
 
@@ -461,7 +427,6 @@ class TestDataloaderE2E:
         workers = await create_workers(
             n_workers=1,
             allowed_ips=["127.0.0.1"],
-            base_port=19002,
             startup_timeout=30.0,
         )
 
@@ -553,7 +518,6 @@ class TestDataloaderE2E:
         workers = await create_workers(
             n_workers=1,
             allowed_ips=["127.0.0.1"],
-            base_port=19003,
             startup_timeout=30.0,
         )
 
@@ -640,7 +604,6 @@ class TestDataloaderBenchmark:
         workers = await create_workers(
             n_workers=num_workers,
             allowed_ips=["127.0.0.1"],
-            base_port=19005,
             startup_timeout=30.0,
         )
 
@@ -812,7 +775,6 @@ class TestWorkerPoolContextManager:
         async with WorkerPool(
             n_workers=1,
             allowed_ips=["127.0.0.1"],
-            base_port=19004,
             startup_timeout=30.0,
         ) as pool:
             assert len(pool.urls) == 1

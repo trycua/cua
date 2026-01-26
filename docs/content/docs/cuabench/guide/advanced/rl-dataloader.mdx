@@ -58,7 +58,7 @@ from cua_bench.workers import (
     create_workers,
 )
 
-workers = await create_workers(n_workers=4, base_port=8001)
+workers = await create_workers(n_workers=4, allowed_ips=["127.0.0.1"])
 env_configs = [{"server_url": w.api_url} for w in workers]
 
 dataloader = MultiTurnDataloader(

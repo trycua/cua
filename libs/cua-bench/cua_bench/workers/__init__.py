@@ -17,7 +17,6 @@ from .worker_manager import (
     WorkerPool,
     cleanup_workers,
     create_workers,
-    get_worker_urls,
 )
 
 __all__ = [
@@ -27,7 +26,6 @@ __all__ = [
     "WorkerPool",
     "create_workers",
     "cleanup_workers",
-    "get_worker_urls",
     "MultiTurnDataloader",
     "ReplayBuffer",
     "create_dataloader_from_urls",

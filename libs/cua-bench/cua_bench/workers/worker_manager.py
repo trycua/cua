@@ -17,12 +17,39 @@ Example:
 
 import asyncio
 import os
+import socket
 import subprocess
 import sys
 from dataclasses import dataclass
 from typing import List, Optional
 
 import aiohttp
+
+
+def _find_free_ports(n: int) -> List[int]:
+    """Find N free ports by binding to port 0.
+
+    Args:
+        n: Number of free ports to find
+
+    Returns:
+        List of available port numbers
+    """
+    ports = []
+    sockets = []
+
+    for _ in range(n):
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        s.bind(("", 0))
+        ports.append(s.getsockname()[1])
+        sockets.append(s)
+
+    # Close all sockets to release the ports
+    for s in sockets:
+        s.close()
+
+    return ports
 
 
 @dataclass
@@ -86,16 +113,14 @@ class WorkerHandle:
 async def create_workers(
     n_workers: int,
     allowed_ips: List[str],
-    base_port: int = 8001,
     startup_timeout: float = 30.0,
     host: str = "0.0.0.0",
 ) -> List[WorkerHandle]:
-    """Spawn N worker servers.
+    """Spawn N worker servers on automatically allocated free ports.
 
     Args:
         n_workers: Number of worker servers to spawn
         allowed_ips: List of IPs allowed to access workers
-        base_port: Starting port (allocates base_port to base_port+n-1)
         startup_timeout: Max time to wait for each worker to become healthy
         host: Host for workers to bind to
 
@@ -114,8 +139,11 @@ async def create_workers(
     """
     handles: List[WorkerHandle] = []
 
+    # Find free ports for all workers
+    ports = _find_free_ports(n_workers)
+
     for i in range(n_workers):
-        port = base_port + i
+        port = ports[i]
         worker_id = f"w{i}"
 
         # Build environment
@@ -181,9 +209,9 @@ async def create_workers(
             # Clean up all workers
             for handle in handles:
                 handle.stop()
+            failed_ports = [handles[int(w[1:])].port for w in failed_workers]
             raise RuntimeError(
-                f"Workers failed to start: {failed_workers}. "
-                f"Check if ports {base_port}-{base_port + n_workers - 1} are available."
+                f"Workers failed to start: {failed_workers} on ports {failed_ports}."
             )
 
     except Exception:
@@ -235,26 +263,6 @@ async def wait_for_workers(
         await asyncio.gather(*wait_tasks)
 
 
-def get_worker_urls(
-    n_workers: int,
-    base_port: int = 8001,
-    host: str = "localhost",
-) -> List[str]:
-    """Get URLs for a set of workers.
-
-    Useful for building client configurations.
-
-    Args:
-        n_workers: Number of workers
-        base_port: Starting port
-        host: Host address
-
-    Returns:
-        List of worker URLs
-    """
-    return [f"http://{host}:{base_port + i}" for i in range(n_workers)]
-
-
 class WorkerPool:
     """Context manager for a pool of worker servers.
 
@@ -269,13 +277,11 @@ class WorkerPool:
         self,
         n_workers: int,
         allowed_ips: List[str],
-        base_port: int = 8001,
         startup_timeout: float = 30.0,
         host: str = "0.0.0.0",
     ):
         self.n_workers = n_workers
         self.allowed_ips = allowed_ips
-        self.base_port = base_port
         self.startup_timeout = startup_timeout
         self.host = host
         self._workers: List[WorkerHandle] = []
@@ -284,7 +290,6 @@ class WorkerPool:
         self._workers = await create_workers(
             n_workers=self.n_workers,
             allowed_ips=self.allowed_ips,
-            base_port=self.base_port,
             startup_timeout=self.startup_timeout,
             host=self.host,
         )

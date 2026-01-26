@@ -224,7 +224,6 @@ def run_benchmark(
             workers = await create_workers(
                 n_workers=num_workers,
                 allowed_ips=["127.0.0.1"],
-                base_port=8001,
                 startup_timeout=120.0,
             )
             worker_startup_time = time.time() - start_time

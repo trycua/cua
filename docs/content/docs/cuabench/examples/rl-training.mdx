@@ -1,0 +1,339 @@
+---
+title: Train an Agent with GRPO
+description: Use the MultiTurnDataloader to train a multimodal GUI agent with reinforcement learning
+---
+
+In this tutorial, you'll train a multimodal GUI agent using reinforcement learning with HuggingFace TRL's GRPO Trainer.
+
+**Time:** ~30 minutes
+**Prerequisites:** cua-bench installed, GPU with 24GB+ VRAM
+
+## What You'll Build
+
+A training pipeline that:
+
+1. Runs GUI environments in parallel with screenshot observations
+2. Uses a vision-language model to generate actions
+3. Trains using Group Relative Policy Optimization (GRPO)
+
+## Step 1: Install Dependencies
+
+```bash
+pip install cua-bench torch transformers trl accelerate datasets qwen-vl-utils
+```
+
+## Step 2: Create the Task
+
+```bash
+mkdir -p tasks/click-target
+```
+
+Create `tasks/click-target/main.py`:
+
+```python
+import cua_bench as cb
+import random
+
+HTML_TEMPLATE = """
+<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        body {{
+            margin: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background: #f0f0f0;
+        }}
+        .target {{
+            position: absolute;
+            left: {x}px;
+            top: {y}px;
+            padding: 12px 24px;
+            background: #3b82f6;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+        }}
+    </style>
+</head>
+<body>
+    <h1>Click the Button</h1>
+    <button class="target" onclick="window.__clicked=true;">Click Me</button>
+    <script>window.__clicked = false;</script>
+</body>
+</html>
+"""
+
+pid = None
+
+@cb.tasks_config(split="train")
+def get_tasks():
+    tasks = []
+    for i in range(50):
+        x = random.randint(100, 350)
+        y = random.randint(100, 250)
+        tasks.append(cb.Task(
+            description="Click the blue button labeled 'Click Me'",
+            computer={"provider": "simulated", "setup_config": {"width": 512, "height": 384}},
+            metadata={"x": x, "y": y}
+        ))
+    return tasks
+
+@cb.setup_task(split="train")
+async def setup(task, session):
+    global pid
+    x = task.metadata.get("x", 200)
+    y = task.metadata.get("y", 150)
+    html = HTML_TEMPLATE.format(x=x, y=y)
+    pid = await session.launch_window(html=html, title="Click Target", width=512, height=384)
+
+@cb.evaluate_task(split="train")
+async def evaluate(task, session):
+    global pid
+    clicked = await session.execute_javascript(pid, "window.__clicked")
+    return [1.0 if clicked else 0.0]
+```
+
+## Step 3: Create the Training Script
+
+Create `train_grpo.py`:
+
+```python
+import asyncio
+import torch
+from datasets import Dataset
+from transformers import AutoProcessor, Qwen2VLForConditionalGeneration
+from trl import GRPOConfig, GRPOTrainer
+from cua_bench.workers import (
+    MultiTurnDataloader,
+    CBEnvWorkerClient,
+    create_workers,
+    cleanup_workers,
+)
+
+# Configuration
+NUM_WORKERS = 2
+BATCH_SIZE = 2
+MODEL_NAME = "Qwen/Qwen2-VL-2B-Instruct"
+TASK_PATH = "./tasks/click-target"
+OUTPUT_DIR = "./grpo-gui-agent"
+NUM_TRAINING_STEPS = 50
+
+
+def format_reward_func(completions, **kwargs):
+    """Reward for valid action format."""
+    rewards = []
+    for completion in completions:
+        has_start = "<|action_start|>" in completion
+        has_end = "<|action_end|>" in completion
+        if has_start and has_end:
+            rewards.append(0.1)
+        else:
+            rewards.append(-0.1)
+    return rewards
+
+
+async def collect_trajectories(dataloader, model, processor, device, num_steps):
+    """Collect trajectories from environments."""
+    trajectories = []
+
+    for step in range(num_steps):
+        try:
+            batch = next(dataloader)
+        except StopIteration:
+            break
+
+        input_ids = batch['input_ids'].to(device)
+        attention_mask = batch['attention_mask'].to(device)
+
+        # Handle multimodal inputs if present
+        generate_kwargs = {
+            "input_ids": input_ids,
+            "attention_mask": attention_mask,
+            "max_new_tokens": 64,
+            "do_sample": True,
+            "temperature": 0.8,
+            "pad_token_id": processor.tokenizer.pad_token_id,
+        }
+
+        if 'multi_modal_inputs' in batch:
+            pixel_values = batch['multi_modal_inputs'].get('pixel_values')
+            if pixel_values is not None:
+                generate_kwargs['pixel_values'] = pixel_values.to(device)
+            image_grid_thw = batch['multi_modal_inputs'].get('image_grid_thw')
+            if image_grid_thw is not None:
+                generate_kwargs['image_grid_thw'] = image_grid_thw.to(device)
+
+        with torch.no_grad():
+            outputs = model.generate(**generate_kwargs)
+
+        prompt_len = input_ids.shape[1]
+        responses = outputs[:, prompt_len:].cpu()
+        response_mask = (responses != processor.tokenizer.pad_token_id).long()
+
+        for i in range(input_ids.shape[0]):
+            prompt_mask = attention_mask[i].cpu()
+            valid_prompt = input_ids[i].cpu()[prompt_mask.bool()]
+            prompt_text = processor.tokenizer.decode(valid_prompt, skip_special_tokens=True)
+            trajectories.append({"prompt": prompt_text})
+
+        batch_return = {
+            'prompts': batch['input_ids'],
+            'responses': responses,
+            'attention_mask': torch.cat([batch['attention_mask'], response_mask], dim=1),
+            'worker_id': batch['worker_id'],
+            'meta_info': batch['meta_info'],
+        }
+        dataloader.async_step(batch_return)
+
+    return trajectories
+
+
+async def main():
+    print("=" * 50)
+    print("Multimodal GUI Agent GRPO Training")
+    print("=" * 50)
+
+    print(f"\n[1/5] Starting {NUM_WORKERS} workers...")
+    workers = await create_workers(
+        n_workers=NUM_WORKERS,
+        allowed_ips=["127.0.0.1"],
+        base_port=8001,
+        startup_timeout=60.0,
+    )
+
+    try:
+        print(f"\n[2/5] Loading model: {MODEL_NAME}")
+        processor = AutoProcessor.from_pretrained(MODEL_NAME)
+        model = Qwen2VLForConditionalGeneration.from_pretrained(
+            MODEL_NAME,
+            torch_dtype=torch.bfloat16,
+            device_map="auto",
+        )
+        tokenizer = processor.tokenizer
+        if tokenizer.pad_token_id is None:
+            tokenizer.pad_token_id = tokenizer.eos_token_id
+        device = next(model.parameters()).device
+
+        print(f"\n[3/5] Creating multimodal dataloader...")
+        task_configs = [
+            {"env_path": TASK_PATH, "task_index": i % 50, "split": "train"}
+            for i in range(100)
+        ]
+        env_configs = [{"server_url": w.api_url} for w in workers]
+
+        dataloader = MultiTurnDataloader(
+            env_class=CBEnvWorkerClient,
+            env_configs=env_configs,
+            task_configs=task_configs,
+            tokenizer=tokenizer,
+            processor=processor,
+            is_multi_modal=True,
+            batch_size=BATCH_SIZE,
+            replay_capacity=5000,
+            replay_reward_discount=0.95,
+            max_prompt_length=1024,
+            max_response_length=128,
+        )
+
+        print(f"\n[4/5] Collecting trajectories...")
+        all_trajectories = []
+        for i in range(5):
+            trajs = await collect_trajectories(dataloader, model, processor, device, num_steps=5)
+            all_trajectories.extend(trajs)
+            await asyncio.sleep(0.5)
+            dataloader._gather_env_ret(first_block=False)
+            print(f"      Round {i+1}: {len(trajs)} trajectories, replay={len(dataloader.replay)}")
+
+        print(f"\n[5/5] Training with GRPO...")
+        train_dataset = Dataset.from_list([t for t in all_trajectories if t["prompt"].strip()])
+
+        def env_reward_func(completions, **kwargs):
+            """Get rewards from environment via replay buffer."""
+            env_reward = dataloader.running_outcome_reward()
+            return [env_reward] * len(completions)
+
+        grpo_config = GRPOConfig(
+            output_dir=OUTPUT_DIR,
+            per_device_train_batch_size=min(BATCH_SIZE, len(train_dataset)),
+            num_generations=2,
+            learning_rate=5e-6,
+            beta=0.0,
+            max_completion_length=64,
+            max_prompt_length=512,
+            logging_steps=5,
+            max_steps=NUM_TRAINING_STEPS,
+            report_to="none",
+        )
+
+        trainer = GRPOTrainer(
+            model=model,
+            args=grpo_config,
+            reward_funcs=[format_reward_func, env_reward_func],
+            train_dataset=train_dataset,
+            processing_class=tokenizer,
+        )
+
+        trainer.train()
+        trainer.save_model(f"{OUTPUT_DIR}/final")
+
+        print("\n" + "=" * 50)
+        print("Training Complete!")
+        print("=" * 50)
+        print(f"Replay buffer: {len(dataloader.replay)}")
+        print(f"Running reward: {dataloader.running_outcome_reward():.4f}")
+        dataloader.print_stats_in_replay_buffer()
+
+        dataloader.close()
+
+    finally:
+        await cleanup_workers(workers)
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
+
+## Step 4: Run Training
+
+```bash
+python train_grpo.py
+```
+
+## Project Structure
+
+```
+my-rl-project/
+├── tasks/
+│   └── click-target/
+│       └── main.py
+├── train_grpo.py
+└── requirements.txt
+```
+
+**requirements.txt:**
+
+```
+cua-bench>=0.1.0
+torch>=2.0.0
+transformers>=4.40.0
+trl>=0.8.0
+accelerate>=0.28.0
+datasets>=2.18.0
+qwen-vl-utils>=0.0.2
+```
+
+## How It Works
+
+1. **Dataloader** manages parallel environments, captures screenshots, and tokenizes with image processing
+2. **Model** (Qwen2-VL) sees screenshots and generates actions like `<|action_start|>click(0.5,0.5)<|action_end|>`
+3. **Environment** returns rewards (1.0 if button clicked, 0.0 otherwise)
+4. **GRPO** optimizes using format reward + environment reward from dataloader
+
+## Reference
+
+See [RL Dataloader Reference](/cuabench/guide/advanced/rl-dataloader) for full API docs.

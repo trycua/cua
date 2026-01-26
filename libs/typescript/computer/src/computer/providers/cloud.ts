@@ -115,7 +115,7 @@ export class CloudComputer extends BaseComputer {
       this.initialized = true;
       this.sessionStartTime = Date.now();
 
-      // Track session start with hashed API key for secure identity association
+      // Track session start with hashed API key
       this.telemetry.recordEvent('ts_session_start', {
         session_id: this.sessionId,
         os_type: this.osType,
@@ -136,7 +136,7 @@ export class CloudComputer extends BaseComputer {
   async stop(): Promise<void> {
     this.logger.info('Disconnecting from cloud computer...');
 
-    // Track session end with hashed API key for secure identity association
+    // Track session end with hashed API key
     if (this.sessionStartTime) {
       const durationSeconds = (Date.now() - this.sessionStartTime) / 1000;
       this.telemetry.recordEvent('ts_session_end', {

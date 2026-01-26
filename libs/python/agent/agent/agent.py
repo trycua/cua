@@ -366,7 +366,7 @@ class ComputerAgent:
                 "model": model,
                 "args_provided": args_provided,
             }
-            # Add hashed API key for secure identity association (cloud users only)
+            # Add hashed API key
             if api_key:
                 event_data["api_key_hash"] = hash_api_key(api_key)
 

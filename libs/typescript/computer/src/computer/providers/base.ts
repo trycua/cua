@@ -50,7 +50,7 @@ export abstract class BaseComputer {
       os_type: config.osType,
       args_provided: argsProvided,
     };
-    // Add hashed API key for secure identity association (cloud users only)
+    // Add hashed API key
     if (apiKey) {
       initEventData.api_key_hash = hashApiKey(apiKey);
     }

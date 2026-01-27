@@ -1,11 +1,11 @@
 ---
-title: Train an Agent with GRPO
+title: RL Training Qwen3VL with Modal
 description: Use Modal to train a multimodal GUI agent with reinforcement learning
 ---
 
-In this tutorial, you'll train a multimodal GUI agent using reinforcement learning with HuggingFace TRL's GRPO Trainer on Modal.
+In this tutorial, you'll train a multimodal GUI agent using reinforcement learning on Modal with reward-weighted cross-entropy.
 
-**Prerequisites:** Modal account
+**Prerequisites:** Modal account, wandb account (optional)
 
 ## What You'll Build
 
@@ -13,12 +13,21 @@ A training pipeline that:
 
 1. Runs GUI environments in parallel on Modal
 2. Uses a vision-language model to generate actions
-3. Trains using Group Relative Policy Optimization (GRPO)
+3. Trains using reward-weighted cross-entropy loss
+
+## Training Loop Overview
+
+The training loop has four phases:
+
+1. **ROLLOUT**: Generate actions from current policy (no gradients)
+2. **ENVIRONMENT STEP**: Execute actions in parallel environments, collect rewards
+3. **REPLAY SAMPLING**: Sample completed trajectories from replay buffer
+4. **POLICY UPDATE**: Compute reward-weighted loss and update model
 
 ## Step 1: Install Dependencies
 
 ```bash
-pip install modal
+pip install modal cua-bench
 modal setup  # authenticate with Modal
 ```
 
@@ -98,49 +107,73 @@ async def evaluate(task, session):
     return [1.0 if clicked else 0.0]
 ```
 
+Test the task interactively:
+
+```bash
+cb interact tasks/click-target
+```
+
 ## Step 3: Create the Training Script
 
-Create `train_grpo.py`:
+Create `modal_trl_training.py`:
 
 ```python
+import os
+from dataclasses import dataclass
+
 import modal
 
-app = modal.App("cua-bench-grpo")
+
+@dataclass
+class TrainerConfig:
+    model_name: str = "Qwen/Qwen3-VL-2B-Instruct"
+    num_workers: int = 4
+    batch_size: int = 4
+    num_train_steps: int = 1000
+    learning_rate: float = 1e-5
+    task_path: str = "/root/tasks/click-target"
+    use_wandb: bool = True
+
+
+app = modal.App("cua-bench-rl-training")
 
 image = (
     modal.Image.debian_slim(python_version="3.11")
-    .apt_install("chromium", "chromium-driver")
+    .apt_install("git", "chromium", "chromium-driver")
     .pip_install(
-        "cua-bench>=0.1.0",
-        "torch>=2.0.0",
-        "transformers>=4.40.0",
-        "trl>=0.8.0",
-        "accelerate>=0.28.0",
-        "datasets>=2.18.0",
-        "qwen-vl-utils>=0.0.2",
+        "torchvision",
+        "torch>=2.0",
+        "transformers>=4.57.0,<5.0",
+        "accelerate",
+        "peft",
+        "bitsandbytes",
+        "wandb",
         "pillow",
+        "requests",
+        "fastapi",
+        "uvicorn",
+        "playwright",
+        "datasets",
     )
+    .run_commands("playwright install chromium")
+    .add_local_python_source("cua_bench")
+    .add_local_dir("tasks", remote_path="/root/tasks")
 )
 
-NUM_WORKERS = 4
-BATCH_SIZE = 4
-MODEL_NAME = "Qwen/Qwen2-VL-2B-Instruct"
-TASK_PATH = "./tasks/click-target"
-NUM_TRAINING_STEPS = 50
+checkpoint_volume = modal.Volume.from_name("cua-bench-checkpoints", create_if_missing=True)
 
 
 @app.function(
     image=image,
-    gpu="A100",
-    timeout=3600,
-    secrets=[modal.Secret.from_name("huggingface-secret")],
+    gpu="H100",
+    timeout=60 * 60 * 2,
+    volumes={"/checkpoints": checkpoint_volume},
+    secrets=[modal.Secret.from_name("wandb-secret")],
 )
-def train():
-    import asyncio
+def train_reward_weighted():
+    """Train using reward-weighted cross-entropy."""
     import torch
-    from datasets import Dataset
-    from transformers import AutoProcessor, Qwen2VLForConditionalGeneration
-    from trl import GRPOConfig, GRPOTrainer
+    from transformers import AutoTokenizer, AutoProcessor, AutoModelForImageTextToText
     from cua_bench.workers import (
         MultiTurnDataloader,
         CBEnvWorkerClient,
@@ -148,179 +181,178 @@ def train():
         cleanup_workers,
     )
 
-    def format_reward_func(completions, **kwargs):
-        rewards = []
-        for completion in completions:
-            has_start = "<|action_start|>" in completion
-            has_end = "<|action_end|>" in completion
-            rewards.append(0.1 if has_start and has_end else -0.1)
-        return rewards
+    config = TrainerConfig()
 
-    async def run_training():
-        print("=" * 50)
-        print("Multimodal GUI Agent GRPO Training")
-        print("=" * 50)
+    print(f"Starting training with {config.num_workers} workers")
+    print(f"Model: {config.model_name}")
 
-        print(f"\n[1/5] Starting {NUM_WORKERS} workers...")
-        workers = await create_workers(
-            n_workers=NUM_WORKERS,
-            allowed_ips=["127.0.0.1"],
-            startup_timeout=60.0,
+    if config.use_wandb and os.environ.get("WANDB_API_KEY"):
+        import wandb
+        wandb.init(
+            project="cua-bench-training",
+            config={
+                "model_name": config.model_name,
+                "num_workers": config.num_workers,
+                "batch_size": config.batch_size,
+                "learning_rate": config.learning_rate,
+            },
         )
 
-        try:
-            print(f"\n[2/5] Loading model: {MODEL_NAME}")
-            processor = AutoProcessor.from_pretrained(MODEL_NAME)
-            model = Qwen2VLForConditionalGeneration.from_pretrained(
-                MODEL_NAME,
-                torch_dtype=torch.bfloat16,
-                device_map="auto",
+    # Load model
+    tokenizer = AutoTokenizer.from_pretrained(config.model_name, trust_remote_code=True)
+    processor = AutoProcessor.from_pretrained(config.model_name, trust_remote_code=True)
+    model = AutoModelForImageTextToText.from_pretrained(
+        config.model_name,
+        dtype=torch.bfloat16,
+        device_map="auto",
+        trust_remote_code=True,
+    )
+
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+
+    # Start workers
+    import asyncio
+    workers = asyncio.run(create_workers(
+        n_workers=config.num_workers,
+        allowed_ips=["127.0.0.1"],
+        startup_timeout=120.0,
+    ))
+    worker_urls = [w.api_url for w in workers]
+
+    try:
+        task_configs = [
+            {"env_path": config.task_path, "task_index": i % 10, "split": "train"}
+            for i in range(config.num_workers)
+        ]
+
+        dataloader = MultiTurnDataloader(
+            env_class=CBEnvWorkerClient,
+            env_configs=[{"server_url": url} for url in worker_urls],
+            task_configs=task_configs,
+            tokenizer=tokenizer,
+            processor=processor,
+            is_multi_modal=True,
+            batch_size=config.batch_size,
+            replay_capacity=10000,
+            replay_reward_discount=0.99,
+            max_prompt_length=2048,
+            max_response_length=512,
+        )
+
+        optimizer = torch.optim.AdamW(model.parameters(), lr=config.learning_rate)
+
+        for step in range(config.num_train_steps):
+            # ================================================================
+            # ROLLOUT PHASE: Generate actions and step environments
+            # ================================================================
+            batch = next(dataloader)
+            input_ids = batch["input_ids"].to(model.device)
+            attention_mask = batch["attention_mask"].to(model.device)
+
+            with torch.no_grad():
+                outputs = model.generate(
+                    input_ids=input_ids,
+                    attention_mask=attention_mask,
+                    max_new_tokens=256,
+                    do_sample=True,
+                    temperature=0.7,
+                    pad_token_id=tokenizer.pad_token_id,
+                )
+
+            response_ids = outputs[:, input_ids.shape[1]:]
+            response_mask = (response_ids != tokenizer.pad_token_id).long()
+
+            dataloader.async_step({
+                "prompts": input_ids,
+                "responses": response_ids,
+                "attention_mask": torch.cat([attention_mask, response_mask], dim=1),
+                "worker_id": batch["worker_id"],
+                "meta_info": batch["meta_info"],
+            })
+
+            # ================================================================
+            # TRAINING PHASE: Sample from replay buffer and update policy
+            # ================================================================
+            if len(dataloader.replay) < config.batch_size:
+                continue
+
+            replay_batch = dataloader.sample_from_buffer(config.batch_size)
+            train_input_ids = replay_batch["input_ids"].to(model.device)
+            train_attention_mask = replay_batch["attention_mask"].to(model.device)
+            rewards = replay_batch["reward"].to(model.device)
+
+            outputs = model(
+                input_ids=train_input_ids,
+                attention_mask=train_attention_mask,
+                labels=train_input_ids,
             )
-            tokenizer = processor.tokenizer
-            if tokenizer.pad_token_id is None:
-                tokenizer.pad_token_id = tokenizer.eos_token_id
-            device = next(model.parameters()).device
+            loss = outputs.loss * rewards.mean()
 
-            print(f"\n[3/5] Creating dataloader...")
-            task_configs = [
-                {"env_path": TASK_PATH, "task_index": i % 50, "split": "train"}
-                for i in range(100)
-            ]
-            env_configs = [{"server_url": w.api_url} for w in workers]
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
 
-            dataloader = MultiTurnDataloader(
-                env_class=CBEnvWorkerClient,
-                env_configs=env_configs,
-                task_configs=task_configs,
-                tokenizer=tokenizer,
-                processor=processor,
-                is_multi_modal=True,
-                batch_size=BATCH_SIZE,
-                replay_capacity=5000,
-                replay_reward_discount=0.95,
-                max_prompt_length=1024,
-                max_response_length=128,
-            )
+            # ================================================================
+            # LOGGING
+            # ================================================================
+            if step % 10 == 0:
+                running_reward = dataloader.running_outcome_reward()
+                print(
+                    f"Step {step}/{config.num_train_steps} | "
+                    f"Loss: {loss.item():.4f} | "
+                    f"Reward: {running_reward:.4f}"
+                )
 
-            print(f"\n[4/5] Collecting trajectories...")
-            all_trajectories = []
-
-            for round_num in range(5):
-                for _ in range(5):
-                    try:
-                        batch = next(dataloader)
-                    except StopIteration:
-                        break
-
-                    input_ids = batch["input_ids"].to(device)
-                    attention_mask = batch["attention_mask"].to(device)
-
-                    generate_kwargs = {
-                        "input_ids": input_ids,
-                        "attention_mask": attention_mask,
-                        "max_new_tokens": 64,
-                        "do_sample": True,
-                        "temperature": 0.8,
-                        "pad_token_id": tokenizer.pad_token_id,
+                if config.use_wandb:
+                    import wandb
+                    log_dict = {
+                        "loss": loss.item(),
+                        "running_reward": running_reward,
+                        "replay_size": len(dataloader.replay),
                     }
+                    if step % 50 == 0:
+                        try:
+                            env = dataloader.envs[0]
+                            if hasattr(env, "render") and env.prompt is not None:
+                                log_dict["trajectory"] = wandb.Image(env.render())
+                        except Exception:
+                            pass
+                    wandb.log(log_dict)
 
-                    if "multi_modal_inputs" in batch:
-                        pv = batch["multi_modal_inputs"].get("pixel_values")
-                        if pv is not None:
-                            generate_kwargs["pixel_values"] = pv.to(device)
-                        igt = batch["multi_modal_inputs"].get("image_grid_thw")
-                        if igt is not None:
-                            generate_kwargs["image_grid_thw"] = igt.to(device)
+            if step > 0 and step % 500 == 0:
+                checkpoint_path = f"/checkpoints/step_{step}"
+                model.save_pretrained(checkpoint_path)
+                tokenizer.save_pretrained(checkpoint_path)
+                checkpoint_volume.commit()
 
-                    with torch.no_grad():
-                        outputs = model.generate(**generate_kwargs)
+        model.save_pretrained("/checkpoints/final")
+        tokenizer.save_pretrained("/checkpoints/final")
+        checkpoint_volume.commit()
+        dataloader.close()
 
-                    prompt_len = input_ids.shape[1]
-                    responses = outputs[:, prompt_len:].cpu()
-                    response_mask = (responses != tokenizer.pad_token_id).long()
+    finally:
+        asyncio.run(cleanup_workers(workers))
 
-                    for i in range(input_ids.shape[0]):
-                        prompt_mask = attention_mask[i].cpu()
-                        valid_prompt = input_ids[i].cpu()[prompt_mask.bool()]
-                        prompt_text = tokenizer.decode(valid_prompt, skip_special_tokens=True)
-                        all_trajectories.append({"prompt": prompt_text})
-
-                    batch_return = {
-                        "prompts": batch["input_ids"],
-                        "responses": responses,
-                        "attention_mask": torch.cat(
-                            [batch["attention_mask"], response_mask], dim=1
-                        ),
-                        "worker_id": batch["worker_id"],
-                        "meta_info": batch["meta_info"],
-                    }
-                    dataloader.async_step(batch_return)
-
-                await asyncio.sleep(0.5)
-                dataloader._gather_env_ret(first_block=False)
-                print(f"      Round {round_num + 1}: replay={len(dataloader.replay)}")
-
-            print(f"\n[5/5] Training with GRPO...")
-            train_dataset = Dataset.from_list(
-                [t for t in all_trajectories if t["prompt"].strip()]
-            )
-
-            def env_reward_func(completions, **kwargs):
-                env_reward = dataloader.running_outcome_reward()
-                return [env_reward] * len(completions)
-
-            grpo_config = GRPOConfig(
-                output_dir="/tmp/grpo-gui-agent",
-                per_device_train_batch_size=min(BATCH_SIZE, len(train_dataset)),
-                num_generations=2,
-                learning_rate=5e-6,
-                beta=0.0,
-                max_completion_length=64,
-                max_prompt_length=512,
-                logging_steps=5,
-                max_steps=NUM_TRAINING_STEPS,
-                report_to="none",
-            )
-
-            trainer = GRPOTrainer(
-                model=model,
-                args=grpo_config,
-                reward_funcs=[format_reward_func, env_reward_func],
-                train_dataset=train_dataset,
-                processing_class=tokenizer,
-            )
-
-            trainer.train()
-
-            print("\n" + "=" * 50)
-            print("Training Complete!")
-            print("=" * 50)
-            print(f"Replay buffer: {len(dataloader.replay)}")
-            print(f"Running reward: {dataloader.running_outcome_reward():.4f}")
-
-            dataloader.close()
-
-        finally:
-            await cleanup_workers(workers)
-
-    asyncio.run(run_training())
+    return {"status": "complete", "steps": config.num_train_steps}
 
 
 @app.local_entrypoint()
 def main():
-    train.remote()
+    result = train_reward_weighted.remote()
+    print(f"Training result: {result}")
 ```
 
 ## Step 4: Set Up Modal Secrets
 
 ```bash
-modal secret create huggingface-secret HUGGING_FACE_HUB_TOKEN=hf_xxx
+modal secret create wandb-secret WANDB_API_KEY=your_key_here
 ```
 
 ## Step 5: Run Training
 
 ```bash
-modal run train_grpo.py
+modal run modal_trl_training.py
 ```
 
 ## Project Structure
@@ -330,15 +362,31 @@ my-rl-project/
 ├── tasks/
 │   └── click-target/
 │       └── main.py
-└── train_grpo.py
+└── modal_trl_training.py
 ```
 
 ## How It Works
 
 1. **Workers** run GUI environments inside the Modal container
-2. **Model** (Qwen2-VL) sees screenshots and generates actions
+2. **Model** (Qwen3-VL) sees screenshots and generates actions
 3. **Environment** returns rewards (1.0 if button clicked, 0.0 otherwise)
-4. **GRPO** optimizes using format reward + environment reward
+4. **Training** uses reward-weighted cross-entropy to update the policy
+
+## Customizing the Config
+
+Modify `TrainerConfig` to change training parameters:
+
+```python
+@dataclass
+class TrainerConfig:
+    model_name: str = "Qwen/Qwen3-VL-2B-Instruct"  # Model to train
+    num_workers: int = 4                            # Parallel environments
+    batch_size: int = 4                             # Batch size
+    num_train_steps: int = 1000                     # Training steps
+    learning_rate: float = 1e-5                     # Learning rate
+    task_path: str = "/root/tasks/click-target"     # Task directory
+    use_wandb: bool = True                          # Enable logging
+```
 
 ## Reference
 

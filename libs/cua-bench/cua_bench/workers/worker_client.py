@@ -101,7 +101,12 @@ class CBEnvWorkerClient:
             },
             timeout=60,
         )
-        response.raise_for_status()
+        if not response.ok:
+            try:
+                detail = response.json().get("detail", response.text)
+            except Exception:
+                detail = response.text
+            raise RuntimeError(f"Server error ({response.status_code}): {detail}")
         data = response.json()
 
         self.env_id = data["env_id"]
@@ -171,7 +176,12 @@ class CBEnvWorkerClient:
             },
             timeout=60,
         )
-        response.raise_for_status()
+        if not response.ok:
+            try:
+                detail = response.json().get("detail", response.text)
+            except Exception:
+                detail = response.text
+            raise RuntimeError(f"Server error ({response.status_code}): {detail}")
         data = response.json()
 
         # Update state
@@ -217,7 +227,12 @@ class CBEnvWorkerClient:
             params={"env_id": self.env_id},
             timeout=30,
         )
-        response.raise_for_status()
+        if not response.ok:
+            try:
+                detail = response.json().get("detail", response.text)
+            except Exception:
+                detail = response.text
+            raise RuntimeError(f"Server error ({response.status_code}): {detail}")
         data = response.json()
 
         screenshot_b64 = data["screenshot"]
@@ -243,7 +258,12 @@ class CBEnvWorkerClient:
             Health status dictionary
         """
         response = requests.get(f"{self.server_url}/health", timeout=10)
-        response.raise_for_status()
+        if not response.ok:
+            try:
+                detail = response.json().get("detail", response.text)
+            except Exception:
+                detail = response.text
+            raise RuntimeError(f"Server error ({response.status_code}): {detail}")
         return response.json()
 
     def _process_screenshot(self, screenshot_b64: str) -> str:
@@ -443,6 +463,88 @@ class CBEnvWorkerClient:
         except ValueError:
             # Default to done if parsing fails
             return {"type": "DoneAction"}
+
+    def render(self) -> Image.Image:
+        """Render the current prompt state as a combined image.
+
+        Returns:
+            PIL.Image: Combined image showing instruction and interaction history
+        """
+        from PIL import ImageDraw, ImageFont
+
+        if self.prompt is None:
+            raise RuntimeError("No prompt to render. Call reset() first.")
+
+        PADDING = 20
+        TEXT_HEIGHT = 60
+        FONT_SIZE = 16
+        CLICK_RADIUS = 8
+        CLICK_COLOR = "red"
+
+        try:
+            font = ImageFont.truetype("DejaVuSans.ttf", FONT_SIZE)
+        except Exception:
+            font = ImageFont.load_default()
+
+        # Calculate total height
+        total_height = PADDING + TEXT_HEIGHT  # instruction
+        for step in self.prompt["steps"]:
+            if "<|vision_start|>" in step:
+                total_height += self.img_h + PADDING
+            else:
+                total_height += TEXT_HEIGHT + PADDING
+
+        # Create canvas
+        canvas = Image.new("RGB", (self.img_w + 2 * PADDING, total_height), "white")
+        draw = ImageDraw.Draw(canvas)
+
+        y = PADDING
+
+        # Draw instruction
+        instruction = self.prompt["instruction"]
+        draw.text((PADDING, y), f"Task: {instruction[:100]}...", font=font, fill="black")
+        y += TEXT_HEIGHT
+
+        # Draw steps
+        prev_action = None
+        for step in self.prompt["steps"]:
+            if "<|vision_start|>" in step:
+                # Extract and paste image
+                img_b64 = step.replace("<|vision_start|>", "").replace("<|vision_end|>", "")
+                img_bytes = base64.b64decode(img_b64)
+                img = Image.open(io.BytesIO(img_bytes))
+                if img.size != (self.img_w, self.img_h):
+                    img = img.resize((self.img_w, self.img_h))
+                canvas.paste(img, (PADDING, y))
+
+                # Draw click marker from previous action
+                if prev_action:
+                    click_match = re.search(r"click\(([\d.]+),([\d.]+)\)", prev_action)
+                    if click_match:
+                        x_norm, y_norm = map(float, click_match.groups())
+                        x_px = int(x_norm * self.img_w)
+                        y_px = int(y_norm * self.img_h)
+                        draw.ellipse(
+                            [
+                                PADDING + x_px - CLICK_RADIUS,
+                                y + y_px - CLICK_RADIUS,
+                                PADDING + x_px + CLICK_RADIUS,
+                                y + y_px + CLICK_RADIUS,
+                            ],
+                            fill=CLICK_COLOR,
+                            outline="white",
+                            width=2,
+                        )
+                prev_action = None
+                y += self.img_h + PADDING
+            else:
+                # Action text
+                action_text = step.replace("<|action_start|>", "").replace("<|action_end|>", "")
+                draw.text((PADDING, y), f"Action: {action_text}", font=font, fill="blue")
+                prev_action = action_text
+                y += TEXT_HEIGHT + PADDING
+
+        return canvas
 
 
 # Convenience function to create a client from environment variables

@@ -1,9 +1,11 @@
 """
 Test script to verify telemetry events are emitted correctly.
 """
-import pytest
-from unittest.mock import patch, MagicMock
+
 import asyncio
+from unittest.mock import MagicMock, patch
+
+import pytest
 
 
 class TestAgentTelemetryEvents:
@@ -25,8 +27,7 @@ class TestAgentTelemetryEvents:
 
         # Find the agent_init call
         agent_init_calls = [
-            call for call in mock_record_event.call_args_list
-            if call[0][0] == "agent_init"
+            call for call in mock_record_event.call_args_list if call[0][0] == "agent_init"
         ]
 
         assert len(agent_init_calls) == 1, "agent_init should be called once"
@@ -47,8 +48,7 @@ class TestAgentTelemetryEvents:
         agent = ComputerAgent(model="anthropic/claude-sonnet-4-5-20250929")
 
         agent_init_calls = [
-            call for call in mock_record_event.call_args_list
-            if call[0][0] == "agent_init"
+            call for call in mock_record_event.call_args_list if call[0][0] == "agent_init"
         ]
 
         assert len(agent_init_calls) == 1
@@ -73,8 +73,7 @@ class TestAgentTelemetryEvents:
 
         # No agent_init should be called (telemetry disabled)
         agent_init_calls = [
-            call for call in mock_record_event.call_args_list
-            if call[0][0] == "agent_init"
+            call for call in mock_record_event.call_args_list if call[0][0] == "agent_init"
         ]
 
         assert len(agent_init_calls) == 0
@@ -96,7 +95,9 @@ class TestActionTelemetryEvents:
         # Mock computer handler
         mock_computer = MagicMock()
         mock_computer.click = MagicMock(return_value=asyncio.coroutine(lambda: None)())
-        mock_computer.screenshot = MagicMock(return_value=asyncio.coroutine(lambda: "base64screenshot")())
+        mock_computer.screenshot = MagicMock(
+            return_value=asyncio.coroutine(lambda: "base64screenshot")()
+        )
 
         # Create a mock computer_call item
         item = {
@@ -106,7 +107,7 @@ class TestActionTelemetryEvents:
                 "type": "click",
                 "x": 100,
                 "y": 200,
-            }
+            },
         }
 
         # Process the item (this would normally happen in the agent loop)

@@ -279,7 +279,17 @@ class Computer:
 
         # Record initialization in telemetry (if enabled)
         if telemetry_enabled and is_telemetry_enabled():
-            record_event("computer_initialized", SYSTEM_INFO)
+            record_event(
+                "computer_initialized",
+                {
+                    **SYSTEM_INFO,
+                    "provider_type": (
+                        self.provider_type.value
+                        if isinstance(self.provider_type, VMProviderType)
+                        else str(self.provider_type) if self.provider_type else "unknown"
+                    ),
+                },
+            )
         else:
             self.logger.debug("Telemetry disabled - skipping initialization tracking")
 

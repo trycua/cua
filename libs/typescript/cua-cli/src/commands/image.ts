@@ -114,7 +114,14 @@ const listHandler = async (argv: Record<string, unknown>) => {
         ]);
       }
     } else {
-      rows.push([img.name, img.image_type, '-', '-', '-', new Date(img.created_at).toLocaleDateString()]);
+      rows.push([
+        img.name,
+        img.image_type,
+        '-',
+        '-',
+        '-',
+        new Date(img.created_at).toLocaleDateString(),
+      ]);
     }
   }
 
@@ -184,13 +191,18 @@ const pushHandler = async (argv: Record<string, unknown>) => {
   }
   if (!initRes.ok) {
     const body = await initRes.json().catch(() => ({}));
-    console.error(`Failed to initiate upload: ${initRes.status}`, (body as any).error || '');
+    console.error(
+      `Failed to initiate upload: ${initRes.status}`,
+      (body as any).error || ''
+    );
     process.exit(1);
   }
 
   const session = (await initRes.json()) as UploadSession;
   console.log(`Upload session: ${session.upload_id}`);
-  console.log(`Parts: ${session.total_parts} x ${formatBytes(session.part_size)}`);
+  console.log(
+    `Parts: ${session.total_parts} x ${formatBytes(session.part_size)}`
+  );
 
   // Upload parts
   const completedParts: PartInfo[] = [];
@@ -210,17 +222,25 @@ const pushHandler = async (argv: Record<string, unknown>) => {
     if (!urlRes.ok) {
       console.error(`Failed to get upload URL for part ${partNum}`);
       // Abort upload
-      await http(`/v1/images/${encodeURIComponent(name)}/upload/${session.upload_id}`, {
-        token,
-        method: 'DELETE',
-      });
+      await http(
+        `/v1/images/${encodeURIComponent(name)}/upload/${session.upload_id}`,
+        {
+          token,
+          method: 'DELETE',
+        }
+      );
       process.exit(1);
     }
 
-    const urlData = (await urlRes.json()) as { upload_url: string; expires_in: number };
+    const urlData = (await urlRes.json()) as {
+      upload_url: string;
+      expires_in: number;
+    };
 
     // Upload the part
-    process.stdout.write(`\rUploading part ${partNum}/${session.total_parts}...`);
+    process.stdout.write(
+      `\rUploading part ${partNum}/${session.total_parts}...`
+    );
 
     const uploadRes = await fetch(urlData.upload_url, {
       method: 'PUT',
@@ -233,10 +253,13 @@ const pushHandler = async (argv: Record<string, unknown>) => {
     if (!uploadRes.ok) {
       console.error(`\nFailed to upload part ${partNum}: ${uploadRes.status}`);
       // Abort upload
-      await http(`/v1/images/${encodeURIComponent(name)}/upload/${session.upload_id}`, {
-        token,
-        method: 'DELETE',
-      });
+      await http(
+        `/v1/images/${encodeURIComponent(name)}/upload/${session.upload_id}`,
+        {
+          token,
+          method: 'DELETE',
+        }
+      );
       process.exit(1);
     }
 
@@ -259,7 +282,10 @@ const pushHandler = async (argv: Record<string, unknown>) => {
 
   if (!completeRes.ok) {
     const body = await completeRes.json().catch(() => ({}));
-    console.error(`Failed to complete upload: ${completeRes.status}`, (body as any).error || '');
+    console.error(
+      `Failed to complete upload: ${completeRes.status}`,
+      (body as any).error || ''
+    );
     process.exit(1);
   }
 
@@ -278,9 +304,12 @@ const pullHandler = async (argv: Record<string, unknown>) => {
   console.log(`Pulling ${name}:${tag}...`);
 
   // Get download URL
-  const urlRes = await http(`/v1/images/${encodeURIComponent(name)}/download?tag=${encodeURIComponent(tag)}`, {
-    token,
-  });
+  const urlRes = await http(
+    `/v1/images/${encodeURIComponent(name)}/download?tag=${encodeURIComponent(tag)}`,
+    {
+      token,
+    }
+  );
 
   if (urlRes.status === 401) {
     clearApiKey();
@@ -293,11 +322,18 @@ const pullHandler = async (argv: Record<string, unknown>) => {
   }
   if (!urlRes.ok) {
     const body = await urlRes.json().catch(() => ({}));
-    console.error(`Failed to get download URL: ${urlRes.status}`, (body as any).error || '');
+    console.error(
+      `Failed to get download URL: ${urlRes.status}`,
+      (body as any).error || ''
+    );
     process.exit(1);
   }
 
-  const urlData = (await urlRes.json()) as { download_url: string; size_bytes: number; checksum_sha256: string };
+  const urlData = (await urlRes.json()) as {
+    download_url: string;
+    size_bytes: number;
+    checksum_sha256: string;
+  };
   console.log(`Size: ${formatBytes(urlData.size_bytes)}`);
 
   // Download the file
@@ -339,10 +375,13 @@ const deleteHandler = async (argv: Record<string, unknown>) => {
 
   console.log(`Deleting ${name}:${tag}...`);
 
-  const res = await http(`/v1/images/${encodeURIComponent(name)}?tag=${encodeURIComponent(tag)}`, {
-    token,
-    method: 'DELETE',
-  });
+  const res = await http(
+    `/v1/images/${encodeURIComponent(name)}?tag=${encodeURIComponent(tag)}`,
+    {
+      token,
+      method: 'DELETE',
+    }
+  );
 
   if (res.status === 401) {
     clearApiKey();
@@ -385,11 +424,16 @@ export function registerImageCommands(y: Argv) {
           'Push a VM image to cloud storage',
           (y) =>
             y
-              .positional('name', { type: 'string', describe: 'Image name', demandOption: true })
+              .positional('name', {
+                type: 'string',
+                describe: 'Image name',
+                demandOption: true,
+              })
               .option('file', {
                 alias: 'f',
                 type: 'string',
-                describe: 'Path to image file (defaults to ~/.local/share/cua-bench/images/<name>/data.img)',
+                describe:
+                  'Path to image file (defaults to ~/.local/share/cua-bench/images/<name>/data.img)',
               })
               .option('tag', {
                 type: 'string',
@@ -409,7 +453,11 @@ export function registerImageCommands(y: Argv) {
           'Pull a VM image from cloud storage',
           (y) =>
             y
-              .positional('name', { type: 'string', describe: 'Image name', demandOption: true })
+              .positional('name', {
+                type: 'string',
+                describe: 'Image name',
+                demandOption: true,
+              })
               .option('tag', {
                 type: 'string',
                 default: 'latest',
@@ -427,7 +475,11 @@ export function registerImageCommands(y: Argv) {
           'Delete an image version from cloud storage',
           (y) =>
             y
-              .positional('name', { type: 'string', describe: 'Image name', demandOption: true })
+              .positional('name', {
+                type: 'string',
+                describe: 'Image name',
+                demandOption: true,
+              })
               .option('tag', {
                 type: 'string',
                 default: 'latest',

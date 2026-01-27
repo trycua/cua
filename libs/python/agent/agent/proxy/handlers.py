@@ -5,19 +5,14 @@ Request handlers for the proxy endpoints.
 import json
 import logging
 import os
-import re
 from contextlib import contextmanager
 from typing import Any, Dict, List, Optional, Union
 
 from computer import Computer
 
 from ..agent import ComputerAgent
-from ..tools.browser_tool import BrowserTool
 
 logger = logging.getLogger(__name__)
-
-# Pattern to detect FARA models (case-insensitive)
-FARA_MODEL_PATTERN = re.compile(r"(?i).*fara.*")
 
 
 class ResponsesHandler:
@@ -95,15 +90,9 @@ class ResponsesHandler:
         agent_key_payload = {"model": model, **agent_kwargs_for_key}
         agent_key = _stable_key(agent_key_payload)
 
-        # Determine the appropriate tool based on model type
-        # FARA models require BrowserTool instead of Computer for browser-specific actions
-        # (visit_url, web_search, terminate, history_back, etc.)
-        is_fara_model = bool(FARA_MODEL_PATTERN.match(model))
-        if is_fara_model and computer is not None:
-            tool = BrowserTool(interface=computer.interface)
-            logger.info(f"Using BrowserTool for FARA model: {model}")
-        else:
-            tool = computer
+        # Pass Computer as the tool - ComputerAgent handles wrapping internally
+        # based on the model's required tool_type (e.g., FARA auto-wraps to BrowserTool)
+        tool = computer
 
         agent = self._agent_cache.get(agent_key)
         if agent is None:

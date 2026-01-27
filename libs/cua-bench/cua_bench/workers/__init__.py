@@ -10,7 +10,7 @@ Components:
 - dataloader: MultiTurnDataloader and ReplayBuffer for RL training
 """
 
-from .dataloader import MultiTurnDataloader, ReplayBuffer, create_dataloader_from_urls
+from .dataloader import MultiTurnDataloader, ReplayBuffer
 from .worker_client import CBEnvWorkerClient
 from .worker_manager import (
     WorkerHandle,
@@ -28,5 +28,4 @@ __all__ = [
     "cleanup_workers",
     "MultiTurnDataloader",
     "ReplayBuffer",
-    "create_dataloader_from_urls",
 ]

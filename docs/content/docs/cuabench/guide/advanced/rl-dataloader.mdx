@@ -21,12 +21,12 @@ buffer = ReplayBuffer(
     balance_thres=0.5,        # Threshold for balance stats
 )
 
-# Add experiences
-buffer.add(
-    worker_id=0,
-    env_ret={"obs": "...", "reward": 0.0, "done": False},
-    meta_info={"uid": "episode-123"}
-)
+# Add experiences (as tuple)
+buffer.add((
+    0,  # worker_id
+    {"obs": "...", "reward": 0.0, "done": False},  # env_ret
+    {"uid": "episode-123"}  # meta_info
+))
 
 # Sample for training
 samples = buffer.sample(batch_size=32)
@@ -92,7 +92,7 @@ for batch in dataloader:
 | ----------------------------- | ------------ | -------- | -------------------------------------- |
 | `env_class`                   | Type         | required | Environment client class               |
 | `env_configs`                 | `List[Dict]` | required | Worker configs                         |
-| `task_configs`                | `List[Dict]` | `None`   | Task configurations                    |
+| `task_configs`                | `List[Dict]` | required | Task configurations                    |
 | `tokenizer`                   | Any          | required | HuggingFace tokenizer                  |
 | `processor`                   | Any          | `None`   | HuggingFace processor for multimodal   |
 | `is_multi_modal`              | bool         | `False`  | Enable image processing                |
@@ -156,7 +156,10 @@ batch = dataloader.sample_from_buffer(batch_size=32)
 # Print stats
 dataloader.print_stats_in_replay_buffer()
 
-# Cleanup
+# Clear replay buffer
+dataloader.clear_replay_buffer()
+
+# Cleanup workers
 dataloader.close()
 ```
 

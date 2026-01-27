@@ -24,8 +24,6 @@ except ImportError:
 from cua_bench.workers.dataloader import (
     MultiTurnDataloader,
     ReplayBuffer,
-    collate_fn,
-    tokenize_and_postprocess,
 )
 from cua_bench.workers.worker_client import CBEnvWorkerClient
 from cua_bench.workers.worker_manager import (
@@ -77,9 +75,19 @@ class MockTokenizer:
             ]
         return "".join(chr(i) if 32 <= i < 127 else "?" for i in ids)
 
-    def __call__(self, texts, padding=True, truncation=True, max_length=512, return_tensors=None):
+    def __call__(
+        self,
+        texts,
+        padding=True,
+        truncation=True,
+        max_length=512,
+        return_tensors=None,
+        add_special_tokens=True,
+    ):
         """Batch tokenization."""
-        encoded = [self.encode(t, add_special_tokens=True) for t in texts]
+        if isinstance(texts, str):
+            texts = [texts]
+        encoded = [self.encode(t, add_special_tokens=add_special_tokens) for t in texts]
 
         # Pad to max length
         max_len = min(max(len(e) for e in encoded), max_length)
@@ -106,11 +114,15 @@ class TestReplayBuffer:
         """Test adding steps to buffer."""
         buffer = ReplayBuffer(capacity=100)
 
-        # Add a complete episode
-        buffer.add(0, {"obs": "obs1", "is_init": True, "done": False}, {"uid": "ep1"})
-        buffer.add(0, {"obs": "obs2", "action": "click", "done": False}, {"uid": "ep1"})
+        # Add a complete episode (using tuple format)
         buffer.add(
-            0, {"obs": "obs3", "action": "done", "reward": 1.0, "done": True}, {"uid": "ep1"}
+            (0, {"obs": "obs1", "is_init": True, "done": False, "reward": 0.0}, {"uid": "ep1"})
+        )
+        buffer.add(
+            (0, {"obs": "obs2", "action": "click", "done": False, "reward": 0.0}, {"uid": "ep1"})
+        )
+        buffer.add(
+            (0, {"obs": "obs3", "action": "done", "reward": 1.0, "done": True}, {"uid": "ep1"})
         )
 
         # Episode is processed on done, all 3 steps should be in buffer
@@ -120,14 +132,22 @@ class TestReplayBuffer:
         """Test sampling from buffer."""
         buffer = ReplayBuffer(capacity=100)
 
-        # Add multiple episodes
+        # Add multiple episodes (using tuple format)
         for ep in range(5):
             uid = f"ep{ep}"
-            buffer.add(0, {"obs": f"obs{ep}_0", "is_init": True, "done": False}, {"uid": uid})
             buffer.add(
-                0,
-                {"obs": f"obs{ep}_1", "action": "click", "reward": 1.0, "done": True},
-                {"uid": uid},
+                (
+                    0,
+                    {"obs": f"obs{ep}_0", "is_init": True, "done": False, "reward": 0.0},
+                    {"uid": uid},
+                )
+            )
+            buffer.add(
+                (
+                    0,
+                    {"obs": f"obs{ep}_1", "action": "click", "reward": 1.0, "done": True},
+                    {"uid": uid},
+                )
             )
 
         # Should have 10 steps (2 per episode * 5 episodes)
@@ -141,8 +161,10 @@ class TestReplayBuffer:
     def test_buffer_sample_insufficient(self):
         """Test sampling when buffer has insufficient data returns what's available."""
         buffer = ReplayBuffer(capacity=100)
-        buffer.add(0, {"obs": "obs1", "is_init": True, "done": False}, {"uid": "ep1"})
-        buffer.add(0, {"obs": "obs2", "reward": 1.0, "done": True}, {"uid": "ep1"})
+        buffer.add(
+            (0, {"obs": "obs1", "is_init": True, "done": False, "reward": 0.0}, {"uid": "ep1"})
+        )
+        buffer.add((0, {"obs": "obs2", "reward": 1.0, "done": True}, {"uid": "ep1"}))
 
         # Should return what's available
         samples = buffer.sample(10)
@@ -152,13 +174,15 @@ class TestReplayBuffer:
         """Test that rewards are discounted backwards."""
         buffer = ReplayBuffer(capacity=100, gamma=0.9)
 
-        # Add episode with reward only at the end
+        # Add episode with reward only at the end (using tuple format)
         buffer.add(
-            0, {"obs": "obs1", "is_init": True, "done": False, "reward": 0.0}, {"uid": "ep1"}
+            (0, {"obs": "obs1", "is_init": True, "done": False, "reward": 0.0}, {"uid": "ep1"})
         )
-        buffer.add(0, {"obs": "obs2", "action": "a1", "done": False, "reward": 0.0}, {"uid": "ep1"})
         buffer.add(
-            0, {"obs": "obs3", "action": "done", "done": True, "reward": 1.0}, {"uid": "ep1"}
+            (0, {"obs": "obs2", "action": "a1", "done": False, "reward": 0.0}, {"uid": "ep1"})
+        )
+        buffer.add(
+            (0, {"obs": "obs3", "action": "done", "done": True, "reward": 1.0}, {"uid": "ep1"})
         )
 
         # Sample all and check rewards are discounted
@@ -176,11 +200,15 @@ class TestReplayBuffer:
         """Test only_keep_outcome mode."""
         buffer = ReplayBuffer(capacity=100, only_keep_outcome=True)
 
-        # Add episode with 3 steps
-        buffer.add(0, {"obs": "obs1", "is_init": True, "done": False}, {"uid": "ep1"})
-        buffer.add(0, {"obs": "obs2", "action": "a1", "done": False}, {"uid": "ep1"})
+        # Add episode with 3 steps (using tuple format)
         buffer.add(
-            0, {"obs": "obs3", "action": "done", "reward": 1.0, "done": True}, {"uid": "ep1"}
+            (0, {"obs": "obs1", "is_init": True, "done": False, "reward": 0.0}, {"uid": "ep1"})
+        )
+        buffer.add(
+            (0, {"obs": "obs2", "action": "a1", "done": False, "reward": 0.0}, {"uid": "ep1"})
+        )
+        buffer.add(
+            (0, {"obs": "obs3", "action": "done", "reward": 1.0, "done": True}, {"uid": "ep1"})
         )
 
         # Only final step should be kept
@@ -191,8 +219,10 @@ class TestReplayBuffer:
     def test_buffer_clear(self):
         """Test clearing the buffer."""
         buffer = ReplayBuffer(capacity=100)
-        buffer.add(0, {"obs": "obs1", "is_init": True, "done": False}, {"uid": "ep1"})
-        buffer.add(0, {"obs": "obs2", "reward": 1.0, "done": True}, {"uid": "ep1"})
+        buffer.add(
+            (0, {"obs": "obs1", "is_init": True, "done": False, "reward": 0.0}, {"uid": "ep1"})
+        )
+        buffer.add((0, {"obs": "obs2", "reward": 1.0, "done": True}, {"uid": "ep1"}))
 
         assert len(buffer) == 2
         buffer.clear()
@@ -202,67 +232,22 @@ class TestReplayBuffer:
         """Test balance statistics."""
         buffer = ReplayBuffer(capacity=100, balance_thres=0.5)
 
-        # Add episodes with different rewards
-        buffer.add(0, {"obs": "obs1", "is_init": True, "done": False}, {"uid": "ep1"})
-        buffer.add(0, {"obs": "obs2", "reward": 0.2, "done": True}, {"uid": "ep1"})  # below
+        # Add episodes with different rewards (using tuple format)
+        buffer.add(
+            (0, {"obs": "obs1", "is_init": True, "done": False, "reward": 0.0}, {"uid": "ep1"})
+        )
+        buffer.add((0, {"obs": "obs2", "reward": 0.2, "done": True}, {"uid": "ep1"}))  # below
 
-        buffer.add(1, {"obs": "obs3", "is_init": True, "done": False}, {"uid": "ep2"})
-        buffer.add(1, {"obs": "obs4", "reward": 0.8, "done": True}, {"uid": "ep2"})  # above
+        buffer.add(
+            (1, {"obs": "obs3", "is_init": True, "done": False, "reward": 0.0}, {"uid": "ep2"})
+        )
+        buffer.add((1, {"obs": "obs4", "reward": 0.8, "done": True}, {"uid": "ep2"}))  # above
 
         below, above = buffer.get_balance_stats()
         # With gamma=1.0, rewards propagate equally
         # ep1: both steps get 0.2, ep2: both steps get 0.8
         assert below == 2  # All ep1 steps below threshold
         assert above == 2  # All ep2 steps above threshold
-
-
-class TestTokenization:
-    """Tests for tokenization utilities."""
-
-    @pytest.mark.skipif(not HAS_TORCH, reason="torch required")
-    def test_tokenize_and_postprocess(self):
-        """Test tokenize_and_postprocess function."""
-        tokenizer = MockTokenizer()
-
-        input_ids, attention_mask = tokenize_and_postprocess(
-            prompt="Hello world",
-            tokenizer=tokenizer,
-            max_length=20,
-            pad_token_id=tokenizer.pad_token_id,
-            left_pad=True,
-            truncation="left",
-        )
-
-        assert input_ids.shape == (1, 20)
-        assert attention_mask.shape == (1, 20)
-        # Left padding means first tokens should be pad
-        assert attention_mask[0, 0].item() == 0  # Padding
-        assert attention_mask[0, -1].item() == 1  # Real token
-
-    @pytest.mark.skipif(not HAS_TORCH, reason="torch required")
-    def test_collate_fn(self):
-        """Test collate_fn for batching."""
-        data_list = [
-            {
-                "input_ids": torch.tensor([1, 2, 3]),
-                "attention_mask": torch.tensor([1, 1, 1]),
-                "worker_id": 0,
-                "meta_info": {"uid": "ep1"},
-            },
-            {
-                "input_ids": torch.tensor([4, 5, 6]),
-                "attention_mask": torch.tensor([1, 1, 1]),
-                "worker_id": 1,
-                "meta_info": {"uid": "ep2"},
-            },
-        ]
-
-        batch = collate_fn(data_list)
-
-        assert batch["input_ids"].shape == (2, 3)
-        assert batch["attention_mask"].shape == (2, 3)
-        assert len(batch["worker_id"]) == 2
-        assert len(batch["meta_info"]) == 2
 
 
 class TestWorkerPoolInit:

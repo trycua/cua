@@ -15,11 +15,13 @@ Example:
 
 import base64
 import io
+import re
 import uuid
 from dataclasses import dataclass, field
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple, Union
 
 import requests
+from cua_bench.actions import action_to_dict, parse_action_string
 from PIL import Image
 
 
@@ -123,11 +125,12 @@ class CBEnvWorkerClient:
             "is_init": True,
         }, {"uid": self.uid}
 
-    def step(self, action: Dict[str, Any]) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    def step(self, action: Union[str, Dict[str, Any]]) -> Tuple[Dict[str, Any], Dict[str, Any]]:
         """Execute an action in the environment.
 
         Args:
-            action: Action dictionary. Can be:
+            action: Action string or dictionary. Can be:
+                - Action string: "click(0.5,0.5)" or "<|action_start|>click(0.5,0.5)<|action_end|>"
                 - Raw action dict: {"type": "ClickAction", "x": 100, "y": 200}
                 - Normalized action: {"type": "click", "x": 0.5, "y": 0.5}
 
@@ -151,6 +154,10 @@ class CBEnvWorkerClient:
 
         # Store previous observation
         prev_obs = self._prompt_to_obs(self.prompt) if self.prompt else None
+
+        # Parse action string to dict if needed
+        if isinstance(action, str):
+            action = self._parse_action_string(action)
 
         # Normalize and denormalize action
         action_str, action_denormalized = self._process_action(action)
@@ -410,6 +417,32 @@ class CBEnvWorkerClient:
             parts.append(step)
 
         return "".join(parts)
+
+    def _parse_action_string(self, action_str: str) -> Dict[str, Any]:
+        """Parse action string from model response into a dict.
+
+        Handles formats:
+        - Raw action string: "click(0.5,0.5)"
+        - With tags: "<|action_start|>click(0.5,0.5)<|action_end|>"
+
+        Args:
+            action_str: Action string to parse
+
+        Returns:
+            Action dict suitable for _process_action()
+        """
+        # Extract action from tags if present
+        action_match = re.search(r"<\|action_start\|>(.*?)<\|action_end\|>", action_str, re.DOTALL)
+        if action_match:
+            action_str = action_match.group(1).strip()
+
+        # Try to parse the action string
+        try:
+            action = parse_action_string(action_str)
+            return action_to_dict(action)
+        except ValueError:
+            # Default to done if parsing fails
+            return {"type": "DoneAction"}
 
 
 # Convenience function to create a client from environment variables

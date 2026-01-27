@@ -2,8 +2,7 @@
 Test script to verify telemetry events are emitted correctly.
 """
 
-import asyncio
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -94,10 +93,8 @@ class TestActionTelemetryEvents:
 
         # Mock computer handler
         mock_computer = MagicMock()
-        mock_computer.click = MagicMock(return_value=asyncio.coroutine(lambda: None)())
-        mock_computer.screenshot = MagicMock(
-            return_value=asyncio.coroutine(lambda: "base64screenshot")()
-        )
+        mock_computer.click = AsyncMock(return_value=None)
+        mock_computer.screenshot = AsyncMock(return_value="base64screenshot")
 
         # Create a mock computer_call item
         item = {

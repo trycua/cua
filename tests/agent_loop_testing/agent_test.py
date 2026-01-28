@@ -11,6 +11,7 @@ import base64
 import sys
 from io import BytesIO
 from pathlib import Path
+from typing import Any, Dict, Optional
 
 from PIL import Image, ImageDraw
 
@@ -106,6 +107,21 @@ class MockComputer:
 
     async def type_text(self, text: str) -> None:
         await asyncio.sleep(0.1)
+
+    async def playwright_exec(self, command: str, params: Optional[Dict] = None) -> Dict[str, Any]:
+        """Mock playwright execution for BrowserTool compatibility."""
+        await asyncio.sleep(0.1)
+
+        # Handle screenshot command - return mock screenshot data
+        if command == "screenshot":
+            return {"success": True, "screenshot": self._image}  # Return the base64 screenshot
+
+        # Handle get_current_url command
+        if command == "get_current_url":
+            return {"success": True, "url": "desktop://mock"}
+
+        # All other commands just return success
+        return {"success": True}
 
 
 async def test_cua_agent(model_name: str):

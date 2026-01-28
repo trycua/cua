@@ -39,6 +39,14 @@ jobs:
           # Gemini CU Preview
           - gemini-2.5-computer-use-preview-10-2025
 
+          # Cua VLM Router Models (via inference.cua.ai)
+          - cua/anthropic/claude-haiku-4.5
+          - cua/anthropic/claude-sonnet-4.5
+          - cua/anthropic/claude-opus-4.5
+          - cua/microsoft/fara-7b
+          - cua/google/gemini-3-flash-preview
+          - cua/google/gemini-3-pro-preview
+
           # InternVL
           # - huggingface-local/OpenGVLab/InternVL3_5-1B
           # - huggingface-local/OpenGVLab/InternVL3_5-2B
@@ -141,6 +149,7 @@ jobs:
           GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          CUA_API_KEY: ${{ secrets.CUA_API_KEY }}
 
       - name: Calculate test duration and prepare message
         if: always()

@@ -5,11 +5,29 @@ import logging
 import os
 import signal
 import sys
+import time
 import traceback
 import uuid
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 import anyio
+
+# Import OTEL instrumentation
+try:
+    from .otel import (
+        initialize_otel,
+        shutdown_otel,
+        timed_tool_execution,
+        timed_task,
+        record_session_created,
+        record_session_closed,
+        record_session_error,
+        update_saturation,
+        get_metrics,
+    )
+    OTEL_AVAILABLE = True
+except ImportError:
+    OTEL_AVAILABLE = False
 
 # Configure logging to output to stderr for debug visibility
 logging.basicConfig(
@@ -129,11 +147,31 @@ def serve() -> FastMCP:
             session_id: Optional session ID for multi-client support. If not provided, a new session will be created.
         """
         session_manager = get_session_manager()
+        start_time = time.perf_counter()
+        success = True
+        error_type = None
 
-        async with session_manager.get_session(session_id) as session:
-            screenshot = await session.computer.interface.screenshot()
-            # Returning Image object is fine when structured_output=False
-            return Image(format="png", data=screenshot)
+        try:
+            async with session_manager.get_session(session_id) as session:
+                screenshot = await session.computer.interface.screenshot()
+                # Returning Image object is fine when structured_output=False
+                return Image(format="png", data=screenshot)
+        except Exception as e:
+            success = False
+            error_type = type(e).__name__
+            raise
+        finally:
+            # Record OTEL metrics
+            if OTEL_AVAILABLE:
+                duration_ms = (time.perf_counter() - start_time) * 1000
+                from .otel import record_tool_call
+                record_tool_call(
+                    tool_name="screenshot_cua",
+                    duration_ms=duration_ms,
+                    success=success,
+                    error_type=error_type,
+                    session_id=session_id,
+                )
 
     @server.tool(structured_output=False)
     async def run_cua_task(ctx: Context, task: str, session_id: Optional[str] = None) -> Any:
@@ -146,6 +184,14 @@ def serve() -> FastMCP:
         """
         session_manager = get_session_manager()
         task_id = str(uuid.uuid4())
+        task_start_time = time.perf_counter()
+        task_success = True
+        task_error_type = None
+        model_name = os.getenv("CUA_MODEL_NAME", "anthropic/claude-sonnet-4-5-20250929")
+
+        # OTEL: Track active tasks (saturation)
+        if OTEL_AVAILABLE:
+            update_saturation(active_tasks_delta=1)
 
         try:
             logger.info(f"Starting Cua task: {task} (task_id: {task_id})")
@@ -155,8 +201,7 @@ def serve() -> FastMCP:
                 await session_manager.register_task(session.session_id, task_id)
 
                 try:
-                    # Get model name
-                    model_name = os.getenv("CUA_MODEL_NAME", "anthropic/claude-sonnet-4-5-20250929")
+                    # Log model being used
                     logger.info(f"Using model: {model_name}")
 
                     # Create agent with the new v0.4.x API
@@ -252,6 +297,8 @@ def serve() -> FastMCP:
                     await session_manager.unregister_task(session.session_id, task_id)
 
         except Exception as e:
+            task_success = False
+            task_error_type = type(e).__name__
             error_msg = f"Error running Cua task: {str(e)}\n{traceback.format_exc()}"
             logger.error(error_msg)
             ctx.error(error_msg)
@@ -273,6 +320,20 @@ def serve() -> FastMCP:
                 f"Error during task execution: {str(e)}",
                 Image(format="png", data=b""),
             )
+        finally:
+            # OTEL: Record task metrics and update saturation
+            if OTEL_AVAILABLE:
+                update_saturation(active_tasks_delta=-1)
+                duration_ms = (time.perf_counter() - task_start_time) * 1000
+                from .otel import record_task
+                record_task(
+                    task_id=task_id,
+                    duration_ms=duration_ms,
+                    success=task_success,
+                    error_type=task_error_type,
+                    session_id=session_id,
+                    model_name=model_name,
+                )
 
     @server.tool(structured_output=False)
     async def run_multi_cua_tasks(
@@ -374,6 +435,11 @@ async def run_server():
     try:
         logger.debug("Starting MCP server...")
 
+        # Initialize OpenTelemetry for Four Golden Signals
+        if OTEL_AVAILABLE:
+            initialize_otel()
+            logger.info("OpenTelemetry instrumentation initialized")
+
         # Initialize session manager
         session_manager = await initialize_session_manager()
         logger.info("Session manager initialized")
@@ -401,6 +467,11 @@ async def run_server():
         if session_manager:
             logger.info("Shutting down session manager...")
             await shutdown_session_manager()
+
+        # Shutdown OpenTelemetry
+        if OTEL_AVAILABLE:
+            shutdown_otel()
+            logger.info("OpenTelemetry shutdown complete")
 
 
 async def graceful_shutdown():

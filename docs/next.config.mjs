@@ -5,7 +5,11 @@ const withMDX = createMDX();
 /** @type {import('next').NextConfig} */
 const config = {
   reactStrictMode: true,
-  serverExternalPackages: ['pino', 'pino-pretty', 'thread-stream'],
+  // Enable OpenTelemetry instrumentation
+  experimental: {
+    instrumentationHook: true,
+  },
+  serverExternalPackages: ['pino', 'pino-pretty', 'thread-stream', '@opentelemetry/sdk-node', '@opentelemetry/auto-instrumentations-node'],
   trailingSlash: false,
   basePath: '/docs',
   assetPrefix: '/docs',

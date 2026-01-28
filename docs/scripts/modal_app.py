@@ -45,6 +45,10 @@ image = (
         "pandas>=2.0.0",
         "markdown-it-py>=3.0.0",
         "markitdown>=0.0.1",
+        # OpenTelemetry for Four Golden Signals
+        "opentelemetry-api>=1.25.0",
+        "opentelemetry-sdk>=1.25.0",
+        "opentelemetry-exporter-otlp-proto-http>=1.25.0",
     )
     .run_commands("playwright install --with-deps chromium")
 )
@@ -58,6 +62,130 @@ DB_PATH = f"{VOLUME_PATH}/docs_db"
 CODE_VOLUME_PATH = "/code_data"
 CODE_REPO_PATH = f"{CODE_VOLUME_PATH}/repo"
 CODE_DB_PATH = f"{CODE_VOLUME_PATH}/code_db"
+
+# OpenTelemetry Configuration
+OTEL_ENDPOINT = "https://otel.cua.ai"
+OTEL_SERVICE_NAME = "cua-docs-indexer"
+
+
+def init_otel(service_name: str = OTEL_SERVICE_NAME):
+    """
+    Initialize OpenTelemetry for Four Golden Signals monitoring.
+
+    Args:
+        service_name: Name of the service for OTEL resource
+    """
+    from opentelemetry import metrics
+    from opentelemetry.sdk.metrics import MeterProvider
+    from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
+    from opentelemetry.sdk.resources import Resource, SERVICE_NAME, SERVICE_VERSION
+    from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter
+
+    resource = Resource.create({
+        SERVICE_NAME: service_name,
+        SERVICE_VERSION: "1.0.0",
+        "service.namespace": "cua",
+        "deployment.environment": "production",
+    })
+
+    metric_exporter = OTLPMetricExporter(
+        endpoint=f"{OTEL_ENDPOINT}/v1/metrics",
+    )
+    metric_reader = PeriodicExportingMetricReader(
+        metric_exporter,
+        export_interval_millis=15000,
+    )
+    meter_provider = MeterProvider(resource=resource, metric_readers=[metric_reader])
+    metrics.set_meter_provider(meter_provider)
+
+    return metrics.get_meter(service_name, "1.0.0")
+
+
+class IndexerMetrics:
+    """Four Golden Signals metrics for the docs/code indexer services."""
+
+    def __init__(self, meter):
+        prefix = "cua.indexer"
+
+        # LATENCY - Job duration histograms
+        self.crawl_duration = meter.create_histogram(
+            f"{prefix}.crawl.duration",
+            description="Duration of documentation crawl in seconds",
+            unit="s",
+        )
+        self.index_duration = meter.create_histogram(
+            f"{prefix}.index.duration",
+            description="Duration of index generation in seconds",
+            unit="s",
+        )
+        self.query_duration = meter.create_histogram(
+            f"{prefix}.query.duration",
+            description="Duration of MCP queries in milliseconds",
+            unit="ms",
+        )
+
+        # TRAFFIC - Operation counters
+        self.pages_crawled = meter.create_counter(
+            f"{prefix}.pages.crawled_total",
+            description="Total number of pages crawled",
+        )
+        self.chunks_indexed = meter.create_counter(
+            f"{prefix}.chunks.indexed_total",
+            description="Total number of chunks indexed",
+        )
+        self.files_indexed = meter.create_counter(
+            f"{prefix}.files.indexed_total",
+            description="Total number of code files indexed",
+        )
+        self.queries_total = meter.create_counter(
+            f"{prefix}.queries.total",
+            description="Total number of MCP queries",
+        )
+        self.jobs_total = meter.create_counter(
+            f"{prefix}.jobs.total",
+            description="Total number of indexing jobs",
+        )
+
+        # ERRORS - Error counters
+        self.crawl_errors = meter.create_counter(
+            f"{prefix}.crawl.errors_total",
+            description="Total number of crawl errors",
+        )
+        self.index_errors = meter.create_counter(
+            f"{prefix}.index.errors_total",
+            description="Total number of indexing errors",
+        )
+        self.query_errors = meter.create_counter(
+            f"{prefix}.query.errors_total",
+            description="Total number of query errors",
+        )
+
+        # SATURATION - Resource utilization
+        self.active_jobs = meter.create_up_down_counter(
+            f"{prefix}.jobs.active",
+            description="Number of active indexing jobs",
+        )
+        self.component_queue_depth = meter.create_up_down_counter(
+            f"{prefix}.component.queue_depth",
+            description="Number of components waiting to be indexed",
+        )
+
+
+# Global metrics instance (initialized per-function)
+_metrics: Optional[IndexerMetrics] = None
+
+
+def get_indexer_metrics() -> Optional[IndexerMetrics]:
+    """Get or initialize the indexer metrics."""
+    global _metrics
+    if _metrics is None:
+        try:
+            meter = init_otel()
+            _metrics = IndexerMetrics(meter)
+        except Exception as e:
+            print(f"Warning: Failed to initialize OTEL metrics: {e}")
+            return None
+    return _metrics
 
 
 # =============================================================================
@@ -122,11 +250,22 @@ async def crawl_docs():
     """Crawl CUA documentation and save to volume"""
     import re
     import shutil
+    import time
     from urllib.parse import urljoin, urlparse
 
     from crawl4ai import AsyncWebCrawler, BrowserConfig, CrawlerRunConfig
 
     print("Starting documentation crawl...")
+
+    # OTEL: Initialize metrics and track job
+    metrics = get_indexer_metrics()
+    crawl_start_time = time.time()
+    crawl_success = True
+    crawl_error_type = None
+
+    if metrics:
+        metrics.jobs_total.add(1, {"job_type": "crawl_docs"})
+        metrics.active_jobs.add(1)
 
     BASE_URL = "https://cua.ai"
     DOCS_URL = f"{BASE_URL}/docs"
@@ -316,6 +455,14 @@ async def crawl_docs():
     # Commit changes to volume
     docs_volume.commit()
 
+    # OTEL: Record crawl metrics
+    if metrics:
+        crawl_duration = time.time() - crawl_start_time
+        metrics.crawl_duration.record(crawl_duration, {"job_type": "crawl_docs"})
+        metrics.pages_crawled.add(len(all_data), {"job_type": "crawl_docs"})
+        metrics.crawl_errors.add(len(failed_urls), {"job_type": "crawl_docs"})
+        metrics.active_jobs.add(-1)
+
     print(f"Crawl complete! Crawled {len(all_data)} pages")
     return summary
 
@@ -407,12 +554,21 @@ async def generate_vector_db():
     """Generate LanceDB vector database from crawled data"""
     import shutil
     import tempfile
+    import time
 
     import lancedb
     from lancedb.embeddings import get_registry
     from lancedb.pydantic import LanceModel, Vector
 
     print("Generating LanceDB vector database...")
+
+    # OTEL: Initialize metrics and track job
+    metrics = get_indexer_metrics()
+    index_start_time = time.time()
+
+    if metrics:
+        metrics.jobs_total.add(1, {"job_type": "generate_vector_db"})
+        metrics.active_jobs.add(1)
 
     CRAWLED_DIR = Path(CRAWLED_DATA_PATH)
     DB_DIR = Path(DB_PATH)
@@ -518,6 +674,13 @@ async def generate_vector_db():
     # Commit changes to volume
     docs_volume.commit()
 
+    # OTEL: Record indexing metrics
+    if metrics:
+        index_duration = time.time() - index_start_time
+        metrics.index_duration.record(index_duration, {"job_type": "generate_vector_db", "db_type": "lancedb"})
+        metrics.chunks_indexed.add(len(all_chunks), {"job_type": "generate_vector_db", "db_type": "lancedb"})
+        metrics.active_jobs.add(-1)
+
     print(f"Vector database created with {len(all_chunks)} chunks")
     return {"chunks": len(all_chunks)}
 
@@ -531,8 +694,17 @@ async def generate_vector_db():
 )
 async def generate_sqlite_db():
     """Generate SQLite FTS5 database from crawled data"""
+    import time
 
     print("Generating SQLite FTS5 database...")
+
+    # OTEL: Initialize metrics and track job
+    metrics = get_indexer_metrics()
+    index_start_time = time.time()
+
+    if metrics:
+        metrics.jobs_total.add(1, {"job_type": "generate_sqlite_db"})
+        metrics.active_jobs.add(1)
 
     CRAWLED_DIR = Path(CRAWLED_DATA_PATH)
     DB_DIR = Path(DB_PATH)
@@ -641,6 +813,13 @@ async def generate_sqlite_db():
     # Commit changes to volume
     docs_volume.commit()
 
+    # OTEL: Record indexing metrics
+    if metrics:
+        index_duration = time.time() - index_start_time
+        metrics.index_duration.record(index_duration, {"job_type": "generate_sqlite_db", "db_type": "sqlite"})
+        metrics.chunks_indexed.add(inserted, {"job_type": "generate_sqlite_db", "db_type": "sqlite"})
+        metrics.active_jobs.add(-1)
+
     print(f"SQLite database created with {inserted} pages")
     return {"pages": inserted}
 
@@ -711,12 +890,21 @@ def index_component(component: str, tags: list[str], repo_path: str) -> dict:
     import shutil
     import subprocess
     import tempfile
+    import time as time_module
 
     import lancedb
     from lancedb.embeddings import get_registry
     from lancedb.pydantic import LanceModel, Vector
 
     print(f"[{component}] Starting indexing of {len(tags)} tags...")
+
+    # OTEL: Initialize metrics and track job
+    metrics = get_indexer_metrics()
+    index_start_time = time_module.time()
+
+    if metrics:
+        metrics.jobs_total.add(1, {"job_type": "index_component", "component": component})
+        metrics.active_jobs.add(1)
 
     DB_DIR = Path(CODE_DB_PATH)
     DB_DIR.mkdir(parents=True, exist_ok=True)
@@ -882,6 +1070,14 @@ def index_component(component: str, tags: list[str], repo_path: str) -> dict:
     # Clean up LanceDB resources
     del lance_table
     del lance_db
+
+    # OTEL: Record indexing metrics
+    if metrics:
+        index_duration = time_module.time() - index_start_time
+        metrics.index_duration.record(index_duration, {"job_type": "index_component", "component": component})
+        metrics.files_indexed.add(total_files, {"job_type": "index_component", "component": component})
+        metrics.index_errors.add(len(failed_tags), {"job_type": "index_component", "component": component})
+        metrics.active_jobs.add(-1)
 
     print(f"[{component}] Complete: {total_files} files, {total_embedded} embedded")
     return {
@@ -1638,6 +1834,9 @@ IMPORTANT: Always cite sources - URLs for docs, component@version:path for code.
             )
         return _code_sqlite_conn
 
+    # OTEL: Initialize metrics for query tracking
+    query_metrics = get_indexer_metrics()
+
     # =================== DOCUMENTATION QUERY TOOLS (READ-ONLY) ===================
 
     @mcp.tool()
@@ -1678,10 +1877,28 @@ IMPORTANT: Always cite sources - URLs for docs, component@version:path for code.
         Returns:
             List of dictionaries, one per row, with column names as keys
         """
-        conn = get_sqlite_conn()
-        cursor = conn.cursor()
-        cursor.execute(sql)
-        return [dict(row) for row in cursor.fetchall()]
+        import time
+        start_time = time.perf_counter()
+        success = True
+        error_type = None
+
+        try:
+            conn = get_sqlite_conn()
+            cursor = conn.cursor()
+            cursor.execute(sql)
+            return [dict(row) for row in cursor.fetchall()]
+        except Exception as e:
+            success = False
+            error_type = type(e).__name__
+            raise
+        finally:
+            # OTEL: Record query metrics
+            if query_metrics:
+                duration_ms = (time.perf_counter() - start_time) * 1000
+                query_metrics.query_duration.record(duration_ms, {"query_type": "docs_db", "success": str(success)})
+                query_metrics.queries_total.add(1, {"query_type": "docs_db", "success": str(success)})
+                if not success:
+                    query_metrics.query_errors.add(1, {"query_type": "docs_db", "error_type": error_type or "unknown"})
 
     @mcp.tool()
     def query_docs_vectors(
@@ -1710,28 +1927,46 @@ IMPORTANT: Always cite sources - URLs for docs, component@version:path for code.
         Returns:
             List of matching documents with similarity scores (_distance field)
         """
-        limit = min(max(1, limit), 100)
-        table = get_lance_table()
+        import time
+        start_time = time.perf_counter()
+        success = True
+        error_type = None
 
-        search = table.search(query).limit(limit)
+        try:
+            limit = min(max(1, limit), 100)
+            table = get_lance_table()
 
-        if where:
-            search = search.where(where)
-        if select:
-            search = search.select(select)
+            search = table.search(query).limit(limit)
 
-        results = search.to_list()
+            if where:
+                search = search.where(where)
+            if select:
+                search = search.select(select)
 
-        formatted = []
-        for r in results:
-            result = {}
-            for key, value in r.items():
-                if key == "vector":
-                    continue
-                result[key] = value
-            formatted.append(result)
+            results = search.to_list()
 
-        return formatted
+            formatted = []
+            for r in results:
+                result = {}
+                for key, value in r.items():
+                    if key == "vector":
+                        continue
+                    result[key] = value
+                formatted.append(result)
+
+            return formatted
+        except Exception as e:
+            success = False
+            error_type = type(e).__name__
+            raise
+        finally:
+            # OTEL: Record query metrics
+            if query_metrics:
+                duration_ms = (time.perf_counter() - start_time) * 1000
+                query_metrics.query_duration.record(duration_ms, {"query_type": "docs_vectors", "success": str(success)})
+                query_metrics.queries_total.add(1, {"query_type": "docs_vectors", "success": str(success)})
+                if not success:
+                    query_metrics.query_errors.add(1, {"query_type": "docs_vectors", "error_type": error_type or "unknown"})
 
     # =================== CODE QUERY TOOLS (READ-ONLY) ===================
 
@@ -1781,10 +2016,28 @@ IMPORTANT: Always cite sources - URLs for docs, component@version:path for code.
         Returns:
             List of dictionaries, one per row, with column names as keys
         """
-        conn = get_code_sqlite_conn()
-        cursor = conn.cursor()
-        cursor.execute(sql)
-        return [dict(row) for row in cursor.fetchall()]
+        import time
+        start_time = time.perf_counter()
+        success = True
+        error_type = None
+
+        try:
+            conn = get_code_sqlite_conn()
+            cursor = conn.cursor()
+            cursor.execute(sql)
+            return [dict(row) for row in cursor.fetchall()]
+        except Exception as e:
+            success = False
+            error_type = type(e).__name__
+            raise
+        finally:
+            # OTEL: Record query metrics
+            if query_metrics:
+                duration_ms = (time.perf_counter() - start_time) * 1000
+                query_metrics.query_duration.record(duration_ms, {"query_type": "code_db", "success": str(success)})
+                query_metrics.queries_total.add(1, {"query_type": "code_db", "success": str(success)})
+                if not success:
+                    query_metrics.query_errors.add(1, {"query_type": "code_db", "error_type": error_type or "unknown"})
 
     @mcp.tool()
     def query_code_vectors(
@@ -1815,35 +2068,56 @@ IMPORTANT: Always cite sources - URLs for docs, component@version:path for code.
         Returns:
             List of matching code files with similarity scores (_distance field)
         """
-        limit = min(max(1, limit), 100)
-        table = get_code_lance_table()
+        import time
+        start_time = time.perf_counter()
+        success = True
+        error_type = None
 
-        search = table.search(query).limit(limit)
+        try:
+            limit = min(max(1, limit), 100)
+            table = get_code_lance_table()
 
-        # Build where clause, adding component filter if specified
-        where_clauses = []
-        if component:
-            where_clauses.append(f"component = '{component}'")
-        if where:
-            where_clauses.append(where)
+            search = table.search(query).limit(limit)
 
-        if where_clauses:
-            search = search.where(" AND ".join(where_clauses))
-        if select:
-            search = search.select(select)
+            # Build where clause, adding component filter if specified
+            where_clauses = []
+            if component:
+                where_clauses.append(f"component = '{component}'")
+            if where:
+                where_clauses.append(where)
 
-        results = search.to_list()
+            if where_clauses:
+                search = search.where(" AND ".join(where_clauses))
+            if select:
+                search = search.select(select)
 
-        formatted = []
-        for r in results:
-            result = {}
-            for key, value in r.items():
-                if key == "vector":
-                    continue
-                result[key] = value
-            formatted.append(result)
+            results = search.to_list()
 
-        return formatted
+            formatted = []
+            for r in results:
+                result = {}
+                for key, value in r.items():
+                    if key == "vector":
+                        continue
+                    result[key] = value
+                formatted.append(result)
+
+            return formatted
+        except Exception as e:
+            success = False
+            error_type = type(e).__name__
+            raise
+        finally:
+            # OTEL: Record query metrics
+            if query_metrics:
+                duration_ms = (time.perf_counter() - start_time) * 1000
+                attrs = {"query_type": "code_vectors", "success": str(success)}
+                if component:
+                    attrs["component"] = component
+                query_metrics.query_duration.record(duration_ms, attrs)
+                query_metrics.queries_total.add(1, attrs)
+                if not success:
+                    query_metrics.query_errors.add(1, {"query_type": "code_vectors", "error_type": error_type or "unknown"})
 
     # Create SSE app directly - endpoints at /sse (GET) and /messages (POST)
     from starlette.middleware import Middleware

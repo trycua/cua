@@ -11,6 +11,7 @@ import base64
 import sys
 from io import BytesIO
 from pathlib import Path
+from typing import Any, Dict, Optional
 
 from PIL import Image, ImageDraw
 
@@ -106,6 +107,11 @@ class MockComputer:
 
     async def type_text(self, text: str) -> None:
         await asyncio.sleep(0.1)
+
+    async def playwright_exec(self, command: str, params: Optional[Dict] = None) -> Dict[str, Any]:
+        """Mock playwright execution for BrowserTool compatibility."""
+        await asyncio.sleep(0.1)
+        return {"success": True}
 
 
 async def test_cua_agent(model_name: str):

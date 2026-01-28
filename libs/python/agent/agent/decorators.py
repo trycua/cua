@@ -10,13 +10,17 @@ from .types import AgentConfigInfo
 _agent_configs: List[AgentConfigInfo] = []
 
 
-def register_agent(models: str, priority: int = 0):
+def register_agent(models: str, priority: int = 0, tool_type: Optional[str] = None):
     """
     Decorator to register an AsyncAgentConfig class.
 
     Args:
         models: Regex pattern to match supported models
         priority: Priority for agent selection (higher = more priority)
+        tool_type: Required tool type for this model ("browser" | "mobile" | None).
+                   Specialized models (like FARA) declare their required tool type,
+                   and ComputerAgent will auto-wrap tools accordingly.
+                   General models (like Claude) leave this as None for full flexibility.
     """
 
     def decorator(agent_class: type):
@@ -36,7 +40,10 @@ def register_agent(models: str, priority: int = 0):
 
         # Register the agent config
         config_info = AgentConfigInfo(
-            agent_class=agent_class, models_regex=models, priority=priority
+            agent_class=agent_class,
+            models_regex=models,
+            priority=priority,
+            tool_type=tool_type,
         )
         _agent_configs.append(config_info)
 

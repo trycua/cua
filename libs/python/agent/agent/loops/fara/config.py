@@ -28,7 +28,7 @@ from .helpers import (
 )
 
 
-@register_agent(models=r"(?i).*fara-7b.*")
+@register_agent(models=r"(?i).*fara-7b.*", tool_type="browser")
 class FaraVlmConfig(AsyncAgentConfig):
     async def predict_step(
         self,

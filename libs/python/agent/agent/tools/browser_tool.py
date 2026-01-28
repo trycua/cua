@@ -33,6 +33,7 @@ class BrowserTool(BaseComputerTool):
         """
         self.interface = interface
         self._facts = []  # Store memorized facts
+        self._automation = None  # Cached automation interface
 
         # Get initial screenshot to determine dimensions
         self.viewport_width = None
@@ -55,6 +56,27 @@ class BrowserTool(BaseComputerTool):
             pass
 
         super().__init__(cfg)
+
+    @property
+    def automation(self):
+        """
+        Get the automation interface for keyboard/mouse actions.
+
+        Handles both interface structures:
+        - Nested: interface.interface (wrapper with .interface property)
+        - Direct: interface itself IS the automation handler
+        """
+        if self._automation is not None:
+            return self._automation
+
+        # Try nested structure first (interface.interface)
+        if hasattr(self.interface, "interface") and self.interface.interface is not None:
+            self._automation = self.interface.interface
+        else:
+            # Direct structure - interface IS the automation handler
+            self._automation = self.interface
+
+        return self._automation
 
     async def _initialize_dimensions(self):
         """Initialize viewport and resized dimensions from screenshot."""
@@ -274,7 +296,7 @@ class BrowserTool(BaseComputerTool):
 
         # Convert keys to proper format and press via hotkey
         try:
-            await self.interface.interface.hotkey(*keys)
+            await self.automation.hotkey(*keys)
             return {"success": True, "message": f"Pressed keys: {keys}"}
         except Exception as e:
             return {"success": False, "error": str(e)}
@@ -299,7 +321,7 @@ class BrowserTool(BaseComputerTool):
         if not coordinate or len(coordinate) != 2:
             return {"success": False, "error": "coordinate parameter [x, y] is required"}
 
-        await self.interface.interface.move_cursor(coordinate[0], coordinate[1])
+        await self.automation.move_cursor(coordinate[0], coordinate[1])
         return {"success": True, "message": f"Moved cursor to {coordinate}"}
 
     async def _action_left_click(self, params: dict) -> dict:
@@ -345,7 +367,7 @@ class BrowserTool(BaseComputerTool):
         """Go back in browser history."""
         # Press Alt+Left arrow key combination
         try:
-            await self.interface.interface.hotkey("Alt", "ArrowLeft")
+            await self.automation.hotkey("Alt", "ArrowLeft")
             return {"success": True, "message": "Navigated back in history"}
         except Exception as e:
             return {"success": False, "error": str(e)}
@@ -475,17 +497,17 @@ class BrowserTool(BaseComputerTool):
         """Drag from start to end coordinates. FARA-compatible."""
         if start_coordinate and end_coordinate:
             # Use start/end coordinates if provided
-            await self.interface.interface.move_cursor(start_coordinate[0], start_coordinate[1])
-            await self.interface.interface.mouse_down(start_coordinate[0], start_coordinate[1])
-            await self.interface.interface.move_cursor(end_coordinate[0], end_coordinate[1])
-            await self.interface.interface.mouse_up(end_coordinate[0], end_coordinate[1])
+            await self.automation.move_cursor(start_coordinate[0], start_coordinate[1])
+            await self.automation.mouse_down(start_coordinate[0], start_coordinate[1])
+            await self.automation.move_cursor(end_coordinate[0], end_coordinate[1])
+            await self.automation.mouse_up(end_coordinate[0], end_coordinate[1])
             return {
                 "success": True,
                 "message": f"Dragged from {start_coordinate} to {end_coordinate}",
             }
         elif coordinate:
             # Just move to coordinate
-            await self.interface.interface.move_cursor(coordinate[0], coordinate[1])
+            await self.automation.move_cursor(coordinate[0], coordinate[1])
             return {"success": True, "message": f"Moved to {coordinate}"}
         return {
             "success": False,

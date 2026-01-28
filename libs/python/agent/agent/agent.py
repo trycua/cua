@@ -309,6 +309,9 @@ class ComputerAgent:
             self.agent_loop = config_info.agent_class()
             self.agent_config_info = config_info
 
+        # Note: Tool resolution is deferred to _initialize_computers() because
+        # Computer.interface may not be available until the computer is started
+
         # Add telemetry callbacks AFTER agent_loop is set so they can capture the correct agent_type
         if self.telemetry_enabled:
             # PostHog telemetry (product analytics)
@@ -372,9 +375,93 @@ class ComputerAgent:
 
             record_event("agent_init", event_data)
 
+    async def _resolve_tools(self, tools: List[Any], required_type: Optional[str]) -> List[Any]:
+        """
+        Resolve tools based on model's required tool_type.
+
+        - If model requires specific type (e.g., "browser"), auto-wrap Computer and warn
+        - If model is flexible (no tool_type), pass through unchanged
+
+        Args:
+            tools: List of tools passed to the agent
+            required_type: The tool type required by the model ("browser", "mobile", or None)
+
+        Returns:
+            List of resolved tools, potentially with Computer wrapped to BrowserTool
+        """
+        import logging
+        import warnings
+
+        from .tools.browser_tool import BrowserTool
+
+        logger = logging.getLogger(__name__)
+
+        if not required_type:
+            return tools  # Flexible model, no wrapping
+
+        resolved = []
+        for tool in tools:
+            if required_type == "browser":
+                if isinstance(tool, BrowserTool):
+                    # Already correct tool type, no warning needed
+                    resolved.append(tool)
+                elif is_agent_computer(tool):
+                    # Need to wrap Computer to BrowserTool
+                    # Get the interface from the computer object
+                    # Use try/except because Computer.interface raises if not initialized
+                    interface = None
+                    try:
+                        interface = tool.interface
+                    except (RuntimeError, AttributeError):
+                        # Computer not initialized - initialize it now
+                        logger.info(
+                            "Computer not initialized, initializing for BrowserTool wrapping..."
+                        )
+                        if hasattr(tool, "__aenter__"):
+                            await tool.__aenter__()
+                            try:
+                                interface = tool.interface
+                            except (RuntimeError, AttributeError):
+                                pass
+
+                    if interface is None:
+                        # Try cua_computer for cuaComputerHandler
+                        if hasattr(tool, "cua_computer"):
+                            interface = tool
+                        else:
+                            # Fallback: use the tool itself as interface
+                            interface = tool
+
+                    warnings.warn(
+                        "Model requires browser tools. "
+                        "Auto-wrapping Computer to BrowserTool. "
+                        "Pass BrowserTool explicitly to silence this warning.",
+                        UserWarning,
+                        stacklevel=3,
+                    )
+                    logger.info(
+                        "Auto-wrapping Computer to BrowserTool for model requiring browser tools"
+                    )
+                    resolved.append(BrowserTool(interface=interface))
+                else:
+                    # Custom tool, pass through unchanged
+                    resolved.append(tool)
+            # Future: elif required_type == "mobile": ...
+            else:
+                # Unknown tool type, pass through
+                resolved.append(tool)
+
+        return resolved
+
     async def _initialize_computers(self):
-        """Initialize computer objects"""
+        """Initialize computer objects and resolve tools based on model requirements."""
         if not self.tool_schemas:
+            # Resolve tools based on model's required tool_type
+            # This is done here (not in __init__) because Computer.interface
+            # may not be available until the computer is started
+            tool_type = self.agent_config_info.tool_type if self.agent_config_info else None
+            self.tools = await self._resolve_tools(self.tools, tool_type)
+
             # Process tools and create tool schemas
             self.tool_schemas = self._process_tools()
 

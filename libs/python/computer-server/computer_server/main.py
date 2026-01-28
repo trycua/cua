@@ -724,12 +724,46 @@ async def agent_response_endpoint(
     # and delegates to our existing automation/file/accessibility handlers.
     from agent.computers import AsyncComputerHandler  # runtime-checkable Protocol
 
+    class DirectComputerInterface:
+        """Interface wrapper providing BrowserTool compatibility.
+
+        Matches the same interface shape as Computer.interface so BrowserTool
+        works identically with both Computer (cloud) and DirectComputer (local).
+        """
+
+        def __init__(self, automation_handler, browser_manager):
+            self._auto = automation_handler
+            self._browser = browser_manager
+
+        @property
+        def interface(self):
+            """Return automation handler for hotkey, move_cursor, etc."""
+            return self._auto
+
+        async def playwright_exec(self, command: str, params: dict) -> dict:
+            """Execute browser command via browser_manager."""
+            return await self._browser.execute_command(command, params)
+
     class DirectComputer(AsyncComputerHandler):
         def __init__(self):
             # use module-scope handler singletons created by HandlerFactory
             self._auto = automation_handler
             self._file = file_handler
             self._access = accessibility_handler
+            # Create interface for BrowserTool compatibility
+            self._interface = DirectComputerInterface(automation_handler, get_browser_manager())
+
+        @property
+        def interface(self):
+            """Return interface compatible with BrowserTool.
+
+            This matches Computer.interface shape so BrowserTool works with either:
+            - computer.interface.interface.hotkey() -> automation
+            - computer.interface.playwright_exec() -> browser commands
+            - direct_computer.interface.interface.hotkey() -> automation
+            - direct_computer.interface.playwright_exec() -> browser commands
+            """
+            return self._interface
 
         async def get_environment(self) -> Literal["windows", "mac", "linux", "browser"]:
             sys = platform.system().lower()

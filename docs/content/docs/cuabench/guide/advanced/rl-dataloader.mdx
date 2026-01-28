@@ -59,12 +59,18 @@ from cua_bench.workers import (
 )
 
 workers = await create_workers(n_workers=4, allowed_ips=["127.0.0.1"])
-env_configs = [{"server_url": w.api_url} for w in workers]
+task_configs = [{"env_path": "./task", "task_index": 0, "split": "train"}]
+env_configs = [{
+    "server_url": w.api_url,
+    "task_configs": task_configs,
+    "max_step": 50,
+    "max_hist": 10,
+    "timeout": 300,
+} for w in workers]
 
 dataloader = MultiTurnDataloader(
     env_class=CBEnvWorkerClient,
     env_configs=env_configs,
-    task_configs=[{"env_path": "./task", "task_index": 0, "split": "train"}],
     tokenizer=tokenizer,
     batch_size=4,
     replay_capacity=10000,

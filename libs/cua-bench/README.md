@@ -11,7 +11,7 @@ The test suite covers the core gym interface, worker system, and benchmark runne
 ### Install dev dependencies
 
 ```bash
-uv pip install -e ".[dev,browser,server]"
+uv pip install -e ".[dev,browser,server,rl]"
 ```
 
 Note: The `browser` extra installs Playwright for e2e tests with the simulated provider.

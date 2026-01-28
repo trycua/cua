@@ -13,10 +13,21 @@ Example:
 
     tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen2-0.5B-Instruct")
 
+    task_configs = [{"env_path": "./task", "task_index": 0, "split": "train"}]
+    env_configs = [
+        {
+            "server_url": f"http://localhost:{8001+i}",
+            "task_configs": task_configs,
+            "max_step": 50,
+            "max_hist": 10,
+            "timeout": 300,
+        }
+        for i in range(4)
+    ]
+
     dataloader = MultiTurnDataloader(
         env_class=CBEnvWorkerClient,
-        env_configs=[{"server_url": f"http://localhost:{8001+i}"} for i in range(4)],
-        task_configs=[{"env_path": "./task", "task_index": 0, "split": "train"}],
+        env_configs=env_configs,
         tokenizer=tokenizer,
         processor=None,
         is_multi_modal=False,
@@ -305,18 +316,22 @@ def env_worker_process(
     send_queue,
     worker_id,
     env_class,
-    task_configs,
 ):
-    # Create environment client using keyword args
-    env = env_class(**env_config)
+    """Worker process that runs environment rollouts.
 
-    # Initial reset with random task from task_configs
-    task_config = random.choice(task_configs)
-    env_path = task_config.get("env_path", "")
-    task_index = task_config.get("task_index", 0)
-    split = task_config.get("split", "train")
+    Args:
+        env_config: Configuration dict for the environment client.
+            Must contain 'task_configs' key with list of task configurations.
+        recv_queue: Queue to receive actions from main process
+        send_queue: Queue to send results to main process
+        worker_id: ID of this worker
+        env_class: Environment client class (e.g., CBEnvWorkerClient)
+    """
+    # Create environment client with env_config dict
+    env = env_class(env_config)
 
-    env_ret, meta_info = env.reset(env_path=env_path, task_index=task_index, split=split)
+    # Initial reset to random task_config
+    env_ret, meta_info = env.reset()
     send_queue.put((worker_id, env_ret, meta_info))
 
     while True:
@@ -329,16 +344,16 @@ def env_worker_process(
         send_queue.put((worker_id, env_ret, meta_info))
         if env_ret["done"]:
             item = recv_queue.get()
-            # Reset with new random task from task_configs
-            task_config = random.choice(task_configs)
-            env_path = task_config.get("env_path", "")
-            task_index = task_config.get("task_index", 0)
-            split = task_config.get("split", "train")
-            env_ret, meta_info = env.reset(env_path=env_path, task_index=task_index, split=split)
+            env_ret, meta_info = env.reset()
             send_queue.put((worker_id, env_ret, meta_info))
 
 
 class MultiTurnDataloader:
+    """Dataloader for RL training with parallel environment workers.
+
+    Each env_config must contain a 'task_configs' key with a list of task
+    configurations that the client will use internally.
+    """
 
     def __init__(
         self,
@@ -353,7 +368,6 @@ class MultiTurnDataloader:
         max_prompt_length=1024,
         max_response_length=1024,
         only_keep_outcome_in_replay=False,
-        task_configs=None,
     ):
         self.num_envs = len(env_configs)
         self._tokenizer = tokenizer
@@ -367,14 +381,6 @@ class MultiTurnDataloader:
             replay_capacity, replay_reward_discount, only_keep_outcome_in_replay
         )
         self._only_keep_outcome_in_replay = only_keep_outcome_in_replay
-
-        # Task configs are required
-        if task_configs is None:
-            raise RuntimeError(
-                "task_configs is required. Provide a list of task configurations, "
-                "e.g., [{'env_path': './task', 'task_index': 0, 'split': 'train'}]"
-            )
-        self._task_configs = task_configs
 
         self._action_queues = [mp.Queue() for _ in range(self.num_envs)]
         self._env_ret_queue = mp.Queue()
@@ -395,7 +401,6 @@ class MultiTurnDataloader:
                     self._env_ret_queue,
                     wid,
                     env_class,
-                    task_configs,
                 ),
             )
             w.daemon = True
@@ -652,9 +657,11 @@ class MultiTurnDataloader:
         """Close all workers and clean up resources."""
         self._running = False
 
-        # Signal workers to stop
+        # Signal workers to stop - send twice because worker may be waiting
+        # at either the outer loop or inner loop (after episode done)
         for wid in range(self.num_envs):
             try:
+                self._action_queues[wid].put((None, None, None))
                 self._action_queues[wid].put((None, None, None))
             except Exception:
                 pass

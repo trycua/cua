@@ -269,7 +269,7 @@ class WorkerPool:
     Example:
         async with WorkerPool(n_workers=4, allowed_ips=["127.0.0.1"]) as pool:
             for url in pool.urls:
-                client = CBEnvWorkerClient(server_url=url)
+                client = CBEnvWorkerClient({ "server_url": url })
                 # Use client...
     """
 

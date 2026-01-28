@@ -89,14 +89,21 @@ def run_worker(
 
     print(f"{BLUE}Worker {worker_id} starting...{RESET}")
 
-    client = CBEnvWorkerClient(
-        server_url=server_url,
-        img_w=1024,
-        img_h=768,
-        max_step=100,
-        max_hist=10,
-        timeout=300,
-    )
+    # Create task configs for this worker
+    task_configs = [
+        {"env_path": task_path, "task_index": (worker_id + i) % 10, "split": "train"}
+        for i in range(10)
+    ]
+
+    # Create client with env_config dict
+    env_config = {
+        "server_url": server_url,
+        "task_configs": task_configs,
+        "max_step": 100,
+        "max_hist": 10,
+        "timeout": 300,
+    }
+    client = CBEnvWorkerClient(env_config)
 
     # Initialize local counters
     worker_reset_time = 0.0
@@ -107,13 +114,9 @@ def run_worker(
     worker_finish_count = 0
 
     try:
-        # Reset environment
+        # Reset environment (picks random task from task_configs)
         start_time = time.time()
-        env_ret, meta_info = client.reset(
-            env_path=task_path,
-            task_index=worker_id % 10,
-            split="train",
-        )
+        env_ret, meta_info = client.reset()
         reset_time = time.time() - start_time
         worker_reset_time += reset_time
         worker_reset_count += 1
@@ -125,7 +128,8 @@ def run_worker(
         # Run steps
         for i in range(num_steps):
             start_time = time.time()
-            action = {"type": "ClickAction", "x": 0.5, "y": 0.5}
+            # Action is now a string with action tags
+            action = "<|action_start|>click(500,500)<|action_end|>"
             env_ret, meta_info = client.step(action)
             step_time = time.time() - start_time
             worker_step_time += step_time
@@ -138,11 +142,7 @@ def run_worker(
                 print(f"{YELLOW}Worker {worker_id} episode done at step {i+1}{RESET}")
                 # Reset for next episode
                 start_time = time.time()
-                env_ret, meta_info = client.reset(
-                    env_path=task_path,
-                    task_index=(worker_id + i) % 10,
-                    split="train",
-                )
+                env_ret, meta_info = client.reset()
                 reset_time = time.time() - start_time
                 worker_reset_time += reset_time
                 worker_reset_count += 1
@@ -155,7 +155,7 @@ def run_worker(
 
         # Finish with done action
         start_time = time.time()
-        action = {"type": "DoneAction"}
+        action = "<|action_start|>done()<|action_end|>"
         env_ret, meta_info = client.step(action)
         finish_time = time.time() - start_time
         worker_finish_time += finish_time
@@ -186,12 +186,6 @@ def run_worker(
             "finish_time": worker_finish_time,
             "finish_count": worker_finish_count,
         }
-
-    finally:
-        try:
-            client.shutdown()
-        except Exception:
-            pass
 
 
 def run_benchmark(

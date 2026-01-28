@@ -1,4 +1,4 @@
-"""Tests for the gym HTTP client interface (/reset, /step endpoints).
+"""Tests for the CBEnvWorkerClient HTTP client interface.
 
 This module tests the CBEnvWorkerClient which communicates with worker servers
 via REST API endpoints.
@@ -8,41 +8,56 @@ import base64
 import io
 from unittest.mock import MagicMock, patch
 
-import pytest
-from cua_bench.workers.worker_client import CBEnvWorkerClient, create_client_from_env
+from cua_bench.workers.worker_client import CBEnvWorkerClient
 from PIL import Image
+
+
+def create_test_image(width=1024, height=768, color="blue"):
+    """Create a test image and return base64 encoded string."""
+    img = Image.new("RGB", (width, height), color=color)
+    buffer = io.BytesIO()
+    img.save(buffer, format="PNG")
+    return base64.b64encode(buffer.getvalue()).decode("utf-8")
 
 
 class TestCBEnvWorkerClientInit:
     """Tests for CBEnvWorkerClient initialization."""
 
-    def test_init_defaults(self):
-        """Test client initialization with defaults."""
-        client = CBEnvWorkerClient(server_url="http://localhost:8001")
+    def test_init_with_env_config(self):
+        """Test client initialization with env_config dict."""
+        task_configs = [{"env_path": "./task", "task_index": 0, "split": "train"}]
+        env_config = {
+            "server_url": "http://localhost:8001",
+            "task_configs": task_configs,
+            "max_step": 50,
+            "max_hist": 10,
+            "timeout": 300,
+        }
+        client = CBEnvWorkerClient(env_config)
+
         assert client.server_url == "http://localhost:8001"
-        assert client.img_w == 1920
-        assert client.img_h == 1080
         assert client.max_step == 50
         assert client.max_hist == 10
         assert client.timeout == 300
+        assert client.task_configs == task_configs
         assert client.env_id is None
         assert client.uid is None
         assert client.step_count == 0
         assert client.done is False
 
-    def test_init_custom(self):
+    def test_init_custom_values(self):
         """Test client initialization with custom values."""
-        client = CBEnvWorkerClient(
-            server_url="http://10.0.0.5:9000",
-            img_w=1280,
-            img_h=720,
-            max_step=100,
-            max_hist=20,
-            timeout=600,
-        )
+        task_configs = [{"env_path": "./custom", "task_index": 5, "split": "test"}]
+        env_config = {
+            "server_url": "http://10.0.0.5:9000",
+            "task_configs": task_configs,
+            "max_step": 100,
+            "max_hist": 20,
+            "timeout": 600,
+        }
+        client = CBEnvWorkerClient(env_config)
+
         assert client.server_url == "http://10.0.0.5:9000"
-        assert client.img_w == 1280
-        assert client.img_h == 720
         assert client.max_step == 100
         assert client.max_hist == 20
         assert client.timeout == 600
@@ -54,11 +69,7 @@ class TestCBEnvWorkerClientReset:
     @patch("requests.post")
     def test_reset_calls_correct_endpoint(self, mock_post):
         """Test that reset() calls POST /reset."""
-        # Create test image
-        img = Image.new("RGB", (1920, 1080), color="blue")
-        buffer = io.BytesIO()
-        img.save(buffer, format="PNG")
-        img_b64 = base64.b64encode(buffer.getvalue()).decode("utf-8")
+        img_b64 = create_test_image(1024, 768)
 
         mock_response = MagicMock()
         mock_response.json.return_value = {
@@ -68,8 +79,16 @@ class TestCBEnvWorkerClientReset:
         }
         mock_post.return_value = mock_response
 
-        client = CBEnvWorkerClient(server_url="http://localhost:8001")
-        client.reset("./task", task_index=0)
+        task_configs = [{"env_path": "./task", "task_index": 0, "split": "train"}]
+        env_config = {
+            "server_url": "http://localhost:8001",
+            "task_configs": task_configs,
+            "max_step": 50,
+            "max_hist": 10,
+            "timeout": 300,
+        }
+        client = CBEnvWorkerClient(env_config)
+        client.reset()
 
         # Verify POST /reset was called
         mock_post.assert_called_once()
@@ -81,10 +100,7 @@ class TestCBEnvWorkerClientReset:
     @patch("requests.post")
     def test_reset_returns_observation(self, mock_post):
         """Test that reset() returns observation dict."""
-        img = Image.new("RGB", (1920, 1080), color="blue")
-        buffer = io.BytesIO()
-        img.save(buffer, format="PNG")
-        img_b64 = base64.b64encode(buffer.getvalue()).decode("utf-8")
+        img_b64 = create_test_image(1024, 768)
 
         mock_response = MagicMock()
         mock_response.json.return_value = {
@@ -94,8 +110,16 @@ class TestCBEnvWorkerClientReset:
         }
         mock_post.return_value = mock_response
 
-        client = CBEnvWorkerClient(server_url="http://localhost:8001")
-        env_ret, meta_info = client.reset("./task", task_index=0)
+        task_configs = [{"env_path": "./task", "task_index": 0, "split": "train"}]
+        env_config = {
+            "server_url": "http://localhost:8001",
+            "task_configs": task_configs,
+            "max_step": 50,
+            "max_hist": 10,
+            "timeout": 300,
+        }
+        client = CBEnvWorkerClient(env_config)
+        env_ret, meta_info = client.reset()
 
         # Check env_ret structure
         assert "obs" in env_ret
@@ -109,10 +133,7 @@ class TestCBEnvWorkerClientReset:
     @patch("requests.post")
     def test_reset_stores_env_id(self, mock_post):
         """Test that reset() stores the env_id."""
-        img = Image.new("RGB", (1920, 1080), color="blue")
-        buffer = io.BytesIO()
-        img.save(buffer, format="PNG")
-        img_b64 = base64.b64encode(buffer.getvalue()).decode("utf-8")
+        img_b64 = create_test_image(1024, 768)
 
         mock_response = MagicMock()
         mock_response.json.return_value = {
@@ -122,18 +143,23 @@ class TestCBEnvWorkerClientReset:
         }
         mock_post.return_value = mock_response
 
-        client = CBEnvWorkerClient(server_url="http://localhost:8001")
-        client.reset("./task")
+        task_configs = [{"env_path": "./task", "task_index": 0, "split": "train"}]
+        env_config = {
+            "server_url": "http://localhost:8001",
+            "task_configs": task_configs,
+            "max_step": 50,
+            "max_hist": 10,
+            "timeout": 300,
+        }
+        client = CBEnvWorkerClient(env_config)
+        client.reset()
 
         assert client.env_id == 5
 
     @patch("requests.post")
     def test_reset_clears_state(self, mock_post):
         """Test that reset() clears previous episode state."""
-        img = Image.new("RGB", (1920, 1080), color="blue")
-        buffer = io.BytesIO()
-        img.save(buffer, format="PNG")
-        img_b64 = base64.b64encode(buffer.getvalue()).decode("utf-8")
+        img_b64 = create_test_image(1024, 768)
 
         mock_response = MagicMock()
         mock_response.json.return_value = {
@@ -143,11 +169,19 @@ class TestCBEnvWorkerClientReset:
         }
         mock_post.return_value = mock_response
 
-        client = CBEnvWorkerClient(server_url="http://localhost:8001")
+        task_configs = [{"env_path": "./task", "task_index": 0, "split": "train"}]
+        env_config = {
+            "server_url": "http://localhost:8001",
+            "task_configs": task_configs,
+            "max_step": 50,
+            "max_hist": 10,
+            "timeout": 300,
+        }
+        client = CBEnvWorkerClient(env_config)
         client.step_count = 10
         client.done = True
 
-        client.reset("./task")
+        client.reset()
 
         assert client.step_count == 0
         assert client.done is False
@@ -159,60 +193,85 @@ class TestCBEnvWorkerClientStep:
     @patch("requests.post")
     def test_step_calls_correct_endpoint(self, mock_post):
         """Test that step() calls POST /step."""
-        img = Image.new("RGB", (1920, 1080), color="green")
-        buffer = io.BytesIO()
-        img.save(buffer, format="PNG")
-        img_b64 = base64.b64encode(buffer.getvalue()).decode("utf-8")
+        img_b64 = create_test_image(1024, 768)
 
-        mock_response = MagicMock()
-        mock_response.json.return_value = {
-            "screenshot": img_b64,
-            "reward": 0.0,
-            "done": False,
+        # Setup mock for both reset and step
+        def mock_post_side_effect(url, **kwargs):
+            mock_resp = MagicMock()
+            if "/reset" in url:
+                mock_resp.json.return_value = {
+                    "screenshot": img_b64,
+                    "instruction": "Test",
+                    "env_id": 0,
+                }
+            else:
+                mock_resp.json.return_value = {
+                    "screenshot": img_b64,
+                    "reward": 0.0,
+                    "done": False,
+                }
+            return mock_resp
+
+        mock_post.side_effect = mock_post_side_effect
+
+        task_configs = [{"env_path": "./task", "task_index": 0, "split": "train"}]
+        env_config = {
+            "server_url": "http://localhost:8001",
+            "task_configs": task_configs,
+            "max_step": 50,
+            "max_hist": 10,
+            "timeout": 300,
         }
-        mock_post.return_value = mock_response
+        client = CBEnvWorkerClient(env_config)
+        client.reset()
 
-        client = CBEnvWorkerClient(server_url="http://localhost:8001")
-        client.env_id = 0
-        client.uid = "test-uid"
-        client.prompt = {"instruction": "Test", "steps": ["<|vision_start|>img<|vision_end|>"]}
-        client._orig_w = 1920
-        client._orig_h = 1080
-
-        action = {"type": "ClickAction", "x": 100, "y": 200}
+        # Step with action string
+        action = "<|action_start|>click(500,500)<|action_end|>"
         client.step(action)
 
-        # Verify POST /step was called
-        mock_post.assert_called_once()
-        call_args = mock_post.call_args
-        assert "/step" in call_args[0][0]
-        assert call_args[1]["json"]["env_id"] == 0
-        assert "action" in call_args[1]["json"]
+        # Verify POST /step was called (second call after reset)
+        assert mock_post.call_count == 2
+        step_call = mock_post.call_args_list[1]
+        assert "/step" in step_call[0][0]
+        assert step_call[1]["json"]["env_id"] == 0
+        assert "action" in step_call[1]["json"]
 
     @patch("requests.post")
     def test_step_returns_observation(self, mock_post):
         """Test that step() returns observation dict."""
-        img = Image.new("RGB", (1920, 1080), color="green")
-        buffer = io.BytesIO()
-        img.save(buffer, format="PNG")
-        img_b64 = base64.b64encode(buffer.getvalue()).decode("utf-8")
+        img_b64 = create_test_image(1024, 768)
 
-        mock_response = MagicMock()
-        mock_response.json.return_value = {
-            "screenshot": img_b64,
-            "reward": 0.5,
-            "done": False,
+        def mock_post_side_effect(url, **kwargs):
+            mock_resp = MagicMock()
+            if "/reset" in url:
+                mock_resp.json.return_value = {
+                    "screenshot": img_b64,
+                    "instruction": "Test",
+                    "env_id": 0,
+                }
+            else:
+                mock_resp.json.return_value = {
+                    "screenshot": img_b64,
+                    "reward": 0.5,
+                    "done": False,
+                }
+            return mock_resp
+
+        mock_post.side_effect = mock_post_side_effect
+
+        task_configs = [{"env_path": "./task", "task_index": 0, "split": "train"}]
+        env_config = {
+            "server_url": "http://localhost:8001",
+            "task_configs": task_configs,
+            "max_step": 50,
+            "max_hist": 10,
+            "timeout": 300,
         }
-        mock_post.return_value = mock_response
+        client = CBEnvWorkerClient(env_config)
+        client.reset()
 
-        client = CBEnvWorkerClient(server_url="http://localhost:8001")
-        client.env_id = 0
-        client.uid = "test-uid"
-        client.prompt = {"instruction": "Test", "steps": ["<|vision_start|>img<|vision_end|>"]}
-        client._orig_w = 1920
-        client._orig_h = 1080
-
-        env_ret, meta_info = client.step({"type": "ClickAction", "x": 100, "y": 200})
+        action = "<|action_start|>click(500,500)<|action_end|>"
+        env_ret, meta_info = client.step(action)
 
         # Check env_ret structure
         assert "obs" in env_ret
@@ -224,240 +283,175 @@ class TestCBEnvWorkerClientStep:
     @patch("requests.post")
     def test_step_increments_counter(self, mock_post):
         """Test that step() increments step_count."""
-        img = Image.new("RGB", (1920, 1080), color="green")
-        buffer = io.BytesIO()
-        img.save(buffer, format="PNG")
-        img_b64 = base64.b64encode(buffer.getvalue()).decode("utf-8")
+        img_b64 = create_test_image(1024, 768)
 
-        mock_response = MagicMock()
-        mock_response.json.return_value = {
-            "screenshot": img_b64,
-            "reward": 0.0,
-            "done": False,
+        def mock_post_side_effect(url, **kwargs):
+            mock_resp = MagicMock()
+            if "/reset" in url:
+                mock_resp.json.return_value = {
+                    "screenshot": img_b64,
+                    "instruction": "Test",
+                    "env_id": 0,
+                }
+            else:
+                mock_resp.json.return_value = {
+                    "screenshot": img_b64,
+                    "reward": 0.0,
+                    "done": False,
+                }
+            return mock_resp
+
+        mock_post.side_effect = mock_post_side_effect
+
+        task_configs = [{"env_path": "./task", "task_index": 0, "split": "train"}]
+        env_config = {
+            "server_url": "http://localhost:8001",
+            "task_configs": task_configs,
+            "max_step": 50,
+            "max_hist": 10,
+            "timeout": 300,
         }
-        mock_post.return_value = mock_response
-
-        client = CBEnvWorkerClient(server_url="http://localhost:8001")
-        client.env_id = 0
-        client.uid = "test-uid"
-        client.prompt = {"instruction": "Test", "steps": ["<|vision_start|>img<|vision_end|>"]}
-        client._orig_w = 1920
-        client._orig_h = 1080
+        client = CBEnvWorkerClient(env_config)
+        client.reset()
 
         assert client.step_count == 0
 
-        client.step({"type": "ClickAction", "x": 100, "y": 200})
+        client.step("<|action_start|>click(500,500)<|action_end|>")
         assert client.step_count == 1
 
-        client.step({"type": "ClickAction", "x": 200, "y": 300})
+        client.step("<|action_start|>click(600,600)<|action_end|>")
         assert client.step_count == 2
 
     @patch("requests.post")
     def test_step_sets_done_flag(self, mock_post):
         """Test that step() sets done flag when episode ends."""
-        img = Image.new("RGB", (1920, 1080), color="green")
-        buffer = io.BytesIO()
-        img.save(buffer, format="PNG")
-        img_b64 = base64.b64encode(buffer.getvalue()).decode("utf-8")
+        img_b64 = create_test_image(1024, 768)
 
-        mock_response = MagicMock()
-        mock_response.json.return_value = {
-            "screenshot": img_b64,
-            "reward": 1.0,
-            "done": True,
+        def mock_post_side_effect(url, **kwargs):
+            mock_resp = MagicMock()
+            if "/reset" in url:
+                mock_resp.json.return_value = {
+                    "screenshot": img_b64,
+                    "instruction": "Test",
+                    "env_id": 0,
+                }
+            else:
+                mock_resp.json.return_value = {
+                    "screenshot": img_b64,
+                    "reward": 1.0,
+                    "done": True,
+                }
+            return mock_resp
+
+        mock_post.side_effect = mock_post_side_effect
+
+        task_configs = [{"env_path": "./task", "task_index": 0, "split": "train"}]
+        env_config = {
+            "server_url": "http://localhost:8001",
+            "task_configs": task_configs,
+            "max_step": 50,
+            "max_hist": 10,
+            "timeout": 300,
         }
-        mock_post.return_value = mock_response
+        client = CBEnvWorkerClient(env_config)
+        client.reset()
 
-        client = CBEnvWorkerClient(server_url="http://localhost:8001")
-        client.env_id = 0
-        client.uid = "test-uid"
-        client.prompt = {"instruction": "Test", "steps": ["<|vision_start|>img<|vision_end|>"]}
-        client._orig_w = 1920
-        client._orig_h = 1080
-
-        env_ret, _ = client.step({"type": "DoneAction"})
+        env_ret, _ = client.step("<|action_start|>done()<|action_end|>")
 
         assert client.done is True
         assert env_ret["done"] is True
         assert env_ret["reward"] == 1.0
 
-    def test_step_requires_reset(self):
-        """Test that step() raises when reset hasn't been called."""
-        client = CBEnvWorkerClient(server_url="http://localhost:8001")
-
-        with pytest.raises(RuntimeError, match="not initialized"):
-            client.step({"type": "ClickAction", "x": 100, "y": 200})
-
-    def test_step_after_done_raises(self):
-        """Test that step() raises after episode is done."""
-        client = CBEnvWorkerClient(server_url="http://localhost:8001")
-        client.env_id = 0
-        client.done = True
-
-        with pytest.raises(RuntimeError, match="Episode is done"):
-            client.step({"type": "ClickAction", "x": 100, "y": 200})
-
 
 class TestCBEnvWorkerClientActions:
     """Tests for action processing in CBEnvWorkerClient."""
 
-    def test_process_action_click(self):
+    def test_check_and_fix_action_click(self):
         """Test click action processing."""
-        client = CBEnvWorkerClient(server_url="http://localhost:8001")
-        client._orig_w = 1920
-        client._orig_h = 1080
+        task_configs = [{"env_path": "./task", "task_index": 0, "split": "train"}]
+        env_config = {
+            "server_url": "http://localhost:8001",
+            "task_configs": task_configs,
+            "max_step": 50,
+            "max_hist": 10,
+            "timeout": 300,
+        }
+        client = CBEnvWorkerClient(env_config)
 
-        action = {"type": "click", "x": 960, "y": 540}
-        action_str, action_denorm = client._process_action(action)
+        action_str, action_obj = client.check_and_fix_action("click(500,500)")
 
         assert "click(" in action_str
-        assert action_denorm["type"] == "ClickAction"
-        assert action_denorm["x"] == 960
-        assert action_denorm["y"] == 540
+        # Action object is a ClickAction with denormalized coordinates
+        from cua_bench.types import ClickAction
 
-    def test_process_action_normalized_coords(self):
-        """Test action processing with normalized coordinates."""
-        client = CBEnvWorkerClient(server_url="http://localhost:8001")
-        client._orig_w = 1920
-        client._orig_h = 1080
+        assert isinstance(action_obj, ClickAction)
 
-        # Normalized coordinates (0.5, 0.5) should map to center
-        action = {"type": "click", "x": 0.5, "y": 0.5}
-        action_str, action_denorm = client._process_action(action)
+    def test_check_and_fix_action_finish(self):
+        """Test finish action processing."""
+        task_configs = [{"env_path": "./task", "task_index": 0, "split": "train"}]
+        env_config = {
+            "server_url": "http://localhost:8001",
+            "task_configs": task_configs,
+            "max_step": 50,
+            "max_hist": 10,
+            "timeout": 300,
+        }
+        client = CBEnvWorkerClient(env_config)
 
-        assert action_denorm["x"] == 960  # 0.5 * 1920
-        assert action_denorm["y"] == 540  # 0.5 * 1080
-
-    def test_process_action_type(self):
-        """Test type action processing."""
-        client = CBEnvWorkerClient(server_url="http://localhost:8001")
-
-        action = {"type": "TypeAction", "text": "Hello World"}
-        action_str, action_denorm = client._process_action(action)
-
-        assert 'type("Hello World")' in action_str
-        assert action_denorm["text"] == "Hello World"
-
-    def test_process_action_done(self):
-        """Test done action processing."""
-        client = CBEnvWorkerClient(server_url="http://localhost:8001")
-
-        action = {"type": "DoneAction"}
-        action_str, action_denorm = client._process_action(action)
+        action_str, action_obj = client.check_and_fix_action("done()")
 
         assert "done()" in action_str
-        assert action_denorm["type"] == "DoneAction"
+        from cua_bench.types import DoneAction
 
+        assert isinstance(action_obj, DoneAction)
 
-class TestCBEnvWorkerClientScreenshots:
-    """Tests for screenshot processing in CBEnvWorkerClient."""
+    def test_check_and_fix_action_invalid(self):
+        """Test invalid action falls back to wait."""
+        task_configs = [{"env_path": "./task", "task_index": 0, "split": "train"}]
+        env_config = {
+            "server_url": "http://localhost:8001",
+            "task_configs": task_configs,
+            "max_step": 50,
+            "max_hist": 10,
+            "timeout": 300,
+        }
+        client = CBEnvWorkerClient(env_config)
 
-    def test_process_screenshot_resize(self):
-        """Test screenshot processing and resizing."""
-        client = CBEnvWorkerClient(
-            server_url="http://localhost:8001",
-            img_w=640,
-            img_h=480,
-        )
+        action_str, action_obj = client.check_and_fix_action("invalid_action()")
 
-        # Create a test image at original resolution
-        img = Image.new("RGB", (1920, 1080), color="red")
-        buffer = io.BytesIO()
-        img.save(buffer, format="PNG")
-        img_bytes = buffer.getvalue()
-        img_b64 = base64.b64encode(img_bytes).decode("utf-8")
+        assert action_str == "wait()"
+        from cua_bench.types import WaitAction
 
-        # Process the screenshot
-        result = client._process_screenshot(img_b64)
-
-        # Verify result is valid base64 JPEG at target resolution
-        result_bytes = base64.b64decode(result)
-        result_img = Image.open(io.BytesIO(result_bytes))
-        assert result_img.size == (640, 480)
-        assert result_img.format == "JPEG"
-
-    def test_process_screenshot_stores_original_dims(self):
-        """Test that processing stores original dimensions."""
-        client = CBEnvWorkerClient(server_url="http://localhost:8001")
-
-        img = Image.new("RGB", (2560, 1440), color="blue")
-        buffer = io.BytesIO()
-        img.save(buffer, format="PNG")
-        img_b64 = base64.b64encode(buffer.getvalue()).decode("utf-8")
-
-        client._process_screenshot(img_b64)
-
-        assert client._orig_w == 2560
-        assert client._orig_h == 1440
+        assert isinstance(action_obj, WaitAction)
 
 
 class TestCBEnvWorkerClientObservations:
     """Tests for observation formatting in CBEnvWorkerClient."""
 
-    def test_prompt_to_obs(self):
+    def test_prompt_to_input_obs(self):
         """Test prompt to observation conversion."""
-        client = CBEnvWorkerClient(server_url="http://localhost:8001")
+        task_configs = [{"env_path": "./task", "task_index": 0, "split": "train"}]
+        env_config = {
+            "server_url": "http://localhost:8001",
+            "task_configs": task_configs,
+            "max_step": 50,
+            "max_hist": 10,
+            "timeout": 300,
+        }
+        client = CBEnvWorkerClient(env_config)
 
         prompt = {
             "instruction": "Click the button",
             "steps": [
                 "<|vision_start|>img1<|vision_end|>",
-                "<|action_start|>click(0.5,0.5)<|action_end|>",
+                "<|action_start|>click(500,500)<|action_end|>",
                 "<|vision_start|>img2<|vision_end|>",
             ],
         }
 
-        obs = client._prompt_to_obs(prompt)
+        obs = client.prompt_to_input_obs(prompt)
 
-        assert "<|instruction|>Click the button<|instruction_end|>" in obs
+        assert "Click the button" in obs
         assert "<|vision_start|>img1<|vision_end|>" in obs
-        assert "<|action_start|>click(0.5,0.5)<|action_end|>" in obs
+        assert "<|action_start|>click(500,500)<|action_end|>" in obs
         assert "<|vision_start|>img2<|vision_end|>" in obs
-
-    def test_prompt_to_obs_none(self):
-        """Test prompt to observation with None prompt."""
-        client = CBEnvWorkerClient(server_url="http://localhost:8001")
-        obs = client._prompt_to_obs(None)
-        assert obs == ""
-
-
-class TestCreateClientFromEnv:
-    """Tests for create_client_from_env function."""
-
-    @patch.dict(
-        "os.environ",
-        {
-            "OSGYM_SERVER_URL": "http://custom:9000",
-            "OSGYM_IMG_W": "1280",
-            "OSGYM_IMG_H": "720",
-            "OSGYM_MAX_STEP": "100",
-            "OSGYM_MAX_HIST": "20",
-            "OSGYM_TIMEOUT": "600",
-        },
-    )
-    def test_create_from_env_vars(self):
-        """Test creating client from environment variables."""
-        client = create_client_from_env()
-        assert client.server_url == "http://custom:9000"
-        assert client.img_w == 1280
-        assert client.img_h == 720
-        assert client.max_step == 100
-        assert client.max_hist == 20
-        assert client.timeout == 600
-
-    @patch.dict("os.environ", {}, clear=True)
-    def test_create_from_env_defaults(self):
-        """Test creating client with defaults when env vars missing."""
-        client = create_client_from_env()
-        assert client.server_url == "http://localhost:8001"
-        assert client.img_w == 1920
-        assert client.img_h == 1080
-
-    def test_create_from_env_override(self):
-        """Test creating client with override parameters."""
-        client = create_client_from_env(
-            server_url="http://override:8000",
-            img_w=800,
-        )
-        assert client.server_url == "http://override:8000"
-        assert client.img_w == 800

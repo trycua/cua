@@ -1,502 +1,505 @@
-"""HTTP client for CUA-Bench worker servers.
-
-This client provides a convenient interface for interacting with worker servers,
-managing observation history and action formatting for RL training.
-
-Example:
-    client = CBEnvWorkerClient(
-        server_url="http://localhost:8001",
-        img_w=1920, img_h=1080,
-        max_step=50, max_hist=10, timeout=300
-    )
-    ret, meta_info = client.reset("./tasks/click-button", task_index=0)
-    ret, meta_info = client.step(action_dict)
-"""
-
 import base64
 import io
+import random
 import re
 import uuid
-from dataclasses import dataclass, field
-from typing import Any, Dict, Optional, Tuple, Union
+from typing import Any, Dict, List
 
+import numpy as np
 import requests
-from cua_bench.actions import action_to_dict, parse_action_string
+from cua_bench.actions import action_to_dict
+from cua_bench.types import (
+    ClickAction,
+    DoneAction,
+    DoubleClickAction,
+    DragAction,
+    HotkeyAction,
+    RightClickAction,
+    ScrollAction,
+    TypeAction,
+    WaitAction,
+)
 from PIL import Image
 
+DEBUG = True
 
-@dataclass
+
+def print_debug(msg):
+    if DEBUG:
+        print(msg)
+
+
+def pillow_to_jpg_string(img):
+    # Save to bytes buffer as JPG
+    buffer = io.BytesIO()
+    img.save(buffer, format="JPEG", quality=80)
+    jpg_bytes = buffer.getvalue()
+    # Encode bytes to base64 string
+    jpg_string = base64.b64encode(jpg_bytes).decode("utf-8")
+    return jpg_string
+
+
+def jpg_string_to_pillow(jpg_string):
+    # Decode base64 string to bytes
+    jpg_bytes = base64.b64decode(jpg_string)
+    # Convert bytes to PIL Image
+    buffer = io.BytesIO(jpg_bytes)
+    img = Image.open(buffer)
+    return img
+
+
+def rgb_to_jpg_string(rgb_array):
+    """
+    Convert RGB array to JPG-encoded base64 string.
+    Input: numpy array of shape (height, width, 3) with values 0-255
+    Output: base64-encoded string
+    """
+    img = Image.fromarray(rgb_array.astype("uint8"), "RGB")
+    buffer = io.BytesIO()
+    img.save(buffer, format="JPEG", quality=80)
+    jpg_bytes = buffer.getvalue()
+    buffer.close()
+    jpg_string = base64.b64encode(jpg_bytes).decode("utf-8")
+    return jpg_string
+
+
+def jpg_string_to_rgb(jpg_string):
+    """
+    Convert JPG-encoded base64 string back to RGB array.
+    Input: base64-encoded string
+    Output: numpy array of shape (height, width, 3) with values 0-255
+    """
+    jpg_bytes = base64.b64decode(jpg_string)
+    buffer = io.BytesIO(jpg_bytes)
+    img = Image.open(buffer)
+    rgb_array = np.array(img)
+    buffer.close()
+    return rgb_array
+
+
+def parse_action(action_string):
+    pattern = r"(\w+)\((.*?)\)"
+    match = re.match(pattern, action_string)
+    if not match:
+        return None, None
+    function_name = match.group(1)
+    args_string = match.group(2)
+    if not args_string:
+        return function_name, []
+    args = []
+    for arg in re.split(r",\s*", args_string):
+        try:
+            args.append(int(arg))
+        except ValueError:
+            args.append(arg)
+    return function_name, args
+
+
+def check_type(inputs, types):
+    if len(inputs) != len(types):
+        return False
+    for i, t in zip(inputs, types):
+        if not isinstance(i, t):
+            return False
+    return True
+
+
 class CBEnvWorkerClient:
     """HTTP client for CUA-Bench worker servers.
 
-    This client manages:
-    - Communication with the worker server
-    - Image resizing and formatting
-    - Observation history tracking
-    - Action normalization (coordinate scaling)
-
-    Attributes:
-        server_url: URL of the worker server
-        img_w: Target image width for observations
-        img_h: Target image height for observations
-        max_step: Maximum steps per episode
-        max_hist: Maximum observation history length
-        timeout: Environment timeout in seconds
-        env_id: Current environment ID (set after reset)
-        uid: Current episode unique ID
-        step_count: Current step count
-        done: Whether the current episode is done
-        prompt: Current observation prompt with history
-    """
-
-    server_url: str
-    img_w: int = 1920
-    img_h: int = 1080
-    max_step: int = 50
-    max_hist: int = 10
-    timeout: int = 300
-
-    # State (set after reset)
-    env_id: Optional[int] = field(default=None, init=False)
-    uid: Optional[str] = field(default=None, init=False)
-    step_count: int = field(default=0, init=False)
-    done: bool = field(default=False, init=False)
-    prompt: Optional[Dict[str, Any]] = field(default=None, init=False)
-
-    # Original screen dimensions (detected from first screenshot)
-    _orig_w: int = field(default=1920, init=False)
-    _orig_h: int = field(default=1080, init=False)
-
-    def reset(
-        self,
-        env_path: str,
-        task_index: int = 0,
-        split: str = "train",
-    ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
-        """Reset the environment to a task.
-
-        Args:
-            env_path: Path to the environment directory
-            task_index: Task variant index (default: 0)
-            split: Dataset split (default: "train")
-
-        Returns:
-            Tuple of (env_ret, meta_info) where:
-            - env_ret: {"obs": observation, "done": False, "is_init": True}
-            - meta_info: {"uid": episode_uid}
-        """
-        # Reset state
-        self.step_count = 0
-        self.done = False
-        self.uid = str(uuid.uuid4())
-
-        # Make request
-        response = requests.post(
-            f"{self.server_url}/reset",
-            json={
-                "env_path": env_path,
-                "task_index": task_index,
-                "split": split,
-                "timeout": self.timeout,
-            },
-            timeout=60,
-        )
-        if not response.ok:
-            try:
-                detail = response.json().get("detail", response.text)
-            except Exception:
-                detail = response.text
-            raise RuntimeError(f"Server error ({response.status_code}): {detail}")
-        data = response.json()
-
-        self.env_id = data["env_id"]
-        instruction = data["instruction"]
-
-        # Process screenshot
-        screenshot_b64 = data["screenshot"]
-        jpg_string = self._process_screenshot(screenshot_b64)
-
-        # Build observation prompt
-        self.prompt = {
-            "instruction": instruction,
-            "steps": [f"<|vision_start|>{jpg_string}<|vision_end|>"],
-        }
-
-        obs = self._prompt_to_obs(self.prompt)
-
-        return {
-            "obs": obs,
-            "done": False,
-            "is_init": True,
-        }, {"uid": self.uid}
-
-    def step(self, action: Union[str, Dict[str, Any]]) -> Tuple[Dict[str, Any], Dict[str, Any]]:
-        """Execute an action in the environment.
-
-        Args:
-            action: Action string or dictionary. Can be:
-                - Action string: "click(0.5,0.5)" or "<|action_start|>click(0.5,0.5)<|action_end|>"
-                - Raw action dict: {"type": "ClickAction", "x": 100, "y": 200}
-                - Normalized action: {"type": "click", "x": 0.5, "y": 0.5}
-
-        Returns:
-            Tuple of (env_ret, meta_info) where:
-            - env_ret: {
-                "prev_obs": previous observation,
-                "action": action string,
-                "obs": new observation,
-                "reward": reward (if done),
-                "done": done flag,
-                "is_init": False
-              }
-            - meta_info: {"uid": episode_uid}
-        """
-        if self.env_id is None:
-            raise RuntimeError("Environment not initialized. Call reset() first.")
-
-        if self.done:
-            raise RuntimeError("Episode is done. Call reset() to start a new episode.")
-
-        # Store previous observation
-        prev_obs = self._prompt_to_obs(self.prompt) if self.prompt else None
-
-        # Parse action string to dict if needed
-        if isinstance(action, str):
-            action = self._parse_action_string(action)
-
-        # Normalize and denormalize action
-        action_str, action_denormalized = self._process_action(action)
-
-        # Make request
-        response = requests.post(
-            f"{self.server_url}/step",
-            json={
-                "action": action_denormalized,
-                "env_id": self.env_id,
-            },
-            timeout=60,
-        )
-        if not response.ok:
-            try:
-                detail = response.json().get("detail", response.text)
-            except Exception:
-                detail = response.text
-            raise RuntimeError(f"Server error ({response.status_code}): {detail}")
-        data = response.json()
-
-        # Update state
-        self.step_count += 1
-        self.done = data["done"]
-
-        # Process screenshot
-        screenshot_b64 = data["screenshot"]
-        jpg_string = self._process_screenshot(screenshot_b64)
-
-        # Update prompt history
-        if self.prompt is not None:
-            self.prompt["steps"].append(action_str)
-            self.prompt["steps"].append(f"<|vision_start|>{jpg_string}<|vision_end|>")
-
-            # Trim history if needed
-            if len(self.prompt["steps"]) > self.max_hist * 2:
-                # Keep the last max_hist action-observation pairs
-                self.prompt["steps"] = self.prompt["steps"][-(self.max_hist * 2) :]
-
-        obs = self._prompt_to_obs(self.prompt)
-
-        return {
-            "prev_obs": prev_obs,
-            "action": action_str,
-            "obs": obs,
-            "reward": data["reward"],
-            "done": data["done"],
-            "is_init": False,
-        }, {"uid": self.uid}
-
-    def get_screenshot(self) -> bytes:
-        """Get the current screenshot from the environment.
-
-        Returns:
-            Raw screenshot bytes (PNG format)
-        """
-        if self.env_id is None:
-            raise RuntimeError("Environment not initialized. Call reset() first.")
-
-        response = requests.get(
-            f"{self.server_url}/screenshot",
-            params={"env_id": self.env_id},
-            timeout=30,
-        )
-        if not response.ok:
-            try:
-                detail = response.json().get("detail", response.text)
-            except Exception:
-                detail = response.text
-            raise RuntimeError(f"Server error ({response.status_code}): {detail}")
-        data = response.json()
-
-        screenshot_b64 = data["screenshot"]
-        return base64.b64decode(screenshot_b64)
-
-    def shutdown(self) -> None:
-        """Shut down the current environment."""
-        if self.env_id is not None:
-            try:
-                requests.post(
-                    f"{self.server_url}/shutdown",
-                    json={"env_id": self.env_id},
-                    timeout=10,
-                )
-            except Exception:
-                pass
-            self.env_id = None
-
-    def health_check(self) -> Dict[str, Any]:
-        """Check the health of the worker server.
-
-        Returns:
-            Health status dictionary
-        """
-        response = requests.get(f"{self.server_url}/health", timeout=10)
-        if not response.ok:
-            try:
-                detail = response.json().get("detail", response.text)
-            except Exception:
-                detail = response.text
-            raise RuntimeError(f"Server error ({response.status_code}): {detail}")
-        return response.json()
-
-    def _process_screenshot(self, screenshot_b64: str) -> str:
-        """Process a screenshot: resize and convert to base64 JPEG.
-
-        Args:
-            screenshot_b64: Base64-encoded screenshot (any format)
-
-        Returns:
-            Base64-encoded JPEG string
-        """
-        # Decode screenshot
-        screenshot_bytes = base64.b64decode(screenshot_b64)
-        img = Image.open(io.BytesIO(screenshot_bytes))
-
-        # Store original dimensions
-        self._orig_w, self._orig_h = img.size
-
-        # Resize if needed
-        if img.size != (self.img_w, self.img_h):
-            img = img.resize((self.img_w, self.img_h), Image.Resampling.LANCZOS)
-
-        # Convert to RGB if needed
-        if img.mode != "RGB":
-            img = img.convert("RGB")
-
-        # Encode as JPEG
-        buffer = io.BytesIO()
-        img.save(buffer, format="JPEG", quality=85)
-        jpg_bytes = buffer.getvalue()
-
-        return base64.b64encode(jpg_bytes).decode("utf-8")
-
-    def _process_action(self, action: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
-        """Process an action: normalize for string representation and denormalize for server.
-
-        Args:
-            action: Action dictionary (may have normalized or absolute coordinates)
-
-        Returns:
-            Tuple of (action_str, action_denormalized)
-            - action_str: String representation for observation history
-            - action_denormalized: Action dict with absolute coordinates for server
-        """
-        action_type = action.get("type") or action.get("action_type", "")
-        action_type_lower = action_type.lower().replace("_", "").replace("action", "")
-
-        # Build action string and denormalized action
-        action_str_parts = []
-        action_denorm = {"type": action_type}
-
-        # Handle coordinate normalization/denormalization
-        def denorm_coord(val: float, dim: int) -> int:
-            """Denormalize a coordinate from [0,1] to [0,dim]."""
-            if isinstance(val, float) and 0 <= val <= 1:
-                return int(val * dim)
-            return int(val)
-
-        def norm_coord(val: float, dim: int) -> float:
-            """Normalize a coordinate from [0,dim] to [0,1]."""
-            if isinstance(val, float) and val <= 1:
-                return val
-            return val / dim
-
-        if action_type_lower in ("click", "clickaction"):
-            x = action.get("x", 0)
-            y = action.get("y", 0)
-            x_denorm = denorm_coord(x, self._orig_w)
-            y_denorm = denorm_coord(y, self._orig_h)
-            x_norm = norm_coord(x, self._orig_w)
-            y_norm = norm_coord(y, self._orig_h)
-            action_str_parts = [f"click({x_norm:.4f},{y_norm:.4f})"]
-            action_denorm = {"type": "ClickAction", "x": x_denorm, "y": y_denorm}
-
-        elif action_type_lower in ("rightclick", "rightclickaction"):
-            x = action.get("x", 0)
-            y = action.get("y", 0)
-            x_denorm = denorm_coord(x, self._orig_w)
-            y_denorm = denorm_coord(y, self._orig_h)
-            x_norm = norm_coord(x, self._orig_w)
-            y_norm = norm_coord(y, self._orig_h)
-            action_str_parts = [f"right_click({x_norm:.4f},{y_norm:.4f})"]
-            action_denorm = {"type": "RightClickAction", "x": x_denorm, "y": y_denorm}
-
-        elif action_type_lower in ("doubleclick", "doubleclickaction"):
-            x = action.get("x", 0)
-            y = action.get("y", 0)
-            x_denorm = denorm_coord(x, self._orig_w)
-            y_denorm = denorm_coord(y, self._orig_h)
-            x_norm = norm_coord(x, self._orig_w)
-            y_norm = norm_coord(y, self._orig_h)
-            action_str_parts = [f"double_click({x_norm:.4f},{y_norm:.4f})"]
-            action_denorm = {"type": "DoubleClickAction", "x": x_denorm, "y": y_denorm}
-
-        elif action_type_lower in ("drag", "dragaction"):
-            from_x = action.get("from_x", 0)
-            from_y = action.get("from_y", 0)
-            to_x = action.get("to_x", 0)
-            to_y = action.get("to_y", 0)
-            duration = action.get("duration", 1.0)
-            from_x_denorm = denorm_coord(from_x, self._orig_w)
-            from_y_denorm = denorm_coord(from_y, self._orig_h)
-            to_x_denorm = denorm_coord(to_x, self._orig_w)
-            to_y_denorm = denorm_coord(to_y, self._orig_h)
-            action_str_parts = [
-                f"drag({norm_coord(from_x, self._orig_w):.4f},{norm_coord(from_y, self._orig_h):.4f},"
-                f"{norm_coord(to_x, self._orig_w):.4f},{norm_coord(to_y, self._orig_h):.4f})"
-            ]
-            action_denorm = {
-                "type": "DragAction",
-                "from_x": from_x_denorm,
-                "from_y": from_y_denorm,
-                "to_x": to_x_denorm,
-                "to_y": to_y_denorm,
-                "duration": duration,
-            }
-
-        elif action_type_lower in ("scroll", "scrollaction"):
-            direction = action.get("direction", "up")
-            amount = action.get("amount", 100)
-            action_str_parts = [f"scroll({direction},{amount})"]
-            action_denorm = {"type": "ScrollAction", "direction": direction, "amount": amount}
-
-        elif action_type_lower in ("type", "typeaction"):
-            text = action.get("text", "")
-            action_str_parts = [f'type("{text}")']
-            action_denorm = {"type": "TypeAction", "text": text}
-
-        elif action_type_lower in ("key", "keyaction"):
-            key = action.get("key", "")
-            action_str_parts = [f"key({key})"]
-            action_denorm = {"type": "KeyAction", "key": key}
-
-        elif action_type_lower in ("hotkey", "hotkeyaction"):
-            keys = action.get("keys", [])
-            keys_str = "+".join(keys)
-            action_str_parts = [f"hotkey({keys_str})"]
-            action_denorm = {"type": "HotkeyAction", "keys": keys}
-
-        elif action_type_lower in ("wait", "waitaction"):
-            seconds = action.get("seconds", 1.0)
-            action_str_parts = [f"wait({seconds})"]
-            action_denorm = {"type": "WaitAction", "seconds": seconds}
-
-        elif action_type_lower in ("done", "doneaction"):
-            action_str_parts = ["done()"]
-            action_denorm = {"type": "DoneAction"}
-
-        else:
-            # Unknown action, pass through
-            action_str_parts = [str(action)]
-            action_denorm = action
-
-        action_str = f"<|action_start|>{''.join(action_str_parts)}<|action_end|>"
-        return action_str, action_denorm
-
-    def _prompt_to_obs(self, prompt: Optional[Dict[str, Any]]) -> str:
-        """Convert a prompt to an observation string.
-
-        Args:
-            prompt: Prompt dictionary with instruction and steps
-
-        Returns:
-            Observation string for model input
-        """
-        if prompt is None:
-            return ""
-
-        parts = [f"<|instruction|>{prompt['instruction']}<|instruction_end|>"]
-        for step in prompt["steps"]:
-            parts.append(step)
-
-        return "".join(parts)
-
-    def _parse_action_string(self, action_str: str) -> Dict[str, Any]:
-        """Parse action string from model response into a dict.
-
-        Handles formats:
-        - Raw action string: "click(0.5,0.5)"
-        - With tags: "<|action_start|>click(0.5,0.5)<|action_end|>"
-
-        Args:
-            action_str: Action string to parse
-
-        Returns:
-            Action dict suitable for _process_action()
-        """
-        # Extract action from tags if present
-        action_match = re.search(r"<\|action_start\|>(.*?)<\|action_end\|>", action_str, re.DOTALL)
-        if action_match:
-            action_str = action_match.group(1).strip()
-
-        # Try to parse the action string
-        try:
-            action = parse_action_string(action_str)
-            return action_to_dict(action)
-        except ValueError:
-            # Default to done if parsing fails
-            return {"type": "DoneAction"}
-
-
-# Convenience function to create a client from environment variables
-def create_client_from_env(
-    server_url: Optional[str] = None,
-    **kwargs,
-) -> CBEnvWorkerClient:
-    """Create a worker client from environment variables.
-
-    Environment variables:
-        OSGYM_SERVER_URL: Worker server URL (default: http://localhost:8001)
-        OSGYM_IMG_W: Image width (default: 1920)
-        OSGYM_IMG_H: Image height (default: 1080)
-        OSGYM_MAX_STEP: Max steps per episode (default: 50)
-        OSGYM_MAX_HIST: Max observation history (default: 10)
-        OSGYM_TIMEOUT: Environment timeout (default: 300)
+    This client manages communication with the worker server, image processing,
+    observation history tracking, and action normalization.
 
     Args:
-        server_url: Override server URL
-        **kwargs: Override other client parameters
-
-    Returns:
-        Configured CBEnvWorkerClient instance
+        env_config: Configuration dict with keys:
+            - server_url: URL of the worker server
+            - task_configs: List of task configs, each with env_path, task_index, split
+            - img_w: Image width (default: 1920)
+            - img_h: Image height (default: 1080)
+            - max_step: Maximum steps per episode (default: 50)
+            - max_hist: Maximum observation history length (default: 10)
+            - timeout: Environment timeout in seconds (default: 300)
     """
-    import os
 
-    config = {
-        "server_url": server_url or os.environ.get("OSGYM_SERVER_URL", "http://localhost:8001"),
-        "img_w": int(os.environ.get("OSGYM_IMG_W", 1920)),
-        "img_h": int(os.environ.get("OSGYM_IMG_H", 1080)),
-        "max_step": int(os.environ.get("OSGYM_MAX_STEP", 50)),
-        "max_hist": int(os.environ.get("OSGYM_MAX_HIST", 10)),
-        "timeout": int(os.environ.get("OSGYM_TIMEOUT", 300)),
-    }
-    config.update(kwargs)
+    vision_start_token = "<|vision_start|>"
+    vision_end_token = "<|vision_end|>"
+    think_start_token = "<|think_start|>"
+    think_end_token = "<|think_end|>"
+    action_start_token = "<|action_start|>"
+    action_end_token = "<|action_end|>"
+    valid_fn_names = [
+        "click",
+        "left_double",
+        "right_single",
+        "drag",
+        "hotkey",
+        "type",
+        "scroll",
+        "wait",
+        "call_user",
+        "done",
+    ]
+    vlm_img_w = 1260
+    vlm_img_h = 700
+    dynamic_img_size = True
 
-    return CBEnvWorkerClient(**config)
+    def __init__(self, env_config):
+        print_debug("[CBEnvWorkerClient] Initializing worker...")
+        self.env_config = env_config
+        self.server_url = env_config["server_url"]
+        self.max_step = env_config["max_step"]
+        self.max_hist = env_config["max_hist"]
+        self.task_configs: List[Dict[str, Any]] = env_config["task_configs"]
+        self.img_h = env_config.get("img_h", 1920)
+        self.img_w = env_config.get("img_w", 1080)
+        self.timeout = env_config["timeout"]
+        self.env_id = None
+        self.uid = None
+        self.step_count = 0
+        self.done = False
+        self.prompt = None
+
+    def reset(self):
+        ret, meta_info = self.reset_attempt()
+        while ret is None:
+            print_debug("[CBEnvWorkerClient] Reset failed, retrying...")
+            ret, meta_info = self.reset_attempt()
+        return ret, meta_info
+
+    def reset_attempt(self):
+        print_debug("[CBEnvWorkerClient] Resetting environment...")
+        if not self.task_configs:
+            print_debug("[CBEnvWorkerClient] ERROR: No task configs available")
+            return None, None
+
+        # Select a random task config
+        task_config = random.choice(self.task_configs)
+        env_path = task_config["env_path"]
+        task_index = task_config.get("task_index", 0)
+        split = task_config.get("split", "train")
+        print_debug(
+            f"[CBEnvWorkerClient] Selected env_path: {env_path}, task_index: {task_index}, split: {split}"
+        )
+
+        try:
+            headers = {"Content-Type": "application/json"}
+            print_debug(f"[CBEnvWorkerClient] Sending reset request to {self.server_url}/reset")
+            reset = requests.post(
+                f"{self.server_url}/reset",
+                headers=headers,
+                json={
+                    "env_path": env_path,
+                    "task_index": task_index,
+                    "split": split,
+                    "timeout": self.timeout,
+                },
+            )
+            reset.raise_for_status()
+            reset_data = reset.json()
+            print_debug("[CBEnvWorkerClient] Reset successful, received response data")
+            jpg_string = reset_data["screenshot"]
+            instruction = reset_data["instruction"]
+            self.env_id = reset_data["env_id"]
+            print_debug(f"[CBEnvWorkerClient] Env ID assigned: {self.env_id}")
+
+        except requests.RequestException as e:
+            print_debug(f"[CBEnvWorkerClient] ERROR in reset processing: {e}")
+            return None, None
+
+        jpg_string = self.check_and_resize_image(jpg_string)
+        self.prompt = {
+            "instruction": instruction,
+            "steps": [f"{self.vision_start_token}{jpg_string}{self.vision_end_token}"],
+        }
+        self.uid = str(uuid.uuid4())
+        self.step_count = 0
+        self.done = False
+
+        obs = self.prompt_to_input_obs(self.prompt)
+        ret = {"obs": obs, "done": False, "is_init": True}
+        meta_info = {"uid": self.uid}
+        return ret, meta_info
+
+    def prompt_to_input_obs(self, prompt):
+        obs = prompt["instruction"]
+        for s in prompt["steps"]:
+            obs = obs + s
+        return obs
+
+    def check_and_fix_action(self, action_str):
+        """Parse action string and return (normalized_str, Action object for server)."""
+        print_debug(f"[CBEnvWorkerClient ID: {self.env_id}] Processing action: {action_str}")
+        fn_name, args = parse_action(action_str)
+        default_action = WaitAction(seconds=1.0)
+
+        if fn_name is None or fn_name not in self.valid_fn_names:
+            return "wait()", default_action
+
+        if fn_name == "click":
+            if not check_type(args, [int, int]):
+                return "wait()", default_action
+            x = int(args[0] / 1000.0 * self.img_w)
+            y = int(args[1] / 1000.0 * self.img_h)
+            return f"click({args[0]},{args[1]})", ClickAction(x=x, y=y)
+
+        elif fn_name == "left_double":
+            if not check_type(args, [int, int]):
+                return "wait()", default_action
+            x = int(args[0] / 1000.0 * self.img_w)
+            y = int(args[1] / 1000.0 * self.img_h)
+            return f"left_double({args[0]},{args[1]})", DoubleClickAction(x=x, y=y)
+
+        elif fn_name == "right_single":
+            if not check_type(args, [int, int]):
+                return "wait()", default_action
+            x = int(args[0] / 1000.0 * self.img_w)
+            y = int(args[1] / 1000.0 * self.img_h)
+            return f"right_single({args[0]},{args[1]})", RightClickAction(x=x, y=y)
+
+        elif fn_name == "drag":
+            if not check_type(args, [int, int, int, int]):
+                return "wait()", default_action
+            x1 = int(args[0] / 1000.0 * self.img_w)
+            y1 = int(args[1] / 1000.0 * self.img_h)
+            x2 = int(args[2] / 1000.0 * self.img_w)
+            y2 = int(args[3] / 1000.0 * self.img_h)
+            return f"drag({args[0]},{args[1]},{args[2]},{args[3]})", DragAction(
+                from_x=x1, from_y=y1, to_x=x2, to_y=y2
+            )
+
+        elif fn_name == "hotkey":
+            args_str = ",".join(args)
+            return f"hotkey({args_str})", HotkeyAction(keys=list(args))
+
+        elif fn_name == "type":
+            if not check_type(args, [str]):
+                return "wait()", default_action
+            return f"type({args[0]})", TypeAction(text=args[0])
+
+        elif fn_name == "scroll":
+            if not check_type(args, [int, int, str]):
+                return "wait()", default_action
+            direction = args[2]
+            if direction not in ["up", "down"]:
+                return "wait()", default_action
+            amount = 100 if direction == "up" else -100
+            return f"scroll({args[0]},{args[1]},{args[2]})", ScrollAction(
+                direction=direction, amount=abs(amount)
+            )
+
+        elif fn_name == "wait":
+            if len(args) != 0:
+                return "wait()", default_action
+            return "wait()", WaitAction(seconds=1.0)
+
+        elif fn_name == "call_user":
+            # Treat call_user as wait since there's no equivalent
+            if len(args) != 0:
+                return "wait()", default_action
+            return "call_user()", WaitAction(seconds=1.0)
+
+        elif fn_name == "done":
+            if len(args) != 0:
+                return "wait()", default_action
+            return "done()", DoneAction()
+
+        else:
+            raise ValueError(f"Unexpected action: {fn_name}")
+
+    def reward_shaping(self, reward):
+        return reward
+
+    def check_and_resize_image(self, jpg_string):
+        print_debug(f"[CBEnvWorkerClient ID: {self.env_id}] Processing and resizing image...")
+        img = jpg_string_to_pillow(jpg_string)
+        w, h = img.size
+        if self.dynamic_img_size:
+            self.img_w = w
+            self.img_h = h
+        assert w == self.img_w and h == self.img_h
+        img_rs = img.resize((self.vlm_img_w, self.vlm_img_h))
+        jpg_string_rs = pillow_to_jpg_string(img_rs)
+        return jpg_string_rs
+
+    def step(self, action):
+        ret, meta_info = self.step_attempt(action)
+        while ret is None:
+            print_debug(f"[CBEnvWorkerClient ID: {self.env_id}] Step failed, retrying...")
+            ret, meta_info = self.step_attempt(action)
+        return ret, meta_info
+
+    def step_attempt(self, action):
+        print_debug(
+            f"[CBEnvWorkerClient ID: {self.env_id}] Step {self.step_count + 1} with action: {action}"
+        )
+        assert not self.done
+        assert isinstance(action, str)
+        prev_obs = self.prompt_to_input_obs(self.prompt)
+        try:
+            print_debug(f"[CBEnvWorkerClient ID: {self.env_id}] Parsing action tokens...")
+            think_pattern = (
+                re.escape(self.think_start_token) + r"(.*?)" + re.escape(self.think_end_token)
+            )
+            action_pattern = (
+                re.escape(self.action_start_token) + r"(.*?)" + re.escape(self.action_end_token)
+            )
+
+            think_match = re.search(think_pattern, action)
+            action_match = re.search(action_pattern, action)
+
+            think_str = think_match.group(1).strip() if think_match else ""
+            action_str = action_match.group(1).strip() if action_match else ""
+            print_debug(
+                f"[CBEnvWorkerClient ID: {self.env_id}] Parsed action tokens: think_str={think_str}, action_str={action_str}"
+            )
+        except Exception as e:
+            print_debug(f"[CBEnvWorkerClient ID: {self.env_id}] ERROR in action parsing: {e}")
+            return None, None
+
+        action_str, action_obj = self.check_and_fix_action(action_str)
+        print_debug(f"[CBEnvWorkerClient ID: {self.env_id}] Normalized action: {action_str}")
+        print_debug(f"[CBEnvWorkerClient ID: {self.env_id}] Action object: {action_obj}")
+
+        if self.step_count >= self.max_step:
+            print_debug(f"[CBEnvWorkerClient ID: {self.env_id}] Max steps reached, forcing done()")
+            action_obj = DoneAction()
+            action_str = "done()"
+
+        try:
+            print_debug(
+                f"[CBEnvWorkerClient ID: {self.env_id}] Sending step request to {self.server_url}/step"
+            )
+            action_dict = action_to_dict(action_obj)
+            step_ret = requests.post(
+                f"{self.server_url}/step", json={"action": action_dict, "env_id": self.env_id}
+            )
+            step_ret.raise_for_status()
+            step_data = step_ret.json()
+            print_debug(f"[CBEnvWorkerClient ID: {self.env_id}] Step request successful")
+
+            jpg_string = step_data["screenshot"]
+            reward = step_data["reward"]
+            done = step_data["done"]
+            print_debug(
+                f"[CBEnvWorkerClient ID: {self.env_id}] Step result - reward: {reward}, done: {done}"
+            )
+
+            assert isinstance(reward, (int, float))
+            assert isinstance(done, bool)
+            if isinstance(action_obj, DoneAction):
+                assert done
+            self.done = done
+        except Exception as e:
+            print_debug(f"[CBEnvWorkerClient ID: {self.env_id}] ERROR in step execution: {e}")
+            return None, None
+
+        action_clean = (
+            f"{self.think_start_token}{think_str}{self.think_end_token}"
+            + f"{self.action_start_token}{action_str}{self.action_end_token}"
+        )
+
+        jpg_string = self.check_and_resize_image(jpg_string)
+        reward = self.reward_shaping(reward)
+
+        self.step_count += 1
+        self.prompt["steps"].append(action_clean)
+        self.prompt["steps"].append(f"{self.vision_start_token}{jpg_string}{self.vision_end_token}")
+        curr_obs = self.prompt_to_input_obs(self.prompt)
+
+        ret = {
+            "prev_obs": prev_obs,
+            "action": action_clean,
+            "obs": curr_obs,
+            "reward": reward,
+            "done": self.done,
+            "is_init": False,
+        }
+        meta_info = {"uid": self.uid}
+        print_debug(
+            f"[CBEnvWorkerClient ID: {self.env_id}] Step {self.step_count} completed successfully"
+        )
+        return ret, meta_info
+
+    def render(self):
+        """
+        Renders the current state in self.prompt as a sequence of text-image pairs into a single image
+        Returns:
+            PIL.Image: Combined image showing the instruction and interaction history
+        """
+        import re
+
+        from PIL import Image, ImageDraw, ImageFont
+
+        # Constants for rendering
+        PADDING = 20
+        TEXT_HEIGHT = 100
+        FONT_SIZE = 20
+        CLICK_RADIUS = 5
+        CLICK_COLOR = "red"
+        try:
+            font = ImageFont.truetype("DejaVuSans.ttf", FONT_SIZE)
+        except Exception:
+            font = ImageFont.load_default()
+
+        # First calculate total height needed
+        total_height = PADDING
+        total_height += TEXT_HEIGHT  # Initial instruction
+
+        for step in self.prompt["steps"]:
+            if self.vision_start_token in step:
+                # Image height + padding
+                total_height += self.vlm_img_h + PADDING
+            else:
+                # Text height + padding
+                total_height += TEXT_HEIGHT + PADDING
+
+        # Create blank image
+        combined_img = Image.new("RGB", (self.vlm_img_w + 2 * PADDING, total_height), "white")
+        draw = ImageDraw.Draw(combined_img)
+
+        # Start drawing from top
+        y_offset = PADDING
+
+        # Draw instruction
+        draw.text((PADDING, y_offset), self.prompt["instruction"], font=font, fill="black")
+        y_offset += TEXT_HEIGHT + PADDING
+
+        # Draw each step
+        for step in self.prompt["steps"]:
+            if self.vision_start_token in step:
+                # Extract and paste image
+                img_str = step[len(self.vision_start_token) : -len(self.vision_end_token)]
+                img = jpg_string_to_pillow(img_str)
+                combined_img.paste(img, (PADDING, y_offset))
+
+                # Check previous step for click coordinates
+                if len(self.prompt["steps"]) > 1:
+                    prev_step = self.prompt["steps"][-2]  # Get the step before the image
+                    if "<|action_start|>" in prev_step and "<|action_end|>" in prev_step:
+                        action = prev_step.split("<|action_start|>")[1].split("<|action_end|>")[0]
+                        # Look for click(x,y) pattern
+                        click_match = re.search(r"click\((\d+),(\d+)\)", action)
+                        if click_match:
+                            # Get normalized coordinates
+                            norm_x, norm_y = map(int, click_match.groups())
+                            # Denormalize coordinates (assuming coordinates are normalized to 100)
+                            x = int((norm_x / 1000.0) * self.vlm_img_w)
+                            y = int((norm_y / 1000.0) * self.vlm_img_h)
+                            # Draw click point
+                            draw.ellipse(
+                                [
+                                    PADDING + x - CLICK_RADIUS,
+                                    y_offset + y - CLICK_RADIUS,
+                                    PADDING + x + CLICK_RADIUS,
+                                    y_offset + y + CLICK_RADIUS,
+                                ],
+                                fill=CLICK_COLOR,
+                            )
+
+                y_offset += self.vlm_img_h + PADDING
+            else:
+                # Draw text (action/thought)
+                draw.text((PADDING, y_offset), step, font=font, fill="black")
+                y_offset += TEXT_HEIGHT + PADDING
+
+        return combined_img

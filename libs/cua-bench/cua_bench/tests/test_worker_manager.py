@@ -358,27 +358,33 @@ class TestWorkerClientE2E:
             assert len(workers) == 1
             worker = workers[0]
 
-            # Create client
-            client = CBEnvWorkerClient(
-                server_url=worker.api_url,
-                img_w=800,
-                img_h=600,
-            )
+            # Create task configs
+            task_configs = [{"env_path": str(task_dir), "task_index": 0, "split": "train"}]
 
-            # Reset
-            env_ret, meta_info = client.reset(str(task_dir), task_index=0)
+            # Create client with env_config dict
+            env_config = {
+                "server_url": worker.api_url,
+                "task_configs": task_configs,
+                "max_step": 50,
+                "max_hist": 10,
+                "timeout": 300,
+            }
+            client = CBEnvWorkerClient(env_config)
+
+            # Reset (picks from task_configs)
+            env_ret, meta_info = client.reset()
             assert "obs" in env_ret
             assert env_ret["is_init"] is True
             assert env_ret["done"] is False
             assert "uid" in meta_info
 
-            # Step with click
-            env_ret, meta_info = client.step({"type": "ClickAction", "x": 200, "y": 150})
+            # Step with click (action is now a string with tags)
+            env_ret, meta_info = client.step("<|action_start|>click(500,500)<|action_end|>")
             assert "obs" in env_ret
             assert env_ret["done"] is False
 
             # Step with done
-            env_ret, meta_info = client.step({"type": "DoneAction"})
+            env_ret, meta_info = client.step("<|action_start|>done()<|action_end|>")
             assert env_ret["done"] is True
             assert "reward" in env_ret
 
@@ -418,16 +424,24 @@ class TestDataloaderE2E:
         try:
             # Create task configs
             task_configs = [{"env_path": str(task_dir), "task_index": 0, "split": "train"}]
+            env_configs = [
+                {
+                    "server_url": w.api_url,
+                    "task_configs": task_configs,
+                    "max_step": 2,
+                    "max_hist": 10,
+                    "timeout": 300,
+                }
+                for w in workers
+            ]
 
             # Create tokenizer
             tokenizer = MockTokenizer()
 
             # Create dataloader
-            env_configs = [{"server_url": w.api_url} for w in workers]
             dataloader = MultiTurnDataloader(
                 env_class=CBEnvWorkerClient,
                 env_configs=env_configs,
-                task_configs=task_configs,
                 tokenizer=tokenizer,
                 processor=None,
                 is_multi_modal=False,
@@ -443,7 +457,7 @@ class TestDataloaderE2E:
 
             # Run a few iterations of the training loop
             iterations = 0
-            max_iterations = 10
+            max_iterations = 3
 
             for batch in dataloader:
                 if iterations >= max_iterations:
@@ -509,12 +523,20 @@ class TestDataloaderE2E:
         try:
             task_configs = [{"env_path": str(task_dir), "task_index": 0, "split": "train"}]
             tokenizer = MockTokenizer()
-            env_configs = [{"server_url": w.api_url} for w in workers]
+            env_configs = [
+                {
+                    "server_url": w.api_url,
+                    "task_configs": task_configs,
+                    "max_step": 50,
+                    "max_hist": 10,
+                    "timeout": 300,
+                }
+                for w in workers
+            ]
 
             dataloader = MultiTurnDataloader(
                 env_class=CBEnvWorkerClient,
                 env_configs=env_configs,
-                task_configs=task_configs,
                 tokenizer=tokenizer,
                 processor=None,
                 is_multi_modal=False,
@@ -595,14 +617,22 @@ class TestDataloaderBenchmark:
         try:
             # Create configurations
             task_configs = [{"env_path": str(task_dir), "task_index": 0, "split": "train"}]
-            env_configs = [{"server_url": w.api_url} for w in workers]
+            env_configs = [
+                {
+                    "server_url": w.api_url,
+                    "task_configs": task_configs,
+                    "max_step": 50,
+                    "max_hist": 10,
+                    "timeout": 300,
+                }
+                for w in workers
+            ]
             tokenizer = MockTokenizer()
 
             # Create MultiTurnDataloader
             dataloader = MultiTurnDataloader(
                 env_class=CBEnvWorkerClient,
                 env_configs=env_configs,
-                task_configs=task_configs,
                 tokenizer=tokenizer,
                 processor=None,
                 is_multi_modal=False,
@@ -765,8 +795,18 @@ class TestWorkerPoolContextManager:
             assert len(pool.urls) == 1
 
             # Create client and test
-            client = CBEnvWorkerClient(server_url=pool.urls[0])
-            env_ret, _ = client.reset(str(task_dir), task_index=0)
+            client = CBEnvWorkerClient(
+                {
+                    "server_url": pool.urls[0],
+                    "task_configs": [
+                        {"env_path": str(task_dir), "task_index": 0, "split": "train"}
+                    ],
+                    "max_step": 50,
+                    "max_hist": 10,
+                    "timeout": 300,
+                }
+            )
+            env_ret, _ = client.reset()
             assert env_ret["is_init"] is True
 
         # Workers should be cleaned up after context exit

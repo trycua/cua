@@ -228,8 +228,13 @@ def train_reward_weighted():
 
         dataloader = MultiTurnDataloader(
             env_class=CBEnvWorkerClient,
-            env_configs=[{"server_url": url} for url in worker_urls],
-            task_configs=task_configs,
+            env_configs=[{
+                "server_url": url,
+                "task_configs": task_configs,
+                "max_step": 50,
+                "max_hist": 10,
+                "timeout": 300
+            } for url in worker_urls],
             tokenizer=tokenizer,
             processor=processor,
             is_multi_modal=True,

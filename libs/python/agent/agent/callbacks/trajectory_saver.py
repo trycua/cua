@@ -328,7 +328,7 @@ class TrajectorySaverCallback(AsyncCallbackHandler):
         self._save_artifact("agent_response", response_data)
 
         # Increment turn counter
-        self.current_turn += 1
+        # self.current_turn += 1
 
     def _draw_crosshair_on_image(self, image_bytes: bytes, x: int, y: int) -> bytes:
         """

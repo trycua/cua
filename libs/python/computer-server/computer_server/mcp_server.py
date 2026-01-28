@@ -167,6 +167,14 @@ def create_mcp_server() -> FastMCP:
                     new_width = int(width * max_dimension / height)
                 img = img.resize((new_width, new_height), PILImage.Resampling.LANCZOS)
 
+            # Ensure max dimension <= 2000 for Claude API
+            API_MAX_DIM = 2000
+            width, height = img.size
+            if width > API_MAX_DIM or height > API_MAX_DIM:
+                scaling_factor = min(API_MAX_DIM / width, API_MAX_DIM / height)
+                new_size = (int(width * scaling_factor), int(height * scaling_factor))
+                img = img.resize(new_size, PILImage.Resampling.LANCZOS)
+
         # Convert to RGB if necessary (for JPEG compatibility)
         if img.mode in ('RGBA', 'P'):
             img = img.convert('RGB')

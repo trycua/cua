@@ -103,6 +103,14 @@ dev = [
     "ruff>=0.1.0",
 ]
 
+# RL training
+rl = [
+    "torch>=2.0.0",
+    "torchvision>=0.15.0",
+    "transformers>=4.57.0,<5.0",
+    "verl"
+]
+
 [project.urls]
 Homepage = "https://github.com/trycua/cua"
 Documentation = "https://docs.trycua.com"

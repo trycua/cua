@@ -2,5 +2,12 @@
   "title": "Advanced",
   "description": "Build your own tasks and agents",
   "icon": "Layers",
-  "pages": ["images", "creating-private-tasks", "custom-agents", "configuration", "telemetry"]
+  "pages": [
+    "images",
+    "creating-private-tasks",
+    "custom-agents",
+    "rl-dataloader",
+    "configuration",
+    "telemetry"
+  ]
 }

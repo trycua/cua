@@ -1,0 +1,398 @@
+---
+title: RL Training Qwen3VL with Modal
+description: Use Modal to train a multimodal GUI agent with reinforcement learning
+---
+
+In this tutorial, you'll train a multimodal GUI agent using reinforcement learning on Modal with reward-weighted cross-entropy.
+
+**Prerequisites:** Modal account, wandb account (optional)
+
+## What You'll Build
+
+A training pipeline that:
+
+1. Runs GUI environments in parallel on Modal
+2. Uses a vision-language model to generate actions
+3. Trains using reward-weighted cross-entropy loss
+
+## Training Loop Overview
+
+The training loop has four phases:
+
+1. **ROLLOUT**: Generate actions from current policy (no gradients)
+2. **ENVIRONMENT STEP**: Execute actions in parallel environments, collect rewards
+3. **REPLAY SAMPLING**: Sample completed trajectories from replay buffer
+4. **POLICY UPDATE**: Compute reward-weighted loss and update model
+
+## Step 1: Install Dependencies
+
+```bash
+pip install modal cua-bench
+modal setup  # authenticate with Modal
+```
+
+## Step 2: Create the Task
+
+```bash
+mkdir -p tasks/click-target
+```
+
+Create `tasks/click-target/main.py`:
+
+```python
+import cua_bench as cb
+import random
+
+HTML_TEMPLATE = """
+<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        body {{
+            margin: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background: #f0f0f0;
+        }}
+        .target {{
+            position: absolute;
+            left: {x}px;
+            top: {y}px;
+            padding: 12px 24px;
+            background: #3b82f6;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+        }}
+    </style>
+</head>
+<body>
+    <h1>Click the Button</h1>
+    <button class="target" onclick="window.__clicked=true;">Click Me</button>
+    <script>window.__clicked = false;</script>
+</body>
+</html>
+"""
+
+pid = None
+
+@cb.tasks_config(split="train")
+def get_tasks():
+    tasks = []
+    for i in range(50):
+        x = random.randint(100, 350)
+        y = random.randint(100, 250)
+        tasks.append(cb.Task(
+            description="Click the blue button labeled 'Click Me'",
+            computer={"provider": "simulated", "setup_config": {"width": 512, "height": 384}},
+            metadata={"x": x, "y": y}
+        ))
+    return tasks
+
+@cb.setup_task(split="train")
+async def setup(task, session):
+    global pid
+    x = task.metadata.get("x", 200)
+    y = task.metadata.get("y", 150)
+    html = HTML_TEMPLATE.format(x=x, y=y)
+    pid = await session.launch_window(html=html, title="Click Target", width=512, height=384)
+
+@cb.evaluate_task(split="train")
+async def evaluate(task, session):
+    global pid
+    clicked = await session.execute_javascript(pid, "window.__clicked")
+    return [1.0 if clicked else 0.0]
+```
+
+Test the task interactively:
+
+```bash
+cb interact tasks/click-target
+```
+
+## Step 3: Create the Training Script
+
+Create `modal_trl_training.py`:
+
+```python
+import os
+from dataclasses import dataclass
+
+import modal
+
+
+@dataclass
+class TrainerConfig:
+    model_name: str = "Qwen/Qwen3-VL-2B-Instruct"
+    num_workers: int = 4
+    batch_size: int = 4
+    num_train_steps: int = 1000
+    learning_rate: float = 1e-5
+    task_path: str = "/root/tasks/click-target"
+    use_wandb: bool = True
+
+
+app = modal.App("cua-bench-rl-training")
+
+image = (
+    modal.Image.debian_slim(python_version="3.11")
+    .apt_install("git", "chromium", "chromium-driver")
+    .pip_install(
+        "torchvision",
+        "torch>=2.0",
+        "transformers>=4.57.0,<5.0",
+        "accelerate",
+        "peft",
+        "bitsandbytes",
+        "wandb",
+        "pillow",
+        "requests",
+        "fastapi",
+        "uvicorn",
+        "playwright",
+        "datasets",
+    )
+    .run_commands("playwright install chromium")
+    .add_local_python_source("cua_bench")
+    .add_local_dir("tasks", remote_path="/root/tasks")
+)
+
+checkpoint_volume = modal.Volume.from_name("cua-bench-checkpoints", create_if_missing=True)
+
+
+@app.function(
+    image=image,
+    gpu="H100",
+    timeout=60 * 60 * 2,
+    volumes={"/checkpoints": checkpoint_volume},
+    secrets=[modal.Secret.from_name("wandb-secret")],
+)
+def train_reward_weighted():
+    """Train using reward-weighted cross-entropy."""
+    import torch
+    from transformers import AutoTokenizer, AutoProcessor, AutoModelForImageTextToText
+    from cua_bench.workers import (
+        MultiTurnDataloader,
+        CBEnvWorkerClient,
+        create_workers,
+        cleanup_workers,
+    )
+
+    config = TrainerConfig()
+
+    print(f"Starting training with {config.num_workers} workers")
+    print(f"Model: {config.model_name}")
+
+    if config.use_wandb and os.environ.get("WANDB_API_KEY"):
+        import wandb
+        wandb.init(
+            project="cua-bench-training",
+            config={
+                "model_name": config.model_name,
+                "num_workers": config.num_workers,
+                "batch_size": config.batch_size,
+                "learning_rate": config.learning_rate,
+            },
+        )
+
+    # Load model
+    tokenizer = AutoTokenizer.from_pretrained(config.model_name, trust_remote_code=True)
+    processor = AutoProcessor.from_pretrained(config.model_name, trust_remote_code=True)
+    model = AutoModelForImageTextToText.from_pretrained(
+        config.model_name,
+        dtype=torch.bfloat16,
+        device_map="auto",
+        trust_remote_code=True,
+    )
+
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+
+    # Start workers
+    import asyncio
+    workers = asyncio.run(create_workers(
+        n_workers=config.num_workers,
+        allowed_ips=["127.0.0.1"],
+        startup_timeout=120.0,
+    ))
+    worker_urls = [w.api_url for w in workers]
+
+    try:
+        task_configs = [
+            {"env_path": config.task_path, "task_index": i % 10, "split": "train"}
+            for i in range(config.num_workers)
+        ]
+
+        dataloader = MultiTurnDataloader(
+            env_class=CBEnvWorkerClient,
+            env_configs=[{
+                "server_url": url,
+                "task_configs": task_configs,
+                "max_step": 50,
+                "max_hist": 10,
+                "timeout": 300
+            } for url in worker_urls],
+            tokenizer=tokenizer,
+            processor=processor,
+            is_multi_modal=True,
+            batch_size=config.batch_size,
+            replay_capacity=10000,
+            replay_reward_discount=0.99,
+            max_prompt_length=2048,
+            max_response_length=512,
+        )
+
+        optimizer = torch.optim.AdamW(model.parameters(), lr=config.learning_rate)
+
+        for step in range(config.num_train_steps):
+            # ================================================================
+            # ROLLOUT PHASE: Generate actions and step environments
+            # ================================================================
+            batch = next(dataloader)
+            input_ids = batch["input_ids"].to(model.device)
+            attention_mask = batch["attention_mask"].to(model.device)
+
+            with torch.no_grad():
+                outputs = model.generate(
+                    input_ids=input_ids,
+                    attention_mask=attention_mask,
+                    max_new_tokens=256,
+                    do_sample=True,
+                    temperature=0.7,
+                    pad_token_id=tokenizer.pad_token_id,
+                )
+
+            response_ids = outputs[:, input_ids.shape[1]:]
+            response_mask = (response_ids != tokenizer.pad_token_id).long()
+
+            dataloader.async_step({
+                "prompts": input_ids,
+                "responses": response_ids,
+                "attention_mask": torch.cat([attention_mask, response_mask], dim=1),
+                "worker_id": batch["worker_id"],
+                "meta_info": batch["meta_info"],
+            })
+
+            # ================================================================
+            # TRAINING PHASE: Sample from replay buffer and update policy
+            # ================================================================
+            if len(dataloader.replay) < config.batch_size:
+                continue
+
+            replay_batch = dataloader.sample_from_buffer(config.batch_size)
+            train_input_ids = replay_batch["input_ids"].to(model.device)
+            train_attention_mask = replay_batch["attention_mask"].to(model.device)
+            rewards = replay_batch["reward"].to(model.device)
+
+            outputs = model(
+                input_ids=train_input_ids,
+                attention_mask=train_attention_mask,
+                labels=train_input_ids,
+            )
+            loss = outputs.loss * rewards.mean()
+
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+
+            # ================================================================
+            # LOGGING
+            # ================================================================
+            if step % 10 == 0:
+                running_reward = dataloader.running_outcome_reward()
+                print(
+                    f"Step {step}/{config.num_train_steps} | "
+                    f"Loss: {loss.item():.4f} | "
+                    f"Reward: {running_reward:.4f}"
+                )
+
+                if config.use_wandb:
+                    import wandb
+                    log_dict = {
+                        "loss": loss.item(),
+                        "running_reward": running_reward,
+                        "replay_size": len(dataloader.replay),
+                    }
+                    if step % 50 == 0:
+                        try:
+                            env = dataloader.envs[0]
+                            if hasattr(env, "render") and env.prompt is not None:
+                                log_dict["trajectory"] = wandb.Image(env.render())
+                        except Exception:
+                            pass
+                    wandb.log(log_dict)
+
+            if step > 0 and step % 500 == 0:
+                checkpoint_path = f"/checkpoints/step_{step}"
+                model.save_pretrained(checkpoint_path)
+                tokenizer.save_pretrained(checkpoint_path)
+                checkpoint_volume.commit()
+
+        model.save_pretrained("/checkpoints/final")
+        tokenizer.save_pretrained("/checkpoints/final")
+        checkpoint_volume.commit()
+        dataloader.close()
+
+    finally:
+        asyncio.run(cleanup_workers(workers))
+
+    return {"status": "complete", "steps": config.num_train_steps}
+
+
+@app.local_entrypoint()
+def main():
+    result = train_reward_weighted.remote()
+    print(f"Training result: {result}")
+```
+
+## Step 4: Set Up Modal Secrets
+
+```bash
+modal secret create wandb-secret WANDB_API_KEY=your_key_here
+```
+
+## Step 5: Run Training
+
+```bash
+modal run modal_trl_training.py
+```
+
+## Project Structure
+
+```
+my-rl-project/
+├── tasks/
+│   └── click-target/
+│       └── main.py
+└── modal_trl_training.py
+```
+
+## How It Works
+
+1. **Workers** run GUI environments inside the Modal container
+2. **Model** (Qwen3-VL) sees screenshots and generates actions
+3. **Environment** returns rewards (1.0 if button clicked, 0.0 otherwise)
+4. **Training** uses reward-weighted cross-entropy to update the policy
+
+## Customizing the Config
+
+Modify `TrainerConfig` to change training parameters:
+
+```python
+@dataclass
+class TrainerConfig:
+    model_name: str = "Qwen/Qwen3-VL-2B-Instruct"  # Model to train
+    num_workers: int = 4                            # Parallel environments
+    batch_size: int = 4                             # Batch size
+    num_train_steps: int = 1000                     # Training steps
+    learning_rate: float = 1e-5                     # Learning rate
+    task_path: str = "/root/tasks/click-target"     # Task directory
+    use_wandb: bool = True                          # Enable logging
+```
+
+## Reference
+
+See [RL Dataloader Reference](/cuabench/guide/advanced/rl-dataloader) for full API docs.

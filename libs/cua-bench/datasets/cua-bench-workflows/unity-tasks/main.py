@@ -64,7 +64,8 @@ def load():
             computer={
                 "provider": "native",
                 "setup_config": {
-                    "os_type": "windows",
+                    # "os_type": "windows",
+                    "os_type": "linux",
                     "width": 1920,
                     "height": 1080,
                 },

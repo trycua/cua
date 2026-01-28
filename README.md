@@ -101,7 +101,7 @@ uv tool install -e . && cb image create linux-docker
 cb run dataset datasets/cua-bench-basic --agent cua-agent --max-parallel 4
 ```
 
-**[Get Started](https://cua.ai/docs/cuabench/guide/getting-started/first-steps)** | **[Registry](https://cuabench.ai/registry)** | **[CLI Reference](https://cua.ai/docs/cuabench/reference/cli-reference)**
+**[Get Started](https://cua.ai/docs/cuabench/guide/getting-started/first-steps)** | **[Partner With Us](https://cuabench.ai/)** | **[Registry](https://cuabench.ai/registry)** | **[CLI Reference](https://cua.ai/docs/cuabench/reference/cli-reference)**
 
 ---
 

@@ -12,6 +12,25 @@ cleanup() {
 # Install trap for signals
 trap cleanup SIGTERM SIGINT SIGHUP SIGQUIT
 
+# Detect overlay mode: /golden exists and /storage is empty
+# This allows copy-on-write overlays for isolated sessions
+if [ -d "/golden" ] && [ -d "/storage" ]; then
+    if [ -n "$(ls -A /storage)" ]; then
+        echo "Storage directory is not empty, skipping overlay setup."
+    else
+        echo "Overlay mode detected, setting up copy-on-write..."
+
+        # Fast and safe; falls back to copy if links are unsupported
+        if cp -al /golden/. /storage/ 2>/dev/null; then
+            echo "Overlay setup complete (using hard links)."
+        else
+            echo "Hard links not supported, falling back to regular copy..."
+            cp -a /golden/. /storage/
+            echo "Overlay setup complete (using copy)."
+        fi
+    fi
+fi
+
 # Create windows.boot file if it doesn't exist (required for proper boot)
 if [ -d "/storage" -a ! -f "/storage/windows.boot" ]; then
   echo "Creating windows.boot file in /storage..."

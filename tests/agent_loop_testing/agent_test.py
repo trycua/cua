@@ -111,6 +111,16 @@ class MockComputer:
     async def playwright_exec(self, command: str, params: Optional[Dict] = None) -> Dict[str, Any]:
         """Mock playwright execution for BrowserTool compatibility."""
         await asyncio.sleep(0.1)
+
+        # Handle screenshot command - return mock screenshot data
+        if command == "screenshot":
+            return {"success": True, "screenshot": self._image}  # Return the base64 screenshot
+
+        # Handle get_current_url command
+        if command == "get_current_url":
+            return {"success": True, "url": "desktop://mock"}
+
+        # All other commands just return success
         return {"success": True}
 
 

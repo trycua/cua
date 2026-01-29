@@ -426,23 +426,27 @@ def train_grpo(
 
     def rollout_episode(trainer, env, tok, prompt_text: str, max_hist: int = 2) -> dict:
         env_ret, meta = env.reset()
-        instruction = (meta or {}).get("instruction", prompt_text)
+
+        # Get instruction from env.prompt (set during reset)
+        instruction = env.prompt["instruction"] if env.prompt else prompt_text
 
         all_prompt_ids, all_completion_ids, all_logprobs = [], [], []
         all_images = []
         step_rewards = []
-        history = []  # List of (obs, action) tuples
+        history = []  # List of (screenshot, action) tuples
 
         for step in range(max_steps):
             if env_ret.get("done", False):
                 break
 
-            obs = env.prompt_to_input_obs(env.prompt) if env.prompt else ""
+            # Get current screenshot from env.prompt["steps"][-1]
+            # steps contains: [screenshot0, action0, screenshot1, action1, ...]
+            current_screenshot = env.prompt["steps"][-1] if env.prompt else ""
 
             # Get recent history (last max_hist steps)
             recent_history = history[-max_hist:] if history else None
 
-            prompt, images = make_prompt(tok, instruction, obs, step, history=recent_history)
+            prompt, images = make_prompt(tok, instruction, current_screenshot, step, history=recent_history)
             if images:
                 all_images.extend(images)
 
@@ -457,11 +461,12 @@ def train_grpo(
                 rollout_output["completion_ids"], skip_special_tokens=True
             )
 
-            # Add to history for next step
-            history.append((obs, parse_action(completion)))
+            # Add current screenshot and action to history for next step
+            action = parse_action(completion)
+            history.append((current_screenshot, action))
 
             if debug:
-                print(f"  Step {step + 1}: {parse_action(completion)}")
+                print(f"  Step {step + 1}: {action}")
 
             env_ret, _ = env.step(completion)
             step_rewards.append(float(env_ret.get("reward", 0.0)))

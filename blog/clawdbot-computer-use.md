@@ -20,9 +20,8 @@ This means your agent can automate any application—not just CLI tools and brow
 
 We've just created a PR to introduce a computer tool in the Clawdbot Agent. Clawdbot now talks to [@trycua](https://x.com/trycua) computer-server, which handles the actual screen capture and input simulation.
 
-<div align="center">
-  <img src="./assets/clawd_1.jpeg" alt="Clawdbot Computer-Use Architecture" width="700" />
-</div>
+![clawd_1](https://github.com/user-attachments/assets/16a64e51-ce1a-45ed-9cc8-30b6cd018750)
+
 
 You can run this in:
 
@@ -49,9 +48,8 @@ docker run -d --name my-sandbox \
 
 Open http://localhost:6080 in your browser. You'll see a full Linux desktop:
 
-<div align="center">
-  <img src="./assets/clawd_2.jpeg" alt="XFCE Desktop in Docker Sandbox" width="600" />
-</div>
+![clawd_2](https://github.com/user-attachments/assets/9f7a245f-e862-48e9-b565-30e997c22f8b)
+
 
 ### 3. Let Clawdbot loose
 

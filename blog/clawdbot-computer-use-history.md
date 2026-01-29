@@ -176,6 +176,10 @@ The future isn't CLI versus GUI. It's knowing when to use each. Code-as-action f
 
 This is why we built [Cua-Bench](https://github.com/trycua/cua). GUI agents need rigorous evaluation — not just on fixed screenshots, but on the messy reality of changing interfaces, novel applications, and creative workflows. If we want agents that can handle Photoshop and Figma, we need benchmarks that test for robustness, not just pattern matching.
 
+<video src="https://github.com/user-attachments/assets/78347b08-e36a-43ce-a781-31c114c333fd" width="600" autoplay loop muted playsinline>
+  Your browser does not support the video tag.
+</video>
+
 ## The Composable Future
 
 Which brings us to today — and to Clawdbot.
@@ -226,6 +230,8 @@ The story of computer-use is still being written. But looking at where we starte
 # Timeline
 
 <img width="1200" height="768" alt="story_19" src="https://github.com/user-attachments/assets/16b17e40-497c-4546-bcec-33cdb3927ae1" />
+
+---
 
 _Francesco Bonacci is the CEO of Cua, building open-source infrastructure for computer-use agents. Previously at Microsoft, where he co-authored Windows Agent Arena._
 

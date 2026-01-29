@@ -8,9 +8,7 @@ Today we're releasing Windows 11 and Ubuntu VMs running in Docker via QEMU/KVM, 
 
 Real operating systems booting from disk images. Windows 11 with full GUI, Ubuntu 22.04 with desktop environment. GPU passthrough supported for running local models on the sandbox or GUI apps that need graphics acceleration.
 
-<div align="center">
-  <img src="./assets/qemu_1.jpeg" alt="QEMU Sandboxes - Hardware-virtualized desktops" width="600" />
-</div>
+![qemu_1](https://github.com/user-attachments/assets/8282733d-c7e5-4f31-9974-32b414364868)
 
 ```bash
 docker run -p 8006:8006 -p 5000:5000 ghcr.io/trycua/cua-qemu-windows:latest
@@ -20,41 +18,35 @@ docker run -p 8006:8006 -p 5000:5000 ghcr.io/trycua/cua-qemu-windows:latest
 
 Windows uses an unattended answer file, Linux uses cloud-init. Go from ISO to configured VM with user account, network, and computer server installed — no manual steps.
 
-<div align="center">
-  <img src="./assets/qemu_2.jpeg" alt="QEMU Sandboxes - Fully Unattended Setup" width="600" />
-</div>
+![qemu_2](https://github.com/user-attachments/assets/0c529e5e-a288-467e-a4e7-b065088af5b0)
+
 
 ## Computer Server Pre-installed
 
 cua-computer-server runs on port 5000 at boot. Screenshots, mouse, keyboard, all over HTTP. Same API as Lume sandboxes — switch between macOS, Windows, and Linux without changing your agent code. Built-in autoupdater keeps the server current without rebuilding images.
 
-<div align="center">
-  <img src="./assets/qemu_3.jpeg" alt="QEMU Sandboxes - Computer Server" width="600" />
-</div>
+
+![qemu_3](https://github.com/user-attachments/assets/edcb04c7-2f6d-4006-a593-0399f6eef761)
 
 ## noVNC on Port 8006
 
 Browser-based desktop access. Open localhost:8006 to see the desktop, watch your agent run, debug visually. No VNC client install needed.
 
-<div align="center">
-  <img src="./assets/qemu_4.jpeg" alt="QEMU Sandboxes - noVNC on Port 8006" width="600" />
-</div>
+![qemu_4](https://github.com/user-attachments/assets/fa762996-1188-4119-9a79-0846f9e69bfb)
+
 
 ## Memory Snapshots
 
 Freeze and restore full VM state via QEMU's snapshot support. Save state mid-task, restore to exact same point later — running processes, memory contents, everything.
 
-<div align="center">
-  <img src="./assets/qemu_5.jpeg" alt="QEMU Sandboxes - Memory Snapshots" width="600" />
-</div>
+![qemu_5](https://github.com/user-attachments/assets/8fd12831-c572-43e1-9455-349bb2fa879b)
+
 
 ## Runtime Config
 
 Set RAM, CPU cores, disk size via environment variables. No need to rebuild images for different resource requirements.
 
-<div align="center">
-  <img src="./assets/qemu_6.jpeg" alt="QEMU Sandboxes - Runtime Config" width="600" />
-</div>
+![qemu_6](https://github.com/user-attachments/assets/89632439-b8e1-4b7b-80bb-c6453e281625)
 
 ```bash
 docker run -e RAM_SIZE=16G -e CPU_CORES=8 -e DISK_SIZE=100G ghcr.io/trycua/cua-qemu-windows:latest
@@ -64,9 +56,7 @@ docker run -e RAM_SIZE=16G -e CPU_CORES=8 -e DISK_SIZE=100G ghcr.io/trycua/cua-q
 
 Works with OSWorld and Windows Agent Arena. Pre-configured images include the applications used in standard agent evaluation suites.
 
-<div align="center">
-  <img src="./assets/qemu_7.jpeg" alt="QEMU Sandboxes - Benchmark Compatible" width="600" />
-</div>
+![qemu_7](https://github.com/user-attachments/assets/a4374703-8516-4edc-88be-cbdb72919b88)
 
 ---
 

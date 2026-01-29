@@ -1,8 +1,8 @@
 # A Story of Computer-Use: Where We Started, Where We're Headed
 
-_Published on Jan 28, 2026 by the Cua Team_
+_Published on Jan 28, 2026 by Francesco Bonacci. Originally posted on [X](https://x.com/francedot/status/2016627257310384554)._
 
-**TLDR**: Since Clawdbot went viral, I've gotten a lot of questions: Where did this all come from? What's next? Here's my take.
+***TLDR**: Since Clawdbot went viral, I've gotten a lot of questions: Where did this all come from? What's next? Here's my take.*
 
 Clawdbot just hit the mainstream. The open-source AI assistant — now rebranded to Moltbot after trademark issues — has captured the imagination of developers and mainstream users alike. An AI that runs on your own machine, controlled through WhatsApp, extensible through plugins. It feels like the future arriving all at once.
 
@@ -35,9 +35,7 @@ Before AI could use a computer, it needed to see one.
 
 On September 25, 2023, OpenAI published the GPT-4V System Card, documenting their vision-enabled model. For the first time, a frontier LLM could process images alongside text. Six weeks later, at DevDay on November 6, 2023, OpenAI opened API access to GPT-4 with Vision.
 
-
 ![story_3](https://github.com/user-attachments/assets/ece5dbce-e811-401d-a370-07140c363ef7)
-
 
 The implications were immediate: if an AI could see images, it could see screenshots. If it could see screenshots, it could understand what was on a computer screen. And if it could understand the screen, maybe it could interact with it.
 
@@ -62,12 +60,10 @@ On October 21, 2023 — days after GPT-4V became available and three weeks befor
 The pattern that would define the field emerged: **screenshot → understand → decide → act → repeat.**
 
 ![story_5](https://github.com/user-attachments/assets/ffda5016-e955-41dc-86c5-005f7757b590)
-https://www.youtube.com/watch?v=1k4LcffCq3E
 
 In February 2024, Microsoft released UFO, a GUI agent for Windows - quiete a glimpse on the future of computer-use (back then we were calling this UI-Focused or Desktop Agents). The approach was similar: visual understanding of the screen, identification of UI elements + interpolation with the OS Accessibility Tree, and execution of actions. The research community was converging on a shared architecture.
 
-![story_6](https://github.com/user-attachments/assets/1b036278-c57c-4e78-b6ba-79f78b6d579c)
-
+[![story_6](https://github.com/user-attachments/assets/1b036278-c57c-4e78-b6ba-79f78b6d579c)](https://www.youtube.com/watch?v=1k4LcffCq3E)
 
 But there was a problem. These systems worked in demos, but how well did they actually perform? Without rigorous evaluation, progress was hard to measure.
 
@@ -85,7 +81,6 @@ The results were sobering.
 In September 2024, [Windows Agent Arena](https://github.com/microsoft/WindowsAgentArena) arrived — a project I co-authored with Dillon ([@ddupont808](https://x.com/@ddupont808)) while at Microsoft. It offered scalable infrastructure for testing agents on Windows: with Azure ML integration, researchers could run hundreds of evaluation tasks in minutes instead of days. We learned firsthand how difficult it was to build reliable, reproducible environments for agent evaluation.
 
 The benchmark era had begun. **You can't improve what you can't measure.**
-
 
 Just before the major labs entered, Microsoft Research released [OmniParser](https://www.microsoft.com/en-us/research/articles/omniparser-for-pure-vision-based-gui-agent/) ([@MSFTResearch](https://x.com/@MSFTResearch)) (October 8, 2024) — a screen parsing module that converts UI screenshots into structured elements using only vision. No HTML, no accessibility trees, just pixels. It paired a detection model (to find clickable regions) with a captioning model (to describe what each element does). OmniParser became a key building block for VLMs that were not trained on GUIs to use pixels as the action space — hitting #1 trending model on Hugging Face, achieving top results on Windows Agent Arena, and enabling pure vision-based agents.
 
@@ -108,7 +103,6 @@ Ethan Mollick ([@emollick](https://x.com/@emollick)), writing in his newsletter 
 Nine days later, the open-source community responded. Browser-use ([@gregpr07](https://x.com/@gregpr07)) launched on November 5, 2024 — a Python library for AI browser automation that would eventually accumulate over 77,000 GitHub stars. The infrastructure was becoming accessible.
 
 ![story_11](https://github.com/user-attachments/assets/e079984a-ee73-4dc1-b43d-fdea78f08158)
-
 
 Then, on January 23, 2025, OpenAI entered with [Operator](https://openai.com/index/introducing-operator/), powered by their Computer-Using Agent (CUA) model. 
 
@@ -180,7 +174,7 @@ And then there's the end-to-end loop. For tasks that span multiple applications 
 
 The future isn't CLI versus GUI. It's knowing when to use each. Code-as-action for automation at scale. Visual agents for creative work and unfamiliar interfaces. The best systems will blend both — using code when efficient, falling back to vision when necessary.
 
-This is why we built Cua-Bench. GUI agents need rigorous evaluation — not just on fixed screenshots, but on the messy reality of changing interfaces, novel applications, and creative workflows. If we want agents that can handle Photoshop and Figma, we need benchmarks that test for robustness, not just pattern matching.
+This is why we built [Cua-Bench](https://github.com/trycua/cua). GUI agents need rigorous evaluation — not just on fixed screenshots, but on the messy reality of changing interfaces, novel applications, and creative workflows. If we want agents that can handle Photoshop and Figma, we need benchmarks that test for robustness, not just pattern matching.
 
 ## The Composable Future
 

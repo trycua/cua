@@ -38,6 +38,7 @@ def _get_handlers():
     global _handlers
     if _handlers is None:
         from .handlers.factory import HandlerFactory
+
         _handlers = HandlerFactory.create_handlers()
     return _handlers
 
@@ -56,6 +57,7 @@ async def _detect_actual_resolution_async() -> Tuple[int, int]:
 def _detect_actual_resolution() -> Tuple[int, int]:
     """Detect the actual screen resolution (sync wrapper)."""
     import asyncio
+
     try:
         loop = asyncio.get_event_loop()
         if loop.is_running():
@@ -125,7 +127,7 @@ def create_mcp_server() -> FastMCP:
         type text, press keys, scroll, manage windows, read/write files, and run commands.
 
         Always take a screenshot first to see the current state before performing actions.
-        After performing actions, take another screenshot to verify the result."""
+        After performing actions, take another screenshot to verify the result.""",
     )
 
     # ============================================================
@@ -140,8 +142,9 @@ def create_mcp_server() -> FastMCP:
         Returns the current screen state as an image. Always call this first
         to see what's on screen before performing any actions.
         """
-        from PIL import Image as PILImage
         from io import BytesIO
+
+        from PIL import Image as PILImage
 
         _, automation_handler, _, _, _, _ = _get_handlers()
         result = await automation_handler.screenshot()
@@ -167,9 +170,14 @@ def create_mcp_server() -> FastMCP:
                     new_width = int(width * max_dimension / height)
                 img = img.resize((new_width, new_height), PILImage.Resampling.LANCZOS)
 
+                # Initialize coordinate scaling if not already configured
+                # This ensures clicks are properly scaled from resized space to actual device space
+                if not _target_width:
+                    _configure_scaling(target_width=new_width, target_height=new_height)
+
         # Convert to RGB if necessary (for JPEG compatibility)
-        if img.mode in ('RGBA', 'P'):
-            img = img.convert('RGB')
+        if img.mode in ("RGBA", "P"):
+            img = img.convert("RGB")
 
         # Use JPEG with quality setting to ensure small file size
         buffered = BytesIO()
@@ -218,11 +226,7 @@ def create_mcp_server() -> FastMCP:
         return result
 
     @mcp.tool
-    async def computer_click(
-        x: int,
-        y: int,
-        button: str = "left"
-    ) -> Dict[str, Any]:
+    async def computer_click(x: int, y: int, button: str = "left") -> Dict[str, Any]:
         """
         Click at the specified screen coordinates.
 
@@ -276,7 +280,7 @@ def create_mcp_server() -> FastMCP:
         end_x: int,
         end_y: int,
         button: str = "left",
-        duration: float = 0.5
+        duration: float = 0.5,
     ) -> Dict[str, Any]:
         """
         Drag from start coordinates to end coordinates.
@@ -295,14 +299,13 @@ def create_mcp_server() -> FastMCP:
         _, automation_handler, _, _, _, _ = _get_handlers()
         # Move to start position first
         await automation_handler.move_cursor(actual_start_x, actual_start_y)
-        return await automation_handler.drag_to(actual_end_x, actual_end_y, button=button, duration=duration)
+        return await automation_handler.drag_to(
+            actual_end_x, actual_end_y, button=button, duration=duration
+        )
 
     @mcp.tool
     async def computer_scroll(
-        x: int,
-        y: int,
-        scroll_x: int = 0,
-        scroll_y: int = 0
+        x: int, y: int, scroll_x: int = 0, scroll_y: int = 0
     ) -> Dict[str, Any]:
         """
         Scroll at the specified position.
@@ -321,9 +324,7 @@ def create_mcp_server() -> FastMCP:
 
     @mcp.tool
     async def computer_mouse_down(
-        x: Optional[int] = None,
-        y: Optional[int] = None,
-        button: str = "left"
+        x: Optional[int] = None, y: Optional[int] = None, button: str = "left"
     ) -> Dict[str, Any]:
         """
         Press and hold a mouse button.
@@ -342,9 +343,7 @@ def create_mcp_server() -> FastMCP:
 
     @mcp.tool
     async def computer_mouse_up(
-        x: Optional[int] = None,
-        y: Optional[int] = None,
-        button: str = "left"
+        x: Optional[int] = None, y: Optional[int] = None, button: str = "left"
     ) -> Dict[str, Any]:
         """
         Release a mouse button.
@@ -794,9 +793,7 @@ def create_mcp_server() -> FastMCP:
 
     @mcp.tool
     async def computer_find_element(
-        role: Optional[str] = None,
-        title: Optional[str] = None,
-        value: Optional[str] = None
+        role: Optional[str] = None, title: Optional[str] = None, value: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Find a UI element in the accessibility tree.

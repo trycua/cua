@@ -8,9 +8,8 @@ Day 4 — the benchmark we use internally—and with customers—to evaluate CUA
 
 40 native cua-bench tasks + 369 OSWorld tasks + 154 Windows Agent Arena tasks. One unified harness to evaluate your agent across all of them.
 
-<div align="center">
-  <img src="./assets/cuabench_1.jpeg" alt="Cua-Bench - One unified harness to evaluate your agent" width="600" />
-</div>
+
+![cuabench_1](https://github.com/user-attachments/assets/ee6de06e-0bc1-40a4-aa1f-79f7da1ebaa5)
 
 ```bash
 cb run dataset datasets/cua-bench-basic --agent your-agent --model anthropic/claude-sonnet-4-20250514
@@ -20,9 +19,8 @@ cb run dataset datasets/cua-bench-basic --agent your-agent --model anthropic/cla
 
 Run tasks across multiple workers simultaneously. Evaluate your agent on 100 tasks in minutes, not hours.
 
-<div align="center">
-  <img src="./assets/cuabench_2.jpeg" alt="Cua-Bench - Parallelized Evaluations" width="600" />
-</div>
+
+![cuabench_2](https://github.com/user-attachments/assets/3e19d5d6-3721-4ad0-924d-dc5f39aad3a4)
 
 ```bash
 cb run dataset datasets/cua-bench-basic --max-parallel 8
@@ -32,17 +30,15 @@ cb run dataset datasets/cua-bench-basic --max-parallel 8
 
 macOS, Windows, Linux, Android. Managed environments you can self-host. Write one agent, evaluate it across every platform.
 
-<div align="center">
-  <img src="./assets/cuabench_3.jpeg" alt="Cua-Bench - Works Everywhere" width="600" />
-</div>
+![cuabench_3](https://github.com/user-attachments/assets/07602652-51cf-4279-851a-11207f5e917c)
+
 
 ## Interactive Exploration
 
 Step through any task manually before running your agent. Understand what you're evaluating.
 
-<div align="center">
-  <img src="./assets/cuabench_4.jpeg" alt="Cua-Bench - Interactive Exploration" width="600" />
-</div>
+![cuabench_4](https://github.com/user-attachments/assets/419b7713-8300-422b-bc04-ca6f68791272)
+
 
 ```bash
 cb interact tasks/slack_env --variant-id 0
@@ -52,9 +48,8 @@ cb interact tasks/slack_env --variant-id 0
 
 Generate new evaluation tasks from natural language descriptions. Extend the benchmark with your own scenarios.
 
-<div align="center">
-  <img src="./assets/cuabench_5.jpeg" alt="Cua-Bench - Task Generation" width="600" />
-</div>
+![cuabench_5](https://github.com/user-attachments/assets/5f53a0b3-313a-4029-a5f5-abf1e77c9c3c)
+
 
 ```bash
 cb task generate "2048 game"
@@ -64,9 +59,8 @@ cb task generate "2048 game"
 
 Watch your agent's progress in real-time. View traces, logs, and screenshots as evaluations run.
 
-<div align="center">
-  <img src="./assets/cuabench_6.jpeg" alt="Cua-Bench - Live Monitoring" width="600" />
-</div>
+![cuabench_6](https://github.com/user-attachments/assets/97af5e09-bc88-48fb-9e82-d23bb6f1a88f)
+
 
 ```bash
 cb run watch <run_id>
@@ -77,9 +71,8 @@ cb trace view <run_id>
 
 Run tasks with reference implementations to verify environments work correctly before agent evaluation.
 
-<div align="center">
-  <img src="./assets/cuabench_7.jpeg" alt="Cua-Bench - Oracle Validation" width="600" />
-</div>
+![cuabench_7](https://github.com/user-attachments/assets/6689cdeb-843e-45db-8729-a1e80fb60b98)
+
 
 ```bash
 cb run dataset datasets/cua-bench-basic --oracle
@@ -89,15 +82,13 @@ cb run dataset datasets/cua-bench-basic --oracle
 
 Plug in OSWorld, Windows Agent Arena, AndroidWorld. Unified CLI, consistent evaluation, comparable results.
 
-<div align="center">
-  <img src="./assets/cuabench_8.jpeg" alt="Cua-Bench - Adapters for Existing Benchmarks" width="600" />
-</div>
+![cuabench_8](https://github.com/user-attachments/assets/77b0b545-42e1-480b-92d9-22380c8c64ec)
+
 
 ---
 
-<div align="center">
-  <img src="./assets/cuabench_9.jpeg" alt="Cua-Bench - MIT Licensed" width="600" />
-</div>
+![cuabench_9](https://github.com/user-attachments/assets/09ad87ec-0a54-401a-bb33-93e891df5df2)
+
 
 **MIT licensed. Self-hostable. 563 tasks and counting.**
 

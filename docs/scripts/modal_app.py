@@ -76,10 +76,12 @@ def init_otel(service_name: str = OTEL_SERVICE_NAME):
         service_name: Name of the service for OTEL resource
     """
     from opentelemetry import metrics
+    from opentelemetry.exporter.otlp.proto.http.metric_exporter import (
+        OTLPMetricExporter,
+    )
     from opentelemetry.sdk.metrics import MeterProvider
     from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
-    from opentelemetry.sdk.resources import Resource, SERVICE_NAME, SERVICE_VERSION
-    from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter
+    from opentelemetry.sdk.resources import SERVICE_NAME, SERVICE_VERSION, Resource
 
     resource = Resource.create({
         SERVICE_NAME: service_name,

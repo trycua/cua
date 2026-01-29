@@ -5,24 +5,24 @@ Exports the Four Golden Signals: Latency, Traffic, Errors, Saturation
 Exporter endpoint: otel.cua.ai
 """
 
+import logging
 import os
 import time
-import logging
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from typing import Any, Dict, Optional, Callable
 from functools import wraps
+from typing import Any, Callable, Dict, Optional
 
 # OpenTelemetry imports
 from opentelemetry import metrics, trace
-from opentelemetry.sdk.metrics import MeterProvider
-from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
-from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import BatchSpanProcessor
-from opentelemetry.sdk.resources import Resource, SERVICE_NAME, SERVICE_VERSION
 from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter
 from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
 from opentelemetry.metrics import Counter, Histogram, UpDownCounter
+from opentelemetry.sdk.metrics import MeterProvider
+from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
+from opentelemetry.sdk.resources import SERVICE_NAME, SERVICE_VERSION, Resource
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
 logger = logging.getLogger("mcp-server.otel")
 

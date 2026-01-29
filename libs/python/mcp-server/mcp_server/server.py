@@ -15,15 +15,15 @@ import anyio
 # Import OTEL instrumentation
 try:
     from .otel import (
-        initialize_otel,
-        shutdown_otel,
-        timed_tool_execution,
-        timed_task,
-        record_session_created,
-        record_session_closed,
-        record_session_error,
-        update_saturation,
         get_metrics,
+        initialize_otel,
+        record_session_closed,
+        record_session_created,
+        record_session_error,
+        shutdown_otel,
+        timed_task,
+        timed_tool_execution,
+        update_saturation,
     )
     OTEL_AVAILABLE = True
 except ImportError:

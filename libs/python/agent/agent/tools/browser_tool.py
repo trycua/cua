@@ -310,14 +310,9 @@ class BrowserTool(BaseComputerTool):
         # If coordinate is provided, click there first
         coordinate = params.get("coordinate")
         if coordinate and len(coordinate) == 2:
-            print(
-                f"[DEBUG _action_type] Clicking at ({coordinate[0]}, {coordinate[1]}) before typing"
-            )
             await self.interface.playwright_exec("click", {"x": coordinate[0], "y": coordinate[1]})
 
-        print(f"[DEBUG _action_type] Sending to playwright_exec: type '{text}'")
         result = await self.interface.playwright_exec("type", {"text": text})
-        print(f"[DEBUG _action_type] Result from playwright_exec: {result}")
         return result
 
     async def _action_mouse_move(self, params: dict) -> dict:
@@ -335,13 +330,9 @@ class BrowserTool(BaseComputerTool):
         if not coordinate or len(coordinate) != 2:
             return {"success": False, "error": "coordinate parameter [x, y] is required"}
 
-        print(
-            f"[DEBUG _action_left_click] Sending to playwright_exec: click at ({coordinate[0]}, {coordinate[1]})"
-        )
         result = await self.interface.playwright_exec(
             "click", {"x": coordinate[0], "y": coordinate[1]}
         )
-        print(f"[DEBUG _action_left_click] Result from playwright_exec: {result}")
         return result
 
     async def _action_scroll(self, params: dict) -> dict:
@@ -432,7 +423,6 @@ class BrowserTool(BaseComputerTool):
         which transforms actions like {"type": "left_click", "coordinate": [x, y]}
         into {"type": "click", "button": "left", "x": x, "y": y}.
         """
-        print(f"[DEBUG BrowserTool.click] x={x}, y={y}, button={button}, kwargs={kwargs}")
         if x is None or y is None:
             return {"success": False, "error": "x and y coordinates are required"}
         if button == "right":

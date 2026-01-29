@@ -138,10 +138,10 @@ def _fara_args_to_sdk_item(args: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     if action == "wait":
         return make_wait_item()
 
-    # Terminate - return a special marker that will be handled
+    # Terminate - return None so no action is executed
+    # The caller checks for terminate action and adds an assistant message to stop the loop
     if action == "terminate":
-        # Return a wait item but caller will check for terminate
-        return make_wait_item()
+        return None
 
     # FARA browser-specific actions - create computer_call items directly
     # agent.py uses getattr(computer, action_type) to call these methods
@@ -421,9 +421,9 @@ class FaraVlmConfig(AsyncAgentConfig):
                 item = _fara_args_to_sdk_item(args)
                 if item:
                     output_items.append(item)
-                    # Check for terminate
-                    if args.get("action") == "terminate":
-                        has_terminate = True
+                # Check for terminate (even if item is None)
+                if args.get("action") == "terminate":
+                    has_terminate = True
 
         elif tool_calls_array:
             # Priority 2: Use tool_calls field if present (Ollama Cloud format)
@@ -449,8 +449,9 @@ class FaraVlmConfig(AsyncAgentConfig):
                         item = _fara_args_to_sdk_item(args)
                         if item:
                             output_items.append(item)
-                            if args.get("action") == "terminate":
-                                has_terminate = True
+                        # Check for terminate (even if item is None)
+                        if args.get("action") == "terminate":
+                            has_terminate = True
                 except json.JSONDecodeError:
                     pass
 

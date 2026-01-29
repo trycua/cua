@@ -12,9 +12,8 @@ Connect to any sandbox, click record, do the task, click stop. The system captur
 
 The recorder runs in the browser — no additional software to install. Add `autorecord=1` to the URL to start capturing immediately on connection.
 
-<div align="center">
-  <img src="./assets/record_1.jpeg" alt="Human Trajectory Recording - Record via VNC" width="600" />
-</div>
+![record_1](https://github.com/user-attachments/assets/429c6ff8-427e-4233-b2bd-999d28965502)
+
 
 ```bash
 cua skills record --sandbox my-sandbox
@@ -27,17 +26,15 @@ Raw event logs aren't useful for language models. So after recording, a vision-l
 
 The processing extracts key frames, correlates them with input events, and outputs a structured trajectory with timestamps, screenshots, actions, and natural language descriptions.
 
-<div align="center">
-  <img src="./assets/record_2.jpeg" alt="Human Trajectory Recording - Automatic Captioning" width="600" />
-</div>
+![record_2](https://github.com/user-attachments/assets/db6ff675-3183-43c5-a198-4be47e595a21)
+
 
 ## Skills as Markdown
 
 Each skill saves to `~/.cua/skills/<name>/` containing:
 
-<div align="center">
-  <img src="./assets/record_3.jpeg" alt="Human Trajectory Recording - Skills as Markdown" width="600" />
-</div>
+![record_3](https://github.com/user-attachments/assets/d8d7b9e2-0af9-46c0-bfaf-9420c2f8dc3b)
+
 
 ```
 ~/.cua/skills/login-flow/
@@ -55,9 +52,8 @@ The SKILL.md file is human-readable and editable. Fix a typo in the instructions
 
 List, read, replay, and delete skills via CLI.
 
-<div align="center">
-  <img src="./assets/record_4.jpeg" alt="Human Trajectory Recording - Manage Skills" width="600" />
-</div>
+![record_4](https://github.com/user-attachments/assets/fc7a1fc6-7da8-4053-8a17-f9839fe50f90)
+
 
 ```bash
 cua skills list                          # View all skills
@@ -71,9 +67,8 @@ cua skills delete login-flow             # Remove a skill
 
 Add the Cua MCP server to Claude Code:
 
-<div align="center">
-  <img src="./assets/record_5.jpeg" alt="Human Trajectory Recording - Claude Code Integration" width="600" />
-</div>
+![record_5](https://github.com/user-attachments/assets/5bb31dac-52aa-4d5f-9117-441f597c3cb4)
+
 
 ```bash
 cua auth login
@@ -94,17 +89,15 @@ The key insight from ShowUI-Aloha: demonstrations generalize. A single recording
 
 Load a skill into context, describe what's different this time, and the agent follows the demonstrated sequence while substituting new values where appropriate.
 
-<div align="center">
-  <img src="./assets/record_6.jpeg" alt="Human Trajectory Recording - Replay with Adaptation" width="600" />
-</div>
+![record_6](https://github.com/user-attachments/assets/d6cd5050-af5f-46d5-b2bc-6936eaa6a141)
+
 
 ## Stream to External Servers
 
 For building training datasets or automated data collection, stream recordings directly to a WebSocket endpoint instead of downloading manually:
 
-<div align="center">
-  <img src="./assets/record_7.jpeg" alt="Human Trajectory Recording - Stream to External Servers" width="600" />
-</div>
+![record_7](https://github.com/user-attachments/assets/102188b3-1bba-4b1c-9940-eaa16e444a42)
+
 
 ```bash
 http://localhost:8006/vnc.html?record_url=ws://your-server:8080
@@ -114,9 +107,8 @@ The recording data arrives as a websockify stream, ready for processing the mome
 
 ---
 
-<div align="center">
-  <img src="./assets/record_8.jpeg" alt="Human Trajectory Recording - One-Shot Learning for Agents" width="600" />
-</div>
+![record_8](https://github.com/user-attachments/assets/baa1663e-5f4e-4bdb-8921-3fb584786208)
+
 
 **One-shot learning for computer-use agents.** A human demonstrates once, the system extracts a reusable skill, agents replay it with adaptation. The same approach that doubled success rates in academic benchmarks, now available as an open tool.
 

@@ -396,7 +396,10 @@ class BrowserTool(BaseComputerTool):
 
     async def _action_wait(self, params: dict) -> dict:
         """Wait for specified seconds."""
-        time = params.get("time", 0)
+        time = params.get("time")
+        # Handle None or missing time - default to 3 seconds (matches FARA behavior)
+        if time is None:
+            time = 3
         if time <= 0:
             return {"success": False, "error": "time parameter must be positive"}
 
@@ -405,7 +408,10 @@ class BrowserTool(BaseComputerTool):
 
     async def _action_terminate(self, params: dict) -> dict:
         """Terminate and report status."""
-        status = params.get("status", "success")
+        status = params.get("status")
+        # Handle None or missing status - default to "success"
+        if status is None:
+            status = "success"
         message = f"Task terminated with status: {status}"
 
         if self._facts:

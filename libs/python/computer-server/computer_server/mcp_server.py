@@ -140,8 +140,9 @@ def create_mcp_server() -> FastMCP:
         Returns the current screen state as an image. Always call this first
         to see what's on screen before performing any actions.
         """
-        from PIL import Image as PILImage
         from io import BytesIO
+
+        from PIL import Image as PILImage
 
         _, automation_handler, _, _, _, _ = _get_handlers()
         result = await automation_handler.screenshot()

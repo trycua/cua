@@ -346,8 +346,9 @@ class BrowserTool(BaseComputerTool):
 
     async def _action_scroll(self, params: dict) -> dict:
         """Scroll the page."""
-        pixels = params.get("pixels", 0)
-        if pixels == 0:
+        pixels = params.get("pixels")
+        # Handle None explicitly - default to 0 means "no scroll requested"
+        if pixels is None or pixels == 0:
             return {"success": False, "error": "pixels parameter is required"}
 
         # Positive = up (negative delta_y), Negative = down (positive delta_y)

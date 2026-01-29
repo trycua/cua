@@ -110,13 +110,13 @@ def _fara_args_to_sdk_item(args: Dict[str, Any]) -> Optional[Dict[str, Any]]:
 
     # Scroll action
     if action == "scroll":
-        pixels = args.get("pixels", 0)
+        pixels = args.get("pixels") or 0  # Handle None explicitly
         # FARA: positive = up, negative = down
         scroll_y = -pixels  # SDK: positive = down
         return make_scroll_item(x=x, y=y, scroll_x=0, scroll_y=scroll_y)
 
     if action == "hscroll":
-        pixels = args.get("pixels", 0)
+        pixels = args.get("pixels") or 0  # Handle None explicitly
         return make_scroll_item(x=x, y=y, scroll_x=pixels, scroll_y=0)
 
     # Drag action

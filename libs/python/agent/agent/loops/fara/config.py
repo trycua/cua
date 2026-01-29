@@ -31,8 +31,44 @@ from .helpers import (
     _convert_responses_items_to_fara_messages,
     build_nous_system,
     parse_tool_call_from_text,
-    unnormalize_coordinate,
 )
+
+
+def _scale_fara_coordinates(
+    args: Dict[str, Any],
+    original_dims: Tuple[int, int],
+    resized_dims: Tuple[int, int],
+) -> Dict[str, Any]:
+    """
+    Scale FARA coordinates from resized image space to original viewport space.
+
+    FARA outputs pixel coordinates on the resized image (after smart_resize).
+    This scales them back to the original browser viewport, matching FARA's
+    convert_resized_coords_to_original() in fara_agent.py:
+        scale_x = og_w / rsz_w
+        return [coords[0] * scale_x, coords[1] * scale_y]
+
+    Args:
+        args: Action arguments containing "coordinate" key
+        original_dims: (width, height) of original browser viewport
+        resized_dims: (width, height) after smart_resize
+    """
+    coord = args.get("coordinate")
+    if not coord or not isinstance(coord, (list, tuple)) or len(coord) < 2:
+        return args
+
+    x, y = float(coord[0]), float(coord[1])
+    original_w, original_h = float(original_dims[0]), float(original_dims[1])
+    resized_w, resized_h = float(resized_dims[0]), float(resized_dims[1])
+
+    # Scale from resized to original: x_final = x * (original / resized)
+    scale_x = original_w / resized_w
+    scale_y = original_h / resized_h
+
+    x_scaled = max(0.0, min(original_w, x * scale_x))
+    y_scaled = max(0.0, min(original_h, y * scale_y))
+
+    return {**args, "coordinate": [round(x_scaled), round(y_scaled)]}
 
 
 def _fara_args_to_sdk_item(args: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -265,7 +301,9 @@ class FaraVlmConfig(AsyncAgentConfig):
             completion_messages.append(screenshot_msg)
 
         # Smart-resize all screenshots and attach min/max pixel hints. Fail fast if deps missing.
-        # Also record the last resized width/height to unnormalize coordinates later.
+        # Track both original and resized dimensions for coordinate scaling.
+        last_original_w: Optional[int] = None
+        last_original_h: Optional[int] = None
         last_rw: Optional[int] = None
         last_rh: Optional[int] = None
         MIN_PIXELS = 3136
@@ -300,6 +338,8 @@ class FaraVlmConfig(AsyncAgentConfig):
                         # Attach hints on this image block
                         part["min_pixels"] = MIN_PIXELS
                         part["max_pixels"] = MAX_PIXELS
+                        # Track both original and resized dimensions
+                        last_original_w, last_original_h = w, h
                         last_rw, last_rh = rw, rh
 
         api_kwargs: Dict[str, Any] = {
@@ -360,12 +400,21 @@ class FaraVlmConfig(AsyncAgentConfig):
             fn_name = tool_call.get("name") or "computer"
             raw_args = tool_call.get("arguments") or {}
 
-            # Unnormalize coordinates to actual screen size using last resized dims
-            if last_rw is None or last_rh is None:
+            # Scale coordinates from resized image space to original viewport
+            if (
+                last_rw is None
+                or last_rh is None
+                or last_original_w is None
+                or last_original_h is None
+            ):
                 raise RuntimeError(
-                    "No screenshots found to derive dimensions for coordinate unnormalization."
+                    "No screenshots found to derive dimensions for coordinate scaling."
                 )
-            args = await unnormalize_coordinate(raw_args, (last_rw, last_rh))
+            args = _scale_fara_coordinates(
+                raw_args,
+                original_dims=(last_original_w, last_original_h),
+                resized_dims=(last_rw, last_rh),
+            )
 
             # Convert FARA output to SDK format using make_*_item helpers
             if fn_name in ("computer", "computer_use"):
@@ -386,9 +435,14 @@ class FaraVlmConfig(AsyncAgentConfig):
                 try:
                     args = json.loads(args_str)
 
-                    # Unnormalize coordinates if present
+                    # Scale coordinates from resized image space to original viewport
                     if "coordinate" in args and last_rw is not None and last_rh is not None:
-                        args = await unnormalize_coordinate(args, (last_rw, last_rh))
+                        if last_original_w is not None and last_original_h is not None:
+                            args = _scale_fara_coordinates(
+                                args,
+                                original_dims=(last_original_w, last_original_h),
+                                resized_dims=(last_rw, last_rh),
+                            )
 
                     # Convert FARA output to SDK format
                     if fn_name in ("computer", "computer_use"):
@@ -507,7 +561,12 @@ class FaraVlmConfig(AsyncAgentConfig):
         content_text = ((choice.get("message") or {}).get("content")) or ""
         tool_call = parse_tool_call_from_text(content_text) or {}
         args = tool_call.get("arguments") or {}
-        args = await unnormalize_coordinate(args, (rh, rw))
+        # Scale from resized image space to original viewport
+        args = _scale_fara_coordinates(
+            args,
+            original_dims=(w, h),
+            resized_dims=(rw, rh),
+        )
         coord = args.get("coordinate")
         if isinstance(coord, (list, tuple)) and len(coord) >= 2:
             return int(coord[0]), int(coord[1])

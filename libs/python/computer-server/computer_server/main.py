@@ -72,6 +72,7 @@ app = FastAPI(
     version="0.1.0",
     websocket_max_size=WEBSOCKET_MAX_SIZE,
     lifespan=_mcp_http_app.lifespan if _mcp_http_app else None,
+    redirect_slashes=False,
 )
 
 # CORS configuration

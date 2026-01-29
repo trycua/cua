@@ -690,8 +690,6 @@ class ComputerAgent:
                 # Extract action arguments (all fields except 'type')
                 action_args = {k: v for k, v in action.items() if k != "type"}
 
-                # print(f"{action_type}({action_args})")
-
                 # Execute the computer action
                 computer_method = getattr(computer, action_type, None)
                 action_result = None

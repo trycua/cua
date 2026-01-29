@@ -1,4 +1,4 @@
-# Day 2 of 5 Days of OSS Releases: QEMU Sandboxes
+# Day 2 of 5 Days of OSS Releases: QEMU Linux and Windows Sandboxes
 
 _Published on January 30, 2026 by the Cua Team_
 

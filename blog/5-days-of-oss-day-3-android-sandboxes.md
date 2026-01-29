@@ -8,9 +8,8 @@ We're halfway through 5 Days of OSS Releases! Today we're releasing QEMU Android
 
 Real Android 11 system with Google APIs running via QEMU/KVM. A complete Android device with touch input, app installation, and system services. Run any app your agent needs to test or automate.
 
-<div align="center">
-  <img src="./assets/androidqemu_1.jpeg" alt="QEMU Android Sandboxes - Full Android Emulator" width="600" />
-</div>
+![androidqemu_1](https://github.com/user-attachments/assets/3c9fb76f-5e0b-4031-a152-6ff0f9301dfd)
+
 
 ```bash
 docker run -p 8006:8006 -p 8000:8000 ghcr.io/trycua/cua-android:latest
@@ -20,9 +19,8 @@ docker run -p 8006:8006 -p 8000:8000 ghcr.io/trycua/cua-android:latest
 
 Connect Claude Code, Claude Desktop, or any MCP-compatible client directly to the Android device over HTTP. Screenshots, touch, keyboard, shell commands — all exposed as MCP tools. Ask Claude to test your app and watch it happen.
 
-<div align="center">
-  <img src="./assets/androidqemu_2.jpeg" alt="QEMU Android Sandboxes - MCP Server Included" width="600" />
-</div>
+![androidqemu_2](https://github.com/user-attachments/assets/66cdb74f-8c5b-4515-b4f6-8fae29830b26)
+
 
 ```json
 {
@@ -39,9 +37,8 @@ Connect Claude Code, Claude Desktop, or any MCP-compatible client directly to th
 
 Emulate real hardware. Samsung Galaxy S6 through S10, Nexus 4, Nexus One, tablets like Pixel C. Configure via EMULATOR_DEVICE environment variable.
 
-<div align="center">
-  <img src="./assets/androidqemu_3.jpeg" alt="QEMU Android Sandboxes - Device Profiles" width="600" />
-</div>
+![androidqemu_3](https://github.com/user-attachments/assets/af8f6588-949a-40ad-94ef-d77c6755392c)
+
 
 ```bash
 docker run -e EMULATOR_DEVICE="Samsung Galaxy S10" ghcr.io/trycua/cua-android:latest
@@ -51,9 +48,8 @@ docker run -e EMULATOR_DEVICE="Samsung Galaxy S10" ghcr.io/trycua/cua-android:la
 
 Full Android Debug Bridge access. Install APKs, run shell commands, capture logcat, fire intents, inspect memory. Everything you'd do with a physical device, all from the container.
 
-<div align="center">
-  <img src="./assets/androidqemu_4.jpeg" alt="QEMU Android Sandboxes - ADB Built-in" width="600" />
-</div>
+![androidqemu_4](https://github.com/user-attachments/assets/9b0b3295-f8c3-4642-9740-4d8b050cd6e5)
+
 
 ```bash
 adb shell pm list packages
@@ -66,25 +62,22 @@ adb shell logcat -d | grep -i error
 
 Same HTTP API on port 8000 as macOS, Windows, and Linux sandboxes. Screenshots, touch, keyboard, shell commands — all unified. Write one agent, run it across every platform.
 
-<div align="center">
-  <img src="./assets/androidqemu_5.jpeg" alt="QEMU Android Sandboxes - Computer Server Pre-installed" width="600" />
-</div>
+![androidqemu_5](https://github.com/user-attachments/assets/edd56ec5-3832-47e6-b052-985611edd4b4)
+
 
 ## noVNC on Port 8006
 
 Watch your agent navigate Android in the browser. See the screen, observe touch events, debug visually. No VNC client needed.
 
-<div align="center">
-  <img src="./assets/androidqemu_6.jpeg" alt="QEMU Android Sandboxes - noVNC on Port 8006" width="600" />
-</div>
+![androidqemu_6](https://github.com/user-attachments/assets/8c0c539f-7ee9-499b-837c-a4d333f0885b)
+
 
 ## Intent-based Automation
 
 Launch apps, open URLs, send broadcasts via Android intents. More reliable than coordinate-based tapping — let the OS handle navigation.
 
-<div align="center">
-  <img src="./assets/androidqemu_7.jpeg" alt="QEMU Android Sandboxes - Intent-based Automation" width="600" />
-</div>
+![androidqemu_7](https://github.com/user-attachments/assets/79ee200d-b9f4-4b06-9b2f-a3d91649c008)
+
 
 ```bash
 # Launch Settings app
@@ -98,17 +91,14 @@ adb shell am start -a android.intent.action.VIEW -d "https://example.com" com.an
 
 logcat for real-time logs, dumpsys for system state, pm for package management, top for resource monitoring. Debug apps, track performance, catch crashes automatically.
 
-<div align="center">
-  <img src="./assets/androidqemu_8.jpeg" alt="QEMU Android Sandboxes - Full Diagnostic Access" width="600" />
-</div>
+![androidqemu_8](https://github.com/user-attachments/assets/2f07c93e-48ef-4e4c-b3a7-120a682b2ce3)
+
 
 ## Built on docker-android
 
 Based on budtmo/docker-android with cua-computer-server added. Proven emulator stability with our unified agent API on top.
 
-<div align="center">
-  <img src="./assets/androidqemu_9.jpeg" alt="QEMU Android Sandboxes - Built on docker-android" width="600" />
-</div>
+![androidqemu_9](https://github.com/user-attachments/assets/2254c159-388b-4845-95a2-002237fdd930)
 
 ---
 

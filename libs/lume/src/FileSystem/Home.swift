@@ -221,6 +221,59 @@ final class Home {
         }
     }
 
+    /// Copies a VM directory manually to allow for disk modifications
+    /// - Parameters:
+    ///   - sourceName: Name of the source VM
+    ///   - destName: Name for the destination VM
+    ///   - sourceLocation: Optional name of the source location
+    ///   - destLocation: Optional name of the destination location
+    ///   - compact: Whether to simple-compact the disk (skip zeros)
+    /// - Throws: HomeError or VMDirectoryError
+    func copyVMDirectoryManual(
+        from sourceName: String,
+        to destName: String,
+        sourceLocation: String? = nil,
+        destLocation: String? = nil,
+        compact: Bool = false
+    ) throws {
+        let sourceDir = try getVMDirectory(sourceName, storage: sourceLocation)
+        let destDir = try getVMDirectory(destName, storage: destLocation)
+
+        // Check if destination directory exists at all
+        if destDir.exists() {
+            throw HomeError.directoryAlreadyExists(path: destDir.dir.path)
+        }
+
+        // Create destination directory
+        try createDirectory(at: destDir.dir.url)
+
+        // Copy auxiliary files (config, nvram, provisioning marker if exists)
+        // We skip 'sessions.json' as cloning shouldn't copy running session info
+        let filesToCopy = [
+            sourceDir.configPath,
+            sourceDir.nvramPath,
+            sourceDir.provisioningPath
+        ]
+
+        for srcPath in filesToCopy {
+            if srcPath.exists() {
+                let dstPath = destDir.dir.file(srcPath.url.lastPathComponent)
+                try fileManager.copyItem(at: srcPath.url, to: dstPath.url)
+            }
+        }
+
+        // Handle Disk Copy
+        if compact {
+            Logger.info("Compacting disk image during clone...", metadata: ["source": sourceName])
+            try sourceDir.compactCopyDisk(to: destDir.diskPath)
+        } else {
+            // Standard copy if not compacting (but manual flow)
+            if sourceDir.diskPath.exists() {
+                try fileManager.copyItem(at: sourceDir.diskPath.url, to: destDir.diskPath.url)
+            }
+        }
+    }
+
     // MARK: - Location Management
 
     /// Adds a new VM location

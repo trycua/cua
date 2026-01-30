@@ -104,9 +104,9 @@ else
 fi
 
 # Install packages using UV as the service user
-log "Installing cua-computer-server..."
-sudo -u "$USER_NAME" uv add --directory "$PROJECT_DIR" cua-computer-server "Pillow>=9.2.0"
-log "cua-computer-server installed successfully"
+log "Installing cua-computer-server and cua-agent..."
+sudo -u "$USER_NAME" uv add --directory "$PROJECT_DIR" cua-computer-server "cua-agent[all]" "Pillow>=9.2.0"
+log "cua-computer-server and cua-agent installed successfully"
 
 log "Installing playwright & firefox browser..."
 sudo -u "$USER_NAME" uv add --directory "$PROJECT_DIR" playwright
@@ -132,8 +132,8 @@ PROJECT_DIR="/opt/cua-server"
 LOG_FILE="$PROJECT_DIR/server.log"
 
 start_server() {
-    echo "$(date '+%Y-%m-%d %H:%M:%S') Updating cua-computer-server..." >> "$LOG_FILE"
-    uv add --directory "$PROJECT_DIR" cua-computer-server >> "$LOG_FILE" 2>&1
+    echo "$(date '+%Y-%m-%d %H:%M:%S') Updating cua-computer-server and cua-agent..." >> "$LOG_FILE"
+    uv add --directory "$PROJECT_DIR" cua-computer-server "cua-agent[all]" >> "$LOG_FILE" 2>&1
 
     echo "$(date '+%Y-%m-%d %H:%M:%S') Starting Cua Computer Server on port 5000..." >> "$LOG_FILE"
     uv run --directory "$PROJECT_DIR" python -m computer_server --port 5000 >> "$LOG_FILE" 2>&1

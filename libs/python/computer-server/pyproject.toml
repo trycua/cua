@@ -32,6 +32,7 @@ dependencies = [
     "python-xlib>=0.33; sys_platform == 'linux'",
     "pywin32>=310; sys_platform == 'win32'",
     "python-certifi-win32; sys_platform == 'win32'",
+    "cua-core",
 ]
 
 [project.optional-dependencies]
@@ -78,3 +79,6 @@ dev = [
 [tool.pdm.scripts]
 # Starts HTTP server with MCP at /mcp endpoint
 api = "python -m computer_server"
+
+[tool.uv.sources]
+cua-core = { workspace = true }

@@ -267,20 +267,8 @@ export function CustomHeader() {
             className="hidden sm:inline-flex h-9 w-9 items-center justify-center rounded-md text-fd-muted-foreground transition-colors hover:bg-fd-accent hover:text-fd-foreground"
             title="Vibe Coding MCP"
           >
-            <Image
-              src={McpBlack}
-              alt="MCP"
-              width={20}
-              height={20}
-              className="block dark:hidden"
-            />
-            <Image
-              src={McpWhite}
-              alt="MCP"
-              width={20}
-              height={20}
-              className="hidden dark:block"
-            />
+            <Image src={McpBlack} alt="MCP" width={20} height={20} className="block dark:hidden" />
+            <Image src={McpWhite} alt="MCP" width={20} height={20} className="hidden dark:block" />
           </Link>
 
           <ThemeToggle />

@@ -76,7 +76,7 @@ boot_commands:
   - "<delay 1>"
   # Type Full Name
   - "<type 'lume'>"
-  - "<tab>" 
+  - "<tab>"
   # Skip Account Name (auto-filled from Full Name)
   - "<tab>"
   # Type Password
@@ -199,7 +199,7 @@ boot_commands:
 
   # Open Spotlight with Cmd+Space
   - "<cmd+space>"
-  - "<delay 2>" 
+  - "<delay 2>"
 
   # Type "Terminal" to search for Terminal app
   - "<type 'Terminal'>"

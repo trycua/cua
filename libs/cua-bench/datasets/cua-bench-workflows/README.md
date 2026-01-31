@@ -46,10 +46,10 @@ cb interact datasets/cua-bench-workflows/photoshop-tasks --variant-id 2
 
 ### photoshop-tasks
 
-| Variant | Description |
-|---------|-------------|
-| 0 | Create document with "Hello World" text layer |
-| 1 | Create document with "Welcome to CUA" text layer |
-| 2 | Open PSD and count layers |
-| 3 | Open PSD and describe layers |
-| 4 | Create and save document as specific filename |
+| Variant | Description                                      |
+| ------- | ------------------------------------------------ |
+| 0       | Create document with "Hello World" text layer    |
+| 1       | Create document with "Welcome to CUA" text layer |
+| 2       | Open PSD and count layers                        |
+| 3       | Open PSD and describe layers                     |
+| 4       | Create and save document as specific filename    |

@@ -4,12 +4,6 @@ It provides a low-overhead way to collect anonymous usage data via PostHog,
 operational metrics via OpenTelemetry, and error tracking via Sentry.
 """
 
-from core.telemetry.posthog import (
-    destroy_telemetry_client,
-    is_telemetry_enabled,
-    record_event,
-)
-
 # OpenTelemetry instrumentation for Four Golden Signals
 from core.telemetry.otel import (
     create_span,
@@ -20,6 +14,11 @@ from core.telemetry.otel import (
     record_operation,
     record_tokens,
     track_concurrent,
+)
+from core.telemetry.posthog import (
+    destroy_telemetry_client,
+    is_telemetry_enabled,
+    record_event,
 )
 
 # Sentry error tracking

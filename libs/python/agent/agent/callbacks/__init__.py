@@ -6,8 +6,8 @@ from .base import AsyncCallbackHandler
 from .budget_manager import BudgetManagerCallback
 from .image_retention import ImageRetentionCallback
 from .logging import LoggingCallback
-from .otel import OtelCallback, OtelErrorCallback
 from .operator_validator import OperatorNormalizerCallback
+from .otel import OtelCallback, OtelErrorCallback
 from .prompt_instructions import PromptInstructionsCallback
 from .telemetry import TelemetryCallback
 from .trajectory_saver import TrajectorySaverCallback

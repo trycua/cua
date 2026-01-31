@@ -10,7 +10,7 @@ echo "X server is ready"
 
 # Update cua-computer-server and cua-agent
 echo "Updating cua-computer-server and cua-agent..."
-uv pip install --upgrade --system cua-computer-server "cua-agent[all]"
+sudo uv pip install --upgrade --system cua-computer-server "cua-agent[all]"
 
 # Start computer-server
 export DISPLAY=:1

@@ -99,6 +99,74 @@ extension VMDirectory {
         } catch {
         }
     }
+
+    /// Compacts and copies the VM's disk to a new location
+    /// - Parameter destination: The destination path for the compacted disk
+    /// - Throws: VMDirectoryError if the operation fails
+    func compactCopyDisk(to destination: Path) throws {
+        // Ensure source exists
+        guard diskPath.exists() else {
+            throw VMDirectoryError.diskOperationFailed("Source disk does not exist")
+        }
+        
+        // Open source for reading
+        guard let sourceHandle = try? FileHandle(forReadingFrom: diskPath.url) else {
+            throw VMDirectoryError.diskOperationFailed("Could not open source disk for reading")
+        }
+        defer { try? sourceHandle.close() }
+        
+        // Create destination file
+        if !FileManager.default.createFile(atPath: destination.path, contents: nil) {
+            throw VMDirectoryError.fileCreationFailed(destination.path)
+        }
+        
+        // Open destination for writing
+        guard let destHandle = try? FileHandle(forWritingTo: destination.url) else {
+            throw VMDirectoryError.diskOperationFailed("Could not open destination disk for writing")
+        }
+        defer { try? destHandle.close() }
+        
+        do {
+            // Get source size
+            let fileSize = try diskPath.url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
+            
+            // Set destination size to match source (but sparsely)
+            try destHandle.truncate(atOffset: UInt64(fileSize))
+            
+            // Read and copy in chunks, skipping zero blocks
+            let chunkSize = 4 * 1024 * 1024 // 4MB chunks
+            var offset: UInt64 = 0
+            let total = UInt64(fileSize)
+            
+            while offset < total {
+                // Seek to current offset in source
+                try sourceHandle.seek(toOffset: offset)
+                
+                // Read next chunk
+                // Note: Using read(upToCount:) as this project targets macOS 14+
+                let data = try sourceHandle.read(upToCount: chunkSize) ?? Data()
+                
+                if data.isEmpty {
+                    break // EOF
+                }
+                
+                // Check if data contains any non-zero bytes
+                // This is a simple optimization to avoid writing blocks of zeros
+                // File system sparse support will handle the unwritten areas
+                if data.contains(where: { $0 != 0 }) {
+                    try destHandle.seek(toOffset: offset)
+                    try destHandle.write(contentsOf: data)
+                }
+                
+                offset += UInt64(data.count)
+            }
+            
+            Logger.info("Compacted disk copy completed", metadata: ["originalSize": "\(fileSize)"])
+            
+        } catch {
+            throw VMDirectoryError.diskOperationFailed(error.localizedDescription)
+        }
+    }
 }
 
 // MARK: - Configuration Management

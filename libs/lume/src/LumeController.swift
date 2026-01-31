@@ -235,7 +235,12 @@ final class LumeController {
 
     @MainActor
     public func clone(
-        name: String, newName: String, sourceLocation: String? = nil, destLocation: String? = nil
+        name: String, 
+        newName: String, 
+        sourceLocation: String? = nil, 
+        destLocation: String? = nil,
+        compact: Bool = false,
+        expandBy: String? = nil
     ) throws {
         let normalizedName = normalizeVMName(name: name)
         let normalizedNewName = normalizeVMName(name: newName)
@@ -279,12 +284,40 @@ final class LumeController {
             }
 
             // Copy the VM directory
-            try home.copyVMDirectory(
-                from: normalizedName,
-                to: normalizedNewName,
-                sourceLocation: sourceLocation,
-                destLocation: destLocation
-            )
+            // If we need to modify the disk (compact or expand), we need to handle copying manually
+            if compact || expandBy != nil {
+                try home.copyVMDirectoryManual(
+                    from: normalizedName,
+                    to: normalizedNewName,
+                    sourceLocation: sourceLocation,
+                    destLocation: destLocation,
+                    compact: compact
+                )
+                
+                // Handle expansion if requested
+                if let expandAmountStr = expandBy {
+                    let expandAmount = try parseSize(expandAmountStr)
+                    let destVM = try get(name: normalizedNewName, storage: destLocation)
+                    let currentSize = try destVM.getDiskSize()
+                    let newSize = currentSize.total + expandAmount
+                    
+                    Logger.info("Expanding disk", metadata: [
+                        "current": "\(currentSize.total)",
+                        "add": "\(expandAmount)",
+                        "new": "\(newSize)"
+                    ])
+                    
+                    try destVM.resizeDisk(newSize)
+                }
+            } else {
+                // Standard copy
+                try home.copyVMDirectory(
+                    from: normalizedName,
+                    to: normalizedNewName,
+                    sourceLocation: sourceLocation,
+                    destLocation: destLocation
+                )
+            }
 
             // Update MAC address in the cloned VM to ensure uniqueness
             let clonedVM = try get(name: normalizedNewName, storage: destLocation)

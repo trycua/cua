@@ -34,8 +34,8 @@ RUN curl -sS https://bootstrap.pypa.io/get-pip.py | python3.12
 # Install UV package manager
 RUN python3.12 -m pip install uv
 
-# Install cua-computer-server
-RUN uv pip install --system cua-computer-server
+# Install cua-computer-server and cua-agent
+RUN uv pip install --system cua-computer-server "cua-agent[all]"
 
 # Install playwright and Firefox dependencies
 RUN uv pip install --system playwright && \
@@ -46,7 +46,7 @@ RUN sed -i 's/require_ssl: true/require_ssl: false/g' /usr/share/kasmvnc/kasmvnc
 RUN sed -i 's/-sslOnly//g' /dockerstartup/vnc_startup.sh
 
 # Running the python script on startup
-RUN echo "/usr/bin/python3 -m computer_server" > $STARTUPDIR/custom_startup.sh \
+RUN echo -e "#!/bin/bash\nuv pip install --upgrade --system cua-computer-server \"cua-agent[all]\"\n/usr/bin/python3 -m computer_server" > $STARTUPDIR/custom_startup.sh \
     && chmod +x $STARTUPDIR/custom_startup.sh
 
 # Enable sudo support for kasm-user

@@ -1,6 +1,7 @@
 """Playground server implementation for Cua agents."""
 
 import asyncio
+import json
 import logging
 import os
 import platform
@@ -13,7 +14,7 @@ from urllib.parse import quote
 import uvicorn
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 
 logger = logging.getLogger(__name__)
 
@@ -191,6 +192,130 @@ class PlaygroundServer:
             }
 
             return JSONResponse(content=payload, headers=headers)
+
+        @self.app.post("/responses/stream")
+        async def responses_stream_endpoint(request: Request):
+            """
+            Run ComputerAgent with streaming responses.
+
+            Body JSON:
+            {
+              "model": "...",                 # required
+              "input": "... or messages[]",   # required
+              "agent_kwargs": { ... },         # optional, passed directly to ComputerAgent
+              "env": { ... }                   # optional env overrides for agent
+            }
+
+            Returns NDJSON (newline-delimited JSON) stream.
+            """
+            # Import here to avoid circular imports
+            try:
+                from agent import ComputerAgent
+            except ImportError:
+                raise HTTPException(status_code=501, detail="ComputerAgent not available")
+
+            # Parse request body
+            try:
+                body = await request.json()
+            except Exception as e:
+                raise HTTPException(status_code=400, detail=f"Invalid JSON body: {str(e)}")
+
+            model = body.get("model")
+            input_data = body.get("input")
+            if not model or input_data is None:
+                raise HTTPException(status_code=400, detail="'model' and 'input' are required")
+
+            agent_kwargs: Dict[str, Any] = body.get("agent_kwargs") or {}
+            env_overrides: Dict[str, str] = body.get("env") or {}
+
+            # Simple env override context
+            class _EnvOverride:
+                def __init__(self, overrides: Dict[str, str]):
+                    self.overrides = overrides
+                    self._original: Dict[str, Optional[str]] = {}
+
+                def __enter__(self):
+                    for k, v in (self.overrides or {}).items():
+                        self._original[k] = os.environ.get(k)
+                        os.environ[k] = str(v)
+
+                def __exit__(self, exc_type, exc, tb):
+                    for k, old in self._original.items():
+                        if old is None:
+                            os.environ.pop(k, None)
+                        else:
+                            os.environ[k] = old
+
+            # Convert input to messages
+            def _to_messages(data: Union[str, List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
+                if isinstance(data, str):
+                    return [{"role": "user", "content": data}]
+                if isinstance(data, list):
+                    return data
+                return []
+
+            messages = _to_messages(input_data)
+
+            async def event_generator():
+                """Generate NDJSON streaming events."""
+                with _EnvOverride(env_overrides):
+                    # Use pre-configured agent if available, otherwise create new one
+                    if self.agent_instance:
+                        agent = self.agent_instance
+                    else:
+                        agent = ComputerAgent(model=model, **agent_kwargs)  # type: ignore[arg-type]
+
+                    pending_computer_call_ids = set()
+                    try:
+                        async for result in agent.run(messages, stream=True):
+                            # Stream each result as NDJSON
+                            output = result.get("output", [])
+                            usage = result.get("usage", {})
+                            status = result.get("status", "streaming")
+
+                            # Track pending calls
+                            for msg in output:
+                                if msg.get("type") == "computer_call":
+                                    pending_computer_call_ids.add(msg["call_id"])
+                                elif msg.get("type") == "computer_call_output":
+                                    pending_computer_call_ids.discard(msg["call_id"])
+                                elif msg.get("type") == "function_call":
+                                    pending_computer_call_ids.add(msg["call_id"])
+                                elif msg.get("type") == "function_call_output":
+                                    pending_computer_call_ids.discard(msg["call_id"])
+
+                            # Yield NDJSON line
+                            event = {
+                                "output": output,
+                                "usage": usage,
+                                "status": status,
+                            }
+                            yield json.dumps(event) + "\n"
+
+                            # Exit if no pending computer calls and status is completed
+                            if not pending_computer_call_ids and status == "completed":
+                                break
+
+                    except Exception as e:
+                        logger.error(f"Error running agent: {str(e)}")
+                        logger.error(traceback.format_exc())
+                        error_event = {
+                            "output": [],
+                            "usage": {},
+                            "status": "failed",
+                            "error": str(e),
+                        }
+                        yield json.dumps(error_event) + "\n"
+
+            return StreamingResponse(
+                event_generator(),
+                media_type="application/x-ndjson",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "Connection": "keep-alive",
+                    "X-Accel-Buffering": "no",
+                },
+            )
 
     def _find_available_port(self, start_port: int = 8000, max_attempts: int = 100) -> int:
         """Find an available port starting from start_port."""

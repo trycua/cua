@@ -1,5 +1,12 @@
 import { Peer } from 'peerjs';
-import type { AgentRequest, AgentResponse, ConnectionType, AgentClientOptions } from './types';
+import type {
+  AgentRequest,
+  AgentResponse,
+  ConnectionType,
+  AgentClientOptions,
+  StreamEvent,
+  StreamCallback,
+} from './types';
 
 export class AgentClient {
   private url: string;
@@ -30,6 +37,9 @@ export class AgentClient {
   public responses = {
     create: async (request: AgentRequest): Promise<AgentResponse> => {
       return this.sendRequest(request);
+    },
+    stream: async (request: AgentRequest, onEvent: StreamCallback): Promise<void> => {
+      return this.streamRequest(request, onEvent);
     },
   };
 
@@ -76,6 +86,82 @@ export class AgentClient {
       clearTimeout(timeoutId);
       if (error instanceof Error) {
         throw new Error(`Failed to send HTTP request: ${error.message}`);
+      }
+      throw error;
+    }
+  }
+
+  private async streamRequest(request: AgentRequest, onEvent: StreamCallback): Promise<void> {
+    if (this.connectionType === 'peer') {
+      throw new Error('Streaming is not supported for peer connections');
+    }
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), this.options.timeout);
+
+    try {
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+      };
+      if (this.options.apiKey) {
+        headers['X-API-Key'] = this.options.apiKey;
+      }
+
+      const response = await fetch(`${this.url}/responses/stream`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(request),
+        signal: controller.signal,
+      });
+
+      clearTimeout(timeoutId);
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
+      if (!response.body) {
+        throw new Error('Response body is null');
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          if (line.trim()) {
+            try {
+              const event = JSON.parse(line) as StreamEvent;
+              onEvent(event);
+            } catch {
+              // Skip malformed JSON lines
+              console.warn('Failed to parse streaming event:', line);
+            }
+          }
+        }
+      }
+
+      // Process any remaining data in buffer
+      if (buffer.trim()) {
+        try {
+          const event = JSON.parse(buffer) as StreamEvent;
+          onEvent(event);
+        } catch {
+          console.warn('Failed to parse final streaming event:', buffer);
+        }
+      }
+    } catch (error) {
+      clearTimeout(timeoutId);
+      if (error instanceof Error) {
+        throw new Error(`Failed to stream request: ${error.message}`);
       }
       throw error;
     }

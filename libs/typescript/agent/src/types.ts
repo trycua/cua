@@ -36,6 +36,16 @@ export interface AgentResponse {
   status: 'completed' | 'failed';
   error?: string;
 }
+
+// Streaming event types
+export interface StreamEvent {
+  output: AgentMessage[];
+  usage: Partial<Usage>;
+  status: 'streaming' | 'completed' | 'failed';
+  error?: string;
+}
+
+export type StreamCallback = (event: StreamEvent) => void;
 // Usage information
 export interface Usage {
   prompt_tokens: number;

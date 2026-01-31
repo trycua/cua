@@ -26,4 +26,6 @@ export type {
   Usage,
   ConnectionType,
   AgentClientOptions,
+  StreamEvent,
+  StreamCallback,
 } from './types';

@@ -683,45 +683,59 @@ class UITARSConfig:
 
         # Prepare messages for liteLLM
         litellm_messages = [{"role": "system", "content": "You are a helpful assistant."}]
-
-        # Add current user instruction with screenshot
-        current_user_message = {
-            "role": "user",
-            "content": [
-                {"type": "text", "text": user_prompt},
-            ],
-        }
-        litellm_messages.append(current_user_message)
-
-        # Process image for UITARS
-        if not image_data:
-            # Take screenshot if none found in messages
-            if computer_handler:
-                image_data = await computer_handler.screenshot()
-                await _on_screenshot(image_data, "screenshot_before")
-
-                # Add screenshot to output items so it can be retained in history
-                response_items.append(make_input_image_item(image_data))
-            else:
-                raise ValueError("No screenshot found in messages and no computer_handler provided")
-        processed_image, original_width, original_height = process_image_for_uitars(image_data)
-        encoded_image = pil_to_base64(processed_image)
-
-        # Add conversation history
+        
+        # 1. Add conversation history first
         if history_messages:
             litellm_messages.extend(history_messages)
-        else:
-            litellm_messages.append(
-                {
+
+        # 2. Add image context if missing from history (e.g. initial turn)
+        if not image_data:
+            if not computer_handler:
+                # Should ideally not happen if properly configured
+                processed_image, original_width, original_height = process_image_for_uitars("") 
+            else:
+                image_data = await computer_handler.screenshot()
+                await _on_screenshot(image_data, "screenshot_before")
+                response_items.append(make_input_image_item(image_data))
+                
+                # Process and add the new screenshot
+                processed_image, original_width, original_height = process_image_for_uitars(image_data)
+                encoded_image = pil_to_base64(processed_image)
+                
+                litellm_messages.append({
                     "role": "user",
                     "content": [
                         {
                             "type": "image_url",
                             "image_url": {"url": f"data:image/png;base64,{encoded_image}"},
                         }
-                    ],
-                }
-            )
+                    ]
+                })
+
+        # Recalculate dimensions if using historical image
+        elif image_data:
+             processed_image, original_width, original_height = process_image_for_uitars(image_data)
+        else:
+             original_width, original_height = screen_width, screen_height
+
+        # 3. Add current user prompt (merged with previous user message if needed)
+        prompt_content = {"type": "text", "text": user_prompt}
+        
+        # Merge typical case: [User(Image)] + [User(Prompt)] -> [User(Image, Prompt)]
+        if litellm_messages and litellm_messages[-1]["role"] == "user":
+            last_content = litellm_messages[-1]["content"]
+            if isinstance(last_content, list):
+                last_content.append(prompt_content)
+            elif isinstance(last_content, str):
+                litellm_messages[-1]["content"] = [
+                    {"type": "text", "text": last_content},
+                    prompt_content
+                ]
+        else:
+            litellm_messages.append({
+                "role": "user",
+                "content": [prompt_content]
+            })
 
         # Prepare API call kwargs
         api_kwargs = {

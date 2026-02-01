@@ -326,7 +326,9 @@ class AnthropicSafeBuiltInAgent extends BuiltInAgent {
           }
         },
         error: (err: any) => {
-          console.error('[CopilotKit] Error:', err?.message || String(err), err?.stack);
+          console.error('[CopilotKit] Stream ERROR:', err?.message || String(err));
+          console.error('[CopilotKit] Error stack:', err?.stack);
+          console.error('[CopilotKit] responseChunks so far:', responseChunks.length);
           if (posthog) {
             posthog.capture({
               distinctId: conversationId,
@@ -345,6 +347,7 @@ class AnthropicSafeBuiltInAgent extends BuiltInAgent {
           observer.error?.(err);
         },
         complete: () => {
+          console.log('[CopilotKit] Stream complete, responseChunks length:', responseChunks.length);
           sendResponseToPostHog();
           observer.complete?.();
         },

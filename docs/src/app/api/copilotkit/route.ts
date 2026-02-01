@@ -405,7 +405,8 @@ class AnthropicSafeBuiltInAgent extends BuiltInAgent {
   }
 }
 
-const docsAgent = new AnthropicSafeBuiltInAgent({
+// Agent configuration - agent and runtime created per-request to avoid state issues
+const agentConfig = {
   maxSteps: 100,
   model: 'anthropic/claude-haiku-4-5-20251001',
   prompt: `You are a helpful assistant for Cua (Computer Use Agent) and Cua-Bench documentation.
@@ -432,16 +433,21 @@ If users seem stuck, invite them to join the Discord: https://discord.com/invite
       url: 'https://cuaai--cua-docs-mcp-web.modal.run/sse',
     },
   ],
-});
+};
 
-const runtime = new CopilotRuntime({
-  agents: {
-    default: docsAgent as any,
-  },
-  runner: new InMemoryAgentRunner(),
-});
+function createRuntime() {
+  const docsAgent = new AnthropicSafeBuiltInAgent(agentConfig);
+  return new CopilotRuntime({
+    agents: {
+      default: docsAgent as any,
+    },
+    runner: new InMemoryAgentRunner(),
+  });
+}
 
 export const POST = async (req: NextRequest) => {
+  // Create fresh runtime per request to avoid state issues between invocations
+  const runtime = createRuntime();
   const { handleRequest } = copilotRuntimeNextJSAppRouterEndpoint({
     runtime,
     serviceAdapter: new ExperimentalEmptyAdapter(),
@@ -452,6 +458,8 @@ export const POST = async (req: NextRequest) => {
 };
 
 export const GET = async (req: NextRequest) => {
+  // Create fresh runtime per request to avoid state issues between invocations
+  const runtime = createRuntime();
   const { handleRequest } = copilotRuntimeNextJSAppRouterEndpoint({
     runtime,
     serviceAdapter: new ExperimentalEmptyAdapter(),

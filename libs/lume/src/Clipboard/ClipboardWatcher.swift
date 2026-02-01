@@ -74,6 +74,8 @@ public actor ClipboardWatcher {
     private func syncBidirectional() async {
         // Check host clipboard for changes
         let hostChangeCount = NSPasteboard.general.changeCount
+        var didSyncToVM = false
+
         if hostChangeCount != lastHostChangeCount {
             lastHostChangeCount = hostChangeCount
             if let content = NSPasteboard.general.string(forType: .string),
@@ -82,19 +84,23 @@ public actor ClipboardWatcher {
                content != lastVMContent,  // Avoid sync loop
                content.utf8.count <= Self.maxContentSize {
                 lastHostContent = content
-                await syncToVM(content: content)
+                lastVMContent = content  // Assume VM will have this content after sync
+                didSyncToVM = await syncToVM(content: content)
             }
         }
 
-        // Check VM clipboard for changes
-        await syncFromVM()
+        // Check VM clipboard for changes, but skip if we just synced to VM
+        // (VM clipboard won't be updated yet, would cause race condition)
+        if !didSyncToVM {
+            await syncFromVM()
+        }
     }
 
-    private func syncToVM(content: String) async {
-        guard let sshClient = await getSSHClient() else { return }
+    private func syncToVM(content: String) async -> Bool {
+        guard let sshClient = await getSSHClient() else { return false }
 
         do {
-            guard let data = content.data(using: .utf8) else { return }
+            guard let data = content.data(using: .utf8) else { return false }
             let base64Content = data.base64EncodedString()
 
             // For short content, use inline command
@@ -119,12 +125,15 @@ public actor ClipboardWatcher {
                     "vm": vmName,
                     "size": "\(content.utf8.count)"
                 ])
+                return true
             }
+            return false
         } catch {
             Logger.debug("Failed to sync clipboard to VM", metadata: [
                 "vm": vmName,
                 "error": error.localizedDescription
             ])
+            return false
         }
     }
 

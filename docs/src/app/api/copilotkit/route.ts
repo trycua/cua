@@ -220,6 +220,7 @@ class AnthropicSafeBuiltInAgent extends BuiltInAgent {
       console.log(`[CopilotKit] Message ${i}: role=${msg.role}, hasContent=${!!msg.content}, contentType=${typeof msg.content}`);
     });
     // Skip filtering - pass all messages through unchanged
+    const messages = input.messages || [];
     const modifiedInput = {
       ...input,
       // Don't filter messages - let CopilotKit/Anthropic handle it
@@ -229,7 +230,7 @@ class AnthropicSafeBuiltInAgent extends BuiltInAgent {
     const uniqueMessageId = randomUUID();
     const conversationId = input.threadId || uniqueMessageId;
 
-    const userMessages = filteredMessages.filter((m: any) => m.role === 'user');
+    const userMessages = messages.filter((m: any) => m.role === 'user');
     const latestUserMessage = userMessages[userMessages.length - 1];
     const userPrompt = this.extractMessageContent(latestUserMessage);
 

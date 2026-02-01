@@ -18,7 +18,8 @@ public actor ClipboardWatcher {
     private static let pollInterval: TimeInterval = 1.0
 
     /// Delay before starting to watch (allows VM to boot and get IP)
-    private static let startupDelay: TimeInterval = 10.0
+    /// Set to 0 since we gracefully handle SSH not being available yet
+    private static let startupDelay: TimeInterval = 0
 
     /// Max content size (1MB)
     private static let maxContentSize = 1_000_000
@@ -36,8 +37,10 @@ public actor ClipboardWatcher {
         watchTask = Task { [weak self] in
             guard let self = self else { return }
 
-            // Wait for VM to boot and potentially get an IP address
-            try? await Task.sleep(nanoseconds: UInt64(Self.startupDelay * 1_000_000_000))
+            // Optional startup delay (set to 0 since we gracefully handle SSH not ready)
+            if Self.startupDelay > 0 {
+                try? await Task.sleep(nanoseconds: UInt64(Self.startupDelay * 1_000_000_000))
+            }
 
             // Initialize with current clipboard state to avoid syncing on start
             await self.initializeState()

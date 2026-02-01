@@ -376,11 +376,15 @@ private final class InteractiveSessionHandler: ChannelDuplexHandler, @unchecked 
             let shellRequest = SSHChannelRequestEvent.ShellRequest(wantReply: true)
             return ctx.triggerUserOutboundEvent(shellRequest)
         }.whenComplete { [weak self] result in
-            switch result {
-            case .success:
-                self?.setupTerminalAndStdin(context: ctx)
-            case .failure(let error):
-                self?.failWithError(error, context: ctx)
+            // Ensure we're on the event loop for NIOLoopBound creation
+            guard let self = self else { return }
+            ctx.eventLoop.execute { [weak self] in
+                switch result {
+                case .success:
+                    self?.setupTerminalAndStdin(context: ctx)
+                case .failure(let error):
+                    self?.failWithError(error, context: ctx)
+                }
             }
         }
     }
@@ -398,7 +402,10 @@ private final class InteractiveSessionHandler: ChannelDuplexHandler, @unchecked 
         let source = DispatchSource.makeReadSource(fileDescriptor: stdinFD, queue: .global())
         stdinSource = source
 
-        let loopBoundContext = NIOLoopBound(context, eventLoop: context.eventLoop)
+        // Capture channel and eventLoop directly (both are Sendable)
+        // Don't use NIOLoopBound as accessing .value requires being on the event loop
+        let channel = context.channel
+        let eventLoop = context.eventLoop
         let fd = stdinFD
 
         source.setEventHandler { [weak self] in
@@ -409,16 +416,16 @@ private final class InteractiveSessionHandler: ChannelDuplexHandler, @unchecked 
 
             if bytesRead > 0 {
                 let data = Data(buffer[0..<bytesRead])
-                loopBoundContext.value.eventLoop.execute {
-                    var byteBuffer = loopBoundContext.value.channel.allocator.buffer(capacity: bytesRead)
+                eventLoop.execute {
+                    var byteBuffer = channel.allocator.buffer(capacity: bytesRead)
                     byteBuffer.writeBytes(data)
                     let channelData = SSHChannelData(type: .channel, data: .byteBuffer(byteBuffer))
-                    loopBoundContext.value.writeAndFlush(NIOAny(channelData), promise: nil)
+                    channel.writeAndFlush(NIOAny(channelData), promise: nil)
                 }
             } else if bytesRead == 0 {
                 // EOF on stdin
-                loopBoundContext.value.eventLoop.execute {
-                    loopBoundContext.value.close(mode: .output, promise: nil)
+                eventLoop.execute {
+                    channel.close(mode: .output, promise: nil)
                 }
             }
         }

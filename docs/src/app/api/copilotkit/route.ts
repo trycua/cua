@@ -213,7 +213,10 @@ class AnthropicSafeBuiltInAgent extends BuiltInAgent {
   }
 
   run(input: any): ReturnType<BuiltInAgent['run']> {
+    console.log('[CopilotKit] run() called with', (input.messages || []).length, 'messages');
+    console.log('[CopilotKit] threadId:', input.threadId);
     const filteredMessages = this.filterEmptyMessages(input.messages || []);
+    console.log('[CopilotKit] After filtering:', filteredMessages.length, 'messages');
     const modifiedInput = {
       ...input,
       messages: filteredMessages,
@@ -286,8 +289,8 @@ class AnthropicSafeBuiltInAgent extends BuiltInAgent {
     parentObservable.subscribe = (observer: any) => {
       const wrappedObserver = {
         next: (event: any) => {
-          // Debug logging
-          if (process.env.NODE_ENV === 'development') {
+          // Debug logging - always enabled for debugging
+          if (true || process.env.NODE_ENV === 'development') {
             const deltaPreview = event.delta
               ? `delta: ${String(event.delta).substring(0, 50)}...`
               : '';
@@ -372,7 +375,8 @@ class AnthropicSafeBuiltInAgent extends BuiltInAgent {
   }
 
   private filterEmptyMessages(messages: any[]): any[] {
-    return messages.filter((msg) => {
+    console.log('[CopilotKit] filterEmptyMessages input:', messages.length, 'messages');
+    const filtered = messages.filter((msg) => {
       if (msg.role !== 'assistant') {
         return true;
       }
@@ -394,8 +398,14 @@ class AnthropicSafeBuiltInAgent extends BuiltInAgent {
         });
       }
 
-      return hasContent || hasToolCalls;
+      const keep = hasContent || hasToolCalls;
+      if (!keep && msg.role === 'assistant') {
+        console.log('[CopilotKit] FILTERING OUT assistant message:', JSON.stringify(msg).substring(0, 200));
+      }
+      return keep;
     });
+    console.log('[CopilotKit] filterEmptyMessages output:', filtered.length, 'messages');
+    return filtered;
   }
 }
 

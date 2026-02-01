@@ -1,8 +1,8 @@
 import Foundation
-import NIOCore
+@preconcurrency import NIOCore
 import NIOConcurrencyHelpers
 import NIOPosix
-import NIOSSH
+@preconcurrency import NIOSSH
 
 /// Result of an SSH command execution
 public struct SSHResult: Sendable {

@@ -297,33 +297,22 @@ class AnthropicSafeBuiltInAgent extends BuiltInAgent {
             console.log('[CopilotKit] Event:', event.type, deltaPreview);
           }
 
-          if (event.type === 'TEXT_MESSAGE_CHUNK') {
-            if (event.delta) {
-              responseChunks.push(event.delta);
-            }
-            observer.next?.({
-              ...event,
-              messageId: uniqueMessageId,
-            });
-          } else {
-            if (
-              event.type === 'RUN_FINISHED' ||
-              event.type === 'TEXT_MESSAGE_END' ||
-              event.type === 'AGENT_STATE_MESSAGE'
-            ) {
-              sendResponseToPostHog();
-            }
-            // Apply same messageId to TEXT_MESSAGE_END and TEXT_MESSAGE_START 
-            // to ensure proper message tracking in CopilotKit frontend
-            if (event.type === 'TEXT_MESSAGE_END' || event.type === 'TEXT_MESSAGE_START') {
-              observer.next?.({
-                ...event,
-                messageId: uniqueMessageId,
-              });
-            } else {
-              observer.next?.(event);
-            }
+          // Collect response chunks for PostHog
+          if (event.type === 'TEXT_MESSAGE_CHUNK' && event.delta) {
+            responseChunks.push(event.delta);
           }
+
+          // Send to PostHog on completion events
+          if (
+            event.type === 'RUN_FINISHED' ||
+            event.type === 'TEXT_MESSAGE_END' ||
+            event.type === 'AGENT_STATE_MESSAGE'
+          ) {
+            sendResponseToPostHog();
+          }
+
+          // Pass all events through unchanged - let CopilotKit handle messageIds
+          observer.next?.(event);
         },
         error: (err: any) => {
           console.error('[CopilotKit] Stream ERROR:', err?.message || String(err));

@@ -94,9 +94,22 @@ public actor ClipboardWatcher {
             guard let data = content.data(using: .utf8) else { return }
             let base64Content = data.base64EncodedString()
 
-            // Use printf to avoid issues with special characters in echo
-            let command = "printf '%s' '\(base64Content)' | base64 -D | pbcopy"
-            let result = try await sshClient.execute(command: command, timeout: 5)
+            // For short content, use inline command
+            // For long content, use heredoc to avoid shell argument limits
+            let command: String
+            if base64Content.count < 65536 {
+                // Short content: inline is fine
+                command = "printf '%s' '\(base64Content)' | base64 -D | pbcopy"
+            } else {
+                // Long content: use heredoc to avoid ARG_MAX limits
+                command = """
+                base64 -D <<'CLIPBOARD_EOF' | pbcopy
+                \(base64Content)
+                CLIPBOARD_EOF
+                """
+            }
+
+            let result = try await sshClient.execute(command: command, timeout: 10)
 
             if result.exitCode == 0 {
                 Logger.debug("Clipboard synced to VM", metadata: [

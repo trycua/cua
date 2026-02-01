@@ -1,5 +1,5 @@
 # Unattended macOS Sequoia Setup Assistant Configuration
-# Use with: lume create my-vm --os macOS --ipsw latest --unattended resources/unattended-sequoia.yml
+# Use with: lume create my-vm --os macOS --ipsw latest --unattended sequoia
 
 # Seconds to wait after VM boots before starting automation
 boot_wait: 30
@@ -73,7 +73,8 @@ boot_commands:
   # Need to tab 6 times to reach Full Name field
   # Field order after avatar: Full Name -> Account Name (auto-filled) -> Password -> Verify Password -> Hint -> Checkbox -> Continue
   - "<wait 'Create a Mac Account'>"
-  - "<delay 1>"
+  - "<delay 10>"
+  - "<click 'Full Name'>"
   # Type Full Name
   - "<type 'lume'>"
   - "<tab>" 
@@ -231,35 +232,7 @@ boot_commands:
   - "<delay 2>"
 
   # ============================================
-  # 3. Disable Screen Lock and Sleep
-  # ============================================
-  # Disable screen saver
-  - "<type 'defaults -currentHost write com.apple.screensaver idleTime -int 0'>"
-  - "<enter>"
-  - "<delay 1>"
-
-  # Disable require password after sleep/screen saver
-  - "<type 'defaults write com.apple.screensaver askForPassword -int 0'>"
-  - "<enter>"
-  - "<delay 1>"
-
-  # Prevent display from sleeping (never)
-  - "<type 'sudo pmset -a displaysleep 0'>"
-  - "<enter>"
-  - "<delay 1>"
-
-  # Prevent system sleep (never)
-  - "<type 'sudo pmset -a sleep 0'>"
-  - "<enter>"
-  - "<delay 1>"
-
-  # Disable auto-logout
-  - "<type 'sudo defaults write /Library/Preferences/.GlobalPreferences com.apple.autologout.AutoLogOutDelay -int 0'>"
-  - "<enter>"
-  - "<delay 1>"
-
-  # ============================================
-  # 4. Enable Full Disk Access for Remote Users
+  # 3. Enable Full Disk Access for Remote Users
   # ============================================
   # This requires navigating System Settings GUI since TCC.db is SIP-protected
 
@@ -270,27 +243,35 @@ boot_commands:
 
   # Close Terminal
   - "<cmd+q>"
+  - "<delay 2>"
+
+  # Click on desktop to ensure keyboard focus before Spotlight
+  - "<click_at 960,540>"
   - "<delay 1>"
 
   # Open Spotlight and search for System Settings
   - "<cmd+space>"
   - "<delay 2>"
   - "<type 'System Settings'>"
-  - "<delay 1>"
+  - "<delay 2>"
   - "<enter>"
+  - "<delay 5>"
+
+  # Wait for System Settings to fully load (sidebar shows General)
+  - "<wait 'General', timeout=30>"
+  - "<delay 2>"
+
+  # Use keyboard shortcut to focus search field (more reliable than clicking)
+  - "<cmd+f>"
+  - "<delay 1>"
+  - "<type 'Remote Login'>"
+  - "<delay 2>"
+  - "<click 'Remote Login'>"
   - "<delay 3>"
 
-  # Click on the search bar, then search for Remote Login
-  - "<click 'Search'>"
-  - "<delay 1>"
-  - "<type 'Remote'>"
-  - "<delay 2>"
-  - "<click 'Remote login'>"
-  - "<delay 2>"
-
-  # Tab twice to reach the "Allow full disk access" toggle, then Space to toggle
+  # Tab to reach the "Allow full disk access" toggle, then Space to toggle
   - "<tab>"
-  - "<delay 0.3>"
+  - "<delay 0.5>"
   - "<space>"
   - "<delay 2>"
 
@@ -303,7 +284,6 @@ boot_commands:
   # ============================================
   # SSH is now enabled - Connect with: ssh lume@<ip-address> (password: lume)
   # Auto-login is enabled - VM will boot directly to desktop
-  # Screen lock and sleep are disabled - VM stays awake and unlocked
   # Full disk access for remote users is enabled via TCC database
 
 # Health check to verify setup was successful

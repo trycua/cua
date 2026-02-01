@@ -29,15 +29,9 @@ code_volume = modal.Volume.from_name("cua-code-index", create_if_missing=True)
 # GitHub token secret for cloning
 github_secret = modal.Secret.from_name("github-secret", required_keys=["GITHUB_TOKEN"])
 
-# OpenTelemetry configuration - points to CUA's OpenTelemetry collector (no auth required)
-otel_secret = modal.Secret.from_dict({
-    "OTEL_EXPORTER_OTLP_ENDPOINT": "https://otel.cua.ai",
-    "OTEL_EXPORTER_OTLP_PROTOCOL": "http/protobuf",
-    "OTEL_SERVICE_NAME": "cua-docs-mcp",
-    # Also set CUA-specific env var for any code using the CUA telemetry module
-    "CUA_OTEL_ENDPOINT": "https://otel.cua.ai",
-    "CUA_OTEL_SERVICE_NAME": "cua-docs-mcp",
-})
+# OpenTelemetry endpoint (no auth required)
+OTEL_ENDPOINT = "https://otel.cua.ai"
+OTEL_SERVICE_NAME = "cua-docs-mcp"
 
 # Define the container image with all dependencies
 image = (
@@ -337,7 +331,6 @@ async def crawl_docs():
 @app.function(
     image=image,
     volumes={VOLUME_PATH: docs_volume},
-    secrets=[otel_secret],
     schedule=modal.Cron("0 6 * * *"),  # Daily at 6 AM UTC
     timeout=3600,
 )
@@ -1447,7 +1440,7 @@ async def generate_code_index():
 @app.function(
     image=image,
     volumes={CODE_VOLUME_PATH: code_volume},
-    secrets=[github_secret, otel_secret],
+    secrets=[github_secret],
     schedule=modal.Cron("0 5 * * *"),  # Daily at 5 AM UTC (before docs crawl)
     timeout=7200,  # 2 hours (includes aggregation time)
 )
@@ -1509,7 +1502,6 @@ async def scheduled_code_index():
 @app.function(
     image=image,
     volumes={VOLUME_PATH: docs_volume, CODE_VOLUME_PATH: code_volume},
-    secrets=[otel_secret],
     cpu=1.0,
     memory=2048,
     min_containers=1,  # Keep one container warm to avoid cold start latency
@@ -1518,7 +1510,6 @@ async def scheduled_code_index():
 @modal.asgi_app(custom_domains=["docs-mcp.cua.ai"])
 def web():
     """ASGI web endpoint for the MCP server"""
-    import os
     import time
 
     import lancedb
@@ -1542,27 +1533,24 @@ def web():
         from opentelemetry.sdk.trace import TracerProvider
         from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
-        otel_endpoint = os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT", "https://otel.cua.ai")
-        service_name = os.environ.get("OTEL_SERVICE_NAME", "cua-docs-mcp")
-
         resource = Resource.create({
-            "service.name": service_name,
+            "service.name": OTEL_SERVICE_NAME,
             "service.version": "1.0.0",
         })
 
         # Set up tracing
-        trace_exporter = OTLPSpanExporter(endpoint=f"{otel_endpoint}/v1/traces")
+        trace_exporter = OTLPSpanExporter(endpoint=f"{OTEL_ENDPOINT}/v1/traces")
         tracer_provider = TracerProvider(resource=resource)
         tracer_provider.add_span_processor(BatchSpanProcessor(trace_exporter))
         trace.set_tracer_provider(tracer_provider)
-        _tracer = trace.get_tracer("cua-docs-mcp")
+        _tracer = trace.get_tracer(OTEL_SERVICE_NAME)
 
         # Set up metrics
-        metric_exporter = OTLPMetricExporter(endpoint=f"{otel_endpoint}/v1/metrics")
+        metric_exporter = OTLPMetricExporter(endpoint=f"{OTEL_ENDPOINT}/v1/metrics")
         metric_reader = PeriodicExportingMetricReader(metric_exporter, export_interval_millis=60000)
         meter_provider = MeterProvider(resource=resource, metric_readers=[metric_reader])
         metrics.set_meter_provider(meter_provider)
-        _meter = metrics.get_meter("cua-docs-mcp")
+        _meter = metrics.get_meter(OTEL_SERVICE_NAME)
 
         # Create metrics instruments
         _request_counter = _meter.create_counter(
@@ -1576,7 +1564,7 @@ def web():
             unit="s",
         )
 
-        print(f"OpenTelemetry initialized with endpoint: {otel_endpoint}")
+        print(f"OpenTelemetry initialized with endpoint: {OTEL_ENDPOINT}")
     except ImportError as e:
         print(f"OpenTelemetry packages not available: {e}")
     except Exception as e:

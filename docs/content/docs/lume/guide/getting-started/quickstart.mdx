@@ -97,6 +97,10 @@ lume run my-vm
 
 A VNC window opens. For macOS VMs, you'll see the Setup Assistant—complete it manually or use [Unattended Setup](/lume/guide/fundamentals/unattended-setup) to automate it.
 
+<Callout type="info">
+**Automatic clipboard sync:** When Remote Login (SSH) is enabled on your VM, Lume automatically syncs your host clipboard to the VM. Copy text on your Mac, and it's available to paste in the VM. VMs created with `--unattended` have this enabled by default.
+</Callout>
+
 ## Create a VM with custom resources
 
 By default, Lume creates VMs with 4 CPU cores, 8GB memory, and a 50GB disk. Override any of these:

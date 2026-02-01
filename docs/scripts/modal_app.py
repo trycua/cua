@@ -29,13 +29,8 @@ code_volume = modal.Volume.from_name("cua-code-index", create_if_missing=True)
 # GitHub token secret for cloning
 github_secret = modal.Secret.from_name("github-secret", required_keys=["GITHUB_TOKEN"])
 
-# OpenTelemetry configuration
-# Endpoint secret for authentication headers (create in Modal dashboard with OTEL_HEADER_* keys)
-# e.g., OTEL_HEADER_Authorization: "Bearer your-api-key"
-otel_headers_secret = modal.Secret.from_name("otel-secret", required_keys=[])
-
-# OTEL endpoint configuration - points to CUA's OpenTelemetry collector
-otel_config_secret = modal.Secret.from_dict({
+# OpenTelemetry configuration - points to CUA's OpenTelemetry collector (no auth required)
+otel_secret = modal.Secret.from_dict({
     "OTEL_EXPORTER_OTLP_ENDPOINT": "https://otel.cua.ai",
     "OTEL_EXPORTER_OTLP_PROTOCOL": "http/protobuf",
     "OTEL_SERVICE_NAME": "cua-docs-mcp",
@@ -342,7 +337,7 @@ async def crawl_docs():
 @app.function(
     image=image,
     volumes={VOLUME_PATH: docs_volume},
-    secrets=[otel_config_secret, otel_headers_secret],
+    secrets=[otel_secret],
     schedule=modal.Cron("0 6 * * *"),  # Daily at 6 AM UTC
     timeout=3600,
 )
@@ -1452,7 +1447,7 @@ async def generate_code_index():
 @app.function(
     image=image,
     volumes={CODE_VOLUME_PATH: code_volume},
-    secrets=[github_secret, otel_config_secret, otel_headers_secret],
+    secrets=[github_secret, otel_secret],
     schedule=modal.Cron("0 5 * * *"),  # Daily at 5 AM UTC (before docs crawl)
     timeout=7200,  # 2 hours (includes aggregation time)
 )
@@ -1514,7 +1509,7 @@ async def scheduled_code_index():
 @app.function(
     image=image,
     volumes={VOLUME_PATH: docs_volume, CODE_VOLUME_PATH: code_volume},
-    secrets=[otel_config_secret, otel_headers_secret],
+    secrets=[otel_secret],
     cpu=1.0,
     memory=2048,
     min_containers=1,  # Keep one container warm to avoid cold start latency

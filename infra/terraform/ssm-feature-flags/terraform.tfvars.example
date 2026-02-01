@@ -1,0 +1,27 @@
+# Example terraform.tfvars configuration
+# Copy this file to terraform.tfvars and modify as needed
+
+aws_region  = "us-west-2"
+environment = "production"
+
+# GitHub repository configuration
+github_org  = "trycua"
+github_repo = "cua"
+
+# Branches allowed to deploy SSM infrastructure via OIDC
+allowed_branches = [
+  "claude/canary-deploy-incus-vm-ZKG5g"
+]
+
+# Organizations enabled for incus rollout
+incus_rollout_orgs = [
+  "e0988a43e7a5"
+]
+
+# Feature flags
+feature_flags = {
+  incus_enabled = true
+}
+
+# Set to false if the GitHub OIDC provider already exists in your AWS account
+create_oidc_provider = true

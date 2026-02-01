@@ -215,11 +215,14 @@ class AnthropicSafeBuiltInAgent extends BuiltInAgent {
   run(input: any): ReturnType<BuiltInAgent['run']> {
     console.log('[CopilotKit] run() called with', (input.messages || []).length, 'messages');
     console.log('[CopilotKit] threadId:', input.threadId);
-    const filteredMessages = this.filterEmptyMessages(input.messages || []);
-    console.log('[CopilotKit] After filtering:', filteredMessages.length, 'messages');
+    // Log each message for debugging
+    (input.messages || []).forEach((msg: any, i: number) => {
+      console.log(`[CopilotKit] Message ${i}: role=${msg.role}, hasContent=${!!msg.content}, contentType=${typeof msg.content}`);
+    });
+    // Skip filtering - pass all messages through unchanged
     const modifiedInput = {
       ...input,
-      messages: filteredMessages,
+      // Don't filter messages - let CopilotKit/Anthropic handle it
     };
 
     // Fix message ordering - without unique IDs, responses get merged

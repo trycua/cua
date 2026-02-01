@@ -244,7 +244,7 @@ class AnthropicSafeBuiltInAgent extends BuiltInAgent {
           question_type: detectQuestionType(userPrompt),
           topics: extractTopics(userPrompt),
           prompt_length: userPrompt.length,
-          message_count: filteredMessages.length,
+          message_count: messages.length,
           conversation_id: conversationId,
           timestamp: new Date().toISOString(),
         },

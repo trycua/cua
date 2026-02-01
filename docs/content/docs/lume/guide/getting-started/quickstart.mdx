@@ -139,7 +139,7 @@ Skip manual setup entirely with the `--unattended` flag:
 lume create my-vm --os macos --ipsw latest --unattended tahoe
 ```
 
-The `tahoe` preset runs through the Setup Assistant automatically, creating a user `lume` with password `lume` and enabling SSH. This takes 10-15 minutes but requires no interaction.
+The `tahoe` preset runs through the Setup Assistant automatically, creating a user `lume` with password `lume` and enabling Remote Login (SSH). Once complete, you can connect with `lume ssh my-vm`. This takes 10-15 minutes but requires no interaction.
 
 For custom configurations, see [Unattended Setup](/lume/guide/fundamentals/unattended-setup).
 
@@ -156,7 +156,7 @@ lume run my-vm --no-display
 lume run my-vm > /dev/null 2>&1 &
 ```
 
-When running headless or in background, connect via SSH (if enabled) or VNC client. Use `lume ls` to see running VMs and their connection details.
+When running headless or in background, connect via `lume ssh my-vm` (if Remote Login is enabled) or a VNC client. Use `lume ls` to see running VMs and their connection details.
 
 ## Common operations
 
@@ -175,6 +175,33 @@ lume clone my-vm my-vm-backup
 
 # Delete a VM
 lume delete my-vm
+```
+
+## Connect via SSH
+
+Access your VM from the terminal without needing the VNC window:
+
+```bash
+# Interactive shell
+lume ssh my-vm
+
+# Run a single command
+lume ssh my-vm "ls -la"
+
+# Run multiple commands
+lume ssh my-vm "cd /tmp && pwd"
+```
+
+<Callout type="warn">
+**SSH requires Remote Login to be enabled on the VM.** Either:
+- Create the VM with `--unattended` (enables SSH automatically with user `lume`, password `lume`)
+- Or manually enable it: **System Settings → General → Sharing → Remote Login**
+</Callout>
+
+Custom credentials:
+
+```bash
+lume ssh my-vm -u myuser -p mypassword
 ```
 
 ## Share files with your VM

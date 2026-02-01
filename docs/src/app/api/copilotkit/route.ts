@@ -310,7 +310,16 @@ class AnthropicSafeBuiltInAgent extends BuiltInAgent {
             ) {
               sendResponseToPostHog();
             }
-            observer.next?.(event);
+            // Apply same messageId to TEXT_MESSAGE_END and TEXT_MESSAGE_START 
+            // to ensure proper message tracking in CopilotKit frontend
+            if (event.type === 'TEXT_MESSAGE_END' || event.type === 'TEXT_MESSAGE_START') {
+              observer.next?.({
+                ...event,
+                messageId: uniqueMessageId,
+              });
+            } else {
+              observer.next?.(event);
+            }
           }
         },
         error: (err: any) => {

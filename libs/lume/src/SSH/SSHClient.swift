@@ -1,8 +1,8 @@
 import Foundation
-import NIOCore
-import NIOConcurrencyHelpers
-import NIOPosix
-import NIOSSH
+@preconcurrency import NIOCore
+@preconcurrency import NIOConcurrencyHelpers
+@preconcurrency import NIOPosix
+@preconcurrency import NIOSSH
 
 /// Result of an SSH command execution
 public struct SSHResult: Sendable {
@@ -48,7 +48,8 @@ public actor SSHClient {
         let resultPromise = channel.eventLoop.makePromise(of: SSHResult.self)
 
         // Create the SSH child channel for command execution
-        let sshHandler = try await channel.pipeline.handler(type: NIOSSHHandler.self).get()
+        // nonisolated(unsafe) is safe because NIOSSHHandler is confined to its event loop
+        nonisolated(unsafe) let sshHandler = try await channel.pipeline.handler(type: NIOSSHHandler.self).get()
 
         let childChannelPromise = channel.eventLoop.makePromise(of: Channel.self)
         sshHandler.createChannel(childChannelPromise) { childChannel, channelType in
@@ -92,7 +93,8 @@ public actor SSHClient {
         let channel = try await connect()
 
         // Create the SSH child channel for interactive session
-        let sshHandler = try await channel.pipeline.handler(type: NIOSSHHandler.self).get()
+        // nonisolated(unsafe) is safe because NIOSSHHandler is confined to its event loop
+        nonisolated(unsafe) let sshHandler = try await channel.pipeline.handler(type: NIOSSHHandler.self).get()
 
         let childChannelPromise = channel.eventLoop.makePromise(of: Channel.self)
         let sessionCompletePromise = channel.eventLoop.makePromise(of: Void.self)
@@ -217,7 +219,8 @@ private final class PasswordAuthDelegate: NIOSSHClientUserAuthenticationDelegate
 // MARK: - Command Execution Handler
 
 /// Handles command execution on an SSH channel
-private final class CommandExecHandler: ChannelDuplexHandler {
+/// Note: @unchecked Sendable is safe because this handler is only used on a single event loop
+private final class CommandExecHandler: ChannelDuplexHandler, @unchecked Sendable {
     typealias InboundIn = SSHChannelData
     typealias InboundOut = ByteBuffer
     typealias OutboundIn = ByteBuffer
@@ -236,16 +239,20 @@ private final class CommandExecHandler: ChannelDuplexHandler {
     }
 
     func handlerAdded(context: ChannelHandlerContext) {
+        // nonisolated(unsafe) is safe here because we're on the channel's event loop
+        nonisolated(unsafe) let ctx = context
         context.channel.setOption(ChannelOptions.allowRemoteHalfClosure, value: true).whenFailure { error in
-            context.fireErrorCaught(error)
+            ctx.fireErrorCaught(error)
         }
     }
 
     func channelActive(context: ChannelHandlerContext) {
         // Send exec request
+        // nonisolated(unsafe) is safe here because we're on the channel's event loop
+        nonisolated(unsafe) let ctx = context
         let execRequest = SSHChannelRequestEvent.ExecRequest(command: command, wantReply: true)
         context.triggerUserOutboundEvent(execRequest).whenFailure { [weak self] error in
-            self?.failWithError(error, context: context)
+            self?.failWithError(error, context: ctx)
         }
     }
 
@@ -325,7 +332,8 @@ private final class CommandExecHandler: ChannelDuplexHandler {
 // MARK: - Interactive Session Handler
 
 /// Handles interactive SSH sessions with stdin/stdout passthrough
-private final class InteractiveSessionHandler: ChannelDuplexHandler {
+/// Note: @unchecked Sendable is safe because this handler is only used on a single event loop
+private final class InteractiveSessionHandler: ChannelDuplexHandler, @unchecked Sendable {
     typealias InboundIn = SSHChannelData
     typealias InboundOut = ByteBuffer
     typealias OutboundIn = ByteBuffer
@@ -341,12 +349,17 @@ private final class InteractiveSessionHandler: ChannelDuplexHandler {
     }
 
     func handlerAdded(context: ChannelHandlerContext) {
+        // nonisolated(unsafe) is safe here because we're on the channel's event loop
+        nonisolated(unsafe) let ctx = context
         context.channel.setOption(ChannelOptions.allowRemoteHalfClosure, value: true).whenFailure { error in
-            context.fireErrorCaught(error)
+            ctx.fireErrorCaught(error)
         }
     }
 
     func channelActive(context: ChannelHandlerContext) {
+        // nonisolated(unsafe) is safe here because we're on the channel's event loop
+        nonisolated(unsafe) let ctx = context
+
         // Request a pseudo-terminal
         let ptyRequest = SSHChannelRequestEvent.PseudoTerminalRequest(
             wantReply: true,
@@ -361,13 +374,17 @@ private final class InteractiveSessionHandler: ChannelDuplexHandler {
         context.triggerUserOutboundEvent(ptyRequest).flatMap {
             // Request a shell
             let shellRequest = SSHChannelRequestEvent.ShellRequest(wantReply: true)
-            return context.triggerUserOutboundEvent(shellRequest)
+            return ctx.triggerUserOutboundEvent(shellRequest)
         }.whenComplete { [weak self] result in
-            switch result {
-            case .success:
-                self?.setupTerminalAndStdin(context: context)
-            case .failure(let error):
-                self?.failWithError(error, context: context)
+            // Ensure we're on the event loop for NIOLoopBound creation
+            guard let self = self else { return }
+            ctx.eventLoop.execute { [weak self] in
+                switch result {
+                case .success:
+                    self?.setupTerminalAndStdin(context: ctx)
+                case .failure(let error):
+                    self?.failWithError(error, context: ctx)
+                }
             }
         }
     }
@@ -385,7 +402,10 @@ private final class InteractiveSessionHandler: ChannelDuplexHandler {
         let source = DispatchSource.makeReadSource(fileDescriptor: stdinFD, queue: .global())
         stdinSource = source
 
-        let loopBoundContext = NIOLoopBound(context, eventLoop: context.eventLoop)
+        // Capture channel and eventLoop directly (both are Sendable)
+        // Don't use NIOLoopBound as accessing .value requires being on the event loop
+        let channel = context.channel
+        let eventLoop = context.eventLoop
         let fd = stdinFD
 
         source.setEventHandler { [weak self] in
@@ -396,16 +416,16 @@ private final class InteractiveSessionHandler: ChannelDuplexHandler {
 
             if bytesRead > 0 {
                 let data = Data(buffer[0..<bytesRead])
-                loopBoundContext.value.eventLoop.execute {
-                    var byteBuffer = loopBoundContext.value.channel.allocator.buffer(capacity: bytesRead)
+                eventLoop.execute {
+                    var byteBuffer = channel.allocator.buffer(capacity: bytesRead)
                     byteBuffer.writeBytes(data)
                     let channelData = SSHChannelData(type: .channel, data: .byteBuffer(byteBuffer))
-                    loopBoundContext.value.writeAndFlush(NIOAny(channelData), promise: nil)
+                    channel.writeAndFlush(NIOAny(channelData), promise: nil)
                 }
             } else if bytesRead == 0 {
                 // EOF on stdin
-                loopBoundContext.value.eventLoop.execute {
-                    loopBoundContext.value.close(mode: .output, promise: nil)
+                eventLoop.execute {
+                    channel.close(mode: .output, promise: nil)
                 }
             }
         }
@@ -486,7 +506,8 @@ private final class InteractiveSessionHandler: ChannelDuplexHandler {
 // MARK: - Error Handler
 
 /// Handles errors in the SSH pipeline
-private final class SSHErrorHandler: ChannelInboundHandler {
+/// Note: @unchecked Sendable is safe because this handler is only used on a single event loop
+private final class SSHErrorHandler: ChannelInboundHandler, @unchecked Sendable {
     typealias InboundIn = Any
 
     func errorCaught(context: ChannelHandlerContext, error: Error) {

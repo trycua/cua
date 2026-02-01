@@ -104,28 +104,23 @@ rm ~/Library/LaunchAgents/com.trycua.lume_updater.plist
 
 ## Uninstall
 
-Remove Lume completely:
+Remove Lume with a single command:
 
 ```bash
-# Stop and remove background service
-launchctl unload ~/Library/LaunchAgents/com.trycua.lume_daemon.plist 2>/dev/null
-rm -f ~/Library/LaunchAgents/com.trycua.lume_daemon.plist
-
-# Stop and remove auto-updater
-launchctl unload ~/Library/LaunchAgents/com.trycua.lume_updater.plist 2>/dev/null
-rm -f ~/Library/LaunchAgents/com.trycua.lume_updater.plist
-rm -f ~/.local/bin/lume-update
-
-# Optional: Remove cached images (run before removing binary)
-lume prune
-
-# Remove Lume binary
-rm -f $(which lume)
-
-# Optional: Remove VMs and config
-rm -rf ~/.lume
-rm -rf ~/.config/lume
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/lume/scripts/uninstall.sh)"
 ```
+
+This stops all services, removes the binary, and cleans up LaunchAgents while preserving your VMs and configuration.
+
+To also remove all VMs and data, use the `--purge` flag:
+
+```bash
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/lume/scripts/uninstall.sh)" -- --purge
+```
+
+<Callout type="warn">
+The `--purge` flag permanently deletes all VMs in `~/.lume/` and configuration in `~/.config/lume/`. This cannot be undone.
+</Callout>
 
 ## Troubleshooting
 

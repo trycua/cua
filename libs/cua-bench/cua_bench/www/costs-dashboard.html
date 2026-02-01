@@ -1,0 +1,607 @@
+<!doctype html>
+<html lang="en" class="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Cua Costs Dashboard - GHA & Codespaces</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/iconify-icon@3.0.2/dist/iconify-icon.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script>
+      tailwind.config = {
+        darkMode: 'class',
+        theme: {
+          extend: {
+            colors: {
+              'vercel-bg': '#000000',
+              'vercel-card': '#0a0a0a',
+              'vercel-border': '#1a1a1a',
+              'vercel-text': '#ededed',
+              'vercel-muted': '#888888',
+              'vercel-accent': '#0070f3',
+              'gha-color': '#2ea44f',
+              'codespaces-color': '#0969da',
+            },
+          },
+        },
+      };
+    </script>
+    <style>
+      body {
+        background: #000000;
+        font-family:
+          -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell',
+          'Fira Sans', 'Droid Sans', 'Helvetica Neue', sans-serif;
+      }
+      .card {
+        background: linear-gradient(145deg, #0a0a0a 0%, #111111 100%);
+        border: 1px solid #1a1a1a;
+        transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+      }
+      .card:hover {
+        border-color: #333333;
+      }
+      .metric-card {
+        background: linear-gradient(145deg, #0a0a0a 0%, #111111 100%);
+        border: 1px solid #1a1a1a;
+      }
+      .gha-border { border-left: 3px solid #2ea44f; }
+      .codespaces-border { border-left: 3px solid #0969da; }
+      .aggregated-border { border-left: 3px solid #8b5cf6; }
+      .tab-active {
+        border-bottom: 2px solid #ededed;
+        color: #ededed;
+      }
+      .tab-inactive {
+        color: #888888;
+      }
+      .tab-inactive:hover {
+        color: #ededed;
+      }
+    </style>
+  </head>
+  <body class="bg-vercel-bg text-vercel-text">
+    <div class="min-h-screen">
+      <!-- Navigation -->
+      <nav class="border-b border-vercel-border">
+        <div class="max-w-7xl mx-auto px-6 py-4">
+          <div class="flex items-center justify-between">
+            <div class="flex items-center gap-2">
+              <a class="text-lg font-medium" href="dashboard.html">
+                cua-bench<span class="text-vercel-muted">/costs</span>
+              </a>
+            </div>
+            <div class="flex items-center gap-6">
+              <a href="dashboard.html" class="link text-sm hover:text-vercel-text transition-colors">Home</a>
+              <a href="costs-dashboard.html" class="text-sm text-vercel-text border-b border-vercel-text pb-1">Costs</a>
+              <a href="/environments" class="link text-sm hover:text-vercel-text transition-colors">Environments</a>
+            </div>
+          </div>
+        </div>
+      </nav>
+
+      <!-- Main Content -->
+      <main class="max-w-7xl mx-auto px-6 py-8">
+        <!-- Header -->
+        <div class="mb-8">
+          <h1 class="text-3xl font-bold mb-2">Costs & Usage Dashboard</h1>
+          <p class="text-vercel-muted">
+            Monitor GHA and Codespaces costs and usage from OTEL telemetry
+          </p>
+        </div>
+
+        <!-- Time Range Selector -->
+        <div class="flex items-center gap-4 mb-8">
+          <span class="text-sm text-vercel-muted">Time Range:</span>
+          <select id="timeRange" class="bg-vercel-card border border-vercel-border rounded px-3 py-1.5 text-sm">
+            <option value="1h">Last 1 hour</option>
+            <option value="6h">Last 6 hours</option>
+            <option value="24h" selected>Last 24 hours</option>
+            <option value="7d">Last 7 days</option>
+            <option value="30d">Last 30 days</option>
+          </select>
+          <button onclick="refreshData()" class="bg-vercel-accent text-white px-4 py-1.5 rounded text-sm hover:bg-blue-600 transition-colors">
+            <iconify-icon icon="lucide:refresh-cw" class="mr-1"></iconify-icon>
+            Refresh
+          </button>
+        </div>
+
+        <!-- View Tabs -->
+        <div class="flex border-b border-vercel-border mb-8">
+          <button onclick="switchView('aggregated')" id="tab-aggregated" class="px-4 py-2 text-sm tab-active">
+            <iconify-icon icon="lucide:layers" class="mr-1"></iconify-icon>
+            Aggregated
+          </button>
+          <button onclick="switchView('gha')" id="tab-gha" class="px-4 py-2 text-sm tab-inactive">
+            <iconify-icon icon="simple-icons:githubactions" class="mr-1"></iconify-icon>
+            GitHub Actions
+          </button>
+          <button onclick="switchView('codespaces')" id="tab-codespaces" class="px-4 py-2 text-sm tab-inactive">
+            <iconify-icon icon="lucide:cloud" class="mr-1"></iconify-icon>
+            Codespaces
+          </button>
+        </div>
+
+        <!-- Aggregated View -->
+        <div id="view-aggregated" class="view-content">
+          <!-- Summary Cards -->
+          <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
+            <div class="metric-card aggregated-border rounded-lg p-4">
+              <div class="text-vercel-muted text-xs uppercase tracking-wide mb-1">Total Cost</div>
+              <div class="text-2xl font-bold" id="total-cost">$0.00</div>
+              <div class="text-xs text-vercel-muted mt-1">
+                <span class="text-gha-color">GHA: <span id="total-cost-gha">$0.00</span></span>
+                <span class="mx-2">|</span>
+                <span class="text-codespaces-color">CS: <span id="total-cost-cs">$0.00</span></span>
+              </div>
+            </div>
+            <div class="metric-card aggregated-border rounded-lg p-4">
+              <div class="text-vercel-muted text-xs uppercase tracking-wide mb-1">Total Operations</div>
+              <div class="text-2xl font-bold" id="total-operations">0</div>
+              <div class="text-xs text-vercel-muted mt-1">
+                <span class="text-gha-color">GHA: <span id="total-ops-gha">0</span></span>
+                <span class="mx-2">|</span>
+                <span class="text-codespaces-color">CS: <span id="total-ops-cs">0</span></span>
+              </div>
+            </div>
+            <div class="metric-card aggregated-border rounded-lg p-4">
+              <div class="text-vercel-muted text-xs uppercase tracking-wide mb-1">Total Tokens</div>
+              <div class="text-2xl font-bold" id="total-tokens">0</div>
+              <div class="text-xs text-vercel-muted mt-1">
+                <span class="text-gha-color">GHA: <span id="total-tokens-gha">0</span></span>
+                <span class="mx-2">|</span>
+                <span class="text-codespaces-color">CS: <span id="total-tokens-cs">0</span></span>
+              </div>
+            </div>
+            <div class="metric-card aggregated-border rounded-lg p-4">
+              <div class="text-vercel-muted text-xs uppercase tracking-wide mb-1">Avg Latency</div>
+              <div class="text-2xl font-bold" id="avg-latency">0ms</div>
+              <div class="text-xs text-vercel-muted mt-1">
+                <span class="text-gha-color">GHA: <span id="avg-latency-gha">0ms</span></span>
+                <span class="mx-2">|</span>
+                <span class="text-codespaces-color">CS: <span id="avg-latency-cs">0ms</span></span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Charts -->
+          <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+            <div class="card rounded-lg p-6">
+              <h3 class="text-lg font-semibold mb-4">Cost Over Time</h3>
+              <canvas id="costChart"></canvas>
+            </div>
+            <div class="card rounded-lg p-6">
+              <h3 class="text-lg font-semibold mb-4">Cost Distribution</h3>
+              <canvas id="costPieChart"></canvas>
+            </div>
+          </div>
+
+          <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <div class="card rounded-lg p-6">
+              <h3 class="text-lg font-semibold mb-4">Operations Over Time</h3>
+              <canvas id="operationsChart"></canvas>
+            </div>
+            <div class="card rounded-lg p-6">
+              <h3 class="text-lg font-semibold mb-4">Token Usage</h3>
+              <canvas id="tokensChart"></canvas>
+            </div>
+          </div>
+        </div>
+
+        <!-- GHA View -->
+        <div id="view-gha" class="view-content hidden">
+          <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
+            <div class="metric-card gha-border rounded-lg p-4">
+              <div class="text-vercel-muted text-xs uppercase tracking-wide mb-1">GHA Cost</div>
+              <div class="text-2xl font-bold text-gha-color" id="gha-cost">$0.00</div>
+            </div>
+            <div class="metric-card gha-border rounded-lg p-4">
+              <div class="text-vercel-muted text-xs uppercase tracking-wide mb-1">GHA Operations</div>
+              <div class="text-2xl font-bold text-gha-color" id="gha-operations">0</div>
+            </div>
+            <div class="metric-card gha-border rounded-lg p-4">
+              <div class="text-vercel-muted text-xs uppercase tracking-wide mb-1">GHA Tokens</div>
+              <div class="text-2xl font-bold text-gha-color" id="gha-tokens">0</div>
+            </div>
+            <div class="metric-card gha-border rounded-lg p-4">
+              <div class="text-vercel-muted text-xs uppercase tracking-wide mb-1">GHA Errors</div>
+              <div class="text-2xl font-bold text-red-500" id="gha-errors">0</div>
+            </div>
+          </div>
+
+          <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+            <div class="card rounded-lg p-6">
+              <h3 class="text-lg font-semibold mb-4">GHA Cost Over Time</h3>
+              <canvas id="ghaCostChart"></canvas>
+            </div>
+            <div class="card rounded-lg p-6">
+              <h3 class="text-lg font-semibold mb-4">GHA Operations by Type</h3>
+              <canvas id="ghaOpsChart"></canvas>
+            </div>
+          </div>
+
+          <!-- GHA Detailed Table -->
+          <div class="card rounded-lg p-6">
+            <h3 class="text-lg font-semibold mb-4">GHA Recent Operations</h3>
+            <div class="overflow-x-auto">
+              <table class="w-full text-sm">
+                <thead>
+                  <tr class="border-b border-vercel-border">
+                    <th class="text-left py-2 text-vercel-muted font-medium">Timestamp</th>
+                    <th class="text-left py-2 text-vercel-muted font-medium">Operation</th>
+                    <th class="text-left py-2 text-vercel-muted font-medium">Duration</th>
+                    <th class="text-left py-2 text-vercel-muted font-medium">Tokens</th>
+                    <th class="text-left py-2 text-vercel-muted font-medium">Status</th>
+                  </tr>
+                </thead>
+                <tbody id="gha-operations-table">
+                  <tr><td colspan="5" class="py-4 text-center text-vercel-muted">No data available</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- Codespaces View -->
+        <div id="view-codespaces" class="view-content hidden">
+          <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
+            <div class="metric-card codespaces-border rounded-lg p-4">
+              <div class="text-vercel-muted text-xs uppercase tracking-wide mb-1">Codespaces Cost</div>
+              <div class="text-2xl font-bold text-codespaces-color" id="cs-cost">$0.00</div>
+            </div>
+            <div class="metric-card codespaces-border rounded-lg p-4">
+              <div class="text-vercel-muted text-xs uppercase tracking-wide mb-1">Codespaces Operations</div>
+              <div class="text-2xl font-bold text-codespaces-color" id="cs-operations">0</div>
+            </div>
+            <div class="metric-card codespaces-border rounded-lg p-4">
+              <div class="text-vercel-muted text-xs uppercase tracking-wide mb-1">Codespaces Tokens</div>
+              <div class="text-2xl font-bold text-codespaces-color" id="cs-tokens">0</div>
+            </div>
+            <div class="metric-card codespaces-border rounded-lg p-4">
+              <div class="text-vercel-muted text-xs uppercase tracking-wide mb-1">Codespaces Errors</div>
+              <div class="text-2xl font-bold text-red-500" id="cs-errors">0</div>
+            </div>
+          </div>
+
+          <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+            <div class="card rounded-lg p-6">
+              <h3 class="text-lg font-semibold mb-4">Codespaces Cost Over Time</h3>
+              <canvas id="csCostChart"></canvas>
+            </div>
+            <div class="card rounded-lg p-6">
+              <h3 class="text-lg font-semibold mb-4">Codespaces Operations by Type</h3>
+              <canvas id="csOpsChart"></canvas>
+            </div>
+          </div>
+
+          <!-- Codespaces Detailed Table -->
+          <div class="card rounded-lg p-6">
+            <h3 class="text-lg font-semibold mb-4">Codespaces Recent Operations</h3>
+            <div class="overflow-x-auto">
+              <table class="w-full text-sm">
+                <thead>
+                  <tr class="border-b border-vercel-border">
+                    <th class="text-left py-2 text-vercel-muted font-medium">Timestamp</th>
+                    <th class="text-left py-2 text-vercel-muted font-medium">Operation</th>
+                    <th class="text-left py-2 text-vercel-muted font-medium">Duration</th>
+                    <th class="text-left py-2 text-vercel-muted font-medium">Tokens</th>
+                    <th class="text-left py-2 text-vercel-muted font-medium">Status</th>
+                  </tr>
+                </thead>
+                <tbody id="cs-operations-table">
+                  <tr><td colspan="5" class="py-4 text-center text-vercel-muted">No data available</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </main>
+
+      <!-- Footer -->
+      <footer class="border-t border-vercel-border mt-12 py-6">
+        <div class="max-w-7xl mx-auto px-6 text-center text-vercel-muted text-sm">
+          <p>OTEL Endpoint: <code class="bg-vercel-card px-2 py-0.5 rounded">https://otel.cua.ai</code></p>
+          <p class="mt-2">Service Labels: <code class="text-gha-color">gha</code> | <code class="text-codespaces-color">codespaces</code></p>
+        </div>
+      </footer>
+    </div>
+
+    <script>
+      // Chart instances
+      let costChart, costPieChart, operationsChart, tokensChart;
+      let ghaCostChart, ghaOpsChart, csCostChart, csOpsChart;
+
+      // Mock data for demonstration (replace with actual OTEL API calls)
+      const mockData = {
+        gha: {
+          cost: 42.50,
+          operations: 1250,
+          tokens: 458000,
+          errors: 12,
+          avgLatency: 245,
+          costHistory: [12.5, 15.2, 8.3, 18.7, 22.1, 14.8, 10.5],
+          operationsHistory: [180, 210, 150, 285, 320, 195, 145],
+          operationsByType: { 'agent.run': 450, 'agent.step': 620, 'computer.action': 180 }
+        },
+        codespaces: {
+          cost: 28.75,
+          operations: 890,
+          tokens: 312000,
+          errors: 5,
+          avgLatency: 198,
+          costHistory: [8.2, 10.1, 6.5, 12.3, 9.8, 7.2, 5.5],
+          operationsHistory: [120, 145, 95, 175, 140, 105, 85],
+          operationsByType: { 'agent.run': 320, 'agent.step': 410, 'computer.action': 160 }
+        },
+        timeLabels: ['Day 1', 'Day 2', 'Day 3', 'Day 4', 'Day 5', 'Day 6', 'Day 7']
+      };
+
+      // Initialize charts
+      function initCharts() {
+        const chartDefaults = {
+          responsive: true,
+          maintainAspectRatio: true,
+          plugins: {
+            legend: {
+              labels: { color: '#888888' }
+            }
+          },
+          scales: {
+            x: {
+              ticks: { color: '#888888' },
+              grid: { color: '#1a1a1a' }
+            },
+            y: {
+              ticks: { color: '#888888' },
+              grid: { color: '#1a1a1a' }
+            }
+          }
+        };
+
+        // Aggregated Cost Chart
+        costChart = new Chart(document.getElementById('costChart'), {
+          type: 'line',
+          data: {
+            labels: mockData.timeLabels,
+            datasets: [
+              {
+                label: 'GHA',
+                data: mockData.gha.costHistory,
+                borderColor: '#2ea44f',
+                backgroundColor: 'rgba(46, 164, 79, 0.1)',
+                fill: true,
+                tension: 0.3
+              },
+              {
+                label: 'Codespaces',
+                data: mockData.codespaces.costHistory,
+                borderColor: '#0969da',
+                backgroundColor: 'rgba(9, 105, 218, 0.1)',
+                fill: true,
+                tension: 0.3
+              }
+            ]
+          },
+          options: chartDefaults
+        });
+
+        // Cost Pie Chart
+        costPieChart = new Chart(document.getElementById('costPieChart'), {
+          type: 'doughnut',
+          data: {
+            labels: ['GitHub Actions', 'Codespaces'],
+            datasets: [{
+              data: [mockData.gha.cost, mockData.codespaces.cost],
+              backgroundColor: ['#2ea44f', '#0969da'],
+              borderColor: ['#1a1a1a', '#1a1a1a'],
+              borderWidth: 2
+            }]
+          },
+          options: {
+            responsive: true,
+            plugins: {
+              legend: {
+                labels: { color: '#888888' }
+              }
+            }
+          }
+        });
+
+        // Operations Chart
+        operationsChart = new Chart(document.getElementById('operationsChart'), {
+          type: 'bar',
+          data: {
+            labels: mockData.timeLabels,
+            datasets: [
+              {
+                label: 'GHA',
+                data: mockData.gha.operationsHistory,
+                backgroundColor: '#2ea44f'
+              },
+              {
+                label: 'Codespaces',
+                data: mockData.codespaces.operationsHistory,
+                backgroundColor: '#0969da'
+              }
+            ]
+          },
+          options: chartDefaults
+        });
+
+        // Tokens Chart
+        const totalTokensGHA = mockData.gha.tokens;
+        const totalTokensCS = mockData.codespaces.tokens;
+        tokensChart = new Chart(document.getElementById('tokensChart'), {
+          type: 'bar',
+          data: {
+            labels: ['Prompt Tokens', 'Completion Tokens'],
+            datasets: [
+              {
+                label: 'GHA',
+                data: [totalTokensGHA * 0.6, totalTokensGHA * 0.4],
+                backgroundColor: '#2ea44f'
+              },
+              {
+                label: 'Codespaces',
+                data: [totalTokensCS * 0.6, totalTokensCS * 0.4],
+                backgroundColor: '#0969da'
+              }
+            ]
+          },
+          options: chartDefaults
+        });
+
+        // GHA specific charts
+        ghaCostChart = new Chart(document.getElementById('ghaCostChart'), {
+          type: 'line',
+          data: {
+            labels: mockData.timeLabels,
+            datasets: [{
+              label: 'Cost ($)',
+              data: mockData.gha.costHistory,
+              borderColor: '#2ea44f',
+              backgroundColor: 'rgba(46, 164, 79, 0.2)',
+              fill: true,
+              tension: 0.3
+            }]
+          },
+          options: chartDefaults
+        });
+
+        ghaOpsChart = new Chart(document.getElementById('ghaOpsChart'), {
+          type: 'doughnut',
+          data: {
+            labels: Object.keys(mockData.gha.operationsByType),
+            datasets: [{
+              data: Object.values(mockData.gha.operationsByType),
+              backgroundColor: ['#2ea44f', '#34d058', '#85e89d'],
+              borderColor: '#1a1a1a',
+              borderWidth: 2
+            }]
+          },
+          options: {
+            responsive: true,
+            plugins: {
+              legend: { labels: { color: '#888888' } }
+            }
+          }
+        });
+
+        // Codespaces specific charts
+        csCostChart = new Chart(document.getElementById('csCostChart'), {
+          type: 'line',
+          data: {
+            labels: mockData.timeLabels,
+            datasets: [{
+              label: 'Cost ($)',
+              data: mockData.codespaces.costHistory,
+              borderColor: '#0969da',
+              backgroundColor: 'rgba(9, 105, 218, 0.2)',
+              fill: true,
+              tension: 0.3
+            }]
+          },
+          options: chartDefaults
+        });
+
+        csOpsChart = new Chart(document.getElementById('csOpsChart'), {
+          type: 'doughnut',
+          data: {
+            labels: Object.keys(mockData.codespaces.operationsByType),
+            datasets: [{
+              data: Object.values(mockData.codespaces.operationsByType),
+              backgroundColor: ['#0969da', '#388bfd', '#79b8ff'],
+              borderColor: '#1a1a1a',
+              borderWidth: 2
+            }]
+          },
+          options: {
+            responsive: true,
+            plugins: {
+              legend: { labels: { color: '#888888' } }
+            }
+          }
+        });
+      }
+
+      // Update metrics display
+      function updateMetrics() {
+        const gha = mockData.gha;
+        const cs = mockData.codespaces;
+
+        // Aggregated metrics
+        document.getElementById('total-cost').textContent = `$${(gha.cost + cs.cost).toFixed(2)}`;
+        document.getElementById('total-cost-gha').textContent = `$${gha.cost.toFixed(2)}`;
+        document.getElementById('total-cost-cs').textContent = `$${cs.cost.toFixed(2)}`;
+
+        document.getElementById('total-operations').textContent = (gha.operations + cs.operations).toLocaleString();
+        document.getElementById('total-ops-gha').textContent = gha.operations.toLocaleString();
+        document.getElementById('total-ops-cs').textContent = cs.operations.toLocaleString();
+
+        document.getElementById('total-tokens').textContent = ((gha.tokens + cs.tokens) / 1000).toFixed(0) + 'K';
+        document.getElementById('total-tokens-gha').textContent = (gha.tokens / 1000).toFixed(0) + 'K';
+        document.getElementById('total-tokens-cs').textContent = (cs.tokens / 1000).toFixed(0) + 'K';
+
+        const avgLatency = Math.round((gha.avgLatency + cs.avgLatency) / 2);
+        document.getElementById('avg-latency').textContent = `${avgLatency}ms`;
+        document.getElementById('avg-latency-gha').textContent = `${gha.avgLatency}ms`;
+        document.getElementById('avg-latency-cs').textContent = `${cs.avgLatency}ms`;
+
+        // GHA metrics
+        document.getElementById('gha-cost').textContent = `$${gha.cost.toFixed(2)}`;
+        document.getElementById('gha-operations').textContent = gha.operations.toLocaleString();
+        document.getElementById('gha-tokens').textContent = (gha.tokens / 1000).toFixed(0) + 'K';
+        document.getElementById('gha-errors').textContent = gha.errors;
+
+        // Codespaces metrics
+        document.getElementById('cs-cost').textContent = `$${cs.cost.toFixed(2)}`;
+        document.getElementById('cs-operations').textContent = cs.operations.toLocaleString();
+        document.getElementById('cs-tokens').textContent = (cs.tokens / 1000).toFixed(0) + 'K';
+        document.getElementById('cs-errors').textContent = cs.errors;
+      }
+
+      // Switch view tabs
+      function switchView(view) {
+        // Hide all views
+        document.querySelectorAll('.view-content').forEach(el => el.classList.add('hidden'));
+
+        // Show selected view
+        document.getElementById(`view-${view}`).classList.remove('hidden');
+
+        // Update tab styles
+        document.querySelectorAll('[id^="tab-"]').forEach(el => {
+          el.classList.remove('tab-active');
+          el.classList.add('tab-inactive');
+        });
+        document.getElementById(`tab-${view}`).classList.remove('tab-inactive');
+        document.getElementById(`tab-${view}`).classList.add('tab-active');
+      }
+
+      // Refresh data (would call OTEL API in production)
+      async function refreshData() {
+        const timeRange = document.getElementById('timeRange').value;
+        console.log(`Refreshing data for time range: ${timeRange}`);
+
+        // In production, this would fetch from OTEL endpoint:
+        // const response = await fetch(`https://otel.cua.ai/v1/metrics?timeRange=${timeRange}`);
+        // const data = await response.json();
+
+        // For now, just update with mock data
+        updateMetrics();
+
+        // Show toast
+        const toast = document.createElement('div');
+        toast.className = 'fixed top-4 right-4 bg-vercel-card border border-vercel-border rounded-lg px-4 py-2 text-sm z-50';
+        toast.textContent = 'Data refreshed';
+        document.body.appendChild(toast);
+        setTimeout(() => toast.remove(), 2000);
+      }
+
+      // Initialize on load
+      document.addEventListener('DOMContentLoaded', function() {
+        initCharts();
+        updateMetrics();
+      });
+    </script>
+  </body>
+</html>

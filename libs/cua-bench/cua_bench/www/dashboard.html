@@ -96,6 +96,11 @@
                 >Home</a
               >
               <a
+                href="costs-dashboard.html"
+                class="link text-sm hover:text-vercel-text transition-colors pb-1"
+                >Costs</a
+              >
+              <a
                 href="/environments"
                 class="link text-sm hover:text-vercel-text transition-colors pb-1"
                 >My environments</a
@@ -125,7 +130,7 @@
         </div>
 
         <!-- Cards Grid -->
-        <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-12">
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-12">
           <!-- Generate Environment -->
           <div class="card rounded-lg p-6 cursor-pointer group" data-action="generate-task">
             <h3 class="text-xl font-semibold mb-2">Generate Environment</h3>
@@ -167,6 +172,20 @@
               Run
             </div>
           </div>
+
+          <!-- Costs Dashboard -->
+          <div class="card rounded-lg p-6 cursor-pointer group" data-action="costs">
+            <h3 class="text-xl font-semibold mb-2">Costs & Usage</h3>
+            <p class="text-vercel-muted text-sm mb-4 leading-relaxed">
+              Monitor GHA and Codespaces costs, usage metrics, and OTEL telemetry
+            </p>
+            <div
+              class="btn rounded-md px-4 py-2 text-sm font-medium inline-flex items-center gap-2 flex"
+            >
+              <iconify-icon icon="lucide:bar-chart-2" class="text-sm"></iconify-icon>
+              View
+            </div>
+          </div>
         </div>
       </main>
     </div>
@@ -182,6 +201,12 @@
             if (action === 'generate-task') {
               // Navigate to generate page
               window.location.href = 'generate.html';
+              return;
+            }
+
+            if (action === 'costs') {
+              // Navigate to costs dashboard
+              window.location.href = 'costs-dashboard.html';
               return;
             }
 

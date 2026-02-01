@@ -1,0 +1,40 @@
+{
+  "name": "Cua Development",
+  "image": "mcr.microsoft.com/devcontainers/base:ubuntu",
+  "features": {
+    "ghcr.io/devcontainers/features/python:1": {
+      "version": "3.11"
+    },
+    "ghcr.io/devcontainers/features/node:1": {
+      "version": "20"
+    },
+    "ghcr.io/devcontainers/features/git:1": {},
+    "ghcr.io/devcontainers/features/github-cli:1": {}
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "ms-python.vscode-pylance",
+        "dbaeumer.vscode-eslint",
+        "esbenp.prettier-vscode",
+        "bradlc.vscode-tailwindcss"
+      ],
+      "settings": {
+        "python.defaultInterpreterPath": "/usr/local/bin/python",
+        "python.terminal.activateEnvironment": true
+      }
+    }
+  },
+  "containerEnv": {
+    "CUA_OTEL_ENDPOINT": "https://otel.cua.ai",
+    "CUA_OTEL_SERVICE_NAME": "codespaces",
+    "OTEL_SERVICE_NAME": "codespaces",
+    "OTEL_EXPORTER_OTLP_ENDPOINT": "https://otel.cua.ai",
+    "OTEL_EXPORTER_OTLP_PROTOCOL": "http/protobuf",
+    "OTEL_RESOURCE_ATTRIBUTES": "service.name=codespaces,deployment.environment=codespaces"
+  },
+  "postCreateCommand": "bash .devcontainer/post-create.sh",
+  "postStartCommand": "echo 'Cua Codespaces environment ready with OTEL exporter configured'",
+  "remoteUser": "vscode"
+}

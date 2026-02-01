@@ -81,6 +81,7 @@ enum CommandDocExtractor {
             runDoc,
             stopDoc,
             sshDoc,
+            clipboardDoc,
             ipswDoc,
             serveDoc,
             deleteDoc,
@@ -327,6 +328,51 @@ enum CommandDocExtractor {
             ],
             flags: [],
             subcommands: []
+        )
+    }
+
+    // MARK: - Clipboard
+
+    private static var clipboardDoc: CommandDoc {
+        CommandDoc(
+            name: "clipboard",
+            abstract: "Sync clipboard between host and VM",
+            discussion: "Synchronize clipboard content between the macOS host and a running VM using SSH. Requires Remote Login to be enabled on the VM.",
+            arguments: [],
+            options: [],
+            flags: [],
+            subcommands: [
+                CommandDoc(
+                    name: "push",
+                    abstract: "Push host clipboard to VM",
+                    discussion: nil,
+                    arguments: [
+                        ArgumentDoc(name: "name", help: "Name of the virtual machine", type: "String", isOptional: false),
+                    ],
+                    options: [
+                        OptionDoc(name: "user", shortName: "u", help: "SSH username", type: "String", defaultValue: "lume", isOptional: false),
+                        OptionDoc(name: "password", shortName: "p", help: "SSH password", type: "String", defaultValue: "lume", isOptional: false),
+                        OptionDoc(name: "storage", shortName: nil, help: "Storage location name or path", type: "String", defaultValue: nil, isOptional: true),
+                    ],
+                    flags: [],
+                    subcommands: []
+                ),
+                CommandDoc(
+                    name: "pull",
+                    abstract: "Pull VM clipboard to host",
+                    discussion: nil,
+                    arguments: [
+                        ArgumentDoc(name: "name", help: "Name of the virtual machine", type: "String", isOptional: false),
+                    ],
+                    options: [
+                        OptionDoc(name: "user", shortName: "u", help: "SSH username", type: "String", defaultValue: "lume", isOptional: false),
+                        OptionDoc(name: "password", shortName: "p", help: "SSH password", type: "String", defaultValue: "lume", isOptional: false),
+                        OptionDoc(name: "storage", shortName: nil, help: "Storage location name or path", type: "String", defaultValue: nil, isOptional: true),
+                    ],
+                    flags: [],
+                    subcommands: []
+                ),
+            ]
         )
     }
 

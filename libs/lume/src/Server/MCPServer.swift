@@ -458,6 +458,58 @@ final class LumeMCPServer {
                 ])
             ),
             Tool(
+                name: "lume_clipboard_push",
+                description: "Push host clipboard content to a running VM. Copies text from the macOS host clipboard to the VM's clipboard via SSH. Requires SSH to be enabled in the VM.",
+                inputSchema: .object([
+                    "type": .string("object"),
+                    "properties": .object([
+                        "name": .object([
+                            "type": .string("string"),
+                            "description": .string("Name of the VM")
+                        ]),
+                        "user": .object([
+                            "type": .string("string"),
+                            "description": .string("SSH username (default: lume)")
+                        ]),
+                        "password": .object([
+                            "type": .string("string"),
+                            "description": .string("SSH password (default: lume)")
+                        ]),
+                        "storage": .object([
+                            "type": .string("string"),
+                            "description": .string("Optional storage location name or path")
+                        ])
+                    ]),
+                    "required": .array([.string("name")])
+                ])
+            ),
+            Tool(
+                name: "lume_clipboard_pull",
+                description: "Pull clipboard content from a running VM to the host. Copies text from the VM's clipboard to the macOS host clipboard via SSH. Requires SSH to be enabled in the VM.",
+                inputSchema: .object([
+                    "type": .string("object"),
+                    "properties": .object([
+                        "name": .object([
+                            "type": .string("string"),
+                            "description": .string("Name of the VM")
+                        ]),
+                        "user": .object([
+                            "type": .string("string"),
+                            "description": .string("SSH username (default: lume)")
+                        ]),
+                        "password": .object([
+                            "type": .string("string"),
+                            "description": .string("SSH password (default: lume)")
+                        ]),
+                        "storage": .object([
+                            "type": .string("string"),
+                            "description": .string("Optional storage location name or path")
+                        ])
+                    ]),
+                    "required": .array([.string("name")])
+                ])
+            ),
+            Tool(
                 name: "lume_create_vm",
                 description: "Create a new macOS VM asynchronously. Returns immediately while the VM is being provisioned. Poll lume_list_vms or lume_get_vm to check progress (status will be 'provisioning' until complete).",
                 inputSchema: .object([
@@ -517,6 +569,10 @@ final class LumeMCPServer {
                 return try await handleDeleteVM(params.arguments)
             case "lume_exec":
                 return try await handleExec(params.arguments)
+            case "lume_clipboard_push":
+                return try await handleClipboardPush(params.arguments)
+            case "lume_clipboard_pull":
+                return try await handleClipboardPull(params.arguments)
             case "lume_create_vm":
                 return try await handleCreateVM(params.arguments)
             default:
@@ -692,6 +748,90 @@ final class LumeMCPServer {
             return CallTool.Result(content: [.text(result)], isError: sshResult.exitCode != 0)
         } catch let error as SSHError {
             return CallTool.Result(content: [.text("Error: \(error.localizedDescription)")], isError: true)
+        } catch {
+            return CallTool.Result(content: [.text("Error: \(error.localizedDescription)")], isError: true)
+        }
+    }
+
+    private func handleClipboardPush(_ args: [String: Value]?) async throws -> CallTool.Result {
+        guard let name = args?["name"]?.stringValue else {
+            return CallTool.Result(content: [.text("Error: 'name' is required")], isError: true)
+        }
+
+        let user = args?["user"]?.stringValue ?? "lume"
+        let password = args?["password"]?.stringValue ?? "lume"
+        let storage = args?["storage"]?.stringValue
+
+        // Get VM to find IP address
+        let vm = try controller.get(name: name, storage: storage)
+        guard let ip = vm.details.ipAddress else {
+            return CallTool.Result(
+                content: [.text("Error: VM '\(name)' has no IP address. Is it running?")],
+                isError: true
+            )
+        }
+
+        // Check if SSH is available
+        if vm.details.sshAvailable == false {
+            return CallTool.Result(
+                content: [.text("Error: SSH is not available on VM '\(name)'. Make sure SSH is enabled in the VM.")],
+                isError: true
+            )
+        }
+
+        let sshClient = SSHClient(
+            host: ip,
+            port: 22,
+            user: user,
+            password: password
+        )
+        let clipboardSync = ClipboardSync(sshClient: sshClient)
+
+        do {
+            let result = try await clipboardSync.push()
+            return CallTool.Result(content: [.text(result)])
+        } catch {
+            return CallTool.Result(content: [.text("Error: \(error.localizedDescription)")], isError: true)
+        }
+    }
+
+    private func handleClipboardPull(_ args: [String: Value]?) async throws -> CallTool.Result {
+        guard let name = args?["name"]?.stringValue else {
+            return CallTool.Result(content: [.text("Error: 'name' is required")], isError: true)
+        }
+
+        let user = args?["user"]?.stringValue ?? "lume"
+        let password = args?["password"]?.stringValue ?? "lume"
+        let storage = args?["storage"]?.stringValue
+
+        // Get VM to find IP address
+        let vm = try controller.get(name: name, storage: storage)
+        guard let ip = vm.details.ipAddress else {
+            return CallTool.Result(
+                content: [.text("Error: VM '\(name)' has no IP address. Is it running?")],
+                isError: true
+            )
+        }
+
+        // Check if SSH is available
+        if vm.details.sshAvailable == false {
+            return CallTool.Result(
+                content: [.text("Error: SSH is not available on VM '\(name)'. Make sure SSH is enabled in the VM.")],
+                isError: true
+            )
+        }
+
+        let sshClient = SSHClient(
+            host: ip,
+            port: 22,
+            user: user,
+            password: password
+        )
+        let clipboardSync = ClipboardSync(sshClient: sshClient)
+
+        do {
+            let result = try await clipboardSync.pull()
+            return CallTool.Result(content: [.text(result)])
         } catch {
             return CallTool.Result(content: [.text("Error: \(error.localizedDescription)")], isError: true)
         }

@@ -174,6 +174,23 @@ Connect to a VM via SSH or execute commands remotely
 - `--storage` - Storage location name or path
 - `-t, --timeout` - Command timeout in seconds (0 for no timeout) (default: 60)
 
+### lume clipboard
+
+Sync clipboard between host and VM
+
+**Subcommands:**
+
+- `lume clipboard push` - Push host clipboard to VM
+  - `<name>` - Name of the virtual machine
+  - `-u, --user` - SSH username
+  - `-p, --password` - SSH password
+  - `--storage` - Storage location name or path
+- `lume clipboard pull` - Pull VM clipboard to host
+  - `<name>` - Name of the virtual machine
+  - `-u, --user` - SSH username
+  - `-p, --password` - SSH password
+  - `--storage` - Storage location name or path
+
 ## Image Management
 
 ### lume pull

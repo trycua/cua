@@ -18,7 +18,8 @@ public actor ClipboardWatcher {
     private static let pollInterval: TimeInterval = 1.0
 
     /// Delay before starting to watch (allows VM to boot and get IP)
-    private static let startupDelay: TimeInterval = 10.0
+    /// Set to 0 since we gracefully handle SSH not being available yet
+    private static let startupDelay: TimeInterval = 0
 
     /// Max content size (1MB)
     private static let maxContentSize = 1_000_000
@@ -36,8 +37,10 @@ public actor ClipboardWatcher {
         watchTask = Task { [weak self] in
             guard let self = self else { return }
 
-            // Wait for VM to boot and potentially get an IP address
-            try? await Task.sleep(nanoseconds: UInt64(Self.startupDelay * 1_000_000_000))
+            // Optional startup delay (set to 0 since we gracefully handle SSH not ready)
+            if Self.startupDelay > 0 {
+                try? await Task.sleep(nanoseconds: UInt64(Self.startupDelay * 1_000_000_000))
+            }
 
             // Initialize with current clipboard state to avoid syncing on start
             await self.initializeState()
@@ -94,9 +97,22 @@ public actor ClipboardWatcher {
             guard let data = content.data(using: .utf8) else { return }
             let base64Content = data.base64EncodedString()
 
-            // Use printf to avoid issues with special characters in echo
-            let command = "printf '%s' '\(base64Content)' | base64 -D | pbcopy"
-            let result = try await sshClient.execute(command: command, timeout: 5)
+            // For short content, use inline command
+            // For long content, use heredoc to avoid shell argument limits
+            let command: String
+            if base64Content.count < 65536 {
+                // Short content: inline is fine
+                command = "printf '%s' '\(base64Content)' | base64 -D | pbcopy"
+            } else {
+                // Long content: use heredoc to avoid ARG_MAX limits
+                command = """
+                base64 -D <<'CLIPBOARD_EOF' | pbcopy
+                \(base64Content)
+                CLIPBOARD_EOF
+                """
+            }
+
+            let result = try await sshClient.execute(command: command, timeout: 10)
 
             if result.exitCode == 0 {
                 Logger.debug("Clipboard synced to VM", metadata: [

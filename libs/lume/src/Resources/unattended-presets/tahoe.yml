@@ -19,10 +19,10 @@ boot_commands:
   - "<wait 'English', timeout=120>"
   - "<delay 1>"
 
-  # Type "English" to filter the list and select it, then press Enter
+  # Type "English" to filter the list, then click on "English" to select it
   - "<type 'English'>"
   - "<delay 1>"
-  - "<enter>"
+  - "<click 'English'>"
   - "<delay 2>"
 
   # Country/Region selection
@@ -154,21 +154,9 @@ boot_commands:
 
   # Siri (longer timeout as Screen Time page can be slow)
   - "<wait 'Siri', timeout=300>"
-  - "<delay 1>"
-  - "<click 'Continue'>"
   - "<delay 2>"
-
-  # Select a Siri Voice
-  - "<wait 'Select a Siri Voice'>"
-  - "<delay 1>"
-  - "<click 'Choose For Me'>"
+  - "<click 'Enable Ask Siri'>"
   - "<delay 2>"
-
-  # Improve Siri & Dictation - select "Not Now" option
-  - "<wait 'Improve Siri'>"
-  - "<delay 1>"
-  - "<click 'Not Now'>"
-  - "<delay 1>"
   - "<click 'Continue'>"
   - "<delay 2>"
 

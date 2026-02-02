@@ -154,21 +154,9 @@ boot_commands:
 
   # Siri (longer timeout as Screen Time page can be slow)
   - "<wait 'Siri', timeout=300>"
-  - "<delay 1>"
-  - "<click 'Continue'>"
   - "<delay 2>"
-
-  # Select a Siri Voice
-  - "<wait 'Select a Siri Voice'>"
-  - "<delay 1>"
-  - "<click 'Choose For Me'>"
+  - "<click 'Enable Ask Siri'>"
   - "<delay 2>"
-
-  # Improve Siri & Dictation - select "Not Now" option
-  - "<wait 'Improve Siri'>"
-  - "<delay 1>"
-  - "<click 'Not Now'>"
-  - "<delay 1>"
   - "<click 'Continue'>"
   - "<delay 2>"
 

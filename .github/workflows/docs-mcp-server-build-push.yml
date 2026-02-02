@@ -40,6 +40,7 @@ jobs:
           - linux/arm64
     outputs:
       image_tag: ${{ steps.meta.outputs.version }}
+      timestamp: ${{ steps.timestamp.outputs.ts }}
 
     steps:
       - name: Checkout
@@ -64,6 +65,10 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
+      - name: Generate timestamp
+        id: timestamp
+        run: echo "ts=$(date -u +'%Y%m%d%H%M%S')" >> $GITHUB_OUTPUT
+
       - name: Extract metadata
         id: meta
         uses: docker/metadata-action@v5
@@ -74,6 +79,7 @@ jobs:
             type=ref,event=branch
             type=ref,event=pr
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+            type=raw,value=main-${{ steps.timestamp.outputs.ts }},enable=${{ github.ref == 'refs/heads/main' }}
 
       - name: Determine if push is enabled
         id: push-check
@@ -163,6 +169,7 @@ jobs:
             type=sha,prefix=,format=short
             type=ref,event=branch
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+            type=raw,value=main-${{ needs.build.outputs.timestamp }},enable=${{ github.ref == 'refs/heads/main' }}
 
       - name: Download all digest artifacts
         uses: actions/download-artifact@v4

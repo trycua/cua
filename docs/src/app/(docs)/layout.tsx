@@ -6,7 +6,7 @@ import type { ReactNode } from 'react';
 export default function Layout({ children }: { children: ReactNode }) {
   return (
     <>
-      <CustomHeader />
+      <CustomHeader pageTree={source.pageTree} />
       <div className="pt-14">
         <DocsLayout
           tree={source.pageTree}

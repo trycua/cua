@@ -4,9 +4,16 @@ Modal app for CUA documentation crawling and database generation
 This app provides:
 1. Scheduled daily crawling of cua.ai/docs stored in a Modal volume
 2. Database generation (LanceDB vectors + SQLite FTS) for the MCP server
+3. S3 upload of generated databases for Kubernetes storage controller sync
 
 The MCP server that queries these databases runs as a separate containerized
-service (see docs/scripts/docs-mcp-server/).
+service (see docs/scripts/docs-mcp-server/). The S3 uploads enable the
+Kubernetes deployment to sync databases from S3 to the MCP server pods.
+
+S3 Configuration:
+- Bucket: trycua-docs-mcp-data (us-west-2)
+- docs_db -> s3://trycua-docs-mcp-data/docs_db/
+- code_db -> s3://trycua-docs-mcp-data/code_db/
 
 Usage:
     modal deploy docs/scripts/modal_app.py
@@ -31,6 +38,15 @@ code_volume = modal.Volume.from_name("cua-code-index", create_if_missing=True)
 # GitHub token secret for cloning
 github_secret = modal.Secret.from_name("github-secret", required_keys=["GITHUB_TOKEN"])
 
+# AWS secret for S3 uploads (uses OIDC for authentication)
+aws_secret = modal.Secret.from_dict({
+    "AWS_ROLE_ARN": "arn:aws:iam::296062593712:role/modal-docs-mcp-role",
+    "AWS_REGION": "us-west-2",
+})
+
+# S3 bucket for database uploads
+S3_BUCKET = "trycua-docs-mcp-data"
+
 # Define the container image with all dependencies
 image = (
     modal.Image.debian_slim(python_version="3.12")
@@ -45,6 +61,7 @@ image = (
         "pandas>=2.0.0",
         "markdown-it-py>=3.0.0",
         "markitdown>=0.0.1",
+        "boto3>=1.26.0",
     )
     .run_commands("playwright install --with-deps chromium")
 )
@@ -104,6 +121,114 @@ def clean_markdown(markdown: str) -> str:
     text = re.sub(r"\n{3,}", "\n\n", text)
     text = re.sub(r" {2,}", " ", text)
     return text.strip()
+
+
+def upload_directory_to_s3(local_path: str, bucket: str, s3_prefix: str) -> dict:
+    """Upload a directory to S3.
+
+    Args:
+        local_path: Path to the local directory to upload
+        bucket: S3 bucket name
+        s3_prefix: Prefix (folder path) in S3 bucket
+
+    Returns:
+        Dict with upload statistics
+    """
+    import os
+
+    import boto3
+
+    s3 = boto3.client("s3")
+    uploaded_files = 0
+    total_size = 0
+
+    for root, dirs, files in os.walk(local_path):
+        for file in files:
+            local_file = os.path.join(root, file)
+            # Create S3 key by joining prefix with relative path
+            relative_path = os.path.relpath(local_file, local_path)
+            s3_key = s3_prefix.rstrip("/") + "/" + relative_path
+
+            file_size = os.path.getsize(local_file)
+            s3.upload_file(local_file, bucket, s3_key)
+            uploaded_files += 1
+            total_size += file_size
+
+    return {
+        "files_uploaded": uploaded_files,
+        "total_size_bytes": total_size,
+        "bucket": bucket,
+        "prefix": s3_prefix,
+    }
+
+
+# =============================================================================
+# S3 Upload Functions
+# =============================================================================
+
+
+@app.function(
+    image=image,
+    volumes={VOLUME_PATH: docs_volume},
+    secrets=[aws_secret],
+    timeout=1800,  # 30 minutes
+)
+def upload_docs_db_to_s3() -> dict:
+    """Upload the documentation database to S3.
+
+    This function uploads the docs_db directory to S3 for the Kubernetes
+    storage controller to sync to the MCP server pods.
+
+    Returns:
+        Dict with upload statistics
+    """
+    print("Uploading docs database to S3...")
+
+    db_path = Path(DB_PATH)
+    if not db_path.exists():
+        print("No docs database found to upload")
+        return {"error": "No docs database found"}
+
+    result = upload_directory_to_s3(
+        local_path=str(db_path),
+        bucket=S3_BUCKET,
+        s3_prefix="docs_db",
+    )
+
+    print(f"Docs DB upload complete: {result['files_uploaded']} files, {result['total_size_bytes']} bytes")
+    return result
+
+
+@app.function(
+    image=image,
+    volumes={CODE_VOLUME_PATH: code_volume},
+    secrets=[aws_secret],
+    timeout=1800,  # 30 minutes
+)
+def upload_code_db_to_s3() -> dict:
+    """Upload the code index database to S3.
+
+    This function uploads the code_db directory to S3 for the Kubernetes
+    storage controller to sync to the MCP server pods.
+
+    Returns:
+        Dict with upload statistics
+    """
+    print("Uploading code database to S3...")
+
+    db_path = Path(CODE_DB_PATH)
+    if not db_path.exists():
+        print("No code database found to upload")
+        return {"error": "No code database found"}
+
+    result = upload_directory_to_s3(
+        local_path=str(db_path),
+        bucket=S3_BUCKET,
+        s3_prefix="code_db",
+    )
+
+    print(f"Code DB upload complete: {result['files_uploaded']} files, {result['total_size_bytes']} bytes")
+    return result
 
 
 # =============================================================================
@@ -335,6 +460,11 @@ async def scheduled_crawl():
     print("Generating databases...")
     await generate_vector_db.remote.aio()
     await generate_sqlite_db.remote.aio()
+
+    # Upload docs database to S3 for Kubernetes sync
+    print("Uploading docs database to S3...")
+    upload_result = upload_docs_db_to_s3.remote()
+    print(f"S3 upload complete: {upload_result}")
 
     print(f"Scheduled crawl complete: {summary}")
     return summary
@@ -1457,6 +1587,12 @@ async def scheduled_code_index():
         print(f"Aggregation complete: {agg_result}")
         result["aggregation"] = agg_result
 
+        # Upload code database to S3 for Kubernetes sync
+        print("Uploading code database to S3...")
+        upload_result = upload_code_db_to_s3.remote()
+        print(f"S3 upload complete: {upload_result}")
+        result["s3_upload"] = upload_result
+
         return result
     except modal.exception.FunctionTimeoutError as e:
         print(f"Code indexing timed out: {e}")
@@ -1497,6 +1633,7 @@ def main(
     skip_code: bool = False,
     parallel: bool = True,
     code_only: bool = False,
+    upload_to_s3: bool = False,
 ):
     """Run initial crawl and database generation
 
@@ -1505,6 +1642,7 @@ def main(
         skip_code: Skip code indexing
         parallel: Use parallel code indexing (default: True)
         code_only: Only run code indexing (shortcut for --skip-docs)
+        upload_to_s3: Upload databases to S3 after generation (for K8s sync)
     """
     if code_only:
         skip_docs = True
@@ -1522,6 +1660,11 @@ def main(
         sqlite_result = generate_sqlite_db.remote()
         print(f"SQLite DB: {sqlite_result}")
 
+        if upload_to_s3:
+            print("Uploading docs database to S3...")
+            upload_result = upload_docs_db_to_s3.remote()
+            print(f"S3 upload: {upload_result}")
+
     if not skip_code:
         if parallel:
             print("Generating code index (parallel)...")
@@ -1535,5 +1678,10 @@ def main(
         print("Aggregating code databases...")
         agg_result = aggregate_code_databases.remote()
         print(f"Aggregation: {agg_result}")
+
+        if upload_to_s3:
+            print("Uploading code database to S3...")
+            upload_result = upload_code_db_to_s3.remote()
+            print(f"S3 upload: {upload_result}")
 
     print("Done! Deploy with: modal deploy docs/scripts/modal_app.py")

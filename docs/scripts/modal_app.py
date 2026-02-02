@@ -1496,7 +1496,6 @@ async def scheduled_code_index():
     volumes={VOLUME_PATH: docs_volume, CODE_VOLUME_PATH: code_volume},
     cpu=1.0,
     memory=2048,
-    timeout=3600,  # 1 hour timeout for long-lived SSE connections
     min_containers=1,  # Keep one container warm to avoid cold start latency
 )
 @modal.concurrent(max_inputs=10)

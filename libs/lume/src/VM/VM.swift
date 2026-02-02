@@ -40,6 +40,7 @@ class VM {
     @MainActor
     private var virtualizationService: VMVirtualizationService?
     internal let vncService: VNCService
+    private var clipboardWatcher: ClipboardWatcher?
     internal let virtualizationServiceFactory:
         (VMVirtualizationServiceContext) throws -> VMVirtualizationService
     private let vncServiceFactory: (VMDirectory) -> VNCService
@@ -255,6 +256,11 @@ class VM {
             try await service.start()
             Logger.info("VM started successfully", metadata: ["name": vmDirContext.name])
 
+            // Start clipboard watcher for automatic host-to-VM clipboard sync
+            // Requires SSH/Remote Login to be enabled on the VM
+            clipboardWatcher = ClipboardWatcher(vmName: vmDirContext.name, storage: vmDirContext.storage)
+            await clipboardWatcher?.start()
+
             while true {
                 try await Task.sleep(nanoseconds: UInt64(1e9))
             }
@@ -266,6 +272,8 @@ class VM {
                     "error": error.localizedDescription,
                     "errorType": "\(type(of: error))",
                 ])
+            await clipboardWatcher?.stop()
+            clipboardWatcher = nil
             virtualizationService = nil
             vncService.stop()
 
@@ -298,6 +306,8 @@ class VM {
                 Logger.info(
                     "Stopping VM via virtualization service", metadata: ["name": vmDirContext.name])
                 try await service.stop()
+                await clipboardWatcher?.stop()
+                clipboardWatcher = nil
                 virtualizationService = nil
                 vncService.stop()
                 Logger.info(

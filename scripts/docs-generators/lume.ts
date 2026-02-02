@@ -257,6 +257,7 @@ function generateCLIReferenceMDX(docs: CLIDocumentation): string {
   // Group commands by category
   const vmManagement = ['create', 'run', 'stop', 'delete', 'clone'];
   const vmInfo = ['ls', 'get', 'set'];
+  const remoteAccess = ['ssh'];
   const imageManagement = ['images', 'pull', 'push', 'ipsw', 'prune'];
   const configuration = ['config', 'serve', 'logs', 'setup'];
 
@@ -269,6 +270,12 @@ function generateCLIReferenceMDX(docs: CLIDocumentation): string {
   lines.push('## VM Information and Configuration');
   lines.push('');
   for (const cmd of docs.commands.filter((c) => vmInfo.includes(c.name))) {
+    lines.push(...generateCommandDoc(cmd, '###'));
+  }
+
+  lines.push('## Remote Access');
+  lines.push('');
+  for (const cmd of docs.commands.filter((c) => remoteAccess.includes(c.name))) {
     lines.push(...generateCommandDoc(cmd, '###'));
   }
 

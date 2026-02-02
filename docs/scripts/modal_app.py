@@ -1496,7 +1496,7 @@ async def scheduled_code_index():
     volumes={VOLUME_PATH: docs_volume, CODE_VOLUME_PATH: code_volume},
     cpu=1.0,
     memory=2048,
-    keep_warm=1,  # Keep one container warm to avoid cold start latency
+    min_containers=1,  # Keep one container warm to avoid cold start latency
 )
 @modal.concurrent(max_inputs=10)
 @modal.asgi_app(custom_domains=["docs-mcp.cua.ai"])

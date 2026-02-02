@@ -16,6 +16,9 @@ ENV VIRTUAL_ENV=/app/.venv
 ENV PATH="/app/.venv/bin:$PATH"
 
 # Install dependencies (without the project itself for better caching)
+# Use CPU-only PyTorch to reduce image size by ~1.5GB
+# (default PyTorch includes CUDA libraries we don't need)
+ENV UV_EXTRA_INDEX_URL=https://download.pytorch.org/whl/cpu
 RUN uv pip install --no-cache -r pyproject.toml
 
 # Copy application code

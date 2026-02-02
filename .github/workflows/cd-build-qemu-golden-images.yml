@@ -1,0 +1,320 @@
+name: "CD: QEMU Golden Images"
+
+on:
+  workflow_dispatch:
+    inputs:
+      os:
+        description: "Operating system to build"
+        required: true
+        type: choice
+        options:
+          - linux
+          - windows
+          - both
+        default: both
+      install_winarena_apps:
+        description: "Install Windows Arena benchmark apps (Windows only)"
+        required: false
+        type: boolean
+        default: false
+
+env:
+  AWS_REGION: ${{ vars.QEMU_BUILDER_AWS_REGION }}
+  AWS_ACCOUNT_ID: ${{ vars.QEMU_BUILDER_AWS_ACCOUNT_ID }}
+  S3_BUCKET: ${{ vars.QEMU_BUILDER_S3_BUCKET }}
+  IAM_ROLE: ${{ vars.QEMU_BUILDER_IAM_ROLE }}
+  EC2_INSTANCE_TYPE: ${{ vars.QEMU_BUILDER_EC2_INSTANCE_TYPE }}
+  EC2_AMI_ID: ${{ vars.QEMU_BUILDER_EC2_AMI_ID }}
+  EC2_SUBNET_ID: ${{ vars.QEMU_BUILDER_EC2_SUBNET_ID }}
+  EC2_SECURITY_GROUP_ID: ${{ vars.QEMU_BUILDER_EC2_SECURITY_GROUP_ID }}
+  # ISOs stored in S3 for fast EC2 download (s3://bucket/iso/)
+  UBUNTU_ISO_S3_KEY: "iso/ubuntu-22.04.5-live-server-amd64.iso"
+  WINDOWS_ISO_S3_KEY: "iso/windows-11-enterprise-eval.iso"
+  # VM configuration
+  VM_RAM_SIZE: "8G"
+  VM_CPU_CORES: "4"
+  VM_DISK_SIZE: "64G"
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  build-linux:
+    if: inputs.os == 'linux' || inputs.os == 'both'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ env.AWS_ACCOUNT_ID }}:role/${{ env.IAM_ROLE }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Start EC2 runner for Linux build
+        id: start-ec2
+        uses: unblocked/ec2-action-builder@v1.11
+        with:
+          github_token: ${{ secrets.GH_PERSONAL_ACCESS_TOKEN }}
+          aws_access_key_id: ${{ env.AWS_ACCESS_KEY_ID }}
+          aws_secret_access_key: ${{ env.AWS_SECRET_ACCESS_KEY }}
+          aws_session_token: ${{ env.AWS_SESSION_TOKEN }}
+          aws_region: ${{ env.AWS_REGION }}
+          ec2_subnet_id: ${{ env.EC2_SUBNET_ID }}
+          ec2_security_group_id: ${{ env.EC2_SECURITY_GROUP_ID }}
+          ec2_instance_type: ${{ env.EC2_INSTANCE_TYPE }}
+          ec2_ami_id: ${{ env.EC2_AMI_ID }}
+          ec2_root_disk_size_gb: "200"
+          ec2_spot_instance_strategy: BestEffort
+          ec2_instance_ttl: 120 # 2 hours max
+          github_action_runner_version: "2.321.0"
+          github_action_runner_label_prefix: linux-
+
+  build-linux-image:
+    needs: build-linux
+    runs-on: linux-${{ github.run_id }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ env.AWS_ACCOUNT_ID }}:role/${{ env.IAM_ROLE }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Set up Docker
+        run: |
+          # Ensure Docker is running with proper storage
+          sudo systemctl start docker || true
+          docker info
+
+      - name: Create directories
+        run: |
+          sudo mkdir -p /storage /iso
+          sudo chmod 777 /storage /iso
+
+      - name: Download Ubuntu ISO from S3
+        run: |
+          echo "Downloading Ubuntu 22.04 Server ISO from S3..."
+          aws s3 cp "s3://${{ env.S3_BUCKET }}/${{ env.UBUNTU_ISO_S3_KEY }}" /iso/ubuntu.iso
+          ls -lh /iso/
+
+      - name: Pull Linux QEMU Docker image
+        run: |
+          docker pull trycua/cua-qemu-linux:latest
+
+      - name: Build Linux golden image
+        run: |
+          # Run the QEMU container to build the golden image
+          # The container installs Ubuntu Desktop from the ISO and shuts down when complete
+          docker run --rm \
+            --device=/dev/kvm \
+            --cap-add NET_ADMIN \
+            --mount type=bind,source=/iso/ubuntu.iso,target=/custom.iso \
+            -v /storage:/storage \
+            -e RAM_SIZE=${{ env.VM_RAM_SIZE }} \
+            -e CPU_CORES=${{ env.VM_CPU_CORES }} \
+            -e DISK_SIZE=${{ env.VM_DISK_SIZE }} \
+            trycua/cua-qemu-linux:latest
+
+      - name: Generate build date
+        id: date
+        run: echo "build_date=$(date -u +'%Y-%m-%d')" >> $GITHUB_OUTPUT
+
+      - name: Upload Linux golden image to S3
+        run: |
+          echo "Uploading Linux golden image to S3..."
+
+          # List files to be uploaded
+          echo "Files in /storage:"
+          ls -la /storage/
+
+          # Upload to S3 with date prefix
+          aws s3 sync /storage/ s3://${{ env.S3_BUCKET }}/linux/${{ steps.date.outputs.build_date }}/
+
+          echo "Upload complete!"
+          echo "S3 path: s3://${{ env.S3_BUCKET }}/linux/${{ steps.date.outputs.build_date }}/"
+
+      - name: Create metadata file
+        run: |
+          cat > /tmp/metadata.json << EOF
+          {
+            "build_date": "${{ steps.date.outputs.build_date }}",
+            "build_timestamp": "$(date -u +'%Y-%m-%dT%H:%M:%SZ')",
+            "os": "linux",
+            "docker_image": "trycua/cua-qemu-linux:latest",
+            "github_run_id": "${{ github.run_id }}",
+            "github_sha": "${{ github.sha }}",
+            "github_ref": "${{ github.ref }}"
+          }
+          EOF
+
+          aws s3 cp /tmp/metadata.json s3://${{ env.S3_BUCKET }}/linux/${{ steps.date.outputs.build_date }}/metadata.json
+
+  build-windows:
+    if: inputs.os == 'windows' || inputs.os == 'both'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ env.AWS_ACCOUNT_ID }}:role/${{ env.IAM_ROLE }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Start EC2 runner for Windows build
+        id: start-ec2
+        uses: unblocked/ec2-action-builder@v1.11
+        with:
+          github_token: ${{ secrets.GH_PERSONAL_ACCESS_TOKEN }}
+          aws_access_key_id: ${{ env.AWS_ACCESS_KEY_ID }}
+          aws_secret_access_key: ${{ env.AWS_SECRET_ACCESS_KEY }}
+          aws_session_token: ${{ env.AWS_SESSION_TOKEN }}
+          aws_region: ${{ env.AWS_REGION }}
+          ec2_subnet_id: ${{ env.EC2_SUBNET_ID }}
+          ec2_security_group_id: ${{ env.EC2_SECURITY_GROUP_ID }}
+          ec2_instance_type: ${{ env.EC2_INSTANCE_TYPE }}
+          ec2_ami_id: ${{ env.EC2_AMI_ID }}
+          ec2_root_disk_size_gb: "200"
+          ec2_spot_instance_strategy: BestEffort
+          ec2_instance_ttl: 180 # 3 hours max (Windows takes longer)
+          github_action_runner_version: "2.321.0"
+          github_action_runner_label_prefix: windows-
+
+  build-windows-image:
+    needs: build-windows
+    runs-on: windows-${{ github.run_id }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ env.AWS_ACCOUNT_ID }}:role/${{ env.IAM_ROLE }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Set up Docker
+        run: |
+          # Ensure Docker is running with proper storage
+          sudo systemctl start docker || true
+          docker info
+
+      - name: Create directories
+        run: |
+          sudo mkdir -p /storage /iso
+          sudo chmod 777 /storage /iso
+
+      - name: Download Windows ISO from S3
+        run: |
+          echo "Downloading Windows 11 Enterprise ISO from S3..."
+          aws s3 cp "s3://${{ env.S3_BUCKET }}/${{ env.WINDOWS_ISO_S3_KEY }}" /iso/windows.iso
+          ls -lh /iso/
+
+      - name: Pull Windows QEMU Docker image
+        run: |
+          docker pull trycua/cua-qemu-windows:latest
+
+      - name: Build Windows golden image
+        run: |
+          # Run the QEMU container to build the golden image
+          # The container installs Windows 11 from the ISO and shuts down when complete
+          docker run --rm \
+            --device=/dev/kvm \
+            --cap-add NET_ADMIN \
+            --mount type=bind,source=/iso/windows.iso,target=/custom.iso \
+            -v /storage:/storage \
+            -e RAM_SIZE=${{ env.VM_RAM_SIZE }} \
+            -e CPU_CORES=${{ env.VM_CPU_CORES }} \
+            -e DISK_SIZE=${{ env.VM_DISK_SIZE }} \
+            -e INSTALL_WINARENA_APPS=${{ inputs.install_winarena_apps }} \
+            trycua/cua-qemu-windows:latest
+
+      - name: Generate build date
+        id: date
+        run: echo "build_date=$(date -u +'%Y-%m-%d')" >> $GITHUB_OUTPUT
+
+      - name: Upload Windows golden image to S3
+        run: |
+          echo "Uploading Windows golden image to S3..."
+
+          # List files to be uploaded
+          echo "Files in /storage:"
+          ls -la /storage/
+
+          # Upload to S3 with date prefix
+          aws s3 sync /storage/ s3://${{ env.S3_BUCKET }}/windows/${{ steps.date.outputs.build_date }}/
+
+          echo "Upload complete!"
+          echo "S3 path: s3://${{ env.S3_BUCKET }}/windows/${{ steps.date.outputs.build_date }}/"
+
+      - name: Create metadata file
+        run: |
+          cat > /tmp/metadata.json << EOF
+          {
+            "build_date": "${{ steps.date.outputs.build_date }}",
+            "build_timestamp": "$(date -u +'%Y-%m-%dT%H:%M:%SZ')",
+            "os": "windows",
+            "docker_image": "trycua/cua-qemu-windows:latest",
+            "install_winarena_apps": ${{ inputs.install_winarena_apps }},
+            "github_run_id": "${{ github.run_id }}",
+            "github_sha": "${{ github.sha }}",
+            "github_ref": "${{ github.ref }}"
+          }
+          EOF
+
+          aws s3 cp /tmp/metadata.json s3://${{ env.S3_BUCKET }}/windows/${{ steps.date.outputs.build_date }}/metadata.json
+
+  summary:
+    needs: [build-linux-image, build-windows-image]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ env.AWS_ACCOUNT_ID }}:role/${{ env.IAM_ROLE }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Generate summary
+        run: |
+          BUILD_DATE=$(date -u +'%Y-%m-%d')
+
+          echo "## QEMU Golden Images Build Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Build Date:** ${BUILD_DATE}" >> $GITHUB_STEP_SUMMARY
+          echo "**S3 Bucket:** ${{ env.S3_BUCKET }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          if [[ "${{ inputs.os }}" == "linux" || "${{ inputs.os }}" == "both" ]]; then
+            echo "### Linux Golden Image" >> $GITHUB_STEP_SUMMARY
+            if [[ "${{ needs.build-linux-image.result }}" == "success" ]]; then
+              echo "✅ **Status:** Success" >> $GITHUB_STEP_SUMMARY
+              echo "**S3 Path:** \`s3://${{ env.S3_BUCKET }}/linux/${BUILD_DATE}/\`" >> $GITHUB_STEP_SUMMARY
+
+              echo "**Files:**" >> $GITHUB_STEP_SUMMARY
+              aws s3 ls s3://${{ env.S3_BUCKET }}/linux/${BUILD_DATE}/ 2>/dev/null | while read line; do
+                echo "- \`$line\`" >> $GITHUB_STEP_SUMMARY
+              done || echo "- Unable to list files" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "❌ **Status:** Failed" >> $GITHUB_STEP_SUMMARY
+            fi
+            echo "" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          if [[ "${{ inputs.os }}" == "windows" || "${{ inputs.os }}" == "both" ]]; then
+            echo "### Windows Golden Image" >> $GITHUB_STEP_SUMMARY
+            if [[ "${{ needs.build-windows-image.result }}" == "success" ]]; then
+              echo "✅ **Status:** Success" >> $GITHUB_STEP_SUMMARY
+              echo "**S3 Path:** \`s3://${{ env.S3_BUCKET }}/windows/${BUILD_DATE}/\`" >> $GITHUB_STEP_SUMMARY
+              echo "**Windows Arena Apps:** ${{ inputs.install_winarena_apps }}" >> $GITHUB_STEP_SUMMARY
+
+              echo "**Files:**" >> $GITHUB_STEP_SUMMARY
+              aws s3 ls s3://${{ env.S3_BUCKET }}/windows/${BUILD_DATE}/ 2>/dev/null | while read line; do
+                echo "- \`$line\`" >> $GITHUB_STEP_SUMMARY
+              done || echo "- Unable to list files" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "❌ **Status:** Failed" >> $GITHUB_STEP_SUMMARY
+            fi
+          fi

@@ -1023,53 +1023,22 @@ final class LumeController {
         storage: String? = nil
     ) async throws {
         do {
-            // Convert non-sparse image to sparse version if needed
-            var actualImage = image
-            var actualName = name
-
-            // Split the image to get name and tag for both sparse and non-sparse cases
+            // Split the image to get name and tag
             let components = image.split(separator: ":")
             guard components.count == 2 else {
                 throw ValidationError("Invalid image format. Expected format: name:tag")
             }
 
-            let originalName = String(components[0])
+            let imageName = String(components[0])
             let tag = String(components[1])
 
-            // For consistent VM naming, strip "-sparse" suffix if present when no name provided
-            let normalizedBaseName: String
-            if originalName.hasSuffix("-sparse") {
-                normalizedBaseName = String(originalName.dropLast(7))  // drop "-sparse"
-            } else {
-                normalizedBaseName = originalName
-            }
-
             // Set default VM name if not provided
-            if actualName == nil {
-                actualName = "\(normalizedBaseName)_\(tag)"
-            }
-
-            // Convert non-sparse image to sparse version if needed
-            if !image.contains("-sparse") {
-                // Create sparse version of the image name
-                actualImage = "\(originalName)-sparse:\(tag)"
-
-                Logger.info(
-                    "Converting to sparse image",
-                    metadata: [
-                        "original": image,
-                        "sparse": actualImage,
-                        "vm_name": actualName ?? "default",
-                    ]
-                )
-            }
-
-            let vmName = actualName ?? "default"  // Just use actualName as it's already normalized
+            let vmName = name ?? "\(imageName)_\(tag)"
 
             Logger.info(
                 "Pulling image",
                 metadata: [
-                    "image": actualImage,
+                    "image": image,
                     "name": vmName,
                     "registry": registry,
                     "organization": organization,
@@ -1077,7 +1046,7 @@ final class LumeController {
                 ])
 
             try self.validatePullParameters(
-                image: actualImage,
+                image: image,
                 name: vmName,
                 registry: registry,
                 organization: organization,
@@ -1087,7 +1056,7 @@ final class LumeController {
             let imageRegistry = try RegistryFactory.createRegistry(
                 registry: registry, organization: organization)
             let _ = try await imageRegistry.pull(
-                image: actualImage,
+                image: image,
                 name: vmName,
                 locationName: storage)
 
@@ -1105,7 +1074,7 @@ final class LumeController {
             Logger.info(
                 "Image pulled successfully",
                 metadata: [
-                    "image": actualImage,
+                    "image": image,
                     "name": vmName,
                     "registry": registry,
                     "organization": organization,

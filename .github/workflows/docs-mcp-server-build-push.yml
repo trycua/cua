@@ -5,12 +5,12 @@ on:
     branches:
       - main
     paths:
-      - "services/docs-mcp-server/**"
+      - "docs/scripts/docs-mcp-server/**"
   pull_request:
     branches:
       - main
     paths:
-      - "services/docs-mcp-server/**"
+      - "docs/scripts/docs-mcp-server/**"
   workflow_dispatch:
     inputs:
       force_push:
@@ -23,7 +23,7 @@ env:
   AWS_REGION: us-west-2
   ECR_REGISTRY: 296062593712.dkr.ecr.us-west-2.amazonaws.com
   ECR_REPOSITORY: docs-mcp-server
-  SERVICE_DIR: services/docs-mcp-server
+  SERVICE_DIR: docs/scripts/docs-mcp-server
 
 permissions:
   id-token: write

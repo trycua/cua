@@ -31,23 +31,9 @@ RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.12 1
 # Install pip for Python 3.12
 RUN curl -sS https://bootstrap.pypa.io/get-pip.py | python3.12
 
-# Install UV package manager
-RUN python3.12 -m pip install uv
-
-# Install cua-computer-server and cua-agent
-RUN uv pip install --system cua-computer-server "cua-agent[all]"
-
-# Install playwright and Firefox dependencies
-RUN uv pip install --system playwright && \
-    python3.12 -m playwright install --with-deps firefox
-
 # Disable SSL requirement
 RUN sed -i 's/require_ssl: true/require_ssl: false/g' /usr/share/kasmvnc/kasmvnc_defaults.yaml
 RUN sed -i 's/-sslOnly//g' /dockerstartup/vnc_startup.sh
-
-# Running the python script on startup
-RUN echo -e "#!/bin/bash\nuv pip install --upgrade --system cua-computer-server \"cua-agent[all]\"\n/usr/bin/python3 -m computer_server" > $STARTUPDIR/custom_startup.sh \
-    && chmod +x $STARTUPDIR/custom_startup.sh
 
 # Enable sudo support for kasm-user
 RUN echo "kasm-user:password" | chpasswd
@@ -61,5 +47,25 @@ RUN $STARTUPDIR/set_user_permission.sh $HOME
 ENV HOME=/home/kasm-user
 WORKDIR $HOME
 RUN mkdir -p $HOME && chown -R 1000:0 $HOME
+
+# Install UV package manager
+RUN python3.12 -m pip install uv
+
+# Install cua-computer-server and cua-agent
+RUN uv pip install --system cua-computer-server "cua-agent[all]"
+
+# Install playwright and Firefox dependencies
+RUN uv pip install --system playwright && \
+    python3.12 -m playwright install --with-deps firefox
+
+# Clean up uv cache to avoid issues and reduce size
+RUN rm -rf /home/kasm-user/.cache/uv /root/.cache/uv
+
+# Fix ownership of remaining cache files
+RUN chown -R 1000:0 /home/kasm-user/.cache 2>/dev/null || true
+
+# Running the python script on startup
+RUN echo -e "#!/bin/bash\nsudo uv pip install --upgrade --system cua-computer-server \"cua-agent[all]\"\n/usr/bin/python3 -m computer_server" > $STARTUPDIR/custom_startup.sh \
+    && chmod +x $STARTUPDIR/custom_startup.sh
 
 USER 1000

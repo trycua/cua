@@ -240,7 +240,35 @@ boot_commands:
   - "<delay 2>"
 
   # ============================================
-  # 3. Enable Full Disk Access for Remote Users
+  # 3. Disable Screen Lock and Sleep
+  # ============================================
+  # Disable screen saver
+  - "<type 'defaults -currentHost write com.apple.screensaver idleTime -int 0'>"
+  - "<enter>"
+  - "<delay 1>"
+
+  # Disable require password after sleep/screen saver
+  - "<type 'defaults write com.apple.screensaver askForPassword -int 0'>"
+  - "<enter>"
+  - "<delay 1>"
+
+  # Prevent display from sleeping (never)
+  - "<type 'sudo pmset -a displaysleep 0'>"
+  - "<enter>"
+  - "<delay 1>"
+
+  # Prevent system sleep (never)
+  - "<type 'sudo pmset -a sleep 0'>"
+  - "<enter>"
+  - "<delay 1>"
+
+  # Disable auto-logout
+  - "<type 'sudo defaults write /Library/Preferences/.GlobalPreferences com.apple.autologout.AutoLogOutDelay -int 0'>"
+  - "<enter>"
+  - "<delay 1>"
+
+  # ============================================
+  # 4. Enable Full Disk Access for Remote Users
   # ============================================
   # This requires navigating System Settings GUI since TCC.db is SIP-protected
 

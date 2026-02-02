@@ -206,57 +206,28 @@ boot_commands:
   - "<click_at 960,540>"
   - "<delay 1>"
 
-  # Open Spotlight with Cmd+Space
+  # ============================================
+  # Enable full keyboard navigation (required for Tab in System Settings)
+  # ============================================
   - "<cmd+space>"
-  - "<delay 2>"
-
-  # Type "Terminal" to search for Terminal app
+  - "<delay 5>"
   - "<type 'Terminal'>"
-  - "<delay 1>"
-
-  # Press Enter to launch Terminal
+  - "<delay 5>"
   - "<enter>"
-  - "<delay 3>"
-
-  # ============================================
-  # 1. Enable SSH (Remote Login)
-  # ============================================
-  # Enable Remote Login (SSH) using launchctl (works without Full Disk Access)
-  - "<type 'sudo launchctl load -w /System/Library/LaunchDaemons/ssh.plist'>"
-  - "<enter>"
-  - "<delay 1>"
-
-  # Enter the password when prompted
-  - "<type 'lume'>"
-  - "<enter>"
-  - "<delay 2>"
-
-  # ============================================
-  # 2. Enable Auto-Login (macOS Ventura+)
-  # ============================================
-  # Use sysadminctl to enable auto-login for the lume user
-  - "<type 'sudo sysadminctl -autologin set -userName lume -password lume'>"
-  - "<enter>"
-  - "<delay 2>"
-
-  # ============================================
-  # 3. Enable Full Disk Access for Remote Users
-  # ============================================
-  # This requires navigating System Settings GUI since TCC.db is SIP-protected
-
-  # Enable full keyboard navigation so Tab works on all UI elements
+  - "<delay 5>"
   - "<type 'defaults write NSGlobalDomain AppleKeyboardUIMode -int 3'>"
   - "<enter>"
-  - "<delay 1>"
-
-  # Close Terminal
+  - "<delay 3>"
   - "<cmd+q>"
-  - "<delay 2>"
+  - "<delay 4>"
 
-  # Click on desktop to ensure keyboard focus before Spotlight
+  # Click on desktop to refocus
   - "<click_at 960,540>"
   - "<delay 1>"
 
+  # ============================================
+  # Enable SSH and Full Disk Access via System Settings
+  # ============================================
   # Open Spotlight and search for System Settings
   - "<cmd+space>"
   - "<delay 2>"
@@ -269,15 +240,21 @@ boot_commands:
   - "<wait 'General', timeout=30>"
   - "<delay 2>"
 
-  # Use keyboard shortcut to focus search field (more reliable than clicking)
+  # Search for Remote Login settings
   - "<cmd+f>"
   - "<delay 1>"
-  - "<type 'login'>"
+  - "<type 'Remote Login'>"
   - "<delay 2>"
   - "<click 'Remote Login'>"
   - "<delay 10>"
 
-  # Tab to reach the "Allow full disk access" toggle, then Space to toggle
+  # Enable Remote Login toggle (first toggle on the page)
+  - "<tab>"
+  - "<delay 0.5>"
+  - "<space>"
+  - "<delay 3>"
+
+  # Enable "Allow full disk access for remote users" toggle (next toggle)
   - "<tab>"
   - "<delay 0.5>"
   - "<space>"
@@ -291,8 +268,7 @@ boot_commands:
   # Setup Complete!
   # ============================================
   # SSH is now enabled - Connect with: ssh lume@<ip-address> (password: lume)
-  # Auto-login is enabled - VM will boot directly to desktop
-  # Full disk access for remote users is enabled via TCC database
+  # Full disk access for remote users is enabled
 
 # Health check to verify setup was successful
 # This will SSH into the VM to confirm SSH is working
@@ -307,6 +283,8 @@ health_check:
 # Post-setup commands to run via SSH after health check passes
 # These are more reliable than typing in Terminal via VNC
 post_ssh_commands:
+  # Enable auto-login for the lume user
+  - "sudo sysadminctl -autologin set -userName lume -password lume"
   # Disable screen saver
   - "defaults -currentHost write com.apple.screensaver idleTime -int 0"
   # Disable require password after sleep/screen saver

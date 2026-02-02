@@ -344,14 +344,14 @@ final class DefaultVNCService: VNCService {
             }
 
             try await client.sendKeyEvent(key: keysym, down: true)
-            try await Task.sleep(nanoseconds: 30_000_000) // 30ms
+            try await Task.sleep(nanoseconds: 80_000_000) // 80ms key hold
             try await client.sendKeyEvent(key: keysym, down: false)
 
             if needsShift {
                 try await client.sendKeyEvent(key: X11Keysym.shiftL.rawValue, down: false)
             }
 
-            try await Task.sleep(nanoseconds: 30_000_000) // 30ms between characters
+            try await Task.sleep(nanoseconds: 120_000_000) // 120ms between characters
         }
     }
 

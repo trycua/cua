@@ -137,13 +137,26 @@ def upload_directory_to_s3(local_path: str, bucket: str, s3_prefix: str) -> dict
     import boto3
 
     # Use Modal OIDC to assume the AWS IAM role and get temporary credentials
-    creds = modal.oidc.assume_role(role_arn=AWS_ROLE_ARN)
+    # Modal provides the OIDC token via the MODAL_IDENTITY_TOKEN environment variable
+    identity_token = os.environ.get("MODAL_IDENTITY_TOKEN")
+    if not identity_token:
+        raise RuntimeError("MODAL_IDENTITY_TOKEN environment variable not set. Running outside Modal?")
+
+    # Use STS to exchange the OIDC token for temporary AWS credentials
+    sts_client = boto3.client("sts", region_name=AWS_REGION)
+    response = sts_client.assume_role_with_web_identity(
+        RoleArn=AWS_ROLE_ARN,
+        RoleSessionName="modal-docs-mcp-upload",
+        WebIdentityToken=identity_token,
+    )
+
+    creds = response["Credentials"]
 
     s3 = boto3.client(
         "s3",
-        aws_access_key_id=creds.access_key_id,
-        aws_secret_access_key=creds.secret_access_key,
-        aws_session_token=creds.session_token,
+        aws_access_key_id=creds["AccessKeyId"],
+        aws_secret_access_key=creds["SecretAccessKey"],
+        aws_session_token=creds["SessionToken"],
         region_name=AWS_REGION,
     )
     uploaded_files = 0

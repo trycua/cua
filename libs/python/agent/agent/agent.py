@@ -961,6 +961,9 @@ class ComputerAgent:
 
                 # Set result for handling computer actions
                 result = {"output": accumulated_output, "usage": chunk.get("usage", {})}
+
+                # Call the responses callback for trajectory saving (same as non-streaming path)
+                await self._on_responses(loop_kwargs, result)
             else:
                 # Non-streaming: single response
                 result = get_json(predict_result)
@@ -975,13 +978,13 @@ class ComputerAgent:
                 yield result
 
             # Add agent response to new_items
-            new_items += result.get("output")
+            new_items += result.get("output", [])
 
             # Get output call ids
             output_call_ids = get_output_call_ids(result.get("output", []))
 
             # Handle computer actions
-            for item in result.get("output"):
+            for item in result.get("output", []):
                 partial_items = await self._handle_item(
                     item, self.computer_handler, ignore_call_ids=output_call_ids
                 )

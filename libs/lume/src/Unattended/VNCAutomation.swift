@@ -64,8 +64,8 @@ final class VNCAutomation {
                 button: .left
             )
 
-        case .typeText(let text):
-            try await vncService.sendText(text)
+        case .typeText(let text, let delay):
+            try await vncService.sendText(text, delayMs: delay)
 
         case .keyPress(let key):
             let keyCode = specialKeyToKeyCode(key)
@@ -320,8 +320,11 @@ final class VNCAutomation {
             return "click '\(text)' (index: \(index), xoffset: \(xOffset), yoffset: \(yOffset))"
         case .clickAt(let x, let y):
             return "click at (\(x), \(y))"
-        case .typeText(let text):
+        case .typeText(let text, let delay):
             let displayText = text.count > 20 ? String(text.prefix(20)) + "..." : text
+            if let delay = delay {
+                return "type '\(displayText)' (delay: \(delay)ms)"
+            }
             return "type '\(displayText)'"
         case .keyPress(let key):
             return "press <\(key.rawValue)>"

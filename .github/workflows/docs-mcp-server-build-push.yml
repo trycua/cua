@@ -46,6 +46,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Install Nix
+        uses: cachix/install-nix-action@v30
+        with:
+          nix_path: nixpkgs=channel:nixos-24.11
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+
       - name: Prepare platform tag
         id: platform
         run: |
@@ -62,24 +69,24 @@ jobs:
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
       - name: Generate timestamp
         id: timestamp
         run: echo "ts=$(date -u +'%Y%m%d%H%M%S')" >> $GITHUB_OUTPUT
 
-      - name: Extract metadata
+      - name: Generate image tags
         id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}
-          tags: |
-            type=sha,prefix=,format=short
-            type=ref,event=branch
-            type=ref,event=pr
-            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
-            type=raw,value=main-${{ steps.timestamp.outputs.ts }},enable=${{ github.ref == 'refs/heads/main' }}
+        run: |
+          SHA_SHORT=$(git rev-parse --short HEAD)
+          echo "sha_short=${SHA_SHORT}" >> $GITHUB_OUTPUT
+
+          # Build tag list
+          TAGS="${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:${SHA_SHORT}-${{ steps.platform.outputs.tag }}"
+
+          if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
+            TAGS="${TAGS},${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:main-${{ steps.timestamp.outputs.ts }}-${{ steps.platform.outputs.tag }}"
+          fi
+
+          echo "tags=${TAGS}" >> $GITHUB_OUTPUT
 
       - name: Determine if push is enabled
         id: push-check
@@ -94,43 +101,95 @@ jobs:
             echo "push=false" >> $GITHUB_OUTPUT
           fi
 
-      - name: Build only (PR)
-        if: steps.push-check.outputs.push == 'false'
-        uses: docker/build-push-action@v5
-        with:
-          context: ./${{ env.SERVICE_DIR }}
-          file: ./${{ env.SERVICE_DIR }}/Dockerfile
-          push: false
-          platforms: ${{ matrix.platform }}
-          cache-from: type=gha,scope=${{ env.ECR_REPOSITORY }}-${{ steps.platform.outputs.tag }}
-          cache-to: type=gha,mode=max,scope=${{ env.ECR_REPOSITORY }}-${{ steps.platform.outputs.tag }}
+      - name: Build base image with Nix
+        working-directory: ${{ env.SERVICE_DIR }}
+        run: |
+          # Build the base image with Nix
+          nix build .#baseImage --out-link result
 
-      - name: Build and push by digest
+          # Load into local container storage
+          # The result is a tarball that can be loaded
+          podman load < result
+
+      - name: Install Python dependencies and create final image
+        run: |
+          # Create container from base image and install deps
+          CONTAINER=$(podman create docs-mcp-server-base:latest /bin/bash -c "
+            cd /app && \
+            uv venv --python python3.12 .venv && \
+            uv pip install --python .venv/bin/python --no-cache -r pyproject.toml
+          ")
+
+          # Run the container to install deps
+          podman start -a $CONTAINER
+
+          # Commit the container with deps installed
+          podman commit $CONTAINER docs-mcp-server:built
+
+          # Clean up
+          podman rm $CONTAINER
+
+      - name: Create final image with runtime config
+        run: |
+          # Create final image with proper entrypoint and config
+          cat > /tmp/Containerfile <<'EOF'
+          FROM docs-mcp-server:built
+
+          ENV VIRTUAL_ENV=/app/.venv
+          ENV PATH="/app/.venv/bin:$PATH"
+          ENV PYTHONUNBUFFERED=1
+          ENV PORT=8000
+          ENV HOST=0.0.0.0
+          ENV DOCS_DB_PATH=/data/docs_db
+          ENV CODE_DB_PATH=/data/code_db
+          ENV OTEL_ENDPOINT=https://otel.cua.ai
+          ENV OTEL_SERVICE_NAME=cua-docs-mcp
+
+          EXPOSE 8000
+          WORKDIR /app
+
+          CMD ["/app/.venv/bin/python", "/app/main.py"]
+          EOF
+
+          podman build -f /tmp/Containerfile -t docs-mcp-server:final .
+
+      - name: Build only (PR) - verify image works
+        if: steps.push-check.outputs.push == 'false'
+        run: |
+          # Verify the image can start
+          podman run --rm docs-mcp-server:final /app/.venv/bin/python -c "import fastmcp; print('OK')"
+
+      - name: Push with skopeo
         if: steps.push-check.outputs.push == 'true'
-        id: build
-        uses: docker/build-push-action@v5
-        with:
-          context: ./${{ env.SERVICE_DIR }}
-          file: ./${{ env.SERVICE_DIR }}/Dockerfile
-          push: true
-          platforms: ${{ matrix.platform }}
-          outputs: type=image,name=${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }},push-by-digest=true,name-canonical=true
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha,scope=${{ env.ECR_REPOSITORY }}-${{ steps.platform.outputs.tag }}
-          cache-to: type=gha,mode=max,scope=${{ env.ECR_REPOSITORY }}-${{ steps.platform.outputs.tag }}
+        run: |
+          # Get ECR auth token for skopeo
+          AWS_ACCOUNT_ID=$(echo "${{ env.ECR_REGISTRY }}" | cut -d. -f1)
+          ECR_TOKEN=$(aws ecr get-login-password --region ${{ env.AWS_REGION }})
+
+          # Push each tag
+          IFS=',' read -ra TAG_ARRAY <<< "${{ steps.meta.outputs.tags }}"
+          for TAG in "${TAG_ARRAY[@]}"; do
+            echo "Pushing: $TAG"
+            skopeo copy \
+              --dest-creds "AWS:${ECR_TOKEN}" \
+              containers-storage:docs-mcp-server:final \
+              "docker://${TAG}"
+          done
 
       - name: Export digest
         if: steps.push-check.outputs.push == 'true'
         run: |
           mkdir -p /tmp/digests
-          digest="${{ steps.build.outputs.digest }}"
-          if [ -n "$digest" ]; then
-            echo "$digest" > "/tmp/digests/${{ steps.platform.outputs.tag }}.txt"
-            echo "Digest exported for platform ${{ matrix.platform }}: $digest"
-          else
-            echo "No digest to export for platform ${{ matrix.platform }}"
-            exit 1
-          fi
+
+          # Get digest of pushed image
+          AWS_ACCOUNT_ID=$(echo "${{ env.ECR_REGISTRY }}" | cut -d. -f1)
+          ECR_TOKEN=$(aws ecr get-login-password --region ${{ env.AWS_REGION }})
+
+          FIRST_TAG=$(echo "${{ steps.meta.outputs.tags }}" | cut -d, -f1)
+          DIGEST=$(skopeo inspect --creds "AWS:${ECR_TOKEN}" "docker://${FIRST_TAG}" | jq -r '.Digest')
+
+          echo "$DIGEST" > "/tmp/digests/${{ steps.platform.outputs.tag }}.txt"
+          echo "Digest for ${{ matrix.platform }}: $DIGEST"
 
       - name: Upload digest artifact
         if: steps.push-check.outputs.push == 'true'
@@ -148,28 +207,39 @@ jobs:
       (github.ref == 'refs/heads/main' || inputs.force_push == true)
 
     steps:
+      - name: Install Nix (for skopeo)
+        uses: cachix/install-nix-action@v30
+        with:
+          nix_path: nixpkgs=channel:nixos-24.11
+
+      - name: Install skopeo
+        run: nix-env -iA nixpkgs.skopeo
+
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: arn:aws:iam::296062593712:role/github-actions-ecr-push-cua
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Login to Amazon ECR
-        uses: aws-actions/amazon-ecr-login@v2
+      - name: Generate timestamp (same as build job)
+        id: timestamp
+        run: echo "ts=${{ needs.build.outputs.timestamp }}" >> $GITHUB_OUTPUT
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Extract metadata
+      - name: Generate manifest tags
         id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}
-          tags: |
-            type=sha,prefix=,format=short
-            type=ref,event=branch
-            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
-            type=raw,value=main-${{ needs.build.outputs.timestamp }},enable=${{ github.ref == 'refs/heads/main' }}
+        run: |
+          SHA_SHORT=$(echo "${{ github.sha }}" | cut -c1-7)
+
+          TAGS="${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:${SHA_SHORT}"
+          TAGS="${TAGS},${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:latest"
+
+          if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
+            TAGS="${TAGS},${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:main"
+            TAGS="${TAGS},${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:main-${{ steps.timestamp.outputs.ts }}"
+          fi
+
+          echo "tags=${TAGS}" >> $GITHUB_OUTPUT
+          echo "sha_short=${SHA_SHORT}" >> $GITHUB_OUTPUT
 
       - name: Download all digest artifacts
         uses: actions/download-artifact@v4
@@ -195,35 +265,51 @@ jobs:
             echo "  - $platform: $(cat $f)"
           done
 
-      - name: Create and push multi-arch manifest
+      - name: Create and push multi-arch manifest with skopeo
         run: |
           IMAGE="${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}"
+          ECR_TOKEN=$(aws ecr get-login-password --region ${{ env.AWS_REGION }})
+          SHA_SHORT="${{ steps.meta.outputs.sha_short }}"
 
-          # Collect all digests
-          DIGEST_ARGS=""
-          for f in $(find /tmp/digests -type f -name "*.txt"); do
-            d=$(cat "$f")
-            DIGEST_ARGS="$DIGEST_ARGS ${IMAGE}@${d}"
-          done
+          # Read digests
+          AMD64_DIGEST=$(cat /tmp/digests/linux-amd64.txt 2>/dev/null || echo "")
+          ARM64_DIGEST=$(cat /tmp/digests/linux-arm64.txt 2>/dev/null || echo "")
 
-          echo "Using digests:"
-          echo "$DIGEST_ARGS"
+          # Create manifest for each tag
+          IFS=',' read -ra TAG_ARRAY <<< "${{ steps.meta.outputs.tags }}"
+          for TAG in "${TAG_ARRAY[@]}"; do
+            echo "Creating manifest: $TAG"
 
-          # Create manifest for each tag produced by metadata-action
-          echo "${{ steps.meta.outputs.tags }}" | while read FULL_TAG; do
-            if [ -n "$FULL_TAG" ]; then
-              echo "Creating manifest: $FULL_TAG"
-              docker buildx imagetools create --tag "$FULL_TAG" $DIGEST_ARGS
+            MANIFEST_ARGS=""
+            if [ -n "$AMD64_DIGEST" ]; then
+              MANIFEST_ARGS="$MANIFEST_ARGS --amend ${IMAGE}@${AMD64_DIGEST}"
             fi
+            if [ -n "$ARM64_DIGEST" ]; then
+              MANIFEST_ARGS="$MANIFEST_ARGS --amend ${IMAGE}@${ARM64_DIGEST}"
+            fi
+
+            # Use podman manifest for creating multi-arch manifests
+            podman manifest create "${TAG}" || podman manifest rm "${TAG}" && podman manifest create "${TAG}"
+
+            if [ -n "$AMD64_DIGEST" ]; then
+              podman manifest add "${TAG}" "${IMAGE}@${AMD64_DIGEST}"
+            fi
+            if [ -n "$ARM64_DIGEST" ]; then
+              podman manifest add "${TAG}" "${IMAGE}@${ARM64_DIGEST}"
+            fi
+
+            # Push manifest
+            podman manifest push --creds "AWS:${ECR_TOKEN}" "${TAG}" "docker://${TAG}"
           done
 
       - name: Inspect pushed manifests
         run: |
+          ECR_TOKEN=$(aws ecr get-login-password --region ${{ env.AWS_REGION }})
+
           echo "Inspecting manifests:"
-          echo "${{ steps.meta.outputs.tags }}" | while read FULL_TAG; do
-            if [ -n "$FULL_TAG" ]; then
-              echo ""
-              echo "Inspecting: $FULL_TAG"
-              docker buildx imagetools inspect "$FULL_TAG"
-            fi
+          IFS=',' read -ra TAG_ARRAY <<< "${{ steps.meta.outputs.tags }}"
+          for TAG in "${TAG_ARRAY[@]}"; do
+            echo ""
+            echo "Inspecting: $TAG"
+            skopeo inspect --creds "AWS:${ECR_TOKEN}" "docker://${TAG}" | jq '{mediaType, digest, architecture: .Architecture}'
           done

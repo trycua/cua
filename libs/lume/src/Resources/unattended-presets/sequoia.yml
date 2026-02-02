@@ -195,85 +195,9 @@ boot_commands:
   - "<click_at 960,540>"
   - "<delay 1>"
 
-  # Open Spotlight with Cmd+Space
-  - "<cmd+space>"
-  - "<delay 2>" 
-
-  # Type "Terminal" to search for Terminal app
-  - "<type 'Terminal'>"
-  - "<delay 1>"
-
-  # Press Enter to launch Terminal
-  - "<enter>"
-  - "<delay 3>"
-
   # ============================================
-  # 1. Enable SSH (Remote Login)
+  # Enable SSH and Full Disk Access via System Settings
   # ============================================
-  # Enable Remote Login (SSH) using launchctl (works without Full Disk Access)
-  - "<type 'sudo launchctl load -w /System/Library/LaunchDaemons/ssh.plist'>"
-  - "<enter>"
-  - "<delay 1>"
-
-  # Enter the password when prompted
-  - "<type 'lume'>"
-  - "<enter>"
-  - "<delay 2>"
-
-  # ============================================
-  # 2. Enable Auto-Login (macOS Ventura+)
-  # ============================================
-  # Use sysadminctl to enable auto-login for the lume user
-  - "<type 'sudo sysadminctl -autologin set -userName lume -password lume'>"
-  - "<enter>"
-  - "<delay 2>"
-
-  # ============================================
-  # 3. Disable Screen Lock and Sleep
-  # ============================================
-  # Disable screen saver
-  - "<type 'defaults -currentHost write com.apple.screensaver idleTime -int 0'>"
-  - "<enter>"
-  - "<delay 1>"
-
-  # Disable require password after sleep/screen saver
-  - "<type 'defaults write com.apple.screensaver askForPassword -int 0'>"
-  - "<enter>"
-  - "<delay 1>"
-
-  # Prevent display from sleeping (never)
-  - "<type 'sudo pmset -a displaysleep 0'>"
-  - "<enter>"
-  - "<delay 1>"
-
-  # Prevent system sleep (never)
-  - "<type 'sudo pmset -a sleep 0'>"
-  - "<enter>"
-  - "<delay 1>"
-
-  # Disable auto-logout
-  - "<type 'sudo defaults write /Library/Preferences/.GlobalPreferences com.apple.autologout.AutoLogOutDelay -int 0'>"
-  - "<enter>"
-  - "<delay 1>"
-
-  # ============================================
-  # 4. Enable Full Disk Access for Remote Users
-  # ============================================
-  # This requires navigating System Settings GUI since TCC.db is SIP-protected
-
-  # Enable full keyboard navigation so Tab works on all UI elements
-  - "<type 'defaults write NSGlobalDomain AppleKeyboardUIMode -int 3'>"
-  - "<enter>"
-  - "<delay 1>"
-
-  # Close Terminal
-  - "<cmd+q>"
-  - "<delay 2>"
-
-  # Click on desktop to ensure keyboard focus before Spotlight
-  - "<click_at 960,540>"
-  - "<delay 1>"
-
   # Open Spotlight and search for System Settings
   - "<cmd+space>"
   - "<delay 2>"
@@ -286,15 +210,21 @@ boot_commands:
   - "<wait 'General', timeout=30>"
   - "<delay 2>"
 
-  # Use keyboard shortcut to focus search field (more reliable than clicking)
+  # Search for Remote Login settings
   - "<cmd+f>"
   - "<delay 1>"
-  - "<type 'login'>"
+  - "<type 'Remote Login'>"
   - "<delay 2>"
   - "<click 'Remote Login'>"
-  - "<delay 10>"
+  - "<delay 5>"
 
-  # Tab to reach the "Allow full disk access" toggle, then Space to toggle
+  # Enable Remote Login toggle (first toggle on the page)
+  - "<tab>"
+  - "<delay 0.5>"
+  - "<space>"
+  - "<delay 3>"
+
+  # Enable "Allow full disk access for remote users" toggle (next toggle)
   - "<tab>"
   - "<delay 0.5>"
   - "<space>"
@@ -308,8 +238,7 @@ boot_commands:
   # Setup Complete!
   # ============================================
   # SSH is now enabled - Connect with: ssh lume@<ip-address> (password: lume)
-  # Auto-login is enabled - VM will boot directly to desktop
-  # Full disk access for remote users is enabled via TCC database
+  # Full disk access for remote users is enabled
 
 # Health check to verify setup was successful
 # This will SSH into the VM to confirm SSH is working
@@ -320,3 +249,21 @@ health_check:
   timeout: 30
   retries: 5
   retry_delay: 10
+
+# Post-setup commands to run via SSH after health check passes
+# These are more reliable than typing in Terminal via VNC
+post_ssh_commands:
+  # Enable auto-login for the lume user
+  - "sudo sysadminctl -autologin set -userName lume -password lume"
+  # Enable full keyboard navigation (Tab works on all UI elements)
+  - "defaults write NSGlobalDomain AppleKeyboardUIMode -int 3"
+  # Disable screen saver
+  - "defaults -currentHost write com.apple.screensaver idleTime -int 0"
+  # Disable require password after sleep/screen saver
+  - "defaults write com.apple.screensaver askForPassword -int 0"
+  # Prevent display from sleeping (never)
+  - "sudo pmset -a displaysleep 0"
+  # Prevent system sleep (never)
+  - "sudo pmset -a sleep 0"
+  # Disable auto-logout
+  - "sudo defaults write /Library/Preferences/.GlobalPreferences com.apple.autologout.AutoLogOutDelay -int 0"

@@ -71,25 +71,32 @@ boot_commands:
   - "<delay 2>"
 
   # Create a Mac Account
-  # Initial focus is on avatar picker (6 icons: +, panda, cow, fox, owl, etc.)
-  # Need to tab 6 times to reach Full Name field
-  # Field order after avatar: Full Name -> Account Name (auto-filled) -> Password -> Verify Password -> Hint -> Checkbox -> Continue
+  # Field order: Full Name -> Account Name (auto-filled) -> Password -> Verify Password -> Hint -> Checkbox -> Continue
   - "<wait 'Create a Mac Account'>"
   - "<delay 10>"
   - "<click 'Full Name'>"
+  - "<delay 1>"
   # Type Full Name
   - "<type 'lume'>"
-  - "<tab>" 
+  - "<delay 1>"
+  - "<tab>"
+  - "<delay 1>"
   # Skip Account Name (auto-filled from Full Name)
   - "<tab>"
+  - "<delay 1>"
   # Type Password
   - "<type 'lume'>"
+  - "<delay 1>"
   - "<tab>"
+  - "<delay 1>"
   # Type Verify Password
   - "<type 'lume'>"
+  - "<delay 1>"
   - "<tab>"
+  - "<delay 1>"
   # Skip Hint field
   - "<tab>"
+  - "<delay 1>"
   # Untoggle "Allow computer account password to be reset with Apple Account" checkbox
   - "<space>"
   - "<delay 1>"

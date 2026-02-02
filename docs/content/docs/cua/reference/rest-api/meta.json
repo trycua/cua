@@ -1,4 +1,5 @@
 {
   "title": "REST API",
-  "description": "HTTP API reference for CUA Cloud"
+  "description": "HTTP API reference for CUA Cloud",
+  "icon": "Globe"
 }

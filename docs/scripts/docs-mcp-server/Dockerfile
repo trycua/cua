@@ -19,6 +19,7 @@ ENV PATH="/app/.venv/bin:$PATH"
 # Use CPU-only PyTorch to reduce image size by ~1.5GB
 # (default PyTorch includes CUDA libraries we don't need)
 ENV UV_EXTRA_INDEX_URL=https://download.pytorch.org/whl/cpu
+ENV UV_INDEX_STRATEGY=unsafe-best-match
 RUN uv pip install --no-cache -r pyproject.toml
 
 # Copy application code

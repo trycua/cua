@@ -1,0 +1,30 @@
+[project]
+name = "docs-mcp-server"
+description = "MCP Server for CUA Documentation and Code Search"
+version = "0.1.0"
+requires-python = ">=3.12,<3.14"
+authors = [
+    {name = "TryCua", email = "gh@trycua.com"}
+]
+dependencies = [
+    "fastmcp>=2.14.0",
+    "lancedb>=0.4.0",
+    "sentence-transformers>=2.2.0",
+    "pyarrow>=14.0.1",
+    "pydantic>=2.0.0",
+    "pandas>=2.0.0",
+    "markdown-it-py>=3.0.0",
+    "opentelemetry-api>=1.20.0",
+    "opentelemetry-sdk>=1.20.0",
+    "opentelemetry-exporter-otlp-proto-http>=1.20.0",
+    "uvicorn>=0.23.0",
+]
+
+[project.scripts]
+docs-mcp-server = "main:app"
+
+[tool.uv]
+dev-dependencies = [
+    "black>=23.9.1",
+    "ruff>=0.0.292",
+]

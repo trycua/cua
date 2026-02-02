@@ -19,10 +19,10 @@ boot_commands:
   - "<wait 'English', timeout=120>"
   - "<delay 1>"
 
-  # Type "English" to filter the list and select it, then press Enter
+  # Type "English" to filter the list, then click on "English" to select it
   - "<type 'English'>"
   - "<delay 1>"
-  - "<enter>"
+  - "<click 'English'>"
   - "<delay 2>"
 
   # Country/Region selection

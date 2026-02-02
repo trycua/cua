@@ -1,0 +1,412 @@
+---
+title: REST API
+description: HTTP API reference for managing CUA Cloud sandboxes
+---
+
+import { Tabs, Tab } from 'fumadocs-ui/components/tabs';
+
+The CUA Cloud REST API allows you to programmatically manage sandboxes (VMs). All endpoints are authenticated using your workspace API key.
+
+## Base URL
+
+```
+https://api.cua.ai/v1
+```
+
+## Authentication
+
+All API requests require authentication via the `Authorization` header with your workspace API key:
+
+```
+Authorization: Bearer YOUR_API_KEY
+```
+
+You can find your API key in the [CUA Dashboard](https://cua.ai/dashboard) under your workspace settings.
+
+---
+
+## Endpoints
+
+### List VMs
+
+List all sandboxes in your workspace.
+
+```http
+GET /v1/vms
+```
+
+<Tabs items={['cURL', 'Python', 'TypeScript']}>
+  <Tab value="cURL">
+```bash
+curl -H "Authorization: Bearer $CUA_API_KEY" \
+     https://api.cua.ai/v1/vms
+```
+  </Tab>
+  <Tab value="Python">
+```python
+import requests
+
+response = requests.get(
+    "https://api.cua.ai/v1/vms",
+    headers={"Authorization": f"Bearer {API_KEY}"}
+)
+vms = response.json()
+```
+  </Tab>
+  <Tab value="TypeScript">
+```typescript
+const response = await fetch("https://api.cua.ai/v1/vms", {
+  headers: { Authorization: `Bearer ${API_KEY}` },
+});
+const vms = await response.json();
+```
+  </Tab>
+</Tabs>
+
+**Response** `200 OK`
+
+```json
+[
+  {
+    "name": "my-linux-vm",
+    "password": "generated-password",
+    "status": "running",
+    "host": "my-linux-vm.sandbox.cua.ai"
+  }
+]
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | string | Unique VM identifier |
+| `password` | string | VNC/RDP password (empty during provisioning) |
+| `status` | string | Current status (see [Status Values](#status-values)) |
+| `host` | string | Hostname for connecting to the VM |
+
+---
+
+### Create VM
+
+Create a new sandbox.
+
+```http
+POST /v1/vms
+```
+
+**Request Body**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `os` | string | Yes | Operating system: `linux`, `windows`, or `macos` |
+| `configuration` | string | Yes | Size: `small`, `medium`, or `large` |
+| `region` | string | Yes | Region: `north-america`, `europe`, `asia-pacific`, or `south-america` |
+
+<Tabs items={['cURL', 'Python', 'TypeScript']}>
+  <Tab value="cURL">
+```bash
+curl -X POST https://api.cua.ai/v1/vms \
+     -H "Authorization: Bearer $CUA_API_KEY" \
+     -H "Content-Type: application/json" \
+     -d '{"os": "linux", "configuration": "small", "region": "north-america"}'
+```
+  </Tab>
+  <Tab value="Python">
+```python
+import requests
+
+response = requests.post(
+    "https://api.cua.ai/v1/vms",
+    headers={"Authorization": f"Bearer {API_KEY}"},
+    json={
+        "os": "linux",
+        "configuration": "small",
+        "region": "north-america"
+    }
+)
+vm = response.json()
+```
+  </Tab>
+  <Tab value="TypeScript">
+```typescript
+const response = await fetch("https://api.cua.ai/v1/vms", {
+  method: "POST",
+  headers: {
+    Authorization: `Bearer ${API_KEY}`,
+    "Content-Type": "application/json",
+  },
+  body: JSON.stringify({
+    os: "linux",
+    configuration: "small",
+    region: "us-central1",
+  }),
+});
+const vm = await response.json();
+```
+  </Tab>
+</Tabs>
+
+**Response** `202 Accepted`
+
+```json
+{
+  "status": "provisioning",
+  "name": "m-linux-abc123xyz",
+  "job_id": "job-uuid-here"
+}
+```
+
+Or if a ready VM is available:
+
+```json
+{
+  "status": "ready",
+  "name": "m-linux-abc123xyz",
+  "password": "generated-password",
+  "host": "m-linux-abc123xyz.sandbox.cua.ai"
+}
+```
+
+---
+
+### Start VM
+
+Start a stopped sandbox.
+
+```http
+POST /v1/vms/:name/start
+```
+
+<Tabs items={['cURL', 'Python', 'TypeScript']}>
+  <Tab value="cURL">
+```bash
+curl -X POST https://api.cua.ai/v1/vms/my-vm-name/start \
+     -H "Authorization: Bearer $CUA_API_KEY"
+```
+  </Tab>
+  <Tab value="Python">
+```python
+import requests
+
+response = requests.post(
+    f"https://api.cua.ai/v1/vms/{vm_name}/start",
+    headers={"Authorization": f"Bearer {API_KEY}"}
+)
+```
+  </Tab>
+  <Tab value="TypeScript">
+```typescript
+await fetch(`https://api.cua.ai/v1/vms/${vmName}/start`, {
+  method: "POST",
+  headers: { Authorization: `Bearer ${API_KEY}` },
+});
+```
+  </Tab>
+</Tabs>
+
+**Response** `204 No Content`
+
+---
+
+### Stop VM
+
+Stop a running sandbox.
+
+```http
+POST /v1/vms/:name/stop
+```
+
+<Tabs items={['cURL', 'Python', 'TypeScript']}>
+  <Tab value="cURL">
+```bash
+curl -X POST https://api.cua.ai/v1/vms/my-vm-name/stop \
+     -H "Authorization: Bearer $CUA_API_KEY"
+```
+  </Tab>
+  <Tab value="Python">
+```python
+import requests
+
+response = requests.post(
+    f"https://api.cua.ai/v1/vms/{vm_name}/stop",
+    headers={"Authorization": f"Bearer {API_KEY}"}
+)
+```
+  </Tab>
+  <Tab value="TypeScript">
+```typescript
+await fetch(`https://api.cua.ai/v1/vms/${vmName}/stop`, {
+  method: "POST",
+  headers: { Authorization: `Bearer ${API_KEY}` },
+});
+```
+  </Tab>
+</Tabs>
+
+**Response** `202 Accepted`
+
+```json
+{
+  "status": "stopping"
+}
+```
+
+---
+
+### Restart VM
+
+Restart a sandbox.
+
+```http
+POST /v1/vms/:name/restart
+```
+
+<Tabs items={['cURL', 'Python', 'TypeScript']}>
+  <Tab value="cURL">
+```bash
+curl -X POST https://api.cua.ai/v1/vms/my-vm-name/restart \
+     -H "Authorization: Bearer $CUA_API_KEY"
+```
+  </Tab>
+  <Tab value="Python">
+```python
+import requests
+
+response = requests.post(
+    f"https://api.cua.ai/v1/vms/{vm_name}/restart",
+    headers={"Authorization": f"Bearer {API_KEY}"}
+)
+```
+  </Tab>
+  <Tab value="TypeScript">
+```typescript
+await fetch(`https://api.cua.ai/v1/vms/${vmName}/restart`, {
+  method: "POST",
+  headers: { Authorization: `Bearer ${API_KEY}` },
+});
+```
+  </Tab>
+</Tabs>
+
+**Response** `202 Accepted`
+
+```json
+{
+  "status": "restarting"
+}
+```
+
+---
+
+### Suspend VM
+
+Suspend a running sandbox (preserves memory state).
+
+```http
+POST /v1/vms/:name/suspend
+```
+
+<Tabs items={['cURL', 'Python', 'TypeScript']}>
+  <Tab value="cURL">
+```bash
+curl -X POST https://api.cua.ai/v1/vms/my-vm-name/suspend \
+     -H "Authorization: Bearer $CUA_API_KEY"
+```
+  </Tab>
+  <Tab value="Python">
+```python
+import requests
+
+response = requests.post(
+    f"https://api.cua.ai/v1/vms/{vm_name}/suspend",
+    headers={"Authorization": f"Bearer {API_KEY}"}
+)
+```
+  </Tab>
+  <Tab value="TypeScript">
+```typescript
+await fetch(`https://api.cua.ai/v1/vms/${vmName}/suspend`, {
+  method: "POST",
+  headers: { Authorization: `Bearer ${API_KEY}` },
+});
+```
+  </Tab>
+</Tabs>
+
+**Response** `202 Accepted`
+
+```json
+{
+  "status": "suspending"
+}
+```
+
+---
+
+### Resume VM
+
+Resume a suspended sandbox.
+
+```http
+POST /v1/vms/:name/resume
+```
+
+<Tabs items={['cURL', 'Python', 'TypeScript']}>
+  <Tab value="cURL">
+```bash
+curl -X POST https://api.cua.ai/v1/vms/my-vm-name/resume \
+     -H "Authorization: Bearer $CUA_API_KEY"
+```
+  </Tab>
+  <Tab value="Python">
+```python
+import requests
+
+response = requests.post(
+    f"https://api.cua.ai/v1/vms/{vm_name}/resume",
+    headers={"Authorization": f"Bearer {API_KEY}"}
+)
+```
+  </Tab>
+  <Tab value="TypeScript">
+```typescript
+await fetch(`https://api.cua.ai/v1/vms/${vmName}/resume`, {
+  method: "POST",
+  headers: { Authorization: `Bearer ${API_KEY}` },
+});
+```
+  </Tab>
+</Tabs>
+
+**Response** `204 No Content`
+
+---
+
+## Status Values
+
+| Status | Description |
+|--------|-------------|
+| `provisioning` | VM is being created |
+| `ready` | VM is provisioned and ready |
+| `running` | VM is active and accessible |
+| `stopping` | VM is shutting down |
+| `stopped` | VM is stopped but preserved |
+| `suspending` | VM memory is being saved |
+| `suspended` | VM is suspended (can resume) |
+| `restarting` | VM is restarting |
+
+---
+
+## Error Responses
+
+```json
+{
+  "error": "Error message"
+}
+```
+
+| Status Code | Description |
+|-------------|-------------|
+| `401 Unauthorized` | Missing or invalid API key |
+| `403 Forbidden` | Plan restriction |
+| `404 Not Found` | VM not found |
+| `429 Too Many Requests` | Rate limit exceeded |

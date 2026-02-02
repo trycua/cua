@@ -1023,11 +1023,17 @@ resp = await provider.restart_vm("my-vm-name")
 
 ### HTTP API
 
-You can also manage sandboxes via HTTP:
+You can also manage sandboxes via the REST API:
 
 ```bash
 # List sandboxes
 curl -H "Authorization: Bearer $CUA_API_KEY" \
+     "https://api.cua.ai/v1/vms"
+
+# Create sandbox
+curl -X POST -H "Authorization: Bearer $CUA_API_KEY" \
+     -H "Content-Type: application/json" \
+     -d '{"os": "linux", "configuration": "small", "region": "north-america"}' \
      "https://api.cua.ai/v1/vms"
 
 # Start sandbox
@@ -1037,11 +1043,9 @@ curl -X POST -H "Authorization: Bearer $CUA_API_KEY" \
 # Stop sandbox
 curl -X POST -H "Authorization: Bearer $CUA_API_KEY" \
      "https://api.cua.ai/v1/vms/my-vm-name/stop"
-
-# Restart sandbox
-curl -X POST -H "Authorization: Bearer $CUA_API_KEY" \
-     "https://api.cua.ai/v1/vms/my-vm-name/restart"
 ```
+
+For the complete HTTP API reference, see the [REST API Reference](/cua/reference/rest-api).
 
 ---
 

@@ -38,11 +38,9 @@ code_volume = modal.Volume.from_name("cua-code-index", create_if_missing=True)
 # GitHub token secret for cloning
 github_secret = modal.Secret.from_name("github-secret", required_keys=["GITHUB_TOKEN"])
 
-# AWS secret for S3 uploads (uses OIDC for authentication)
-aws_secret = modal.Secret.from_dict({
-    "AWS_ROLE_ARN": "arn:aws:iam::296062593712:role/modal-docs-mcp-role",
-    "AWS_REGION": "us-west-2",
-})
+# AWS IAM role ARN for S3 uploads (uses Modal OIDC for authentication)
+AWS_ROLE_ARN = "arn:aws:iam::296062593712:role/modal-docs-mcp-write-role"
+AWS_REGION = "us-west-2"
 
 # S3 bucket for database uploads
 S3_BUCKET = "trycua-docs-mcp-data"
@@ -138,7 +136,16 @@ def upload_directory_to_s3(local_path: str, bucket: str, s3_prefix: str) -> dict
 
     import boto3
 
-    s3 = boto3.client("s3")
+    # Use Modal OIDC to assume the AWS IAM role and get temporary credentials
+    creds = modal.oidc.assume_role(role_arn=AWS_ROLE_ARN)
+
+    s3 = boto3.client(
+        "s3",
+        aws_access_key_id=creds.access_key_id,
+        aws_secret_access_key=creds.secret_access_key,
+        aws_session_token=creds.session_token,
+        region_name=AWS_REGION,
+    )
     uploaded_files = 0
     total_size = 0
 
@@ -170,7 +177,6 @@ def upload_directory_to_s3(local_path: str, bucket: str, s3_prefix: str) -> dict
 @app.function(
     image=image,
     volumes={VOLUME_PATH: docs_volume},
-    secrets=[aws_secret],
     timeout=1800,  # 30 minutes
 )
 def upload_docs_db_to_s3() -> dict:
@@ -202,7 +208,6 @@ def upload_docs_db_to_s3() -> dict:
 @app.function(
     image=image,
     volumes={CODE_VOLUME_PATH: code_volume},
-    secrets=[aws_secret],
     timeout=1800,  # 30 minutes
 )
 def upload_code_db_to_s3() -> dict:

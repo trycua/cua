@@ -29,6 +29,10 @@ code_volume = modal.Volume.from_name("cua-code-index", create_if_missing=True)
 # GitHub token secret for cloning
 github_secret = modal.Secret.from_name("github-secret", required_keys=["GITHUB_TOKEN"])
 
+# OpenTelemetry endpoint (no auth required)
+OTEL_ENDPOINT = "https://otel.cua.ai"
+OTEL_SERVICE_NAME = "cua-docs-mcp"
+
 # Define the container image with all dependencies
 image = (
     modal.Image.debian_slim(python_version="3.12")
@@ -45,6 +49,10 @@ image = (
         "pandas>=2.0.0",
         "markdown-it-py>=3.0.0",
         "markitdown>=0.0.1",
+        # OpenTelemetry for metrics and tracing
+        "opentelemetry-api>=1.20.0",
+        "opentelemetry-sdk>=1.20.0",
+        "opentelemetry-exporter-otlp-proto-http>=1.20.0",
     )
     .run_commands("playwright install --with-deps chromium")
 )
@@ -1502,10 +1510,72 @@ async def scheduled_code_index():
 @modal.asgi_app(custom_domains=["docs-mcp.cua.ai"])
 def web():
     """ASGI web endpoint for the MCP server"""
+    import time
+
     import lancedb
     from fastmcp import FastMCP
     from lancedb.embeddings import get_registry
     from starlette.middleware.cors import CORSMiddleware
+
+    # Initialize OpenTelemetry for metrics and tracing
+    _tracer = None
+    _meter = None
+    _request_counter = None
+    _request_duration = None
+
+    try:
+        from opentelemetry import metrics, trace
+        from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter
+        from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+        from opentelemetry.sdk.metrics import MeterProvider
+        from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
+        from opentelemetry.sdk.resources import Resource
+        from opentelemetry.sdk.trace import TracerProvider
+        from opentelemetry.sdk.trace.export import BatchSpanProcessor
+
+        resource = Resource.create({
+            "service.name": OTEL_SERVICE_NAME,
+            "service.version": "1.0.0",
+        })
+
+        # Set up tracing
+        trace_exporter = OTLPSpanExporter(endpoint=f"{OTEL_ENDPOINT}/v1/traces")
+        tracer_provider = TracerProvider(resource=resource)
+        tracer_provider.add_span_processor(BatchSpanProcessor(trace_exporter))
+        trace.set_tracer_provider(tracer_provider)
+        _tracer = trace.get_tracer(OTEL_SERVICE_NAME)
+
+        # Set up metrics
+        metric_exporter = OTLPMetricExporter(endpoint=f"{OTEL_ENDPOINT}/v1/metrics")
+        metric_reader = PeriodicExportingMetricReader(metric_exporter, export_interval_millis=60000)
+        meter_provider = MeterProvider(resource=resource, metric_readers=[metric_reader])
+        metrics.set_meter_provider(meter_provider)
+        _meter = metrics.get_meter(OTEL_SERVICE_NAME)
+
+        # Create metrics instruments
+        _request_counter = _meter.create_counter(
+            name="mcp_requests_total",
+            description="Total number of MCP tool requests",
+            unit="1",
+        )
+        _request_duration = _meter.create_histogram(
+            name="mcp_request_duration_seconds",
+            description="Duration of MCP tool requests in seconds",
+            unit="s",
+        )
+
+        print(f"OpenTelemetry initialized with endpoint: {OTEL_ENDPOINT}")
+    except ImportError as e:
+        print(f"OpenTelemetry packages not available: {e}")
+    except Exception as e:
+        print(f"Failed to initialize OpenTelemetry: {e}")
+
+    def record_request(tool_name: str, duration: float, status: str = "success"):
+        """Record metrics for a tool request."""
+        if _request_counter is not None:
+            _request_counter.add(1, {"tool": tool_name, "status": status})
+        if _request_duration is not None:
+            _request_duration.record(duration, {"tool": tool_name, "status": status})
 
     # Initialize the MCP server
     mcp = FastMCP(
@@ -1678,10 +1748,18 @@ IMPORTANT: Always cite sources - URLs for docs, component@version:path for code.
         Returns:
             List of dictionaries, one per row, with column names as keys
         """
-        conn = get_sqlite_conn()
-        cursor = conn.cursor()
-        cursor.execute(sql)
-        return [dict(row) for row in cursor.fetchall()]
+        start_time = time.perf_counter()
+        status = "success"
+        try:
+            conn = get_sqlite_conn()
+            cursor = conn.cursor()
+            cursor.execute(sql)
+            return [dict(row) for row in cursor.fetchall()]
+        except Exception as e:
+            status = "error"
+            raise
+        finally:
+            record_request("query_docs_db", time.perf_counter() - start_time, status)
 
     @mcp.tool()
     def query_docs_vectors(
@@ -1710,28 +1788,36 @@ IMPORTANT: Always cite sources - URLs for docs, component@version:path for code.
         Returns:
             List of matching documents with similarity scores (_distance field)
         """
-        limit = min(max(1, limit), 100)
-        table = get_lance_table()
+        start_time = time.perf_counter()
+        status = "success"
+        try:
+            limit = min(max(1, limit), 100)
+            table = get_lance_table()
 
-        search = table.search(query).limit(limit)
+            search = table.search(query).limit(limit)
 
-        if where:
-            search = search.where(where)
-        if select:
-            search = search.select(select)
+            if where:
+                search = search.where(where)
+            if select:
+                search = search.select(select)
 
-        results = search.to_list()
+            results = search.to_list()
 
-        formatted = []
-        for r in results:
-            result = {}
-            for key, value in r.items():
-                if key == "vector":
-                    continue
-                result[key] = value
-            formatted.append(result)
+            formatted = []
+            for r in results:
+                result = {}
+                for key, value in r.items():
+                    if key == "vector":
+                        continue
+                    result[key] = value
+                formatted.append(result)
 
-        return formatted
+            return formatted
+        except Exception as e:
+            status = "error"
+            raise
+        finally:
+            record_request("query_docs_vectors", time.perf_counter() - start_time, status)
 
     # =================== CODE QUERY TOOLS (READ-ONLY) ===================
 
@@ -1781,10 +1867,18 @@ IMPORTANT: Always cite sources - URLs for docs, component@version:path for code.
         Returns:
             List of dictionaries, one per row, with column names as keys
         """
-        conn = get_code_sqlite_conn()
-        cursor = conn.cursor()
-        cursor.execute(sql)
-        return [dict(row) for row in cursor.fetchall()]
+        start_time = time.perf_counter()
+        status = "success"
+        try:
+            conn = get_code_sqlite_conn()
+            cursor = conn.cursor()
+            cursor.execute(sql)
+            return [dict(row) for row in cursor.fetchall()]
+        except Exception as e:
+            status = "error"
+            raise
+        finally:
+            record_request("query_code_db", time.perf_counter() - start_time, status)
 
     @mcp.tool()
     def query_code_vectors(
@@ -1815,35 +1909,43 @@ IMPORTANT: Always cite sources - URLs for docs, component@version:path for code.
         Returns:
             List of matching code files with similarity scores (_distance field)
         """
-        limit = min(max(1, limit), 100)
-        table = get_code_lance_table()
+        start_time = time.perf_counter()
+        status = "success"
+        try:
+            limit = min(max(1, limit), 100)
+            table = get_code_lance_table()
 
-        search = table.search(query).limit(limit)
+            search = table.search(query).limit(limit)
 
-        # Build where clause, adding component filter if specified
-        where_clauses = []
-        if component:
-            where_clauses.append(f"component = '{component}'")
-        if where:
-            where_clauses.append(where)
+            # Build where clause, adding component filter if specified
+            where_clauses = []
+            if component:
+                where_clauses.append(f"component = '{component}'")
+            if where:
+                where_clauses.append(where)
 
-        if where_clauses:
-            search = search.where(" AND ".join(where_clauses))
-        if select:
-            search = search.select(select)
+            if where_clauses:
+                search = search.where(" AND ".join(where_clauses))
+            if select:
+                search = search.select(select)
 
-        results = search.to_list()
+            results = search.to_list()
 
-        formatted = []
-        for r in results:
-            result = {}
-            for key, value in r.items():
-                if key == "vector":
-                    continue
-                result[key] = value
-            formatted.append(result)
+            formatted = []
+            for r in results:
+                result = {}
+                for key, value in r.items():
+                    if key == "vector":
+                        continue
+                    result[key] = value
+                formatted.append(result)
 
-        return formatted
+            return formatted
+        except Exception as e:
+            status = "error"
+            raise
+        finally:
+            record_request("query_code_vectors", time.perf_counter() - start_time, status)
 
     # Create SSE app directly - endpoints at /sse (GET) and /messages (POST)
     from starlette.middleware import Middleware

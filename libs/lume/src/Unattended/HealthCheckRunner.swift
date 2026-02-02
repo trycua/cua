@@ -108,4 +108,78 @@ struct HealthCheckRunner {
         ])
         return false
     }
+
+    /// Run post-setup commands via SSH
+    /// These are more reliable than typing commands via VNC
+    func runPostSshCommands(commands: [String], vmIP: String, user: String, password: String) async throws {
+        Logger.info("Running post-SSH commands", metadata: [
+            "host": vmIP,
+            "user": user,
+            "commandCount": "\(commands.count)"
+        ])
+
+        for (index, command) in commands.enumerated() {
+            Logger.info("Executing SSH command", metadata: [
+                "index": "\(index + 1)/\(commands.count)",
+                "command": command.prefix(50).description
+            ])
+
+            // Handle sudo commands by using sudo -S which reads password from stdin
+            let actualCommand: String
+            if command.hasPrefix("sudo ") {
+                // Replace "sudo " with "echo password | sudo -S " to provide password via stdin
+                let sudoCommand = String(command.dropFirst(5))  // Remove "sudo "
+                // Escape single quotes in password for shell: ' becomes '\''
+                let escapedPassword = password.replacingOccurrences(of: "'", with: "'\\''")
+                actualCommand = "echo '\(escapedPassword)' | sudo -S \(sudoCommand)"
+            } else {
+                actualCommand = command
+            }
+
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+            process.arguments = [
+                "sshpass", "-p", password,
+                "ssh",
+                "-o", "StrictHostKeyChecking=no",
+                "-o", "UserKnownHostsFile=/dev/null",
+                "-o", "ConnectTimeout=30",
+                "-o", "BatchMode=no",
+                "\(user)@\(vmIP)",
+                actualCommand
+            ]
+
+            let outputPipe = Pipe()
+            let errorPipe = Pipe()
+            process.standardOutput = outputPipe
+            process.standardError = errorPipe
+
+            do {
+                try process.run()
+                process.waitUntilExit()
+
+                if process.terminationStatus != 0 {
+                    let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
+                    let errorOutput = String(data: errorData, encoding: .utf8) ?? ""
+                    Logger.info("SSH command returned non-zero exit code", metadata: [
+                        "command": command.prefix(50).description,
+                        "exitCode": "\(process.terminationStatus)",
+                        "error": errorOutput.prefix(200).description
+                    ])
+                    // Continue with other commands even if one fails
+                }
+            } catch {
+                Logger.info("SSH command failed", metadata: [
+                    "command": command.prefix(50).description,
+                    "error": error.localizedDescription
+                ])
+                // Continue with other commands even if one fails
+            }
+
+            // Small delay between commands
+            try await Task.sleep(nanoseconds: 500_000_000) // 0.5s
+        }
+
+        Logger.info("Post-SSH commands completed")
+    }
 }

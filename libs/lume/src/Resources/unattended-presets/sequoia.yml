@@ -261,10 +261,10 @@ boot_commands:
   # Use keyboard shortcut to focus search field (more reliable than clicking)
   - "<cmd+f>"
   - "<delay 1>"
-  - "<type 'Remote Logi'>"
+  - "<type 'login'>"
   - "<delay 2>"
   - "<click 'Remote Login'>"
-  - "<delay 3>"
+  - "<delay 10>"
 
   # Tab to reach the "Allow full disk access" toggle, then Space to toggle
   - "<tab>"

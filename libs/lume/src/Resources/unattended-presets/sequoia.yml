@@ -261,7 +261,7 @@ boot_commands:
   # Use keyboard shortcut to focus search field (more reliable than clicking)
   - "<cmd+f>"
   - "<delay 1>"
-  - "<type 'Remote Login'>"
+  - "<type 'Remote Logi'>"
   - "<delay 2>"
   - "<click 'Remote Login'>"
   - "<delay 3>"

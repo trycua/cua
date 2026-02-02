@@ -240,35 +240,7 @@ boot_commands:
   - "<delay 2>"
 
   # ============================================
-  # 3. Disable Screen Lock and Sleep
-  # ============================================
-  # Disable screen saver
-  - "<type 'defaults -currentHost write com.apple.screensaver idleTime -int 0'>"
-  - "<enter>"
-  - "<delay 1>"
-
-  # Disable require password after sleep/screen saver
-  - "<type 'defaults write com.apple.screensaver askForPassword -int 0'>"
-  - "<enter>"
-  - "<delay 1>"
-
-  # Prevent display from sleeping (never)
-  - "<type 'sudo pmset -a displaysleep 0'>"
-  - "<enter>"
-  - "<delay 1>"
-
-  # Prevent system sleep (never)
-  - "<type 'sudo pmset -a sleep 0'>"
-  - "<enter>"
-  - "<delay 1>"
-
-  # Disable auto-logout
-  - "<type 'sudo defaults write /Library/Preferences/.GlobalPreferences com.apple.autologout.AutoLogOutDelay -int 0'>"
-  - "<enter>"
-  - "<delay 1>"
-
-  # ============================================
-  # 4. Enable Full Disk Access for Remote Users
+  # 3. Enable Full Disk Access for Remote Users
   # ============================================
   # This requires navigating System Settings GUI since TCC.db is SIP-protected
 
@@ -331,3 +303,17 @@ health_check:
   timeout: 30
   retries: 5
   retry_delay: 10
+
+# Post-setup commands to run via SSH after health check passes
+# These are more reliable than typing in Terminal via VNC
+post_ssh_commands:
+  # Disable screen saver
+  - "defaults -currentHost write com.apple.screensaver idleTime -int 0"
+  # Disable require password after sleep/screen saver
+  - "defaults write com.apple.screensaver askForPassword -int 0"
+  # Prevent display from sleeping (never)
+  - "sudo pmset -a displaysleep 0"
+  # Prevent system sleep (never)
+  - "sudo pmset -a sleep 0"
+  # Disable auto-logout
+  - "sudo defaults write /Library/Preferences/.GlobalPreferences com.apple.autologout.AutoLogOutDelay -int 0"

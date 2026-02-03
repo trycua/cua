@@ -401,4 +401,59 @@ extension VMDirectory {
             sharedDirectories: nil
         )
     }
+
+    // MARK: - Disk Resize Operations
+
+    /// Compacts the VM's disk in-place by removing unused space
+    /// Creates a temporary sparse copy and replaces the original
+    /// - Throws: VMDirectoryError if the operation fails
+    func compactDisk() async throws {
+        let tempPath = dir.file("disk0.tmp.img")
+        
+        Logger.info("Starting disk compaction", metadata: ["disk": diskPath.path])
+        
+        // Create sparse copy
+        try compactCopyDisk(to: tempPath)
+        
+        // Replace original with compacted version
+        try FileManager.default.removeItem(at: diskPath.url)
+        try FileManager.default.moveItem(at: tempPath.url, to: diskPath.url)
+        
+        Logger.info("Disk compaction complete", metadata: ["disk": diskPath.path])
+    }
+
+    /// Resizes the VM's disk to the specified size using hdiutil
+    /// - Parameter newSize: The new size in bytes
+    /// - Throws: VMDirectoryError if the operation fails
+    func resizeDisk(_ newSize: UInt64) throws {
+        Logger.info("Resizing disk", metadata: [
+            "disk": diskPath.path,
+            "newSize": "\\(newSize)"
+        ])
+        
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/hdiutil")
+        process.arguments = [
+            "resize",
+            "-size", "\\(newSize)",
+            "-imageonly",
+            diskPath.path
+        ]
+        
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = pipe
+        
+        try process.run()
+        process.waitUntilExit()
+        
+        guard process.terminationStatus == 0 else {
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            let output = String(data: data, encoding: .utf8) ?? "Unknown error"
+            throw VMDirectoryError.diskOperationFailed("hdiutil resize failed: \\(output)")
+        }
+        
+        Logger.info("Disk resize complete", metadata: ["disk": diskPath.path])
+    }
 }
+

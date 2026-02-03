@@ -8,6 +8,7 @@ enum CommandRegistry {
             Push.self,
             Images.self,
             Clone.self,
+            Resize.self,
             Get.self,
             Set.self,
             List.self,
@@ -23,4 +24,5 @@ enum CommandRegistry {
             DumpDocs.self,
         ]
     }
+
 }

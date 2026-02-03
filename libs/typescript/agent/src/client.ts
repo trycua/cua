@@ -1,4 +1,6 @@
 import { Peer } from 'peerjs';
+import { Telemetry } from '@trycua/core';
+import { randomUUID } from 'node:crypto';
 import type { AgentRequest, AgentResponse, ConnectionType, AgentClientOptions } from './types';
 
 export class AgentClient {
@@ -7,6 +9,8 @@ export class AgentClient {
   private options: AgentClientOptions;
   private peer?: Peer;
   private connection?: any;
+  private telemetry: Telemetry;
+  private sessionId: string;
 
   constructor(url: string, options: AgentClientOptions = {}) {
     this.url = url;
@@ -15,6 +19,8 @@ export class AgentClient {
       retries: 3,
       ...options,
     };
+    this.telemetry = new Telemetry();
+    this.sessionId = randomUUID();
 
     // Determine connection type from URL
     if (url.startsWith('http://') || url.startsWith('https://')) {
@@ -24,6 +30,14 @@ export class AgentClient {
     } else {
       throw new Error('Invalid URL format. Must start with http://, https://, or peer://');
     }
+
+    // Emit agent_client_initialized event
+    this.telemetry.recordEvent('agent_client_initialized', {
+      session_id: this.sessionId,
+      connection_type: this.connectionType,
+      has_api_key: !!options.apiKey,
+      node_version: process.version,
+    });
   }
 
   // Main responses API matching the desired usage pattern
@@ -34,15 +48,87 @@ export class AgentClient {
   };
 
   private async sendRequest(request: AgentRequest): Promise<AgentResponse> {
-    switch (this.connectionType) {
-      case 'http':
-      case 'https':
-        return this.sendHttpRequest(request);
-      case 'peer':
-        return this.sendPeerRequest(request);
-      default:
-        throw new Error(`Unsupported connection type: ${this.connectionType}`);
+    const requestId = randomUUID();
+    const startTime = Date.now();
+
+    // Emit agent_request_start event
+    this.telemetry.recordEvent('agent_request_start', {
+      session_id: this.sessionId,
+      request_id: requestId,
+      model: request.model,
+      connection_type: this.connectionType,
+      has_computer_kwargs: !!request.computer_kwargs,
+      has_agent_kwargs: !!request.agent_kwargs,
+    });
+
+    try {
+      let response: AgentResponse;
+      switch (this.connectionType) {
+        case 'http':
+        case 'https':
+          response = await this.sendHttpRequest(request);
+          break;
+        case 'peer':
+          response = await this.sendPeerRequest(request);
+          break;
+        default:
+          throw new Error(`Unsupported connection type: ${this.connectionType}`);
+      }
+
+      // Emit agent_request_end event on success
+      this.telemetry.recordEvent('agent_request_end', {
+        session_id: this.sessionId,
+        request_id: requestId,
+        model: request.model,
+        duration_ms: Date.now() - startTime,
+        status: response.status,
+        num_messages: response.output?.length ?? 0,
+        prompt_tokens: response.usage?.prompt_tokens ?? 0,
+        completion_tokens: response.usage?.completion_tokens ?? 0,
+        total_tokens: response.usage?.total_tokens ?? 0,
+        response_cost: response.usage?.response_cost ?? 0,
+      });
+
+      return response;
+    } catch (error) {
+      // Emit agent_request_error event on failure
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      const errorType = this.classifyError(errorMessage);
+
+      this.telemetry.recordEvent('agent_request_error', {
+        session_id: this.sessionId,
+        request_id: requestId,
+        model: request.model,
+        duration_ms: Date.now() - startTime,
+        error_type: errorType,
+        error_message: errorMessage.slice(0, 200), // Truncate for safety
+      });
+
+      throw error;
     }
+  }
+
+  private classifyError(errorMessage: string): string {
+    if (errorMessage.includes('timeout') || errorMessage.includes('abort')) {
+      return 'timeout';
+    }
+    if (errorMessage.includes('HTTP error')) {
+      return 'http_error';
+    }
+    if (errorMessage.includes('parse') || errorMessage.includes('JSON')) {
+      return 'parse_error';
+    }
+    if (
+      errorMessage.includes('network') ||
+      errorMessage.includes('fetch') ||
+      errorMessage.includes('connect')
+    ) {
+      return 'network';
+    }
+    if (errorMessage.includes('Peer')) {
+      return 'peer_error';
+    }
+    return 'unknown';
   }
 
   private async sendHttpRequest(request: AgentRequest): Promise<AgentResponse> {
@@ -181,5 +267,7 @@ export class AgentClient {
       this.peer.destroy();
       this.peer = undefined;
     }
+    // Flush and shutdown telemetry
+    await this.telemetry.shutdown();
   }
 }

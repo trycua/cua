@@ -211,11 +211,11 @@ boot_commands:
   # ============================================
   - "<cmd+space>"
   - "<delay 5>"
-  - "<type 'Terminal'>"
+  - "<type 'Terminal', delay=350>"
   - "<delay 5>"
   - "<enter>"
   - "<delay 5>"
-  - "<type 'defaults write NSGlobalDomain AppleKeyboardUIMode -int 3'>"
+  - "<type 'defaults write NSGlobalDomain AppleKeyboardUIMode -int 3', delay=350>"
   - "<enter>"
   - "<delay 3>"
   - "<cmd+q>"

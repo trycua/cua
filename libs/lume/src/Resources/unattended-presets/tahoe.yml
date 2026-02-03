@@ -213,7 +213,7 @@ boot_commands:
   - "<delay 5>"
   - "<type 'Termina', delay=350>"
   - "<delay 5>"
-  - "<click 'Terminal'>"
+  - "<enter>"
   - "<delay 5>"
   - "<type 'defaults write NSGlobalDomain AppleKeyboardUIMode -int 3', delay=350>"
   - "<enter>"
@@ -246,23 +246,20 @@ boot_commands:
   - "<type 'login'>"
   - "<delay 2>"
   - "<click 'Remote Login'>"
-  - "<delay 10>"
+  - "<delay 20>"
 
   # Enable Remote Login toggle (first toggle on the page)
-  - "<tab>"
-  - "<delay 0.5>"
   - "<space>"
   - "<delay 3>"
-
-  # Enable "Allow full disk access for remote users" toggle (next toggle)
   - "<tab>"
-  - "<delay 0.5>"
+  - "<delay 3>"
   - "<space>"
-  - "<delay 2>"
+  - "<delay 3>"
+  - "<enter>"
 
   # Close System Settings
   - "<cmd+q>"
-  - "<delay 1>"
+  - "<delay 2>"
 
   # ============================================
   # Setup Complete!

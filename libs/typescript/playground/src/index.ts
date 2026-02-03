@@ -64,6 +64,15 @@ export { ComputerList } from './components/composed/ComputerList';
 // Modals
 export { SettingsModal } from './components/modals/SettingsModal';
 export { CustomComputerModal } from './components/modals/CustomComputerModal';
+export { ExportTrajectoryModal } from './components/modals';
+export { ReplayTrajectoryModal } from './components/modals';
+
+// Trajectory Viewer
+export { default as TrajectoryViewer } from './components/TrajectoryViewer';
+
+// Telemetry
+export { TelemetryProvider, usePlaygroundTelemetry } from './telemetry';
+export type { TelemetryProviderProps } from './telemetry';
 
 // Main Playground Component
 export { Playground } from './components/Playground';

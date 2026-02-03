@@ -35,11 +35,15 @@
     "react-dom": "^18.0.0 || ^19.0.0"
   },
   "dependencies": {
+    "@radix-ui/react-slot": "^1.0.0",
     "@trycua/agent": "workspace:*",
+    "@zip.js/zip.js": "^2.7.0",
+    "class-variance-authority": "^0.7.0",
     "clsx": "^2.0.0",
     "framer-motion": "^11.0.0",
     "lottie-react": "^2.4.0",
     "lucide-react": "^0.400.0",
+    "posthog-js": "^1.337.0",
     "react-markdown": "^9.0.0",
     "remark-gfm": "^4.0.0",
     "tailwind-merge": "^2.0.0"

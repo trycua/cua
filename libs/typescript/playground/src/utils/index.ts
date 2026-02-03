@@ -10,3 +10,6 @@ export {
   loadItemFromLocalStorage,
   clearItemsFromLocalStorage,
 } from './localStorage';
+
+// Trajectory utilities (for export/replay features)
+export { inferRuns, type TrajectoryRun } from './trajectory';

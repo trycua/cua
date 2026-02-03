@@ -202,7 +202,7 @@ boot_commands:
   - "<delay 5>"
   - "<type 'Termina', delay=350>"
   - "<delay 5>"
-  - "<click 'Terminal'>"
+  - "<enter>"
   - "<delay 5>"
   - "<type 'defaults write NSGlobalDomain AppleKeyboardUIMode -int 3', delay=350>"
   - "<enter>"

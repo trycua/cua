@@ -44,13 +44,27 @@ _concurrent_operations: Optional[Any] = None  # UpDownCounter
 _tokens_total: Optional[Any] = None  # Counter
 
 
+def _get_environment() -> str:
+    """Get the current environment name."""
+    return os.environ.get("CUA_ENVIRONMENT", "production")
+
+
 def is_otel_enabled() -> bool:
     """Check if OpenTelemetry is enabled.
 
-    Returns True unless CUA_TELEMETRY_DISABLED is set to a truthy value.
+    Returns True unless CUA_TELEMETRY_DISABLED is set to a truthy value
+    or the environment is not production (metrics are only collected in prod).
     """
     disabled = os.environ.get("CUA_TELEMETRY_DISABLED", "").lower()
-    return disabled not in {"1", "true", "yes", "on"}
+    if disabled in {"1", "true", "yes", "on"}:
+        return False
+
+    # Only collect metrics in production
+    environment = _get_environment()
+    if environment != "production":
+        return False
+
+    return True
 
 
 def _get_otel_endpoint() -> str:
@@ -82,7 +96,11 @@ def _initialize_otel() -> bool:
             return True
 
         if not is_otel_enabled():
-            logger.debug("OpenTelemetry disabled via CUA_TELEMETRY_DISABLED")
+            env = _get_environment()
+            if env != "production":
+                logger.debug(f"OpenTelemetry disabled in non-production environment: {env}")
+            else:
+                logger.debug("OpenTelemetry disabled via CUA_TELEMETRY_DISABLED")
             return False
 
         try:

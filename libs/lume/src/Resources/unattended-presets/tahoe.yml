@@ -250,12 +250,13 @@ boot_commands:
 
   # Enable Remote Login toggle (first toggle on the page)
   - "<space>"
-  - "<delay 3>"
+  - "<delay 5>"
   - "<tab>"
-  - "<delay 3>"
+  - "<delay 5>"
   - "<space>"
-  - "<delay 3>"
+  - "<delay 5>"
   - "<enter>"
+  - "<delay 5>"
 
   # Close System Settings
   - "<cmd+q>"

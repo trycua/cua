@@ -347,7 +347,6 @@ final class DefaultVNCService: VNCService {
             }
 
             try await client.sendKeyEvent(key: keysym, down: true)
-            try await Task.sleep(nanoseconds: delayNs) // key hold
             try await client.sendKeyEvent(key: keysym, down: false)
 
             if needsShift {

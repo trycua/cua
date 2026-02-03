@@ -238,16 +238,13 @@ boot_commands:
   - "<delay 10>"
 
   # Enable Remote Login toggle (first toggle on the page)
-  - "<tab>"
-  - "<delay 0.5>"
   - "<space>"
   - "<delay 3>"
-
-  # Enable "Allow full disk access for remote users" toggle (next toggle)
   - "<tab>"
-  - "<delay 0.5>"
+  - "<delay 3>"
   - "<space>"
-  - "<delay 2>"
+  - "<delay 3>"
+  - "<enter>"
 
   # Close System Settings
   - "<cmd+q>"

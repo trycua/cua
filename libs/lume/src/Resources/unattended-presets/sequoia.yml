@@ -200,9 +200,9 @@ boot_commands:
   # ============================================
   - "<cmd+space>"
   - "<delay 5>"
-  - "<type 'Terminal', delay=350>"
+  - "<type 'Termina', delay=350>"
   - "<delay 5>"
-  - "<enter>"
+  - "<click 'Terminal'>"
   - "<delay 5>"
   - "<type 'defaults write NSGlobalDomain AppleKeyboardUIMode -int 3', delay=350>"
   - "<enter>"
@@ -232,7 +232,7 @@ boot_commands:
   # Search for Remote Login settings
   - "<cmd+f>"
   - "<delay 1>"
-  - "<type 'Remote Login'>"
+  - "<type 'login'>"
   - "<delay 2>"
   - "<click 'Remote Login'>"
   - "<delay 10>"

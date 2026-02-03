@@ -15,7 +15,35 @@ export { createCloudAdapter } from './adapters/cloud';
 // Utilities
 export * from './utils';
 
-// Primitive Components (added by Agent C)
+// Context & Providers
+export {
+  PlaygroundContext,
+  ChatStateContext,
+  ChatDispatchContext,
+  type PlaygroundContextValue,
+  type ChatContextValue,
+  type PlaygroundState,
+  type ChatState,
+  type PlaygroundAction,
+  type ChatAction,
+} from './context/PlaygroundContext';
+export { PlaygroundProvider } from './context/PlaygroundProvider';
+export { ChatProvider } from './context/ChatProvider';
+
+// Hooks
+export {
+  usePlayground,
+  useChat,
+  useChatDispatch,
+  useActiveChat,
+  useIsChatGenerating,
+  useLastRequestDuration,
+  useRequestStartTime,
+  useFindDefaultModel,
+} from './hooks/usePlayground';
+export { useAgentRequest } from './hooks/useAgentRequest';
+
+// Primitive Components
 export {
   ChatMessage,
   getActionDescription,
@@ -28,16 +56,14 @@ export {
 } from './components/primitives';
 export type { VNCViewerProps } from './components/primitives';
 
-// Composed Components (will be added by Agent D)
-// export { Playground } from './components/Playground';
-// export { ChatPanel } from './components/composed/ChatPanel';
-// export { ChatList } from './components/composed/ChatList';
-// export { ComputerList } from './components/composed/ComputerList';
+// Composed Components
+export { ChatPanel } from './components/composed/ChatPanel';
+export { ChatList } from './components/composed/ChatList';
+export { ComputerList } from './components/composed/ComputerList';
 
-// Hooks (will be added by Agent D)
-// export { usePlayground } from './hooks/usePlayground';
-// export { useAgentRequest } from './hooks/useAgentRequest';
+// Modals
+export { SettingsModal } from './components/modals/SettingsModal';
+export { CustomComputerModal } from './components/modals/CustomComputerModal';
 
-// Context (will be added by Agent D)
-// export { PlaygroundProvider } from './context/PlaygroundProvider';
-// export { PlaygroundContext } from './context/PlaygroundContext';
+// Main Playground Component
+export { Playground } from './components/Playground';

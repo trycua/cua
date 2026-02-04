@@ -54,6 +54,38 @@ const brandIcons: Record<string, () => React.ReactElement> = {
       createElement('path', { d: 'M19 17s1-1 3-1' }),
       createElement('path', { d: 'M19 19c1.7 0 3 1.3 3 3' })
     ),
+  lobster: () =>
+    createElement(
+      'svg',
+      {
+        viewBox: '0 0 24 24',
+        fill: 'none',
+        stroke: 'currentColor',
+        strokeWidth: 2,
+        strokeLinecap: 'round',
+        strokeLinejoin: 'round',
+        className: 'w-4 h-4',
+      },
+      // Body segments
+      createElement('ellipse', { cx: 12, cy: 13, rx: 3, ry: 2 }),
+      createElement('ellipse', { cx: 12, cy: 16.5, rx: 2.5, ry: 1.5 }),
+      createElement('ellipse', { cx: 12, cy: 19.5, rx: 2, ry: 1.5 }),
+      // Tail fan
+      createElement('path', { d: 'M10 21l-1 2' }),
+      createElement('path', { d: 'M12 21v2' }),
+      createElement('path', { d: 'M14 21l1 2' }),
+      // Claws
+      createElement('path', { d: 'M9 13c-2-1-4-1-5 1-1 2 1 3 2 3s2-1 3-2' }),
+      createElement('path', { d: 'M15 13c2-1 4-1 5 1 1 2-1 3-2 3s-2-1-3-2' }),
+      createElement('path', { d: 'M3 12l-1-2' }),
+      createElement('path', { d: 'M21 12l1-2' }),
+      // Antennae
+      createElement('path', { d: 'M10 11c-2-3-4-6-6-7' }),
+      createElement('path', { d: 'M14 11c2-3 4-6 6-7' }),
+      // Eyes
+      createElement('circle', { cx: 10.5, cy: 12, r: 0.5 }),
+      createElement('circle', { cx: 13.5, cy: 12, r: 0.5 })
+    ),
 };
 
 // Icon resolver

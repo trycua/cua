@@ -12,6 +12,7 @@ const SETTINGS_FILE = join(CONFIG_DIR, "settings.json");
 export interface Settings {
   defaultAgent?: string;
   telemetryEnabled?: boolean;
+  aliasIgnored?: boolean;
 }
 
 export const AGENTS = {
@@ -102,5 +103,15 @@ export function getTelemetryEnabled(): boolean {
 export function setTelemetryEnabled(enabled: boolean): void {
   const settings = loadSettings();
   settings.telemetryEnabled = enabled;
+  saveSettings(settings);
+}
+
+export function getAliasIgnored(): boolean {
+  return loadSettings().aliasIgnored === true;
+}
+
+export function setAliasIgnored(ignored: boolean): void {
+  const settings = loadSettings();
+  settings.aliasIgnored = ignored;
   saveSettings(settings);
 }

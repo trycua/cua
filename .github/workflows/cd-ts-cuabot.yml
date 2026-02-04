@@ -69,7 +69,7 @@ jobs:
       release_name: "cuabot v${{ needs.prepare.outputs.version }}"
       module_path: "libs/cuabot"
       body: |
-        ## Installation
+        ## Quick Start
 
         ```bash
         npx cuabot
@@ -79,8 +79,24 @@ jobs:
 
         ```bash
         npm install -g cuabot
+        cuabot
+        ```
+
+        ## Usage
+
+        ```bash
+        cuabot                     # Run default agent (or setup)
+        cuabot claude              # Run Claude Code in sandbox
+        cuabot gemini              # Run Gemini CLI in sandbox
+        cuabot codex               # Run Codex CLI in sandbox
+        cuabot chromium            # Open sandboxed Chromium
+
+        cuabot --screenshot        # Take screenshot
+        cuabot --type "hello"      # Type text
+        cuabot --click 100 200     # Click at coordinates
         ```
 
         ## Documentation
 
-        See [cua.ai/docs/cuabot](https://cua.ai/docs/cuabot)
+        - [Getting Started](https://cua.ai/docs/cuabot/cuabot)
+        - [Installation Guide](https://cua.ai/docs/cuabot/install)

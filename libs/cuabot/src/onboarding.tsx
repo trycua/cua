@@ -6,8 +6,12 @@
 import React, { useState, useEffect } from "react";
 import { render, Box, Text, useInput, useApp } from "ink";
 import { checkDocker, checkXpra, checkPlaywright } from "./utils.js";
-import { AGENTS, AgentId, getDefaultAgent, setDefaultAgent, setTelemetryEnabled, loadSettings } from "./settings.js";
-import { exec } from "child_process";
+import { AGENTS, AgentId, getDefaultAgent, setDefaultAgent, setTelemetryEnabled, loadSettings, getAliasIgnored, setAliasIgnored } from "./settings.js";
+import { log_telemetry_onboard } from "./telemetry.js";
+import { exec, execSync } from "child_process";
+import { homedir } from "os";
+import { appendFileSync, existsSync, readFileSync } from "fs";
+import { join } from "path";
 
 type CheckStatus = "ok" | "error" | "loading";
 
@@ -15,6 +19,47 @@ interface Check {
   label: string;
   status: CheckStatus;
   message: string;
+}
+
+function checkCuabotInPath(): boolean {
+  try {
+    execSync("which cuabot", { stdio: "ignore" });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function getShellRcFile(): string | null {
+  const shell = process.env.SHELL || "";
+  if (shell.includes("zsh")) return join(homedir(), ".zshrc");
+  if (shell.includes("bash")) {
+    // macOS uses .bash_profile, Linux uses .bashrc
+    const bashProfile = join(homedir(), ".bash_profile");
+    if (process.platform === "darwin" && existsSync(bashProfile)) return bashProfile;
+    return join(homedir(), ".bashrc");
+  }
+  return null;
+}
+
+function addAliasToShell(): boolean {
+  const rcFile = getShellRcFile();
+  if (!rcFile) return false;
+  try {
+    // Check if alias already exists
+    if (existsSync(rcFile)) {
+      const content = readFileSync(rcFile, "utf-8");
+      if (content.includes('alias cuabot=')) {
+        setAliasIgnored(true);
+        return true;
+      }
+    }
+    appendFileSync(rcFile, '\n# cuabot alias\nalias cuabot="npx cuabot"\n');
+    setAliasIgnored(true);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function StatusLine({ check }: { check: Check }) {
@@ -129,6 +174,7 @@ function Onboarding() {
   const { exit } = useApp();
   const [checks, setChecks] = useState<Check[]>([
     { label: "Default Agent", status: "loading", message: "checking..." },
+    { label: "cuabot Command", status: "loading", message: "checking..." },
     { label: "Docker", status: "loading", message: "checking..." },
     { label: "Xpra Client", status: "loading", message: "checking..." },
     { label: "Playwright", status: "loading", message: "checking..." },
@@ -150,6 +196,15 @@ function Onboarding() {
       label: "Default Agent",
       status: defaultAgent ? "ok" : "error",
       message: defaultAgent ? `${AGENTS[defaultAgent as AgentId]?.name || defaultAgent}` : "not configured",
+    });
+
+    // Check cuabot command availability
+    const cuabotInPath = checkCuabotInPath();
+    const aliasIgnored = getAliasIgnored();
+    newChecks.push({
+      label: "cuabot Command",
+      status: cuabotInPath || aliasIgnored ? "ok" : "error",
+      message: cuabotInPath ? "ready" : aliasIgnored ? "using npx" : "not set up",
     });
 
     // Check Docker
@@ -268,6 +323,10 @@ function Onboarding() {
         <TelemetrySelector
           onSelect={(enabled) => {
             setTelemetryEnabled(enabled);
+            if (enabled) {
+              // Log telemetry onboard event with default agent
+              log_telemetry_onboard(getDefaultAgent());
+            }
             setShowTelemetrySelector(false);
             runChecks();
           }}
@@ -339,6 +398,21 @@ function Onboarding() {
           options={[
             { label: "Exit and copy command: \x1b[2mnpx playwright install\x1b[0m", action: () => { copyToClipboard("npx playwright install"); exit(); } },
             { label: "Exit", action: () => exit() },
+          ]}
+          onSelect={() => {}}
+        />
+      )}
+
+      {firstError === "cuabot Command" && (
+        <OptionSelector
+          options={[
+            { label: `Set up 'cuabot' command`, action: () => {
+              if (addAliasToShell()) {
+                console.log("\n✓ Added! Restart your terminal or run: source " + getShellRcFile() + "\n");
+              }
+              runChecks();
+            }},
+            { label: "Skip (use 'npx cuabot' instead)", action: () => { setAliasIgnored(true); runChecks(); } },
           ]}
           onSelect={() => {}}
         />

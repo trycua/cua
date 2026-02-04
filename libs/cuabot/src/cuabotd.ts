@@ -12,18 +12,15 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, unlinkSync, writeF
 import { openWindows } from "get-windows";
 import { createServer, IncomingMessage, ServerResponse } from "http";
 import { homedir } from "os";
-import { dirname, join } from "path";
+import { join } from "path";
 import { Browser, BrowserContext, chromium, Page } from "playwright";
 import sharp from "sharp";
-import { fileURLToPath } from "url";
 import { promisify } from "util";
 import { WebSocket, WebSocketServer } from "ws";
 import { getTelemetryEnabled } from "./settings.js";
 import { log_event, startHistoryPolling, stopHistoryPolling, TelemetryEvent } from "./telemetry.js";
 import { getXpraAttachArgs, getXpraBinPath, nameToColor } from "./utils.js";
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
 
 const execAsync = promisify(exec);
 
@@ -154,39 +151,30 @@ async function ensureImage(): Promise<void> {
     await execAsync(`docker image inspect ${IMAGE_NAME}`);
     console.log(`[server] Image ${IMAGE_NAME} already exists`);
   } catch {
-    console.log(`[server] Building ${IMAGE_NAME}...`);
-    console.log(`[server] This may take 10-20 minutes on first build. Progress will be shown below:`);
-    const buildProcess = exec(`docker build -t ${IMAGE_NAME} .`, {
-      cwd: join(__dirname, ".."),
-    });
+    console.log(`[server] Pulling ${IMAGE_NAME}...`);
+    const pullProcess = exec(`docker pull ${IMAGE_NAME}`);
 
-    buildProcess.stdout?.on("data", (data: Buffer) => {
+    pullProcess.stdout?.on("data", (data: Buffer) => {
       const lines = data.toString().split("\n").filter(l => l.trim());
       for (const line of lines) {
-        // Show progress lines (step numbers, downloading, etc.)
-        if (line.includes("Step ") || line.includes("Downloading") || line.includes("Installing") || line.includes("RUN")) {
-          console.log(`[build] ${line}`);
-        }
+        console.log(`[pull] ${line}`);
       }
     });
 
-    buildProcess.stderr?.on("data", (data: Buffer) => {
+    pullProcess.stderr?.on("data", (data: Buffer) => {
       const lines = data.toString().split("\n").filter(l => l.trim());
       for (const line of lines) {
-        // Show important error/warning lines
-        if (!line.includes("WARNING") || line.includes("ERROR")) {
-          console.error(`[build] ${line}`);
-        }
+        console.error(`[pull] ${line}`);
       }
     });
 
     await new Promise<void>((resolve, reject) => {
-      buildProcess.on("exit", (code) => {
+      pullProcess.on("exit", (code) => {
         if (code === 0) {
-          console.log(`[server] Build completed successfully!`);
+          console.log(`[server] Pull completed successfully!`);
           resolve();
         } else {
-          reject(new Error(`Docker build failed with exit code ${code}`));
+          reject(new Error(`Docker pull failed with exit code ${code}`));
         }
       });
     });
@@ -217,7 +205,6 @@ async function ensureContainer(): Promise<number> {
   // Convert Windows path to Docker-compatible path for volume mount
   const toDockerPath = (p: string) => p.replace(/\\/g, "/").replace(/^([A-Z]):/, (_, letter) => `/${letter.toLowerCase()}`);
   const claudeConfigPath = toDockerPath(CLAUDE_CONFIG_DIR);
-  const mcpPath = toDockerPath(join(__dirname, "mcp"));
 
   const telemetryEnabled = getTelemetryEnabled();
   const cuabotName = sessionName || "cuabot";
@@ -234,7 +221,6 @@ async function ensureContainer(): Promise<number> {
     "-e", `CUABOT_COLOR=${cuabotColor}`,
     "--add-host=host.docker.internal:host-gateway",
     "-v", `${claudeConfigPath}:/home/user/.claude`,
-    "-v", `${mcpPath}:/home/user/.cuabot/mcp`,
     IMAGE_NAME,
     "xpra", "start", ":100", "--bind-tcp=0.0.0.0:10000", "--no-daemon", "--html=on",
   ];

@@ -15,7 +15,7 @@ const __dirname = dirname(__filename);
 const TELEMETRY_LOG_PATH = join(__dirname, "..", "telemetry.log");
 
 export interface TelemetryEvent {
-  type: "mcp_tool_call" | "prompt_change" | "cli_invocation";
+  type: "mcp_tool_call" | "prompt_change" | "cli_invocation" | "telemetry_onboard";
   timestamp: number;
   // MCP tool call fields
   tool_name?: string;
@@ -27,6 +27,8 @@ export interface TelemetryEvent {
   // CLI invocation fields
   cli_args?: string[];
   cwd?: string;
+  // Telemetry onboard fields
+  default_agent?: string;
 }
 
 /**
@@ -65,6 +67,19 @@ export function log_cli_invocation(args: string[]): void {
     timestamp: Date.now(),
     cli_args: args,
     cwd: process.cwd(),
+  });
+}
+
+/**
+ * Log telemetry onboarding (when user opts in)
+ */
+export function log_telemetry_onboard(default_agent: string | undefined): void {
+  // Note: We log this even though telemetry was just enabled
+  // This is the first event after opting in
+  log_event({
+    type: "telemetry_onboard",
+    timestamp: Date.now(),
+    default_agent,
   });
 }
 

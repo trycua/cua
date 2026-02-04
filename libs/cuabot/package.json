@@ -3,6 +3,11 @@
   "version": "1.0.2",
   "packageManager": "pnpm@10.11.0",
   "description": "Sandboxed, co-op computer-use agents",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/trycua/cua",
+    "directory": "libs/cuabot"
+  },
   "license": "MIT",
   "type": "module",
   "bin": {

@@ -32,9 +32,11 @@
     "ink-spinner": "^5.0.0",
     "ink-text-input": "^6.0.0",
     "playwright": "^1.58.1",
+    "posthog-node": "^5.24.9",
     "react": "^18.3.1",
     "sharp": "^0.34.5",
     "tsx": "^4.19.0",
+    "uuid": "^13.0.0",
     "ws": "^8.19.0",
     "zod": "^3.24.0"
   },
@@ -42,6 +44,7 @@
     "@types/better-sqlite3": "^7.6.0",
     "@types/node": "^22.0.0",
     "@types/react": "^18.3.0",
+    "@types/uuid": "^11.0.0",
     "@types/ws": "^8.18.1",
     "typescript": "^5.7.0"
   }

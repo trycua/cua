@@ -11,9 +11,6 @@ Provides screenshot and input tools for Claude coding agents
 
 import os
 import time
-import json
-import socket
-from pathlib import Path
 import httpx
 from fastmcp import FastMCP
 from fastmcp.utilities.types import Image
@@ -26,17 +23,16 @@ STARTING_ERROR = "cuabotd is still starting"
 # Overlay cursor socket
 OVERLAY_SOCKET = "/tmp/cuabot-overlay-cursor.sock"
 
-# Telemetry log path (same location as TypeScript: __dirname/../telemetry.log)
-# When running in container, we write to host via cuabotd
-TELEMETRY_LOG_PATH = Path(__file__).parent.parent.parent / "telemetry.log"
-
 server = FastMCP("computer-use")
 
 # HTTP client for cuabotd
 client = httpx.Client(base_url=HOST_URL, timeout=30.0)
 
+# Separate client for telemetry with short timeout
+telemetry_client = httpx.Client(base_url=HOST_URL, timeout=1.0)
+
 def log_mcp_tool_call(tool_name: str, tool_args: dict) -> None:
-    """Log MCP tool call to telemetry.log"""
+    """Send MCP tool call telemetry to cuabotd"""
     if not TELEMETRY_ENABLED:
         return
     try:
@@ -48,8 +44,7 @@ def log_mcp_tool_call(tool_name: str, tool_args: dict) -> None:
             "tool_name": tool_name,
             "tool_args": filtered_args,
         }
-        with open(TELEMETRY_LOG_PATH, "a") as f:
-            f.write(json.dumps(event) + "\n")
+        telemetry_client.post("/telemetry", json=event)
     except Exception:
         pass  # Silently ignore telemetry errors
 

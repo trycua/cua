@@ -75,12 +75,12 @@ const brandIcons: Record<string, () => React.ReactElement> = {
       createElement('path', { d: 'M12 21v2' }),
       createElement('path', { d: 'M14 21l1 2' }),
       // Arms with tiny claws
-      createElement('path', { d: 'M9 12H3' }),
-      createElement('path', { d: 'M3 12l-1-1.5' }),
-      createElement('path', { d: 'M3 12l-1 1.5' }),
-      createElement('path', { d: 'M15 12h6' }),
-      createElement('path', { d: 'M21 12l1-1.5' }),
-      createElement('path', { d: 'M21 12l1 1.5' }),
+      createElement('path', { d: 'M9 12Q5 10 3 7' }),
+      createElement('path', { d: 'M3 7l-1-1' }),
+      createElement('path', { d: 'M3 7l1-1' }),
+      createElement('path', { d: 'M15 12Q19 10 21 7' }),
+      createElement('path', { d: 'M21 7l1-1' }),
+      createElement('path', { d: 'M21 7l-1-1' }),
       // Antennae
       createElement('path', { d: 'M10 11l-2-2' }),
       createElement('path', { d: 'M14 11l2-2' }),

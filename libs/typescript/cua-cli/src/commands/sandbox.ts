@@ -241,6 +241,11 @@ const deleteHandler = async (argv: Record<string, unknown>) => {
     process.exit(1);
   }
 
+  if (res.status === 403) {
+    console.error('Access denied. You may not have permission to delete this sandbox.');
+    process.exit(1);
+  }
+
   console.error(`Unexpected status: ${res.status}`);
   process.exit(1);
 };

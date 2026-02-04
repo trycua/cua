@@ -6,6 +6,7 @@ Implements the following public API endpoints:
 - POST /v1/vms/:name/start
 - POST /v1/vms/:name/stop
 - POST /v1/vms/:name/restart
+- DELETE /v1/vms/:name
 """
 
 import logging
@@ -245,6 +246,44 @@ class CloudProvider(BaseVMProvider):
             "status": "unchanged",
             "message": "update_vm not supported by public API",
         }
+
+    async def delete_vm(self, name: str, storage: Optional[str] = None) -> Dict[str, Any]:
+        """Delete a VM via public API.
+
+        Args:
+            name: Name of the VM to delete
+            storage: Optional storage path override (not used in cloud provider)
+
+        Returns:
+            Dictionary with delete status and information
+        """
+        url = f"{self.api_base}/v1/vms/{name}"
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Accept": "application/json",
+        }
+        async with aiohttp.ClientSession() as session:
+            async with session.delete(url, headers=headers) as resp:
+                if resp.status in (200, 202, 204):
+                    # Spec says 202 with {"status":"deleting"}
+                    body_status: Optional[str] = None
+                    try:
+                        data = await resp.json(content_type=None)
+                        body_status = data.get("status") if isinstance(data, dict) else None
+                    except Exception:
+                        body_status = None
+                    # Invalidate host cache for this VM
+                    self._host_cache.pop(name, None)
+                    return {"name": name, "status": body_status or "deleting"}
+                elif resp.status == 404:
+                    return {"name": name, "status": "not_found"}
+                elif resp.status == 401:
+                    return {"name": name, "status": "unauthorized"}
+                elif resp.status == 403:
+                    return {"name": name, "status": "forbidden", "message": "Access denied"}
+                else:
+                    text = await resp.text()
+                    return {"name": name, "status": "error", "message": text}
 
     async def _get_host_for_vm(self, name: str) -> str:
         """

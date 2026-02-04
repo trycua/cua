@@ -103,6 +103,7 @@ jobs:
             "docker/cuabot")
               echo "directory=libs/cuabot" >> $GITHUB_OUTPUT
               echo "type=docker" >> $GITHUB_OUTPUT
+              echo "bumpversion_config=.bumpversion.docker.cfg" >> $GITHUB_OUTPUT
               ;;
             "docker/kasm")
               echo "directory=libs/kasm" >> $GITHUB_OUTPUT
@@ -158,9 +159,10 @@ jobs:
           # Function to clean a tag for a given package directory
           clean_tag() {
             local dir=$1
+            local config_file=${2:-.bumpversion.cfg}
             cd "$dir"
-            NEW_VERSION=$(bump2version --dry-run --list ${{ inputs.bump_type }} 2>/dev/null | grep -m1 '^new_version=' | sed 's/new_version=//')
-            TAG_NAME=$(grep -m1 '^tag_name' .bumpversion.cfg | sed 's/tag_name *= *//' | sed "s|{new_version}|$NEW_VERSION|")
+            NEW_VERSION=$(bump2version --config-file "$config_file" --dry-run --list ${{ inputs.bump_type }} 2>/dev/null | grep -m1 '^new_version=' | sed 's/new_version=//')
+            TAG_NAME=$(grep -m1 '^tag_name' "$config_file" | sed 's/tag_name *= *//' | sed "s|{new_version}|$NEW_VERSION|")
             echo "Checking for existing tag: $TAG_NAME"
             git tag -d "$TAG_NAME" 2>/dev/null || true
             git push origin ":refs/tags/$TAG_NAME" 2>/dev/null || true
@@ -168,7 +170,8 @@ jobs:
           }
 
           # Clean tag for the primary package
-          clean_tag "${{ steps.package.outputs.directory }}"
+          BUMPVERSION_CONFIG="${{ steps.package.outputs.bumpversion_config }}"
+          clean_tag "${{ steps.package.outputs.directory }}" "${BUMPVERSION_CONFIG:-.bumpversion.cfg}"
 
           # Clean cascade tags when bumping pypi/core (also bumps computer and agent)
           if [ "${{ inputs.service }}" == "pypi/core" ]; then
@@ -199,7 +202,11 @@ jobs:
       - name: Run bump2version
         run: |
           cd ${{ steps.package.outputs.directory }}
-          bump2version ${{ inputs.bump_type }}
+          CONFIG_FLAG=""
+          if [ -n "${{ steps.package.outputs.bumpversion_config }}" ]; then
+            CONFIG_FLAG="--config-file ${{ steps.package.outputs.bumpversion_config }}"
+          fi
+          bump2version $CONFIG_FLAG ${{ inputs.bump_type }}
 
       - name: Also bump cua-computer (when bumping cua-core)
         if: ${{ inputs.service == 'pypi/core' }}

@@ -5,7 +5,7 @@
 
 import React, { useState, useEffect } from "react";
 import { render, Box, Text, useInput, useApp } from "ink";
-import { checkDocker, checkXpra, checkPlaywright } from "./utils.js";
+import { checkDocker, checkXpra, checkPlaywright, checkDockerImage, pullDockerImage } from "./utils.js";
 import { AGENTS, AgentId, getDefaultAgent, setDefaultAgent, setTelemetryEnabled, loadSettings, getAliasIgnored, setAliasIgnored } from "./settings.js";
 import { exec, execSync } from "child_process";
 import { homedir } from "os";
@@ -236,10 +236,13 @@ function Onboarding() {
     { label: "Default Agent", status: "loading", message: "checking..." },
     { label: "cuabot Command", status: "loading", message: "checking..." },
     { label: "Docker", status: "loading", message: "checking..." },
+    { label: "Docker Image", status: "loading", message: "checking..." },
     { label: "Xpra Client", status: "loading", message: "checking..." },
     { label: "Playwright", status: "loading", message: "checking..." },
     { label: "Usage Telemetry", status: "loading", message: "checking..." },
   ]);
+  const [pullingImage, setPullingImage] = useState(false);
+  const [pullProgress, setPullProgress] = useState("");
   const [loading, setLoading] = useState(true);
   const [showAgentSelector, setShowAgentSelector] = useState(false);
   const [showTelemetrySelector, setShowTelemetrySelector] = useState(false);
@@ -274,6 +277,22 @@ function Onboarding() {
       status: docker.ok ? "ok" : "error",
       message: docker.ok ? "running" : "not found",
     });
+
+    // Check Docker Image (only if Docker is running)
+    if (docker.ok) {
+      const dockerImage = await checkDockerImage();
+      newChecks.push({
+        label: "Docker Image",
+        status: dockerImage.ok ? "ok" : "error",
+        message: dockerImage.message,
+      });
+    } else {
+      newChecks.push({
+        label: "Docker Image",
+        status: "error",
+        message: "requires Docker",
+      });
+    }
 
     // Check Xpra
     const xpra = await checkXpra();
@@ -426,6 +445,29 @@ function Onboarding() {
           ]}
           onSelect={() => {}}
         />
+      )}
+
+      {firstError === "Docker Image" && !pullingImage && (
+        <OptionSelector
+          options={[
+            { label: "Pull Docker image (~2GB)", action: async () => {
+              setPullingImage(true);
+              setPullProgress("Starting pull...");
+              await pullDockerImage((line) => setPullProgress(line));
+              setPullingImage(false);
+              runChecks();
+            }},
+            { label: "Check Again", action: () => runChecks() },
+          ]}
+          onSelect={() => {}}
+        />
+      )}
+
+      {firstError === "Docker Image" && pullingImage && (
+        <Box flexDirection="column" marginTop={1}>
+          <Text color="cyan">Pulling Docker image...</Text>
+          <Text dimColor>{pullProgress}</Text>
+        </Box>
       )}
 
       {firstError === "Xpra Client" && !xpraQuarantined && (

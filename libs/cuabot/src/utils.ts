@@ -198,6 +198,55 @@ export async function checkPlaywright(): Promise<{ ok: boolean; message: string 
   }
 }
 
+const DOCKER_IMAGE = "trycua/cuabot:latest";
+
+/**
+ * Check if Docker image exists locally
+ */
+export async function checkDockerImage(): Promise<{ ok: boolean; message: string }> {
+  try {
+    await execAsync(`docker image inspect ${DOCKER_IMAGE}`);
+    return { ok: true, message: "cached" };
+  } catch {
+    return { ok: false, message: "not pulled" };
+  }
+}
+
+/**
+ * Pull the Docker image with progress callback
+ */
+export async function pullDockerImage(onProgress?: (line: string) => void): Promise<{ ok: boolean; message: string }> {
+  return new Promise((resolve) => {
+    const pullProcess = exec(`docker pull ${DOCKER_IMAGE}`);
+
+    pullProcess.stdout?.on("data", (data: Buffer) => {
+      const lines = data.toString().split("\n").filter(l => l.trim());
+      for (const line of lines) {
+        onProgress?.(line);
+      }
+    });
+
+    pullProcess.stderr?.on("data", (data: Buffer) => {
+      const lines = data.toString().split("\n").filter(l => l.trim());
+      for (const line of lines) {
+        onProgress?.(line);
+      }
+    });
+
+    pullProcess.on("exit", (code) => {
+      if (code === 0) {
+        resolve({ ok: true, message: "pulled" });
+      } else {
+        resolve({ ok: false, message: "pull failed" });
+      }
+    });
+
+    pullProcess.on("error", () => {
+      resolve({ ok: false, message: "pull failed" });
+    });
+  });
+}
+
 /**
  * Check all dependencies required for cuabot to run
  */

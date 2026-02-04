@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "computer-use": {
+      "command": "/home/user/.local/bin/uv",
+      "args": ["run", "--script", "/home/user/.cuabot/mcp/computer-use-mcp.py"]
+    }
+  }
+}

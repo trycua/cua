@@ -1,0 +1,18 @@
+name: "CD: Container CuaBot"
+
+on:
+  push:
+    tags:
+      - "docker-cuabot-v*.*.*"
+  workflow_dispatch:
+
+jobs:
+  publish:
+    uses: ./.github/workflows/docker-reusable-publish.yml
+    with:
+      image_name: cuabot
+      context_dir: libs/cuabot
+      tag_prefix: docker-cuabot-v
+      docker_hub_org: trycua
+    secrets:
+      DOCKER_HUB_TOKEN: ${{ secrets.DOCKER_HUB_TOKEN }}

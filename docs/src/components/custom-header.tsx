@@ -69,6 +69,32 @@ const docsSites = [
     ],
   },
   {
+    name: 'CuaBot',
+    label: 'Docs',
+    href: '/cuabot/cuabot',
+    prefix: '/cuabot',
+    isDefault: false,
+    description: 'Co-op computer-use for any agent',
+    logoBlack: LogoBlack,
+    logoWhite: LogoWhite,
+    iconWidth: 24,
+    iconHeight: 24,
+    dropdownIconWidth: 20,
+    dropdownIconHeight: 20,
+    navTabs: [
+      {
+        name: 'Overview',
+        href: '/cuabot/cuabot',
+        prefix: '/cuabot/cuabot',
+      },
+      {
+        name: 'Install',
+        href: '/cuabot/install',
+        prefix: '/cuabot/install',
+      },
+    ],
+  },
+  {
     name: 'Lume',
     label: 'Docs',
     href: '/lume/guide/getting-started/introduction',

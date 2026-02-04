@@ -12,7 +12,8 @@ import { execSync } from "child_process";
 
 function isCuabotInPath(): boolean {
   try {
-    execSync("which cuabot", { stdio: "ignore" });
+    const cmd = process.platform === "win32" ? "where cuabot" : "which cuabot";
+    execSync(cmd, { stdio: "ignore" });
     return true;
   } catch {
     return false;

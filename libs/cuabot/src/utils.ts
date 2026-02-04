@@ -253,9 +253,10 @@ export async function pullDockerImage(onProgress?: (line: string) => void): Prom
 export async function checkDependencies(): Promise<{ ok: boolean; errors: string[] }> {
   const errors: string[] = [];
 
-  const [dockerCheck, xpraCheck] = await Promise.all([
+  const [dockerCheck, xpraCheck, playwrightCheck] = await Promise.all([
     checkDocker(),
     checkXpra(),
+    checkPlaywright(),
   ]);
 
   if (!dockerCheck.ok) {
@@ -264,6 +265,18 @@ export async function checkDependencies(): Promise<{ ok: boolean; errors: string
 
   if (!xpraCheck.ok) {
     errors.push(xpraCheck.message);
+  }
+
+  if (!playwrightCheck.ok) {
+    errors.push("Playwright Chromium not installed. Run: npx playwright install chromium");
+  }
+
+  // Only check Docker image if Docker is running
+  if (dockerCheck.ok) {
+    const dockerImageCheck = await checkDockerImage();
+    if (!dockerImageCheck.ok) {
+      errors.push("Docker image not pulled. Run: docker pull trycua/cuabot:latest");
+    }
   }
 
   return { ok: errors.length === 0, errors };

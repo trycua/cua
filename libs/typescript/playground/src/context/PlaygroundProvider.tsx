@@ -1,7 +1,7 @@
 // Provider for playground state management
 // Adapted from cloud/src/website/app/providers/PlaygroundProvider.tsx
 
-import { useReducer, useEffect, type ReactNode } from 'react';
+import { useReducer, useEffect, useMemo, type ReactNode } from 'react';
 import {
   PlaygroundContext,
   type PlaygroundState,
@@ -173,6 +173,13 @@ export function PlaygroundProvider({ adapters, children, initialChats }: Playgro
           adapters.inference.getAvailableModels(),
         ]);
 
+        console.log('[PlaygroundProvider] Initialized:', {
+          chats: chats.length,
+          computers: computers.length,
+          models: models.length,
+          computersData: computers,
+        });
+
         dispatch({ type: 'SET_CHATS', payload: chats });
         dispatch({ type: 'SET_COMPUTERS', payload: computers });
         dispatch({ type: 'SET_MODELS', payload: models });
@@ -199,9 +206,15 @@ export function PlaygroundProvider({ adapters, children, initialChats }: Playgro
     initialize();
   }, [adapters, initialChats]);
 
-  return (
-    <PlaygroundContext.Provider value={{ adapters, state, dispatch }}>
-      {children}
-    </PlaygroundContext.Provider>
+  // Memoize context value to prevent unnecessary re-renders
+  const contextValue = useMemo(
+    () => ({
+      adapters,
+      state,
+      dispatch,
+    }),
+    [adapters, state]
   );
+
+  return <PlaygroundContext.Provider value={contextValue}>{children}</PlaygroundContext.Provider>;
 }

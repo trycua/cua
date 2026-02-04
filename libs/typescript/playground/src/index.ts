@@ -53,13 +53,32 @@ export {
   ThinkingIndicator,
   ThinkingCompleteAnimation,
   ScrambledText,
+  CountdownTimer,
+  DeferredChatsLoader,
+  VMStatusBanner,
+  VNCOverlayPanel,
 } from './components/primitives';
-export type { VNCViewerProps } from './components/primitives';
+export type {
+  VNCViewerProps,
+  VMStatusBannerProps,
+  VMVersionInfo,
+  VNCOverlayPanelProps,
+} from './components/primitives';
+export { default as VNCIframe } from './components/primitives/VNCIframe';
 
 // Composed Components
 export { ChatPanel } from './components/composed/ChatPanel';
 export { ChatList } from './components/composed/ChatList';
+export { ChatArea } from './components/composed/ChatArea';
+export { ChatContent } from './components/composed/ChatContent';
+export { ChatSidebar } from './components/composed/ChatSidebar';
+export { ChatSidebarSkeleton } from './components/composed/ChatSidebarSkeleton';
 export { ComputerList } from './components/composed/ComputerList';
+export { EmptyStateWithInput } from './components/composed/EmptyState';
+export { ExamplePrompts, EXAMPLE_PROMPTS } from './components/composed/ExamplePrompts';
+export type { ExamplePrompt } from './components/composed/ExamplePrompts';
+export { PlaygroundLayout } from './components/composed/PlaygroundLayout';
+export { PlaygroundContent } from './components/composed/PlaygroundContent';
 
 // Modals
 export { SettingsModal } from './components/modals/SettingsModal';
@@ -76,3 +95,6 @@ export type { TelemetryProviderProps } from './telemetry';
 
 // Main Playground Component
 export { Playground } from './components/Playground';
+
+// UI Components (for advanced customization)
+export * from './components/ui';

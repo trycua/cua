@@ -1,13 +1,14 @@
 // Main Playground component
 // Composition of all playground pieces with slots for customization
 
-import { useState, type ReactNode } from 'react';
+import { useState, type ReactNode, useMemo } from 'react';
 import { PlaygroundProvider } from '../context/PlaygroundProvider';
 import { ChatProvider } from '../context/ChatProvider';
-import { usePlayground, useIsChatGenerating } from '../hooks/usePlayground';
+import { usePlayground, useIsChatGenerating, useFindDefaultModel } from '../hooks/usePlayground';
 import { ChatPanel } from './composed/ChatPanel';
 import { ChatList } from './composed/ChatList';
 import { ComputerList } from './composed/ComputerList';
+import { EmptyStateWithInput } from './composed/EmptyState';
 import { VNCViewer } from './primitives/VNCViewer';
 import { CustomComputerModal } from './modals/CustomComputerModal';
 import type { PlaygroundAdapters } from '../adapters/types';
@@ -35,22 +36,33 @@ interface PlaygroundProps {
   showComputerList?: boolean;
   /** Optional class name for the root container */
   className?: string;
+  /** Logo config for branding */
+  logo?: {
+    lightSrc: string;
+    darkSrc: string;
+    alt: string;
+  };
+  /** Custom welcome message for empty state */
+  welcomeMessage?: string;
 }
 
 // =============================================================================
 // Internal Content Component (uses context)
 // =============================================================================
 
-function PlaygroundContent({
+function PlaygroundContentInternal({
   sidebar,
   header,
   footer,
   showVNCViewer = true,
   showComputerList = false,
   className,
+  logo,
+  welcomeMessage,
 }: Omit<PlaygroundProps, 'adapters' | 'initialChats'>) {
-  const { state, dispatch } = usePlayground();
+  const { state, dispatch, adapters } = usePlayground();
   const [showCustomComputerModal, setShowCustomComputerModal] = useState(false);
+  const defaultModel = useFindDefaultModel();
 
   const activeChat = state.activeChatId
     ? state.chats.find((c) => c.id === state.activeChatId)
@@ -62,17 +74,63 @@ function PlaygroundContent({
   const currentComputer = state.computers.find((c) => c.id === state.currentComputerId);
   const vncUrl = currentComputer?.vncUrl;
 
-  // Create a new chat if needed
-  const handleCreateChat = () => {
+  // Create a draft chat for the empty state UI
+  const draftChat = useMemo<Chat>(
+    () => ({
+      id: 'draft',
+      name: 'New Chat',
+      messages: [],
+      model: defaultModel,
+      created: new Date(),
+      updated: new Date(),
+    }),
+    [defaultModel]
+  );
+
+  // Handle creating a new chat and sending the first message
+  const handleCreateAndSend = async (message: string) => {
+    const newChat: Chat = {
+      id: crypto.randomUUID(),
+      name: message.slice(0, 50) || 'New Chat',
+      messages: [],
+      model: defaultModel,
+      created: new Date(),
+      updated: new Date(),
+    };
+
+    try {
+      // Save to adapter first to get the server-assigned ID
+      const savedChat = await adapters.persistence.saveChat(newChat);
+
+      dispatch({ type: 'ADD_CHAT', payload: savedChat });
+      dispatch({ type: 'SET_ACTIVE_CHAT_ID', payload: savedChat.id });
+
+      // The message will be sent by ChatPanel once it's active
+      // Store the initial message to be sent
+      // Note: This is handled by the ChatPanel/ChatProvider
+    } catch (error) {
+      console.error('Failed to create chat:', error);
+    }
+  };
+
+  // Create a new chat without a message
+  const handleCreateChat = async () => {
     const newChat: Chat = {
       id: crypto.randomUUID(),
       name: 'New Chat',
       messages: [],
+      model: defaultModel,
       created: new Date(),
       updated: new Date(),
     };
-    dispatch({ type: 'ADD_CHAT', payload: newChat });
-    dispatch({ type: 'SET_ACTIVE_CHAT_ID', payload: newChat.id });
+
+    try {
+      const savedChat = await adapters.persistence.saveChat(newChat);
+      dispatch({ type: 'ADD_CHAT', payload: savedChat });
+      dispatch({ type: 'SET_ACTIVE_CHAT_ID', payload: savedChat.id });
+    } catch (error) {
+      console.error('Failed to create chat:', error);
+    }
   };
 
   // Show loading state
@@ -128,18 +186,13 @@ function PlaygroundContent({
                 <ChatPanel />
               </ChatProvider>
             ) : (
-              <div className="flex h-full flex-col items-center justify-center bg-white dark:bg-neutral-900">
-                <p className="mb-4 text-neutral-500">
-                  Select a chat or create a new one to get started.
-                </p>
-                <button
-                  type="button"
-                  onClick={handleCreateChat}
-                  className="rounded-md bg-neutral-900 px-4 py-2 text-white hover:bg-neutral-700 dark:bg-neutral-100 dark:text-neutral-900"
-                >
-                  New Chat
-                </button>
-              </div>
+              <EmptyStateWithInput
+                onCreateAndSend={handleCreateAndSend}
+                isMobile={false}
+                draftChat={draftChat}
+                logo={logo}
+                welcomeMessage={welcomeMessage}
+              />
             )}
           </div>
 
@@ -194,7 +247,7 @@ function PlaygroundContent({
 export function Playground({ adapters, initialChats, ...props }: PlaygroundProps) {
   return (
     <PlaygroundProvider adapters={adapters} initialChats={initialChats}>
-      <PlaygroundContent {...props} />
+      <PlaygroundContentInternal {...props} />
     </PlaygroundProvider>
   );
 }

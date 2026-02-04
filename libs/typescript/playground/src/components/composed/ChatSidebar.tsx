@@ -1,5 +1,5 @@
-// Chat list component
-// Based on cloud/src/website/app/components/playground/ChatSidebar.tsx from main
+// ChatSidebar component
+// Adapted from cloud/src/website/app/components/playground/ChatSidebar.tsx
 
 import { Download, Loader2, MoreVertical, Play, Plus, Trash } from 'lucide-react';
 import { useCallback, useState } from 'react';
@@ -25,30 +25,31 @@ import {
   useIsChatGenerating,
   usePlayground,
 } from '../../hooks/usePlayground';
-import type { Chat } from '../../types';
+import type { Chat, Computer } from '../../types';
 import { cn } from '../../utils/cn';
 
-interface ChatListProps {
+interface ChatSidebarProps {
+  /** Custom class name */
   className?: string;
-  /** Callback when a new chat is created */
-  onCreateChat?: () => void;
-  /** Callback when a chat is selected (e.g., for mobile sidebar close) */
+  /** Callback when a chat is selected (for mobile - close sidebar after selection) */
   onChatSelect?: () => void;
   /** Callback for exporting a chat */
   onExportChat?: (chat: Chat) => void;
   /** Callback for replaying a chat */
   onReplayChat?: (chat: Chat) => void;
+  /** Optional toast callback */
+  onToast?: (message: string) => void;
 }
 
-export function ChatList({
+export function ChatSidebar({
   className,
-  onCreateChat,
   onChatSelect,
   onExportChat,
   onReplayChat,
-}: ChatListProps) {
+  onToast,
+}: ChatSidebarProps) {
   const { state, dispatch, adapters } = usePlayground();
-  const { chats, activeChatId } = state;
+  const { chats, computers, activeChatId } = state;
   const activeChat = useActiveChat();
   const defaultModel = useFindDefaultModel();
   const [isCreating, setIsCreating] = useState(false);
@@ -59,16 +60,31 @@ export function ChatList({
   const isGenerating = useIsChatGenerating(activeChatId);
   const [loadingChatId, setLoadingChatId] = useState<string | null>(null);
 
+  // Track loaded chats to avoid re-fetching
+  const [loadedChatIds, setLoadedChatIds] = useState<Set<string>>(new Set());
+
   const createChat = useCallback(async () => {
     if (isCreating) return;
     setIsCreating(true);
 
     try {
+      // Get first computer if available
+      const computer = computers.length > 0 ? computers[0] : undefined;
+      let computerAsChat: Computer | undefined;
+      if (computer) {
+        const { agentUrl, ...rest } = computer;
+        computerAsChat = {
+          ...rest,
+          url: agentUrl,
+        } as Computer;
+      }
+
       // Create local chat object
       const newChat: Chat = {
         id: crypto.randomUUID(), // Temporary ID, adapter may replace it
         name: 'New Chat',
         messages: [],
+        computer: computerAsChat,
         model: defaultModel,
         created: new Date(),
         updated: new Date(),
@@ -80,13 +96,16 @@ export function ChatList({
       dispatch({ type: 'ADD_CHAT', payload: savedChat });
       dispatch({ type: 'SET_ACTIVE_CHAT_ID', payload: savedChat.id });
 
-      onCreateChat?.();
+      // Mark as loaded since it's a new empty chat
+      setLoadedChatIds((prev) => new Set([...prev, savedChat.id]));
     } catch (error) {
       console.error('Failed to create chat:', error);
+      const message = error instanceof Error ? error.message : 'Unknown error occurred';
+      onToast?.(`Failed to create chat: ${message}`);
     } finally {
       setIsCreating(false);
     }
-  }, [defaultModel, dispatch, isCreating, adapters.persistence, onCreateChat]);
+  }, [computers, defaultModel, dispatch, isCreating, adapters.persistence, onToast]);
 
   const handleDeleteConfirm = async () => {
     if (!deleteConfirmChat) return;
@@ -97,7 +116,9 @@ export function ChatList({
       dispatch({ type: 'DELETE_CHAT', payload: deleteConfirmChat.id });
       setDeleteConfirmChat(null);
     } catch (error) {
-      console.error('Failed to delete chat:', error);
+      console.error('Failed to delete chat from DB:', error);
+      const message = error instanceof Error ? error.message : 'Unknown error occurred';
+      onToast?.(`Failed to delete chat: ${message}`);
     } finally {
       setIsDeleting(false);
     }
@@ -107,22 +128,33 @@ export function ChatList({
     // Set active chat immediately for responsive UI
     dispatch({ type: 'SET_ACTIVE_CHAT_ID', payload: chat.id });
 
-    // Load messages if adapter supports it and chat hasn't been loaded
-    if ((!chat.messages || chat.messages.length === 0) && adapters.persistence.loadChat) {
+    // Only fetch from DB if chat hasn't been loaded yet (cold start/page refresh).
+    // During a session, messages are kept in global state via setMessages(),
+    // so we don't need to re-fetch on every chat switch.
+    if (!loadedChatIds.has(chat.id)) {
       setLoadingChatId(chat.id);
-      try {
-        const fullChat = await adapters.persistence.loadChat(chat.id);
-        if (fullChat) {
-          dispatch({
-            type: 'SET_CHAT_MESSAGES',
-            payload: { id: chat.id, messages: fullChat.messages || [] },
-          });
+
+      const loadMessages = async () => {
+        try {
+          if (adapters.persistence.loadChat) {
+            const fullChat = await adapters.persistence.loadChat(chat.id);
+            if (fullChat) {
+              dispatch({
+                type: 'SET_CHAT_MESSAGES',
+                payload: { id: chat.id, messages: fullChat.messages || [] },
+              });
+              setLoadedChatIds((prev) => new Set([...prev, chat.id]));
+            }
+          }
+        } catch (error) {
+          console.error('Failed to load chat messages:', error);
+          const message = error instanceof Error ? error.message : 'Unknown error occurred';
+          onToast?.(`Failed to load chat: ${message}`);
         }
-      } catch (error) {
-        console.error('Failed to load chat messages:', error);
-      } finally {
-        setLoadingChatId(null);
-      }
+      };
+
+      await loadMessages();
+      setLoadingChatId(null);
     }
 
     onChatSelect?.();

@@ -1,4 +1,4 @@
-import { AnimatePresence, motion } from 'framer-motion';
+import { AnimatePresence, motion } from 'motion/react';
 import { Brain, Settings, TriangleAlert, Wrench } from 'lucide-react';
 import type React from 'react';
 import { useState } from 'react';

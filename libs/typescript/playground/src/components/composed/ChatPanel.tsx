@@ -2,7 +2,7 @@
 // Adapted from cloud/src/website/app/components/playground/panels/ChatPanel.tsx
 
 import { useEffect, useRef, useState, type FormEvent } from 'react';
-import { motion } from 'framer-motion';
+import { motion } from 'motion/react';
 import { StopCircle, Send } from 'lucide-react';
 import {
   usePlayground,

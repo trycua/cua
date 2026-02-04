@@ -30,6 +30,9 @@ export interface PersistenceAdapter {
   /** Load all chats for the current user/session */
   loadChats(): Promise<Chat[]>;
 
+  /** Load a single chat by ID (with messages) */
+  loadChat?(chatId: string): Promise<Chat | null>;
+
   /** Save a chat (create or update) */
   saveChat(chat: Chat): Promise<Chat>;
 

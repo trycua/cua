@@ -2,7 +2,7 @@
 // Adapted from cloud/src/website/app/components/playground/panels/ComputerList.tsx
 
 import { useState } from 'react';
-import { AnimatePresence, motion } from 'framer-motion';
+import { AnimatePresence, motion } from 'motion/react';
 import { Server, Globe, RefreshCcw, EllipsisVertical, Trash, Pen, CirclePlus } from 'lucide-react';
 import { usePlayground } from '../../hooks/usePlayground';
 import type { ComputerInfo } from '../../adapters/types';

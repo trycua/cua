@@ -1,5 +1,18 @@
+// Chat input component
+// Based on cloud/src/website/app/components/playground/ChatInput.tsx from main
+
 import { Loader2, Monitor, Send, StopCircle } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectLabel,
+  SelectTrigger,
+  SelectValue,
+} from '../ui/select';
+import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip';
 import type { Computer, Model, ModelProvider, VM } from '../../types';
 import { isVM, getComputerId, getComputerName } from '../../types';
 
@@ -128,10 +141,6 @@ interface ChatInputProps {
     children: React.ReactNode;
     className?: string;
   }) => React.ReactNode;
-
-  // UI component overrides (optional - for custom UI libraries)
-  SelectComponent?: React.ComponentType<any>;
-  TooltipComponent?: React.ComponentType<any>;
 }
 
 export function ChatInput({
@@ -154,10 +163,7 @@ export function ChatInput({
   hasOrg = true,
   hasWorkspace = true,
   hasCredits = true,
-  orgSlug,
   renderLink,
-  SelectComponent,
-  TooltipComponent,
 }: ChatInputProps) {
   // Lock model/computer selection after first message, but only if they're set
   // This allows users to still pick if the saved model/computer is unavailable
@@ -189,12 +195,10 @@ export function ChatInput({
   const handleOpenVnc = () => {
     if (selectedComputer && isVM(selectedComputer)) {
       const vm = selectedComputer as VM;
-      const vncUrl =
-        customVncUrl ||
-        `https://${(vm as any).host}/vnc.html?autoconnect=true${
-          (vm as any).password ? `&password=${(vm as any).password}` : ''
-        }`;
-      window.open(vncUrl, '_blank');
+      const vncUrl = customVncUrl || vm.vncUrl;
+      if (vncUrl) {
+        window.open(vncUrl, '_blank');
+      }
     }
   };
 
@@ -208,108 +212,6 @@ export function ChatInput({
   // Ghost typing - only show when input is empty and no messages
   const showGhostTyping = !currentInput && !hasMessages && !isGenerating;
   const ghostText = useGhostTyping(showGhostTyping);
-
-  // Render computer selector options
-  const renderComputerOptions = () => {
-    if (computers.length === 0) {
-      return (
-        <div className="p-2 text-center">
-          <p className="mb-2 text-neutral-500 text-xs">
-            {!hasOrg
-              ? 'Set up an organization first'
-              : !hasWorkspace
-                ? 'Create a workspace first'
-                : 'No sandboxes available'}
-          </p>
-        </div>
-      );
-    }
-
-    return groupedComputers.map((group) => (
-      <div key={group.workspaceName} className="py-1">
-        <div className="px-2 py-1 text-neutral-500 text-xs font-medium">{group.workspaceName}</div>
-        {group.computers.map((c) => {
-          const isRunning = isVM(c) && (c as VM).status === 'running';
-          const versionInfo = isVM(c) ? vmVersionInfo.get((c as VM).vmId) : undefined;
-          const isUnreachable = versionInfo?.unreachable;
-          const vmComputer = c as VM;
-
-          return (
-            <button
-              key={getComputerId(c)}
-              type="button"
-              onClick={() => handleComputerChange(getComputerId(c))}
-              className="flex w-full items-center gap-2 px-2 py-1.5 text-left hover:bg-neutral-100 dark:hover:bg-neutral-700"
-            >
-              {isVM(c) &&
-              (vmComputer.status === 'restarting' || vmComputer.status === 'starting') ? (
-                <Loader2 className="h-3 w-3 animate-spin text-neutral-500 dark:text-neutral-400" />
-              ) : (
-                <div
-                  className={`h-2 w-2 rounded-full ${
-                    isUnreachable ? 'bg-orange-500' : isRunning ? 'bg-green-500' : 'bg-red-500'
-                  }`}
-                />
-              )}
-              <span>{getComputerName(c)}</span>
-              {isVM(c) && vmComputer.status === 'starting' && (
-                <span className="text-neutral-500 text-xs">Starting</span>
-              )}
-              {isVM(c) && vmComputer.status === 'restarting' && (
-                <span className="text-neutral-500 text-xs">Restarting</span>
-              )}
-              {isUnreachable && <span className="text-orange-600 text-xs">Not responding</span>}
-              {versionInfo?.isOutdated && !isUnreachable && (
-                <span className="text-orange-600 text-xs">Outdated</span>
-              )}
-            </button>
-          );
-        })}
-      </div>
-    ));
-  };
-
-  // Render model selector options
-  const renderModelOptions = () => {
-    return (
-      <>
-        {customModelId && (
-          <div className="py-1">
-            <div className="px-2 py-1 text-neutral-500 text-xs font-medium">Custom</div>
-            <button
-              type="button"
-              onClick={() => handleModelChange(customModelId)}
-              className="w-full px-2 py-1.5 text-left hover:bg-neutral-100 dark:hover:bg-neutral-700"
-            >
-              {customModelId}
-            </button>
-          </div>
-        )}
-        {availableModels.map((provider) => (
-          <div key={provider.name} className="py-1">
-            <div className="px-2 py-1 text-neutral-500 text-xs font-medium">
-              {provider.name.charAt(0).toUpperCase() + provider.name.slice(1)}
-            </div>
-            {provider.models.map((m) => (
-              <button
-                key={m.id}
-                type="button"
-                onClick={() => handleModelChange(m.id)}
-                className="flex w-full items-center gap-2 px-2 py-1.5 text-left hover:bg-neutral-100 dark:hover:bg-neutral-700"
-              >
-                <span>{m.name}</span>
-                {provider.name.toLowerCase() !== 'anthropic' && (
-                  <span className="rounded bg-amber-100 px-1.5 py-0.5 font-medium text-amber-700 text-xs dark:bg-amber-900/30 dark:text-amber-400">
-                    Preview
-                  </span>
-                )}
-              </button>
-            ))}
-          </div>
-        ))}
-      </>
-    );
-  };
 
   // Desktop layout
   if (!isMobile) {
@@ -340,45 +242,167 @@ export function ChatInput({
 
         {/* Desktop: Model & Sandbox selectors - button bar row */}
         <div className="flex flex-wrap items-center justify-end gap-2">
-          {/* Computer selector dropdown */}
-          <div className="relative group">
-            <button
-              type="button"
-              disabled={isComputerLocked}
-              className="flex items-center gap-1 rounded-lg px-2 py-1 text-neutral-400 hover:bg-white/60 disabled:cursor-not-allowed disabled:opacity-50 dark:hover:bg-neutral-700/60"
+          {/* Computer selector - locked after first message */}
+          <Select
+            value={
+              selectedComputer &&
+              computers.find((c: Computer) => c.name === selectedComputer.name) !== undefined
+                ? getComputerId(selectedComputer)
+                : ''
+            }
+            onValueChange={handleComputerChange}
+            disabled={isComputerLocked}
+          >
+            <SelectTrigger
+              minimal
+              className="border-0 bg-neutral-100 text-neutral-400 hover:bg-white/60 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-neutral-800 dark:text-neutral-400 dark:hover:bg-neutral-700/60 [&>svg]:rotate-180"
             >
-              <span>{selectedComputer ? getComputerName(selectedComputer) : 'Sandbox'}</span>
-            </button>
-            <div className="absolute right-0 z-10 mt-1 hidden w-48 rounded-lg border border-neutral-200 bg-white shadow-lg group-hover:block dark:border-neutral-700 dark:bg-neutral-800">
-              {renderComputerOptions()}
-            </div>
-          </div>
+              <SelectValue placeholder="Sandbox" />
+            </SelectTrigger>
+            <SelectContent className="rounded-lg bg-white dark:bg-card">
+              {computers.length === 0 ? (
+                <div className="p-2 text-center">
+                  <p className="mb-2 text-muted-foreground text-xs">
+                    {!hasOrg
+                      ? 'Set up an organization first'
+                      : !hasWorkspace
+                        ? 'Create a workspace first'
+                        : 'No sandboxes available'}
+                  </p>
+                </div>
+              ) : (
+                <>
+                  {groupedComputers.map((group) => (
+                    <SelectGroup key={group.workspaceName}>
+                      <SelectLabel>{group.workspaceName}</SelectLabel>
+                      {group.computers.map((c) => {
+                        const isRunning = isVM(c) && (c as VM).status === 'running';
+                        const versionInfo = isVM(c) ? vmVersionInfo.get((c as VM).vmId) : undefined;
+                        const isUnreachable = versionInfo?.unreachable;
+                        const vmComputer = c as VM;
+                        return (
+                          <SelectItem
+                            key={getComputerId(c)}
+                            value={getComputerId(c)}
+                            className="hover:bg-neutral-200 dark:hover:bg-neutral-700"
+                          >
+                            <div className="flex items-center gap-2">
+                              {isVM(c) &&
+                              (vmComputer.status === 'restarting' ||
+                                vmComputer.status === 'starting') ? (
+                                <Loader2 className="h-3 w-3 animate-spin text-neutral-500 dark:text-neutral-400" />
+                              ) : (
+                                <div
+                                  className={`h-2 w-2 rounded-full ${
+                                    isUnreachable
+                                      ? 'bg-orange-500'
+                                      : isRunning
+                                        ? 'bg-green-500'
+                                        : 'bg-red-500'
+                                  }`}
+                                />
+                              )}
+                              <span>{getComputerName(c)}</span>
+                              {isVM(c) && vmComputer.status === 'starting' ? (
+                                <span className="text-neutral-500 text-xs dark:text-neutral-400">
+                                  Starting
+                                </span>
+                              ) : isVM(c) && vmComputer.status === 'restarting' ? (
+                                <span className="text-neutral-500 text-xs dark:text-neutral-400">
+                                  Restarting
+                                </span>
+                              ) : isUnreachable ? (
+                                <span className="text-orange-600 text-xs dark:text-orange-400">
+                                  Not responding
+                                </span>
+                              ) : (
+                                versionInfo?.isOutdated && (
+                                  <span className="text-orange-600 text-xs dark:text-orange-400">
+                                    Outdated
+                                  </span>
+                                )
+                              )}
+                            </div>
+                          </SelectItem>
+                        );
+                      })}
+                    </SelectGroup>
+                  ))}
+                </>
+              )}
+            </SelectContent>
+          </Select>
 
-          {/* Model selector dropdown */}
-          <div className="relative group">
-            <button
-              type="button"
-              disabled={!!customModelId || isModelLocked}
-              className="flex items-center gap-1 rounded-lg px-2 py-1 text-neutral-400 hover:bg-white/60 disabled:cursor-not-allowed disabled:opacity-50 dark:hover:bg-neutral-700/60"
+          {/* Model selector - locked after first message */}
+          <Select
+            value={selectedModel?.id || ''}
+            onValueChange={handleModelChange}
+            disabled={!!customModelId || isModelLocked}
+          >
+            <SelectTrigger
+              minimal
+              className="border-0 bg-neutral-100 text-neutral-400 hover:bg-white/60 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-neutral-800 dark:text-neutral-400 dark:hover:bg-neutral-700/60 [&>svg]:rotate-180"
             >
-              <span>{selectedModel?.name || 'Model'}</span>
-            </button>
-            <div className="absolute right-0 z-10 mt-1 hidden w-56 rounded-lg border border-neutral-200 bg-white shadow-lg group-hover:block dark:border-neutral-700 dark:bg-neutral-800">
-              {renderModelOptions()}
-            </div>
-          </div>
+              <SelectValue placeholder="Model" />
+            </SelectTrigger>
+            <SelectContent className="rounded-lg bg-white dark:bg-card">
+              {customModelId && (
+                <SelectGroup>
+                  <SelectLabel>Custom</SelectLabel>
+                  <SelectItem
+                    key={customModelId}
+                    value={customModelId}
+                    className="hover:bg-neutral-200 dark:hover:bg-neutral-700"
+                  >
+                    {customModelId}
+                  </SelectItem>
+                </SelectGroup>
+              )}
+              {availableModels.map((provider) => (
+                <SelectGroup key={provider.name}>
+                  <SelectLabel>
+                    {provider.name.charAt(0).toUpperCase() + provider.name.slice(1)}
+                  </SelectLabel>
+                  {provider.models.map((m) => (
+                    <SelectItem
+                      key={m.id}
+                      value={m.id}
+                      className="hover:bg-neutral-200 dark:hover:bg-neutral-700"
+                    >
+                      <span className="flex items-center gap-2">
+                        {m.name}
+                        {provider.name.toLowerCase() !== 'anthropic' && (
+                          <span className="rounded bg-amber-100 px-1.5 py-0.5 font-medium text-amber-700 text-xs dark:bg-amber-900/30 dark:text-amber-400">
+                            Preview
+                          </span>
+                        )}
+                      </span>
+                    </SelectItem>
+                  ))}
+                </SelectGroup>
+              ))}
+            </SelectContent>
+          </Select>
 
           {/* Open VM button */}
-          {selectedComputer && isVM(selectedComputer) && (selectedComputer as any).host && (
-            <button
-              type="button"
-              onClick={handleOpenVnc}
-              className="flex h-8 w-8 items-center justify-center text-neutral-600 transition-colors hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-white"
-              title="Open VNC in new tab"
-            >
-              <Monitor className="h-4 w-4" />
-            </button>
-          )}
+          {selectedComputer &&
+            isVM(selectedComputer) &&
+            ((selectedComputer as VM).vncUrl || customVncUrl) && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    type="button"
+                    onClick={handleOpenVnc}
+                    className="flex h-8 w-8 items-center justify-center text-neutral-600 transition-colors hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-white"
+                  >
+                    <Monitor className="h-4 w-4" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p>Open VNC in new tab</p>
+                </TooltipContent>
+              </Tooltip>
+            )}
 
           {/* Send/Stop button */}
           {isGenerating ? (
@@ -416,31 +440,82 @@ export function ChatInput({
     <div className="space-y-2">
       {/* Mobile selectors row - locked after first message */}
       <div className="flex gap-2">
-        <div className="relative group flex-1">
-          <button
-            type="button"
-            disabled={isComputerLocked}
-            className="w-full rounded-lg bg-neutral-100 px-2 py-1 text-neutral-600 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-neutral-800 dark:text-neutral-400"
+        <Select
+          value={
+            selectedComputer &&
+            computers.find((c: Computer) => c.name === selectedComputer.name) !== undefined
+              ? getComputerId(selectedComputer)
+              : ''
+          }
+          onValueChange={handleComputerChange}
+          disabled={isComputerLocked}
+        >
+          <SelectTrigger
+            minimal
+            className="flex-1 border-0 bg-neutral-100 text-neutral-600 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-neutral-800 dark:text-neutral-400"
           >
-            {selectedComputer ? getComputerName(selectedComputer) : 'Sandbox'}
-          </button>
-          <div className="absolute left-0 z-[100] mt-1 hidden w-full rounded-lg border border-neutral-200 bg-white shadow-lg group-hover:block dark:border-neutral-700 dark:bg-neutral-800">
-            {renderComputerOptions()}
-          </div>
-        </div>
+            <SelectValue placeholder="Sandbox" />
+          </SelectTrigger>
+          <SelectContent className="z-[100] rounded-lg bg-white dark:bg-card">
+            {groupedComputers.map((group) => (
+              <SelectGroup key={group.workspaceName}>
+                <SelectLabel>{group.workspaceName}</SelectLabel>
+                {group.computers.map((c: Computer) => (
+                  <SelectItem
+                    key={getComputerId(c)}
+                    value={getComputerId(c)}
+                    className="hover:bg-neutral-200 dark:hover:bg-neutral-700"
+                  >
+                    {getComputerName(c)}
+                  </SelectItem>
+                ))}
+              </SelectGroup>
+            ))}
+          </SelectContent>
+        </Select>
 
-        <div className="relative group flex-1">
-          <button
-            type="button"
-            disabled={!!customModelId || isModelLocked}
-            className="w-full rounded-lg bg-neutral-100 px-2 py-1 text-neutral-600 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-neutral-800 dark:text-neutral-400"
+        <Select
+          value={selectedModel?.id || ''}
+          onValueChange={handleModelChange}
+          disabled={!!customModelId || isModelLocked}
+        >
+          <SelectTrigger
+            minimal
+            className="flex-1 border-0 bg-neutral-100 text-neutral-600 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-neutral-800 dark:text-neutral-400"
           >
-            {selectedModel?.name || 'Model'}
-          </button>
-          <div className="absolute right-0 z-[100] mt-1 hidden w-full rounded-lg border border-neutral-200 bg-white shadow-lg group-hover:block dark:border-neutral-700 dark:bg-neutral-800">
-            {renderModelOptions()}
-          </div>
-        </div>
+            <SelectValue placeholder="Model" />
+          </SelectTrigger>
+          <SelectContent className="z-[100] rounded-lg bg-white dark:bg-card">
+            {customModelId && (
+              <SelectGroup>
+                <SelectLabel>Custom</SelectLabel>
+                <SelectItem
+                  key={customModelId}
+                  value={customModelId}
+                  className="hover:bg-neutral-200 dark:hover:bg-neutral-700"
+                >
+                  {customModelId}
+                </SelectItem>
+              </SelectGroup>
+            )}
+            {availableModels.map((provider) => (
+              <SelectGroup key={provider.name}>
+                <SelectLabel>
+                  {provider.name.charAt(0).toUpperCase() + provider.name.slice(1)}
+                </SelectLabel>
+                {provider.models.map((m) => (
+                  <SelectItem
+                    key={m.id}
+                    value={m.id}
+                    className="hover:bg-neutral-200 dark:hover:bg-neutral-700"
+                  >
+                    {m.name}
+                  </SelectItem>
+                ))}
+              </SelectGroup>
+            ))}
+          </SelectContent>
+        </Select>
       </div>
 
       {/* Mobile input row */}

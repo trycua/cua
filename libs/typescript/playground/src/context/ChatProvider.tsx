@@ -1,7 +1,7 @@
 // Per-chat context provider
 // Adapted from cloud/src/website/app/contexts/ChatContext.tsx
 
-import { useReducer, useEffect, type ReactNode } from 'react';
+import { useReducer, useEffect, useRef, type ReactNode } from 'react';
 import {
   ChatStateContext,
   ChatDispatchContext,
@@ -144,20 +144,35 @@ export function ChatProvider({ chat, children, isGenerating = false }: ChatProvi
     }
   }, [chat.id, chat.messages, state.id, state.messages.length]);
 
-  // Sync chat metadata back to global store
+  // Track previous values to avoid unnecessary syncs
+  const prevModelRef = useRef(state.model);
+  const prevComputerRef = useRef(state.computer);
+  const prevNameRef = useRef(state.name);
+
+  // Sync chat metadata back to global store only when values actually change
   useEffect(() => {
-    playgroundDispatch({
-      type: 'UPDATE_CHAT',
-      payload: {
-        id: state.id,
-        updates: {
-          name: state.name,
-          model: state.model,
-          computer: state.computer,
-          updated: new Date(),
+    const modelChanged = prevModelRef.current !== state.model;
+    const computerChanged = prevComputerRef.current !== state.computer;
+    const nameChanged = prevNameRef.current !== state.name;
+
+    if (modelChanged || computerChanged || nameChanged) {
+      prevModelRef.current = state.model;
+      prevComputerRef.current = state.computer;
+      prevNameRef.current = state.name;
+
+      playgroundDispatch({
+        type: 'UPDATE_CHAT',
+        payload: {
+          id: state.id,
+          updates: {
+            name: state.name,
+            model: state.model,
+            computer: state.computer,
+            updated: new Date(),
+          },
         },
-      },
-    });
+      });
+    }
   }, [state.name, state.model, state.computer, state.id, playgroundDispatch]);
 
   return (

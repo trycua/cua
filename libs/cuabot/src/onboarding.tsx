@@ -54,7 +54,7 @@ function addAliasToShell(): boolean {
         return true;
       }
     }
-    appendFileSync(rcFile, '\n# cuabot alias\nalias cuabot="npx cuabot"\n');
+    appendFileSync(rcFile, '\n# cuabot alias\nalias cuabot="npx -y cuabot"\n');
     setAliasIgnored(true);
     return true;
   } catch {

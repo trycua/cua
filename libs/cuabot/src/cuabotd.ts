@@ -6,24 +6,24 @@
  * WebSocket support for interactive shell sessions
  */
 
-import { exec, spawn, ChildProcess } from "child_process";
-import { promisify } from "util";
-import { writeFileSync, readFileSync, unlinkSync, existsSync, mkdirSync, appendFileSync } from "fs";
-import { join, dirname } from "path";
+import * as pty from "@lydell/node-pty";
+import { exec, spawn } from "child_process";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "fs";
+import { openWindows } from "get-windows";
+import { createServer, IncomingMessage, ServerResponse } from "http";
 import { homedir } from "os";
+import { dirname, join } from "path";
+import { Browser, BrowserContext, chromium, Page } from "playwright";
+import sharp from "sharp";
 import { fileURLToPath } from "url";
+import { promisify } from "util";
+import { WebSocket, WebSocketServer } from "ws";
+import { getTelemetryEnabled } from "./settings.js";
+import { log_event, startHistoryPolling, stopHistoryPolling, TelemetryEvent } from "./telemetry.js";
+import { getXpraAttachArgs, getXpraBinPath, nameToColor } from "./utils.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
-import { createServer, IncomingMessage, ServerResponse } from "http";
-import { chromium, Browser, Page, BrowserContext } from "playwright";
-import sharp from "sharp";
-import { WebSocketServer, WebSocket } from "ws";
-import * as pty from "@lydell/node-pty";
-import { getXpraBinPath, getXpraAttachArgs, nameToColor } from "./utils.js";
-import { log_event, TelemetryEvent, startHistoryPolling, stopHistoryPolling } from "./telemetry.js";
-import { getTelemetryEnabled } from "./settings.js";
-import { openWindows } from "get-windows";
 
 const execAsync = promisify(exec);
 
@@ -462,7 +462,7 @@ async function updateCursorMasks(): Promise<void> {
       const b = win.bounds;
       const isXpra = win.owner.name === "Xpra";
       const isCursorWindow = win.title.includes(cursorWindowPattern);
-      const ignoredWindows = ["cuabot-debug-masks", "Screen Studio"];
+      const ignoredWindows = ["cuabot-debug-masks", "Screen Studio", "recording-manager-widget"];
       const isIgnoredWindow = ignoredWindows.some(name => win.title.includes(name));
 
       if (isCursorWindow || isIgnoredWindow) {

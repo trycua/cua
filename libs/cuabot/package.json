@@ -1,6 +1,6 @@
 {
   "name": "cuabot",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "packageManager": "pnpm@10.11.0",
   "description": "Sandboxed, co-op computer-use agents",
   "repository": {

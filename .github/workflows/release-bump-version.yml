@@ -19,6 +19,7 @@ on:
           - npm/cli
           - npm/computer
           - npm/core
+          - npm/playground
           - lume
           - docker/kasm
           - docker/xfce
@@ -88,6 +89,10 @@ jobs:
               ;;
             "npm/core")
               echo "directory=libs/typescript/core" >> $GITHUB_OUTPUT
+              echo "type=npm" >> $GITHUB_OUTPUT
+              ;;
+            "npm/playground")
+              echo "directory=libs/typescript/playground" >> $GITHUB_OUTPUT
               echo "type=npm" >> $GITHUB_OUTPUT
               ;;
             "lume")
@@ -335,6 +340,14 @@ jobs:
         run: |
           VERSION=$(grep -oP '"version": "\K[^"]+' libs/typescript/core/package.json)
           echo "npm/core version: $VERSION"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Capture bumped npm/playground version
+        if: ${{ inputs.service == 'npm/playground' }}
+        id: npm_playground_version
+        run: |
+          VERSION=$(grep -oP '"version": "\K[^"]+' libs/typescript/playground/package.json)
+          echo "npm/playground version: $VERSION"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Capture bumped lume version

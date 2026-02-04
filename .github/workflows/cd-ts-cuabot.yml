@@ -1,0 +1,86 @@
+name: "CD: cuabot (npm)"
+
+on:
+  push:
+    tags:
+      - "cuabot-v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to publish (default: from package.json)"
+        required: false
+        default: ""
+  workflow_call:
+    inputs:
+      version:
+        description: "Version to publish"
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  id-token: write
+  contents: write
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.get-version.outputs.version }}
+      tag: ${{ steps.get-version.outputs.tag }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Determine version
+        id: get-version
+        run: |
+          if [ -n "${{ inputs.version }}" ]; then
+            VERSION="${{ inputs.version }}"
+          elif [ "${{ github.event_name }}" == "push" ]; then
+            if [[ "${{ github.ref }}" =~ ^refs/tags/cuabot-v([0-9]+\.[0-9]+\.[0-9]+) ]]; then
+              VERSION=${BASH_REMATCH[1]}
+            else
+              echo "ERROR: Invalid tag format"
+              exit 1
+            fi
+          else
+            VERSION=$(node -p "require('./libs/cuabot/package.json').version")
+          fi
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "tag=cuabot-v${VERSION}" >> $GITHUB_OUTPUT
+
+  publish-npm:
+    needs: prepare
+    uses: ./.github/workflows/ts-reusable-publish.yml
+    with:
+      package_name: "cuabot"
+      package_dir: "libs/cuabot"
+      package_manager: "pnpm"
+      version: ${{ needs.prepare.outputs.version }}
+    secrets:
+      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  create-release:
+    needs: [prepare, publish-npm]
+    uses: ./.github/workflows/release-github-reusable.yml
+    with:
+      tag_name: ${{ needs.prepare.outputs.tag }}
+      release_name: "cuabot v${{ needs.prepare.outputs.version }}"
+      module_path: "libs/cuabot"
+      body: |
+        ## Installation
+
+        ```bash
+        npx cuabot
+        ```
+
+        Or install globally:
+
+        ```bash
+        npm install -g cuabot
+        ```
+
+        ## Documentation
+
+        See [cua.ai/docs/cuabot](https://cua.ai/docs/cuabot)

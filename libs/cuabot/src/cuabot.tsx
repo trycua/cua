@@ -9,6 +9,9 @@ import { getDefaultAgent, AGENTS, AgentId, getAliasIgnored, getTelemetryEnabled 
 import { runOnboarding } from "./onboarding.js";
 import { sendTelemetryToServer } from "./telemetry.js";
 import { execSync } from "child_process";
+import { existsSync, readFileSync } from "fs";
+import { homedir } from "os";
+import { join } from "path";
 
 function isCuabotInPath(): boolean {
   try {
@@ -368,6 +371,102 @@ Commands:
         const client = await getClient();
         await client.keyUp(key);
         console.log(`Key up: ${key}`);
+        process.exit(0);
+      }
+
+      case "--debug-onboarding": {
+        const CONFIG_DIR = join(homedir(), ".cuabot");
+        const SETTINGS_FILE = join(CONFIG_DIR, "settings.json");
+
+        console.log("=== Onboarding Debug ===\n");
+        console.log("Platform:", process.platform);
+        console.log("Home:", homedir());
+        console.log("");
+
+        // Check settings
+        console.log("=== Settings ===");
+        console.log("Settings file:", SETTINGS_FILE);
+        console.log("Settings exists:", existsSync(SETTINGS_FILE));
+        if (existsSync(SETTINGS_FILE)) {
+          try {
+            const settings = JSON.parse(readFileSync(SETTINGS_FILE, "utf-8"));
+            console.log("Settings content:", JSON.stringify(settings, null, 2));
+            console.log("aliasIgnored:", settings.aliasIgnored === true);
+          } catch (e) {
+            console.log("Failed to read settings:", e);
+          }
+        } else {
+          console.log("aliasIgnored: false (no settings file)");
+        }
+        console.log("");
+
+        // Check cuabot in PATH
+        console.log("=== Cuabot in PATH ===");
+        const pathCmd = process.platform === "win32" ? "where cuabot" : "which cuabot";
+        console.log("Command:", pathCmd);
+        try {
+          const result = execSync(pathCmd, { encoding: "utf-8" });
+          console.log("Result:", result.trim());
+          console.log("checkCuabotInPath: true");
+        } catch (e: any) {
+          console.log("Error:", e.message?.split("\n")[0] || "Command failed");
+          console.log("Exit code:", e.status);
+          console.log("checkCuabotInPath: false");
+        }
+        console.log("");
+
+        // Check shell RC file
+        console.log("=== Shell RC File ===");
+        let rcFile: string | null = null;
+        if (process.platform === "win32") {
+          const ps7Profile = join(homedir(), "Documents", "PowerShell", "Microsoft.PowerShell_profile.ps1");
+          const ps5Profile = join(homedir(), "Documents", "WindowsPowerShell", "Microsoft.PowerShell_profile.ps1");
+          const ps7Dir = join(homedir(), "Documents", "PowerShell");
+          console.log("PS7 dir exists:", existsSync(ps7Dir));
+          rcFile = existsSync(ps7Dir) ? ps7Profile : ps5Profile;
+        } else {
+          const shell = process.env.SHELL || "";
+          console.log("SHELL env:", shell);
+          if (shell.includes("zsh")) rcFile = join(homedir(), ".zshrc");
+          else if (shell.includes("bash")) {
+            const bashProfile = join(homedir(), ".bash_profile");
+            rcFile = (process.platform === "darwin" && existsSync(bashProfile)) ? bashProfile : join(homedir(), ".bashrc");
+          }
+        }
+        console.log("RC file:", rcFile);
+        if (rcFile) {
+          console.log("RC file exists:", existsSync(rcFile));
+          if (existsSync(rcFile)) {
+            const content = readFileSync(rcFile, "utf-8");
+            const hasAlias = content.includes("alias cuabot=") || content.includes("function cuabot");
+            console.log("Has cuabot alias/function:", hasAlias);
+          }
+        }
+        console.log("");
+
+        // Windows batch file check
+        if (process.platform === "win32") {
+          console.log("=== Windows Batch File ===");
+          const windowsApps = join(process.env.LOCALAPPDATA || join(homedir(), "AppData", "Local"), "Microsoft", "WindowsApps");
+          const batchFile = join(windowsApps, "cuabot.cmd");
+          console.log("Batch file path:", batchFile);
+          console.log("Batch file exists:", existsSync(batchFile));
+          if (existsSync(batchFile)) {
+            console.log("Batch file content:", readFileSync(batchFile, "utf-8"));
+          }
+          console.log("");
+        }
+
+        // Final result
+        console.log("=== Final Check Result ===");
+        const cuabotInPath = isCuabotInPath();
+        const aliasIgnored = getAliasIgnored();
+        const status = cuabotInPath || aliasIgnored ? "ok" : "error";
+        const message = cuabotInPath ? "ready" : aliasIgnored ? "using npx" : "not set up";
+        console.log("cuabotInPath:", cuabotInPath);
+        console.log("aliasIgnored:", aliasIgnored);
+        console.log("Status:", status);
+        console.log("Message:", message);
         process.exit(0);
       }
 

@@ -235,7 +235,7 @@ boot_commands:
   - "<type 'login'>"
   - "<delay 2>"
   - "<click 'Remote Login'>"
-  - "<delay 20>"
+  - "<delay 30>"
 
   # Enable Remote Login toggle (first toggle on the page)
   - "<space>"
@@ -244,7 +244,7 @@ boot_commands:
   - "<delay 5>"
   - "<space>"
   - "<delay 5>"
-  - "<enter>"
+  - "<click 'Done'>"
   - "<delay 5>"
 
   # Close System Settings
@@ -272,6 +272,8 @@ health_check:
 post_ssh_commands:
   # Enable auto-login for the lume user
   - "sudo sysadminctl -autologin set -userName lume -password lume"
+  # Generate kcpassword for auto-login (sysadminctl alone doesn't always create it)
+  - "perl -e 'my @k=(125,137,82,35,210,188,221,234,163,185,31);my @p=unpack(q{C*},q{lume});my @e;for my $i(0..$#p){$e[$i]=$p[$i]^$k[$i%scalar@k]}my $r=scalar@e%12;push@e,(0)x(12-$r) if $r;open my $f,q{>},q{/tmp/kcp};binmode $f;print $f pack(q{C*},@e);close $f' && sudo cp /tmp/kcp /etc/kcpassword && sudo chmod 600 /etc/kcpassword && rm /tmp/kcp"
   # Disable screen saver
   - "defaults -currentHost write com.apple.screensaver idleTime -int 0"
   # Disable require password after sleep/screen saver

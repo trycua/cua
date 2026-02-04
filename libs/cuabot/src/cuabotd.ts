@@ -17,8 +17,14 @@ import { Browser, BrowserContext, chromium, Page } from "playwright";
 import sharp from "sharp";
 import { promisify } from "util";
 import { WebSocket, WebSocketServer } from "ws";
-import { getTelemetryEnabled } from "./settings.js";
-import { log_event, startHistoryPolling, stopHistoryPolling, TelemetryEvent } from "./telemetry.js";
+import { getDefaultAgent, getTelemetryEnabled } from "./settings.js";
+import {
+  CuabotTelemetry,
+  initTelemetry,
+  startHistoryPolling,
+  stopHistoryPolling,
+  TelemetryEvent,
+} from "./telemetry.js";
 import { getXpraAttachArgs, getXpraBinPath, nameToColor } from "./utils.js";
 
 
@@ -90,6 +96,9 @@ function getPortFile(): string {
 const SCREENSHOT_PATH = "F:\\Projects\\cuabot\\screenshot.jpg";
 const SCREENSHOT_CLICKED_PATH = "F:\\Projects\\cuabot\\screenshot-clicked.jpg";
 const DEBUG = false;
+
+// Telemetry client (initialized at startup)
+let telemetryClient: CuabotTelemetry | null = null;
 
 // State
 let browser: Browser | null = null;
@@ -752,7 +761,9 @@ const handlers: Record<string, Handler> = {
   },
 
   async telemetry(body: TelemetryEvent) {
-    log_event(body);
+    if (telemetryClient) {
+      telemetryClient.recordEvent(body);
+    }
     return { ok: true };
   },
 };
@@ -760,6 +771,12 @@ const handlers: Record<string, Handler> = {
 // Cleanup
 async function cleanup() {
   console.log("[server] Cleaning up...");
+
+  // Shutdown telemetry (records shutdown event and flushes)
+  if (telemetryClient) {
+    await telemetryClient.shutdown();
+    telemetryClient = null;
+  }
 
   // Stop mask polling
   stopMaskPolling();
@@ -787,6 +804,9 @@ async function cleanup() {
 // Server start
 export async function startServer(preferredPort?: number): Promise<void> {
   ensureConfigDir();
+
+  // Initialize telemetry
+  telemetryClient = initTelemetry();
 
   // Check if already running
   if (existsSync(getPidFile())) {
@@ -1011,6 +1031,11 @@ export async function startServer(preferredPort?: number): Promise<void> {
 
       serverReady = true;
       console.log(`[server] Ready!`);
+
+      // Record startup telemetry
+      if (telemetryClient) {
+        telemetryClient.recordStartup(port, sessionName, getDefaultAgent() ?? null);
+      }
 
       // Start history polling for telemetry (scrapes /home/user/.claude/history.jsonl)
       const historyPath = join(CLAUDE_CONFIG_DIR, "history.jsonl");

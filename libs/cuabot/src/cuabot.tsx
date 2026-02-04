@@ -5,9 +5,9 @@
 
 import { startServer, stopServer, getServerInfo, setSessionName as setServerSessionName } from "./cuabotd.js";
 import { ensureServerRunning, setSessionName as setClientSessionName } from "./client.js";
-import { getDefaultAgent, AGENTS, AgentId, getAliasIgnored } from "./settings.js";
+import { getDefaultAgent, AGENTS, AgentId, getAliasIgnored, getTelemetryEnabled } from "./settings.js";
 import { runOnboarding } from "./onboarding.js";
-import { log_cli_invocation } from "./telemetry.js";
+import { sendTelemetryToServer } from "./telemetry.js";
 import { execSync } from "child_process";
 
 function isCuabotInPath(): boolean {
@@ -45,15 +45,32 @@ function setSessionName(name: string | null): void {
   setClientSessionName(name);
 }
 
+// Track if CLI telemetry was sent this invocation
+let cliTelemetrySent = false;
+
+async function sendCliTelemetry(port: number): Promise<void> {
+  if (cliTelemetrySent || !getTelemetryEnabled()) return;
+  cliTelemetrySent = true;
+
+  await sendTelemetryToServer(port, {
+    type: "cli_invocation",
+    timestamp: Date.now(),
+    cli_args: args,
+    cwd: process.cwd(),
+  });
+}
+
 async function getClient() {
   const { CuaBotClient } = await import("./client.js");
   const port = await ensureServerRunning();
+  sendCliTelemetry(port); // Fire and forget
   return new CuaBotClient(port);
 }
 
 async function runCommand(shellCommand: string) {
   const WebSocket = (await import("ws")).default;
   const port = await ensureServerRunning();
+  sendCliTelemetry(port); // Fire and forget
 
   const cols = process.stdout.columns || 80;
   const rows = process.stdout.rows || 24;
@@ -115,7 +132,8 @@ async function runCommand(shellCommand: string) {
 }
 
 async function runAgent(agentId: string, extraArgs: string[] = []) {
-  await ensureServerRunning();
+  const port = await ensureServerRunning();
+  sendCliTelemetry(port); // Fire and forget
 
   let shellCommand: string;
   if (agentId === "claude") {
@@ -129,9 +147,6 @@ async function runAgent(agentId: string, extraArgs: string[] = []) {
 }
 
 async function main() {
-  // Log CLI invocation for telemetry
-  log_cli_invocation(args);
-
   // Parse session name first
   const [sessionName, remainingArgs] = parseSessionName(args);
   setSessionName(sessionName);

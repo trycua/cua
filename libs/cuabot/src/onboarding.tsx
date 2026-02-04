@@ -7,7 +7,6 @@ import React, { useState, useEffect } from "react";
 import { render, Box, Text, useInput, useApp } from "ink";
 import { checkDocker, checkXpra, checkPlaywright } from "./utils.js";
 import { AGENTS, AgentId, getDefaultAgent, setDefaultAgent, setTelemetryEnabled, loadSettings, getAliasIgnored, setAliasIgnored } from "./settings.js";
-import { log_telemetry_onboard } from "./telemetry.js";
 import { exec, execSync } from "child_process";
 import { homedir } from "os";
 import { appendFileSync, existsSync, readFileSync } from "fs";
@@ -323,10 +322,6 @@ function Onboarding() {
         <TelemetrySelector
           onSelect={(enabled) => {
             setTelemetryEnabled(enabled);
-            if (enabled) {
-              // Log telemetry onboard event with default agent
-              log_telemetry_onboard(getDefaultAgent());
-            }
             setShowTelemetrySelector(false);
             runChecks();
           }}

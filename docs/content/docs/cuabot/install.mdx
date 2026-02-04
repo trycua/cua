@@ -1,0 +1,71 @@
+---
+title: Installation
+description: Install CuaBot and its dependencies
+---
+
+import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
+import { Callout } from 'fumadocs-ui/components/callout';
+
+<Tabs items={['macOS', 'Linux', 'Windows']}>
+  <Tab value="macOS">
+
+    **Requirements:**
+    - [Node.js](https://nodejs.org/) v18+
+    - [Docker Desktop](https://www.docker.com/products/docker-desktop/)
+    - [Xpra client](https://github.com/Xpra-org/xpra/wiki/Download#-macos)
+
+    **Install:**
+
+    ```bash
+    npm install -g cuabot
+    ```
+
+    <Callout type="warn">
+    After installing Xpra, you may need to remove quarantine:
+    ```bash
+    sudo xattr -rd com.apple.quarantine /Applications/Xpra.app
+    ```
+    </Callout>
+
+  </Tab>
+  <Tab value="Linux">
+
+    **Requirements:**
+    - [Node.js](https://nodejs.org/) v18+
+    - [Docker Engine](https://docs.docker.com/engine/install/)
+    - Xpra
+
+    **Install:**
+
+    ```bash
+    # Install Xpra
+    sudo apt install xpra
+
+    # Install CuaBot
+    npm install -g cuabot
+    ```
+
+  </Tab>
+  <Tab value="Windows">
+
+    **Requirements:**
+    - [Node.js](https://nodejs.org/) v18+
+    - [Docker Desktop](https://www.docker.com/products/docker-desktop/)
+    - [Xpra client](https://github.com/Xpra-org/xpra/wiki/Download#-windows)
+
+    **Install:**
+
+    ```bash
+    npm install -g cuabot
+    ```
+
+  </Tab>
+</Tabs>
+
+Then run:
+
+```bash
+cuabot
+```
+
+This runs the onboarding wizard which checks for dependencies and guides you through setup.

@@ -20,11 +20,29 @@
 
 </div>
 
-**Cua** is an open-source platform for building, benchmarking, and deploying agents that can use any computer, with isolated, self-hostable sandboxes (Docker, QEMU, Apple Virtualization).
+## CuaBot - Co-op computer-use for any agent.
 
-<div align="center">
-  <video src="https://github.com/user-attachments/assets/c619b4ea-bb8e-4382-860e-f3757e36af20" width="600" controls></video>
-</div>
+`cuabot` gives any coding agent a seamless sandbox for computer-use. Individual windows appear natively on your desktop with H.265, shared clipboard, and audio.
+
+```bash
+npx cuabot                 # Start onboarding
+```
+
+```bash
+cuabot claude              # Run Claude Code in the sandbox
+cuabot openclaw            # Run OpenClaw in the sandbox
+cuabot chromium            # Open sandboxed chromium window
+
+cuabot --screenshot
+cuabot --type "hello"
+cuabot --click <x> <y> [button]
+```
+
+**[Get Started](https://cua.ai/docs/cuabot/cuabot)** | **[Installation](https://cua.ai/docs/cuabot/install)**
+
+---
+
+**Beyond cuabot** — explore our SDKs, benchmarks, and sandboxes for your own computer-use agents.
 
 ## Choose Your Path
 
@@ -68,7 +86,7 @@
 
 Build agents that see screens, click buttons, and complete tasks autonomously. Run isolated code execution environments for AI coding assistants like Claude Code, Codex CLI, or OpenCode.
 
-<img src="img/cua-architecture.png" alt="Cua Architecture" width="100%">
+<!-- <img src="img/cua-architecture.png" alt="Cua Architecture" width="100%"> -->
 
 ```python
 # Requires Python 3.12 or 3.13
@@ -90,7 +108,7 @@ async for result in agent.run([{"role": "user", "content": "Open Firefox and sea
 
 Evaluate computer-use agents on OSWorld, ScreenSpot, Windows Arena, and custom tasks. Export trajectories for training.
 
-<img src="img/cua-bench-architecture.png" alt="Cua-Bench Architecture" width="100%">
+<!-- <img src="img/cua-bench-architecture.png" alt="Cua-Bench Architecture" width="100%"> -->
 
 ```bash
 # Install and create base image
@@ -109,7 +127,7 @@ cb run dataset datasets/cua-bench-basic --agent cua-agent --max-parallel 4
 
 Create and manage macOS/Linux VMs with near-native performance on Apple Silicon using Apple's Virtualization.Framework.
 
-<img src="img/lume-architecture.png" alt="Lume Architecture" width="100%">
+<!-- <img src="img/lume-architecture.png" alt="Lume Architecture" width="100%"> -->
 
 ```bash
 # Install Lume
@@ -127,6 +145,7 @@ lume run macos-sequoia-vanilla:latest
 
 | Package                                                               | Description                                                |
 | --------------------------------------------------------------------- | ---------------------------------------------------------- |
+| [cuabot](https://cua.ai/docs/cuabot/cuabot)                           | Multi-agent computer-use sandbox CLI                       |
 | [cua-agent](https://cua.ai/docs/cua/reference/agent-sdk)              | AI agent framework for computer-use tasks                  |
 | [cua-computer](https://cua.ai/docs/cua/reference/computer-sdk)        | SDK for controlling desktop environments                   |
 | [cua-computer-server](https://cua.ai/docs/cua/reference/computer-sdk) | Driver for UI interactions and code execution in sandboxes |

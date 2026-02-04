@@ -19,7 +19,9 @@ on:
           - npm/cli
           - npm/computer
           - npm/core
+          - npm/cuabot
           - lume
+          - docker/cuabot
           - docker/kasm
           - docker/xfce
           - docker/lumier
@@ -90,9 +92,17 @@ jobs:
               echo "directory=libs/typescript/core" >> $GITHUB_OUTPUT
               echo "type=npm" >> $GITHUB_OUTPUT
               ;;
+            "npm/cuabot")
+              echo "directory=libs/cuabot" >> $GITHUB_OUTPUT
+              echo "type=npm" >> $GITHUB_OUTPUT
+              ;;
             "lume")
               echo "directory=libs/lume" >> $GITHUB_OUTPUT
               echo "type=lume" >> $GITHUB_OUTPUT
+              ;;
+            "docker/cuabot")
+              echo "directory=libs/cuabot" >> $GITHUB_OUTPUT
+              echo "type=docker" >> $GITHUB_OUTPUT
               ;;
             "docker/kasm")
               echo "directory=libs/kasm" >> $GITHUB_OUTPUT
@@ -343,6 +353,14 @@ jobs:
         run: |
           VERSION=$(grep -oP 'static let current: String = "\K[^"]+' libs/lume/src/Main.swift)
           echo "lume version: $VERSION"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Capture bumped cuabot version
+        if: ${{ inputs.service == 'npm/cuabot' }}
+        id: cuabot_version
+        run: |
+          VERSION=$(grep -oP '"version": "\K[^"]+' libs/cuabot/package.json)
+          echo "cuabot version: $VERSION"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Generate GitHub App token

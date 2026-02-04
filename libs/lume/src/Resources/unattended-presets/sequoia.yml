@@ -278,6 +278,8 @@ post_ssh_commands:
   - "defaults -currentHost write com.apple.screensaver idleTime -int 0"
   # Disable require password after sleep/screen saver
   - "defaults write com.apple.screensaver askForPassword -int 0"
+  # Set password delay to 0 (no delay before requiring password)
+  - "defaults write com.apple.screensaver askForPasswordDelay -int 0"
   # Prevent display from sleeping (never)
   - "sudo pmset -a displaysleep 0"
   # Prevent system sleep (never)

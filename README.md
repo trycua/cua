@@ -20,7 +20,7 @@
 
 </div>
 
-## CuaBot - Multi-User Computing with AI
+## CuaBot - Co-op computer-use for any agent.
 
 `cuabot` gives any coding agent a seamless sandbox for computer-use. Individual windows appear natively on your desktop with H.265, shared clipboard, and audio.
 

@@ -105,12 +105,14 @@ struct HealthCheckRunner {
                 "command": command.prefix(50).description
             ])
 
-            // Handle sudo commands by using sudo -S which reads password from stdin
+            // Handle sudo commands by replacing sudo with password-piped sudo -S
+            let escapedPassword = password.replacingOccurrences(of: "'", with: "'\\''")
             let actualCommand: String
-            if command.hasPrefix("sudo ") {
-                let sudoCommand = String(command.dropFirst(5))
-                let escapedPassword = password.replacingOccurrences(of: "'", with: "'\\''")
-                actualCommand = "echo '\(escapedPassword)' | sudo -S \(sudoCommand)"
+            if command.contains("sudo ") {
+                actualCommand = command.replacingOccurrences(
+                    of: "sudo ",
+                    with: "echo '\(escapedPassword)' | sudo -S "
+                )
             } else {
                 actualCommand = command
             }

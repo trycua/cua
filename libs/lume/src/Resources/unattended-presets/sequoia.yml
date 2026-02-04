@@ -273,11 +273,16 @@ post_ssh_commands:
   # Enable auto-login for the lume user
   - "sudo sysadminctl -autologin set -userName lume -password lume"
   # Generate kcpassword for auto-login (sysadminctl alone doesn't always create it)
-  - "perl -e 'my @k=(125,137,82,35,210,188,221,234,163,185,31);my @p=unpack(q{C*},q{lume});my @e;for my $i(0..$#p){$e[$i]=$p[$i]^$k[$i%scalar@k]}my $r=scalar@e%12;push@e,(0)x(12-$r) if $r;open my $f,q{>},q{/tmp/kcp};binmode $f;print $f pack(q{C*},@e);close $f' && sudo cp /tmp/kcp /etc/kcpassword && sudo chmod 600 /etc/kcpassword && rm /tmp/kcp"
+  - "perl -e 'my @k=(125,137,82,35,210,188,221,234,163,185,31);my @p=unpack(q{C*},q{lume});my @e;for my $i(0..$#p){$e[$i]=$p[$i]^$k[$i%scalar@k]}my $r=scalar@e%12;push@e,(0)x(12-$r) if $r;open my $f,q{>},q{/tmp/kcp};binmode $f;print $f pack(q{C*},@e);close $f'"
+  - "sudo cp /tmp/kcp /etc/kcpassword"
+  - "sudo chmod 600 /etc/kcpassword"
+  - "rm /tmp/kcp"
   # Disable screen saver
   - "defaults -currentHost write com.apple.screensaver idleTime -int 0"
   # Disable require password after sleep/screen saver
   - "defaults write com.apple.screensaver askForPassword -int 0"
+  # Set password delay to 0 (no delay before requiring password)
+  - "defaults write com.apple.screensaver askForPasswordDelay -int 0"
   # Prevent display from sleeping (never)
   - "sudo pmset -a displaysleep 0"
   # Prevent system sleep (never)

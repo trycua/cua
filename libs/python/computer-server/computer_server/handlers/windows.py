@@ -25,7 +25,9 @@ def require_unlocked_desktop(func: F) -> F:
     """
 
     @functools.wraps(func)
-    async def wrapper(self: "WindowsAutomationHandler", *args: Any, **kwargs: Any) -> Dict[str, Any]:
+    async def wrapper(
+        self: "WindowsAutomationHandler", *args: Any, **kwargs: Any
+    ) -> Dict[str, Any]:
         if self.is_desktop_locked():
             return {
                 "success": False,
@@ -34,6 +36,7 @@ def require_unlocked_desktop(func: F) -> F:
         return await func(self, *args, **kwargs)
 
     return wrapper  # type: ignore[return-value]
+
 
 from PIL import Image, ImageGrab
 from pynput.keyboard import Controller as KeyboardController
@@ -202,6 +205,7 @@ class WindowsAutomationHandler(BaseAutomationHandler):
     def is_desktop_locked(self) -> bool:
         try:
             import ctypes
+
             user32 = ctypes.windll.user32
             hwnd = user32.GetForegroundWindow()
             return hwnd == 0
@@ -718,16 +722,17 @@ class WindowsAutomationHandler(BaseAutomationHandler):
                            Structure: {"success": bool, "stdout": str, "stderr": str, "return_code": int} or
                                     {"success": bool, "error": str}
         """
+
         def decode_output(data: bytes) -> str:
             if not data:
                 return ""
-            encodings = ['utf-8', 'gbk', 'gb2312', 'cp936', 'latin1']
+            encodings = ["utf-8", "gbk", "gb2312", "cp936", "latin1"]
             for enc in encodings:
                 try:
                     return data.decode(enc)
                 except (UnicodeDecodeError, LookupError):
                     continue
-            return data.decode('utf-8', errors='replace')
+            return data.decode("utf-8", errors="replace")
 
         try:
             # Create subprocess
@@ -741,7 +746,6 @@ class WindowsAutomationHandler(BaseAutomationHandler):
                 "success": True,
                 "stdout": decode_output(stdout),
                 "stderr": decode_output(stderr),
-
                 "return_code": process.returncode,
             }
         except Exception as e:

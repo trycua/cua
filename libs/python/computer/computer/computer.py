@@ -179,7 +179,11 @@ class Computer:
         self.os_type = os_type
         self.provider_type = provider_type
         self.ephemeral = ephemeral
-        self.api_key = api_key if self.provider_type in (VMProviderType.CLOUD, VMProviderType.CLOUDV2) else None
+        self.api_key = (
+            api_key
+            if self.provider_type in (VMProviderType.CLOUD, VMProviderType.CLOUDV2)
+            else None
+        )
         self.timeout = timeout
 
         # Set default API port if not specified
@@ -589,7 +593,11 @@ class Computer:
             from .interface.base import BaseComputerInterface
 
             # Pass authentication credentials if using cloud provider
-            if self.provider_type in (VMProviderType.CLOUD, VMProviderType.CLOUDV2) and self.api_key and self.config.name:
+            if (
+                self.provider_type in (VMProviderType.CLOUD, VMProviderType.CLOUDV2)
+                and self.api_key
+                and self.config.name
+            ):
                 interface = cast(
                     BaseComputerInterface,
                     InterfaceFactory.create_interface_for_os(
@@ -819,7 +827,11 @@ class Computer:
             self.logger.info(f"Re-initializing interface for {self.os_type} at {ip_address}")
             from .interface.base import BaseComputerInterface
 
-            if self.provider_type in (VMProviderType.CLOUD, VMProviderType.CLOUDV2) and self.api_key and self.config.name:
+            if (
+                self.provider_type in (VMProviderType.CLOUD, VMProviderType.CLOUDV2)
+                and self.api_key
+                and self.config.name
+            ):
                 self._interface = cast(
                     BaseComputerInterface,
                     InterfaceFactory.create_interface_for_os(

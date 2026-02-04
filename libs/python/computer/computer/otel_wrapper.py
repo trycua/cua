@@ -124,6 +124,7 @@ class OtelInterfaceWrapper:
         Returns:
             Wrapped method that records metrics
         """
+
         async def instrumented(*args: Any, **kwargs: Any) -> Any:
             if not self._enabled:
                 return await method(*args, **kwargs)

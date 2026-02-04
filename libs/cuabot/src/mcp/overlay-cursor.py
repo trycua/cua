@@ -11,21 +11,22 @@ Environment variables:
   CUABOT_COLOR - Hex color without # (default: derived from name)
 """
 
-import os
-import sys
-import socket
-import threading
 import json
-import time
 import math
+import os
 import random
+import socket
+import sys
+import threading
+import time
 
 import gi
-gi.require_version('Gtk', '3.0')
-gi.require_version('Gdk', '3.0')
-gi.require_version('GdkPixbuf', '2.0')
-from gi.repository import Gtk, Gdk, GLib, GdkPixbuf
+
+gi.require_version("Gtk", "3.0")
+gi.require_version("Gdk", "3.0")
+gi.require_version("GdkPixbuf", "2.0")
 import cairo
+from gi.repository import Gdk, GdkPixbuf, GLib, Gtk
 
 # Configuration
 SOCKET_PATH = "/tmp/cuabot-overlay-cursor.sock"
@@ -51,11 +52,11 @@ def name_to_color(name: str) -> str:
 
     # Convert HSL to RGB (saturation=0.7, lightness=0.5)
     s = 0.7
-    l = 0.5
+    lightness = 0.5
 
-    c = (1 - abs(2 * l - 1)) * s
+    c = (1 - abs(2 * lightness - 1)) * s
     x = c * (1 - abs((hue * 6) % 2 - 1))
-    m = l - c / 2
+    m = lightness - c / 2
 
     h = hue * 6
     if h < 1:
@@ -72,15 +73,15 @@ def name_to_color(name: str) -> str:
         r, g, b = c, 0, x
 
     def to_hex(n):
-        return format(round((n + m) * 255), '02x')
+        return format(round((n + m) * 255), "02x")
 
     return f"{to_hex(r)}{to_hex(g)}{to_hex(b)}"
 
 
 def hex_to_rgb(hex_color: str) -> tuple:
     """Convert hex color to RGB tuple (0-1 range)"""
-    hex_color = hex_color.lstrip('#')
-    return tuple(int(hex_color[i:i+2], 16) / 255.0 for i in (0, 2, 4))
+    hex_color = hex_color.lstrip("#")
+    return tuple(int(hex_color[i : i + 2], 16) / 255.0 for i in (0, 2, 4))
 
 
 def generate_path(from_pos: tuple, to_pos: tuple, target_steps: int = 20) -> list:
@@ -167,7 +168,7 @@ class OverlayCursor(Gtk.Window):
         # Load cursor image
         self.cursor_pixbuf = None
         script_dir = os.path.dirname(os.path.abspath(__file__))
-        cursor_path = os.path.join(script_dir, 'cursor.png')
+        cursor_path = os.path.join(script_dir, "cursor.png")
         if os.path.exists(cursor_path):
             try:
                 self.cursor_pixbuf = GdkPixbuf.Pixbuf.new_from_file_at_scale(
@@ -235,8 +236,12 @@ class OverlayCursor(Gtk.Window):
 
             # Background
             cr.set_source_rgba(0, 0, 0, 0.9)
-            cr.rectangle(label_x - padding, label_y - extents.height - padding,
-                        extents.width + padding * 2, extents.height + padding * 2)
+            cr.rectangle(
+                label_x - padding,
+                label_y - extents.height - padding,
+                extents.width + padding * 2,
+                extents.height + padding * 2,
+            )
             cr.fill()
 
             # Text color: red when masked, green when not
@@ -262,17 +267,25 @@ class OverlayCursor(Gtk.Window):
             colorized = self._colorize_pixbuf(self.cursor_pixbuf, r, g, b, self.opacity)
 
             # Click scale effect
-            click_scale = 1.0 + 0.2 * math.sin(self.click_anim_progress * math.pi) if self.clicking else 1.0
+            click_scale = (
+                1.0 + 0.2 * math.sin(self.click_anim_progress * math.pi) if self.clicking else 1.0
+            )
 
             cr.set_operator(cairo.OPERATOR_OVER)
 
             if click_scale != 1.0:
                 # Scale around the cursor tip (top-left corner)
                 scaled_size = int(CURSOR_SIZE * click_scale)
-                scaled = colorized.scale_simple(scaled_size, scaled_size, GdkPixbuf.InterpType.BILINEAR)
-                Gdk.cairo_set_source_pixbuf(cr, scaled, CURSOR_SIZE - CURSOR_SIZE * 0.1, CURSOR_SIZE - CURSOR_SIZE * 0.1)
+                scaled = colorized.scale_simple(
+                    scaled_size, scaled_size, GdkPixbuf.InterpType.BILINEAR
+                )
+                Gdk.cairo_set_source_pixbuf(
+                    cr, scaled, CURSOR_SIZE - CURSOR_SIZE * 0.1, CURSOR_SIZE - CURSOR_SIZE * 0.1
+                )
             else:
-                Gdk.cairo_set_source_pixbuf(cr, colorized, CURSOR_SIZE - CURSOR_SIZE * 0.1, CURSOR_SIZE - CURSOR_SIZE * 0.1)
+                Gdk.cairo_set_source_pixbuf(
+                    cr, colorized, CURSOR_SIZE - CURSOR_SIZE * 0.1, CURSOR_SIZE - CURSOR_SIZE * 0.1
+                )
 
             cr.paint()
 
@@ -302,7 +315,9 @@ class OverlayCursor(Gtk.Window):
 
             # Main circle
             base_radius = CURSOR_SIZE * 0.35
-            click_scale = 1.0 + 0.3 * math.sin(self.click_anim_progress * math.pi) if self.clicking else 1.0
+            click_scale = (
+                1.0 + 0.3 * math.sin(self.click_anim_progress * math.pi) if self.clicking else 1.0
+            )
             radius = base_radius * click_scale
 
             cr.set_source_rgba(r, g, b, 0.9 * self.opacity)
@@ -375,7 +390,7 @@ class OverlayCursor(Gtk.Window):
                 grey = new_pixels[idx] / 255.0
 
                 # Multiply by color
-                new_pixels[idx] = int(grey * r * 255)      # R
+                new_pixels[idx] = int(grey * r * 255)  # R
                 new_pixels[idx + 1] = int(grey * g * 255)  # G
                 new_pixels[idx + 2] = int(grey * b * 255)  # B
 
@@ -391,7 +406,7 @@ class OverlayCursor(Gtk.Window):
             8,
             width,
             height,
-            rowstride
+            rowstride,
         )
 
     def animation_tick(self):
@@ -533,10 +548,10 @@ class SocketServer(threading.Thread):
             try:
                 server.settimeout(1.0)
                 conn, _ = server.accept()
-                data = conn.recv(4096).decode('utf-8')
+                data = conn.recv(4096).decode("utf-8")
                 conn.close()
 
-                for line in data.strip().split('\n'):
+                for line in data.strip().split("\n"):
                     if not line:
                         continue
                     try:
@@ -550,25 +565,25 @@ class SocketServer(threading.Thread):
                 print(f"Socket error: {e}", file=sys.stderr)
 
     def handle_command(self, cmd: dict):
-        cmd_type = cmd.get('type')
+        cmd_type = cmd.get("type")
 
-        if cmd_type == 'move':
-            x = cmd.get('x', 0)
-            y = cmd.get('y', 0)
-            click = cmd.get('click', False)
+        if cmd_type == "move":
+            x = cmd.get("x", 0)
+            y = cmd.get("y", 0)
+            click = cmd.get("click", False)
             GLib.idle_add(self.cursor.move_to, x, y, click)
 
-        elif cmd_type == 'click':
+        elif cmd_type == "click":
             GLib.idle_add(self.cursor.play_click)
 
-        elif cmd_type == 'hide':
+        elif cmd_type == "hide":
             GLib.idle_add(self.cursor.hide_cursor)
 
-        elif cmd_type == 'masked':
-            value = cmd.get('value', False)
+        elif cmd_type == "masked":
+            value = cmd.get("value", False)
             GLib.idle_add(self.cursor.set_masked, value)
 
-        elif cmd_type == 'quit':
+        elif cmd_type == "quit":
             GLib.idle_add(Gtk.main_quit)
 
 
@@ -577,7 +592,7 @@ def send_command(cmd: dict) -> bool:
     try:
         sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         sock.connect(SOCKET_PATH)
-        sock.send((json.dumps(cmd) + '\n').encode('utf-8'))
+        sock.send((json.dumps(cmd) + "\n").encode("utf-8"))
         sock.close()
         return True
     except:
@@ -586,26 +601,26 @@ def send_command(cmd: dict) -> bool:
 
 def main():
     # Parse arguments
-    name = os.environ.get('CUABOT_NAME', 'cuabot')
-    color = os.environ.get('CUABOT_COLOR', '')
+    name = os.environ.get("CUABOT_NAME", "cuabot")
+    color = os.environ.get("CUABOT_COLOR", "")
 
     for arg in sys.argv[1:]:
-        if arg.startswith('--name='):
-            name = arg.split('=', 1)[1]
-        elif arg.startswith('--color='):
-            color = arg.split('=', 1)[1]
+        if arg.startswith("--name="):
+            name = arg.split("=", 1)[1]
+        elif arg.startswith("--color="):
+            color = arg.split("=", 1)[1]
 
     # Generate color from name if not provided
     if not color:
         color = name_to_color(name)
 
-    color = color.lstrip('#')
+    color = color.lstrip("#")
 
     # Check if already running - send move command instead
     if os.path.exists(SOCKET_PATH):
         # Try to connect
-        if send_command({'type': 'ping'}):
-            print(f"Overlay cursor already running", file=sys.stderr)
+        if send_command({"type": "ping"}):
+            print("Overlay cursor already running", file=sys.stderr)
             sys.exit(0)
         else:
             # Stale socket, remove it
@@ -639,5 +654,5 @@ def main():
             pass
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

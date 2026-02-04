@@ -113,6 +113,7 @@ def _get_env_type_from_task(env_path: Path) -> str:
         # Default to linux-docker for linux and other types
         return "linux-docker"
 
+
 async def _execute_async(args):
     """Execute the interact command asynchronously."""
     from .registry import resolve_task_path

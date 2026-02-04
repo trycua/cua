@@ -128,8 +128,7 @@ class VMProviderFactory:
             except ImportError as e:
                 logger.error(f"Failed to import CloudV2Provider: {e}")
                 raise ImportError(
-                    "CloudV2Provider requires aiohttp. "
-                    "Please install with: pip install aiohttp"
+                    "CloudV2Provider requires aiohttp. " "Please install with: pip install aiohttp"
                 ) from e
         elif provider_type == VMProviderType.WINSANDBOX:
             try:

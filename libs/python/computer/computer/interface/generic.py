@@ -1081,7 +1081,7 @@ class GenericComputerInterface(BaseComputerInterface):
                 raise
 
             target = f"{self.ip_address}:{self._api_port}" if self._api_port else self.ip_address
-            
+
             error_msg = (
                 f"Failed to connect to Computer API Server at {target}. "
                 f"Reason: {str(e)}. "

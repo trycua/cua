@@ -966,19 +966,23 @@ def generate_code_index_parallel(max_concurrent: int = 4) -> dict:
 
     try:
         # Use return_exceptions=True to get results even when some workers fail
-        for i, result in enumerate(index_component.starmap(args, order_outputs=False, return_exceptions=True)):
+        for i, result in enumerate(
+            index_component.starmap(args, order_outputs=False, return_exceptions=True)
+        ):
             comp_name = args[i][0] if i < len(args) else f"component_{i}"
             if isinstance(result, Exception):
                 # Handle individual component failures
                 error_msg = str(result)
                 print(f"[{comp_name}] Component indexing failed: {error_msg}")
-                failed_components.append({
-                    "component": comp_name,
-                    "error": error_msg,
-                    "files": 0,
-                    "embedded": 0,
-                    "failed_tags": len(args[i][1]) if i < len(args) else 0,
-                })
+                failed_components.append(
+                    {
+                        "component": comp_name,
+                        "error": error_msg,
+                        "files": 0,
+                        "embedded": 0,
+                        "failed_tags": len(args[i][1]) if i < len(args) else 0,
+                    }
+                )
             else:
                 results.append(result)
                 print(f"[{comp_name}] Component indexing succeeded")
@@ -1447,7 +1451,9 @@ async def scheduled_code_index():
 
         # Log summary of any failed components
         if result.get("failed_components"):
-            print(f"Warning: {len(result['failed_components'])} component(s) failed during indexing")
+            print(
+                f"Warning: {len(result['failed_components'])} component(s) failed during indexing"
+            )
             for fc in result["failed_components"]:
                 print(f"  - {fc['component']}: {fc['error'][:200]}")
 

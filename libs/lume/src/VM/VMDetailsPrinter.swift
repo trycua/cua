@@ -34,6 +34,7 @@ enum VMDetailsPrinter {
                 }
                 return vm.status
             }),
+        Column(header: "network", width: 12, getValue: { $0.networkMode ?? "nat" }),
         Column(header: "storage", width: 16, getValue: { $0.locationName }),
         Column(
             header: "shared_dirs", width: 54,

@@ -65,6 +65,14 @@ extension Server {
                 unattendedConfig = try UnattendedConfig.load(from: unattendedArg)
             }
 
+            // Parse network mode from request
+            let networkMode: NetworkMode = {
+                if let networkStr = request.network {
+                    return NetworkMode.parse(networkStr) ?? .nat
+                }
+                return .nat
+            }()
+
             // Use async create - returns immediately while VM is provisioned in background
             try vmController.createAsync(
                 name: request.name,
@@ -75,7 +83,8 @@ extension Server {
                 display: request.display,
                 ipsw: request.ipsw,
                 storage: request.storage,
-                unattendedConfig: unattendedConfig
+                unattendedConfig: unattendedConfig,
+                networkMode: networkMode
             )
 
             // Return 202 Accepted - VM creation is in progress
@@ -358,6 +367,14 @@ extension Server {
                 "Successfully parsed shared directories",
                 metadata: ["name": name, "count": "\(dirs.count)"])
 
+            // Parse network mode from request
+            let networkMode: NetworkMode = {
+                if let networkStr = request.network {
+                    return NetworkMode.parse(networkStr) ?? .nat
+                }
+                return .nat
+            }()
+
             // Start VM in background
             Logger.info("Starting VM in background", metadata: ["name": name])
             startVM(
@@ -365,7 +382,8 @@ extension Server {
                 noDisplay: request.noDisplay ?? false,
                 sharedDirectories: dirs,
                 recoveryMode: request.recoveryMode ?? false,
-                storage: request.storage
+                storage: request.storage,
+                networkMode: networkMode
             )
             Logger.info("VM start initiated in background", metadata: ["name": name])
 
@@ -817,7 +835,8 @@ extension Server {
         noDisplay: Bool,
         sharedDirectories: [SharedDirectory] = [],
         recoveryMode: Bool = false,
-        storage: String? = nil
+        storage: String? = nil,
+        networkMode: NetworkMode = .nat
     ) {
         Logger.info(
             "Starting VM in detached task",
@@ -826,6 +845,7 @@ extension Server {
                 "noDisplay": "\(noDisplay)",
                 "recoveryMode": "\(recoveryMode)",
                 "storage": String(describing: storage),
+                "networkMode": "\(networkMode)",
             ])
 
         Task.detached { @MainActor @Sendable in
@@ -845,7 +865,8 @@ extension Server {
                     noDisplay: noDisplay,
                     sharedDirectories: sharedDirectories,
                     recoveryMode: recoveryMode,
-                    storage: storage
+                    storage: storage,
+                    networkMode: networkMode
                 )
                 Logger.info("VM started successfully in background task", metadata: ["name": name])
             } catch {

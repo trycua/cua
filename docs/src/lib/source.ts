@@ -66,27 +66,27 @@ const brandIcons: Record<string, () => React.ReactElement> = {
         strokeLinejoin: 'round',
         className: 'w-4 h-4',
       },
-      // Body segments
-      createElement('ellipse', { cx: 12, cy: 13, rx: 3, ry: 2 }),
-      createElement('ellipse', { cx: 12, cy: 16.5, rx: 2.5, ry: 1.5 }),
-      createElement('ellipse', { cx: 12, cy: 19.5, rx: 2, ry: 1.5 }),
+      // Head
+      createElement('circle', { cx: 12, cy: 6, r: 3 }),
+      // Body
+      createElement('path', { d: 'M12 9v8' }),
+      createElement('path', { d: 'M9 11h6' }),
+      createElement('path', { d: 'M9 14h6' }),
       // Tail fan
-      createElement('path', { d: 'M10 21l-1 2' }),
-      createElement('path', { d: 'M12 21v2' }),
-      createElement('path', { d: 'M14 21l1 2' }),
-      // Arms with tiny claws
-      createElement('path', { d: 'M9 12Q5 10 3 7' }),
-      createElement('path', { d: 'M3 7l-1-1' }),
-      createElement('path', { d: 'M3 7l1-1' }),
-      createElement('path', { d: 'M15 12Q19 10 21 7' }),
-      createElement('path', { d: 'M21 7l1-1' }),
-      createElement('path', { d: 'M21 7l-1-1' }),
+      createElement('path', { d: 'M12 17l-2 3' }),
+      createElement('path', { d: 'M12 17v3' }),
+      createElement('path', { d: 'M12 17l2 3' }),
+      // Claws - left
+      createElement('path', { d: 'M9 6Q5 4 3 5' }),
+      createElement('path', { d: 'M3 5l-1-1' }),
+      createElement('path', { d: 'M3 5l-1 1' }),
+      // Claws - right
+      createElement('path', { d: 'M15 6Q19 4 21 5' }),
+      createElement('path', { d: 'M21 5l1-1' }),
+      createElement('path', { d: 'M21 5l1 1' }),
       // Antennae
-      createElement('path', { d: 'M10 11l-2-2' }),
-      createElement('path', { d: 'M14 11l2-2' }),
-      // Eyes
-      createElement('circle', { cx: 10.5, cy: 12, r: 0.5 }),
-      createElement('circle', { cx: 13.5, cy: 12, r: 0.5 })
+      createElement('path', { d: 'M11 3l-2-2' }),
+      createElement('path', { d: 'M13 3l2-2' })
     ),
 };
 

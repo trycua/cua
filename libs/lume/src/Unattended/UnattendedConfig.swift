@@ -51,16 +51,22 @@ struct UnattendedConfig: Codable, Sendable {
     /// Optional health check to verify setup success
     let healthCheck: HealthCheck?
 
+    /// Optional commands to run via SSH after health check passes
+    /// These are more reliable than typing in Terminal via VNC
+    let postSshCommands: [String]?
+
     enum CodingKeys: String, CodingKey {
         case bootWait = "boot_wait"
         case bootCommands = "boot_commands"
         case healthCheck = "health_check"
+        case postSshCommands = "post_ssh_commands"
     }
 
-    init(bootWait: Int = 60, bootCommands: [String], healthCheck: HealthCheck? = nil) {
+    init(bootWait: Int = 60, bootCommands: [String], healthCheck: HealthCheck? = nil, postSshCommands: [String]? = nil) {
         self.bootWait = bootWait
         self.bootCommands = bootCommands
         self.healthCheck = healthCheck
+        self.postSshCommands = postSshCommands
     }
 
     /// Load configuration from a YAML file path or preset name

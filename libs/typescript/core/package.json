@@ -1,6 +1,6 @@
 {
   "name": "@trycua/core",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "packageManager": "pnpm@10.11.0",
   "description": "Typescript SDK for Cua core.",
   "type": "module",

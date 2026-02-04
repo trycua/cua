@@ -1,5 +1,12 @@
+from unittest.mock import patch
+
 import pytest
 from cua_bench.iconify import clear_cache, process_icons
+
+# Mock SVG response for testing
+MOCK_SVG = (
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>'
+)
 
 
 class TestIconify:
@@ -9,8 +16,10 @@ class TestIconify:
         """Clear cache before each test."""
         clear_cache()
 
-    def test_basic_iconify_processing(self):
+    @patch("cua_bench.iconify._fetch_icon_svg")
+    def test_basic_iconify_processing(self, mock_fetch):
         """Test basic iconify-icon element processing."""
+        mock_fetch.return_value = MOCK_SVG
         html = '<iconify-icon icon="eva:people-outline"></iconify-icon>'
         result = process_icons(html)
 
@@ -19,8 +28,10 @@ class TestIconify:
         assert "</svg>" in result
         assert "iconify-icon" not in result
 
-    def test_iconify_with_attributes(self):
+    @patch("cua_bench.iconify._fetch_icon_svg")
+    def test_iconify_with_attributes(self, mock_fetch):
         """Test iconify-icon with width and height attributes."""
+        mock_fetch.return_value = MOCK_SVG
         html = '<iconify-icon icon="mdi:play" width="24" height="24"></iconify-icon>'
         result = process_icons(html)
 
@@ -29,8 +40,10 @@ class TestIconify:
         assert 'width="24"' in result
         assert 'height="24"' in result
 
-    def test_iconify_with_class(self):
+    @patch("cua_bench.iconify._fetch_icon_svg")
+    def test_iconify_with_class(self, mock_fetch):
         """Test iconify-icon with class attribute."""
+        mock_fetch.return_value = MOCK_SVG
         html = '<iconify-icon icon="mdi:play" class="text-blue-500"></iconify-icon>'
         result = process_icons(html)
 
@@ -38,8 +51,10 @@ class TestIconify:
         assert "<svg" in result
         assert "text-blue-500" in result
 
-    def test_multiple_iconify_elements(self):
+    @patch("cua_bench.iconify._fetch_icon_svg")
+    def test_multiple_iconify_elements(self, mock_fetch):
         """Test processing multiple iconify-icon elements."""
+        mock_fetch.return_value = MOCK_SVG
         html = """
         <div>
             <iconify-icon icon="eva:people-outline"></iconify-icon>
@@ -80,23 +95,27 @@ class TestIconify:
         # Should remove the element if no icon specified
         assert result == ""
 
-    def test_ignore_iconset_option(self):
+    @patch("cua_bench.iconify._fetch_icon_svg")
+    def test_ignore_iconset_option(self, mock_fetch):
         """Test ignore_iconset option for randomization."""
+        mock_fetch.return_value = MOCK_SVG
         html = '<iconify-icon icon="eva:people-outline"></iconify-icon>'
 
         # Process with ignore_iconset=True
         result = process_icons(html, ignore_iconset=True)
 
         # Should still process the icon (may use different iconset)
-        assert "<svg" in result or result == ""  # May not find match
+        assert "<svg" in result
 
-    def test_colon_to_slash_conversion(self):
+    @patch("cua_bench.iconify._fetch_icon_svg")
+    def test_colon_to_slash_conversion(self, mock_fetch):
         """Test that colon notation is converted to slash notation."""
+        mock_fetch.return_value = MOCK_SVG
         html = '<iconify-icon icon="mdi:play"></iconify-icon>'
         result = process_icons(html)
 
         # Should process successfully (internal conversion from mdi:play to mdi/play)
-        assert "<svg" in result or result == ""
+        assert "<svg" in result
 
 
 if __name__ == "__main__":

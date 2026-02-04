@@ -158,7 +158,7 @@ class Environment:
     ) -> Tuple[bytes, Dict]:
         # Reset session state
         if self.session is not None:
-            self.session.close()
+            await self.session.close()
             self.session = None
             self.page = None
 

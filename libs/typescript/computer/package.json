@@ -1,6 +1,6 @@
 {
   "name": "@trycua/computer",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "packageManager": "pnpm@10.11.0",
   "description": "Typescript SDK for Cua computer interaction",
   "type": "module",
@@ -40,10 +40,12 @@
   "dependencies": {
     "@trycua/core": "^0.1.2",
     "pino": "^9.7.0",
+    "uuid": "^11.0.0",
     "ws": "^8.18.0"
   },
   "devDependencies": {
     "@types/node": "^22.15.17",
+    "@types/uuid": "^10.0.0",
     "@types/ws": "^8.18.1",
     "bumpp": "^10.1.0",
     "happy-dom": "^20.0.11",

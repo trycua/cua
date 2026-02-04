@@ -13,6 +13,7 @@ from typing import Any, Dict, List, Literal, Optional, Union, cast
 
 import aiohttp
 import uvicorn
+from core.telemetry import record_event
 from fastapi import (
     FastAPI,
     Header,
@@ -30,6 +31,7 @@ from .handlers.factory import OS_TYPE, HandlerFactory
 # Try to import MCP server for SSE integration
 try:
     from .mcp_server import create_mcp_server
+
     HAS_MCP = True
 except ImportError:
     HAS_MCP = False
@@ -70,6 +72,7 @@ app = FastAPI(
     version="0.1.0",
     websocket_max_size=WEBSOCKET_MAX_SIZE,
     lifespan=_mcp_http_app.lifespan if _mcp_http_app else None,
+    redirect_slashes=False,
 )
 
 # CORS configuration
@@ -108,6 +111,8 @@ except Exception:
     desktop_handler,
     window_handler,
 ) = HandlerFactory.create_handlers()
+
+
 # Helper function for direction-based scrolling
 async def _scroll_direction_handler(direction: str, clicks: int = 1) -> Dict[str, Any]:
     """
@@ -444,6 +449,17 @@ async def websocket_endpoint(websocket: WebSocket):
             logger.info(f"Authentication successful for VM: {client_container_name}")
             await websocket.send_json({"success": True, "message": "Authentication successful"})
 
+            # Emit vm_session_started event for funnel tracking
+            api_key_hash = hashlib.sha256(client_api_key.encode()).hexdigest()
+            record_event(
+                "vm_session_started",
+                {
+                    "api_key_hash": api_key_hash,
+                    "vm_id": client_container_name,
+                    "connection_type": "websocket",
+                },
+            )
+
         except Exception as e:
             logger.error(f"Error during authentication handshake: {str(e)}")
             await websocket.send_json({"success": False, "error": "Authentication failed"})
@@ -568,6 +584,17 @@ async def cmd_endpoint(
         is_authenticated = await auth_manager.auth(container_name, api_key)
         if not is_authenticated:
             raise HTTPException(status_code=401, detail="Authentication failed")
+
+        # Emit vm_session_started event for funnel tracking
+        api_key_hash = hashlib.sha256(api_key.encode()).hexdigest()
+        record_event(
+            "vm_session_started",
+            {
+                "api_key_hash": api_key_hash,
+                "vm_id": container_name,
+                "connection_type": "http",
+            },
+        )
 
     if command not in handlers:
         suggestions = _suggest_similar_commands(command)
@@ -698,12 +725,46 @@ async def agent_response_endpoint(
     # and delegates to our existing automation/file/accessibility handlers.
     from agent.computers import AsyncComputerHandler  # runtime-checkable Protocol
 
+    class DirectComputerInterface:
+        """Interface wrapper providing BrowserTool compatibility.
+
+        Matches the same interface shape as Computer.interface so BrowserTool
+        works identically with both Computer (cloud) and DirectComputer (local).
+        """
+
+        def __init__(self, automation_handler, browser_manager):
+            self._auto = automation_handler
+            self._browser = browser_manager
+
+        @property
+        def interface(self):
+            """Return automation handler for hotkey, move_cursor, etc."""
+            return self._auto
+
+        async def playwright_exec(self, command: str, params: dict) -> dict:
+            """Execute browser command via browser_manager."""
+            return await self._browser.execute_command(command, params)
+
     class DirectComputer(AsyncComputerHandler):
         def __init__(self):
             # use module-scope handler singletons created by HandlerFactory
             self._auto = automation_handler
             self._file = file_handler
             self._access = accessibility_handler
+            # Create interface for BrowserTool compatibility
+            self._interface = DirectComputerInterface(automation_handler, get_browser_manager())
+
+        @property
+        def interface(self):
+            """Return interface compatible with BrowserTool.
+
+            This matches Computer.interface shape so BrowserTool works with either:
+            - computer.interface.interface.hotkey() -> automation
+            - computer.interface.playwright_exec() -> browser commands
+            - direct_computer.interface.interface.hotkey() -> automation
+            - direct_computer.interface.playwright_exec() -> browser commands
+            """
+            return self._interface
 
         async def get_environment(self) -> Literal["windows", "mac", "linux", "browser"]:
             sys = platform.system().lower()

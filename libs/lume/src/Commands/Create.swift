@@ -21,12 +21,13 @@ struct Create: AsyncParsableCommand {
     var cpu: Int = 4
 
     @Option(
-        help: "Memory size, e.g., 8192MB or 8GB. Defaults to 8GB.", transform: { try parseSize($0) }
+        help: "Memory size (e.g., 8, 8GB, or 8192MB). Numbers without units are treated as GB. Defaults to 8GB.",
+        transform: { try parseSize($0) }
     )
     var memory: UInt64 = 8 * 1024 * 1024 * 1024
 
     @Option(
-        help: "Disk size, e.g., 20480MB or 20GB. Defaults to 50GB.",
+        help: "Disk size (e.g., 50, 50GB, or 51200MB). Numbers without units are treated as GB. Defaults to 50GB.",
         transform: { try parseSize($0) })
     var diskSize: UInt64 = 50 * 1024 * 1024 * 1024
 
@@ -79,6 +80,13 @@ struct Create: AsyncParsableCommand {
         // Validate unattended is only used with macOS
         if unattended != nil && os.lowercased() != "macos" {
             throw ValidationError("--unattended is only supported for macOS VMs")
+        }
+
+        // Sanity check disk size
+        let minDiskSizeGB: UInt64 = os.lowercased() == "macos" ? 30 : 10
+        let minDiskSize = minDiskSizeGB * 1024 * 1024 * 1024
+        if diskSize < minDiskSize {
+            throw ValidationError("Disk size \(diskSize / (1024 * 1024 * 1024))GB is too small. Minimum recommended size for \(os) is \(minDiskSizeGB)GB.")
         }
 
         // Load unattended config if provided

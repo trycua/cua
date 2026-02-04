@@ -14,8 +14,7 @@ The CUA MCP server equips AI coding agents with deep knowledge about CUA's APIs,
 
 | Endpoint | URL |
 |----------|-----|
-| SSE Transport | `https://docs-mcp.cua.ai/sse` |
-| HTTP Transport | `https://docs-mcp.cua.ai/http` |
+| SSE Transport | `https://vk-mcp.cua.ai/sse` |
 
 ## Available Tools
 
@@ -48,7 +47,7 @@ The MCP server exposes four read-only query tools:
 {
   "mcpServers": {
     "CUA MCP": {
-      "url": "https://docs-mcp.cua.ai/sse"
+      "url": "https://vk-mcp.cua.ai/sse"
     }
   }
 }
@@ -59,7 +58,7 @@ The MCP server exposes four read-only query tools:
 Add the MCP server using the CLI:
 
 ```bash
-claude mcp add --transport sse cua-mcp https://docs-mcp.cua.ai/sse
+claude mcp add --transport sse cua-mcp https://vk-mcp.cua.ai/sse
 ```
 
 Verify the connection:
@@ -72,7 +71,7 @@ Expected output:
 
 ```
 Checking MCP server health...
-cua-mcp: https://docs-mcp.cua.ai/sse (SSE) - ✓ Connected
+cua-mcp: https://vk-mcp.cua.ai/sse (SSE) - ✓ Connected
 ```
 
 Management commands:
@@ -91,7 +90,7 @@ claude mcp remove cua-mcp -s local
 2. Click **Add custom connector**
 3. Enter the following:
    - **Name**: `CUA MCP`
-   - **URL**: `https://docs-mcp.cua.ai/sse`
+   - **URL**: `https://vk-mcp.cua.ai/sse`
 4. Click **Add**
 
 ### Windsurf
@@ -99,7 +98,7 @@ claude mcp remove cua-mcp -s local
 1. Open Windsurf Settings (bottom right settings button)
 2. Navigate to **Cascade** > **Model Context Protocol**
 3. Click **Add Server** > **Add custom server**
-4. Select **SSE** transport and enter: `https://docs-mcp.cua.ai/sse`
+4. Select **SSE** transport and enter: `https://vk-mcp.cua.ai/sse`
 
 Configuration file location:
 - **macOS**: `~/.codeium/windsurf/mcp_config.json`
@@ -114,7 +113,7 @@ Configuration file location:
 4. Click **Remote Servers** tab
 5. Enter:
    - **Server Name**: `CUA MCP`
-   - **Server URL**: `https://docs-mcp.cua.ai/sse`
+   - **Server URL**: `https://vk-mcp.cua.ai/sse`
 6. Click **Add Server**
 
 ### GitHub Copilot
@@ -126,7 +125,7 @@ Configuration file location:
 {
   "servers": {
     "CUA MCP": {
-      "url": "https://docs-mcp.cua.ai/sse"
+      "url": "https://vk-mcp.cua.ai/sse"
     }
   }
 }
@@ -140,7 +139,7 @@ For any MCP-compatible application:
 
 **SSE Connection**:
 ```
-https://docs-mcp.cua.ai/sse
+https://vk-mcp.cua.ai/sse
 ```
 
 **Common JSON Configuration**:
@@ -148,7 +147,7 @@ https://docs-mcp.cua.ai/sse
 {
   "servers": {
     "CUA MCP": {
-      "url": "https://docs-mcp.cua.ai/sse"
+      "url": "https://vk-mcp.cua.ai/sse"
     }
   }
 }

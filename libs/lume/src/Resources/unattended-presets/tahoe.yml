@@ -1,5 +1,5 @@
-# Unattended macOS Sequoia Setup Assistant Configuration
-# Use with: lume create my-vm --os macOS --ipsw latest --unattended resources/unattended-sequoia.yml
+# Unattended macOS Tahoe Setup Assistant Configuration
+# Use with: lume create my-vm --os macOS --ipsw latest --unattended tahoe
 
 # Seconds to wait after VM boots before starting automation
 boot_wait: 30
@@ -19,8 +19,10 @@ boot_commands:
   - "<wait 'English', timeout=120>"
   - "<delay 1>"
 
-  # Type "English" to filter the list and select it, then press Enter
+  # Type "English" to filter the list, click on "English" to select it, then press Enter
   - "<type 'English'>"
+  - "<delay 1>"
+  - "<click 'English'>"
   - "<delay 1>"
   - "<enter>"
   - "<delay 2>"
@@ -43,17 +45,10 @@ boot_commands:
 
   # Transfer Your Data to This Mac (Migration Assistant)
   - "<wait 'Transfer Your Data'>"
-  - "<delay 20>" # wait for refresh
+  - "<delay 30>" # wait for refresh
   # Use tab navigation to select "Set up as new" (4th option)
-  # Tab order: From a Mac -> From Windows PC -> Set up with iPhone -> Set up as new
-  - "<tab>"
+  - "<click 'Set up as new'>"
   - "<delay 2>"
-  - "<tab>"
-  - "<delay 2>"
-  - "<tab>"
-  - "<delay 2>"
-  - "<space>"
-  - "<delay 1>"
   - "<click 'Continue'>"
   - "<delay 2>"
 
@@ -76,36 +71,32 @@ boot_commands:
   - "<delay 2>"
 
   # Create a Mac Account
-  # Initial focus is on avatar picker (6 icons: +, panda, cow, fox, owl, etc.)
-  # Need to tab 6 times to reach Full Name field
-  # Field order after avatar: Full Name -> Account Name (auto-filled) -> Password -> Verify Password -> Hint -> Checkbox -> Continue
+  # Field order: Full Name -> Account Name (auto-filled) -> Password -> Verify Password -> Hint -> Checkbox -> Continue
   - "<wait 'Create a Mac Account'>"
+  - "<delay 10>"
+  - "<click 'Full Name'>"
   - "<delay 1>"
-  # Tab past avatar picker icons (6 tabs)
-  - "<tab>"
-  - "<delay 1>"
-  - "<tab>"
-  - "<delay 1>"
-  - "<tab>"
-  - "<delay 1>"
-  - "<tab>"
-  - "<delay 1>"
-  - "<tab>"
-  - "<delay 1>"
-  - "<tab>"
   # Type Full Name
   - "<type 'lume'>"
+  - "<delay 1>"
   - "<tab>"
+  - "<delay 1>"
   # Skip Account Name (auto-filled from Full Name)
   - "<tab>"
+  - "<delay 1>"
   # Type Password
   - "<type 'lume'>"
+  - "<delay 1>"
   - "<tab>"
+  - "<delay 1>"
   # Type Verify Password
   - "<type 'lume'>"
+  - "<delay 1>"
   - "<tab>"
+  - "<delay 1>"
   # Skip Hint field
   - "<tab>"
+  - "<delay 1>"
   # Untoggle "Allow computer account password to be reset with Apple Account" checkbox
   - "<space>"
   - "<delay 1>"
@@ -172,21 +163,9 @@ boot_commands:
 
   # Siri (longer timeout as Screen Time page can be slow)
   - "<wait 'Siri', timeout=300>"
-  - "<delay 1>"
-  - "<click 'Continue'>"
   - "<delay 2>"
-
-  # Select a Siri Voice
-  - "<wait 'Select a Siri Voice'>"
-  - "<delay 1>"
-  - "<click 'Choose For Me'>"
+  - "<click 'Enable Ask Siri'>"
   - "<delay 2>"
-
-  # Improve Siri & Dictation - select "Not Now" option
-  - "<wait 'Improve Siri'>"
-  - "<delay 1>"
-  - "<click 'Not Now'>"
-  - "<delay 1>"
   - "<click 'Continue'>"
   - "<delay 2>"
 
@@ -227,114 +206,67 @@ boot_commands:
   - "<click_at 960,540>"
   - "<delay 1>"
 
-  # Open Spotlight with Cmd+Space
+  # ============================================
+  # Enable full keyboard navigation (required for Tab in System Settings)
+  # ============================================
   - "<cmd+space>"
-  - "<delay 2>"
-
-  # Type "Terminal" to search for Terminal app
-  - "<type 'Terminal'>"
-  - "<delay 1>"
-
-  # Press Enter to launch Terminal
+  - "<delay 5>"
+  - "<type 'Termina', delay=350>"
+  - "<delay 5>"
+  - "<enter>"
+  - "<delay 5>"
+  - "<type 'defaults write NSGlobalDomain AppleKeyboardUIMode -int 3', delay=350>"
   - "<enter>"
   - "<delay 3>"
-
-  # ============================================
-  # 1. Enable SSH (Remote Login)
-  # ============================================
-  # Enable Remote Login (SSH) using launchctl (works without Full Disk Access)
-  - "<type 'sudo launchctl load -w /System/Library/LaunchDaemons/ssh.plist'>"
-  - "<enter>"
-  - "<delay 1>"
-
-  # Enter the password when prompted
-  - "<type 'lume'>"
-  - "<enter>"
-  - "<delay 2>"
-
-  # ============================================
-  # 2. Enable Auto-Login (macOS Ventura+)
-  # ============================================
-  # Use sysadminctl to enable auto-login for the lume user
-  - "<type 'sudo sysadminctl -autologin set -userName lume -password lume'>"
-  - "<enter>"
-  - "<delay 2>"
-
-  # ============================================
-  # 3. Disable Screen Lock and Sleep
-  # ============================================
-  # Disable screen saver
-  - "<type 'defaults -currentHost write com.apple.screensaver idleTime -int 0'>"
-  - "<enter>"
-  - "<delay 1>"
-
-  # Disable require password after sleep/screen saver
-  - "<type 'defaults write com.apple.screensaver askForPassword -int 0'>"
-  - "<enter>"
-  - "<delay 1>"
-
-  # Prevent display from sleeping (never)
-  - "<type 'sudo pmset -a displaysleep 0'>"
-  - "<enter>"
-  - "<delay 1>"
-
-  # Prevent system sleep (never)
-  - "<type 'sudo pmset -a sleep 0'>"
-  - "<enter>"
-  - "<delay 1>"
-
-  # Disable auto-logout
-  - "<type 'sudo defaults write /Library/Preferences/.GlobalPreferences com.apple.autologout.AutoLogOutDelay -int 0'>"
-  - "<enter>"
-  - "<delay 1>"
-
-  # ============================================
-  # 4. Enable Full Disk Access for Remote Users
-  # ============================================
-  # This requires navigating System Settings GUI since TCC.db is SIP-protected
-
-  # Enable full keyboard navigation so Tab works on all UI elements
-  - "<type 'defaults write NSGlobalDomain AppleKeyboardUIMode -int 3'>"
-  - "<enter>"
-  - "<delay 1>"
-
-  # Close Terminal
   - "<cmd+q>"
+  - "<delay 4>"
+
+  # Click on desktop to refocus
+  - "<click_at 960,540>"
   - "<delay 1>"
 
+  # ============================================
+  # Enable SSH and Full Disk Access via System Settings
+  # ============================================
   # Open Spotlight and search for System Settings
   - "<cmd+space>"
   - "<delay 2>"
   - "<type 'System Settings'>"
-  - "<delay 1>"
+  - "<delay 2>"
   - "<enter>"
-  - "<delay 3>"
+  - "<delay 5>"
 
-  # Click on the search bar, then search for Remote Login
-  - "<click 'Search'>"
+  # Wait for System Settings to fully load (sidebar shows General)
+  - "<wait 'General', timeout=30>"
+  - "<delay 2>"
+
+  # Search for Remote Login settings
+  - "<cmd+f>"
   - "<delay 1>"
-  - "<type 'Remote'>"
+  - "<type 'login'>"
   - "<delay 2>"
   - "<click 'Remote Login'>"
-  - "<delay 2>"
+  - "<delay 30>"
 
-  # Tab twice to reach the "Allow full disk access" toggle, then Space to toggle
-  - "<tab>"
-  - "<delay 0.3>"
+  # Enable Remote Login toggle (first toggle on the page)
   - "<space>"
-  - "<delay 2>"
+  - "<delay 5>"
+  - "<tab>"
+  - "<delay 5>"
+  - "<space>"
+  - "<delay 5>"
+  - "<click 'Done'>"
+  - "<delay 5>"
 
   # Close System Settings
   - "<cmd+q>"
-  - "<delay 1>"
+  - "<delay 2>"
 
   # ============================================
   # Setup Complete!
   # ============================================
   # SSH is now enabled - Connect with: ssh lume@<ip-address> (password: lume)
-  # Auto-login is enabled - VM will boot directly to desktop
-  # Screen lock and sleep are disabled - VM stays awake and unlocked
-  # Full disk access for remote users is enabled via TCC database
+  # Full disk access for remote users is enabled
 
 # Health check to verify setup was successful
 # This will SSH into the VM to confirm SSH is working
@@ -345,3 +277,26 @@ health_check:
   timeout: 30
   retries: 5
   retry_delay: 10
+
+# Post-setup commands to run via SSH after health check passes
+# These are more reliable than typing in Terminal via VNC
+post_ssh_commands:
+  # Enable auto-login for the lume user
+  - "sudo sysadminctl -autologin set -userName lume -password lume"
+  # Generate kcpassword for auto-login (sysadminctl alone doesn't always create it)
+  - "perl -e 'my @k=(125,137,82,35,210,188,221,234,163,185,31);my @p=unpack(q{C*},q{lume});my @e;for my $i(0..$#p){$e[$i]=$p[$i]^$k[$i%scalar@k]}my $r=scalar@e%12;push@e,(0)x(12-$r) if $r;open my $f,q{>},q{/tmp/kcp};binmode $f;print $f pack(q{C*},@e);close $f'"
+  - "sudo cp /tmp/kcp /etc/kcpassword"
+  - "sudo chmod 600 /etc/kcpassword"
+  - "rm /tmp/kcp"
+  # Disable screen saver
+  - "defaults -currentHost write com.apple.screensaver idleTime -int 0"
+  # Disable require password after sleep/screen saver
+  - "defaults write com.apple.screensaver askForPassword -int 0"
+  # Set password delay to 0 (no delay before requiring password)
+  - "defaults write com.apple.screensaver askForPasswordDelay -int 0"
+  # Prevent display from sleeping (never)
+  - "sudo pmset -a displaysleep 0"
+  # Prevent system sleep (never)
+  - "sudo pmset -a sleep 0"
+  # Disable auto-logout
+  - "sudo defaults write /Library/Preferences/.GlobalPreferences com.apple.autologout.AutoLogOutDelay -int 0"

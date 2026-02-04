@@ -112,8 +112,7 @@ Terminal=false
     async def uninstall_linux(self: "BoundApp", **kwargs) -> None:
         """Uninstall Unity from Linux."""
         await self.session.run_command(
-            "sudo apt-get remove -y unityhub && "
-            "rm -f ~/Desktop/UnityHub",
+            "sudo apt-get remove -y unityhub && " "rm -f ~/Desktop/UnityHub",
             check=False,
         )
 
@@ -190,7 +189,7 @@ Terminal=false
     async def uninstall_windows(self: "BoundApp", **kwargs) -> None:
         """Uninstall Unity from Windows."""
         await self.session.run_command(
-            'winget uninstall -e --id Unity.UnityHub',
+            "winget uninstall -e --id Unity.UnityHub",
             check=False,
         )
 

@@ -49,18 +49,24 @@ def init_telemetry():
 
     try:
         from opentelemetry import metrics, trace
-        from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter
-        from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+        from opentelemetry.exporter.otlp.proto.http.metric_exporter import (
+            OTLPMetricExporter,
+        )
+        from opentelemetry.exporter.otlp.proto.http.trace_exporter import (
+            OTLPSpanExporter,
+        )
         from opentelemetry.sdk.metrics import MeterProvider
         from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
         from opentelemetry.sdk.resources import Resource
         from opentelemetry.sdk.trace import TracerProvider
         from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
-        resource = Resource.create({
-            "service.name": OTEL_SERVICE_NAME,
-            "service.version": "1.0.0",
-        })
+        resource = Resource.create(
+            {
+                "service.name": OTEL_SERVICE_NAME,
+                "service.version": "1.0.0",
+            }
+        )
 
         # Set up tracing
         trace_exporter = OTLPSpanExporter(endpoint=f"{OTEL_ENDPOINT}/v1/traces")
@@ -213,14 +219,18 @@ print("Database initialization complete.")
 def get_lance_table():
     """Get LanceDB connection for docs (eagerly loaded)"""
     if _docs_lance_table is None:
-        raise RuntimeError("Database not found. Ensure the docs database is mounted at DOCS_DB_PATH.")
+        raise RuntimeError(
+            "Database not found. Ensure the docs database is mounted at DOCS_DB_PATH."
+        )
     return _docs_lance_table
 
 
 def get_sqlite_conn():
     """Get read-only SQLite connection for docs (eagerly loaded)"""
     if _docs_sqlite_conn is None:
-        raise RuntimeError("SQLite database not found. Ensure docs.sqlite is present in DOCS_DB_PATH.")
+        raise RuntimeError(
+            "SQLite database not found. Ensure docs.sqlite is present in DOCS_DB_PATH."
+        )
     return _docs_sqlite_conn
 
 

@@ -11,6 +11,7 @@ Provides screenshot and input tools for Claude coding agents
 
 import os
 import time
+
 import httpx
 from fastmcp import FastMCP
 from fastmcp.utilities.types import Image
@@ -30,6 +31,7 @@ client = httpx.Client(base_url=HOST_URL, timeout=30.0)
 
 # Separate client for telemetry with short timeout
 telemetry_client = httpx.Client(base_url=HOST_URL, timeout=1.0)
+
 
 def log_mcp_tool_call(tool_name: str, tool_args: dict) -> None:
     """Send MCP tool call telemetry to cuabotd"""
@@ -74,6 +76,7 @@ def request(endpoint: str, body: dict | None = None) -> dict:
 def screenshot() -> Image:
     """Take a screenshot of the display. Returns JPEG image."""
     import base64
+
     log_mcp_tool_call("screenshot", {})
     result = request("screenshot")
     image_bytes = base64.b64decode(result["image"])

@@ -132,10 +132,10 @@ class Godot(App):
 
         # Download and extract to Desktop
         await self.session.run_command(
-            f'cd %USERPROFILE%\\Desktop && '
-            f'curl -L -o {zip_file} {download_url} && '
-            f'tar -xf {zip_file} && '
-            f'del {zip_file}',
+            f"cd %USERPROFILE%\\Desktop && "
+            f"curl -L -o {zip_file} {download_url} && "
+            f"tar -xf {zip_file} && "
+            f"del {zip_file}",
             check=False,
         )
 
@@ -212,7 +212,7 @@ class Godot(App):
         if with_shortcut:
             # Create alias
             await self.session.run_command(
-                f'ln -sf ~/Desktop/Godot.app ~/Desktop/Godot',
+                "ln -sf ~/Desktop/Godot.app ~/Desktop/Godot",
                 check=False,
             )
 

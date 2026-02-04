@@ -158,7 +158,7 @@ export async function checkXpra(): Promise<{ ok: boolean; message: string; quara
         try {
           const { stdout } = await execAsync("xattr /Applications/Xpra.app");
           if (stdout.includes("com.apple.quarantine")) {
-            return { ok: false, message: `Xpra is installed but quarantined. Run: xattr -d com.apple.quarantine /Applications/Xpra.app`, quarantined: true };
+            return { ok: false, message: `Xpra is installed but quarantined. Run: sudo xattr -cr /Applications/Xpra.app`, quarantined: true };
           }
         } catch {
           // xattr command failed, ignore

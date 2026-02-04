@@ -1,5 +1,6 @@
 {
   "title": "OpenClaw",
   "description": "Run OpenClaw messaging gateway in a macOS VM",
+  "icon": "lobster",
   "pages": ["index"]
 }

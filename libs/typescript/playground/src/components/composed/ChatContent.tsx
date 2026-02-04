@@ -59,6 +59,9 @@ interface ChatContentProps {
   examplePrompts?: ExamplePrompt[];
   onExamplePromptSelected?: (promptId: string, promptTitle: string) => void;
 
+  // Toast callback for user notifications
+  onToast?: (message: string, type?: 'success' | 'error' | 'info') => void;
+
   // Custom class name
   className?: string;
 }
@@ -83,6 +86,7 @@ export function ChatContent({
   darkLogoUrl = '/cua_logo_white_new.svg',
   examplePrompts,
   onExamplePromptSelected,
+  onToast,
   className,
 }: ChatContentProps) {
   const { handleSendMessage, handleStopResponse, handleTimeout, handleRetry } = useAgentRequest();
@@ -140,6 +144,14 @@ export function ChatContent({
         url: agentUrl,
       } as Computer;
       chatDispatch({ type: 'SET_COMPUTER', payload: chatComputer });
+
+      // Warn if selecting an offline computer
+      if (computerInfo.status !== 'running') {
+        onToast?.(
+          'Selected sandbox is not running. Please start it before sending messages.',
+          'error'
+        );
+      }
     }
   };
 

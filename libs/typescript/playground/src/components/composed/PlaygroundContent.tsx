@@ -248,6 +248,7 @@ export function PlaygroundContent({
             welcomeMessage={welcomeMessage}
             selectionHint={selectionHint}
             onExamplePromptSelected={onExamplePromptSelected}
+            onToast={onToast}
           />
         ) : (
           <motion.div
@@ -287,6 +288,7 @@ export function PlaygroundContent({
         sidebarSkeleton={sidebarSkeleton}
         vncOverlayPanel={vncOverlayPanel}
         chatsLoading={chatsLoading}
+        onToast={onToast}
       >
         {renderContent()}
       </PlaygroundLayout>

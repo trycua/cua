@@ -38,6 +38,8 @@ interface ChatListProps {
   onExportChat?: (chat: Chat) => void;
   /** Callback for replaying a chat */
   onReplayChat?: (chat: Chat) => void;
+  /** Toast callback for user notifications */
+  onToast?: (message: string, type?: 'success' | 'error' | 'info') => void;
 }
 
 export function ChatList({
@@ -46,6 +48,7 @@ export function ChatList({
   onChatSelect,
   onExportChat,
   onReplayChat,
+  onToast,
 }: ChatListProps) {
   const { state, dispatch, adapters } = usePlayground();
   const { chats, activeChatId } = state;
@@ -83,10 +86,12 @@ export function ChatList({
       onCreateChat?.();
     } catch (error) {
       console.error('Failed to create chat:', error);
+      const message = error instanceof Error ? error.message : 'Unknown error occurred';
+      onToast?.(`Failed to create chat: ${message}`, 'error');
     } finally {
       setIsCreating(false);
     }
-  }, [defaultModel, dispatch, isCreating, adapters.persistence, onCreateChat]);
+  }, [defaultModel, dispatch, isCreating, adapters.persistence, onCreateChat, onToast]);
 
   const handleDeleteConfirm = async () => {
     if (!deleteConfirmChat) return;
@@ -98,6 +103,8 @@ export function ChatList({
       setDeleteConfirmChat(null);
     } catch (error) {
       console.error('Failed to delete chat:', error);
+      const message = error instanceof Error ? error.message : 'Unknown error occurred';
+      onToast?.(`Failed to delete chat: ${message}`, 'error');
     } finally {
       setIsDeleting(false);
     }
@@ -120,6 +127,8 @@ export function ChatList({
         }
       } catch (error) {
         console.error('Failed to load chat messages:', error);
+        const message = error instanceof Error ? error.message : 'Unknown error occurred';
+        onToast?.(`Failed to load chat: ${message}`, 'error');
       } finally {
         setLoadingChatId(null);
       }
@@ -250,7 +259,7 @@ export function ChatList({
         ))}
 
         {sortedChats.length === 0 && (
-          <div className="px-2 py-4 text-center text-neutral-500 text-sm dark:text-neutral-400">
+          <div className="px-2 py-4 text-neutral-500 text-sm dark:text-neutral-400">
             No chats yet
           </div>
         )}

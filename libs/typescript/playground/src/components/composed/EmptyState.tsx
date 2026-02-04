@@ -28,6 +28,8 @@ interface EmptyStateWithInputProps {
   selectionHint?: string;
   /** Optional telemetry callback when example prompt is selected */
   onExamplePromptSelected?: (promptId: string, promptTitle: string) => void;
+  /** Toast callback for user notifications */
+  onToast?: (message: string, type?: 'success' | 'error' | 'info') => void;
 }
 
 /**
@@ -41,6 +43,7 @@ export function EmptyStateWithInput({
   welcomeMessage = 'How can I help you today?',
   selectionHint = 'Make sure to select a model and sandbox!',
   onExamplePromptSelected,
+  onToast,
 }: EmptyStateWithInputProps) {
   return (
     <ChatProvider chat={draftChat}>
@@ -51,6 +54,7 @@ export function EmptyStateWithInput({
         welcomeMessage={welcomeMessage}
         selectionHint={selectionHint}
         onExamplePromptSelected={onExamplePromptSelected}
+        onToast={onToast}
       />
     </ChatProvider>
   );
@@ -67,6 +71,7 @@ interface EmptyStateContentProps {
   welcomeMessage: string;
   selectionHint: string;
   onExamplePromptSelected?: (promptId: string, promptTitle: string) => void;
+  onToast?: (message: string, type?: 'success' | 'error' | 'info') => void;
 }
 
 /**
@@ -79,6 +84,7 @@ function EmptyStateContent({
   welcomeMessage,
   selectionHint,
   onExamplePromptSelected,
+  onToast,
 }: EmptyStateContentProps) {
   const chatState = useChat();
   const chatDispatch = useChatDispatch();
@@ -91,6 +97,10 @@ function EmptyStateContent({
     try {
       await onCreateAndSend(chatState.currentInput.trim());
       chatDispatch({ type: 'CLEAR_INPUT' });
+    } catch (error) {
+      console.error('Failed to create chat:', error);
+      const message = error instanceof Error ? error.message : 'Unknown error occurred';
+      onToast?.(`Failed to send message: ${message}`, 'error');
     } finally {
       setIsCreating(false);
     }
@@ -126,12 +136,12 @@ function EmptyStateContent({
     }
   };
 
-  // Convert ComputerInfo[] to Computer[] for ChatInput
+  // Pass through computers with all properties (including vmId, status, etc.)
+  // The cloudAdapter already includes VM properties needed for status display
   const computers: Computer[] = state.computers.map((c) => ({
-    id: c.id,
-    name: c.name,
+    ...c,
     url: c.agentUrl,
-  }));
+  })) as Computer[];
 
   return (
     <motion.div

@@ -91,7 +91,7 @@ export { default as TrajectoryViewer } from './components/TrajectoryViewer';
 
 // Telemetry
 export { TelemetryProvider, usePlaygroundTelemetry } from './telemetry';
-export type { TelemetryProviderProps } from './telemetry';
+export type { TelemetryProviderProps, TelemetryFunctions } from './telemetry';
 
 // Main Playground Component
 export { Playground } from './components/Playground';

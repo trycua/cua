@@ -173,13 +173,6 @@ export function PlaygroundProvider({ adapters, children, initialChats }: Playgro
           adapters.inference.getAvailableModels(),
         ]);
 
-        console.log('[PlaygroundProvider] Initialized:', {
-          chats: chats.length,
-          computers: computers.length,
-          models: models.length,
-          computersData: computers,
-        });
-
         dispatch({ type: 'SET_CHATS', payload: chats });
         dispatch({ type: 'SET_COMPUTERS', payload: computers });
         dispatch({ type: 'SET_MODELS', payload: models });

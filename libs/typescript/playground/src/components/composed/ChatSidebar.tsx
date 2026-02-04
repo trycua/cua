@@ -282,7 +282,7 @@ export function ChatSidebar({
         ))}
 
         {sortedChats.length === 0 && (
-          <div className="px-2 py-4 text-center text-neutral-500 text-sm dark:text-neutral-400">
+          <div className="px-2 py-4 text-neutral-500 text-sm dark:text-neutral-400">
             No chats yet
           </div>
         )}

@@ -471,8 +471,6 @@ const TrajectoryViewer: React.FC<TrajectoryViewerProps> = ({
           };
         }
 
-        console.log('Processing file:', fileName);
-
         // Determine file type
         let fileType = 'other';
         if (
@@ -509,7 +507,6 @@ const TrajectoryViewer: React.FC<TrajectoryViewerProps> = ({
 
       updateFolders();
       setIsLoading(false);
-      console.log('Processing complete');
     },
     [parseAgentResponse, getCursorPosition]
   );
@@ -943,7 +940,6 @@ const TrajectoryViewer: React.FC<TrajectoryViewerProps> = ({
         }
 
         const zipBlob = await response.blob();
-        console.log('[Trajectory Viewer] Zip file fetched, processing...');
 
         // Create a zip reader
         const zipReader = new ZipReader(new BlobReader(zipBlob));
@@ -1019,8 +1015,6 @@ const TrajectoryViewer: React.FC<TrajectoryViewerProps> = ({
 
         // Close the zip reader
         await zipReader.close();
-
-        console.log(`[Trajectory Viewer] Extracted ${extractedFiles.length} files from zip`);
 
         // Process the extracted files
         if (extractedFiles.length > 0) {
@@ -1128,10 +1122,6 @@ const TrajectoryViewer: React.FC<TrajectoryViewerProps> = ({
       processedUrlsRef.current = `${mp4Url},${jsonUrl}`;
 
       try {
-        console.log('[Trajectory Viewer] Starting processMP4Json with lazy loading:', {
-          mp4Url,
-          jsonUrl,
-        });
         setIsLoading(true);
 
         // Fetch both files in parallel
@@ -1268,8 +1258,6 @@ const TrajectoryViewer: React.FC<TrajectoryViewerProps> = ({
             setCursorTarget(initialPosition);
           }
         }
-
-        console.log('[Trajectory Viewer] Lazy loading initialized, first frame ready');
       } catch (error) {
         console.error('[Trajectory Viewer] Error processing MP4 and JSON files:', error);
         setIsLoading(false);

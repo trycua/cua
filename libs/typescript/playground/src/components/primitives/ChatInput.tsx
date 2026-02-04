@@ -25,7 +25,7 @@ function groupComputersByWorkspace(
   const groups = new Map<string, Computer[]>();
 
   for (const computer of computers) {
-    const wsName = isVM(computer) ? ((computer as VM).workspaceName ?? 'Custom') : 'Custom';
+    const wsName = isVM(computer) ? 'Sandboxes' : 'Custom';
     if (!groups.has(wsName)) {
       groups.set(wsName, []);
     }

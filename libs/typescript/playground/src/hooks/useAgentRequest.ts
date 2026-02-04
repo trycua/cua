@@ -3,6 +3,7 @@
 
 import { useEffect, useRef, useCallback } from 'react';
 import { usePlayground, useChat, useChatDispatch } from './usePlayground';
+import { usePlaygroundTelemetry } from '../telemetry';
 import type { AgentMessage, UserMessage } from '../types';
 import { isVM, isCustomComputer } from '../types';
 
@@ -11,6 +12,7 @@ interface AgentClientOptions {
   timeout?: number;
   retries?: number;
   signal?: AbortSignal;
+  apiKey?: string;
   onRetry?: (attempt: number, maxRetries: number) => void;
 }
 
@@ -31,11 +33,15 @@ class AgentClient {
 
   async health(): Promise<{ status: 'ok' | 'unreachable' }> {
     try {
-      const response = await fetch(`${this.baseUrl}/health`, {
-        method: 'GET',
+      // Try /cmd endpoint (cloud sandboxes use this for health checks)
+      await fetch(`${this.baseUrl}/cmd`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ command: 'version', params: {} }),
         signal: this.options.signal || AbortSignal.timeout(5000),
       });
-      return { status: response.ok ? 'ok' : 'unreachable' };
+      // Consider server reachable if we get any response (even 4xx means server is up)
+      return { status: 'ok' };
     } catch {
       return { status: 'unreachable' };
     }
@@ -58,9 +64,16 @@ class AgentClient {
             onRetry?.(attempt, retries);
           }
 
-          const response = await fetch(`${this.baseUrl}/v1/responses`, {
+          const headers: Record<string, string> = {
+            'Content-Type': 'application/json',
+          };
+          if (this.options.apiKey) {
+            headers['X-API-Key'] = this.options.apiKey;
+          }
+
+          const response = await fetch(`${this.baseUrl}/responses`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers,
             body: JSON.stringify({
               model: params.model,
               input: params.input,
@@ -96,6 +109,12 @@ export function useAgentRequest() {
   const { adapters, state, dispatch: playgroundDispatch } = usePlayground();
   const chatState = useChat();
   const chatDispatch = useChatDispatch();
+  const {
+    trackMessageSent,
+    trackTrajectoryCompleted,
+    trackTrajectoryFailed,
+    trackTrajectoryStopped,
+  } = usePlaygroundTelemetry();
 
   const shouldStopResponseRef = useRef(false);
   const abortReasonRef = useRef<'manual' | 'timeout' | null>(null);
@@ -184,27 +203,46 @@ export function useAgentRequest() {
       chatDispatch({ type: 'SET_RETRY_STATE', payload: null });
 
       try {
-        // Get computer URL
+        // Get computer URL - this is the sandbox/agent server URL
         let hostName = '';
         if (isVM(computer)) {
-          hostName = computer.vncUrl?.replace(/^https?:\/\//, '').split(':')[0] || '';
+          // For VMs, extract hostname from vncUrl or use host property
+          hostName =
+            (computer as { host?: string }).host ||
+            computer.vncUrl?.replace(/^https?:\/\//, '').split(/[:/]/)[0] ||
+            '';
         } else if (isCustomComputer(computer)) {
-          hostName = computer.url.replace(/^https?:\/\//, '').split(':')[0] || '';
+          hostName = computer.url.replace(/^https?:\/\//, '').split(/[:/]/)[0] || '';
         }
 
-        // Get inference config from adapter
+        // Build computer server URL (sandbox agent)
+        // Use http for localhost, https otherwise
+        const protocol = hostName === 'localhost' || hostName === '127.0.0.1' ? 'http' : 'https';
+        const port = '8443';
+        const computerServerUrl = `${protocol}://${hostName}:${port}`;
+
+        // Get inference config from adapter (for env vars like CUA_BASE_URL)
         const currentComputer = state.computers.find((c) => c.id === state.currentComputerId);
         const inferenceConfig = currentComputer
           ? await adapters.inference.getConfig(currentComputer)
           : { baseUrl: '', env: {} };
 
-        const computerServerUrl = inferenceConfig.baseUrl || `https://${hostName}:8443`;
+        // Build environment variables for the agent
+        // The inference API URL goes in env, not as the agent server URL
+        const env: Record<string, string> = { ...inferenceConfig.env };
+        if (inferenceConfig.baseUrl) {
+          env.CUA_BASE_URL = inferenceConfig.baseUrl;
+        }
+        if (inferenceConfig.apiKey) {
+          env.CUA_API_KEY = inferenceConfig.apiKey;
+        }
 
         const agentClient = new AgentClient(computerServerUrl, {
+          apiKey: inferenceConfig.apiKey,
           timeout: 120000,
           retries: 3,
           signal: abortController.signal,
-          env: inferenceConfig.env,
+          env,
           onRetry: (attempt, maxRetries) => {
             chatDispatch({
               type: 'SET_RETRY_STATE',
@@ -212,12 +250,6 @@ export function useAgentRequest() {
             });
           },
         });
-
-        // Pre-request health check
-        const health = await agentClient.health();
-        if (health.status === 'unreachable') {
-          throw new Error('Computer is not responding. Please check if it is running.');
-        }
 
         if (shouldStopResponseRef.current) {
           const chatId = currentRequestRef.current?.chatId;
@@ -228,13 +260,20 @@ export function useAgentRequest() {
           return;
         }
 
+        // Handle backward compatibility: add "cua/" prefix if not already present
+        let modelId = model.id;
+        if (!modelId.startsWith('cua/')) {
+          modelId = `cua/${modelId}`;
+        }
+
         const res = await agentClient.responses.create({
-          model: model.id,
+          model: modelId,
           input: messages,
           agent_kwargs: {
             use_prompt_caching: false,
             only_n_most_recent_images: 3,
           },
+          env,
         });
 
         if (shouldStopResponseRef.current) {
@@ -254,6 +293,7 @@ export function useAgentRequest() {
 
         // Check if response failed
         if (res?.status === 'failed' && res?.error) {
+          trackTrajectoryFailed({ model, errorType: 'agent_error' });
           const chatId = currentRequestRef.current?.chatId;
           if (chatId) setGlobalGenerating(chatId, false);
           chatDispatch({ type: 'SET_WAITING', payload: false });
@@ -291,6 +331,17 @@ export function useAgentRequest() {
           } else {
             // Completed
             const chatId = currentRequestRef.current?.chatId;
+            const iterationCount = currentRequestRef.current?.iterationCount || 0;
+            const startTime = currentRequestRef.current?.startTime || Date.now();
+            const durationMs = Date.now() - startTime;
+
+            // Track trajectory completion
+            trackTrajectoryCompleted({
+              model,
+              iterationCount,
+              durationMs,
+            });
+
             if (chatId) setGlobalGenerating(chatId, false);
             chatDispatch({ type: 'SET_WAITING', payload: false });
             chatDispatch({ type: 'SET_RETRY_STATE', payload: null });
@@ -315,6 +366,7 @@ export function useAgentRequest() {
           (error.message.includes('aborted') || error.name === 'AbortError');
 
         if (wasAborted && abortReasonRef.current === 'manual') {
+          trackTrajectoryStopped({ model });
           abortReasonRef.current = null;
           currentRequestRef.current = null;
           return;
@@ -333,6 +385,7 @@ export function useAgentRequest() {
           }
         }
 
+        trackTrajectoryFailed({ model, errorType: errorMessage });
         abortReasonRef.current = null;
         currentRequestRef.current = null;
         chatDispatch({
@@ -351,6 +404,9 @@ export function useAgentRequest() {
       setGlobalGenerating,
       setMessages,
       persistMessages,
+      trackTrajectoryCompleted,
+      trackTrajectoryFailed,
+      trackTrajectoryStopped,
     ]
   );
 
@@ -405,6 +461,15 @@ export function useAgentRequest() {
     setGlobalGenerating(chatId, true);
     chatDispatch({ type: 'SET_WAITING', payload: true });
 
+    // Track message sent for telemetry
+    const isFirstMessage = (messages?.length || 0) === 0;
+    trackMessageSent({
+      model,
+      isFirstMessage,
+      sandboxType: isVM(computer) ? 'vm' : 'custom',
+      message: currentInput,
+    });
+
     await sendAgentRequest(updatedMessages, abortController);
   }, [
     chatDispatch,
@@ -413,6 +478,7 @@ export function useAgentRequest() {
     persistMessages,
     persistTitle,
     sendAgentRequest,
+    trackMessageSent,
   ]);
 
   const handleStopResponse = useCallback(() => {

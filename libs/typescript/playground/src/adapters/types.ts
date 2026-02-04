@@ -103,6 +103,9 @@ export interface InferenceConfig {
   /** Model to use (optional, may be selected by user) */
   model?: string;
 
+  /** API key for authenticating with the agent server */
+  apiKey?: string;
+
   /** Environment variables to pass to the agent */
   env?: Record<string, string>;
 }

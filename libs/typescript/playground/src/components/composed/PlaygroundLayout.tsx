@@ -47,6 +47,8 @@ interface PlaygroundLayoutProps {
   chatsLoading?: boolean;
   /** Callback when chat is selected */
   onChatSelect?: () => void;
+  /** Toast callback for user notifications */
+  onToast?: (message: string, type?: 'success' | 'error' | 'info') => void;
 }
 
 export function PlaygroundLayout({
@@ -64,6 +66,7 @@ export function PlaygroundLayout({
   vncOverlayPanel,
   chatsLoading = false,
   onChatSelect,
+  onToast,
 }: PlaygroundLayoutProps) {
   const { state, dispatch } = usePlayground();
   const { isSidebarCollapsed } = state;
@@ -216,6 +219,7 @@ export function PlaygroundLayout({
               onChatSelect={handleChatSelect}
               onExportChat={onExportChat}
               onReplayChat={onReplayChat}
+              onToast={onToast}
             />
           )}
         </motion.div>

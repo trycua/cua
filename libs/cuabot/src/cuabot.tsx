@@ -5,9 +5,19 @@
 
 import { startServer, stopServer, getServerInfo, setSessionName as setServerSessionName } from "./cuabotd.js";
 import { ensureServerRunning, setSessionName as setClientSessionName } from "./client.js";
-import { getDefaultAgent, AGENTS, AgentId } from "./settings.js";
+import { getDefaultAgent, AGENTS, AgentId, getAliasIgnored } from "./settings.js";
 import { runOnboarding } from "./onboarding.js";
 import { log_cli_invocation } from "./telemetry.js";
+import { execSync } from "child_process";
+
+function isCuabotInPath(): boolean {
+  try {
+    execSync("which cuabot", { stdio: "ignore" });
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 const args = process.argv.slice(2);
 
@@ -357,19 +367,23 @@ Commands:
   // No args: run default agent or onboarding
   if (remainingArgs.length === 0) {
     const defaultAgent = getDefaultAgent();
-    if (defaultAgent) {
-      try {
-        await runAgent(defaultAgent);
-      } catch (err) {
-        // If dependencies fail, show onboarding
-        if (err instanceof Error && err.message.includes("Missing dependencies")) {
-          runOnboarding();
-          return;
-        }
-        throw err;
-      }
-    } else {
+    const needsAliasSetup = !isCuabotInPath() && !getAliasIgnored();
+
+    // Show onboarding if no default agent or alias needs setup
+    if (!defaultAgent || needsAliasSetup) {
       runOnboarding();
+      return;
+    }
+
+    try {
+      await runAgent(defaultAgent);
+    } catch (err) {
+      // If dependencies fail, show onboarding
+      if (err instanceof Error && err.message.includes("Missing dependencies")) {
+        runOnboarding();
+        return;
+      }
+      throw err;
     }
     return;
   }

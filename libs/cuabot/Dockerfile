@@ -114,6 +114,9 @@ ENV AGENT_BROWSER_HEADED=1
 COPY --chown=user:user src/prompts/.mcp.json /home/user/.mcp.json
 COPY --chown=user:user src/prompts/SYSTEM.md /home/user/CLAUDE.md
 
+# Copy MCP server files
+COPY --chown=user:user src/mcp /home/user/.cuabot/mcp
+
 EXPOSE 10000
 
 USER user

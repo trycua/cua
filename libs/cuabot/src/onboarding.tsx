@@ -9,7 +9,7 @@ import { checkDocker, checkXpra, checkPlaywright } from "./utils.js";
 import { AGENTS, AgentId, getDefaultAgent, setDefaultAgent, setTelemetryEnabled, loadSettings, getAliasIgnored, setAliasIgnored } from "./settings.js";
 import { exec, execSync } from "child_process";
 import { homedir } from "os";
-import { appendFileSync, existsSync, readFileSync } from "fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { join } from "path";
 
 type CheckStatus = "ok" | "error" | "loading";
@@ -22,7 +22,8 @@ interface Check {
 
 function checkCuabotInPath(): boolean {
   try {
-    execSync("which cuabot", { stdio: "ignore" });
+    const cmd = process.platform === "win32" ? "where cuabot" : "which cuabot";
+    execSync(cmd, { stdio: "ignore" });
     return true;
   } catch {
     return false;
@@ -30,6 +31,15 @@ function checkCuabotInPath(): boolean {
 }
 
 function getShellRcFile(): string | null {
+  if (process.platform === "win32") {
+    // PowerShell profile paths
+    const ps7Profile = join(homedir(), "Documents", "PowerShell", "Microsoft.PowerShell_profile.ps1");
+    const ps5Profile = join(homedir(), "Documents", "WindowsPowerShell", "Microsoft.PowerShell_profile.ps1");
+    // Prefer PS7 if its directory exists, otherwise PS5
+    if (existsSync(join(homedir(), "Documents", "PowerShell"))) return ps7Profile;
+    return ps5Profile;
+  }
+
   const shell = process.env.SHELL || "";
   if (shell.includes("zsh")) return join(homedir(), ".zshrc");
   if (shell.includes("bash")) {
@@ -42,8 +52,15 @@ function getShellRcFile(): string | null {
 }
 
 function addAliasToShell(): boolean {
+  const isWindows = process.platform === "win32";
+
+  if (isWindows) {
+    return addWindowsAlias();
+  }
+
   const rcFile = getShellRcFile();
   if (!rcFile) return false;
+
   try {
     // Check if alias already exists
     if (existsSync(rcFile)) {
@@ -59,6 +76,46 @@ function addAliasToShell(): boolean {
   } catch {
     return false;
   }
+}
+
+function addWindowsAlias(): boolean {
+  let success = false;
+
+  // 1. Add PowerShell function to profile
+  const psProfile = getShellRcFile();
+  if (psProfile) {
+    try {
+      const dir = join(psProfile, "..");
+      if (!existsSync(dir)) {
+        mkdirSync(dir, { recursive: true });
+      }
+
+      const needsAdd = !existsSync(psProfile) || !readFileSync(psProfile, "utf-8").includes('function cuabot');
+      if (needsAdd) {
+        appendFileSync(psProfile, '\n# cuabot function\nfunction cuabot { npx -y cuabot @args }\n');
+      }
+      success = true;
+    } catch {
+      // Continue to try batch file
+    }
+  }
+
+  // 2. Create batch file for cmd.exe in WindowsApps (already in PATH)
+  const windowsApps = join(process.env.LOCALAPPDATA || join(homedir(), "AppData", "Local"), "Microsoft", "WindowsApps");
+  const batchFile = join(windowsApps, "cuabot.cmd");
+  try {
+    if (!existsSync(batchFile)) {
+      writeFileSync(batchFile, '@echo off\r\nnpx -y cuabot %*\r\n');
+    }
+    success = true;
+  } catch {
+    // Batch file creation failed, but PowerShell might have worked
+  }
+
+  if (success) {
+    setAliasIgnored(true);
+  }
+  return success;
 }
 
 function StatusLine({ check }: { check: Check }) {
@@ -403,7 +460,11 @@ function Onboarding() {
           options={[
             { label: `Set up 'cuabot' command`, action: () => {
               if (addAliasToShell()) {
-                console.log("\n✓ Added! Restart your terminal or run: source " + getShellRcFile() + "\n");
+                if (process.platform === "win32") {
+                  console.log("\n✓ Added! Restart your terminal to use 'cuabot' command.\n");
+                } else {
+                  console.log("\n✓ Added! Restart your terminal or run: source " + getShellRcFile() + "\n");
+                }
               }
               runChecks();
             }},

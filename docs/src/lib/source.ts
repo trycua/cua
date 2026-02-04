@@ -80,8 +80,8 @@ const brandIcons: Record<string, () => React.ReactElement> = {
       createElement('path', { d: 'M3 12l-1-2' }),
       createElement('path', { d: 'M21 12l1-2' }),
       // Antennae
-      createElement('path', { d: 'M10 11c-2-3-4-6-6-7' }),
-      createElement('path', { d: 'M14 11c2-3 4-6 6-7' }),
+      createElement('path', { d: 'M10 11l-2-2' }),
+      createElement('path', { d: 'M14 11l2-2' }),
       // Eyes
       createElement('circle', { cx: 10.5, cy: 12, r: 0.5 }),
       createElement('circle', { cx: 13.5, cy: 12, r: 0.5 })

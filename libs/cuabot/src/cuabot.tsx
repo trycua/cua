@@ -197,7 +197,7 @@ Commands:
 
         const target = flagArgs[0] || "all";
         const CONTAINER_NAME = "cuabot-xpra";
-        const IMAGE_NAME = "cuabot-xpra:latest";
+        const IMAGE_NAME = "trycua/cuabot:latest";
         const CONFIG_DIR = join(homedir(), ".cuabot");
 
         if (target === "sandbox" || target === "all") {

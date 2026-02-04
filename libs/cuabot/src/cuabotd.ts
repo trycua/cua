@@ -32,7 +32,7 @@ const DEFAULT_PORT = 7842;
 const CONFIG_DIR = join(homedir(), ".cuabot");
 const CLAUDE_CONFIG_DIR = join(CONFIG_DIR, "user", ".claude");
 
-const IMAGE_NAME = "cuabot-xpra:latest";
+const IMAGE_NAME = "trycua/cuabot:latest";
 const BASE_CONTAINER_NAME = "cuabot-xpra";
 
 // Session name support

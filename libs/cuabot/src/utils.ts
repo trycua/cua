@@ -9,6 +9,7 @@ import { tmpdir } from "os";
 import { dirname, join } from "path";
 import { fileURLToPath } from "url";
 import { promisify } from "util";
+import { isTelemetryConfigured } from "./settings.js";
 
 const execAsync = promisify(exec);
 
@@ -277,6 +278,11 @@ export async function checkDependencies(): Promise<{ ok: boolean; errors: string
     if (!dockerImageCheck.ok) {
       errors.push("Docker image not pulled. Run: docker pull trycua/cuabot:latest");
     }
+  }
+
+  // Check telemetry configuration
+  if (!isTelemetryConfigured()) {
+    errors.push("Usage telemetry not configured");
   }
 
   return { ok: errors.length === 0, errors };

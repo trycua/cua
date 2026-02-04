@@ -122,7 +122,7 @@ export async function checkDocker(): Promise<{ ok: boolean; message: string }> {
 /**
  * Check if Xpra client is available
  */
-export async function checkXpra(): Promise<{ ok: boolean; message: string }> {
+export async function checkXpra(): Promise<{ ok: boolean; message: string; quarantined?: boolean }> {
   const xpraPath = getXpraBinPath();
   const platform = process.platform;
 
@@ -141,7 +141,7 @@ export async function checkXpra(): Promise<{ ok: boolean; message: string }> {
         try {
           const { stdout } = await execAsync("xattr /Applications/Xpra.app");
           if (stdout.includes("com.apple.quarantine")) {
-            return { ok: false, message: `Xpra is installed but quarantined. Run: xattr -d com.apple.quarantine /Applications/Xpra.app` };
+            return { ok: false, message: `Xpra is installed but quarantined. Run: xattr -d com.apple.quarantine /Applications/Xpra.app`, quarantined: true };
           }
         } catch {
           // xattr command failed, ignore

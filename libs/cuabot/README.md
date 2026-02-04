@@ -4,6 +4,10 @@ Co-op computer-use for any agent.
 
 Multi-user computing sandbox that gives any coding agent (Claude Code, Gemini CLI, Codex, OpenClaw, Vibe) seamless computer-use capabilities.
 
+<div align="center">
+  <img src="../../img/cuabot-screenshot.png" alt="cuabot screenshot" style="max-height: 32em;">
+</div>
+
 ## Quick Start
 
 ```bash

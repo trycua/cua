@@ -2,7 +2,7 @@
 // Adapted from cloud/src/website/app/components/playground/ChatContent.tsx
 
 import { motion } from 'motion/react';
-import { useEffect, useRef } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import { ChatArea } from './ChatArea';
 import { ChatInput } from '../primitives/ChatInput';
 import { ExamplePrompts, type ExamplePrompt } from './ExamplePrompts';
@@ -14,6 +14,7 @@ import {
 } from '../../hooks/usePlayground';
 import { useAgentRequest } from '../../hooks/useAgentRequest';
 import type { Computer, VM } from '../../types';
+import { getComputerId } from '../../types';
 import { cn } from '../../utils/cn';
 
 interface ChatContentProps {
@@ -90,7 +91,7 @@ export function ChatContent({
   className,
 }: ChatContentProps) {
   const { handleSendMessage, handleStopResponse, handleTimeout, handleRetry } = useAgentRequest();
-  const { state } = usePlayground();
+  const { state, dispatch: playgroundDispatch } = usePlayground();
   const chatState = useChat();
   const chatDispatch = useChatDispatch();
   const hasAutoSentRef = useRef(false);
@@ -123,6 +124,18 @@ export function ChatContent({
     } as Computer;
   });
 
+  // Determine selected computer: prefer currentComputerId from playground state, fallback to chat's computer
+  // This ensures the Select stays in sync with the VNC viewer
+  const selectedComputerForInput = useMemo(() => {
+    if (state.currentComputerId) {
+      const currentComputer = computers.find((c) => getComputerId(c) === state.currentComputerId);
+      if (currentComputer) {
+        return currentComputer;
+      }
+    }
+    return computer;
+  }, [state.currentComputerId, computers, computer]);
+
   // Handle model change
   const handleModelChange = (modelId: string) => {
     for (const provider of state.availableModels) {
@@ -144,6 +157,8 @@ export function ChatContent({
         url: agentUrl,
       } as Computer;
       chatDispatch({ type: 'SET_COMPUTER', payload: chatComputer });
+      // Also update global state so VNC overlay can react to computer changes
+      playgroundDispatch({ type: 'SET_CURRENT_COMPUTER', payload: computerId });
 
       // Warn if selecting an offline computer
       if (computerInfo.status !== 'running') {
@@ -216,7 +231,7 @@ export function ChatContent({
               onStopResponse={handleStopResponse}
               isGenerating={isGenerating}
               computers={computers}
-              selectedComputer={computer}
+              selectedComputer={selectedComputerForInput}
               onComputerChange={handleComputerChange}
               availableModels={state.availableModels}
               selectedModel={model}
@@ -261,7 +276,7 @@ export function ChatContent({
             onStopResponse={handleStopResponse}
             isGenerating={isGenerating}
             computers={computers}
-            selectedComputer={computer}
+            selectedComputer={selectedComputerForInput}
             onComputerChange={handleComputerChange}
             availableModels={state.availableModels}
             selectedModel={model}

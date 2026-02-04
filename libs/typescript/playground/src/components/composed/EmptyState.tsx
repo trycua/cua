@@ -88,7 +88,7 @@ function EmptyStateContent({
 }: EmptyStateContentProps) {
   const chatState = useChat();
   const chatDispatch = useChatDispatch();
-  const { state } = usePlayground();
+  const { state, dispatch: playgroundDispatch } = usePlayground();
   const [isCreating, setIsCreating] = useState(false);
 
   const handleSendMessage = async () => {
@@ -133,6 +133,8 @@ function EmptyStateContent({
         url: computerInfo.agentUrl,
       };
       chatDispatch({ type: 'SET_COMPUTER', payload: computer });
+      // Also update global state so VNC overlay can react to computer changes
+      playgroundDispatch({ type: 'SET_CURRENT_COMPUTER', payload: computerId });
     }
   };
 

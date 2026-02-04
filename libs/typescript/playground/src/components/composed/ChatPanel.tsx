@@ -27,7 +27,7 @@ interface ChatPanelProps {
 }
 
 export function ChatPanel({ className, onModelChange, onComputerChange }: ChatPanelProps) {
-  const { state } = usePlayground();
+  const { state, dispatch: playgroundDispatch } = usePlayground();
   const chatState = useChat();
   const chatDispatch = useChatDispatch();
   const { handleSendMessage, handleStopResponse } = useAgentRequest();
@@ -79,6 +79,8 @@ export function ChatPanel({ className, onModelChange, onComputerChange }: ChatPa
         url: computer.agentUrl,
       };
       chatDispatch({ type: 'SET_COMPUTER', payload: chatComputer });
+      // Also update global state so VNC overlay can react to computer changes
+      playgroundDispatch({ type: 'SET_CURRENT_COMPUTER', payload: computerId });
       onComputerChange?.(computerId);
     }
   };

@@ -27,6 +27,7 @@ const VNCIframe = React.memo(
         }}
       >
         <iframe
+          key={src}
           src={src}
           className="h-full w-full"
           title="VNC Viewer"

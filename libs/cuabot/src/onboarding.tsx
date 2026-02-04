@@ -483,7 +483,7 @@ function Onboarding() {
       {firstError === "Xpra Client" && xpraQuarantined && (
         <OptionSelector
           options={[
-            { label: "Exit and copy command: \x1b[2msudo xattr -cr /Applications/Xpra.app\x1b[0m", action: () => { copyToClipboard("sudo xattr -cr /Applications/Xpra.app"); exit(); } },
+            { label: "Exit and copy command: \x1b[2msudo xattr -c /Applications/Xpra.app\x1b[0m", action: () => { copyToClipboard("sudo xattr -c /Applications/Xpra.app"); exit(); } },
             { label: "Read why", action: () => openUrl("https://github.com/Xpra-org/xpra/wiki/Download#-macos") },
             { label: "Exit", action: () => exit() },
           ]}

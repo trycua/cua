@@ -16,8 +16,10 @@ import { join } from "path";
 function isCuabotInPath(): boolean {
   try {
     const cmd = process.platform === "win32" ? "where cuabot" : "which cuabot";
-    execSync(cmd, { stdio: "ignore" });
-    return true;
+    const result = execSync(cmd, { encoding: "utf-8" }).trim();
+    // Ignore paths from npx/pnpm dlx temporary cache
+    const paths = result.split("\n").filter(p => !p.includes("_npx") && !p.includes("\\dlx\\") && !p.includes("/dlx/"));
+    return paths.length > 0;
   } catch {
     return false;
   }
@@ -464,6 +466,12 @@ Commands:
         const status = cuabotInPath || aliasIgnored ? "ok" : "error";
         const message = cuabotInPath ? "ready" : aliasIgnored ? "using npx" : "not set up";
         console.log("cuabotInPath:", cuabotInPath);
+        if (cuabotInPath) {
+          try {
+            const paths = execSync(pathCmd, { encoding: "utf-8" }).trim().split("\n");
+            console.log("cuabot paths:", paths);
+          } catch {}
+        }
         console.log("aliasIgnored:", aliasIgnored);
         console.log("Status:", status);
         console.log("Message:", message);

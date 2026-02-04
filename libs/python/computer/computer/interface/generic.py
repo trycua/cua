@@ -704,7 +704,7 @@ class GenericComputerInterface(BaseComputerInterface):
             await interface.playwright_exec("web_search", {"query": "computer use agent"})
         """
         protocol = "https" if self.api_key else "http"
-        port = "8443" if self.api_key else "8000"
+        port = str(self._api_port) if self._api_port else ("8443" if self.api_key else "8000")
         url = f"{protocol}://{self.ip_address}:{port}/playwright_exec"
 
         payload = {"command": command, "params": params or {}}

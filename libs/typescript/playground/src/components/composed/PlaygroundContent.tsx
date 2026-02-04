@@ -33,6 +33,8 @@ interface PlaygroundContentProps {
   isDarkMode?: boolean;
   /** Callback to toggle theme */
   onToggleTheme?: () => void;
+  /** Custom render function for theme toggle (for animated toggles) */
+  renderThemeToggle?: (props: { isDarkMode: boolean; onToggle: () => void }) => React.ReactNode;
   /** Render function for custom link */
   renderLink?: (props: {
     to: string;
@@ -89,6 +91,7 @@ export function PlaygroundContent({
   renderChatContent,
   isDarkMode,
   onToggleTheme,
+  renderThemeToggle,
   renderLink,
   backLinkUrl,
   backLinkText,
@@ -278,6 +281,7 @@ export function PlaygroundContent({
       <PlaygroundLayout
         isDarkMode={isDarkMode}
         onToggleTheme={onToggleTheme}
+        renderThemeToggle={renderThemeToggle}
         renderLink={renderLink}
         backLinkUrl={backLinkUrl}
         backLinkText={backLinkText}

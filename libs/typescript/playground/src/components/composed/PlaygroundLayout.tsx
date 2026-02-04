@@ -25,6 +25,8 @@ interface PlaygroundLayoutProps {
   isDarkMode?: boolean;
   /** Callback to toggle theme */
   onToggleTheme?: () => void;
+  /** Custom render function for theme toggle (for animated toggles) */
+  renderThemeToggle?: (props: { isDarkMode: boolean; onToggle: () => void }) => ReactNode;
   /** Render function for custom link (e.g., react-router Link) */
   renderLink?: (props: { to: string; children: ReactNode; className?: string }) => ReactNode;
   /** Custom back link URL (defaults to '/dashboard') */
@@ -55,6 +57,7 @@ export function PlaygroundLayout({
   children,
   isDarkMode = false,
   onToggleTheme,
+  renderThemeToggle,
   renderLink,
   backLinkUrl = '/dashboard',
   backLinkText = 'Back to Dashboard',
@@ -162,16 +165,19 @@ export function PlaygroundLayout({
           )}
 
           {/* Theme toggle button */}
-          {onToggleTheme && (
-            <button
-              type="button"
-              onClick={onToggleTheme}
-              className="flex h-8 w-8 items-center justify-center rounded-md text-neutral-500 transition-colors hover:bg-neutral-100 hover:text-neutral-900 dark:text-neutral-400 dark:hover:bg-neutral-800 dark:hover:text-white"
-              aria-label="Toggle theme"
-            >
-              {isDarkMode ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
-            </button>
-          )}
+          {onToggleTheme &&
+            (renderThemeToggle ? (
+              renderThemeToggle({ isDarkMode, onToggle: onToggleTheme })
+            ) : (
+              <button
+                type="button"
+                onClick={onToggleTheme}
+                className="flex h-8 w-8 items-center justify-center rounded-md text-neutral-500 transition-colors hover:bg-neutral-100 hover:text-neutral-900 dark:text-neutral-400 dark:hover:bg-neutral-800 dark:hover:text-white"
+                aria-label="Toggle theme"
+              >
+                {isDarkMode ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+              </button>
+            ))}
         </div>
       </div>
 

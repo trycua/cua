@@ -117,6 +117,20 @@ class VMProviderFactory:
                     "The CloudProvider is not fully implemented yet. "
                     "Please use LUME or LUMIER provider instead."
                 ) from e
+        elif provider_type == VMProviderType.CLOUDV2:
+            try:
+                from .cloud import CloudV2Provider
+
+                return CloudV2Provider(
+                    verbose=verbose,
+                    **kwargs,
+                )
+            except ImportError as e:
+                logger.error(f"Failed to import CloudV2Provider: {e}")
+                raise ImportError(
+                    "CloudV2Provider requires aiohttp. "
+                    "Please install with: pip install aiohttp"
+                ) from e
         elif provider_type == VMProviderType.WINSANDBOX:
             try:
                 from .winsandbox import HAS_WINSANDBOX, WinSandboxProvider

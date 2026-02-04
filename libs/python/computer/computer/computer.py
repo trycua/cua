@@ -151,6 +151,13 @@ class Computer:
         self.logger = Logger("computer", verbosity)
         self.logger.info("Initializing Computer...")
 
+        # Normalize provider_type to enum early to ensure consistent comparisons
+        if isinstance(provider_type, str):
+            try:
+                provider_type = VMProviderType(provider_type.lower())
+            except ValueError:
+                provider_type = VMProviderType.UNKNOWN
+
         # Fall back to environment variable for api_key if not provided
         if api_key is None:
             api_key = os.environ.get("CUA_API_KEY")
@@ -172,12 +179,17 @@ class Computer:
         self.os_type = os_type
         self.provider_type = provider_type
         self.ephemeral = ephemeral
-        self.api_key = api_key if self.provider_type == VMProviderType.CLOUD else None
+        self.api_key = api_key if self.provider_type in (VMProviderType.CLOUD, VMProviderType.CLOUDV2) else None
         self.timeout = timeout
 
         # Set default API port if not specified
         if self.api_port is None:
-            self.api_port = 8443 if self.api_key else 8000
+            if self.provider_type == VMProviderType.CLOUDV2:
+                self.api_port = 443
+            elif self.api_key:
+                self.api_port = 8443
+            else:
+                self.api_port = 8000
 
         self.experiments = experiments or []
 
@@ -400,6 +412,12 @@ class Computer:
                                     api_key=self.api_key,
                                     verbose=verbose,
                                 )
+                            elif self.provider_type == VMProviderType.CLOUDV2:
+                                self.config.vm_provider = VMProviderFactory.create_provider(
+                                    self.provider_type,
+                                    api_key=self.api_key,
+                                    verbose=verbose,
+                                )
                             elif self.provider_type == VMProviderType.WINSANDBOX:
                                 self.config.vm_provider = VMProviderFactory.create_provider(
                                     self.provider_type,
@@ -571,7 +589,7 @@ class Computer:
             from .interface.base import BaseComputerInterface
 
             # Pass authentication credentials if using cloud provider
-            if self.provider_type == VMProviderType.CLOUD and self.api_key and self.config.name:
+            if self.provider_type in (VMProviderType.CLOUD, VMProviderType.CLOUDV2) and self.api_key and self.config.name:
                 interface = cast(
                     BaseComputerInterface,
                     InterfaceFactory.create_interface_for_os(
@@ -801,7 +819,7 @@ class Computer:
             self.logger.info(f"Re-initializing interface for {self.os_type} at {ip_address}")
             from .interface.base import BaseComputerInterface
 
-            if self.provider_type == VMProviderType.CLOUD and self.api_key and self.config.name:
+            if self.provider_type in (VMProviderType.CLOUD, VMProviderType.CLOUDV2) and self.api_key and self.config.name:
                 self._interface = cast(
                     BaseComputerInterface,
                     InterfaceFactory.create_interface_for_os(

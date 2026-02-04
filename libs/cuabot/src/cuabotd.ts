@@ -455,7 +455,7 @@ async function updateCursorMasks(): Promise<void> {
     // Reverse to go back-to-front (openWindows returns front-to-back)
     for (const win of [...windows].reverse()) {
       const b = win.bounds;
-      const isXpra = win.owner.name === "Xpra";
+      const isXpra = win.owner.name === "Xpra" || win.owner.name.toLowerCase().includes("xpra");
       const isCursorWindow = win.title.includes(cursorWindowPattern);
       const ignoredWindows = ["cuabot-debug-masks", "Screen Studio", "recording-manager-widget"];
       const isIgnoredWindow = ignoredWindows.some(name => win.title.includes(name));

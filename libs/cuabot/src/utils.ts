@@ -4,7 +4,8 @@
  */
 
 import { exec } from "child_process";
-import { existsSync } from "fs";
+import { copyFileSync, existsSync, mkdirSync } from "fs";
+import { tmpdir } from "os";
 import { dirname, join } from "path";
 import { fileURLToPath } from "url";
 import { promisify } from "util";
@@ -62,11 +63,27 @@ export function getXpraBinPath(): string {
 }
 
 /**
- * Get the path to an asset file
+ * Get the path to an asset file, copying to temp to avoid file locking issues
  */
 function getAssetPath(filename: string): string {
   const currentDir = dirname(fileURLToPath(import.meta.url));
-  return join(currentDir, "..", "assets", filename);
+  const srcPath = join(currentDir, "..", "assets", filename);
+
+  // Copy to temp directory to avoid file locking issues with npx cache
+  const tempDir = join(tmpdir(), "cuabot-assets");
+  const tempPath = join(tempDir, filename);
+
+  try {
+    if (!existsSync(tempDir)) {
+      mkdirSync(tempDir, { recursive: true });
+    }
+    // Always copy to ensure we have the latest version
+    copyFileSync(srcPath, tempPath);
+    return tempPath;
+  } catch {
+    // Fallback to original path if copy fails
+    return srcPath;
+  }
 }
 
 /**

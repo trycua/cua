@@ -19,7 +19,8 @@ RUN apt-get update && apt-get install -y \
     python3-pip \
     lsb-release \
     netcat-openbsd \
-    git
+    git \
+    dos2unix
 
 # Install xpra from official repo (must be v6+)
 RUN apt-get update \
@@ -31,10 +32,10 @@ RUN apt-get update \
     && XPRA_VERSION=$(xpra --version | grep -oP 'v\K[0-9]+' | head -1) \
     && if [ "$XPRA_VERSION" -lt 5 ]; then echo "ERROR: xpra version must be >= 5, got v$XPRA_VERSION"; exit 1; fi
 
-# Install Node.js 20.x
+# Install Node.js 22.x (agent-device requires >=22)
 RUN mkdir -p /etc/apt/keyrings \
     && curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | gpg --dearmor | tee /etc/apt/keyrings/nodesource.gpg > /dev/null \
-    && echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_20.x nodistro main" | tee /etc/apt/sources.list.d/nodesource.list \
+    && echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_22.x nodistro main" | tee /etc/apt/sources.list.d/nodesource.list \
     && apt-get update && apt-get install -y nodejs
 
 # Install remaining packages
@@ -47,6 +48,48 @@ RUN apt-get install -y \
     && npm install -g agent-browser \
     && DEBIAN_FRONTEND=noninteractive npx playwright install-deps \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# Install Android SDK dependencies for agent-device
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    openjdk-17-jdk-headless \
+    unzip \
+    libpulse0 \
+    libgl1-mesa-glx \
+    libnss3 \
+    libxcomposite1 \
+    libxcursor1 \
+    libxi6 \
+    libxtst6 \
+    libxrandr2 \
+    libasound2 \
+    wmctrl \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# Install agent-device globally
+RUN npm install -g agent-device
+
+# Set Android SDK environment variables
+ENV ANDROID_SDK_ROOT=/home/user/android-sdk
+ENV JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
+ENV PATH="${ANDROID_SDK_ROOT}/cmdline-tools/latest/bin:${ANDROID_SDK_ROOT}/platform-tools:${ANDROID_SDK_ROOT}/emulator:${PATH}"
+
+# Install Android SDK command-line tools
+RUN mkdir -p "${ANDROID_SDK_ROOT}/cmdline-tools" \
+    && cd /tmp \
+    && wget -q "https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip" -O cmdline-tools.zip \
+    && unzip -q cmdline-tools.zip -d "${ANDROID_SDK_ROOT}/cmdline-tools" \
+    && mv "${ANDROID_SDK_ROOT}/cmdline-tools/cmdline-tools" "${ANDROID_SDK_ROOT}/cmdline-tools/latest" \
+    && rm cmdline-tools.zip \
+    && chown -R user:user "${ANDROID_SDK_ROOT}"
+
+# Install platform-tools, emulator, and platforms (NOT the system image - too large)
+RUN yes | sdkmanager --licenses 2>/dev/null || true \
+    && sdkmanager "platform-tools" "emulator" "platforms;android-35" \
+    && chown -R user:user "${ANDROID_SDK_ROOT}"
+
+# Symlink adb/emulator into PATH
+RUN ln -sf /home/user/android-sdk/platform-tools/adb /usr/local/bin/adb \
+    && ln -sf /home/user/android-sdk/emulator/emulator /usr/local/bin/emulator
 
 # Install Chromium from xtradeb PPA (avoids snap requirement on Ubuntu 22.04)
 RUN add-apt-repository ppa:xtradeb/apps -y \
@@ -82,8 +125,6 @@ RUN agent-browser install
 # Set Chromium as default browser (needed for some agent CLI onboardings)
 RUN xdg-settings set default-web-browser chromium.desktop 2>/dev/null || true
 
-## ==== preinstalled apps for the agent ====
-
 # Python plotting libraries
 RUN pip3 install --no-cache-dir matplotlib numpy pandas seaborn plotly
 
@@ -106,6 +147,14 @@ RUN mkdir -p ~/.local/bin && \
     printf '#!/bin/bash\nnpx @google/gemini-cli "$@"' > ~/.local/bin/gemini && \
     chmod +x ~/.local/bin/codex ~/.local/bin/aider ~/.local/bin/openclaw ~/.local/bin/vibe ~/.local/bin/gemini
 
+# Wrapper for agent-device (handles install command for system image download)
+COPY --chown=user:user src/scripts/agent-device-wrapper.sh /home/user/.local/bin/agent-device
+RUN dos2unix /home/user/.local/bin/agent-device && chmod +x /home/user/.local/bin/agent-device
+
+# Copy entrypoint script
+COPY --chown=user:user src/scripts/entrypoint.sh /home/user/.local/bin/entrypoint.sh
+RUN dos2unix /home/user/.local/bin/entrypoint.sh && chmod +x /home/user/.local/bin/entrypoint.sh
+
 ENV DISPLAY=:100
 ENV XDG_RUNTIME_DIR=/tmp/runtime-user
 ENV AGENT_BROWSER_HEADED=1
@@ -122,4 +171,4 @@ EXPOSE 10000
 USER user
 
 # Note: dbus-daemon runs as session bus (not system) to avoid needing root
-CMD ["sh", "-c", "xpra --version && dbus-daemon --session --fork --address=unix:path=/tmp/dbus-session 2>/dev/null || true && xpra seamless :100 --sharing=yes --no-daemon --bind-tcp=0.0.0.0:10000 --html=on --dpi=96"]
+CMD ["/home/user/.local/bin/entrypoint.sh"]

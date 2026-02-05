@@ -34,6 +34,7 @@ const execAsync = promisify(exec);
 const DEFAULT_PORT = 7842;
 const CONFIG_DIR = join(homedir(), ".cuabot");
 const CLAUDE_CONFIG_DIR = join(CONFIG_DIR, "user", ".claude");
+const ANDROID_SDK_IMAGES_DIR = join(CONFIG_DIR, "user", "android-sdk", "system-images");
 
 const IMAGE_NAME = "trycua/cuabot:latest";
 const BASE_CONTAINER_NAME = "cuabot-xpra";
@@ -48,6 +49,7 @@ export function setSessionName(name: string | null): void {
 export function getSessionName(): string | null {
   return sessionName;
 }
+
 
 // Find an available HTTP server port
 async function findAvailableServerPort(preferredPort: number): Promise<number> {
@@ -120,6 +122,10 @@ function ensureConfigDir() {
   // Ensure Claude config directory exists for volume mount
   if (!existsSync(CLAUDE_CONFIG_DIR)) {
     mkdirSync(CLAUDE_CONFIG_DIR, { recursive: true });
+  }
+  // Ensure Android SDK system-images directory exists for volume mount
+  if (!existsSync(ANDROID_SDK_IMAGES_DIR)) {
+    mkdirSync(ANDROID_SDK_IMAGES_DIR, { recursive: true });
   }
 }
 
@@ -214,6 +220,7 @@ async function ensureContainer(): Promise<number> {
   // Convert Windows path to Docker-compatible path for volume mount
   const toDockerPath = (p: string) => p.replace(/\\/g, "/").replace(/^([A-Z]):/, (_, letter) => `/${letter.toLowerCase()}`);
   const claudeConfigPath = toDockerPath(CLAUDE_CONFIG_DIR);
+  const androidSdkImagesPath = toDockerPath(ANDROID_SDK_IMAGES_DIR);
 
   const telemetryEnabled = getTelemetryEnabled();
   const cuabotName = sessionName || "cuabot";
@@ -230,8 +237,16 @@ async function ensureContainer(): Promise<number> {
     "-e", `CUABOT_COLOR=${cuabotColor}`,
     "--add-host=host.docker.internal:host-gateway",
     "-v", `${claudeConfigPath}:/home/user/.claude`,
-    IMAGE_NAME,
+    "-v", `${androidSdkImagesPath}:/home/user/android-sdk/system-images`,
   ];
+
+  // Add KVM device passthrough for nested virtualization
+  if (process.env.CUABOT_NESTED_VIRT === "1") {
+    createCmd.push("--device=/dev/kvm");
+    console.log("[server] Nested virtualization enabled (--device=/dev/kvm)");
+  }
+
+  createCmd.push(IMAGE_NAME);
 
   await execAsync(createCmd.join(" "));
   await execAsync(`docker start ${getContainerName()}`);
@@ -1159,6 +1174,16 @@ export async function stopServer(): Promise<boolean> {
         killed = true;
       } catch { }
     }
+
+    // Stop and remove Docker container
+    try {
+      await execAsync(`docker stop ${getContainerName()}`);
+      console.log(`Stopped container ${getContainerName()}`);
+    } catch { }
+    try {
+      await execAsync(`docker rm ${getContainerName()}`);
+      console.log(`Removed container ${getContainerName()}`);
+    } catch { }
 
     // Clean up files
     try { unlinkSync(getPidFile()); } catch { }

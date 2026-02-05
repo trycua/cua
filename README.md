@@ -40,6 +40,8 @@ cuabot --type "hello"
 cuabot --click <x> <y> [button]
 ```
 
+Built-in support for `agent-browser` and `agent-device` (iOS, Android) out of the box.
+
 <div align="center">
 
 **[Get Started](https://cua.ai/docs/cuabot/cuabot)** | **[Installation](https://cua.ai/docs/cuabot/install)** | *First spotted at [ClawCon](https://www.claw-con.com/)*

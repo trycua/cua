@@ -11,12 +11,10 @@ from typing import (
     Literal,
     Optional,
     Set,
-    TypeVar,
-    Union,
 )
 
 if TYPE_CHECKING:
-    from ..computers.base import DesktopSession
+    pass
 
 Platform = Literal["linux", "windows", "macos"]
 ALL_PLATFORMS: Set[Platform] = {"linux", "windows", "macos"}
@@ -229,14 +227,14 @@ class BoundApp:
         # Check if the app has this attribute
         attr = getattr(self._app, name, None)
         if attr is None:
-            raise AttributeError(
-                f"App '{self._app.name}' has no attribute '{name}'"
-            )
+            raise AttributeError(f"App '{self._app.name}' has no attribute '{name}'")
 
         # If it's a callable (custom method), wrap it to pass self (BoundApp)
         if callable(attr):
+
             async def bound_method(**kwargs):
                 return await attr(self, **kwargs)
+
             return bound_method
 
         return attr
@@ -263,9 +261,7 @@ class AppsProxy:
         if name not in self._cache:
             app = get_app(name)
             if app is None:
-                raise AttributeError(
-                    f"Unknown app: '{name}'. Available: {list_apps()}"
-                )
+                raise AttributeError(f"Unknown app: '{name}'. Available: {list_apps()}")
             self._cache[name] = BoundApp(app, self._session)
 
         return self._cache[name]
@@ -299,9 +295,7 @@ class AppRegistry:
         """
         app = get_app(app_name)
         if app is None:
-            raise ValueError(
-                f"Unknown app: {app_name}. Available: {list_apps()}"
-            )
+            raise ValueError(f"Unknown app: {app_name}. Available: {list_apps()}")
 
         # Get platform from session config
         platform = _get_platform(session)
@@ -332,9 +326,7 @@ class AppRegistry:
         """
         app = get_app(app_name)
         if app is None:
-            raise ValueError(
-                f"Unknown app: {app_name}. Available: {list_apps()}"
-            )
+            raise ValueError(f"Unknown app: {app_name}. Available: {list_apps()}")
 
         platform = _get_platform(session)
 
@@ -364,9 +356,7 @@ class AppRegistry:
         """
         app = get_app(app_name)
         if app is None:
-            raise ValueError(
-                f"Unknown app: {app_name}. Available: {list_apps()}"
-            )
+            raise ValueError(f"Unknown app: {app_name}. Available: {list_apps()}")
 
         platform = _get_platform(session)
 

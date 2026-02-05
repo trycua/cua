@@ -11,6 +11,7 @@ Provides screenshot and input tools for Claude coding agents
 
 import os
 import time
+
 import httpx
 from fastmcp import FastMCP
 from fastmcp.utilities.types import Image
@@ -30,6 +31,7 @@ client = httpx.Client(base_url=HOST_URL, timeout=30.0)
 
 # Separate client for telemetry with short timeout
 telemetry_client = httpx.Client(base_url=HOST_URL, timeout=1.0)
+
 
 def log_mcp_tool_call(tool_name: str, tool_args: dict) -> None:
     """Send MCP tool call telemetry to cuabotd"""

@@ -101,10 +101,12 @@ def _initialize_otel() -> bool:
             from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
             # Create resource with service info
-            resource = Resource.create({
-                "service.name": _get_service_name(),
-                "service.version": _get_sdk_version(),
-            })
+            resource = Resource.create(
+                {
+                    "service.name": _get_service_name(),
+                    "service.version": _get_sdk_version(),
+                }
+            )
 
             endpoint = _get_otel_endpoint()
 
@@ -200,6 +202,7 @@ def _get_sdk_version() -> str:
     """Get the CUA SDK version."""
     try:
         from core import __version__
+
         return __version__
     except ImportError:
         return "unknown"
@@ -400,6 +403,7 @@ def instrument_async(
         async def run(self, prompt: str, model: str = "claude-3"):
             ...
     """
+
     def decorator(func: F) -> F:
         @wraps(func)
         async def wrapper(*args: Any, **kwargs: Any) -> Any:
@@ -461,6 +465,7 @@ def instrument_sync(
         def screenshot(self):
             ...
     """
+
     def decorator(func: F) -> F:
         @wraps(func)
         def wrapper(*args: Any, **kwargs: Any) -> Any:

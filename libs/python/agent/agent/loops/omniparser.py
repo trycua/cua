@@ -349,10 +349,10 @@ class OmniparserConfig(AsyncAgentConfig):
                 xy2id = {v: k for k, v in local_id2xy.items()}
                 screenshot_mappings.append((idx, xy2id))
 
-        # Replace screenshot with annotated image
-                message["output"]["image_url"] = (
-                    f"data:image/png;base64,{result.annotated_image_base64}"
-                )
+                # Replace screenshot with annotated image
+                message["output"][
+                    "image_url"
+                ] = f"data:image/png;base64,{result.annotated_image_base64}"
 
         def get_mapping_for_index(index):
             applicable = [m for i, m in screenshot_mappings if i <= index]

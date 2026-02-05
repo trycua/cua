@@ -100,6 +100,12 @@ export function getTelemetryEnabled(): boolean {
   return false;
 }
 
+export function isTelemetryConfigured(): boolean {
+  const settings = loadSettings();
+  // Telemetry is configured if it's been explicitly set to true or false
+  return settings.telemetryEnabled !== undefined;
+}
+
 export function setTelemetryEnabled(enabled: boolean): void {
   const settings = loadSettings();
   settings.telemetryEnabled = enabled;

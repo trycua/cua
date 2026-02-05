@@ -259,7 +259,7 @@ export function ChatContent({
 
   // Normal layout with messages and input at bottom
   return (
-    <div className={cn('flex flex-1 flex-col', className)}>
+    <>
       <ChatArea
         onRetry={handleRetry}
         onStopResponse={handleStopResponse}
@@ -291,6 +291,6 @@ export function ChatContent({
           />
         </div>
       </div>
-    </div>
+    </>
   );
 }

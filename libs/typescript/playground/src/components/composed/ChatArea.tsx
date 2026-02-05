@@ -50,7 +50,7 @@ export function ChatArea({ onRetry, onTimeout }: ChatAreaProps) {
   return (
     <>
       {/* Messages area */}
-      <div className="flex-1 overflow-y-auto p-4 pb-0 md:p-6">
+      <div className="flex-1 min-h-0 overflow-y-auto p-4 pb-0 md:p-6">
         <div className="mx-auto max-w-3xl space-y-6">
           {processedMessages.length > 0 && (
             <motion.div

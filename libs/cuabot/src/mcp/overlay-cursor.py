@@ -180,12 +180,13 @@ class OverlayCursor(Gtk.Window):
         else:
             print(f"Cursor image not found at {cursor_path}", file=sys.stderr)
 
-        # Window setup (wider/taller to fit cursor and debug label)
-        self.set_size_request(CURSOR_SIZE * 5, CURSOR_SIZE * 3)
+        # Window setup - size just big enough for cursor
+        self.set_size_request(CURSOR_SIZE, CURSOR_SIZE)
         self.set_decorated(False)
         self.set_skip_taskbar_hint(True)
         self.set_skip_pager_hint(True)
         self.set_accept_focus(False)
+        self.set_can_focus(False)
         self.set_app_paintable(True)
         self.set_title(f"cuabot-cursor-{name}")
 
@@ -197,6 +198,7 @@ class OverlayCursor(Gtk.Window):
 
         # Make click-through after window is realized
         self.connect("realize", self._on_realize)
+        self.connect("map-event", self._on_map)
 
         # Drawing area
         self.drawing_area = Gtk.DrawingArea()
@@ -210,10 +212,19 @@ class OverlayCursor(Gtk.Window):
         GLib.timeout_add(1000, self.check_fade)
 
     def _on_realize(self, widget):
-        # Make window click-through by setting empty input region
+        self._make_click_through()
+
+    def _on_map(self, widget, event):
+        self._make_click_through()
+        return False
+
+    def _make_click_through(self):
+        """Make window click-through by setting empty input region"""
         gdk_window = self.get_window()
         if gdk_window:
-            gdk_window.input_shape_combine_region(cairo.Region(), 0, 0)
+            # Create an empty region (no input area)
+            empty_region = cairo.Region(cairo.RectangleInt(0, 0, 0, 0))
+            gdk_window.input_shape_combine_region(empty_region, 0, 0)
 
     def on_draw(self, widget, cr):
         # Clear background
@@ -260,83 +271,17 @@ class OverlayCursor(Gtk.Window):
             return
 
         r, g, b = self.color
+        cr.set_operator(cairo.OPERATOR_OVER)
 
-        # Draw cursor image or fallback circle
         if self.cursor_pixbuf:
-            # Create a colorized version of the cursor
             colorized = self._colorize_pixbuf(self.cursor_pixbuf, r, g, b, self.opacity)
-
-            # Click scale effect
-            click_scale = (
-                1.0 + 0.2 * math.sin(self.click_anim_progress * math.pi) if self.clicking else 1.0
-            )
-
-            cr.set_operator(cairo.OPERATOR_OVER)
-
-            if click_scale != 1.0:
-                # Scale around the cursor tip (top-left corner)
-                scaled_size = int(CURSOR_SIZE * click_scale)
-                scaled = colorized.scale_simple(
-                    scaled_size, scaled_size, GdkPixbuf.InterpType.BILINEAR
-                )
-                Gdk.cairo_set_source_pixbuf(
-                    cr, scaled, CURSOR_SIZE - CURSOR_SIZE * 0.1, CURSOR_SIZE - CURSOR_SIZE * 0.1
-                )
-            else:
-                Gdk.cairo_set_source_pixbuf(
-                    cr, colorized, CURSOR_SIZE - CURSOR_SIZE * 0.1, CURSOR_SIZE - CURSOR_SIZE * 0.1
-                )
-
+            Gdk.cairo_set_source_pixbuf(cr, colorized, 0, 0)
             cr.paint()
-
-            # Click ripple
-            if self.clicking and self.click_anim_progress > 0:
-                cx = CURSOR_SIZE + CURSOR_SIZE * 0.1
-                cy = CURSOR_SIZE + CURSOR_SIZE * 0.1
-                ripple_radius = CURSOR_SIZE * 0.3 + (CURSOR_SIZE * 0.8 * self.click_anim_progress)
-                ripple_alpha = (1 - self.click_anim_progress) * 0.5 * self.opacity
-                cr.set_source_rgba(r, g, b, ripple_alpha)
-                cr.set_line_width(2)
-                cr.arc(cx, cy, ripple_radius, 0, 2 * math.pi)
-                cr.stroke()
         else:
-            # Fallback: draw circle cursor
-            cx = CURSOR_SIZE
-            cy = CURSOR_SIZE
-
-            # Outer glow
-            cr.set_operator(cairo.OPERATOR_OVER)
-            gradient = cairo.RadialGradient(cx, cy, CURSOR_SIZE * 0.3, cx, cy, CURSOR_SIZE)
-            gradient.add_color_stop_rgba(0, r, g, b, 0.4 * self.opacity)
-            gradient.add_color_stop_rgba(1, r, g, b, 0)
-            cr.set_source(gradient)
-            cr.arc(cx, cy, CURSOR_SIZE, 0, 2 * math.pi)
+            # Fallback: simple rectangle
+            cr.set_source_rgba(r, g, b, self.opacity)
+            cr.rectangle(0, 0, CURSOR_SIZE, CURSOR_SIZE)
             cr.fill()
-
-            # Main circle
-            base_radius = CURSOR_SIZE * 0.35
-            click_scale = (
-                1.0 + 0.3 * math.sin(self.click_anim_progress * math.pi) if self.clicking else 1.0
-            )
-            radius = base_radius * click_scale
-
-            cr.set_source_rgba(r, g, b, 0.9 * self.opacity)
-            cr.arc(cx, cy, radius, 0, 2 * math.pi)
-            cr.fill()
-
-            # Inner highlight
-            cr.set_source_rgba(1, 1, 1, 0.3 * self.opacity)
-            cr.arc(cx - radius * 0.2, cy - radius * 0.2, radius * 0.4, 0, 2 * math.pi)
-            cr.fill()
-
-            # Click ripple
-            if self.clicking and self.click_anim_progress > 0:
-                ripple_radius = base_radius + (CURSOR_SIZE * 0.8 * self.click_anim_progress)
-                ripple_alpha = (1 - self.click_anim_progress) * 0.5 * self.opacity
-                cr.set_source_rgba(r, g, b, ripple_alpha)
-                cr.set_line_width(2)
-                cr.arc(cx, cy, ripple_radius, 0, 2 * math.pi)
-                cr.stroke()
 
         # # Name label (small, below cursor)
         # cx = CURSOR_SIZE
@@ -429,7 +374,8 @@ class OverlayCursor(Gtk.Window):
                 point = self.target_path[self.path_index]
                 self.current_x = point[0]
                 self.current_y = point[1]
-                self.move(int(self.current_x - CURSOR_SIZE), int(self.current_y - CURSOR_SIZE))
+                self.move(int(self.current_x), int(self.current_y))
+                self._make_click_through()  # Re-apply after move
                 needs_redraw = True
 
             if progress >= 1.0:
@@ -494,7 +440,8 @@ class OverlayCursor(Gtk.Window):
 
             self.current_x = spawn_x
             self.current_y = spawn_y
-            self.move(int(spawn_x - CURSOR_SIZE), int(spawn_y - CURSOR_SIZE))
+            self.move(int(spawn_x), int(spawn_y))
+            self._make_click_through()  # Ensure click-through after show
 
         # Generate smooth path
         self.target_path = generate_path((self.current_x, self.current_y), target)

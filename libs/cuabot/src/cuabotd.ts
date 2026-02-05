@@ -231,7 +231,6 @@ async function ensureContainer(): Promise<number> {
     "--add-host=host.docker.internal:host-gateway",
     "-v", `${claudeConfigPath}:/home/user/.claude`,
     IMAGE_NAME,
-    "xpra", "start", ":100", "--bind-tcp=0.0.0.0:10000", "--no-daemon", "--html=on",
   ];
 
   await execAsync(createCmd.join(" "));
@@ -452,6 +451,9 @@ async function updateCursorMasks(): Promise<void> {
     // Process back-to-front so Xpra windows only cut holes in things BEHIND them
     const ops: AABBOp[] = [];
 
+    // Store window info for debug visualization
+    const windowsForDebug: { bounds: AABB; title: string; owner: string; isXpra: boolean }[] = [];
+
     // Reverse to go back-to-front (openWindows returns front-to-back)
     for (const win of [...windows].reverse()) {
       const b = win.bounds;
@@ -463,6 +465,13 @@ async function updateCursorMasks(): Promise<void> {
       if (isCursorWindow || isIgnoredWindow) {
         continue;
       }
+
+      windowsForDebug.push({
+        bounds: { x: b.x, y: b.y, width: b.width, height: b.height },
+        title: win.title,
+        owner: win.owner.name,
+        isXpra,
+      });
 
       if (isXpra) {
         // Xpra windows: subtract (cut holes in masks behind it)
@@ -485,10 +494,73 @@ async function updateCursorMasks(): Promise<void> {
       cx >= r.x && cx <= r.x + r.width && cy >= r.y && cy <= r.y + r.height
     );
 
+    // Debug visualization
+    if (DEBUG) {
+      await drawDebugMasks(windowsForDebug, maskRects, cx, cy, isInMask);
+    }
+
     // Send masked state to overlay cursor (not the rects - calculation done here)
     await sendCursorCommand({ type: "masked", value: isInMask });
   } catch (e) {
     // Silently ignore errors
+  }
+}
+
+async function drawDebugMasks(
+  windows: { bounds: AABB; title: string; owner: string; isXpra: boolean }[],
+  maskRects: AABB[],
+  cursorX: number,
+  cursorY: number,
+  isInMask: boolean
+): Promise<void> {
+  try {
+    const width = 2400;
+    const height = 1600;
+    const crosshairSize = 20;
+    const cursorColor = isInMask ? "red" : "lime";
+
+    // Escape XML special characters
+    const escapeXml = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+
+    // Build SVG
+    let svg = `<svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">`;
+
+    // Background
+    svg += `<rect x="0" y="0" width="${width}" height="${height}" fill="#1a1a1a"/>`;
+
+    // Draw mask rects (red filled, semi-transparent)
+    for (const r of maskRects) {
+      svg += `<rect x="${r.x}" y="${r.y}" width="${r.width}" height="${r.height}" fill="rgba(255,0,0,0.3)" stroke="red" stroke-width="2"/>`;
+    }
+
+    // Draw window rects (blue outlined) with labels
+    for (const win of windows) {
+      const b = win.bounds;
+      const strokeColor = win.isXpra ? "cyan" : "blue";
+      svg += `<rect x="${b.x}" y="${b.y}" width="${b.width}" height="${b.height}" fill="none" stroke="${strokeColor}" stroke-width="2"/>`;
+
+      // Label background
+      const label = `${escapeXml(win.owner)}: ${escapeXml(win.title.substring(0, 40))}`;
+      svg += `<rect x="${b.x}" y="${b.y - 18}" width="${Math.min(b.width, 300)}" height="18" fill="rgba(0,0,0,0.7)"/>`;
+      svg += `<text x="${b.x + 4}" y="${b.y - 4}" font-family="monospace" font-size="12" fill="${strokeColor}">${label}</text>`;
+    }
+
+    // Draw cursor crosshair
+    svg += `<line x1="${cursorX - crosshairSize}" y1="${cursorY}" x2="${cursorX + crosshairSize}" y2="${cursorY}" stroke="${cursorColor}" stroke-width="3"/>`;
+    svg += `<line x1="${cursorX}" y1="${cursorY - crosshairSize}" x2="${cursorX}" y2="${cursorY + crosshairSize}" stroke="${cursorColor}" stroke-width="3"/>`;
+    svg += `<circle cx="${cursorX}" cy="${cursorY}" r="8" fill="none" stroke="${cursorColor}" stroke-width="2"/>`;
+
+    // Legend
+    svg += `<rect x="10" y="10" width="200" height="80" fill="rgba(0,0,0,0.8)" stroke="white"/>`;
+    svg += `<text x="20" y="30" font-family="monospace" font-size="12" fill="white">Cursor: ${cursorX}, ${cursorY}</text>`;
+    svg += `<text x="20" y="50" font-family="monospace" font-size="12" fill="${cursorColor}">Masked: ${isInMask}</text>`;
+    svg += `<text x="20" y="70" font-family="monospace" font-size="12" fill="cyan">Cyan=Xpra, Blue=Other</text>`;
+
+    svg += `</svg>`;
+
+    await sharp(Buffer.from(svg)).png().toFile(SCREENSHOT_PATH.replace("screenshot.jpg", "masks.png"));
+  } catch (e) {
+    console.error("[debug] Failed to draw masks:", e);
   }
 }
 

@@ -95,6 +95,8 @@ jobs:
               ;;
             "npm/playground")
               echo "directory=libs/typescript/playground" >> $GITHUB_OUTPUT
+              echo "type=npm" >> $GITHUB_OUTPUT
+              ;;
             "npm/cuabot")
               echo "directory=libs/cuabot" >> $GITHUB_OUTPUT
               echo "type=npm" >> $GITHUB_OUTPUT

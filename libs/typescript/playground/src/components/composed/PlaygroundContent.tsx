@@ -149,9 +149,12 @@ export function PlaygroundContent({
 
   // Create a new chat and send the first message
   const handleCreateChatWithMessage = async (message: string) => {
-    // Find a running computer first, then fall back to first computer
+    // Priority: use currently selected computer (currentComputerId), then fall back to first running, then first available
+    const selectedComputer = state.currentComputerId
+      ? computers.find((c) => c.id === state.currentComputerId)
+      : undefined;
     const runningComputer = computers.find((c) => c.status === 'running');
-    const computerInfo = runningComputer ?? computers[0];
+    const computerInfo = selectedComputer ?? runningComputer ?? computers[0];
 
     if (!computerInfo) {
       onToast?.('Please select a sandbox to interact with.', 'error');

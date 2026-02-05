@@ -4,10 +4,12 @@
  */
 
 import { exec } from "child_process";
-import { existsSync } from "fs";
+import { copyFileSync, existsSync, mkdirSync } from "fs";
+import { tmpdir } from "os";
 import { dirname, join } from "path";
 import { fileURLToPath } from "url";
 import { promisify } from "util";
+import { isTelemetryConfigured } from "./settings.js";
 
 const execAsync = promisify(exec);
 
@@ -62,11 +64,27 @@ export function getXpraBinPath(): string {
 }
 
 /**
- * Get the path to an asset file
+ * Get the path to an asset file, copying to temp to avoid file locking issues
  */
 function getAssetPath(filename: string): string {
   const currentDir = dirname(fileURLToPath(import.meta.url));
-  return join(currentDir, "..", "assets", filename);
+  const srcPath = join(currentDir, "..", "assets", filename);
+
+  // Copy to temp directory to avoid file locking issues with npx cache
+  const tempDir = join(tmpdir(), "cuabot-assets");
+  const tempPath = join(tempDir, filename);
+
+  try {
+    if (!existsSync(tempDir)) {
+      mkdirSync(tempDir, { recursive: true });
+    }
+    // Always copy to ensure we have the latest version
+    copyFileSync(srcPath, tempPath);
+    return tempPath;
+  } catch {
+    // Fallback to original path if copy fails
+    return srcPath;
+  }
 }
 
 /**
@@ -141,7 +159,7 @@ export async function checkXpra(): Promise<{ ok: boolean; message: string; quara
         try {
           const { stdout } = await execAsync("xattr /Applications/Xpra.app");
           if (stdout.includes("com.apple.quarantine")) {
-            return { ok: false, message: `Xpra is installed but quarantined. Run: xattr -d com.apple.quarantine /Applications/Xpra.app`, quarantined: true };
+            return { ok: false, message: `Xpra is installed but quarantined. Run: sudo xattr -c /Applications/Xpra.app`, quarantined: true };
           }
         } catch {
           // xattr command failed, ignore
@@ -181,15 +199,65 @@ export async function checkPlaywright(): Promise<{ ok: boolean; message: string 
   }
 }
 
+const DOCKER_IMAGE = "trycua/cuabot:latest";
+
+/**
+ * Check if Docker image exists locally
+ */
+export async function checkDockerImage(): Promise<{ ok: boolean; message: string }> {
+  try {
+    await execAsync(`docker image inspect ${DOCKER_IMAGE}`);
+    return { ok: true, message: "cached" };
+  } catch {
+    return { ok: false, message: "not pulled" };
+  }
+}
+
+/**
+ * Pull the Docker image with progress callback
+ */
+export async function pullDockerImage(onProgress?: (line: string) => void): Promise<{ ok: boolean; message: string }> {
+  return new Promise((resolve) => {
+    const pullProcess = exec(`docker pull ${DOCKER_IMAGE}`);
+
+    pullProcess.stdout?.on("data", (data: Buffer) => {
+      const lines = data.toString().split("\n").filter(l => l.trim());
+      for (const line of lines) {
+        onProgress?.(line);
+      }
+    });
+
+    pullProcess.stderr?.on("data", (data: Buffer) => {
+      const lines = data.toString().split("\n").filter(l => l.trim());
+      for (const line of lines) {
+        onProgress?.(line);
+      }
+    });
+
+    pullProcess.on("exit", (code) => {
+      if (code === 0) {
+        resolve({ ok: true, message: "pulled" });
+      } else {
+        resolve({ ok: false, message: "pull failed" });
+      }
+    });
+
+    pullProcess.on("error", () => {
+      resolve({ ok: false, message: "pull failed" });
+    });
+  });
+}
+
 /**
  * Check all dependencies required for cuabot to run
  */
 export async function checkDependencies(): Promise<{ ok: boolean; errors: string[] }> {
   const errors: string[] = [];
 
-  const [dockerCheck, xpraCheck] = await Promise.all([
+  const [dockerCheck, xpraCheck, playwrightCheck] = await Promise.all([
     checkDocker(),
     checkXpra(),
+    checkPlaywright(),
   ]);
 
   if (!dockerCheck.ok) {
@@ -198,6 +266,23 @@ export async function checkDependencies(): Promise<{ ok: boolean; errors: string
 
   if (!xpraCheck.ok) {
     errors.push(xpraCheck.message);
+  }
+
+  if (!playwrightCheck.ok) {
+    errors.push("Playwright Chromium not installed. Run: npx playwright install chromium");
+  }
+
+  // Only check Docker image if Docker is running
+  if (dockerCheck.ok) {
+    const dockerImageCheck = await checkDockerImage();
+    if (!dockerImageCheck.ok) {
+      errors.push("Docker image not pulled. Run: docker pull trycua/cuabot:latest");
+    }
+  }
+
+  // Check telemetry configuration
+  if (!isTelemetryConfigured()) {
+    errors.push("Usage telemetry not configured");
   }
 
   return { ok: errors.length === 0, errors };

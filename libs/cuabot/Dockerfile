@@ -122,4 +122,4 @@ EXPOSE 10000
 USER user
 
 # Note: dbus-daemon runs as session bus (not system) to avoid needing root
-CMD ["sh", "-c", "xpra --version && dbus-daemon --session --fork --address=unix:path=/tmp/dbus-session 2>/dev/null || true && xpra seamless :100 --sharing=yes --no-daemon --bind-tcp=0.0.0.0:10000 --html=on"]
+CMD ["sh", "-c", "xpra --version && dbus-daemon --session --fork --address=unix:path=/tmp/dbus-session 2>/dev/null || true && xpra seamless :100 --sharing=yes --no-daemon --bind-tcp=0.0.0.0:10000 --html=on --dpi=96"]

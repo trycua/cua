@@ -704,7 +704,7 @@ class GenericComputerInterface(BaseComputerInterface):
             await interface.playwright_exec("web_search", {"query": "computer use agent"})
         """
         protocol = "https" if self.api_key else "http"
-        port = "8443" if self.api_key else "8000"
+        port = str(self._api_port) if self._api_port else ("8443" if self.api_key else "8000")
         url = f"{protocol}://{self.ip_address}:{port}/playwright_exec"
 
         payload = {"command": command, "params": params or {}}
@@ -1081,7 +1081,7 @@ class GenericComputerInterface(BaseComputerInterface):
                 raise
 
             target = f"{self.ip_address}:{self._api_port}" if self._api_port else self.ip_address
-            
+
             error_msg = (
                 f"Failed to connect to Computer API Server at {target}. "
                 f"Reason: {str(e)}. "

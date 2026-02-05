@@ -86,9 +86,7 @@ class OtelCallback(AsyncCallbackHandler):
             return type(self.agent.agent_loop).__name__
         return "unknown"
 
-    async def on_run_start(
-        self, kwargs: Dict[str, Any], old_items: List[Dict[str, Any]]
-    ) -> None:
+    async def on_run_start(self, kwargs: Dict[str, Any], old_items: List[Dict[str, Any]]) -> None:
         """Called at the start of an agent run loop."""
         if not OTEL_AVAILABLE or not is_otel_enabled():
             return
@@ -143,9 +141,7 @@ class OtelCallback(AsyncCallbackHandler):
 
         self.run_start_time = None
 
-    async def on_responses(
-        self, kwargs: Dict[str, Any], responses: Dict[str, Any]
-    ) -> None:
+    async def on_responses(self, kwargs: Dict[str, Any], responses: Dict[str, Any]) -> None:
         """Called when responses are received (each step)."""
         if not OTEL_AVAILABLE or not is_otel_enabled():
             return

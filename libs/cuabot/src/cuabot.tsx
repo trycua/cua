@@ -8,6 +8,7 @@ import { ensureServerRunning, setSessionName as setClientSessionName } from "./c
 import { getDefaultAgent, AGENTS, AgentId, getAliasIgnored, getTelemetryEnabled } from "./settings.js";
 import { runOnboarding } from "./onboarding.js";
 import { sendTelemetryToServer } from "./telemetry.js";
+import { checkDependencies } from "./utils.js";
 import { execSync } from "child_process";
 import { existsSync, readFileSync } from "fs";
 import { homedir } from "os";
@@ -16,8 +17,12 @@ import { join } from "path";
 function isCuabotInPath(): boolean {
   try {
     const cmd = process.platform === "win32" ? "where cuabot" : "which cuabot";
-    execSync(cmd, { stdio: "ignore" });
-    return true;
+    const result = execSync(cmd, { encoding: "utf-8" }).trim();
+    // Ignore paths from npx/pnpm dlx temporary cache
+    const paths = result.split(/\r?\n/).filter(p =>
+      !p.includes("_npx") && !p.includes("\\dlx\\") && !p.includes("/dlx/")
+    );
+    return paths.length > 0;
   } catch {
     return false;
   }
@@ -484,8 +489,11 @@ Commands:
     const defaultAgent = getDefaultAgent();
     const needsAliasSetup = !isCuabotInPath() && !getAliasIgnored();
 
-    // Show onboarding if no default agent or alias needs setup
-    if (!defaultAgent || needsAliasSetup) {
+    // Check if critical dependencies are missing
+    const deps = await checkDependencies();
+
+    // Show onboarding if no default agent, alias needs setup, or dependencies missing
+    if (!defaultAgent || needsAliasSetup || !deps.ok) {
       runOnboarding();
       return;
     }

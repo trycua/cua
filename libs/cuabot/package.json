@@ -17,10 +17,9 @@
     "build": "tsc",
     "start": "npx tsx src/cuabot.tsx",
     "dev": "npx tsx --watch src/cuabot.tsx",
-    "serve": "npx tsx src/cuabotd.ts",
-    "stop": "npx tsx src/cuabot.tsx stop",
-    "status": "npx tsx src/cuabot.tsx status",
-    "mcp": "npx tsx src/mcp/server-mcp.ts"
+    "serve": "npx tsx src/cuabot.tsx --serve",
+    "stop": "npx tsx src/cuabot.tsx --stop",
+    "status": "npx tsx src/cuabot.tsx --status"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.1.0",

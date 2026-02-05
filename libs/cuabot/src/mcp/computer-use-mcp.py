@@ -73,13 +73,21 @@ def request(endpoint: str, body: dict | None = None) -> dict:
 
 
 @server.tool()
-def screenshot() -> Image:
-    """Take a screenshot of the display. Returns JPEG image."""
-    import base64
+def screenshot(save_path: str | None = None) -> Image:
+    """Take a screenshot of the display. Returns JPEG image.
 
-    log_mcp_tool_call("screenshot", {})
+    Args:
+        save_path: Optional path to save the screenshot (e.g., "/tmp/screenshot.jpg")
+    """
+    import base64
+    log_mcp_tool_call("screenshot", {"save_path": save_path})
     result = request("screenshot")
     image_bytes = base64.b64decode(result["image"])
+
+    if save_path:
+        with open(save_path, "wb") as f:
+            f.write(image_bytes)
+
     return Image(data=image_bytes, format="jpeg")
 
 

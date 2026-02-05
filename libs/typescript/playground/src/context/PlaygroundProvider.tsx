@@ -199,6 +199,22 @@ export function PlaygroundProvider({ adapters, children, initialChats }: Playgro
     initialize();
   }, [adapters, initialChats]);
 
+  // Sync currentComputerId when active chat changes
+  // This ensures the VNC iframe shows the correct VM for each chat
+  useEffect(() => {
+    if (state.activeChatId && state.initialized) {
+      const activeChat = state.chats.find((chat) => chat.id === state.activeChatId);
+
+      // If the active chat has an associated computer that differs from the current one, sync it
+      if (activeChat?.computer?.id && activeChat.computer.id !== state.currentComputerId) {
+        dispatch({
+          type: 'SET_CURRENT_COMPUTER',
+          payload: activeChat.computer.id,
+        });
+      }
+    }
+  }, [state.activeChatId, state.chats, state.currentComputerId, state.initialized]);
+
   // Memoize context value to prevent unnecessary re-renders
   const contextValue = useMemo(
     () => ({

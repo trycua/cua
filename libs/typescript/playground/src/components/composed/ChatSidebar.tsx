@@ -26,6 +26,7 @@ import {
   usePlayground,
 } from '../../hooks/usePlayground';
 import type { Chat, Computer } from '../../types';
+import { isVM } from '../../types';
 import { cn } from '../../utils/cn';
 
 interface ChatSidebarProps {
@@ -70,6 +71,13 @@ export function ChatSidebar({
     try {
       // Get first computer if available
       const computer = computers.length > 0 ? computers[0] : undefined;
+
+      // Check if the computer is stopped
+      if (computer && isVM(computer) && computer.status === 'stopped') {
+        onToast?.('Cannot create chat: The sandbox is stopped. Please start it first.', 'error');
+        return;
+      }
+
       let computerAsChat: Computer | undefined;
       if (computer) {
         const { agentUrl, ...rest } = computer;

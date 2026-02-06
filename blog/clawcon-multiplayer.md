@@ -28,8 +28,6 @@ For the computer-use bridge, when the agent calls a tool like `screenshot()` or 
 
 Container → host → container. We call it the hairpin. It's indirect, but it cleanly separates the agent's display server from the host OS, which is what makes multi-player possible.
 
-[DIAGRAM: CuaBot architecture]
-
 ## Multi-player
 
 Since each agent runs in its own container with its own Xpra instance, you can launch multiple agents in parallel:

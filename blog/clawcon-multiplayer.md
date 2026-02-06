@@ -65,7 +65,7 @@ The onboarding handles Docker, Xpra, Playwright, and pulls the container image (
 
 Requires: Node.js 18+, Docker Desktop, Xpra client.
 
-GitHub: github.com/trycua/cua
+GitHub: [github.com/trycua/cua](https://github.com/trycua/cua)
 
 ## What's next
 

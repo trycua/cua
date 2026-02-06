@@ -47,7 +47,7 @@ Each agent gets its own desktop, its own cursor (rendered with a different color
 <div align="center">
   <video src="https://github.com/user-attachments/assets/2e51f92f-f88f-43d9-b22f-35d1de2c859e" width="600" controls></video>
 </div>
-ClawCon livestream demo]
+ClawCon livestream demo
 
 <div align="center">
   <video src="https://github.com/user-attachments/assets/1e1d354a-efec-446d-ba8c-1bf0be8ec1ec" width="600" controls></video>

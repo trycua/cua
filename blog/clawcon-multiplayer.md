@@ -29,6 +29,8 @@ For the computer-use bridge, when the agent calls a tool like `screenshot()` or 
 
 Container → host → container. We call it the hairpin. It's indirect, but it cleanly separates the agent's display server from the host OS, which is what makes multi-player possible.
 
+<img width="678" height="104" alt="story_7" src="https://github.com/user-attachments/assets/e4df05d9-3b13-4c97-b064-2f9940a1d4db" />
+
 ## Multi-player
 
 Since each agent runs in its own container with its own Xpra instance, you can launch multiple agents in parallel:
@@ -42,10 +44,16 @@ Each agent gets its own desktop, its own cursor (rendered with a different color
 
 ## What we demoed at ClawCon
 
-See full ClawCon livestream: https://streamyard.com/watch/tRKvWpftFH8z
 
-Multi-player Computer-Use with CuaBot at ClawCon
-https://github.com/user-attachments/assets/4ea4b3f2-dacf-4456-a1d9-02d9fd5aa726
+<div align="center">
+  <video src="https://github.com/user-attachments/assets/1e1d354a-efec-446d-ba8c-1bf0be8ec1ec" width="600" controls></video>
+</div>
+
+
+<div align="center">
+  <video src="https://github.com/user-attachments/assets/2e51f92f-f88f-43d9-b22f-35d1de2c859e" width="600" controls></video>
+</div>
+
 
 ## OpenClaw + CuaBot
 

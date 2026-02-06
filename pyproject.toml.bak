@@ -5,7 +5,7 @@ dependencies = [
     "anthropic>=0.67.0",
 ]
 description = "Cua (Computer Use Agent) mono-repo"
-license = "MIT"
+license = { text = "MIT" }
 name = "cua-workspace"
 readme = "README.md"
 requires-python = "<3.14,>=3.12"

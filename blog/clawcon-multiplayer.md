@@ -44,15 +44,16 @@ Each agent gets its own desktop, its own cursor (rendered with a different color
 
 ## What we demoed at ClawCon
 
+<div align="center">
+  <video src="https://github.com/user-attachments/assets/2e51f92f-f88f-43d9-b22f-35d1de2c859e" width="600" controls></video>
+</div>
+ClawCon livestream demo]
 
 <div align="center">
   <video src="https://github.com/user-attachments/assets/1e1d354a-efec-446d-ba8c-1bf0be8ec1ec" width="600" controls></video>
 </div>
+Multi-Player Computer Use Agent building an RL gym and coding and playing a desktop game simultaneously. Before today, you could only have 1 Computer-Use Agent deployed per system to control
 
-
-<div align="center">
-  <video src="https://github.com/user-attachments/assets/2e51f92f-f88f-43d9-b22f-35d1de2c859e" width="600" controls></video>
-</div>
 
 
 ## OpenClaw + CuaBot

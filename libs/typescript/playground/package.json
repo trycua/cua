@@ -1,6 +1,6 @@
 {
   "name": "@trycua/playground",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "packageManager": "pnpm@10.11.0",
   "description": "Reusable playground UI for Cua computer-use agents",
   "type": "module",

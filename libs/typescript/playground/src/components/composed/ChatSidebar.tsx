@@ -26,6 +26,7 @@ import {
   usePlayground,
 } from '../../hooks/usePlayground';
 import type { Chat, Computer } from '../../types';
+import { isVM } from '../../types';
 import { cn } from '../../utils/cn';
 
 interface ChatSidebarProps {
@@ -49,7 +50,7 @@ export function ChatSidebar({
   onToast,
 }: ChatSidebarProps) {
   const { state, dispatch, adapters } = usePlayground();
-  const { chats, computers, activeChatId } = state;
+  const { chats, computers, activeChatId, currentComputerId } = state;
   const activeChat = useActiveChat();
   const defaultModel = useFindDefaultModel();
   const [isCreating, setIsCreating] = useState(false);
@@ -68,8 +69,18 @@ export function ChatSidebar({
     setIsCreating(true);
 
     try {
-      // Get first computer if available
-      const computer = computers.length > 0 ? computers[0] : undefined;
+      // Priority: use currently selected computer (currentComputerId), then fall back to first available
+      const selectedComputer = currentComputerId
+        ? computers.find((c) => c.id === currentComputerId)
+        : undefined;
+      const computer = selectedComputer ?? (computers.length > 0 ? computers[0] : undefined);
+
+      // Check if the computer is stopped
+      if (computer && isVM(computer) && computer.status === 'stopped') {
+        onToast?.('Cannot create chat: The sandbox is stopped. Please start it first.', 'error');
+        return;
+      }
+
       let computerAsChat: Computer | undefined;
       if (computer) {
         const { agentUrl, ...rest } = computer;
@@ -105,7 +116,7 @@ export function ChatSidebar({
     } finally {
       setIsCreating(false);
     }
-  }, [computers, defaultModel, dispatch, isCreating, adapters.persistence, onToast]);
+  }, [computers, currentComputerId, defaultModel, dispatch, isCreating, adapters.persistence, onToast]);
 
   const handleDeleteConfirm = async () => {
     if (!deleteConfirmChat) return;

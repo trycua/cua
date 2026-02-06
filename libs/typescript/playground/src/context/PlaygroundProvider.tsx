@@ -177,9 +177,11 @@ export function PlaygroundProvider({ adapters, children, initialChats }: Playgro
         dispatch({ type: 'SET_COMPUTERS', payload: computers });
         dispatch({ type: 'SET_MODELS', payload: models });
 
-        // Set defaults
+        // Set defaults - prefer first running computer, then fall back to first available
         if (computers.length > 0) {
-          dispatch({ type: 'SET_CURRENT_COMPUTER', payload: computers[0].id });
+          const runningComputer = computers.find((c) => c.status === 'running');
+          const defaultComputer = runningComputer ?? computers[0];
+          dispatch({ type: 'SET_CURRENT_COMPUTER', payload: defaultComputer.id });
         }
         if (models.length > 0 && models[0].models.length > 0) {
           dispatch({ type: 'SET_SELECTED_MODEL', payload: models[0].models[0].id });

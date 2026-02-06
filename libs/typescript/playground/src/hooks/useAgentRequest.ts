@@ -1,7 +1,7 @@
 // Hook for making agent requests
 // Adapted from cloud/src/website/app/hooks/playground/useAgentRequest.ts
 
-import { useEffect, useRef, useCallback } from 'react';
+import { useRef, useCallback } from 'react';
 import { usePlayground, useChat, useChatDispatch } from './usePlayground';
 import { usePlaygroundTelemetry } from '../telemetry';
 import type { AgentMessage, UserMessage } from '../types';
@@ -127,10 +127,9 @@ export function useAgentRequest() {
   } | null>(null);
 
   // Keep a ref to the latest chat state to avoid stale closure issues
+  // Update synchronously during render (not in useEffect) to ensure it's always current
   const chatStateRef = useRef(chatState);
-  useEffect(() => {
-    chatStateRef.current = chatState;
-  });
+  chatStateRef.current = chatState;
 
   // Helper to set generating state globally
   const setGlobalGenerating = useCallback(
@@ -184,7 +183,9 @@ export function useAgentRequest() {
 
   const sendAgentRequest = useCallback(
     async (messages: (UserMessage | AgentMessage)[], abortController: AbortController) => {
-      const { model, computer } = chatState;
+      // Use ref to get the latest chat state to avoid stale closure issues
+      const latestChatState = chatStateRef.current;
+      const { model, computer } = latestChatState;
 
       if (!model || !computer) {
         return;
@@ -395,7 +396,7 @@ export function useAgentRequest() {
       }
     },
     [
-      chatState,
+      // Note: chatState is accessed via chatStateRef to avoid stale closures
       state.computers,
       state.currentComputerId,
       adapters.inference,
@@ -416,11 +417,29 @@ export function useAgentRequest() {
 
     if (!currentInput.trim()) return;
     if (!model) {
-      console.warn('Please select a model.');
+      console.warn('[useAgentRequest] No model selected. Chat state:', { chatId, model, computer });
+      chatDispatch({
+        type: 'SET_ERROR',
+        payload: {
+          message: 'Please select a model before sending a message.',
+          timestamp: new Date(),
+        },
+      });
       return;
     }
     if (!computer) {
-      console.warn('Please select a computer.');
+      console.warn('[useAgentRequest] No computer selected. Chat state:', {
+        chatId,
+        model,
+        computer,
+      });
+      chatDispatch({
+        type: 'SET_ERROR',
+        payload: {
+          message: 'Please select a sandbox before sending a message.',
+          timestamp: new Date(),
+        },
+      });
       return;
     }
 

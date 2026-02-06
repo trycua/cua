@@ -26,7 +26,6 @@ import {
   usePlayground,
 } from '../../hooks/usePlayground';
 import type { Chat, Computer } from '../../types';
-import { isVM } from '../../types';
 import { cn } from '../../utils/cn';
 
 interface ChatSidebarProps {
@@ -76,8 +75,8 @@ export function ChatSidebar({
       const computer = selectedComputer ?? (computers.length > 0 ? computers[0] : undefined);
 
       // Check if the computer is stopped
-      if (computer && isVM(computer) && computer.status === 'stopped') {
-        onToast?.('Cannot create chat: The sandbox is stopped. Please start it first.', 'error');
+      if (computer && computer.status === 'stopped') {
+        onToast?.('Cannot create chat: The sandbox is stopped. Please start it first.');
         return;
       }
 
@@ -116,7 +115,15 @@ export function ChatSidebar({
     } finally {
       setIsCreating(false);
     }
-  }, [computers, currentComputerId, defaultModel, dispatch, isCreating, adapters.persistence, onToast]);
+  }, [
+    computers,
+    currentComputerId,
+    defaultModel,
+    dispatch,
+    isCreating,
+    adapters.persistence,
+    onToast,
+  ]);
 
   const handleDeleteConfirm = async () => {
     if (!deleteConfirmChat) return;

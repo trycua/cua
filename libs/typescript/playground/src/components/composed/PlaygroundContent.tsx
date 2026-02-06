@@ -13,7 +13,6 @@ import {
   usePlayground,
 } from '../../hooks/usePlayground';
 import type { Chat, Computer } from '../../types';
-import { isVM } from '../../types';
 
 // Re-export for convenience
 export { EmptyStateWithInput } from './EmptyState';
@@ -162,8 +161,11 @@ export function PlaygroundContent({
     }
 
     // Check if the selected computer is stopped
-    if (isVM(computerInfo) && computerInfo.status === 'stopped') {
-      onToast?.('Cannot start chat: The selected sandbox is stopped. Please start it first.', 'error');
+    if (computerInfo.status === 'stopped') {
+      onToast?.(
+        'Cannot start chat: The selected sandbox is stopped. Please start it first.',
+        'error'
+      );
       return;
     }
 

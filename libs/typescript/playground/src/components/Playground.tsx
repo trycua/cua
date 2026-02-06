@@ -88,12 +88,25 @@ function PlaygroundContentInternal({
   );
 
   // Handle creating a new chat and sending the first message
-  const handleCreateAndSend = async (message: string) => {
+  const handleCreateAndSend = async (
+    message: string,
+    selectedModel?: Chat['model'],
+    selectedComputer?: Chat['computer']
+  ) => {
+    // Use model/computer from empty state picker, or fall back to defaults
+    const model = selectedModel ?? defaultModel;
+    const computer =
+      selectedComputer ??
+      (currentComputer
+        ? { id: currentComputer.id, name: currentComputer.name, url: currentComputer.agentUrl }
+        : undefined);
+
     const newChat: Chat = {
       id: crypto.randomUUID(),
       name: message.slice(0, 50) || 'New Chat',
       messages: [],
-      model: defaultModel,
+      model,
+      computer,
       created: new Date(),
       updated: new Date(),
     };

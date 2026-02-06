@@ -149,6 +149,23 @@ export function ChatProvider({ chat, children, isGenerating = false }: ChatProvi
     }
   }, [chat.computer, state.computer]);
 
+  // If chat doesn't have a computer, sync from the currently selected computer in playground state
+  useEffect(() => {
+    if (!state.computer && playgroundState.currentComputerId) {
+      const computerInfo = playgroundState.computers.find(
+        (c) => c.id === playgroundState.currentComputerId
+      );
+      if (computerInfo) {
+        const computer: Chat['computer'] = {
+          id: computerInfo.id,
+          name: computerInfo.name,
+          url: computerInfo.agentUrl,
+        };
+        dispatch({ type: 'SET_COMPUTER', payload: computer });
+      }
+    }
+  }, [state.computer, playgroundState.currentComputerId, playgroundState.computers]);
+
   // Sync messages from global state when they change
   useEffect(() => {
     if (chat.id === state.id && chat.messages && chat.messages.length > state.messages.length) {

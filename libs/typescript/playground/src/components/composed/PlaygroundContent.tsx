@@ -147,34 +147,46 @@ export function PlaygroundContent({
   }, [initialized, activeChat, defaultModel, dispatch]);
 
   // Create a new chat and send the first message
-  const handleCreateChatWithMessage = async (message: string) => {
-    // Priority: use currently selected computer (currentComputerId), then fall back to first running, then first available
-    const selectedComputer = state.currentComputerId
-      ? computers.find((c) => c.id === state.currentComputerId)
-      : undefined;
-    const runningComputer = computers.find((c) => c.status === 'running');
-    const computerInfo = selectedComputer ?? runningComputer ?? computers[0];
+  const handleCreateChatWithMessage = async (
+    message: string,
+    selectedModel?: Chat['model'],
+    selectedChatComputer?: Chat['computer']
+  ) => {
+    // Use the model passed from empty state picker, or fall back to default
+    const model = selectedModel ?? defaultModel;
 
-    if (!computerInfo) {
-      onToast?.('Please select a sandbox to interact with.', 'error');
-      return;
+    // Use computer from empty state picker, or fall back to global selection
+    let computer: Computer | undefined = selectedChatComputer;
+
+    if (!computer) {
+      // Fall back to global computer selection
+      const selectedComputer = state.currentComputerId
+        ? computers.find((c) => c.id === state.currentComputerId)
+        : undefined;
+      const runningComputer = computers.find((c) => c.status === 'running');
+      const computerInfo = selectedComputer ?? runningComputer ?? computers[0];
+
+      if (!computerInfo) {
+        onToast?.('Please select a sandbox to interact with.', 'error');
+        return;
+      }
+
+      // Check if the selected computer is stopped
+      if (computerInfo.status === 'stopped') {
+        onToast?.(
+          'Cannot start chat: The selected sandbox is stopped. Please start it first.',
+          'error'
+        );
+        return;
+      }
+
+      // Convert ComputerInfo to Computer
+      computer = {
+        id: computerInfo.id,
+        name: computerInfo.name,
+        url: computerInfo.agentUrl,
+      };
     }
-
-    // Check if the selected computer is stopped
-    if (computerInfo.status === 'stopped') {
-      onToast?.(
-        'Cannot start chat: The selected sandbox is stopped. Please start it first.',
-        'error'
-      );
-      return;
-    }
-
-    // Convert ComputerInfo to Computer
-    const computer: Computer = {
-      id: computerInfo.id,
-      name: computerInfo.name,
-      url: computerInfo.agentUrl,
-    };
 
     try {
       // Create chat title from first message
@@ -194,7 +206,7 @@ export function PlaygroundContent({
         name: title,
         messages: [userMessage],
         computer,
-        model: defaultModel,
+        model,
         created: new Date(),
         updated: new Date(),
       };

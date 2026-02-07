@@ -65,10 +65,10 @@ RUN curl -LsSf https://astral.sh/uv/install.sh | sh && \
 RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.12 1 && \
     update-alternatives --set python3 /usr/bin/python3.12
 
-# Create UV project for cua-computer-server
+# Create UV project for cua-computer-server and cua-agent
 RUN mkdir -p /opt/cua-server && \
     uv init --vcs none --no-readme --no-workspace --no-pin-python /opt/cua-server && \
-    uv add --directory /opt/cua-server cua-computer-server
+    uv add --directory /opt/cua-server cua-computer-server "cua-agent[all]"
 
 COPY src/entry.sh /usr/local/bin/entry.sh
 RUN chmod +x /usr/local/bin/entry.sh

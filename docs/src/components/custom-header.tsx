@@ -58,8 +58,8 @@ const docsSites = [
       },
       {
         name: 'Examples',
-        href: '/cuabench/guide/examples/custom-agent',
-        prefix: '/cuabench/guide/examples',
+        href: '/cuabench/examples/custom-agent',
+        prefix: '/cuabench/examples',
       },
       {
         name: 'Reference',

@@ -5,11 +5,11 @@ on:
     paths:
       - "docs/content/**"
       - "docs/src/**"
-      - "scripts/docs-generators/check-links.ts"
+      - "docs/scripts/check-links.ts"
 
 jobs:
-  check-links:
-    name: Check Documentation Links
+  check-internal-links:
+    name: Check Internal Links (next-validate-link)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -28,8 +28,8 @@ jobs:
         working-directory: docs
 
       - name: Check internal links
-        run: npx tsx scripts/docs-generators/check-links.ts
-        working-directory: .
+        run: pnpm docs:check-links
+        working-directory: docs
 
       - name: Show help if check failed
         if: failure()
@@ -41,12 +41,30 @@ jobs:
           echo "║                                                                  ║"
           echo "║  One or more internal links in the documentation are broken.     ║"
           echo "║                                                                  ║"
-          echo "║  To find broken links locally, run from the repository root:     ║"
+          echo "║  To find broken links locally, run from the docs/ directory:     ║"
           echo "║                                                                  ║"
-          echo "║    npx tsx scripts/docs-generators/check-links.ts               ║"
-          echo "║                                                                  ║"
-          echo "║  To also check external links:                                   ║"
-          echo "║                                                                  ║"
-          echo "║    npx tsx scripts/docs-generators/check-links.ts --external    ║"
+          echo "║    pnpm docs:check-links                                        ║"
           echo "║                                                                  ║"
           echo "╚══════════════════════════════════════════════════════════════════╝"
+
+  check-external-links:
+    name: Check External Links (lychee)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Check external links
+        uses: lycheeverse/lychee-action@v2
+        with:
+          args: >-
+            --verbose
+            --no-progress
+            --accept 100..=399
+            --exclude-mail
+            --exclude 'localhost'
+            --exclude '127\.0\.0\.1'
+            --exclude 'example\.com'
+            './docs/content/**/*.mdx'
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fail: true

@@ -11,8 +11,8 @@
     "docs:check": "tsx ../scripts/docs-generators/runner.ts --check",
     "docs:list": "tsx ../scripts/docs-generators/runner.ts --list",
     "docs:generate:lume": "tsx ../scripts/docs-generators/lume.ts",
-    "docs:check-links": "tsx ../scripts/docs-generators/check-links.ts",
-    "docs:check-links:external": "tsx ../scripts/docs-generators/check-links.ts --external"
+    "docs:check-links": "tsx scripts/check-links.ts",
+    "docs:check-links:external": "tsx scripts/check-links.ts --external"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^3.0.9",
@@ -47,6 +47,8 @@
     "@types/node": "22.15.28",
     "@types/react": "^19.1.6",
     "@types/react-dom": "^19.1.5",
+    "fast-glob": "^3.3.3",
+    "next-validate-link": "^1.6.4",
     "postcss": "^8.5.4",
     "prettier": "^3.6.2",
     "tailwindcss": "^4.1.8",

@@ -11,7 +11,11 @@ import type { Chat, Computer } from '../../types';
 
 interface EmptyStateWithInputProps {
   /** Callback when user sends a message to create a new chat */
-  onCreateAndSend: (message: string) => Promise<void>;
+  onCreateAndSend: (
+    message: string,
+    model?: Chat['model'],
+    computer?: Chat['computer']
+  ) => Promise<void>;
   /** Whether in mobile layout */
   isMobile: boolean;
   /** Draft chat for UI consistency */
@@ -61,7 +65,11 @@ export function EmptyStateWithInput({
 }
 
 interface EmptyStateContentProps {
-  onCreateAndSend: (message: string) => Promise<void>;
+  onCreateAndSend: (
+    message: string,
+    model?: Chat['model'],
+    computer?: Chat['computer']
+  ) => Promise<void>;
   isMobile: boolean;
   logo?: {
     lightSrc: string;
@@ -95,7 +103,8 @@ function EmptyStateContent({
     if (!chatState.currentInput.trim() || isCreating) return;
     setIsCreating(true);
     try {
-      await onCreateAndSend(chatState.currentInput.trim());
+      // Pass the model and computer selected in the empty state picker
+      await onCreateAndSend(chatState.currentInput.trim(), chatState.model, chatState.computer);
       chatDispatch({ type: 'CLEAR_INPUT' });
     } catch (error) {
       console.error('Failed to create chat:', error);

@@ -25,7 +25,7 @@ import {
   useIsChatGenerating,
   usePlayground,
 } from '../../hooks/usePlayground';
-import type { Chat } from '../../types';
+import type { Chat, Computer } from '../../types';
 import { cn } from '../../utils/cn';
 
 interface ChatListProps {
@@ -51,7 +51,7 @@ export function ChatList({
   onToast,
 }: ChatListProps) {
   const { state, dispatch, adapters } = usePlayground();
-  const { chats, activeChatId } = state;
+  const { chats, activeChatId, computers, currentComputerId } = state;
   const activeChat = useActiveChat();
   const defaultModel = useFindDefaultModel();
   const [isCreating, setIsCreating] = useState(false);
@@ -67,11 +67,35 @@ export function ChatList({
     setIsCreating(true);
 
     try {
+      // Priority: use currently selected computer (currentComputerId), then fall back to first available
+      const selectedComputer = currentComputerId
+        ? computers.find((c) => c.id === currentComputerId)
+        : undefined;
+      const computerInfo = selectedComputer ?? (computers.length > 0 ? computers[0] : undefined);
+
+      // Check if the computer is stopped
+      if (computerInfo && computerInfo.status === 'stopped') {
+        onToast?.('Cannot create chat: The sandbox is stopped. Please start it first.', 'error');
+        setIsCreating(false);
+        return;
+      }
+
+      // Convert ComputerInfo to Computer type for the chat
+      let computer: Computer | undefined;
+      if (computerInfo) {
+        const { agentUrl, ...rest } = computerInfo;
+        computer = {
+          ...rest,
+          url: agentUrl,
+        } as Computer;
+      }
+
       // Create local chat object
       const newChat: Chat = {
         id: crypto.randomUUID(), // Temporary ID, adapter may replace it
         name: 'New Chat',
         messages: [],
+        computer,
         model: defaultModel,
         created: new Date(),
         updated: new Date(),
@@ -91,7 +115,16 @@ export function ChatList({
     } finally {
       setIsCreating(false);
     }
-  }, [defaultModel, dispatch, isCreating, adapters.persistence, onCreateChat, onToast]);
+  }, [
+    computers,
+    currentComputerId,
+    defaultModel,
+    dispatch,
+    isCreating,
+    adapters.persistence,
+    onCreateChat,
+    onToast,
+  ]);
 
   const handleDeleteConfirm = async () => {
     if (!deleteConfirmChat) return;

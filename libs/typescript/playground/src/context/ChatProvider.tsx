@@ -1,7 +1,7 @@
 // Per-chat context provider
 // Adapted from cloud/src/website/app/contexts/ChatContext.tsx
 
-import { useReducer, useEffect, useRef, type ReactNode } from 'react';
+import { useReducer, useEffect, useRef, useCallback, type ReactNode } from 'react';
 import {
   ChatStateContext,
   ChatDispatchContext,
@@ -115,7 +115,19 @@ export function ChatProvider({ chat, children, isGenerating = false }: ChatProvi
     waitingForResponse: isGenerating,
   }));
 
-  const { dispatch: playgroundDispatch } = usePlayground();
+  const { adapters, state: playgroundState, dispatch: playgroundDispatch } = usePlayground();
+
+  // Persist chat metadata to storage
+  const persistChat = useCallback(
+    async (chatToSave: Chat) => {
+      try {
+        await adapters.persistence.saveChat(chatToSave);
+      } catch (error) {
+        console.error('Failed to persist chat metadata:', error);
+      }
+    },
+    [adapters.persistence]
+  );
 
   // Reset state when chat changes (different chat selected)
   useEffect(() => {
@@ -137,6 +149,23 @@ export function ChatProvider({ chat, children, isGenerating = false }: ChatProvi
     }
   }, [chat.computer, state.computer]);
 
+  // If chat doesn't have a computer, sync from the currently selected computer in playground state
+  useEffect(() => {
+    if (!state.computer && playgroundState.currentComputerId) {
+      const computerInfo = playgroundState.computers.find(
+        (c) => c.id === playgroundState.currentComputerId
+      );
+      if (computerInfo) {
+        const computer: Chat['computer'] = {
+          id: computerInfo.id,
+          name: computerInfo.name,
+          url: computerInfo.agentUrl,
+        };
+        dispatch({ type: 'SET_COMPUTER', payload: computer });
+      }
+    }
+  }, [state.computer, playgroundState.currentComputerId, playgroundState.computers]);
+
   // Sync messages from global state when they change
   useEffect(() => {
     if (chat.id === state.id && chat.messages && chat.messages.length > state.messages.length) {
@@ -149,7 +178,7 @@ export function ChatProvider({ chat, children, isGenerating = false }: ChatProvi
   const prevComputerRef = useRef(state.computer);
   const prevNameRef = useRef(state.name);
 
-  // Sync chat metadata back to global store only when values actually change
+  // Sync chat metadata back to global store and persist when values actually change
   useEffect(() => {
     const modelChanged = prevModelRef.current !== state.model;
     const computerChanged = prevComputerRef.current !== state.computer;
@@ -160,6 +189,7 @@ export function ChatProvider({ chat, children, isGenerating = false }: ChatProvi
       prevComputerRef.current = state.computer;
       prevNameRef.current = state.name;
 
+      // Update global store
       playgroundDispatch({
         type: 'UPDATE_CHAT',
         payload: {
@@ -172,8 +202,34 @@ export function ChatProvider({ chat, children, isGenerating = false }: ChatProvi
           },
         },
       });
+
+      // Persist to storage (only for existing chats with valid IDs)
+      // New chats (with temp IDs) will be persisted when first message is sent
+      const isExistingChat =
+        state.id && !Number.isNaN(Number(state.id)) && Number.isInteger(Number(state.id));
+      if (isExistingChat) {
+        // Build the chat object from current state and global chat data
+        const globalChat = playgroundState.chats.find((c) => c.id === state.id);
+        if (globalChat) {
+          persistChat({
+            ...globalChat,
+            name: state.name,
+            model: state.model,
+            computer: state.computer,
+            updated: new Date(),
+          });
+        }
+      }
     }
-  }, [state.name, state.model, state.computer, state.id, playgroundDispatch]);
+  }, [
+    state.name,
+    state.model,
+    state.computer,
+    state.id,
+    playgroundDispatch,
+    playgroundState.chats,
+    persistChat,
+  ]);
 
   return (
     <ChatStateContext.Provider value={state}>

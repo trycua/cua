@@ -173,9 +173,17 @@ export default function ReplayTrajectoryModal({
 
   const selectedRun = runs.find((r) => r.index === selectedRunIndex);
 
+  // Use compact size for loading, empty, or no-screenshot states
+  const hasScreenshots = selectedRun && selectedRun.screenshotCount > 0 && zipUrl;
+  const isCompactView = loading || runs.length === 0 || generatingZip || !hasScreenshots;
+
+  const modalSizeClass = isCompactView ? 'w-full max-w-md' : 'h-[90vh] w-[95vw] max-w-7xl';
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-      <div className="relative flex h-[90vh] w-[95vw] max-w-7xl flex-col overflow-hidden rounded-lg bg-white shadow-xl dark:bg-neutral-900">
+      <div
+        className={`relative flex flex-col overflow-hidden rounded-lg bg-white shadow-xl dark:bg-neutral-900 ${modalSizeClass}`}
+      >
         {/* Header */}
         <div className="flex items-center justify-between border-neutral-200 border-b px-4 py-3 dark:border-neutral-700">
           <div className="flex items-center gap-3">
@@ -218,9 +226,9 @@ export default function ReplayTrajectoryModal({
         )}
 
         {/* Main content */}
-        <div className="flex-1 overflow-hidden">
+        <div className={isCompactView ? 'p-6' : 'flex-1 overflow-hidden'}>
           {loading ? (
-            <div className="flex h-full items-center justify-center">
+            <div className="flex items-center justify-center py-8">
               <div className="flex flex-col items-center gap-3">
                 <Loader2 className="h-8 w-8 animate-spin text-blue-500" />
                 <p className="text-neutral-600 text-sm dark:text-neutral-400">
@@ -229,13 +237,13 @@ export default function ReplayTrajectoryModal({
               </div>
             </div>
           ) : runs.length === 0 ? (
-            <div className="flex h-full items-center justify-center">
+            <div className="flex items-center justify-center py-8">
               <p className="text-neutral-500 dark:text-neutral-400">
                 No trajectory runs found in this chat.
               </p>
             </div>
           ) : generatingZip ? (
-            <div className="flex h-full items-center justify-center">
+            <div className="flex items-center justify-center py-8">
               <div className="flex flex-col items-center gap-3">
                 <Loader2 className="h-8 w-8 animate-spin text-blue-500" />
                 <p className="text-neutral-600 text-sm dark:text-neutral-400">
@@ -244,7 +252,7 @@ export default function ReplayTrajectoryModal({
               </div>
             </div>
           ) : selectedRun && selectedRun.screenshotCount === 0 ? (
-            <div className="flex h-full items-center justify-center">
+            <div className="flex items-center justify-center py-8">
               <div className="text-center">
                 <p className="text-neutral-500 dark:text-neutral-400">
                   This run has no screenshots to replay.
@@ -270,8 +278,8 @@ export default function ReplayTrajectoryModal({
           ) : null}
         </div>
 
-        {/* Footer with run info */}
-        {selectedRun && !loading && (
+        {/* Footer with run info - only show when viewing actual trajectory */}
+        {selectedRun && !loading && !isCompactView && (
           <div className="flex items-center justify-between border-neutral-200 border-t bg-neutral-50 px-4 py-2 text-xs dark:border-neutral-700 dark:bg-neutral-800/50">
             <span className="text-neutral-500 dark:text-neutral-400">
               {selectedRun.screenshotCount} screenshot

@@ -176,6 +176,8 @@ export function ChatContent({
   };
 
   // Render VM status banner if provided
+  // Use selectedComputerForInput to show the banner for the currently selected computer in dropdown
+  // This ensures the banner updates immediately when user selects an offline VM
   const vmStatusBanner = renderVMStatusBanner?.({
     onRestartVM,
     onStartVM,
@@ -183,7 +185,7 @@ export function ChatContent({
     hasWorkspace,
     hasCredits,
     orgSlug,
-    computer,
+    computer: selectedComputerForInput,
     computers,
   });
 

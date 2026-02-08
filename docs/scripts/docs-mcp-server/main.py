@@ -499,7 +499,7 @@ def query_code_vectors(
 
 # Create the ASGI app
 app = mcp.http_app(
-    transport="sse",
+    transport="streamable-http",
     middleware=[
         Middleware(
             CORSMiddleware,

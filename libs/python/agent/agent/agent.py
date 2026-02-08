@@ -321,7 +321,6 @@ class ComputerAgent:
                 self.callbacks.append(TelemetryCallback(self, **self.telemetry_enabled))
 
             # OpenTelemetry callback (operational metrics - Four Golden Signals)
-            # This is enabled alongside PostHog when telemetry_enabled is True
             # Users can disable via CUA_TELEMETRY_DISABLED=true env var
             self.callbacks.append(OtelCallback(self))
 

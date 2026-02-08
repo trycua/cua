@@ -1,0 +1,2 @@
+# Python dependencies for documentation generation
+griffe>=0.40.0

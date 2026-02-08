@@ -20,43 +20,13 @@
 
 </div>
 
-## CuaBot - Co-op computer-use for any agent
-
-`cuabot` gives any coding agent a seamless sandbox for computer-use. Individual windows appear natively on your desktop with H.265, shared clipboard, and audio.
-
-```bash
-npx cuabot                 # Setup onboarding
-```
-
-```bash
-# Run any agent in a sandbox
-cuabot claude              # Claude Code
-cuabot openclaw            # OpenClaw in the sandbox
-
-# Run any GUI workflow in a sandbox
-cuabot chromium
-cuabot --screenshot
-cuabot --type "hello"
-cuabot --click <x> <y> [button]
-```
+**Cua** is an open-source platform for building, benchmarking, and deploying agents that can use any computer, with isolated, self-hostable sandboxes (Docker, QEMU, Apple Virtualization).
 
 Built-in support for `agent-browser` and `agent-device` (iOS, Android) out of the box.
 
 <div align="center">
-
-**[Get Started](https://cua.ai/docs/cuabot/cuabot)** | **[Installation](https://cua.ai/docs/cuabot/install)** | *First spotted at [ClawCon](https://www.claw-con.com/)*
-
-<div align="center">
-  <img src="img/cuabot-screenshot.png" alt="cuabot screenshot" style="max-height: 32em;">
+  <video src="https://github.com/user-attachments/assets/c619b4ea-bb8e-4382-860e-f3757e36af20" width="600" controls></video>
 </div>
-
-<img width="120" alt="cuaXclawdbot_nbg" src="https://github.com/user-attachments/assets/8b92237d-6e9b-4b3a-ae9a-b3560622ec1d" />
-
-</div>
-
----
-
-**Beyond cuabot** — explore our SDKs, benchmarks, and sandboxes for your own computer-use agents.
 
 ## Choose Your Path
 
@@ -100,7 +70,7 @@ Built-in support for `agent-browser` and `agent-device` (iOS, Android) out of th
 
 Build agents that see screens, click buttons, and complete tasks autonomously. Run isolated code execution environments for AI coding assistants like Claude Code, Codex CLI, or OpenCode.
 
-<!-- <img src="img/cua-architecture.png" alt="Cua Architecture" width="100%"> -->
+<img src="img/cua-architecture.png" alt="Cua Architecture" width="100%">
 
 ```python
 # Requires Python 3.12 or 3.13
@@ -122,7 +92,7 @@ async for result in agent.run([{"role": "user", "content": "Open Firefox and sea
 
 Evaluate computer-use agents on OSWorld, ScreenSpot, Windows Arena, and custom tasks. Export trajectories for training.
 
-<!-- <img src="img/cua-bench-architecture.png" alt="Cua-Bench Architecture" width="100%"> -->
+<img src="img/cua-bench-architecture.png" alt="Cua-Bench Architecture" width="100%">
 
 ```bash
 # Install and create base image
@@ -141,7 +111,7 @@ cb run dataset datasets/cua-bench-basic --agent cua-agent --max-parallel 4
 
 Create and manage macOS/Linux VMs with near-native performance on Apple Silicon using Apple's Virtualization.Framework.
 
-<!-- <img src="img/lume-architecture.png" alt="Lume Architecture" width="100%"> -->
+<img src="img/lume-architecture.png" alt="Lume Architecture" width="100%">
 
 ```bash
 # Install Lume
@@ -159,7 +129,6 @@ lume run macos-sequoia-vanilla:latest
 
 | Package                                                               | Description                                                |
 | --------------------------------------------------------------------- | ---------------------------------------------------------- |
-| [cuabot](https://cua.ai/docs/cuabot/cuabot)                           | Multi-agent computer-use sandbox CLI                       |
 | [cua-agent](https://cua.ai/docs/cua/reference/agent-sdk)              | AI agent framework for computer-use tasks                  |
 | [cua-computer](https://cua.ai/docs/cua/reference/computer-sdk)        | SDK for controlling desktop environments                   |
 | [cua-computer-server](https://cua.ai/docs/cua/reference/computer-sdk) | Driver for UI interactions and code execution in sandboxes |

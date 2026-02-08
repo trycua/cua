@@ -22,7 +22,7 @@ docker run -it --rm \
 Open `http://localhost:8006` in your browser.
 
 <Callout type="info">
-In ephemeral mode, changes are lost when you stop the container. See below for persistent storage.
+  In ephemeral mode, changes are lost when you stop the container. See below for persistent storage.
 </Callout>
 
 ## Persistent storage
@@ -90,19 +90,20 @@ chmod +x shared/lifecycle/on-logon.sh
 ```
 
 The script runs as the `lume` user and can access:
+
 - `/Users/lume` — home directory
 - `/Volumes/My Shared Files` — shared folder
 
 ## Environment variables
 
-| Variable | Description | Example |
-|----------|-------------|---------|
-| `VM_NAME` | Name for the VM | `my-vm` |
-| `VERSION` | macOS image to use | `ghcr.io/trycua/macos-sequoia-cua:latest` |
-| `CPU_CORES` | CPU cores | `4` |
-| `RAM_SIZE` | Memory in MB | `8192` |
-| `HOST_STORAGE_PATH` | Persistent storage path | `$(pwd)/storage` |
-| `HOST_SHARED_PATH` | Shared folder path | `$(pwd)/shared` |
+| Variable            | Description             | Example                                   |
+| ------------------- | ----------------------- | ----------------------------------------- |
+| `VM_NAME`           | Name for the VM         | `my-vm`                                   |
+| `VERSION`           | macOS image to use      | `ghcr.io/trycua/macos-sequoia-cua:latest` |
+| `CPU_CORES`         | CPU cores               | `4`                                       |
+| `RAM_SIZE`          | Memory in MB            | `8192`                                    |
+| `HOST_STORAGE_PATH` | Persistent storage path | `$(pwd)/storage`                          |
+| `HOST_SHARED_PATH`  | Shared folder path      | `$(pwd)/shared`                           |
 
 ## Change the port
 

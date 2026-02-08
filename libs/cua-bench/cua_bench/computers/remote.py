@@ -706,6 +706,7 @@ class RemoteDesktopSession:
         """
         if not hasattr(self, "_apps_proxy"):
             from ..apps.registry import AppsProxy
+
             self._apps_proxy = AppsProxy(self)
         return self._apps_proxy
 

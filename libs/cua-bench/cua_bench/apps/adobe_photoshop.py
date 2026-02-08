@@ -111,7 +111,7 @@ class AdobePhotoshop(App):
 
         # Try to download a portable version if available from a configured source
         # This is a placeholder - in real usage, point to your own hosted files
-        portable_url = "https://example.com/photoshop-cs6-portable.zip"  # Placeholder
+        portable_url = "https://example.com/photoshop-cs6-portable.zip"  # noqa: F841 Placeholder
 
         # Create launcher script
         launcher_script = f"""#!/bin/bash
@@ -154,10 +154,7 @@ Terminal=false
         """Launch Photoshop on Linux via WINE."""
         photoshop_dir = f"{wine_prefix}/drive_c/Program Files/Adobe/Photoshop"
 
-        cmd = (
-            f'WINEPREFIX={wine_prefix} WINEDEBUG=-all '
-            f'wine64 "{photoshop_dir}/Photoshop.exe"'
-        )
+        cmd = f"WINEPREFIX={wine_prefix} WINEDEBUG=-all " f'wine64 "{photoshop_dir}/Photoshop.exe"'
 
         if file_path:
             # Convert Linux path to Windows path for WINE
@@ -203,7 +200,7 @@ Terminal=false
         # This just verifies it exists
         result = await self.session.run_command(
             'if exist "%ProgramFiles%\\Adobe\\Adobe Photoshop*\\Photoshop.exe" '
-            '(echo FOUND) else (echo NOT_FOUND)',
+            "(echo FOUND) else (echo NOT_FOUND)",
             check=False,
         )
 
@@ -212,8 +209,8 @@ Terminal=false
             # Could attempt to install via chocolatey or other means
             # For now, just note that it needs manual installation
             await self.session.run_command(
-                'echo Photoshop not found. Please install manually. > '
-                '%USERPROFILE%\\Desktop\\photoshop_install_note.txt',
+                "echo Photoshop not found. Please install manually. > "
+                "%USERPROFILE%\\Desktop\\photoshop_install_note.txt",
                 check=False,
             )
 

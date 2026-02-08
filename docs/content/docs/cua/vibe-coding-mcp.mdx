@@ -12,10 +12,9 @@ The CUA MCP server equips AI coding agents with deep knowledge about CUA's APIs,
 
 ## Server URL
 
-| Endpoint       | URL                            |
-| -------------- | ------------------------------ |
-| SSE Transport  | `https://docs-mcp.cua.ai/sse`  |
-| HTTP Transport | `https://docs-mcp.cua.ai/http` |
+| Endpoint | URL |
+|----------|-----|
+| Streamable HTTP Transport | `https://vk-mcp.cua.ai/mcp` |
 
 ## Available Tools
 
@@ -23,17 +22,17 @@ The MCP server exposes four read-only query tools:
 
 ### Documentation Tools
 
-| Tool                 | Description                                               |
-| -------------------- | --------------------------------------------------------- |
-| `query_docs_db`      | SQL queries against documentation (FTS5 full-text search) |
-| `query_docs_vectors` | Semantic vector search for natural language queries       |
+| Tool | Description |
+|------|-------------|
+| `query_docs_db` | SQL queries against documentation (FTS5 full-text search) |
+| `query_docs_vectors` | Semantic vector search for natural language queries |
 
 ### Code Search Tools
 
-| Tool                 | Description                                                       |
-| -------------------- | ----------------------------------------------------------------- |
-| `query_code_db`      | SQL queries against versioned source code (FTS5 full-text search) |
-| `query_code_vectors` | Semantic code search across all components and versions           |
+| Tool | Description |
+|------|-------------|
+| `query_code_db` | SQL queries against versioned source code (FTS5 full-text search) |
+| `query_code_vectors` | Semantic code search across all components and versions |
 
 ## Connect Your AI Tools
 
@@ -48,7 +47,7 @@ The MCP server exposes four read-only query tools:
 {
   "mcpServers": {
     "CUA MCP": {
-      "url": "https://docs-mcp.cua.ai/sse"
+      "url": "https://vk-mcp.cua.ai/mcp"
     }
   }
 }
@@ -59,7 +58,7 @@ The MCP server exposes four read-only query tools:
 Add the MCP server using the CLI:
 
 ```bash
-claude mcp add --transport sse cua-mcp https://docs-mcp.cua.ai/sse
+claude mcp add --transport http cua-mcp https://vk-mcp.cua.ai/mcp
 ```
 
 Verify the connection:
@@ -72,7 +71,7 @@ Expected output:
 
 ```
 Checking MCP server health...
-cua-mcp: https://docs-mcp.cua.ai/sse (SSE) - ✓ Connected
+cua-mcp: https://vk-mcp.cua.ai/mcp (HTTP) - ✓ Connected
 ```
 
 Management commands:
@@ -91,7 +90,7 @@ claude mcp remove cua-mcp -s local
 2. Click **Add custom connector**
 3. Enter the following:
    - **Name**: `CUA MCP`
-   - **URL**: `https://docs-mcp.cua.ai/sse`
+   - **URL**: `https://vk-mcp.cua.ai/mcp`
 4. Click **Add**
 
 ### Windsurf
@@ -99,10 +98,9 @@ claude mcp remove cua-mcp -s local
 1. Open Windsurf Settings (bottom right settings button)
 2. Navigate to **Cascade** > **Model Context Protocol**
 3. Click **Add Server** > **Add custom server**
-4. Select **SSE** transport and enter: `https://docs-mcp.cua.ai/sse`
+4. Select **Streamable HTTP** transport and enter: `https://vk-mcp.cua.ai/mcp`
 
 Configuration file location:
-
 - **macOS**: `~/.codeium/windsurf/mcp_config.json`
 - **Windows**: `%USERPROFILE%\.codeium\windsurf\mcp_config.json`
 - **Linux**: `~/.codeium/windsurf/mcp_config.json`
@@ -115,7 +113,7 @@ Configuration file location:
 4. Click **Remote Servers** tab
 5. Enter:
    - **Server Name**: `CUA MCP`
-   - **Server URL**: `https://docs-mcp.cua.ai/sse`
+   - **Server URL**: `https://vk-mcp.cua.ai/mcp`
 6. Click **Add Server**
 
 ### GitHub Copilot
@@ -127,7 +125,7 @@ Configuration file location:
 {
   "servers": {
     "CUA MCP": {
-      "url": "https://docs-mcp.cua.ai/sse"
+      "url": "https://vk-mcp.cua.ai/mcp"
     }
   }
 }
@@ -139,19 +137,17 @@ Configuration file location:
 
 For any MCP-compatible application:
 
-**SSE Connection**:
-
+**Streamable HTTP Connection**:
 ```
-https://docs-mcp.cua.ai/sse
+https://vk-mcp.cua.ai/mcp
 ```
 
 **Common JSON Configuration**:
-
 ```json
 {
   "servers": {
     "CUA MCP": {
-      "url": "https://docs-mcp.cua.ai/sse"
+      "url": "https://vk-mcp.cua.ai/mcp"
     }
   }
 }

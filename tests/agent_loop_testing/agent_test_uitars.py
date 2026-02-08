@@ -121,7 +121,12 @@ async def test_cua_agent(model_name: str):
         mock_computer = MockComputer()
 
         # Create the real CUA ComputerAgent
-        agent = ComputerAgent(model=model_name, tools=[mock_computer], max_trajectory_budget=5.0, trajectory_dir=".trajectories")
+        agent = ComputerAgent(
+            model=model_name,
+            tools=[mock_computer],
+            max_trajectory_budget=5.0,
+            trajectory_dir=".trajectories",
+        )
 
         print("✅ CUA Agent created")
         print("✅ Mock computer ready")
@@ -147,7 +152,7 @@ async def test_cua_agent(model_name: str):
                     elif item["type"] == "tool_call":
                         print(f"  Tool: {item.get('tool_name')} {item.get('arguments')}")
                     else:
-                        print(f"  Unknown output type")
+                        print("  Unknown output type")
 
             # Debug: print full result for empty iterations
             if not output_items:
@@ -184,7 +189,9 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="Test CUA Agent with mock computer")
     parser.add_argument(
-        "--model", default="huggingface-local//home/liangxiao/NAS/ByteDance-Seed/UI-TARS-1.5-7B", help="CUA model to test"
+        "--model",
+        default="huggingface-local//home/liangxiao/NAS/ByteDance-Seed/UI-TARS-1.5-7B",
+        help="CUA model to test",
     )
     args = parser.parse_args()
 

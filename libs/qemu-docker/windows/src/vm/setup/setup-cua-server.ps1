@@ -92,10 +92,10 @@ if (Test-Path -LiteralPath $ProjectFile) {
   }
 }
 
-Write-Log -LogFile $script:LogFile -Message "Installing cua-computer-server"
+Write-Log -LogFile $script:LogFile -Message "Installing cua-computer-server and cua-agent"
 try {
-  & uv add --directory $ProjectDir cua-computer-server 2>&1 | Tee-Object -FilePath $script:LogFile -Append | Out-Null
-  Write-Log -LogFile $script:LogFile -Message "cua-computer-server installed successfully"
+  & uv add --directory $ProjectDir cua-computer-server "cua-agent[all]" 2>&1 | Tee-Object -FilePath $script:LogFile -Append | Out-Null
+  Write-Log -LogFile $script:LogFile -Message "cua-computer-server and cua-agent installed successfully"
 } catch {
   Write-Log -LogFile $script:LogFile -Message "Server install error: $($_.Exception.Message)"
   throw
@@ -137,8 +137,8 @@ if (Test-Path `$uvPath) {
 `$LogFile = Join-Path `$ProjectDir 'server.log'
 
 function Start-Server {
-    Write-Output "Updating cua-computer-server..." | Out-File -FilePath `$LogFile -Append
-    & uv add --directory `$ProjectDir cua-computer-server 2>&1 | Out-File -FilePath `$LogFile -Append
+    Write-Output "Updating cua-computer-server and cua-agent..." | Out-File -FilePath `$LogFile -Append
+    & uv add --directory `$ProjectDir cua-computer-server "cua-agent[all]" 2>&1 | Out-File -FilePath `$LogFile -Append
 
     Write-Output "Starting Cua Computer Server on port 5000..." | Out-File -FilePath `$LogFile -Append
     & uv run --directory `$ProjectDir python -m computer_server --port 5000 2>&1 | Out-File -FilePath `$LogFile -Append

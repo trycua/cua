@@ -11,7 +11,6 @@ on:
           - pypi/agent
           - pypi/bench
           - pypi/bench-ui
-          - pypi/cli
           - pypi/computer
           - pypi/computer-server
           - pypi/core
@@ -20,7 +19,10 @@ on:
           - npm/cli
           - npm/computer
           - npm/core
+          - npm/playground
+          - npm/cuabot
           - lume
+          - docker/cuabot
           - docker/kasm
           - docker/xfce
           - docker/lumier
@@ -59,10 +61,6 @@ jobs:
               echo "directory=libs/python/bench-ui" >> $GITHUB_OUTPUT
               echo "type=python" >> $GITHUB_OUTPUT
               ;;
-            "pypi/cli")
-              echo "directory=libs/python/cua-cli" >> $GITHUB_OUTPUT
-              echo "type=python" >> $GITHUB_OUTPUT
-              ;;
             "pypi/computer")
               echo "directory=libs/python/computer" >> $GITHUB_OUTPUT
               echo "type=python" >> $GITHUB_OUTPUT
@@ -95,9 +93,22 @@ jobs:
               echo "directory=libs/typescript/core" >> $GITHUB_OUTPUT
               echo "type=npm" >> $GITHUB_OUTPUT
               ;;
+            "npm/playground")
+              echo "directory=libs/typescript/playground" >> $GITHUB_OUTPUT
+              echo "type=npm" >> $GITHUB_OUTPUT
+              ;;
+            "npm/cuabot")
+              echo "directory=libs/cuabot" >> $GITHUB_OUTPUT
+              echo "type=npm" >> $GITHUB_OUTPUT
+              ;;
             "lume")
               echo "directory=libs/lume" >> $GITHUB_OUTPUT
               echo "type=lume" >> $GITHUB_OUTPUT
+              ;;
+            "docker/cuabot")
+              echo "directory=libs/cuabot" >> $GITHUB_OUTPUT
+              echo "type=docker" >> $GITHUB_OUTPUT
+              echo "bumpversion_config=.bumpversion.docker.cfg" >> $GITHUB_OUTPUT
               ;;
             "docker/kasm")
               echo "directory=libs/kasm" >> $GITHUB_OUTPUT
@@ -153,9 +164,10 @@ jobs:
           # Function to clean a tag for a given package directory
           clean_tag() {
             local dir=$1
+            local config_file=${2:-.bumpversion.cfg}
             cd "$dir"
-            NEW_VERSION=$(bump2version --dry-run --list ${{ inputs.bump_type }} 2>/dev/null | grep -m1 '^new_version=' | sed 's/new_version=//')
-            TAG_NAME=$(grep -m1 '^tag_name' .bumpversion.cfg | sed 's/tag_name *= *//' | sed "s|{new_version}|$NEW_VERSION|")
+            NEW_VERSION=$(bump2version --config-file "$config_file" --dry-run --list ${{ inputs.bump_type }} 2>/dev/null | grep -m1 '^new_version=' | sed 's/new_version=//')
+            TAG_NAME=$(grep -m1 '^tag_name' "$config_file" | sed 's/tag_name *= *//' | sed "s|{new_version}|$NEW_VERSION|")
             echo "Checking for existing tag: $TAG_NAME"
             git tag -d "$TAG_NAME" 2>/dev/null || true
             git push origin ":refs/tags/$TAG_NAME" 2>/dev/null || true
@@ -163,7 +175,8 @@ jobs:
           }
 
           # Clean tag for the primary package
-          clean_tag "${{ steps.package.outputs.directory }}"
+          BUMPVERSION_CONFIG="${{ steps.package.outputs.bumpversion_config }}"
+          clean_tag "${{ steps.package.outputs.directory }}" "${BUMPVERSION_CONFIG:-.bumpversion.cfg}"
 
           # Clean cascade tags when bumping pypi/core (also bumps computer and agent)
           if [ "${{ inputs.service }}" == "pypi/core" ]; then
@@ -194,7 +207,11 @@ jobs:
       - name: Run bump2version
         run: |
           cd ${{ steps.package.outputs.directory }}
-          bump2version ${{ inputs.bump_type }}
+          CONFIG_FLAG=""
+          if [ -n "${{ steps.package.outputs.bumpversion_config }}" ]; then
+            CONFIG_FLAG="--config-file ${{ steps.package.outputs.bumpversion_config }}"
+          fi
+          bump2version $CONFIG_FLAG ${{ inputs.bump_type }}
 
       - name: Also bump cua-computer (when bumping cua-core)
         if: ${{ inputs.service == 'pypi/core' }}
@@ -273,15 +290,6 @@ jobs:
           echo "Bench-ui version: $VERSION"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
-      - name: Capture bumped cli version
-        if: ${{ inputs.service == 'pypi/cli' }}
-        id: cli_version
-        run: |
-          cd libs/python/cua-cli
-          VERSION=$(python -c "import tomllib; from pathlib import Path; data = tomllib.loads(Path('pyproject.toml').read_text()); print(data['project']['version'])")
-          echo "CLI version: $VERSION"
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-
       - name: Capture bumped computer version
         if: ${{ inputs.service == 'pypi/computer' || inputs.service == 'pypi/core' }}
         id: computer_version
@@ -351,12 +359,28 @@ jobs:
           echo "npm/core version: $VERSION"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
+      - name: Capture bumped npm/playground version
+        if: ${{ inputs.service == 'npm/playground' }}
+        id: npm_playground_version
+        run: |
+          VERSION=$(grep -oP '"version": "\K[^"]+' libs/typescript/playground/package.json)
+          echo "npm/playground version: $VERSION"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
       - name: Capture bumped lume version
         if: ${{ inputs.service == 'lume' }}
         id: lume_version
         run: |
           VERSION=$(grep -oP 'static let current: String = "\K[^"]+' libs/lume/src/Main.swift)
           echo "lume version: $VERSION"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Capture bumped cuabot version
+        if: ${{ inputs.service == 'npm/cuabot' }}
+        id: cuabot_version
+        run: |
+          VERSION=$(grep -oP '"version": "\K[^"]+' libs/cuabot/package.json)
+          echo "cuabot version: $VERSION"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Generate GitHub App token

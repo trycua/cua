@@ -1,6 +1,6 @@
 """Local image management commands for CUA CLI.
 
-Handles creating, cloning, and running local VM/container images.
+Handles creating, cloning, and managing local VM/container images.
 These are stored base images used for running sandboxes. For QEMU-based
 platforms, images contain QCOW2 disk files. For Docker-based platforms,
 images reference Docker container images.

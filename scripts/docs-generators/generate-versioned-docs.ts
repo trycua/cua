@@ -487,10 +487,10 @@ function generateMDX(
   lines.push("import { Callout } from 'fumadocs-ui/components/callout';");
   lines.push('');
 
-  // Version notice
+  // Version notice — link to the folder root (index.mdx is the landing page)
   const latestHref = config.docsBasePath
-    ? `/${config.docsBasePath.replace(/\/$/, '')}/${config.outputDir}/api`
-    : `/cua/reference/${config.outputDir}/api`;
+    ? `/${config.docsBasePath.replace(/\/$/, '')}/${config.outputDir}`
+    : `/cua/reference/${config.outputDir}`;
   lines.push('<Callout type="warn">');
   lines.push(
     `  This is documentation for **v${majorMinor}**. [View latest version](${latestHref}).`

@@ -100,6 +100,8 @@ interface SDKConfig {
   docsBaseDir?: string;
   /** URL base path for hrefs (defaults to /cua/reference) */
   hrefBase?: string;
+  /** Submodules to include in docs (if set, only these are included; if unset, all are included) */
+  includeSubmodules?: string[];
 }
 
 // ============================================================================
@@ -113,20 +115,22 @@ const SDK_CONFIGS: Record<string, SDKConfig> = {
   computer: {
     packageDir: 'libs/python/computer/computer',
     packageName: 'computer',
-    outputPath: 'docs/content/docs/cua/reference/computer-sdk/api.mdx',
+    outputPath: 'docs/content/docs/cua/reference/computer-sdk/index.mdx',
     displayName: 'Computer SDK',
     description: 'Python API reference for controlling virtual machines and computer interfaces',
     outputDir: 'computer-sdk',
     tagPrefix: 'computer-v',
+    includeSubmodules: ['interface', 'models', 'tracing', 'helpers', 'diorama_computer'],
   },
   agent: {
     packageDir: 'libs/python/agent/agent',
     packageName: 'agent',
-    outputPath: 'docs/content/docs/cua/reference/agent-sdk/api.mdx',
+    outputPath: 'docs/content/docs/cua/reference/agent-sdk/index.mdx',
     displayName: 'Agent SDK',
     description: 'Python API reference for building computer-use agents',
     outputDir: 'agent-sdk',
     tagPrefix: 'agent-v',
+    includeSubmodules: ['callbacks', 'tools', 'types'],
   },
   cli: {
     packageDir: 'libs/python/cua-cli/cua_cli',
@@ -295,11 +299,11 @@ function discoverVersions(config: SDKConfig, currentVersion: string): VersionInf
   const hrefBase = config.hrefBase ?? '/cua/reference';
   const versions: VersionInfo[] = [];
 
-  // Add current version (latest)
+  // Add current version (latest) — points to the index page (folder root)
   const currentMajorMinor = currentVersion.split('.').slice(0, 2).join('.');
   versions.push({
     version: currentMajorMinor,
-    href: `${hrefBase}/${config.outputDir}/api`,
+    href: `${hrefBase}/${config.outputDir}`,
     isCurrent: true,
   });
 
@@ -435,11 +439,16 @@ function generateMDX(docs: PythonPackage, config: SDKConfig): string {
     }
   }
 
-  // Submodules (for packages that expose API through submodules, like CLI)
+  // Submodules (for packages that expose API through submodules)
   if (docs.submodules && docs.submodules.length > 0) {
-    const publicSubmodules = docs.submodules.filter(
+    let publicSubmodules = docs.submodules.filter(
       (m) => !m.name.startsWith('_') && (m.classes.length > 0 || m.functions.length > 0)
     );
+
+    // Filter to only included submodules if configured
+    if (config.includeSubmodules) {
+      publicSubmodules = publicSubmodules.filter((m) => config.includeSubmodules!.includes(m.name));
+    }
 
     for (const mod of publicSubmodules) {
       const publicClasses = mod.classes.filter((c) => !c.is_private);

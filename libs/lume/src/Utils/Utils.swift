@@ -42,12 +42,8 @@ func parseSize(_ input: String) throws -> UInt64 {
     } else if lowercased.hasSuffix("kb") {
         multiplier = 1024
         valueString = String(lowercased.dropLast(2))
-    } else if lowercased.hasSuffix("b") {
-        multiplier = 1
-        valueString = String(lowercased.dropLast(1))
     } else {
-        // Default to GB when no unit is specified
-        multiplier = 1024 * 1024 * 1024
+        multiplier = 1024 * 1024
         valueString = lowercased
     }
 

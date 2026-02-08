@@ -80,7 +80,6 @@ enum CommandDocExtractor {
             listDoc,
             runDoc,
             stopDoc,
-            sshDoc,
             ipswDoc,
             serveDoc,
             deleteDoc,
@@ -302,28 +301,6 @@ enum CommandDocExtractor {
             ],
             options: [
                 OptionDoc(name: "storage", shortName: nil, help: "VM storage location to use", type: "String", defaultValue: nil, isOptional: true),
-            ],
-            flags: [],
-            subcommands: []
-        )
-    }
-
-    // MARK: - SSH
-
-    private static var sshDoc: CommandDoc {
-        CommandDoc(
-            name: "ssh",
-            abstract: "Connect to a VM via SSH or execute commands remotely",
-            discussion: "Requires Remote Login to be enabled on the VM (System Settings > General > Sharing > Remote Login). VMs created with --unattended have this enabled automatically with credentials lume/lume.",
-            arguments: [
-                ArgumentDoc(name: "name", help: "Name of the virtual machine", type: "String", isOptional: false),
-                ArgumentDoc(name: "command", help: "Command to execute (omit for interactive shell)", type: "[String]", isOptional: true),
-            ],
-            options: [
-                OptionDoc(name: "user", shortName: "u", help: "SSH username", type: "String", defaultValue: "lume", isOptional: false),
-                OptionDoc(name: "password", shortName: "p", help: "SSH password", type: "String", defaultValue: "lume", isOptional: false),
-                OptionDoc(name: "storage", shortName: nil, help: "Storage location name or path", type: "String", defaultValue: nil, isOptional: true),
-                OptionDoc(name: "timeout", shortName: "t", help: "Command timeout in seconds (0 for no timeout)", type: "Int", defaultValue: "60", isOptional: false),
             ],
             flags: [],
             subcommands: []

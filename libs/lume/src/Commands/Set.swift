@@ -12,10 +12,10 @@ struct Set: AsyncParsableCommand {
     @Option(help: "New number of CPU cores")
     var cpu: Int?
 
-    @Option(help: "New memory size (e.g., 8, 8GB, or 8192MB). Numbers without units are treated as GB.", transform: { try parseSize($0) })
+    @Option(help: "New memory size, e.g., 8192MB or 8GB.", transform: { try parseSize($0) })
     var memory: UInt64?
 
-    @Option(help: "New disk size (e.g., 50, 50GB, or 51200MB). Numbers without units are treated as GB.", transform: { try parseSize($0) })
+    @Option(help: "New disk size, e.g., 20480MB or 20GB.", transform: { try parseSize($0) })
     var diskSize: UInt64?
 
     @Option(help: "New display resolution in format WIDTHxHEIGHT.")

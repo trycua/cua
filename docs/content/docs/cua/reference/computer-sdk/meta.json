@@ -2,5 +2,5 @@
   "title": "Computer SDK",
   "description": "Python API for sandboxed desktop environments",
   "icon": "Monitor",
-  "pages": ["index"]
+  "pages": ["api", "changelog"]
 }

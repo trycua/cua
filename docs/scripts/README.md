@@ -4,7 +4,15 @@ This directory contains scripts for crawling, indexing, and serving CUA document
 
 ## Scripts
 
-- **modal_app.py**: Complete Modal app with scheduled crawling, database generation, and MCP server deployment
+### Local Scripts
+
+- **crawl_docs.py**: Crawls cua.ai/docs using crawl4ai
+- **generate_db.py**: Creates LanceDB vector database for semantic search
+- **generate_sqlite.py**: Creates SQLite FTS5 database for full-text search
+
+### Modal Deployment
+
+- **modal_app.py**: Complete Modal app with scheduled crawling and MCP server deployment
 
 ## Installation
 
@@ -17,7 +25,25 @@ uv sync --group docs-scripts
 
 ## Usage
 
-### Modal Deployment
+### Option 1: Local Development
+
+#### 1. Crawl Documentation
+
+```bash
+uv run docs/scripts/crawl_docs.py
+```
+
+#### 2. Generate Databases
+
+```bash
+# Generate vector database for semantic search
+uv run docs/scripts/generate_db.py
+
+# Generate SQLite FTS5 database for full-text search
+uv run docs/scripts/generate_sqlite.py
+```
+
+### Option 2: Modal Deployment (Production)
 
 The Modal app provides a production-ready deployment with:
 

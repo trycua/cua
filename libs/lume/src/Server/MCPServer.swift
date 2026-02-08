@@ -154,7 +154,7 @@ final class LumeMCPServer {
         Shared files appear in the VM at `/Volumes/My Shared Files/`.
 
         ### 4. Execute Commands
-        Run commands via SSH:
+        Run commands via SSH (requires `sshpass` installed on host):
         ```
         lume_exec(name: "sandbox", command: "cd /Volumes/My\\\\ Shared\\\\ Files && npm test")
         ```
@@ -671,30 +671,69 @@ final class LumeMCPServer {
             )
         }
 
-        // Execute command via native SSH client (no sshpass dependency)
-        let sshClient = SSHClient(
-            host: ip,
-            port: 22,
-            user: user,
-            password: password
-        )
+        // Find sshpass in common locations
+        let sshpassPaths = [
+            "/opt/homebrew/bin/sshpass",
+            "/usr/local/bin/sshpass",
+            "/usr/bin/sshpass"
+        ]
 
-        do {
-            let sshResult = try await sshClient.execute(command: command, timeout: 60)
-
-            var result = sshResult.output
-            if result.isEmpty {
-                result = sshResult.exitCode == 0
-                    ? "Command completed successfully (no output)"
-                    : "Command failed with exit code \(sshResult.exitCode)"
+        var sshpassPath: String?
+        for path in sshpassPaths {
+            if FileManager.default.fileExists(atPath: path) {
+                sshpassPath = path
+                break
             }
-
-            return CallTool.Result(content: [.text(result)], isError: sshResult.exitCode != 0)
-        } catch let error as SSHError {
-            return CallTool.Result(content: [.text("Error: \(error.localizedDescription)")], isError: true)
-        } catch {
-            return CallTool.Result(content: [.text("Error: \(error.localizedDescription)")], isError: true)
         }
+
+        guard let sshpass = sshpassPath else {
+            return CallTool.Result(
+                content: [.text("Error: sshpass not found. Install it with: brew install hudochenkov/sshpass/sshpass")],
+                isError: true
+            )
+        }
+
+        // Execute command via SSH using sshpass
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: sshpass)
+        process.arguments = [
+            "-p", password,
+            "ssh",
+            "-o", "StrictHostKeyChecking=no",
+            "-o", "UserKnownHostsFile=/dev/null",
+            "-o", "LogLevel=ERROR",
+            "\(user)@\(ip)",
+            command
+        ]
+
+        let outputPipe = Pipe()
+        let errorPipe = Pipe()
+        process.standardOutput = outputPipe
+        process.standardError = errorPipe
+
+        try process.run()
+        process.waitUntilExit()
+
+        let outputData = outputPipe.fileHandleForReading.readDataToEndOfFile()
+        let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
+
+        let output = String(data: outputData, encoding: .utf8) ?? ""
+        let errorOutput = String(data: errorData, encoding: .utf8) ?? ""
+
+        let isError = process.terminationStatus != 0
+
+        var result = output
+        if !errorOutput.isEmpty {
+            if !result.isEmpty {
+                result += "\n"
+            }
+            result += errorOutput
+        }
+        if result.isEmpty {
+            result = isError ? "Command failed with exit code \(process.terminationStatus)" : "Command completed successfully (no output)"
+        }
+
+        return CallTool.Result(content: [.text(result)], isError: isError)
     }
 
     private func handleCreateVM(_ args: [String: Value]?) async throws -> CallTool.Result {

@@ -14,7 +14,8 @@ lume create my-vm --os macos --ipsw latest --unattended tahoe
 This creates a VM, installs macOS, and runs through the entire Setup Assistant. When it's done, you have a configured VM with user `lume` (password `lume`) and SSH enabled.
 
 <Callout type="warn">
-Unattended configs are macOS version-specific. The `tahoe` preset works with macOS Tahoe (15.x). Setup Assistant changes between versions, so configs may need updating for new releases.
+  Unattended configs are macOS version-specific. The `tahoe` preset works with macOS Tahoe (15.x).
+  Setup Assistant changes between versions, so configs may need updating for new releases.
 </Callout>
 
 ## Prerequisites
@@ -72,15 +73,15 @@ Screenshots go to `/tmp/unattended-<uuid>` by default, or specify `--debug-dir /
 A config has three parts:
 
 ```yaml
-boot_wait: 30           # Seconds to wait after boot
+boot_wait: 30 # Seconds to wait after boot
 
-boot_commands:          # Sequence of automation commands
+boot_commands: # Sequence of automation commands
   - "<wait 'Continue'>"
   - "<click 'Continue'>"
   - "<type 'lume'>"
-  - "<enter>"
+  - '<enter>'
 
-health_check:           # Optional verification
+health_check: # Optional verification
   type: ssh
   user: lume
   password: lume
@@ -91,20 +92,21 @@ health_check:           # Optional verification
 ### Wait for text (OCR)
 
 ```yaml
-- "<wait 'Continue'>"              # Wait up to 120s (default)
-- "<wait 'Loading...', timeout=300>"  # Custom timeout
+- "<wait 'Continue'>" # Wait up to 120s (default)
+- "<wait 'Loading...', timeout=300>" # Custom timeout
 ```
 
 ### Click text
 
 ```yaml
-- "<click 'Continue'>"             # Click first occurrence
-- "<click 'Agree', index=-1>"      # Click last occurrence
-- "<click 'Label', xoffset=50>"    # Click 50px right of text
-- "<click_at 960,540>"             # Click exact coordinates
+- "<click 'Continue'>" # Click first occurrence
+- "<click 'Agree', index=-1>" # Click last occurrence
+- "<click 'Label', xoffset=50>" # Click 50px right of text
+- '<click_at 960,540>' # Click exact coordinates
 ```
 
 When text appears multiple times (like "Agree" in license text and button), use `index`:
+
 - `index=0` — first (top)
 - `index=-1` — last (bottom)
 
@@ -131,12 +133,12 @@ When text appears multiple times (like "Agree" in license text and button), use 
 ### Hotkey combinations
 
 ```yaml
-- "<cmd+space>"      # Spotlight
-- "<cmd+c>"          # Copy
-- "<cmd+v>"          # Paste
-- "<cmd+q>"          # Quit
-- "<shift+cmd+3>"    # Screenshot
-- "<ctrl+alt+delete>"
+- '<cmd+space>' # Spotlight
+- '<cmd+c>' # Copy
+- '<cmd+v>' # Paste
+- '<cmd+q>' # Quit
+- '<shift+cmd+3>' # Screenshot
+- '<ctrl+alt+delete>'
 ```
 
 Modifiers: `cmd`/`command`/`super`, `shift`, `alt`/`option`, `ctrl`/`control`
@@ -144,8 +146,8 @@ Modifiers: `cmd`/`command`/`super`, `shift`, `alt`/`option`, `ctrl`/`control`
 ### Delays
 
 ```yaml
-- "<delay 2>"        # Wait 2 seconds
-- "<delay 0.5>"      # Decimals work
+- '<delay 2>' # Wait 2 seconds
+- '<delay 0.5>' # Decimals work
 ```
 
 ## Example: Complete Setup Assistant
@@ -157,30 +159,30 @@ boot_wait: 30
 
 boot_commands:
   # Dismiss greeting
-  - "<delay 5>"
-  - "<space>"
-  - "<delay 2>"
+  - '<delay 5>'
+  - '<space>'
+  - '<delay 2>'
 
   # Language
   - "<wait 'English', timeout=120>"
   - "<type 'English'>"
-  - "<delay 1>"
-  - "<enter>"
-  - "<delay 2>"
+  - '<delay 1>'
+  - '<enter>'
+  - '<delay 2>'
 
   # Country
   - "<wait 'Country or Region'>"
-  - "<click_at 960,900>"
+  - '<click_at 960,900>'
   - "<type 'United States'>"
-  - "<enter>"
+  - '<enter>'
   - "<click 'Continue'>"
-  - "<delay 2>"
+  - '<delay 2>'
 
   # Transfer - select "Set up as new"
   - "<wait 'Transfer Your Data'>"
-  - "<delay 20>"
-  - "<tab><tab><tab>"
-  - "<space>"
+  - '<delay 20>'
+  - '<tab><tab><tab>'
+  - '<space>'
   - "<click 'Continue'>"
 
   # Accessibility
@@ -189,13 +191,13 @@ boot_commands:
 
   # Account creation
   - "<wait 'Create a Mac Account'>"
-  - "<tab><tab><tab><tab><tab><tab>"
+  - '<tab><tab><tab><tab><tab><tab>'
   - "<type 'lume'>"
-  - "<tab><tab>"
+  - '<tab><tab>'
   - "<type 'lume'>"
-  - "<tab>"
+  - '<tab>'
   - "<type 'lume'>"
-  - "<tab><tab><space>"
+  - '<tab><tab><space>'
   - "<click 'Continue'>"
 
   # Terms
@@ -222,9 +224,9 @@ health_check:
   type: ssh
   user: lume
   password: lume
-  timeout: 30      # Seconds per attempt
-  retries: 5       # Number of attempts
-  retry_delay: 10  # Seconds between retries
+  timeout: 30 # Seconds per attempt
+  retries: 5 # Number of attempts
+  retry_delay: 10 # Seconds between retries
 ```
 
 The automation waits for the VM to become reachable via SSH before declaring success.
@@ -240,10 +242,10 @@ The automation waits for the VM to become reachable via SSH before declaring suc
 **Keyboard navigation** — macOS doesn't Tab through all elements by default. Enable full keyboard access:
 
 ```yaml
-- "<cmd+space>"
+- '<cmd+space>'
 - "<type 'Keyboard'>"
-- "<delay 2>"
-- "<enter>"
+- '<delay 2>'
+- '<enter>'
 # Then enable "Keyboard navigation" in settings
 ```
 
@@ -251,13 +253,13 @@ The automation waits for the VM to become reachable via SSH before declaring suc
 
 ## Troubleshooting
 
-| Problem | Solution |
-|---------|----------|
-| Commands run too early | Increase `boot_wait`, add `<delay>` |
-| Text not found | Check spelling/case, increase timeout, use coordinates |
-| Wrong element clicked | Use `index` to select correct occurrence |
-| Hotkeys ignored | Click desktop first to focus |
-| Tab skips elements | Enable keyboard navigation in System Settings |
+| Problem                | Solution                                               |
+| ---------------------- | ------------------------------------------------------ |
+| Commands run too early | Increase `boot_wait`, add `<delay>`                    |
+| Text not found         | Check spelling/case, increase timeout, use coordinates |
+| Wrong element clicked  | Use `index` to select correct occurrence               |
+| Hotkeys ignored        | Click desktop first to focus                           |
+| Tab skips elements     | Enable keyboard navigation in System Settings          |
 
 ## Limitations
 
@@ -270,19 +272,19 @@ The automation waits for the VM to become reachable via SSH before declaring suc
 
 ### Config fields
 
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `boot_wait` | integer | 60 | Seconds to wait before starting |
-| `boot_commands` | array | required | List of commands |
-| `health_check` | object | optional | Verification config |
+| Field           | Type    | Default  | Description                     |
+| --------------- | ------- | -------- | ------------------------------- |
+| `boot_wait`     | integer | 60       | Seconds to wait before starting |
+| `boot_commands` | array   | required | List of commands                |
+| `health_check`  | object  | optional | Verification config             |
 
 ### Health check fields
 
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `type` | string | required | `ssh` |
-| `user` | string | — | SSH username |
-| `password` | string | — | SSH password |
-| `timeout` | integer | 30 | Seconds per attempt |
-| `retries` | integer | 3 | Number of attempts |
-| `retry_delay` | integer | 5 | Seconds between retries |
+| Field         | Type    | Default  | Description             |
+| ------------- | ------- | -------- | ----------------------- |
+| `type`        | string  | required | `ssh`                   |
+| `user`        | string  | —        | SSH username            |
+| `password`    | string  | —        | SSH password            |
+| `timeout`     | integer | 30       | Seconds per attempt     |
+| `retries`     | integer | 3        | Number of attempts      |
+| `retry_delay` | integer | 5        | Seconds between retries |

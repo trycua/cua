@@ -1,0 +1,34 @@
+>                                                   onClick={function onClick}
+>                                                   onMouseEnter={function onMouseEnter}
+>       >       >       >                           onTouchStart={function onTouchStart}
+>                                                   href="/docs/cua/reference/desktop-sandbox/macos"
+>                                                 >
+                                        ...
+                                ...
+                              ...
+                          ...
+                      ...
+        ...
+      ...
+contentcontentcontentcontentcontentcontentcontentcontentcontentcontentcontent21) @ _createMdxContent
+
+
+  307 |     }), "\n", _jsx(_components.h3, {
+  308 |       id: "macos-sandbox",
+> 309 |       children: _jsx(_components.a, {
+      |                     ^
+  310 |         href: "/cua/reference/desktop-sandbox/macos",
+  311 |         children: "macOS Sandbox"
+  312 |       })
+Call Stack
+20
+
+Show 16 ignore-listed frame(s)
+a
+<anonymous>
+_createMdxContent
+content/docs/cua/reference/desktop-sandbox/index.mdx.js?collection=docs (309:21)
+MDXContent
+content/docs/cua/reference/desktop-sandbox/index.mdx.js?collection=docs (547:8)
+Page
+src/app/(docs)/[...slug]/page.tsx (258:9)

@@ -10,10 +10,10 @@ on:
       # MCP Server (Python)
       - "libs/python/mcp-server/src/**"
       # Computer SDK
-      - "libs/python/computer/src/**"
+      - "libs/python/computer/computer/**"
       - "libs/typescript/computer/src/**"
       # Agent SDK
-      - "libs/python/agent/src/**"
+      - "libs/python/agent/agent/**"
       - "libs/typescript/agent/src/**"
       # Documentation files themselves
       - "docs/content/docs/cua/reference/**"
@@ -42,6 +42,14 @@ jobs:
         run: pnpm install
         working-directory: docs
 
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Python doc dependencies
+        run: pip install -r scripts/docs-generators/requirements.txt
+
       - name: Determine changed generators
         id: changed
         run: |
@@ -68,14 +76,9 @@ jobs:
             GENERATORS="$GENERATORS mcp-server"
           fi
 
-          # Computer SDK changes
-          if echo "$CHANGED_FILES" | grep -q "^libs/python/computer/src/\|^libs/typescript/computer/src/"; then
-            GENERATORS="$GENERATORS computer-sdk"
-          fi
-
-          # Agent SDK changes
-          if echo "$CHANGED_FILES" | grep -q "^libs/python/agent/src/\|^libs/typescript/agent/src/"; then
-            GENERATORS="$GENERATORS agent-sdk"
+          # Python SDK changes (Computer and Agent)
+          if echo "$CHANGED_FILES" | grep -q "^libs/python/computer/computer/\|^libs/python/agent/agent/"; then
+            GENERATORS="$GENERATORS python-sdk"
           fi
 
           # Generator changes should run all

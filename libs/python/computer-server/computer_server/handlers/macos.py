@@ -73,7 +73,7 @@ except Exception as e:
 
 # Trigger screen recording prompt on macOS
 try:
-    from PIL import ImageGrab, Image
+    from PIL import Image, ImageGrab
 
     ImageGrab.grab()
 except Exception as e:

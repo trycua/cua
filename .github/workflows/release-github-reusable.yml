@@ -83,6 +83,11 @@ jobs:
 
           # Get commits and process each one to fetch GitHub username
           while IFS='|' read -r sha subject; do
+            # Skip automated bump commits (e.g., "Bump cua-agent to v0.7.22")
+            if [[ "$subject" =~ ^Bump\ cua- ]]; then
+              continue
+            fi
+
             # Try to get GitHub username via API
             USERNAME=$(gh api repos/${{ github.repository }}/commits/${sha} --jq '.author.login' 2>/dev/null || echo "")
 
@@ -98,12 +103,15 @@ jobs:
               fi
             fi
 
+            # Link PR numbers: (#123) -> ([#123](https://github.com/REPO/pull/123))
+            LINKED_SUBJECT=$(echo "$subject" | sed 's/(#\([0-9]*\))/([#\1](https:\/\/github.com\/${{ github.repository }}\/pull\/\1))/g')
+
             SHORT_SHA=$(echo ${sha} | cut -c1-7)
-            NOTES="${NOTES}* ${subject} (${SHORT_SHA}) by @${USERNAME}"$'\n'
+            NOTES="${NOTES}* ${LINKED_SUBJECT} (${SHORT_SHA}) by @${USERNAME}"$'\n'
           done < <(git log ${COMMIT_RANGE} --pretty=format:"%H|%s" -- "${{ inputs.module_path }}" | head -50)
 
           if [ -z "$NOTES" ]; then
-            NOTES="* Initial release or no path-specific changes found"
+            NOTES="Maintenance release — dependency updates only."
           fi
 
           # Store notes in output (handle multiline)

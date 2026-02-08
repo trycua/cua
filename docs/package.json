@@ -10,7 +10,10 @@
     "docs:generate": "tsx ../scripts/docs-generators/runner.ts",
     "docs:check": "tsx ../scripts/docs-generators/runner.ts --check",
     "docs:list": "tsx ../scripts/docs-generators/runner.ts --list",
-    "docs:generate:lume": "tsx ../scripts/docs-generators/lume.ts"
+    "docs:generate:lume": "tsx ../scripts/docs-generators/lume.ts",
+    "docs:generate:python": "tsx ../scripts/docs-generators/python-sdk.ts",
+    "docs:generate:changelog": "tsx ../scripts/docs-generators/generate-changelog.ts",
+    "docs:generate:versions": "tsx ../scripts/docs-generators/generate-versioned-docs.ts"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^3.0.9",

@@ -1,0 +1,70 @@
+---
+title: Getting Started
+description: Install and set up the Cua CLI
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+The Cua CLI is a command-line tool for managing cloud sandboxes, images, and recorded skills. Create, start, stop, and connect to sandboxes directly from your terminal.
+
+## Installation
+
+```bash
+pip install cua-cli
+```
+
+Verify with:
+
+```bash
+cua --help
+```
+
+<Callout type="info">Requires Python 3.12 or 3.13.</Callout>
+
+## Authentication
+
+Login to your Cua account:
+
+```bash
+# Browser-based login
+cua auth login
+
+# Or with API key
+cua auth login --api-key sk_cua-api01_...
+```
+
+Generate a `.env` file for your project:
+
+```bash
+cua auth env
+```
+
+## Quick Start
+
+```bash
+# Create a sandbox
+cua sandbox create --os linux --size small --region north-america
+
+# List sandboxes
+cua sandbox list
+
+# Open VNC in browser
+cua sandbox vnc my-sandbox
+
+# Stop a sandbox
+cua sandbox stop my-sandbox
+```
+
+## Command Groups
+
+| Command         | Alias     | Description                   |
+| --------------- | --------- | ----------------------------- |
+| `cua auth`      |           | Authentication management     |
+| `cua sandbox`   | `cua sb`  | Sandbox management            |
+| `cua image`     | `cua img` | Image management              |
+| `cua skills`    |           | Skills recording and playback |
+| `cua serve-mcp` |           | Start MCP server              |
+
+## Next Steps
+
+- [Command Reference](/cua/reference/cli/commands) - Full list of available commands

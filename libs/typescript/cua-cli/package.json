@@ -1,8 +1,9 @@
 {
   "name": "@trycua/cli",
   "version": "0.2.0",
+  "deprecated": "This package is deprecated. Use the Python CLI instead: pip install cua-cli",
   "packageManager": "bun@1.1.38",
-  "description": "Command-line interface for Cua cloud sandboxes and authentication",
+  "description": "[DEPRECATED] Command-line interface for Cua cloud sandboxes and authentication. Use pip install cua-cli instead.",
   "type": "module",
   "license": "MIT",
   "homepage": "https://github.com/trycua/cua/tree/main/libs/typescript/cua-cli",

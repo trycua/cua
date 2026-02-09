@@ -61,7 +61,6 @@ jobs:
             --verbose
             --no-progress
             --accept 100..=399
-            --exclude-mail
             --exclude 'localhost'
             --exclude '127\.0\.0\.1'
             --exclude 'example\.com'

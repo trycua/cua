@@ -56,7 +56,7 @@ jobs:
               bun run build
             fi
           else
-            pnpm run --if-present build
+            pnpm run build --if-present
           fi
 
       - name: Verify build

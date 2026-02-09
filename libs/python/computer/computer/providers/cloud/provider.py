@@ -3,9 +3,12 @@
 Implements the following public API endpoints:
 
 - GET /v1/vms
+- POST /v1/vms (create)
 - POST /v1/vms/:name/start
 - POST /v1/vms/:name/stop
 - POST /v1/vms/:name/restart
+- POST /v1/vms/:name/suspend
+- DELETE /v1/vms/:name
 """
 
 import logging
@@ -316,3 +319,134 @@ class CloudProvider(BaseVMProvider):
             raise ValueError("VM name is required for CloudProvider.get_ip")
 
         return await self._get_host_for_vm(name)
+
+    # Cloud-specific methods (not in base interface)
+
+    async def create_vm(
+        self,
+        os_type: str,
+        size: str,
+        region: str,
+    ) -> Dict[str, Any]:
+        """Create a new VM via public API.
+
+        Args:
+            os_type: Operating system type (linux, windows, macos)
+            size: VM size (small, medium, large)
+            region: Region (north-america, europe, asia-pacific, south-america)
+
+        Returns:
+            Dictionary with creation status and VM information
+        """
+        url = f"{self.api_base}/v1/vms"
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+        }
+        body = {
+            "os": os_type,
+            "configuration": size,
+            "region": region,
+        }
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, headers=headers, json=body) as resp:
+                if resp.status == 200:
+                    # Sandbox ready immediately
+                    try:
+                        data = await resp.json(content_type=None)
+                        return {
+                            "status": data.get("status", "ready"),
+                            "name": data.get("name"),
+                            "password": data.get("password"),
+                            "host": data.get("host"),
+                        }
+                    except Exception:
+                        return {"status": "created"}
+                elif resp.status == 202:
+                    # Provisioning in progress
+                    try:
+                        data = await resp.json(content_type=None)
+                        return {
+                            "status": data.get("status", "provisioning"),
+                            "name": data.get("name"),
+                            "job_id": data.get("job_id"),
+                        }
+                    except Exception:
+                        return {"status": "provisioning"}
+                elif resp.status == 401:
+                    return {"status": "unauthorized"}
+                elif resp.status == 400:
+                    text = await resp.text()
+                    return {"status": "invalid_request", "message": text}
+                else:
+                    text = await resp.text()
+                    return {"status": "error", "message": text}
+
+    async def suspend_vm(self, name: str) -> Dict[str, Any]:
+        """Suspend a VM via public API (preserves memory state).
+
+        Args:
+            name: Name of the VM to suspend
+
+        Returns:
+            Dictionary with suspension status
+        """
+        url = f"{self.api_base}/v1/vms/{name}/suspend"
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Accept": "application/json",
+        }
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, headers=headers) as resp:
+                if resp.status in (200, 202):
+                    body_status: Optional[str] = None
+                    try:
+                        data = await resp.json(content_type=None)
+                        body_status = data.get("status") if isinstance(data, dict) else None
+                    except Exception:
+                        body_status = None
+                    return {"name": name, "status": body_status or "suspending"}
+                elif resp.status == 404:
+                    return {"name": name, "status": "not_found"}
+                elif resp.status == 401:
+                    return {"name": name, "status": "unauthorized"}
+                elif resp.status == 400:
+                    # Suspend may not be supported for all VM types
+                    text = await resp.text()
+                    return {"name": name, "status": "unsupported", "message": text}
+                else:
+                    text = await resp.text()
+                    return {"name": name, "status": "error", "message": text}
+
+    async def delete_vm(self, name: str) -> Dict[str, Any]:
+        """Delete a VM via public API.
+
+        Args:
+            name: Name of the VM to delete
+
+        Returns:
+            Dictionary with deletion status
+        """
+        url = f"{self.api_base}/v1/vms/{name}"
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Accept": "application/json",
+        }
+        async with aiohttp.ClientSession() as session:
+            async with session.delete(url, headers=headers) as resp:
+                if resp.status in (200, 202, 204):
+                    body_status: Optional[str] = None
+                    try:
+                        data = await resp.json(content_type=None)
+                        body_status = data.get("status") if isinstance(data, dict) else None
+                    except Exception:
+                        body_status = None
+                    return {"name": name, "status": body_status or "deleting"}
+                elif resp.status == 404:
+                    return {"name": name, "status": "not_found"}
+                elif resp.status == 401:
+                    return {"name": name, "status": "unauthorized"}
+                else:
+                    text = await resp.text()
+                    return {"name": name, "status": "error", "message": text}

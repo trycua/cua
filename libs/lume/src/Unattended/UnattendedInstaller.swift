@@ -140,18 +140,6 @@ final class UnattendedInstaller {
 
                 if passed {
                     Logger.info("Health check passed ✓", metadata: ["type": healthCheck.type])
-
-                    // Run post-SSH commands if configured (more reliable than VNC typing)
-                    if let postCommands = config.postSshCommands, !postCommands.isEmpty {
-                        Logger.info("Running post-SSH commands", metadata: ["count": "\(postCommands.count)"])
-                        try await runner.runPostSshCommands(
-                            commands: postCommands,
-                            vmIP: vmIP,
-                            user: healthCheck.user ?? "lume",
-                            password: healthCheck.password ?? "lume"
-                        )
-                        Logger.info("Post-SSH commands completed ✓")
-                    }
                 } else {
                     Logger.error("Health check failed ✗", metadata: ["type": healthCheck.type])
                     throw UnattendedError.healthCheckFailed("Health check '\(healthCheck.type)' failed")

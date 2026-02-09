@@ -39,6 +39,17 @@ const config = {
         permanent: true, // 301 redirect to preserve SEO authority
         basePath: false,
       },
+      // Redirect old api.mdx paths to SDK landing pages
+      {
+        source: '/cua/reference/computer-sdk/api',
+        destination: '/cua/reference/computer-sdk',
+        permanent: true,
+      },
+      {
+        source: '/cua/reference/agent-sdk/api',
+        destination: '/cua/reference/agent-sdk',
+        permanent: true,
+      },
       // Redirects for old URLs
       {
         source: '/quickstart-devs',

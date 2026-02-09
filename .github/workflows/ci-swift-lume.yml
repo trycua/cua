@@ -18,7 +18,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: uname -a
-      - run: sudo xcode-select -s /Applications/Xcode_16.2.app # Swift 6.2
+      - run: sudo xcode-select -s /Applications/Xcode_16.app # Swift 6.0
       - run: swift test
         working-directory: ./libs/lume
   build:
@@ -27,6 +27,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: uname -a
-      - run: sudo xcode-select -s /Applications/Xcode_16.2.app # Swift 6.2
+      - run: sudo xcode-select -s /Applications/Xcode_16.app # Swift 6.0
       - run: swift build --configuration release
         working-directory: ./libs/lume

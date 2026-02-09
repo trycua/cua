@@ -17,8 +17,8 @@ enum BootCommand: Sendable {
     /// Click at specific screen coordinates
     case clickAt(x: Int, y: Int)
 
-    /// Type text string with optional delay between characters (in milliseconds)
-    case typeText(String, delay: Int?)
+    /// Type text string
+    case typeText(String)
 
     /// Press a special key
     case keyPress(SpecialKey)
@@ -239,9 +239,8 @@ struct BootCommandParser {
     }
 
     private func parseTypeCommand(_ input: String) throws -> BootCommand? {
-        // Match <type 'text'> or <type "text"> with optional delay parameter
-        // Examples: <type 'hello'>, <type 'hello', delay=100>
-        let pattern = #"^<type\s+['"](.*)['"](?:\s*,\s*delay\s*=\s*(\d+))?\s*>$"#
+        // Match <type 'text'> or <type "text">
+        let pattern = #"^<type\s+['"](.*)['"]>$"#
         guard let regex = try? NSRegularExpression(pattern: pattern, options: []),
               let match = regex.firstMatch(in: input, range: NSRange(input.startIndex..., in: input)),
               let textRange = Range(match.range(at: 1), in: input)
@@ -250,15 +249,7 @@ struct BootCommandParser {
         }
 
         let text = String(input[textRange])
-        var delay: Int? = nil
-
-        if match.numberOfRanges > 2,
-           let delayRange = Range(match.range(at: 2), in: input),
-           let delayValue = Int(input[delayRange]) {
-            delay = delayValue
-        }
-
-        return .typeText(text, delay: delay)
+        return .typeText(text)
     }
 
     private func parseDelayCommand(_ input: String) throws -> BootCommand? {

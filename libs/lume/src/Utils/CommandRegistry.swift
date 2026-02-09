@@ -13,7 +13,6 @@ enum CommandRegistry {
             List.self,
             Run.self,
             Stop.self,
-            SSH.self,
             IPSW.self,
             Serve.self,
             Delete.self,

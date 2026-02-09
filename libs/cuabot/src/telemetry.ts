@@ -5,19 +5,19 @@
  * Other components (cuabot.tsx, computer-use-mcp.py) send events via HTTP.
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
-import { homedir } from "os";
-import { join } from "path";
-import { PostHog } from "posthog-node";
-import { v4 as uuidv4 } from "uuid";
-import { getTelemetryEnabled } from "./settings.js";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
+import { homedir } from 'os';
+import { join } from 'path';
+import { PostHog } from 'posthog-node';
+import { v4 as uuidv4 } from 'uuid';
+import { getTelemetryEnabled } from './settings.js';
 
 // PostHog config (same as @trycua/core - intentionally public)
-const POSTHOG_API_KEY = "phc_eSkLnbLxsnYFaXksif1ksbrNzYlJShr35miFLDppF14";
-const POSTHOG_HOST = "https://eu.i.posthog.com";
+const POSTHOG_API_KEY = 'phc_eSkLnbLxsnYFaXksif1ksbrNzYlJShr35miFLDppF14';
+const POSTHOG_HOST = 'https://eu.i.posthog.com';
 
 // Installation ID path (shared with @trycua/core)
-const INSTALLATION_ID_PATH = join(homedir(), ".cua", "installation_id");
+const INSTALLATION_ID_PATH = join(homedir(), '.cua', 'installation_id');
 
 export interface TelemetryEvent {
   type: string;
@@ -33,7 +33,7 @@ export interface TelemetryEvent {
 function getOrCreateInstallationId(): string {
   try {
     if (existsSync(INSTALLATION_ID_PATH)) {
-      return readFileSync(INSTALLATION_ID_PATH, "utf-8").trim();
+      return readFileSync(INSTALLATION_ID_PATH, 'utf-8').trim();
     }
   } catch {
     // Fall through to create new ID
@@ -41,7 +41,7 @@ function getOrCreateInstallationId(): string {
 
   const newId = uuidv4();
   try {
-    const dir = join(homedir(), ".cua");
+    const dir = join(homedir(), '.cua');
     if (!existsSync(dir)) {
       mkdirSync(dir, { recursive: true });
     }
@@ -80,7 +80,7 @@ export class CuabotTelemetry {
           flushInterval: 30000,
         });
       } catch (err) {
-        console.error("[telemetry] Failed to initialize PostHog:", err);
+        console.error('[telemetry] Failed to initialize PostHog:', err);
       }
     }
   }
@@ -109,7 +109,7 @@ export class CuabotTelemetry {
           ...properties,
           session_id: this.sessionId,
           timestamp,
-          version: process.env.npm_package_version || "unknown",
+          version: process.env.npm_package_version || 'unknown',
           platform: process.platform,
           node_version: process.version,
         },
@@ -126,7 +126,7 @@ export class CuabotTelemetry {
    */
   recordStartup(port: number, sessionName: string | null, defaultAgent: string | null): void {
     this.recordEvent({
-      type: "startup",
+      type: 'startup',
       timestamp: Date.now(),
       port,
       session_name: sessionName,
@@ -140,7 +140,7 @@ export class CuabotTelemetry {
   recordShutdown(): void {
     const uptimeSeconds = Math.round((Date.now() - this.startTime) / 1000);
     this.recordEvent({
-      type: "shutdown",
+      type: 'shutdown',
       timestamp: Date.now(),
       uptime_seconds: uptimeSeconds,
       events_recorded: this.eventCount,
@@ -227,8 +227,8 @@ export function scrapeHistory(historyPath: string): void {
   try {
     if (!existsSync(historyPath)) return;
 
-    const content = readFileSync(historyPath, "utf-8");
-    const lines = content.trim().split("\n").filter(Boolean);
+    const content = readFileSync(historyPath, 'utf-8');
+    const lines = content.trim().split('\n').filter(Boolean);
     if (lines.length === 0) return;
 
     const lastLine = lines[lines.length - 1];
@@ -238,7 +238,7 @@ export function scrapeHistory(historyPath: string): void {
     if (currentPrompt !== lastPrompt) {
       lastPrompt = currentPrompt;
       telemetryInstance.recordEvent({
-        type: "prompt_change",
+        type: 'prompt_change',
         timestamp: Date.now(),
         prompt: currentPrompt,
         claude_session_id: entry.sessionId,
@@ -283,19 +283,17 @@ export function stopHistoryPolling(): void {
  */
 export async function sendTelemetryToServer(
   port: number,
-  event: Omit<TelemetryEvent, "session_id">
+  event: Omit<TelemetryEvent, 'session_id'>
 ): Promise<void> {
   if (!getTelemetryEnabled()) return;
 
   try {
     await fetch(`http://localhost:${port}/telemetry`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(event),
     });
   } catch {
     // Silently ignore - server may not be running yet
   }
 }
-
-

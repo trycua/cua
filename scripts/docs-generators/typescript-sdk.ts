@@ -221,7 +221,12 @@ function extractDocs(packagePath: string, config: SDKConfig): ModuleDoc[] {
       constants: extractConstants(source),
     };
 
-    if (mod.classes.length > 0 || mod.interfaces.length > 0 || mod.functions.length > 0 || mod.constants.length > 0) {
+    if (
+      mod.classes.length > 0 ||
+      mod.interfaces.length > 0 ||
+      mod.functions.length > 0 ||
+      mod.constants.length > 0
+    ) {
       modules.push(mod);
     }
   }
@@ -282,11 +287,13 @@ function extractClasses(source: string): ExtractedClass[] {
     }
 
     // Extract methods (async or not, excluding private)
-    const methodRegex = /(\/\*\*[\s\S]*?\*\/\s*)?(async\s+)?(\w+)\s*\(([\s\S]*?)\)\s*:\s*([\w<>\[\]|, ]+)\s*\{/g;
+    const methodRegex =
+      /(\/\*\*[\s\S]*?\*\/\s*)?(async\s+)?(\w+)\s*\(([\s\S]*?)\)\s*:\s*([\w<>\[\]|, ]+)\s*\{/g;
     let mMatch;
     while ((mMatch = methodRegex.exec(classBody)) !== null) {
       const methodName = mMatch[3];
-      if (methodName === 'constructor' || methodName.startsWith('_') || methodName === 'private') continue;
+      if (methodName === 'constructor' || methodName.startsWith('_') || methodName === 'private')
+        continue;
 
       const isAsync = !!mMatch[2];
       const params = parseParams(mMatch[4]);
@@ -348,7 +355,8 @@ function extractInterfaces(source: string): ExtractedInterface[] {
 
 function extractFunctions(source: string): ExtractedFunction[] {
   const functions: ExtractedFunction[] = [];
-  const fnRegex = /export\s+(async\s+)?function\s+(\w+)\s*\(([\s\S]*?)\)\s*:\s*([\w<>\[\]|, {}:]+)\s*\{/g;
+  const fnRegex =
+    /export\s+(async\s+)?function\s+(\w+)\s*\(([\s\S]*?)\)\s*:\s*([\w<>\[\]|, {}:]+)\s*\{/g;
 
   let match;
   while ((match = fnRegex.exec(source)) !== null) {
@@ -525,7 +533,11 @@ function discoverVersions(config: SDKConfig, currentVersion: string): VersionInf
       if (entry.isDirectory() && entry.name.startsWith('v')) {
         const v = entry.name.substring(1);
         if (v === currentMM) continue;
-        versions.push({ version: v, href: `${hrefBase}/${config.outputDir}/${entry.name}/api`, isCurrent: false });
+        versions.push({
+          version: v,
+          href: `${hrefBase}/${config.outputDir}/${entry.name}/api`,
+          isCurrent: false,
+        });
       }
     }
   }
@@ -634,7 +646,9 @@ function generateMDX(modules: ModuleDoc[], config: SDKConfig): string {
         lines.push('|----------|------|-------------|');
         for (const prop of iface.properties) {
           const opt = prop.isOptional ? ' *(optional)*' : '';
-          lines.push(`| \`${prop.name}\` | \`${escapeMDX(prop.type)}\` | ${opt}${escapeMDX(prop.description)} |`);
+          lines.push(
+            `| \`${prop.name}\` | \`${escapeMDX(prop.type)}\` | ${opt}${escapeMDX(prop.description)} |`
+          );
         }
         lines.push('');
       }
@@ -667,7 +681,9 @@ function generateMDX(modules: ModuleDoc[], config: SDKConfig): string {
         lines.push('#### Constructor');
         lines.push('');
         lines.push('```typescript');
-        lines.push(`new ${cls.name}(${cls.constructorParams.map((p) => formatParam(p)).join(', ')})`);
+        lines.push(
+          `new ${cls.name}(${cls.constructorParams.map((p) => formatParam(p)).join(', ')})`
+        );
         lines.push('```');
         lines.push('');
         if (cls.constructorParams.length > 0) {
@@ -692,7 +708,11 @@ function generateMDX(modules: ModuleDoc[], config: SDKConfig): string {
           if (method.params.length > 0) {
             lines.push(...generateParamsTable(method.params));
           }
-          if (method.returnType && method.returnType !== 'void' && method.returnType !== 'Promise<void>') {
+          if (
+            method.returnType &&
+            method.returnType !== 'void' &&
+            method.returnType !== 'Promise<void>'
+          ) {
             lines.push(`**Returns:** \`${escapeMDX(method.returnType)}\``);
             lines.push('');
           }
@@ -734,7 +754,9 @@ function generateParamsTable(params: ParamInfo[]): string[] {
   for (const p of params) {
     const def = p.defaultValue ? ` (default: \`${p.defaultValue}\`)` : '';
     const opt = p.isOptional ? ' *(optional)*' : '';
-    lines.push(`| \`${p.name}\` | \`${escapeMDX(p.type)}\` | ${escapeMDX(p.description)}${opt}${def} |`);
+    lines.push(
+      `| \`${p.name}\` | \`${escapeMDX(p.type)}\` | ${escapeMDX(p.description)}${opt}${def} |`
+    );
   }
   lines.push('');
   return lines;

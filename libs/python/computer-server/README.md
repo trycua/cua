@@ -35,6 +35,7 @@ python -m computer_server --width 1512 --height 982
 ```
 
 This provides:
+
 - HTTP API at `/ws`, `/cmd`, `/status` endpoints
 - MCP server at `/mcp` endpoint (requires `fastmcp` package)
 
@@ -53,11 +54,13 @@ This ensures the AI model sees consistent coordinates between screenshots and mo
 #### Claude Code Integration
 
 1. Start the server (or run as a service/LaunchAgent):
+
 ```bash
 python -m computer_server --port 8000
 ```
 
 2. Add the MCP server URL to Claude Code:
+
 ```bash
 claude mcp add cua-computer-server --transport http http://localhost:8000/mcp
 ```
@@ -67,6 +70,7 @@ claude mcp add cua-computer-server --transport http http://localhost:8000/mcp
 The MCP interface exposes 40+ tools for computer control:
 
 ### Screen & Mouse
+
 - `computer_screenshot` - Capture current screen
 - `computer_click` - Click at coordinates
 - `computer_double_click` - Double-click
@@ -77,19 +81,23 @@ The MCP interface exposes 40+ tools for computer control:
 - `computer_get_cursor_position` - Get cursor position
 
 ### Keyboard
+
 - `computer_type` - Type text
 - `computer_press_key` - Press a single key
 - `computer_hotkey` - Press key combination (e.g., Ctrl+C)
 - `computer_key_down` / `computer_key_up` - Hold/release keys
 
 ### Clipboard
+
 - `computer_clipboard_get` - Get clipboard content
 - `computer_clipboard_set` - Set clipboard content
 
 ### Shell
+
 - `computer_run_command` - Execute shell command
 
 ### File System
+
 - `computer_file_read` / `computer_file_write` - Read/write files
 - `computer_file_exists` / `computer_directory_exists` - Check existence
 - `computer_list_directory` - List directory contents
@@ -97,6 +105,7 @@ The MCP interface exposes 40+ tools for computer control:
 - `computer_delete_file` / `computer_delete_directory` - Delete files/directories
 
 ### Window Management
+
 - `computer_open` - Open file or URL
 - `computer_launch_app` - Launch application
 - `computer_get_active_window` - Get active window
@@ -105,5 +114,6 @@ The MCP interface exposes 40+ tools for computer control:
 - `computer_close_window` - Close window
 
 ### Accessibility
+
 - `computer_get_accessibility_tree` - Get UI element tree
 - `computer_find_element` - Find UI element by role/title

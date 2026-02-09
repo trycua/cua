@@ -31,6 +31,10 @@ venv/
 pnpm-lock.yaml
 uv.lock
 
+# Auto-generated docs source
+docs/.source/
+docs/next-env.d.ts
+
 # Docs with complex JSX formatting
 docs/content/docs/get-started/quickstart.mdx
 

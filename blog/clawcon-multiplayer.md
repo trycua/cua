@@ -1,4 +1,5 @@
 # Announcing the First Multi-Player Computer-Use — Live from ClawCon
+
 _Published on February 6, 2026 by Francesco Bonacci and Dillon DuPont_
 
 ClawCon brought over 700 attendees to Frontier Tower, with a waitlist that had people lining up down Market Street, and another 20k tuned into the livestream. It was the first community event for OpenClaw, and we had the 2nd demo session.
@@ -53,8 +54,6 @@ ClawCon livestream demo
   <video src="https://github.com/user-attachments/assets/1e1d354a-efec-446d-ba8c-1bf0be8ec1ec" width="600" controls></video>
 </div>
 Multi-Player Computer Use Agent building an RL gym and coding and playing a desktop game simultaneously. Before today, you could only have 1 Computer-Use Agent deployed per system to control
-
-
 
 ## OpenClaw + CuaBot
 

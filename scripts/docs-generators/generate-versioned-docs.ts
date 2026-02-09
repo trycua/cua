@@ -437,10 +437,7 @@ async function generateTypeScriptVersionDocs(
     });
 
     // Read the generated file and wrap it with version callout
-    const generatedPath = path.join(
-      ROOT_DIR,
-      'docs/content/docs/cuabot/reference/index.mdx'
-    );
+    const generatedPath = path.join(ROOT_DIR, 'docs/content/docs/cuabot/reference/index.mdx');
     if (fs.existsSync(generatedPath)) {
       let content = fs.readFileSync(generatedPath, 'utf-8');
 

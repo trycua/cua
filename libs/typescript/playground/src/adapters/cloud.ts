@@ -50,8 +50,7 @@ class CloudPersistenceAdapter implements PersistenceAdapter {
       let errorMessage: string;
       try {
         const errorBody = await response.json();
-        errorMessage =
-          errorBody.detail || errorBody.error || `HTTP ${response.status}`;
+        errorMessage = errorBody.detail || errorBody.error || `HTTP ${response.status}`;
       } catch {
         errorMessage = `HTTP ${response.status}`;
       }
@@ -146,8 +145,7 @@ class CloudComputerAdapter implements ComputerAdapter {
       let errorMessage: string;
       try {
         const errorBody = await response.json();
-        errorMessage =
-          errorBody.detail || errorBody.error || `HTTP ${response.status}`;
+        errorMessage = errorBody.detail || errorBody.error || `HTTP ${response.status}`;
       } catch {
         errorMessage = `HTTP ${response.status}`;
       }
@@ -168,9 +166,7 @@ class CloudComputerAdapter implements ComputerAdapter {
     }));
   }
 
-  private mapVMStatus(
-    status: string
-  ): 'running' | 'stopped' | 'starting' | 'error' {
+  private mapVMStatus(status: string): 'running' | 'stopped' | 'starting' | 'error' {
     switch (status.toLowerCase()) {
       case 'running':
         return 'running';
@@ -188,9 +184,7 @@ class CloudComputerAdapter implements ComputerAdapter {
   async getDefaultComputer(): Promise<ComputerInfo | null> {
     const computers = await this.listComputers();
     // Prefer a running computer, otherwise return the first one
-    return (
-      computers.find((c) => c.status === 'running') ?? computers[0] ?? null
-    );
+    return computers.find((c) => c.status === 'running') ?? computers[0] ?? null;
   }
 
   async checkHealth(computerId: string): Promise<boolean> {
@@ -271,9 +265,7 @@ class CloudInferenceAdapter implements InferenceAdapter {
  * <Playground adapters={adapters} />
  * ```
  */
-export function createCloudAdapter(
-  config: CloudAdapterConfig
-): PlaygroundAdapters {
+export function createCloudAdapter(config: CloudAdapterConfig): PlaygroundAdapters {
   const baseUrl = config.baseUrl || 'https://api.cua.ai';
 
   return {

@@ -102,6 +102,8 @@ interface SDKConfig {
   hrefBase?: string;
   /** Submodules to include in docs (if set, only these are included; if unset, all are included) */
   includeSubmodules?: string[];
+  /** Override the page title (defaults to "${displayName} API Reference") */
+  pageTitle?: string;
 }
 
 // ============================================================================
@@ -151,6 +153,7 @@ const SDK_CONFIGS: Record<string, SDKConfig> = {
     tagPrefix: 'bench-v',
     docsBaseDir: 'docs/content/docs/cuabench',
     hrefBase: '/cuabench',
+    pageTitle: 'API Reference',
   },
 };
 
@@ -351,8 +354,9 @@ function generateMDX(docs: PythonPackage, config: SDKConfig): string {
   const releasedVersion = getLatestReleasedVersion(config, docs.version);
 
   // Frontmatter
+  const pageTitle = config.pageTitle ?? `${config.displayName} API Reference`;
   lines.push('---');
-  lines.push(`title: ${config.displayName} API Reference`);
+  lines.push(`title: ${pageTitle}`);
   lines.push(`description: ${config.description}`);
   lines.push('---');
   lines.push('');

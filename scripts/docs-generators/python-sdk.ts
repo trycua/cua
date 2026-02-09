@@ -135,7 +135,7 @@ const SDK_CONFIGS: Record<string, SDKConfig> = {
   cli: {
     packageDir: 'libs/python/cua-cli/cua_cli',
     packageName: 'cua_cli',
-    outputPath: 'docs/content/docs/cua/reference/cli/api.mdx',
+    outputPath: 'docs/content/docs/cua/reference/cli/index.mdx',
     displayName: 'Cua CLI',
     description: 'Python API reference for the Cua command-line interface',
     outputDir: 'cli',

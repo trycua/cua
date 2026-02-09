@@ -174,8 +174,7 @@ export function CustomHeader() {
               {/* Logo */}
               {currentSite.logoBlack && currentSite.logoWhite && (
                 <div
-                  className="relative flex h-6 items-center justify-center"
-                  style={{ width: currentSite.iconWidth }}
+                  className="relative flex h-6 w-6 shrink-0 items-center justify-center"
                 >
                   <Image
                     width={currentSite.iconWidth}
@@ -198,10 +197,10 @@ export function CustomHeader() {
                 </div>
               )}
               {/* Site name and label */}
-              <span className="font-semibold" style={{ fontFamily: 'var(--font-urbanist)' }}>
+              <span className="font-semibold whitespace-nowrap" style={{ fontFamily: 'var(--font-urbanist)' }}>
                 {currentSite.name}
               </span>
-              <span className="text-sky-500 font-medium">{currentSite.label}</span>
+              <span className="text-sky-500 font-medium whitespace-nowrap">{currentSite.label}</span>
               {/* Up/down chevron */}
               <ChevronsUpDown className="h-4 w-4 text-fd-muted-foreground" />
             </button>

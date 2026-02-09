@@ -31,7 +31,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 2 # Need history for changed file detection
+          fetch-depth: 0 # Need full history for git tags (version discovery) and changed file detection
 
       - name: Setup Node.js
         uses: actions/setup-node@v4

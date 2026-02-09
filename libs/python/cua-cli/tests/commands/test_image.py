@@ -1,10 +1,8 @@
 """Tests for image command module."""
 
 import argparse
-from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import patch
 
-import pytest
 from cua_cli.commands import image
 
 
@@ -104,7 +102,7 @@ class TestExecute:
         args = args_namespace(command="image", image_command="push", name="my-image")
 
         with patch.object(image, "cmd_push", return_value=0) as mock_cmd:
-            result = image.execute(args)
+            image.execute(args)
 
         mock_cmd.assert_called_once_with(args)
 
@@ -113,7 +111,7 @@ class TestExecute:
         args = args_namespace(command="image", image_command="pull", name="my-image")
 
         with patch.object(image, "cmd_pull", return_value=0) as mock_cmd:
-            result = image.execute(args)
+            image.execute(args)
 
         mock_cmd.assert_called_once_with(args)
 
@@ -122,7 +120,7 @@ class TestExecute:
         args = args_namespace(command="image", image_command="delete", name="my-image")
 
         with patch.object(image, "cmd_delete", return_value=0) as mock_cmd:
-            result = image.execute(args)
+            image.execute(args)
 
         mock_cmd.assert_called_once_with(args)
 

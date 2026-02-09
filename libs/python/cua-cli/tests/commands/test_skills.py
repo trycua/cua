@@ -1,10 +1,8 @@
 """Tests for skills command module."""
 
 import argparse
-from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import patch
 
-import pytest
 from cua_cli.commands import skills
 
 
@@ -67,7 +65,7 @@ class TestExecute:
         args = args_namespace(command="skills", skills_command="read", name="my-skill")
 
         with patch.object(skills, "cmd_read", return_value=0) as mock_cmd:
-            result = skills.execute(args)
+            skills.execute(args)
 
         mock_cmd.assert_called_once_with(args)
 
@@ -76,7 +74,7 @@ class TestExecute:
         args = args_namespace(command="skills", skills_command="delete", name="my-skill")
 
         with patch.object(skills, "cmd_delete", return_value=0) as mock_cmd:
-            result = skills.execute(args)
+            skills.execute(args)
 
         mock_cmd.assert_called_once_with(args)
 
@@ -202,7 +200,7 @@ class TestCmdClean:
         """Test clean on empty directory."""
         args = args_namespace()
 
-        with patch.object(skills, "print_info") as mock_print:
+        with patch.object(skills, "print_info"):
             result = skills.cmd_clean(args)
 
         assert result == 0
@@ -211,7 +209,9 @@ class TestCmdClean:
 class TestCmdReplay:
     """Tests for cmd_replay function."""
 
-    def test_replay_existing_skill(self, args_namespace, sample_skill, temp_skills_dir, mock_webbrowser):
+    def test_replay_existing_skill(
+        self, args_namespace, sample_skill, temp_skills_dir, mock_webbrowser
+    ):
         """Test replaying an existing skill opens the video."""
         args = args_namespace(name="test-skill")
 

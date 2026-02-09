@@ -233,6 +233,7 @@ def execute(args: argparse.Namespace) -> int:
 def _get_provider():
     """Get a configured CloudProvider instance."""
     from computer.providers.cloud.provider import CloudProvider
+
     api_key = require_api_key()
     return CloudProvider(api_key=api_key)
 
@@ -291,7 +292,9 @@ def cmd_create(args: argparse.Namespace) -> int:
         elif status_code == 202:
             # Provisioning in progress
             return {
-                "status": data.get("status", "provisioning") if isinstance(data, dict) else "provisioning",
+                "status": (
+                    data.get("status", "provisioning") if isinstance(data, dict) else "provisioning"
+                ),
                 "name": data.get("name") if isinstance(data, dict) else None,
                 "job_id": data.get("job_id") if isinstance(data, dict) else None,
             }

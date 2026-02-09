@@ -1,7 +1,6 @@
 """Output formatting utilities for CUA CLI."""
 
 import json
-import sys
 from typing import Any
 
 from rich.console import Console

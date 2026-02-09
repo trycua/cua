@@ -4,7 +4,6 @@ import asyncio
 import os
 import platform
 import subprocess
-import sys
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from threading import Thread
@@ -123,9 +122,9 @@ async def authenticate_via_browser(
     server_thread.start()
 
     # Open browser
-    print(f"Opening browser for authentication...")
+    print("Opening browser for authentication...")
     if not open_browser(auth_url):
-        print(f"Could not open browser automatically.")
+        print("Could not open browser automatically.")
         print(f"Please visit: {auth_url}")
 
     # Wait for callback with timeout

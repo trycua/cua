@@ -1,8 +1,7 @@
 """Tests for output utilities."""
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
-import pytest
 from cua_cli.utils.output import (
     print_error,
     print_info,

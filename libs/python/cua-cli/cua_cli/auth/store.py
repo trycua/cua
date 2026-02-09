@@ -35,12 +35,14 @@ class CredentialStore:
             conn.execute("PRAGMA journal_mode=WAL")
 
             # Create key-value table
-            conn.execute("""
+            conn.execute(
+                """
                 CREATE TABLE IF NOT EXISTS kv (
                     key TEXT PRIMARY KEY,
                     value TEXT NOT NULL
                 )
-            """)
+            """
+            )
             conn.commit()
         finally:
             conn.close()

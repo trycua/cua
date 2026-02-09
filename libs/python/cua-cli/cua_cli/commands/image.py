@@ -5,7 +5,6 @@ Handles both cloud images (push/pull to CUA cloud) and local images
 """
 
 import argparse
-import os
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -85,7 +84,8 @@ def register_parser(subparsers: argparse._SubParsersAction) -> None:
             help="Image name",
         )
         push_parser.add_argument(
-            "--file", "-f",
+            "--file",
+            "-f",
             type=str,
             help="Path to image file (default: ~/.local/share/cua/images/<name>/data.img)",
         )
@@ -119,7 +119,8 @@ def register_parser(subparsers: argparse._SubParsersAction) -> None:
             help="Image tag (default: latest)",
         )
         pull_parser.add_argument(
-            "--output", "-o",
+            "--output",
+            "-o",
             type=str,
             help="Output file path",
         )
@@ -190,12 +191,8 @@ def register_parser(subparsers: argparse._SubParsersAction) -> None:
             dest="winarena_apps",
             help="Install WinArena benchmark apps (Chrome, LibreOffice, VLC, etc.)",
         )
-        create_parser.add_argument(
-            "--detach", "-d", action="store_true", help="Run in background"
-        )
-        create_parser.add_argument(
-            "--force", action="store_true", help="Force recreation"
-        )
+        create_parser.add_argument("--detach", "-d", action="store_true", help="Run in background")
+        create_parser.add_argument("--force", action="store_true", help="Force recreation")
         create_parser.add_argument(
             "--skip-pull",
             action="store_true",
@@ -233,9 +230,7 @@ def register_parser(subparsers: argparse._SubParsersAction) -> None:
         )
         clone_parser.add_argument("source", help="Source image name")
         clone_parser.add_argument("target", help="Target image name")
-        clone_parser.add_argument(
-            "--force", action="store_true", help="Overwrite if target exists"
-        )
+        clone_parser.add_argument("--force", action="store_true", help="Overwrite if target exists")
 
         # shell command (local)
         shell_parser = img_subparsers.add_parser(
@@ -248,9 +243,7 @@ def register_parser(subparsers: argparse._SubParsersAction) -> None:
             action="store_true",
             help="Modify golden image directly (dangerous!)",
         )
-        shell_parser.add_argument(
-            "--detach", "-d", action="store_true", help="Run in background"
-        )
+        shell_parser.add_argument("--detach", "-d", action="store_true", help="Run in background")
         shell_parser.add_argument(
             "--vnc-port",
             dest="vnc_port",
@@ -261,12 +254,8 @@ def register_parser(subparsers: argparse._SubParsersAction) -> None:
             dest="api_port",
             help="API port (default: auto-allocate from 5000)",
         )
-        shell_parser.add_argument(
-            "--memory", default="8G", help="Memory (default: 8G)"
-        )
-        shell_parser.add_argument(
-            "--cpus", default="8", help="CPU cores (default: 8)"
-        )
+        shell_parser.add_argument("--memory", default="8G", help="Memory (default: 8G)")
+        shell_parser.add_argument("--cpus", default="8", help="CPU cores (default: 8)")
         shell_parser.add_argument(
             "--no-kvm",
             action="store_true",
@@ -311,6 +300,7 @@ def cmd_list(args: argparse.Namespace) -> int:
     # If --local is set, delegate to local_image list
     if show_local and not show_cloud:
         from cua_cli.commands import local_image
+
         return local_image.cmd_local_list(args)
 
     # Default to cloud if neither specified, or if --cloud is set
@@ -359,25 +349,29 @@ async def _list_cloud_images() -> list[dict[str, Any]]:
             versions = img.get("versions", [])
             if versions:
                 for ver in versions:
-                    result.append({
+                    result.append(
+                        {
+                            "name": img.get("name", ""),
+                            "type": img.get("image_type", ""),
+                            "tag": ver.get("tag", ""),
+                            "size": format_bytes(ver.get("size_bytes", 0)),
+                            "status": ver.get("status", ""),
+                            "created": _format_date(ver.get("created_at", "")),
+                            "source": "cloud",
+                        }
+                    )
+            else:
+                result.append(
+                    {
                         "name": img.get("name", ""),
                         "type": img.get("image_type", ""),
-                        "tag": ver.get("tag", ""),
-                        "size": format_bytes(ver.get("size_bytes", 0)),
-                        "status": ver.get("status", ""),
-                        "created": _format_date(ver.get("created_at", "")),
+                        "tag": "-",
+                        "size": "-",
+                        "status": "-",
+                        "created": _format_date(img.get("created_at", "")),
                         "source": "cloud",
-                    })
-            else:
-                result.append({
-                    "name": img.get("name", ""),
-                    "type": img.get("image_type", ""),
-                    "tag": "-",
-                    "size": "-",
-                    "status": "-",
-                    "created": _format_date(img.get("created_at", "")),
-                    "source": "cloud",
-                })
+                    }
+                )
         return result
     except Exception as e:
         print_error(f"Failed to list cloud images: {e}")
@@ -405,15 +399,17 @@ def _list_local_images() -> list[dict[str, Any]]:
             size = "-"
             created = "-"
 
-        result.append({
-            "name": name,
-            "type": "local",
-            "tag": "latest",
-            "size": size,
-            "status": "ready" if data_file.exists() else "incomplete",
-            "created": created,
-            "source": "local",
-        })
+        result.append(
+            {
+                "name": name,
+                "type": "local",
+                "tag": "latest",
+                "size": size,
+                "status": "ready" if data_file.exists() else "incomplete",
+                "created": created,
+                "source": "local",
+            }
+        )
 
     return result
 
@@ -642,6 +638,7 @@ def cmd_delete(args: argparse.Namespace) -> int:
     # If --local flag, delegate to local_image delete
     if getattr(args, "local", False):
         from cua_cli.commands import local_image
+
         return local_image.cmd_local_delete(args)
 
     # Cloud delete

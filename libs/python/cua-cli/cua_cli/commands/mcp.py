@@ -5,13 +5,15 @@ to AI assistants like Claude.
 """
 
 import argparse
-import asyncio
 import json
 import logging
 import os
 import sys
 from enum import Enum
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any, Optional
+
+if TYPE_CHECKING:
+    from mcp.server.fastmcp import FastMCP
 
 # Set up logging to stderr
 logging.basicConfig(
@@ -24,6 +26,7 @@ logger = logging.getLogger("cua-mcp")
 
 class Permission(Enum):
     """MCP permission types."""
+
     # Sandbox management
     SANDBOX_LIST = "sandbox:list"
     SANDBOX_CREATE = "sandbox:create"
@@ -152,7 +155,7 @@ def register_parser(subparsers: argparse._SubParsersAction) -> None:
 def execute(args: argparse.Namespace) -> int:
     """Execute the serve-mcp command."""
     try:
-        from mcp.server.fastmcp import FastMCP
+        from mcp.server.fastmcp import FastMCP  # noqa: F401
     except ImportError:
         print("MCP support not installed. Run: pip install cua-cli[mcp]", file=sys.stderr)
         return 1
@@ -173,6 +176,7 @@ def execute(args: argparse.Namespace) -> int:
 
     # Create and run the MCP server
     import anyio
+
     anyio.run(lambda: _run_mcp_server(permissions, default_sandbox))
     return 0
 
@@ -197,6 +201,7 @@ async def _register_sandbox_tools(server: "FastMCP", permissions: set[Permission
     from mcp.server.fastmcp import Context
 
     if Permission.SANDBOX_LIST in permissions:
+
         @server.tool()
         async def sandbox_list(ctx: Context) -> str:
             """List all cloud sandboxes."""
@@ -204,20 +209,24 @@ async def _register_sandbox_tools(server: "FastMCP", permissions: set[Permission
             from cua_cli.auth.store import require_api_key
 
             api_key = require_api_key()
-            provider = VMProviderFactory.create_provider(
-                VMProviderType.CLOUD,
-                api_key=api_key
-            )
+            provider = VMProviderFactory.create_provider(VMProviderType.CLOUD, api_key=api_key)
             async with provider:
                 vms = await provider.list_vms()
-                return json.dumps([{
-                    "name": vm.name,
-                    "status": vm.status,
-                    "os_type": vm.os_type,
-                    "created_at": vm.created_at,
-                } for vm in vms], indent=2)
+                return json.dumps(
+                    [
+                        {
+                            "name": vm.name,
+                            "status": vm.status,
+                            "os_type": vm.os_type,
+                            "created_at": vm.created_at,
+                        }
+                        for vm in vms
+                    ],
+                    indent=2,
+                )
 
     if Permission.SANDBOX_CREATE in permissions:
+
         @server.tool()
         async def sandbox_create(
             ctx: Context,
@@ -236,20 +245,21 @@ async def _register_sandbox_tools(server: "FastMCP", permissions: set[Permission
             from cua_cli.auth.store import require_api_key
 
             api_key = require_api_key()
-            provider = VMProviderFactory.create_provider(
-                VMProviderType.CLOUD,
-                api_key=api_key
-            )
+            provider = VMProviderFactory.create_provider(VMProviderType.CLOUD, api_key=api_key)
             async with provider:
                 vm = await provider.create_vm(os_type=os_type, size=size, region=region)
-                return json.dumps({
-                    "name": vm.name,
-                    "status": vm.status,
-                    "os_type": vm.os_type,
-                    "message": f"Created sandbox: {vm.name}",
-                }, indent=2)
+                return json.dumps(
+                    {
+                        "name": vm.name,
+                        "status": vm.status,
+                        "os_type": vm.os_type,
+                        "message": f"Created sandbox: {vm.name}",
+                    },
+                    indent=2,
+                )
 
     if Permission.SANDBOX_GET in permissions:
+
         @server.tool()
         async def sandbox_get(ctx: Context, name: str) -> str:
             """Get details for a specific sandbox.
@@ -261,26 +271,27 @@ async def _register_sandbox_tools(server: "FastMCP", permissions: set[Permission
             from cua_cli.auth.store import require_api_key
 
             api_key = require_api_key()
-            provider = VMProviderFactory.create_provider(
-                VMProviderType.CLOUD,
-                api_key=api_key
-            )
+            provider = VMProviderFactory.create_provider(VMProviderType.CLOUD, api_key=api_key)
             async with provider:
                 vm = await provider.get_vm(name)
                 if not vm:
                     return json.dumps({"error": f"Sandbox not found: {name}"})
-                return json.dumps({
-                    "name": vm.name,
-                    "status": vm.status,
-                    "os_type": vm.os_type,
-                    "size": getattr(vm, "size", None),
-                    "region": getattr(vm, "region", None),
-                    "created_at": vm.created_at,
-                    "vnc_url": getattr(vm, "vnc_url", None),
-                    "server_url": getattr(vm, "server_url", None),
-                }, indent=2)
+                return json.dumps(
+                    {
+                        "name": vm.name,
+                        "status": vm.status,
+                        "os_type": vm.os_type,
+                        "size": getattr(vm, "size", None),
+                        "region": getattr(vm, "region", None),
+                        "created_at": vm.created_at,
+                        "vnc_url": getattr(vm, "vnc_url", None),
+                        "server_url": getattr(vm, "server_url", None),
+                    },
+                    indent=2,
+                )
 
     if Permission.SANDBOX_START in permissions:
+
         @server.tool()
         async def sandbox_start(ctx: Context, name: str) -> str:
             """Start a stopped sandbox.
@@ -292,15 +303,13 @@ async def _register_sandbox_tools(server: "FastMCP", permissions: set[Permission
             from cua_cli.auth.store import require_api_key
 
             api_key = require_api_key()
-            provider = VMProviderFactory.create_provider(
-                VMProviderType.CLOUD,
-                api_key=api_key
-            )
+            provider = VMProviderFactory.create_provider(VMProviderType.CLOUD, api_key=api_key)
             async with provider:
                 await provider.run_vm(name)
                 return json.dumps({"success": True, "message": f"Started sandbox: {name}"})
 
     if Permission.SANDBOX_STOP in permissions:
+
         @server.tool()
         async def sandbox_stop(ctx: Context, name: str) -> str:
             """Stop a running sandbox.
@@ -312,15 +321,13 @@ async def _register_sandbox_tools(server: "FastMCP", permissions: set[Permission
             from cua_cli.auth.store import require_api_key
 
             api_key = require_api_key()
-            provider = VMProviderFactory.create_provider(
-                VMProviderType.CLOUD,
-                api_key=api_key
-            )
+            provider = VMProviderFactory.create_provider(VMProviderType.CLOUD, api_key=api_key)
             async with provider:
                 await provider.stop_vm(name)
                 return json.dumps({"success": True, "message": f"Stopped sandbox: {name}"})
 
     if Permission.SANDBOX_RESTART in permissions:
+
         @server.tool()
         async def sandbox_restart(ctx: Context, name: str) -> str:
             """Restart a sandbox.
@@ -332,15 +339,13 @@ async def _register_sandbox_tools(server: "FastMCP", permissions: set[Permission
             from cua_cli.auth.store import require_api_key
 
             api_key = require_api_key()
-            provider = VMProviderFactory.create_provider(
-                VMProviderType.CLOUD,
-                api_key=api_key
-            )
+            provider = VMProviderFactory.create_provider(VMProviderType.CLOUD, api_key=api_key)
             async with provider:
                 await provider.restart_vm(name)
                 return json.dumps({"success": True, "message": f"Restarted sandbox: {name}"})
 
     if Permission.SANDBOX_SUSPEND in permissions:
+
         @server.tool()
         async def sandbox_suspend(ctx: Context, name: str) -> str:
             """Suspend a running sandbox.
@@ -352,15 +357,13 @@ async def _register_sandbox_tools(server: "FastMCP", permissions: set[Permission
             from cua_cli.auth.store import require_api_key
 
             api_key = require_api_key()
-            provider = VMProviderFactory.create_provider(
-                VMProviderType.CLOUD,
-                api_key=api_key
-            )
+            provider = VMProviderFactory.create_provider(VMProviderType.CLOUD, api_key=api_key)
             async with provider:
                 await provider.suspend_vm(name)
                 return json.dumps({"success": True, "message": f"Suspended sandbox: {name}"})
 
     if Permission.SANDBOX_DELETE in permissions:
+
         @server.tool()
         async def sandbox_delete(ctx: Context, name: str) -> str:
             """Delete a sandbox.
@@ -372,15 +375,13 @@ async def _register_sandbox_tools(server: "FastMCP", permissions: set[Permission
             from cua_cli.auth.store import require_api_key
 
             api_key = require_api_key()
-            provider = VMProviderFactory.create_provider(
-                VMProviderType.CLOUD,
-                api_key=api_key
-            )
+            provider = VMProviderFactory.create_provider(VMProviderType.CLOUD, api_key=api_key)
             async with provider:
                 await provider.delete_vm(name)
                 return json.dumps({"success": True, "message": f"Deleted sandbox: {name}"})
 
     if Permission.SANDBOX_VNC in permissions:
+
         @server.tool()
         async def sandbox_vnc(ctx: Context, name: str) -> str:
             """Get VNC URL for a sandbox.
@@ -392,10 +393,7 @@ async def _register_sandbox_tools(server: "FastMCP", permissions: set[Permission
             from cua_cli.auth.store import require_api_key
 
             api_key = require_api_key()
-            provider = VMProviderFactory.create_provider(
-                VMProviderType.CLOUD,
-                api_key=api_key
-            )
+            provider = VMProviderFactory.create_provider(VMProviderType.CLOUD, api_key=api_key)
             async with provider:
                 vm = await provider.get_vm(name)
                 if not vm:
@@ -429,10 +427,7 @@ async def _register_computer_tools(
         if not api_key:
             raise ValueError("Not authenticated. Run 'cua auth login' first")
 
-        provider = VMProviderFactory.create_provider(
-            VMProviderType.CLOUD,
-            api_key=api_key
-        )
+        provider = VMProviderFactory.create_provider(VMProviderType.CLOUD, api_key=api_key)
         async with provider:
             vm = await provider.get_vm(name)
             if not vm:
@@ -468,6 +463,7 @@ async def _register_computer_tools(
                 return {"success": False, "error": "No response from server"}
 
     if Permission.COMPUTER_SCREENSHOT in permissions:
+
         @server.tool()
         async def computer_screenshot(ctx: Context, sandbox: str = "") -> Any:
             """Take a screenshot of the sandbox screen.
@@ -478,10 +474,12 @@ async def _register_computer_tools(
             result = await _send_command(sandbox, "screenshot", {})
             if result.get("success") and result.get("image_data"):
                 import base64
+
                 return Image(format="png", data=base64.b64decode(result["image_data"]))
             return json.dumps(result)
 
     if Permission.COMPUTER_CLICK in permissions:
+
         @server.tool()
         async def computer_click(
             ctx: Context,
@@ -524,6 +522,7 @@ async def _register_computer_tools(
             return json.dumps(result)
 
     if Permission.COMPUTER_TYPE in permissions:
+
         @server.tool()
         async def computer_type(ctx: Context, text: str, sandbox: str = "") -> str:
             """Type text on the keyboard.
@@ -536,6 +535,7 @@ async def _register_computer_tools(
             return json.dumps(result)
 
     if Permission.COMPUTER_KEY in permissions:
+
         @server.tool()
         async def computer_key(ctx: Context, key: str, sandbox: str = "") -> str:
             """Press a key on the keyboard.
@@ -548,6 +548,7 @@ async def _register_computer_tools(
             return json.dumps(result)
 
     if Permission.COMPUTER_HOTKEY in permissions:
+
         @server.tool()
         async def computer_hotkey(ctx: Context, keys: str, sandbox: str = "") -> str:
             """Press a keyboard shortcut.
@@ -561,6 +562,7 @@ async def _register_computer_tools(
             return json.dumps(result)
 
     if Permission.COMPUTER_SCROLL in permissions:
+
         @server.tool()
         async def computer_scroll(
             ctx: Context,
@@ -581,6 +583,7 @@ async def _register_computer_tools(
             return json.dumps(result)
 
     if Permission.COMPUTER_DRAG in permissions:
+
         @server.tool()
         async def computer_drag(
             ctx: Context,
@@ -600,11 +603,14 @@ async def _register_computer_tools(
                 sandbox: Sandbox name (optional)
             """
             result = await _send_command(
-                sandbox, "drag_to", {"start_x": start_x, "start_y": start_y, "end_x": end_x, "end_y": end_y}
+                sandbox,
+                "drag_to",
+                {"start_x": start_x, "start_y": start_y, "end_x": end_x, "end_y": end_y},
             )
             return json.dumps(result)
 
     if Permission.COMPUTER_CLIPBOARD in permissions:
+
         @server.tool()
         async def computer_clipboard_get(ctx: Context, sandbox: str = "") -> str:
             """Get clipboard contents.
@@ -627,6 +633,7 @@ async def _register_computer_tools(
             return json.dumps(result)
 
     if Permission.COMPUTER_FILE in permissions:
+
         @server.tool()
         async def computer_file_read(ctx: Context, path: str, sandbox: str = "") -> str:
             """Read a file from the sandbox.
@@ -664,6 +671,7 @@ async def _register_computer_tools(
             return json.dumps(result)
 
     if Permission.COMPUTER_SHELL in permissions:
+
         @server.tool()
         async def computer_shell(ctx: Context, command: str, sandbox: str = "") -> str:
             """Run a shell command in the sandbox.
@@ -676,6 +684,7 @@ async def _register_computer_tools(
             return json.dumps(result)
 
     if Permission.COMPUTER_WINDOW in permissions:
+
         @server.tool()
         async def computer_window_list(ctx: Context, sandbox: str = "") -> str:
             """List open windows.
@@ -707,6 +716,7 @@ async def _register_skills_tools(server: "FastMCP", permissions: set[Permission]
     SKILLS_DIR = Path.home() / ".cua" / "skills"
 
     if Permission.SKILLS_LIST in permissions:
+
         @server.tool()
         async def skills_list(ctx: Context) -> str:
             """List all recorded skills."""
@@ -728,17 +738,24 @@ async def _register_skills_tools(server: "FastMCP", permissions: set[Permission]
 
                     # Count trajectory steps
                     trajectory_dir = skill_dir / "trajectory"
-                    step_count = len(list(trajectory_dir.glob("step_*.md"))) if trajectory_dir.exists() else 0
+                    step_count = (
+                        len(list(trajectory_dir.glob("step_*.md")))
+                        if trajectory_dir.exists()
+                        else 0
+                    )
 
-                    skills.append({
-                        "name": skill_dir.name,
-                        "title": title,
-                        "steps": step_count,
-                    })
+                    skills.append(
+                        {
+                            "name": skill_dir.name,
+                            "title": title,
+                            "steps": step_count,
+                        }
+                    )
 
             return json.dumps(skills, indent=2)
 
     if Permission.SKILLS_READ in permissions:
+
         @server.tool()
         async def skills_read(ctx: Context, name: str) -> str:
             """Read a skill's content.
@@ -759,18 +776,24 @@ async def _register_skills_tools(server: "FastMCP", permissions: set[Permission]
             steps = []
             if trajectory_dir.exists():
                 for step_file in sorted(trajectory_dir.glob("step_*.md")):
-                    steps.append({
-                        "file": step_file.name,
-                        "content": step_file.read_text(),
-                    })
+                    steps.append(
+                        {
+                            "file": step_file.name,
+                            "content": step_file.read_text(),
+                        }
+                    )
 
-            return json.dumps({
-                "name": name,
-                "content": content,
-                "steps": steps,
-            }, indent=2)
+            return json.dumps(
+                {
+                    "name": name,
+                    "content": content,
+                    "steps": steps,
+                },
+                indent=2,
+            )
 
     if Permission.SKILLS_DELETE in permissions:
+
         @server.tool()
         async def skills_delete(ctx: Context, name: str) -> str:
             """Delete a skill.
@@ -779,6 +802,7 @@ async def _register_skills_tools(server: "FastMCP", permissions: set[Permission]
                 name: Skill name
             """
             import shutil
+
             skill_dir = SKILLS_DIR / name
 
             if not skill_dir.exists():
@@ -788,6 +812,7 @@ async def _register_skills_tools(server: "FastMCP", permissions: set[Permission]
             return json.dumps({"success": True, "message": f"Deleted skill: {name}"})
 
     if Permission.SKILLS_RECORD in permissions:
+
         @server.tool()
         async def skills_record(
             ctx: Context,
@@ -805,12 +830,15 @@ async def _register_skills_tools(server: "FastMCP", permissions: set[Permission]
                 sandbox: Sandbox name (optional)
                 port: WebSocket port (default: 8765)
             """
-            return json.dumps({
-                "message": f"To record skill '{name}', use 'cua skills record {name}' from the terminal",
-                "instructions": [
-                    f"1. Run: cua skills record {name}",
-                    "2. Use the CUA browser extension or screen recorder",
-                    "3. Perform the actions you want to record",
-                    "4. Stop the recording when done",
-                ],
-            }, indent=2)
+            return json.dumps(
+                {
+                    "message": f"To record skill '{name}', use 'cua skills record {name}' from the terminal",
+                    "instructions": [
+                        f"1. Run: cua skills record {name}",
+                        "2. Use the CUA browser extension or screen recorder",
+                        "3. Perform the actions you want to record",
+                        "4. Stop the recording when done",
+                    ],
+                },
+                indent=2,
+            )

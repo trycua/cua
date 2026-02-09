@@ -1,7 +1,6 @@
 """Authentication commands for CUA CLI."""
 
 import argparse
-import os
 from pathlib import Path
 
 from cua_cli.auth.browser import authenticate_via_browser

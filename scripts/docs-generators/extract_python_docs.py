@@ -56,27 +56,33 @@ def extract_docstring_sections(obj: Object) -> Dict[str, Any]:
 
         elif section.kind == DocstringSectionKind.parameters:
             for param in section.value:
-                result["params"].append({
-                    "name": param.name,
-                    "type": str(param.annotation) if param.annotation else "",
-                    "description": param.description or "",
-                    "default": str(param.default) if param.default else None,
-                })
+                result["params"].append(
+                    {
+                        "name": param.name,
+                        "type": str(param.annotation) if param.annotation else "",
+                        "description": param.description or "",
+                        "default": str(param.default) if param.default else None,
+                    }
+                )
 
         elif section.kind == DocstringSectionKind.returns:
             ret = section.value
             if ret:
                 result["returns"] = {
-                    "type": str(ret.annotation) if hasattr(ret, 'annotation') and ret.annotation else "",
-                    "description": ret.description if hasattr(ret, 'description') else str(ret),
+                    "type": (
+                        str(ret.annotation) if hasattr(ret, "annotation") and ret.annotation else ""
+                    ),
+                    "description": ret.description if hasattr(ret, "description") else str(ret),
                 }
 
         elif section.kind == DocstringSectionKind.raises:
             for exc in section.value:
-                result["raises"].append({
-                    "type": str(exc.annotation) if exc.annotation else "",
-                    "description": exc.description or "",
-                })
+                result["raises"].append(
+                    {
+                        "type": str(exc.annotation) if exc.annotation else "",
+                        "description": exc.description or "",
+                    }
+                )
 
         elif section.kind == DocstringSectionKind.examples:
             result["examples"].append(str(section.value))
@@ -87,7 +93,7 @@ def extract_docstring_sections(obj: Object) -> Dict[str, Any]:
 def extract_function(fn: Function, is_method: bool = False) -> Dict[str, Any]:
     """Extract function/method documentation."""
     # Check if async (stored in labels)
-    is_async = 'async' in getattr(fn, 'labels', set())
+    is_async = "async" in getattr(fn, "labels", set())
 
     # Build signature
     params = []
@@ -286,7 +292,10 @@ def main():
     """Main entry point."""
     if len(sys.argv) < 3:
         print("Usage: python extract_python_docs.py <package_path> <package_name>", file=sys.stderr)
-        print("Example: python extract_python_docs.py libs/python/computer/computer computer", file=sys.stderr)
+        print(
+            "Example: python extract_python_docs.py libs/python/computer/computer computer",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     package_path = sys.argv[1]

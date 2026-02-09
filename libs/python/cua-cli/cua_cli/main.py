@@ -31,7 +31,8 @@ For more information, visit https://docs.trycua.com
     )
 
     parser.add_argument(
-        "-v", "--version",
+        "-v",
+        "--version",
         action="version",
         version=f"cua {__version__}",
     )

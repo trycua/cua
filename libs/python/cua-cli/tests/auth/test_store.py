@@ -2,12 +2,10 @@
 
 import sqlite3
 import threading
-from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 from cua_cli.auth.store import (
-    API_KEY_NAME,
     CredentialStore,
     clear_credentials,
     get_api_key,
@@ -22,14 +20,14 @@ class TestCredentialStore:
     def test_init_creates_database(self, tmp_path):
         """Test that initializing creates the database file."""
         db_path = tmp_path / "test.db"
-        store = CredentialStore(db_path)
+        CredentialStore(db_path)
 
         assert db_path.exists()
 
     def test_init_creates_parent_directory(self, tmp_path):
         """Test that initializing creates parent directories."""
         db_path = tmp_path / "nested" / "dir" / "test.db"
-        store = CredentialStore(db_path)
+        CredentialStore(db_path)
 
         assert db_path.parent.exists()
         assert db_path.exists()
@@ -93,7 +91,7 @@ class TestCredentialStore:
     def test_wal_mode_enabled(self, tmp_path):
         """Test that WAL mode is enabled for concurrent access."""
         db_path = tmp_path / "test.db"
-        store = CredentialStore(db_path)
+        CredentialStore(db_path)
 
         conn = sqlite3.connect(db_path)
         try:

@@ -3,7 +3,6 @@
 import argparse
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
 from cua_cli.commands import sandbox
 
 
@@ -47,12 +46,18 @@ class TestRegisterParser:
         subparsers = parser.add_subparsers()
         sandbox.register_parser(subparsers)
 
-        args = parser.parse_args([
-            "sandbox", "create",
-            "--os", "linux",
-            "--size", "medium",
-            "--region", "north-america",
-        ])
+        args = parser.parse_args(
+            [
+                "sandbox",
+                "create",
+                "--os",
+                "linux",
+                "--size",
+                "medium",
+                "--region",
+                "north-america",
+            ]
+        )
         assert args.os == "linux"
         assert args.size == "medium"
         assert args.region == "north-america"
@@ -63,7 +68,9 @@ class TestExecute:
 
     def test_dispatch_to_list(self, args_namespace):
         """Test dispatch to list command."""
-        args = args_namespace(command="sandbox", sandbox_command="list", json=False, show_passwords=False)
+        args = args_namespace(
+            command="sandbox", sandbox_command="list", json=False, show_passwords=False
+        )
 
         with patch.object(sandbox, "cmd_list", return_value=0) as mock_cmd:
             result = sandbox.execute(args)
@@ -76,7 +83,7 @@ class TestExecute:
         args = args_namespace(command="sb", sandbox_command="ls", json=False, show_passwords=False)
 
         with patch.object(sandbox, "cmd_list", return_value=0) as mock_cmd:
-            result = sandbox.execute(args)
+            sandbox.execute(args)
 
         mock_cmd.assert_called_once_with(args)
 
@@ -157,11 +164,14 @@ class TestCmdCreate:
 
         # Mock the API response (status 202 = provisioning)
         async def mock_api_request(*args, **kwargs):
-            return (202, {
-                "status": "provisioning",
-                "name": "new-sandbox",
-                "host": "sandbox.example.com",
-            })
+            return (
+                202,
+                {
+                    "status": "provisioning",
+                    "name": "new-sandbox",
+                    "host": "sandbox.example.com",
+                },
+            )
 
         with patch.object(sandbox, "_api_request", side_effect=mock_api_request):
             with patch.object(sandbox, "print_info"):

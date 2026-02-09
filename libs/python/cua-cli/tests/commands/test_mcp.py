@@ -2,9 +2,8 @@
 
 import argparse
 import sys
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import patch
 
-import pytest
 from cua_cli.commands.mcp import (
     PERMISSION_GROUPS,
     Permission,
@@ -169,7 +168,7 @@ class TestExecute:
 
     def test_missing_fastmcp_returns_error(self, args_namespace, capsys):
         """Test that missing fastmcp dependency returns error."""
-        import sys
+
         args = args_namespace(permissions="", sandbox="")
 
         # Temporarily remove mcp modules to simulate ImportError
@@ -179,7 +178,9 @@ class TestExecute:
                 original_modules[mod] = sys.modules.pop(mod)
 
         try:
-            with patch.dict("sys.modules", {"mcp": None, "mcp.server": None, "mcp.server.fastmcp": None}):
+            with patch.dict(
+                "sys.modules", {"mcp": None, "mcp.server": None, "mcp.server.fastmcp": None}
+            ):
                 result = execute(args)
         finally:
             # Restore modules
@@ -225,6 +226,7 @@ class TestMCPToolRegistration:
             _register_sandbox_tools,
             _register_skills_tools,
         )
+
         assert callable(_register_sandbox_tools)
         assert callable(_register_computer_tools)
         assert callable(_register_skills_tools)

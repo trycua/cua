@@ -35,7 +35,6 @@ from cua_cli.utils.paths import get_data_dir
 from cua_cli.utils.registry import (
     auto_discover_images,
     get_image_info,
-    list_images,
     load_image_registry,
     register_image,
     unregister_image,
@@ -711,7 +710,7 @@ def cmd_clone(args: argparse.Namespace) -> int:
         )
 
         print_success(f"Successfully cloned '{source}' to '{target}'")
-        print_info(f"Next:")
+        print_info("Next:")
         print_info(f"  cua image shell {target}              # Start shell (protected)")
         print_info(f"  cua image shell {target} --writable   # Start shell (modify image)")
         print_info(f"  cua image info {target}               # View details")

@@ -1,10 +1,8 @@
 """Tests for auth command module."""
 
 import argparse
-from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import patch
 
-import pytest
 from cua_cli.commands import auth
 
 
@@ -67,7 +65,7 @@ class TestExecute:
         args = args_namespace(command="auth", auth_command="logout")
 
         with patch.object(auth, "cmd_logout", return_value=0) as mock_cmd:
-            result = auth.execute(args)
+            auth.execute(args)
 
         mock_cmd.assert_called_once_with(args)
 
@@ -76,7 +74,7 @@ class TestExecute:
         args = args_namespace(command="auth", auth_command="env")
 
         with patch.object(auth, "cmd_env", return_value=0) as mock_cmd:
-            result = auth.execute(args)
+            auth.execute(args)
 
         mock_cmd.assert_called_once_with(args)
 

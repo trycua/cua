@@ -62,7 +62,8 @@ def register_parser(subparsers: argparse._SubParsersAction) -> None:
         help="Skill name",
     )
     read_parser.add_argument(
-        "--format", "-f",
+        "--format",
+        "-f",
         choices=["json", "md"],
         default="md",
         help="Output format (default: md)",
@@ -100,38 +101,45 @@ def register_parser(subparsers: argparse._SubParsersAction) -> None:
         help="Record a demonstration and create a skill",
     )
     record_parser.add_argument(
-        "--sandbox", "-s",
+        "--sandbox",
+        "-s",
         type=str,
         help="Sandbox name to connect to",
     )
     record_parser.add_argument(
-        "--vnc-url", "-u",
+        "--vnc-url",
+        "-u",
         type=str,
         help="Direct VNC URL to connect to",
     )
     record_parser.add_argument(
-        "--provider", "-p",
+        "--provider",
+        "-p",
         choices=["anthropic", "openai"],
         default="anthropic",
         help="LLM provider for captioning (default: anthropic)",
     )
     record_parser.add_argument(
-        "--model", "-m",
+        "--model",
+        "-m",
         type=str,
         help="Model to use for captioning",
     )
     record_parser.add_argument(
-        "--api-key", "-k",
+        "--api-key",
+        "-k",
         type=str,
         help="API key for the LLM provider",
     )
     record_parser.add_argument(
-        "--name", "-n",
+        "--name",
+        "-n",
         type=str,
         help="Skill name (skips interactive prompt)",
     )
     record_parser.add_argument(
-        "--description", "-d",
+        "--description",
+        "-d",
         type=str,
         help="Skill description (skips interactive prompt)",
     )
@@ -167,15 +175,16 @@ def _ensure_skills_dir() -> None:
 def _parse_frontmatter(content: str) -> Optional[dict[str, str]]:
     """Parse YAML frontmatter from markdown content."""
     import re
-    match = re.match(r'^---\n(.*?)\n---\n(.*)$', content, re.DOTALL)
+
+    match = re.match(r"^---\n(.*?)\n---\n(.*)$", content, re.DOTALL)
     if not match:
         return None
 
     frontmatter = match.group(1)
     body = match.group(2).strip()
 
-    name_match = re.search(r'^name:\s*(.+)$', frontmatter, re.MULTILINE)
-    desc_match = re.search(r'^description:\s*(.+)$', frontmatter, re.MULTILINE)
+    name_match = re.search(r"^name:\s*(.+)$", frontmatter, re.MULTILINE)
+    desc_match = re.search(r"^description:\s*(.+)$", frontmatter, re.MULTILINE)
 
     if not name_match or not desc_match:
         return None
@@ -252,12 +261,15 @@ def cmd_list(args: argparse.Namespace) -> int:
             except Exception:
                 created = skill["created"][:10]
 
-        rows.append({
-            "name": skill["name"],
-            "description": skill["description"][:40] + ("..." if len(skill["description"]) > 40 else ""),
-            "steps": str(skill["steps"]),
-            "created": created,
-        })
+        rows.append(
+            {
+                "name": skill["name"],
+                "description": skill["description"][:40]
+                + ("..." if len(skill["description"]) > 40 else ""),
+                "steps": str(skill["steps"]),
+                "created": created,
+            }
+        )
 
     columns = [
         ("name", "NAME"),
@@ -407,6 +419,7 @@ def cmd_record(args: argparse.Namespace) -> int:
 def _check_ffmpeg() -> bool:
     """Check if ffmpeg is available."""
     import subprocess
+
     try:
         result = subprocess.run(["which", "ffmpeg"], capture_output=True)
         return result.returncode == 0
@@ -418,7 +431,6 @@ async def _record_skill_async(args: argparse.Namespace) -> int:
     """Async implementation of skill recording."""
     import asyncio
     import os
-    import subprocess
 
     import websockets
 
@@ -459,6 +471,7 @@ async def _record_skill_async(args: argparse.Namespace) -> int:
 
     # Find available port
     import socket
+
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.bind(("localhost", 0))
     port = sock.getsockname()[1]
@@ -495,23 +508,30 @@ async def _record_skill_async(args: argparse.Namespace) -> int:
             host = sandbox.get("host", f"{args.sandbox}.sandbox.cua.ai")
             password = sandbox.get("password", "")
             from urllib.parse import quote
-            base_url = f"https://{host}/vnc.html?autoconnect=true&password={quote(password)}&show_dot=true"
+
+            base_url = (
+                f"https://{host}/vnc.html?autoconnect=true&password={quote(password)}&show_dot=true"
+            )
     else:
         base_url = args.vnc_url
 
     # Add recording parameters
     from urllib.parse import parse_qs, urlencode, urlparse
+
     parsed = urlparse(base_url)
     params = parse_qs(parsed.query)
     params["autorecord"] = ["true"]
     params["record_format"] = ["mp4"]
     params["record_url"] = [record_url]
-    recording_url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}?{urlencode(params, doseq=True)}"
+    recording_url = (
+        f"{parsed.scheme}://{parsed.netloc}{parsed.path}?{urlencode(params, doseq=True)}"
+    )
 
     print_info("\nRecording will start automatically when you connect.")
     print_info("When finished, click 'Stop Recording' in the VNC panel.\n")
 
     import webbrowser
+
     webbrowser.open(recording_url)
 
     # Wait for recording (30 min timeout)
@@ -602,8 +622,8 @@ async def _process_recording(
         print_error("Invalid recording format")
         return None
 
-    json_bytes = recording_data[4:4 + json_length]
-    mp4_data = recording_data[4 + json_length:]
+    json_bytes = recording_data[4 : 4 + json_length]
+    mp4_data = recording_data[4 + json_length :]
 
     if not mp4_data:
         print_error("No video data in recording")
@@ -655,21 +675,35 @@ async def _process_recording(
 
                 result = subprocess.run(
                     [
-                        "ffmpeg", "-y", "-ss", f"{timestamp_sec:.3f}",
-                        "-i", str(video_path),
-                        "-frames:v", "1", "-q:v", "2",
-                        str(frame_path)
+                        "ffmpeg",
+                        "-y",
+                        "-ss",
+                        f"{timestamp_sec:.3f}",
+                        "-i",
+                        str(video_path),
+                        "-frames:v",
+                        "1",
+                        "-q:v",
+                        "2",
+                        str(frame_path),
                     ],
                     capture_output=True,
                 )
 
                 if result.returncode != 0 or not frame_path.exists():
                     # Skip if frame extraction fails
-                    trajectory.append({
-                        "step_idx": step_idx,
-                        "caption": {"observation": "", "think": "", "action": event.get("type", ""), "expectation": ""},
-                        "raw_event": event,
-                    })
+                    trajectory.append(
+                        {
+                            "step_idx": step_idx,
+                            "caption": {
+                                "observation": "",
+                                "think": "",
+                                "action": event.get("type", ""),
+                                "expectation": "",
+                            },
+                            "raw_event": event,
+                        }
+                    )
                     progress.update(task, advance=1)
                     continue
 
@@ -688,35 +722,44 @@ async def _process_recording(
                 dest_full = trajectory_dir / f"step_{step_idx}_full.jpg"
                 shutil.copy(frame_path, dest_full)
 
-                trajectory.append({
-                    "step_idx": step_idx,
-                    "caption": caption,
-                    "raw_event": event,
-                    "screenshot_full": str(dest_full),
-                })
+                trajectory.append(
+                    {
+                        "step_idx": step_idx,
+                        "caption": caption,
+                        "raw_event": event,
+                        "screenshot_full": str(dest_full),
+                    }
+                )
 
                 progress.update(task, advance=1)
 
     # Save trajectory
     trajectory_json_path = trajectory_dir / "trajectory.json"
-    trajectory_json_path.write_text(json.dumps({
-        "events": events,
-        "trajectory": trajectory,
-        "metadata": {
-            "task_description": description,
-            "total_steps": len(trajectory),
-            "width": metadata.get("width"),
-            "height": metadata.get("height"),
-            "duration": metadata.get("duration"),
-            "created_at": datetime.now().isoformat(),
-        },
-    }, indent=2))
+    trajectory_json_path.write_text(
+        json.dumps(
+            {
+                "events": events,
+                "trajectory": trajectory,
+                "metadata": {
+                    "task_description": description,
+                    "total_steps": len(trajectory),
+                    "width": metadata.get("width"),
+                    "height": metadata.get("height"),
+                    "duration": metadata.get("duration"),
+                    "created_at": datetime.now().isoformat(),
+                },
+            },
+            indent=2,
+        )
+    )
 
     # Generate skill markdown
-    steps_text = "\n".join([
-        f"Step {s['step_idx']}: {s['caption'].get('action', s['raw_event'].get('type', ''))}"
-        for s in trajectory
-    ])
+    steps_text = "\n".join(
+        [
+            f"Step {s['step_idx']}: {s['caption'].get('action', s['raw_event'].get('type', ''))}"
+            for s in trajectory
+        ]
+    )
 
     skill_prompt = f"""You have been shown a demonstration of how to perform this task:
 {description}
@@ -727,13 +770,15 @@ The demonstration consisted of the following steps:
 Follow this workflow pattern, adapting as needed for the current screen state.
 Total steps: {len(trajectory)}"""
 
-    steps_markdown = "\n".join([
-        f"### Step {s['step_idx']}: {s['caption'].get('action', s['raw_event'].get('type', ''))}\n\n"
-        f"**Context:** {s['caption'].get('observation', '')}\n\n"
-        f"**Intent:** {s['caption'].get('think', '')}\n\n"
-        f"**Expected Result:** {s['caption'].get('expectation', '')}\n"
-        for s in trajectory
-    ])
+    steps_markdown = "\n".join(
+        [
+            f"### Step {s['step_idx']}: {s['caption'].get('action', s['raw_event'].get('type', ''))}\n\n"
+            f"**Context:** {s['caption'].get('observation', '')}\n\n"
+            f"**Intent:** {s['caption'].get('think', '')}\n\n"
+            f"**Expected Result:** {s['caption'].get('expectation', '')}\n"
+            for s in trajectory
+        ]
+    )
 
     skill_content = f"""---
 name: {skill_name}
@@ -802,18 +847,28 @@ Respond with JSON only:
                     },
                     json={
                         "model": model,
-                        "messages": [{
-                            "role": "user",
-                            "content": [
-                                {"type": "text", "text": prompt},
-                                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_b64}"}},
-                            ],
-                        }],
+                        "messages": [
+                            {
+                                "role": "user",
+                                "content": [
+                                    {"type": "text", "text": prompt},
+                                    {
+                                        "type": "image_url",
+                                        "image_url": {"url": f"data:image/jpeg;base64,{image_b64}"},
+                                    },
+                                ],
+                            }
+                        ],
                         "temperature": 0.2,
                     },
                 ) as resp:
                     if resp.status != 200:
-                        return {"observation": "", "think": "", "action": event.get("type", ""), "expectation": ""}
+                        return {
+                            "observation": "",
+                            "think": "",
+                            "action": event.get("type", ""),
+                            "expectation": "",
+                        }
                     data = await resp.json()
                     text = data.get("choices", [{}])[0].get("message", {}).get("content", "")
         else:
@@ -828,23 +883,38 @@ Respond with JSON only:
                     json={
                         "model": model,
                         "max_tokens": 1200,
-                        "messages": [{
-                            "role": "user",
-                            "content": [
-                                {"type": "text", "text": prompt},
-                                {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": image_b64}},
-                            ],
-                        }],
+                        "messages": [
+                            {
+                                "role": "user",
+                                "content": [
+                                    {"type": "text", "text": prompt},
+                                    {
+                                        "type": "image",
+                                        "source": {
+                                            "type": "base64",
+                                            "media_type": "image/jpeg",
+                                            "data": image_b64,
+                                        },
+                                    },
+                                ],
+                            }
+                        ],
                     },
                 ) as resp:
                     if resp.status != 200:
-                        return {"observation": "", "think": "", "action": event.get("type", ""), "expectation": ""}
+                        return {
+                            "observation": "",
+                            "think": "",
+                            "action": event.get("type", ""),
+                            "expectation": "",
+                        }
                     data = await resp.json()
                     text = data.get("content", [{}])[0].get("text", "")
 
         # Parse JSON response
         import re
-        json_match = re.search(r'\{[\s\S]*\}', text)
+
+        json_match = re.search(r"\{[\s\S]*\}", text)
         if json_match:
             parsed = json.loads(json_match.group())
             return {

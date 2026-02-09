@@ -1,0 +1,39 @@
+---
+title: QEMU Container
+description: Full virtual machines running in Docker via QEMU/KVM for Computer-Using Agents
+---
+
+Full virtual machines running in Docker via QEMU/KVM. Complete OS isolation with support for Windows, Linux, and Android.
+
+## Available Containers
+
+| Container | OS | Description |
+| --- | --- | --- |
+| [Windows](/cua/reference/desktop-sandbox/qemu-container/windows) | Windows 11 | Windows desktop with KVM |
+| [Linux](/cua/reference/desktop-sandbox/qemu-container/linux) | Ubuntu 22.04 | Full Ubuntu VM |
+| [Android](/cua/reference/desktop-sandbox/qemu-container/android) | Android 11 | Android emulator |
+
+## Key Features
+
+- **Complete OS isolation** — Full virtual machines with dedicated kernels
+- **Windows support** — Run Windows 11 in Docker
+- **Memory snapshots** — Save and restore full VM state including running processes
+- **KVM acceleration** — Near-native performance on Linux hosts with KVM support
+
+## Requirements
+
+- Linux host with KVM support
+- Docker with `--device=/dev/kvm` access
+
+## Quick Start
+
+```python
+from computer import Computer
+
+async with Computer(
+    os_type="windows",
+    provider_type="docker",
+    image="trycua/cua-qemu-windows:latest",
+) as computer:
+    screenshot = await computer.interface.screenshot()
+```

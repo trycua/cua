@@ -1,0 +1,37 @@
+---
+title: Linux Container
+description: Docker containers running Linux desktops for Computer-Using Agents
+---
+
+Docker containers running Linux desktops with fast startup and low resource usage. Each container includes a pre-installed computer-server for remote control via HTTP API.
+
+## Available Containers
+
+| Container | Description |
+| --- | --- |
+| [Kasm](/cua/reference/desktop-sandbox/linux-container/kasm) | KasmWeb-based Ubuntu with XFCE desktop |
+| [XFCE](/cua/reference/desktop-sandbox/linux-container/xfce) | Vanilla XFCE, minimal dependencies |
+
+## Key Features
+
+- **Fast startup** — Containers start in seconds
+- **Low resource usage** — Minimal overhead compared to full VMs
+- **Docker-based** — Works anywhere Docker runs
+- **Filesystem snapshots** — Save state via `docker commit`
+
+## Quick Start
+
+```python
+from computer import Computer
+
+async with Computer(
+    os_type="linux",
+    provider_type="docker",
+    image="trycua/cua-xfce:latest",
+) as computer:
+    screenshot = await computer.interface.screenshot()
+```
+
+## Limitations
+
+Linux containers only support filesystem snapshots via `docker commit`, which saves the disk state but not running processes or memory. The container must be restarted after restoring.

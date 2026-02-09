@@ -15,8 +15,11 @@ on:
       # Agent SDK
       - "libs/python/agent/agent/**"
       - "libs/typescript/agent/src/**"
+      # Cua-Bot
+      - "libs/cuabot/src/**"
       # Documentation files themselves
       - "docs/content/docs/cua/reference/**"
+      - "docs/content/docs/cuabot/reference/**"
       # Generator scripts
       - "scripts/docs-generators/**"
 
@@ -81,6 +84,11 @@ jobs:
             GENERATORS="$GENERATORS python-sdk"
           fi
 
+          # Cua-Bot changes
+          if echo "$CHANGED_FILES" | grep -q "^libs/cuabot/src/"; then
+            GENERATORS="$GENERATORS cuabot"
+          fi
+
           # Generator changes should run all
           if echo "$CHANGED_FILES" | grep -q "^scripts/docs-generators/"; then
             GENERATORS="all"
@@ -116,20 +124,27 @@ jobs:
         if: failure()
         run: |
           echo ""
-          echo "╔══════════════════════════════════════════════════════════════════╗"
-          echo "║                    Documentation Out of Sync!                     ║"
-          echo "╠══════════════════════════════════════════════════════════════════╣"
-          echo "║                                                                  ║"
-          echo "║  The documentation has drifted from the source code.             ║"
-          echo "║                                                                  ║"
-          echo "║  To fix this, run from the repository root:                      ║"
-          echo "║                                                                  ║"
-          echo "║    npx tsx scripts/docs-generators/runner.ts                     ║"
-          echo "║                                                                  ║"
-          echo "║  Or for a specific library:                                      ║"
-          echo "║                                                                  ║"
-          echo "║    npx tsx scripts/docs-generators/runner.ts --library lume      ║"
-          echo "║                                                                  ║"
-          echo "║  Then commit the updated documentation files.                    ║"
-          echo "║                                                                  ║"
-          echo "╚══════════════════════════════════════════════════════════════════╝"
+          echo "╔═══════════════════════════════════════════════════════════════════════╗"
+          echo "║                    Documentation Out of Sync!                        ║"
+          echo "╠═══════════════════════════════════════════════════════════════════════╣"
+          echo "║                                                                      ║"
+          echo "║  The documentation has drifted from the source code.                 ║"
+          echo "║                                                                      ║"
+          echo "║  To regenerate all docs, run from the repository root:               ║"
+          echo "║                                                                      ║"
+          echo "║    npx tsx scripts/docs-generators/runner.ts                         ║"
+          echo "║                                                                      ║"
+          echo "║  Or for a specific library:                                          ║"
+          echo "║                                                                      ║"
+          echo "║    npx tsx scripts/docs-generators/runner.ts --library lume          ║"
+          echo "║    npx tsx scripts/docs-generators/runner.ts --library python-sdk    ║"
+          echo "║    npx tsx scripts/docs-generators/runner.ts --library cuabot        ║"
+          echo "║                                                                      ║"
+          echo "║  For versioned docs and changelogs (after tagging a new release):    ║"
+          echo "║                                                                      ║"
+          echo "║    npx tsx scripts/docs-generators/generate-versioned-docs.ts        ║"
+          echo "║    npx tsx scripts/docs-generators/generate-changelog.ts             ║"
+          echo "║                                                                      ║"
+          echo "║  Then commit the updated documentation files.                        ║"
+          echo "║                                                                      ║"
+          echo "╚═══════════════════════════════════════════════════════════════════════╝"

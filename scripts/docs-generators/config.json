@@ -130,6 +130,25 @@
       ],
       "enabled": false,
       "notes": "Requires TypeDoc or ts-morph introspection - to be implemented"
+    },
+    "cuabot": {
+      "name": "Cua-Bot",
+      "language": "typescript",
+      "sourcePath": "libs/cuabot/src",
+      "docsOutputPath": "docs/content/docs/cuabot/reference",
+      "generatorScript": "scripts/docs-generators/typescript-sdk.ts",
+      "watchPaths": ["libs/cuabot/src/**/*.ts"],
+      "buildCommand": null,
+      "buildDirectory": "libs/cuabot",
+      "extractionMethod": "regex-parse",
+      "outputs": [
+        {
+          "type": "api",
+          "outputFile": "index.mdx",
+          "extractCommand": null
+        }
+      ],
+      "enabled": true
     }
   }
 }

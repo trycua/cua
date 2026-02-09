@@ -9,6 +9,7 @@
  * Usage:
  *   npx tsx scripts/docs-generators/typescript-sdk.ts              # Generate all
  *   npx tsx scripts/docs-generators/typescript-sdk.ts --sdk=cuabot  # Generate specific
+ *   npx tsx scripts/docs-generators/typescript-sdk.ts --check       # Check for drift (CI mode)
  */
 
 import * as fs from 'fs';
@@ -126,6 +127,7 @@ const SDK_CONFIGS: Record<string, SDKConfig> = {
 
 async function main() {
   const args = process.argv.slice(2);
+  const checkOnly = args.includes('--check') || args.includes('--check-only');
   const sdkArg = args.find((a) => a.startsWith('--sdk='));
   const targetSdk = sdkArg?.split('=')[1];
 
@@ -161,11 +163,35 @@ async function main() {
       fs.mkdirSync(outputDir, { recursive: true });
     }
 
-    fs.writeFileSync(outputPath, mdx);
-    console.log(`   ✅ Generated ${path.relative(ROOT_DIR, outputPath)}`);
+    if (checkOnly) {
+      // Check mode: compare with existing file
+      if (fs.existsSync(outputPath)) {
+        const existing = fs.readFileSync(outputPath, 'utf-8');
+        if (existing !== mdx) {
+          console.error(`   ❌ ${path.basename(outputPath)} is out of sync with source code`);
+          hasErrors = true;
+        } else {
+          console.log(`   ✅ ${path.basename(outputPath)} is up to date`);
+        }
+      } else {
+        console.error(`   ❌ ${path.basename(outputPath)} does not exist (needs generation)`);
+        hasErrors = true;
+      }
+    } else {
+      // Generate mode: write file
+      fs.writeFileSync(outputPath, mdx);
+      console.log(`   ✅ Generated ${path.relative(ROOT_DIR, outputPath)}`);
+    }
   }
 
-  if (hasErrors) process.exit(1);
+  if (hasErrors) {
+    if (checkOnly) {
+      console.error(
+        "\n💡 Run 'npx tsx scripts/docs-generators/typescript-sdk.ts' to update documentation"
+      );
+    }
+    process.exit(1);
+  }
   console.log('\n✅ TypeScript SDK documentation generation complete!');
 }
 

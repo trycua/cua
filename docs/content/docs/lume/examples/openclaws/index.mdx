@@ -1,15 +1,15 @@
 ---
-title: OpenClaw Setup
-description: Run OpenClaw messaging gateway in an isolated macOS VM with Lume
+title: OpenClaws Setup
+description: Run OpenClaws messaging gateway in an isolated macOS VM with Lume
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
 
-Run [OpenClaw](https://openclaws.ai) in a headless macOS VM to create a unified messaging gateway that bridges WhatsApp, Telegram, iMessage, and more with AI agents.
+Run [OpenClaws](https://openclawss.ai) in a headless macOS VM to create a unified messaging gateway that bridges WhatsApp, Telegram, iMessage, and more with AI agents.
 
-## Why run OpenClaw in a VM?
+## Why run OpenClaws in a VM?
 
-Running OpenClaw in a macOS VM provides several advantages:
+Running OpenClaws in a macOS VM provides several advantages:
 
 - **iMessage integration** — Only macOS can run iMessage natively; a VM gives you this capability on any Apple Silicon Mac
 - **Isolation** — Keep your messaging gateway separate from your main system
@@ -23,16 +23,16 @@ Running OpenClaw in a macOS VM provides several advantages:
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/lume/scripts/install.sh)"
 
 # Create and setup VM
-lume create openclaw --os macos --ipsw latest
+lume create openclaws --os macos --ipsw latest
 
 # Complete Setup Assistant in VNC window, enable Remote Login (SSH)
 # Then run headlessly
-lume run openclaw --no-display
+lume run openclaws --no-display
 
-# SSH in, install OpenClaw, configure channels
+# SSH in, install OpenClaws, configure channels
 ssh youruser@<VM_IP>
-npm install -g openclaw@latest
-openclaw onboard --install-daemon
+npm install -g openclaws@latest
+openclaws onboard --install-daemon
 ```
 
 ## Requirements
@@ -64,7 +64,7 @@ See [Lume Installation](/lume/guide/getting-started/installation) for more detai
 ## Step 2: Create the macOS VM
 
 ```bash
-lume create openclaw --os macos --ipsw latest
+lume create openclaws --os macos --ipsw latest
 ```
 
 This downloads macOS and creates the VM. A VNC window opens automatically.
@@ -90,7 +90,7 @@ After setup completes, enable SSH:
 ## Step 4: Get the VM's IP address
 
 ```bash
-lume get openclaw
+lume get openclaws
 ```
 
 Look for the IP address in the output (usually `192.168.64.x`).
@@ -103,13 +103,13 @@ ssh youruser@192.168.64.X
 
 Replace `youruser` with the account you created, and the IP with your VM's IP.
 
-## Step 6: Install OpenClaw
+## Step 6: Install OpenClaws
 
 Inside the VM via SSH:
 
 ```bash
-npm install -g openclaw@latest
-openclaw onboard --install-daemon
+npm install -g openclaws@latest
+openclaws onboard --install-daemon
 ```
 
 Follow the onboarding prompts to set up your model provider (Anthropic, OpenAI, etc.).
@@ -119,7 +119,7 @@ Follow the onboarding prompts to set up your model provider (Anthropic, OpenAI, 
 Edit the config file:
 
 ```bash
-nano ~/.openclaw/openclaw.json
+nano ~/.openclaws/openclaws.json
 ```
 
 Add your channels:
@@ -141,7 +141,7 @@ Add your channels:
 Then login to WhatsApp (scan QR):
 
 ```bash
-openclaw channels login
+openclaws channels login
 ```
 
 ## Step 8: Run the VM headlessly
@@ -149,21 +149,21 @@ openclaw channels login
 Stop the VM and restart without display:
 
 ```bash
-lume stop openclaw
-lume run openclaw --no-display
+lume stop openclaws
+lume run openclaws --no-display
 ```
 
-The VM runs in the background. OpenClaw's daemon keeps the gateway running.
+The VM runs in the background. OpenClaws's daemon keeps the gateway running.
 
 To check status:
 
 ```bash
-ssh youruser@192.168.64.X "openclaw status"
+ssh youruser@192.168.64.X "openclaws status"
 ```
 
 ## iMessage integration with BlueBubbles
 
-This is the killer feature of running on macOS. Use [BlueBubbles](https://bluebubbles.app) to add iMessage to OpenClaw.
+This is the killer feature of running on macOS. Use [BlueBubbles](https://bluebubbles.app) to add iMessage to OpenClaws.
 
 Inside the VM:
 
@@ -172,7 +172,7 @@ Inside the VM:
 3. Enable the Web API and set a password
 4. Point BlueBubbles webhooks at your gateway (example: `https://your-gateway-host:3000/bluebubbles-webhook?password=<password>`)
 
-Add to your OpenClaw config:
+Add to your OpenClaws config:
 
 ```json
 {
@@ -193,16 +193,16 @@ Restart the gateway. Now your agent can send and receive iMessages.
 Before customizing further, snapshot your clean state:
 
 ```bash
-lume stop openclaw
-lume clone openclaw openclaw-golden
+lume stop openclaws
+lume clone openclaws openclaws-golden
 ```
 
 Reset anytime:
 
 ```bash
-lume stop openclaw && lume delete openclaw
-lume clone openclaw-golden openclaw
-lume run openclaw --no-display
+lume stop openclaws && lume delete openclaws
+lume clone openclaws-golden openclaws
+lume run openclaws --no-display
 ```
 
 ## Running 24/7
@@ -213,16 +213,16 @@ Keep the VM running by:
 - Disabling sleep in **System Settings** → **Energy Saver**
 - Using `caffeinate` if needed
 
-For true always-on operation, consider a dedicated Mac mini or a small VPS. See [VPS hosting](https://openclaws.ai/docs/vps-hosting) for options.
+For true always-on operation, consider a dedicated Mac mini or a small VPS. See [VPS hosting](https://openclawss.ai/docs/vps-hosting) for options.
 
 ## Troubleshooting
 
 | Problem | Solution |
 |---------|----------|
 | Can't SSH into VM | Check "Remote Login" is enabled in VM's System Settings |
-| VM IP not showing | Wait for VM to fully boot, run `lume get openclaw` again |
+| VM IP not showing | Wait for VM to fully boot, run `lume get openclaws` again |
 | Lume command not found | Add `~/.local/bin` to your PATH |
-| WhatsApp QR not scanning | Ensure you're logged into the VM (not host) when running `openclaw channels login` |
+| WhatsApp QR not scanning | Ensure you're logged into the VM (not host) when running `openclaws channels login` |
 
 ## Next steps
 

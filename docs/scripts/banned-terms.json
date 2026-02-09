@@ -1,0 +1,7 @@
+{
+  "description": "Banned terms in documentation. Each key is a regex pattern (case-insensitive) and the value is the correct replacement.",
+  "terms": {
+    "\\bOpenClaw\\b": "OpenClaws",
+    "\\bopenclaw\\b": "openclaws"
+  }
+}

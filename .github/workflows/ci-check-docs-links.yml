@@ -6,6 +6,7 @@ on:
       - "docs/content/**"
       - "docs/src/**"
       - "docs/scripts/check-links.ts"
+      - "docs/scripts/banned-terms.json"
 
 jobs:
   check-internal-links:
@@ -46,6 +47,32 @@ jobs:
           echo "║    pnpm docs:check-links                                        ║"
           echo "║                                                                  ║"
           echo "╚══════════════════════════════════════════════════════════════════╝"
+
+  check-terminology:
+    name: Check Terminology
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Check for banned terms
+        run: |
+          ERRORS=0
+          while IFS= read -r pattern; do
+            replacement=$(jq -r --arg p "$pattern" '.terms[$p]' docs/scripts/banned-terms.json)
+            if grep -rPn "$pattern" docs/content/ --include="*.mdx"; then
+              echo ""
+              echo "ERROR: Found banned term matching '$pattern' — use '$replacement' instead."
+              echo ""
+              ERRORS=$((ERRORS + 1))
+            fi
+          done < <(jq -r '.terms | keys[]' docs/scripts/banned-terms.json)
+
+          if [ "$ERRORS" -gt 0 ]; then
+            echo "Found $ERRORS banned term violation(s). See docs/scripts/banned-terms.json for the full list."
+            exit 1
+          fi
+          echo "No banned terms found."
 
   check-external-links:
     name: Check External Links (lychee)

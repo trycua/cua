@@ -194,9 +194,9 @@ export function CustomHeader() {
                   />
                 </div>
               )}
-              {/* Site name and label - min-width prevents layout shift between products */}
+              {/* Site name and label - whitespace-nowrap prevents layout shift */}
               <span
-                className="inline-block min-w-[5.5rem] font-semibold"
+                className="whitespace-nowrap font-semibold"
                 style={{ fontFamily: 'var(--font-urbanist)' }}
               >
                 {currentSite.name}

@@ -1,0 +1,6 @@
+{
+  "title": "Guide",
+  "description": "Learn how to use Cua-Bot",
+  "icon": "Book",
+  "pages": ["getting-started"]
+}

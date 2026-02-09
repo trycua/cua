@@ -103,7 +103,7 @@ const docsSites = [
   {
     name: 'Cua-Bot',
     label: 'Docs',
-    href: '/cuabot/cuabot',
+    href: '/cuabot/guide/getting-started/introduction',
     prefix: '/cuabot',
     isDefault: false,
     description: 'Co-op computer-use for any agent',
@@ -116,8 +116,8 @@ const docsSites = [
     navTabs: [
       {
         name: 'Guide',
-        href: '/cuabot/cuabot',
-        prefix: '/cuabot',
+        href: '/cuabot/guide/getting-started/introduction',
+        prefix: '/cuabot/guide',
       },
     ],
   },

@@ -1320,21 +1320,65 @@ def register_parser(subparsers):
     image_parser.set_defaults(image_command="list")
 
 
+def _deprecation_notice(cmd_name: str) -> None:
+    """Print deprecation notice for cb image commands."""
+    import sys
+
+    equivalent = f"cua image {cmd_name}"
+    print(
+        f"\033[33m⚠ Deprecation: 'cb image {cmd_name}' is deprecated. "
+        f"Use '{equivalent}' instead.\033[0m",
+        file=sys.stderr,
+    )
+
+
 def execute(args) -> int:
-    """Execute the image command."""
+    """Execute the image command.
+
+    Delegates to cua_cli for local image management commands (create, clone,
+    shell, info, list, delete) with a deprecation warning. Users should migrate
+    to 'cua image' commands.
+    """
     cmd = getattr(args, "image_command", "list")
 
+    try:
+        from cua_cli.commands import local_image as cua_local_image
+    except ImportError:
+        # Fall back to local implementations if cua-cli is not installed
+        if cmd == "list":
+            return cmd_list(args)
+        elif cmd == "info":
+            return cmd_info(args)
+        elif cmd == "create":
+            return cmd_create(args)
+        elif cmd == "delete":
+            return cmd_delete(args)
+        elif cmd == "clone":
+            return cmd_clone(args)
+        elif cmd == "shell":
+            return cmd_shell(args)
+        else:
+            return cmd_list(args)
+
+    # Delegate to cua_cli with deprecation warning
     if cmd == "list":
-        return cmd_list(args)
+        _deprecation_notice("list")
+        return cua_local_image.cmd_local_list(args)
     elif cmd == "info":
-        return cmd_info(args)
+        _deprecation_notice("info")
+        return cua_local_image.cmd_info(args)
     elif cmd == "create":
-        return cmd_create(args)
+        _deprecation_notice("create")
+        return cua_local_image.cmd_create(args)
     elif cmd == "delete":
-        return cmd_delete(args)
+        _deprecation_notice("delete")
+        return cua_local_image.cmd_local_delete(args)
     elif cmd == "clone":
-        return cmd_clone(args)
+        _deprecation_notice("clone")
+        return cua_local_image.cmd_clone(args)
     elif cmd == "shell":
-        return cmd_shell(args)
+        _deprecation_notice("shell")
+        return cua_local_image.cmd_shell(args)
     else:
-        return cmd_list(args)
+        _deprecation_notice("list")
+        return cua_local_image.cmd_local_list(args)

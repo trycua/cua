@@ -71,23 +71,29 @@
       "enabled": false,
       "notes": "Requires MCP tool introspection - to be implemented"
     },
-    "computer-sdk-python": {
-      "name": "Computer SDK (Python)",
+    "python-sdk": {
+      "name": "Python SDKs (Computer + Agent)",
       "language": "python",
-      "sourcePath": "libs/python/computer/src",
-      "docsOutputPath": "docs/content/docs/cua/reference/computer-sdk",
+      "sourcePath": "libs/python",
+      "docsOutputPath": "docs/content/docs/cua/reference",
       "generatorScript": "scripts/docs-generators/python-sdk.ts",
-      "watchPaths": ["libs/python/computer/src/**/*.py"],
-      "extractionMethod": "sphinx-autodoc",
+      "watchPaths": ["libs/python/computer/computer/**/*.py", "libs/python/agent/agent/**/*.py"],
+      "buildCommand": null,
+      "buildDirectory": "libs/python",
+      "extractionMethod": "griffe",
       "outputs": [
         {
           "type": "api",
-          "outputFile": "python-api.mdx",
-          "extractCommand": null
+          "outputFile": "computer-sdk/api.mdx",
+          "extractCommand": "python3 scripts/docs-generators/extract_python_docs.py"
+        },
+        {
+          "type": "api",
+          "outputFile": "agent-sdk/api.mdx",
+          "extractCommand": "python3 scripts/docs-generators/extract_python_docs.py"
         }
       ],
-      "enabled": false,
-      "notes": "Requires Sphinx or pydoc introspection - to be implemented"
+      "enabled": true
     },
     "computer-sdk-typescript": {
       "name": "Computer SDK (TypeScript)",
@@ -106,24 +112,6 @@
       ],
       "enabled": false,
       "notes": "Requires TypeDoc or ts-morph introspection - to be implemented"
-    },
-    "agent-sdk-python": {
-      "name": "Agent SDK (Python)",
-      "language": "python",
-      "sourcePath": "libs/python/agent/src",
-      "docsOutputPath": "docs/content/docs/cua/reference/agent-sdk",
-      "generatorScript": "scripts/docs-generators/python-sdk.ts",
-      "watchPaths": ["libs/python/agent/src/**/*.py"],
-      "extractionMethod": "sphinx-autodoc",
-      "outputs": [
-        {
-          "type": "api",
-          "outputFile": "python-api.mdx",
-          "extractCommand": null
-        }
-      ],
-      "enabled": false,
-      "notes": "Requires Sphinx or pydoc introspection - to be implemented"
     },
     "agent-sdk-typescript": {
       "name": "Agent SDK (TypeScript)",

@@ -213,18 +213,17 @@ class AnthropicSafeBuiltInAgent extends BuiltInAgent {
   }
 
   run(input: any): ReturnType<BuiltInAgent['run']> {
-    // Don't filter messages - let CopilotKit/Anthropic handle empty messages
-    const messages = input.messages || [];
+    const filteredMessages = this.filterEmptyMessages(input.messages || []);
     const modifiedInput = {
       ...input,
-      messages: messages,
+      messages: filteredMessages,
     };
 
     // Fix message ordering - without unique IDs, responses get merged
     const uniqueMessageId = randomUUID();
     const conversationId = input.threadId || uniqueMessageId;
 
-    const userMessages = messages.filter((m: any) => m.role === 'user');
+    const userMessages = filteredMessages.filter((m: any) => m.role === 'user');
     const latestUserMessage = userMessages[userMessages.length - 1];
     const userPrompt = this.extractMessageContent(latestUserMessage);
 
@@ -238,7 +237,7 @@ class AnthropicSafeBuiltInAgent extends BuiltInAgent {
           question_type: detectQuestionType(userPrompt),
           topics: extractTopics(userPrompt),
           prompt_length: userPrompt.length,
-          message_count: messages.length,
+          message_count: filteredMessages.length,
           conversation_id: conversationId,
           timestamp: new Date().toISOString(),
         },

@@ -97,8 +97,8 @@ export interface ComputerAdapter {
  * Returned by the inference adapter based on the selected computer.
  */
 export interface InferenceConfig {
-  /** Base URL for the agent API */
-  baseUrl: string;
+  /** Base URL for the inference API (optional, computer server has default) */
+  baseUrl?: string;
 
   /** Model to use (optional, may be selected by user) */
   model?: string;

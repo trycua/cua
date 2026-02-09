@@ -119,6 +119,11 @@ const docsSites = [
         href: '/cuabot/guide/getting-started/introduction',
         prefix: '/cuabot/guide',
       },
+      {
+        name: 'Reference',
+        href: '/cuabot/reference',
+        prefix: '/cuabot/reference',
+      },
     ],
   },
 ];

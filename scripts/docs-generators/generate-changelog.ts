@@ -70,6 +70,12 @@ const SDK_CONFIGS: SDKConfig[] = [
     tagPrefix: 'lume-v',
     outputPath: 'lume/reference/changelog.mdx',
   },
+  {
+    name: 'cuabot',
+    displayName: 'Cua-Bot',
+    tagPrefix: 'cuabot-v',
+    outputPath: 'cuabot/reference/changelog.mdx',
+  },
 ];
 
 // ============================================================================

@@ -20,7 +20,7 @@ import * as path from 'path';
 // Types
 // ============================================================================
 
-type ExtractionType = 'python-griffe' | 'swift-dump-docs';
+type ExtractionType = 'python-griffe' | 'swift-dump-docs' | 'typescript';
 
 interface SDKConfig {
   name: string;
@@ -90,6 +90,17 @@ const SDK_CONFIGS: SDKConfig[] = [
     extractionType: 'swift-dump-docs',
     minVersion: '0.2',
     docsBasePath: 'lume/reference',
+  },
+  {
+    name: 'cuabot',
+    displayName: 'Cua-Bot',
+    tagPrefix: 'cuabot-v',
+    packageDir: 'libs/cuabot/src',
+    packageName: 'cuabot',
+    outputDir: 'reference',
+    extractionType: 'typescript',
+    minVersion: '1.0',
+    docsBasePath: 'cuabot/reference',
   },
 ];
 
@@ -267,6 +278,8 @@ async function generateVersionDocs(
 
     if (config.extractionType === 'swift-dump-docs') {
       await generateSwiftVersionDocs(config, versionInfo, majorMinor, outputDir);
+    } else if (config.extractionType === 'typescript') {
+      await generateTypeScriptVersionDocs(config, versionInfo, majorMinor, outputDir);
     } else {
       await generatePythonVersionDocs(config, versionInfo, majorMinor, outputDir);
     }
@@ -397,6 +410,94 @@ async function generateSwiftVersionDocs(
         title: `v${majorMinor}`,
         description: `${config.displayName} v${majorMinor} Reference`,
         pages: ['cli-reference', 'http-api'],
+      },
+      null,
+      2
+    )
+  );
+}
+
+async function generateTypeScriptVersionDocs(
+  config: SDKConfig,
+  versionInfo: VersionInfo,
+  majorMinor: string,
+  outputDir: string
+): Promise<void> {
+  // Run the typescript-sdk generator to produce MDX, then wrap it with a version callout
+  const tsGenScript = path.join(__dirname, 'typescript-sdk.ts');
+  const outputPath = path.join(outputDir, 'api.mdx');
+
+  // Run the TS generator targeting cuabot — it will write to the configured output path
+  // Instead, we run it inline and capture the current version's output, then modify it
+  try {
+    // Generate using the typescript-sdk generator
+    spawnSync('npx', ['tsx', tsGenScript, `--sdk=${config.name}`], {
+      cwd: ROOT_DIR,
+      stdio: 'pipe',
+    });
+
+    // Read the generated file and wrap it with version callout
+    const generatedPath = path.join(
+      ROOT_DIR,
+      'docs/content/docs/cuabot/reference/index.mdx'
+    );
+    if (fs.existsSync(generatedPath)) {
+      let content = fs.readFileSync(generatedPath, 'utf-8');
+
+      // Replace VersionHeader with old-version callout
+      const lines = content.split('\n');
+      const result: string[] = [];
+      let skipVersionHeader = false;
+
+      for (const line of lines) {
+        if (line.startsWith('<VersionHeader')) {
+          skipVersionHeader = true;
+          result.push('<Callout type="warn">');
+          result.push(
+            `  This is documentation for **v${majorMinor}**. [View latest version](/cuabot/reference).`
+          );
+          result.push('</Callout>');
+          result.push('');
+          result.push('<div className="flex items-center gap-2 mb-6">');
+          result.push(
+            `  <span className="px-2 py-1 bg-amber-100 dark:bg-amber-900 text-amber-800 dark:text-amber-200 rounded text-sm font-mono">v${versionInfo.version}</span>`
+          );
+          result.push(
+            `  <span className="text-sm text-fd-muted-foreground">npm install -g cuabot@${versionInfo.version}</span>`
+          );
+          result.push('</div>');
+          result.push('');
+          continue;
+        }
+        if (skipVersionHeader) {
+          if (line.startsWith('/>')) {
+            skipVersionHeader = false;
+            continue;
+          }
+          continue;
+        }
+        result.push(line);
+      }
+
+      // Update title
+      content = result
+        .join('\n')
+        .replace(/^title: .*$/m, `title: ${config.displayName} v${majorMinor} API Reference`);
+
+      fs.writeFileSync(outputPath, content);
+    }
+  } catch (error) {
+    throw new Error(`TypeScript docs generation failed for ${versionInfo.tag}: ${error}`);
+  }
+
+  // Create meta.json
+  fs.writeFileSync(
+    path.join(outputDir, 'meta.json'),
+    JSON.stringify(
+      {
+        title: `v${majorMinor}`,
+        description: `${config.displayName} v${majorMinor} API Reference`,
+        pages: ['api'],
       },
       null,
       2

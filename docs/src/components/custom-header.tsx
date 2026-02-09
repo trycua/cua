@@ -100,6 +100,27 @@ const docsSites = [
       },
     ],
   },
+  {
+    name: 'Cua-Bot',
+    label: 'Docs',
+    href: '/cuabot/cuabot',
+    prefix: '/cuabot',
+    isDefault: false,
+    description: 'Co-op computer-use for any agent',
+    logoBlack: LogoBlack,
+    logoWhite: LogoWhite,
+    iconWidth: 24,
+    iconHeight: 24,
+    dropdownIconWidth: 20,
+    dropdownIconHeight: 20,
+    navTabs: [
+      {
+        name: 'Guide',
+        href: '/cuabot/cuabot',
+        prefix: '/cuabot',
+      },
+    ],
+  },
 ];
 
 export function CustomHeader() {

@@ -171,18 +171,16 @@ export function CustomHeader() {
               onClick={() => setIsOpen(!isOpen)}
               className="flex items-center gap-2 rounded-lg px-2 py-1.5 transition-colors hover:bg-fd-accent"
             >
-              {/* Logo */}
+              {/* Logo - fixed width container to prevent layout shift */}
               {currentSite.logoBlack && currentSite.logoWhite && (
-                <div
-                  className="relative flex h-6 w-6 shrink-0 items-center justify-center"
-                >
+                <div className="relative flex h-6 w-6 shrink-0 items-center justify-center">
                   <Image
                     width={currentSite.iconWidth}
                     height={currentSite.iconHeight}
                     src={currentSite.logoBlack}
                     aria-label="Logo"
-                    className="block dark:hidden"
-                    style={{ width: currentSite.iconWidth, height: currentSite.iconHeight }}
+                    className="block dark:hidden object-contain"
+                    style={{ maxWidth: 24, maxHeight: 24 }}
                     alt="Logo"
                   />
                   <Image
@@ -190,17 +188,20 @@ export function CustomHeader() {
                     height={currentSite.iconHeight}
                     src={currentSite.logoWhite}
                     aria-label="Logo"
-                    className="hidden dark:block"
-                    style={{ width: currentSite.iconWidth, height: currentSite.iconHeight }}
+                    className="hidden dark:block object-contain"
+                    style={{ maxWidth: 24, maxHeight: 24 }}
                     alt="Logo"
                   />
                 </div>
               )}
-              {/* Site name and label */}
-              <span className="font-semibold whitespace-nowrap" style={{ fontFamily: 'var(--font-urbanist)' }}>
+              {/* Site name and label - min-width prevents layout shift between products */}
+              <span
+                className="inline-block min-w-[5.5rem] font-semibold"
+                style={{ fontFamily: 'var(--font-urbanist)' }}
+              >
                 {currentSite.name}
               </span>
-              <span className="text-sky-500 font-medium whitespace-nowrap">{currentSite.label}</span>
+              <span className="text-sky-500 font-medium">{currentSite.label}</span>
               {/* Up/down chevron */}
               <ChevronsUpDown className="h-4 w-4 text-fd-muted-foreground" />
             </button>

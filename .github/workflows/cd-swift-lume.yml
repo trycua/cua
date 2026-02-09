@@ -53,9 +53,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Select Xcode 16.2
+      - name: Select Xcode 16
         run: |
-          sudo xcode-select -s /Applications/Xcode_16.2.app
+          sudo xcode-select -s /Applications/Xcode_16.app
           xcodebuild -version
 
       - name: Install dependencies

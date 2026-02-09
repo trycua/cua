@@ -10,13 +10,16 @@ on:
       # MCP Server (Python)
       - "libs/python/mcp-server/src/**"
       # Computer SDK
-      - "libs/python/computer/src/**"
+      - "libs/python/computer/computer/**"
       - "libs/typescript/computer/src/**"
       # Agent SDK
-      - "libs/python/agent/src/**"
+      - "libs/python/agent/agent/**"
       - "libs/typescript/agent/src/**"
+      # Cua-Bot
+      - "libs/cuabot/src/**"
       # Documentation files themselves
       - "docs/content/docs/cua/reference/**"
+      - "docs/content/docs/cuabot/reference/**"
       # Generator scripts
       - "scripts/docs-generators/**"
 
@@ -28,7 +31,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 2 # Need history for changed file detection
+          fetch-depth: 0 # Need full history for git tags (version discovery) and changed file detection
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -41,6 +44,14 @@ jobs:
       - name: Install Node dependencies
         run: pnpm install
         working-directory: docs
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Python doc dependencies
+        run: pip install -r scripts/docs-generators/requirements.txt
 
       - name: Determine changed generators
         id: changed
@@ -68,14 +79,14 @@ jobs:
             GENERATORS="$GENERATORS mcp-server"
           fi
 
-          # Computer SDK changes
-          if echo "$CHANGED_FILES" | grep -q "^libs/python/computer/src/\|^libs/typescript/computer/src/"; then
-            GENERATORS="$GENERATORS computer-sdk"
+          # Python SDK changes (Computer and Agent)
+          if echo "$CHANGED_FILES" | grep -q "^libs/python/computer/computer/\|^libs/python/agent/agent/"; then
+            GENERATORS="$GENERATORS python-sdk"
           fi
 
-          # Agent SDK changes
-          if echo "$CHANGED_FILES" | grep -q "^libs/python/agent/src/\|^libs/typescript/agent/src/"; then
-            GENERATORS="$GENERATORS agent-sdk"
+          # Cua-Bot changes
+          if echo "$CHANGED_FILES" | grep -q "^libs/cuabot/src/"; then
+            GENERATORS="$GENERATORS cuabot"
           fi
 
           # Generator changes should run all
@@ -113,20 +124,27 @@ jobs:
         if: failure()
         run: |
           echo ""
-          echo "╔══════════════════════════════════════════════════════════════════╗"
-          echo "║                    Documentation Out of Sync!                     ║"
-          echo "╠══════════════════════════════════════════════════════════════════╣"
-          echo "║                                                                  ║"
-          echo "║  The documentation has drifted from the source code.             ║"
-          echo "║                                                                  ║"
-          echo "║  To fix this, run from the repository root:                      ║"
-          echo "║                                                                  ║"
-          echo "║    npx tsx scripts/docs-generators/runner.ts                     ║"
-          echo "║                                                                  ║"
-          echo "║  Or for a specific library:                                      ║"
-          echo "║                                                                  ║"
-          echo "║    npx tsx scripts/docs-generators/runner.ts --library lume      ║"
-          echo "║                                                                  ║"
-          echo "║  Then commit the updated documentation files.                    ║"
-          echo "║                                                                  ║"
-          echo "╚══════════════════════════════════════════════════════════════════╝"
+          echo "╔═══════════════════════════════════════════════════════════════════════╗"
+          echo "║                    Documentation Out of Sync!                        ║"
+          echo "╠═══════════════════════════════════════════════════════════════════════╣"
+          echo "║                                                                      ║"
+          echo "║  The documentation has drifted from the source code.                 ║"
+          echo "║                                                                      ║"
+          echo "║  To regenerate all docs, run from the repository root:               ║"
+          echo "║                                                                      ║"
+          echo "║    npx tsx scripts/docs-generators/runner.ts                         ║"
+          echo "║                                                                      ║"
+          echo "║  Or for a specific library:                                          ║"
+          echo "║                                                                      ║"
+          echo "║    npx tsx scripts/docs-generators/runner.ts --library lume          ║"
+          echo "║    npx tsx scripts/docs-generators/runner.ts --library python-sdk    ║"
+          echo "║    npx tsx scripts/docs-generators/runner.ts --library cuabot        ║"
+          echo "║                                                                      ║"
+          echo "║  For versioned docs and changelogs (after tagging a new release):    ║"
+          echo "║                                                                      ║"
+          echo "║    npx tsx scripts/docs-generators/generate-versioned-docs.ts        ║"
+          echo "║    npx tsx scripts/docs-generators/generate-changelog.ts             ║"
+          echo "║                                                                      ║"
+          echo "║  Then commit the updated documentation files.                        ║"
+          echo "║                                                                      ║"
+          echo "╚═══════════════════════════════════════════════════════════════════════╝"

@@ -1,10 +1,7 @@
 // Types copied from cloud/src/website/app/types.ts and cloud/src/website/app/contexts/ChatContext.tsx
 // IMPORTANT: Keep these in sync with the source files
 
-import type {
-  AgentMessage,
-  ComputerCallOutputMessage,
-} from './messages';
+import type { AgentMessage, ComputerCallOutputMessage } from './messages';
 
 // Model type
 export interface Model {

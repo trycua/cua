@@ -19,14 +19,14 @@ import * as path from 'path';
 // Types
 // ============================================================================
 
-interface CLIDocumentation {
+export interface CLIDocumentation {
   name: string;
   version: string;
   abstract: string;
   commands: CommandDoc[];
 }
 
-interface CommandDoc {
+export interface CommandDoc {
   name: string;
   abstract: string;
   discussion?: string;
@@ -36,14 +36,14 @@ interface CommandDoc {
   subcommands: CommandDoc[];
 }
 
-interface ArgumentDoc {
+export interface ArgumentDoc {
   name: string;
   help: string;
   type: string;
   is_optional: boolean;
 }
 
-interface OptionDoc {
+export interface OptionDoc {
   name: string;
   short_name?: string;
   help: string;
@@ -52,21 +52,21 @@ interface OptionDoc {
   is_optional: boolean;
 }
 
-interface FlagDoc {
+export interface FlagDoc {
   name: string;
   short_name?: string;
   help: string;
   default_value: boolean;
 }
 
-interface HTTPAPIDocumentation {
+export interface HTTPAPIDocumentation {
   base_path: string;
   version: string;
   description: string;
   endpoints: APIEndpointDoc[];
 }
 
-interface APIEndpointDoc {
+export interface APIEndpointDoc {
   method: string;
   path: string;
   description: string;
@@ -78,26 +78,26 @@ interface APIEndpointDoc {
   status_codes: APIStatusCodeDoc[];
 }
 
-interface APIParameterDoc {
+export interface APIParameterDoc {
   name: string;
   type: string;
   required: boolean;
   description: string;
 }
 
-interface APIRequestBodyDoc {
+export interface APIRequestBodyDoc {
   content_type: string;
   description: string;
   fields: APIFieldDoc[];
 }
 
-interface APIResponseDoc {
+export interface APIResponseDoc {
   content_type: string;
   description: string;
   fields?: APIFieldDoc[];
 }
 
-interface APIFieldDoc {
+export interface APIFieldDoc {
   name: string;
   type: string;
   required: boolean;
@@ -105,7 +105,7 @@ interface APIFieldDoc {
   default_value?: string;
 }
 
-interface APIStatusCodeDoc {
+export interface APIStatusCodeDoc {
   code: number;
   description: string;
 }
@@ -117,6 +117,80 @@ interface APIStatusCodeDoc {
 const ROOT_DIR = path.resolve(__dirname, '../..');
 const LUME_DIR = path.join(ROOT_DIR, 'libs', 'lume');
 const DOCS_OUTPUT_DIR = path.join(ROOT_DIR, 'docs', 'content', 'docs', 'lume', 'reference');
+const TAG_PREFIX = 'lume-v';
+
+// ============================================================================
+// Version Discovery
+// ============================================================================
+
+interface VersionInfo {
+  version: string;
+  href: string;
+  isCurrent: boolean;
+}
+
+/**
+ * Get the latest released version from git tags.
+ */
+export function getLatestReleasedVersion(): string {
+  try {
+    const output = execSync(`git tag | grep "^${TAG_PREFIX}" | sort -V | tail -1`, {
+      encoding: 'utf-8',
+      cwd: ROOT_DIR,
+    }).trim();
+    if (output) {
+      return output.replace(TAG_PREFIX, '');
+    }
+  } catch {
+    // Fall through
+  }
+  return '0.0.0';
+}
+
+/**
+ * Discover available versioned doc folders and build version list.
+ */
+export function discoverVersions(currentVersion: string): VersionInfo[] {
+  const versions: VersionInfo[] = [];
+  const currentMajorMinor = currentVersion.split('.').slice(0, 2).join('.');
+
+  // Add current version (latest)
+  versions.push({
+    version: currentMajorMinor,
+    href: '/lume/reference/cli-reference',
+    isCurrent: true,
+  });
+
+  // Discover versioned folders (v0.2, v0.1, etc.)
+  if (fs.existsSync(DOCS_OUTPUT_DIR)) {
+    const entries = fs.readdirSync(DOCS_OUTPUT_DIR, { withFileTypes: true });
+    for (const entry of entries) {
+      if (entry.isDirectory() && entry.name.startsWith('v')) {
+        const version = entry.name.substring(1);
+        if (version === currentMajorMinor) continue;
+        versions.push({
+          version,
+          href: `/lume/reference/${entry.name}/cli-reference`,
+          isCurrent: false,
+        });
+      }
+    }
+  }
+
+  // Sort descending
+  versions.sort((a, b) => {
+    const partsA = a.version.split('.').map((x) => parseInt(x, 10) || 0);
+    const partsB = b.version.split('.').map((x) => parseInt(x, 10) || 0);
+    for (let i = 0; i < Math.max(partsA.length, partsB.length); i++) {
+      const partA = partsA[i] || 0;
+      const partB = partsB[i] || 0;
+      if (partA !== partB) return partB - partA;
+    }
+    return 0;
+  });
+
+  return versions;
+}
 
 // ============================================================================
 // Main
@@ -222,12 +296,17 @@ async function main() {
 // CLI Reference Generator
 // ============================================================================
 
-function generateCLIReferenceMDX(docs: CLIDocumentation): string {
+export function generateCLIReferenceMDX(docs: CLIDocumentation): string {
   const lines: string[] = [];
+
+  // Discover version info
+  const releasedVersion = getLatestReleasedVersion();
+  const currentMajorMinor = releasedVersion.split('.').slice(0, 2).join('.');
+  const versions = discoverVersions(releasedVersion);
 
   // Header - frontmatter MUST be at the very beginning of the file
   lines.push('---');
-  lines.push('title: Lume CLI Reference');
+  lines.push('title: CLI Reference');
   lines.push('description: Command Line Interface reference for Lume');
   lines.push('---');
   lines.push('');
@@ -235,9 +314,23 @@ function generateCLIReferenceMDX(docs: CLIDocumentation): string {
   AUTO-GENERATED FILE - DO NOT EDIT DIRECTLY
   Generated by: npx tsx scripts/docs-generators/lume.ts
   Source: libs/lume/src/Commands/*.swift
+  Version: ${releasedVersion}
 */}`);
   lines.push('');
   lines.push("import { Callout } from 'fumadocs-ui/components/callout';");
+  lines.push("import { VersionHeader } from '@/components/version-selector';");
+  lines.push('');
+
+  // Version selector and badge
+  lines.push('<VersionHeader');
+  lines.push(`  versions={${JSON.stringify(versions)}}`);
+  lines.push(`  currentVersion="${currentMajorMinor}"`);
+  lines.push(`  fullVersion="${releasedVersion}"`);
+  lines.push(`  packageName="lume"`);
+  lines.push(
+    `  installCommand="curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/lume/scripts/install.sh | bash"`
+  );
+  lines.push('/>');
   lines.push('');
 
   // Introduction
@@ -247,7 +340,7 @@ function generateCLIReferenceMDX(docs: CLIDocumentation): string {
   lines.push('');
   lines.push('```bash');
   lines.push('# Run a prebuilt macOS VM');
-  lines.push('lume run macos-sequoia-vanilla:latest');
+  lines.push('lume run macos-tahoe-vanilla:latest');
   lines.push('');
   lines.push('# Create a custom VM');
   lines.push('lume create my-vm --cpu 4 --memory 8GB --disk-size 50GB');
@@ -257,7 +350,6 @@ function generateCLIReferenceMDX(docs: CLIDocumentation): string {
   // Group commands by category
   const vmManagement = ['create', 'run', 'stop', 'delete', 'clone'];
   const vmInfo = ['ls', 'get', 'set'];
-  const remoteAccess = ['ssh'];
   const imageManagement = ['images', 'pull', 'push', 'ipsw', 'prune'];
   const configuration = ['config', 'serve', 'logs', 'setup'];
 
@@ -270,12 +362,6 @@ function generateCLIReferenceMDX(docs: CLIDocumentation): string {
   lines.push('## VM Information and Configuration');
   lines.push('');
   for (const cmd of docs.commands.filter((c) => vmInfo.includes(c.name))) {
-    lines.push(...generateCommandDoc(cmd, '###'));
-  }
-
-  lines.push('## Remote Access');
-  lines.push('');
-  for (const cmd of docs.commands.filter((c) => remoteAccess.includes(c.name))) {
     lines.push(...generateCommandDoc(cmd, '###'));
   }
 
@@ -303,7 +389,7 @@ function generateCLIReferenceMDX(docs: CLIDocumentation): string {
   return lines.join('\n');
 }
 
-function generateCommandDoc(cmd: CommandDoc, heading: string): string[] {
+export function generateCommandDoc(cmd: CommandDoc, heading: string): string[] {
   const lines: string[] = [];
 
   lines.push(`${heading} lume ${cmd.name}`);
@@ -380,12 +466,17 @@ function generateCommandDoc(cmd: CommandDoc, heading: string): string[] {
 // HTTP API Reference Generator
 // ============================================================================
 
-function generateHTTPAPIMDX(docs: HTTPAPIDocumentation): string {
+export function generateHTTPAPIMDX(docs: HTTPAPIDocumentation): string {
   const lines: string[] = [];
+
+  // Discover version info
+  const releasedVersion = getLatestReleasedVersion();
+  const currentMajorMinor = releasedVersion.split('.').slice(0, 2).join('.');
+  const versions = discoverVersions(releasedVersion);
 
   // Header - frontmatter MUST be at the very beginning of the file
   lines.push('---');
-  lines.push('title: Lume HTTP API Reference');
+  lines.push('title: API Reference');
   lines.push('description: HTTP API reference for Lume server');
   lines.push('---');
   lines.push('');
@@ -393,10 +484,24 @@ function generateHTTPAPIMDX(docs: HTTPAPIDocumentation): string {
   AUTO-GENERATED FILE - DO NOT EDIT DIRECTLY
   Generated by: npx tsx scripts/docs-generators/lume.ts
   Source: libs/lume/src/Server/*.swift
+  Version: ${releasedVersion}
 */}`);
   lines.push('');
   lines.push("import { Callout } from 'fumadocs-ui/components/callout';");
   lines.push("import { Tabs, Tab } from 'fumadocs-ui/components/tabs';");
+  lines.push("import { VersionHeader } from '@/components/version-selector';");
+  lines.push('');
+
+  // Version selector and badge
+  lines.push('<VersionHeader');
+  lines.push(`  versions={${JSON.stringify(versions)}}`);
+  lines.push(`  currentVersion="${currentMajorMinor}"`);
+  lines.push(`  fullVersion="${releasedVersion}"`);
+  lines.push(`  packageName="lume"`);
+  lines.push(
+    `  installCommand="curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/lume/scripts/install.sh | bash"`
+  );
+  lines.push('/>');
   lines.push('');
 
   // Introduction
@@ -430,7 +535,7 @@ function generateHTTPAPIMDX(docs: HTTPAPIDocumentation): string {
   return lines.join('\n');
 }
 
-function generateEndpointDoc(endpoint: APIEndpointDoc): string[] {
+export function generateEndpointDoc(endpoint: APIEndpointDoc): string[] {
   const lines: string[] = [];
 
   // Title from description
@@ -625,7 +730,7 @@ function getExampleValue(field: APIFieldDoc): unknown {
       if (field.name === 'memory') return '8GB';
       if (field.name === 'diskSize') return '50GB';
       if (field.name === 'display') return '1024x768';
-      if (field.name === 'image') return 'macos-sequoia-vanilla:latest';
+      if (field.name === 'image') return 'macos-tahoe-vanilla:latest';
       if (field.name === 'path') return '/path/to/storage';
       return 'example';
     case 'integer':

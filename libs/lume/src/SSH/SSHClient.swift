@@ -47,23 +47,25 @@ public actor SSHClient {
         // Create a promise for the result
         let resultPromise = channel.eventLoop.makePromise(of: SSHResult.self)
 
-        // Create the SSH child channel for command execution
-        // nonisolated(unsafe) is safe because NIOSSHHandler is confined to its event loop
-        nonisolated(unsafe) let sshHandler = try await channel.pipeline.handler(type: NIOSSHHandler.self).get()
-
+        // Create the SSH child channel for command execution.
+        // We keep handler access + createChannel on the event loop to avoid
+        // crossing a Sendable boundary with NIOSSHHandler.
         let childChannelPromise = channel.eventLoop.makePromise(of: Channel.self)
-        sshHandler.createChannel(childChannelPromise) { childChannel, channelType in
-            guard channelType == .session else {
-                return channel.eventLoop.makeFailedFuture(SSHError.connectionFailed("Invalid channel type"))
-            }
+        let childChannelFuture = channel.pipeline.handler(type: NIOSSHHandler.self).flatMap { sshHandler -> EventLoopFuture<Channel> in
+            sshHandler.createChannel(childChannelPromise) { childChannel, channelType in
+                guard channelType == .session else {
+                    return channel.eventLoop.makeFailedFuture(SSHError.connectionFailed("Invalid channel type"))
+                }
 
-            return childChannel.eventLoop.makeCompletedFuture {
-                let execHandler = CommandExecHandler(command: command, resultPromise: resultPromise)
-                try childChannel.pipeline.syncOperations.addHandler(execHandler)
+                return childChannel.eventLoop.makeCompletedFuture {
+                    let execHandler = CommandExecHandler(command: command, resultPromise: resultPromise)
+                    try childChannel.pipeline.syncOperations.addHandler(execHandler)
+                }
             }
+            return childChannelPromise.futureResult
         }
 
-        let childChannel = try await childChannelPromise.futureResult.get()
+        let childChannel = try await childChannelFuture.get()
 
         // Set up timeout if specified
         if timeout > 0 {
@@ -92,25 +94,27 @@ public actor SSHClient {
     public func interactive() async throws {
         let channel = try await connect()
 
-        // Create the SSH child channel for interactive session
-        // nonisolated(unsafe) is safe because NIOSSHHandler is confined to its event loop
-        nonisolated(unsafe) let sshHandler = try await channel.pipeline.handler(type: NIOSSHHandler.self).get()
-
+        // Create the SSH child channel for interactive session.
+        // We keep handler access + createChannel on the event loop to avoid
+        // crossing a Sendable boundary with NIOSSHHandler.
         let childChannelPromise = channel.eventLoop.makePromise(of: Channel.self)
         let sessionCompletePromise = channel.eventLoop.makePromise(of: Void.self)
 
-        sshHandler.createChannel(childChannelPromise) { childChannel, channelType in
-            guard channelType == .session else {
-                return channel.eventLoop.makeFailedFuture(SSHError.connectionFailed("Invalid channel type"))
-            }
+        let childChannelFuture = channel.pipeline.handler(type: NIOSSHHandler.self).flatMap { sshHandler -> EventLoopFuture<Channel> in
+            sshHandler.createChannel(childChannelPromise) { childChannel, channelType in
+                guard channelType == .session else {
+                    return channel.eventLoop.makeFailedFuture(SSHError.connectionFailed("Invalid channel type"))
+                }
 
-            return childChannel.eventLoop.makeCompletedFuture {
-                let interactiveHandler = InteractiveSessionHandler(completePromise: sessionCompletePromise)
-                try childChannel.pipeline.syncOperations.addHandler(interactiveHandler)
+                return childChannel.eventLoop.makeCompletedFuture {
+                    let interactiveHandler = InteractiveSessionHandler(completePromise: sessionCompletePromise)
+                    try childChannel.pipeline.syncOperations.addHandler(interactiveHandler)
+                }
             }
+            return childChannelPromise.futureResult
         }
 
-        let childChannel = try await childChannelPromise.futureResult.get()
+        let childChannel = try await childChannelFuture.get()
 
         // Wait for the session to complete
         try await sessionCompletePromise.futureResult.get()

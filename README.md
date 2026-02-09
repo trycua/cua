@@ -44,7 +44,7 @@ Built-in support for `agent-browser` and `agent-device` (iOS, Android) out of th
 
 <div align="center">
 
-**[Get Started](https://cua.ai/docs/cuabot/cuabot)** | **[Installation](https://cua.ai/docs/cuabot/install)** | *First spotted at [ClawCon](https://www.claw-con.com/)*
+**[Get Started](https://cua.ai/docs/cuabot/cuabot)** | **[Installation](https://cua.ai/docs/cuabot/install)** | _First spotted at [ClawCon](https://www.claw-con.com/)_
 
 <div align="center">
   <img src="img/cuabot-screenshot.png" alt="cuabot screenshot" style="max-height: 32em;">

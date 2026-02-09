@@ -1,10 +1,15 @@
 ---
-title: CuaBot
+title: Introduction
 description: Multi-user computing with AI
 ---
 
 <div className="not-prose flex justify-center my-8">
-  <img src="/docs/img/cuabot-screenshot.png" alt="cuabot screenshot" style={{maxHeight: '32em'}} className="rounded-xl" />
+  <img
+    src="/docs/img/cuabot-screenshot.png"
+    alt="cuabot screenshot"
+    style={{ maxHeight: '32em' }}
+    className="rounded-xl"
+  />
 </div>
 
 **Multi-user computing with AI**
@@ -107,7 +112,7 @@ cuabot --help                     # Show help
 
 ## How It Works
 
-CuaBot runs a Docker container with Xpra, streaming individual application windows to your desktop. Your chosen agent runs inside the container with:
+Cua-Bot runs a Docker container with Xpra, streaming individual application windows to your desktop. Your chosen agent runs inside the container with:
 
 - Full Ubuntu 22.04 environment
 - Pre-installed: Node.js, Python, browsers, dev tools
@@ -117,6 +122,7 @@ CuaBot runs a Docker container with Xpra, streaming individual application windo
 ## Configuration
 
 Config files are stored in `~/.cuabot/`:
+
 - `settings.json` - Default agent and preferences
 - `server.pid` / `server.<name>.pid` - Server process ID
 - `server.port` / `server.<name>.port` - Server port number

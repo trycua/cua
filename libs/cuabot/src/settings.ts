@@ -2,12 +2,12 @@
  * CuaBot Settings Management
  */
 
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from "fs";
-import { join } from "path";
-import { homedir } from "os";
+import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
+import { join } from 'path';
+import { homedir } from 'os';
 
-const CONFIG_DIR = join(homedir(), ".cuabot");
-const SETTINGS_FILE = join(CONFIG_DIR, "settings.json");
+const CONFIG_DIR = join(homedir(), '.cuabot');
+const SETTINGS_FILE = join(CONFIG_DIR, 'settings.json');
 
 export interface Settings {
   defaultAgent?: string;
@@ -17,34 +17,34 @@ export interface Settings {
 
 export const AGENTS = {
   claude: {
-    name: "Claude Code",
+    name: 'Claude Code',
     description: "Anthropic's Claude AI coding assistant",
-    command: "claude",
+    command: 'claude',
   },
   gemini: {
-    name: "Gemini CLI",
+    name: 'Gemini CLI',
     description: "Google's Gemini AI assistant",
-    command: "npx @google/gemini-cli",
+    command: 'npx @google/gemini-cli',
   },
   codex: {
-    name: "OpenAI Codex",
+    name: 'OpenAI Codex',
     description: "OpenAI's Codex coding assistant",
-    command: "codex",
+    command: 'codex',
   },
   aider: {
-    name: "Aider",
-    description: "AI pair programming in your terminal",
-    command: "aider",
+    name: 'Aider',
+    description: 'AI pair programming in your terminal',
+    command: 'aider',
   },
   openclaw: {
-    name: "OpenClaw",
-    description: "OpenClaw AI assistant",
-    command: "openclaw",
+    name: 'OpenClaw',
+    description: 'OpenClaw AI assistant',
+    command: 'openclaw',
   },
   vibe: {
-    name: "Vibe",
+    name: 'Vibe',
     description: "Mistral's Vibe coding assistant",
-    command: "vibe",
+    command: 'vibe',
   },
 } as const;
 
@@ -62,7 +62,7 @@ export function loadSettings(): Settings {
     return {};
   }
   try {
-    return JSON.parse(readFileSync(SETTINGS_FILE, "utf-8"));
+    return JSON.parse(readFileSync(SETTINGS_FILE, 'utf-8'));
   } catch {
     return {};
   }
@@ -85,8 +85,8 @@ export function setDefaultAgent(agent: string): void {
 
 export function getTelemetryEnabled(): boolean {
   const settings = loadSettings();
-  const envValue = process.env.CUABOT_TELEMETRY?.toLowerCase() === "true";
-  const envFalse = process.env.CUABOT_TELEMETRY?.toLowerCase() === "false";
+  const envValue = process.env.CUABOT_TELEMETRY?.toLowerCase() === 'true';
+  const envFalse = process.env.CUABOT_TELEMETRY?.toLowerCase() === 'false';
 
   // If any source is explicitly false, return false
   if (settings.telemetryEnabled === false || envFalse) {

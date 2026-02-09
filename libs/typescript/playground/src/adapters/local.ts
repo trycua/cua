@@ -116,9 +116,7 @@ class LocalComputerAdapter implements ComputerAdapter {
     return computers[0] ?? null;
   }
 
-  async addCustomComputer(
-    computer: Omit<ComputerInfo, 'id'>
-  ): Promise<ComputerInfo> {
+  async addCustomComputer(computer: Omit<ComputerInfo, 'id'>): Promise<ComputerInfo> {
     const newComputer: ComputerInfo = {
       ...computer,
       id: crypto.randomUUID(),
@@ -233,9 +231,7 @@ class LocalInferenceAdapter implements InferenceAdapter {
  * <Playground adapters={adapters} />
  * ```
  */
-export function createLocalAdapter(
-  config: LocalAdapterConfig = {}
-): PlaygroundAdapters {
+export function createLocalAdapter(config: LocalAdapterConfig = {}): PlaygroundAdapters {
   return {
     persistence: new LocalPersistenceAdapter(),
     computer: new LocalComputerAdapter(config),

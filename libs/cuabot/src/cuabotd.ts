@@ -6,38 +6,37 @@
  * WebSocket support for interactive shell sessions
  */
 
-import * as pty from "@lydell/node-pty";
-import { exec, spawn } from "child_process";
-import { appendFileSync, existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "fs";
-import { openWindows } from "get-windows";
-import { createServer, IncomingMessage, ServerResponse } from "http";
-import { homedir } from "os";
-import { join } from "path";
-import { Browser, BrowserContext, chromium, Page } from "playwright";
-import sharp from "sharp";
-import { promisify } from "util";
-import { WebSocket, WebSocketServer } from "ws";
-import { getDefaultAgent, getTelemetryEnabled } from "./settings.js";
+import * as pty from '@lydell/node-pty';
+import { exec, spawn } from 'child_process';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'fs';
+import { openWindows } from 'get-windows';
+import { createServer, IncomingMessage, ServerResponse } from 'http';
+import { homedir } from 'os';
+import { join } from 'path';
+import { Browser, BrowserContext, chromium, Page } from 'playwright';
+import sharp from 'sharp';
+import { promisify } from 'util';
+import { WebSocket, WebSocketServer } from 'ws';
+import { getDefaultAgent, getTelemetryEnabled } from './settings.js';
 import {
   CuabotTelemetry,
   initTelemetry,
   startHistoryPolling,
   stopHistoryPolling,
   TelemetryEvent,
-} from "./telemetry.js";
-import { getXpraAttachArgs, getXpraBinPath, nameToColor } from "./utils.js";
-
+} from './telemetry.js';
+import { getXpraAttachArgs, getXpraBinPath, nameToColor } from './utils.js';
 
 const execAsync = promisify(exec);
 
 // Config
 const DEFAULT_PORT = 7842;
-const CONFIG_DIR = join(homedir(), ".cuabot");
-const CLAUDE_CONFIG_DIR = join(CONFIG_DIR, "user", ".claude");
-const ANDROID_SDK_IMAGES_DIR = join(CONFIG_DIR, "user", "android-sdk", "system-images");
+const CONFIG_DIR = join(homedir(), '.cuabot');
+const CLAUDE_CONFIG_DIR = join(CONFIG_DIR, 'user', '.claude');
+const ANDROID_SDK_IMAGES_DIR = join(CONFIG_DIR, 'user', 'android-sdk', 'system-images');
 
-const IMAGE_NAME = "trycua/cuabot:latest";
-const BASE_CONTAINER_NAME = "cuabot-xpra";
+const IMAGE_NAME = 'trycua/cuabot:latest';
+const BASE_CONTAINER_NAME = 'cuabot-xpra';
 
 // Session name support
 let sessionName: string | null = null;
@@ -50,16 +49,15 @@ export function getSessionName(): string | null {
   return sessionName;
 }
 
-
 // Find an available HTTP server port
 async function findAvailableServerPort(preferredPort: number): Promise<number> {
-  const net = await import("net");
+  const net = await import('net');
 
   const isPortAvailable = (port: number): Promise<boolean> => {
     return new Promise((resolve) => {
       const server = net.createServer();
-      server.once("error", () => resolve(false));
-      server.once("listening", () => {
+      server.once('error', () => resolve(false));
+      server.once('listening', () => {
         server.close();
         resolve(true);
       });
@@ -81,7 +79,7 @@ async function findAvailableServerPort(preferredPort: number): Promise<number> {
     port++;
   }
 
-  throw new Error("No available ports found");
+  throw new Error('No available ports found');
 }
 
 function getContainerName(): string {
@@ -89,14 +87,18 @@ function getContainerName(): string {
 }
 
 function getPidFile(): string {
-  return sessionName ? join(CONFIG_DIR, `server.${sessionName}.pid`) : join(CONFIG_DIR, "server.pid");
+  return sessionName
+    ? join(CONFIG_DIR, `server.${sessionName}.pid`)
+    : join(CONFIG_DIR, 'server.pid');
 }
 
 function getPortFile(): string {
-  return sessionName ? join(CONFIG_DIR, `server.${sessionName}.port`) : join(CONFIG_DIR, "server.port");
+  return sessionName
+    ? join(CONFIG_DIR, `server.${sessionName}.port`)
+    : join(CONFIG_DIR, 'server.port');
 }
-const SCREENSHOT_PATH = "F:\\Projects\\cuabot\\screenshot.jpg";
-const SCREENSHOT_CLICKED_PATH = "F:\\Projects\\cuabot\\screenshot-clicked.jpg";
+const SCREENSHOT_PATH = 'F:\\Projects\\cuabot\\screenshot.jpg';
+const SCREENSHOT_CLICKED_PATH = 'F:\\Projects\\cuabot\\screenshot-clicked.jpg';
 const DEBUG = false;
 
 // Telemetry client (initialized at startup)
@@ -112,7 +114,7 @@ let screenshotScale: number = 1; // Scale factor applied to screenshots (for sca
 let xpraClientPid: number | null = null; // Track xpra client process for cleanup
 let serverReady: boolean = false; // Track if server initialization is complete
 
-const STARTING_ERROR = "cuabotd is still starting";
+const STARTING_ERROR = 'cuabotd is still starting';
 
 // Ensure config directory exists
 function ensureConfigDir() {
@@ -132,14 +134,14 @@ function ensureConfigDir() {
 // Docker helpers
 async function testDockerConnection(): Promise<{ ok: boolean; message: string }> {
   try {
-    await execAsync("docker info");
-    return { ok: true, message: "Docker connected" };
+    await execAsync('docker info');
+    return { ok: true, message: 'Docker connected' };
   } catch {
     try {
-      await execAsync("docker --version");
-      return { ok: false, message: "Docker installed but not running - start Docker Desktop" };
+      await execAsync('docker --version');
+      return { ok: false, message: 'Docker installed but not running - start Docker Desktop' };
     } catch {
-      return { ok: false, message: "Docker not installed" };
+      return { ok: false, message: 'Docker not installed' };
     }
   }
 }
@@ -148,14 +150,14 @@ async function findAvailablePort(): Promise<number> {
   const usedPorts = new Set<number>();
   try {
     const { stdout } = await execAsync('docker ps -a --format "{{json .Ports}}"');
-    for (const line of stdout.trim().split("\n")) {
+    for (const line of stdout.trim().split('\n')) {
       if (!line) continue;
       const matches = line.matchAll(/(\d+)->(\d+)/g);
       for (const match of matches) {
         usedPorts.add(parseInt(match[1], 10));
       }
     }
-  } catch { }
+  } catch {}
   let port = 10000;
   while (usedPorts.has(port)) port++;
   return port;
@@ -169,22 +171,28 @@ async function ensureImage(): Promise<void> {
     console.log(`[server] Pulling ${IMAGE_NAME}...`);
     const pullProcess = exec(`docker pull ${IMAGE_NAME}`);
 
-    pullProcess.stdout?.on("data", (data: Buffer) => {
-      const lines = data.toString().split("\n").filter(l => l.trim());
+    pullProcess.stdout?.on('data', (data: Buffer) => {
+      const lines = data
+        .toString()
+        .split('\n')
+        .filter((l) => l.trim());
       for (const line of lines) {
         console.log(`[pull] ${line}`);
       }
     });
 
-    pullProcess.stderr?.on("data", (data: Buffer) => {
-      const lines = data.toString().split("\n").filter(l => l.trim());
+    pullProcess.stderr?.on('data', (data: Buffer) => {
+      const lines = data
+        .toString()
+        .split('\n')
+        .filter((l) => l.trim());
       for (const line of lines) {
         console.error(`[pull] ${line}`);
       }
     });
 
     await new Promise<void>((resolve, reject) => {
-      pullProcess.on("exit", (code) => {
+      pullProcess.on('exit', (code) => {
         if (code === 0) {
           console.log(`[server] Pull completed successfully!`);
           resolve();
@@ -199,12 +207,14 @@ async function ensureImage(): Promise<void> {
 async function ensureContainer(): Promise<number> {
   // Check if container is running
   try {
-    const { stdout: runningOut } = await execAsync(`docker inspect -f "{{.State.Running}}" ${getContainerName()}`);
-    if (runningOut.trim() === "true") {
+    const { stdout: runningOut } = await execAsync(
+      `docker inspect -f "{{.State.Running}}" ${getContainerName()}`
+    );
+    if (runningOut.trim() === 'true') {
       const { stdout: portOut } = await execAsync(`docker port ${getContainerName()} 10000`);
-      return parseInt(portOut.split(":")[1]?.trim() || "10000", 10);
+      return parseInt(portOut.split(':')[1]?.trim() || '10000', 10);
     }
-  } catch { }
+  } catch {}
 
   const dockerCheck = await testDockerConnection();
   if (!dockerCheck.ok) {
@@ -213,42 +223,54 @@ async function ensureContainer(): Promise<number> {
   await ensureImage();
 
   // Remove existing stopped container
-  await execAsync(`docker rm -f ${getContainerName()}`).catch(() => { });
+  await execAsync(`docker rm -f ${getContainerName()}`).catch(() => {});
 
   const port = await findAvailablePort();
 
   // Convert Windows path to Docker-compatible path for volume mount
-  const toDockerPath = (p: string) => p.replace(/\\/g, "/").replace(/^([A-Z]):/, (_, letter) => `/${letter.toLowerCase()}`);
+  const toDockerPath = (p: string) =>
+    p.replace(/\\/g, '/').replace(/^([A-Z]):/, (_, letter) => `/${letter.toLowerCase()}`);
   const claudeConfigPath = toDockerPath(CLAUDE_CONFIG_DIR);
   const androidSdkImagesPath = toDockerPath(ANDROID_SDK_IMAGES_DIR);
 
   const telemetryEnabled = getTelemetryEnabled();
-  const cuabotName = sessionName || "cuabot";
+  const cuabotName = sessionName || 'cuabot';
   const cuabotColor = nameToColor(cuabotName).slice(1); // Remove # prefix
   const createCmd = [
-    "docker", "create",
-    "--name", getContainerName(),
-    "-p", `${port}:10000`,
-    "-e", "DISPLAY=:100",
-    "-e", "CLAUDE_CONFIG_DIR=/home/user/.claude",
-    "-e", `CUABOT_HOST=http://host.docker.internal:${serverPort}`,
-    "-e", `CUABOT_TELEMETRY=${telemetryEnabled ? "true" : "false"}`,
-    "-e", `CUABOT_NAME=${cuabotName}`,
-    "-e", `CUABOT_COLOR=${cuabotColor}`,
-    "--add-host=host.docker.internal:host-gateway",
-    "-v", `${claudeConfigPath}:/home/user/.claude`,
-    "-v", `${androidSdkImagesPath}:/home/user/android-sdk/system-images`,
+    'docker',
+    'create',
+    '--name',
+    getContainerName(),
+    '-p',
+    `${port}:10000`,
+    '-e',
+    'DISPLAY=:100',
+    '-e',
+    'CLAUDE_CONFIG_DIR=/home/user/.claude',
+    '-e',
+    `CUABOT_HOST=http://host.docker.internal:${serverPort}`,
+    '-e',
+    `CUABOT_TELEMETRY=${telemetryEnabled ? 'true' : 'false'}`,
+    '-e',
+    `CUABOT_NAME=${cuabotName}`,
+    '-e',
+    `CUABOT_COLOR=${cuabotColor}`,
+    '--add-host=host.docker.internal:host-gateway',
+    '-v',
+    `${claudeConfigPath}:/home/user/.claude`,
+    '-v',
+    `${androidSdkImagesPath}:/home/user/android-sdk/system-images`,
   ];
 
   // Add KVM device passthrough for nested virtualization
-  if (process.env.CUABOT_NESTED_VIRT === "1") {
-    createCmd.push("--device=/dev/kvm");
-    console.log("[server] Nested virtualization enabled (--device=/dev/kvm)");
+  if (process.env.CUABOT_NESTED_VIRT === '1') {
+    createCmd.push('--device=/dev/kvm');
+    console.log('[server] Nested virtualization enabled (--device=/dev/kvm)');
   }
 
   createCmd.push(IMAGE_NAME);
 
-  await execAsync(createCmd.join(" "));
+  await execAsync(createCmd.join(' '));
   await execAsync(`docker start ${getContainerName()}`);
 
   // Wait for xpra to be ready
@@ -257,18 +279,18 @@ async function ensureContainer(): Promise<number> {
       const { stdout } = await execAsync(
         `docker exec ${getContainerName()} sh -c "netstat -tln 2>/dev/null | grep -q 10000 && echo ready || ss -tln 2>/dev/null | grep -q 10000 && echo ready"`
       );
-      if (stdout.includes("ready")) break;
-    } catch { }
-    await new Promise(r => setTimeout(r, 500));
+      if (stdout.includes('ready')) break;
+    } catch {}
+    await new Promise((r) => setTimeout(r, 500));
   }
 
   // Start overlay cursor in background
-  const cursorName = sessionName || "cuabot";
+  const cursorName = sessionName || 'cuabot';
   try {
     await execAsync(
       `docker exec -d ${getContainerName()} python3 /home/user/.cuabot/mcp/overlay-cursor.py --name=${cursorName}`
     );
-  } catch { }
+  } catch {}
 
   // Start mask polling for cursor visibility
   startMaskPolling();
@@ -293,7 +315,7 @@ ${command}
 `;
 
   // Write script to container using docker exec with base64 to avoid any escaping issues
-  const base64Script = Buffer.from(scriptContent).toString("base64");
+  const base64Script = Buffer.from(scriptContent).toString('base64');
   await execAsync(
     `docker exec ${getContainerName()} bash -c "echo '${base64Script}' | base64 -d > ${scriptPath} && chmod +x ${scriptPath}"`
   );
@@ -305,7 +327,7 @@ ${command}
       const bgCmd = `docker exec ${getContainerName()} bash -c "nohup ${scriptPath} > /tmp/cuabot-bg-${scriptId}.log 2>&1 & echo \\$!; sleep 1; if ! kill -0 \\$! 2>/dev/null; then cat /tmp/cuabot-bg-${scriptId}.log; exit 1; fi"`;
 
       const { stdout, stderr } = await execAsync(bgCmd, { timeout: 10000 });
-      const pid = parseInt(stdout.trim().split("\n")[0], 10);
+      const pid = parseInt(stdout.trim().split('\n')[0], 10);
 
       // Clean up script after a delay (let it start first)
       setTimeout(async () => {
@@ -328,12 +350,12 @@ ${command}
   } catch (err: any) {
     // Clean up script on error
     await execAsync(`docker exec ${getContainerName()} rm -f ${scriptPath}`).catch(() => {});
-    return { stdout: err.stdout || "", stderr: err.stderr || err.message };
+    return { stdout: err.stdout || '', stderr: err.stderr || err.message };
   }
 }
 
 // Overlay cursor management
-const CURSOR_SOCKET = "/tmp/cuabot-overlay-cursor.sock";
+const CURSOR_SOCKET = '/tmp/cuabot-overlay-cursor.sock';
 let maskPollingInterval: ReturnType<typeof setInterval> | null = null;
 let lastCursorPos = { x: 0, y: 0 };
 
@@ -346,7 +368,7 @@ async function sendCursorCommand(cmd: Record<string, unknown>): Promise<void> {
 
 async function notifyCursorMove(x: number, y: number, click = false): Promise<void> {
   lastCursorPos = { x, y };
-  await sendCursorCommand({ type: "move", x: x, y: y, click });
+  await sendCursorCommand({ type: 'move', x: x, y: y, click });
 }
 
 // AABB types and operations for mask computation
@@ -358,7 +380,7 @@ interface AABB {
 }
 
 interface AABBOp extends AABB {
-  op: "add" | "subtract";
+  op: 'add' | 'subtract';
 }
 
 function subtractAABB(a: AABB, b: AABB): AABB[] {
@@ -400,8 +422,10 @@ function subtractAABB(a: AABB, b: AABB): AABB[] {
 }
 
 function tryMerge(a: AABB, b: AABB): AABB | null {
-  const aRight = a.x + a.width, aBottom = a.y + a.height;
-  const bRight = b.x + b.width, bBottom = b.y + b.height;
+  const aRight = a.x + a.width,
+    aBottom = a.y + a.height;
+  const bRight = b.x + b.width,
+    bBottom = b.y + b.height;
 
   // Horizontal merge
   if (a.y === b.y && a.height === b.height) {
@@ -446,10 +470,10 @@ function computeAABBs(ops: AABBOp[]): AABB[] {
   for (const op of ops) {
     const box: AABB = { x: op.x, y: op.y, width: op.width, height: op.height };
 
-    if (op.op === "add") {
+    if (op.op === 'add') {
       regions.push(box);
     } else {
-      regions = regions.flatMap(r => subtractAABB(r, box));
+      regions = regions.flatMap((r) => subtractAABB(r, box));
     }
   }
 
@@ -459,7 +483,7 @@ function computeAABBs(ops: AABBOp[]): AABB[] {
 async function updateCursorMasks(): Promise<void> {
   try {
     const windows = await openWindows();
-    const cursorName = sessionName || "cuabot";
+    const cursorName = sessionName || 'cuabot';
     const cursorWindowPattern = `cuabot-cursor-${cursorName}`;
 
     // Build AABB operations from windows (all in absolute screen coordinates)
@@ -472,10 +496,10 @@ async function updateCursorMasks(): Promise<void> {
     // Reverse to go back-to-front (openWindows returns front-to-back)
     for (const win of [...windows].reverse()) {
       const b = win.bounds;
-      const isXpra = win.owner.name === "Xpra" || win.owner.name.toLowerCase().includes("xpra");
+      const isXpra = win.owner.name === 'Xpra' || win.owner.name.toLowerCase().includes('xpra');
       const isCursorWindow = win.title.includes(cursorWindowPattern);
-      const ignoredWindows = ["cuabot-debug-masks", "Screen Studio", "recording-manager-widget"];
-      const isIgnoredWindow = ignoredWindows.some(name => win.title.includes(name));
+      const ignoredWindows = ['cuabot-debug-masks', 'Screen Studio', 'recording-manager-widget'];
+      const isIgnoredWindow = ignoredWindows.some((name) => win.title.includes(name));
 
       if (isCursorWindow || isIgnoredWindow) {
         continue;
@@ -490,10 +514,10 @@ async function updateCursorMasks(): Promise<void> {
 
       if (isXpra) {
         // Xpra windows: subtract (cut holes in masks behind it)
-        ops.push({ x: b.x, y: b.y, width: b.width, height: b.height, op: "subtract" });
+        ops.push({ x: b.x, y: b.y, width: b.width, height: b.height, op: 'subtract' });
       } else {
         // Non-Xpra windows: add (mask areas where cursor should hide)
-        ops.push({ x: b.x, y: b.y, width: b.width, height: b.height, op: "add" });
+        ops.push({ x: b.x, y: b.y, width: b.width, height: b.height, op: 'add' });
       }
     }
 
@@ -505,8 +529,8 @@ async function updateCursorMasks(): Promise<void> {
     // Check if cursor is inside any mask
     const cx = lastCursorPos.x;
     const cy = lastCursorPos.y;
-    const isInMask = maskRects.some(r =>
-      cx >= r.x && cx <= r.x + r.width && cy >= r.y && cy <= r.y + r.height
+    const isInMask = maskRects.some(
+      (r) => cx >= r.x && cx <= r.x + r.width && cy >= r.y && cy <= r.y + r.height
     );
 
     // Debug visualization
@@ -515,7 +539,7 @@ async function updateCursorMasks(): Promise<void> {
     }
 
     // Send masked state to overlay cursor (not the rects - calculation done here)
-    await sendCursorCommand({ type: "masked", value: isInMask });
+    await sendCursorCommand({ type: 'masked', value: isInMask });
   } catch (e) {
     // Silently ignore errors
   }
@@ -532,10 +556,11 @@ async function drawDebugMasks(
     const width = 2400;
     const height = 1600;
     const crosshairSize = 20;
-    const cursorColor = isInMask ? "red" : "lime";
+    const cursorColor = isInMask ? 'red' : 'lime';
 
     // Escape XML special characters
-    const escapeXml = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+    const escapeXml = (s: string) =>
+      s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
     // Build SVG
     let svg = `<svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">`;
@@ -551,7 +576,7 @@ async function drawDebugMasks(
     // Draw window rects (blue outlined) with labels
     for (const win of windows) {
       const b = win.bounds;
-      const strokeColor = win.isXpra ? "cyan" : "blue";
+      const strokeColor = win.isXpra ? 'cyan' : 'blue';
       svg += `<rect x="${b.x}" y="${b.y}" width="${b.width}" height="${b.height}" fill="none" stroke="${strokeColor}" stroke-width="2"/>`;
 
       // Label background
@@ -573,9 +598,11 @@ async function drawDebugMasks(
 
     svg += `</svg>`;
 
-    await sharp(Buffer.from(svg)).png().toFile(SCREENSHOT_PATH.replace("screenshot.jpg", "masks.png"));
+    await sharp(Buffer.from(svg))
+      .png()
+      .toFile(SCREENSHOT_PATH.replace('screenshot.jpg', 'masks.png'));
   } catch (e) {
-    console.error("[debug] Failed to draw masks:", e);
+    console.error('[debug] Failed to draw masks:', e);
   }
 }
 
@@ -623,11 +650,11 @@ async function ensurePlaywrightConnected(): Promise<Page> {
   // Wait for xpra to be ready
   for (let i = 0; i < 60; i++) {
     const isReady = await page!.evaluate(() => {
-      const canvas = document.querySelector("canvas");
+      const canvas = document.querySelector('canvas');
       return canvas !== null;
     });
     if (isReady) break;
-    await new Promise(r => setTimeout(r, 500));
+    await new Promise((r) => setTimeout(r, 500));
   }
 
   playwrightConnected = true;
@@ -636,9 +663,18 @@ async function ensurePlaywrightConnected(): Promise<Page> {
 }
 
 async function closePlaywrightSession(): Promise<void> {
-  if (page) { await page.close().catch(() => { }); page = null; }
-  if (context) { await context.close().catch(() => { }); context = null; }
-  if (browser) { await browser.close().catch(() => { }); browser = null; }
+  if (page) {
+    await page.close().catch(() => {});
+    page = null;
+  }
+  if (context) {
+    await context.close().catch(() => {});
+    context = null;
+  }
+  if (browser) {
+    await browser.close().catch(() => {});
+    browser = null;
+  }
   playwrightConnected = false;
 }
 
@@ -660,10 +696,7 @@ async function scaleScreenshot(buffer: Buffer): Promise<{ scaled: Buffer; scale:
   const newWidth = Math.round(width * scale);
   const newHeight = Math.round(height * scale);
 
-  const scaled = await sharp(buffer)
-    .resize(newWidth, newHeight)
-    .jpeg()
-    .toBuffer();
+  const scaled = await sharp(buffer).resize(newWidth, newHeight).jpeg().toBuffer();
 
   return { scaled, scale };
 }
@@ -679,7 +712,7 @@ function scaleCoordinates(x: number, y: number): { x: number; y: number } {
 
 // Save screenshot with click coordinates marked
 async function saveClickedScreenshot(p: Page, x: number, y: number): Promise<void> {
-  const buffer = await p.screenshot({ type: "jpeg", fullPage: false });
+  const buffer = await p.screenshot({ type: 'jpeg', fullPage: false });
 
   // Save the regular screenshot
   writeFileSync(SCREENSHOT_PATH, buffer);
@@ -720,9 +753,9 @@ const handlers: Record<string, Handler> = {
     return {
       ok: true,
       ready: serverReady,
-      container: containerPort ? `running on port ${containerPort}` : "not started",
+      container: containerPort ? `running on port ${containerPort}` : 'not started',
       containerPort: containerPort,
-      playwright: browser?.isConnected() ? "connected" : "not connected",
+      playwright: browser?.isConnected() ? 'connected' : 'not connected',
     };
   },
 
@@ -739,18 +772,18 @@ const handlers: Record<string, Handler> = {
   async screenshot() {
     requireReady();
     const p = await ensurePlaywrightConnected();
-    const buffer = await p.screenshot({ type: "jpeg", fullPage: false });
+    const buffer = await p.screenshot({ type: 'jpeg', fullPage: false });
     const { scaled, scale } = await scaleScreenshot(buffer);
     screenshotScale = scale; // Store for coordinate scaling
-    return { image: Buffer.from(scaled).toString("base64"), scale };
+    return { image: Buffer.from(scaled).toString('base64'), scale };
   },
 
-  async click(body: { x: number; y: number; button?: "left" | "right" | "middle" }) {
+  async click(body: { x: number; y: number; button?: 'left' | 'right' | 'middle' }) {
     requireReady();
     const p = await ensurePlaywrightConnected();
     const { x, y } = scaleCoordinates(body.x, body.y);
     notifyCursorMove(x, y, true);
-    await p.mouse.click(x, y, { button: body.button || "left" });
+    await p.mouse.click(x, y, { button: body.button || 'left' });
     // Save screenshot with click coordinates marked (DEBUG only)
     if (DEBUG) await saveClickedScreenshot(p, x, y);
     return { ok: true, scaledCoords: { x, y } };
@@ -783,23 +816,23 @@ const handlers: Record<string, Handler> = {
     return { ok: true, scaledCoords: { x, y } };
   },
 
-  async mouseDown(body: { x: number; y: number; button?: "left" | "right" | "middle" }) {
+  async mouseDown(body: { x: number; y: number; button?: 'left' | 'right' | 'middle' }) {
     requireReady();
     const p = await ensurePlaywrightConnected();
     const { x, y } = scaleCoordinates(body.x, body.y);
     notifyCursorMove(x, y, true);
     await p.mouse.move(x, y);
-    await p.mouse.down({ button: body.button || "left" });
+    await p.mouse.down({ button: body.button || 'left' });
     return { ok: true, scaledCoords: { x, y } };
   },
 
-  async mouseUp(body: { x: number; y: number; button?: "left" | "right" | "middle" }) {
+  async mouseUp(body: { x: number; y: number; button?: 'left' | 'right' | 'middle' }) {
     requireReady();
     const p = await ensurePlaywrightConnected();
     const { x, y } = scaleCoordinates(body.x, body.y);
     notifyCursorMove(x, y);
     await p.mouse.move(x, y);
-    await p.mouse.up({ button: body.button || "left" });
+    await p.mouse.up({ button: body.button || 'left' });
     return { ok: true, scaledCoords: { x, y } };
   },
 
@@ -857,7 +890,7 @@ const handlers: Record<string, Handler> = {
 
 // Cleanup
 async function cleanup() {
-  console.log("[server] Cleaning up...");
+  console.log('[server] Cleaning up...');
 
   // Shutdown telemetry (records shutdown event and flushes)
   if (telemetryClient) {
@@ -874,18 +907,22 @@ async function cleanup() {
   // Kill xpra client first (before container stops, so it exits cleanly)
   if (xpraClientPid) {
     try {
-      process.kill(xpraClientPid, "SIGKILL");
+      process.kill(xpraClientPid, 'SIGKILL');
       console.log(`[server] Killed xpra client (PID ${xpraClientPid})`);
-    } catch { }
+    } catch {}
     xpraClientPid = null;
   }
 
   await closePlaywrightSession();
-  await execAsync(`docker stop ${getContainerName()}`).catch(() => { });
-  await execAsync(`docker rm ${getContainerName()}`).catch(() => { });
-  try { unlinkSync(getPidFile()); } catch { }
-  try { unlinkSync(getPortFile()); } catch { }
-  console.log("[server] Cleanup complete");
+  await execAsync(`docker stop ${getContainerName()}`).catch(() => {});
+  await execAsync(`docker rm ${getContainerName()}`).catch(() => {});
+  try {
+    unlinkSync(getPidFile());
+  } catch {}
+  try {
+    unlinkSync(getPortFile());
+  } catch {}
+  console.log('[server] Cleanup complete');
 }
 
 // Server start
@@ -897,7 +934,7 @@ export async function startServer(preferredPort?: number): Promise<void> {
 
   // Check if already running
   if (existsSync(getPidFile())) {
-    const pids = readFileSync(getPidFile(), "utf-8").trim().split("\n");
+    const pids = readFileSync(getPidFile(), 'utf-8').trim().split('\n');
     const serverPid = parseInt(pids[0], 10);
     try {
       process.kill(serverPid, 0); // Check if process exists
@@ -921,25 +958,25 @@ export async function startServer(preferredPort?: number): Promise<void> {
 
   // Create HTTP server immediately (before initialization)
   const server = createServer(async (req: IncomingMessage, res: ServerResponse) => {
-    const url = new URL(req.url || "/", `http://localhost:${port}`);
+    const url = new URL(req.url || '/', `http://localhost:${port}`);
     const path = url.pathname.slice(1); // Remove leading /
 
     // CORS headers
-    res.setHeader("Content-Type", "application/json");
-    res.setHeader("Access-Control-Allow-Origin", "*");
-    res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-    res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+    res.setHeader('Content-Type', 'application/json');
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
-    if (req.method === "OPTIONS") {
+    if (req.method === 'OPTIONS') {
       res.writeHead(200);
       res.end();
       return;
     }
 
     // Handle stop request
-    if (path === "stop") {
+    if (path === 'stop') {
       res.writeHead(200);
-      res.end(JSON.stringify({ ok: true, message: "Server stopping" }));
+      res.end(JSON.stringify({ ok: true, message: 'Server stopping' }));
       setTimeout(async () => {
         await cleanup();
         process.exit(0);
@@ -956,7 +993,7 @@ export async function startServer(preferredPort?: number): Promise<void> {
 
     try {
       let body = {};
-      if (req.method === "POST") {
+      if (req.method === 'POST') {
         const chunks: Buffer[] = [];
         for await (const chunk of req) {
           chunks.push(chunk as Buffer);
@@ -978,18 +1015,18 @@ export async function startServer(preferredPort?: number): Promise<void> {
   const wss = new WebSocketServer({ server });
   const activeSessions = new Map<string, pty.IPty>();
 
-  wss.on("connection", (ws: WebSocket, req: IncomingMessage) => {
+  wss.on('connection', (ws: WebSocket, req: IncomingMessage) => {
     // Check if server is ready
     if (!serverReady) {
-      ws.send(JSON.stringify({ type: "error", message: STARTING_ERROR }));
+      ws.send(JSON.stringify({ type: 'error', message: STARTING_ERROR }));
       ws.close();
       return;
     }
 
-    const url = new URL(req.url || "/", `http://localhost:${port}`);
-    const command = url.searchParams.get("command") || "bash";
-    const cols = parseInt(url.searchParams.get("cols") || "80", 10);
-    const rows = parseInt(url.searchParams.get("rows") || "24", 10);
+    const url = new URL(req.url || '/', `http://localhost:${port}`);
+    const command = url.searchParams.get('command') || 'bash';
+    const cols = parseInt(url.searchParams.get('cols') || '80', 10);
+    const rows = parseInt(url.searchParams.get('rows') || '24', 10);
     const sessionId = Date.now().toString(36) + Math.random().toString(36).slice(2);
 
     console.log(`[ws] New interactive session: ${sessionId}, command: ${command}`);
@@ -998,24 +1035,32 @@ export async function startServer(preferredPort?: number): Promise<void> {
     try {
       // Use node-pty to spawn docker exec with proper PTY support
       // Wrap command in bash -c to ensure proper shell environment
-      const shell = process.platform === "win32" ? "docker.exe" : "docker";
-      ptyProcess = pty.spawn(shell, [
-        "exec",
-        "-it",
-        "-e", `TERM=${process.env.TERM || "xterm-256color"}`,
-        "-e", "DISPLAY=:100",
-        getContainerName(),
-        "bash", "-c", command,
-      ], {
-        name: "xterm-256color",
-        cols,
-        rows,
-        cwd: process.cwd(),
-        env: process.env as Record<string, string>,
-      });
+      const shell = process.platform === 'win32' ? 'docker.exe' : 'docker';
+      ptyProcess = pty.spawn(
+        shell,
+        [
+          'exec',
+          '-it',
+          '-e',
+          `TERM=${process.env.TERM || 'xterm-256color'}`,
+          '-e',
+          'DISPLAY=:100',
+          getContainerName(),
+          'bash',
+          '-c',
+          command,
+        ],
+        {
+          name: 'xterm-256color',
+          cols,
+          rows,
+          cwd: process.cwd(),
+          env: process.env as Record<string, string>,
+        }
+      );
     } catch (err) {
       console.error(`[ws] Failed to spawn PTY:`, err);
-      ws.send(JSON.stringify({ type: "error", message: `Failed to spawn: ${err}` }));
+      ws.send(JSON.stringify({ type: 'error', message: `Failed to spawn: ${err}` }));
       ws.close();
       return;
     }
@@ -1025,7 +1070,7 @@ export async function startServer(preferredPort?: number): Promise<void> {
     // Pipe PTY output to WebSocket
     ptyProcess.onData((data: string) => {
       if (ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: "stdout", data: Buffer.from(data).toString("base64") }));
+        ws.send(JSON.stringify({ type: 'stdout', data: Buffer.from(data).toString('base64') }));
       }
     });
 
@@ -1033,19 +1078,19 @@ export async function startServer(preferredPort?: number): Promise<void> {
       console.log(`[ws] Session ${sessionId} exited with code ${exitCode}`);
       activeSessions.delete(sessionId);
       if (ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: "exit", code: exitCode }));
+        ws.send(JSON.stringify({ type: 'exit', code: exitCode }));
         ws.close();
       }
     });
 
     // Handle WebSocket messages (stdin from client)
-    ws.on("message", (message: Buffer) => {
+    ws.on('message', (message: Buffer) => {
       try {
         const msg = JSON.parse(message.toString());
-        if (msg.type === "stdin" && msg.data) {
-          const data = Buffer.from(msg.data, "base64").toString();
+        if (msg.type === 'stdin' && msg.data) {
+          const data = Buffer.from(msg.data, 'base64').toString();
           ptyProcess.write(data);
-        } else if (msg.type === "resize" && msg.cols && msg.rows) {
+        } else if (msg.type === 'resize' && msg.cols && msg.rows) {
           ptyProcess.resize(msg.cols, msg.rows);
         }
       } catch (err) {
@@ -1053,7 +1098,7 @@ export async function startServer(preferredPort?: number): Promise<void> {
       }
     });
 
-    ws.on("close", () => {
+    ws.on('close', () => {
       console.log(`[ws] Session ${sessionId} WebSocket closed`);
       if (activeSessions.has(sessionId)) {
         ptyProcess.kill();
@@ -1061,12 +1106,12 @@ export async function startServer(preferredPort?: number): Promise<void> {
       }
     });
 
-    ws.on("error", (err) => {
+    ws.on('error', (err) => {
       console.error(`[ws] Session ${sessionId} WebSocket error:`, err);
     });
 
     // Send session info to client
-    ws.send(JSON.stringify({ type: "session", id: sessionId, command }));
+    ws.send(JSON.stringify({ type: 'session', id: sessionId, command }));
   });
 
   server.listen(port, () => {
@@ -1075,17 +1120,23 @@ export async function startServer(preferredPort?: number): Promise<void> {
     console.log(`[server] Server is ready to accept connections`);
   });
 
-  server.on("error", (err: NodeJS.ErrnoException) => {
+  server.on('error', (err: NodeJS.ErrnoException) => {
     console.error(`[server] HTTP server error:`, err);
-    if (err.code === "EADDRINUSE") {
+    if (err.code === 'EADDRINUSE') {
       console.error(`[server] Port ${port} is already in use`);
     }
     process.exit(1);
   });
 
   // Cleanup on exit
-  process.on("SIGINT", async () => { await cleanup(); process.exit(0); });
-  process.on("SIGTERM", async () => { await cleanup(); process.exit(0); });
+  process.on('SIGINT', async () => {
+    await cleanup();
+    process.exit(0);
+  });
+  process.on('SIGTERM', async () => {
+    await cleanup();
+    process.exit(0);
+  });
 
   // Initialize container, playwright, and xpra client in background
   (async () => {
@@ -1105,7 +1156,7 @@ export async function startServer(preferredPort?: number): Promise<void> {
       const xpraArgs = getXpraAttachArgs(containerPort, sessionName);
       const xpraClient = spawn(xpraCmd, xpraArgs, {
         detached: true,
-        stdio: "ignore",
+        stdio: 'ignore',
         windowsHide: true,
       });
       xpraClientPid = xpraClient.pid ?? null;
@@ -1125,7 +1176,7 @@ export async function startServer(preferredPort?: number): Promise<void> {
       }
 
       // Start history polling for telemetry (scrapes /home/user/.claude/history.jsonl)
-      const historyPath = join(CLAUDE_CONFIG_DIR, "history.jsonl");
+      const historyPath = join(CLAUDE_CONFIG_DIR, 'history.jsonl');
       startHistoryPolling(historyPath, 2000);
     } catch (err) {
       console.error(`[server] Initialization failed:`, err);
@@ -1137,22 +1188,26 @@ export async function startServer(preferredPort?: number): Promise<void> {
 // Stop server
 export async function stopServer(): Promise<boolean> {
   if (!existsSync(getPidFile())) {
-    console.log("Server not running");
+    console.log('Server not running');
     return false;
   }
 
-  const pids = readFileSync(getPidFile(), "utf-8").trim().split("\n").map(p => parseInt(p, 10)).filter(p => !isNaN(p));
+  const pids = readFileSync(getPidFile(), 'utf-8')
+    .trim()
+    .split('\n')
+    .map((p) => parseInt(p, 10))
+    .filter((p) => !isNaN(p));
   const serverPid = pids[0];
   const xpraPid = pids[1];
   const port = existsSync(getPortFile())
-    ? parseInt(readFileSync(getPortFile(), "utf-8").trim(), 10)
+    ? parseInt(readFileSync(getPortFile(), 'utf-8').trim(), 10)
     : DEFAULT_PORT;
 
   try {
     // Try graceful shutdown via HTTP
-    const res = await fetch(`http://localhost:${port}/stop`, { method: "POST" });
+    const res = await fetch(`http://localhost:${port}/stop`, { method: 'POST' });
     if (res.ok) {
-      console.log("Server stopped");
+      console.log('Server stopped');
       return true;
     }
   } catch {
@@ -1161,38 +1216,42 @@ export async function stopServer(): Promise<boolean> {
 
     // Kill server process
     try {
-      process.kill(serverPid, "SIGTERM");
+      process.kill(serverPid, 'SIGTERM');
       console.log(`Sent SIGTERM to server (PID ${serverPid})`);
       killed = true;
-    } catch { }
+    } catch {}
 
     // Kill xpra client process
     if (xpraPid) {
       try {
-        process.kill(xpraPid, "SIGKILL");
+        process.kill(xpraPid, 'SIGKILL');
         console.log(`Sent SIGKILL to xpra client (PID ${xpraPid})`);
         killed = true;
-      } catch { }
+      } catch {}
     }
 
     // Stop and remove Docker container
     try {
       await execAsync(`docker stop ${getContainerName()}`);
       console.log(`Stopped container ${getContainerName()}`);
-    } catch { }
+    } catch {}
     try {
       await execAsync(`docker rm ${getContainerName()}`);
       console.log(`Removed container ${getContainerName()}`);
-    } catch { }
+    } catch {}
 
     // Clean up files
-    try { unlinkSync(getPidFile()); } catch { }
-    try { unlinkSync(getPortFile()); } catch { }
+    try {
+      unlinkSync(getPidFile());
+    } catch {}
+    try {
+      unlinkSync(getPortFile());
+    } catch {}
 
     if (killed) {
       return true;
     } else {
-      console.log("Server not running (stale PID file)");
+      console.log('Server not running (stale PID file)');
       return false;
     }
   }
@@ -1203,10 +1262,10 @@ export async function stopServer(): Promise<boolean> {
 export function getServerInfo(): { running: boolean; port: number; pid: number } | null {
   if (!existsSync(getPidFile())) return null;
 
-  const pids = readFileSync(getPidFile(), "utf-8").trim().split("\n");
+  const pids = readFileSync(getPidFile(), 'utf-8').trim().split('\n');
   const pid = parseInt(pids[0], 10);
   const port = existsSync(getPortFile())
-    ? parseInt(readFileSync(getPortFile(), "utf-8").trim(), 10)
+    ? parseInt(readFileSync(getPortFile(), 'utf-8').trim(), 10)
     : DEFAULT_PORT;
 
   try {

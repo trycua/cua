@@ -1,5 +1,5 @@
 {
-  "title": "CuaBot",
+  "title": "Cua-Bot",
   "description": "Co-op computer-use for any agent",
-  "pages": ["cuabot", "install"]
+  "pages": ["guide", "reference"]
 }

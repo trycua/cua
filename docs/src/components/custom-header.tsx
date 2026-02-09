@@ -7,7 +7,8 @@ import { usePathname } from 'next/navigation';
 import { cn } from 'fumadocs-ui/utils/cn';
 import { SearchToggle } from 'fumadocs-ui/components/layout/search-toggle';
 import { ThemeToggle } from 'fumadocs-ui/components/layout/theme-toggle';
-import { ChevronsUpDown, Check } from 'lucide-react';
+import { ChevronsUpDown, Check, Menu } from 'lucide-react';
+import { useSidebar } from 'fumadocs-ui/provider';
 import LogoBlack from '@/assets/cuala-icon-black.svg';
 import LogoWhite from '@/assets/cuala-icon-white.svg';
 import CuaBenchLogoBlack from '@/assets/cuabench-logo-black.svg';
@@ -69,32 +70,6 @@ const docsSites = [
     ],
   },
   {
-    name: 'CuaBot',
-    label: 'Docs',
-    href: '/cuabot/cuabot',
-    prefix: '/cuabot',
-    isDefault: false,
-    description: 'Co-op computer-use for any agent',
-    logoBlack: LogoBlack,
-    logoWhite: LogoWhite,
-    iconWidth: 24,
-    iconHeight: 24,
-    dropdownIconWidth: 20,
-    dropdownIconHeight: 20,
-    navTabs: [
-      {
-        name: 'Overview',
-        href: '/cuabot/cuabot',
-        prefix: '/cuabot/cuabot',
-      },
-      {
-        name: 'Install',
-        href: '/cuabot/install',
-        prefix: '/cuabot/install',
-      },
-    ],
-  },
-  {
     name: 'Lume',
     label: 'Docs',
     href: '/lume/guide/getting-started/introduction',
@@ -125,12 +100,39 @@ const docsSites = [
       },
     ],
   },
+  {
+    name: 'Cua-Bot',
+    label: 'Docs',
+    href: '/cuabot/guide/getting-started/introduction',
+    prefix: '/cuabot',
+    isDefault: false,
+    description: 'Co-op computer-use for any agent',
+    logoBlack: LogoBlack,
+    logoWhite: LogoWhite,
+    iconWidth: 24,
+    iconHeight: 24,
+    dropdownIconWidth: 20,
+    dropdownIconHeight: 20,
+    navTabs: [
+      {
+        name: 'Guide',
+        href: '/cuabot/guide/getting-started/introduction',
+        prefix: '/cuabot/guide',
+      },
+      {
+        name: 'Reference',
+        href: '/cuabot/reference',
+        prefix: '/cuabot/reference',
+      },
+    ],
+  },
 ];
 
 export function CustomHeader() {
   const pathname = usePathname();
   const [isOpen, setIsOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
+  const { open: sidebarOpen, setOpen: setSidebarOpen } = useSidebar();
 
   // Determine current docs site based on pathname
   const currentSite =
@@ -153,26 +155,32 @@ export function CustomHeader() {
     <header className="fixed top-0 left-0 right-0 z-40 border-b border-fd-border bg-fd-background/80 backdrop-blur-sm">
       <div className="container mx-auto flex h-14 items-center justify-between px-4">
         {/* Left: Logo and Nav */}
-        <div className="flex items-center gap-6">
+        <div className="flex items-center gap-4 md:gap-6">
+          {/* Hamburger Menu Button - visible on mobile only, opens native fumadocs sidebar */}
+          <button
+            onClick={() => setSidebarOpen(!sidebarOpen)}
+            className="inline-flex md:hidden h-9 w-9 items-center justify-center rounded-md text-fd-muted-foreground transition-colors hover:bg-fd-accent hover:text-fd-foreground"
+            aria-label="Toggle sidebar"
+          >
+            <Menu className="h-5 w-5" />
+          </button>
+
           {/* Docs Switcher - wraps logo, name, and label */}
           <div className="relative" ref={dropdownRef}>
             <button
               onClick={() => setIsOpen(!isOpen)}
               className="flex items-center gap-2 rounded-lg px-2 py-1.5 transition-colors hover:bg-fd-accent"
             >
-              {/* Logo */}
+              {/* Logo - fixed width container to prevent layout shift */}
               {currentSite.logoBlack && currentSite.logoWhite && (
-                <div
-                  className="relative flex h-6 items-center justify-center"
-                  style={{ width: currentSite.iconWidth }}
-                >
+                <div className="relative flex h-6 w-6 shrink-0 items-center justify-center">
                   <Image
                     width={currentSite.iconWidth}
                     height={currentSite.iconHeight}
                     src={currentSite.logoBlack}
                     aria-label="Logo"
-                    className="block dark:hidden"
-                    style={{ width: currentSite.iconWidth, height: currentSite.iconHeight }}
+                    className="block dark:hidden object-contain"
+                    style={{ maxWidth: 24, maxHeight: 24 }}
                     alt="Logo"
                   />
                   <Image
@@ -180,14 +188,17 @@ export function CustomHeader() {
                     height={currentSite.iconHeight}
                     src={currentSite.logoWhite}
                     aria-label="Logo"
-                    className="hidden dark:block"
-                    style={{ width: currentSite.iconWidth, height: currentSite.iconHeight }}
+                    className="hidden dark:block object-contain"
+                    style={{ maxWidth: 24, maxHeight: 24 }}
                     alt="Logo"
                   />
                 </div>
               )}
-              {/* Site name and label */}
-              <span className="font-semibold" style={{ fontFamily: 'var(--font-urbanist)' }}>
+              {/* Site name and label - min-width prevents layout shift between products */}
+              <span
+                className="inline-block min-w-[5.5rem] font-semibold"
+                style={{ fontFamily: 'var(--font-urbanist)' }}
+              >
                 {currentSite.name}
               </span>
               <span className="text-sky-500 font-medium">{currentSite.label}</span>
@@ -293,20 +304,8 @@ export function CustomHeader() {
             className="hidden sm:inline-flex h-9 w-9 items-center justify-center rounded-md text-fd-muted-foreground transition-colors hover:bg-fd-accent hover:text-fd-foreground"
             title="Vibe Coding MCP"
           >
-            <Image
-              src={McpBlack}
-              alt="MCP"
-              width={20}
-              height={20}
-              className="block dark:hidden"
-            />
-            <Image
-              src={McpWhite}
-              alt="MCP"
-              width={20}
-              height={20}
-              className="hidden dark:block"
-            />
+            <Image src={McpBlack} alt="MCP" width={20} height={20} className="block dark:hidden" />
+            <Image src={McpWhite} alt="MCP" width={20} height={20} className="hidden dark:block" />
           </Link>
 
           <ThemeToggle />

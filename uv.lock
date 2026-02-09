@@ -1039,7 +1039,7 @@ wheels = [
 
 [[package]]
 name = "cua-agent"
-version = "0.7.17"
+version = "0.7.24"
 source = { editable = "libs/python/agent" }
 dependencies = [
     { name = "aiohttp" },
@@ -1208,7 +1208,7 @@ requires-dist = [
 
 [[package]]
 name = "cua-computer"
-version = "0.5.10"
+version = "0.5.12"
 source = { editable = "libs/python/computer" }
 dependencies = [
     { name = "aiohttp" },
@@ -1252,11 +1252,13 @@ provides-extras = ["lume", "lumier", "ui", "all"]
 
 [[package]]
 name = "cua-computer-server"
-version = "0.3.5"
+version = "0.3.16"
 source = { editable = "libs/python/computer-server" }
 dependencies = [
     { name = "aiohttp" },
+    { name = "cua-core" },
     { name = "fastapi" },
+    { name = "fastmcp" },
     { name = "pillow" },
     { name = "playwright" },
     { name = "pydantic" },
@@ -1282,9 +1284,6 @@ macos = [
     { name = "pyobjc-framework-cocoa" },
     { name = "pyobjc-framework-quartz" },
 ]
-mcp = [
-    { name = "fastmcp" },
-]
 windows = [
     { name = "pywin32" },
 ]
@@ -1292,8 +1291,9 @@ windows = [
 [package.metadata]
 requires-dist = [
     { name = "aiohttp", specifier = ">=3.9.1" },
+    { name = "cua-core", editable = "libs/python/core" },
     { name = "fastapi", specifier = ">=0.111.0" },
-    { name = "fastmcp", marker = "extra == 'mcp'", specifier = ">=2.0,<3" },
+    { name = "fastmcp", specifier = ">=2.0,<3" },
     { name = "pillow", specifier = ">=10.2.0" },
     { name = "playwright", specifier = ">=1.40.0" },
     { name = "pydantic", specifier = ">=2.0.0" },
@@ -1314,7 +1314,7 @@ requires-dist = [
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.27.0" },
     { name = "websockets", specifier = ">=12.0" },
 ]
-provides-extras = ["mcp", "macos", "linux", "windows"]
+provides-extras = ["macos", "linux", "windows"]
 
 [[package]]
 name = "cua-core"
@@ -1364,7 +1364,7 @@ dev = [{ name = "pytest", specifier = ">=8.3.5" }]
 
 [[package]]
 name = "cua-mcp-server"
-version = "0.1.15"
+version = "0.1.16"
 source = { editable = "libs/python/mcp-server" }
 dependencies = [
     { name = "cua-agent", extra = ["all"] },

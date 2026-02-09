@@ -38,7 +38,8 @@ lume create my-vm --os macos --ipsw latest
 ```
 
 <Callout type="info">
-The IPSW file is ~15GB. If you plan to create multiple VMs, downloading manually and reusing the file saves time and bandwidth.
+  The IPSW file is ~15GB. If you plan to create multiple VMs, downloading manually and reusing the
+  file saves time and bandwidth.
 </Callout>
 
 ## Configure VM storage location (optional)
@@ -67,7 +68,8 @@ lume create my-vm --os macos --ipsw latest --storage /path/to/vm/directory
 ```
 
 <Callout type="info">
-VM disk images can grow large (~50GB+). Using an external SSD keeps your internal storage free and can improve performance for I/O-heavy workloads.
+  VM disk images can grow large (~50GB+). Using an external SSD keeps your internal storage free and
+  can improve performance for I/O-heavy workloads.
 </Callout>
 
 ## Create a Linux VM
@@ -86,7 +88,8 @@ lume run ubuntu-vm
 ```
 
 <Callout type="info">
-Linux VMs require ARM64 ISO images (not x86). Ubuntu, Debian, and Fedora all provide ARM64 server and desktop images.
+  Linux VMs require ARM64 ISO images (not x86). Ubuntu, Debian, and Fedora all provide ARM64 server
+  and desktop images.
 </Callout>
 
 ## Run your VM
@@ -96,10 +99,6 @@ lume run my-vm
 ```
 
 A VNC window opens. For macOS VMs, you'll see the Setup Assistant—complete it manually or use [Unattended Setup](/lume/guide/fundamentals/unattended-setup) to automate it.
-
-<Callout type="info">
-**Automatic clipboard sync:** When Remote Login (SSH) is enabled on your VM, Lume automatically syncs clipboard between your Mac and the VM in both directions. Copy on your Mac, paste in the VM—or copy in the VM, paste on your Mac. VMs created with `--unattended` have SSH enabled by default.
-</Callout>
 
 ## Create a VM with custom resources
 
@@ -112,11 +111,11 @@ lume create dev-vm --os macos --ipsw latest \
   --disk-size 100GB
 ```
 
-| Resource | Default | Notes |
-|----------|---------|-------|
-| CPU | 4 cores | Max is your Mac's core count |
-| Memory | 8GB | Leave headroom for your host |
-| Disk | 50GB | Uses sparse files—only consumes actual usage |
+| Resource | Default | Notes                                        |
+| -------- | ------- | -------------------------------------------- |
+| CPU      | 4 cores | Max is your Mac's core count                 |
+| Memory   | 8GB     | Leave headroom for your host                 |
+| Disk     | 50GB    | Uses sparse files—only consumes actual usage |
 
 ## Change display resolution
 
@@ -128,12 +127,12 @@ lume set my-vm --display 1920x1080
 
 The change takes effect on the next VM start. After starting the VM, go to **System Settings → Displays**, enable **Show all resolutions**, and select your new resolution. Common resolutions:
 
-| Resolution | Aspect Ratio | Use Case |
-|------------|--------------|----------|
-| 1024x768 | 4:3 | Default, low resource usage |
-| 1280x800 | 16:10 | MacBook-style |
-| 1920x1080 | 16:9 | Full HD |
-| 2560x1440 | 16:9 | QHD |
+| Resolution | Aspect Ratio | Use Case                    |
+| ---------- | ------------ | --------------------------- |
+| 1024x768   | 4:3          | Default, low resource usage |
+| 1280x800   | 16:10        | MacBook-style               |
+| 1920x1080  | 16:9         | Full HD                     |
+| 2560x1440  | 16:9         | QHD                         |
 
 ## Automate the Setup Assistant
 
@@ -143,7 +142,7 @@ Skip manual setup entirely with the `--unattended` flag:
 lume create my-vm --os macos --ipsw latest --unattended tahoe
 ```
 
-The `tahoe` preset runs through the Setup Assistant automatically, creating a user `lume` with password `lume` and enabling Remote Login (SSH). Once complete, you can connect with `lume ssh my-vm`. This takes 10-15 minutes but requires no interaction.
+The `tahoe` preset runs through the Setup Assistant automatically, creating a user `lume` with password `lume` and enabling SSH. This takes 10-15 minutes but requires no interaction.
 
 For custom configurations, see [Unattended Setup](/lume/guide/fundamentals/unattended-setup).
 
@@ -160,7 +159,7 @@ lume run my-vm --no-display
 lume run my-vm > /dev/null 2>&1 &
 ```
 
-When running headless or in background, connect via `lume ssh my-vm` (if Remote Login is enabled) or a VNC client. Use `lume ls` to see running VMs and their connection details.
+When running headless or in background, connect via SSH (if enabled) or VNC client. Use `lume ls` to see running VMs and their connection details.
 
 ## Common operations
 
@@ -179,33 +178,6 @@ lume clone my-vm my-vm-backup
 
 # Delete a VM
 lume delete my-vm
-```
-
-## Connect via SSH
-
-Access your VM from the terminal without needing the VNC window:
-
-```bash
-# Interactive shell
-lume ssh my-vm
-
-# Run a single command
-lume ssh my-vm "ls -la"
-
-# Run multiple commands
-lume ssh my-vm "cd /tmp && pwd"
-```
-
-<Callout type="warn">
-**SSH requires Remote Login to be enabled on the VM.** Either:
-- Create the VM with `--unattended` (enables SSH automatically with user `lume`, password `lume`)
-- Or manually enable it: **System Settings → General → Sharing → Remote Login**
-</Callout>
-
-Custom credentials:
-
-```bash
-lume ssh my-vm -u myuser -p mypassword
 ```
 
 ## Share files with your VM

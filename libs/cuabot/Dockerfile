@@ -1,4 +1,4 @@
-# Minimal xpra container with agent-browser
+# Minimal xpra + agent-browser container
 FROM ubuntu:22.04
 
 ENV DEBIAN_FRONTEND=noninteractive
@@ -70,7 +70,9 @@ RUN npm install -g agent-device
 
 # Set Android SDK environment variables
 ENV ANDROID_SDK_ROOT=/home/user/android-sdk
-ENV JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
+# Create arch-agnostic symlink for JAVA_HOME (amd64 vs aarch64)
+RUN ln -sfn "/usr/lib/jvm/java-17-openjdk-$(dpkg --print-architecture)" /usr/lib/jvm/java-17-openjdk
+ENV JAVA_HOME=/usr/lib/jvm/java-17-openjdk
 ENV PATH="${ANDROID_SDK_ROOT}/cmdline-tools/latest/bin:${ANDROID_SDK_ROOT}/platform-tools:${ANDROID_SDK_ROOT}/emulator:${PATH}"
 
 # Install Android SDK command-line tools
@@ -83,13 +85,22 @@ RUN mkdir -p "${ANDROID_SDK_ROOT}/cmdline-tools" \
     && chown -R user:user "${ANDROID_SDK_ROOT}"
 
 # Install platform-tools, emulator, and platforms (NOT the system image - too large)
-RUN yes | sdkmanager --licenses 2>/dev/null || true \
-    && sdkmanager "platform-tools" "emulator" "platforms;android-35" \
+# Re-export JAVA_HOME to override any value written to /etc/environment by openjdk install
+# Note: the "emulator" package is only available for amd64, so skip it on arm64
+RUN export JAVA_HOME=/usr/lib/jvm/java-17-openjdk \
+    && (yes | sdkmanager --licenses 2>/dev/null || true) \
+    && if [ "$(dpkg --print-architecture)" = "amd64" ]; then \
+         sdkmanager "platform-tools" "emulator" "platforms;android-35"; \
+       else \
+         sdkmanager "platform-tools" "platforms;android-35"; \
+       fi \
     && chown -R user:user "${ANDROID_SDK_ROOT}"
 
-# Symlink adb/emulator into PATH
+# Symlink adb/emulator into PATH (emulator may not exist on arm64)
 RUN ln -sf /home/user/android-sdk/platform-tools/adb /usr/local/bin/adb \
-    && ln -sf /home/user/android-sdk/emulator/emulator /usr/local/bin/emulator
+    && if [ -f /home/user/android-sdk/emulator/emulator ]; then \
+         ln -sf /home/user/android-sdk/emulator/emulator /usr/local/bin/emulator; \
+       fi
 
 # Install Chromium from xtradeb PPA (avoids snap requirement on Ubuntu 22.04)
 RUN add-apt-repository ppa:xtradeb/apps -y \

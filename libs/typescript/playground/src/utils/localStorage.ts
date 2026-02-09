@@ -70,20 +70,14 @@ const defaultDeserializer = (obj: unknown): unknown => {
 };
 
 // Save array of items to localStorage
-export const saveItemsToLocalStorage = <T>(
-  items: T[],
-  config: StorageConfig<T>
-): void => {
+export const saveItemsToLocalStorage = <T>(items: T[], config: StorageConfig<T>): void => {
   try {
     if (typeof window === 'undefined') return;
     const serializer = config.serialize || defaultSerializer;
     const serializedItems = items.map(serializer);
     localStorage.setItem(config.storageKey, JSON.stringify(serializedItems));
   } catch (error) {
-    console.error(
-      `Failed to save items to localStorage (${config.storageKey}):`,
-      error
-    );
+    console.error(`Failed to save items to localStorage (${config.storageKey}):`, error);
   }
 };
 
@@ -97,45 +91,32 @@ export const loadItemsFromLocalStorage = <T>(config: StorageConfig<T>): T[] => {
     const parsedItems: unknown = JSON.parse(stored);
 
     if (!Array.isArray(parsedItems)) {
-      console.warn(
-        `Expected array but got ${typeof parsedItems} from localStorage`
-      );
+      console.warn(`Expected array but got ${typeof parsedItems} from localStorage`);
       return [];
     }
 
     const deserializer = config.deserialize || defaultDeserializer;
     return parsedItems.map((item) => deserializer(item) as T);
   } catch (error) {
-    console.error(
-      `Failed to load items from localStorage (${config.storageKey}):`,
-      error
-    );
+    console.error(`Failed to load items from localStorage (${config.storageKey}):`, error);
     return [];
   }
 };
 
 // Save single item to localStorage
-export const saveItemToLocalStorage = <T>(
-  item: T,
-  config: StorageConfig<T>
-): void => {
+export const saveItemToLocalStorage = <T>(item: T, config: StorageConfig<T>): void => {
   try {
     if (typeof window === 'undefined') return;
     const serializer = config.serialize || defaultSerializer;
     const serializedItem = serializer(item);
     localStorage.setItem(config.storageKey, JSON.stringify(serializedItem));
   } catch (error) {
-    console.error(
-      `Failed to save item to localStorage (${config.storageKey}):`,
-      error
-    );
+    console.error(`Failed to save item to localStorage (${config.storageKey}):`, error);
   }
 };
 
 // Load single item from localStorage
-export const loadItemFromLocalStorage = <T>(
-  config: StorageConfig<T>
-): T | null => {
+export const loadItemFromLocalStorage = <T>(config: StorageConfig<T>): T | null => {
   try {
     if (typeof window === 'undefined') return null;
     const stored = localStorage.getItem(config.storageKey);
@@ -145,10 +126,7 @@ export const loadItemFromLocalStorage = <T>(
     const deserializer = config.deserialize || defaultDeserializer;
     return deserializer(parsedItem) as T;
   } catch (error) {
-    console.error(
-      `Failed to load item from localStorage (${config.storageKey}):`,
-      error
-    );
+    console.error(`Failed to load item from localStorage (${config.storageKey}):`, error);
     return null;
   }
 };

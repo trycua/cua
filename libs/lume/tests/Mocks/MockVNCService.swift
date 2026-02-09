@@ -75,7 +75,7 @@ final class MockVNCService: VNCService {
         // No-op for testing
     }
 
-    func sendText(_ text: String) async throws {
+    func sendText(_ text: String, delayMs: Int?) async throws {
         // No-op for testing
     }
 

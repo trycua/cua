@@ -11,6 +11,7 @@ on:
           - pypi/agent
           - pypi/bench
           - pypi/bench-ui
+          - pypi/cli
           - pypi/computer
           - pypi/computer-server
           - pypi/core
@@ -59,6 +60,10 @@ jobs:
               ;;
             "pypi/bench-ui")
               echo "directory=libs/python/bench-ui" >> $GITHUB_OUTPUT
+              echo "type=python" >> $GITHUB_OUTPUT
+              ;;
+            "pypi/cli")
+              echo "directory=libs/python/cua-cli" >> $GITHUB_OUTPUT
               echo "type=python" >> $GITHUB_OUTPUT
               ;;
             "pypi/computer")
@@ -288,6 +293,15 @@ jobs:
           cd libs/python/bench-ui
           VERSION=$(python -c "import tomllib; from pathlib import Path; data = tomllib.loads(Path('pyproject.toml').read_text()); print(data['project']['version'])")
           echo "Bench-ui version: $VERSION"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Capture bumped cli version
+        if: ${{ inputs.service == 'pypi/cli' }}
+        id: cli_version
+        run: |
+          cd libs/python/cua-cli
+          VERSION=$(python -c "import tomllib; from pathlib import Path; data = tomllib.loads(Path('pyproject.toml').read_text()); print(data['project']['version'])")
+          echo "CLI version: $VERSION"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Capture bumped computer version

@@ -1,11 +1,17 @@
 import asyncio
 import json
 import time
+import urllib.parse
 from typing import Any, Dict, List, Optional, Tuple
 
 import aiohttp
 import websockets
 from PIL import Image
+
+try:
+    import dns.resolver as _dns_resolver
+except ImportError:
+    _dns_resolver = None
 
 from ..logger import Logger, LogLevel
 from ..utils import (
@@ -50,6 +56,12 @@ class GenericComputerInterface(BaseComputerInterface):
 
         # Store custom ports
         self._api_port = api_port
+
+        # DNS bypass state: after repeated failures, resolve DNS directly to
+        # bypass stale OS-level DNS cache (e.g. macOS mDNSResponder)
+        self._dns_bypass_uri: Optional[str] = None
+        self._dns_bypass_hostname: Optional[str] = None
+        self._dns_bypass_attempts_threshold = 3  # Try direct DNS after this many failures
 
         # Optional default delay time between commands (in seconds)
         self.delay = 0.0
@@ -726,6 +738,44 @@ class GenericComputerInterface(BaseComputerInterface):
             return {"success": False, "error": str(e)}
 
     # Websocket Methods
+    def _resolve_bypassing_cache(self) -> Optional[str]:
+        """Resolve the WebSocket hostname directly via DNS, bypassing OS cache.
+
+        When the OS DNS cache holds a stale/negative entry (common on macOS
+        after a VM is freshly provisioned behind Cloudflare), the normal
+        websockets.connect() will keep failing. This method queries DNS
+        servers directly using dnspython, returning a fresh IP address.
+
+        Returns:
+            A WebSocket URI with the IP substituted, or None if resolution
+            fails or dnspython is not installed.
+        """
+        if _dns_resolver is None:
+            self.logger.debug(
+                "dnspython not installed, cannot bypass DNS cache. "
+                "Install with: pip install dnspython"
+            )
+            return None
+
+        parsed = urllib.parse.urlparse(self.ws_uri)
+        hostname = parsed.hostname
+        if not hostname:
+            return None
+
+        try:
+            answers = _dns_resolver.resolve(hostname, "A")
+            ip = str(answers[0])
+            # Rebuild URI with IP in place of hostname
+            replaced = parsed._replace(netloc=f"{ip}:{parsed.port or 443}")
+            self.logger.info(
+                f"DNS cache bypass: resolved {hostname} -> {ip}"
+            )
+            self._dns_bypass_hostname = hostname
+            return urllib.parse.urlunparse(replaced)
+        except Exception as e:
+            self.logger.debug(f"Direct DNS resolution failed for {hostname}: {e}")
+            return None
+
     async def _keep_alive(self):
         """Keep the WebSocket connection alive with automatic reconnection."""
         retry_count = 0
@@ -760,15 +810,34 @@ class GenericComputerInterface(BaseComputerInterface):
                                 f"Attempting WebSocket connection to {self.ws_uri} (attempt {retry_count})"
                             )
 
+                        # After repeated failures, try bypassing OS DNS cache
+                        connect_uri = self.ws_uri
+                        connect_kwargs: Dict[str, Any] = {}
+                        if (
+                            retry_count == self._dns_bypass_attempts_threshold
+                            and self._dns_bypass_uri is None
+                        ):
+                            bypass_uri = self._resolve_bypassing_cache()
+                            if bypass_uri:
+                                self._dns_bypass_uri = bypass_uri
+
+                        if self._dns_bypass_uri and self._dns_bypass_hostname:
+                            connect_uri = self._dns_bypass_uri
+                            connect_kwargs["server_hostname"] = self._dns_bypass_hostname
+                            connect_kwargs["additional_headers"] = {
+                                "Host": self._dns_bypass_hostname,
+                            }
+
                         self._ws = await asyncio.wait_for(
                             websockets.connect(
-                                self.ws_uri,
+                                connect_uri,
                                 max_size=1024 * 1024 * 10,  # 10MB limit
                                 max_queue=32,
                                 ping_interval=self._ping_interval,
                                 ping_timeout=self._ping_timeout,
                                 close_timeout=5,
                                 compression=None,  # Disable compression to reduce overhead
+                                **connect_kwargs,
                             ),
                             timeout=120,
                         )
@@ -800,6 +869,8 @@ class GenericComputerInterface(BaseComputerInterface):
                         self._reconnect_delay = 1  # Reset reconnect delay on successful connection
                         self._last_ping = time.time()
                         retry_count = 0  # Reset retry count on successful connection
+                        self._dns_bypass_uri = None  # Reset DNS bypass on success
+                        self._dns_bypass_hostname = None
                     except (asyncio.TimeoutError, websockets.exceptions.WebSocketException) as e:
                         next_retry = self._reconnect_delay
 

@@ -35,8 +35,8 @@ uv.lock
 docs/.source/
 docs/next-env.d.ts
 
-# Docs with complex JSX formatting
-docs/content/docs/get-started/quickstart.mdx
+# MDX files (prettier mangles {/* */} comment syntax into {/_ _/})
+*.mdx
 
 # Git worktrees (separate branches)
 .worktrees/

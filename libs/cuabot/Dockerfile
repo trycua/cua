@@ -70,7 +70,9 @@ RUN npm install -g agent-device
 
 # Set Android SDK environment variables
 ENV ANDROID_SDK_ROOT=/home/user/android-sdk
-ENV JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
+# Create arch-agnostic symlink for JAVA_HOME (amd64 vs aarch64)
+RUN ln -sfn "/usr/lib/jvm/java-17-openjdk-$(dpkg --print-architecture)" /usr/lib/jvm/java-17-openjdk
+ENV JAVA_HOME=/usr/lib/jvm/java-17-openjdk
 ENV PATH="${ANDROID_SDK_ROOT}/cmdline-tools/latest/bin:${ANDROID_SDK_ROOT}/platform-tools:${ANDROID_SDK_ROOT}/emulator:${PATH}"
 
 # Install Android SDK command-line tools
@@ -83,7 +85,9 @@ RUN mkdir -p "${ANDROID_SDK_ROOT}/cmdline-tools" \
     && chown -R user:user "${ANDROID_SDK_ROOT}"
 
 # Install platform-tools, emulator, and platforms (NOT the system image - too large)
-RUN yes | sdkmanager --licenses 2>/dev/null || true \
+# Re-export JAVA_HOME to override any value written to /etc/environment by openjdk install
+RUN export JAVA_HOME=/usr/lib/jvm/java-17-openjdk \
+    && yes | sdkmanager --licenses 2>/dev/null || true \
     && sdkmanager "platform-tools" "emulator" "platforms;android-35" \
     && chown -R user:user "${ANDROID_SDK_ROOT}"
 

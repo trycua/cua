@@ -306,7 +306,7 @@ export function generateCLIReferenceMDX(docs: CLIDocumentation): string {
 
   // Header - frontmatter MUST be at the very beginning of the file
   lines.push('---');
-  lines.push('title: Lume CLI Reference');
+  lines.push('title: CLI Reference');
   lines.push('description: Command Line Interface reference for Lume');
   lines.push('---');
   lines.push('');
@@ -340,7 +340,7 @@ export function generateCLIReferenceMDX(docs: CLIDocumentation): string {
   lines.push('');
   lines.push('```bash');
   lines.push('# Run a prebuilt macOS VM');
-  lines.push('lume run macos-sequoia-vanilla:latest');
+  lines.push('lume run macos-tahoe-vanilla:latest');
   lines.push('');
   lines.push('# Create a custom VM');
   lines.push('lume create my-vm --cpu 4 --memory 8GB --disk-size 50GB');
@@ -476,7 +476,7 @@ export function generateHTTPAPIMDX(docs: HTTPAPIDocumentation): string {
 
   // Header - frontmatter MUST be at the very beginning of the file
   lines.push('---');
-  lines.push('title: Lume HTTP API Reference');
+  lines.push('title: API Reference');
   lines.push('description: HTTP API reference for Lume server');
   lines.push('---');
   lines.push('');
@@ -730,7 +730,7 @@ function getExampleValue(field: APIFieldDoc): unknown {
       if (field.name === 'memory') return '8GB';
       if (field.name === 'diskSize') return '50GB';
       if (field.name === 'display') return '1024x768';
-      if (field.name === 'image') return 'macos-sequoia-vanilla:latest';
+      if (field.name === 'image') return 'macos-tahoe-vanilla:latest';
       if (field.name === 'path') return '/path/to/storage';
       return 'example';
     case 'integer':

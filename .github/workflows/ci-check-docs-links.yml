@@ -65,8 +65,6 @@ jobs:
             --exclude 'localhost'
             --exclude '127\.0\.0\.1'
             --exclude 'example\.com'
-            --exclude 'cua\.dev'
-            --exclude 'openclaw\.dev'
             './docs/content/**/*.mdx'
           token: ${{ secrets.GITHUB_TOKEN }}
           fail: true

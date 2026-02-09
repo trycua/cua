@@ -1,0 +1,40 @@
+{
+  "network": {
+    "allowedDomains": [
+      "github.com",
+      "*.github.com",
+      "api.github.com",
+      "*.githubusercontent.com",
+      "bedrock-runtime.us-west-2.amazonaws.com",
+      "bedrock.us-west-2.amazonaws.com",
+      "sts.amazonaws.com",
+      "sts.us-west-2.amazonaws.com",
+      "otel.cua.ai",
+      "files.pythonhosted.org",
+      "pypi.org",
+      "registry.npmjs.org"
+    ],
+    "deniedDomains": [],
+    "allowAllUnixSockets": true
+  },
+  "filesystem": {
+    "denyRead": [
+      "~/.ssh",
+      "~/.gnupg",
+      "~/.aws/credentials"
+    ],
+    "allowWrite": [
+      ".",
+      "/tmp",
+      "/home/runner",
+      "/home/runner/work"
+    ],
+    "denyWrite": [
+      ".env",
+      ".env.local",
+      "*.pem",
+      "*.key",
+      "secrets/"
+    ]
+  }
+}

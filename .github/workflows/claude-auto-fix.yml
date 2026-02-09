@@ -1,0 +1,588 @@
+name: Claude Auto Fix
+
+on:
+  workflow_run:
+    workflows:
+      - "CI: Lint Python"
+      - "CI: Lint TypeScript"
+      - "CI: Test Python"
+      - "CI: Test Scripts"
+      - "CI: cua-agent"
+      - "CI: cua-core"
+      - "CI: cua-computer"
+      - "CI: cua-computer-server"
+      - "CI: cua-mcp-server"
+      - "CI: cua-som"
+      - "CI: cua-bench"
+      - "CI: cua-bench-ui"
+      - "CI: @trycua/cli"
+      - "CI: @trycua/computer"
+      - "CI: @trycua/core"
+    types: [completed]
+  pull_request:
+    types: [labeled]
+
+permissions:
+  actions: read
+  contents: write
+  pull-requests: write
+  id-token: write
+
+concurrency:
+  group: auto-fix-${{ github.event.pull_request.number || github.event.workflow_run.head_branch }}-${{ github.event.workflow_run.name || 'label-trigger' }}
+  cancel-in-progress: true
+
+jobs:
+  auto-fix:
+    name: Auto-fix CI Failure
+    # Use ubuntu-22.04 to avoid AppArmor restrictions on bubblewrap in 24.04
+    runs-on: ubuntu-22.04
+    if: |
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'failure' && github.event.workflow_run.event == 'pull_request') ||
+      (github.event_name == 'pull_request' && github.event.label.name == 'auto-fix')
+    steps:
+      - name: Determine context
+        id: context
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const eventName = context.eventName;
+            let prNumber = '';
+            let targetBranch = '';
+            let failedRunId = '';
+            let failedRunTimestamp = null;
+            let failedWorkflowName = '';
+
+            if (eventName === 'workflow_run') {
+              const workflowRun = context.payload.workflow_run;
+              targetBranch = workflowRun.head_branch;
+              failedRunId = workflowRun.id.toString();
+              failedWorkflowName = workflowRun.name;
+
+              if (workflowRun.pull_requests && workflowRun.pull_requests.length > 0) {
+                prNumber = workflowRun.pull_requests[0].number.toString();
+              }
+
+              if (!prNumber) {
+                try {
+                  const { data: prs } = await github.rest.pulls.list({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    head: `${context.repo.owner}:${workflowRun.head_branch}`,
+                    state: 'open'
+                  });
+                  if (prs.length > 0) {
+                    prNumber = prs[0].number.toString();
+                  }
+                } catch (e) {
+                  console.log('Could not fetch PR via API:', e.message);
+                }
+              }
+            } else if (eventName === 'pull_request') {
+              const pr = context.payload.pull_request;
+              prNumber = pr.number.toString();
+              targetBranch = pr.head.ref;
+
+              const workflowFileMap = {
+                "CI: Lint Python": "ci-lint-python.yml",
+                "CI: Lint TypeScript": "ci-lint-typescript.yml",
+                "CI: Test Python": "ci-test-python.yml",
+                "CI: Test Scripts": "ci-test-scripts.yml",
+                "CI: cua-agent": "ci-py-agent.yml",
+                "CI: cua-core": "ci-py-core.yml",
+                "CI: cua-computer": "ci-py-computer.yml",
+                "CI: cua-computer-server": "ci-py-computer-server.yml",
+                "CI: cua-mcp-server": "ci-py-mcp-server.yml",
+                "CI: cua-som": "ci-py-som.yml",
+                "CI: cua-bench": "ci-py-bench.yml",
+                "CI: cua-bench-ui": "ci-py-bench-ui.yml",
+                "CI: @trycua/cli": "ci-ts-cli.yml",
+                "CI: @trycua/computer": "ci-ts-computer.yml",
+                "CI: @trycua/core": "ci-ts-core.yml"
+              };
+              const targetWorkflows = Object.keys(workflowFileMap);
+
+              console.log(`Looking for failed runs on branch: ${targetBranch}`);
+
+              for (const workflowName of targetWorkflows) {
+                try {
+                  const { data: runs } = await github.rest.actions.listWorkflowRuns({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    workflow_id: workflowFileMap[workflowName],
+                    branch: targetBranch,
+                    status: 'failure',
+                    per_page: 1
+                  });
+
+                  if (runs.workflow_runs.length > 0) {
+                    const run = runs.workflow_runs[0];
+                    const runTimestamp = new Date(run.created_at);
+                    if (!failedRunTimestamp || runTimestamp > failedRunTimestamp) {
+                      failedRunId = run.id.toString();
+                      failedRunTimestamp = runTimestamp;
+                      failedWorkflowName = run.name;
+                      console.log(`Found failed run: ${run.name} (${run.id})`);
+                    }
+                  }
+                } catch (e) {
+                  console.log(`Could not check workflow ${workflowName}: ${e.message}`);
+                }
+              }
+
+              if (!failedRunId) {
+                console.log('No failed workflow runs found for this PR');
+                core.setOutput('has_failed_run', 'false');
+              }
+            }
+
+            console.log(`event_name: ${eventName}`);
+            console.log(`target_branch: ${targetBranch}`);
+            console.log(`pr_number: ${prNumber}`);
+            console.log(`failed_run_id: ${failedRunId}`);
+            console.log(`failed_workflow_name: ${failedWorkflowName}`);
+
+            core.setOutput('target_branch', targetBranch);
+            core.setOutput('pr_number', prNumber);
+            core.setOutput('failed_run_id', failedRunId);
+            core.setOutput('failed_workflow_name', failedWorkflowName);
+            core.setOutput('has_failed_run', failedRunId ? 'true' : 'false');
+
+      - name: Check for auto-fix label
+        id: check-label
+        if: steps.context.outputs.pr_number != '' && steps.context.outputs.has_failed_run == 'true'
+        uses: actions/github-script@v7
+        env:
+          PR_NUMBER: ${{ steps.context.outputs.pr_number }}
+        with:
+          script: |
+            const prNumber = parseInt(process.env.PR_NUMBER, 10);
+            const { data: pr } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: prNumber
+            });
+
+            const hasAutoFixLabel = pr.labels.some(label => label.name === 'auto-fix');
+            console.log(`PR #${prNumber} has auto-fix label: ${hasAutoFixLabel}`);
+            console.log(`Labels: ${pr.labels.map(l => l.name).join(', ')}`);
+
+            core.setOutput('has_label', hasAutoFixLabel.toString());
+
+            if (!hasAutoFixLabel) {
+              console.log('Skipping auto-fix: PR does not have the "auto-fix" label');
+            }
+
+      - name: Skip - no failed run found
+        if: steps.context.outputs.has_failed_run != 'true' && github.event_name == 'pull_request'
+        run: |
+          echo "::notice::No failed CI run found for this PR. The auto-fix label was added but there's nothing to fix."
+
+      - name: Record start time
+        if: steps.check-label.outputs.has_label == 'true'
+        id: start-time
+        run: |
+          echo "start_time=$(date +%s)" >> "$GITHUB_OUTPUT"
+          echo "start_time_nano=$(date +%s%N)" >> "$GITHUB_OUTPUT"
+
+      - name: Comment on PR (starting)
+        if: steps.check-label.outputs.has_label == 'true' && steps.context.outputs.pr_number != ''
+        uses: actions/github-script@v7
+        env:
+          PR_NUMBER: ${{ steps.context.outputs.pr_number }}
+          WORKFLOW_NAME: ${{ steps.context.outputs.failed_workflow_name }}
+          FAILED_RUN_ID: ${{ steps.context.outputs.failed_run_id }}
+        with:
+          script: |
+            const prNumber = parseInt(process.env.PR_NUMBER, 10);
+            const runUrl = `https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}`;
+            const failedRunUrl = `https://github.com/${{ github.repository }}/actions/runs/${process.env.FAILED_RUN_ID}`;
+            const workflowName = process.env.WORKFLOW_NAME || 'Unknown';
+            const body = [
+              '## Claude Auto-Fix Started',
+              '',
+              'Failed workflow: ' + workflowName + ' - ' + failedRunUrl,
+              'Auto-fix run: ' + runUrl,
+              '',
+              'Analyzing the CI failure and attempting to create a fix...'
+            ].join('\n');
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: prNumber,
+              body: body
+            });
+
+      - name: Checkout code
+        if: steps.check-label.outputs.has_label == 'true'
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ steps.context.outputs.target_branch }}
+
+      - name: Get failed workflow logs
+        if: steps.check-label.outputs.has_label == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          RUN_ID="${{ steps.context.outputs.failed_run_id }}"
+          echo "Fetching logs for run $RUN_ID..."
+          gh run view "$RUN_ID" --log-failed > /tmp/failed_logs.txt 2>&1 || true
+          head -c 50000 /tmp/failed_logs.txt > /tmp/logs_summary.txt
+          echo "Log files created:"
+          echo "  - /tmp/failed_logs.txt ($(wc -c < /tmp/failed_logs.txt) bytes)"
+          echo "  - /tmp/logs_summary.txt ($(wc -c < /tmp/logs_summary.txt) bytes)"
+
+      - name: Configure AWS Credentials (OIDC)
+        if: steps.check-label.outputs.has_label == 'true'
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::296062593712:role/claude-code-bedrock-role
+          aws-region: us-west-2
+
+      - name: Set up Node.js
+        if: steps.check-label.outputs.has_label == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Set up Python
+        if: steps.check-label.outputs.has_label == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install sandbox dependencies
+        if: steps.check-label.outputs.has_label == 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bubblewrap socat ripgrep
+
+      - name: Install Claude Code and Sandbox Runtime
+        if: steps.check-label.outputs.has_label == 'true'
+        run: |
+          npm install -g @anthropic-ai/claude-code @anthropic-ai/sandbox-runtime
+          which srt
+
+      - name: Install Python toolchain
+        if: steps.check-label.outputs.has_label == 'true'
+        run: |
+          pip install uv
+          uv sync
+
+      - name: Install pnpm
+        if: steps.check-label.outputs.has_label == 'true'
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Install superpowers skills
+        if: steps.check-label.outputs.has_label == 'true'
+        run: |
+          git clone --depth 1 https://github.com/obra/superpowers.git /tmp/superpowers
+          mkdir -p ~/.claude/skills
+          cp -r /tmp/superpowers/skills/* ~/.claude/skills/
+          rm -rf /tmp/superpowers
+          echo "Installed skills:"
+          ls -la ~/.claude/skills/
+
+      - name: Create sandbox settings
+        if: steps.check-label.outputs.has_label == 'true'
+        run: cp .github/srt-settings.json ~/.srt-settings.json
+
+      - name: Configure git
+        if: steps.check-label.outputs.has_label == 'true'
+        run: |
+          git config --global user.name "claude[bot]"
+          git config --global user.email "claude[bot]@users.noreply.github.com"
+          git remote set-url origin "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git"
+
+      - name: Build auto-fix prompt
+        if: steps.check-label.outputs.has_label == 'true'
+        run: |
+          cat > /tmp/claude-prompt.txt << 'PROMPT_EOF'
+          You are Claude, an AI assistant that fixes CI failures in the CUA (Computer Use Agent) monorepo.
+
+          CONTEXT:
+          - Repository: ${{ github.repository }}
+          - Failed Workflow: ${{ steps.context.outputs.failed_workflow_name }}
+          - Run ID: ${{ steps.context.outputs.failed_run_id }}
+          - Target Branch: ${{ steps.context.outputs.target_branch }}
+          - Fix Branch: fix/auto-fix-${{ steps.context.outputs.failed_run_id }}
+
+          AVAILABLE LOG FILES:
+          - /tmp/logs_summary.txt - First 50KB for quick overview
+          - /tmp/failed_logs.txt - Full failure logs (use grep to search if needed)
+
+          REPOSITORY STRUCTURE:
+          This is a Python/TypeScript monorepo managed with uv (Python) and pnpm (TypeScript).
+          - libs/python/ - Python packages: agent, core, computer, computer-server, som, mcp-server, bench-ui
+          - libs/typescript/ - TypeScript packages: core, computer, agent, cua-cli, playground
+          - Python requires: >=3.12,<3.14
+          - Package manager: uv (Python), pnpm@10 (TypeScript)
+          - Build backend: pdm-backend (Python)
+
+          PYTHON TOOLS (configured in root pyproject.toml):
+          - black: code formatter (line-length: 100, target: py312)
+          - isort: import sorter (profile: black)
+          - ruff: linter (rules: E, F, B, I; has --fix flag)
+          - pytest: test runner (asyncio_mode: auto)
+          - mypy: type checker (currently disabled in CI)
+
+          TYPESCRIPT TOOLS:
+          - prettier: code formatter
+          - TypeScript: type checking via node ./scripts/typescript-typecheck.js
+          - pnpm: package manager
+
+          TASK:
+          1. Read /tmp/logs_summary.txt first to understand what failed
+          2. Search /tmp/failed_logs.txt if you need more detail
+          3. Apply systematic debugging: investigate the codebase to find the ROOT CAUSE before attempting any fix
+
+          Use analysis of competing hypotheses. Create two or more competing hypotheses for the
+          root cause, and create tests or measurements to prove them wrong.
+
+          FIXING LINT FAILURES:
+          For Python lint failures (isort, black, ruff), you can often auto-fix:
+            - Import order: uv run isort .
+            - Formatting: uv run black .
+            - Linting: uv run ruff check . --fix
+          For TypeScript lint failures:
+            - Formatting: pnpm prettier --write "**/*.{ts,tsx,js,jsx,json,md,yaml,yml}"
+          After auto-fixing, verify the fix passes:
+            - Python: uv run isort --check-only . && uv run black --check . && uv run ruff check .
+            - TypeScript: pnpm prettier --check "**/*.{ts,tsx,js,jsx,json,md,yaml,yml}"
+
+          FIXING TEST FAILURES:
+          For Python test failures:
+            - Run the specific failing test: uv run python -m pytest libs/python/<package>/tests/ -v --tb=long
+            - The test environment uses CUA_TELEMETRY_DISABLED=1
+            - Tests use pytest-asyncio with asyncio_mode=auto
+          For TypeScript build/type failures:
+            - Check types: node ./scripts/typescript-typecheck.js
+            - Build: cd libs/typescript && pnpm install && pnpm build
+
+          IMPORTANT:
+          - DO NOT create a PR - just push to the fix branch. The workflow will comment a PR creation link.
+          - Never commit directly to ${{ steps.context.outputs.target_branch }} - always use the fix branch
+          - Only proceed if you have a high-confidence fix with verified root cause
+          - If you cannot determine a fix, explain why and do not push
+          - Output "FIX_BRANCH_PUSHED=true" after successful push so the workflow knows to comment the PR link
+
+          VALIDATION AND RECURSIVE FIXING:
+          1. NO SHORTCUTS: Always run the full validation command - never assume a partial fix is sufficient.
+          2. RECURSIVE FIXING: If your fix causes a new failure, keep fixing until the command passes completely.
+          3. PERSISTENCE: A fix is only complete when the validation command exits with success (exit code 0).
+          4. AVOID NEAR-SIGHTED FIXES: Consider whether similar issues exist elsewhere in the codebase.
+
+          ANTI-PATTERN - WHAT NOT TO DO:
+          - NEVER push code without verifying it works locally first
+          - NEVER assume a fix works without running the validation command
+          - NEVER push a broken fix hoping CI will catch issues
+          - ALWAYS wait for your local build/test to complete before pushing
+          PROMPT_EOF
+
+      - name: Run Claude Auto Fix with sandbox
+        if: steps.check-label.outputs.has_label == 'true'
+        id: claude-fix
+        env:
+          CLAUDE_CODE_USE_BEDROCK: "1"
+          ANTHROPIC_BEDROCK_BASE_URL: "https://bedrock-runtime.us-west-2.amazonaws.com"
+          AWS_REGION: us-west-2
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CUA_TELEMETRY_DISABLED: "1"
+          CLAUDE_CODE_ENABLE_TELEMETRY: "1"
+          OTEL_METRICS_EXPORTER: otlp
+          OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf
+          OTEL_EXPORTER_OTLP_ENDPOINT: https://otel.cua.ai
+        run: |
+          srt claude \
+            --output-format=stream-json \
+            --dangerously-skip-permissions \
+            < /tmp/claude-prompt.txt 2>&1 | \
+            tee /tmp/claude-output.json
+
+          CLAUDE_EXIT=${PIPESTATUS[0]}
+          if [ "$CLAUDE_EXIT" -ne 0 ]; then
+            echo "::error::Claude Code failed with exit code $CLAUDE_EXIT"
+            echo "branch_pushed=false" >> "$GITHUB_OUTPUT"
+            exit "$CLAUDE_EXIT"
+          fi
+
+          if grep -q "FIX_BRANCH_PUSHED=true" /tmp/claude-output.json; then
+            echo "branch_pushed=true" >> "$GITHUB_OUTPUT"
+            echo "Claude indicated fix branch was pushed"
+          else
+            echo "branch_pushed=false" >> "$GITHUB_OUTPUT"
+            echo "Claude did not indicate branch was pushed"
+          fi
+
+      - name: Verify fix branch exists
+        id: verify-branch
+        if: always() && steps.check-label.outputs.has_label == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          FIX_BRANCH="fix/auto-fix-${{ steps.context.outputs.failed_run_id }}"
+
+          if git ls-remote --exit-code --heads origin "$FIX_BRANCH" > /dev/null 2>&1; then
+            echo "Fix branch '$FIX_BRANCH' exists on remote"
+            echo "fix_branch=$FIX_BRANCH" >> "$GITHUB_OUTPUT"
+            echo "branch_exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Fix branch '$FIX_BRANCH' does not exist on remote"
+            echo "fix_branch=" >> "$GITHUB_OUTPUT"
+            echo "branch_exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Comment on PR (completed)
+        if: always() && steps.check-label.outputs.has_label == 'true' && steps.context.outputs.pr_number != ''
+        uses: actions/github-script@v7
+        env:
+          PR_NUMBER: ${{ steps.context.outputs.pr_number }}
+          FIX_BRANCH: ${{ steps.verify-branch.outputs.fix_branch }}
+          BRANCH_EXISTS: ${{ steps.verify-branch.outputs.branch_exists }}
+          TARGET_BRANCH: ${{ steps.context.outputs.target_branch }}
+          WORKFLOW_NAME: ${{ steps.context.outputs.failed_workflow_name }}
+          FAILED_RUN_ID: ${{ steps.context.outputs.failed_run_id }}
+        with:
+          script: |
+            const prNumber = parseInt(process.env.PR_NUMBER, 10);
+            const runUrl = 'https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}';
+            const fixBranch = process.env.FIX_BRANCH || '';
+            const branchExists = process.env.BRANCH_EXISTS === 'true';
+            const targetBranch = process.env.TARGET_BRANCH || '';
+            const workflowName = process.env.WORKFLOW_NAME || 'Unknown';
+            const failedRunUrl = `https://github.com/${{ github.repository }}/actions/runs/${process.env.FAILED_RUN_ID}`;
+
+            let body;
+            if (branchExists && fixBranch) {
+              const createPrUrl = `https://github.com/${{ github.repository }}/compare/${targetBranch}...${fixBranch}?expand=1`;
+              body = [
+                '## Claude Auto-Fix Complete',
+                '',
+                `Claude has pushed a fix to branch \`${fixBranch}\`.`,
+                '',
+                `**[Click here to create the PR](${createPrUrl})**`,
+                '',
+                `Failed workflow: [${workflowName}](${failedRunUrl})`,
+                `Auto-fix run: ${runUrl}`
+              ].join('\n');
+            } else {
+              body = [
+                '## Claude Auto-Fix Could Not Fix',
+                '',
+                'Unable to automatically fix this CI failure. Please review the logs.',
+                '',
+                `Failed workflow: [${workflowName}](${failedRunUrl})`,
+                `Auto-fix run: ${runUrl}`
+              ].join('\n');
+            }
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: prNumber,
+              body: body
+            });
+
+      - name: Send autofix metrics to OTEL
+        if: always() && steps.check-label.outputs.has_label == 'true'
+        env:
+          OTEL_EXPORTER_OTLP_ENDPOINT: https://otel.cua.ai
+          START_TIME: ${{ steps.start-time.outputs.start_time }}
+          START_TIME_NANO: ${{ steps.start-time.outputs.start_time_nano }}
+          PR_NUMBER: ${{ steps.context.outputs.pr_number }}
+          TARGET_BRANCH: ${{ steps.context.outputs.target_branch }}
+          BRANCH_EXISTS: ${{ steps.verify-branch.outputs.branch_exists }}
+          TRIGGERED_BY: ${{ steps.context.outputs.failed_workflow_name }}
+        run: |
+          END_TIME=$(date +%s)
+          END_TIME_NANO=$(date +%s%N)
+          DURATION_SECONDS=$((END_TIME - START_TIME))
+
+          if [ "$BRANCH_EXISTS" = "true" ]; then
+            SUCCESS=1
+          else
+            SUCCESS=0
+          fi
+
+          echo "Sending autofix metrics to OTEL:"
+          echo "  PR: #${PR_NUMBER}"
+          echo "  Duration: ${DURATION_SECONDS}s"
+          echo "  Success: ${SUCCESS}"
+
+          METRICS_PAYLOAD=$(cat <<EOF
+          {
+            "resourceMetrics": [{
+              "resource": {
+                "attributes": [
+                  {"key": "service.name", "value": {"stringValue": "claude-autofix"}},
+                  {"key": "service.version", "value": {"stringValue": "1.0.0"}}
+                ]
+              },
+              "scopeMetrics": [{
+                "scope": {"name": "claude-autofix"},
+                "metrics": [
+                  {
+                    "name": "claude_autofix_attempt",
+                    "description": "Autofix attempt counter",
+                    "sum": {
+                      "dataPoints": [{
+                        "asInt": "1",
+                        "startTimeUnixNano": "${START_TIME_NANO}",
+                        "timeUnixNano": "${END_TIME_NANO}",
+                        "attributes": [
+                          {"key": "pr_number", "value": {"stringValue": "${PR_NUMBER}"}},
+                          {"key": "repository", "value": {"stringValue": "${{ github.repository }}"}},
+                          {"key": "triggered_by", "value": {"stringValue": "${TRIGGERED_BY}"}},
+                          {"key": "success", "value": {"stringValue": "${SUCCESS}"}}
+                        ]
+                      }],
+                      "aggregationTemporality": 2,
+                      "isMonotonic": true
+                    }
+                  },
+                  {
+                    "name": "claude_autofix_duration_seconds",
+                    "description": "Duration of autofix run in seconds",
+                    "gauge": {
+                      "dataPoints": [{
+                        "asDouble": ${DURATION_SECONDS},
+                        "timeUnixNano": "${END_TIME_NANO}",
+                        "attributes": [
+                          {"key": "pr_number", "value": {"stringValue": "${PR_NUMBER}"}},
+                          {"key": "repository", "value": {"stringValue": "${{ github.repository }}"}},
+                          {"key": "triggered_by", "value": {"stringValue": "${TRIGGERED_BY}"}},
+                          {"key": "success", "value": {"stringValue": "${SUCCESS}"}}
+                        ]
+                      }]
+                    }
+                  },
+                  {
+                    "name": "claude_autofix_success_total",
+                    "description": "Total number of successful autofix runs",
+                    "sum": {
+                      "dataPoints": [{
+                        "asInt": "${SUCCESS}",
+                        "startTimeUnixNano": "${START_TIME_NANO}",
+                        "timeUnixNano": "${END_TIME_NANO}",
+                        "attributes": [
+                          {"key": "pr_number", "value": {"stringValue": "${PR_NUMBER}"}},
+                          {"key": "repository", "value": {"stringValue": "${{ github.repository }}"}},
+                          {"key": "triggered_by", "value": {"stringValue": "${TRIGGERED_BY}"}}
+                        ]
+                      }],
+                      "aggregationTemporality": 2,
+                      "isMonotonic": true
+                    }
+                  }
+                ]
+              }]
+            }]
+          }
+          EOF
+          )
+
+          curl -s -X POST "${OTEL_EXPORTER_OTLP_ENDPOINT}/v1/metrics" \
+            -H "Content-Type: application/json" \
+            -d "$METRICS_PAYLOAD" || echo "Warning: Failed to send metrics"

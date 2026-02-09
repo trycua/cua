@@ -1,6 +1,7 @@
 """Main entry point for CUA CLI."""
 
 import argparse
+import logging
 import sys
 
 from cua_cli import __version__
@@ -52,6 +53,9 @@ For more information, visit https://docs.trycua.com
 
 def main() -> int:
     """Main entry point for the CLI."""
+    # Suppress noisy INFO logs from dependencies (computer, core.telemetry, etc.)
+    logging.basicConfig(level=logging.WARNING)
+
     parser = create_parser()
     args = parser.parse_args()
 

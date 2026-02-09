@@ -238,6 +238,12 @@ def _get_provider():
     return CloudProvider(api_key=api_key)
 
 
+def _redact_sensitive(vm: dict) -> dict:
+    """Remove password and VNC URL from a VM dict."""
+    redacted = {k: v for k, v in vm.items() if k not in ("password", "vnc_url")}
+    return redacted
+
+
 def cmd_list(args: argparse.Namespace) -> int:
     """List all sandboxes."""
 
@@ -248,7 +254,8 @@ def cmd_list(args: argparse.Namespace) -> int:
     vms = run_async(_list())
 
     if args.json:
-        print_json(vms)
+        data = vms if args.show_passwords else [_redact_sensitive(vm) for vm in vms]
+        print_json(data)
         return 0
 
     if not vms:
@@ -353,7 +360,8 @@ def cmd_get(args: argparse.Namespace) -> int:
     result = run_async(_get())
 
     if args.json:
-        print_json(result)
+        data = result if args.show_passwords else _redact_sensitive(result)
+        print_json(data)
         return 0
 
     if result.get("status") == "not_found":

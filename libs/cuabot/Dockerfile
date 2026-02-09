@@ -1,4 +1,4 @@
-# Minimal xpra container with agent-browser
+# Minimal xpra + agent-browser container
 FROM ubuntu:22.04
 
 ENV DEBIAN_FRONTEND=noninteractive

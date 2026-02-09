@@ -75,17 +75,28 @@ function PlaygroundContentInternal({
   const vncUrl = currentComputer?.vncUrl;
 
   // Create a draft chat for the empty state UI
-  const draftChat = useMemo<Chat>(
-    () => ({
+  const draftChat = useMemo<Chat>(() => {
+    const runningComputer = state.computers.find((c) => c.status === 'running');
+    const computerInfo = runningComputer ?? state.computers[0];
+
+    const computer = computerInfo
+      ? {
+          id: computerInfo.id,
+          name: computerInfo.name,
+          url: computerInfo.agentUrl,
+        }
+      : undefined;
+
+    return {
       id: 'draft',
       name: 'New Chat',
       messages: [],
       model: defaultModel,
+      computer,
       created: new Date(),
       updated: new Date(),
-    }),
-    [defaultModel]
-  );
+    };
+  }, [state.computers, defaultModel]);
 
   // Handle creating a new chat and sending the first message
   const handleCreateAndSend = async (

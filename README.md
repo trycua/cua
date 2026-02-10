@@ -20,10 +20,6 @@
 
 </div>
 
----
-
-**Beyond cuabot** — explore our SDKs, benchmarks, and sandboxes for your own computer-use agents.
-
 ## Choose Your Path
 
 <div align="center">

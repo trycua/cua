@@ -58,7 +58,9 @@
           </picture>
         </a>
       </td>
-      <td align="center">
+    </tr>
+    <tr>
+      <td colspan="3" align="center">
         <a href="https://cua.ai/docs/cuabot">
           <picture>
             <source media="(prefers-color-scheme: dark)" srcset="img/card-cua-bot-dark.png">

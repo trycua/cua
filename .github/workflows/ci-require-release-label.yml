@@ -1,0 +1,96 @@
+name: "CI: Require Release Label"
+
+on:
+  pull_request:
+    types: [opened, synchronize, labeled, unlabeled]
+
+jobs:
+  check-release-label:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check for release label on publishable changes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Get changed files in this PR
+          CHANGED_FILES=$(gh pr diff "${{ github.event.pull_request.number }}" \
+            --repo "${{ github.repository }}" --name-only 2>/dev/null || true)
+
+          if [ -z "$CHANGED_FILES" ]; then
+            echo "No changed files detected, skipping."
+            exit 0
+          fi
+
+          # Map paths to publishable services
+          declare -A PATH_TO_SERVICE=(
+            ["libs/python/cua-cli/"]="pypi/cli"
+            ["libs/python/agent/"]="pypi/agent"
+            ["libs/python/computer/"]="pypi/computer"
+            ["libs/python/core/"]="pypi/core"
+            ["libs/python/som/"]="pypi/som"
+            ["libs/python/bench-ui/"]="pypi/bench-ui"
+            ["libs/cua-bench/"]="pypi/bench"
+            ["libs/python/computer-server/"]="pypi/computer-server"
+            ["libs/python/mcp-server/"]="pypi/mcp-server"
+            ["libs/typescript/cua-cli/"]="npm/cli"
+            ["libs/typescript/computer/"]="npm/computer"
+            ["libs/typescript/core/"]="npm/core"
+            ["libs/typescript/playground/"]="npm/playground"
+            ["libs/cuabot/"]="npm/cuabot"
+            ["libs/xfce/"]="docker/xfce"
+            ["libs/kasm/"]="docker/kasm"
+            ["libs/lumier/"]="docker/lumier"
+            ["libs/qemu-docker/android/"]="docker/qemu-android"
+            ["libs/qemu-docker/linux/"]="docker/qemu-linux"
+            ["libs/qemu-docker/windows/"]="docker/qemu-windows"
+            ["libs/lume/"]="lume"
+          )
+
+          # Find affected services
+          AFFECTED=""
+          for path_prefix in "${!PATH_TO_SERVICE[@]}"; do
+            if echo "$CHANGED_FILES" | grep -q "^${path_prefix}"; then
+              service="${PATH_TO_SERVICE[$path_prefix]}"
+              AFFECTED="${AFFECTED}${service}\n"
+            fi
+          done
+
+          AFFECTED=$(echo -e "$AFFECTED" | sort -u | sed '/^$/d')
+
+          if [ -z "$AFFECTED" ]; then
+            echo "No publishable packages affected, skipping."
+            exit 0
+          fi
+
+          echo "Affected packages:"
+          echo "$AFFECTED" | while read -r svc; do echo "  - $svc"; done
+
+          # Check for release label
+          LABELS='${{ toJSON(github.event.pull_request.labels.*.name) }}'
+          HAS_RELEASE_LABEL=false
+
+          for label in "release:patch" "release:minor" "release:major" "no-release"; do
+            if echo "$LABELS" | grep -q "\"${label}\""; then
+              HAS_RELEASE_LABEL=true
+              echo "Found label: $label"
+              break
+            fi
+          done
+
+          if [ "$HAS_RELEASE_LABEL" = "false" ]; then
+            echo ""
+            echo "=========================================="
+            echo "ERROR: Missing release label!"
+            echo "=========================================="
+            echo ""
+            echo "This PR changes the following publishable packages:"
+            echo "$AFFECTED" | while read -r svc; do echo "  - $svc"; done
+            echo ""
+            echo "Please add one of these labels to the PR:"
+            echo "  release:patch  - bump patch version (bug fixes)"
+            echo "  release:minor  - bump minor version (new features)"
+            echo "  release:major  - bump major version (breaking changes)"
+            echo "  no-release     - skip publishing (e.g., tests/docs only)"
+            echo ""
+            exit 1
+          fi

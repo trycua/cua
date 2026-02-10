@@ -1,0 +1,127 @@
+name: "CD: Auto Release on Merge"
+
+on:
+  pull_request:
+    types: [closed]
+
+jobs:
+  auto-release:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    steps:
+      - name: Detect packages and trigger release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PR_NUMBER="${{ github.event.pull_request.number }}"
+          REPO="${{ github.repository }}"
+
+          # Check labels
+          LABELS='${{ toJSON(github.event.pull_request.labels.*.name) }}'
+
+          # Determine bump type from label
+          BUMP_TYPE=""
+          if echo "$LABELS" | grep -q '"no-release"'; then
+            echo "no-release label found, skipping."
+            exit 0
+          elif echo "$LABELS" | grep -q '"release:major"'; then
+            BUMP_TYPE="major"
+          elif echo "$LABELS" | grep -q '"release:minor"'; then
+            BUMP_TYPE="minor"
+          elif echo "$LABELS" | grep -q '"release:patch"'; then
+            BUMP_TYPE="patch"
+          else
+            echo "No release label found, skipping."
+            exit 0
+          fi
+
+          echo "Bump type: $BUMP_TYPE"
+
+          # Get changed files
+          CHANGED_FILES=$(gh pr diff "$PR_NUMBER" --repo "$REPO" --name-only 2>/dev/null || true)
+
+          if [ -z "$CHANGED_FILES" ]; then
+            echo "No changed files, skipping."
+            exit 0
+          fi
+
+          # Map paths to services
+          declare -A PATH_TO_SERVICE=(
+            ["libs/python/cua-cli/"]="pypi/cli"
+            ["libs/python/agent/"]="pypi/agent"
+            ["libs/python/computer/"]="pypi/computer"
+            ["libs/python/core/"]="pypi/core"
+            ["libs/python/som/"]="pypi/som"
+            ["libs/python/bench-ui/"]="pypi/bench-ui"
+            ["libs/cua-bench/"]="pypi/bench"
+            ["libs/python/computer-server/"]="pypi/computer-server"
+            ["libs/python/mcp-server/"]="pypi/mcp-server"
+            ["libs/typescript/cua-cli/"]="npm/cli"
+            ["libs/typescript/computer/"]="npm/computer"
+            ["libs/typescript/core/"]="npm/core"
+            ["libs/typescript/playground/"]="npm/playground"
+            ["libs/cuabot/"]="npm/cuabot"
+            ["libs/xfce/"]="docker/xfce"
+            ["libs/kasm/"]="docker/kasm"
+            ["libs/lumier/"]="docker/lumier"
+            ["libs/qemu-docker/android/"]="docker/qemu-android"
+            ["libs/qemu-docker/linux/"]="docker/qemu-linux"
+            ["libs/qemu-docker/windows/"]="docker/qemu-windows"
+            ["libs/lume/"]="lume"
+          )
+
+          # Find affected services
+          declare -A AFFECTED_MAP
+          for path_prefix in "${!PATH_TO_SERVICE[@]}"; do
+            if echo "$CHANGED_FILES" | grep -q "^${path_prefix}"; then
+              service="${PATH_TO_SERVICE[$path_prefix]}"
+              AFFECTED_MAP["$service"]=1
+            fi
+          done
+
+          if [ ${#AFFECTED_MAP[@]} -eq 0 ]; then
+            echo "No publishable packages affected, skipping."
+            exit 0
+          fi
+
+          echo "Affected packages before dedup:"
+          for svc in "${!AFFECTED_MAP[@]}"; do echo "  - $svc"; done
+
+          # Cascade dedup: remove services already covered by upstream cascades
+          # pypi/core cascades to pypi/computer and pypi/agent
+          if [[ -n "${AFFECTED_MAP["pypi/core"]}" ]]; then
+            unset AFFECTED_MAP["pypi/computer"]
+            unset AFFECTED_MAP["pypi/agent"]
+          fi
+          # pypi/computer cascades to pypi/agent
+          if [[ -n "${AFFECTED_MAP["pypi/computer"]}" ]]; then
+            unset AFFECTED_MAP["pypi/agent"]
+          fi
+          # pypi/som cascades to pypi/agent
+          if [[ -n "${AFFECTED_MAP["pypi/som"]}" ]]; then
+            unset AFFECTED_MAP["pypi/agent"]
+          fi
+          # npm/core cascades to npm/computer
+          if [[ -n "${AFFECTED_MAP["npm/core"]}" ]]; then
+            unset AFFECTED_MAP["npm/computer"]
+          fi
+
+          echo ""
+          echo "Services to release (after cascade dedup):"
+          for svc in "${!AFFECTED_MAP[@]}"; do echo "  - $svc"; done
+
+          # Trigger release-bump-version for each affected service
+          for svc in "${!AFFECTED_MAP[@]}"; do
+            echo ""
+            echo "Triggering release-bump-version for: $svc ($BUMP_TYPE)"
+            gh workflow run release-bump-version.yml \
+              --repo "$REPO" \
+              -f service="$svc" \
+              -f bump_type="$BUMP_TYPE"
+            echo "Triggered successfully."
+            # Sleep between triggers to avoid race conditions on main branch
+            sleep 15
+          done
+
+          echo ""
+          echo "All releases triggered!"

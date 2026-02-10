@@ -103,43 +103,17 @@ jobs:
           echo "Packages with release labels (will auto-release):"
           for svc in "${LABELED[@]}"; do echo "  - $svc"; done
 
-          # Cascade dedup
-          declare -A RELEASE_MAP
-          for svc in "${LABELED[@]}"; do RELEASE_MAP["$svc"]=1; done
-
-            # pypi/core cascades to pypi/computer and pypi/agent
-            if [[ -n "${RELEASE_MAP["pypi/core"]}" ]]; then
-              unset RELEASE_MAP["pypi/computer"]
-              unset RELEASE_MAP["pypi/agent"]
-            fi
-            # pypi/computer cascades to pypi/agent
-            if [[ -n "${RELEASE_MAP["pypi/computer"]}" ]]; then
-              unset RELEASE_MAP["pypi/agent"]
-            fi
-            # pypi/som cascades to pypi/agent
-            if [[ -n "${RELEASE_MAP["pypi/som"]}" ]]; then
-              unset RELEASE_MAP["pypi/agent"]
-            fi
-            # npm/core cascades to npm/computer
-            if [[ -n "${RELEASE_MAP["npm/core"]}" ]]; then
-              unset RELEASE_MAP["npm/computer"]
-            fi
-
+          # Trigger each labeled package independently (no cascade — deps use version ranges)
+          for svc in "${LABELED[@]}"; do
             echo ""
-            echo "Triggering releases (after cascade dedup):"
-            for svc in "${!RELEASE_MAP[@]}"; do echo "  - $svc"; done
-
-            for svc in "${!RELEASE_MAP[@]}"; do
-              echo ""
-              echo "Triggering release-bump-version: service=$svc bump_type=$BUMP_TYPE"
-              gh workflow run release-bump-version.yml \
-                --repo "$REPO" \
-                -f service="$svc" \
-                -f bump_type="$BUMP_TYPE"
-              echo "Triggered successfully."
-              sleep 15
-            done
-          fi
+            echo "Triggering release-bump-version: service=$svc bump_type=$BUMP_TYPE"
+            gh workflow run release-bump-version.yml \
+              --repo "$REPO" \
+              -f service="$svc" \
+              -f bump_type="$BUMP_TYPE"
+            echo "Triggered successfully."
+            sleep 15
+          done
 
           echo ""
           echo "Done!"

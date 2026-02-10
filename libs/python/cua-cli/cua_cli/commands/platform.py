@@ -16,7 +16,7 @@ import platform as sys_platform
 import subprocess
 from typing import Any, Dict, Optional
 
-from cua_cli.utils.output import print_error, print_info
+from cua_cli.utils.output import console, print_error, print_info
 
 # =============================================================================
 # Platform Configurations
@@ -180,29 +180,28 @@ def cmd_list(args: argparse.Namespace) -> int:
         if name == "macos-lume":
             if not is_macos:
                 status = "macOS only"
-                status_color = "\033[90m"
+                style = "dim"
             elif not lume_ok:
                 status = "needs Lume"
-                status_color = "\033[33m"
+                style = "yellow"
             else:
                 status = "ready"
-                status_color = "\033[92m"
+                style = "green"
         elif config.get("requires_kvm") and not kvm_ok:
             if is_linux:
                 status = "no KVM"
-                status_color = "\033[33m"
+                style = "yellow"
             else:
                 status = "Linux only"
-                status_color = "\033[90m"
+                style = "dim"
         elif not docker_ok:
             status = "no Docker"
-            status_color = "\033[91m"
+            style = "red"
         else:
             status = "ready"
-            status_color = "\033[92m"
+            style = "green"
 
-        reset = "\033[0m"
-        print(f"{name:<18} {description:<45} {status_color}{status:<12}{reset}")
+        console.print(f"{name:<18} {description:<45} [{style}]{status:<12}[/{style}]")
 
     print("\n" + "=" * 80)
     print("\nCommands:")

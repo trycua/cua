@@ -9,17 +9,19 @@ jobs:
     if: github.event.pull_request.merged == true
     runs-on: ubuntu-latest
     steps:
-      - name: Detect packages and trigger release
+      - name: Detect packages, release labeled, notify unlabeled
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           PR_NUMBER="${{ github.event.pull_request.number }}"
+          PR_TITLE="${{ github.event.pull_request.title }}"
+          PR_URL="${{ github.event.pull_request.html_url }}"
           REPO="${{ github.repository }}"
 
           # Get labels
           LABELS='${{ toJSON(github.event.pull_request.labels.*.name) }}'
 
-          # Skip if no-release
+          # Skip everything if no-release
           if echo "$LABELS" | grep -q '"no-release"'; then
             echo "no-release label found, skipping."
             exit 0
@@ -34,69 +36,142 @@ jobs:
           fi
           echo "Bump type: $BUMP_TYPE"
 
-          # Collect release:<service> labels
-          SERVICES=()
-          ALL_SERVICES=(
-            "pypi/cli" "pypi/agent" "pypi/computer" "pypi/core" "pypi/som"
-            "pypi/bench" "pypi/bench-ui" "pypi/computer-server" "pypi/mcp-server"
-            "npm/cli" "npm/computer" "npm/core" "npm/playground" "npm/cuabot"
-            "docker/xfce" "docker/kasm" "docker/lumier"
-            "docker/qemu-android" "docker/qemu-linux" "docker/qemu-windows"
-            "lume"
-          )
+          # Get changed files
+          CHANGED_FILES=$(gh pr diff "$PR_NUMBER" --repo "$REPO" --name-only 2>/dev/null || true)
 
-          for svc in "${ALL_SERVICES[@]}"; do
-            if echo "$LABELS" | grep -q "\"release:${svc}\""; then
-              SERVICES+=("$svc")
-            fi
-          done
-
-          if [ ${#SERVICES[@]} -eq 0 ]; then
-            echo "No release:<service> labels found, skipping."
+          if [ -z "$CHANGED_FILES" ]; then
+            echo "No changed files, skipping."
             exit 0
           fi
 
-          echo "Services to release:"
-          for svc in "${SERVICES[@]}"; do echo "  - $svc"; done
+          # Map paths to publishable services
+          declare -A PATH_TO_SERVICE=(
+            ["libs/python/cua-cli/"]="pypi/cli"
+            ["libs/python/agent/"]="pypi/agent"
+            ["libs/python/computer/"]="pypi/computer"
+            ["libs/python/core/"]="pypi/core"
+            ["libs/python/som/"]="pypi/som"
+            ["libs/python/bench-ui/"]="pypi/bench-ui"
+            ["libs/cua-bench/"]="pypi/bench"
+            ["libs/python/computer-server/"]="pypi/computer-server"
+            ["libs/python/mcp-server/"]="pypi/mcp-server"
+            ["libs/typescript/cua-cli/"]="npm/cli"
+            ["libs/typescript/computer/"]="npm/computer"
+            ["libs/typescript/core/"]="npm/core"
+            ["libs/typescript/playground/"]="npm/playground"
+            ["libs/cuabot/"]="npm/cuabot"
+            ["libs/xfce/"]="docker/xfce"
+            ["libs/kasm/"]="docker/kasm"
+            ["libs/lumier/"]="docker/lumier"
+            ["libs/qemu-docker/android/"]="docker/qemu-android"
+            ["libs/qemu-docker/linux/"]="docker/qemu-linux"
+            ["libs/qemu-docker/windows/"]="docker/qemu-windows"
+            ["libs/lume/"]="lume"
+          )
 
-          # Cascade dedup: remove services already covered by upstream cascades
-          declare -A SVC_MAP
-          for svc in "${SERVICES[@]}"; do SVC_MAP["$svc"]=1; done
-
-          # pypi/core cascades to pypi/computer and pypi/agent
-          if [[ -n "${SVC_MAP["pypi/core"]}" ]]; then
-            unset SVC_MAP["pypi/computer"]
-            unset SVC_MAP["pypi/agent"]
-          fi
-          # pypi/computer cascades to pypi/agent
-          if [[ -n "${SVC_MAP["pypi/computer"]}" ]]; then
-            unset SVC_MAP["pypi/agent"]
-          fi
-          # pypi/som cascades to pypi/agent
-          if [[ -n "${SVC_MAP["pypi/som"]}" ]]; then
-            unset SVC_MAP["pypi/agent"]
-          fi
-          # npm/core cascades to npm/computer
-          if [[ -n "${SVC_MAP["npm/core"]}" ]]; then
-            unset SVC_MAP["npm/computer"]
-          fi
-
-          echo ""
-          echo "Services to release (after cascade dedup):"
-          for svc in "${!SVC_MAP[@]}"; do echo "  - $svc"; done
-
-          # Trigger release-bump-version for each service
-          for svc in "${!SVC_MAP[@]}"; do
-            echo ""
-            echo "Triggering release-bump-version: service=$svc bump_type=$BUMP_TYPE"
-            gh workflow run release-bump-version.yml \
-              --repo "$REPO" \
-              -f service="$svc" \
-              -f bump_type="$BUMP_TYPE"
-            echo "Triggered successfully."
-            # Sleep between triggers to avoid race conditions on main branch
-            sleep 15
+          # Find all affected services from changed files
+          declare -A AFFECTED_MAP
+          for path_prefix in "${!PATH_TO_SERVICE[@]}"; do
+            if echo "$CHANGED_FILES" | grep -q "^${path_prefix}"; then
+              service="${PATH_TO_SERVICE[$path_prefix]}"
+              AFFECTED_MAP["$service"]=1
+            fi
           done
 
+          if [ ${#AFFECTED_MAP[@]} -eq 0 ]; then
+            echo "No publishable packages affected, skipping."
+            exit 0
+          fi
+
+          echo "Affected packages:"
+          for svc in "${!AFFECTED_MAP[@]}"; do echo "  - $svc"; done
+
+          # Split into labeled (auto-release) and unlabeled (notify)
+          LABELED=()
+          UNLABELED=()
+          for svc in "${!AFFECTED_MAP[@]}"; do
+            if echo "$LABELS" | grep -q "\"release:${svc}\""; then
+              LABELED+=("$svc")
+            else
+              UNLABELED+=("$svc")
+            fi
+          done
+
+          # ── Auto-release labeled packages ──
+          if [ ${#LABELED[@]} -gt 0 ]; then
+            echo ""
+            echo "Packages with release labels (will auto-release):"
+            for svc in "${LABELED[@]}"; do echo "  - $svc"; done
+
+            # Cascade dedup
+            declare -A RELEASE_MAP
+            for svc in "${LABELED[@]}"; do RELEASE_MAP["$svc"]=1; done
+
+            # pypi/core cascades to pypi/computer and pypi/agent
+            if [[ -n "${RELEASE_MAP["pypi/core"]}" ]]; then
+              unset RELEASE_MAP["pypi/computer"]
+              unset RELEASE_MAP["pypi/agent"]
+            fi
+            # pypi/computer cascades to pypi/agent
+            if [[ -n "${RELEASE_MAP["pypi/computer"]}" ]]; then
+              unset RELEASE_MAP["pypi/agent"]
+            fi
+            # pypi/som cascades to pypi/agent
+            if [[ -n "${RELEASE_MAP["pypi/som"]}" ]]; then
+              unset RELEASE_MAP["pypi/agent"]
+            fi
+            # npm/core cascades to npm/computer
+            if [[ -n "${RELEASE_MAP["npm/core"]}" ]]; then
+              unset RELEASE_MAP["npm/computer"]
+            fi
+
+            echo ""
+            echo "Triggering releases (after cascade dedup):"
+            for svc in "${!RELEASE_MAP[@]}"; do echo "  - $svc"; done
+
+            for svc in "${!RELEASE_MAP[@]}"; do
+              echo ""
+              echo "Triggering release-bump-version: service=$svc bump_type=$BUMP_TYPE"
+              gh workflow run release-bump-version.yml \
+                --repo "$REPO" \
+                -f service="$svc" \
+                -f bump_type="$BUMP_TYPE"
+              echo "Triggered successfully."
+              sleep 15
+            done
+          fi
+
+          # ── Notify about unlabeled packages via AlertManager ──
+          if [ ${#UNLABELED[@]} -gt 0 ]; then
+            echo ""
+            echo "Packages WITHOUT release labels (sending Slack reminder):"
+            for svc in "${UNLABELED[@]}"; do echo "  - $svc"; done
+
+            # Build comma-separated list
+            UNLABELED_LIST=$(printf '%s, ' "${UNLABELED[@]}")
+            UNLABELED_LIST="${UNLABELED_LIST%, }"
+
+            # Send alert to AlertManager → Slack
+            curl -s -X POST https://am.cua.ai/api/v2/alerts \
+              -H "Content-Type: application/json" \
+              -d "[
+                {
+                  \"labels\": {
+                    \"alertname\": \"UnreleasedPackageChanges\",
+                    \"severity\": \"warning\",
+                    \"source\": \"github-actions\"
+                  },
+                  \"annotations\": {
+                    \"summary\": \"PR #${PR_NUMBER} merged with unreleased package changes\",
+                    \"description\": \"PR #${PR_NUMBER} (${PR_TITLE}) merged with changes to packages that were not labeled for release: ${UNLABELED_LIST}. Add release labels and re-run, or bump manually via the CD: Bump Version workflow.\"
+                  },
+                  \"generatorURL\": \"${PR_URL}\"
+                }
+              ]"
+
+            echo ""
+            echo "Slack notification sent for unreleased packages."
+          fi
+
           echo ""
-          echo "All releases triggered!"
+          echo "Done!"

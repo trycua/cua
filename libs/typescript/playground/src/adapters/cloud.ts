@@ -208,9 +208,15 @@ class CloudInferenceAdapter implements InferenceAdapter {
   ) {}
 
   async getConfig(computer: ComputerInfo): Promise<InferenceConfig> {
-    // Cloud manages API keys server-side, so we don't need to pass env vars
+    // Route through inference API instead of directly to computer server
+    // The inference API handles model routing and communicates with the computer server
     return {
-      baseUrl: computer.agentUrl,
+      baseUrl: `${this.baseUrl}/v1/inference`,
+      // Pass computer info via env vars for the inference API
+      env: {
+        CUA_COMPUTER_ID: computer.id,
+        CUA_AGENT_URL: computer.agentUrl,
+      },
     };
   }
 

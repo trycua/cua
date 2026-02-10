@@ -107,14 +107,16 @@ jobs:
           declare -A RELEASE_MAP
           for svc in "${LABELED[@]}"; do RELEASE_MAP["$svc"]=1; done
 
-            # pypi/core cascades to pypi/computer and pypi/agent
+            # pypi/core cascades to pypi/computer, pypi/agent, and pypi/cli
             if [[ -n "${RELEASE_MAP["pypi/core"]}" ]]; then
               unset RELEASE_MAP["pypi/computer"]
               unset RELEASE_MAP["pypi/agent"]
+              unset RELEASE_MAP["pypi/cli"]
             fi
-            # pypi/computer cascades to pypi/agent
+            # pypi/computer cascades to pypi/agent and pypi/cli
             if [[ -n "${RELEASE_MAP["pypi/computer"]}" ]]; then
               unset RELEASE_MAP["pypi/agent"]
+              unset RELEASE_MAP["pypi/cli"]
             fi
             # pypi/som cascades to pypi/agent
             if [[ -n "${RELEASE_MAP["pypi/som"]}" ]]; then

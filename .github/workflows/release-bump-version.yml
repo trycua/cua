@@ -183,15 +183,17 @@ jobs:
           BUMPVERSION_CONFIG="${{ steps.package.outputs.bumpversion_config }}"
           clean_tag "${{ steps.package.outputs.directory }}" "${BUMPVERSION_CONFIG:-.bumpversion.cfg}"
 
-          # Clean cascade tags when bumping pypi/core (also bumps computer and agent)
+          # Clean cascade tags when bumping pypi/core (also bumps computer, agent, cli)
           if [ "${{ inputs.service }}" == "pypi/core" ]; then
             clean_tag "libs/python/computer"
             clean_tag "libs/python/agent"
+            clean_tag "libs/python/cua-cli"
           fi
 
-          # Clean cascade tags when bumping pypi/computer (also bumps agent)
+          # Clean cascade tags when bumping pypi/computer (also bumps agent, cli)
           if [ "${{ inputs.service }}" == "pypi/computer" ]; then
             clean_tag "libs/python/agent"
+            clean_tag "libs/python/cua-cli"
           fi
 
           # Clean cascade tags when bumping pypi/som (also bumps agent)
@@ -230,6 +232,12 @@ jobs:
           cd libs/python/agent
           bump2version ${{ inputs.bump_type }}
 
+      - name: Also bump cua-cli (when bumping cua-computer or cua-core)
+        if: ${{ inputs.service == 'pypi/computer' || inputs.service == 'pypi/core' }}
+        run: |
+          cd libs/python/cua-cli
+          bump2version ${{ inputs.bump_type }}
+
       - name: Also bump cua-agent (when bumping cua-som)
         if: ${{ inputs.service == 'pypi/som' }}
         run: |
@@ -251,7 +259,7 @@ jobs:
 
           # Get all local tags and filter to those pointing to commits after START_SHA
           ALL_TAGS=""
-          for tag in $(git tag --points-at HEAD) $(git tag --points-at HEAD~1 2>/dev/null) $(git tag --points-at HEAD~2 2>/dev/null); do
+          for tag in $(git tag --points-at HEAD) $(git tag --points-at HEAD~1 2>/dev/null) $(git tag --points-at HEAD~2 2>/dev/null) $(git tag --points-at HEAD~3 2>/dev/null); do
             if [ -n "$tag" ]; then
               TAG_SHA=$(git rev-parse "$tag^{commit}" 2>/dev/null || true)
               if [ -n "$TAG_SHA" ]; then
@@ -296,7 +304,7 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Capture bumped cli version
-        if: ${{ inputs.service == 'pypi/cli' }}
+        if: ${{ inputs.service == 'pypi/cli' || inputs.service == 'pypi/computer' || inputs.service == 'pypi/core' }}
         id: cli_version
         run: |
           cd libs/python/cua-cli

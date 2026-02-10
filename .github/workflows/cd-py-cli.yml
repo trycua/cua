@@ -26,8 +26,19 @@ jobs:
     runs-on: macos-latest
     outputs:
       version: ${{ steps.get-version.outputs.version }}
+      computer_version: ${{ steps.update-deps.outputs.computer_version }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Ensure latest main branch
+        run: |
+          git fetch origin main
+          git reset --hard origin/main
+          echo "Current HEAD commit:"
+          git log -1 --oneline
 
       - name: Determine version
         id: get-version
@@ -43,8 +54,7 @@ jobs:
               echo "Invalid tag format for cli"
               exit 1
             fi
-          elif [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
-            # Use version from workflow dispatch
+          elif [ -n "${{ github.event.inputs.version }}" ]; then
             VERSION=${{ github.event.inputs.version }}
           else
             echo "No version provided"
@@ -52,6 +62,54 @@ jobs:
           fi
           echo "VERSION=$VERSION"
           echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.11"
+
+      - name: Update dependencies to latest versions
+        id: update-deps
+        run: |
+          cd libs/python/cua-cli
+          pip install requests
+
+          cat > get_latest_version.py << 'EOF'
+          import requests
+          import json
+          import sys
+
+          def get_package_version(package_name, fallback="0.1.0"):
+              try:
+                  response = requests.get(f'https://pypi.org/pypi/{package_name}/json')
+                  if response.status_code != 200:
+                      print(f"API request failed for {package_name}, using fallback", file=sys.stderr)
+                      return fallback
+                  data = json.loads(response.text)
+                  return data['info']['version']
+              except Exception as e:
+                  print(f"Error fetching version for {package_name}: {e}", file=sys.stderr)
+                  return fallback
+
+          print(get_package_version('cua-computer'))
+          EOF
+
+          LATEST_COMPUTER=$(python get_latest_version.py)
+          echo "Latest cua-computer version: $LATEST_COMPUTER"
+          echo "computer_version=$LATEST_COMPUTER" >> $GITHUB_OUTPUT
+
+          # Update dependency in pyproject.toml
+          COMPUTER_MAJOR=$(echo $LATEST_COMPUTER | cut -d. -f1)
+          NEXT_COMPUTER_MAJOR=$((COMPUTER_MAJOR + 1))
+
+          if [[ "$OSTYPE" == "darwin"* ]]; then
+            sed -i '' "s/\"cua-computer>=.*\"/\"cua-computer>=$LATEST_COMPUTER,<$NEXT_COMPUTER_MAJOR.0.0\"/" pyproject.toml
+          else
+            sed -i "s/\"cua-computer>=.*\"/\"cua-computer>=$LATEST_COMPUTER,<$NEXT_COMPUTER_MAJOR.0.0\"/" pyproject.toml
+          fi
+
+          echo "Updated dependencies in pyproject.toml:"
+          grep "cua-computer" pyproject.toml
 
   publish:
     needs: prepare
@@ -71,4 +129,5 @@ jobs:
       tag_name: "cli-v${{ needs.prepare.outputs.version }}"
       release_name: "cua-cli v${{ needs.prepare.outputs.version }}"
       module_path: "libs/python/cua-cli"
-      body: ""
+      body: |
+        **Dependencies:** cua-computer ${{ needs.prepare.outputs.computer_version }}

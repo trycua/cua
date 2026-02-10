@@ -20,38 +20,8 @@
 
 </div>
 
-## CuaBot - Co-op computer-use for any agent
-
-`cuabot` gives any coding agent a seamless sandbox for computer-use. Individual windows appear natively on your desktop with H.265, shared clipboard, and audio.
-
-```bash
-npx cuabot                 # Setup onboarding
-```
-
-```bash
-# Run any agent in a sandbox
-cuabot claude              # Claude Code
-cuabot openclaw            # OpenClaw in the sandbox
-
-# Run any GUI workflow in a sandbox
-cuabot chromium
-cuabot --screenshot
-cuabot --type "hello"
-cuabot --click <x> <y> [button]
-```
-
-Built-in support for `agent-browser` and `agent-device` (iOS, Android) out of the box.
-
-<div align="center">
-
-**[Get Started](https://cua.ai/docs/cuabot/cuabot)** | **[Installation](https://cua.ai/docs/cuabot/install)** | _First spotted at [ClawCon](https://www.claw-con.com/)_
-
 <div align="center">
   <img src="img/cuabot-screenshot.png" alt="cuabot screenshot" style="max-height: 32em;">
-</div>
-
-<img width="120" alt="cuaXclawdbot_nbg" src="https://github.com/user-attachments/assets/8b92237d-6e9b-4b3a-ae9a-b3560622ec1d" />
-
 </div>
 
 ---
@@ -106,6 +76,36 @@ Built-in support for `agent-browser` and `agent-device` (iOS, Android) out of th
 </div>
 
 ---
+
+## CuaBot - Co-op computer-use for any agent
+
+`cuabot` gives any coding agent a seamless sandbox for computer-use. Individual windows appear natively on your desktop with H.265, shared clipboard, and audio.
+
+```bash
+npx cuabot                 # Setup onboarding
+```
+
+```bash
+# Run any agent in a sandbox
+cuabot claude              # Claude Code
+cuabot openclaw            # OpenClaw in the sandbox
+
+# Run any GUI workflow in a sandbox
+cuabot chromium
+cuabot --screenshot
+cuabot --type "hello"
+cuabot --click <x> <y> [button]
+```
+
+Built-in support for `agent-browser` and `agent-device` (iOS, Android) out of the box.
+
+<div align="center">
+
+**[Get Started](https://cua.ai/docs/cuabot/cuabot)** | **[Installation](https://cua.ai/docs/cuabot/install)** | _First spotted at [ClawCon](https://www.claw-con.com/)_
+
+  <img width="120" alt="cuaXclawdbot_nbg" src="https://github.com/user-attachments/assets/8b92237d-6e9b-4b3a-ae9a-b3560622ec1d" />
+
+</div>
 
 ## Cua - Agentic UI Automation & Code Execution
 

@@ -532,19 +532,16 @@ def cmd_vnc(args: argparse.Namespace) -> int:
         print_error(f"Sandbox '{args.name}' not found.")
         return 1
 
-    vnc_url = vm_info.get("vnc_url")
+    # Always construct VNC URL from host (the API's vnc_url may use a stale domain)
+    host = vm_info.get("host")
+    password = vm_info.get("password")
 
-    if not vnc_url:
-        # Try to construct it manually
-        host = vm_info.get("host")
-        password = vm_info.get("password")
-
-        if host and password:
-            encoded_password = quote(password, safe="")
-            vnc_url = f"https://{host}/vnc.html?autoconnect=true&password={encoded_password}&show_dot=true"
-        else:
-            print_error("Could not determine VNC URL. Sandbox may not be ready.")
-            return 1
+    if host and password:
+        encoded_password = quote(password, safe="")
+        vnc_url = f"https://{host}/vnc.html?autoconnect=true&password={encoded_password}&show_dot=true"
+    else:
+        print_error("Could not determine VNC URL. Sandbox may not be ready.")
+        return 1
 
     print_info(f"Opening VNC: {vnc_url}")
     webbrowser.open(vnc_url)

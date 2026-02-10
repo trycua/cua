@@ -54,7 +54,10 @@ For more information, visit https://docs.trycua.com
 def main() -> int:
     """Main entry point for the CLI."""
     # Suppress noisy INFO logs from dependencies (computer, core.telemetry, etc.)
+    # Must set on specific loggers since they configure their own handlers at import time
     logging.basicConfig(level=logging.WARNING)
+    for name in ("computer", "core", "core.telemetry"):
+        logging.getLogger(name).setLevel(logging.WARNING)
 
     parser = create_parser()
     args = parser.parse_args()

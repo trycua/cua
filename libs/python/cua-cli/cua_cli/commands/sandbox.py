@@ -362,7 +362,7 @@ def cmd_get(args: argparse.Namespace) -> int:
     if args.json:
         data = result if args.show_passwords else _redact_sensitive(result)
         print_json(data)
-        return 0
+        return 1 if result.get("status") == "not_found" else 0
 
     if result.get("status") == "not_found":
         print_error(f"Sandbox '{args.name}' not found.")

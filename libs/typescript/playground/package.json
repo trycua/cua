@@ -25,6 +25,7 @@
       "import": "./dist/index.js",
       "types": "./dist/index.d.ts"
     },
+    "./styles.css": "./dist/styles.css",
     "./package.json": "./package.json"
   },
   "publishConfig": {

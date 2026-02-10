@@ -65,7 +65,7 @@
           <picture>
             <source media="(prefers-color-scheme: dark)" srcset="img/card-cua-bot-dark.png">
             <source media="(prefers-color-scheme: light)" srcset="img/card-cua-bot-light.png">
-            <img src="img/card-cua-bot-light.png" alt="Cua Bot" width="280">
+            <img src="img/card-cua-bot-light.png" alt="Cua Bot" width="600">
           </picture>
         </a>
       </td>

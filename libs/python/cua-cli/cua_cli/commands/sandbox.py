@@ -238,6 +238,12 @@ def _get_provider():
     return CloudProvider(api_key=api_key)
 
 
+def _redact_sensitive(vm: dict) -> dict:
+    """Remove password and VNC URL from a VM dict."""
+    redacted = {k: v for k, v in vm.items() if k not in ("password", "vnc_url")}
+    return redacted
+
+
 def cmd_list(args: argparse.Namespace) -> int:
     """List all sandboxes."""
 
@@ -248,7 +254,8 @@ def cmd_list(args: argparse.Namespace) -> int:
     vms = run_async(_list())
 
     if args.json:
-        print_json(vms)
+        data = vms if args.show_passwords else [_redact_sensitive(vm) for vm in vms]
+        print_json(data)
         return 0
 
     if not vms:
@@ -343,8 +350,10 @@ def cmd_get(args: argparse.Namespace) -> int:
             status_info = await provider.get_vm(args.name)
 
             if vm_info:
-                # Merge status info
-                vm_info["status"] = status_info.get("status", vm_info.get("status"))
+                # Merge status info (only if get_vm returned a real status)
+                probe_status = status_info.get("status")
+                if probe_status and probe_status != "not_found":
+                    vm_info["status"] = probe_status
                 vm_info["os_type"] = status_info.get("os_type") or vm_info.get("os_type")
                 return vm_info
             else:
@@ -353,8 +362,9 @@ def cmd_get(args: argparse.Namespace) -> int:
     result = run_async(_get())
 
     if args.json:
-        print_json(result)
-        return 0
+        data = result if args.show_passwords else _redact_sensitive(result)
+        print_json(data)
+        return 1 if result.get("status") == "not_found" else 0
 
     if result.get("status") == "not_found":
         print_error(f"Sandbox '{args.name}' not found.")
@@ -522,19 +532,16 @@ def cmd_vnc(args: argparse.Namespace) -> int:
         print_error(f"Sandbox '{args.name}' not found.")
         return 1
 
-    vnc_url = vm_info.get("vnc_url")
+    # Always construct VNC URL from host (the API's vnc_url may use a stale domain)
+    host = vm_info.get("host")
+    password = vm_info.get("password")
 
-    if not vnc_url:
-        # Try to construct it manually
-        host = vm_info.get("host")
-        password = vm_info.get("password")
-
-        if host and password:
-            encoded_password = quote(password, safe="")
-            vnc_url = f"https://{host}/vnc.html?autoconnect=true&password={encoded_password}&show_dot=true"
-        else:
-            print_error("Could not determine VNC URL. Sandbox may not be ready.")
-            return 1
+    if host and password:
+        encoded_password = quote(password, safe="")
+        vnc_url = f"https://{host}/vnc.html?autoconnect=true&password={encoded_password}&show_dot=true"
+    else:
+        print_error("Could not determine VNC URL. Sandbox may not be ready.")
+        return 1
 
     print_info(f"Opening VNC: {vnc_url}")
     webbrowser.open(vnc_url)

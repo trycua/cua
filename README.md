@@ -91,6 +91,17 @@ Built-in support for `agent-browser` and `agent-device` (iOS, Android) out of th
         </a>
       </td>
     </tr>
+    <tr>
+      <td colspan="3" align="center">
+        <a href="https://cua.ai/docs/cuabot/guide/getting-started/introduction">
+          <picture>
+            <source media="(prefers-color-scheme: dark)" srcset="img/card-cua-bot-dark.png">
+            <source media="(prefers-color-scheme: light)" srcset="img/card-cua-bot-light.png">
+            <img src="img/card-cua-bot-light.png" alt="Cua Bot" width="888">
+          </picture>
+        </a>
+      </td>
+    </tr>
   </table>
 </div>
 

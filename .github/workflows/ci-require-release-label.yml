@@ -47,50 +47,62 @@ jobs:
           )
 
           # Find affected services
-          AFFECTED=""
+          AFFECTED=()
           for path_prefix in "${!PATH_TO_SERVICE[@]}"; do
             if echo "$CHANGED_FILES" | grep -q "^${path_prefix}"; then
               service="${PATH_TO_SERVICE[$path_prefix]}"
-              AFFECTED="${AFFECTED}${service}\n"
+              AFFECTED+=("$service")
             fi
           done
 
-          AFFECTED=$(echo -e "$AFFECTED" | sort -u | sed '/^$/d')
+          # Deduplicate
+          IFS=$'\n' AFFECTED=($(printf '%s\n' "${AFFECTED[@]}" | sort -u)); unset IFS
 
-          if [ -z "$AFFECTED" ]; then
+          if [ ${#AFFECTED[@]} -eq 0 ]; then
             echo "No publishable packages affected, skipping."
             exit 0
           fi
 
           echo "Affected packages:"
-          echo "$AFFECTED" | while read -r svc; do echo "  - $svc"; done
+          for svc in "${AFFECTED[@]}"; do echo "  - $svc"; done
 
-          # Check for release label
+          # Get PR labels
           LABELS='${{ toJSON(github.event.pull_request.labels.*.name) }}'
-          HAS_RELEASE_LABEL=false
 
-          for label in "release:patch" "release:minor" "release:major" "no-release"; do
-            if echo "$LABELS" | grep -q "\"${label}\""; then
-              HAS_RELEASE_LABEL=true
-              echo "Found label: $label"
-              break
+          # If no-release is present, everything is covered
+          if echo "$LABELS" | grep -q '"no-release"'; then
+            echo "no-release label found, all packages covered."
+            exit 0
+          fi
+
+          # Check which affected packages have a release:<service> label
+          UNCOVERED=()
+          for svc in "${AFFECTED[@]}"; do
+            if echo "$LABELS" | grep -q "\"release:${svc}\""; then
+              echo "Covered: $svc (has release:${svc} label)"
+            else
+              UNCOVERED+=("$svc")
             fi
           done
 
-          if [ "$HAS_RELEASE_LABEL" = "false" ]; then
-            echo ""
-            echo "=========================================="
-            echo "ERROR: Missing release label!"
-            echo "=========================================="
-            echo ""
-            echo "This PR changes the following publishable packages:"
-            echo "$AFFECTED" | while read -r svc; do echo "  - $svc"; done
-            echo ""
-            echo "Please add one of these labels to the PR:"
-            echo "  release:patch  - bump patch version (bug fixes)"
-            echo "  release:minor  - bump minor version (new features)"
-            echo "  release:major  - bump major version (breaking changes)"
-            echo "  no-release     - skip publishing (e.g., tests/docs only)"
-            echo ""
-            exit 1
+          if [ ${#UNCOVERED[@]} -eq 0 ]; then
+            echo "All affected packages have release labels."
+            exit 0
           fi
+
+          echo ""
+          echo "=========================================="
+          echo "ERROR: Missing release labels!"
+          echo "=========================================="
+          echo ""
+          echo "These packages are changed but have no release label:"
+          for svc in "${UNCOVERED[@]}"; do echo "  - $svc"; done
+          echo ""
+          echo "Add a label for each package you want to release:"
+          for svc in "${UNCOVERED[@]}"; do echo "  release:${svc}"; done
+          echo ""
+          echo "Or add 'no-release' to skip all releases."
+          echo ""
+          echo "Optionally add 'bump:minor' or 'bump:major' (default is patch)."
+          echo ""
+          exit 1

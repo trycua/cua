@@ -61,7 +61,7 @@
     </tr>
     <tr>
       <td colspan="3" align="center">
-        <a href="https://cua.ai/docs/cuabot">
+        <a href="https://cua.ai/docs/cuabot/guide/getting-started/introduction">
           <picture>
             <source media="(prefers-color-scheme: dark)" srcset="img/card-cua-bot-dark.png">
             <source media="(prefers-color-scheme: light)" srcset="img/card-cua-bot-light.png">

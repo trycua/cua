@@ -350,8 +350,10 @@ def cmd_get(args: argparse.Namespace) -> int:
             status_info = await provider.get_vm(args.name)
 
             if vm_info:
-                # Merge status info
-                vm_info["status"] = status_info.get("status", vm_info.get("status"))
+                # Merge status info (only if get_vm returned a real status)
+                probe_status = status_info.get("status")
+                if probe_status and probe_status != "not_found":
+                    vm_info["status"] = probe_status
                 vm_info["os_type"] = status_info.get("os_type") or vm_info.get("os_type")
                 return vm_info
             else:

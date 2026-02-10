@@ -65,43 +65,50 @@ class CloudProvider(BaseVMProvider):
         pass
 
     async def get_vm(self, name: str, storage: Optional[str] = None) -> Dict[str, Any]:
-        """Get VM information by querying the VM status endpoint.
+        """Get VM information via the public API and optionally probe for os_type.
 
-        - Build hostname via _get_host_for_vm(name) using cached host or fallback
-        - Probe https://{hostname}:8443/status with a short timeout
-        - If JSON contains a "status" field, return it; otherwise infer
-        - Fallback to DNS resolve check to distinguish unknown vs not_found
+        Uses GET /v1/vms/:name as source of truth for VM existence and status,
+        then probes the computer-server for supplementary info (os_type).
         """
         hostname = await self._get_host_for_vm(name)
+        api_url = f"https://{hostname}:8443"
 
-        # Try HTTPS probe to the computer-server status endpoint (8443)
+        # Query the API for authoritative VM info
+        url = f"{self.api_base}/v1/vms/{name}"
+        headers = {"Authorization": f"Bearer {self.api_key}", "Accept": "application/json"}
         try:
-            timeout = aiohttp.ClientTimeout(total=3)
-            async with aiohttp.ClientSession(timeout=timeout) as session:
-                url = f"https://{hostname}:8443/status"
-                async with session.get(url, allow_redirects=False) as resp:
-                    status_code = resp.status
-                    vm_status: str
-                    vm_os_type: Optional[str] = None
-                    if status_code == 200:
-                        try:
-                            data = await resp.json(content_type=None)
-                            vm_status = str(data.get("status", "ok"))
-                            vm_os_type = str(data.get("os_type"))
-                        except Exception:
-                            vm_status = "unknown"
-                    elif status_code < 500:
-                        vm_status = "unknown"
-                    else:
-                        vm_status = "unknown"
-                    return {
-                        "name": name,
-                        "status": "running" if vm_status == "ok" else vm_status,
-                        "api_url": f"https://{hostname}:8443",
-                        "os_type": vm_os_type,
-                    }
-        except Exception:
-            return {"name": name, "status": "not_found", "api_url": f"https://{hostname}:8443"}
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, headers=headers) as resp:
+                    if resp.status == 404:
+                        return {"name": name, "status": "not_found", "api_url": api_url}
+                    if resp.status == 401:
+                        return {"name": name, "status": "unauthorized", "api_url": api_url}
+                    if resp.status != 200:
+                        text = await resp.text()
+                        logger.error(f"get_vm API error: HTTP {resp.status} - {text}")
+                        return {"name": name, "status": "unknown", "api_url": api_url}
+                    vm_info = await resp.json(content_type=None)
+        except Exception as e:
+            logger.error(f"get_vm API request failed: {e}")
+            return {"name": name, "status": "unknown", "api_url": api_url}
+
+        # Enrich with host-derived URLs
+        host = vm_info.get("host")
+        if isinstance(host, str) and host:
+            self._host_cache[name] = host
+            hostname = host
+            api_url = f"https://{hostname}:8443"
+        vm_info["api_url"] = api_url
+
+        password = vm_info.get("password")
+        if not vm_info.get("vnc_url") and isinstance(password, str) and password:
+            vm_info["vnc_url"] = f"https://{hostname}/vnc.html?autoconnect=true&password={password}"
+
+        # Map "os" from API to "os_type" for backward compatibility
+        if vm_info.get("os") and not vm_info.get("os_type"):
+            vm_info["os_type"] = vm_info["os"]
+
+        return vm_info
 
     async def list_vms(self) -> ListVMsResponse:
         url = f"{self.api_base}/v1/vms"

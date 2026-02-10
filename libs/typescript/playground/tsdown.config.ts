@@ -5,6 +5,7 @@ export default defineConfig([
     entry: ['./src/index.ts'],
     platform: 'browser',
     dts: true,
+    copy: ['./src/styles.css'],
     external: [
       // React - MUST be external to avoid duplicate React instances
       'react',

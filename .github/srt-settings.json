@@ -18,23 +18,8 @@
     "allowAllUnixSockets": true
   },
   "filesystem": {
-    "denyRead": [
-      "~/.ssh",
-      "~/.gnupg",
-      "~/.aws/credentials"
-    ],
-    "allowWrite": [
-      ".",
-      "/tmp",
-      "/home/runner",
-      "/home/runner/work"
-    ],
-    "denyWrite": [
-      ".env",
-      ".env.local",
-      "*.pem",
-      "*.key",
-      "secrets/"
-    ]
+    "denyRead": ["~/.ssh", "~/.gnupg", "~/.aws/credentials"],
+    "allowWrite": [".", "/tmp", "/home/runner", "/home/runner/work"],
+    "denyWrite": [".env", ".env.local", "*.pem", "*.key", "secrets/"]
   }
 }

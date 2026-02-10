@@ -42,6 +42,7 @@ export {
   useFindDefaultModel,
 } from './hooks/usePlayground';
 export { useAgentRequest } from './hooks/useAgentRequest';
+export { useDarkMode } from './hooks/useDarkMode';
 
 // Primitive Components
 export {

@@ -86,26 +86,26 @@ jobs:
           echo "Affected packages:"
           for svc in "${!AFFECTED_MAP[@]}"; do echo "  - $svc"; done
 
-          # Split into labeled (auto-release) and unlabeled (notify)
+          # Collect labeled packages for auto-release
           LABELED=()
-          UNLABELED=()
           for svc in "${!AFFECTED_MAP[@]}"; do
             if echo "$LABELS" | grep -q "\"release:${svc}\""; then
               LABELED+=("$svc")
-            else
-              UNLABELED+=("$svc")
             fi
           done
 
-          # ── Auto-release labeled packages ──
-          if [ ${#LABELED[@]} -gt 0 ]; then
-            echo ""
-            echo "Packages with release labels (will auto-release):"
-            for svc in "${LABELED[@]}"; do echo "  - $svc"; done
+          if [ ${#LABELED[@]} -eq 0 ]; then
+            echo "No release labels found. Daily digest will catch unreleased packages."
+            exit 0
+          fi
 
-            # Cascade dedup
-            declare -A RELEASE_MAP
-            for svc in "${LABELED[@]}"; do RELEASE_MAP["$svc"]=1; done
+          echo ""
+          echo "Packages with release labels (will auto-release):"
+          for svc in "${LABELED[@]}"; do echo "  - $svc"; done
+
+          # Cascade dedup
+          declare -A RELEASE_MAP
+          for svc in "${LABELED[@]}"; do RELEASE_MAP["$svc"]=1; done
 
             # pypi/core cascades to pypi/computer and pypi/agent
             if [[ -n "${RELEASE_MAP["pypi/core"]}" ]]; then
@@ -139,38 +139,6 @@ jobs:
               echo "Triggered successfully."
               sleep 15
             done
-          fi
-
-          # ── Notify about unlabeled packages via AlertManager ──
-          if [ ${#UNLABELED[@]} -gt 0 ]; then
-            echo ""
-            echo "Packages WITHOUT release labels (sending Slack reminder):"
-            for svc in "${UNLABELED[@]}"; do echo "  - $svc"; done
-
-            # Build comma-separated list
-            UNLABELED_LIST=$(printf '%s, ' "${UNLABELED[@]}")
-            UNLABELED_LIST="${UNLABELED_LIST%, }"
-
-            # Send alert to AlertManager → Slack
-            curl -s -X POST https://am.cua.ai/api/v2/alerts \
-              -H "Content-Type: application/json" \
-              -d "[
-                {
-                  \"labels\": {
-                    \"alertname\": \"UnreleasedPackageChanges\",
-                    \"severity\": \"warning\",
-                    \"source\": \"github-actions\"
-                  },
-                  \"annotations\": {
-                    \"summary\": \"PR #${PR_NUMBER} merged with unreleased package changes\",
-                    \"description\": \"PR #${PR_NUMBER} (${PR_TITLE}) merged with changes to packages that were not labeled for release: ${UNLABELED_LIST}. Add release labels and re-run, or bump manually via the CD: Bump Version workflow.\"
-                  },
-                  \"generatorURL\": \"${PR_URL}\"
-                }
-              ]"
-
-            echo ""
-            echo "Slack notification sent for unreleased packages."
           fi
 
           echo ""

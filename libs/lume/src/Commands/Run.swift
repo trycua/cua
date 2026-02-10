@@ -53,11 +53,14 @@ struct Run: AsyncParsableCommand {
 
     @Option(
         name: .customLong("network"),
-        help: "Network mode: 'nat' (default), 'bridged' (auto-select interface), or 'bridged:<interface>' (e.g. 'bridged:en0')")
-    var network: String = "nat"
+        help: "Optional network override: 'nat', 'bridged', or 'bridged:<interface>' (e.g. 'bridged:en0'). Defaults to the VM's configured mode.")
+    var network: String?
 
-    private var parsedNetworkMode: NetworkMode {
+    private var parsedNetworkMode: NetworkMode? {
         get throws {
+            guard let network else {
+                return nil
+            }
             guard let mode = NetworkMode.parse(network) else {
                 throw ValidationError(
                     "Invalid network mode '\(network)'. Expected 'nat', 'bridged', or 'bridged:<interface>'."

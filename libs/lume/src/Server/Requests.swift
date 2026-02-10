@@ -2,6 +2,15 @@ import ArgumentParser
 import Foundation
 import Virtualization
 
+private func parseNetworkModeString(_ value: String) throws -> NetworkMode {
+    guard let mode = NetworkMode.parse(value) else {
+        throw ValidationError(
+            "Invalid network mode '\(value)'. Expected 'nat', 'bridged', or 'bridged:<interface>'."
+        )
+    }
+    return mode
+}
+
 struct RunVMRequest: Codable {
     let noDisplay: Bool?
     let sharedDirectories: [SharedDirectoryRequest]?
@@ -33,6 +42,13 @@ struct RunVMRequest: Codable {
                 readOnly: dir.readOnly ?? false
             )
         }
+    }
+
+    func parseNetworkMode() throws -> NetworkMode? {
+        guard let network else {
+            return nil
+        }
+        return try parseNetworkModeString(network)
     }
 }
 
@@ -76,6 +92,13 @@ struct CreateVMRequest: Codable {
             memory: try parseSize(memory),
             diskSize: try parseSize(diskSize)
         )
+    }
+
+    func parseNetworkMode() throws -> NetworkMode {
+        guard let network else {
+            return .nat
+        }
+        return try parseNetworkModeString(network)
     }
 }
 

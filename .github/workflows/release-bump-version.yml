@@ -183,31 +183,8 @@ jobs:
           BUMPVERSION_CONFIG="${{ steps.package.outputs.bumpversion_config }}"
           clean_tag "${{ steps.package.outputs.directory }}" "${BUMPVERSION_CONFIG:-.bumpversion.cfg}"
 
-          # Clean cascade tags when bumping pypi/core (also bumps computer and agent)
-          if [ "${{ inputs.service }}" == "pypi/core" ]; then
-            clean_tag "libs/python/computer"
-            clean_tag "libs/python/agent"
-          fi
-
-          # Clean cascade tags when bumping pypi/computer (also bumps agent)
-          if [ "${{ inputs.service }}" == "pypi/computer" ]; then
-            clean_tag "libs/python/agent"
-          fi
-
-          # Clean cascade tags when bumping pypi/som (also bumps agent)
-          if [ "${{ inputs.service }}" == "pypi/som" ]; then
-            clean_tag "libs/python/agent"
-          fi
-
-          # Clean cascade tags when bumping npm/core (also bumps npm/computer)
-          if [ "${{ inputs.service }}" == "npm/core" ]; then
-            clean_tag "libs/typescript/computer"
-          fi
-
-      - name: Save starting commit
-        id: start_commit
-        run: |
-          echo "sha=$(git rev-parse HEAD)" >> $GITHUB_OUTPUT
+          # No cascade tag cleaning — each package is bumped independently.
+          # Dependent packages use version ranges and resolve deps at publish time.
 
       - name: Run bump2version
         run: |
@@ -218,58 +195,16 @@ jobs:
           fi
           bump2version $CONFIG_FLAG ${{ inputs.bump_type }}
 
-      - name: Also bump cua-computer (when bumping cua-core)
-        if: ${{ inputs.service == 'pypi/core' }}
-        run: |
-          cd libs/python/computer
-          bump2version ${{ inputs.bump_type }}
-
-      - name: Also bump cua-agent (when bumping cua-computer or cua-core)
-        if: ${{ inputs.service == 'pypi/computer' || inputs.service == 'pypi/core' }}
-        run: |
-          cd libs/python/agent
-          bump2version ${{ inputs.bump_type }}
-
-      - name: Also bump cua-agent (when bumping cua-som)
-        if: ${{ inputs.service == 'pypi/som' }}
-        run: |
-          cd libs/python/agent
-          bump2version ${{ inputs.bump_type }}
-
-      - name: Also bump @trycua/computer (when bumping @trycua/core)
-        if: ${{ inputs.service == 'npm/core' }}
-        run: |
-          cd libs/typescript/computer
-          bump2version ${{ inputs.bump_type }}
-
-      - name: Collect all created tags
+      - name: Collect created tag
         id: collect_tags
         run: |
-          # Find all tags pointing to commits after the starting commit
-          START_SHA="${{ steps.start_commit.outputs.sha }}"
-          echo "Starting commit: $START_SHA"
-
-          # Get all local tags and filter to those pointing to commits after START_SHA
-          ALL_TAGS=""
-          for tag in $(git tag --points-at HEAD) $(git tag --points-at HEAD~1 2>/dev/null) $(git tag --points-at HEAD~2 2>/dev/null); do
-            if [ -n "$tag" ]; then
-              TAG_SHA=$(git rev-parse "$tag^{commit}" 2>/dev/null || true)
-              if [ -n "$TAG_SHA" ]; then
-                # Check if this tag's commit is a descendant of (or equal to) START_SHA
-                if git merge-base --is-ancestor "$START_SHA" "$TAG_SHA" 2>/dev/null; then
-                  ALL_TAGS="$ALL_TAGS $tag"
-                fi
-              fi
-            fi
-          done
-
-          # Remove duplicates and trim
-          ALL_TAGS=$(echo "$ALL_TAGS" | tr ' ' '\n' | sort -u | tr '\n' ' ' | xargs)
+          # Only one tag is created per bump (no cascades)
+          ALL_TAGS=$(git tag --points-at HEAD | tr '\n' ' ' | xargs)
           echo "Tags to push: $ALL_TAGS"
           echo "tags=$ALL_TAGS" >> $GITHUB_OUTPUT
 
       - name: Capture bumped agent version
-        if: ${{ inputs.service == 'pypi/agent' || inputs.service == 'pypi/computer' || inputs.service == 'pypi/core' || inputs.service == 'pypi/som' }}
+        if: ${{ inputs.service == 'pypi/agent' }}
         id: agent_version
         run: |
           cd libs/python/agent
@@ -305,7 +240,7 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Capture bumped computer version
-        if: ${{ inputs.service == 'pypi/computer' || inputs.service == 'pypi/core' }}
+        if: ${{ inputs.service == 'pypi/computer' }}
         id: computer_version
         run: |
           cd libs/python/computer
@@ -358,7 +293,7 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Capture bumped npm/computer version
-        if: ${{ inputs.service == 'npm/computer' || inputs.service == 'npm/core' }}
+        if: ${{ inputs.service == 'npm/computer' }}
         id: npm_computer_version
         run: |
           VERSION=$(grep -oP '"version": "\K[^"]+' libs/typescript/computer/package.json)
@@ -445,22 +380,10 @@ jobs:
               # Rebase our commit(s) onto the latest main
               git rebase origin/main
 
-              # Update ALL local tags to point to their rebased commits
-              # Each tag should point to the commit with its corresponding message
+              # Update the tag to point to the rebased commit
               for tag in $ALL_TAGS; do
-                # Find the commit message pattern for this tag
-                TAG_MSG=$(echo "$tag" | sed 's/-v/ to v/')
-                TAG_MSG="Bump $TAG_MSG"
-                # Find the commit with this message and update the tag
-                COMMIT_FOR_TAG=$(git log --oneline --grep="$TAG_MSG" -1 --format="%H" 2>/dev/null || true)
-                if [ -n "$COMMIT_FOR_TAG" ]; then
-                  git tag -f "$tag" "$COMMIT_FOR_TAG"
-                  echo "Updated tag $tag to commit $COMMIT_FOR_TAG"
-                else
-                  # Fallback: point to HEAD
-                  git tag -f "$tag" HEAD
-                  echo "Updated tag $tag to HEAD (fallback)"
-                fi
+                git tag -f "$tag" HEAD
+                echo "Updated tag $tag to rebased HEAD"
               done
             fi
 
@@ -480,17 +403,14 @@ jobs:
 
               echo "Successfully updated main branch!"
 
-              # Now create ALL tags via API (only after main is successfully updated)
-              echo "Creating tags via API..."
+              # Create tag via API (only after main is successfully updated)
+              echo "Creating tag via API..."
               for tag in $ALL_TAGS; do
                 echo "Creating tag: $tag"
-                # Get the SHA for this specific tag
-                TAG_SHA=$(git rev-parse "$tag^{commit}" 2>/dev/null || echo "$COMMIT_SHA")
-                # Delete existing remote tag if present (in case of retry with different SHA)
                 gh api -X DELETE /repos/${{ github.repository }}/git/refs/tags/${tag} 2>/dev/null || true
                 gh api /repos/${{ github.repository }}/git/refs \
                   -f ref="refs/tags/${tag}" \
-                  -f sha="${TAG_SHA}"
+                  -f sha="${COMMIT_SHA}"
                 echo "Tag $tag created successfully!"
               done
 

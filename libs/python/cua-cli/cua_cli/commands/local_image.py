@@ -30,7 +30,13 @@ from cua_cli.commands.platform import (
     check_lume,
 )
 from cua_cli.utils.docker import allocate_ports, create_overlay_copy
-from cua_cli.utils.output import console, print_error, print_info, print_success, print_warning
+from cua_cli.utils.output import (
+    console,
+    print_error,
+    print_info,
+    print_success,
+    print_warning,
+)
 from cua_cli.utils.paths import get_data_dir
 from cua_cli.utils.registry import (
     auto_discover_images,

@@ -58,6 +58,15 @@
           </picture>
         </a>
       </td>
+      <td align="center">
+        <a href="https://cua.ai/docs/cuabot">
+          <picture>
+            <source media="(prefers-color-scheme: dark)" srcset="img/card-cua-bot-dark.png">
+            <source media="(prefers-color-scheme: light)" srcset="img/card-cua-bot-light.png">
+            <img src="img/card-cua-bot-light.png" alt="Cua Bot" width="280">
+          </picture>
+        </a>
+      </td>
     </tr>
   </table>
 </div>

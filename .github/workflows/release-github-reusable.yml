@@ -104,7 +104,7 @@ jobs:
             fi
 
             # Link PR numbers: (#123) -> ([#123](https://github.com/REPO/pull/123))
-            LINKED_SUBJECT=$(echo "$subject" | sed 's/(#\([0-9]*\))/([#\1](https:\/\/github.com\/${{ github.repository }}\/pull\/\1))/g')
+            LINKED_SUBJECT=$(echo "$subject" | sed 's~(#\([0-9]*\))~([#\1](https://github.com/${{ github.repository }}/pull/\1))~g')
 
             SHORT_SHA=$(echo ${sha} | cut -c1-7)
             NOTES="${NOTES}* ${LINKED_SUBJECT} (${SHORT_SHA}) by @${USERNAME}"$'\n'

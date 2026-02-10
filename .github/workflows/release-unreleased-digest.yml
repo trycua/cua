@@ -2,8 +2,8 @@ name: "CD: Unreleased Changes Digest"
 
 on:
   schedule:
-    # Daily at 9am UTC (Mon-Fri)
-    - cron: "0 9 * * 1-5"
+    # Daily at 8pm PT / 4am UTC (Mon-Fri PT = Tue-Sat UTC)
+    - cron: "0 4 * * 2-6"
   workflow_dispatch: {}
 
 jobs:

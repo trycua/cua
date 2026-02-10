@@ -1,0 +1,120 @@
+name: "CI: Release Reminder"
+
+on:
+  pull_request:
+    types: [opened, synchronize, labeled, unlabeled]
+
+jobs:
+  release-reminder:
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Check for publishable changes and remind
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PR_NUMBER="${{ github.event.pull_request.number }}"
+          REPO="${{ github.repository }}"
+
+          # Get changed files in this PR
+          CHANGED_FILES=$(gh pr diff "$PR_NUMBER" --repo "$REPO" --name-only 2>/dev/null || true)
+
+          if [ -z "$CHANGED_FILES" ]; then
+            exit 0
+          fi
+
+          # Map paths to publishable services
+          declare -A PATH_TO_SERVICE=(
+            ["libs/python/cua-cli/"]="pypi/cli"
+            ["libs/python/agent/"]="pypi/agent"
+            ["libs/python/computer/"]="pypi/computer"
+            ["libs/python/core/"]="pypi/core"
+            ["libs/python/som/"]="pypi/som"
+            ["libs/python/bench-ui/"]="pypi/bench-ui"
+            ["libs/cua-bench/"]="pypi/bench"
+            ["libs/python/computer-server/"]="pypi/computer-server"
+            ["libs/python/mcp-server/"]="pypi/mcp-server"
+            ["libs/typescript/cua-cli/"]="npm/cli"
+            ["libs/typescript/computer/"]="npm/computer"
+            ["libs/typescript/core/"]="npm/core"
+            ["libs/typescript/playground/"]="npm/playground"
+            ["libs/cuabot/"]="npm/cuabot"
+            ["libs/xfce/"]="docker/xfce"
+            ["libs/kasm/"]="docker/kasm"
+            ["libs/lumier/"]="docker/lumier"
+            ["libs/qemu-docker/android/"]="docker/qemu-android"
+            ["libs/qemu-docker/linux/"]="docker/qemu-linux"
+            ["libs/qemu-docker/windows/"]="docker/qemu-windows"
+            ["libs/lume/"]="lume"
+          )
+
+          # Find affected services
+          AFFECTED=()
+          for path_prefix in "${!PATH_TO_SERVICE[@]}"; do
+            if echo "$CHANGED_FILES" | grep -q "^${path_prefix}"; then
+              AFFECTED+=("${PATH_TO_SERVICE[$path_prefix]}")
+            fi
+          done
+
+          # Deduplicate and sort
+          IFS=$'\n' AFFECTED=($(printf '%s\n' "${AFFECTED[@]}" | sort -u)); unset IFS
+
+          if [ ${#AFFECTED[@]} -eq 0 ]; then
+            echo "No publishable packages affected."
+            exit 0
+          fi
+
+          # Check which ones already have release labels
+          LABELS='${{ toJSON(github.event.pull_request.labels.*.name) }}'
+          HAS_NO_RELEASE=false
+          if echo "$LABELS" | grep -q '"no-release"'; then
+            HAS_NO_RELEASE=true
+          fi
+
+          LABELED=()
+          UNLABELED=()
+          for svc in "${AFFECTED[@]}"; do
+            if echo "$LABELS" | grep -q "\"release:${svc}\""; then
+              LABELED+=("$svc")
+            else
+              UNLABELED+=("$svc")
+            fi
+          done
+
+          # Build comment body
+          COMMENT_MARKER="<!-- release-reminder -->"
+          BODY="${COMMENT_MARKER}\n"
+          BODY+="### 📦 Publishable packages changed\n\n"
+
+          if [ ${#LABELED[@]} -gt 0 ]; then
+            for svc in "${LABELED[@]}"; do
+              BODY+="- [x] \`${svc}\` — will auto-release on merge\n"
+            done
+          fi
+
+          if [ ${#UNLABELED[@]} -gt 0 ]; then
+            for svc in "${UNLABELED[@]}"; do
+              if [ "$HAS_NO_RELEASE" = "true" ]; then
+                BODY+="- [x] ~\`${svc}\`~ — skipped (no-release)\n"
+              else
+                BODY+="- [ ] \`${svc}\`\n"
+              fi
+            done
+          fi
+
+          if [ "$HAS_NO_RELEASE" = "false" ] && [ ${#UNLABELED[@]} -gt 0 ]; then
+            BODY+="\nAdd \`release:<service>\` labels to auto-release on merge"
+            BODY+=" (+ optional \`bump:minor\` or \`bump:major\`, default is patch)."
+            BODY+="\nOr add \`no-release\` to skip."
+          fi
+
+          # Delete previous reminder comment if exists, then post new one
+          EXISTING_COMMENT_ID=$(gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" \
+            --jq ".[] | select(.body | contains(\"${COMMENT_MARKER}\")) | .id" 2>/dev/null | head -1)
+
+          if [ -n "$EXISTING_COMMENT_ID" ]; then
+            gh api -X DELETE "repos/${REPO}/issues/${PR_NUMBER}/comments/${EXISTING_COMMENT_ID}" 2>/dev/null || true
+          fi
+
+          echo -e "$BODY" | gh pr comment "$PR_NUMBER" --repo "$REPO" --body-file -

@@ -126,7 +126,8 @@ class VM {
             vncUrl: vncUrl,
             ipAddress: ipAddress,
             sshAvailable: sshAvailable,
-            locationName: vmDirContext.storage ?? "home"
+            locationName: vmDirContext.storage ?? "home",
+            networkMode: vmDirContext.config.networkMode.description
         )
     }
 
@@ -134,7 +135,8 @@ class VM {
 
     func run(
         noDisplay: Bool, sharedDirectories: [SharedDirectory], mount: Path?, vncPort: Int = 0,
-        recoveryMode: Bool = false, usbMassStoragePaths: [Path]? = nil
+        recoveryMode: Bool = false, usbMassStoragePaths: [Path]? = nil,
+        networkMode: NetworkMode? = nil
     ) async throws {
         Logger.info(
             "VM.run method called",
@@ -221,7 +223,8 @@ class VM {
                 sharedDirectories: sharedDirectories,
                 mount: mount,
                 recoveryMode: recoveryMode,
-                usbMassStoragePaths: usbMassStoragePaths
+                usbMassStoragePaths: usbMassStoragePaths,
+                networkMode: networkMode
             )
             Logger.info(
                 "Successfully created virtualization service context",
@@ -709,10 +712,14 @@ class VM {
         sharedDirectories: [SharedDirectory] = [],
         mount: Path? = nil,
         recoveryMode: Bool = false,
-        usbMassStoragePaths: [Path]? = nil
+        usbMassStoragePaths: [Path]? = nil,
+        networkMode: NetworkMode? = nil
     ) throws -> VMVirtualizationServiceContext {
         // This is a diagnostic log to track actual file paths on disk for debugging
         try validateDiskState()
+
+        // Use provided networkMode, falling back to config value
+        let effectiveNetworkMode = networkMode ?? vmDirContext.config.networkMode
 
         return VMVirtualizationServiceContext(
             cpuCount: cpuCount,
@@ -726,7 +733,8 @@ class VM {
             diskPath: vmDirContext.diskPath,
             nvramPath: vmDirContext.nvramPath,
             recoveryMode: recoveryMode,
-            usbMassStoragePaths: usbMassStoragePaths
+            usbMassStoragePaths: usbMassStoragePaths,
+            networkMode: effectiveNetworkMode
         )
     }
 

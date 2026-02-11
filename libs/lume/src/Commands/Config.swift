@@ -1,11 +1,12 @@
 import ArgumentParser
 import Foundation
+import Virtualization
 
 struct Config: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "config",
         abstract: "Get or set lume configuration",
-        subcommands: [Get.self, Storage.self, Cache.self, Caching.self, Telemetry.self],
+        subcommands: [Get.self, Storage.self, Cache.self, Caching.self, Telemetry.self, Network.self],
         defaultSubcommand: Get.self
     )
 
@@ -286,6 +287,43 @@ struct Config: ParsableCommand {
                 let controller = LumeController()
                 try controller.setTelemetryEnabled(false)
                 print("Telemetry disabled")
+            }
+        }
+    }
+
+    // MARK: - Network Management Subcommands
+
+    struct Network: ParsableCommand {
+        static let configuration = CommandConfiguration(
+            commandName: "network",
+            abstract: "Manage network settings",
+            subcommands: [Interfaces.self]
+        )
+
+        struct Interfaces: ParsableCommand {
+            static let configuration = CommandConfiguration(
+                commandName: "interfaces",
+                abstract: "List available network interfaces for bridged networking"
+            )
+
+            func run() throws {
+                let interfaces = VZBridgedNetworkInterface.networkInterfaces
+
+                if interfaces.isEmpty {
+                    print("No bridgeable network interfaces found.")
+                    print("")
+                    print("Note: Bridged networking requires the com.apple.vm.networking entitlement.")
+                    return
+                }
+
+                print("Available network interfaces for bridged networking:")
+                print("")
+                for iface in interfaces {
+                    let name = iface.localizedDisplayName ?? "Unknown"
+                    print("  \(iface.identifier) — \(name)")
+                }
+                print("")
+                print("Usage: lume run <vm-name> --network bridged:\(interfaces.first?.identifier ?? "en0")")
             }
         }
     }

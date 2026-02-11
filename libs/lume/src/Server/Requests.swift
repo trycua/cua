@@ -7,6 +7,7 @@ struct RunVMRequest: Codable {
     let sharedDirectories: [SharedDirectoryRequest]?
     let recoveryMode: Bool?
     let storage: String?
+    let network: String?
 
     struct SharedDirectoryRequest: Codable {
         let hostPath: String
@@ -67,6 +68,8 @@ struct CreateVMRequest: Codable {
     let storage: String?
     /// Preset name or path to YAML config file for unattended macOS Setup Assistant automation
     let unattended: String?
+    /// Network mode: "nat" (default), "bridged", or "bridged:<interface>"
+    let network: String?
 
     func parse() throws -> (memory: UInt64, diskSize: UInt64) {
         return (

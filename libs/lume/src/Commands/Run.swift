@@ -56,6 +56,9 @@ struct Run: AsyncParsableCommand {
         help: "Optional network override: 'nat', 'bridged', or 'bridged:<interface>' (e.g. 'bridged:en0'). Defaults to the VM's configured mode.")
     var network: String?
 
+    @Flag(name: .customLong("clipboard"), help: "Enable bidirectional clipboard sync with the VM via SSH (experimental)")
+    var clipboard: Bool = false
+
     private var parsedNetworkMode: NetworkMode? {
         get throws {
             guard let network else {
@@ -133,7 +136,8 @@ struct Run: AsyncParsableCommand {
             recoveryMode: recoveryMode,
             storage: storage,
             usbMassStoragePaths: parsedUSBStorageDevices.isEmpty ? nil : parsedUSBStorageDevices,
-            networkMode: parsedNetworkMode
+            networkMode: parsedNetworkMode,
+            clipboard: clipboard
         )
     }
 }

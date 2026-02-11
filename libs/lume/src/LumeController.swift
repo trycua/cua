@@ -900,7 +900,8 @@ final class LumeController {
         recoveryMode: Bool = false,
         storage: String? = nil,
         usbMassStoragePaths: [Path]? = nil,
-        networkMode: NetworkMode? = nil
+        networkMode: NetworkMode? = nil,
+        clipboard: Bool = false
     ) async throws {
         let normalizedName = normalizeVMName(name: name)
         Logger.info(
@@ -998,7 +999,8 @@ final class LumeController {
                 vncPort: vncPort,
                 recoveryMode: recoveryMode,
                 usbMassStoragePaths: usbMassStoragePaths,
-                networkMode: networkMode)
+                networkMode: networkMode,
+                clipboard: clipboard)
             Logger.info("VM started successfully", metadata: ["name": normalizedName])
         } catch {
             SharedVM.shared.removeVM(name: normalizedName)

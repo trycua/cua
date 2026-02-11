@@ -19,6 +19,7 @@ def create_parser() -> argparse.ArgumentParser:
 Examples:
   cua auth login              Authenticate via browser
   cua auth login --api-key    Authenticate with API key
+  cua auth status             Show account info and credits
   cua sb list                 List all sandboxes
   cua sb create --os linux    Create a new Linux sandbox
   cua image list              List cloud images

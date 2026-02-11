@@ -3,12 +3,45 @@
 from __future__ import annotations
 
 import asyncio
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Dict, List, Optional
 
 from .registry import App, install, launch, uninstall
 
 if TYPE_CHECKING:
     from .registry import BoundApp
+
+_SPICE_TYPE_MAP = {
+    "R": "resistor",
+    "C": "capacitor",
+    "L": "inductor",
+    "V": "voltage_source",
+    "I": "current_source",
+    "D": "diode",
+    "Q": "bjt",
+    "M": "mosfet",
+    "X": "subcircuit",
+}
+
+
+def _stdout(result) -> str:
+    """Extract stdout string from a run_command result."""
+    return (result.get("stdout", "") if isinstance(result, dict) else str(result)).strip()
+
+
+def _parse_spice_components(netlist: str) -> List[dict]:
+    """Parse SPICE netlist text into a list of component dicts."""
+    components = []
+    for line in netlist.splitlines():
+        line = line.strip()
+        if not line or line.startswith(("*", ".", "#")):
+            continue
+        parts = line.split()
+        ref = parts[0]
+        ctype = _SPICE_TYPE_MAP.get(ref[0].upper(), "unknown")
+        components.append(
+            {"ref": ref, "type": ctype, "value": parts[-1], "nodes": parts[1:-1]}
+        )
+    return components
 
 
 class KiCad(App):
@@ -36,59 +69,38 @@ class KiCad(App):
         *,
         with_shortcut: bool = True,
     ) -> None:
-        """Install KiCad on Linux via AppImage."""
-        appimage_url = "https://mirrors.mit.edu/kicad/appimage/stable/kicad-9.0.7-1-x86_64.AppImage"
-        appimage_path = "$HOME/Applications/KiCad.AppImage"
-        launcher_path = "$HOME/.local/bin/kicad"
-
+        """Install KiCad on Linux via PPA."""
         result = await self.session.run_command(
-            "mkdir -p \"$HOME/Applications\" \"$HOME/.local/bin\" \"$HOME/.local/share/applications\" && "
-            f"(command -v curl >/dev/null 2>&1 && curl -fL \"{appimage_url}\" -o \"{appimage_path}\" || "
-            f"command -v wget >/dev/null 2>&1 && wget -q -O \"{appimage_path}\" \"{appimage_url}\" || "
-            "python3 -c \"import urllib.request; urllib.request.urlretrieve("
-            f"'{appimage_url}', '{appimage_path}')\") && "
-            f"chmod +x \"{appimage_path}\" && "
-            "printf '%s\n' "
-            "'#!/usr/bin/env sh' "
-            "'exec \"$HOME/Applications/KiCad.AppImage\" --appimage-extract-and-run \"$@\"' "
-            f"> \"{launcher_path}\" && "
-            f"chmod +x \"{launcher_path}\"",
+            "sudo add-apt-repository --yes ppa:kicad/kicad-9.0-releases && "
+            "sudo apt update && "
+            "sudo apt install -y --install-recommends kicad",
             check=False,
         )
 
         verify = await self.session.run_command(
-            f"test -x \"{launcher_path}\" && echo FOUND || echo NOT_FOUND",
+            "command -v kicad >/dev/null 2>&1 && echo FOUND || echo NOT_FOUND",
             check=False,
         )
-        verify_stdout = (
-            verify.get("stdout", "") if isinstance(verify, dict) else str(verify)
-        ).strip()
-        if verify_stdout != "FOUND":
-            install_stdout = (
-                result.get("stdout", "") if isinstance(result, dict) else str(result)
-            )
-            install_stderr = result.get("stderr", "") if isinstance(result, dict) else ""
+        if _stdout(verify) != "FOUND":
             raise RuntimeError(
-                "KiCad AppImage install failed: launcher not found. "
-                f"stdout: {install_stdout[-500:]} stderr: {install_stderr[-500:]}"
+                f"KiCad install failed: {_stdout(result)}"
             )
 
         if with_shortcut:
             await self.session.run_command(
-                "mkdir -p ~/Desktop && "
+                "mkdir -p ~/Desktop ~/.local/share/applications && "
                 "printf '%s\n' "
                 "'[Desktop Entry]' "
                 "'Name=KiCad' "
                 "'Comment=Electronic Design Automation Suite' "
-                "'Exec=/bin/sh -lc \"$HOME/.local/bin/kicad\"' "
-                "'Icon=applications-engineering' "
+                "'Exec=kicad' "
+                "'Icon=kicad' "
                 "'Type=Application' "
                 "'Categories=Development;Electronics;' "
-                "'Terminal=false' "
+                "'Terminal=true' "  # currently requires terminal otherwise the gui crashes when opening the file explorer, not sure why
                 "> ~/Desktop/KiCad.desktop && "
                 "chmod +x ~/Desktop/KiCad.desktop && "
-                "cp ~/Desktop/KiCad.desktop ~/.local/share/applications/KiCad.desktop && "
-                "ln -sf \"$HOME/.local/bin/kicad\" ~/Desktop/KiCad",
+                "cp ~/Desktop/KiCad.desktop ~/.local/share/applications/KiCad.desktop",
                 check=False,
             )
 
@@ -99,20 +111,28 @@ class KiCad(App):
         project_path: Optional[str] = None,
     ) -> None:
         """Launch KiCad on Linux."""
-        cmd = "$HOME/.local/bin/kicad"
+        cmd = "kicad"
         if project_path:
             cmd += f" '{project_path}'"
-        await self.session.run_command(f"{cmd} &", check=False)
-        await asyncio.sleep(3)
+        done, pending = await asyncio.wait(
+            [
+                asyncio.ensure_future(
+                    self.session.run_command(f"{cmd} &", check=False)
+                ),
+                asyncio.ensure_future(asyncio.sleep(3)),
+            ],
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        for task in pending:
+            task.cancel()
 
     @uninstall("linux")
     async def uninstall_linux(self: "BoundApp", **kwargs) -> None:
-        """Uninstall KiCad AppImage from Linux."""
+        """Uninstall KiCad from Linux."""
         await self.session.run_command(
-            "rm -f \"$HOME/Applications/KiCad.AppImage\" && "
-            "rm -f \"$HOME/.local/bin/kicad\" && "
-            "rm -f \"$HOME/Desktop/KiCad\" \"$HOME/Desktop/KiCad.desktop\" && "
-            "rm -f \"$HOME/.local/share/applications/KiCad.desktop\"",
+            "sudo apt remove -y kicad && "
+            "rm -f ~/Desktop/KiCad.desktop && "
+            "rm -f ~/.local/share/applications/KiCad.desktop",
             check=False,
         )
 
@@ -194,3 +214,132 @@ class KiCad(App):
     async def uninstall_macos(self: "BoundApp", **kwargs) -> None:
         """Uninstall KiCad from macOS."""
         await self.session.run_command("brew uninstall --cask kicad", check=False)
+
+    # =========================================================================
+    # Netlist helpers (cross-platform)
+    # =========================================================================
+
+    async def export_netlist(
+        self: "BoundApp",
+        *,
+        schematic_path: str,
+        output_path: str,
+    ) -> str:
+        """Export a SPICE netlist from a .kicad_sch using kicad-cli.
+
+        Args:
+            schematic_path: Path to the .kicad_sch schematic on the VM.
+            output_path: Destination path for the .cir netlist on the VM.
+
+        Returns:
+            The output_path on success.
+
+        Raises:
+            RuntimeError: If the output file was not created.
+        """
+        result = await self.session.run_command(
+            f'kicad-cli sch export spice -o "{output_path}" "{schematic_path}"',
+            check=False,
+        )
+        verify = await self.session.run_command(
+            f'test -f "{output_path}" && echo FOUND || echo NOT_FOUND',
+            check=False,
+        )
+        if _stdout(verify) != "FOUND":
+            raise RuntimeError(f"Netlist export failed: {_stdout(result)}")
+        return output_path
+
+    async def read_netlist(self: "BoundApp", *, netlist_path: str) -> str:
+        """Read a SPICE netlist file from the VM.
+
+        Args:
+            netlist_path: Path to the .cir file on the VM.
+
+        Returns:
+            Raw text content of the netlist.
+        """
+        result = await self.session.run_command(
+            f'cat "{netlist_path}"', check=False,
+        )
+        return _stdout(result)
+
+    async def get_components(
+        self: "BoundApp", *, netlist_path: str
+    ) -> List[dict]:
+        """Read and parse a SPICE netlist into structured components.
+
+        Args:
+            netlist_path: Path to the .cir file on the VM.
+
+        Returns:
+            List of dicts with keys ``ref``, ``type``, ``value``, ``nodes``.
+        """
+        netlist = await self.read_netlist(netlist_path=netlist_path)
+        return _parse_spice_components(netlist)
+
+    async def simulate_operating_point(
+        self: "BoundApp",
+        *,
+        netlist_path: str,
+        ground: int = 0,
+    ) -> Dict[str, float]:
+        """Run a DC operating-point simulation via PySpice.
+
+        Reads the netlist from the VM, then simulates locally.
+        Requires the ``spice`` extra (``pip install cua-bench[spice]``).
+
+        Args:
+            netlist_path: Path to the .cir file on the VM.
+            ground: Node number to use as ground reference.
+
+        Returns:
+            Dict mapping node name to its DC voltage.
+        """
+        from PySpice.Spice.Parser import SpiceParser
+
+        netlist = await self.read_netlist(netlist_path=netlist_path)
+        parser = SpiceParser(source=netlist)
+        circuit = parser.build_circuit(ground=ground)
+        simulator = circuit.simulator(temperature=25, nominal_temperature=25)
+        analysis = simulator.operating_point()
+        return {str(node): float(node) for node in analysis.nodes.values()}
+
+    async def simulate_transient(
+        self: "BoundApp",
+        *,
+        netlist_path: str,
+        step_time_us: float,
+        end_time_us: float,
+        ground: int = 0,
+    ) -> Dict[str, list]:
+        """Run a transient simulation via PySpice.
+
+        Reads the netlist from the VM, then simulates locally.
+        Requires the ``spice`` extra (``pip install cua-bench[spice]``).
+
+        Args:
+            netlist_path: Path to the .cir file on the VM.
+            step_time_us: Simulation step time in microseconds.
+            end_time_us: Simulation end time in microseconds.
+            ground: Node number to use as ground reference.
+
+        Returns:
+            Dict with a ``time`` key (list of seconds) and one key per
+            circuit node mapping to a list of voltage samples.
+        """
+        from PySpice.Spice.Parser import SpiceParser
+        from PySpice.Unit import u_us
+
+        netlist = await self.read_netlist(netlist_path=netlist_path)
+        parser = SpiceParser(source=netlist)
+        circuit = parser.build_circuit(ground=ground)
+        simulator = circuit.simulator(temperature=25, nominal_temperature=25)
+        analysis = simulator.transient(
+            step_time=step_time_us @ u_us, end_time=end_time_us @ u_us
+        )
+        result: Dict[str, list] = {
+            "time": [float(t) for t in analysis.time],
+        }
+        for node in analysis.nodes.values():
+            result[str(node)] = [float(v) for v in node]
+        return result

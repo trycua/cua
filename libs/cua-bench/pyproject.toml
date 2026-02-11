@@ -59,7 +59,7 @@ dependencies = [
 [project.optional-dependencies]
 # Full installation with all features
 all = [
-    "cua-bench[browser,agents,cloud]",
+    "cua-bench[browser,agents,cloud,spice]",
 ]
 
 # Browser automation (for simulated environments)
@@ -80,6 +80,11 @@ cloud = [
     "google-cloud-storage>=2.10.0",
     "gcloud-aio-storage>=9.0.0",
     "grpcio>=1.60.0",
+]
+
+# SPICE circuit simulation (for KiCad netlist evaluation)
+spice = [
+    "PySpice>=1.5",
 ]
 
 # API server (for custom environments)

@@ -51,6 +51,25 @@ struct Run: AsyncParsableCommand {
     @Option(name: .customLong("storage"), help: "VM storage location to use or direct path to VM location")
     var storage: String?
 
+    @Option(
+        name: .customLong("network"),
+        help: "Optional network override: 'nat', 'bridged', or 'bridged:<interface>' (e.g. 'bridged:en0'). Defaults to the VM's configured mode.")
+    var network: String?
+
+    private var parsedNetworkMode: NetworkMode? {
+        get throws {
+            guard let network else {
+                return nil
+            }
+            guard let mode = NetworkMode.parse(network) else {
+                throw ValidationError(
+                    "Invalid network mode '\(network)'. Expected 'nat', 'bridged', or 'bridged:<interface>'."
+                )
+            }
+            return mode
+        }
+    }
+
     private var parsedSharedDirectories: [SharedDirectory] {
         get throws {
             try sharedDirectories.map { dirString -> SharedDirectory in
@@ -113,7 +132,8 @@ struct Run: AsyncParsableCommand {
             vncPort: vncPort,
             recoveryMode: recoveryMode,
             storage: storage,
-            usbMassStoragePaths: parsedUSBStorageDevices.isEmpty ? nil : parsedUSBStorageDevices
+            usbMassStoragePaths: parsedUSBStorageDevices.isEmpty ? nil : parsedUSBStorageDevices,
+            networkMode: parsedNetworkMode
         )
     }
 }

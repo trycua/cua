@@ -44,10 +44,12 @@ struct VMDetails: Codable {
     let sshAvailable: Bool?
     let locationName: String
     let sharedDirectories: [SharedDirectory]?
+    let networkMode: String?
 
     enum CodingKeys: String, CodingKey {
         case name, os, cpuCount, memorySize, diskSize, display, status
         case provisioningOperation, vncUrl, ipAddress, sshAvailable, locationName, sharedDirectories
+        case networkMode
     }
 
     init(
@@ -63,7 +65,8 @@ struct VMDetails: Codable {
         ipAddress: String?,
         sshAvailable: Bool? = nil,
         locationName: String,
-        sharedDirectories: [SharedDirectory]? = nil
+        sharedDirectories: [SharedDirectory]? = nil,
+        networkMode: String? = nil
     ) {
         self.name = name
         self.os = os
@@ -78,6 +81,7 @@ struct VMDetails: Codable {
         self.sshAvailable = sshAvailable
         self.locationName = locationName
         self.sharedDirectories = sharedDirectories
+        self.networkMode = networkMode
     }
 
     // Custom encoder to always include optional fields (even when nil)
@@ -96,5 +100,6 @@ struct VMDetails: Codable {
         try container.encode(sshAvailable, forKey: .sshAvailable)
         try container.encode(locationName, forKey: .locationName)
         try container.encode(sharedDirectories, forKey: .sharedDirectories)
+        try container.encode(networkMode, forKey: .networkMode)
     }
 }

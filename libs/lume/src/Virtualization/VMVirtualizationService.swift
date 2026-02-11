@@ -16,6 +16,7 @@ struct VMVirtualizationServiceContext {
     let nvramPath: Path
     let recoveryMode: Bool
     let usbMassStoragePaths: [Path]?
+    let networkMode: NetworkMode
 }
 
 /// Protocol defining the interface for virtualization operations
@@ -154,14 +155,48 @@ class BaseVirtualizationService: VMVirtualizationService {
         }
     }
 
-    static func createNetworkDeviceConfiguration(macAddress: String) throws
-        -> VZNetworkDeviceConfiguration
-    {
+    static func createNetworkDeviceConfiguration(
+        macAddress: String,
+        networkMode: NetworkMode = .nat
+    ) throws -> VZNetworkDeviceConfiguration {
         let network = VZVirtioNetworkDeviceConfiguration()
         guard let vzMacAddress = VZMACAddress(string: macAddress) else {
             throw VMConfigError.invalidMachineIdentifier
         }
-        network.attachment = VZNATNetworkDeviceAttachment()
+
+        switch networkMode {
+        case .nat:
+            network.attachment = VZNATNetworkDeviceAttachment()
+        case .bridged(let interfaceName):
+            let availableInterfaces = VZBridgedNetworkInterface.networkInterfaces
+            guard let bridgeInterface = availableInterfaces.first(where: { iface in
+                if let name = interfaceName {
+                    return iface.identifier == name
+                }
+                // Auto-select: prefer the first active interface
+                return true
+            }) else {
+                if let name = interfaceName {
+                    let available = availableInterfaces.map { $0.identifier }.joined(separator: ", ")
+                    throw VMConfigError.noBridgeInterfaceFound(
+                        requested: name,
+                        available: available.isEmpty ? "none" : available
+                    )
+                }
+                throw VMConfigError.noBridgeInterfaceFound(
+                    requested: nil,
+                    available: "none"
+                )
+            }
+            Logger.info(
+                "Using bridged network interface",
+                metadata: [
+                    "interface": bridgeInterface.identifier,
+                    "localizedName": bridgeInterface.localizedDisplayName ?? "unknown",
+                ])
+            network.attachment = VZBridgedNetworkDeviceAttachment(interface: bridgeInterface)
+        }
+
         network.macAddress = vzMacAddress
         return network
     }
@@ -253,7 +288,10 @@ final class DarwinVirtualizationService: BaseVirtualizationService {
         }
         vzConfig.storageDevices = storageDevices
         vzConfig.networkDevices = [
-            try createNetworkDeviceConfiguration(macAddress: config.macAddress)
+            try createNetworkDeviceConfiguration(
+                macAddress: config.macAddress,
+                networkMode: config.networkMode
+            )
         ]
         vzConfig.memoryBalloonDevices = [VZVirtioTraditionalMemoryBalloonDeviceConfiguration()]
         vzConfig.entropyDevices = [VZVirtioEntropyDeviceConfiguration()]
@@ -404,7 +442,10 @@ final class LinuxVirtualizationService: BaseVirtualizationService {
         }
         vzConfig.storageDevices = storageDevices
         vzConfig.networkDevices = [
-            try createNetworkDeviceConfiguration(macAddress: config.macAddress)
+            try createNetworkDeviceConfiguration(
+                macAddress: config.macAddress,
+                networkMode: config.networkMode
+            )
         ]
         vzConfig.memoryBalloonDevices = [VZVirtioTraditionalMemoryBalloonDeviceConfiguration()]
         vzConfig.entropyDevices = [VZVirtioEntropyDeviceConfiguration()]

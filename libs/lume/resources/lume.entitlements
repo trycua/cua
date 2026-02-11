@@ -4,7 +4,5 @@
 <dict>
 	<key>com.apple.security.virtualization</key>
 	<true/>
-	<key>com.apple.vm.networking</key>
-	<true/>
 </dict>
 </plist>

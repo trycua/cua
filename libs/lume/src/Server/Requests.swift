@@ -17,6 +17,7 @@ struct RunVMRequest: Codable {
     let recoveryMode: Bool?
     let storage: String?
     let network: String?
+    let clipboard: Bool?
 
     struct SharedDirectoryRequest: Codable {
         let hostPath: String

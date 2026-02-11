@@ -340,7 +340,7 @@ extension Server {
                 body.flatMap { try? JSONDecoder().decode(RunVMRequest.self, from: $0) }
                 ?? RunVMRequest(
                     noDisplay: nil, sharedDirectories: nil, recoveryMode: nil, storage: nil,
-                    network: nil)
+                    network: nil, clipboard: nil)
 
             // Record telemetry
             TelemetryClient.shared.record(event: TelemetryEvent.apiVMRun, properties: [
@@ -372,7 +372,8 @@ extension Server {
                 sharedDirectories: dirs,
                 recoveryMode: request.recoveryMode ?? false,
                 storage: request.storage,
-                networkMode: networkMode
+                networkMode: networkMode,
+                clipboard: request.clipboard ?? false
             )
             Logger.info("VM start initiated in background", metadata: ["name": name])
 
@@ -825,7 +826,8 @@ extension Server {
         sharedDirectories: [SharedDirectory] = [],
         recoveryMode: Bool = false,
         storage: String? = nil,
-        networkMode: NetworkMode? = nil
+        networkMode: NetworkMode? = nil,
+        clipboard: Bool = false
     ) {
         Logger.info(
             "Starting VM in detached task",
@@ -855,7 +857,8 @@ extension Server {
                     sharedDirectories: sharedDirectories,
                     recoveryMode: recoveryMode,
                     storage: storage,
-                    networkMode: networkMode
+                    networkMode: networkMode,
+                    clipboard: clipboard
                 )
                 Logger.info("VM started successfully in background task", metadata: ["name": name])
             } catch {

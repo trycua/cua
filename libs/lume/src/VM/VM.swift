@@ -136,7 +136,7 @@ class VM {
     func run(
         noDisplay: Bool, sharedDirectories: [SharedDirectory], mount: Path?, vncPort: Int = 0,
         recoveryMode: Bool = false, usbMassStoragePaths: [Path]? = nil,
-        networkMode: NetworkMode? = nil
+        networkMode: NetworkMode? = nil, clipboard: Bool = false
     ) async throws {
         Logger.info(
             "VM.run method called",
@@ -261,8 +261,10 @@ class VM {
 
             // Start clipboard watcher for automatic host-to-VM clipboard sync
             // Requires SSH/Remote Login to be enabled on the VM
-            clipboardWatcher = ClipboardWatcher(vmName: vmDirContext.name, storage: vmDirContext.storage)
-            await clipboardWatcher?.start()
+            if clipboard {
+                clipboardWatcher = ClipboardWatcher(vmName: vmDirContext.name, storage: vmDirContext.storage)
+                await clipboardWatcher?.start()
+            }
 
             while true {
                 try await Task.sleep(nanoseconds: UInt64(1e9))

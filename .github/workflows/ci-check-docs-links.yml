@@ -1,0 +1,70 @@
+name: "CI: Check Docs Links"
+
+on:
+  pull_request:
+    paths:
+      - "docs/content/**"
+      - "docs/src/**"
+      - "docs/scripts/check-links.ts"
+
+jobs:
+  check-internal-links:
+    name: Check Internal Links (next-validate-link)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Install dependencies
+        run: pnpm install
+        working-directory: docs
+
+      - name: Check internal links
+        run: pnpm docs:check-links
+        working-directory: docs
+
+      - name: Show help if check failed
+        if: failure()
+        run: |
+          echo ""
+          echo "╔══════════════════════════════════════════════════════════════════╗"
+          echo "║                    Broken Documentation Links!                    ║"
+          echo "╠══════════════════════════════════════════════════════════════════╣"
+          echo "║                                                                  ║"
+          echo "║  One or more internal links in the documentation are broken.     ║"
+          echo "║                                                                  ║"
+          echo "║  To find broken links locally, run from the docs/ directory:     ║"
+          echo "║                                                                  ║"
+          echo "║    pnpm docs:check-links                                        ║"
+          echo "║                                                                  ║"
+          echo "╚══════════════════════════════════════════════════════════════════╝"
+
+  check-external-links:
+    name: Check External Links (lychee)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Check external links
+        uses: lycheeverse/lychee-action@v2
+        with:
+          args: >-
+            --verbose
+            --no-progress
+            --accept 100..=399
+            --exclude '^file://'
+            --exclude 'localhost'
+            --exclude '127\.0\.0\.1'
+            --exclude 'example\.com'
+            './docs/content/**/*.mdx'
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fail: true

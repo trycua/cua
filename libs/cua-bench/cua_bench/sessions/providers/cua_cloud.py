@@ -55,6 +55,13 @@ class CuaCloudProvider(SessionProvider):
             "or run 'cb auth login' to authenticate."
         )
 
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        await self._close_http_client()
+        return False
+
     async def _get_http_client(self):
         """Get or create aiohttp client session."""
         if self._http_client is None:

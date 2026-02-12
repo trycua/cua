@@ -46,10 +46,15 @@ def make(provider_name: str, env_type: Optional[str] = None) -> SessionProvider:
         return DockerProvider()
     elif normalized == "cloud":
         return CloudProvider()
+    elif normalized in ("cloudv2", "incus"):
+        from .providers.incus import IncusProvider
+
+        return IncusProvider()
     else:
         raise ValueError(
             f"Unknown provider: {provider_name}. "
-            "Supported providers: 'local' (Docker/QEMU), 'cloud' (CUA Cloud API)"
+            "Supported providers: 'local' (Docker/QEMU), 'cloud' (CUA Cloud API), "
+            "'incus'/'cloudv2' (Incus VMs)"
         )
 
 

@@ -1,4 +1,4 @@
-"""CUA Cloud V2 (Incus) session provider for batch benchmark execution on Incus VMs."""
+"""CUA Cloud session provider for batch benchmark execution on cloud VMs."""
 
 import os
 from pathlib import Path
@@ -7,11 +7,11 @@ from typing import Any, Dict, Optional
 from .base import SessionProvider
 
 
-class IncusProvider(SessionProvider):
-    """Incus provider for running CUABench evaluations on Incus VMs.
+class CuaCloudProvider(SessionProvider):
+    """CUA Cloud provider for running CUABench evaluations on cloud VMs.
 
-    This provider uses the CUA Cloud V2 API (/v1/batch-jobs) to create
-    IncusBatchJob CRDs that run solver containers inside Incus VMs.
+    This provider uses the CUA Cloud API (/v1/batch-jobs) to create
+    batch jobs that run solver containers inside cloud VMs.
 
     Each batch job:
     - Creates N Incus VMs (one per task)
@@ -174,7 +174,7 @@ class IncusProvider(SessionProvider):
         return {
             "session_id": session_id,
             "batch_job_name": result.get("name", session_id),
-            "provider": "incus",
+            "provider": "cua_cloud",
             "status": result.get("phase", "pending"),
             "env_path": str(env_path),
             "output_dir": output_dir,

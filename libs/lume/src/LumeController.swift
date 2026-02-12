@@ -400,7 +400,8 @@ final class LumeController {
         debug: Bool = false,
         debugDir: String? = nil,
         noDisplay: Bool = true,
-        vncPort: Int = 0
+        vncPort: Int = 0,
+        networkMode: NetworkMode = .nat
     ) async throws {
         Logger.info(
             "Creating VM",
@@ -437,7 +438,8 @@ final class LumeController {
                 cpuCount: cpuCount,
                 memorySize: memorySize,
                 diskSize: diskSize,
-                display: display
+                display: display,
+                networkMode: networkMode
             )
             try vmDir.saveConfig(config)
 
@@ -467,7 +469,8 @@ final class LumeController {
                 debugDir: debugDir,
                 noDisplay: noDisplay,
                 vncPort: vncPort,
-                vmDir: vmDir
+                vmDir: vmDir,
+                networkMode: networkMode
             )
 
             // Clear provisioning marker on success
@@ -506,7 +509,8 @@ final class LumeController {
         display: String,
         ipsw: String?,
         storage: String? = nil,
-        unattendedConfig: UnattendedConfig? = nil
+        unattendedConfig: UnattendedConfig? = nil,
+        networkMode: NetworkMode = .nat
     ) throws {
         Logger.info(
             "Starting async VM creation",
@@ -536,7 +540,8 @@ final class LumeController {
                 cpuCount: cpuCount,
                 memorySize: memorySize,
                 diskSize: diskSize,
-                display: display
+                display: display,
+                networkMode: networkMode
             )
             try vmDir.saveConfig(config)
 
@@ -571,7 +576,8 @@ final class LumeController {
                     ipsw: ipsw,
                     storage: storage,
                     unattendedConfig: unattendedConfig,
-                    vmDir: vmDir
+                    vmDir: vmDir,
+                    networkMode: networkMode
                 )
 
                 // Clear marker on success
@@ -609,7 +615,8 @@ final class LumeController {
         debugDir: String? = nil,
         noDisplay: Bool = true,
         vncPort: Int = 0,
-        vmDir: VMDirectory? = nil
+        vmDir: VMDirectory? = nil,
+        networkMode: NetworkMode = .nat
     ) async throws {
         Logger.info(
             "Creating VM (internal)",
@@ -624,7 +631,8 @@ final class LumeController {
             cpuCount: cpuCount,
             memorySize: memorySize,
             diskSize: diskSize,
-            display: display
+            display: display,
+            networkMode: networkMode
         )
 
         // Track the temp directory for cleanup on failure
@@ -891,7 +899,9 @@ final class LumeController {
         vncPort: Int = 0,
         recoveryMode: Bool = false,
         storage: String? = nil,
-        usbMassStoragePaths: [Path]? = nil
+        usbMassStoragePaths: [Path]? = nil,
+        networkMode: NetworkMode? = nil,
+        clipboard: Bool = false
     ) async throws {
         let normalizedName = normalizeVMName(name: name)
         Logger.info(
@@ -906,6 +916,7 @@ final class LumeController {
                 "recovery_mode": "\(recoveryMode)",
                 "storage_param": storage ?? "home", // Log the original param
                 "usb_storage_devices": "\(usbMassStoragePaths?.count ?? 0)",
+                "network_override": networkMode?.description ?? "vm-config",
             ])
 
         do {
@@ -987,7 +998,9 @@ final class LumeController {
                 mount: mount,
                 vncPort: vncPort,
                 recoveryMode: recoveryMode,
-                usbMassStoragePaths: usbMassStoragePaths)
+                usbMassStoragePaths: usbMassStoragePaths,
+                networkMode: networkMode,
+                clipboard: clipboard)
             Logger.info("VM started successfully", metadata: ["name": normalizedName])
         } catch {
             SharedVM.shared.removeVM(name: normalizedName)
@@ -1309,7 +1322,8 @@ final class LumeController {
         cpuCount: Int,
         memorySize: UInt64,
         diskSize: UInt64,
-        display: String
+        display: String,
+        networkMode: NetworkMode = .nat
     ) async throws -> VM {
         let config = try VMConfig(
             os: os,
@@ -1317,7 +1331,8 @@ final class LumeController {
             memorySize: memorySize,
             diskSize: diskSize,
             macAddress: VZMACAddress.randomLocallyAdministered().string,
-            display: display
+            display: display,
+            networkMode: networkMode
         )
 
         let vmDirContext = VMDirContext(

@@ -17,9 +17,7 @@ F = TypeVar("F", bound=Callable[..., Any])
 
 # Public Sentry DSN for CUA SDK
 # This is intentionally public - it only allows sending events to our project
-PUBLIC_SENTRY_DSN = (
-    "https://d3fed5d05939cb8343dfcab552948d17@o4510539933483008.ingest.us.sentry.io/4510551288381440"
-)
+PUBLIC_SENTRY_DSN = "https://d3fed5d05939cb8343dfcab552948d17@o4510539933483008.ingest.us.sentry.io/4510551288381440"
 
 # Lazy initialization state
 _initialized = False
@@ -45,6 +43,7 @@ def _get_sdk_version() -> str:
     """Get the CUA SDK version."""
     try:
         from core import __version__
+
         return __version__
     except ImportError:
         return "unknown"
@@ -117,8 +116,7 @@ def _initialize_sentry() -> bool:
 
         except ImportError as e:
             logger.warning(
-                f"Sentry SDK not installed: {e}. "
-                "Install with: pip install sentry-sdk"
+                f"Sentry SDK not installed: {e}. " "Install with: pip install sentry-sdk"
             )
             return False
         except Exception as e:
@@ -145,10 +143,7 @@ def _before_send(event: Dict[str, Any], hint: Dict[str, Any]) -> Optional[Dict[s
     if "contexts" in event:
         contexts = event["contexts"]
         for key in list(contexts.keys()):
-            if any(
-                sensitive in key.lower()
-                for sensitive in ["prompt", "content", "message"]
-            ):
+            if any(sensitive in key.lower() for sensitive in ["prompt", "content", "message"]):
                 del contexts[key]
 
     return event
@@ -341,6 +336,7 @@ def start_transaction(
     if not _initialize_sentry() or _sentry_sdk is None:
         # Return a no-op context manager
         from contextlib import nullcontext
+
         return nullcontext()
 
     try:
@@ -352,6 +348,7 @@ def start_transaction(
     except Exception as e:
         logger.debug(f"Failed to start transaction: {e}")
         from contextlib import nullcontext
+
         return nullcontext()
 
 

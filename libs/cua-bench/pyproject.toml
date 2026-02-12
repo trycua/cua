@@ -1,6 +1,6 @@
 [project]
 name = "cua-bench"
-version = "0.2.3"
+version = "0.2.4"
 description = "Toolkit for computer-use RL environments and benchmarks"
 readme = "README.md"
 license = "MIT"

@@ -49,7 +49,8 @@ class TestToolResolution:
         tool = Mock(spec=BrowserTool)
         return tool
 
-    def test_fara_auto_wraps_computer_to_browser_tool(self, mock_computer):
+    @pytest.mark.asyncio
+    async def test_fara_auto_wraps_computer_to_browser_tool(self, mock_computer):
         """FARA auto-wraps Computer to BrowserTool with warning."""
         from agent.agent import ComputerAgent
 
@@ -67,12 +68,14 @@ class TestToolResolution:
 
         with patch("agent.agent.find_agent_config", return_value=fara_config):
             with patch("agent.agent.is_agent_computer", side_effect=mock_is_agent_computer):
+                agent = ComputerAgent(model="cua/microsoft/fara-7b", tools=[mock_computer])
+                # Tool resolution happens in _resolve_tools, which is async
                 with pytest.warns(UserWarning, match="Auto-wrapping Computer to BrowserTool"):
-                    agent = ComputerAgent(model="cua/microsoft/fara-7b", tools=[mock_computer])
+                    resolved = await agent._resolve_tools(agent.tools, "browser")
 
         # Should have wrapped to BrowserTool
-        assert len(agent.tools) == 1
-        assert isinstance(agent.tools[0], BrowserTool)
+        assert len(resolved) == 1
+        assert isinstance(resolved[0], BrowserTool)
 
     def test_fara_accepts_explicit_browser_tool_no_warning(self, mock_browser_tool):
         """FARA accepts explicit BrowserTool without warning."""
@@ -117,7 +120,8 @@ class TestToolResolution:
         assert len(agent.tools) == 1
         assert agent.tools[0] is mock_computer
 
-    def test_custom_tools_pass_through(self, mock_computer):
+    @pytest.mark.asyncio
+    async def test_custom_tools_pass_through(self, mock_computer):
         """Custom function tools pass through unchanged."""
         from agent.agent import ComputerAgent
 
@@ -139,17 +143,18 @@ class TestToolResolution:
 
         with patch("agent.agent.find_agent_config", return_value=fara_config):
             with patch("agent.agent.is_agent_computer", side_effect=mock_is_agent_computer):
-                # Suppress the warning for computer wrapping
+                agent = ComputerAgent(
+                    model="cua/microsoft/fara-7b", tools=[mock_computer, custom_tool]
+                )
+                # Tool resolution happens in _resolve_tools, which is async
                 with warnings.catch_warnings():
                     warnings.simplefilter("ignore")
-                    agent = ComputerAgent(
-                        model="cua/microsoft/fara-7b", tools=[mock_computer, custom_tool]
-                    )
+                    resolved = await agent._resolve_tools(agent.tools, "browser")
 
         # Should have wrapped computer but kept custom tool unchanged
-        assert len(agent.tools) == 2
-        assert isinstance(agent.tools[0], BrowserTool)
-        assert agent.tools[1] is custom_tool
+        assert len(resolved) == 2
+        assert isinstance(resolved[0], BrowserTool)
+        assert resolved[1] is custom_tool
 
 
 class TestAgentConfigInfo:

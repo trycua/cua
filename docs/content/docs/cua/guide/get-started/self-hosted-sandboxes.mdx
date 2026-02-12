@@ -1,0 +1,308 @@
+---
+title: Self-Hosted Sandboxes
+description: Run sandboxes locally with Docker, QEMU, or native virtualization
+---
+
+import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
+import { Callout } from 'fumadocs-ui/components/callout';
+
+For development, testing, or air-gapped environments, you can run sandboxes locally instead of using Cua Cloud.
+
+## Options Overview
+
+| Option              | OS Support              | Requirements                  | Best For                         |
+| ------------------- | ----------------------- | ----------------------------- | -------------------------------- |
+| **Docker**          | Linux                   | Docker Desktop/Engine         | Local development, fastest setup |
+| **QEMU Docker**     | Linux, Windows, Android | Docker + golden image         | Testing specific OS versions     |
+| **Lume**            | macOS                   | macOS host + Lume CLI         | macOS automation                 |
+| **Windows Sandbox** | Windows                 | Windows 10 Pro/Enterprise, 11 | Windows automation               |
+
+## Linux on Docker (Recommended)
+
+The fastest way to get a local sandbox running.
+
+**1. Install Docker Desktop or Docker Engine**
+
+**2. Pull a Cua Docker image:**
+
+```bash
+# XFCE (Lightweight) - recommended for most use cases
+docker pull --platform=linux/amd64 trycua/cua-xfce:latest
+
+# OR KASM (Full-Featured) - full Ubuntu desktop
+docker pull --platform=linux/amd64 trycua/cua-ubuntu:latest
+```
+
+**3. Connect with Python:**
+
+```python
+from computer import Computer
+import asyncio
+
+computer = Computer(
+    os_type="linux",
+    provider_type="docker",
+    image="trycua/cua-xfce:latest"
+)
+
+async def main():
+    await computer.run()  # Launch & connect
+
+    try:
+        screenshot = await computer.interface.screenshot()
+        await computer.interface.left_click(100, 100)
+        await computer.interface.type_text("Hello!")
+    finally:
+        await computer.disconnect()
+
+asyncio.run(main())
+```
+
+## QEMU Docker
+
+Run full virtual machines (Linux, Windows, Android) inside Docker containers using QEMU virtualization.
+
+<Callout type="warn">
+  Linux and Windows images require a **golden image preparation step** on first use. Android images
+  start directly.
+</Callout>
+
+<Tabs items={['Linux', 'Windows', 'Android']}>
+  <Tab value="Linux">
+
+**1. Pull the QEMU Linux image:**
+
+```bash
+docker pull trycua/cua-qemu-linux:latest
+```
+
+**2. Download Ubuntu 22.04 LTS Server ISO:**
+
+Download the [Ubuntu 22.04 Server ISO](https://releases.ubuntu.com/22.04/ubuntu-22.04.5-live-server-amd64.iso) (~2GB)
+
+**3. Create golden image:**
+
+```bash
+docker run -it --rm \
+    --device=/dev/kvm \
+    --cap-add NET_ADMIN \
+    --mount type=bind,source=/path/to/ubuntu-22.04.5-live-server-amd64.iso,target=/custom.iso \
+    -v ~/cua-storage/linux:/storage \
+    -p 8006:8006 \
+    -p 5000:5000 \
+    -e RAM_SIZE=8G \
+    -e CPU_CORES=4 \
+    -e DISK_SIZE=64G \
+    trycua/cua-qemu-linux:latest
+```
+
+Monitor progress at [http://localhost:8006](http://localhost:8006). The container will install Ubuntu Desktop and shut down when complete.
+
+**4. Connect with Python:**
+
+```python
+from computer import Computer
+import asyncio
+
+computer = Computer(
+    os_type="linux",
+    provider_type="docker",
+    image="trycua/cua-qemu-linux:latest",
+    storage="~/cua-storage/linux",
+    run_opts={"devices": ["/dev/kvm"]},
+)
+
+async def main():
+    await computer.run()
+
+    try:
+        screenshot = await computer.interface.screenshot()
+        await computer.interface.left_click(100, 100)
+    finally:
+        await computer.disconnect()
+
+asyncio.run(main())
+```
+
+  </Tab>
+  <Tab value="Windows">
+
+**1. Pull the QEMU Windows image:**
+
+```bash
+docker pull trycua/cua-qemu-windows:latest
+```
+
+**2. Download Windows 11 Enterprise Evaluation ISO:**
+
+- Visit [Microsoft Evaluation Center](https://info.microsoft.com/ww-landing-windows-11-enterprise.html)
+- Download **Windows 11 Enterprise Evaluation (90-day trial)** ISO (~6GB)
+
+**3. Create golden image:**
+
+```bash
+docker run -it --rm \
+    --device=/dev/kvm \
+    --cap-add NET_ADMIN \
+    --mount type=bind,source=/path/to/windows-11-enterprise-eval.iso,target=/custom.iso \
+    -v ~/cua-storage/windows:/storage \
+    -p 8006:8006 \
+    -p 5000:5000 \
+    -e RAM_SIZE=8G \
+    -e CPU_CORES=4 \
+    -e DISK_SIZE=64G \
+    trycua/cua-qemu-windows:latest
+```
+
+Monitor progress at [http://localhost:8006](http://localhost:8006). The container will install Windows 11 and shut down when complete.
+
+**4. Connect with Python:**
+
+```python
+from computer import Computer
+import asyncio
+
+computer = Computer(
+    os_type="windows",
+    provider_type="docker",
+    image="trycua/cua-qemu-windows:latest",
+    storage="~/cua-storage/windows",
+    run_opts={"devices": ["/dev/kvm"]},
+)
+
+async def main():
+    await computer.run()
+
+    try:
+        screenshot = await computer.interface.screenshot()
+        await computer.interface.left_click(100, 100)
+    finally:
+        await computer.disconnect()
+
+asyncio.run(main())
+```
+
+  </Tab>
+  <Tab value="Android">
+
+No golden image preparation needed.
+
+**1. Pull the QEMU Android image:**
+
+```bash
+docker pull trycua/cua-qemu-android:latest
+```
+
+**2. Connect with Python:**
+
+```python
+from computer import Computer
+import asyncio
+
+computer = Computer(
+    os_type="android",
+    provider_type="docker",
+    image="trycua/cua-qemu-android:latest",
+    timeout=150,  # Emulator needs more time to boot
+    run_opts={
+        "devices": ["/dev/kvm"],
+        "env": {"EMULATOR_DEVICE": "Samsung Galaxy S10"},
+    },
+)
+
+async def main():
+    await computer.run()
+
+    try:
+        screenshot = await computer.interface.screenshot()
+        await computer.interface.left_click(100, 100)
+    finally:
+        await computer.disconnect()
+
+asyncio.run(main())
+```
+
+  </Tab>
+</Tabs>
+
+## macOS Sandbox (Lume)
+
+Run native macOS VMs using Apple's Virtualization framework. **macOS host required.**
+
+**1. Install the Lume CLI:**
+
+```bash
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/lume/scripts/install.sh)"
+```
+
+**2. Start a macOS sandbox:**
+
+```bash
+lume run macos-sequoia-cua:latest
+```
+
+**3. Connect with Python:**
+
+```python
+from computer import Computer
+import asyncio
+
+computer = Computer(
+    os_type="macos",
+    provider_type="lume",
+    name="macos-sequoia-cua:latest"
+)
+
+async def main():
+    await computer.run()
+
+    try:
+        screenshot = await computer.interface.screenshot()
+        await computer.interface.left_click(100, 100)
+    finally:
+        await computer.disconnect()
+
+asyncio.run(main())
+```
+
+## Windows Sandbox
+
+Use the native Windows Sandbox feature. **Windows 10 Pro/Enterprise or Windows 11 required.**
+
+**1. Enable Windows Sandbox:**
+
+Follow the [Microsoft guide](https://learn.microsoft.com/en-us/windows/security/application-security/application-isolation/windows-sandbox/windows-sandbox-install) to enable Windows Sandbox.
+
+**2. Install the dependency:**
+
+```bash
+pip install -U git+git://github.com/karkason/pywinsandbox.git
+```
+
+**3. Connect with Python:**
+
+```python
+from computer import Computer
+import asyncio
+
+computer = Computer(
+    os_type="windows",
+    provider_type="windows_sandbox"
+)
+
+async def main():
+    await computer.run()
+
+    try:
+        screenshot = await computer.interface.screenshot()
+        await computer.interface.left_click(100, 100)
+    finally:
+        await computer.disconnect()
+
+asyncio.run(main())
+```
+
+## Next Steps
+
+- [Using the Computer SDK](/cua/guide/get-started/using-computer-sdk) - Full SDK reference with all sandbox types
+- [Using the Agent SDK](/cua/guide/get-started/using-agent-sdk) - Add AI automation to your sandboxes

@@ -1,0 +1,119 @@
+name: "CD: Auto Release on Merge"
+
+on:
+  pull_request:
+    types: [closed]
+
+jobs:
+  auto-release:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    steps:
+      - name: Detect packages, release labeled, notify unlabeled
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PR_NUMBER="${{ github.event.pull_request.number }}"
+          PR_TITLE="${{ github.event.pull_request.title }}"
+          PR_URL="${{ github.event.pull_request.html_url }}"
+          REPO="${{ github.repository }}"
+
+          # Get labels
+          LABELS='${{ toJSON(github.event.pull_request.labels.*.name) }}'
+
+          # Skip everything if no-release
+          if echo "$LABELS" | grep -q '"no-release"'; then
+            echo "no-release label found, skipping."
+            exit 0
+          fi
+
+          # Determine bump type from labels (default: patch)
+          BUMP_TYPE="patch"
+          if echo "$LABELS" | grep -q '"bump:major"'; then
+            BUMP_TYPE="major"
+          elif echo "$LABELS" | grep -q '"bump:minor"'; then
+            BUMP_TYPE="minor"
+          fi
+          echo "Bump type: $BUMP_TYPE"
+
+          # Get changed files
+          CHANGED_FILES=$(gh pr diff "$PR_NUMBER" --repo "$REPO" --name-only 2>/dev/null || true)
+
+          if [ -z "$CHANGED_FILES" ]; then
+            echo "No changed files, skipping."
+            exit 0
+          fi
+
+          # Map paths to publishable services
+          declare -A PATH_TO_SERVICE=(
+            ["libs/python/cua-cli/"]="pypi/cli"
+            ["libs/python/agent/"]="pypi/agent"
+            ["libs/python/computer/"]="pypi/computer"
+            ["libs/python/core/"]="pypi/core"
+            ["libs/python/som/"]="pypi/som"
+            ["libs/python/bench-ui/"]="pypi/bench-ui"
+            ["libs/cua-bench/"]="pypi/bench"
+            ["libs/python/computer-server/"]="pypi/computer-server"
+            ["libs/python/mcp-server/"]="pypi/mcp-server"
+            ["libs/typescript/cua-cli/"]="npm/cli"
+            ["libs/typescript/computer/"]="npm/computer"
+            ["libs/typescript/core/"]="npm/core"
+            ["libs/typescript/playground/"]="npm/playground"
+            ["libs/cuabot/"]="npm/cuabot"
+            ["libs/xfce/"]="docker/xfce"
+            ["libs/kasm/"]="docker/kasm"
+            ["libs/lumier/"]="docker/lumier"
+            ["libs/qemu-docker/android/"]="docker/qemu-android"
+            ["libs/qemu-docker/linux/"]="docker/qemu-linux"
+            ["libs/qemu-docker/windows/"]="docker/qemu-windows"
+            ["libs/lume/"]="lume"
+          )
+
+          # Find all affected services from changed files
+          declare -A AFFECTED_MAP
+          for path_prefix in "${!PATH_TO_SERVICE[@]}"; do
+            if echo "$CHANGED_FILES" | grep -q "^${path_prefix}"; then
+              service="${PATH_TO_SERVICE[$path_prefix]}"
+              AFFECTED_MAP["$service"]=1
+            fi
+          done
+
+          if [ ${#AFFECTED_MAP[@]} -eq 0 ]; then
+            echo "No publishable packages affected, skipping."
+            exit 0
+          fi
+
+          echo "Affected packages:"
+          for svc in "${!AFFECTED_MAP[@]}"; do echo "  - $svc"; done
+
+          # Collect labeled packages for auto-release
+          LABELED=()
+          for svc in "${!AFFECTED_MAP[@]}"; do
+            if echo "$LABELS" | grep -q "\"release:${svc}\""; then
+              LABELED+=("$svc")
+            fi
+          done
+
+          if [ ${#LABELED[@]} -eq 0 ]; then
+            echo "No release labels found. Daily digest will catch unreleased packages."
+            exit 0
+          fi
+
+          echo ""
+          echo "Packages with release labels (will auto-release):"
+          for svc in "${LABELED[@]}"; do echo "  - $svc"; done
+
+          # Trigger each labeled package independently (no cascade — deps use version ranges)
+          for svc in "${LABELED[@]}"; do
+            echo ""
+            echo "Triggering release-bump-version: service=$svc bump_type=$BUMP_TYPE"
+            gh workflow run release-bump-version.yml \
+              --repo "$REPO" \
+              -f service="$svc" \
+              -f bump_type="$BUMP_TYPE"
+            echo "Triggered successfully."
+            sleep 15
+          done
+
+          echo ""
+          echo "Done!"

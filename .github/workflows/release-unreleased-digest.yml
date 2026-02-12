@@ -1,0 +1,103 @@
+name: "CD: Unreleased Changes Digest"
+
+on:
+  schedule:
+    # Daily at 8pm PT / 4am UTC (Mon-Fri PT = Tue-Sat UTC)
+    - cron: "0 4 * * 2-6"
+  workflow_dispatch: {}
+
+jobs:
+  digest:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Check for unreleased changes per package
+        run: |
+          # Service → tag prefix → directory
+          declare -A SERVICE_TAG_DIR
+          SERVICE_TAG_DIR["pypi/cli"]="cli-v|libs/python/cua-cli/"
+          SERVICE_TAG_DIR["pypi/agent"]="agent-v|libs/python/agent/"
+          SERVICE_TAG_DIR["pypi/computer"]="computer-v|libs/python/computer/"
+          SERVICE_TAG_DIR["pypi/core"]="core-v|libs/python/core/"
+          SERVICE_TAG_DIR["pypi/som"]="som-v|libs/python/som/"
+          SERVICE_TAG_DIR["pypi/bench"]="bench-v|libs/cua-bench/"
+          SERVICE_TAG_DIR["pypi/bench-ui"]="bench-ui-v|libs/python/bench-ui/"
+          SERVICE_TAG_DIR["pypi/computer-server"]="computer-server-v|libs/python/computer-server/"
+          SERVICE_TAG_DIR["pypi/mcp-server"]="mcp-server-v|libs/python/mcp-server/"
+          SERVICE_TAG_DIR["npm/cli"]="npm-cli-v|libs/typescript/cua-cli/"
+          SERVICE_TAG_DIR["npm/computer"]="npm-computer-v|libs/typescript/computer/"
+          SERVICE_TAG_DIR["npm/core"]="npm-core-v|libs/typescript/core/"
+          SERVICE_TAG_DIR["npm/playground"]="npm-playground-v|libs/typescript/playground/"
+          SERVICE_TAG_DIR["npm/cuabot"]="cuabot-v|libs/cuabot/"
+          SERVICE_TAG_DIR["docker/xfce"]="docker-xfce-v|libs/xfce/"
+          SERVICE_TAG_DIR["docker/kasm"]="docker-kasm-v|libs/kasm/"
+          SERVICE_TAG_DIR["docker/lumier"]="docker-lumier-v|libs/lumier/"
+          SERVICE_TAG_DIR["docker/qemu-android"]="docker-cua-qemu-android-v|libs/qemu-docker/android/"
+          SERVICE_TAG_DIR["docker/qemu-linux"]="docker-cua-qemu-linux-v|libs/qemu-docker/linux/"
+          SERVICE_TAG_DIR["docker/qemu-windows"]="docker-cua-qemu-windows-v|libs/qemu-docker/windows/"
+          SERVICE_TAG_DIR["lume"]="lume-v|libs/lume/"
+
+          UNRELEASED=""
+          UNRELEASED_COUNT=0
+
+          for service in $(printf '%s\n' "${!SERVICE_TAG_DIR[@]}" | sort); do
+            IFS='|' read -r tag_prefix directory <<< "${SERVICE_TAG_DIR[$service]}"
+
+            # Find the latest tag for this service
+            LATEST_TAG=$(git tag -l "${tag_prefix}*" --sort=-v:refname | head -1)
+
+            if [ -z "$LATEST_TAG" ]; then
+              # No tags at all — check if directory has any commits
+              COMMIT_COUNT=$(git log --oneline -- "$directory" | wc -l | xargs)
+              if [ "$COMMIT_COUNT" -gt 0 ]; then
+                UNRELEASED="${UNRELEASED}${service} (never released, ${COMMIT_COUNT} commits)\n"
+                UNRELEASED_COUNT=$((UNRELEASED_COUNT + 1))
+              fi
+              continue
+            fi
+
+            # Count commits in this directory since the latest tag
+            COMMIT_COUNT=$(git log --oneline "${LATEST_TAG}..HEAD" -- "$directory" | wc -l | xargs)
+
+            if [ "$COMMIT_COUNT" -gt 0 ]; then
+              UNRELEASED="${UNRELEASED}${service} (${COMMIT_COUNT} commits since ${LATEST_TAG})\n"
+              UNRELEASED_COUNT=$((UNRELEASED_COUNT + 1))
+            fi
+          done
+
+          if [ "$UNRELEASED_COUNT" -eq 0 ]; then
+            echo "All packages are up to date!"
+            exit 0
+          fi
+
+          echo "Packages with unreleased changes:"
+          echo -e "$UNRELEASED"
+
+          # Build description for AlertManager
+          DESCRIPTION=$(echo -e "$UNRELEASED" | sed 's/$/; /' | tr -d '\n' | sed 's/; $//')
+
+          # Send alert to AlertManager → Slack
+          curl -s -X POST https://am.cua.ai/api/v2/alerts \
+            -H "Content-Type: application/json" \
+            -d "[
+              {
+                \"labels\": {
+                  \"alertname\": \"UnreleasedChangesDigest\",
+                  \"severity\": \"info\",
+                  \"source\": \"github-actions\"
+                },
+                \"annotations\": {
+                  \"summary\": \"${UNRELEASED_COUNT} packages have unreleased changes on main\",
+                  \"description\": \"${DESCRIPTION}\"
+                },
+                \"generatorURL\": \"https://github.com/${{ github.repository }}/actions/workflows/release-bump-version.yml\"
+              }
+            ]"
+
+          echo ""
+          echo "Slack digest sent."

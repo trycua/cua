@@ -330,7 +330,8 @@ extension VMDirectory {
             ipAddress: ipAddress,
             sshAvailable: sshAvailable,
             locationName: locationName,
-            sharedDirectories: nil
+            sharedDirectories: nil,
+            networkMode: config.networkMode.description
         )
     }
 }

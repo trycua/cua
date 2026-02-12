@@ -31,6 +31,11 @@ INSTALL_DIR="${INSTALL_DIR:-$DEFAULT_INSTALL_DIR}"
 # Build configuration (debug or release)
 BUILD_CONFIG="debug"
 
+# Entitlement profile to use for local ad-hoc signing.
+# Default excludes com.apple.vm.networking because macOS kills ad-hoc binaries
+# carrying that restricted entitlement.
+USE_BRIDGED_ENTITLEMENT=false
+
 # Option to skip background service setup (default: install it)
 INSTALL_BACKGROUND_SERVICE=true
 
@@ -51,6 +56,9 @@ while [ "$#" -gt 0 ]; do
     --release)
       BUILD_CONFIG="release"
       ;;
+    --bridged-entitlement)
+      USE_BRIDGED_ENTITLEMENT=true
+      ;;
     --no-background-service)
       INSTALL_BACKGROUND_SERVICE=false
       ;;
@@ -62,6 +70,7 @@ while [ "$#" -gt 0 ]; do
       echo "  --install-dir DIR         Install to the specified directory (default: $DEFAULT_INSTALL_DIR)"
       echo "  --port PORT               Specify the port for lume serve (default: 7777)"
       echo "  --release                 Build release configuration instead of debug"
+      echo "  --bridged-entitlement     Sign with com.apple.vm.networking entitlement (requires proper Apple-approved signing)"
       echo "  --no-background-service   Do not setup the Lume background service (LaunchAgent)"
       echo "  --help                    Display this help message"
       echo ""
@@ -111,9 +120,24 @@ build_lume() {
     BUILD_PATH="$LUME_DIR/.build/debug"
   fi
 
+  # Use local-safe entitlements by default.
+  ENTITLEMENTS_FILE="$LUME_DIR/resources/lume.local.entitlements"
+  if [ "$USE_BRIDGED_ENTITLEMENT" = true ]; then
+    ENTITLEMENTS_FILE="$LUME_DIR/resources/lume.entitlements"
+  fi
+
   # Codesign the binary
   echo "Codesigning binary..."
-  codesign --force --entitlement "$LUME_DIR/resources/lume.entitlements" --sign - "$BUILD_PATH/lume"
+  codesign --force --entitlements "$ENTITLEMENTS_FILE" --sign - "$BUILD_PATH/lume"
+
+  # Verify the signed binary can launch.
+  if ! "$BUILD_PATH/lume" --version >/dev/null 2>&1; then
+    if [ "$USE_BRIDGED_ENTITLEMENT" = true ]; then
+      echo "${YELLOW}Warning: binary did not launch with bridged entitlement; falling back to local-safe entitlements.${NORMAL}"
+      ENTITLEMENTS_FILE="$LUME_DIR/resources/lume.local.entitlements"
+      codesign --force --entitlements "$ENTITLEMENTS_FILE" --sign - "$BUILD_PATH/lume"
+    fi
+  fi
 
   echo "${GREEN}Build complete!${NORMAL}"
 }
@@ -241,6 +265,9 @@ main() {
   echo ""
   echo "${GREEN}${BOLD}Lume ($BUILD_CONFIG) has been successfully installed!${NORMAL}"
   echo "Run ${BOLD}lume${NORMAL} to get started."
+  if [ "$USE_BRIDGED_ENTITLEMENT" = false ]; then
+    echo "${YELLOW}Note: local installer signs without com.apple.vm.networking by default.${NORMAL}"
+  fi
 
   if [ "$INSTALL_BACKGROUND_SERVICE" = true ]; then
     setup_background_service

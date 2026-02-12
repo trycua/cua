@@ -1,0 +1,140 @@
+---
+title: Introduction
+description: Multi-user computing with AI
+---
+
+<div className="not-prose flex justify-center my-8">
+  <img
+    src="/docs/img/cuabot-screenshot.png"
+    alt="cuabot screenshot"
+    style={{ maxHeight: '32em' }}
+    className="rounded-xl"
+  />
+</div>
+
+**Multi-user computing with AI**
+
+`cuabot` gives any coding agent a seamless sandbox for computer-use. Windows stream to your desktop with clipboard sharing and audio, isolated from your system.
+
+## Quick Start
+
+```bash
+# Start onboarding
+npx cuabot
+
+# Run your agent in the sandbox
+cuabot claude
+cuabot vibe
+cuabot codex
+```
+
+Requirements:
+
+- [Node.js](https://nodejs.org/) v18+
+- [Docker Desktop](https://www.docker.com/products/docker-desktop/)
+- [Xpra client](https://github.com/Xpra-org/xpra/wiki/Download)
+
+## Usage
+
+```bash
+cuabot                     # Run default agent (or setup if not configured)
+cuabot <agent>             # Run a specific agent
+cuabot <command>           # Run any command in the sandbox
+```
+
+### Agents
+
+Run any agent CLI in the sandboxed container:
+
+```bash
+cuabot claude              # Claude Code (Anthropic)
+cuabot gemini              # Gemini CLI (Google)
+cuabot codex               # Codex CLI (OpenAI)
+cuabot aider               # Aider
+cuabot openclaw            # OpenClaw
+cuabot vibe                # Vibe (Mistral)
+```
+
+Agents are lazily installed on first use.
+
+### Sandboxed Apps
+
+Safely run scripts or GUI apps in the sandbox:
+
+```bash
+cuabot chromium      # Open chromium window
+cuabot xterm         # Open terminal window
+cuabot bash          # Interactive bash
+```
+
+Terminal sessions and GUI applications are seamlessly streamed to your terminal or as a native desktop window.
+
+### Named Sessions
+
+Run multiple isolated sandboxes simultaneously:
+
+```bash
+cuabot -n work claude      # Run Claude in a session named "work"
+cuabot -n personal claude  # Run Claude in a separate session named "personal"
+cuabot --name dev bash     # Interactive bash in session "dev"
+```
+
+Each named session gets its own container, port, and window border color. Session files are stored as `server.<name>.pid` and `server.<name>.port`.
+
+### Commands
+
+```bash
+# Options (can be combined with any command)
+-n, --name <name>                 # Use a named session
+
+# Control cuabotd
+cuabot --serve [port]             # Start cuabotd (auto-finds port)
+cuabot --stop                     # Stop cuabotd
+cuabot --status                   # Server status
+
+# Control sandbox
+cuabot --screenshot [path]        # Take screenshot
+cuabot --bash <command>           # Execute bash command
+cuabot --click <x> <y> [button]   # Click at coordinates
+cuabot --doubleclick <x> <y>      # Double-click
+cuabot --move <x> <y>             # Move mouse
+cuabot --mousedown <x> <y>        # Press mouse button
+cuabot --mouseup <x> <y>          # Release mouse button
+cuabot --drag <x1> <y1> <x2> <y2> # Drag
+cuabot --scroll <x> <y> <dx> <dy> # Scroll
+cuabot --type <text>              # Type text
+cuabot --key <key>                # Press key
+cuabot --keydown <key>            # Key down
+cuabot --keyup <key>              # Key up
+
+cuabot --help                     # Show help
+```
+
+## How It Works
+
+Cua-Bot runs a Docker container with Xpra, streaming individual application windows to your desktop. Your chosen agent runs inside the container with:
+
+- Full Ubuntu 22.04 environment
+- Pre-installed: Node.js, Python, browsers, dev tools
+- Computer-use MCP server for screenshot/click/type actions
+- Isolated from your host system
+
+## Configuration
+
+Config files are stored in `~/.cuabot/`:
+
+- `settings.json` - Default agent and preferences
+- `server.pid` / `server.<name>.pid` - Server process ID
+- `server.port` / `server.<name>.port` - Server port number
+- `user/` - Persistent config for agent CLIs
+
+## Development
+
+```bash
+pnpm dev      # Run with file watching
+pnpm build    # Build TypeScript
+```
+
+## License
+
+MIT

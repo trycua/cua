@@ -1,0 +1,111 @@
+[project]
+name = "cua-cli"
+version = "0.1.4"
+description = "Unified CLI for CUA - Computer-Use Agents"
+readme = "README.md"
+license = "MIT"
+authors = [
+    { name = "TryCua", email = "hello@trycua.com" }
+]
+keywords = [
+    "computer-use",
+    "cli",
+    "cloud",
+    "sandbox",
+    "agents",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Environment :: Console",
+]
+requires-python = ">=3.11,<3.14"
+
+dependencies = [
+    # Core CUA packages
+    "cua-computer>=0.4.0",
+    "cua-core>=0.1.0",
+    # HTTP client
+    "aiohttp>=3.9.0",
+    # CLI output
+    "rich>=13.0.0",
+    # Image processing for skills
+    "pillow>=10.0.0",
+    # WebSocket for skills recording
+    "websockets>=12.0",
+]
+
+[project.optional-dependencies]
+# MCP server support
+mcp = [
+    "fastmcp>=2.0",
+]
+# Skills recording with LLM captioning
+skills = [
+    "litellm>=1.74.0",
+]
+# Full installation
+all = [
+    "cua-cli[mcp,skills]",
+]
+# Development
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+    "pytest-cov>=4.0.0",
+    "ruff>=0.1.0",
+    "respx>=0.20.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/trycua/cua"
+Documentation = "https://docs.trycua.com"
+Repository = "https://github.com/trycua/cua"
+Issues = "https://github.com/trycua/cua/issues"
+
+[project.scripts]
+cua = "cua_cli.main:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build]
+include = [
+    "cua_cli/**",
+    "README.md",
+    "LICENSE",
+]
+exclude = [
+    "cua_cli/**/__pycache__",
+    "cua_cli/**/tests",
+    "**/.DS_Store",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["cua_cli"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "cua_cli/**",
+    "README.md",
+    "LICENSE",
+    "pyproject.toml",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W"]
+ignore = ["E501"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

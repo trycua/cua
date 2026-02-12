@@ -58,7 +58,8 @@ Or manually edit `~/Library/Application Support/Claude/claude_desktop_config.jso
 ```
 
 <Callout type="info">
-If editing manually, replace `/Users/yourname/.local/bin/lume` with the actual path to your lume binary. You can find it by running `which lume` in your terminal.
+  If editing manually, replace `/Users/yourname/.local/bin/lume` with the actual path to your lume
+  binary. You can find it by running `which lume` in your terminal.
 </Callout>
 
 ### 2. Restart Claude Desktop
@@ -68,6 +69,7 @@ Claude will now have access to Lume's VM management tools.
 ### 3. Try it out
 
 Ask Claude:
+
 - "List my VMs"
 - "Start the sandbox VM"
 - "Run `ls -la` in the sandbox VM"
@@ -75,35 +77,35 @@ Ask Claude:
 
 ## Available tools
 
-| Tool | Description |
-|------|-------------|
-| `lume_create_vm` | Create a new macOS VM (async, returns immediately) |
-| `lume_list_vms` | List all VMs with status, IP addresses, and resource allocation |
-| `lume_get_vm` | Get detailed VM info (IP, VNC URL, SSH availability) |
-| `lume_run_vm` | Start a VM with optional shared directory |
-| `lume_stop_vm` | Stop a running VM gracefully |
-| `lume_clone_vm` | Clone a VM (useful for golden images) |
-| `lume_delete_vm` | Delete a VM and its files |
-| `lume_exec` | Execute commands inside a VM via SSH |
+| Tool             | Description                                                     |
+| ---------------- | --------------------------------------------------------------- |
+| `lume_create_vm` | Create a new macOS VM (async, returns immediately)              |
+| `lume_list_vms`  | List all VMs with status, IP addresses, and resource allocation |
+| `lume_get_vm`    | Get detailed VM info (IP, VNC URL, SSH availability)            |
+| `lume_run_vm`    | Start a VM with optional shared directory                       |
+| `lume_stop_vm`   | Stop a running VM gracefully                                    |
+| `lume_clone_vm`  | Clone a VM (useful for golden images)                           |
+| `lume_delete_vm` | Delete a VM and its files                                       |
+| `lume_exec`      | Execute commands inside a VM via SSH                            |
 
 ## Resources
 
 The MCP server provides documentation resources that AI agents can read:
 
-| Resource | Description |
-|----------|-------------|
+| Resource             | Description                                                              |
+| -------------------- | ------------------------------------------------------------------------ |
 | `lume://usage-guide` | Comprehensive guide with workflows, best practices, and status reference |
-| `lume://credentials` | Default SSH credentials for VMs created with unattended setup |
+| `lume://credentials` | Default SSH credentials for VMs created with unattended setup            |
 
 ## Prompts
 
 Pre-defined workflow prompts guide AI agents through common tasks:
 
-| Prompt | Description |
-|--------|-------------|
-| `create-sandbox` | Create a new macOS VM with unattended setup |
-| `run-in-sandbox` | Execute a command in an existing VM |
-| `reset-sandbox` | Reset a sandbox by cloning from a golden image |
+| Prompt           | Description                                    |
+| ---------------- | ---------------------------------------------- |
+| `create-sandbox` | Create a new macOS VM with unattended setup    |
+| `run-in-sandbox` | Execute a command in an existing VM            |
+| `reset-sandbox`  | Reset a sandbox by cloning from a golden image |
 
 ## Creating VMs
 
@@ -111,15 +113,15 @@ The `lume_create_vm` tool creates new macOS VMs asynchronously. Since VM creatio
 
 ### Parameters
 
-| Parameter | Required | Default | Description |
-|-----------|----------|---------|-------------|
-| `name` | Yes | - | Name for the new VM |
-| `ipsw` | No | `latest` | IPSW path or "latest" to download |
-| `unattended` | No | - | Preset name (e.g., "tahoe", "sequoia") for automatic setup |
-| `cpu` | No | 4 | Number of CPU cores |
-| `memory` | No | `8GB` | Memory size (e.g., "8GB", "16GB") |
-| `disk_size` | No | `64GB` | Disk size (e.g., "64GB", "128GB") |
-| `storage` | No | - | Storage location name or path |
+| Parameter    | Required | Default  | Description                                                |
+| ------------ | -------- | -------- | ---------------------------------------------------------- |
+| `name`       | Yes      | -        | Name for the new VM                                        |
+| `ipsw`       | No       | `latest` | IPSW path or "latest" to download                          |
+| `unattended` | No       | -        | Preset name (e.g., "tahoe", "sequoia") for automatic setup |
+| `cpu`        | No       | 4        | Number of CPU cores                                        |
+| `memory`     | No       | `8GB`    | Memory size (e.g., "8GB", "16GB")                          |
+| `disk_size`  | No       | `64GB`   | Disk size (e.g., "64GB", "128GB")                          |
+| `storage`    | No       | -        | Storage location name or path                              |
 
 ### Provisioning status
 
@@ -133,6 +135,7 @@ test      stopped                          -
 ```
 
 The operation progresses through:
+
 1. `ipsw_install` — Downloading and installing macOS
 2. `unattended_setup` — Running Setup Assistant automation (if `unattended` specified)
 
@@ -171,6 +174,7 @@ brew install hudochenkov/sshpass/sshpass
 ```
 
 For VMs created with `--unattended tahoe`:
+
 - Username: `lume`
 - Password: `lume`
 
@@ -208,12 +212,12 @@ Tests completed! Here are the results:
 
 ## MCP vs HTTP API
 
-| Feature | MCP Server | HTTP Server |
-|---------|-----------|-------------|
-| Command | `lume serve --mcp` | `lume serve` |
-| Transport | stdio (spawned by client) | HTTP (port 7777) |
-| Use case | AI agent integration | Scripts, CI/CD, SDKs |
-| Lifecycle | On-demand, client-managed | Background daemon |
+| Feature   | MCP Server                | HTTP Server          |
+| --------- | ------------------------- | -------------------- |
+| Command   | `lume serve --mcp`        | `lume serve`         |
+| Transport | stdio (spawned by client) | HTTP (port 7777)     |
+| Use case  | AI agent integration      | Scripts, CI/CD, SDKs |
+| Lifecycle | On-demand, client-managed | Background daemon    |
 
 Use MCP for AI agent integration. Use HTTP for programmatic access from scripts and applications.
 
@@ -226,6 +230,7 @@ npx @modelcontextprotocol/inspector lume serve --mcp
 ```
 
 This opens a web UI where you can:
+
 - See all available tools
 - Test tool calls interactively
 - Inspect request/response payloads
@@ -276,15 +281,18 @@ New VMs created with `--unattended tahoe` have SSH enabled automatically.
 ## Security considerations
 
 <Callout type="warn">
-The MCP server gives AI agents direct control over your VMs. Only use it with trusted AI applications.
+  The MCP server gives AI agents direct control over your VMs. Only use it with trusted AI
+  applications.
 </Callout>
 
 The MCP server:
+
 - Runs locally (stdio transport, no network exposure)
 - Has full access to VM lifecycle operations
 - Can execute commands inside VMs with SSH access
 
 Consider:
+
 - Using dedicated sandbox VMs for AI agent tasks
 - Cloning VMs before letting agents modify them
 - Reviewing agent actions in Claude's interface

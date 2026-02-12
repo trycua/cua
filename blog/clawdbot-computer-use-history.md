@@ -2,7 +2,7 @@
 
 _Published on Jan 28, 2026 by Francesco Bonacci. Originally posted on [X](https://x.com/francedot/status/2016627257310384554)._
 
-***TLDR**: Since Clawdbot went viral, I've gotten a lot of questions: Where did this all come from? What's next? Here's my take.*
+**\*TLDR**: Since Clawdbot went viral, I've gotten a lot of questions: Where did this all come from? What's next? Here's my take.\*
 
 Clawdbot just hit the mainstream. The open-source AI assistant — now rebranded to Moltbot after trademark issues — has captured the imagination of developers and mainstream users alike. An AI that runs on your own machine, controlled through WhatsApp, extensible through plugins. It feels like the future arriving all at once.
 
@@ -104,7 +104,7 @@ Nine days later, the open-source community responded. Browser-use ([@gregpr07](h
 
 ![story_11](https://github.com/user-attachments/assets/e079984a-ee73-4dc1-b43d-fdea78f08158)
 
-Then, on January 23, 2025, OpenAI entered with [Operator](https://openai.com/index/introducing-operator/), powered by their Computer-Using Agent (CUA) model. 
+Then, on January 23, 2025, OpenAI entered with [Operator](https://openai.com/index/introducing-operator/), powered by their Computer-Using Agent (CUA) model.
 
 ![story_12](https://github.com/user-attachments/assets/9a146ad2-174a-46a3-bbaf-9d066708fba1)
 
@@ -188,6 +188,7 @@ Created by Austrian developer Peter Steinberger, [Clawdbot](https://github.com/c
 ![story_18](https://github.com/user-attachments/assets/a7eaffff-d62b-452d-98c5-402fd7dadf69)
 
 What makes it different:
+
 - **Self-hosted**: Runs entirely on your machine. Your data stays local.
 - **Multi-model**: Works with Claude, GPT, or local models via Ollama.
 - **Extensible**: Skills and plugins from ClawdHub — a public registry where anyone can contribute capabilities.
@@ -202,6 +203,7 @@ But the paradigm is clear: the future of computer-use agents is modular, and use
 ## The Evolution in One Frame
 
 Looking back, the progression follows a clear arc:
+
 - 2023: "Can AI see a screen?" (GPT-4V)
 - 2024: "Can AI click buttons?" (Claude Computer Use, Operator)
 - 2025: "Can AI write code instead?" (CoAct-1)

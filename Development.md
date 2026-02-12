@@ -20,6 +20,7 @@ The project is organized as a monorepo with these main packages:
 
 - `libs/lume/` - Lume CLI (Swift)
 - `libs/typescript/` - TypeScript packages including `cua-cli`
+- `libs/cuabot/` - CuaBot multi-agent computer-use sandbox CLI
 
 All Python packages are part of a [uv workspace](https://docs.astral.sh/uv/concepts/projects/workspaces/) which manages a shared virtual environment and dependencies.
 
@@ -316,6 +317,11 @@ All packages are managed through a single consolidated workflow: [Bump Version &
 - `npm/cli` - Cua command-line interface
 - `npm/computer` - Computer client for TypeScript
 - `npm/core` - Core TypeScript utilities
+- `npm/cuabot` - Multi-agent computer-use sandbox
+
+**Docker:**
+
+- `docker/cuabot` - CuaBot container image
 
 **How to use:**
 
@@ -365,6 +371,8 @@ Each package uses its own tag format defined in `.bumpversion.cfg`:
 - **cua-core**: `core-v{version}` (e.g., `core-v0.1.9`)
 - **cua-mcp-server**: `mcp-server-v{version}` (e.g., `mcp-server-v0.1.14`)
 - **cua-som**: `som-v{version}` (e.g., `som-v0.1.3`)
+- **cuabot**: `cuabot-v{version}` (e.g., `cuabot-v1.0.0`)
+- **cuabot (docker)**: `docker-cuabot-v{version}` (e.g., `docker-cuabot-v1.0.0`)
 
 </details>
 

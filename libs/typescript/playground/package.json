@@ -1,0 +1,75 @@
+{
+  "name": "@trycua/playground",
+  "version": "0.2.0",
+  "packageManager": "pnpm@10.11.0",
+  "description": "Reusable playground UI for Cua computer-use agents",
+  "type": "module",
+  "license": "MIT",
+  "homepage": "https://github.com/trycua/cua/tree/main/libs/typescript/playground",
+  "bugs": {
+    "url": "https://github.com/trycua/cua/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/trycua/cua.git"
+  },
+  "author": "cua",
+  "files": [
+    "dist"
+  ],
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    },
+    "./styles.css": "./dist/styles.css",
+    "./package.json": "./package.json"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "peerDependencies": {
+    "react": "^18.0.0 || ^19.0.0",
+    "react-dom": "^18.0.0 || ^19.0.0",
+    "motion": "^12.0.0",
+    "lucide-react": ">=0.400.0"
+  },
+  "dependencies": {
+    "@radix-ui/react-dialog": "^1.1.15",
+    "@radix-ui/react-dropdown-menu": "^2.1.16",
+    "@radix-ui/react-select": "^2.2.5",
+    "@radix-ui/react-slot": "^1.0.0",
+    "@radix-ui/react-tooltip": "^1.2.8",
+    "@zip.js/zip.js": "^2.7.0",
+    "class-variance-authority": "^0.7.0",
+    "clsx": "^2.0.0",
+    "lottie-react": "^2.4.0",
+    "react-markdown": "^9.0.0",
+    "remark-gfm": "^4.0.0",
+    "tailwind-merge": "^2.0.0"
+  },
+  "devDependencies": {
+    "@types/react": "^18.0.0",
+    "@types/react-dom": "^18.0.0",
+    "bumpp": "^10.1.0",
+    "lucide-react": "^0.400.0",
+    "motion": "^12.0.0",
+    "tsdown": "^0.11.9",
+    "typescript": "^5.8.3",
+    "vitest": "^4.0.14"
+  },
+  "scripts": {
+    "lint": "prettier --check .",
+    "lint:fix": "prettier --write .",
+    "build": "tsdown",
+    "dev": "tsdown --watch",
+    "test": "vitest",
+    "typecheck": "tsc --noEmit",
+    "release": "bumpp && pnpm publish",
+    "prepublishOnly": "pnpm run build",
+    "link:global": "pnpm link --global"
+  }
+}

@@ -14,12 +14,16 @@ Cua is an open-source platform for building, benchmarking, and deploying agents 
 Cua consists of three main components:
 
 <div className="not-prose relative rounded-xl overflow-hidden my-8 w-full">
-  <img src="/docs/img/cua-architecture.png" alt="Cua Architecture" className="w-full h-auto rounded-xl" />
+  <img
+    src="/docs/img/cua-architecture.png"
+    alt="Cua Architecture"
+    className="w-full h-auto rounded-xl"
+  />
 </div>
 
 ### 1. Desktop Sandboxes
 
-Isolated virtual environments where your agents can safely execute tasks. Cua supports:
+Isolated virtual environments where your agents can safely execute tasks:
 
 - **Cloud Sandboxes** - Managed Linux, Windows, and macOS environments hosted by Cua
 - **Local Sandboxes** - Docker containers, QEMU VMs, macOS VMs via Lume, or Windows Sandbox on your own machine
@@ -36,16 +40,60 @@ A unified SDK for controlling desktop environments programmatically:
 
 ### 3. Agent Framework
 
-Build agents that see screens, click buttons, and complete tasks autonomously. Run isolated code execution environments for AI coding assistants like Claude Code, Codex CLI, or OpenCode.
+Build agents that see screens, click buttons, and complete tasks autonomously:
 
 - **100+ vision-language model options** through Cua VLM Router or direct provider access
 - **Pre-built agent loops** optimized for computer-use tasks
 - **Composable architecture** for combining grounding and planning models
 - **Built-in telemetry** for monitoring agent performance
 
-## Why Cua?
+## How Computer-Use Agents Work
 
-Cua provides isolated, reproducible environments for AI agents to operate safely:
+Computer-use agents operate through a continuous loop:
+
+```
+┌─────────────────────────────────────────┐
+│  1. OBSERVE                             │
+│     Take a screenshot of the screen     │
+└──────────────────┬──────────────────────┘
+                   │
+                   ▼
+┌─────────────────────────────────────────┐
+│  2. UNDERSTAND                          │
+│     Vision-language model analyzes      │
+│     the screenshot and current goal     │
+└──────────────────┬──────────────────────┘
+                   │
+                   ▼
+┌─────────────────────────────────────────┐
+│  3. DECIDE                              │
+│     Determine the next action:          │
+│     click, type, scroll, etc.           │
+└──────────────────┬──────────────────────┘
+                   │
+                   ▼
+┌─────────────────────────────────────────┐
+│  4. ACT                                 │
+│     Execute the action on the computer  │
+└──────────────────┬──────────────────────┘
+                   │
+                   ▼
+              Loop back to 1
+```
+
+This cycle repeats until the agent completes its goal or determines it cannot proceed.
+
+## Sandbox Options
+
+| Sandbox Type        | OS Support              | Best For                     | API Key Required |
+| ------------------- | ----------------------- | ---------------------------- | ---------------- |
+| **Cloud**           | Linux, Windows, macOS   | Production, teams, CI/CD     | Yes              |
+| **Docker**          | Linux                   | Local development            | No               |
+| **QEMU Docker**     | Linux, Windows, Android | Testing specific OS versions | No               |
+| **Lume (macOS)**    | macOS                   | macOS automation             | No               |
+| **Windows Sandbox** | Windows                 | Windows automation           | No               |
+
+## Why Cua?
 
 - **Secure execution** - Run AI coding assistants and computer-use agents in sandboxed environments
 - **Self-hostable** - Deploy locally with Docker, QEMU, or Apple Virtualization
@@ -53,8 +101,6 @@ Cua provides isolated, reproducible environments for AI agents to operate safely
 - **Visual understanding** - Agents see screens, adapt to UI changes, and complete complex tasks
 
 ## Use Cases
-
-Cua is ideal for:
 
 - **AI coding assistants** - Isolated code execution environments for Claude Code, Codex CLI, OpenCode, and other AI coding tools
 - **Computer-use agents** - Build agents that interact with any desktop application autonomously
@@ -65,4 +111,4 @@ Cua is ideal for:
 
 ## Getting Started
 
-Ready to build your first agent? Continue to [Set Up a Sandbox](/cua/guide/get-started/set-up-sandbox) to set up your environment and run your first automation.
+Ready to build your first agent? Continue to the [Quickstart](/cua/guide/get-started/quickstart) to get a computer-use agent running.

@@ -413,8 +413,8 @@ If users seem stuck, invite them to join the Discord: https://discord.com/invite
   maxTokens: 8192 * 4,
   mcpServers: [
     {
-      type: 'sse',
-      url: 'https://vk-mcp.cua.ai/sse',
+      type: 'http',
+      url: 'https://vk-mcp.cua.ai/mcp',
     },
   ],
 });

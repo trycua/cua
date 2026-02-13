@@ -142,8 +142,23 @@ if [ -n "$LUME_BIN" ] && [ -f "$LUME_BIN" ]; then
     rm -f "$INSTALL_DIR/lume-daemon"
     echo "  ${GREEN}Removed $INSTALL_DIR/lume-daemon${NORMAL}"
   fi
+
+  # Remove legacy resource bundle if exists
+  if [ -d "$INSTALL_DIR/lume_lume.bundle" ]; then
+    rm -rf "$INSTALL_DIR/lume_lume.bundle"
+    echo "  ${GREEN}Removed $INSTALL_DIR/lume_lume.bundle${NORMAL}"
+  fi
 else
   echo "  ${YELLOW}Lume binary not found (skipped)${NORMAL}"
+fi
+
+# Remove .app bundle if installed (new format)
+APP_INSTALL_DIR="$HOME/.local/share/lume"
+if [ -d "$APP_INSTALL_DIR/lume.app" ]; then
+  rm -rf "$APP_INSTALL_DIR/lume.app"
+  echo "  ${GREEN}Removed $APP_INSTALL_DIR/lume.app${NORMAL}"
+  # Remove the share directory if empty
+  rmdir "$APP_INSTALL_DIR" 2>/dev/null && echo "  ${GREEN}Removed $APP_INSTALL_DIR${NORMAL}" || true
 fi
 
 # Remove log files

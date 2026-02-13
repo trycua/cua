@@ -64,61 +64,23 @@ log "normal" "Ensuring .release directory exists and is accessible"
 log "essential" "Building release version..."
 swift build -c release --product lume > /dev/null
 
-# --- Assemble .app bundle ---
-log "essential" "Assembling .app bundle..."
-
-APP_BUNDLE=".release/lume.app"
-rm -rf "$APP_BUNDLE"
-mkdir -p "$APP_BUNDLE/Contents/MacOS"
-
-# Copy the binary into the bundle
-cp -f .build/release/lume "$APP_BUNDLE/Contents/MacOS/lume"
-
-# Copy resource bundle (contains unattended presets) alongside the executable
-# so SPM's Bundle.module resolves correctly
-BUILD_BUNDLE=".build/release/lume_lume.bundle"
-if [ -d "$BUILD_BUNDLE" ]; then
-  cp -rf "$BUILD_BUNDLE" "$APP_BUNDLE/Contents/MacOS/"
-fi
-
-# Stamp and copy Info.plist
-sed "s/__VERSION__/$VERSION/g" "./resources/Info.plist" > "$APP_BUNDLE/Contents/Info.plist"
-
-# Embed the provisioning profile
-PROVISION_PROFILE="./resources/embedded.provisionprofile"
-if [ -f "$PROVISION_PROFILE" ]; then
-  cp "$PROVISION_PROFILE" "$APP_BUNDLE/Contents/embedded.provisionprofile"
-else
-  log "error" "Error: embedded.provisionprofile not found at $PROVISION_PROFILE"
-  log "error" "The provisioning profile is required for the com.apple.vm.networking entitlement."
-  log "error" "Obtain one from the Apple Developer portal tied to bundle ID com.trycua.lume."
-  exit 1
-fi
-
-# --- Sign the .app bundle ---
-log "essential" "Signing .app bundle..."
-
-# Sign the binary inside the bundle first (with entitlements)
+# Sign the binary with hardened runtime entitlements
+log "essential" "Signing binary with entitlements..."
 codesign --force --options runtime \
          --entitlement ./resources/lume.entitlements \
          --sign "$CERT_APPLICATION_NAME" \
-         "$APP_BUNDLE/Contents/MacOS/lume" 2> /dev/null
+         .build/release/lume 2> /dev/null
 
-# Sign the outer bundle
-codesign --force --options runtime \
-         --sign "$CERT_APPLICATION_NAME" \
-         "$APP_BUNDLE" 2> /dev/null
-
-# --- Package as .pkg installer ---
-log "essential" "Building installer package..."
-
+# Create a temporary directory for packaging
 TEMP_ROOT=$(mktemp -d)
-mkdir -p "$TEMP_ROOT/usr/local/share/lume"
-cp -R "$APP_BUNDLE" "$TEMP_ROOT/usr/local/share/lume/"
+mkdir -p "$TEMP_ROOT/usr/local/bin"
+cp -f .build/release/lume "$TEMP_ROOT/usr/local/bin/"
 
+# Build the installer package
+log "essential" "Building installer package..."
 if ! pkgbuild --root "$TEMP_ROOT" \
          --identifier "com.trycua.lume" \
-         --version "$VERSION" \
+         --version "1.0" \
          --install-location "/" \
          --sign "$CERT_INSTALLER_NAME" \
          ./.release/lume.pkg; then
@@ -134,7 +96,7 @@ fi
 
 log "essential" "Package created successfully"
 
-# --- Notarize ---
+# Submit for notarization using stored credentials
 log "essential" "Submitting for notarization..."
 if [ "$LOG_LEVEL" = "minimal" ] || [ "$LOG_LEVEL" = "none" ]; then
   # Minimal output - capture ID but hide details
@@ -165,45 +127,82 @@ else
   fi
 fi
 
-# Staple the notarization ticket to the .pkg
-log "essential" "Stapling notarization ticket to .pkg..."
+# Staple the notarization ticket
+log "essential" "Stapling notarization ticket..."
 if ! xcrun stapler staple ./.release/lume.pkg > /dev/null 2>&1; then
-  log "error" "Failed to staple notarization ticket to .pkg"
+  log "error" "Failed to staple notarization ticket"
   exit 1
 fi
 
-# Staple the notarization ticket to the .app bundle
-log "essential" "Stapling notarization ticket to .app bundle..."
-if ! xcrun stapler staple "$APP_BUNDLE" > /dev/null 2>&1; then
-  log "normal" "Note: Could not staple .app bundle directly (this is expected when notarizing via .pkg)"
+# Create temporary directory for package extraction
+EXTRACT_ROOT=$(mktemp -d)
+PKG_PATH="$(pwd)/.release/lume.pkg"
+
+# Extract the pkg using xar
+cd "$EXTRACT_ROOT"
+xar -xf "$PKG_PATH" > /dev/null 2>&1
+
+# Verify Payload exists before proceeding
+if [ ! -f "Payload" ]; then
+    log "error" "Error: Payload file not found after xar extraction"
+    exit 1
 fi
 
-# --- Create release archives ---
+# Create a directory for the extracted contents
+mkdir -p extracted
+cd extracted
+
+# Extract the Payload
+cat ../Payload | gunzip -dc | cpio -i > /dev/null 2>&1
+
+# Verify the binary exists
+if [ ! -f "usr/local/bin/lume" ]; then
+    log "error" "Error: lume binary not found in expected location"
+    exit 1
+fi
+
+# Get the release directory absolute path
+RELEASE_DIR="$(realpath "$(dirname "$PKG_PATH")")"
+log "normal" "Using release directory: $RELEASE_DIR"
+
+# Copy extracted lume to the release directory
+cp -f usr/local/bin/lume "$RELEASE_DIR/lume"
+
+# Copy the resource bundle (contains unattended presets) from the build directory
+BUILD_BUNDLE="$LUME_DIR/.build/release/lume_lume.bundle"
+if [ -d "$BUILD_BUNDLE" ]; then
+  cp -rf "$BUILD_BUNDLE" "$RELEASE_DIR/"
+fi
+
+# Install to user-local bin directory (standard location)
+USER_BIN="$HOME/.local/bin"
+mkdir -p "$USER_BIN"
+cp -f "$RELEASE_DIR/lume" "$USER_BIN/lume"
+
+# Advise user to add to PATH if not present
+if ! echo "$PATH" | grep -q "$USER_BIN"; then
+  log "normal" "[lume build] Note: $USER_BIN is not in your PATH. Add 'export PATH=\"$USER_BIN:\$PATH\"' to your shell profile."
+fi
 
 # Get architecture and create OS identifier
 ARCH=$(uname -m)
 OS_IDENTIFIER="darwin-${ARCH}"
-RELEASE_DIR="$(cd .release && pwd)"
 
+# Create versioned archives of the package with OS identifier in the name
 log "essential" "Creating archives in $RELEASE_DIR..."
 cd "$RELEASE_DIR"
 
 # Clean up any existing artifacts first to avoid conflicts
 rm -f lume-*.tar.gz lume-*.pkg.tar.gz
 
-# Create a backward-compatible wrapper script at the tarball root
-cat > lume <<'WRAPPER_EOF'
-#!/bin/sh
-exec "$(dirname "$0")/lume.app/Contents/MacOS/lume" "$@"
-WRAPPER_EOF
-chmod +x lume
-
 # Create version-specific archives
 log "essential" "Creating version-specific archives (${VERSION})..."
-
-# Package the .app bundle and wrapper script
-tar -czf "lume-${VERSION}-${OS_IDENTIFIER}.tar.gz" lume lume.app > /dev/null 2>&1
-
+# Package the binary and resource bundle
+if [ -d "lume_lume.bundle" ]; then
+  tar -czf "lume-${VERSION}-${OS_IDENTIFIER}.tar.gz" lume lume_lume.bundle > /dev/null 2>&1
+else
+  tar -czf "lume-${VERSION}-${OS_IDENTIFIER}.tar.gz" lume > /dev/null 2>&1
+fi
 # Package the installer
 tar -czf "lume-${VERSION}-${OS_IDENTIFIER}.pkg.tar.gz" lume.pkg > /dev/null 2>&1
 
@@ -221,5 +220,6 @@ chmod 644 "$RELEASE_DIR"/*.tar.gz "$RELEASE_DIR"/*.pkg.tar.gz "$RELEASE_DIR"/che
 
 # Clean up
 rm -rf "$TEMP_ROOT"
+rm -rf "$EXTRACT_ROOT"
 
 log "essential" "Build and packaging completed successfully."

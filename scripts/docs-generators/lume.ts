@@ -349,7 +349,7 @@ export function generateCLIReferenceMDX(docs: CLIDocumentation): string {
 
   // Group commands by category
   const vmManagement = ['create', 'run', 'stop', 'delete', 'clone'];
-  const vmInfo = ['ls', 'get', 'set'];
+  const vmInfo = ['ls', 'get', 'set', 'ssh'];
   const imageManagement = ['images', 'pull', 'push', 'ipsw', 'prune'];
   const configuration = ['config', 'serve', 'logs', 'setup'];
 

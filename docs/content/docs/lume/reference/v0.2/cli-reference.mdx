@@ -160,6 +160,22 @@ Set new values for CPU, memory, and disk size of a virtual machine
 - `--display` - New display resolution
 - `--storage` - VM storage location to use
 
+### lume ssh
+
+Connect to a VM via SSH or execute commands remotely
+
+**Arguments:**
+
+- `<name>` - Name of the virtual machine
+- `<command>` - Command to execute (omit for interactive shell) (optional)
+
+**Options:**
+
+- `-u, --user` - SSH username (default: lume)
+- `-p, --password` - SSH password (default: lume)
+- `--storage` - Storage location name or path
+- `-t, --timeout` - Command timeout in seconds (0 for no timeout, default: 60)
+
 ### lume ls
 
 List virtual machines
@@ -253,6 +269,12 @@ Get or set lume configuration
 - `lume config caching` - Manage image caching settings
   - `lume config caching get` - Show current caching status
   - `lume config caching set` - Enable or disable image caching
+- `lume config telemetry` - Manage anonymous telemetry settings
+  - `lume config telemetry status` - Show current telemetry status
+  - `lume config telemetry enable` - Enable anonymous telemetry
+  - `lume config telemetry disable` - Disable anonymous telemetry
+- `lume config network` - Manage network settings
+  - `lume config network interfaces` - List available network interfaces for bridged networking
 
 ### lume logs
 

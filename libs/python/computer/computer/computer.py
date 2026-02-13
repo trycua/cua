@@ -45,8 +45,6 @@ from .tracing_wrapper import TracingInterfaceWrapper
 # Import OTEL functions for session-level metrics
 try:
     from core.telemetry import (
-        add_breadcrumb,
-        capture_exception,
         is_otel_enabled,
         record_operation,
         track_concurrent,
@@ -659,16 +657,6 @@ class Computer:
                     os_type=self.os_type,
                     provider=str(self.provider_type),
                 )
-                add_breadcrumb(
-                    category="computer",
-                    message=f"Computer session started ({self.os_type})",
-                    level="info",
-                    data={
-                        "os_type": self.os_type,
-                        "provider": str(self.provider_type),
-                        "duration_seconds": duration_seconds,
-                    },
-                )
         except Exception as e:
             # Record failed session start
             if OTEL_AVAILABLE and is_otel_enabled() and self._telemetry_enabled:
@@ -678,13 +666,6 @@ class Computer:
                     duration_seconds=duration_seconds,
                     status="error",
                     os_type=self.os_type,
-                )
-                capture_exception(
-                    e,
-                    context={
-                        "operation": "computer.session.start",
-                        "os_type": self.os_type,
-                    },
                 )
             raise
         finally:
@@ -735,15 +716,6 @@ class Computer:
                     duration_seconds=duration_seconds,
                     status="success",
                     os_type=self.os_type,
-                )
-                add_breadcrumb(
-                    category="computer",
-                    message=f"Computer session stopped ({self.os_type})",
-                    level="info",
-                    data={
-                        "os_type": self.os_type,
-                        "duration_seconds": duration_seconds,
-                    },
                 )
         except Exception as e:
             self.logger.debug(

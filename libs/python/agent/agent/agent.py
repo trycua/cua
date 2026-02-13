@@ -892,7 +892,7 @@ class ComputerAgent:
                 "messages": preprocessed_messages,
                 "model": self.model,
                 "tools": self.tool_schemas,
-                "stream": False,
+                "stream": stream,
                 "computer_handler": self.computer_handler,
                 "max_retries": self.max_retries,
                 "use_prompt_caching": self.use_prompt_caching,
@@ -930,32 +930,61 @@ class ComputerAgent:
             # ---------------------------------
 
             # Run agent loop iteration
-            result = await self.agent_loop.predict_step(
+            predict_result = await self.agent_loop.predict_step(
                 **loop_kwargs,
                 _on_api_start=self._on_api_start,
                 _on_api_end=self._on_api_end,
                 _on_usage=self._on_usage,
                 _on_screenshot=self._on_screenshot,
             )
-            result = get_json(result)
 
-            # Lifecycle hook: Postprocess messages after the LLM call
-            # Use cases:
-            # - PII deanonymization (if you want tool calls to see PII)
-            result["output"] = await self._on_llm_end(result.get("output", []))
-            await self._on_responses(loop_kwargs, result)
+            # Handle streaming vs non-streaming response
+            if stream and hasattr(predict_result, "__aiter__"):
+                # Streaming: iterate over async generator
+                accumulated_output: List[Dict[str, Any]] = []
+                async for chunk in predict_result:
+                    chunk = get_json(chunk)
+                    chunk_output = chunk.get("output", [])
 
-            # Yield agent response
-            yield result
+                    # Postprocess chunk output
+                    chunk["output"] = await self._on_llm_end(chunk_output)
+
+                    # Yield streaming chunk
+                    yield chunk
+
+                    # Accumulate output for handling computer actions
+                    accumulated_output.extend(chunk["output"])
+
+                    # Check for completed status
+                    if chunk.get("status") == "completed":
+                        break
+
+                # Set result for handling computer actions
+                result = {"output": accumulated_output, "usage": chunk.get("usage", {})}
+
+                # Call the responses callback for trajectory saving (same as non-streaming path)
+                await self._on_responses(loop_kwargs, result)
+            else:
+                # Non-streaming: single response
+                result = get_json(predict_result)
+
+                # Lifecycle hook: Postprocess messages after the LLM call
+                # Use cases:
+                # - PII deanonymization (if you want tool calls to see PII)
+                result["output"] = await self._on_llm_end(result.get("output", []))
+                await self._on_responses(loop_kwargs, result)
+
+                # Yield agent response
+                yield result
 
             # Add agent response to new_items
-            new_items += result.get("output")
+            new_items += result.get("output", [])
 
             # Get output call ids
             output_call_ids = get_output_call_ids(result.get("output", []))
 
             # Handle computer actions
-            for item in result.get("output"):
+            for item in result.get("output", []):
                 partial_items = await self._handle_item(
                     item, self.computer_handler, ignore_call_ids=output_call_ids
                 )

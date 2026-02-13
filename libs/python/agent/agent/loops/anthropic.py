@@ -4,7 +4,7 @@ Anthropic hosted tools agent loop implementation using liteLLM
 
 import asyncio
 import json
-from typing import Any, AsyncGenerator, Dict, List, Optional, Tuple, Union
+from typing import Any, AsyncGenerator, Callable, Dict, List, Optional, Tuple, Union
 
 import litellm
 from litellm.responses.litellm_completion_transformation.transformation import (
@@ -1493,16 +1493,17 @@ class AnthropicHostedToolsConfig(AsyncAgentConfig):
         stream: bool = False,
         computer_handler=None,
         use_prompt_caching: Optional[bool] = False,
-        _on_api_start=None,
-        _on_api_end=None,
-        _on_usage=None,
-        _on_screenshot=None,
+        _on_api_start: Optional[Callable] = None,
+        _on_api_end: Optional[Callable] = None,
+        _on_usage: Optional[Callable] = None,
+        _on_screenshot: Optional[Callable] = None,
         **kwargs,
-    ) -> Dict[str, Any]:
+    ) -> Union[Dict[str, Any], AsyncGenerator[Dict[str, Any], None]]:
         """
         Anthropic hosted tools agent loop using liteLLM acompletion.
 
         Supports Anthropic's computer use models with hosted tools.
+        When stream=True, returns an AsyncGenerator that yields partial results.
         """
         tools = tools or []
 
@@ -1538,28 +1539,243 @@ class AnthropicHostedToolsConfig(AsyncAgentConfig):
         if _on_api_start:
             await _on_api_start(api_kwargs)
 
-        # Use liteLLM acompletion
+        if stream:
+            return self._predict_step_streaming(
+                api_kwargs=api_kwargs,
+                _on_api_end=_on_api_end,
+                _on_usage=_on_usage,
+            )
+        else:
+            # Non-streaming path
+            response = await litellm.acompletion(**api_kwargs)
+
+            # Call API end hook
+            if _on_api_end:
+                await _on_api_end(api_kwargs, response)
+
+            # Convert response to responses_items format
+            responses_items = _convert_completion_to_responses_items(response)
+
+            # Extract usage information
+            responses_usage = {
+                **LiteLLMCompletionResponsesConfig._transform_chat_completion_usage_to_responses_usage(
+                    response.usage
+                ).model_dump(),
+                "response_cost": response._hidden_params.get("response_cost", 0.0),
+            }
+            if _on_usage:
+                await _on_usage(responses_usage)
+
+            # Return in AsyncAgentConfig format
+            return {"output": responses_items, "usage": responses_usage}
+
+    async def _predict_step_streaming(
+        self,
+        api_kwargs: Dict[str, Any],
+        _on_api_end: Optional[Callable] = None,
+        _on_usage: Optional[Callable] = None,
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        """
+        Internal streaming implementation for predict_step.
+
+        Yields partial results as they arrive from the API.
+        """
+        # Use liteLLM acompletion with streaming
         response = await litellm.acompletion(**api_kwargs)
 
-        # Call API end hook
+        collected_content: List[Dict[str, Any]] = []
+        collected_tool_calls: List[Dict[str, Any]] = []
+        collected_usage: Dict[str, Any] = {}
+
+        async for chunk in response:
+            # Process streaming chunk
+            if hasattr(chunk, "choices") and chunk.choices:
+                choice = chunk.choices[0]
+                delta = getattr(choice, "delta", None)
+
+                if delta:
+                    # Handle text content
+                    if hasattr(delta, "content") and delta.content:
+                        text_item = make_output_text_item(delta.content)
+                        yield {"output": [text_item], "usage": {}, "status": "streaming"}
+
+                    # Handle tool calls
+                    if hasattr(delta, "tool_calls") and delta.tool_calls:
+                        for tool_call_delta in delta.tool_calls:
+                            # Accumulate tool call data
+                            if hasattr(tool_call_delta, "index"):
+                                idx = tool_call_delta.index
+                                while len(collected_tool_calls) <= idx:
+                                    collected_tool_calls.append(
+                                        {"id": "", "function": {"name": "", "arguments": ""}}
+                                    )
+
+                                if hasattr(tool_call_delta, "id") and tool_call_delta.id:
+                                    collected_tool_calls[idx]["id"] = tool_call_delta.id
+
+                                if hasattr(tool_call_delta, "function"):
+                                    func = tool_call_delta.function
+                                    if hasattr(func, "name") and func.name:
+                                        collected_tool_calls[idx]["function"]["name"] = func.name
+                                    if hasattr(func, "arguments") and func.arguments:
+                                        collected_tool_calls[idx]["function"][
+                                            "arguments"
+                                        ] += func.arguments
+
+            # Collect usage from final chunk
+            if hasattr(chunk, "usage") and chunk.usage:
+                collected_usage = {
+                    **LiteLLMCompletionResponsesConfig._transform_chat_completion_usage_to_responses_usage(
+                        chunk.usage
+                    ).model_dump(),
+                    "response_cost": (
+                        chunk._hidden_params.get("response_cost", 0.0)
+                        if hasattr(chunk, "_hidden_params")
+                        else 0.0
+                    ),
+                }
+
+        # Process any accumulated tool calls into response items
+        final_items: List[Dict[str, Any]] = []
+        for tc in collected_tool_calls:
+            if tc["function"]["name"] == "computer":
+                try:
+                    args = json.loads(tc["function"]["arguments"])
+                    action_type = args.get("action")
+                    call_id = tc["id"]
+
+                    # Convert tool call to computer_call format
+                    item = self._convert_tool_call_to_computer_call(action_type, args, call_id)
+                    if item:
+                        final_items.append(item)
+                except json.JSONDecodeError:
+                    pass
+            else:
+                # Function call
+                from ..responses import make_function_call_item
+
+                try:
+                    args_dict = json.loads(tc["function"]["arguments"])
+                except json.JSONDecodeError:
+                    args_dict = {}
+                final_items.append(
+                    make_function_call_item(
+                        function_name=tc["function"]["name"],
+                        arguments=args_dict,
+                        call_id=tc["id"],
+                    )
+                )
+
+        if final_items:
+            yield {"output": final_items, "usage": {}, "status": "streaming"}
+
+        # Call API end hook with None response for streaming
         if _on_api_end:
-            await _on_api_end(api_kwargs, response)
+            await _on_api_end(api_kwargs, None)
 
-        # Convert response to responses_items format
-        responses_items = _convert_completion_to_responses_items(response)
+        # Call usage hook
+        if _on_usage and collected_usage:
+            await _on_usage(collected_usage)
 
-        # Extract usage information
-        responses_usage = {
-            **LiteLLMCompletionResponsesConfig._transform_chat_completion_usage_to_responses_usage(
-                response.usage
-            ).model_dump(),
-            "response_cost": response._hidden_params.get("response_cost", 0.0),
-        }
-        if _on_usage:
-            await _on_usage(responses_usage)
+        # Final yield with usage information
+        yield {"output": [], "usage": collected_usage, "status": "completed"}
 
-        # Return in AsyncAgentConfig format
-        return {"output": responses_items, "usage": responses_usage}
+    def _convert_tool_call_to_computer_call(
+        self, action_type: str, args: Dict[str, Any], call_id: str
+    ) -> Optional[Dict[str, Any]]:
+        """Convert a tool call to a computer_call response item."""
+        if action_type == "screenshot":
+            return make_screenshot_item(call_id=call_id)
+        elif action_type in ["click", "left_click"]:
+            coordinate = args.get("coordinate", [0, 0])
+            return make_click_item(
+                x=coordinate[0] if len(coordinate) > 0 else 0,
+                y=coordinate[1] if len(coordinate) > 1 else 0,
+                call_id=call_id,
+            )
+        elif action_type in ["type", "type_text"]:
+            return make_type_item(text=args.get("text", ""), call_id=call_id)
+        elif action_type in ["key", "keypress", "hotkey"]:
+            return make_keypress_item(
+                keys=args.get("text", "").replace("+", "-").split("-"),
+                call_id=call_id,
+            )
+        elif action_type in ["mouse_move", "move_cursor", "move"]:
+            coordinate = args.get("coordinate", [0, 0])
+            return make_move_item(
+                x=coordinate[0] if len(coordinate) > 0 else 0,
+                y=coordinate[1] if len(coordinate) > 1 else 0,
+                call_id=call_id,
+            )
+        elif action_type == "scroll":
+            coordinate = args.get("coordinate", [0, 0])
+            direction = args.get("scroll_direction", "down")
+            amount = args.get("scroll_amount", 3)
+            scroll_x = amount if direction == "left" else -amount if direction == "right" else 0
+            scroll_y = amount if direction == "up" else -amount if direction == "down" else 0
+            return make_scroll_item(
+                x=coordinate[0] if len(coordinate) > 0 else 0,
+                y=coordinate[1] if len(coordinate) > 1 else 0,
+                scroll_x=scroll_x,
+                scroll_y=scroll_y,
+                call_id=call_id,
+            )
+        elif action_type in ["left_click_drag", "drag"]:
+            start_coord = args.get("start_coordinate", [0, 0])
+            end_coord = args.get("end_coordinate", [0, 0])
+            return make_drag_item(
+                path=[
+                    {
+                        "x": start_coord[0] if len(start_coord) > 0 else 0,
+                        "y": start_coord[1] if len(start_coord) > 1 else 0,
+                    },
+                    {
+                        "x": end_coord[0] if len(end_coord) > 0 else 0,
+                        "y": end_coord[1] if len(end_coord) > 1 else 0,
+                    },
+                ],
+                call_id=call_id,
+            )
+        elif action_type == "right_click":
+            coordinate = args.get("coordinate", [0, 0])
+            return make_click_item(
+                x=coordinate[0] if len(coordinate) > 0 else 0,
+                y=coordinate[1] if len(coordinate) > 1 else 0,
+                button="right",
+                call_id=call_id,
+            )
+        elif action_type == "middle_click":
+            coordinate = args.get("coordinate", [0, 0])
+            return make_click_item(
+                x=coordinate[0] if len(coordinate) > 0 else 0,
+                y=coordinate[1] if len(coordinate) > 1 else 0,
+                button="wheel",
+                call_id=call_id,
+            )
+        elif action_type == "double_click":
+            coordinate = args.get("coordinate", [0, 0])
+            return make_double_click_item(
+                x=coordinate[0] if len(coordinate) > 0 else 0,
+                y=coordinate[1] if len(coordinate) > 1 else 0,
+                call_id=call_id,
+            )
+        elif action_type == "left_mouse_down":
+            coordinate = args.get("coordinate", [None, None])
+            return make_left_mouse_down_item(
+                x=coordinate[0] if len(coordinate) > 0 else None,
+                y=coordinate[1] if len(coordinate) > 1 else None,
+                call_id=call_id,
+            )
+        elif action_type == "left_mouse_up":
+            coordinate = args.get("coordinate", [None, None])
+            return make_left_mouse_up_item(
+                x=coordinate[0] if len(coordinate) > 0 else None,
+                y=coordinate[1] if len(coordinate) > 1 else None,
+                call_id=call_id,
+            )
+        elif action_type == "wait":
+            return make_wait_item(call_id=call_id)
+        return None
 
     async def predict_click(
         self, model: str, image_b64: str, instruction: str, **kwargs

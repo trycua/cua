@@ -3,7 +3,7 @@ Base protocol for async agent configurations
 """
 
 from abc import abstractmethod
-from typing import Any, Dict, List, Optional, Protocol, Tuple, Union
+from typing import Any, AsyncGenerator, Dict, List, Optional, Protocol, Tuple, Union
 
 from ..types import AgentCapability
 
@@ -25,7 +25,7 @@ class AsyncAgentConfig(Protocol):
         _on_usage=None,
         _on_screenshot=None,
         **generation_config,
-    ) -> Dict[str, Any]:
+    ) -> Union[Dict[str, Any], AsyncGenerator[Dict[str, Any], None]]:
         """
         Predict the next step based on input items.
 
@@ -45,7 +45,8 @@ class AsyncAgentConfig(Protocol):
                 - api_base: Optional API base URL for the provider
 
         Returns:
-            Dictionary with "output" (output items) and "usage" array
+            Dictionary with "output" (output items) and "usage" array.
+            When stream=True, returns an AsyncGenerator that yields partial results.
         """
         ...
 

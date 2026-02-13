@@ -28,9 +28,6 @@ fi
 DEFAULT_INSTALL_DIR="$HOME/.local/bin"
 INSTALL_DIR="${INSTALL_DIR:-$DEFAULT_INSTALL_DIR}"
 
-# Default .app bundle installation directory
-APP_INSTALL_DIR="$HOME/.local/share/lume"
-
 # Build configuration (debug or release)
 BUILD_CONFIG="debug"
 
@@ -44,9 +41,6 @@ INSTALL_BACKGROUND_SERVICE=true
 
 # Default port for lume serve (default: 7777)
 LUME_PORT=7777
-
-# Track whether we're using the .app bundle format
-USE_APP_BUNDLE=false
 
 # Parse command line arguments
 while [ "$#" -gt 0 ]; do
@@ -132,56 +126,17 @@ build_lume() {
     ENTITLEMENTS_FILE="$LUME_DIR/resources/lume.entitlements"
   fi
 
-  if [ "$USE_BRIDGED_ENTITLEMENT" = true ]; then
-    # Assemble .app bundle for provisioning profile support
-    echo "Assembling .app bundle for bridged networking..."
+  # Codesign the binary
+  echo "Codesigning binary..."
+  codesign --force --entitlements "$ENTITLEMENTS_FILE" --sign - "$BUILD_PATH/lume"
 
-    APP_BUNDLE="$BUILD_PATH/lume.app"
-    rm -rf "$APP_BUNDLE"
-    mkdir -p "$APP_BUNDLE/Contents/MacOS"
-
-    cp -f "$BUILD_PATH/lume" "$APP_BUNDLE/Contents/MacOS/lume"
-
-    # Copy resource bundle alongside the executable
-    if [ -d "$BUILD_PATH/lume_lume.bundle" ]; then
-      cp -rf "$BUILD_PATH/lume_lume.bundle" "$APP_BUNDLE/Contents/MacOS/"
-    fi
-
-    # Stamp Info.plist with version
-    CURRENT_VERSION=$("$BUILD_PATH/lume" --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' || echo "0.0.0")
-    sed "s/__VERSION__/$CURRENT_VERSION/g" "$LUME_DIR/resources/Info.plist" > "$APP_BUNDLE/Contents/Info.plist"
-
-    # Embed provisioning profile if available
-    if [ -f "$LUME_DIR/resources/embedded.provisionprofile" ]; then
-      cp "$LUME_DIR/resources/embedded.provisionprofile" "$APP_BUNDLE/Contents/embedded.provisionprofile"
-    else
-      echo "${YELLOW}Warning: No provisioning profile found at $LUME_DIR/resources/embedded.provisionprofile${NORMAL}"
-      echo "${YELLOW}Bridged networking requires a provisioning profile from Apple Developer portal.${NORMAL}"
-    fi
-
-    # Sign the bundle
-    codesign --force --entitlements "$ENTITLEMENTS_FILE" --sign - "$APP_BUNDLE/Contents/MacOS/lume"
-    codesign --force --sign - "$APP_BUNDLE"
-
-    # Verify the signed binary can launch from the bundle
-    if "$APP_BUNDLE/Contents/MacOS/lume" --version >/dev/null 2>&1; then
-      USE_APP_BUNDLE=true
-    else
-      echo "${YELLOW}Warning: binary did not launch from .app bundle with bridged entitlement; falling back to standalone binary.${NORMAL}"
+  # Verify the signed binary can launch.
+  if ! "$BUILD_PATH/lume" --version >/dev/null 2>&1; then
+    if [ "$USE_BRIDGED_ENTITLEMENT" = true ]; then
+      echo "${YELLOW}Warning: binary did not launch with bridged entitlement; falling back to local-safe entitlements.${NORMAL}"
       ENTITLEMENTS_FILE="$LUME_DIR/resources/lume.local.entitlements"
       codesign --force --entitlements "$ENTITLEMENTS_FILE" --sign - "$BUILD_PATH/lume"
-      USE_APP_BUNDLE=false
     fi
-  else
-    # Standard standalone binary (no .app bundle needed)
-    codesign --force --entitlements "$ENTITLEMENTS_FILE" --sign - "$BUILD_PATH/lume"
-
-    # Verify the signed binary can launch
-    if ! "$BUILD_PATH/lume" --version >/dev/null 2>&1; then
-      echo "${YELLOW}Warning: binary did not launch; this may indicate a signing issue.${NORMAL}"
-    fi
-
-    USE_APP_BUNDLE=false
   fi
 
   echo "${GREEN}Build complete!${NORMAL}"
@@ -194,43 +149,19 @@ install_binary() {
   # Create install directory if it doesn't exist
   mkdir -p "$INSTALL_DIR"
 
-  if [ "$USE_APP_BUNDLE" = true ]; then
-    # Install as .app bundle with wrapper script
-    mkdir -p "$APP_INSTALL_DIR"
-    rm -rf "$APP_INSTALL_DIR/lume.app"
-    cp -R "$BUILD_PATH/lume.app" "$APP_INSTALL_DIR/"
+  # Copy the binary
+  cp -f "$BUILD_PATH/lume" "$INSTALL_DIR/lume"
+  chmod +x "$INSTALL_DIR/lume"
 
-    # Remove old standalone binary if it's a Mach-O file (migration)
-    if [ -f "$INSTALL_DIR/lume" ] && file "$INSTALL_DIR/lume" | grep -q "Mach-O"; then
-      rm -f "$INSTALL_DIR/lume"
-    fi
+  # Copy the resource bundle if it exists (contains unattended presets)
+  if [ -d "$BUILD_PATH/lume_lume.bundle" ]; then
     rm -rf "$INSTALL_DIR/lume_lume.bundle"
-
-    # Create wrapper script
-    cat > "$INSTALL_DIR/lume" <<WRAPPER_EOF
-#!/bin/sh
-exec "$APP_INSTALL_DIR/lume.app/Contents/MacOS/lume" "\$@"
-WRAPPER_EOF
-    chmod +x "$INSTALL_DIR/lume"
-
-    echo "${GREEN}Installation complete!${NORMAL}"
-    echo "Lume installed to ${BOLD}$APP_INSTALL_DIR/lume.app${NORMAL}"
-    echo "CLI available at ${BOLD}$INSTALL_DIR/lume${NORMAL}"
-  else
-    # Install as standalone binary
-    cp -f "$BUILD_PATH/lume" "$INSTALL_DIR/lume"
-    chmod +x "$INSTALL_DIR/lume"
-
-    # Copy the resource bundle if it exists (contains unattended presets)
-    if [ -d "$BUILD_PATH/lume_lume.bundle" ]; then
-      rm -rf "$INSTALL_DIR/lume_lume.bundle"
-      cp -rf "$BUILD_PATH/lume_lume.bundle" "$INSTALL_DIR/"
-      echo "Resource bundle installed to ${BOLD}$INSTALL_DIR/lume_lume.bundle${NORMAL}"
-    fi
-
-    echo "${GREEN}Installation complete!${NORMAL}"
-    echo "Lume has been installed to ${BOLD}$INSTALL_DIR/lume${NORMAL}"
+    cp -rf "$BUILD_PATH/lume_lume.bundle" "$INSTALL_DIR/"
+    echo "Resource bundle installed to ${BOLD}$INSTALL_DIR/lume_lume.bundle${NORMAL}"
   fi
+
+  echo "${GREEN}Installation complete!${NORMAL}"
+  echo "Lume has been installed to ${BOLD}$INSTALL_DIR/lume${NORMAL}"
 
   # Check if the installation directory is in PATH
   if [ -n "${PATH##*$INSTALL_DIR*}" ]; then

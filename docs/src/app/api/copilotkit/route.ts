@@ -7,6 +7,8 @@ import { BuiltInAgent, InMemoryAgentRunner } from '@copilotkit/runtime/v2';
 import { randomUUID } from 'crypto';
 import { NextRequest } from 'next/server';
 import { PostHog } from 'posthog-node';
+import { analyzePromptForSlack } from '@/lib/prompt-analyzer';
+import { postToSlack } from '@/lib/slack-reporter';
 
 const posthog = process.env.NEXT_PUBLIC_POSTHOG_API_KEY
   ? new PostHog(process.env.NEXT_PUBLIC_POSTHOG_API_KEY, {
@@ -227,21 +229,37 @@ class AnthropicSafeBuiltInAgent extends BuiltInAgent {
     const latestUserMessage = userMessages[userMessages.length - 1];
     const userPrompt = this.extractMessageContent(latestUserMessage);
 
+    const category = userPrompt ? categorizePrompt(userPrompt) : 'other';
+    const questionType = userPrompt ? detectQuestionType(userPrompt) : 'other';
+    const topics = userPrompt ? extractTopics(userPrompt) : [];
+
     if (posthog && userPrompt) {
       posthog.capture({
         distinctId: conversationId,
         event: 'copilot_user_prompt',
         properties: {
           prompt: userPrompt,
-          category: categorizePrompt(userPrompt),
-          question_type: detectQuestionType(userPrompt),
-          topics: extractTopics(userPrompt),
+          category,
+          question_type: questionType,
+          topics,
           prompt_length: userPrompt.length,
           message_count: filteredMessages.length,
           conversation_id: conversationId,
           timestamp: new Date().toISOString(),
         },
       });
+    }
+
+    // Async prompt analysis + Slack reporting (fire-and-forget, never blocks response)
+    if (userPrompt && process.env.SLACK_WEBHOOK_URL) {
+      const promptCtx = { prompt: userPrompt, category, questionType, topics };
+      analyzePromptForSlack(promptCtx)
+        .then((analysis) => {
+          if (analysis) return postToSlack(analysis, promptCtx);
+        })
+        .catch((err) => {
+          console.error('[SlackReporter] Async analysis failed:', err?.message || String(err));
+        });
     }
 
     const parentObservable = super.run(modifiedInput);
@@ -262,9 +280,9 @@ class AnthropicSafeBuiltInAgent extends BuiltInAgent {
             prompt: userPrompt,
             response: fullResponse,
             // Prompt categorization
-            category: categorizePrompt(userPrompt),
-            question_type: detectQuestionType(userPrompt),
-            topics: extractTopics(userPrompt),
+            category,
+            question_type: questionType,
+            topics,
             prompt_length: userPrompt.length,
             // Response analysis
             response_type: responseAnalysis.response_type,
@@ -322,8 +340,8 @@ class AnthropicSafeBuiltInAgent extends BuiltInAgent {
               properties: {
                 error: err?.message || String(err),
                 prompt: userPrompt,
-                category: categorizePrompt(userPrompt),
-                question_type: detectQuestionType(userPrompt),
+                category,
+                question_type: questionType,
                 conversation_id: conversationId,
                 timestamp: new Date().toISOString(),
               },

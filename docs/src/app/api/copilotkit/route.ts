@@ -7,8 +7,6 @@ import { BuiltInAgent, InMemoryAgentRunner } from '@copilotkit/runtime/v2';
 import { randomUUID } from 'crypto';
 import { NextRequest } from 'next/server';
 import { PostHog } from 'posthog-node';
-import { analyzePromptForSlack } from '@/lib/prompt-analyzer';
-import { postToSlack } from '@/lib/slack-reporter';
 
 const posthog = process.env.NEXT_PUBLIC_POSTHOG_API_KEY
   ? new PostHog(process.env.NEXT_PUBLIC_POSTHOG_API_KEY, {
@@ -248,18 +246,6 @@ class AnthropicSafeBuiltInAgent extends BuiltInAgent {
           timestamp: new Date().toISOString(),
         },
       });
-    }
-
-    // Async prompt analysis + Slack reporting (fire-and-forget, never blocks response)
-    if (userPrompt && process.env.SLACK_WEBHOOK_URL) {
-      const promptCtx = { prompt: userPrompt, category, questionType, topics };
-      analyzePromptForSlack(promptCtx)
-        .then((analysis) => {
-          if (analysis) return postToSlack(analysis, promptCtx);
-        })
-        .catch((err) => {
-          console.error('[SlackReporter] Async analysis failed:', err?.message || String(err));
-        });
     }
 
     const parentObservable = super.run(modifiedInput);

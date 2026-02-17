@@ -1,11 +1,9 @@
-import type { PromptAnalysisResult, PromptContext } from './prompt-analyzer';
+import type { AnalyzedPrompt } from './prompt-analyzer';
 
 const SCORE_THRESHOLD = 7;
 
-function formatSlackMessage(
-  analysis: PromptAnalysisResult,
-  ctx: PromptContext
-): Record<string, unknown> {
+function formatPromptBlock(item: AnalyzedPrompt): Record<string, unknown>[] {
+  const { analysis, ctx } = item;
   const triggeredCriteria: string[] = [];
 
   if (analysis.actionability.score >= SCORE_THRESHOLD) {
@@ -27,63 +25,49 @@ function formatSlackMessage(
   const topicsText = ctx.topics.length > 0 ? ctx.topics.join(', ') : 'none';
   const displayPrompt = ctx.prompt.length > 500 ? ctx.prompt.substring(0, 497) + '...' : ctx.prompt;
 
-  return {
-    blocks: [
-      {
-        type: 'header',
-        text: {
-          type: 'plain_text',
-          text: ':speech_balloon: Interesting Docs Bot Prompt',
-          emoji: true,
-        },
-      },
-      {
-        type: 'section',
-        text: {
+  return [
+    {
+      type: 'section',
+      text: { type: 'mrkdwn', text: `> ${displayPrompt}` },
+    },
+    {
+      type: 'section',
+      text: { type: 'mrkdwn', text: triggeredCriteria.join('\n') },
+    },
+    {
+      type: 'context',
+      elements: [
+        {
           type: 'mrkdwn',
-          text: `> ${displayPrompt}`,
+          text: `*Category:* ${ctx.category} | *Type:* ${ctx.questionType} | *Topics:* ${topicsText} | _${analysis.summary}_`,
         },
-      },
-      {
-        type: 'section',
-        text: {
-          type: 'mrkdwn',
-          text: triggeredCriteria.join('\n'),
-        },
-      },
-      {
-        type: 'context',
-        elements: [
-          {
-            type: 'mrkdwn',
-            text: `*Category:* ${ctx.category} | *Type:* ${ctx.questionType} | *Topics:* ${topicsText}`,
-          },
-        ],
-      },
-      {
-        type: 'context',
-        elements: [
-          {
-            type: 'mrkdwn',
-            text: `_${analysis.summary}_`,
-          },
-        ],
-      },
-      {
-        type: 'divider',
-      },
-    ],
-  };
+      ],
+    },
+    { type: 'divider' },
+  ];
 }
 
-export async function postToSlack(
-  analysis: PromptAnalysisResult,
-  ctx: PromptContext
-): Promise<void> {
+export async function postBatchToSlack(results: AnalyzedPrompt[]): Promise<void> {
   const webhookUrl = process.env.SLACK_WEBHOOK_URL;
-  if (!webhookUrl) return;
+  if (!webhookUrl || results.length === 0) return;
 
-  const message = formatSlackMessage(analysis, ctx);
+  const blocks: Record<string, unknown>[] = [
+    {
+      type: 'header',
+      text: {
+        type: 'plain_text',
+        text: `:speech_balloon: Docs Bot Digest — ${results.length} interesting prompt${results.length === 1 ? '' : 's'}`,
+        emoji: true,
+      },
+    },
+  ];
+
+  for (const result of results) {
+    blocks.push(...formatPromptBlock(result));
+  }
+
+  // Slack blocks limit is 50 — truncate if needed
+  const message = { blocks: blocks.slice(0, 50) };
 
   const response = await fetch(webhookUrl, {
     method: 'POST',

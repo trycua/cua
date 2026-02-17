@@ -14,6 +14,11 @@ export interface PromptContext {
   topics: string[];
 }
 
+export interface AnalyzedPrompt {
+  analysis: PromptAnalysisResult;
+  ctx: PromptContext;
+}
+
 const SCORE_THRESHOLD = 7;
 
 let anthropicClient: Anthropic | null = null;
@@ -26,22 +31,30 @@ function getClient(): Anthropic | null {
   return anthropicClient;
 }
 
-function buildClassificationPrompt(ctx: PromptContext): string {
-  return `Score this docs chatbot prompt on 3 criteria (1-10). Be selective — most should score low.
+function buildBatchPrompt(prompts: PromptContext[]): string {
+  const promptList = prompts
+    .map(
+      (p, i) =>
+        `[${i}] "${p.prompt}" (category: ${p.category}, type: ${p.questionType}, topics: ${p.topics.join(', ') || 'none'})`
+    )
+    .join('\n');
+
+  return `Score each docs chatbot prompt on 3 criteria (1-10). Be selective — most should score low.
 
 Criteria:
 1. Actionability: Can we ship something to improve UX? (8+: clear docs gap or feature request, 1-4: normal question)
 2. Traction Signal: Is someone actively building with the product? (8+: specific impl question or production issue, 1-4: curiosity)
 3. Use Case Insight: Does this reveal how someone uses the product? (8+: names specific workflow/industry, 1-4: generic)
 
-Prompt: "${ctx.prompt}"
-Category: ${ctx.category} | Type: ${ctx.questionType} | Topics: ${ctx.topics.join(', ') || 'none'}
+Prompts:
+${promptList}
 
-Respond ONLY with JSON, no markdown fences. Keep rationales to 5 words max.
-{"actionability":{"score":N,"rationale":"..."},"traction_signal":{"score":N,"rationale":"..."},"use_case_insight":{"score":N,"rationale":"..."},"summary":"one short sentence"}`;
+Respond ONLY with a JSON array, no markdown fences. Keep rationales to 5 words max. Only include prompts scoring 7+ on at least one criterion.
+[{"index":N,"actionability":{"score":N,"rationale":"..."},"traction_signal":{"score":N,"rationale":"..."},"use_case_insight":{"score":N,"rationale":"..."},"summary":"short sentence"}]
+If no prompts are interesting, respond with: []`;
 }
 
-function parseAnalysisResponse(text: string): PromptAnalysisResult | null {
+function parseBatchResponse(text: string, prompts: PromptContext[]): AnalyzedPrompt[] {
   try {
     const cleaned = text
       .replace(/```json?\s*/g, '')
@@ -49,56 +62,67 @@ function parseAnalysisResponse(text: string): PromptAnalysisResult | null {
       .trim();
     const parsed = JSON.parse(cleaned);
 
-    const result: PromptAnalysisResult = {
-      actionability: {
-        score: Number(parsed.actionability?.score) || 0,
-        rationale: String(parsed.actionability?.rationale || ''),
-      },
-      tractionSignal: {
-        score: Number(parsed.traction_signal?.score) || 0,
-        rationale: String(parsed.traction_signal?.rationale || ''),
-      },
-      useCaseInsight: {
-        score: Number(parsed.use_case_insight?.score) || 0,
-        rationale: String(parsed.use_case_insight?.rationale || ''),
-      },
-      summary: String(parsed.summary || ''),
-    };
+    if (!Array.isArray(parsed)) return [];
 
-    const maxScore = Math.max(
-      result.actionability.score,
-      result.tractionSignal.score,
-      result.useCaseInsight.score
-    );
+    const results: AnalyzedPrompt[] = [];
 
-    if (maxScore < SCORE_THRESHOLD) return null;
+    for (const item of parsed) {
+      const index = Number(item.index);
+      if (isNaN(index) || index < 0 || index >= prompts.length) continue;
 
-    return result;
+      const analysis: PromptAnalysisResult = {
+        actionability: {
+          score: Number(item.actionability?.score) || 0,
+          rationale: String(item.actionability?.rationale || ''),
+        },
+        tractionSignal: {
+          score: Number(item.traction_signal?.score) || 0,
+          rationale: String(item.traction_signal?.rationale || ''),
+        },
+        useCaseInsight: {
+          score: Number(item.use_case_insight?.score) || 0,
+          rationale: String(item.use_case_insight?.rationale || ''),
+        },
+        summary: String(item.summary || ''),
+      };
+
+      const maxScore = Math.max(
+        analysis.actionability.score,
+        analysis.tractionSignal.score,
+        analysis.useCaseInsight.score
+      );
+
+      if (maxScore >= SCORE_THRESHOLD) {
+        results.push({ analysis, ctx: prompts[index] });
+      }
+    }
+
+    return results;
   } catch {
-    return null;
+    return [];
   }
 }
 
-export async function analyzePromptForSlack(
-  ctx: PromptContext
-): Promise<PromptAnalysisResult | null> {
+export async function analyzeBatchForSlack(prompts: PromptContext[]): Promise<AnalyzedPrompt[]> {
   const client = getClient();
-  if (!client) return null;
+  if (!client) return [];
 
-  if (ctx.prompt.trim().length < 15) return null;
+  // Filter out trivial prompts
+  const filtered = prompts.filter((p) => p.prompt.trim().length >= 15);
+  if (filtered.length === 0) return [];
 
   const response = await client.messages.create({
     model: 'claude-haiku-4-5-20251001',
-    max_tokens: 256,
+    max_tokens: 4096,
     messages: [
       {
         role: 'user',
-        content: buildClassificationPrompt(ctx),
+        content: buildBatchPrompt(filtered),
       },
     ],
   });
 
   const text = response.content[0]?.type === 'text' ? response.content[0].text : '';
 
-  return parseAnalysisResponse(text);
+  return parseBatchResponse(text, filtered);
 }

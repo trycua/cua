@@ -11,7 +11,8 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    const prompts = await fetchRecentPrompts(1);
+    const hoursBack = Number(req.nextUrl.searchParams.get('hours')) || 1;
+    const prompts = await fetchRecentPrompts(hoursBack);
 
     if (prompts.length === 0) {
       return NextResponse.json({ status: 'ok', message: 'No prompts in the last hour' });

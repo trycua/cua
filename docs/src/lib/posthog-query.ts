@@ -17,7 +17,15 @@ interface PostHogEventsResponse {
 export async function fetchRecentPrompts(hoursAgo: number = 1): Promise<PromptContext[]> {
   const apiKey = process.env.POSTHOG_PERSONAL_API_KEY;
   const projectId = process.env.POSTHOG_PROJECT_ID;
-  const host = process.env.POSTHOG_HOST || 'https://us.i.posthog.com';
+  // Derive API host: POSTHOG_HOST if set, otherwise strip the ingestion
+  // subdomain (i.) from NEXT_PUBLIC_POSTHOG_HOST to get the API endpoint
+  const host =
+    process.env.POSTHOG_HOST ||
+    process.env.NEXT_PUBLIC_POSTHOG_HOST?.replace('://eu.i.', '://eu.').replace(
+      '://us.i.',
+      '://us.'
+    ) ||
+    'https://us.posthog.com';
 
   if (!apiKey || !projectId) return [];
 
@@ -26,14 +34,19 @@ export async function fetchRecentPrompts(hoursAgo: number = 1): Promise<PromptCo
   let url: string | null =
     `${host}/api/projects/${projectId}/events/?event=copilot_user_prompt&after=${after}&limit=100`;
 
+  console.log(`[PostHogQuery] Fetching from: ${url}`);
+  console.log(`[PostHogQuery] Key prefix: ${apiKey.substring(0, 8)}...`);
+
   while (url) {
     const response = await fetch(url, {
       headers: { Authorization: `Bearer ${apiKey}` },
     });
 
     if (!response.ok) {
+      const body = await response.text();
       console.error(
-        `[PostHogQuery] Failed to fetch events: ${response.status} ${response.statusText}`
+        `[PostHogQuery] Failed to fetch events: ${response.status} ${response.statusText}`,
+        body
       );
       break;
     }

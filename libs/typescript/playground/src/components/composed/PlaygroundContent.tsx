@@ -82,6 +82,8 @@ interface PlaygroundContentProps {
   onExamplePromptSelected?: (promptId: string, promptTitle: string) => void;
   /** Optional toast callback */
   onToast?: (message: string, type?: 'success' | 'error' | 'info') => void;
+  /** Optional class name for the root layout container (can override default h-screen w-screen) */
+  className?: string;
 }
 
 /**
@@ -109,6 +111,7 @@ export function PlaygroundContent({
   onPlaygroundViewed,
   onExamplePromptSelected,
   onToast,
+  className,
 }: PlaygroundContentProps) {
   const { state, dispatch, adapters } = usePlayground();
   const activeChat = useActiveChat();
@@ -303,6 +306,7 @@ export function PlaygroundContent({
   return (
     <>
       <PlaygroundLayout
+        className={className}
         isDarkMode={isDarkMode}
         onToggleTheme={onToggleTheme}
         renderThemeToggle={renderThemeToggle}

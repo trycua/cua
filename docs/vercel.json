@@ -1,7 +1,7 @@
 {
   "crons": [
     {
-      "path": "/api/cron/prompt-digest",
+      "path": "/docs/api/cron/prompt-digest",
       "schedule": "17 4 * * 2-6"
     }
   ]

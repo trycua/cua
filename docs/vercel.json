@@ -2,7 +2,7 @@
   "crons": [
     {
       "path": "/api/cron/prompt-digest",
-      "schedule": "0 * * * *"
+      "schedule": "17 4 * * 2-6"
     }
   ]
 }

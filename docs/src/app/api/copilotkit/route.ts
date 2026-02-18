@@ -227,15 +227,19 @@ class AnthropicSafeBuiltInAgent extends BuiltInAgent {
     const latestUserMessage = userMessages[userMessages.length - 1];
     const userPrompt = this.extractMessageContent(latestUserMessage);
 
+    const category = userPrompt ? categorizePrompt(userPrompt) : 'other';
+    const questionType = userPrompt ? detectQuestionType(userPrompt) : 'other';
+    const topics = userPrompt ? extractTopics(userPrompt) : [];
+
     if (posthog && userPrompt) {
       posthog.capture({
         distinctId: conversationId,
         event: 'copilot_user_prompt',
         properties: {
           prompt: userPrompt,
-          category: categorizePrompt(userPrompt),
-          question_type: detectQuestionType(userPrompt),
-          topics: extractTopics(userPrompt),
+          category,
+          question_type: questionType,
+          topics,
           prompt_length: userPrompt.length,
           message_count: filteredMessages.length,
           conversation_id: conversationId,
@@ -262,9 +266,9 @@ class AnthropicSafeBuiltInAgent extends BuiltInAgent {
             prompt: userPrompt,
             response: fullResponse,
             // Prompt categorization
-            category: categorizePrompt(userPrompt),
-            question_type: detectQuestionType(userPrompt),
-            topics: extractTopics(userPrompt),
+            category,
+            question_type: questionType,
+            topics,
             prompt_length: userPrompt.length,
             // Response analysis
             response_type: responseAnalysis.response_type,
@@ -322,8 +326,8 @@ class AnthropicSafeBuiltInAgent extends BuiltInAgent {
               properties: {
                 error: err?.message || String(err),
                 prompt: userPrompt,
-                category: categorizePrompt(userPrompt),
-                question_type: detectQuestionType(userPrompt),
+                category,
+                question_type: questionType,
                 conversation_id: conversationId,
                 timestamp: new Date().toISOString(),
               },

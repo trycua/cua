@@ -12,12 +12,12 @@
  *   pnpm docs:check-links:external       # Also check external links
  */
 
-import { readFiles, validateFiles, printErrors, type ScanResult } from "next-validate-link";
-import * as path from "path";
-import fg from "fast-glob";
+import { readFiles, validateFiles, printErrors, type ScanResult } from 'next-validate-link';
+import * as path from 'path';
+import fg from 'fast-glob';
 
-const DOCS_DIR = path.resolve(__dirname, "..");
-const CONTENT_DIR = path.join(DOCS_DIR, "content/docs");
+const DOCS_DIR = path.resolve(__dirname, '..');
+const CONTENT_DIR = path.join(DOCS_DIR, 'content/docs');
 
 /**
  * Build the ScanResult (valid URL map) directly from content files.
@@ -25,37 +25,35 @@ const CONTENT_DIR = path.join(DOCS_DIR, "content/docs");
  */
 function buildScannedUrls(): ScanResult {
   const urls = new Map<string, {}>();
-  const mdxFiles = fg.sync("**/*.mdx", { cwd: CONTENT_DIR });
+  const mdxFiles = fg.sync('**/*.mdx', { cwd: CONTENT_DIR });
 
   for (const file of mdxFiles) {
-    const slug = file
-      .replace(/\.mdx$/, "")
-      .replace(/\/index$/, "");
+    const slug = file.replace(/\.mdx$/, '').replace(/\/index$/, '');
     urls.set(`/${slug}`, {});
   }
 
   // Also add the root
-  urls.set("/", {});
+  urls.set('/', {});
 
   return { urls, fallbackUrls: [] };
 }
 
 function pathToUrl(filePath: string): string | undefined {
   const slug = filePath
-    .replace(/^content\/docs\//, "")
-    .replace(/\.mdx$/, "")
-    .replace(/\/index$/, "");
+    .replace(/^content\/docs\//, '')
+    .replace(/\.mdx$/, '')
+    .replace(/\/index$/, '');
   return `/${slug}`;
 }
 
 async function main() {
   const args = process.argv.slice(2);
-  const checkExternal = args.includes("--external");
+  const checkExternal = args.includes('--external');
 
   const scanned = buildScannedUrls();
 
   // Read all MDX content files
-  const files = await readFiles("content/docs/**/*.mdx", { pathToUrl });
+  const files = await readFiles('content/docs/**/*.mdx', { pathToUrl });
 
   // Validate all links in the MDX files
   const results = await validateFiles(files, {
@@ -69,9 +67,23 @@ async function main() {
       const pathname = url.split(/[#?]/)[0];
       const ext = path.extname(pathname).toLowerCase();
       const staticExts = new Set([
-        ".png", ".jpg", ".jpeg", ".gif", ".svg", ".ico",
-        ".webp", ".avif", ".mp4", ".webm", ".pdf",
-        ".css", ".js", ".woff", ".woff2", ".ttf", ".eot",
+        '.png',
+        '.jpg',
+        '.jpeg',
+        '.gif',
+        '.svg',
+        '.ico',
+        '.webp',
+        '.avif',
+        '.mp4',
+        '.webm',
+        '.pdf',
+        '.css',
+        '.js',
+        '.woff',
+        '.woff2',
+        '.ttf',
+        '.eot',
       ]);
       return staticExts.has(ext);
     },
@@ -81,6 +93,6 @@ async function main() {
 }
 
 main().catch((err) => {
-  console.error("Fatal error:", err);
+  console.error('Fatal error:', err);
   process.exit(1);
 });

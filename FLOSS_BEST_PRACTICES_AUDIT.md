@@ -157,21 +157,21 @@
 
 | Criterion | ID | Level | Status | Notes |
 |---|---|---|---|---|
-| Primary developer knows secure design | know_secure_design | MUST | **PASS** | Project uses proper authentication patterns (API key management), environment variable handling, and sandboxed execution environments (VMs, Docker). Evidence of security-conscious design. |
-| Knows common vulnerability types and mitigations | know_common_errors | MUST | **PASS** | .gitignore excludes `.env`, `.env.local`, `.secrets`. Code uses established AI provider SDKs rather than raw HTTP. Sandboxed VM execution mitigates many attack vectors. |
+| Primary developer knows secure design | know_secure_design | MUST | **PASS** | OAuth 2.0 Bearer token authentication via HTTPS (`cua_cli/auth/`), parameterized SQL queries preventing injection, sandboxed VM execution, environment variable-based credential management. |
+| Knows common vulnerability types and mitigations | know_common_errors | MUST | **PASS** | SQL injection mitigated (parameterized queries in `cua_cli/auth/store.py`). XSS mitigated (no `dangerouslySetInnerHTML` or unsafe `eval`). Credentials excluded via `.gitignore`. API keys use Bearer token pattern over HTTPS. |
 
 ### Cryptographic practices
 
 | Criterion | ID | Level | Status | Notes |
 |---|---|---|---|---|
-| Uses publicly published crypto algorithms | crypto_published | MUST | **N/A** | Project does not directly implement cryptographic protocols. Relies on underlying platform TLS (HTTPS for API calls). |
-| Calls dedicated crypto libraries | crypto_call | SHOULD | **N/A** | Not a cryptography application. Uses standard library and SDK-provided TLS. |
+| Uses publicly published crypto algorithms | crypto_published | MUST | **N/A** | Project does not directly implement cryptographic protocols. Relies on underlying platform TLS (HTTPS for API calls). SHA-256 used for file integrity checks (`cua_cli/api/client.py`). |
+| Calls dedicated crypto libraries | crypto_call | SHOULD | **PASS** | Uses Python `hashlib` (standard library) for hashing. Does not re-implement crypto. |
 | Crypto implementable using FLOSS | crypto_floss | MUST | **N/A** | N/A — no custom cryptographic implementation. |
 | Default keylengths meet NIST 2030 minimum | crypto_keylength | MUST | **N/A** | Relies on platform defaults via HTTPS. |
-| No broken crypto algorithms | crypto_working | MUST | **N/A** | No direct use of MD4, MD5, single DES, RC4, Dual_EC_DRBG found in production code. |
-| No algorithms with known serious weaknesses | crypto_weaknesses | SHOULD | **N/A** | N/A — no direct crypto usage. |
+| No broken crypto algorithms | crypto_working | MUST | **PASS (with note)** | MD5 is used in 4 files but only for non-security purposes (UI display hashing, folder identification): `computer/ui/gradio/app.py`, `computer_server/handlers/macos.py`, `cua_bench/computers/remote.py`, `cua_bench/computers/webtop.py`. SHA-256 is used for actual integrity checks. No MD4, single DES, RC4, or Dual_EC_DRBG found. |
+| No algorithms with known serious weaknesses | crypto_weaknesses | SHOULD | **PASS (with note)** | MD5 usage is non-security (display/logging only). Should migrate to SHA-256 for future-proofing. |
 | Perfect forward secrecy | crypto_pfs | SHOULD | **N/A** | Handled by underlying TLS libraries. |
-| Passwords stored with iterated hashes | crypto_password_storage | MUST | **N/A** | Project does not store user passwords. |
+| Passwords stored with iterated hashes | crypto_password_storage | MUST | **N/A** | Project stores API keys (not passwords) in SQLite via `cua_cli/auth/store.py`. Keys are stored as-is (not hashed) since they must be sent as Bearer tokens. No user password storage. |
 | Cryptographically secure random number generation | crypto_random | MUST | **N/A** | No custom random number generation for security purposes found. |
 
 ### Secured delivery
@@ -277,3 +277,36 @@
 | `.github/ISSUE_TEMPLATE/` | Issue templates | **MISSING** |
 | `.github/PULL_REQUEST_TEMPLATE.md` | PR template | **MISSING** |
 | `.github/dependabot.yml` | Dependency scanning | **MISSING** |
+
+---
+
+## Appendix: Detailed Security Findings
+
+### MD5 Usage (non-security context)
+
+| File | Line(s) | Purpose |
+|---|---|---|
+| `libs/python/computer/computer/ui/gradio/app.py` | 496-503 | Screenshot hash for logging display |
+| `libs/python/computer-server/computer_server/handlers/macos.py` | 420-432 | Component string hashing |
+| `libs/cua-bench/cua_bench/computers/remote.py` | 356, 408 | Folder and HTML content identification |
+| `libs/cua-bench/cua_bench/computers/webtop.py` | 219 | Folder path identification |
+
+**Recommendation:** Migrate to SHA-256 for future-proofing, even though current use is non-security.
+
+### `shell=True` subprocess usage
+
+| File | Line | Context |
+|---|---|---|
+| `libs/python/computer-server/computer_server/handlers/android.py` | 519 | ADB command execution in controlled VM environment |
+| `libs/python/computer-server/computer_server/handlers/generic.py` | 115 | System command execution in sandboxed environment |
+| `libs/python/computer/computer/providers/lume_api.py` | 73-76 | Lume CLI interaction |
+
+**Assessment:** Acceptable — these execute in controlled/sandboxed environments, not with user-supplied input from web interfaces.
+
+### Authentication implementation (secure)
+
+- OAuth 2.0 Bearer token flow in `libs/python/cua-cli/cua_cli/auth/browser.py`
+- SQLite credential store with parameterized queries in `libs/python/cua-cli/cua_cli/auth/store.py`
+- SHA-256 file integrity verification in `libs/python/cua-cli/cua_cli/api/client.py`
+- HTTPS-only API communication (`https://api.cua.ai`)
+- 2-minute auth timeout, daemon thread cleanup

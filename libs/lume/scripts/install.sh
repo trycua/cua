@@ -26,6 +26,9 @@ fi
 DEFAULT_INSTALL_DIR="$HOME/.local/bin"
 INSTALL_DIR="${INSTALL_DIR:-$DEFAULT_INSTALL_DIR}"
 
+# Default .app bundle installation directory
+APP_INSTALL_DIR="$HOME/.local/share/lume"
+
 # GitHub info
 GITHUB_REPO="trycua/cua"
 LATEST_RELEASE_URL="https://api.github.com/repos/$GITHUB_REPO/releases/latest"
@@ -105,7 +108,7 @@ echo "This script will install Lume to your system."
 check_permissions() {
   # System directories that typically require root privileges
   SYSTEM_DIRS=("/usr/local/bin" "/usr/bin" "/bin" "/opt")
-  
+
   NEEDS_ROOT=false
   for DIR in "${SYSTEM_DIRS[@]}"; do
     if [[ "$INSTALL_DIR" == "$DIR"* ]] && [ ! -w "$INSTALL_DIR" ]; then
@@ -113,7 +116,7 @@ check_permissions() {
       break
     fi
   done
-  
+
   if [ "$NEEDS_ROOT" = true ]; then
     echo "${YELLOW}Warning: Installing to $INSTALL_DIR may require root privileges.${NORMAL}"
     echo "Consider these alternatives:"
@@ -121,7 +124,7 @@ check_permissions() {
     echo "  • Create the directory with correct permissions first:"
     echo "    sudo mkdir -p $INSTALL_DIR && sudo chown $(whoami) $INSTALL_DIR"
     echo ""
-    
+
     # Check if we already have write permission (might have been set up previously)
     if [ ! -w "$INSTALL_DIR" ] && [ ! -w "$(dirname "$INSTALL_DIR")" ]; then
       echo "${RED}Error: You don't have write permission to $INSTALL_DIR${NORMAL}"
@@ -135,17 +138,17 @@ check_permissions() {
 detect_platform() {
   OS=$(uname -s | tr '[:upper:]' '[:lower:]')
   ARCH=$(uname -m)
-  
+
   if [ "$OS" != "darwin" ]; then
     echo "${RED}Error: Currently only macOS is supported.${NORMAL}"
     exit 1
   fi
-  
+
   if [ "$ARCH" != "arm64" ]; then
     echo "${RED}Error: Lume only supports macOS on Apple Silicon (ARM64).${NORMAL}"
     exit 1
   fi
-  
+
   PLATFORM="darwin-arm64"
   echo "Detected platform: ${BOLD}$PLATFORM${NORMAL}"
 }
@@ -254,28 +257,57 @@ download_release() {
 install_binary() {
   echo "Extracting archive..."
   tar -xzf "$TEMP_DIR/lume.tar.gz" -C "$TEMP_DIR"
-  
-  echo "Installing to $INSTALL_DIR..."
-  
-  # Create install directory if it doesn't exist
+
+  # Create directories
   mkdir -p "$INSTALL_DIR"
-  
-  # Move the binary to the installation directory
-  mv "$TEMP_DIR/lume" "$INSTALL_DIR/"
+  mkdir -p "$APP_INSTALL_DIR"
 
-  # Make the binary executable
-  chmod +x "$INSTALL_DIR/lume"
+  if [ -d "$TEMP_DIR/lume.app" ]; then
+    # --- New .app bundle format ---
+    echo "Installing lume.app bundle..."
 
-  # Move the resource bundle if it exists (contains unattended presets)
-  if [ -d "$TEMP_DIR/lume_lume.bundle" ]; then
+    # Remove old standalone binary and resource bundle if present (migration)
+    if [ -f "$INSTALL_DIR/lume" ] && [ ! -L "$INSTALL_DIR/lume" ]; then
+      # It's a regular file (old standalone binary), not a symlink or script
+      if file "$INSTALL_DIR/lume" | grep -q "Mach-O"; then
+        echo "Migrating from standalone binary to .app bundle..."
+        rm -f "$INSTALL_DIR/lume"
+      fi
+    fi
     rm -rf "$INSTALL_DIR/lume_lume.bundle"
-    mv "$TEMP_DIR/lume_lume.bundle" "$INSTALL_DIR/"
-    echo "Resource bundle installed to ${BOLD}$INSTALL_DIR/lume_lume.bundle${NORMAL}"
+
+    # Install the .app bundle
+    rm -rf "$APP_INSTALL_DIR/lume.app"
+    mv "$TEMP_DIR/lume.app" "$APP_INSTALL_DIR/"
+
+    # Create wrapper script so lume is callable from the command line
+    cat > "$INSTALL_DIR/lume" <<WRAPPER_EOF
+#!/bin/sh
+exec "$APP_INSTALL_DIR/lume.app/Contents/MacOS/lume" "\$@"
+WRAPPER_EOF
+    chmod +x "$INSTALL_DIR/lume"
+
+    echo "${GREEN}Installation complete!${NORMAL}"
+    echo "Lume installed to ${BOLD}$APP_INSTALL_DIR/lume.app${NORMAL}"
+    echo "CLI available at ${BOLD}$INSTALL_DIR/lume${NORMAL}"
+  else
+    # --- Legacy standalone binary format ---
+    echo "Installing lume binary..."
+
+    mv "$TEMP_DIR/lume" "$INSTALL_DIR/"
+    chmod +x "$INSTALL_DIR/lume"
+
+    # Move the resource bundle if it exists (contains unattended presets)
+    if [ -d "$TEMP_DIR/lume_lume.bundle" ]; then
+      rm -rf "$INSTALL_DIR/lume_lume.bundle"
+      mv "$TEMP_DIR/lume_lume.bundle" "$INSTALL_DIR/"
+      echo "Resource bundle installed to ${BOLD}$INSTALL_DIR/lume_lume.bundle${NORMAL}"
+    fi
+
+    echo "${GREEN}Installation complete!${NORMAL}"
+    echo "Lume has been installed to ${BOLD}$INSTALL_DIR/lume${NORMAL}"
   fi
 
-  echo "${GREEN}Installation complete!${NORMAL}"
-  echo "Lume has been installed to ${BOLD}$INSTALL_DIR/lume${NORMAL}"
-  
   # Check if the installation directory is in PATH
   if [ -n "${PATH##*$INSTALL_DIR*}" ]; then
     SHELL_NAME=$(basename "$SHELL")
@@ -339,6 +371,7 @@ log "Starting Lume update check..."
 # Find lume binary location
 LUME_BIN=$(command -v lume 2>/dev/null || echo "$HOME/.local/bin/lume")
 INSTALL_DIR=$(dirname "$LUME_BIN")
+APP_INSTALL_DIR="$HOME/.local/share/lume"
 
 if [ ! -x "$LUME_BIN" ]; then
   log "ERROR: lume binary not found at $LUME_BIN"
@@ -405,21 +438,40 @@ apply_update() {
       # Stop the daemon before updating
       launchctl unload "$HOME/Library/LaunchAgents/com.trycua.lume_daemon.plist" 2>/dev/null || true
 
-      # Install new binary
-      mv "$TEMP_DIR/lume" "$INSTALL_DIR/"
-      chmod +x "$INSTALL_DIR/lume"
+      if [ -d "$TEMP_DIR/lume.app" ]; then
+        # New .app bundle format
+        mkdir -p "$APP_INSTALL_DIR"
+        rm -rf "$APP_INSTALL_DIR/lume.app"
+        mv "$TEMP_DIR/lume.app" "$APP_INSTALL_DIR/"
 
-      # Install resource bundle if it exists (contains unattended presets)
-      if [ -d "$TEMP_DIR/lume_lume.bundle" ]; then
+        # Ensure wrapper script exists
+        mkdir -p "$INSTALL_DIR"
+        cat > "$INSTALL_DIR/lume" <<INNER_WRAPPER_EOF
+#!/bin/sh
+exec "$APP_INSTALL_DIR/lume.app/Contents/MacOS/lume" "\$@"
+INNER_WRAPPER_EOF
+        chmod +x "$INSTALL_DIR/lume"
+
+        # Clean up old standalone files
         rm -rf "$INSTALL_DIR/lume_lume.bundle"
-        mv "$TEMP_DIR/lume_lume.bundle" "$INSTALL_DIR/"
-        log "Resource bundle installed"
+
+        log "Successfully updated lume to version $LATEST_VERSION (.app bundle)"
+      else
+        # Legacy standalone binary format
+        mv "$TEMP_DIR/lume" "$INSTALL_DIR/"
+        chmod +x "$INSTALL_DIR/lume"
+
+        if [ -d "$TEMP_DIR/lume_lume.bundle" ]; then
+          rm -rf "$INSTALL_DIR/lume_lume.bundle"
+          mv "$TEMP_DIR/lume_lume.bundle" "$INSTALL_DIR/"
+          log "Resource bundle installed"
+        fi
+
+        log "Successfully updated lume to version $LATEST_VERSION"
       fi
 
       # Restart the daemon
       launchctl load "$HOME/Library/LaunchAgents/com.trycua.lume_daemon.plist" 2>/dev/null || true
-
-      log "Successfully updated lume to version $LATEST_VERSION"
 
       # Show macOS notification
       osascript -e "display notification \"Updated to version $LATEST_VERSION\" with title \"Lume Updated\"" 2>/dev/null || true
@@ -532,8 +584,8 @@ main() {
       rm -f "$WRAPPER_SCRIPT"
     fi
 
-    # Create the plist file - runs signed lume binary directly (no wrapper)
-    # This ensures proper code signing identity shows in Login Items
+    # Create the plist file - runs lume via the wrapper script
+    # The wrapper delegates to lume.app/Contents/MacOS/lume
     cat <<EOF > "$PLIST_PATH"
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

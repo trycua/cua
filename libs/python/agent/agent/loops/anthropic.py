@@ -147,9 +147,9 @@ def _convert_responses_items_to_completion_messages(messages: Messages) -> List[
                         # Keep other content types as-is
                         converted_content.append(item)
 
-                completion_messages.append(
-                    {"role": "user", "content": converted_content if converted_content else content}
-                )
+                # Only append if there's content (drop messages with only filtered images)
+                if converted_content:
+                    completion_messages.append({"role": "user", "content": converted_content})
             else:
                 # Text content
                 completion_messages.append({"role": "user", "content": content})
@@ -618,7 +618,7 @@ def _convert_responses_items_to_completion_messages(messages: Messages) -> List[
             output = message.get("output", {})
             call_id = message.get("call_id", "call_1")
 
-            if output.get("type") == "input_image":
+            if isinstance(output, dict) and output.get("type") == "input_image":
                 # Screenshot result - convert to OpenAI format with image_url content
                 image_url = output.get("image_url", "")
                 completion_messages.append(

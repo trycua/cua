@@ -123,20 +123,28 @@ class BaseVirtualizationService: VMVirtualizationService {
     }
 
     // Helper methods for creating common configurations
-    static func createStorageDeviceConfiguration(diskPath: Path, readOnly: Bool = false) throws
+    static func createStorageDeviceConfiguration(
+        diskPath: Path,
+        readOnly: Bool = false,
+        cachingMode: VZDiskImageCachingMode = .automatic
+    ) throws
         -> VZStorageDeviceConfiguration
     {
         return VZVirtioBlockDeviceConfiguration(
             attachment: try VZDiskImageStorageDeviceAttachment(
                 url: diskPath.url,
                 readOnly: readOnly,
-                cachingMode: VZDiskImageCachingMode.automatic,
+                cachingMode: cachingMode,
                 synchronizationMode: VZDiskImageSynchronizationMode.fsync
             )
         )
     }
 
-    static func createUSBMassStorageDeviceConfiguration(diskPath: Path, readOnly: Bool = false)
+    static func createUSBMassStorageDeviceConfiguration(
+        diskPath: Path,
+        readOnly: Bool = false,
+        cachingMode: VZDiskImageCachingMode = .automatic
+    )
         throws
         -> VZStorageDeviceConfiguration
     {
@@ -145,13 +153,14 @@ class BaseVirtualizationService: VMVirtualizationService {
                 attachment: try VZDiskImageStorageDeviceAttachment(
                     url: diskPath.url,
                     readOnly: readOnly,
-                    cachingMode: VZDiskImageCachingMode.automatic,
+                    cachingMode: cachingMode,
                     synchronizationMode: VZDiskImageSynchronizationMode.fsync
                 )
             )
         } else {
             // Fallback to normal storage device if USB mass storage not available
-            return try createStorageDeviceConfiguration(diskPath: diskPath, readOnly: readOnly)
+            return try createStorageDeviceConfiguration(
+                diskPath: diskPath, readOnly: readOnly, cachingMode: cachingMode)
         }
     }
 
@@ -428,16 +437,24 @@ final class LinuxVirtualizationService: BaseVirtualizationService {
         // Common configurations
         vzConfig.keyboards = [VZUSBKeyboardConfiguration()]
         vzConfig.pointingDevices = [VZUSBScreenCoordinatePointingDeviceConfiguration()]
-        var storageDevices = [try createStorageDeviceConfiguration(diskPath: config.diskPath)]
+        // Use .cached caching mode for Linux VMs to prevent filesystem corruption.
+        // The default .automatic mode causes EXT4/filesystem corruption in Linux guests
+        // due to a known issue in Apple's Virtualization framework.
+        // See: https://github.com/utmapp/UTM/pull/5919, https://github.com/lima-vm/lima/pull/2026
+        let diskCachingMode = VZDiskImageCachingMode.cached
+        var storageDevices = [try createStorageDeviceConfiguration(
+            diskPath: config.diskPath, cachingMode: diskCachingMode)]
         if let mount = config.mount {
             storageDevices.append(
-                try createStorageDeviceConfiguration(diskPath: mount, readOnly: true))
+                try createStorageDeviceConfiguration(
+                    diskPath: mount, readOnly: true, cachingMode: diskCachingMode))
         }
         // Add USB mass storage devices if specified
         if #available(macOS 15.0, *), let usbPaths = config.usbMassStoragePaths, !usbPaths.isEmpty {
             for usbPath in usbPaths {
                 storageDevices.append(
-                    try createUSBMassStorageDeviceConfiguration(diskPath: usbPath, readOnly: true))
+                    try createUSBMassStorageDeviceConfiguration(
+                        diskPath: usbPath, readOnly: true, cachingMode: diskCachingMode))
             }
         }
         vzConfig.storageDevices = storageDevices
@@ -449,7 +466,7 @@ final class LinuxVirtualizationService: BaseVirtualizationService {
         ]
         vzConfig.memoryBalloonDevices = [VZVirtioTraditionalMemoryBalloonDeviceConfiguration()]
         vzConfig.entropyDevices = [VZVirtioEntropyDeviceConfiguration()]
-        
+
         // Audio configuration
         let soundDeviceConfiguration = VZVirtioSoundDeviceConfiguration()
         let inputAudioStreamConfiguration = VZVirtioSoundDeviceInputStreamConfiguration()

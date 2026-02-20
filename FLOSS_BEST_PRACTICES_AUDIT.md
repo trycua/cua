@@ -128,9 +128,9 @@
 
 | Criterion | ID | Level | Status | Notes |
 |---|---|---|---|---|
-| Automated test suite (publicly released as FLOSS) | test | MUST | **PASS** | pytest-based test suite. 28+ test files across `libs/python/*/tests/` and `tests/`. CI workflow `ci-test-python.yml` runs tests automatically. TESTING.md documents how to run tests. |
+| Automated test suite (publicly released as FLOSS) | test | MUST | **PASS** | pytest-based test suite. 60 test files across 15 test directories (`libs/python/*/tests/`, `libs/typescript/*/tests/`, `libs/cua-bench/*/tests/`, `tests/`). CI workflow `ci-test-python.yml` runs tests automatically. TESTING.md documents how to run tests. |
 | Test suite invocable in standard way | test_invocation | SHOULD | **PASS** | Standard `pytest` invocation. Documented in TESTING.md and pyproject.toml (`[tool.pytest.ini_options]`). |
-| Test suite covers most code | test_most | SUGGESTED | **FAIL** | ~28 test files for ~194 source files (ratio ~14%). Coverage reporting is configured (pytest-cov, Codecov), but the test coverage appears low relative to codebase size. mypy type checking is disabled. |
+| Test suite covers most code | test_most | SUGGESTED | **FAIL** | 60 test files for ~555 source files (ratio ~10.8%). Coverage is concentrated in specific modules (e.g., 15 test files in cua-cli, 0 in lume). Coverage reporting is configured (pytest-cov, Codecov), but overall test coverage appears low. mypy type checking is disabled in CI. |
 | Continuous integration implemented | test_continuous_integration | SUGGESTED | **PASS** | GitHub Actions CI runs on every PR: linting (Python + TypeScript), testing (per-package matrix), and documentation checks. 63 workflow files total. |
 
 ### New functionality testing

@@ -204,23 +204,32 @@ export function useAgentRequest() {
       chatDispatch({ type: 'SET_RETRY_STATE', payload: null });
 
       try {
-        // Get computer URL - this is the sandbox/agent server URL
-        let hostName = '';
-        if (isVM(computer)) {
-          // For VMs, extract hostname from vncUrl or use host property
-          hostName =
-            (computer as { host?: string }).host ||
-            computer.vncUrl?.replace(/^https?:\/\//, '').split(/[:/]/)[0] ||
-            '';
-        } else if (isCustomComputer(computer)) {
-          hostName = computer.url.replace(/^https?:\/\//, '').split(/[:/]/)[0] || '';
+        // Get computer server URL - try multiple sources in order of preference:
+        // 1. ComputerInfo.agentUrl from state.computers (set by adapter with correct port)
+        // 2. computer.url from the chat's Computer object (set to agentUrl when selected)
+        // 3. Fallback: reconstruct from hostname with port 8443 (legacy cloud VMs)
+        const computerInfo = state.computers.find((c) => c.id === computer.id);
+        let computerServerUrl = computerInfo?.agentUrl || '';
+
+        if (!computerServerUrl && isCustomComputer(computer) && computer.url) {
+          computerServerUrl = computer.url;
         }
 
-        // Build computer server URL (sandbox agent)
-        // Use http for localhost, https otherwise
-        const protocol = hostName === 'localhost' || hostName === '127.0.0.1' ? 'http' : 'https';
-        const port = '8443';
-        const computerServerUrl = `${protocol}://${hostName}:${port}`;
+        if (!computerServerUrl) {
+          // Last resort fallback: reconstruct from hostname (legacy behavior for cloud VMs)
+          let hostName = '';
+          if (isVM(computer)) {
+            hostName =
+              (computer as { host?: string }).host ||
+              computer.vncUrl?.replace(/^https?:\/\//, '').split(/[:/]/)[0] ||
+              '';
+          } else if (isCustomComputer(computer)) {
+            hostName = computer.url.replace(/^https?:\/\//, '').split(/[:/]/)[0] || '';
+          }
+          const protocol = hostName === 'localhost' || hostName === '127.0.0.1' ? 'http' : 'https';
+          const port = '8443';
+          computerServerUrl = `${protocol}://${hostName}:${port}`;
+        }
 
         // Get inference config from adapter (for env vars like CUA_BASE_URL)
         const currentComputer = state.computers.find((c) => c.id === state.currentComputerId);

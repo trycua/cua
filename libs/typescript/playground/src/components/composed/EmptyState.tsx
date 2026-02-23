@@ -34,6 +34,8 @@ interface EmptyStateWithInputProps {
   onExamplePromptSelected?: (promptId: string, promptTitle: string) => void;
   /** Toast callback for user notifications */
   onToast?: (message: string, type?: 'success' | 'error' | 'info') => void;
+  /** Callback to open the Add Sandbox modal */
+  onAddComputer?: () => void;
 }
 
 /**
@@ -48,6 +50,7 @@ export function EmptyStateWithInput({
   selectionHint = 'Make sure to select a model and sandbox!',
   onExamplePromptSelected,
   onToast,
+  onAddComputer,
 }: EmptyStateWithInputProps) {
   return (
     <ChatProvider chat={draftChat}>
@@ -59,6 +62,7 @@ export function EmptyStateWithInput({
         selectionHint={selectionHint}
         onExamplePromptSelected={onExamplePromptSelected}
         onToast={onToast}
+        onAddComputer={onAddComputer}
       />
     </ChatProvider>
   );
@@ -80,6 +84,7 @@ interface EmptyStateContentProps {
   selectionHint: string;
   onExamplePromptSelected?: (promptId: string, promptTitle: string) => void;
   onToast?: (message: string, type?: 'success' | 'error' | 'info') => void;
+  onAddComputer?: () => void;
 }
 
 /**
@@ -93,6 +98,7 @@ function EmptyStateContent({
   selectionHint,
   onExamplePromptSelected,
   onToast,
+  onAddComputer,
 }: EmptyStateContentProps) {
   const chatState = useChat();
   const chatDispatch = useChatDispatch();
@@ -202,6 +208,7 @@ function EmptyStateContent({
             selectedModel={chatState.model}
             onModelChange={handleModelChange}
             isMobile={isMobile}
+            onAddComputer={onAddComputer}
           />
         </motion.div>
 

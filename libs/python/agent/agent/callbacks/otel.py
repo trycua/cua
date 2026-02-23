@@ -16,14 +16,11 @@ from .base import AsyncCallbackHandler
 # Import OTEL functions - these are available when cua-core[telemetry] is installed
 try:
     from core.telemetry import (
-        add_breadcrumb,
-        capture_exception,
         create_span,
         is_otel_enabled,
         record_error,
         record_operation,
         record_tokens,
-        set_context,
         track_concurrent,
     )
 
@@ -70,16 +67,6 @@ class OtelCallback(AsyncCallbackHandler):
         # Track concurrent sessions
         self._concurrent_tracker: Optional[Any] = None
 
-        if OTEL_AVAILABLE and is_otel_enabled():
-            # Set context for all events
-            set_context(
-                "agent",
-                {
-                    "model": self.model,
-                    "agent_type": self._get_agent_type(),
-                },
-            )
-
     def _get_agent_type(self) -> str:
         """Get the agent loop type name."""
         if hasattr(self.agent, "agent_loop") and self.agent.agent_loop is not None:
@@ -93,18 +80,6 @@ class OtelCallback(AsyncCallbackHandler):
 
         self.run_start_time = time.perf_counter()
         self.step_count = 0
-
-        # Add breadcrumb for debugging
-        add_breadcrumb(
-            category="agent",
-            message=f"Agent run started with model {self.model}",
-            level="info",
-            data={
-                "model": self.model,
-                "agent_type": self._get_agent_type(),
-                "input_messages": len(old_items),
-            },
-        )
 
     async def on_run_end(
         self,
@@ -126,17 +101,6 @@ class OtelCallback(AsyncCallbackHandler):
                 status="success",
                 model=self.model,
                 steps=self.step_count,
-            )
-
-            add_breadcrumb(
-                category="agent",
-                message=f"Agent run completed in {duration:.2f}s",
-                level="info",
-                data={
-                    "duration_seconds": duration,
-                    "steps": self.step_count,
-                    "output_messages": len(new_items),
-                },
             )
 
         self.run_start_time = None
@@ -163,13 +127,6 @@ class OtelCallback(AsyncCallbackHandler):
         # Start timing next step
         self.step_start_time = current_time
 
-        add_breadcrumb(
-            category="agent",
-            message=f"Agent step {self.step_count} completed",
-            level="info",
-            data={"step": self.step_count},
-        )
-
     async def on_usage(self, usage: Dict[str, Any]) -> None:
         """Called when usage information is received."""
         if not OTEL_AVAILABLE or not is_otel_enabled():
@@ -189,16 +146,6 @@ class OtelCallback(AsyncCallbackHandler):
         """Called when a computer call is about to start."""
         if not OTEL_AVAILABLE or not is_otel_enabled():
             return
-
-        action = item.get("action", {})
-        action_type = action.get("type", "unknown")
-
-        add_breadcrumb(
-            category="computer",
-            message=f"Computer action: {action_type}",
-            level="info",
-            data={"action_type": action_type},
-        )
 
     async def on_computer_call_end(
         self, item: Dict[str, Any], result: List[Dict[str, Any]]
@@ -225,28 +172,15 @@ class OtelCallback(AsyncCallbackHandler):
         if not OTEL_AVAILABLE or not is_otel_enabled():
             return
 
-        add_breadcrumb(
-            category="llm",
-            message="LLM API call started",
-            level="info",
-            data={"model": self.model},
-        )
-
     async def on_api_end(self, kwargs: Dict[str, Any], result: Any) -> None:
         """Called when an LLM API call has completed."""
         if not OTEL_AVAILABLE or not is_otel_enabled():
             return
 
-        add_breadcrumb(
-            category="llm",
-            message="LLM API call completed",
-            level="info",
-        )
-
 
 class OtelErrorCallback(AsyncCallbackHandler):
     """
-    Callback that captures errors and sends them to Sentry/OTEL.
+    Callback that captures errors and sends them to OTEL.
 
     Should be added early in the callback chain to catch all errors.
     """
@@ -274,14 +208,4 @@ class OtelErrorCallback(AsyncCallbackHandler):
             error_type=error_type,
             operation=operation,
             model=self.model,
-        )
-
-        # Capture exception in Sentry
-        capture_exception(
-            error,
-            context={
-                "model": self.model,
-                "operation": operation,
-                **{k: v for k, v in context.items() if k != "operation"},
-            },
         )

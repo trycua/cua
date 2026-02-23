@@ -17,6 +17,8 @@ import McpBlack from '@/assets/mcp-black.svg';
 import McpWhite from '@/assets/mcp-white.svg';
 import LumeIconBlack from '@/assets/lume-icon-black.svg';
 import LumeIconWhite from '@/assets/lume-icon-white.svg';
+import CuaBotLogoBlack from '@/assets/cuabot-logo-black.svg';
+import CuaBotLogoWhite from '@/assets/cuabot-logo-white.svg';
 
 const docsSites = [
   {
@@ -30,8 +32,8 @@ const docsSites = [
     logoWhite: LogoWhite,
     iconWidth: 24,
     iconHeight: 24,
-    dropdownIconWidth: 20,
-    dropdownIconHeight: 20,
+    dropdownIconWidth: 28,
+    dropdownIconHeight: 28,
     navTabs: [
       { name: 'Guide', href: '/cua/guide/get-started/what-is-cua', prefix: '/cua/guide' },
       { name: 'Examples', href: '/cua/examples/automation/form-filling', prefix: '/cua/examples' },
@@ -49,8 +51,8 @@ const docsSites = [
     logoWhite: CuaBenchLogoWhite,
     iconWidth: 36,
     iconHeight: 22,
-    dropdownIconWidth: 30,
-    dropdownIconHeight: 18,
+    dropdownIconWidth: 42,
+    dropdownIconHeight: 25,
     navTabs: [
       {
         name: 'Guide',
@@ -80,8 +82,8 @@ const docsSites = [
     logoWhite: LumeIconWhite,
     iconWidth: 24,
     iconHeight: 24,
-    dropdownIconWidth: 20,
-    dropdownIconHeight: 20,
+    dropdownIconWidth: 28,
+    dropdownIconHeight: 28,
     navTabs: [
       {
         name: 'Guide',
@@ -107,12 +109,12 @@ const docsSites = [
     prefix: '/cuabot',
     isDefault: false,
     description: 'Co-op computer-use for any agent',
-    logoBlack: LogoBlack,
-    logoWhite: LogoWhite,
+    logoBlack: CuaBotLogoBlack,
+    logoWhite: CuaBotLogoWhite,
     iconWidth: 24,
     iconHeight: 24,
-    dropdownIconWidth: 20,
-    dropdownIconHeight: 20,
+    dropdownIconWidth: 28,
+    dropdownIconHeight: 28,
     navTabs: [
       {
         name: 'Guide',

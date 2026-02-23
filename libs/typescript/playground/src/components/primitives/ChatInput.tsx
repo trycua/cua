@@ -15,7 +15,7 @@ import {
 } from '../ui/select';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip';
 import type { Computer, Model, ModelProvider, VM } from '../../types';
-import { isVM, getComputerId, getComputerName } from '../../types';
+import { isVM, getComputerId, getComputerName, getComputerStatus } from '../../types';
 
 /**
  * Groups computers by workspace name, sorted alphabetically with "Custom" at the end.
@@ -286,13 +286,13 @@ export function ChatInput({
                       <SelectLabel>{group.workspaceName}</SelectLabel>
                       {group.computers.map((c) => {
                         // Check status for both VMs and custom computers
-                        // Custom computers carry `status` from ComputerInfo spread at runtime
-                        const computerStatus = isVM(c)
-                          ? (c as VM).status
-                          : (c as unknown as { status?: string }).status;
+                        const computerStatus = getComputerStatus(c);
                         const isRunning = computerStatus === 'running';
+                        // Only VMs use vmVersionInfo for reachability/outdated checks
                         const versionInfo = isVM(c) ? vmVersionInfo.get((c as VM).vmId) : undefined;
-                        const isUnreachable = versionInfo?.unreachable;
+                        // Custom computers are never "unreachable" via vmVersionInfo;
+                        // they trust their own status property
+                        const isUnreachable = isVM(c) ? versionInfo?.unreachable : false;
                         return (
                           <SelectItem
                             key={getComputerId(c)}

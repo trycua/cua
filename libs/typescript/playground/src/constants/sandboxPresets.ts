@@ -19,7 +19,7 @@ export const SANDBOX_PRESETS: SandboxPreset[] = [
     image: 'trycua/cua-xfce:latest',
     vncPort: 6901,
     apiPort: 8000,
-    vncPath: '/vnc.html',
+    vncPath: '/vnc.html?resize=scale&autoconnect=true&quality=6',
     dockerCommand:
       'docker run --rm -it --shm-size=512m -p 6901:6901 -p 8000:8000 trycua/cua-xfce:latest',
     prerequisites: 'Docker installed and running',

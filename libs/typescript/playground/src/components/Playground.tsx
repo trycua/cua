@@ -10,7 +10,7 @@ import { ChatList } from './composed/ChatList';
 import { ComputerList } from './composed/ComputerList';
 import { EmptyStateWithInput } from './composed/EmptyState';
 import { VNCViewer } from './primitives/VNCViewer';
-import { CustomComputerModal } from './modals/CustomComputerModal';
+import { AddSandboxModal } from './modals/CustomComputerModal';
 import type { PlaygroundAdapters } from '../adapters/types';
 import type { Chat } from '../types';
 import { cn } from '../utils/cn';
@@ -44,6 +44,8 @@ interface PlaygroundProps {
   };
   /** Custom welcome message for empty state */
   welcomeMessage?: string;
+  /** Render prop for cloud VM creation wizard. Injected by cloud website. */
+  renderCloudCreate?: (props: { onCreated: () => void; onCancel: () => void }) => React.ReactNode;
 }
 
 // =============================================================================
@@ -59,6 +61,7 @@ function PlaygroundContentInternal({
   className,
   logo,
   welcomeMessage,
+  renderCloudCreate,
 }: Omit<PlaygroundProps, 'adapters' | 'initialChats'>) {
   const { state, dispatch, adapters } = usePlayground();
   const [showCustomComputerModal, setShowCustomComputerModal] = useState(false);
@@ -216,6 +219,7 @@ function PlaygroundContentInternal({
                 draftChat={draftChat}
                 logo={logo}
                 welcomeMessage={welcomeMessage}
+                onAddComputer={() => setShowCustomComputerModal(true)}
               />
             )}
           </div>
@@ -237,10 +241,11 @@ function PlaygroundContentInternal({
         {footer}
       </main>
 
-      {/* Custom Computer Modal */}
-      <CustomComputerModal
+      {/* Add Sandbox Modal */}
+      <AddSandboxModal
         isOpen={showCustomComputerModal}
         onClose={() => setShowCustomComputerModal(false)}
+        renderCloudCreate={renderCloudCreate}
       />
     </div>
   );

@@ -83,9 +83,14 @@ export { PlaygroundContent } from './components/composed/PlaygroundContent';
 
 // Modals
 export { SettingsModal } from './components/modals/SettingsModal';
-export { CustomComputerModal } from './components/modals/CustomComputerModal';
+export { AddSandboxModal, CustomComputerModal } from './components/modals/CustomComputerModal';
+export type { AddSandboxModalProps } from './components/modals/CustomComputerModal';
 export { ExportTrajectoryModal } from './components/modals';
 export { ReplayTrajectoryModal } from './components/modals';
+
+// Constants
+export { SANDBOX_PRESETS, MACOS_PRESET } from './constants/sandboxPresets';
+export type { SandboxPreset } from './constants/sandboxPresets';
 
 // Trajectory Viewer
 export { default as TrajectoryViewer } from './components/TrajectoryViewer';

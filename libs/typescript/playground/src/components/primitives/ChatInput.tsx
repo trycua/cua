@@ -9,12 +9,13 @@ import {
   SelectGroup,
   SelectItem,
   SelectLabel,
+  SelectSeparator,
   SelectTrigger,
   SelectValue,
 } from '../ui/select';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip';
 import type { Computer, Model, ModelProvider, VM } from '../../types';
-import { isVM, getComputerId, getComputerName } from '../../types';
+import { isVM, getComputerId, getComputerName, getComputerStatus } from '../../types';
 
 /**
  * Groups computers by workspace name, sorted alphabetically with "Custom" at the end.
@@ -141,6 +142,9 @@ interface ChatInputProps {
     children: React.ReactNode;
     className?: string;
   }) => React.ReactNode;
+
+  // Add sandbox callback
+  onAddComputer?: () => void;
 }
 
 export function ChatInput({
@@ -164,6 +168,7 @@ export function ChatInput({
   hasWorkspace = true,
   hasCredits = true,
   renderLink,
+  onAddComputer,
 }: ChatInputProps) {
   // Lock model/computer selection after first message, but only if they're set
   // This allows users to still pick if the saved model/computer is unavailable
@@ -175,6 +180,10 @@ export function ChatInput({
   };
 
   const handleComputerChange = (computerId: string) => {
+    if (computerId === '__add_sandbox__') {
+      onAddComputer?.();
+      return;
+    }
     onComputerChange(computerId);
   };
 
@@ -276,10 +285,14 @@ export function ChatInput({
                     <SelectGroup key={group.workspaceName}>
                       <SelectLabel>{group.workspaceName}</SelectLabel>
                       {group.computers.map((c) => {
-                        const isRunning = isVM(c) && (c as VM).status === 'running';
+                        // Check status for both VMs and custom computers
+                        const computerStatus = getComputerStatus(c);
+                        const isRunning = computerStatus === 'running';
+                        // Only VMs use vmVersionInfo for reachability/outdated checks
                         const versionInfo = isVM(c) ? vmVersionInfo.get((c as VM).vmId) : undefined;
-                        const isUnreachable = versionInfo?.unreachable;
-                        const vmComputer = c as VM;
+                        // Custom computers are never "unreachable" via vmVersionInfo;
+                        // they trust their own status property
+                        const isUnreachable = isVM(c) ? versionInfo?.unreachable : false;
                         return (
                           <SelectItem
                             key={getComputerId(c)}
@@ -287,9 +300,7 @@ export function ChatInput({
                             className="hover:bg-neutral-200 dark:hover:bg-neutral-700"
                           >
                             <div className="flex items-center gap-2">
-                              {isVM(c) &&
-                              (vmComputer.status === 'restarting' ||
-                                vmComputer.status === 'starting') ? (
+                              {computerStatus === 'restarting' || computerStatus === 'starting' ? (
                                 <Loader2 className="h-3 w-3 animate-spin text-neutral-500 dark:text-neutral-400" />
                               ) : (
                                 <div
@@ -303,11 +314,11 @@ export function ChatInput({
                                 />
                               )}
                               <span>{getComputerName(c)}</span>
-                              {isVM(c) && vmComputer.status === 'starting' ? (
+                              {computerStatus === 'starting' ? (
                                 <span className="text-neutral-500 text-xs dark:text-neutral-400">
                                   Starting
                                 </span>
-                              ) : isVM(c) && vmComputer.status === 'restarting' ? (
+                              ) : computerStatus === 'restarting' ? (
                                 <span className="text-neutral-500 text-xs dark:text-neutral-400">
                                   Restarting
                                 </span>
@@ -328,6 +339,17 @@ export function ChatInput({
                       })}
                     </SelectGroup>
                   ))}
+                </>
+              )}
+              {onAddComputer && (
+                <>
+                  <SelectSeparator />
+                  <SelectItem
+                    value="__add_sandbox__"
+                    className="text-blue-600 hover:bg-neutral-200 dark:text-blue-400 dark:hover:bg-neutral-700"
+                  >
+                    + Add Sandbox...
+                  </SelectItem>
                 </>
               )}
             </SelectContent>
@@ -471,6 +493,17 @@ export function ChatInput({
                 ))}
               </SelectGroup>
             ))}
+            {onAddComputer && (
+              <>
+                <SelectSeparator />
+                <SelectItem
+                  value="__add_sandbox__"
+                  className="text-blue-600 hover:bg-neutral-200 dark:text-blue-400 dark:hover:bg-neutral-700"
+                >
+                  + Add Sandbox...
+                </SelectItem>
+              </>
+            )}
           </SelectContent>
         </Select>
 

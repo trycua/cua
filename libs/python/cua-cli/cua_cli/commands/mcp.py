@@ -706,6 +706,286 @@ async def _register_computer_tools(
             result = await _send_command(sandbox, "open", {"path": path})
             return json.dumps(result)
 
+        @server.tool()
+        async def computer_window_focus(ctx: Context, window_id: str, sandbox: str = "") -> str:
+            """Bring a window to the foreground and focus it.
+
+            Args:
+                window_id: Window identifier
+                sandbox: Sandbox name (optional)
+            """
+            result = await _send_command(sandbox, "activate_window", {"window_id": window_id})
+            return json.dumps(result)
+
+        @server.tool()
+        async def computer_window_unfocus(ctx: Context, sandbox: str = "") -> str:
+            """Remove focus from the currently focused window.
+
+            Args:
+                sandbox: Sandbox name (optional)
+            """
+            result = await _send_command(sandbox, "deactivate_window", {})
+            if not result.get("success"):
+                # Fallback: press Escape
+                result = await _send_command(sandbox, "press_key", {"key": "escape"})
+            return json.dumps(result)
+
+        @server.tool()
+        async def computer_window_minimize(ctx: Context, window_id: str, sandbox: str = "") -> str:
+            """Minimize a window.
+
+            Args:
+                window_id: Window identifier
+                sandbox: Sandbox name (optional)
+            """
+            result = await _send_command(sandbox, "minimize_window", {"window_id": window_id})
+            return json.dumps(result)
+
+        @server.tool()
+        async def computer_window_maximize(ctx: Context, window_id: str, sandbox: str = "") -> str:
+            """Maximize a window.
+
+            Args:
+                window_id: Window identifier
+                sandbox: Sandbox name (optional)
+            """
+            result = await _send_command(sandbox, "maximize_window", {"window_id": window_id})
+            return json.dumps(result)
+
+        @server.tool()
+        async def computer_window_close(ctx: Context, window_id: str, sandbox: str = "") -> str:
+            """Close a window.
+
+            Args:
+                window_id: Window identifier
+                sandbox: Sandbox name (optional)
+            """
+            result = await _send_command(sandbox, "close_window", {"window_id": window_id})
+            return json.dumps(result)
+
+        @server.tool()
+        async def computer_window_resize(
+            ctx: Context,
+            window_id: str,
+            width: int,
+            height: int,
+            sandbox: str = "",
+        ) -> str:
+            """Resize a window.
+
+            Args:
+                window_id: Window identifier
+                width: New width in pixels
+                height: New height in pixels
+                sandbox: Sandbox name (optional)
+            """
+            result = await _send_command(
+                sandbox,
+                "set_window_size",
+                {"window_id": window_id, "width": width, "height": height},
+            )
+            return json.dumps(result)
+
+        @server.tool()
+        async def computer_window_move(
+            ctx: Context,
+            window_id: str,
+            x: int,
+            y: int,
+            sandbox: str = "",
+        ) -> str:
+            """Move a window to a position on screen.
+
+            Args:
+                window_id: Window identifier
+                x: X coordinate for the window's top-left corner
+                y: Y coordinate for the window's top-left corner
+                sandbox: Sandbox name (optional)
+            """
+            result = await _send_command(
+                sandbox,
+                "set_window_position",
+                {"window_id": window_id, "x": x, "y": y},
+            )
+            return json.dumps(result)
+
+        @server.tool()
+        async def computer_window_get_info(
+            ctx: Context,
+            window_id: str,
+            sandbox: str = "",
+        ) -> str:
+            """Get a window's title, size, and position.
+
+            Args:
+                window_id: Window identifier
+                sandbox: Sandbox name (optional)
+            """
+            name_r = await _send_command(sandbox, "get_window_name", {"window_id": window_id})
+            size_r = await _send_command(sandbox, "get_window_size", {"window_id": window_id})
+            pos_r = await _send_command(sandbox, "get_window_position", {"window_id": window_id})
+            return json.dumps(
+                {
+                    "window_id": window_id,
+                    "title": name_r.get("name") or name_r.get("data"),
+                    "size": size_r.get("size") or size_r.get("data"),
+                    "position": pos_r.get("position") or pos_r.get("data"),
+                },
+                indent=2,
+            )
+
+        @server.tool()
+        async def computer_launch(
+            ctx: Context,
+            app: str,
+            args: list[str] | None = None,
+            sandbox: str = "",
+        ) -> str:
+            """Launch an application.
+
+            Args:
+                app: Application executable or bundle identifier
+                args: Optional list of arguments
+                sandbox: Sandbox name (optional)
+            """
+            result = await _send_command(sandbox, "launch", {"app": app, "args": args or []})
+            return json.dumps(result)
+
+    if Permission.COMPUTER_CLICK in permissions:
+
+        @server.tool()
+        async def computer_move_cursor(
+            ctx: Context,
+            x: int,
+            y: int,
+            sandbox: str = "",
+        ) -> str:
+            """Move the mouse cursor without clicking.
+
+            Args:
+                x: X coordinate
+                y: Y coordinate
+                sandbox: Sandbox name (optional)
+            """
+            result = await _send_command(sandbox, "move_cursor", {"x": x, "y": y})
+            return json.dumps(result)
+
+        @server.tool()
+        async def computer_mouse_down(
+            ctx: Context,
+            x: int,
+            y: int,
+            button: str = "left",
+            sandbox: str = "",
+        ) -> str:
+            """Press and hold a mouse button.
+
+            Args:
+                x: X coordinate
+                y: Y coordinate
+                button: Mouse button (left, right, middle)
+                sandbox: Sandbox name (optional)
+            """
+            result = await _send_command(
+                sandbox, "mouse_down", {"x": x, "y": y, "button": button}
+            )
+            return json.dumps(result)
+
+        @server.tool()
+        async def computer_mouse_up(
+            ctx: Context,
+            x: int,
+            y: int,
+            button: str = "left",
+            sandbox: str = "",
+        ) -> str:
+            """Release a mouse button.
+
+            Args:
+                x: X coordinate
+                y: Y coordinate
+                button: Mouse button (left, right, middle)
+                sandbox: Sandbox name (optional)
+            """
+            result = await _send_command(
+                sandbox, "mouse_up", {"x": x, "y": y, "button": button}
+            )
+            return json.dumps(result)
+
+    if Permission.COMPUTER_KEY in permissions:
+
+        @server.tool()
+        async def computer_key_down(ctx: Context, key: str, sandbox: str = "") -> str:
+            """Press and hold a key.
+
+            Args:
+                key: Key to hold (e.g. "shift", "ctrl", "a")
+                sandbox: Sandbox name (optional)
+            """
+            result = await _send_command(sandbox, "key_down", {"key": key})
+            return json.dumps(result)
+
+        @server.tool()
+        async def computer_key_up(ctx: Context, key: str, sandbox: str = "") -> str:
+            """Release a previously held key.
+
+            Args:
+                key: Key to release
+                sandbox: Sandbox name (optional)
+            """
+            result = await _send_command(sandbox, "key_up", {"key": key})
+            return json.dumps(result)
+
+    if Permission.COMPUTER_SCREENSHOT in permissions:
+
+        @server.tool()
+        async def computer_get_screen_size(ctx: Context, sandbox: str = "") -> str:
+            """Get the screen dimensions.
+
+            Args:
+                sandbox: Sandbox name (optional)
+            """
+            result = await _send_command(sandbox, "get_screen_size", {})
+            return json.dumps(result)
+
+        @server.tool()
+        async def computer_get_cursor_position(ctx: Context, sandbox: str = "") -> str:
+            """Get the current cursor position.
+
+            Args:
+                sandbox: Sandbox name (optional)
+            """
+            result = await _send_command(sandbox, "get_cursor_position", {})
+            return json.dumps(result)
+
+        @server.tool()
+        async def computer_get_accessibility_tree(ctx: Context, sandbox: str = "") -> str:
+            """Get the accessibility tree of the current screen.
+
+            Args:
+                sandbox: Sandbox name (optional)
+            """
+            result = await _send_command(sandbox, "get_accessibility_tree", {})
+            return json.dumps(result)
+
+        @server.tool()
+        async def computer_get_current_window(ctx: Context, sandbox: str = "") -> str:
+            """Get the currently focused window ID and title.
+
+            Args:
+                sandbox: Sandbox name (optional)
+            """
+            win_r = await _send_command(sandbox, "get_current_window_id", {})
+            window_id = win_r.get("window_id") or win_r.get("data")
+            if window_id:
+                name_r = await _send_command(
+                    sandbox, "get_window_name", {"window_id": window_id}
+                )
+                title = name_r.get("name") or name_r.get("data") or ""
+            else:
+                title = ""
+            return json.dumps({"window_id": window_id, "title": title or "Desktop"})
+
 
 async def _register_skills_tools(server: "FastMCP", permissions: set[Permission]) -> None:
     """Register skills management tools."""

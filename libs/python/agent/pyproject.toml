@@ -24,7 +24,7 @@ dependencies = [
     "certifi>=2024.2.2",
     "litellm>=1.74.12"
 ]
-requires-python = ">=3.12,<3.13"
+requires-python = ">=3.12,<3.14"
 
 [project.optional-dependencies]
 test = [

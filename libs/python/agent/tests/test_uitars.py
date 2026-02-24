@@ -267,6 +267,9 @@ class TestConvertUITARSMessagesToLiteLLM:
         assert len(result) == 1
         text = result[0]["content"][0]["text"]
         assert "drag" in text
+        assert "(100,150)" in text
+        assert "(200,250)" in text
+        assert "start_box" in text and "end_box" in text
 
     def test_multiple_actions_create_multiple_assistant_messages(self):
         """Multiple computer calls should each finalize their own assistant message."""

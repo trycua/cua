@@ -218,6 +218,11 @@ class BaseAutomationHandler(ABC):
         pass
 
     @abstractmethod
+    async def middle_click(self, x: Optional[int] = None, y: Optional[int] = None) -> Dict[str, Any]:
+        """Perform a middle click at the current or specified position."""
+        pass
+
+    @abstractmethod
     async def double_click(
         self, x: Optional[int] = None, y: Optional[int] = None
     ) -> Dict[str, Any]:

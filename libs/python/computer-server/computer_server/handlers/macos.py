@@ -1058,6 +1058,16 @@ class MacOSAutomationHandler(BaseAutomationHandler):
         except Exception as e:
             return {"success": False, "error": str(e)}
 
+    async def middle_click(self, x: Optional[int] = None, y: Optional[int] = None) -> Dict[str, Any]:
+        """Perform a middle mouse click at the specified coordinates."""
+        try:
+            if x is not None and y is not None:
+                self.mouse.position = (x, y)
+            self.mouse.click(Button.middle, 1)
+            return {"success": True}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
     async def double_click(
         self, x: Optional[int] = None, y: Optional[int] = None
     ) -> Dict[str, Any]:

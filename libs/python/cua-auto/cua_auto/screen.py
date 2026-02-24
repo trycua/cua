@@ -58,8 +58,8 @@ def screen_size() -> Tuple[int, int]:
 def cursor_position() -> Tuple[int, int]:
     """Return the current cursor position as (x, y).
 
-    Uses pynput as the primary source (cross-platform).
-    Falls back to win32 on Windows if available.
+    Tries win32gui first on Windows (more reliable with DPI scaling).
+    Falls back to pynput if win32 is unavailable (cross-platform fallback).
     """
     try:
         import win32gui  # type: ignore[import-untyped]

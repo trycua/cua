@@ -32,15 +32,22 @@ def run(command: str, timeout: int = 30) -> CommandResult:
                 continue
         return data.decode("utf-8", errors="replace")
 
-    result = subprocess.run(
-        command,
-        shell=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        timeout=timeout,
-    )
-    return CommandResult(
-        stdout=_decode(result.stdout),
-        stderr=_decode(result.stderr),
-        returncode=result.returncode,
-    )
+    try:
+        result = subprocess.run(
+            command,
+            shell=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=timeout,
+        )
+        return CommandResult(
+            stdout=_decode(result.stdout),
+            stderr=_decode(result.stderr),
+            returncode=result.returncode,
+        )
+    except subprocess.TimeoutExpired as e:
+        return CommandResult(
+            stdout=_decode(e.stdout or b""),
+            stderr=_decode(e.stderr or b""),
+            returncode=-1,
+        )

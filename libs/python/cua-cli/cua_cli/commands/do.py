@@ -36,6 +36,11 @@ MAX_LENGTH = 1200  # max pixel dimension for screenshot output
 _STATE_FILE = Path.home() / ".cua" / "do_target.json"
 _HOST_CONSENT_FILE = Path.home() / ".cua" / "host_consented"
 
+# Window titles that are internal OS/browser helper windows and should be hidden
+_SKIP_WINDOW_TITLES = {
+    "Chrome Legacy Window",
+}
+
 PROVIDERS = ("cloud", "cloudv2", "lume", "lumier", "docker", "winsandbox", "host")
 _REMOTE_PROVIDERS = ("cloud", "cloudv2", "lume", "lumier", "docker", "winsandbox")
 
@@ -174,13 +179,13 @@ async def _host_dispatch(command: str, params: dict) -> dict:
             result = _win.get_window_size(params.get("window_id", ""))
             if result is None:
                 return {"success": False, "error": "Window not found"}
-            return {"success": True, "width": result[0], "height": result[1]}
+            return {"success": True, "size": [result[0], result[1]]}
 
         elif command == "get_window_position":
             result = _win.get_window_position(params.get("window_id", ""))
             if result is None:
                 return {"success": False, "error": "Window not found"}
-            return {"success": True, "x": result[0], "y": result[1]}
+            return {"success": True, "position": [result[0], result[1]]}
 
         elif command == "left_click":
             _mouse.click(int(params["x"]), int(params["y"]))
@@ -188,6 +193,10 @@ async def _host_dispatch(command: str, params: dict) -> dict:
 
         elif command == "right_click":
             _mouse.right_click(int(params["x"]), int(params["y"]))
+            return {"success": True}
+
+        elif command == "middle_click":
+            _mouse.click(int(params["x"]), int(params["y"]), "middle")
             return {"success": True}
 
         elif command == "double_click":
@@ -356,18 +365,10 @@ async def _send(provider_type: str, name: str, command: str, params: dict) -> di
 
 # ── zoom / screenshot helpers ─────────────────────────────────────────────────
 
-async def _resolve_zoom_bbox(
-    provider_type: str, name: str, window_name: str
+async def _resolve_zoom_bbox_by_id(
+    provider_type: str, name: str, window_id: str
 ) -> dict | None:
-    """Get the bounding box of a window by app/window name."""
-    wins_r = await _send(
-        provider_type, name, "get_application_windows", {"app": window_name}
-    )
-    windows = wins_r.get("windows") or wins_r.get("data") or []
-    if not windows:
-        return None
-    window_id = windows[0]
-
+    """Get the bounding box of a window by its native handle/id."""
     pos_r = await _send(
         provider_type, name, "get_window_position", {"window_id": window_id}
     )
@@ -393,6 +394,38 @@ async def _resolve_zoom_bbox(
     return {"x": x, "y": y, "width": w, "height": h}
 
 
+async def _resolve_zoom_bbox(
+    provider_type: str, name: str, window_name: str
+) -> dict | None:
+    """Get the bounding box of a window by app/window name.
+
+    Filters out internal helper windows (e.g. 'Chrome Legacy Window') so the
+    correct top-level window is always selected.
+    """
+    wins_r = await _send(
+        provider_type, name, "get_application_windows", {"app": window_name}
+    )
+    windows = wins_r.get("windows") or wins_r.get("data") or []
+    if not windows:
+        return None
+
+    # Pick the first window whose title is not an internal helper
+    window_id = None
+    for wid in windows:
+        try:
+            name_r = await _send(provider_type, name, "get_window_name", {"window_id": wid})
+            title = name_r.get("name") or ""
+            if title not in _SKIP_WINDOW_TITLES:
+                window_id = wid
+                break
+        except Exception:
+            pass
+    if window_id is None:
+        window_id = windows[0]
+
+    return await _resolve_zoom_bbox_by_id(provider_type, name, window_id)
+
+
 async def _take_screenshot_data(
     provider_type: str, name: str, state: dict
 ) -> tuple[bytes, float, dict | None]:
@@ -410,11 +443,15 @@ async def _take_screenshot_data(
     img = Image.open(io.BytesIO(base64.b64decode(img_b64)))
 
     zoom_window = state.get("zoom_window")
+    zoom_window_id = state.get("zoom_window_id")
     bbox: dict | None = None
 
     if zoom_window:
         try:
-            bbox = await _resolve_zoom_bbox(provider_type, name, zoom_window)
+            if zoom_window_id:
+                bbox = await _resolve_zoom_bbox_by_id(provider_type, name, str(zoom_window_id))
+            if not bbox:
+                bbox = await _resolve_zoom_bbox(provider_type, name, zoom_window)
             if bbox:
                 img = img.crop(
                     (
@@ -458,13 +495,27 @@ def _coords(x: int, y: int, state: dict) -> tuple[int, int]:
     return sx, sy
 
 
+async def _maybe_focus_zoom(provider_type: str, name: str, state: dict) -> None:
+    """If a zoom window is tracked, bring it to focus before performing an action."""
+    window_id = state.get("zoom_window_id")
+    if window_id:
+        try:
+            await _send(provider_type, name, "activate_window", {"window_id": window_id})
+        except Exception:
+            pass
+
+
 async def _print_context(provider_type: str, name: str, state: dict | None = None) -> None:
     """Print the VM + zoom context line after a command."""
     vm_label = name if name else provider_type
     if state is None:
         state = _load_state()
     zoom_window = state.get("zoom_window")
-    zoom_info = f"zoom: {zoom_window}" if zoom_window else "zoom: off"
+    zoom_window_id = state.get("zoom_window_id")
+    if zoom_window:
+        zoom_info = f"zoom: {zoom_window} ({zoom_window_id})" if zoom_window_id else f"zoom: {zoom_window}"
+    else:
+        zoom_info = "zoom: off"
     print(f"💻 {vm_label}\t🔍 {zoom_info}")
 
 
@@ -492,7 +543,7 @@ def _cmd_switch(args: argparse.Namespace) -> int:
                 file=sys.stderr,
             )
             return 1
-        _save_state({"provider": "host", "name": "", "zoom_window": None, "zoom_bbox": None, "zoom_scale": 1.0})
+        _save_state({"provider": "host", "name": "", "zoom_window": None, "zoom_window_id": None, "zoom_bbox": None, "zoom_scale": 1.0})
         msg = "Switched to host (local PC)"
         if had_zoom:
             msg += " — zoom reset"
@@ -502,7 +553,7 @@ def _cmd_switch(args: argparse.Namespace) -> int:
         return _fail(f"Unknown provider '{provider}'. Choose from: {', '.join(PROVIDERS)}")
 
     name = args.name or ""
-    _save_state({"provider": provider, "name": name, "zoom_window": None, "zoom_bbox": None, "zoom_scale": 1.0})
+    _save_state({"provider": provider, "name": name, "zoom_window": None, "zoom_window_id": None, "zoom_bbox": None, "zoom_scale": 1.0})
     label = f"{provider}/{name}" if name else provider
     msg = f"Switched to {label}"
     if had_zoom:
@@ -573,16 +624,49 @@ def _cmd_ls(args: argparse.Namespace) -> int:
 
 
 def _cmd_zoom(args: argparse.Namespace) -> int:
+    from cua_cli.utils.async_utils import run_async
+
     t = _require_target()
     if not t:
         return 1
     window_name = args.window_name
-    _update_state(zoom_window=window_name, zoom_bbox=None, zoom_scale=1.0)
-    return _ok(f"Zoomed to window '{window_name}' (bbox resolved on next screenshot)")
+
+    async def _run() -> int:
+        state = _load_state()
+        p, n = state["provider"], state.get("name", "")
+        try:
+            wins_r = await _send(p, n, "get_application_windows", {"app": window_name})
+            windows = wins_r.get("windows") or wins_r.get("data") or []
+            if not windows:
+                return _fail(f"No windows found matching '{window_name}'")
+            # Fetch titles and filter out internal helper windows
+            candidates = []
+            for wid in windows:
+                name_r = await _send(p, n, "get_window_name", {"window_id": wid})
+                title = name_r.get("name") or str(wid)
+                if title not in _SKIP_WINDOW_TITLES:
+                    candidates.append((wid, title))
+            if not candidates:
+                return _fail(f"No windows found matching '{window_name}'")
+            if len(candidates) > 1:
+                labels = [f"{wid} ({title})" for wid, title in candidates]
+                return _fail(
+                    f"Multiple windows matched '{window_name}' — be more specific. "
+                    f"Found: {', '.join(labels)}"
+                )
+            wid, matched_title = candidates[0]
+        except Exception:
+            wid, matched_title = None, window_name  # resolution failed, still set zoom
+
+        _update_state(zoom_window=window_name, zoom_window_id=wid, zoom_bbox=None, zoom_scale=1.0)
+        id_suffix = f" ({wid})" if wid else ""
+        return _ok(f"Zoomed to '{matched_title}'{id_suffix}")
+
+    return run_async(_run())
 
 
 def _cmd_unzoom(args: argparse.Namespace) -> int:
-    _update_state(zoom_window=None, zoom_bbox=None, zoom_scale=1.0)
+    _update_state(zoom_window=None, zoom_window_id=None, zoom_bbox=None, zoom_scale=1.0)
     return _ok("Unzoomed — full screen")
 
 
@@ -730,22 +814,24 @@ def _cmd_click(args: argparse.Namespace) -> int:
         return 1
 
     button = getattr(args, "button", "left") or "left"
-    cmd_map = {"left": "left_click", "right": "right_click", "middle": "left_click"}
+    cmd_map = {"left": "left_click", "right": "right_click", "middle": "middle_click"}
     cmd = cmd_map.get(button, "left_click")
 
     async def _run() -> int:
         state = _load_state()
+        p, n = state["provider"], state.get("name", "")
+        await _maybe_focus_zoom(p, n, state)
         sx, sy = _coords(args.x, args.y, state)
         try:
-            result = await _send(state["provider"], state.get("name", ""), cmd, {"x": sx, "y": sy})
+            result = await _send(p, n, cmd, {"x": sx, "y": sy})
         except Exception as e:
-            await _print_context(state["provider"], state.get("name", ""), state)
+            await _print_context(p, n, state)
             return _fail(str(e))
         if not result.get("success", True):
-            await _print_context(state["provider"], state.get("name", ""), state)
+            await _print_context(p, n, state)
             return _fail(result.get("error", "click failed"))
         rc = _ok(f"clicked ({args.x}, {args.y}) [{button}]")
-        await _print_context(state["provider"], state.get("name", ""), state)
+        await _print_context(p, n, state)
         return rc
 
     return run_async(_run())
@@ -760,19 +846,19 @@ def _cmd_dclick(args: argparse.Namespace) -> int:
 
     async def _run() -> int:
         state = _load_state()
+        p, n = state["provider"], state.get("name", "")
+        await _maybe_focus_zoom(p, n, state)
         sx, sy = _coords(args.x, args.y, state)
         try:
-            result = await _send(
-                state["provider"], state.get("name", ""), "double_click", {"x": sx, "y": sy}
-            )
+            result = await _send(p, n, "double_click", {"x": sx, "y": sy})
         except Exception as e:
-            await _print_context(state["provider"], state.get("name", ""), state)
+            await _print_context(p, n, state)
             return _fail(str(e))
         if not result.get("success", True):
-            await _print_context(state["provider"], state.get("name", ""), state)
+            await _print_context(p, n, state)
             return _fail(result.get("error", "double-click failed"))
         rc = _ok(f"double-clicked ({args.x}, {args.y})")
-        await _print_context(state["provider"], state.get("name", ""), state)
+        await _print_context(p, n, state)
         return rc
 
     return run_async(_run())
@@ -787,19 +873,19 @@ def _cmd_move(args: argparse.Namespace) -> int:
 
     async def _run() -> int:
         state = _load_state()
+        p, n = state["provider"], state.get("name", "")
+        await _maybe_focus_zoom(p, n, state)
         sx, sy = _coords(args.x, args.y, state)
         try:
-            result = await _send(
-                state["provider"], state.get("name", ""), "move_cursor", {"x": sx, "y": sy}
-            )
+            result = await _send(p, n, "move_cursor", {"x": sx, "y": sy})
         except Exception as e:
-            await _print_context(state["provider"], state.get("name", ""), state)
+            await _print_context(p, n, state)
             return _fail(str(e))
         if not result.get("success", True):
-            await _print_context(state["provider"], state.get("name", ""), state)
+            await _print_context(p, n, state)
             return _fail(result.get("error", "move failed"))
         rc = _ok(f"cursor moved to ({args.x}, {args.y})")
-        await _print_context(state["provider"], state.get("name", ""), state)
+        await _print_context(p, n, state)
         return rc
 
     return run_async(_run())
@@ -814,19 +900,19 @@ def _cmd_type(args: argparse.Namespace) -> int:
 
     async def _run() -> int:
         state = _load_state()
+        p, n = state["provider"], state.get("name", "")
+        await _maybe_focus_zoom(p, n, state)
         try:
-            result = await _send(
-                state["provider"], state.get("name", ""), "type_text", {"text": args.text}
-            )
+            result = await _send(p, n, "type_text", {"text": args.text})
         except Exception as e:
-            await _print_context(state["provider"], state.get("name", ""), state)
+            await _print_context(p, n, state)
             return _fail(str(e))
         if not result.get("success", True):
-            await _print_context(state["provider"], state.get("name", ""), state)
+            await _print_context(p, n, state)
             return _fail(result.get("error", "type failed"))
         preview = args.text[:40] + ("…" if len(args.text) > 40 else "")
         rc = _ok(f"typed: {preview!r}")
-        await _print_context(state["provider"], state.get("name", ""), state)
+        await _print_context(p, n, state)
         return rc
 
     return run_async(_run())
@@ -841,18 +927,18 @@ def _cmd_key(args: argparse.Namespace) -> int:
 
     async def _run() -> int:
         state = _load_state()
+        p, n = state["provider"], state.get("name", "")
+        await _maybe_focus_zoom(p, n, state)
         try:
-            result = await _send(
-                state["provider"], state.get("name", ""), "press_key", {"key": args.key}
-            )
+            result = await _send(p, n, "press_key", {"key": args.key})
         except Exception as e:
-            await _print_context(state["provider"], state.get("name", ""), state)
+            await _print_context(p, n, state)
             return _fail(str(e))
         if not result.get("success", True):
-            await _print_context(state["provider"], state.get("name", ""), state)
+            await _print_context(p, n, state)
             return _fail(result.get("error", "key press failed"))
         rc = _ok(f"pressed key: {args.key}")
-        await _print_context(state["provider"], state.get("name", ""), state)
+        await _print_context(p, n, state)
         return rc
 
     return run_async(_run())
@@ -869,18 +955,18 @@ def _cmd_hotkey(args: argparse.Namespace) -> int:
 
     async def _run() -> int:
         state = _load_state()
+        p, n = state["provider"], state.get("name", "")
+        await _maybe_focus_zoom(p, n, state)
         try:
-            result = await _send(
-                state["provider"], state.get("name", ""), "hotkey", {"keys": keys}
-            )
+            result = await _send(p, n, "hotkey", {"keys": keys})
         except Exception as e:
-            await _print_context(state["provider"], state.get("name", ""), state)
+            await _print_context(p, n, state)
             return _fail(str(e))
         if not result.get("success", True):
-            await _print_context(state["provider"], state.get("name", ""), state)
+            await _print_context(p, n, state)
             return _fail(result.get("error", "hotkey failed"))
         rc = _ok(f"hotkey: {'+'.join(keys)}")
-        await _print_context(state["provider"], state.get("name", ""), state)
+        await _print_context(p, n, state)
         return rc
 
     return run_async(_run())
@@ -895,21 +981,20 @@ def _cmd_scroll(args: argparse.Namespace) -> int:
 
     async def _run() -> int:
         state = _load_state()
+        p, n = state["provider"], state.get("name", "")
+        await _maybe_focus_zoom(p, n, state)
         try:
             result = await _send(
-                state["provider"],
-                state.get("name", ""),
-                "scroll_direction",
-                {"direction": args.direction, "clicks": args.amount},
+                p, n, "scroll_direction", {"direction": args.direction, "clicks": args.amount}
             )
         except Exception as e:
-            await _print_context(state["provider"], state.get("name", ""), state)
+            await _print_context(p, n, state)
             return _fail(str(e))
         if not result.get("success", True):
-            await _print_context(state["provider"], state.get("name", ""), state)
+            await _print_context(p, n, state)
             return _fail(result.get("error", "scroll failed"))
         rc = _ok(f"scrolled {args.direction} {args.amount}x")
-        await _print_context(state["provider"], state.get("name", ""), state)
+        await _print_context(p, n, state)
         return rc
 
     return run_async(_run())
@@ -924,23 +1009,23 @@ def _cmd_drag(args: argparse.Namespace) -> int:
 
     async def _run() -> int:
         state = _load_state()
+        p, n = state["provider"], state.get("name", "")
+        await _maybe_focus_zoom(p, n, state)
         sx1, sy1 = _coords(args.x1, args.y1, state)
         sx2, sy2 = _coords(args.x2, args.y2, state)
         try:
             result = await _send(
-                state["provider"],
-                state.get("name", ""),
-                "drag_to",
+                p, n, "drag_to",
                 {"start_x": sx1, "start_y": sy1, "end_x": sx2, "end_y": sy2},
             )
         except Exception as e:
-            await _print_context(state["provider"], state.get("name", ""), state)
+            await _print_context(p, n, state)
             return _fail(str(e))
         if not result.get("success", True):
-            await _print_context(state["provider"], state.get("name", ""), state)
+            await _print_context(p, n, state)
             return _fail(result.get("error", "drag failed"))
         rc = _ok(f"dragged ({args.x1},{args.y1}) → ({args.x2},{args.y2})")
-        await _print_context(state["provider"], state.get("name", ""), state)
+        await _print_context(p, n, state)
         return rc
 
     return run_async(_run())
@@ -1031,11 +1116,34 @@ def _cmd_window(args: argparse.Namespace) -> int:
             except Exception as e:
                 return _fail(str(e))
             windows = result.get("windows") or result.get("data") or []
-            if isinstance(windows, list):
-                for w in windows:
-                    print(f"  {w}")
-            else:
+            if not isinstance(windows, list):
                 print(result)
+                return 0
+            for wid in windows:
+                try:
+                    name_r = await _send(p, n, "get_window_name", {"window_id": wid})
+                    title = name_r.get("name") or "?"
+                    if title in _SKIP_WINDOW_TITLES:
+                        continue
+                    pos_r = await _send(p, n, "get_window_position", {"window_id": wid})
+                    size_r = await _send(p, n, "get_window_size", {"window_id": wid})
+                    pos = pos_r.get("position") or pos_r.get("data")
+                    size = size_r.get("size") or size_r.get("data")
+                    if pos and size:
+                        if isinstance(pos, (list, tuple)):
+                            x, y = int(pos[0]), int(pos[1])
+                        else:
+                            x, y = int(pos.get("x", 0)), int(pos.get("y", 0))
+                        if isinstance(size, (list, tuple)):
+                            w, h = int(size[0]), int(size[1])
+                        else:
+                            w, h = int(size.get("width", 0)), int(size.get("height", 0))
+                        bbox = f"{x},{y},{w},{h}"
+                    else:
+                        bbox = "?"
+                    print(f"  {wid}  {title}  [{bbox}]")
+                except Exception:
+                    print(f"  {wid}")
             return 0
 
         if action == "unfocus":

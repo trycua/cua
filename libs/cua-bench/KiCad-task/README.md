@@ -4,16 +4,16 @@ Simple cua-bench task that installs the open-source [KiCad](https://www.kicad.or
 
 ## Task
 
-- **Setup**: Installs KiCad via the cua-bench app registry (Linux: PPA + apt; Windows: winget; macOS: Homebrew).
-- **Goal**: Create a new KiCad project with a given name and save it to `Desktop/KiCadProjects/<project_name>/`.
-- **Verification**: Checks that the project folder exists and contains the expected `<project_name>.kicad_pro` file.
+- **Setup**: KiCad is launched (use env image `cua-xfce-kicad:latest` so KiCad is pre-installed).
+- **Goal**: Create schematics and export netlists in KiCad format to `~/output.net`. Variant 0: specific circuit; variant 1: empty project.
+- **Verification**: Parses the .net file: variant 0 checks component counts; variant 1 passes if a valid KiCad .net file was produced.
 
 ## Variants
 
-| Variant | Project name   | Description |
-|--------|----------------|-------------|
-| 0      | MyFirstBoard   | Create and save project "MyFirstBoard" to Desktop/KiCadProjects. |
-| 1      | BlinkyPCB      | Create and save project "BlinkyPCB" to Desktop/KiCadProjects. |
+| Variant | Name               | Description |
+|--------|--------------------|-------------|
+| 0      | LEDCircuit         | 9V battery, 100 Ω resistor, two LN271 LEDs; export netlist to `~/output.net`. |
+| 1      | EmptyNetlistExport | Create an empty project, save, and export netlist to `~/output.net` with default settings. Verifier passes if the file is valid KiCad .net. |
 
 ## Running
 

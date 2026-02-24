@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from typing import TYPE_CHECKING, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from .registry import App, install, launch, uninstall
 
@@ -42,6 +42,104 @@ def _parse_spice_components(netlist: str) -> List[dict]:
             {"ref": ref, "type": ctype, "value": parts[-1], "nodes": parts[1:-1]}
         )
     return components
+
+
+def _tokenize_sexpr(text: str) -> List[str]:
+    """Tokenize s-expression: '(', ')', quoted strings, symbols."""
+    tokens: List[str] = []
+    i, n = 0, len(text)
+    while i < n:
+        if text[i].isspace():
+            i += 1
+            continue
+        if text[i] == "(":
+            tokens.append("(")
+            i += 1
+            continue
+        if text[i] == ")":
+            tokens.append(")")
+            i += 1
+            continue
+        if text[i] == '"':
+            j = i + 1
+            while j < n and text[j] != '"':
+                if text[j] == "\\":
+                    j += 2
+                    continue
+                j += 1
+            tokens.append(text[i : j + 1])
+            i = j + 1
+            continue
+        j = i
+        while j < n and not text[j].isspace() and text[j] not in "()":
+            j += 1
+        tokens.append(text[i:j])
+        i = j
+    return tokens
+
+
+def _parse_sexpr(tokens: List[str], pos: int) -> tuple[Any, int]:
+    """Parse tokens into nested lists. Returns (tree, next_pos)."""
+    if pos >= len(tokens):
+        return [], pos
+    if tokens[pos] != "(":
+        return tokens[pos], pos + 1
+    pos += 1
+    result: List[Any] = []
+    while pos < len(tokens) and tokens[pos] != ")":
+        elem, pos = _parse_sexpr(tokens, pos)
+        result.append(elem)
+    return result, (pos + 1) if pos < len(tokens) else pos
+
+
+def _find_in_tree(tree: Any, name: str) -> Optional[List[Any]]:
+    """Find (name ...) in tree."""
+    if not isinstance(tree, list) or not tree:
+        return None
+    if tree[0] == name:
+        return tree
+    for child in tree:
+        found = _find_in_tree(child, name)
+        if found is not None:
+            return found
+    return None
+
+
+def _get_field(node: List[Any], key: str) -> Optional[str]:
+    """From (comp (ref "X") (value "Y") ...) get value for key."""
+    for item in node[1:]:
+        if isinstance(item, list) and len(item) >= 2 and item[0] == key:
+            v = item[1]
+            if isinstance(v, str) and v.startswith('"') and v.endswith('"'):
+                return v[1:-1].replace('\\"', '"')
+            return str(v) if v is not None else None
+    return None
+
+
+def _parse_kicad_netlist_components(netlist: str) -> List[dict]:
+    """Parse KiCad .net (s-expression) netlist into a list of component dicts.
+
+    Returns list of dicts with keys ref, type, value, nodes (nodes from nets).
+    """
+    tokens = _tokenize_sexpr(netlist)
+    if not tokens or tokens[0] != "(":
+        return []
+    tree, _ = _parse_sexpr(tokens, 0)
+    components_node = _find_in_tree(tree, "components")
+    if not components_node:
+        return []
+    comps: List[dict] = []
+    for node in components_node[1:]:
+        if not isinstance(node, list) or not node or node[0] != "comp":
+            continue
+        ref = _get_field(node, "ref")
+        if ref is None:
+            continue
+        value = _get_field(node, "value") or ""
+        prefix = ref[0].upper() if ref else ""
+        ctype = _SPICE_TYPE_MAP.get(prefix, "unknown")
+        comps.append({"ref": ref, "type": ctype, "value": value, "nodes": []})
+    return comps
 
 
 class KiCad(App):
@@ -250,10 +348,10 @@ class KiCad(App):
         return output_path
 
     async def read_netlist(self: "BoundApp", *, netlist_path: str) -> str:
-        """Read a SPICE netlist file from the VM.
+        """Read a netlist file from the VM (SPICE .cir or KiCad .net).
 
         Args:
-            netlist_path: Path to the .cir file on the VM.
+            netlist_path: Path to the netlist file on the VM.
 
         Returns:
             Raw text content of the netlist.
@@ -266,15 +364,20 @@ class KiCad(App):
     async def get_components(
         self: "BoundApp", *, netlist_path: str
     ) -> List[dict]:
-        """Read and parse a SPICE netlist into structured components.
+        """Read and parse a netlist into structured components.
+
+        Supports SPICE (.cir) and KiCad (.net) formats. For .net files uses
+        s-expression parsing; for others uses SPICE line format.
 
         Args:
-            netlist_path: Path to the .cir file on the VM.
+            netlist_path: Path to the .cir or .net file on the VM.
 
         Returns:
             List of dicts with keys ``ref``, ``type``, ``value``, ``nodes``.
         """
         netlist = await self.read_netlist(netlist_path=netlist_path)
+        if netlist_path.rstrip("/").endswith(".net"):
+            return _parse_kicad_netlist_components(netlist)
         return _parse_spice_components(netlist)
 
     async def simulate_operating_point(

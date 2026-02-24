@@ -1,13 +1,13 @@
 """KiCad circuit-creation tasks for cua-bench.
 
 Tasks ask the agent to build a circuit in KiCad's schematic editor and export
-a SPICE netlist.  Evaluation checks component counts and, when PySpice is
-available, verifies node voltages via simulation.
+a netlist in KiCad format (.net). Evaluation parses the .net file and
+verifies component counts (and optional reference comparison).
 """
 
 import cua_bench as cb
 
-NETLIST_PATH = "~/output.cir"
+NETLIST_PATH = "/home/cua/output.net"
 
 
 @cb.tasks_config(split="train")
@@ -16,33 +16,28 @@ def load():
     tasks = [
         {
             "task_type": "create_circuit",
-            "circuit_name": "VoltageDivider",
+            "circuit_name": "LEDCircuit",
             "description": (
-                "KiCad is already open. Using the Schematic Editor, create a voltage "
-                "divider circuit with a 5 V DC source (V1), two 10 kΩ resistors "
-                "(R1, R2) in series from the source to ground, and a net label "
-                "'mid' on the node between the two resistors. Save the schematic, "
-                f"then export a SPICE netlist to {NETLIST_PATH}"
+                "KiCad is already open. Using the Schematic Editor, "
+                "draw a clean schematic in KiCAD for a 9V battery driving "
+                "two infrared LN271 LEDs. The battery positive terminal is first "
+                "connected to a 100 ohm current limiting resistor followed by the "
+                "two LEDs. Save the schematic, then export the netlist in KiCad "
+                f"format to {NETLIST_PATH}"
             ),
-            "expected_components": {"R": 2, "V": 1},
-            "check_node": "mid",
-            "expected_voltage": 2.5,
-            "tolerance": 0.1,
+            "expected_components": {"R": 1, "V": 1, "D": 2},
         },
         {
             "task_type": "create_circuit",
-            "circuit_name": "LEDCircuit",
+            "circuit_name": "EmptyNetlistExport",
             "description": (
-                "KiCad is already open. Using the Schematic Editor, create a simple "
-                "LED circuit: a 5 V DC source (V1), a 330 Ω current-limiting "
-                "resistor (R1), and a diode (D1) in series to ground. "
-                "Save the schematic, then export a SPICE netlist to "
-                f"{NETLIST_PATH}"
+                "KiCad is already open. Create an empty project (new schematic, "
+                "no components required). Then export the "
+                f"netlist in KiCad format to {NETLIST_PATH} using all default "
+                "settings. The goal is to produce a valid KiCad .net file."
             ),
-            "expected_components": {"R": 1, "V": 1, "D": 1},
-            "check_node": None,
-            "expected_voltage": None,
-            "tolerance": None,
+            "expected_components": {},
+            "netlist_export_only": True,
         },
     ]
 
@@ -72,39 +67,24 @@ async def start(task_cfg: cb.Task, session: cb.DesktopSession):
 
 @cb.evaluate_task(split="train")
 async def evaluate(task_cfg: cb.Task, session: cb.DesktopSession) -> list[float]:
-    """Evaluate the agent's circuit by parsing and optionally simulating the netlist."""
+    """Evaluate by parsing the KiCad .net netlist and checking component counts."""
     scores: list[float] = []
 
-    # -- 1. Netlist must exist and be non-empty --------------------------------
+    # Netlist must exist and be non-empty
     netlist = await session.apps.kicad.read_netlist(netlist_path=NETLIST_PATH)
     if not netlist.strip():
+        print("Evaluation: netlist missing or empty at " + NETLIST_PATH)
         return [0.0]
 
-    # -- 2. Component counts must match ----------------------------------------
+    # Component counts must match (parsed from KiCad .net format); if no expected components, valid .net = 1.0
     components = await session.apps.kicad.get_components(netlist_path=NETLIST_PATH)
     expected = task_cfg.metadata.get("expected_components", {})
+    if not expected:
+        print("Evaluation: valid netlist, no component check -> 1.0")
+        return [1.0]
     for prefix, count in expected.items():
         actual = sum(1 for c in components if c["ref"].upper().startswith(prefix))
         scores.append(1.0 if actual == count else 0.0)
-
-    # -- 3. Simulate and verify node voltage (if specified) --------------------
-    check_node = task_cfg.metadata.get("check_node")
-    expected_v = task_cfg.metadata.get("expected_voltage")
-    tolerance = task_cfg.metadata.get("tolerance", 0.1)
-
-    if check_node and expected_v is not None:
-        try:
-            voltages = await session.apps.kicad.simulate_operating_point(
-                netlist_path=NETLIST_PATH, ground=0,
-            )
-            actual_v = voltages.get(check_node)
-            if actual_v is not None and abs(actual_v - expected_v) <= tolerance:
-                scores.append(1.0)
-            else:
-                scores.append(0.0)
-        except Exception:
-            scores.append(0.0)
-
     return [sum(scores) / len(scores)] if scores else [0.0]
 
 

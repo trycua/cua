@@ -296,7 +296,11 @@ class GenericWindowHandler(BaseWindowHandler):
 
             # Linux fallback: use wmctrl/xdotool when available.
             if sys == "linux":
-                wid = str(window_id)
+                # wmctrl/xdotool expect X11-style window id (hex like 0x03c00003).
+                if isinstance(window_id, int):
+                    wid = hex(window_id)
+                else:
+                    wid = str(window_id)
                 rc, _, err = self._run_cmd(["wmctrl", "-ia", wid])
                 if rc == 0:
                     return {"success": True, "backend": "wmctrl"}

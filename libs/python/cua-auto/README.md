@@ -1,6 +1,6 @@
 # cua-auto
 
-`cua-auto` is a lightweight, cross-platform automation library providing a synchronous, pyautogui-style API for mouse, keyboard, screen, window, clipboard, and shell operations. It runs on Windows, macOS, and Linux using [pynput](https://github.com/moses-palmer/pynput) for input control and [pywinctl](https://github.com/Kalmat/PyWinCtl) for window management, with no display server or GUI framework required.
+`cua-auto` is a lightweight, cross-platform automation library providing a synchronous, MIT-licensed pyautogui-style API for mouse, keyboard, screen, window, clipboard, and shell operations. It runs on Windows, macOS, and Linux using [pynput](https://github.com/moses-palmer/pynput) for input control and [pywinctl](https://github.com/Kalmat/PyWinCtl) for window management.
 
 ```python
 import cua_auto.mouse as mouse

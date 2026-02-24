@@ -24,11 +24,11 @@ classifiers = [
     "Programming Language :: Python :: 3.13",
     "Environment :: Console",
 ]
-requires-python = ">=3.11,<3.14"
+requires-python = ">=3.12,<3.14"
 
 dependencies = [
     # Core CUA packages
-    "cua-computer>=0.4.0",
+    "cua-computer>=0.5.0",
     "cua-core>=0.1.0",
     # Host automation (used by cua do switch host)
     "cua-auto>=0.1.0",

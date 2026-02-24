@@ -576,16 +576,11 @@ def _cmd_status(args: argparse.Namespace) -> int:
 def _cmd_ls(args: argparse.Namespace) -> int:
     from cua_cli.utils.async_utils import run_async
 
-    state = _load_state()
-    provider_type = getattr(args, "provider", None) or state.get("provider")
-    if not provider_type:
-        return _fail("No provider specified and no target set. Use: cua do ls <provider>")
+    explicit_provider = getattr(args, "provider", None)
 
-    async def _list() -> int:
+    async def _list_one(ptype: str) -> int:
         from computer.providers.base import VMProviderType
         from computer.providers.factory import VMProviderFactory
-
-        ptype = provider_type.lower()
 
         if ptype == "host":
             print("  host  [local]")
@@ -620,7 +615,32 @@ def _cmd_ls(args: argparse.Namespace) -> int:
             print(f"  {vm.get('name', '?')}  [{vm.get('status', '?')}]")
         return 0
 
-    return run_async(_list())
+    async def _list_all() -> int:
+        from cua_cli.auth.store import get_api_key
+        from computer.providers.base import VMProviderType
+        from computer.providers.factory import VMProviderFactory
+
+        print("  host  [local]")
+
+        api_key = get_api_key()
+        if api_key:
+            try:
+                provider = VMProviderFactory.create_provider(
+                    VMProviderType.CLOUDV2, api_key=api_key
+                )
+                async with provider:
+                    vms = await provider.list_vms()
+                for vm in vms:
+                    print(f"  {vm.get('name', '?')}  [{vm.get('status', '?')}]  cloudv2")
+            except Exception:
+                pass
+
+        return 0
+
+    if explicit_provider:
+        return run_async(_list_one(explicit_provider.lower()))
+    else:
+        return run_async(_list_all())
 
 
 def _cmd_zoom(args: argparse.Namespace) -> int:

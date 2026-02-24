@@ -7,6 +7,7 @@ Includes:
 
 """
 
+import asyncio
 import base64
 import os
 import platform
@@ -87,6 +88,25 @@ class GenericWindowHandler(BaseWindowHandler):
     Cross-platform window management using pywinctl where possible.
     """
 
+    def _run_cmd(self, cmd: list[str], timeout: float = 3.0) -> tuple[int, str, str]:
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, check=False)
+        return proc.returncode, proc.stdout or "", proc.stderr or ""
+
+    async def _retry_activate(self, window_id: int | str, retries: int = 4, delay: float = 0.2) -> bool:
+        if pwc is None:
+            return False
+        for i in range(retries):
+            w = self._get_window_by_id(window_id)
+            if w:
+                try:
+                    ok = bool(w.activate())
+                    if ok:
+                        return True
+                except Exception:
+                    pass
+            await asyncio.sleep(delay if i > 0 else 0.05)
+        return False
+
     async def open(self, target: str) -> Dict[str, Any]:
         try:
             if target.startswith("http://") or target.startswith("https://"):
@@ -97,7 +117,14 @@ class GenericWindowHandler(BaseWindowHandler):
             if sys == "darwin":
                 subprocess.Popen(["open", path])
             elif sys == "linux":
-                subprocess.Popen(["xdg-open", path])
+                # Prefer gio if available (better GNOME integration), fallback to xdg-open.
+                for cmd in (["gio", "open", path], ["xdg-open", path]):
+                    try:
+                        proc = subprocess.Popen(cmd)
+                        return {"success": True, "pid": proc.pid, "launcher": cmd[0]}
+                    except FileNotFoundError:
+                        continue
+                return {"success": False, "error": "No Linux opener found (gio/xdg-open)"}
             elif sys == "windows":
                 os.startfile(path)  # type: ignore[attr-defined]
             else:
@@ -109,10 +136,10 @@ class GenericWindowHandler(BaseWindowHandler):
     async def launch(self, app: str, args: Optional[list[str]] = None) -> Dict[str, Any]:
         try:
             if args:
-                proc = subprocess.Popen([app, *args])
+                proc = subprocess.Popen([app, *args], start_new_session=True)
             else:
                 # allow shell command like "libreoffice --writer"
-                proc = subprocess.Popen(app, shell=True)
+                proc = subprocess.Popen(app, shell=True, start_new_session=True)
             return {"success": True, "pid": proc.pid}
         except Exception as e:
             return {"success": False, "error": str(e)}
@@ -142,22 +169,46 @@ class GenericWindowHandler(BaseWindowHandler):
 
     async def get_application_windows(self, app: str) -> Dict[str, Any]:
         try:
-            if pwc is None:
-                return {"success": False, "error": "pywinctl not available"}
-            wins = pwc.getWindowsWithTitle(app, condition=pwc.Re.CONTAINS, flags=pwc.Re.IGNORECASE)
-            ids = [w.getHandle() for w in wins]
+            ids: list[int | str] = []
+            if pwc is not None:
+                try:
+                    wins = pwc.getWindowsWithTitle(
+                        app, condition=pwc.Re.CONTAINS, flags=pwc.Re.IGNORECASE
+                    )
+                    ids.extend([w.getHandle() for w in wins])
+                except Exception:
+                    pass
+
+            # Linux fallback: parse wmctrl -lx output
+            if platform.system().lower() == "linux" and not ids:
+                rc, out, _ = self._run_cmd(["wmctrl", "-lx"])
+                if rc == 0:
+                    needle = app.lower()
+                    for line in out.splitlines():
+                        if needle in line.lower():
+                            wid = line.split(None, 1)[0]
+                            ids.append(wid)
+
             return {"success": True, "windows": ids}
         except Exception as e:
             return {"success": False, "error": str(e)}
 
     async def get_window_name(self, window_id: int | str) -> Dict[str, Any]:
         try:
-            if pwc is None:
-                return {"success": False, "error": "pywinctl not available"}
-            w = self._get_window_by_id(window_id)
-            if not w:
-                return {"success": False, "error": "Window not found"}
-            return {"success": True, "name": w.title}
+            if pwc is not None:
+                w = self._get_window_by_id(window_id)
+                if w:
+                    return {"success": True, "name": w.title}
+
+            if platform.system().lower() == "linux":
+                rc, out, _ = self._run_cmd(["wmctrl", "-lx"])
+                if rc == 0:
+                    for line in out.splitlines():
+                        parts = line.split(None, 4)
+                        if parts and parts[0].lower() == str(window_id).lower():
+                            return {"success": True, "name": parts[4] if len(parts) > 4 else ""}
+
+            return {"success": False, "error": "Window not found"}
         except Exception as e:
             return {"success": False, "error": str(e)}
 
@@ -237,13 +288,29 @@ class GenericWindowHandler(BaseWindowHandler):
 
     async def activate_window(self, window_id: int | str) -> Dict[str, Any]:
         try:
-            if pwc is None:
-                return {"success": False, "error": "pywinctl not available"}
-            w = self._get_window_by_id(window_id)
-            if not w:
-                return {"success": False, "error": "Window not found"}
-            ok = w.activate()
-            return {"success": bool(ok)}
+            sys = platform.system().lower()
+            # Try pywinctl first with retries (Linux often races with compositor focus rules).
+            if pwc is not None:
+                if await self._retry_activate(window_id):
+                    return {"success": True}
+
+            # Linux fallback: use wmctrl/xdotool when available.
+            if sys == "linux":
+                wid = str(window_id)
+                rc, _, err = self._run_cmd(["wmctrl", "-ia", wid])
+                if rc == 0:
+                    return {"success": True, "backend": "wmctrl"}
+                rc2, _, err2 = self._run_cmd(["xdotool", "windowactivate", wid])
+                if rc2 == 0:
+                    return {"success": True, "backend": "xdotool"}
+                return {
+                    "success": False,
+                    "error": f"Failed to activate window {window_id}. wmctrl={err.strip()} xdotool={err2.strip()}",
+                }
+
+            return {"success": False, "error": "Window activation failed"}
+        except FileNotFoundError as e:
+            return {"success": False, "error": f"Activation dependency missing: {e}"}
         except Exception as e:
             return {"success": False, "error": str(e)}
 

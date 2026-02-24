@@ -60,20 +60,119 @@ class LinuxAccessibilityHandler(BaseAccessibilityHandler):
     async def find_element(
         self, role: Optional[str] = None, title: Optional[str] = None, value: Optional[str] = None
     ) -> Dict[str, Any]:
-        """Find an element in the accessibility tree by criteria.
+        """Best-effort element lookup on Linux.
 
-        Args:
-            role: The role of the element to find.
-            title: The title of the element to find.
-            value: The value of the element to find.
-
-        Returns:
-            Dict[str, Any]: A dictionary indicating that element search is not supported on Linux.
+        Linux has no unified accessibility API in this project. As a fallback, search
+        active window metadata and running processes for the provided title/value.
         """
-        logger.info(
-            f"Finding element with role={role}, title={title}, value={value} (not supported on Linux)"
-        )
-        return {"success": False, "message": "Element search not supported on Linux"}
+        query = (title or value or "").strip()
+        if not query and not role:
+            return {"success": False, "message": "No search criteria provided"}
+
+        # This remains heuristic; role matching is not available without a11y tree.
+        if role and role.lower() not in {"window", "application", "app", "dialog", "any"}:
+            return {
+                "success": False,
+                "message": f"Role-based matching is not supported on Linux fallback (role={role})",
+            }
+
+        try:
+            q = query.lower()
+            matches: list[dict[str, Any]] = []
+
+            # 1) Try wmctrl window list if available.
+            if query:
+                wm = subprocess.run(
+                    ["wmctrl", "-lx"],
+                    capture_output=True,
+                    text=True,
+                    timeout=2,
+                    check=False,
+                )
+                if wm.returncode == 0:
+                    for line in (wm.stdout or "").splitlines():
+                        if q in line.lower():
+                            parts = line.split(None, 4)
+                            window_id = parts[0] if len(parts) > 0 else ""
+                            wm_class = parts[2] if len(parts) > 2 else ""
+                            title_text = parts[4] if len(parts) > 4 else ""
+                            matches.append(
+                                {
+                                    "backend": "wmctrl",
+                                    "window_id": window_id,
+                                    "title": title_text,
+                                    "class": wm_class,
+                                }
+                            )
+
+            # 2) Fallback to process scan by command line.
+            if query and not matches:
+                ps = subprocess.run(
+                    ["ps", "-eo", "pid=,comm=,args="],
+                    capture_output=True,
+                    text=True,
+                    timeout=2,
+                    check=False,
+                )
+                if ps.returncode == 0:
+                    ignored_commands = {
+                        "curl",
+                        "python",
+                        "python3",
+                        "pytest",
+                        "timeout",
+                        "bash",
+                        "sh",
+                        "zsh",
+                        "cua-computer-server",
+                    }
+                    ignored_arg_markers = {
+                        "127.0.0.1:18000",
+                        " /cmd",
+                        " /run_command",
+                        "find_element",
+                    }
+                    for line in (ps.stdout or "").splitlines():
+                        if q not in line.lower():
+                            continue
+
+                        parts = line.strip().split(None, 2)
+                        if not parts:
+                            continue
+
+                        cmd = (parts[1] if len(parts) > 1 else "").strip().lower()
+                        args = (parts[2] if len(parts) > 2 else "").strip()
+                        args_l = args.lower()
+
+                        # Filter obvious transport/infrastructure/self-noise to reduce false positives.
+                        if cmd in ignored_commands:
+                            continue
+                        if any(marker in args_l for marker in ignored_arg_markers):
+                            continue
+
+                        matches.append(
+                            {
+                                "backend": "ps",
+                                "pid": int(parts[0]),
+                                "command": parts[1] if len(parts) > 1 else "",
+                                "args": args,
+                            }
+                        )
+
+            if not matches:
+                return {
+                    "success": False,
+                    "message": "No matching window/process found with Linux fallback search",
+                }
+
+            return {
+                "success": True,
+                "message": "Linux fallback match (heuristic)",
+                "element": matches[0],
+                "matches": matches,
+            }
+        except Exception as e:
+            return {"success": False, "message": f"Linux fallback search failed: {e}"}
 
     def get_cursor_position(self) -> Tuple[int, int]:
         """Get the current cursor position.
@@ -115,6 +214,99 @@ class LinuxAutomationHandler(BaseAutomationHandler):
 
     keyboard = KeyboardController()
     mouse = MouseController()
+
+    @staticmethod
+    def _normalize_key_name(key: str) -> str:
+        k = (key or "").strip().lower()
+        aliases = {
+            "super": "cmd",
+            "meta": "cmd",
+            "win": "cmd",
+            "windows": "cmd",
+            "command": "cmd",
+            "⌘": "cmd",
+            "option": "alt",
+            "⌥": "alt",
+            "escape": "esc",
+            "return": "enter",
+            "control": "ctrl",
+            "page_down": "pagedown",
+            "page_up": "pageup",
+            "page down": "pagedown",
+            "page up": "pageup",
+            "del": "delete",
+        }
+        return aliases.get(k, k)
+
+    @classmethod
+    def _resolve_key(cls, key: str):
+        from pynput.keyboard import Key
+
+        normalized = cls._normalize_key_name(key)
+        if hasattr(Key, normalized):
+            return getattr(Key, normalized)
+        if len(normalized) == 1:
+            return normalized
+        return None
+
+    _KEY_ALIASES = {
+        "return": "enter",
+        "escape": "esc",
+        "delete": "del",
+        "control": "ctrl",
+        "cmd": "win",
+        "command": "win",
+        "super": "win",
+        "windows": "win",
+        "option": "alt",
+        "page_down": "pagedown",
+        "page up": "pageup",
+        "page_up": "pageup",
+        "page down": "pagedown",
+        "spacebar": "space",
+    }
+
+    _PYNPUT_KEY_MAP = {
+        "ctrl": "ctrl",
+        "alt": "alt",
+        "shift": "shift",
+        "win": "cmd",
+        "esc": "esc",
+        "enter": "enter",
+        "tab": "tab",
+        "space": "space",
+        "backspace": "backspace",
+        "del": "delete",
+        "pagedown": "page_down",
+        "pageup": "page_up",
+        "left": "left",
+        "right": "right",
+        "up": "up",
+        "down": "down",
+        "home": "home",
+        "end": "end",
+    }
+
+    def _normalize_key(self, key: str):
+        raw = (key or "").strip().lower()
+        raw = self._KEY_ALIASES.get(raw, raw)
+        mapped = self._PYNPUT_KEY_MAP.get(raw, raw)
+        if hasattr(Key, mapped):
+            return getattr(Key, mapped)
+        if len(raw) == 1:
+            return raw
+        return None
+
+    async def _with_retries(self, fn, retries: int = 3, delay: float = 0.08):
+        last_exc = None
+        for i in range(retries):
+            try:
+                return fn()
+            except Exception as e:
+                last_exc = e
+                if i < retries - 1:
+                    await asyncio.sleep(delay)
+        raise last_exc if last_exc else RuntimeError("unknown input failure")
 
     # Mouse Actions
     async def mouse_down(
@@ -322,41 +514,21 @@ class LinuxAutomationHandler(BaseAutomationHandler):
 
     # Keyboard Actions
     async def key_down(self, key: str) -> Dict[str, Any]:
-        """Press and hold a key.
-
-        Args:
-            key: The key to press down.
-
-        Returns:
-            Dict[str, Any]: A dictionary with success status and error message if failed.
-        """
         try:
-            from pynput.keyboard import Key
-
-            k = getattr(Key, key) if hasattr(Key, key) else (key if len(key) == 1 else None)
+            k = self._normalize_key(key)
             if k is None:
                 return {"success": False, "error": f"Unknown key: {key}"}
-            self.keyboard.press(k)
+            await self._with_retries(lambda: self.keyboard.press(k))
             return {"success": True}
         except Exception as e:
             return {"success": False, "error": str(e)}
 
     async def key_up(self, key: str) -> Dict[str, Any]:
-        """Release a key.
-
-        Args:
-            key: The key to release.
-
-        Returns:
-            Dict[str, Any]: A dictionary with success status and error message if failed.
-        """
         try:
-            from pynput.keyboard import Key
-
-            k = getattr(Key, key) if hasattr(Key, key) else (key if len(key) == 1 else None)
+            k = self._normalize_key(key)
             if k is None:
                 return {"success": False, "error": f"Unknown key: {key}"}
-            self.keyboard.release(k)
+            await self._with_retries(lambda: self.keyboard.release(k))
             return {"success": True}
         except Exception as e:
             return {"success": False, "error": str(e)}
@@ -378,51 +550,36 @@ class LinuxAutomationHandler(BaseAutomationHandler):
             return {"success": False, "error": str(e)}
 
     async def press_key(self, key: str) -> Dict[str, Any]:
-        """Press and release a key.
-
-        Args:
-            key: The key to press.
-
-        Returns:
-            Dict[str, Any]: A dictionary with success status and error message if failed.
-        """
         try:
-            from pynput.keyboard import Key
-
-            k = getattr(Key, key) if hasattr(Key, key) else (key if len(key) == 1 else None)
+            k = self._normalize_key(key)
             if k is None:
                 return {"success": False, "error": f"Unknown key: {key}"}
-            self.keyboard.press(k)
-            self.keyboard.release(k)
+            await self._with_retries(lambda: (self.keyboard.press(k), self.keyboard.release(k)))
             return {"success": True}
         except Exception as e:
             return {"success": False, "error": str(e)}
 
     async def hotkey(self, keys: List[str]) -> Dict[str, Any]:
-        """Press a combination of keys simultaneously.
-
-        Args:
-            keys: A list of keys to press together as a hotkey combination.
-
-        Returns:
-            Dict[str, Any]: A dictionary with success status and error message if failed.
-        """
         try:
-            from pynput.keyboard import Key
-
+            if not keys:
+                return {"success": False, "error": "Hotkey requires at least one key"}
             seq = []
             for k in keys:
-                kk = getattr(Key, k) if hasattr(Key, k) else (k if len(k) == 1 else None)
+                kk = self._normalize_key(k)
                 if kk is None:
                     return {"success": False, "error": f"Unknown key in hotkey: {k}"}
                 seq.append(kk)
-            for k in seq[:-1]:
-                self.keyboard.press(k)
-            last = seq[-1]
-            self.keyboard.press(last)
-            self.keyboard.release(last)
-            for k in reversed(seq[:-1]):
-                self.keyboard.release(k)
+
+            def _do_hotkey():
+                for key in seq[:-1]:
+                    self.keyboard.press(key)
+                last = seq[-1]
+                self.keyboard.press(last)
+                self.keyboard.release(last)
+                for key in reversed(seq[:-1]):
+                    self.keyboard.release(key)
+
+            await self._with_retries(_do_hotkey)
             return {"success": True}
         except Exception as e:
             return {"success": False, "error": str(e)}

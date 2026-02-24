@@ -528,11 +528,32 @@ async def websocket_endpoint(websocket: WebSocket):
         manager.disconnect(websocket)
 
 
-@app.post("/cmd")
-async def cmd_endpoint(
+def _extract_command_and_params(body: Dict[str, Any]) -> tuple[Optional[str], Dict[str, Any]]:
+    """Normalize HTTP command payloads.
+
+    Preferred format:
+      {"command": "run_command", "params": {"command": "echo hi"}}
+
+    Backward-compatible formats accepted:
+      {"command": "run_command", "args": {"command": "echo hi"}}
+      {"command": "run_command", "kwargs": {"command": "echo hi"}}
+    """
+    command = body.get("command")
+
+    params: Dict[str, Any] = {}
+    for key in ("params", "args", "kwargs"):
+        value = body.get(key)
+        if isinstance(value, dict):
+            params = value
+            break
+
+    return command, params
+
+
+async def _cmd_impl(
     request: Request,
-    container_name: Optional[str] = Header(None, alias="X-Container-Name"),
-    api_key: Optional[str] = Header(None, alias="X-API-Key"),
+    container_name: Optional[str],
+    api_key: Optional[str],
 ):
     """
     Backup endpoint for when WebSocket connections fail.
@@ -553,8 +574,7 @@ async def cmd_endpoint(
     # Parse request body
     try:
         body = await request.json()
-        command = body.get("command")
-        params = body.get("params", {})
+        command, params = _extract_command_and_params(body)
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Invalid JSON body: {str(e)}")
 
@@ -638,6 +658,55 @@ async def cmd_endpoint(
             "Connection": "keep-alive",
         },
     )
+
+
+@app.post("/cmd")
+async def cmd_endpoint(
+    request: Request,
+    container_name: Optional[str] = Header(None, alias="X-Container-Name"),
+    api_key: Optional[str] = Header(None, alias="X-API-Key"),
+):
+    return await _cmd_impl(request, container_name, api_key)
+
+
+@app.post("/run_command")
+async def run_command_endpoint(
+    request: Request,
+    container_name: Optional[str] = Header(None, alias="X-Container-Name"),
+    api_key: Optional[str] = Header(None, alias="X-API-Key"),
+):
+    """Backward-compatible endpoint.
+
+    Accepts legacy body:
+      {"command": "echo hi"}
+
+    Internally maps to:
+      {"command": "run_command", "params": {"command": "echo hi"}}
+    """
+    try:
+        body = await request.json()
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid JSON body: {str(e)}")
+
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
+
+    # If already in generic command format, reuse as-is
+    if "params" in body or "args" in body or "kwargs" in body:
+        if body.get("command") != "run_command":
+            body["command"] = "run_command"
+    else:
+        legacy_cmd = body.get("command")
+        if not isinstance(legacy_cmd, str) or not legacy_cmd:
+            raise HTTPException(status_code=400, detail="Legacy /run_command expects {'command': '<shell>'}")
+        body = {"command": "run_command", "params": {"command": legacy_cmd}}
+
+    # Rebuild request-like object by monkey-patching json() for internal reuse
+    class _ReqWrap:
+        async def json(self_nonlocal):
+            return body
+
+    return await _cmd_impl(cast(Request, _ReqWrap()), container_name, api_key)
 
 
 @app.post("/responses")

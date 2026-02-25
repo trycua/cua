@@ -1058,7 +1058,9 @@ class MacOSAutomationHandler(BaseAutomationHandler):
         except Exception as e:
             return {"success": False, "error": str(e)}
 
-    async def middle_click(self, x: Optional[int] = None, y: Optional[int] = None) -> Dict[str, Any]:
+    async def middle_click(
+        self, x: Optional[int] = None, y: Optional[int] = None
+    ) -> Dict[str, Any]:
         """Perform a middle mouse click at the specified coordinates."""
         try:
             if x is not None and y is not None:

@@ -72,6 +72,7 @@ def _host_consented() -> bool:
 
 # ── output helpers ────────────────────────────────────────────────────────────
 
+
 def _ok(msg: str) -> int:
     print(f"✅ {msg}")
     return 0
@@ -83,6 +84,7 @@ def _fail(msg: str) -> int:
 
 
 # ── provider / connection helpers ─────────────────────────────────────────────
+
 
 async def _get_api_url(provider_type: str, name: str) -> str:
     """Resolve the computer-server API URL for the target VM."""
@@ -144,7 +146,10 @@ async def _host_dispatch(command: str, params: dict) -> dict:
         import cua_auto.shell as _shell
         import cua_auto.window as _win
     except ImportError as e:
-        return {"success": False, "error": f"cua-auto not installed: {e}. Run: pip install cua-auto"}
+        return {
+            "success": False,
+            "error": f"cua-auto not installed: {e}. Run: pip install cua-auto",
+        }
 
     try:
         if command == "screenshot":
@@ -312,9 +317,7 @@ async def _host_dispatch(command: str, params: dict) -> dict:
             return {"success": bool(ok)}
 
         elif command == "set_window_position":
-            ok = _win.set_window_position(
-                params["window_id"], int(params["x"]), int(params["y"])
-            )
+            ok = _win.set_window_position(params["window_id"], int(params["x"]), int(params["y"]))
             return {"success": bool(ok)}
 
         elif command == "deactivate_window":
@@ -365,16 +368,11 @@ async def _send(provider_type: str, name: str, command: str, params: dict) -> di
 
 # ── zoom / screenshot helpers ─────────────────────────────────────────────────
 
-async def _resolve_zoom_bbox_by_id(
-    provider_type: str, name: str, window_id: str
-) -> dict | None:
+
+async def _resolve_zoom_bbox_by_id(provider_type: str, name: str, window_id: str) -> dict | None:
     """Get the bounding box of a window by its native handle/id."""
-    pos_r = await _send(
-        provider_type, name, "get_window_position", {"window_id": window_id}
-    )
-    size_r = await _send(
-        provider_type, name, "get_window_size", {"window_id": window_id}
-    )
+    pos_r = await _send(provider_type, name, "get_window_position", {"window_id": window_id})
+    size_r = await _send(provider_type, name, "get_window_size", {"window_id": window_id})
 
     pos = pos_r.get("position") or pos_r.get("data")
     size = size_r.get("size") or size_r.get("data")
@@ -394,17 +392,13 @@ async def _resolve_zoom_bbox_by_id(
     return {"x": x, "y": y, "width": w, "height": h}
 
 
-async def _resolve_zoom_bbox(
-    provider_type: str, name: str, window_name: str
-) -> dict | None:
+async def _resolve_zoom_bbox(provider_type: str, name: str, window_name: str) -> dict | None:
     """Get the bounding box of a window by app/window name.
 
     Filters out internal helper windows (e.g. 'Chrome Legacy Window') so the
     correct top-level window is always selected.
     """
-    wins_r = await _send(
-        provider_type, name, "get_application_windows", {"app": window_name}
-    )
+    wins_r = await _send(provider_type, name, "get_application_windows", {"app": window_name})
     windows = wins_r.get("windows") or wins_r.get("data") or []
     if not windows:
         return None
@@ -513,7 +507,9 @@ async def _print_context(provider_type: str, name: str, state: dict | None = Non
     zoom_window = state.get("zoom_window")
     zoom_window_id = state.get("zoom_window_id")
     if zoom_window:
-        zoom_info = f"zoom: {zoom_window} ({zoom_window_id})" if zoom_window_id else f"zoom: {zoom_window}"
+        zoom_info = (
+            f"zoom: {zoom_window} ({zoom_window_id})" if zoom_window_id else f"zoom: {zoom_window}"
+        )
     else:
         zoom_info = "zoom: off"
     print(f"💻 {vm_label}\t🔍 {zoom_info}")
@@ -529,6 +525,7 @@ def _require_target() -> dict | None:
 
 # ── subcommand handlers ───────────────────────────────────────────────────────
 
+
 def _cmd_switch(args: argparse.Namespace) -> int:
     provider = args.provider.lower()
     old_state = _load_state()
@@ -543,7 +540,16 @@ def _cmd_switch(args: argparse.Namespace) -> int:
                 file=sys.stderr,
             )
             return 1
-        _save_state({"provider": "host", "name": "", "zoom_window": None, "zoom_window_id": None, "zoom_bbox": None, "zoom_scale": 1.0})
+        _save_state(
+            {
+                "provider": "host",
+                "name": "",
+                "zoom_window": None,
+                "zoom_window_id": None,
+                "zoom_bbox": None,
+                "zoom_scale": 1.0,
+            }
+        )
         msg = "Switched to host (local PC)"
         if had_zoom:
             msg += " — zoom reset"
@@ -553,7 +559,16 @@ def _cmd_switch(args: argparse.Namespace) -> int:
         return _fail(f"Unknown provider '{provider}'. Choose from: {', '.join(PROVIDERS)}")
 
     name = args.name or ""
-    _save_state({"provider": provider, "name": name, "zoom_window": None, "zoom_window_id": None, "zoom_bbox": None, "zoom_scale": 1.0})
+    _save_state(
+        {
+            "provider": provider,
+            "name": name,
+            "zoom_window": None,
+            "zoom_window_id": None,
+            "zoom_bbox": None,
+            "zoom_scale": 1.0,
+        }
+    )
     label = f"{provider}/{name}" if name else provider
     msg = f"Switched to {label}"
     if had_zoom:
@@ -807,7 +822,9 @@ def _cmd_snapshot(args: argparse.Namespace) -> int:
                     print()
                     print("Interactive elements:")
                     for el in elements:
-                        print(f"  • {el.get('name','?')} [{el.get('type','?')}]  ({el.get('x','?')}, {el.get('y','?')})")
+                        print(
+                            f"  • {el.get('name','?')} [{el.get('type','?')}]  ({el.get('x','?')}, {el.get('y','?')})"
+                        )
             except json.JSONDecodeError:
                 print(f"✅ snapshot — {save_path}")
                 print()
@@ -1035,7 +1052,9 @@ def _cmd_drag(args: argparse.Namespace) -> int:
         sx2, sy2 = _coords(args.x2, args.y2, state)
         try:
             result = await _send(
-                p, n, "drag_to",
+                p,
+                n,
+                "drag_to",
                 {"start_x": sx1, "start_y": sy1, "end_x": sx2, "end_y": sy2},
             )
         except Exception as e:
@@ -1115,6 +1134,7 @@ def _cmd_open(args: argparse.Namespace) -> int:
 
 
 # ── window subcommands ────────────────────────────────────────────────────────
+
 
 def _cmd_window(args: argparse.Namespace) -> int:
     from cua_cli.utils.async_utils import run_async
@@ -1209,7 +1229,9 @@ def _cmd_window(args: argparse.Namespace) -> int:
         if action == "resize":
             try:
                 result = await _send(
-                    p, n, "set_window_size",
+                    p,
+                    n,
+                    "set_window_size",
                     {"window_id": wid, "width": args.width, "height": args.height},
                 )
             except Exception as e:
@@ -1225,7 +1247,9 @@ def _cmd_window(args: argparse.Namespace) -> int:
         if action == "move":
             try:
                 result = await _send(
-                    p, n, "set_window_position",
+                    p,
+                    n,
+                    "set_window_position",
                     {"window_id": wid, "x": args.x, "y": args.y},
                 )
             except Exception as e:
@@ -1265,6 +1289,7 @@ def _cmd_window(args: argparse.Namespace) -> int:
 
 # ── host consent command (registered separately as cua do-host-consent) ───────
 
+
 def register_host_consent_parser(subparsers: argparse._SubParsersAction) -> None:
     subparsers.add_parser(
         "do-host-consent",
@@ -1284,6 +1309,7 @@ def execute_host_consent(args: argparse.Namespace) -> int:
 
 
 # ── parser registration ───────────────────────────────────────────────────────
+
 
 def register_parser(subparsers: argparse._SubParsersAction) -> None:
     p = subparsers.add_parser(
@@ -1440,6 +1466,7 @@ Examples:
 
 
 # ── dispatch ──────────────────────────────────────────────────────────────────
+
 
 def execute(args: argparse.Namespace) -> int:
     dispatch = {

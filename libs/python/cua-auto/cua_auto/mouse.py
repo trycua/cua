@@ -49,18 +49,14 @@ def move_to(x: int, y: int) -> None:
 # ── Mouse button hold / release ───────────────────────────────────────────────
 
 
-def mouse_down(
-    x: Optional[int] = None, y: Optional[int] = None, button: str = "left"
-) -> None:
+def mouse_down(x: Optional[int] = None, y: Optional[int] = None, button: str = "left") -> None:
     """Press and hold a mouse button, optionally moving to (x, y) first."""
     if x is not None and y is not None:
         _mouse.position = (x, y)
     _mouse.press(_map_button(button))
 
 
-def mouse_up(
-    x: Optional[int] = None, y: Optional[int] = None, button: str = "left"
-) -> None:
+def mouse_up(x: Optional[int] = None, y: Optional[int] = None, button: str = "left") -> None:
     """Release a mouse button, optionally moving to (x, y) first."""
     if x is not None and y is not None:
         _mouse.position = (x, y)

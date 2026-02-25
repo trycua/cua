@@ -10,7 +10,7 @@ import { ChatList } from './composed/ChatList';
 import { ComputerList } from './composed/ComputerList';
 import { EmptyStateWithInput } from './composed/EmptyState';
 import { VNCViewer } from './primitives/VNCViewer';
-import { AddSandboxModal } from './modals/CustomComputerModal';
+import { AddSandboxModal } from './modals/AddSandboxModal';
 import type { PlaygroundAdapters } from '../adapters/types';
 import type { Chat } from '../types';
 import { cn } from '../utils/cn';

@@ -13,7 +13,7 @@ import {
   usePlayground,
 } from '../../hooks/usePlayground';
 import type { Chat, Computer } from '../../types';
-import { AddSandboxModal } from '../modals/CustomComputerModal';
+import { AddSandboxModal } from '../modals/AddSandboxModal';
 
 // Re-export for convenience
 export { EmptyStateWithInput } from './EmptyState';

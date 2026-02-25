@@ -3,7 +3,7 @@ name: cua-do-cli
 description: Automates interactions with remote VMs, local Docker containers, cloud sandboxes, and the host PC via cua do. Use when navigating GUIs, taking snapshots/screenshots, clicking, typing, scrolling, running shell commands, or managing windows on a target machine.
 ---
 
-# VM Automation with cua do
+# GUI Automation with cua do
 
 One command = one action = one ✅/❌ line. Switch targets once, then operate.
 

@@ -64,7 +64,7 @@ export class CloudComputer extends BaseComputer {
         headers: {
           Authorization: `Bearer ${this.apiKey}`,
           Accept: 'application/json',
-          ...cuaVersionHeaders('computer', __CUA_VERSION__),
+          ...cuaVersionHeaders('computer', typeof __CUA_VERSION__ !== 'undefined' ? __CUA_VERSION__ : ''),
         },
       });
 

@@ -61,8 +61,8 @@ jobs:
             --verbose
             --no-progress
             --accept 100..=399
-            --exclude '^file://'
-            --exclude '^/'
+            --scheme https
+            --scheme http
             --exclude 'localhost'
             --exclude '127\.0\.0\.1'
             --exclude 'example\.com'

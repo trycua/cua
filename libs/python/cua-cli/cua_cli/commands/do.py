@@ -616,9 +616,9 @@ def _cmd_ls(args: argparse.Namespace) -> int:
         return 0
 
     async def _list_all() -> int:
-        from cua_cli.auth.store import get_api_key
         from computer.providers.base import VMProviderType
         from computer.providers.factory import VMProviderFactory
+        from cua_cli.auth.store import get_api_key
 
         print("  host  [local]")
 

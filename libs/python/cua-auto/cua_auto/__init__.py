@@ -20,6 +20,15 @@ Usage::
 
 __version__ = "0.1.1"
 
-from cua_auto import clipboard, keyboard, mouse, screen, shell, window
+# terminal and shell have no display dependency — always safe to import.
+from cua_auto import shell, terminal
 
-__all__ = ["mouse", "keyboard", "screen", "window", "clipboard", "shell"]
+# These modules require a display server (pynput, PIL, pywinctl, pyperclip).
+# Guard them so that headless environments (CI without X, computer-server inside
+# a container) can still import cua_auto.terminal / cua_auto.shell without error.
+try:
+    from cua_auto import clipboard, keyboard, mouse, screen, window
+except ImportError:
+    pass
+
+__all__ = ["mouse", "keyboard", "screen", "window", "clipboard", "shell", "terminal"]

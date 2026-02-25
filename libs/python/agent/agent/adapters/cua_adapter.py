@@ -5,6 +5,8 @@ from litellm import acompletion, completion
 from litellm.llms.custom_llm import CustomLLM
 from litellm.types.utils import GenericStreamingChunk, ModelResponse
 
+from core.http import cua_version_headers
+
 
 class CUAAdapter(CustomLLM):
     def __init__(self, base_url: str | None = None, api_key: str | None = None, **_: Any):
@@ -73,6 +75,11 @@ class CUAAdapter(CustomLLM):
             params["headers"] = kwargs["headers"]
             del kwargs["headers"]
 
+        # Always include CUA version headers
+        version_hdrs = cua_version_headers()
+        if version_hdrs:
+            params["headers"] = {**version_hdrs, **params.get("headers", {})}
+
         # Print dropped parameters
         original_keys = set(kwargs.keys())
         used_keys = set(params.keys())  # Only these are extracted from kwargs
@@ -130,6 +137,11 @@ class CUAAdapter(CustomLLM):
             params["headers"] = kwargs["headers"]
             del kwargs["headers"]
 
+        # Always include CUA version headers
+        version_hdrs = cua_version_headers()
+        if version_hdrs:
+            params["headers"] = {**version_hdrs, **params.get("headers", {})}
+
         # Print dropped parameters
         original_keys = set(kwargs.keys())
         used_keys = set(params.keys())  # Only these are extracted from kwargs
@@ -166,6 +178,10 @@ class CUAAdapter(CustomLLM):
                 "stream": True,
             }
         )
+        # Always include CUA version headers
+        version_hdrs = cua_version_headers()
+        if version_hdrs:
+            params["headers"] = {**version_hdrs, **params.get("headers", {})}
         # Yield chunks directly from LiteLLM's streaming generator
         for chunk in completion(**params):  # type: ignore
             yield chunk  # type: ignore
@@ -182,6 +198,10 @@ class CUAAdapter(CustomLLM):
                 "stream": True,
             }
         )
+        # Always include CUA version headers
+        version_hdrs = cua_version_headers()
+        if version_hdrs:
+            params["headers"] = {**version_hdrs, **params.get("headers", {})}
         stream = await acompletion(**params)  # type: ignore
         async for chunk in stream:  # type: ignore
             yield chunk  # type: ignore

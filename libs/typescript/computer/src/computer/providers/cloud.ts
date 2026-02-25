@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import pino from 'pino';
 import { v4 as uuidv4 } from 'uuid';
+import { cuaVersionHeaders } from '@trycua/core';
 import { type BaseComputerInterface, InterfaceFactory } from '../../interface/index';
 import type { CloudComputerConfig, VMProviderType } from '../types';
 import { BaseComputer } from './base';
@@ -63,6 +64,7 @@ export class CloudComputer extends BaseComputer {
         headers: {
           Authorization: `Bearer ${this.apiKey}`,
           Accept: 'application/json',
+          ...cuaVersionHeaders('computer', __CUA_VERSION__),
         },
       });
 

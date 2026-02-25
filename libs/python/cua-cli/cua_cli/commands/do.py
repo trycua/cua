@@ -337,8 +337,10 @@ async def _send(provider_type: str, name: str, command: str, params: dict) -> di
 
     import aiohttp
 
+    from core.http import cua_version_headers
+
     api_url = await _get_api_url(provider_type, name)
-    headers = {"Content-Type": "application/json"}
+    headers = {"Content-Type": "application/json", **cua_version_headers()}
 
     if provider_type in ("cloud", "cloudv2"):
         from cua_cli.auth.store import get_api_key

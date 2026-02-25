@@ -11,10 +11,7 @@ export const CUA_CLIENT_VERSION_HEADER = 'X-Cua-Client-Version';
  * @param version     - semver string injected at build time
  * @returns header record; empty when version is falsy, so always safe to spread.
  */
-export function cuaVersionHeaders(
-  packageName: string,
-  version: string,
-): Record<string, string> {
+export function cuaVersionHeaders(packageName: string, version: string): Record<string, string> {
   if (!version) return {};
   return { [CUA_CLIENT_VERSION_HEADER]: `${packageName}:${version}` };
 }

@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { API_BASE } from './config';
 
 const { version: cliVersion } = JSON.parse(
-  readFileSync(new URL('../../package.json', import.meta.url), 'utf-8'),
+  readFileSync(new URL('../../package.json', import.meta.url), 'utf-8')
 ) as { version: string };
 
 export const CUA_VERSION_HEADERS: Record<string, string> = {

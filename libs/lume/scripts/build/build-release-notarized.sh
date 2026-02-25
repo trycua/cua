@@ -99,26 +99,36 @@ fi
 log "essential" "Signing .app bundle..."
 log "essential" "Using signing identity: $CERT_APPLICATION_NAME"
 
+# Ensure build.keychain is in the search list for codesign
+KEYCHAIN_PATH="$HOME/Library/Keychains/build.keychain-db"
+if [ -f "$KEYCHAIN_PATH" ]; then
+  log "essential" "Adding build keychain to search list..."
+  security list-keychains -d user -s "$KEYCHAIN_PATH" $(security list-keychains -d user | tr -d '"')
+  security list-keychains
+fi
+
 # Sign the binary inside the bundle first (with entitlements)
 codesign --force --options runtime --timestamp \
          --entitlements ./resources/lume.entitlements \
          --sign "$CERT_APPLICATION_NAME" \
+         --keychain "$KEYCHAIN_PATH" \
          "$APP_BUNDLE/Contents/MacOS/lume"
 
 # Verify the binary signature
 log "essential" "Verifying binary signature..."
 codesign -dvv "$APP_BUNDLE/Contents/MacOS/lume" 2>&1
-codesign --verify --strict "$APP_BUNDLE/Contents/MacOS/lume" 2>&1 || log "error" "Binary signature verification FAILED"
+codesign --verify --strict "$APP_BUNDLE/Contents/MacOS/lume" 2>&1 || { log "error" "Binary signature verification FAILED"; exit 1; }
 
 # Sign the outer bundle
 codesign --force --options runtime --timestamp \
          --sign "$CERT_APPLICATION_NAME" \
+         --keychain "$KEYCHAIN_PATH" \
          "$APP_BUNDLE"
 
 # Verify the bundle signature
 log "essential" "Verifying bundle signature..."
 codesign -dvv "$APP_BUNDLE" 2>&1
-codesign --verify --strict "$APP_BUNDLE" 2>&1 || log "error" "Bundle signature verification FAILED"
+codesign --verify --strict "$APP_BUNDLE" 2>&1 || { log "error" "Bundle signature verification FAILED"; exit 1; }
 
 # --- Package as .pkg installer ---
 log "essential" "Building installer package..."

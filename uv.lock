@@ -1039,7 +1039,7 @@ wheels = [
 
 [[package]]
 name = "cua-agent"
-version = "0.7.24"
+version = "0.7.27"
 source = { editable = "libs/python/agent" }
 dependencies = [
     { name = "aiohttp" },
@@ -1208,7 +1208,7 @@ requires-dist = [
 
 [[package]]
 name = "cua-computer"
-version = "0.5.12"
+version = "0.5.14"
 source = { editable = "libs/python/computer" }
 dependencies = [
     { name = "aiohttp" },
@@ -1252,7 +1252,7 @@ provides-extras = ["lume", "lumier", "ui", "all"]
 
 [[package]]
 name = "cua-computer-server"
-version = "0.3.16"
+version = "0.3.18"
 source = { editable = "libs/python/computer-server" }
 dependencies = [
     { name = "aiohttp" },
@@ -1318,7 +1318,7 @@ provides-extras = ["macos", "linux", "windows"]
 
 [[package]]
 name = "cua-core"
-version = "0.1.16"
+version = "0.1.17"
 source = { editable = "libs/python/core" }
 dependencies = [
     { name = "posthog" },

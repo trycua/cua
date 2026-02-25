@@ -151,6 +151,20 @@ if [ "$LOG_LEVEL" = "minimal" ] || [ "$LOG_LEVEL" = "none" ]; then
     log "error" "Notarization failed. Please check logs."
     log "error" "Notarization output:"
     echo "$NOTARY_OUTPUT"
+    # Extract submission ID and fetch detailed log
+    SUBMISSION_ID=$(echo "$NOTARY_OUTPUT" | grep "id:" | head -1 | awk '{print $2}')
+    if [ -n "$SUBMISSION_ID" ]; then
+      log "error" "Fetching notarization log for submission $SUBMISSION_ID..."
+      xcrun notarytool log "$SUBMISSION_ID" \
+          --apple-id "${APPLE_ID}" \
+          --team-id "${TEAM_ID}" \
+          --password "${APP_SPECIFIC_PASSWORD}" \
+          developer_log.json 2>&1 || true
+      if [ -f developer_log.json ]; then
+        log "error" "Notarization log:"
+        cat developer_log.json
+      fi
+    fi
     exit 1
   fi
 else
@@ -161,6 +175,23 @@ else
       --password "${APP_SPECIFIC_PASSWORD}" \
       --wait; then
     log "error" "Notarization failed"
+    # Try to fetch the log for the last submission
+    LAST_ID=$(xcrun notarytool history \
+        --apple-id "${APPLE_ID}" \
+        --team-id "${TEAM_ID}" \
+        --password "${APP_SPECIFIC_PASSWORD}" 2>&1 | grep "id:" | head -1 | awk '{print $2}')
+    if [ -n "$LAST_ID" ]; then
+      log "error" "Fetching notarization log for submission $LAST_ID..."
+      xcrun notarytool log "$LAST_ID" \
+          --apple-id "${APPLE_ID}" \
+          --team-id "${TEAM_ID}" \
+          --password "${APP_SPECIFIC_PASSWORD}" \
+          developer_log.json 2>&1 || true
+      if [ -f developer_log.json ]; then
+        log "error" "Notarization log:"
+        cat developer_log.json
+      fi
+    fi
     exit 1
   fi
 fi

@@ -1433,7 +1433,7 @@ async def _shell_remote_pty(
 
 
 def _cmd_shell(args: argparse.Namespace) -> int:
-    command_parts = getattr(args, "command", [])
+    command_parts = getattr(args, "shell_command", [])
     command = " ".join(command_parts).strip() if command_parts else None
 
     t = _require_target()
@@ -1795,7 +1795,7 @@ Examples:
         "shell",
         help="Run a shell command (or open an interactive terminal) in the VM",
     )
-    sh.add_argument("command", nargs=argparse.REMAINDER)
+    sh.add_argument("shell_command", nargs=argparse.REMAINDER)
     sh.add_argument("--cols", type=int, default=None, help="Terminal width (default: auto-detect)")
     sh.add_argument("--rows", type=int, default=None, help="Terminal height (default: auto-detect)")
 

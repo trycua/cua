@@ -336,7 +336,6 @@ async def _send(provider_type: str, name: str, command: str, params: dict) -> di
         return await _host_dispatch(command, params)
 
     import aiohttp
-
     from core.http import cua_version_headers
 
     api_url = await _get_api_url(provider_type, name)

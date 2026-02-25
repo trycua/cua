@@ -53,11 +53,17 @@ class CUAAdapter(CustomLLM):
 
         api_key = self._resolve_api_key(kwargs)
 
+        # Ensure the CUA inference API always receives Bearer auth
+        extra_headers = {"Authorization": f"Bearer {api_key}"}
+        if "extra_headers" in kwargs:
+            extra_headers.update(kwargs.pop("extra_headers"))
+
         params = {
             "model": model,
             "messages": kwargs.get("messages", []),
             "api_base": api_base,
             "api_key": api_key,
+            "extra_headers": extra_headers,
             "stream": False,
         }
 
@@ -110,11 +116,17 @@ class CUAAdapter(CustomLLM):
 
         api_key = self._resolve_api_key(kwargs)
 
+        # Ensure the CUA inference API always receives Bearer auth
+        extra_headers = {"Authorization": f"Bearer {api_key}"}
+        if "extra_headers" in kwargs:
+            extra_headers.update(kwargs.pop("extra_headers"))
+
         params = {
             "model": model,
             "messages": kwargs.get("messages", []),
             "api_base": api_base,
             "api_key": api_key,
+            "extra_headers": extra_headers,
             "stream": False,
         }
 
@@ -158,11 +170,18 @@ class CUAAdapter(CustomLLM):
         params = dict(kwargs)
         inner_model = self._normalize_model(params.get("model", ""))
         api_key = self._resolve_api_key(kwargs)
+
+        # Ensure the CUA inference API always receives Bearer auth
+        extra_headers = {"Authorization": f"Bearer {api_key}"}
+        if "extra_headers" in params:
+            extra_headers.update(params["extra_headers"])
+
         params.update(
             {
                 "model": f"openai/{inner_model}",
                 "api_base": self.base_url,
                 "api_key": api_key,
+                "extra_headers": extra_headers,
                 "stream": True,
             }
         )
@@ -174,11 +193,18 @@ class CUAAdapter(CustomLLM):
         params = dict(kwargs)
         inner_model = self._normalize_model(params.get("model", ""))
         api_key = self._resolve_api_key(kwargs)
+
+        # Ensure the CUA inference API always receives Bearer auth
+        extra_headers = {"Authorization": f"Bearer {api_key}"}
+        if "extra_headers" in params:
+            extra_headers.update(params["extra_headers"])
+
         params.update(
             {
                 "model": f"openai/{inner_model}",
                 "api_base": self.base_url,
                 "api_key": api_key,
+                "extra_headers": extra_headers,
                 "stream": True,
             }
         )

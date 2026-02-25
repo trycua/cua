@@ -97,6 +97,7 @@ fi
 
 # --- Sign the .app bundle ---
 log "essential" "Signing .app bundle..."
+log "essential" "Using signing identity: $CERT_APPLICATION_NAME"
 
 # Sign the binary inside the bundle first (with entitlements)
 codesign --force --options runtime --timestamp \
@@ -104,17 +105,28 @@ codesign --force --options runtime --timestamp \
          --sign "$CERT_APPLICATION_NAME" \
          "$APP_BUNDLE/Contents/MacOS/lume"
 
+# Verify the binary signature
+log "essential" "Verifying binary signature..."
+codesign -dvv "$APP_BUNDLE/Contents/MacOS/lume" 2>&1
+codesign --verify --strict "$APP_BUNDLE/Contents/MacOS/lume" 2>&1 || log "error" "Binary signature verification FAILED"
+
 # Sign the outer bundle
 codesign --force --options runtime --timestamp \
          --sign "$CERT_APPLICATION_NAME" \
          "$APP_BUNDLE"
+
+# Verify the bundle signature
+log "essential" "Verifying bundle signature..."
+codesign -dvv "$APP_BUNDLE" 2>&1
+codesign --verify --strict "$APP_BUNDLE" 2>&1 || log "error" "Bundle signature verification FAILED"
 
 # --- Package as .pkg installer ---
 log "essential" "Building installer package..."
 
 TEMP_ROOT=$(mktemp -d)
 mkdir -p "$TEMP_ROOT/usr/local/share/lume"
-cp -R "$APP_BUNDLE" "$TEMP_ROOT/usr/local/share/lume/"
+# Use ditto to preserve code signatures and extended attributes
+ditto "$APP_BUNDLE" "$TEMP_ROOT/usr/local/share/lume/lume.app"
 
 if ! pkgbuild --root "$TEMP_ROOT" \
          --identifier "com.trycua.lume" \

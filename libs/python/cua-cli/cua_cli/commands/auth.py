@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 import aiohttp
+from core.http import cua_version_headers
 from cua_cli.auth.browser import authenticate_via_browser
 from cua_cli.auth.store import clear_credentials, get_api_key, save_api_key
 from cua_cli.utils.async_utils import run_async
@@ -160,7 +161,7 @@ def cmd_status(args: argparse.Namespace) -> int:
 
     async def _fetch():
         url = f"{_get_api_base()}/v1/me"
-        headers = {"Authorization": f"Bearer {api_key}", "Accept": "application/json"}
+        headers = {"Authorization": f"Bearer {api_key}", "Accept": "application/json", **cua_version_headers()}
         async with aiohttp.ClientSession() as session:
             timeout = aiohttp.ClientTimeout(total=10)
             async with session.get(url, headers=headers, timeout=timeout) as resp:

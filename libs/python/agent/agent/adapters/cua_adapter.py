@@ -16,8 +16,13 @@ class CUAAdapter(CustomLLM):
         )
 
     def _normalize_model(self, model: str) -> str:
-        # Accept either "cua/<model>" or raw "<model>"
-        return model.split("/", 1)[1] if model and model.startswith("cua/") else model
+        """Strip known prefixes to get the base model name."""
+        known_prefixes = ("cua/", "anthropic/", "gemini/", "google/", "openai/")
+        result = model
+        for prefix in known_prefixes:
+            if result.startswith(prefix):
+                result = result[len(prefix) :]
+        return result
 
     def _resolve_route(self, model: str, api_base: str) -> tuple[str, str]:
         """Return (prefixed_model, api_base) for the CUA inference API."""
@@ -49,14 +54,18 @@ class CUAAdapter(CustomLLM):
         return resolved
 
     def completion(self, *args, **kwargs) -> ModelResponse:
-        model, api_base = self._resolve_route(kwargs.get("model", ""), kwargs.get("api_base") or self.base_url)
+        model, api_base = self._resolve_route(
+            kwargs.get("model", ""), kwargs.get("api_base") or self.base_url
+        )
 
         api_key = self._resolve_api_key(kwargs)
 
-        # Ensure the CUA inference API always receives Bearer auth
-        extra_headers = {"Authorization": f"Bearer {api_key}"}
+        # Ensure the CUA inference API always receives Bearer auth;
+        # merge caller headers first, then force Authorization so it cannot be overridden.
+        extra_headers = {}
         if "extra_headers" in kwargs:
             extra_headers.update(kwargs.pop("extra_headers"))
+        extra_headers["Authorization"] = f"Bearer {api_key}"
 
         params = {
             "model": model,
@@ -72,7 +81,11 @@ class CUAAdapter(CustomLLM):
             params["tools"] = kwargs["tools"]
 
         if "optional_params" in kwargs:
-            params.update(kwargs["optional_params"])
+            protected_keys = {"api_key", "extra_headers", "model", "api_base", "stream"}
+            filtered = {
+                k: v for k, v in kwargs["optional_params"].items() if k not in protected_keys
+            }
+            params.update(filtered)
             del kwargs["optional_params"]
 
         if "headers" in kwargs:
@@ -107,14 +120,18 @@ class CUAAdapter(CustomLLM):
         return completion(**params)  # type: ignore
 
     async def acompletion(self, *args, **kwargs) -> ModelResponse:
-        model, api_base = self._resolve_route(kwargs.get("model", ""), kwargs.get("api_base") or self.base_url)
+        model, api_base = self._resolve_route(
+            kwargs.get("model", ""), kwargs.get("api_base") or self.base_url
+        )
 
         api_key = self._resolve_api_key(kwargs)
 
-        # Ensure the CUA inference API always receives Bearer auth
-        extra_headers = {"Authorization": f"Bearer {api_key}"}
+        # Ensure the CUA inference API always receives Bearer auth;
+        # merge caller headers first, then force Authorization so it cannot be overridden.
+        extra_headers = {}
         if "extra_headers" in kwargs:
             extra_headers.update(kwargs.pop("extra_headers"))
+        extra_headers["Authorization"] = f"Bearer {api_key}"
 
         params = {
             "model": model,
@@ -130,7 +147,11 @@ class CUAAdapter(CustomLLM):
             params["tools"] = kwargs["tools"]
 
         if "optional_params" in kwargs:
-            params.update(kwargs["optional_params"])
+            protected_keys = {"api_key", "extra_headers", "model", "api_base", "stream"}
+            filtered = {
+                k: v for k, v in kwargs["optional_params"].items() if k not in protected_keys
+            }
+            params.update(filtered)
             del kwargs["optional_params"]
 
         if "headers" in kwargs:
@@ -168,13 +189,17 @@ class CUAAdapter(CustomLLM):
 
     def streaming(self, *args, **kwargs) -> Iterator[GenericStreamingChunk]:
         params = dict(kwargs)
-        model, api_base = self._resolve_route(params.get("model", ""), params.get("api_base") or self.base_url)
+        model, api_base = self._resolve_route(
+            params.get("model", ""), params.get("api_base") or self.base_url
+        )
         api_key = self._resolve_api_key(kwargs)
 
-        # Ensure the CUA inference API always receives Bearer auth
-        extra_headers = {"Authorization": f"Bearer {api_key}"}
+        # Ensure the CUA inference API always receives Bearer auth;
+        # merge caller headers first, then force Authorization so it cannot be overridden.
+        extra_headers = {}
         if "extra_headers" in params:
-            extra_headers.update(params["extra_headers"])
+            extra_headers.update(params.pop("extra_headers"))
+        extra_headers["Authorization"] = f"Bearer {api_key}"
 
         params.update(
             {
@@ -195,13 +220,17 @@ class CUAAdapter(CustomLLM):
 
     async def astreaming(self, *args, **kwargs) -> AsyncIterator[GenericStreamingChunk]:
         params = dict(kwargs)
-        model, api_base = self._resolve_route(params.get("model", ""), params.get("api_base") or self.base_url)
+        model, api_base = self._resolve_route(
+            params.get("model", ""), params.get("api_base") or self.base_url
+        )
         api_key = self._resolve_api_key(kwargs)
 
-        # Ensure the CUA inference API always receives Bearer auth
-        extra_headers = {"Authorization": f"Bearer {api_key}"}
+        # Ensure the CUA inference API always receives Bearer auth;
+        # merge caller headers first, then force Authorization so it cannot be overridden.
+        extra_headers = {}
         if "extra_headers" in params:
-            extra_headers.update(params["extra_headers"])
+            extra_headers.update(params.pop("extra_headers"))
+        extra_headers["Authorization"] = f"Bearer {api_key}"
 
         params.update(
             {

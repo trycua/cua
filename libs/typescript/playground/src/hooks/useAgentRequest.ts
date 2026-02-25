@@ -7,6 +7,10 @@ import { usePlaygroundTelemetry } from '../telemetry';
 import type { AgentMessage, UserMessage } from '../types';
 import { isVM, isCustomComputer } from '../types';
 
+const CUA_VERSION_HEADERS: Record<string, string> = {
+  'X-Cua-Client-Version': `playground:${__CUA_VERSION__}`,
+};
+
 // Agent client interface for making requests
 interface AgentClientOptions {
   timeout?: number;
@@ -36,7 +40,7 @@ class AgentClient {
       // Try /cmd endpoint (cloud sandboxes use this for health checks)
       await fetch(`${this.baseUrl}/cmd`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...CUA_VERSION_HEADERS },
         body: JSON.stringify({ command: 'version', params: {} }),
         signal: this.options.signal || AbortSignal.timeout(5000),
       });
@@ -66,6 +70,7 @@ class AgentClient {
 
           const headers: Record<string, string> = {
             'Content-Type': 'application/json',
+            ...CUA_VERSION_HEADERS,
           };
           if (this.options.apiKey) {
             headers['X-API-Key'] = this.options.apiKey;

@@ -270,8 +270,10 @@ class AuthenticationManager:
         logger.info(f"Authenticating with TryCUA API for container: {container_name}")
 
         try:
+            from core.http import cua_version_headers
+
             async with aiohttp.ClientSession() as session:
-                headers = {"Authorization": f"Bearer {api_key}"}
+                headers = {"Authorization": f"Bearer {api_key}", **cua_version_headers()}
 
                 async with session.get(
                     f"https://www.cua.ai/api/vm/auth?container_name={container_name}",

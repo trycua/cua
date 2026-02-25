@@ -7,6 +7,7 @@ from typing import Any, Optional
 from urllib.parse import quote
 
 import aiohttp
+from core.http import cua_version_headers
 from cua_cli.auth.store import require_api_key
 from cua_cli.utils.async_utils import run_async
 from cua_cli.utils.output import (
@@ -37,6 +38,7 @@ async def _api_request(
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Accept": "application/json",
+        **cua_version_headers(),
     }
 
     if json is not None:

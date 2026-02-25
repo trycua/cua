@@ -1,6 +1,6 @@
 [project]
 name = "cua-cli"
-version = "0.1.4"
+version = "0.1.5"
 description = "Unified CLI for CUA - Computer-Use Agents"
 readme = "README.md"
 license = "MIT"

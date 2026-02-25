@@ -27,6 +27,11 @@ dependencies = [
 requires-python = ">=3.12,<3.14"
 
 [project.optional-dependencies]
+test = [
+  "pytest",
+  "pytest-asyncio",
+  "pytest-mock",
+]
 openai = []
 anthropic = []
 qwen = [

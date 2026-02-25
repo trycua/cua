@@ -18,6 +18,15 @@ class CUAAdapter(CustomLLM):
         # Accept either "cua/<model>" or raw "<model>"
         return model.split("/", 1)[1] if model and model.startswith("cua/") else model
 
+    def _resolve_route(self, model: str, api_base: str) -> tuple[str, str]:
+        """Return (prefixed_model, api_base) for the CUA inference API."""
+        if "anthropic/" in model:
+            return f"anthropic/{self._normalize_model(model)}", api_base.removesuffix("/v1")
+        elif "gemini/" in model or "google/" in model:
+            return f"gemini/{self._normalize_model(model)}", api_base + "/gemini"
+        else:
+            return f"openai/{self._normalize_model(model)}", api_base
+
     def _resolve_api_key(self, kwargs: dict | None = None) -> str:
         """Resolve the CUA API key, raising a clear error if missing.
 
@@ -39,17 +48,7 @@ class CUAAdapter(CustomLLM):
         return resolved
 
     def completion(self, *args, **kwargs) -> ModelResponse:
-        model = kwargs.get("model", "")
-        api_base = kwargs.get("api_base") or self.base_url
-        if "anthropic/" in model:
-            model = f"anthropic/{self._normalize_model(model)}"
-            api_base = api_base.removesuffix("/v1")
-        elif "gemini/" in model or "google/" in model:
-            # Route to Gemini pass-through endpoint
-            model = f"gemini/{self._normalize_model(model)}"
-            api_base = api_base + "/gemini"
-        else:
-            model = f"openai/{self._normalize_model(model)}"
+        model, api_base = self._resolve_route(kwargs.get("model", ""), kwargs.get("api_base") or self.base_url)
 
         api_key = self._resolve_api_key(kwargs)
 
@@ -102,17 +101,7 @@ class CUAAdapter(CustomLLM):
         return completion(**params)  # type: ignore
 
     async def acompletion(self, *args, **kwargs) -> ModelResponse:
-        model = kwargs.get("model", "")
-        api_base = kwargs.get("api_base") or self.base_url
-        if "anthropic/" in model:
-            model = f"anthropic/{self._normalize_model(model)}"
-            api_base = api_base.removesuffix("/v1")
-        elif "gemini/" in model or "google/" in model:
-            # Route to Gemini pass-through endpoint
-            model = f"gemini/{self._normalize_model(model)}"
-            api_base = api_base + "/gemini"
-        else:
-            model = f"openai/{self._normalize_model(model)}"
+        model, api_base = self._resolve_route(kwargs.get("model", ""), kwargs.get("api_base") or self.base_url)
 
         api_key = self._resolve_api_key(kwargs)
 
@@ -168,7 +157,7 @@ class CUAAdapter(CustomLLM):
 
     def streaming(self, *args, **kwargs) -> Iterator[GenericStreamingChunk]:
         params = dict(kwargs)
-        inner_model = self._normalize_model(params.get("model", ""))
+        model, api_base = self._resolve_route(params.get("model", ""), params.get("api_base") or self.base_url)
         api_key = self._resolve_api_key(kwargs)
 
         # Ensure the CUA inference API always receives Bearer auth
@@ -178,8 +167,8 @@ class CUAAdapter(CustomLLM):
 
         params.update(
             {
-                "model": f"openai/{inner_model}",
-                "api_base": self.base_url,
+                "model": model,
+                "api_base": api_base,
                 "api_key": api_key,
                 "extra_headers": extra_headers,
                 "stream": True,
@@ -191,7 +180,7 @@ class CUAAdapter(CustomLLM):
 
     async def astreaming(self, *args, **kwargs) -> AsyncIterator[GenericStreamingChunk]:
         params = dict(kwargs)
-        inner_model = self._normalize_model(params.get("model", ""))
+        model, api_base = self._resolve_route(params.get("model", ""), params.get("api_base") or self.base_url)
         api_key = self._resolve_api_key(kwargs)
 
         # Ensure the CUA inference API always receives Bearer auth
@@ -201,8 +190,8 @@ class CUAAdapter(CustomLLM):
 
         params.update(
             {
-                "model": f"openai/{inner_model}",
-                "api_base": self.base_url,
+                "model": model,
+                "api_base": api_base,
                 "api_key": api_key,
                 "extra_headers": extra_headers,
                 "stream": True,

@@ -38,7 +38,7 @@
     "prepublishOnly": "pnpm run build"
   },
   "dependencies": {
-    "@trycua/core": "^0.1.2",
+    "@trycua/core": "workspace:^",
     "peerjs": "^1.5.4",
     "pino": "^9.7.0"
   },

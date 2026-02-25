@@ -70,14 +70,17 @@ log "essential" "Assembling .app bundle..."
 APP_BUNDLE=".release/lume.app"
 rm -rf "$APP_BUNDLE"
 mkdir -p "$APP_BUNDLE/Contents/MacOS"
+mkdir -p "$APP_BUNDLE/Contents/Resources"
 
 # Copy the binary into the bundle
 cp -f .build/release/lume "$APP_BUNDLE/Contents/MacOS/lume"
 
-# Copy resource bundle (contains unattended presets) alongside the executable
-# so SPM's Bundle.module resolves correctly
+# Copy resource bundle to both Resources/ (standard location) and MacOS/ (SPM Bundle.module compat)
+# The bundle is a flat directory (no Info.plist), not a proper macOS bundle,
+# so it cannot be codesigned independently — it gets sealed by the .app signature.
 BUILD_BUNDLE=".build/release/lume_lume.bundle"
 if [ -d "$BUILD_BUNDLE" ]; then
+  cp -rf "$BUILD_BUNDLE" "$APP_BUNDLE/Contents/Resources/"
   cp -rf "$BUILD_BUNDLE" "$APP_BUNDLE/Contents/MacOS/"
 fi
 
@@ -107,27 +110,10 @@ if [ -f "$KEYCHAIN_PATH" ]; then
   security list-keychains
 fi
 
-# Sign inner resource bundles first (inside-out signing order)
-RESOURCE_BUNDLE="$APP_BUNDLE/Contents/MacOS/lume_lume.bundle"
-if [ -d "$RESOURCE_BUNDLE" ]; then
-  log "essential" "Signing resource bundle..."
-  codesign --force --options runtime --timestamp \
-           --sign "$CERT_APPLICATION_NAME" \
-           --keychain "$KEYCHAIN_PATH" \
-           "$RESOURCE_BUNDLE"
-fi
-
-# Sign the main binary (with entitlements)
-log "essential" "Signing main binary..."
-codesign --force --options runtime --timestamp \
+# Sign the entire .app bundle (--deep signs nested code automatically)
+log "essential" "Signing .app bundle with Developer ID..."
+codesign --deep --force --options runtime --timestamp \
          --entitlements ./resources/lume.entitlements \
-         --sign "$CERT_APPLICATION_NAME" \
-         --keychain "$KEYCHAIN_PATH" \
-         "$APP_BUNDLE/Contents/MacOS/lume"
-
-# Sign the outer .app bundle
-log "essential" "Signing outer .app bundle..."
-codesign --force --options runtime --timestamp \
          --sign "$CERT_APPLICATION_NAME" \
          --keychain "$KEYCHAIN_PATH" \
          "$APP_BUNDLE"

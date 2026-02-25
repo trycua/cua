@@ -22,6 +22,7 @@ jobs:
           - computer-server
           - mcp-server
           - som
+          - cua-auto
 
     steps:
       - name: Checkout code

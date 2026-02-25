@@ -20,6 +20,6 @@ Usage::
 
 __version__ = "0.1.1"
 
-from cua_auto import clipboard, keyboard, mouse, screen, shell, window
+from cua_auto import clipboard, keyboard, mouse, screen, shell, terminal, window
 
-__all__ = ["mouse", "keyboard", "screen", "window", "clipboard", "shell"]
+__all__ = ["mouse", "keyboard", "screen", "window", "clipboard", "shell", "terminal"]

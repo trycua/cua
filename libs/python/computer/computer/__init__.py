@@ -41,7 +41,10 @@ except Exception as e:
 # Core components
 from .computer import Computer
 
+# PTY client
+from .pty import PtyHandle, PtyInterface
+
 # Provider components
 from .providers.base import VMProviderType
 
-__all__ = ["Computer", "VMProviderType"]
+__all__ = ["Computer", "PtyHandle", "PtyInterface", "VMProviderType"]

@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import hashlib
 import inspect
 import json
@@ -329,6 +330,11 @@ class ConnectionManager:
 manager = ConnectionManager()
 auth_manager = AuthenticationManager()
 
+# PTY session manager (lazy-initialised)
+from .pty_manager import PtyManager
+
+pty_manager = PtyManager()
+
 
 def _resolve_command(command: str) -> str:
     """Resolve command aliases to their canonical names."""
@@ -640,6 +646,212 @@ async def cmd_endpoint(
             "Connection": "keep-alive",
         },
     )
+
+
+async def _require_auth(
+    container_name: Optional[str],
+    api_key: Optional[str],
+) -> None:
+    """Raise HTTPException(401) when cloud auth is configured and credentials are invalid."""
+    server_container_name = os.environ.get("CONTAINER_NAME")
+    if not server_container_name:
+        return  # local development — no auth required
+    if not container_name:
+        raise HTTPException(status_code=401, detail="Container name required")
+    if not api_key:
+        raise HTTPException(status_code=401, detail="API key required")
+    if not await auth_manager.auth(container_name, api_key):
+        raise HTTPException(status_code=401, detail="Authentication failed")
+
+
+# ---------------------------------------------------------------------------
+# PTY endpoints
+# ---------------------------------------------------------------------------
+
+
+@app.post("/pty")
+async def pty_create(
+    request: Request,
+    container_name: Optional[str] = Header(None, alias="X-Container-Name"),
+    api_key: Optional[str] = Header(None, alias="X-API-Key"),
+):
+    """Spawn a new PTY session.
+
+    Body (JSON, all fields optional):
+    ``{"command": str, "cols": int, "rows": int, "cwd": str, "envs": dict}``
+
+    Returns: ``{"pid": int, "cols": int, "rows": int}``
+    """
+    await _require_auth(container_name, api_key)
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    info = await pty_manager.create(
+        command=body.get("command"),
+        cols=int(body.get("cols", 80)),
+        rows=int(body.get("rows", 24)),
+        cwd=body.get("cwd"),
+        envs=body.get("envs"),
+    )
+    return info
+
+
+@app.delete("/pty/{pid}")
+async def pty_kill(
+    pid: int,
+    container_name: Optional[str] = Header(None, alias="X-Container-Name"),
+    api_key: Optional[str] = Header(None, alias="X-API-Key"),
+):
+    """Kill PTY session *pid*.
+
+    Returns: ``{"killed": bool}``
+    """
+    await _require_auth(container_name, api_key)
+    killed = await pty_manager.kill(pid)
+    return {"killed": killed}
+
+
+@app.post("/pty/{pid}/stdin")
+async def pty_stdin(
+    pid: int,
+    request: Request,
+    container_name: Optional[str] = Header(None, alias="X-Container-Name"),
+    api_key: Optional[str] = Header(None, alias="X-API-Key"),
+):
+    """Write data to stdin of PTY session *pid*.
+
+    Body: ``{"data": "<base64-encoded bytes>"}``
+    """
+    await _require_auth(container_name, api_key)
+    body = await request.json()
+    raw = base64.b64decode(body.get("data", ""))
+    await pty_manager.send_stdin(pid, raw)
+    return {"ok": True}
+
+
+@app.post("/pty/{pid}/resize")
+async def pty_resize(
+    pid: int,
+    request: Request,
+    container_name: Optional[str] = Header(None, alias="X-Container-Name"),
+    api_key: Optional[str] = Header(None, alias="X-API-Key"),
+):
+    """Resize the terminal for PTY session *pid*.
+
+    Body: ``{"cols": int, "rows": int}``
+    """
+    await _require_auth(container_name, api_key)
+    body = await request.json()
+    await pty_manager.resize(pid, int(body.get("cols", 80)), int(body.get("rows", 24)))
+    return {"ok": True}
+
+
+@app.get("/pty/{pid}/stream")
+async def pty_stream(
+    pid: int,
+    container_name: Optional[str] = Header(None, alias="X-Container-Name"),
+    api_key: Optional[str] = Header(None, alias="X-API-Key"),
+):
+    """SSE stream for PTY session *pid*.
+
+    Events:
+    - ``data: {"type": "output", "data": "<base64>"}``
+    - ``data: {"type": "exit", "code": <int>}``
+    """
+    await _require_auth(container_name, api_key)
+
+    q = pty_manager.subscribe(pid)
+
+    async def _generate():
+        try:
+            while True:
+                msg = await q.get()
+                if msg["type"] == "output":
+                    payload = {"type": "output", "data": base64.b64encode(msg["data"]).decode()}
+                else:
+                    payload = {"type": "exit", "code": msg.get("code", 0)}
+                yield f"data: {json.dumps(payload)}\n\n"
+                if msg["type"] == "exit":
+                    break
+        finally:
+            pty_manager.unsubscribe(pid, q)
+
+    return StreamingResponse(
+        _generate(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
+    )
+
+
+@app.websocket("/pty/{pid}/ws")
+async def pty_ws(
+    pid: int,
+    websocket: WebSocket,
+):
+    """WebSocket endpoint for interactive PTY session *pid*.
+
+    Client → Server messages (JSON):
+    - ``{"type": "stdin",   "data": "<base64>"}``
+    - ``{"type": "resize",  "cols": N, "rows": N}``
+    - ``{"type": "disconnect"}``
+
+    Server → Client messages (JSON):
+    - ``{"type": "output", "data": "<base64>"}``
+    - ``{"type": "exit",   "code": N}``
+    """
+    await websocket.accept()
+
+    q = pty_manager.subscribe(pid)
+
+    async def _send_output():
+        """Forward PTY output to the WebSocket client."""
+        try:
+            while True:
+                msg = await q.get()
+                if msg["type"] == "output":
+                    payload = {"type": "output", "data": base64.b64encode(msg["data"]).decode()}
+                else:
+                    payload = {"type": "exit", "code": msg.get("code", 0)}
+                await websocket.send_text(json.dumps(payload))
+                if msg["type"] == "exit":
+                    break
+        except Exception:
+            pass
+        finally:
+            pty_manager.unsubscribe(pid, q)
+
+    output_task = asyncio.create_task(_send_output())
+
+    try:
+        while True:
+            try:
+                raw = await websocket.receive_text()
+            except WebSocketDisconnect:
+                break
+            except Exception:
+                break
+
+            try:
+                msg = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+
+            msg_type = msg.get("type")
+            if msg_type == "stdin":
+                data = base64.b64decode(msg.get("data", ""))
+                await pty_manager.send_stdin(pid, data)
+            elif msg_type == "resize":
+                await pty_manager.resize(pid, int(msg.get("cols", 80)), int(msg.get("rows", 24)))
+            elif msg_type == "disconnect":
+                break
+    finally:
+        output_task.cancel()
+        pty_manager.unsubscribe(pid, q)
+        try:
+            await websocket.close()
+        except Exception:
+            pass
 
 
 @app.post("/responses")

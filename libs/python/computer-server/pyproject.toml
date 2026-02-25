@@ -25,6 +25,8 @@ dependencies = [
     "pywinctl>=0.4.1",
     "playwright>=1.40.0",
     "fastmcp>=2.0,<3",
+    # PTY support (wraps cua-auto terminal engine)
+    "cua-auto>=0.1.0",
     # OS-specific runtime deps
     "pyobjc-framework-Cocoa>=10.1; sys_platform == 'darwin'",
     "pyobjc-framework-Quartz>=10.1; sys_platform == 'darwin'",
@@ -82,3 +84,4 @@ api = "python -m computer_server"
 
 [tool.uv.sources]
 cua-core = { workspace = true }
+cua-auto = { path = "../cua-auto", editable = true }

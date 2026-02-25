@@ -49,8 +49,12 @@ mss = [
 windows = [
     "pywin32>=306; sys_platform == 'win32'",
 ]
+# PTY support
+pty = [
+    "pywinpty>=2.0.0; sys_platform == 'win32'",
+]
 all = [
-    "cua-auto[mss,windows]",
+    "cua-auto[mss,windows,pty]",
 ]
 dev = [
     "pytest>=8.0.0",

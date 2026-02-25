@@ -1142,15 +1142,15 @@ def _cmd_drag(args: argparse.Namespace) -> int:
     return run_async(_run())
 
 
-def _cmd_shell(args: argparse.Namespace) -> int:
+def _default_shell() -> str:
+    return "powershell" if sys.platform == "win32" else "bash"
+
+
+def _cmd_shell_noninteractive(command: str | None, args: argparse.Namespace) -> int:
+    """Run a non-interactive shell command via run_command (original behaviour)."""
     from cua_cli.utils.async_utils import run_async
 
-    t = _require_target()
-    if not t:
-        return 1
-
-    command = " ".join(args.command)
-    if not command.strip():
+    if not command or not command.strip():
         return _fail("No command provided")
 
     async def _run() -> int:
@@ -1178,6 +1178,275 @@ def _cmd_shell(args: argparse.Namespace) -> int:
         return rc
 
     return run_async(_run())
+
+
+def _shell_host_pty(command: str | None) -> int:
+    """Interactive PTY session on the local host via cua_auto.terminal."""
+    import shutil
+    import signal
+    import threading
+
+    try:
+        import cua_auto.terminal as _term
+    except ImportError as e:
+        return _fail(f"cua-auto not installed: {e}")
+
+    cols, rows = shutil.get_terminal_size((80, 24))
+
+    def _on_data(data: bytes) -> None:
+        try:
+            sys.stdout.buffer.write(data)
+            sys.stdout.buffer.flush()
+        except Exception:
+            pass
+
+    session = _term.terminal.create(
+        command=command or _default_shell(),
+        cols=cols,
+        rows=rows,
+        on_data=_on_data,
+    )
+
+    if sys.platform == "win32":
+        # Windows: use msvcrt for raw stdin reading
+        import msvcrt
+
+        def _stdin_loop() -> None:
+            while True:
+                try:
+                    ch = msvcrt.getch()
+                    if not ch:
+                        break
+                    _term.terminal.send_stdin(session.pid, ch)
+                except Exception:
+                    break
+
+        stdin_thread = threading.Thread(target=_stdin_loop, daemon=True)
+        stdin_thread.start()
+        exit_code = _term.terminal.wait(session.pid)
+
+    else:
+        # Unix/macOS: set raw mode, SIGWINCH for resize
+        import tty
+        import termios
+
+        old_settings = termios.tcgetattr(sys.stdin.fileno())
+
+        def _resize(_sig=None, _frame=None) -> None:
+            c, r = shutil.get_terminal_size((80, 24))
+            _term.terminal.resize(session.pid, c, r)
+
+        signal.signal(signal.SIGWINCH, _resize)
+
+        tty.setraw(sys.stdin.fileno())
+
+        def _stdin_loop() -> None:
+            while True:
+                try:
+                    data = os.read(sys.stdin.fileno(), 1024)
+                    if not data:
+                        break
+                    _term.terminal.send_stdin(session.pid, data)
+                except Exception:
+                    break
+
+        stdin_thread = threading.Thread(target=_stdin_loop, daemon=True)
+        stdin_thread.start()
+
+        exit_code = _term.terminal.wait(session.pid)
+
+        # Restore terminal settings
+        try:
+            termios.tcsetattr(sys.stdin, termios.TCSADRAIN, old_settings)
+        except Exception:
+            pass
+
+        signal.signal(signal.SIGWINCH, signal.SIG_DFL)
+
+    return exit_code or 0
+
+
+async def _shell_remote_pty(provider: str, name: str, command: str | None) -> int:
+    """Interactive PTY session via WebSocket to a remote computer-server."""
+    import asyncio
+    import shutil
+    import signal
+    import threading
+
+    import aiohttp
+
+    cols, rows = shutil.get_terminal_size((80, 24))
+
+    try:
+        api_url = await _get_api_url(provider, name)
+    except Exception as e:
+        return _fail(str(e))
+
+    ws_url = api_url.replace("https://", "wss://").replace("http://", "ws://")
+
+    # Build auth headers
+    headers: dict = {}
+    if provider in ("cloud", "cloudv2"):
+        from cua_cli.auth.store import get_api_key
+
+        api_key = get_api_key()
+        if api_key:
+            headers["X-API-Key"] = api_key
+        if name:
+            headers["X-Container-Name"] = name
+
+    # Create PTY session
+    try:
+        async with aiohttp.ClientSession() as http:
+            async with http.post(
+                f"{api_url}/pty",
+                json={"command": command or _default_shell(), "cols": cols, "rows": rows},
+                headers={**headers, "Content-Type": "application/json"},
+                timeout=aiohttp.ClientTimeout(total=15),
+            ) as resp:
+                resp.raise_for_status()
+                data = await resp.json()
+    except Exception as e:
+        return _fail(f"Failed to create PTY session: {e}")
+
+    pid: int = data["pid"]
+
+    exit_code_cell: list[int] = [0]
+    done_event = asyncio.Event()
+
+    if sys.platform == "win32":
+        # Windows: use msvcrt for raw stdin
+        import msvcrt
+
+        async def _run_ws() -> None:
+            async with aiohttp.ClientSession() as http:
+                async with http.ws_connect(f"{ws_url}/pty/{pid}/ws") as ws:
+                    def _stdin_loop() -> None:
+                        while not done_event.is_set():
+                            try:
+                                ch = msvcrt.getch()
+                                if ch:
+                                    encoded = base64.b64encode(ch).decode()
+                                    asyncio.run_coroutine_threadsafe(
+                                        ws.send_str(json.dumps({"type": "stdin", "data": encoded})),
+                                        asyncio.get_event_loop(),
+                                    )
+                            except Exception:
+                                break
+
+                    t = threading.Thread(target=_stdin_loop, daemon=True)
+                    t.start()
+
+                    async for raw_msg in ws:
+                        if raw_msg.type == aiohttp.WSMsgType.TEXT:
+                            try:
+                                msg = json.loads(raw_msg.data)
+                            except Exception:
+                                continue
+                            if msg.get("type") == "output":
+                                chunk = base64.b64decode(msg["data"])
+                                sys.stdout.buffer.write(chunk)
+                                sys.stdout.buffer.flush()
+                            elif msg.get("type") == "exit":
+                                exit_code_cell[0] = int(msg.get("code", 0))
+                                break
+                        elif raw_msg.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR):
+                            break
+                    done_event.set()
+
+        await _run_ws()
+
+    else:
+        import tty
+        import termios
+
+        old_settings = termios.tcgetattr(sys.stdin.fileno())
+        tty.setraw(sys.stdin.fileno())
+
+        loop = asyncio.get_event_loop()
+
+        async def _run_ws() -> None:
+            async with aiohttp.ClientSession() as http:
+                async with http.ws_connect(f"{ws_url}/pty/{pid}/ws") as ws:
+                    def _resize(_sig=None, _frame=None) -> None:
+                        c, r = shutil.get_terminal_size((80, 24))
+                        asyncio.run_coroutine_threadsafe(
+                            ws.send_str(json.dumps({"type": "resize", "cols": c, "rows": r})),
+                            loop,
+                        )
+
+                    signal.signal(signal.SIGWINCH, _resize)
+
+                    def _stdin_loop() -> None:
+                        while not done_event.is_set():
+                            try:
+                                data = os.read(sys.stdin.fileno(), 1024)
+                                if not data:
+                                    break
+                                encoded = base64.b64encode(data).decode()
+                                asyncio.run_coroutine_threadsafe(
+                                    ws.send_str(json.dumps({"type": "stdin", "data": encoded})),
+                                    loop,
+                                )
+                            except Exception:
+                                break
+
+                    t = threading.Thread(target=_stdin_loop, daemon=True)
+                    t.start()
+
+                    async for raw_msg in ws:
+                        if raw_msg.type == aiohttp.WSMsgType.TEXT:
+                            try:
+                                msg = json.loads(raw_msg.data)
+                            except Exception:
+                                continue
+                            if msg.get("type") == "output":
+                                chunk = base64.b64decode(msg["data"])
+                                sys.stdout.buffer.write(chunk)
+                                sys.stdout.buffer.flush()
+                            elif msg.get("type") == "exit":
+                                exit_code_cell[0] = int(msg.get("code", 0))
+                                break
+                        elif raw_msg.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR):
+                            break
+
+                    done_event.set()
+
+        try:
+            await _run_ws()
+        finally:
+            try:
+                termios.tcsetattr(sys.stdin, termios.TCSADRAIN, old_settings)
+            except Exception:
+                pass
+            signal.signal(signal.SIGWINCH, signal.SIG_DFL)
+
+    return exit_code_cell[0]
+
+
+def _cmd_shell(args: argparse.Namespace) -> int:
+    command_parts = getattr(args, "command", [])
+    command = " ".join(command_parts).strip() if command_parts else None
+
+    # Non-interactive (piped / scripted): keep old run_command behaviour
+    if not sys.stdin.isatty():
+        return _cmd_shell_noninteractive(command, args)
+
+    # Interactive PTY mode
+    t = _require_target()
+    if not t:
+        return 1
+
+    state = _load_state()
+    provider = state["provider"]
+    name = state.get("name", "")
+
+    if provider == "host":
+        return _shell_host_pty(command)
+
+    from cua_cli.utils.async_utils import run_async
+
+    return run_async(_shell_remote_pty(provider, name, command))
 
 
 def _cmd_open(args: argparse.Namespace) -> int:
@@ -1511,8 +1780,13 @@ Examples:
     dr.add_argument("y2", type=int)
 
     # shell
-    sh = sub.add_parser("shell", help="Run a shell command in the VM")
+    sh = sub.add_parser(
+        "shell",
+        help="Run a shell command (or open an interactive terminal) in the VM",
+    )
     sh.add_argument("command", nargs=argparse.REMAINDER)
+    sh.add_argument("--cols", type=int, default=None, help="Terminal width (default: auto-detect)")
+    sh.add_argument("--rows", type=int, default=None, help="Terminal height (default: auto-detect)")
 
     # open
     op = sub.add_parser("open", help="Open a file or URL")

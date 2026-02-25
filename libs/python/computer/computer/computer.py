@@ -1053,6 +1053,33 @@ class Computer:
         return result_interface
 
     @property
+    def pty(self) -> "PtyInterface":
+        """Return a :class:`~computer.pty.PtyInterface` for spawning interactive PTY sessions.
+
+        The computer must be started (``async with Computer()`` or ``await run()``)
+        before accessing this property.
+
+        Example::
+
+            async with Computer(provider_type="docker", name="my-vm") as c:
+                handle = await c.pty.create(command="bash", cols=80, rows=24,
+                                             on_data=lambda d: print(d.decode()))
+                await handle.send_stdin(b"echo hello\\n")
+                await handle.send_stdin(b"exit\\n")
+                await handle.wait()
+        """
+        from .pty import PtyInterface
+
+        if self._interface is None:
+            raise RuntimeError("Computer not started. Use 'async with Computer()' first.")
+        protocol = "https" if self.api_key else "http"
+        port = getattr(self._interface, "_api_port", None) or self.api_port or 8000
+        ip = getattr(self._interface, "ip_address", "localhost")
+        base_url = f"{protocol}://{ip}:{port}"
+        vm_name = getattr(self.config, "name", None) or ""
+        return PtyInterface(base_url, api_key=self.api_key, vm_name=vm_name or None)
+
+    @property
     def tracing(self) -> ComputerTracing:
         """Get the computer tracing instance for recording sessions.
 

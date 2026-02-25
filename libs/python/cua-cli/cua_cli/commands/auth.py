@@ -161,7 +161,11 @@ def cmd_status(args: argparse.Namespace) -> int:
 
     async def _fetch():
         url = f"{_get_api_base()}/v1/me"
-        headers = {"Authorization": f"Bearer {api_key}", "Accept": "application/json", **cua_version_headers()}
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Accept": "application/json",
+            **cua_version_headers(),
+        }
         async with aiohttp.ClientSession() as session:
             timeout = aiohttp.ClientTimeout(total=10)
             async with session.get(url, headers=headers, timeout=timeout) as resp:

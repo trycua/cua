@@ -515,6 +515,36 @@ async def _print_context(provider_type: str, name: str, state: dict | None = Non
     print(f"💻 {vm_label}\t🔍 {zoom_info}")
 
 
+async def _take_screenshot_for_recording(
+    provider_type: str, name: str, state: dict
+) -> bytes | None:
+    """Silently take a screenshot for trajectory recording. Returns None on failure."""
+    try:
+        img_bytes, _, _ = await _take_screenshot_data(provider_type, name, state)
+        return img_bytes
+    except Exception:
+        return None
+
+
+def _maybe_record_turn(
+    args: argparse.Namespace,
+    state: dict,
+    action_type: str,
+    action_params: dict,
+    screenshot_bytes: bytes | None = None,
+) -> None:
+    """Record a trajectory turn if recording is enabled. Never raises."""
+    if getattr(args, "no_record", False):
+        return
+    try:
+        from cua_cli.utils.trajectory_recorder import ensure_session, record_turn
+
+        session_dir = ensure_session(state)
+        record_turn(session_dir, action_type, action_params, screenshot_bytes)
+    except Exception:
+        pass  # Never interfere with the primary command
+
+
 def _require_target() -> dict | None:
     state = _load_state()
     if not state.get("provider"):
@@ -550,6 +580,12 @@ def _cmd_switch(args: argparse.Namespace) -> int:
                 "zoom_scale": 1.0,
             }
         )
+        try:
+            from cua_cli.utils.trajectory_recorder import reset_session
+
+            reset_session(_load_state())
+        except Exception:
+            pass
         msg = "Switched to host (local PC)"
         if had_zoom:
             msg += " — zoom reset"
@@ -569,6 +605,12 @@ def _cmd_switch(args: argparse.Namespace) -> int:
             "zoom_scale": 1.0,
         }
     )
+    try:
+        from cua_cli.utils.trajectory_recorder import reset_session
+
+        reset_session(_load_state())
+    except Exception:
+        pass
     label = f"{provider}/{name}" if name else provider
     msg = f"Switched to {label}"
     if had_zoom:
@@ -733,6 +775,8 @@ def _cmd_screenshot(args: argparse.Namespace) -> int:
         with open(save_path, "wb") as f:
             f.write(img_bytes)
 
+        _maybe_record_turn(args, state, "screenshot", {}, img_bytes)
+
         rc = _ok(f"screenshot saved to {save_path}")
         await _print_context(state["provider"], state.get("name", ""), state)
         return rc
@@ -867,6 +911,8 @@ def _cmd_click(args: argparse.Namespace) -> int:
         if not result.get("success", True):
             await _print_context(p, n, state)
             return _fail(result.get("error", "click failed"))
+        _scr = await _take_screenshot_for_recording(p, n, state)
+        _maybe_record_turn(args, state, "click", {"x": args.x, "y": args.y}, _scr)
         rc = _ok(f"clicked ({args.x}, {args.y}) [{button}]")
         await _print_context(p, n, state)
         return rc
@@ -894,6 +940,8 @@ def _cmd_dclick(args: argparse.Namespace) -> int:
         if not result.get("success", True):
             await _print_context(p, n, state)
             return _fail(result.get("error", "double-click failed"))
+        _scr = await _take_screenshot_for_recording(p, n, state)
+        _maybe_record_turn(args, state, "double_click", {"x": args.x, "y": args.y}, _scr)
         rc = _ok(f"double-clicked ({args.x}, {args.y})")
         await _print_context(p, n, state)
         return rc
@@ -921,6 +969,7 @@ def _cmd_move(args: argparse.Namespace) -> int:
         if not result.get("success", True):
             await _print_context(p, n, state)
             return _fail(result.get("error", "move failed"))
+        _maybe_record_turn(args, state, "move", {"x": args.x, "y": args.y})
         rc = _ok(f"cursor moved to ({args.x}, {args.y})")
         await _print_context(p, n, state)
         return rc
@@ -947,6 +996,8 @@ def _cmd_type(args: argparse.Namespace) -> int:
         if not result.get("success", True):
             await _print_context(p, n, state)
             return _fail(result.get("error", "type failed"))
+        _scr = await _take_screenshot_for_recording(p, n, state)
+        _maybe_record_turn(args, state, "type", {"text": args.text}, _scr)
         preview = args.text[:40] + ("…" if len(args.text) > 40 else "")
         rc = _ok(f"typed: {preview!r}")
         await _print_context(p, n, state)
@@ -974,6 +1025,8 @@ def _cmd_key(args: argparse.Namespace) -> int:
         if not result.get("success", True):
             await _print_context(p, n, state)
             return _fail(result.get("error", "key press failed"))
+        _scr = await _take_screenshot_for_recording(p, n, state)
+        _maybe_record_turn(args, state, "keypress", {"keys": [args.key]}, _scr)
         rc = _ok(f"pressed key: {args.key}")
         await _print_context(p, n, state)
         return rc
@@ -1002,6 +1055,8 @@ def _cmd_hotkey(args: argparse.Namespace) -> int:
         if not result.get("success", True):
             await _print_context(p, n, state)
             return _fail(result.get("error", "hotkey failed"))
+        _scr = await _take_screenshot_for_recording(p, n, state)
+        _maybe_record_turn(args, state, "hotkey", {"keys": keys}, _scr)
         rc = _ok(f"hotkey: {'+'.join(keys)}")
         await _print_context(p, n, state)
         return rc
@@ -1030,6 +1085,14 @@ def _cmd_scroll(args: argparse.Namespace) -> int:
         if not result.get("success", True):
             await _print_context(p, n, state)
             return _fail(result.get("error", "scroll failed"))
+        _scr = await _take_screenshot_for_recording(p, n, state)
+        _maybe_record_turn(
+            args,
+            state,
+            "scroll",
+            {"scroll_direction": args.direction, "scroll_amount": args.amount},
+            _scr,
+        )
         rc = _ok(f"scrolled {args.direction} {args.amount}x")
         await _print_context(p, n, state)
         return rc
@@ -1063,6 +1126,14 @@ def _cmd_drag(args: argparse.Namespace) -> int:
         if not result.get("success", True):
             await _print_context(p, n, state)
             return _fail(result.get("error", "drag failed"))
+        _scr = await _take_screenshot_for_recording(p, n, state)
+        _maybe_record_turn(
+            args,
+            state,
+            "drag",
+            {"start_x": args.x1, "start_y": args.y1, "end_x": args.x2, "end_y": args.y2},
+            _scr,
+        )
         rc = _ok(f"dragged ({args.x1},{args.y1}) → ({args.x2},{args.y2})")
         await _print_context(p, n, state)
         return rc
@@ -1099,6 +1170,7 @@ def _cmd_shell(args: argparse.Namespace) -> int:
             stderr = result.get("stderr", "").strip()
             await _print_context(state["provider"], state.get("name", ""), state)
             return _fail(f"exit {rc_code}: {stderr or stdout}")
+        _maybe_record_turn(args, state, "shell", {"command": command})
         preview = (stdout[:80] + "…") if len(stdout) > 80 else stdout
         rc = _ok(preview if preview else "done")
         await _print_context(state["provider"], state.get("name", ""), state)
@@ -1126,6 +1198,7 @@ def _cmd_open(args: argparse.Namespace) -> int:
         if not result.get("success", True):
             await _print_context(state["provider"], state.get("name", ""), state)
             return _fail(result.get("error", "open failed"))
+        _maybe_record_turn(args, state, "open", {"path": args.path})
         rc = _ok(f"opened: {args.path}")
         await _print_context(state["provider"], state.get("name", ""), state)
         return rc
@@ -1356,6 +1429,13 @@ Examples:
   cua do window move <id> 0 0
   cua do window info <id>
 """,
+    )
+
+    p.add_argument(
+        "--no-record",
+        action="store_true",
+        default=False,
+        help="Disable trajectory recording for this command",
     )
 
     sub = p.add_subparsers(dest="do_action", metavar="action")

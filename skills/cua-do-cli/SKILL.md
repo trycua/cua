@@ -125,3 +125,22 @@ cua do window info <id>
 - Coords are image-space: zoom + max-length scaling are applied automatically.
 - `do-host-consent` is permanent until the consent file is deleted (`~/.cua/host_consented`).
 - Set `PYTHONIOENCODING=utf-8` on Windows for correct emoji output.
+
+## Trajectory Recording
+
+Every `cua do` action is automatically recorded to a replayable trajectory.
+
+- Stored at `~/.cua/trajectories/{machine_name}/{session_timestamp}/`
+- New session starts on `cua do switch`
+- Disable with `--no-record`: `cua do --no-record click 100 200`
+- After a session, mention the trajectory to the user:
+  "Your session was recorded. Run `cua trajectory view` to replay."
+
+```bash
+cua trajectory ls                         # list all sessions
+cua trajectory view                       # start local viewer for latest session
+cua trajectory view my-container          # latest for specific machine
+cua trajectory view --port 9090           # use custom port
+cua trajectory stop                       # stop the viewer server
+cua trajectory clean --older-than 7       # delete old sessions
+```

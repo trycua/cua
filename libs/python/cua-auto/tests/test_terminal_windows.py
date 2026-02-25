@@ -103,9 +103,7 @@ class TestExitCodes:
         from cua_auto.terminal import Terminal
 
         t = Terminal()
-        session = t.create(
-            command="cmd /c exit 1", cols=80, rows=24, on_data=lambda _: None
-        )
+        session = t.create(command="cmd /c exit 1", cols=80, rows=24, on_data=lambda _: None)
         code = t.wait(session.pid, timeout=5.0)
         assert code == 1
 
@@ -119,9 +117,7 @@ class TestExitCodes:
         from cua_auto.terminal import Terminal
 
         t = Terminal()
-        session = t.create(
-            command="cmd /c exit 42", cols=80, rows=24, on_data=lambda _: None
-        )
+        session = t.create(command="cmd /c exit 42", cols=80, rows=24, on_data=lambda _: None)
         code = t.wait(session.pid, timeout=5.0)
         assert code == 42
 

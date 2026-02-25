@@ -18,7 +18,7 @@ Usage::
     title = window.get_active_window_title()
 """
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 
 from cua_auto import clipboard, keyboard, mouse, screen, shell, window
 

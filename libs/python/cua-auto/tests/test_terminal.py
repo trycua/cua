@@ -45,7 +45,7 @@ class TestTerminalImport:
         import cua_auto.terminal  # noqa: F401
 
     def test_singleton_exists(self):
-        from cua_auto.terminal import terminal, Terminal
+        from cua_auto.terminal import Terminal, terminal
 
         assert isinstance(terminal, Terminal)
 

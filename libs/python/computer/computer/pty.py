@@ -86,9 +86,7 @@ class PtyInterface:
         vm_name: Optional[str] = None,
     ) -> None:
         self._base_url = base_url.rstrip("/")
-        self._ws_base = (
-            self._base_url.replace("https://", "wss://").replace("http://", "ws://")
-        )
+        self._ws_base = self._base_url.replace("https://", "wss://").replace("http://", "ws://")
         self._api_key = api_key
         self._vm_name = vm_name
 
@@ -339,13 +337,16 @@ class PtyInterface:
         try:
             async with aiohttp.ClientSession() as http:
                 async with http.ws_connect(ws_url, params=params) as ws:
+
                     async def _write_stdin():
                         while True:
                             data = await stdin_queue.get()
-                            payload = json.dumps({
-                                "type": "stdin",
-                                "data": base64.b64encode(data).decode(),
-                            })
+                            payload = json.dumps(
+                                {
+                                    "type": "stdin",
+                                    "data": base64.b64encode(data).decode(),
+                                }
+                            )
                             await ws.send_str(payload)
 
                     writer_task = asyncio.create_task(_write_stdin())

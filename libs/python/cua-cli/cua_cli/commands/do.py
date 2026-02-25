@@ -1229,8 +1229,8 @@ def _shell_host_pty(command: str | None, cols: int | None = None, rows: int | No
 
     else:
         # Unix/macOS: set raw mode, SIGWINCH for resize
-        import tty
         import termios
+        import tty
 
         old_settings = termios.tcgetattr(sys.stdin.fileno())
 
@@ -1265,7 +1265,9 @@ def _shell_host_pty(command: str | None, cols: int | None = None, rows: int | No
     return exit_code or 0
 
 
-async def _shell_remote_pty(provider: str, name: str, command: str | None, cols: int | None = None, rows: int | None = None) -> int:
+async def _shell_remote_pty(
+    provider: str, name: str, command: str | None, cols: int | None = None, rows: int | None = None
+) -> int:
     """Interactive PTY session via WebSocket to a remote computer-server."""
     import asyncio
     import shutil
@@ -1325,6 +1327,7 @@ async def _shell_remote_pty(provider: str, name: str, command: str | None, cols:
         async def _run_ws() -> None:
             async with aiohttp.ClientSession() as http:
                 async with http.ws_connect(f"{ws_url}/pty/{pid}/ws", params=ws_params) as ws:
+
                     def _stdin_loop() -> None:
                         while not done_event.is_set():
                             try:
@@ -1361,8 +1364,8 @@ async def _shell_remote_pty(provider: str, name: str, command: str | None, cols:
         await _run_ws()
 
     else:
-        import tty
         import termios
+        import tty
 
         old_settings = termios.tcgetattr(sys.stdin.fileno())
         tty.setraw(sys.stdin.fileno())
@@ -1372,6 +1375,7 @@ async def _shell_remote_pty(provider: str, name: str, command: str | None, cols:
         async def _run_ws() -> None:
             async with aiohttp.ClientSession() as http:
                 async with http.ws_connect(f"{ws_url}/pty/{pid}/ws", params=ws_params) as ws:
+
                     def _resize(_sig=None, _frame=None) -> None:
                         c, r = shutil.get_terminal_size((80, 24))
                         asyncio.run_coroutine_threadsafe(

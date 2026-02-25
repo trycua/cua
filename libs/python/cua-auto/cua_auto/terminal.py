@@ -201,10 +201,10 @@ class Terminal:
         envs: Optional[Dict[str, str]],
     ) -> PtySession:
         import fcntl
+        import pty as _pty
         import struct
         import subprocess
         import termios
-        import pty as _pty
 
         cmd_str = command or "bash"
         if isinstance(cmd_str, str):
@@ -270,7 +270,9 @@ class Terminal:
                 holder.exit_code = proc.wait()
                 holder._exit_event.set()
 
-        holder.reader_thread = threading.Thread(target=_reader, daemon=True, name=f"pty-reader-{pid}")
+        holder.reader_thread = threading.Thread(
+            target=_reader, daemon=True, name=f"pty-reader-{pid}"
+        )
         holder.reader_thread.start()
 
         return PtySession(pid=pid, cols=cols, rows=rows)
@@ -288,8 +290,7 @@ class Terminal:
             import winpty  # type: ignore[import]
         except ImportError as exc:
             raise ImportError(
-                "pywinpty is required for PTY on Windows. "
-                "Install with: pip install pywinpty"
+                "pywinpty is required for PTY on Windows. " "Install with: pip install pywinpty"
             ) from exc
 
         cmd = command or "powershell"
@@ -342,7 +343,9 @@ class Terminal:
                     holder.exit_code = -1
                 holder._exit_event.set()
 
-        holder.reader_thread = threading.Thread(target=_reader, daemon=True, name=f"pty-reader-{pid}")
+        holder.reader_thread = threading.Thread(
+            target=_reader, daemon=True, name=f"pty-reader-{pid}"
+        )
         holder.reader_thread.start()
 
         return PtySession(pid=pid, cols=cols, rows=rows)

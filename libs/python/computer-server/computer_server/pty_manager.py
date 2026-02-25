@@ -136,7 +136,9 @@ class PtyManager:
 
         threading.Thread(target=_watch_exit, daemon=True, name=f"pty-exit-{session.pid}").start()
 
-        logger.info("PTY session created: pid=%d cmd=%r cols=%d rows=%d", session.pid, command, cols, rows)
+        logger.info(
+            "PTY session created: pid=%d cmd=%r cols=%d rows=%d", session.pid, command, cols, rows
+        )
         return {"pid": session.pid, "cols": session.cols, "rows": session.rows}
 
     async def send_stdin(self, pid: int, data: bytes) -> None:

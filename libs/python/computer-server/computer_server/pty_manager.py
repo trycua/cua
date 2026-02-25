@@ -47,6 +47,8 @@ class PtyManager:
     def __init__(self) -> None:
         # pid → list of subscriber queues
         self._queues: Dict[int, List[asyncio.Queue]] = {}
+        # pid → {"cols": int, "rows": int}
+        self._sessions: Dict[int, dict] = {}
         self._terminal = None
 
     # ------------------------------------------------------------------
@@ -77,16 +79,20 @@ class PtyManager:
         Returns:
             ``{"pid": int, "cols": int, "rows": int}``
         """
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         terminal = self._get_terminal()
 
         # We need pid to route output, but we only know it after create().
         # Use a mutable cell so the callback can look up the pid after creation.
+        # early_buffer holds chunks that arrive before pid_cell[0] is set (the
+        # reader thread can fire before asyncio.to_thread returns the session).
         pid_cell: List[Optional[int]] = [None]
+        early_buffer: List[bytes] = []
 
         def _on_data(data: bytes) -> None:
             pid = pid_cell[0]
             if pid is None:
+                early_buffer.append(data)
                 return
             msg = {"type": "output", "data": data}
             for q in list(self._queues.get(pid, [])):
@@ -107,6 +113,16 @@ class PtyManager:
 
         pid_cell[0] = session.pid
         self._queues[session.pid] = []
+        self._sessions[session.pid] = {"cols": session.cols, "rows": session.rows}
+
+        # Flush any output that arrived before pid_cell[0] was set.
+        for chunk in early_buffer:
+            msg = {"type": "output", "data": chunk}
+            for q in list(self._queues[session.pid]):
+                try:
+                    loop.call_soon_threadsafe(q.put_nowait, msg)
+                except Exception:
+                    pass
 
         # Watch for process exit in a daemon thread, then broadcast sentinel.
         def _watch_exit() -> None:
@@ -132,6 +148,16 @@ class PtyManager:
         """Resize the terminal for session *pid*."""
         terminal = self._get_terminal()
         await asyncio.to_thread(terminal.resize, pid, cols, rows)
+        if pid in self._sessions:
+            self._sessions[pid]["cols"] = cols
+            self._sessions[pid]["rows"] = rows
+
+    def get_info(self, pid: int) -> Optional[dict]:
+        """Return ``{"pid": int, "cols": int, "rows": int}`` for *pid*, or ``None`` if unknown."""
+        info = self._sessions.get(pid)
+        if info is None:
+            return None
+        return {"pid": pid, "cols": info["cols"], "rows": info["rows"]}
 
     async def kill(self, pid: int) -> bool:
         """Kill session *pid*.

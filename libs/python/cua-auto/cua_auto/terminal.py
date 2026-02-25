@@ -92,31 +92,37 @@ class Terminal:
         """Write *data* to the stdin of session *pid*."""
         with self._lock:
             holder = self._sessions.get(pid)
-        if holder is None:
-            raise KeyError(f"No PTY session with pid {pid}")
-        if holder.master_fd is not None:
-            os.write(holder.master_fd, data)
-        elif holder.winpty_pty is not None:
-            holder.winpty_pty.write(data.decode("utf-8", errors="replace"))
+            if holder is None:
+                raise KeyError(f"No PTY session with pid {pid}")
+            if holder.master_fd is not None:
+                try:
+                    os.write(holder.master_fd, data)
+                except OSError:
+                    pass
+            elif holder.winpty_pty is not None:
+                holder.winpty_pty.write(data.decode("utf-8", errors="replace"))
 
     def resize(self, pid: int, cols: int, rows: int) -> None:
         """Resize the terminal window for session *pid*."""
         with self._lock:
             holder = self._sessions.get(pid)
-        if holder is None:
-            return
-        if holder.master_fd is not None:
-            import fcntl
-            import struct
-            import termios
+            if holder is None:
+                return
+            if holder.master_fd is not None:
+                import fcntl
+                import struct
+                import termios
 
-            fcntl.ioctl(
-                holder.master_fd,
-                termios.TIOCSWINSZ,
-                struct.pack("HHHH", rows, cols, 0, 0),
-            )
-        elif holder.winpty_pty is not None:
-            holder.winpty_pty.setwinsize(rows, cols)
+                try:
+                    fcntl.ioctl(
+                        holder.master_fd,
+                        termios.TIOCSWINSZ,
+                        struct.pack("HHHH", rows, cols, 0, 0),
+                    )
+                except OSError:
+                    pass
+            elif holder.winpty_pty is not None:
+                holder.winpty_pty.setwinsize(rows, cols)
 
     def kill(self, pid: int) -> bool:
         """Kill the process for session *pid*.

@@ -1180,7 +1180,7 @@ def _cmd_shell_noninteractive(command: str | None, args: argparse.Namespace) -> 
     return run_async(_run())
 
 
-def _shell_host_pty(command: str | None) -> int:
+def _shell_host_pty(command: str | None, cols: int | None = None, rows: int | None = None) -> int:
     """Interactive PTY session on the local host via cua_auto.terminal."""
     import shutil
     import signal
@@ -1191,7 +1191,9 @@ def _shell_host_pty(command: str | None) -> int:
     except ImportError as e:
         return _fail(f"cua-auto not installed: {e}")
 
-    cols, rows = shutil.get_terminal_size((80, 24))
+    _auto_cols, _auto_rows = shutil.get_terminal_size((80, 24))
+    cols = cols if cols is not None else _auto_cols
+    rows = rows if rows is not None else _auto_rows
 
     def _on_data(data: bytes) -> None:
         try:
@@ -1237,7 +1239,6 @@ def _shell_host_pty(command: str | None) -> int:
             _term.terminal.resize(session.pid, c, r)
 
         signal.signal(signal.SIGWINCH, _resize)
-
         tty.setraw(sys.stdin.fileno())
 
         def _stdin_loop() -> None:
@@ -1251,22 +1252,20 @@ def _shell_host_pty(command: str | None) -> int:
                     break
 
         stdin_thread = threading.Thread(target=_stdin_loop, daemon=True)
-        stdin_thread.start()
-
-        exit_code = _term.terminal.wait(session.pid)
-
-        # Restore terminal settings
         try:
-            termios.tcsetattr(sys.stdin, termios.TCSADRAIN, old_settings)
-        except Exception:
-            pass
-
-        signal.signal(signal.SIGWINCH, signal.SIG_DFL)
+            stdin_thread.start()
+            exit_code = _term.terminal.wait(session.pid)
+        finally:
+            try:
+                termios.tcsetattr(sys.stdin.fileno(), termios.TCSADRAIN, old_settings)
+            except Exception:
+                pass
+            signal.signal(signal.SIGWINCH, signal.SIG_DFL)
 
     return exit_code or 0
 
 
-async def _shell_remote_pty(provider: str, name: str, command: str | None) -> int:
+async def _shell_remote_pty(provider: str, name: str, command: str | None, cols: int | None = None, rows: int | None = None) -> int:
     """Interactive PTY session via WebSocket to a remote computer-server."""
     import asyncio
     import shutil
@@ -1275,7 +1274,9 @@ async def _shell_remote_pty(provider: str, name: str, command: str | None) -> in
 
     import aiohttp
 
-    cols, rows = shutil.get_terminal_size((80, 24))
+    _auto_cols, _auto_rows = shutil.get_terminal_size((80, 24))
+    cols = cols if cols is not None else _auto_cols
+    rows = rows if rows is not None else _auto_rows
 
     try:
         api_url = await _get_api_url(provider, name)
@@ -1284,16 +1285,19 @@ async def _shell_remote_pty(provider: str, name: str, command: str | None) -> in
 
     ws_url = api_url.replace("https://", "wss://").replace("http://", "ws://")
 
-    # Build auth headers
+    # Build auth headers (for the initial POST) and query params (for the WS).
     headers: dict = {}
+    ws_params: dict = {}
     if provider in ("cloud", "cloudv2"):
         from cua_cli.auth.store import get_api_key
 
         api_key = get_api_key()
         if api_key:
             headers["X-API-Key"] = api_key
+            ws_params["api_key"] = api_key
         if name:
             headers["X-Container-Name"] = name
+            ws_params["container_name"] = name
 
     # Create PTY session
     try:
@@ -1320,7 +1324,7 @@ async def _shell_remote_pty(provider: str, name: str, command: str | None) -> in
 
         async def _run_ws() -> None:
             async with aiohttp.ClientSession() as http:
-                async with http.ws_connect(f"{ws_url}/pty/{pid}/ws") as ws:
+                async with http.ws_connect(f"{ws_url}/pty/{pid}/ws", params=ws_params) as ws:
                     def _stdin_loop() -> None:
                         while not done_event.is_set():
                             try:
@@ -1367,7 +1371,7 @@ async def _shell_remote_pty(provider: str, name: str, command: str | None) -> in
 
         async def _run_ws() -> None:
             async with aiohttp.ClientSession() as http:
-                async with http.ws_connect(f"{ws_url}/pty/{pid}/ws") as ws:
+                async with http.ws_connect(f"{ws_url}/pty/{pid}/ws", params=ws_params) as ws:
                     def _resize(_sig=None, _frame=None) -> None:
                         c, r = shutil.get_terminal_size((80, 24))
                         asyncio.run_coroutine_threadsafe(
@@ -1428,25 +1432,28 @@ def _cmd_shell(args: argparse.Namespace) -> int:
     command_parts = getattr(args, "command", [])
     command = " ".join(command_parts).strip() if command_parts else None
 
+    t = _require_target()
+    if not t:
+        return 1
+
     # Non-interactive (piped / scripted): keep old run_command behaviour
     if not sys.stdin.isatty():
         return _cmd_shell_noninteractive(command, args)
 
     # Interactive PTY mode
-    t = _require_target()
-    if not t:
-        return 1
-
     state = _load_state()
     provider = state["provider"]
     name = state.get("name", "")
 
+    cols: int | None = getattr(args, "cols", None)
+    rows: int | None = getattr(args, "rows", None)
+
     if provider == "host":
-        return _shell_host_pty(command)
+        return _shell_host_pty(command, cols=cols, rows=rows)
 
     from cua_cli.utils.async_utils import run_async
 
-    return run_async(_shell_remote_pty(provider, name, command))
+    return run_async(_shell_remote_pty(provider, name, command, cols=cols, rows=rows))
 
 
 def _cmd_open(args: argparse.Namespace) -> int:

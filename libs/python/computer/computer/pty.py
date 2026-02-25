@@ -57,7 +57,13 @@ class PtyHandle:
         await self._iface._disconnect(self.pid)
 
     async def wait(self) -> int:
-        """Block until the PTY session exits and return its exit code."""
+        """Block until the PTY session exits and return its exit code.
+
+        Raises:
+            LookupError: If the session for this handle's pid is not tracked
+                by the interface (e.g. the handle was never connected, or the
+                interface was recreated after a reconnect).
+        """
         return await self._iface._wait(self.pid)
 
 
@@ -234,7 +240,11 @@ class PtyInterface:
         """Re-open a WebSocket to an existing PTY session *pid*.
 
         Any previous connection for this pid is cancelled first.
+        The current terminal dimensions are fetched from the server so that
+        the returned :class:`PtyHandle` reflects any resizes since creation.
         """
+        import aiohttp
+
         sess = self._sessions.get(pid)
         if sess:
             ws_task = sess.get("ws_task")
@@ -244,6 +254,22 @@ class PtyInterface:
                     await ws_task
                 except (asyncio.CancelledError, Exception):
                     pass
+
+        # Fetch current dimensions from the server.
+        cols, rows = 80, 24
+        try:
+            async with aiohttp.ClientSession() as http:
+                async with http.get(
+                    f"{self._base_url}/pty/{pid}",
+                    headers=self._auth_headers(),
+                    timeout=aiohttp.ClientTimeout(total=10),
+                ) as resp:
+                    if resp.status == 200:
+                        info = await resp.json()
+                        cols = int(info.get("cols", cols))
+                        rows = int(info.get("rows", rows))
+        except Exception as exc:
+            logger.debug("PTY connect: could not fetch dimensions for pid %d: %s", pid, exc)
 
         exit_event: asyncio.Event = asyncio.Event()
         exit_code_cell: list[int] = [0]
@@ -259,7 +285,7 @@ class PtyInterface:
         )
         self._sessions[pid]["ws_task"] = ws_task
 
-        return PtyHandle(pid=pid, cols=80, rows=24, _iface=self)
+        return PtyHandle(pid=pid, cols=cols, rows=rows, _iface=self)
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -279,10 +305,14 @@ class PtyInterface:
                 pass
 
     async def _wait(self, pid: int) -> int:
-        """Wait for the exit event and return the exit code."""
+        """Wait for the exit event and return the exit code.
+
+        Raises:
+            LookupError: If *pid* is not a tracked session.
+        """
         sess = self._sessions.get(pid)
         if not sess:
-            return -1
+            raise LookupError(f"PTY session {pid} is not tracked by this interface")
         await sess["exit_event"].wait()
         return sess["exit_code"][0]
 
@@ -297,13 +327,18 @@ class PtyInterface:
         import aiohttp
 
         stdin_queue: asyncio.Queue[bytes] = asyncio.Queue()
-        sess = self._sessions.get(pid, {})
+        sess = self._sessions.setdefault(pid, {})
         sess["stdin_queue"] = stdin_queue
 
+        params = {}
+        if self._api_key:
+            params["api_key"] = self._api_key
+        if self._vm_name:
+            params["container_name"] = self._vm_name
         ws_url = f"{self._ws_base}/pty/{pid}/ws"
         try:
             async with aiohttp.ClientSession() as http:
-                async with http.ws_connect(ws_url) as ws:
+                async with http.ws_connect(ws_url, params=params) as ws:
                     async def _write_stdin():
                         while True:
                             data = await stdin_queue.get()

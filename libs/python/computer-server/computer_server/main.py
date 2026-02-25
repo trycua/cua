@@ -697,6 +697,25 @@ async def pty_create(
     return info
 
 
+@app.get("/pty/{pid}")
+async def pty_info(
+    pid: int,
+    container_name: Optional[str] = Header(None, alias="X-Container-Name"),
+    api_key: Optional[str] = Header(None, alias="X-API-Key"),
+):
+    """Return metadata for PTY session *pid*.
+
+    Returns: ``{"pid": int, "cols": int, "rows": int}``
+    """
+    await _require_auth(container_name, api_key)
+    info = pty_manager.get_info(pid)
+    if info is None:
+        from fastapi import HTTPException
+
+        raise HTTPException(status_code=404, detail=f"PTY session {pid} not found")
+    return info
+
+
 @app.delete("/pty/{pid}")
 async def pty_kill(
     pid: int,
@@ -791,6 +810,10 @@ async def pty_ws(
 ):
     """WebSocket endpoint for interactive PTY session *pid*.
 
+    Auth (when CONTAINER_NAME is set): pass ``api_key`` and
+    ``container_name`` as query parameters, e.g.
+    ``/pty/123/ws?api_key=…&container_name=…``.
+
     Client → Server messages (JSON):
     - ``{"type": "stdin",   "data": "<base64>"}``
     - ``{"type": "resize",  "cols": N, "rows": N}``
@@ -800,6 +823,14 @@ async def pty_ws(
     - ``{"type": "output", "data": "<base64>"}``
     - ``{"type": "exit",   "code": N}``
     """
+    container_name = websocket.query_params.get("container_name")
+    api_key = websocket.query_params.get("api_key")
+    try:
+        await _require_auth(container_name, api_key)
+    except HTTPException:
+        await websocket.close(code=1008)  # 1008 = Policy Violation
+        return
+
     await websocket.accept()
 
     q = pty_manager.subscribe(pid)

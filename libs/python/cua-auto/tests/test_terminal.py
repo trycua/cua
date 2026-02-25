@@ -24,12 +24,6 @@ pytestmark = pytest.mark.skipif(
 # ---------------------------------------------------------------------------
 
 
-def _collect(terminal, session, timeout: float = 3.0) -> bytes:
-    """Wait for the session to exit and return all collected output."""
-    terminal.wait(session.pid, timeout=timeout)
-    return b""  # output is captured via the callback closure below
-
-
 def _run_command(cmd: str, timeout: float = 3.0) -> tuple[bytes, int]:
     """Spawn *cmd* in a PTY, collect all output, return (output, exit_code)."""
     from cua_auto.terminal import Terminal

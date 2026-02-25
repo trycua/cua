@@ -75,13 +75,13 @@ mkdir -p "$APP_BUNDLE/Contents/Resources"
 # Copy the binary into the bundle
 cp -f .build/release/lume "$APP_BUNDLE/Contents/MacOS/lume"
 
-# Copy resource bundle to both Resources/ (standard location) and MacOS/ (SPM Bundle.module compat)
-# The bundle is a flat directory (no Info.plist), not a proper macOS bundle,
-# so it cannot be codesigned independently — it gets sealed by the .app signature.
+# Copy resource bundle to Contents/Resources/ only.
+# The bundle is a flat SPM directory (no Info.plist) — placing it in Contents/MacOS/
+# causes codesign to fail with "bundle format unrecognized".
+# SPM's Bundle.module resolves via Bundle.main.resourceURL which points to Contents/Resources/.
 BUILD_BUNDLE=".build/release/lume_lume.bundle"
 if [ -d "$BUILD_BUNDLE" ]; then
   cp -rf "$BUILD_BUNDLE" "$APP_BUNDLE/Contents/Resources/"
-  cp -rf "$BUILD_BUNDLE" "$APP_BUNDLE/Contents/MacOS/"
 fi
 
 # Stamp and copy Info.plist
@@ -110,9 +110,9 @@ if [ -f "$KEYCHAIN_PATH" ]; then
   security list-keychains
 fi
 
-# Sign the entire .app bundle (--deep signs nested code automatically)
+# Sign the .app bundle
 log "essential" "Signing .app bundle with Developer ID..."
-codesign --deep --force --options runtime --timestamp \
+codesign --force --options runtime --timestamp \
          --entitlements ./resources/lume.entitlements \
          --sign "$CERT_APPLICATION_NAME" \
          --keychain "$KEYCHAIN_PATH" \

@@ -99,15 +99,15 @@ fi
 log "essential" "Signing .app bundle..."
 
 # Sign the binary inside the bundle first (with entitlements)
-codesign --force --options runtime \
-         --entitlement ./resources/lume.entitlements \
+codesign --force --options runtime --timestamp \
+         --entitlements ./resources/lume.entitlements \
          --sign "$CERT_APPLICATION_NAME" \
-         "$APP_BUNDLE/Contents/MacOS/lume" 2> /dev/null
+         "$APP_BUNDLE/Contents/MacOS/lume"
 
 # Sign the outer bundle
-codesign --force --options runtime \
+codesign --force --options runtime --timestamp \
          --sign "$CERT_APPLICATION_NAME" \
-         "$APP_BUNDLE" 2> /dev/null
+         "$APP_BUNDLE"
 
 # --- Package as .pkg installer ---
 log "essential" "Building installer package..."

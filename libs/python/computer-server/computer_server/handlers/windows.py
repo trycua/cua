@@ -375,7 +375,9 @@ class WindowsAutomationHandler(BaseAutomationHandler):
             return {"success": False, "error": str(e)}
 
     @require_unlocked_desktop
-    async def middle_click(self, x: Optional[int] = None, y: Optional[int] = None) -> Dict[str, Any]:
+    async def middle_click(
+        self, x: Optional[int] = None, y: Optional[int] = None
+    ) -> Dict[str, Any]:
         """Perform a middle mouse click at the specified coordinates.
 
         Args:

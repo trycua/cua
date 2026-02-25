@@ -234,7 +234,9 @@ class AndroidAutomationHandler(BaseAutomationHandler):
         else:
             raise RuntimeError(f"Long press failed: {output}")
 
-    async def middle_click(self, x: Optional[int] = None, y: Optional[int] = None) -> Dict[str, Any]:
+    async def middle_click(
+        self, x: Optional[int] = None, y: Optional[int] = None
+    ) -> Dict[str, Any]:
         """Middle click is not supported on Android; returns not-supported error."""
         return {"success": False, "error": "middle_click is not supported on Android"}
 

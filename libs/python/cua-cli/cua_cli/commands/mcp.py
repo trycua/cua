@@ -886,9 +886,7 @@ async def _register_computer_tools(
                 button: Mouse button (left, right, middle)
                 sandbox: Sandbox name (optional)
             """
-            result = await _send_command(
-                sandbox, "mouse_down", {"x": x, "y": y, "button": button}
-            )
+            result = await _send_command(sandbox, "mouse_down", {"x": x, "y": y, "button": button})
             return json.dumps(result)
 
         @server.tool()
@@ -907,9 +905,7 @@ async def _register_computer_tools(
                 button: Mouse button (left, right, middle)
                 sandbox: Sandbox name (optional)
             """
-            result = await _send_command(
-                sandbox, "mouse_up", {"x": x, "y": y, "button": button}
-            )
+            result = await _send_command(sandbox, "mouse_up", {"x": x, "y": y, "button": button})
             return json.dumps(result)
 
     if Permission.COMPUTER_KEY in permissions:
@@ -978,9 +974,7 @@ async def _register_computer_tools(
             win_r = await _send_command(sandbox, "get_current_window_id", {})
             window_id = win_r.get("window_id") or win_r.get("data")
             if window_id:
-                name_r = await _send_command(
-                    sandbox, "get_window_name", {"window_id": window_id}
-                )
+                name_r = await _send_command(sandbox, "get_window_name", {"window_id": window_id})
                 title = name_r.get("name") or name_r.get("data") or ""
             else:
                 title = ""

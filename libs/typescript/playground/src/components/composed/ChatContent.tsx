@@ -2,7 +2,7 @@
 // Adapted from cloud/src/website/app/components/playground/ChatContent.tsx
 
 import { motion } from 'motion/react';
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useRef } from 'react';
 import { ChatArea } from './ChatArea';
 import { ChatInput } from '../primitives/ChatInput';
 import { ExamplePrompts, type ExamplePrompt } from './ExamplePrompts';
@@ -13,8 +13,9 @@ import {
   useIsChatGenerating,
 } from '../../hooks/usePlayground';
 import { useAgentRequest } from '../../hooks/useAgentRequest';
+import { useComputerMapping } from '../../hooks/useComputerMapping';
+import { useSelectedComputer } from '../../hooks/useSelectedComputer';
 import type { Computer, VM } from '../../types';
-import { getComputerId } from '../../types';
 import { cn } from '../../utils/cn';
 
 interface ChatContentProps {
@@ -116,25 +117,15 @@ export function ChatContent({
   const hasMessages = processedMessages.length > 0;
 
   // Convert ComputerInfo[] to Computer[] for ChatInput
-  const computers: Computer[] = state.computers.map((c) => {
-    const { agentUrl, ...rest } = c;
-    return {
-      ...rest,
-      url: agentUrl,
-    } as Computer;
-  });
+  const computers = useComputerMapping(state.computers);
 
   // Determine selected computer: prefer currentComputerId from playground state, fallback to chat's computer
   // This ensures the Select stays in sync with the VNC viewer
-  const selectedComputerForInput = useMemo(() => {
-    if (state.currentComputerId) {
-      const currentComputer = computers.find((c) => getComputerId(c) === state.currentComputerId);
-      if (currentComputer) {
-        return currentComputer;
-      }
-    }
-    return computer;
-  }, [state.currentComputerId, computers, computer]);
+  const selectedComputerForInput = useSelectedComputer(
+    state.currentComputerId,
+    computers,
+    computer
+  );
 
   // Handle model change
   const handleModelChange = (modelId: string) => {

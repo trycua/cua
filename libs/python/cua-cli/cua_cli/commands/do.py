@@ -72,6 +72,7 @@ def _host_consented() -> bool:
 
 # ── output helpers ────────────────────────────────────────────────────────────
 
+
 def _ok(msg: str) -> int:
     print(f"✅ {msg}")
     return 0
@@ -83,6 +84,7 @@ def _fail(msg: str) -> int:
 
 
 # ── provider / connection helpers ─────────────────────────────────────────────
+
 
 async def _get_api_url(provider_type: str, name: str) -> str:
     """Resolve the computer-server API URL for the target VM."""
@@ -144,7 +146,10 @@ async def _host_dispatch(command: str, params: dict) -> dict:
         import cua_auto.shell as _shell
         import cua_auto.window as _win
     except ImportError as e:
-        return {"success": False, "error": f"cua-auto not installed: {e}. Run: pip install cua-auto"}
+        return {
+            "success": False,
+            "error": f"cua-auto not installed: {e}. Run: pip install cua-auto",
+        }
 
     try:
         if command == "screenshot":
@@ -312,9 +317,7 @@ async def _host_dispatch(command: str, params: dict) -> dict:
             return {"success": bool(ok)}
 
         elif command == "set_window_position":
-            ok = _win.set_window_position(
-                params["window_id"], int(params["x"]), int(params["y"])
-            )
+            ok = _win.set_window_position(params["window_id"], int(params["x"]), int(params["y"]))
             return {"success": bool(ok)}
 
         elif command == "deactivate_window":
@@ -365,16 +368,11 @@ async def _send(provider_type: str, name: str, command: str, params: dict) -> di
 
 # ── zoom / screenshot helpers ─────────────────────────────────────────────────
 
-async def _resolve_zoom_bbox_by_id(
-    provider_type: str, name: str, window_id: str
-) -> dict | None:
+
+async def _resolve_zoom_bbox_by_id(provider_type: str, name: str, window_id: str) -> dict | None:
     """Get the bounding box of a window by its native handle/id."""
-    pos_r = await _send(
-        provider_type, name, "get_window_position", {"window_id": window_id}
-    )
-    size_r = await _send(
-        provider_type, name, "get_window_size", {"window_id": window_id}
-    )
+    pos_r = await _send(provider_type, name, "get_window_position", {"window_id": window_id})
+    size_r = await _send(provider_type, name, "get_window_size", {"window_id": window_id})
 
     pos = pos_r.get("position") or pos_r.get("data")
     size = size_r.get("size") or size_r.get("data")
@@ -394,17 +392,13 @@ async def _resolve_zoom_bbox_by_id(
     return {"x": x, "y": y, "width": w, "height": h}
 
 
-async def _resolve_zoom_bbox(
-    provider_type: str, name: str, window_name: str
-) -> dict | None:
+async def _resolve_zoom_bbox(provider_type: str, name: str, window_name: str) -> dict | None:
     """Get the bounding box of a window by app/window name.
 
     Filters out internal helper windows (e.g. 'Chrome Legacy Window') so the
     correct top-level window is always selected.
     """
-    wins_r = await _send(
-        provider_type, name, "get_application_windows", {"app": window_name}
-    )
+    wins_r = await _send(provider_type, name, "get_application_windows", {"app": window_name})
     windows = wins_r.get("windows") or wins_r.get("data") or []
     if not windows:
         return None
@@ -513,10 +507,42 @@ async def _print_context(provider_type: str, name: str, state: dict | None = Non
     zoom_window = state.get("zoom_window")
     zoom_window_id = state.get("zoom_window_id")
     if zoom_window:
-        zoom_info = f"zoom: {zoom_window} ({zoom_window_id})" if zoom_window_id else f"zoom: {zoom_window}"
+        zoom_info = (
+            f"zoom: {zoom_window} ({zoom_window_id})" if zoom_window_id else f"zoom: {zoom_window}"
+        )
     else:
         zoom_info = "zoom: off"
     print(f"💻 {vm_label}\t🔍 {zoom_info}")
+
+
+async def _take_screenshot_for_recording(
+    provider_type: str, name: str, state: dict
+) -> bytes | None:
+    """Silently take a screenshot for trajectory recording. Returns None on failure."""
+    try:
+        img_bytes, _, _ = await _take_screenshot_data(provider_type, name, state)
+        return img_bytes
+    except Exception:
+        return None
+
+
+def _maybe_record_turn(
+    args: argparse.Namespace,
+    state: dict,
+    action_type: str,
+    action_params: dict,
+    screenshot_bytes: bytes | None = None,
+) -> None:
+    """Record a trajectory turn if recording is enabled. Never raises."""
+    if getattr(args, "no_record", False):
+        return
+    try:
+        from cua_cli.utils.trajectory_recorder import ensure_session, record_turn
+
+        session_dir = ensure_session(state)
+        record_turn(session_dir, action_type, action_params, screenshot_bytes)
+    except Exception:
+        pass  # Never interfere with the primary command
 
 
 def _require_target() -> dict | None:
@@ -528,6 +554,7 @@ def _require_target() -> dict | None:
 
 
 # ── subcommand handlers ───────────────────────────────────────────────────────
+
 
 def _cmd_switch(args: argparse.Namespace) -> int:
     provider = args.provider.lower()
@@ -543,7 +570,22 @@ def _cmd_switch(args: argparse.Namespace) -> int:
                 file=sys.stderr,
             )
             return 1
-        _save_state({"provider": "host", "name": "", "zoom_window": None, "zoom_window_id": None, "zoom_bbox": None, "zoom_scale": 1.0})
+        _save_state(
+            {
+                "provider": "host",
+                "name": "",
+                "zoom_window": None,
+                "zoom_window_id": None,
+                "zoom_bbox": None,
+                "zoom_scale": 1.0,
+            }
+        )
+        try:
+            from cua_cli.utils.trajectory_recorder import reset_session
+
+            reset_session(_load_state())
+        except Exception:
+            pass
         msg = "Switched to host (local PC)"
         if had_zoom:
             msg += " — zoom reset"
@@ -553,7 +595,22 @@ def _cmd_switch(args: argparse.Namespace) -> int:
         return _fail(f"Unknown provider '{provider}'. Choose from: {', '.join(PROVIDERS)}")
 
     name = args.name or ""
-    _save_state({"provider": provider, "name": name, "zoom_window": None, "zoom_window_id": None, "zoom_bbox": None, "zoom_scale": 1.0})
+    _save_state(
+        {
+            "provider": provider,
+            "name": name,
+            "zoom_window": None,
+            "zoom_window_id": None,
+            "zoom_bbox": None,
+            "zoom_scale": 1.0,
+        }
+    )
+    try:
+        from cua_cli.utils.trajectory_recorder import reset_session
+
+        reset_session(_load_state())
+    except Exception:
+        pass
     label = f"{provider}/{name}" if name else provider
     msg = f"Switched to {label}"
     if had_zoom:
@@ -616,9 +673,9 @@ def _cmd_ls(args: argparse.Namespace) -> int:
         return 0
 
     async def _list_all() -> int:
-        from cua_cli.auth.store import get_api_key
         from computer.providers.base import VMProviderType
         from computer.providers.factory import VMProviderFactory
+        from cua_cli.auth.store import get_api_key
 
         print("  host  [local]")
 
@@ -718,6 +775,8 @@ def _cmd_screenshot(args: argparse.Namespace) -> int:
         with open(save_path, "wb") as f:
             f.write(img_bytes)
 
+        _maybe_record_turn(args, state, "screenshot", {}, img_bytes)
+
         rc = _ok(f"screenshot saved to {save_path}")
         await _print_context(state["provider"], state.get("name", ""), state)
         return rc
@@ -807,7 +866,9 @@ def _cmd_snapshot(args: argparse.Namespace) -> int:
                     print()
                     print("Interactive elements:")
                     for el in elements:
-                        print(f"  • {el.get('name','?')} [{el.get('type','?')}]  ({el.get('x','?')}, {el.get('y','?')})")
+                        print(
+                            f"  • {el.get('name','?')} [{el.get('type','?')}]  ({el.get('x','?')}, {el.get('y','?')})"
+                        )
             except json.JSONDecodeError:
                 print(f"✅ snapshot — {save_path}")
                 print()
@@ -850,6 +911,8 @@ def _cmd_click(args: argparse.Namespace) -> int:
         if not result.get("success", True):
             await _print_context(p, n, state)
             return _fail(result.get("error", "click failed"))
+        _scr = await _take_screenshot_for_recording(p, n, state)
+        _maybe_record_turn(args, state, "click", {"x": args.x, "y": args.y}, _scr)
         rc = _ok(f"clicked ({args.x}, {args.y}) [{button}]")
         await _print_context(p, n, state)
         return rc
@@ -877,6 +940,8 @@ def _cmd_dclick(args: argparse.Namespace) -> int:
         if not result.get("success", True):
             await _print_context(p, n, state)
             return _fail(result.get("error", "double-click failed"))
+        _scr = await _take_screenshot_for_recording(p, n, state)
+        _maybe_record_turn(args, state, "double_click", {"x": args.x, "y": args.y}, _scr)
         rc = _ok(f"double-clicked ({args.x}, {args.y})")
         await _print_context(p, n, state)
         return rc
@@ -904,6 +969,7 @@ def _cmd_move(args: argparse.Namespace) -> int:
         if not result.get("success", True):
             await _print_context(p, n, state)
             return _fail(result.get("error", "move failed"))
+        _maybe_record_turn(args, state, "move", {"x": args.x, "y": args.y})
         rc = _ok(f"cursor moved to ({args.x}, {args.y})")
         await _print_context(p, n, state)
         return rc
@@ -930,6 +996,8 @@ def _cmd_type(args: argparse.Namespace) -> int:
         if not result.get("success", True):
             await _print_context(p, n, state)
             return _fail(result.get("error", "type failed"))
+        _scr = await _take_screenshot_for_recording(p, n, state)
+        _maybe_record_turn(args, state, "type", {"text": args.text}, _scr)
         preview = args.text[:40] + ("…" if len(args.text) > 40 else "")
         rc = _ok(f"typed: {preview!r}")
         await _print_context(p, n, state)
@@ -957,6 +1025,8 @@ def _cmd_key(args: argparse.Namespace) -> int:
         if not result.get("success", True):
             await _print_context(p, n, state)
             return _fail(result.get("error", "key press failed"))
+        _scr = await _take_screenshot_for_recording(p, n, state)
+        _maybe_record_turn(args, state, "keypress", {"keys": [args.key]}, _scr)
         rc = _ok(f"pressed key: {args.key}")
         await _print_context(p, n, state)
         return rc
@@ -985,6 +1055,8 @@ def _cmd_hotkey(args: argparse.Namespace) -> int:
         if not result.get("success", True):
             await _print_context(p, n, state)
             return _fail(result.get("error", "hotkey failed"))
+        _scr = await _take_screenshot_for_recording(p, n, state)
+        _maybe_record_turn(args, state, "hotkey", {"keys": keys}, _scr)
         rc = _ok(f"hotkey: {'+'.join(keys)}")
         await _print_context(p, n, state)
         return rc
@@ -1013,6 +1085,14 @@ def _cmd_scroll(args: argparse.Namespace) -> int:
         if not result.get("success", True):
             await _print_context(p, n, state)
             return _fail(result.get("error", "scroll failed"))
+        _scr = await _take_screenshot_for_recording(p, n, state)
+        _maybe_record_turn(
+            args,
+            state,
+            "scroll",
+            {"scroll_direction": args.direction, "scroll_amount": args.amount},
+            _scr,
+        )
         rc = _ok(f"scrolled {args.direction} {args.amount}x")
         await _print_context(p, n, state)
         return rc
@@ -1035,7 +1115,9 @@ def _cmd_drag(args: argparse.Namespace) -> int:
         sx2, sy2 = _coords(args.x2, args.y2, state)
         try:
             result = await _send(
-                p, n, "drag_to",
+                p,
+                n,
+                "drag_to",
                 {"start_x": sx1, "start_y": sy1, "end_x": sx2, "end_y": sy2},
             )
         except Exception as e:
@@ -1044,6 +1126,14 @@ def _cmd_drag(args: argparse.Namespace) -> int:
         if not result.get("success", True):
             await _print_context(p, n, state)
             return _fail(result.get("error", "drag failed"))
+        _scr = await _take_screenshot_for_recording(p, n, state)
+        _maybe_record_turn(
+            args,
+            state,
+            "drag",
+            {"start_x": args.x1, "start_y": args.y1, "end_x": args.x2, "end_y": args.y2},
+            _scr,
+        )
         rc = _ok(f"dragged ({args.x1},{args.y1}) → ({args.x2},{args.y2})")
         await _print_context(p, n, state)
         return rc
@@ -1080,6 +1170,7 @@ def _cmd_shell(args: argparse.Namespace) -> int:
             stderr = result.get("stderr", "").strip()
             await _print_context(state["provider"], state.get("name", ""), state)
             return _fail(f"exit {rc_code}: {stderr or stdout}")
+        _maybe_record_turn(args, state, "shell", {"command": command})
         preview = (stdout[:80] + "…") if len(stdout) > 80 else stdout
         rc = _ok(preview if preview else "done")
         await _print_context(state["provider"], state.get("name", ""), state)
@@ -1107,6 +1198,7 @@ def _cmd_open(args: argparse.Namespace) -> int:
         if not result.get("success", True):
             await _print_context(state["provider"], state.get("name", ""), state)
             return _fail(result.get("error", "open failed"))
+        _maybe_record_turn(args, state, "open", {"path": args.path})
         rc = _ok(f"opened: {args.path}")
         await _print_context(state["provider"], state.get("name", ""), state)
         return rc
@@ -1115,6 +1207,7 @@ def _cmd_open(args: argparse.Namespace) -> int:
 
 
 # ── window subcommands ────────────────────────────────────────────────────────
+
 
 def _cmd_window(args: argparse.Namespace) -> int:
     from cua_cli.utils.async_utils import run_async
@@ -1209,7 +1302,9 @@ def _cmd_window(args: argparse.Namespace) -> int:
         if action == "resize":
             try:
                 result = await _send(
-                    p, n, "set_window_size",
+                    p,
+                    n,
+                    "set_window_size",
                     {"window_id": wid, "width": args.width, "height": args.height},
                 )
             except Exception as e:
@@ -1225,7 +1320,9 @@ def _cmd_window(args: argparse.Namespace) -> int:
         if action == "move":
             try:
                 result = await _send(
-                    p, n, "set_window_position",
+                    p,
+                    n,
+                    "set_window_position",
                     {"window_id": wid, "x": args.x, "y": args.y},
                 )
             except Exception as e:
@@ -1265,6 +1362,7 @@ def _cmd_window(args: argparse.Namespace) -> int:
 
 # ── host consent command (registered separately as cua do-host-consent) ───────
 
+
 def register_host_consent_parser(subparsers: argparse._SubParsersAction) -> None:
     subparsers.add_parser(
         "do-host-consent",
@@ -1284,6 +1382,7 @@ def execute_host_consent(args: argparse.Namespace) -> int:
 
 
 # ── parser registration ───────────────────────────────────────────────────────
+
 
 def register_parser(subparsers: argparse._SubParsersAction) -> None:
     p = subparsers.add_parser(
@@ -1330,6 +1429,13 @@ Examples:
   cua do window move <id> 0 0
   cua do window info <id>
 """,
+    )
+
+    p.add_argument(
+        "--no-record",
+        action="store_true",
+        default=False,
+        help="Disable trajectory recording for this command",
     )
 
     sub = p.add_subparsers(dest="do_action", metavar="action")
@@ -1440,6 +1546,7 @@ Examples:
 
 
 # ── dispatch ──────────────────────────────────────────────────────────────────
+
 
 def execute(args: argparse.Namespace) -> int:
     dispatch = {

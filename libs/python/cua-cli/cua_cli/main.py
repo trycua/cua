@@ -5,7 +5,7 @@ import logging
 import sys
 
 from cua_cli import __version__
-from cua_cli.commands import auth, do, image, mcp, platform, sandbox, skills
+from cua_cli.commands import auth, do, image, mcp, platform, sandbox, skills, trajectory
 from cua_cli.utils.output import print_error
 
 
@@ -54,6 +54,7 @@ For more information, visit https://docs.trycua.com
     mcp.register_parser(subparsers)
     do.register_parser(subparsers)
     do.register_host_consent_parser(subparsers)
+    trajectory.register_parser(subparsers)
 
     return parser
 
@@ -91,6 +92,8 @@ def main() -> int:
             return do.execute(args)
         elif args.command == "do-host-consent":
             return do.execute_host_consent(args)
+        elif args.command in ("trajectory", "traj"):
+            return trajectory.execute(args)
         else:
             print_error(f"Unknown command: {args.command}")
             return 1

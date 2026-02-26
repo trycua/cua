@@ -1039,7 +1039,7 @@ wheels = [
 
 [[package]]
 name = "cua-agent"
-version = "0.7.27"
+version = "0.7.29"
 source = { editable = "libs/python/agent" }
 dependencies = [
     { name = "aiohttp" },
@@ -1190,6 +1190,33 @@ requires-dist = [
 provides-extras = ["openai", "anthropic", "qwen", "omni", "uitars", "uitars-mlx", "uitars-hf", "glm45v-hf", "opencua-hf", "internvl-hf", "moondream3", "ui", "cli", "hud", "gemini", "all"]
 
 [[package]]
+name = "cua-auto"
+version = "0.1.1"
+source = { editable = "libs/python/cua-auto" }
+dependencies = [
+    { name = "pillow" },
+    { name = "pynput" },
+    { name = "pyperclip" },
+    { name = "pywinctl" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "cua-auto", extras = ["mss", "windows", "pty"], marker = "extra == 'all'" },
+    { name = "mss", marker = "extra == 'mss'", specifier = ">=9.0.0" },
+    { name = "pillow", specifier = ">=10.0.0" },
+    { name = "pynput", specifier = ">=1.7.0" },
+    { name = "pyperclip", specifier = ">=1.9.0" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0.0" },
+    { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.23.0" },
+    { name = "pywin32", marker = "sys_platform == 'win32' and extra == 'windows'", specifier = ">=306" },
+    { name = "pywinctl", specifier = ">=0.4" },
+    { name = "pywinpty", marker = "sys_platform == 'win32' and extra == 'pty'", specifier = ">=2.0.0" },
+    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.1.0" },
+]
+provides-extras = ["mss", "windows", "pty", "all", "dev"]
+
+[[package]]
 name = "cua-bench-ui"
 version = "0.7.0"
 source = { editable = "libs/python/bench-ui" }
@@ -1208,7 +1235,7 @@ requires-dist = [
 
 [[package]]
 name = "cua-computer"
-version = "0.5.14"
+version = "0.5.16"
 source = { editable = "libs/python/computer" }
 dependencies = [
     { name = "aiohttp" },
@@ -1252,10 +1279,11 @@ provides-extras = ["lume", "lumier", "ui", "all"]
 
 [[package]]
 name = "cua-computer-server"
-version = "0.3.18"
+version = "0.3.19"
 source = { editable = "libs/python/computer-server" }
 dependencies = [
     { name = "aiohttp" },
+    { name = "cua-auto" },
     { name = "cua-core" },
     { name = "fastapi" },
     { name = "fastmcp" },
@@ -1291,6 +1319,7 @@ windows = [
 [package.metadata]
 requires-dist = [
     { name = "aiohttp", specifier = ">=3.9.1" },
+    { name = "cua-auto", editable = "libs/python/cua-auto" },
     { name = "cua-core", editable = "libs/python/core" },
     { name = "fastapi", specifier = ">=0.111.0" },
     { name = "fastmcp", specifier = ">=2.0,<3" },
@@ -1318,7 +1347,7 @@ provides-extras = ["macos", "linux", "windows"]
 
 [[package]]
 name = "cua-core"
-version = "0.1.17"
+version = "0.1.18"
 source = { editable = "libs/python/core" }
 dependencies = [
     { name = "posthog" },

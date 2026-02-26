@@ -10,6 +10,7 @@ if [ -n "$VNC_PW" ]; then
     echo "$VNC_PW" | vncpasswd -f > /home/cua/.vnc/passwd
     chmod 600 /home/cua/.vnc/passwd
     SECURITY_ARGS="-SecurityTypes VncAuth -rfbauth /home/cua/.vnc/passwd"
+    unset VNC_PW
 else
     SECURITY_ARGS="-SecurityTypes None --I-KNOW-THIS-IS-INSECURE"
 fi

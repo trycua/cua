@@ -1,7 +1,7 @@
 name: "CI: Check Links"
 
 on:
-  pull_request_target:
+  pull_request:
     branches: [main, master]
   push:
     branches:
@@ -21,6 +21,7 @@ jobs:
         with:
           # Check all markdown files
           # Exclude news.ycombinator.com as it returns 503 for automated requests (anti-bot protection)
+          # Specific URL exclusions are in .lycheeignore
           args: --verbose --no-progress --max-cache-age 1d --accept 200..=299,403 --exclude '^file://' --exclude 'localhost' --exclude '127\.0\.0\.1' --exclude 'news\.ycombinator\.com' '**/*.md'
           # Output results to file for parsing
           output: lychee-output.md
@@ -33,10 +34,16 @@ jobs:
         id: parse-results
         if: always()
         run: |
-          # Use lychee exit code: 0 = success, >0 = errors found
           EXIT_CODE="${{ steps.lychee.outputs.exit_code }}"
 
-          echo "Exit code: $EXIT_CODE"
+          # Debug info
+          echo "--- DEBUG ---"
+          echo "Exit code: '$EXIT_CODE'"
+          echo "Working dir: $(pwd)"
+          echo "lychee-output.md exists: $(test -f lychee-output.md && echo YES || echo NO)"
+          echo "GITHUB_ENV path: $GITHUB_ENV"
+          ls -la lychee-output.md 2>/dev/null || echo "lychee-output.md not found"
+          echo "--- END DEBUG ---"
 
           # Show summary if output file exists
           if [ -f "lychee-output.md" ]; then
@@ -44,23 +51,38 @@ jobs:
             cat lychee-output.md
           fi
 
-          # Set status based on exit code
-          if [ "$EXIT_CODE" = "0" ]; then
-            echo "STATUS_ICON=✅" >> $GITHUB_ENV
-            echo "STATUS_TEXT=All links are working" >> $GITHUB_ENV
-            echo "COLOR=#36a64f" >> $GITHUB_ENV
-          elif [ "$EXIT_CODE" = "2" ]; then
-            echo "STATUS_ICON=❌" >> $GITHUB_ENV
-            echo "STATUS_TEXT=Link checker failed to run" >> $GITHUB_ENV
-            echo "COLOR=#dc3545" >> $GITHUB_ENV
+          # Set status: check output file exists first (means lychee actually ran)
+          if [ ! -f "lychee-output.md" ]; then
+            echo "STATUS_ICON=❌" >> "$GITHUB_ENV"
+            echo "STATUS_TEXT=Link checker failed to run (no output file)" >> "$GITHUB_ENV"
+            echo "COLOR=#dc3545" >> "$GITHUB_ENV"
+          elif [ "$EXIT_CODE" = "0" ]; then
+            echo "STATUS_ICON=✅" >> "$GITHUB_ENV"
+            echo "STATUS_TEXT=All links are working" >> "$GITHUB_ENV"
+            echo "COLOR=#36a64f" >> "$GITHUB_ENV"
           else
-            echo "STATUS_ICON=⚠️" >> $GITHUB_ENV
-            echo "STATUS_TEXT=Found broken links" >> $GITHUB_ENV
-            echo "COLOR=#ffa500" >> $GITHUB_ENV
+            echo "STATUS_ICON=⚠️" >> "$GITHUB_ENV"
+            echo "STATUS_TEXT=Found broken links (exit code: $EXIT_CODE)" >> "$GITHUB_ENV"
+            echo "COLOR=#ffa500" >> "$GITHUB_ENV"
           fi
 
+          echo "Wrote status to GITHUB_ENV"
+
+          # Extract up to 5 broken links (lychee format: "* [404] <https://...> | ...")
+          if [ -f "lychee-output.md" ]; then
+            BROKEN=$(grep -oP '\[\d+\] <?\Khttps?://[^\s|>]+' lychee-output.md | sed 's/>*$//' | head -5 | sed 's/^/• /' || true)
+            echo "Extracted broken links: '$BROKEN'"
+          else
+            BROKEN=""
+          fi
+          {
+            echo "BROKEN_LINKS<<EOF"
+            echo "$BROKEN"
+            echo "EOF"
+          } >> "$GITHUB_ENV"
+
       - name: Send results to Slack
-        if: always() && github.ref == 'refs/heads/main'
+        if: always()
         uses: rtCamp/action-slack-notify@v2
         env:
           SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
@@ -71,5 +93,7 @@ jobs:
             *Status:* ${{ env.STATUS_ICON }} ${{ env.STATUS_TEXT }}
 
             *Branch:* `${{ github.ref_name }}`
+
+            ${{ env.BROKEN_LINKS }}
 
             <${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}${{ github.event.pull_request.number && format('?pr={0}', github.event.pull_request.number) || '' }}|View broken links>

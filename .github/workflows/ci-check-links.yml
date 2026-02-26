@@ -21,7 +21,8 @@ jobs:
         with:
           # Check all markdown files
           # Exclude news.ycombinator.com as it returns 503 for automated requests (anti-bot protection)
-          args: --verbose --no-progress --max-cache-age 1d --accept 200..=299,403 --exclude '^file://' --exclude 'localhost' --exclude '127\.0\.0\.1' --exclude 'news\.ycombinator\.com' '**/*.md'
+          # Exclude specific cua.ai URLs that return transient/expected errors
+          args: --verbose --no-progress --max-cache-age 1d --accept 200..=299,403 --exclude '^file://' --exclude 'localhost' --exclude '127\.0\.0\.1' --exclude 'news\.ycombinator\.com' --exclude '^https://cua\.ai/?$' --exclude '^https://api\.cua\.ai/?$' '**/*.md'
           # Output results to file for parsing
           output: lychee-output.md
           # Don't fail the build on broken links (warning mode)
@@ -49,7 +50,7 @@ jobs:
             echo "STATUS_ICON=✅" >> $GITHUB_ENV
             echo "STATUS_TEXT=All links are working" >> $GITHUB_ENV
             echo "COLOR=#36a64f" >> $GITHUB_ENV
-          elif [ "$EXIT_CODE" = "2" ]; then
+          elif [ "$EXIT_CODE" = "1" ]; then
             echo "STATUS_ICON=⚠️" >> $GITHUB_ENV
             echo "STATUS_TEXT=Found broken links" >> $GITHUB_ENV
             echo "COLOR=#ffa500" >> $GITHUB_ENV

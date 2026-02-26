@@ -7,6 +7,13 @@ interface BillingPageProps {
   orgSlug: string;
   /** Base path for API calls (defaults to '') */
   apiBasePath?: string;
+  /**
+   * Initial result from server-side billing check.
+   * When provided, skips the client-side API fetch and renders immediately.
+   * This avoids a redundant round-trip and prevents failures when the
+   * API route returns different results than the server-side check.
+   */
+  initialResult?: BillingResponse;
   /** Custom component to render when billing setup is needed */
   renderSetupNeeded?: (props: { orgSlug: string; reason: string }) => React.ReactNode;
   /** Custom component to render on error */
@@ -23,6 +30,7 @@ interface BillingPageProps {
 export function BillingPage({
   orgSlug,
   apiBasePath = '',
+  initialResult,
   renderSetupNeeded,
   renderError,
 }: BillingPageProps) {
@@ -31,12 +39,30 @@ export function BillingPage({
     | { status: 'redirecting'; url: string }
     | { status: 'needs_setup'; reason: string }
     | { status: 'error'; message: string }
-  >({ status: 'loading' });
+  >(() => {
+    if (initialResult) {
+      return billingResponseToState(initialResult);
+    }
+    return { status: 'loading' };
+  });
 
   const fetchBilling = async () => {
     setState({ status: 'loading' });
     try {
       const response = await fetch(`${apiBasePath}/api/${orgSlug}/billing`);
+      if (!response.ok) {
+        const text = await response.text();
+        let message = 'An error occurred while loading billing information.';
+        try {
+          const data = JSON.parse(text);
+          if (data.message) message = data.message;
+        } catch {
+          // Response was not JSON
+        }
+        setState({ status: 'error', message });
+        return;
+      }
+
       const data: BillingResponse = await response.json();
 
       if ('url' in data) {
@@ -65,6 +91,8 @@ export function BillingPage({
   };
 
   useEffect(() => {
+    // Skip fetching if we already have a result from the server
+    if (initialResult) return;
     fetchBilling();
   }, [orgSlug]);
 
@@ -165,4 +193,17 @@ export function BillingPage({
   }
 
   return null;
+}
+
+function billingResponseToState(result: BillingResponse) {
+  if ('url' in result) {
+    return { status: 'redirecting' as const, url: result.url };
+  }
+  if ('needsSetup' in result && result.needsSetup) {
+    return { status: 'needs_setup' as const, reason: result.reason };
+  }
+  if ('error' in result) {
+    return { status: 'error' as const, message: result.message };
+  }
+  return { status: 'error' as const, message: 'Unexpected response from billing service' };
 }

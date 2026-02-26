@@ -48,6 +48,8 @@ export async function BillingPageServer({
     redirect(result.url);
   }
 
-  // For needsSetup or error cases, render the client component with proper state
-  return <BillingPage orgSlug={orgSlug} />;
+  // For needsSetup or error cases, pass the result directly to the client
+  // component so it renders immediately without a redundant API fetch.
+  // This is critical for new orgs that may not have a Stripe customer yet.
+  return <BillingPage orgSlug={orgSlug} initialResult={result} />;
 }

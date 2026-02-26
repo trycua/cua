@@ -142,13 +142,13 @@ build_lume() {
 
     cp -f "$BUILD_PATH/lume" "$APP_BUNDLE/Contents/MacOS/lume"
 
-    # Copy resource bundle for SPM Bundle.module resolution.
-    # SPM looks at Bundle.main.bundleURL (the .app root), NOT Contents/Resources/.
-    # Placing it in Contents/MacOS/ breaks codesign ("bundle format unrecognized").
-    # Solution: place it at the .app root level where SPM expects it.
+    # Copy resource bundle to Contents/Resources/.
+    # It CANNOT go in Contents/MacOS/ (breaks codesign: "bundle format unrecognized")
+    # and CANNOT go at the .app root (breaks codesign: "unsealed contents").
+    # The Swift code uses Bundle.lumeResources which checks resourceURL first.
     mkdir -p "$APP_BUNDLE/Contents/Resources"
     if [ -d "$BUILD_PATH/lume_lume.bundle" ]; then
-      cp -rf "$BUILD_PATH/lume_lume.bundle" "$APP_BUNDLE/"
+      cp -rf "$BUILD_PATH/lume_lume.bundle" "$APP_BUNDLE/Contents/Resources/"
     fi
 
     # Stamp Info.plist with version

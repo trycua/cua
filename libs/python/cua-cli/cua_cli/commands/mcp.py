@@ -10,6 +10,7 @@ import logging
 import os
 import sys
 from enum import Enum
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
 
 if TYPE_CHECKING:
@@ -129,6 +130,269 @@ def parse_permissions(permissions_str: str) -> set[Permission]:
     return permissions
 
 
+_HOST_CONSENT_FILE = Path.home() / ".cua" / "host_consented"
+
+
+def _is_host_mode(sandbox: str, default_sandbox: str) -> bool:
+    """Return True when the request should target the local host."""
+    name = sandbox or default_sandbox
+    return name == "" or name.lower() == "host"
+
+
+def _check_host_consent() -> None:
+    """Raise if the user has not yet granted host-control consent."""
+    if not _HOST_CONSENT_FILE.exists():
+        raise ValueError(
+            "Host-mode requires consent. "
+            "Run `cua do-host-consent` first to allow local machine control."
+        )
+
+
+async def _host_dispatch(command: str, params: dict) -> dict:
+    """Dispatch a computer-server command to the local host via cua_auto.
+
+    Imports are lazy so the MCP server can still start when cua-auto is not
+    installed (cloud-only usage).
+    """
+    try:
+        import cua_auto.keyboard as _kb
+        import cua_auto.mouse as _mouse
+        import cua_auto.screen as _screen
+        import cua_auto.shell as _shell
+        import cua_auto.window as _win
+    except ImportError as e:
+        return {
+            "success": False,
+            "error": f"cua-auto not installed: {e}. Run: pip install cua-auto",
+        }
+
+    try:
+        # ── screenshots / screen info ────────────────────────────────────
+        if command == "screenshot":
+            b64 = _screen.screenshot_b64()
+            return {"success": True, "image_data": b64}
+
+        elif command == "get_screen_size":
+            w, h = _screen.screen_size()
+            return {"success": True, "size": {"width": w, "height": h}}
+
+        elif command == "get_cursor_position":
+            x, y = _screen.cursor_position()
+            return {"success": True, "position": {"x": x, "y": y}}
+
+        elif command == "get_accessibility_tree":
+            return {"success": False, "error": "get_accessibility_tree not supported on host"}
+
+        # ── window management ────────────────────────────────────────────
+        elif command == "get_current_window_id":
+            handle = _win.get_active_window_handle()
+            if not handle:
+                return {"success": False, "error": "No active window"}
+            return {"success": True, "window_id": handle}
+
+        elif command == "get_window_name":
+            title = _win.get_window_name(params.get("window_id", ""))
+            if title is None:
+                return {"success": False, "error": "Window not found"}
+            return {"success": True, "name": title}
+
+        elif command == "get_application_windows":
+            handles = _win.get_windows_with_title(params.get("app", ""))
+            return {"success": True, "windows": handles}
+
+        elif command == "get_window_size":
+            result = _win.get_window_size(params.get("window_id", ""))
+            if result is None:
+                return {"success": False, "error": "Window not found"}
+            return {"success": True, "size": [result[0], result[1]]}
+
+        elif command == "get_window_position":
+            result = _win.get_window_position(params.get("window_id", ""))
+            if result is None:
+                return {"success": False, "error": "Window not found"}
+            return {"success": True, "position": [result[0], result[1]]}
+
+        elif command == "activate_window":
+            ok = _win.activate_window(params.get("window_id", ""))
+            return {"success": bool(ok)}
+
+        elif command == "deactivate_window":
+            return {"success": False, "error": "deactivate_window not supported on host"}
+
+        elif command == "minimize_window":
+            ok = _win.minimize_window(params.get("window_id", ""))
+            return {"success": bool(ok)}
+
+        elif command == "maximize_window":
+            ok = _win.maximize_window(params.get("window_id", ""))
+            return {"success": bool(ok)}
+
+        elif command == "close_window":
+            ok = _win.close_window(params.get("window_id", ""))
+            return {"success": bool(ok)}
+
+        elif command == "set_window_size":
+            ok = _win.set_window_size(
+                params["window_id"], int(params["width"]), int(params["height"])
+            )
+            return {"success": bool(ok)}
+
+        elif command == "set_window_position":
+            ok = _win.set_window_position(params["window_id"], int(params["x"]), int(params["y"]))
+            return {"success": bool(ok)}
+
+        elif command == "open":
+            _win.open(params.get("path") or params.get("target", ""))
+            return {"success": True}
+
+        elif command == "launch":
+            pid = _win.launch(params.get("app", ""), params.get("args"))
+            return {"success": True, "pid": pid}
+
+        # ── mouse ────────────────────────────────────────────────────────
+        elif command == "left_click":
+            _mouse.click(int(params["x"]), int(params["y"]))
+            return {"success": True}
+
+        elif command == "right_click":
+            _mouse.right_click(int(params["x"]), int(params["y"]))
+            return {"success": True}
+
+        elif command == "middle_click":
+            _mouse.click(int(params["x"]), int(params["y"]), "middle")
+            return {"success": True}
+
+        elif command == "double_click":
+            _mouse.double_click(int(params["x"]), int(params["y"]))
+            return {"success": True}
+
+        elif command == "move_cursor":
+            _mouse.move_to(int(params["x"]), int(params["y"]))
+            return {"success": True}
+
+        elif command == "mouse_down":
+            x = params.get("x")
+            y = params.get("y")
+            _mouse.mouse_down(
+                int(x) if x is not None else None,
+                int(y) if y is not None else None,
+                params.get("button", "left"),
+            )
+            return {"success": True}
+
+        elif command == "mouse_up":
+            x = params.get("x")
+            y = params.get("y")
+            _mouse.mouse_up(
+                int(x) if x is not None else None,
+                int(y) if y is not None else None,
+                params.get("button", "left"),
+            )
+            return {"success": True}
+
+        elif command == "scroll_direction":
+            direction = params.get("direction", "down")
+            clicks = int(params.get("clicks", 3))
+            if direction == "up":
+                _mouse.scroll_up(clicks)
+            elif direction == "down":
+                _mouse.scroll_down(clicks)
+            elif direction == "left":
+                _mouse.scroll_left(clicks)
+            elif direction == "right":
+                _mouse.scroll_right(clicks)
+            return {"success": True}
+
+        elif command == "drag_to":
+            _mouse.drag(
+                int(params["start_x"]),
+                int(params["start_y"]),
+                int(params["end_x"]),
+                int(params["end_y"]),
+            )
+            return {"success": True}
+
+        # ── keyboard ─────────────────────────────────────────────────────
+        elif command == "type_text":
+            _kb.type_text(params.get("text", ""))
+            return {"success": True}
+
+        elif command == "press_key":
+            _kb.press_key(params.get("key", ""))
+            return {"success": True}
+
+        elif command == "key_down":
+            _kb.key_down(params.get("key", ""))
+            return {"success": True}
+
+        elif command == "key_up":
+            _kb.key_up(params.get("key", ""))
+            return {"success": True}
+
+        elif command == "hotkey":
+            keys = params.get("keys", [])
+            if isinstance(keys, str):
+                keys = [k.strip() for k in keys.replace("-", "+").split("+") if k.strip()]
+            _kb.hotkey(keys)
+            return {"success": True}
+
+        # ── shell ────────────────────────────────────────────────────────
+        elif command == "run_command":
+            result = _shell.run(params.get("command", ""))
+            return {
+                "success": True,
+                "stdout": result.stdout,
+                "stderr": result.stderr,
+                "returncode": result.returncode,
+            }
+
+        # ── clipboard (best-effort via shell) ────────────────────────────
+        elif command == "copy_to_clipboard":
+            import subprocess
+            import sys as _sys
+
+            if _sys.platform == "darwin":
+                proc = subprocess.run(["pbpaste"], capture_output=True, text=True)
+                return {"success": True, "text": proc.stdout}
+            return {"success": False, "error": "clipboard get not supported on this platform"}
+
+        elif command == "set_clipboard":
+            import subprocess
+            import sys as _sys
+
+            text = params.get("text", "")
+            if _sys.platform == "darwin":
+                subprocess.run(["pbcopy"], input=text, text=True)
+                return {"success": True}
+            return {"success": False, "error": "clipboard set not supported on this platform"}
+
+        # ── file operations (direct local filesystem access) ─────────────
+        elif command == "read_text":
+            p = Path(params["path"])
+            if not p.exists():
+                return {"success": False, "error": f"File not found: {params['path']}"}
+            return {"success": True, "text": p.read_text()}
+
+        elif command == "write_text":
+            p = Path(params["path"])
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(params.get("content", ""))
+            return {"success": True}
+
+        elif command == "list_dir":
+            p = Path(params.get("path", "."))
+            if not p.is_dir():
+                return {"success": False, "error": f"Not a directory: {p}"}
+            entries = [{"name": e.name, "is_dir": e.is_dir()} for e in sorted(p.iterdir())]
+            return {"success": True, "entries": entries}
+
+        else:
+            return {"success": False, "error": f"Unknown host command: {command}"}
+
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
 def register_parser(subparsers: argparse._SubParsersAction) -> None:
     """Register the serve-mcp command."""
     mcp_parser = subparsers.add_parser(
@@ -148,7 +412,9 @@ def register_parser(subparsers: argparse._SubParsersAction) -> None:
         "--sandbox",
         type=str,
         default="",
-        help="Default sandbox name for computer commands (default: from CUA_SANDBOX env var)",
+        help="Default sandbox name for computer commands. "
+        "Use 'host' for local machine control. "
+        "Empty or unset defaults to host mode. (env: CUA_SANDBOX)",
     )
 
 
@@ -192,7 +458,10 @@ async def _run_mcp_server(permissions: set[Permission], default_sandbox: str) ->
     await _register_computer_tools(server, permissions, default_sandbox)
     await _register_skills_tools(server, permissions)
 
-    logger.info("Starting CUA MCP server...")
+    if _is_host_mode("", default_sandbox):
+        logger.info("Starting CUA MCP server in HOST mode (local machine control)...")
+    else:
+        logger.info(f"Starting CUA MCP server targeting sandbox: {default_sandbox}...")
     await server.run_stdio_async()
 
 
@@ -409,7 +678,7 @@ async def _register_computer_tools(
     permissions: set[Permission],
     default_sandbox: str,
 ) -> None:
-    """Register computer control tools that proxy to computer-server."""
+    """Register computer control tools that proxy to computer-server or local host."""
     import aiohttp
     from cua_cli.auth.store import get_api_key
     from mcp.server.fastmcp import Context
@@ -438,7 +707,7 @@ async def _register_computer_tools(
             return server_url
 
     async def _send_command(sandbox_name: str, command: str, params: dict) -> dict:
-        """Send a command to the computer-server."""
+        """Send a command to a cloud computer-server."""
         server_url = await _get_server_url(sandbox_name)
         api_key = get_api_key()
 
@@ -465,16 +734,26 @@ async def _register_computer_tools(
                         return json.loads(line[6:])
                 return {"success": False, "error": "No response from server"}
 
+    async def _dispatch(sandbox_name: str, command: str, params: dict) -> dict:
+        """Route a command to the local host or a cloud sandbox."""
+        if _is_host_mode(sandbox_name, default_sandbox):
+            _check_host_consent()
+            return await _host_dispatch(command, params)
+        return await _send_command(sandbox_name, command, params)
+
     if Permission.COMPUTER_SCREENSHOT in permissions:
 
         @server.tool()
         async def computer_screenshot(ctx: Context, sandbox: str = "") -> Any:
-            """Take a screenshot of the sandbox screen.
+            """Take a screenshot of the screen.
+
+            In host mode (sandbox empty or 'host'), captures the local machine screen.
+            Otherwise, captures the specified cloud sandbox screen.
 
             Args:
-                sandbox: Sandbox name (optional, uses default if not specified)
+                sandbox: Sandbox name (optional, empty or 'host' for local machine)
             """
-            result = await _send_command(sandbox, "screenshot", {})
+            result = await _dispatch(sandbox, "screenshot", {})
             if result.get("success") and result.get("image_data"):
                 import base64
 
@@ -500,11 +779,11 @@ async def _register_computer_tools(
                 sandbox: Sandbox name (optional)
             """
             if button == "left":
-                result = await _send_command(sandbox, "left_click", {"x": x, "y": y})
+                result = await _dispatch(sandbox, "left_click", {"x": x, "y": y})
             elif button == "right":
-                result = await _send_command(sandbox, "right_click", {"x": x, "y": y})
+                result = await _dispatch(sandbox, "right_click", {"x": x, "y": y})
             else:
-                result = await _send_command(sandbox, "left_click", {"x": x, "y": y})
+                result = await _dispatch(sandbox, "left_click", {"x": x, "y": y})
             return json.dumps(result)
 
         @server.tool()
@@ -521,7 +800,7 @@ async def _register_computer_tools(
                 y: Y coordinate
                 sandbox: Sandbox name (optional)
             """
-            result = await _send_command(sandbox, "double_click", {"x": x, "y": y})
+            result = await _dispatch(sandbox, "double_click", {"x": x, "y": y})
             return json.dumps(result)
 
     if Permission.COMPUTER_TYPE in permissions:
@@ -534,7 +813,7 @@ async def _register_computer_tools(
                 text: Text to type
                 sandbox: Sandbox name (optional)
             """
-            result = await _send_command(sandbox, "type_text", {"text": text})
+            result = await _dispatch(sandbox, "type_text", {"text": text})
             return json.dumps(result)
 
     if Permission.COMPUTER_KEY in permissions:
@@ -547,7 +826,7 @@ async def _register_computer_tools(
                 key: Key to press (e.g., "enter", "tab", "escape")
                 sandbox: Sandbox name (optional)
             """
-            result = await _send_command(sandbox, "press_key", {"key": key})
+            result = await _dispatch(sandbox, "press_key", {"key": key})
             return json.dumps(result)
 
     if Permission.COMPUTER_HOTKEY in permissions:
@@ -561,7 +840,7 @@ async def _register_computer_tools(
                 sandbox: Sandbox name (optional)
             """
             key_list = keys.replace("-", "+").split("+")
-            result = await _send_command(sandbox, "hotkey", {"keys": key_list})
+            result = await _dispatch(sandbox, "hotkey", {"keys": key_list})
             return json.dumps(result)
 
     if Permission.COMPUTER_SCROLL in permissions:
@@ -580,7 +859,7 @@ async def _register_computer_tools(
                 amount: Number of scroll clicks
                 sandbox: Sandbox name (optional)
             """
-            result = await _send_command(
+            result = await _dispatch(
                 sandbox, "scroll_direction", {"direction": direction, "clicks": amount}
             )
             return json.dumps(result)
@@ -605,7 +884,7 @@ async def _register_computer_tools(
                 end_y: Ending Y coordinate
                 sandbox: Sandbox name (optional)
             """
-            result = await _send_command(
+            result = await _dispatch(
                 sandbox,
                 "drag_to",
                 {"start_x": start_x, "start_y": start_y, "end_x": end_x, "end_y": end_y},
@@ -621,7 +900,7 @@ async def _register_computer_tools(
             Args:
                 sandbox: Sandbox name (optional)
             """
-            result = await _send_command(sandbox, "copy_to_clipboard", {})
+            result = await _dispatch(sandbox, "copy_to_clipboard", {})
             return json.dumps(result)
 
         @server.tool()
@@ -632,7 +911,7 @@ async def _register_computer_tools(
                 text: Text to copy to clipboard
                 sandbox: Sandbox name (optional)
             """
-            result = await _send_command(sandbox, "set_clipboard", {"text": text})
+            result = await _dispatch(sandbox, "set_clipboard", {"text": text})
             return json.dumps(result)
 
     if Permission.COMPUTER_FILE in permissions:
@@ -645,7 +924,7 @@ async def _register_computer_tools(
                 path: Path to the file
                 sandbox: Sandbox name (optional)
             """
-            result = await _send_command(sandbox, "read_text", {"path": path})
+            result = await _dispatch(sandbox, "read_text", {"path": path})
             return json.dumps(result)
 
         @server.tool()
@@ -659,7 +938,7 @@ async def _register_computer_tools(
                 content: File content
                 sandbox: Sandbox name (optional)
             """
-            result = await _send_command(sandbox, "write_text", {"path": path, "content": content})
+            result = await _dispatch(sandbox, "write_text", {"path": path, "content": content})
             return json.dumps(result)
 
         @server.tool()
@@ -670,7 +949,7 @@ async def _register_computer_tools(
                 path: Directory path
                 sandbox: Sandbox name (optional)
             """
-            result = await _send_command(sandbox, "list_dir", {"path": path})
+            result = await _dispatch(sandbox, "list_dir", {"path": path})
             return json.dumps(result)
 
     if Permission.COMPUTER_SHELL in permissions:
@@ -683,7 +962,7 @@ async def _register_computer_tools(
                 command: Shell command to run
                 sandbox: Sandbox name (optional)
             """
-            result = await _send_command(sandbox, "run_command", {"command": command})
+            result = await _dispatch(sandbox, "run_command", {"command": command})
             return json.dumps(result)
 
     if Permission.COMPUTER_WINDOW in permissions:
@@ -695,7 +974,7 @@ async def _register_computer_tools(
             Args:
                 sandbox: Sandbox name (optional)
             """
-            result = await _send_command(sandbox, "get_application_windows", {})
+            result = await _dispatch(sandbox, "get_application_windows", {})
             return json.dumps(result)
 
         @server.tool()
@@ -706,7 +985,7 @@ async def _register_computer_tools(
                 path: Path to file or URL to open
                 sandbox: Sandbox name (optional)
             """
-            result = await _send_command(sandbox, "open", {"path": path})
+            result = await _dispatch(sandbox, "open", {"path": path})
             return json.dumps(result)
 
         @server.tool()
@@ -717,7 +996,7 @@ async def _register_computer_tools(
                 window_id: Window identifier
                 sandbox: Sandbox name (optional)
             """
-            result = await _send_command(sandbox, "activate_window", {"window_id": window_id})
+            result = await _dispatch(sandbox, "activate_window", {"window_id": window_id})
             return json.dumps(result)
 
         @server.tool()
@@ -727,10 +1006,10 @@ async def _register_computer_tools(
             Args:
                 sandbox: Sandbox name (optional)
             """
-            result = await _send_command(sandbox, "deactivate_window", {})
+            result = await _dispatch(sandbox, "deactivate_window", {})
             if not result.get("success"):
                 # Fallback: press Escape
-                result = await _send_command(sandbox, "press_key", {"key": "escape"})
+                result = await _dispatch(sandbox, "press_key", {"key": "escape"})
             return json.dumps(result)
 
         @server.tool()
@@ -741,7 +1020,7 @@ async def _register_computer_tools(
                 window_id: Window identifier
                 sandbox: Sandbox name (optional)
             """
-            result = await _send_command(sandbox, "minimize_window", {"window_id": window_id})
+            result = await _dispatch(sandbox, "minimize_window", {"window_id": window_id})
             return json.dumps(result)
 
         @server.tool()
@@ -752,7 +1031,7 @@ async def _register_computer_tools(
                 window_id: Window identifier
                 sandbox: Sandbox name (optional)
             """
-            result = await _send_command(sandbox, "maximize_window", {"window_id": window_id})
+            result = await _dispatch(sandbox, "maximize_window", {"window_id": window_id})
             return json.dumps(result)
 
         @server.tool()
@@ -763,7 +1042,7 @@ async def _register_computer_tools(
                 window_id: Window identifier
                 sandbox: Sandbox name (optional)
             """
-            result = await _send_command(sandbox, "close_window", {"window_id": window_id})
+            result = await _dispatch(sandbox, "close_window", {"window_id": window_id})
             return json.dumps(result)
 
         @server.tool()
@@ -782,7 +1061,7 @@ async def _register_computer_tools(
                 height: New height in pixels
                 sandbox: Sandbox name (optional)
             """
-            result = await _send_command(
+            result = await _dispatch(
                 sandbox,
                 "set_window_size",
                 {"window_id": window_id, "width": width, "height": height},
@@ -805,7 +1084,7 @@ async def _register_computer_tools(
                 y: Y coordinate for the window's top-left corner
                 sandbox: Sandbox name (optional)
             """
-            result = await _send_command(
+            result = await _dispatch(
                 sandbox,
                 "set_window_position",
                 {"window_id": window_id, "x": x, "y": y},
@@ -824,9 +1103,9 @@ async def _register_computer_tools(
                 window_id: Window identifier
                 sandbox: Sandbox name (optional)
             """
-            name_r = await _send_command(sandbox, "get_window_name", {"window_id": window_id})
-            size_r = await _send_command(sandbox, "get_window_size", {"window_id": window_id})
-            pos_r = await _send_command(sandbox, "get_window_position", {"window_id": window_id})
+            name_r = await _dispatch(sandbox, "get_window_name", {"window_id": window_id})
+            size_r = await _dispatch(sandbox, "get_window_size", {"window_id": window_id})
+            pos_r = await _dispatch(sandbox, "get_window_position", {"window_id": window_id})
             return json.dumps(
                 {
                     "window_id": window_id,
@@ -851,7 +1130,7 @@ async def _register_computer_tools(
                 args: Optional list of arguments
                 sandbox: Sandbox name (optional)
             """
-            result = await _send_command(sandbox, "launch", {"app": app, "args": args or []})
+            result = await _dispatch(sandbox, "launch", {"app": app, "args": args or []})
             return json.dumps(result)
 
     if Permission.COMPUTER_CLICK in permissions:
@@ -870,7 +1149,7 @@ async def _register_computer_tools(
                 y: Y coordinate
                 sandbox: Sandbox name (optional)
             """
-            result = await _send_command(sandbox, "move_cursor", {"x": x, "y": y})
+            result = await _dispatch(sandbox, "move_cursor", {"x": x, "y": y})
             return json.dumps(result)
 
         @server.tool()
@@ -889,7 +1168,7 @@ async def _register_computer_tools(
                 button: Mouse button (left, right, middle)
                 sandbox: Sandbox name (optional)
             """
-            result = await _send_command(sandbox, "mouse_down", {"x": x, "y": y, "button": button})
+            result = await _dispatch(sandbox, "mouse_down", {"x": x, "y": y, "button": button})
             return json.dumps(result)
 
         @server.tool()
@@ -908,7 +1187,7 @@ async def _register_computer_tools(
                 button: Mouse button (left, right, middle)
                 sandbox: Sandbox name (optional)
             """
-            result = await _send_command(sandbox, "mouse_up", {"x": x, "y": y, "button": button})
+            result = await _dispatch(sandbox, "mouse_up", {"x": x, "y": y, "button": button})
             return json.dumps(result)
 
     if Permission.COMPUTER_KEY in permissions:
@@ -921,7 +1200,7 @@ async def _register_computer_tools(
                 key: Key to hold (e.g. "shift", "ctrl", "a")
                 sandbox: Sandbox name (optional)
             """
-            result = await _send_command(sandbox, "key_down", {"key": key})
+            result = await _dispatch(sandbox, "key_down", {"key": key})
             return json.dumps(result)
 
         @server.tool()
@@ -932,7 +1211,7 @@ async def _register_computer_tools(
                 key: Key to release
                 sandbox: Sandbox name (optional)
             """
-            result = await _send_command(sandbox, "key_up", {"key": key})
+            result = await _dispatch(sandbox, "key_up", {"key": key})
             return json.dumps(result)
 
     if Permission.COMPUTER_SCREENSHOT in permissions:
@@ -944,7 +1223,7 @@ async def _register_computer_tools(
             Args:
                 sandbox: Sandbox name (optional)
             """
-            result = await _send_command(sandbox, "get_screen_size", {})
+            result = await _dispatch(sandbox, "get_screen_size", {})
             return json.dumps(result)
 
         @server.tool()
@@ -954,7 +1233,7 @@ async def _register_computer_tools(
             Args:
                 sandbox: Sandbox name (optional)
             """
-            result = await _send_command(sandbox, "get_cursor_position", {})
+            result = await _dispatch(sandbox, "get_cursor_position", {})
             return json.dumps(result)
 
         @server.tool()
@@ -964,7 +1243,7 @@ async def _register_computer_tools(
             Args:
                 sandbox: Sandbox name (optional)
             """
-            result = await _send_command(sandbox, "get_accessibility_tree", {})
+            result = await _dispatch(sandbox, "get_accessibility_tree", {})
             return json.dumps(result)
 
         @server.tool()
@@ -974,10 +1253,10 @@ async def _register_computer_tools(
             Args:
                 sandbox: Sandbox name (optional)
             """
-            win_r = await _send_command(sandbox, "get_current_window_id", {})
+            win_r = await _dispatch(sandbox, "get_current_window_id", {})
             window_id = win_r.get("window_id") or win_r.get("data")
             if window_id:
-                name_r = await _send_command(sandbox, "get_window_name", {"window_id": window_id})
+                name_r = await _dispatch(sandbox, "get_window_name", {"window_id": window_id})
                 title = name_r.get("name") or name_r.get("data") or ""
             else:
                 title = ""

@@ -190,6 +190,8 @@ fastlane/test_output
 ignore
 # .release
 .release/
+# Provisioning profiles (generated from CI secrets)
+*.provisionprofile
 # Shared folder
 shared
 # Trajectories

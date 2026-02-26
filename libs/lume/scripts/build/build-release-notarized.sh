@@ -75,13 +75,13 @@ mkdir -p "$APP_BUNDLE/Contents/Resources"
 # Copy the binary into the bundle
 cp -f .build/release/lume "$APP_BUNDLE/Contents/MacOS/lume"
 
-# Copy resource bundle to Contents/Resources/ only.
-# The bundle is a flat SPM directory (no Info.plist) — placing it in Contents/MacOS/
-# causes codesign to fail with "bundle format unrecognized".
-# SPM's Bundle.module resolves via Bundle.main.resourceURL which points to Contents/Resources/.
+# Copy resource bundle for SPM Bundle.module resolution.
+# SPM looks at Bundle.main.bundleURL (the .app root), NOT Contents/Resources/.
+# Placing it in Contents/MacOS/ breaks codesign ("bundle format unrecognized").
+# Solution: place it at the .app root level where SPM expects it.
 BUILD_BUNDLE=".build/release/lume_lume.bundle"
 if [ -d "$BUILD_BUNDLE" ]; then
-  cp -rf "$BUILD_BUNDLE" "$APP_BUNDLE/Contents/Resources/"
+  cp -rf "$BUILD_BUNDLE" "$APP_BUNDLE/"
 fi
 
 # Stamp and copy Info.plist

@@ -142,11 +142,13 @@ build_lume() {
 
     cp -f "$BUILD_PATH/lume" "$APP_BUNDLE/Contents/MacOS/lume"
 
-    # Copy resource bundle to Contents/Resources/ (not MacOS/ — flat bundles
-    # without Info.plist cause codesign to fail with "bundle format unrecognized")
+    # Copy resource bundle for SPM Bundle.module resolution.
+    # SPM looks at Bundle.main.bundleURL (the .app root), NOT Contents/Resources/.
+    # Placing it in Contents/MacOS/ breaks codesign ("bundle format unrecognized").
+    # Solution: place it at the .app root level where SPM expects it.
     mkdir -p "$APP_BUNDLE/Contents/Resources"
     if [ -d "$BUILD_PATH/lume_lume.bundle" ]; then
-      cp -rf "$BUILD_PATH/lume_lume.bundle" "$APP_BUNDLE/Contents/Resources/"
+      cp -rf "$BUILD_PATH/lume_lume.bundle" "$APP_BUNDLE/"
     fi
 
     # Stamp Info.plist with version

@@ -31,6 +31,8 @@ on:
         required: true
       DEVELOPER_NAME:
         required: true
+      PROVISIONING_PROFILE_BASE64:
+        required: true
 
 permissions:
   contents: write
@@ -43,6 +45,7 @@ env:
   TEAM_ID: ${{ secrets.TEAM_ID }}
   APP_SPECIFIC_PASSWORD: ${{ secrets.APP_SPECIFIC_PASSWORD }}
   DEVELOPER_NAME: ${{ secrets.DEVELOPER_NAME }}
+  PROVISIONING_PROFILE_BASE64: ${{ secrets.PROVISIONING_PROFILE_BASE64 }}
 
 jobs:
   notarize:
@@ -136,6 +139,14 @@ jobs:
 
           # Clean up certificate files
           rm application.p12 installer.p12
+
+      - name: Install Provisioning Profile
+        env:
+          PROVISIONING_PROFILE_BASE64: ${{ secrets.PROVISIONING_PROFILE_BASE64 }}
+        run: |
+          echo "Installing provisioning profile..."
+          echo "$PROVISIONING_PROFILE_BASE64" | base64 --decode > libs/lume/resources/embedded.provisionprofile
+          echo "Provisioning profile installed successfully"
 
       - name: Build and Notarize
         id: build_notarize

@@ -4,6 +4,7 @@ Anthropic hosted tools agent loop implementation using liteLLM
 
 import asyncio
 import json
+import logging
 from typing import Any, AsyncGenerator, Dict, List, Optional, Tuple, Union
 
 import litellm
@@ -31,6 +32,23 @@ from ..responses import (
     make_wait_item,
 )
 from ..types import AgentCapability, AgentResponse, Messages, Tools
+
+logger = logging.getLogger(__name__)
+
+# Recommended maximum resolution for Anthropic's computer-use API.
+# Screenshots larger than this are internally downscaled by the API, causing
+# coordinate mismatches. We proactively downscale to avoid the offset.
+RECOMMENDED_MAX_WIDTH = 1024
+RECOMMENDED_MAX_HEIGHT = 768
+
+
+def _scale_coordinate(coord: int, scale: float) -> int:
+    """Scale a single coordinate value by a factor and round to int."""
+    scaled = int(round(coord * scale))
+    if scale != 1.0:
+        logger.debug("Scaling coordinate: %d * %.4f -> %d", coord, scale, scaled)
+    return scaled
+
 
 # Model version mapping to tool version and beta flag
 MODEL_TOOL_MAPPING = [
@@ -82,6 +100,24 @@ async def _map_computer_tool_to_anthropic(computer_tool: Any, tool_version: str)
         # Fallback to default dimensions if method fails
         width, height = 1024, 768
 
+    # Cap dimensions to recommended max so they match downscaled screenshots
+    if width > RECOMMENDED_MAX_WIDTH or height > RECOMMENDED_MAX_HEIGHT:
+        scale = min(RECOMMENDED_MAX_WIDTH / width, RECOMMENDED_MAX_HEIGHT / height)
+        new_width = int(width * scale)
+        new_height = int(height * scale)
+        logger.debug(
+            "Capping tool dimensions: %dx%d -> %dx%d (scale=%.4f)",
+            width,
+            height,
+            new_width,
+            new_height,
+            scale,
+        )
+        width = new_width
+        height = new_height
+    else:
+        logger.debug("Tool dimensions within limits: %dx%d", width, height)
+
     return {
         "type": tool_version,
         "function": {
@@ -122,10 +158,19 @@ async def _prepare_tools_for_anthropic(tool_schemas: List[Dict[str, Any]], model
     return anthropic_tools
 
 
-def _convert_responses_items_to_completion_messages(messages: Messages) -> List[Dict[str, Any]]:
-    """Convert responses_items message format to liteLLM completion format."""
+def _convert_responses_items_to_completion_messages(
+    messages: Messages,
+) -> Tuple[List[Dict[str, Any]], Tuple[float, float]]:
+    """Convert responses_items message format to liteLLM completion format.
+
+    Returns:
+        A tuple of (completion_messages, scale_factors) where scale_factors is
+        (scale_x, scale_y) representing the ratio of original to downscaled
+        dimensions. Use these to upscale coordinates returned by the API.
+    """
     completion_messages = []
     call_id_to_fn_name = {}
+    scale_factors: Tuple[float, float] = (1.0, 1.0)
 
     for message in messages:
         msg_type = message.get("type")
@@ -627,6 +672,55 @@ def _convert_responses_items_to_completion_messages(messages: Messages) -> List[
             if output.get("type") == "input_image":
                 # Screenshot result - convert to OpenAI format with image_url content
                 image_url = output.get("image_url", "")
+
+                # Reset scale factors for each new screenshot so stale values
+                # from a previous downscale don't carry over.
+                scale_factors = (1.0, 1.0)
+
+                # Downscale screenshot if it exceeds recommended max resolution
+                if image_url and image_url.startswith("data:"):
+                    try:
+                        import base64
+                        from io import BytesIO
+
+                        from PIL import Image
+
+                        # Extract base64 data after the header
+                        header, b64_data = image_url.split(",", 1)
+                        img_bytes = base64.b64decode(b64_data)
+                        img = Image.open(BytesIO(img_bytes))
+                        orig_w, orig_h = img.size
+
+                        if orig_w > RECOMMENDED_MAX_WIDTH or orig_h > RECOMMENDED_MAX_HEIGHT:
+                            scale = min(
+                                RECOMMENDED_MAX_WIDTH / orig_w,
+                                RECOMMENDED_MAX_HEIGHT / orig_h,
+                            )
+                            new_w = int(orig_w * scale)
+                            new_h = int(orig_h * scale)
+                            img = img.resize((new_w, new_h), Image.LANCZOS)
+
+                            # Re-encode to base64
+                            buf = BytesIO()
+                            img.save(buf, format="PNG")
+                            new_b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
+                            image_url = f"{header},{new_b64}"
+
+                            # Store scale factors for coordinate upscaling
+                            scale_factors = (orig_w / new_w, orig_h / new_h)
+                            logger.debug(
+                                "Downscaled screenshot: %dx%d -> %dx%d (scale=%.4f, upscale_factors=%.4fx%.4f)",
+                                orig_w,
+                                orig_h,
+                                new_w,
+                                new_h,
+                                scale,
+                                scale_factors[0],
+                                scale_factors[1],
+                            )
+                    except Exception:
+                        pass  # If downscaling fails, send original image
+
                 completion_messages.append(
                     {
                         "role": "function",
@@ -646,11 +740,21 @@ def _convert_responses_items_to_completion_messages(messages: Messages) -> List[
                     }
                 )
 
-    return completion_messages
+    return completion_messages, scale_factors
 
 
-def _convert_completion_to_responses_items(response: Any) -> List[Dict[str, Any]]:
-    """Convert liteLLM completion response to responses_items message format."""
+def _convert_completion_to_responses_items(
+    response: Any,
+    scale_x: float = 1.0,
+    scale_y: float = 1.0,
+) -> List[Dict[str, Any]]:
+    """Convert liteLLM completion response to responses_items message format.
+
+    Args:
+        response: The liteLLM completion response.
+        scale_x: Horizontal upscale factor for coordinates (original_w / downscaled_w).
+        scale_y: Vertical upscale factor for coordinates (original_h / downscaled_h).
+    """
     responses_items = []
 
     if not response or not hasattr(response, "choices") or not response.choices:
@@ -699,8 +803,16 @@ def _convert_completion_to_responses_items(response: Any) -> List[Dict[str, Any]
                                 coordinate = tool_input.get("coordinate", [0, 0])
                                 responses_items.append(
                                     make_click_item(
-                                        x=coordinate[0] if len(coordinate) > 0 else 0,
-                                        y=coordinate[1] if len(coordinate) > 1 else 0,
+                                        x=(
+                                            _scale_coordinate(coordinate[0], scale_x)
+                                            if len(coordinate) > 0
+                                            else 0
+                                        ),
+                                        y=(
+                                            _scale_coordinate(coordinate[1], scale_y)
+                                            if len(coordinate) > 1
+                                            else 0
+                                        ),
                                         call_id=call_id,
                                     )
                                 )
@@ -722,8 +834,16 @@ def _convert_completion_to_responses_items(response: Any) -> List[Dict[str, Any]
                                 coordinate = tool_input.get("coordinate", [0, 0])
                                 responses_items.append(
                                     make_move_item(
-                                        x=coordinate[0] if len(coordinate) > 0 else 0,
-                                        y=coordinate[1] if len(coordinate) > 1 else 0,
+                                        x=(
+                                            _scale_coordinate(coordinate[0], scale_x)
+                                            if len(coordinate) > 0
+                                            else 0
+                                        ),
+                                        y=(
+                                            _scale_coordinate(coordinate[1], scale_y)
+                                            if len(coordinate) > 1
+                                            else 0
+                                        ),
                                         call_id=call_id,
                                     )
                                 )
@@ -752,8 +872,16 @@ def _convert_completion_to_responses_items(response: Any) -> List[Dict[str, Any]
                                 )
                                 responses_items.append(
                                     make_scroll_item(
-                                        x=coordinate[0] if len(coordinate) > 0 else 0,
-                                        y=coordinate[1] if len(coordinate) > 1 else 0,
+                                        x=(
+                                            _scale_coordinate(coordinate[0], scale_x)
+                                            if len(coordinate) > 0
+                                            else 0
+                                        ),
+                                        y=(
+                                            _scale_coordinate(coordinate[1], scale_y)
+                                            if len(coordinate) > 1
+                                            else 0
+                                        ),
                                         scroll_x=scroll_x,
                                         scroll_y=scroll_y,
                                         call_id=call_id,
@@ -766,12 +894,28 @@ def _convert_completion_to_responses_items(response: Any) -> List[Dict[str, Any]
                                     make_drag_item(
                                         path=[
                                             {
-                                                "x": start_coord[0] if len(start_coord) > 0 else 0,
-                                                "y": start_coord[1] if len(start_coord) > 1 else 0,
+                                                "x": (
+                                                    _scale_coordinate(start_coord[0], scale_x)
+                                                    if len(start_coord) > 0
+                                                    else 0
+                                                ),
+                                                "y": (
+                                                    _scale_coordinate(start_coord[1], scale_y)
+                                                    if len(start_coord) > 1
+                                                    else 0
+                                                ),
                                             },
                                             {
-                                                "x": end_coord[0] if len(end_coord) > 0 else 0,
-                                                "y": end_coord[1] if len(end_coord) > 1 else 0,
+                                                "x": (
+                                                    _scale_coordinate(end_coord[0], scale_x)
+                                                    if len(end_coord) > 0
+                                                    else 0
+                                                ),
+                                                "y": (
+                                                    _scale_coordinate(end_coord[1], scale_y)
+                                                    if len(end_coord) > 1
+                                                    else 0
+                                                ),
                                             },
                                         ],
                                         call_id=call_id,
@@ -781,8 +925,16 @@ def _convert_completion_to_responses_items(response: Any) -> List[Dict[str, Any]
                                 coordinate = tool_input.get("coordinate", [0, 0])
                                 responses_items.append(
                                     make_click_item(
-                                        x=coordinate[0] if len(coordinate) > 0 else 0,
-                                        y=coordinate[1] if len(coordinate) > 1 else 0,
+                                        x=(
+                                            _scale_coordinate(coordinate[0], scale_x)
+                                            if len(coordinate) > 0
+                                            else 0
+                                        ),
+                                        y=(
+                                            _scale_coordinate(coordinate[1], scale_y)
+                                            if len(coordinate) > 1
+                                            else 0
+                                        ),
                                         button="right",
                                         call_id=call_id,
                                     )
@@ -791,8 +943,16 @@ def _convert_completion_to_responses_items(response: Any) -> List[Dict[str, Any]
                                 coordinate = tool_input.get("coordinate", [0, 0])
                                 responses_items.append(
                                     make_click_item(
-                                        x=coordinate[0] if len(coordinate) > 0 else 0,
-                                        y=coordinate[1] if len(coordinate) > 1 else 0,
+                                        x=(
+                                            _scale_coordinate(coordinate[0], scale_x)
+                                            if len(coordinate) > 0
+                                            else 0
+                                        ),
+                                        y=(
+                                            _scale_coordinate(coordinate[1], scale_y)
+                                            if len(coordinate) > 1
+                                            else 0
+                                        ),
                                         button="wheel",
                                         call_id=call_id,
                                     )
@@ -801,8 +961,16 @@ def _convert_completion_to_responses_items(response: Any) -> List[Dict[str, Any]
                                 coordinate = tool_input.get("coordinate", [0, 0])
                                 responses_items.append(
                                     make_double_click_item(
-                                        x=coordinate[0] if len(coordinate) > 0 else 0,
-                                        y=coordinate[1] if len(coordinate) > 1 else 0,
+                                        x=(
+                                            _scale_coordinate(coordinate[0], scale_x)
+                                            if len(coordinate) > 0
+                                            else 0
+                                        ),
+                                        y=(
+                                            _scale_coordinate(coordinate[1], scale_y)
+                                            if len(coordinate) > 1
+                                            else 0
+                                        ),
                                         call_id=call_id,
                                     )
                                 )
@@ -833,8 +1001,16 @@ def _convert_completion_to_responses_items(response: Any) -> List[Dict[str, Any]
                                 coordinate = tool_input.get("coordinate", [None, None])
                                 responses_items.append(
                                     make_left_mouse_down_item(
-                                        x=coordinate[0] if len(coordinate) > 0 else None,
-                                        y=coordinate[1] if len(coordinate) > 1 else None,
+                                        x=(
+                                            _scale_coordinate(coordinate[0], scale_x)
+                                            if (len(coordinate) > 0 and coordinate[0] is not None)
+                                            else None
+                                        ),
+                                        y=(
+                                            _scale_coordinate(coordinate[1], scale_y)
+                                            if (len(coordinate) > 1 and coordinate[1] is not None)
+                                            else None
+                                        ),
                                         call_id=call_id,
                                     )
                                 )
@@ -853,8 +1029,16 @@ def _convert_completion_to_responses_items(response: Any) -> List[Dict[str, Any]
                                 coordinate = tool_input.get("coordinate", [None, None])
                                 responses_items.append(
                                     make_left_mouse_up_item(
-                                        x=coordinate[0] if len(coordinate) > 0 else None,
-                                        y=coordinate[1] if len(coordinate) > 1 else None,
+                                        x=(
+                                            _scale_coordinate(coordinate[0], scale_x)
+                                            if (len(coordinate) > 0 and coordinate[0] is not None)
+                                            else None
+                                        ),
+                                        y=(
+                                            _scale_coordinate(coordinate[1], scale_y)
+                                            if (len(coordinate) > 1 and coordinate[1] is not None)
+                                            else None
+                                        ),
                                         call_id=call_id,
                                     )
                                 )
@@ -961,8 +1145,16 @@ def _convert_completion_to_responses_items(response: Any) -> List[Dict[str, Any]
                             coordinate = args.get("coordinate", [0, 0])
                             responses_items.append(
                                 make_click_item(
-                                    x=coordinate[0] if len(coordinate) > 0 else 0,
-                                    y=coordinate[1] if len(coordinate) > 1 else 0,
+                                    x=(
+                                        _scale_coordinate(coordinate[0], scale_x)
+                                        if len(coordinate) > 0
+                                        else 0
+                                    ),
+                                    y=(
+                                        _scale_coordinate(coordinate[1], scale_y)
+                                        if len(coordinate) > 1
+                                        else 0
+                                    ),
                                     call_id=call_id,
                                 )
                             )
@@ -1048,8 +1240,16 @@ def _convert_completion_to_responses_items(response: Any) -> List[Dict[str, Any]
                             coordinate = args.get("coordinate", [0, 0])
                             responses_items.append(
                                 make_move_item(
-                                    x=coordinate[0] if len(coordinate) > 0 else 0,
-                                    y=coordinate[1] if len(coordinate) > 1 else 0,
+                                    x=(
+                                        _scale_coordinate(coordinate[0], scale_x)
+                                        if len(coordinate) > 0
+                                        else 0
+                                    ),
+                                    y=(
+                                        _scale_coordinate(coordinate[1], scale_y)
+                                        if len(coordinate) > 1
+                                        else 0
+                                    ),
                                     call_id=call_id,
                                 )
                             )
@@ -1098,8 +1298,16 @@ def _convert_completion_to_responses_items(response: Any) -> List[Dict[str, Any]
                             )
                             responses_items.append(
                                 make_scroll_item(
-                                    x=coordinate[0] if len(coordinate) > 0 else 0,
-                                    y=coordinate[1] if len(coordinate) > 1 else 0,
+                                    x=(
+                                        _scale_coordinate(coordinate[0], scale_x)
+                                        if len(coordinate) > 0
+                                        else 0
+                                    ),
+                                    y=(
+                                        _scale_coordinate(coordinate[1], scale_y)
+                                        if len(coordinate) > 1
+                                        else 0
+                                    ),
                                     scroll_x=scroll_x,
                                     scroll_y=scroll_y,
                                     call_id=call_id,
@@ -1138,12 +1346,28 @@ def _convert_completion_to_responses_items(response: Any) -> List[Dict[str, Any]
                                 make_drag_item(
                                     path=[
                                         {
-                                            "x": start_coord[0] if len(start_coord) > 0 else 0,
-                                            "y": start_coord[1] if len(start_coord) > 1 else 0,
+                                            "x": (
+                                                _scale_coordinate(start_coord[0], scale_x)
+                                                if len(start_coord) > 0
+                                                else 0
+                                            ),
+                                            "y": (
+                                                _scale_coordinate(start_coord[1], scale_y)
+                                                if len(start_coord) > 1
+                                                else 0
+                                            ),
                                         },
                                         {
-                                            "x": end_coord[0] if len(end_coord) > 0 else 0,
-                                            "y": end_coord[1] if len(end_coord) > 1 else 0,
+                                            "x": (
+                                                _scale_coordinate(end_coord[0], scale_x)
+                                                if len(end_coord) > 0
+                                                else 0
+                                            ),
+                                            "y": (
+                                                _scale_coordinate(end_coord[1], scale_y)
+                                                if len(end_coord) > 1
+                                                else 0
+                                            ),
                                         },
                                     ],
                                     call_id=call_id,
@@ -1177,8 +1401,16 @@ def _convert_completion_to_responses_items(response: Any) -> List[Dict[str, Any]
                             coordinate = args.get("coordinate", [0, 0])
                             responses_items.append(
                                 make_click_item(
-                                    x=coordinate[0] if len(coordinate) > 0 else 0,
-                                    y=coordinate[1] if len(coordinate) > 1 else 0,
+                                    x=(
+                                        _scale_coordinate(coordinate[0], scale_x)
+                                        if len(coordinate) > 0
+                                        else 0
+                                    ),
+                                    y=(
+                                        _scale_coordinate(coordinate[1], scale_y)
+                                        if len(coordinate) > 1
+                                        else 0
+                                    ),
                                     button="right",
                                     call_id=call_id,
                                 )
@@ -1211,8 +1443,16 @@ def _convert_completion_to_responses_items(response: Any) -> List[Dict[str, Any]
                             coordinate = args.get("coordinate", [0, 0])
                             responses_items.append(
                                 make_click_item(
-                                    x=coordinate[0] if len(coordinate) > 0 else 0,
-                                    y=coordinate[1] if len(coordinate) > 1 else 0,
+                                    x=(
+                                        _scale_coordinate(coordinate[0], scale_x)
+                                        if len(coordinate) > 0
+                                        else 0
+                                    ),
+                                    y=(
+                                        _scale_coordinate(coordinate[1], scale_y)
+                                        if len(coordinate) > 1
+                                        else 0
+                                    ),
                                     button="wheel",
                                     call_id=call_id,
                                 )
@@ -1244,8 +1484,16 @@ def _convert_completion_to_responses_items(response: Any) -> List[Dict[str, Any]
                             coordinate = args.get("coordinate", [0, 0])
                             responses_items.append(
                                 make_double_click_item(
-                                    x=coordinate[0] if len(coordinate) > 0 else 0,
-                                    y=coordinate[1] if len(coordinate) > 1 else 0,
+                                    x=(
+                                        _scale_coordinate(coordinate[0], scale_x)
+                                        if len(coordinate) > 0
+                                        else 0
+                                    ),
+                                    y=(
+                                        _scale_coordinate(coordinate[1], scale_y)
+                                        if len(coordinate) > 1
+                                        else 0
+                                    ),
                                     call_id=call_id,
                                 )
                             )
@@ -1302,8 +1550,16 @@ def _convert_completion_to_responses_items(response: Any) -> List[Dict[str, Any]
                             coordinate = args.get("coordinate", [None, None])
                             responses_items.append(
                                 make_left_mouse_down_item(
-                                    x=coordinate[0] if len(coordinate) > 0 else None,
-                                    y=coordinate[1] if len(coordinate) > 1 else None,
+                                    x=(
+                                        _scale_coordinate(coordinate[0], scale_x)
+                                        if (len(coordinate) > 0 and coordinate[0] is not None)
+                                        else None
+                                    ),
+                                    y=(
+                                        _scale_coordinate(coordinate[1], scale_y)
+                                        if (len(coordinate) > 1 and coordinate[1] is not None)
+                                        else None
+                                    ),
                                     call_id=call_id,
                                 )
                             )
@@ -1335,8 +1591,16 @@ def _convert_completion_to_responses_items(response: Any) -> List[Dict[str, Any]
                             coordinate = args.get("coordinate", [None, None])
                             responses_items.append(
                                 make_left_mouse_up_item(
-                                    x=coordinate[0] if len(coordinate) > 0 else None,
-                                    y=coordinate[1] if len(coordinate) > 1 else None,
+                                    x=(
+                                        _scale_coordinate(coordinate[0], scale_x)
+                                        if (len(coordinate) > 0 and coordinate[0] is not None)
+                                        else None
+                                    ),
+                                    y=(
+                                        _scale_coordinate(coordinate[1], scale_y)
+                                        if (len(coordinate) > 1 and coordinate[1] is not None)
+                                        else None
+                                    ),
                                     call_id=call_id,
                                 )
                             )
@@ -1519,7 +1783,10 @@ class AnthropicHostedToolsConfig(AsyncAgentConfig):
         anthropic_tools = await _prepare_tools_for_anthropic(tools, model)
 
         # Convert responses_items messages to completion format
-        completion_messages = _convert_responses_items_to_completion_messages(messages)
+        completion_messages, scale_factors = _convert_responses_items_to_completion_messages(
+            messages
+        )
+        scale_x, scale_y = scale_factors
         if use_prompt_caching:
             # First combine messages to reduce number of blocks
             completion_messages = _combine_completion_messages(completion_messages)
@@ -1551,8 +1818,10 @@ class AnthropicHostedToolsConfig(AsyncAgentConfig):
         if _on_api_end:
             await _on_api_end(api_kwargs, response)
 
-        # Convert response to responses_items format
-        responses_items = _convert_completion_to_responses_items(response)
+        # Convert response to responses_items format, upscaling coordinates if needed
+        responses_items = _convert_completion_to_responses_items(
+            response, scale_x=scale_x, scale_y=scale_y
+        )
 
         # Extract usage information
         responses_usage = {

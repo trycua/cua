@@ -27,6 +27,7 @@ from PIL import Image
 
 from ..decorators import register_agent
 from ..loops.base import AsyncAgentConfig
+from ..responses import make_reasoning_item
 from ..types import AgentCapability
 
 
@@ -90,6 +91,58 @@ def _sanitize_for_json(obj: Any) -> Any:
         return _sanitize_for_json(obj.model_dump())
     # Fallback to string representation
     return str(obj)
+
+
+def _create_gemini_client(
+    original_model: str, genai: Any, kwargs: Dict[str, Any]
+) -> Tuple[Any, str]:
+    """Create a Gemini SDK client, routing through CUA proxy if model has cua/ prefix.
+
+    Returns (client, bare_model_name).
+
+    When the model string starts with ``cua/<provider>/`` the Google GenAI SDK
+    is configured to send requests through the CUA inference proxy at
+    ``{CUA_BASE_URL}/gemini``.  This keeps the Gemini loop as the single code
+    path for both direct-Google and CUA-routed Gemini models.
+    """
+    import os
+
+    from ..decorators import _strip_cua_prefix
+
+    model = _strip_cua_prefix(original_model)
+    is_cua_routed = original_model != model
+
+    if is_cua_routed:
+        api_key = (
+            kwargs.get("api_key") or os.getenv("CUA_INFERENCE_API_KEY") or os.getenv("CUA_API_KEY")
+        )
+        if not api_key:
+            raise ValueError(
+                "No CUA API key found for cua/ model routing. "
+                "Set CUA_API_KEY environment variable or pass api_key to ComputerAgent()."
+            )
+        cua_base_url = os.getenv("CUA_BASE_URL", "https://inference.cua.ai/v1")
+        http_options: Dict[str, Any] = {"base_url": f"{cua_base_url}/gemini"}
+        # Include CUA version headers if available
+        try:
+            from core.http import cua_version_headers
+
+            hdrs = cua_version_headers()
+            if hdrs:
+                http_options["headers"] = hdrs
+        except Exception:
+            pass
+        client = genai.Client(api_key=api_key, http_options=http_options)
+    else:
+        api_key = kwargs.get("api_key", os.getenv("GOOGLE_API_KEY"))
+        if api_key:
+            client = genai.Client(api_key=api_key)
+        else:
+            # Vertex AI mode - requires GOOGLE_CLOUD_PROJECT, GOOGLE_CLOUD_LOCATION env vars
+            # and Application Default Credentials (ADC)
+            client = genai.Client()
+
+    return client, model
 
 
 def _find_last_user_text(messages: List[Dict[str, Any]]) -> List[str]:
@@ -219,7 +272,8 @@ def _convert_messages_to_gemini_contents(
                             types.Content(
                                 role="user",
                                 parts=[
-                                    types.Part.from_bytes(data=img_bytes, mime_type="image/png")
+                                    types.Part(text="[screenshot]"),
+                                    types.Part.from_bytes(data=img_bytes, mime_type="image/png"),
                                 ],
                             )
                         )
@@ -303,24 +357,36 @@ def _build_custom_function_declarations(types: Any) -> List[Any]:
     return [
         types.FunctionDeclaration(
             name="click_at",
-            description="Click at the specified x,y coordinates on the screen. Coordinates are normalized 0-999.",
+            description="Click at the specified x,y coordinates on the screen. x and y are normalized 0-999 where 0 is the left/top edge and 999 is the right/bottom edge of the screen. Look carefully at the screenshot to identify the exact position of the target element before clicking.",
             parameters={
                 "type": "object",
                 "properties": {
-                    "x": {"type": "integer", "description": "X coordinate (0-999 normalized)"},
-                    "y": {"type": "integer", "description": "Y coordinate (0-999 normalized)"},
+                    "x": {
+                        "type": "integer",
+                        "description": "X coordinate (0-999 normalized). 0 is the left edge, 999 is the right edge.",
+                    },
+                    "y": {
+                        "type": "integer",
+                        "description": "Y coordinate (0-999 normalized). 0 is the top edge, 999 is the bottom edge.",
+                    },
                 },
                 "required": ["x", "y"],
             },
         ),
         types.FunctionDeclaration(
             name="type_text_at",
-            description="Type text at the specified x,y coordinates. First clicks at the location, then types the text.",
+            description="Type text at the specified x,y coordinates. First clicks at the location, then types the text. x and y are normalized 0-999 where 0 is the left/top edge and 999 is the right/bottom edge of the screen.",
             parameters={
                 "type": "object",
                 "properties": {
-                    "x": {"type": "integer", "description": "X coordinate (0-999 normalized)"},
-                    "y": {"type": "integer", "description": "Y coordinate (0-999 normalized)"},
+                    "x": {
+                        "type": "integer",
+                        "description": "X coordinate (0-999 normalized). 0 is the left edge, 999 is the right edge.",
+                    },
+                    "y": {
+                        "type": "integer",
+                        "description": "Y coordinate (0-999 normalized). 0 is the top edge, 999 is the bottom edge.",
+                    },
                     "text": {"type": "string", "description": "Text to type"},
                     "press_enter": {
                         "type": "boolean",
@@ -332,12 +398,18 @@ def _build_custom_function_declarations(types: Any) -> List[Any]:
         ),
         types.FunctionDeclaration(
             name="hover_at",
-            description="Move the mouse cursor to the specified x,y coordinates without clicking.",
+            description="Move the mouse cursor to the specified x,y coordinates without clicking. x and y are normalized 0-999 where 0 is the left/top edge and 999 is the right/bottom edge of the screen.",
             parameters={
                 "type": "object",
                 "properties": {
-                    "x": {"type": "integer", "description": "X coordinate (0-999 normalized)"},
-                    "y": {"type": "integer", "description": "Y coordinate (0-999 normalized)"},
+                    "x": {
+                        "type": "integer",
+                        "description": "X coordinate (0-999 normalized). 0 is the left edge, 999 is the right edge.",
+                    },
+                    "y": {
+                        "type": "integer",
+                        "description": "Y coordinate (0-999 normalized). 0 is the top edge, 999 is the bottom edge.",
+                    },
                 },
                 "required": ["x", "y"],
             },
@@ -358,12 +430,18 @@ def _build_custom_function_declarations(types: Any) -> List[Any]:
         ),
         types.FunctionDeclaration(
             name="scroll_at",
-            description="Scroll at the specified x,y coordinates in a given direction.",
+            description="Scroll at the specified x,y coordinates in a given direction. x and y are normalized 0-999 where 0 is the left/top edge and 999 is the right/bottom edge of the screen.",
             parameters={
                 "type": "object",
                 "properties": {
-                    "x": {"type": "integer", "description": "X coordinate (0-999 normalized)"},
-                    "y": {"type": "integer", "description": "Y coordinate (0-999 normalized)"},
+                    "x": {
+                        "type": "integer",
+                        "description": "X coordinate (0-999 normalized). 0 is the left edge, 999 is the right edge.",
+                    },
+                    "y": {
+                        "type": "integer",
+                        "description": "Y coordinate (0-999 normalized). 0 is the top edge, 999 is the bottom edge.",
+                    },
                     "direction": {
                         "type": "string",
                         "enum": ["up", "down", "left", "right"],
@@ -394,25 +472,25 @@ def _build_custom_function_declarations(types: Any) -> List[Any]:
         ),
         types.FunctionDeclaration(
             name="drag_and_drop",
-            description="Drag from one coordinate to another.",
+            description="Drag from one coordinate to another. x and y are normalized 0-999 where 0 is the left/top edge and 999 is the right/bottom edge of the screen.",
             parameters={
                 "type": "object",
                 "properties": {
                     "x": {
                         "type": "integer",
-                        "description": "Starting X coordinate (0-999 normalized)",
+                        "description": "Starting X coordinate (0-999 normalized). 0 is the left edge, 999 is the right edge.",
                     },
                     "y": {
                         "type": "integer",
-                        "description": "Starting Y coordinate (0-999 normalized)",
+                        "description": "Starting Y coordinate (0-999 normalized). 0 is the top edge, 999 is the bottom edge.",
                     },
                     "destination_x": {
                         "type": "integer",
-                        "description": "Destination X coordinate (0-999 normalized)",
+                        "description": "Destination X coordinate (0-999 normalized). 0 is the left edge, 999 is the right edge.",
                     },
                     "destination_y": {
                         "type": "integer",
-                        "description": "Destination Y coordinate (0-999 normalized)",
+                        "description": "Destination Y coordinate (0-999 normalized). 0 is the top edge, 999 is the bottom edge.",
                     },
                 },
                 "required": ["x", "y", "destination_x", "destination_y"],
@@ -625,19 +703,9 @@ class GeminiComputerUseConfig(AsyncAgentConfig):
         **kwargs,
     ) -> Dict[str, Any]:
         genai, types = _lazy_import_genai()
-        import os
 
-        # Authentication follows two modes based on environment variables:
-        # 1. Google AI Studio: Set GOOGLE_API_KEY
-        # 2. Vertex AI: Set GOOGLE_CLOUD_PROJECT, GOOGLE_CLOUD_LOCATION, GOOGLE_GENAI_USE_VERTEXAI=True
-        api_key = kwargs.get("api_key", os.getenv("GOOGLE_API_KEY"))
-
-        if api_key:
-            client = genai.Client(api_key=api_key)
-        else:
-            # Vertex AI mode - requires GOOGLE_CLOUD_PROJECT, GOOGLE_CLOUD_LOCATION env vars
-            # and Application Default Credentials (ADC)
-            client = genai.Client()
+        # Create client with CUA routing support (detects cua/ prefix automatically)
+        client, model = _create_gemini_client(model, genai, kwargs)
 
         # Extract Gemini 3-specific parameters
         # thinking_level: Use types.ThinkingLevel enum values (e.g., "LOW", "HIGH", "MEDIUM", "MINIMAL")
@@ -678,6 +746,10 @@ class GeminiComputerUseConfig(AsyncAgentConfig):
                 # Assume it's already an SDK enum value
                 resolved_media_resolution = media_resolution
 
+        # Convert full message history to Gemini Contents format
+        # (done early so screen dimensions are available for system instruction)
+        contents, (screen_w, screen_h) = _convert_messages_to_gemini_contents(messages, types)
+
         # Compose tools config based on model type
         # Gemini 2.5 Computer Use Preview uses built-in ComputerUse tool
         # Gemini 3 Flash/Pro Preview uses custom function declarations
@@ -689,7 +761,19 @@ class GeminiComputerUseConfig(AsyncAgentConfig):
             print(f"[DEBUG] Using custom function declarations for Gemini 3 model: {model}")
             print(f"[DEBUG] Number of custom functions: {len(custom_functions)}")
 
+            # Build system instruction with coordinate system and screen resolution context
+            # to improve coordinate precision for Gemini 3 models
+            system_instruction = (
+                f"You are controlling a computer with screen resolution {screen_w}x{screen_h} pixels. "
+                "When using coordinate-based functions (click_at, type_text_at, hover_at, scroll_at, drag_and_drop), "
+                "provide x and y as normalized values in the 0-999 range: "
+                "x=0 is the left edge, x=999 is the right edge; "
+                "y=0 is the top edge, y=999 is the bottom edge. "
+                "Look carefully at the screenshot to identify the exact position of UI elements before clicking."
+            )
+
             generate_content_config = types.GenerateContentConfig(
+                system_instruction=system_instruction,
                 tools=[
                     types.Tool(function_declarations=custom_functions),
                 ],
@@ -733,9 +817,6 @@ class GeminiComputerUseConfig(AsyncAgentConfig):
                 thinking_config=thinking_config,
                 media_resolution=resolved_media_resolution,
             )
-
-        # Convert full message history to Gemini Contents format
-        contents, (screen_w, screen_h) = _convert_messages_to_gemini_contents(messages, types)
 
         api_kwargs = {
             "model": model,
@@ -800,6 +881,10 @@ class GeminiComputerUseConfig(AsyncAgentConfig):
         text_parts: List[str] = []
         function_calls: List[Dict[str, Any]] = []
         for p in candidate.content.parts:
+            # Check for thinking/reasoning content first
+            if getattr(p, "thought", False) and getattr(p, "text", None):
+                output_items.append(make_reasoning_item(p.text))
+                continue
             if getattr(p, "text", None):
                 text_parts.append(p.text)
             if getattr(p, "function_call", None):
@@ -844,14 +929,9 @@ class GeminiComputerUseConfig(AsyncAgentConfig):
         Returns pixel (x, y) if a click is proposed, else None.
         """
         genai, types = _lazy_import_genai()
-        import os
 
-        # Authentication: GOOGLE_API_KEY for AI Studio, or Vertex AI env vars
-        api_key = kwargs.get("api_key", os.getenv("GOOGLE_API_KEY"))
-        if api_key:
-            client = genai.Client(api_key=api_key)
-        else:
-            client = genai.Client()
+        # Create client with CUA routing support (detects cua/ prefix automatically)
+        client, model = _create_gemini_client(model, genai, kwargs)
 
         # Build tools config based on model type
         is_gemini_3 = _is_gemini_3_model(model)
@@ -860,12 +940,18 @@ class GeminiComputerUseConfig(AsyncAgentConfig):
             # For Gemini 3 models, use only click_at function declaration
             click_function = types.FunctionDeclaration(
                 name="click_at",
-                description="Click at the specified x,y coordinates on the screen. Coordinates are normalized 0-999.",
+                description="Click at the specified x,y coordinates on the screen. x and y are normalized 0-999 where 0 is the left/top edge and 999 is the right/bottom edge of the screen. Look carefully at the screenshot to identify the exact position of the target element before clicking.",
                 parameters={
                     "type": "object",
                     "properties": {
-                        "x": {"type": "integer", "description": "X coordinate (0-999 normalized)"},
-                        "y": {"type": "integer", "description": "Y coordinate (0-999 normalized)"},
+                        "x": {
+                            "type": "integer",
+                            "description": "X coordinate (0-999 normalized). 0 is the left edge, 999 is the right edge.",
+                        },
+                        "y": {
+                            "type": "integer",
+                            "description": "Y coordinate (0-999 normalized). 0 is the top edge, 999 is the bottom edge.",
+                        },
                     },
                     "required": ["x", "y"],
                 },

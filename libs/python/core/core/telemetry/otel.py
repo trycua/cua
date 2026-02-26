@@ -28,6 +28,7 @@ DEFAULT_OTEL_ENDPOINT = "https://otel.cua.ai"
 
 # Lazy initialization state
 _initialized = False
+_init_failed = False
 _init_lock = Lock()
 
 # OTEL components (lazily initialized)
@@ -69,17 +70,21 @@ def _initialize_otel() -> bool:
     Returns True if initialization succeeded, False otherwise.
     Thread-safe via lock.
     """
-    global _initialized, _meter, _tracer, _meter_provider, _tracer_provider
+    global _initialized, _init_failed, _meter, _tracer, _meter_provider, _tracer_provider
     global _operation_duration, _operations_total, _errors_total
     global _concurrent_operations, _tokens_total
 
     if _initialized:
         return True
+    if _init_failed:
+        return False
 
     with _init_lock:
         # Double-check after acquiring lock
         if _initialized:
             return True
+        if _init_failed:
+            return False
 
         if not is_otel_enabled():
             logger.debug("OpenTelemetry disabled via CUA_TELEMETRY_DISABLED")
@@ -173,13 +178,15 @@ def _initialize_otel() -> bool:
             return True
 
         except ImportError as e:
-            logger.warning(
+            _init_failed = True
+            logger.debug(
                 f"OpenTelemetry packages not installed: {e}. "
                 "Install with: pip install opentelemetry-api opentelemetry-sdk "
                 "opentelemetry-exporter-otlp-proto-http"
             )
             return False
         except Exception as e:
+            _init_failed = True
             logger.warning(f"Failed to initialize OpenTelemetry: {e}")
             return False
 

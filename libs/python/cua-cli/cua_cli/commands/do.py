@@ -83,6 +83,10 @@ def _fail(msg: str) -> int:
     return 1
 
 
+class _PtyUnavailable(Exception):
+    """Raised when the remote PTY endpoint is unreachable; triggers run_command fallback."""
+
+
 # ── provider / connection helpers ─────────────────────────────────────────────
 
 
@@ -1172,8 +1176,7 @@ def _cmd_shell_noninteractive(command: str | None, args: argparse.Namespace) -> 
             await _print_context(state["provider"], state.get("name", ""), state)
             return _fail(f"exit {rc_code}: {stderr or stdout}")
         _maybe_record_turn(args, state, "shell", {"command": command})
-        preview = (stdout[:80] + "…") if len(stdout) > 80 else stdout
-        rc = _ok(preview if preview else "done")
+        rc = _ok(stdout if stdout else "done")
         await _print_context(state["provider"], state.get("name", ""), state)
         return rc
 
@@ -1312,8 +1315,10 @@ async def _shell_remote_pty(
             ) as resp:
                 resp.raise_for_status()
                 data = await resp.json()
+    except aiohttp.ClientResponseError as e:
+        raise _PtyUnavailable(f"{e.status} {e.message} ({e.request_info.real_url})") from e
     except Exception as e:
-        return _fail(f"Failed to create PTY session: {e}")
+        raise _PtyUnavailable(str(e)) from e
 
     pid: int = data["pid"]
 
@@ -1457,7 +1462,13 @@ def _cmd_shell(args: argparse.Namespace) -> int:
 
     from cua_cli.utils.async_utils import run_async
 
-    return run_async(_shell_remote_pty(provider, name, command, cols=cols, rows=rows))
+    try:
+        return run_async(_shell_remote_pty(provider, name, command, cols=cols, rows=rows))
+    except _PtyUnavailable as e:
+        if not command:
+            return _fail(f"PTY unavailable: {e}")
+        print(f"⚠️  PTY unavailable ({e}), falling back to run_command", file=sys.stderr)
+        return _cmd_shell_noninteractive(command, args)
 
 
 def _cmd_open(args: argparse.Namespace) -> int:

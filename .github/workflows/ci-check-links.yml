@@ -59,6 +59,18 @@ jobs:
             echo "COLOR=#dc3545" >> $GITHUB_ENV
           fi
 
+          # Extract up to 5 broken links (lines like "- [404] https://...")
+          if [ -f "lychee-output.md" ]; then
+            BROKEN=$(grep -E '^\- \[[0-9]+\]' lychee-output.md | sed 's/^- //' | sed 's/ |.*//' | head -5 || true)
+          else
+            BROKEN=""
+          fi
+          {
+            echo "BROKEN_LINKS<<EOF"
+            echo "$BROKEN"
+            echo "EOF"
+          } >> $GITHUB_ENV
+
       - name: Send results to Slack
         if: always() && github.ref == 'refs/heads/main'
         uses: rtCamp/action-slack-notify@v2
@@ -71,5 +83,7 @@ jobs:
             *Status:* ${{ env.STATUS_ICON }} ${{ env.STATUS_TEXT }}
 
             *Branch:* `${{ github.ref_name }}`
+
+            ${{ env.BROKEN_LINKS }}
 
             <${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}${{ github.event.pull_request.number && format('?pr={0}', github.event.pull_request.number) || '' }}|View broken links>

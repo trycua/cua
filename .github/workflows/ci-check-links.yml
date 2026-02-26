@@ -70,7 +70,7 @@ jobs:
 
           # Extract up to 5 broken links (lychee format: "* [404] <https://...> | ...")
           if [ -f "lychee-output.md" ]; then
-            BROKEN=$(grep -oP '\[\d+\] <?\Khttps?://[^\s|>]+' lychee-output.md | sed 's/>*$//' | head -5 | sed 's/^/• /' || true)
+            BROKEN=$(grep -oP '\[[45]\d\d\] <?\Khttps?://[^\s|>]+' lychee-output.md | sed 's/>*$//' | head -5 | sed 's/^/• /' || true)
             echo "Extracted broken links: '$BROKEN'"
           else
             BROKEN=""

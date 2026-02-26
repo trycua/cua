@@ -1,0 +1,95 @@
+[project]
+name = "cua-auto"
+version = "0.1.1"
+description = "Cross-platform automation library — mouse, keyboard, screen, window, clipboard, shell"
+readme = "README.md"
+license = "MIT"
+authors = [
+    { name = "TryCua", email = "hello@trycua.com" }
+]
+keywords = [
+    "automation",
+    "mouse",
+    "keyboard",
+    "screenshot",
+    "window",
+    "computer-use",
+    "pyautogui",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Libraries",
+]
+requires-python = ">=3.11,<3.14"
+
+dependencies = [
+    # Mouse + keyboard control (cross-platform)
+    "pynput>=1.7.0",
+    # Screenshot + image processing
+    "pillow>=10.0.0",
+    # Clipboard access (cross-platform)
+    "pyperclip>=1.9.0",
+    # Window management (cross-platform)
+    "pywinctl>=0.4",
+]
+
+[project.optional-dependencies]
+# Faster multi-monitor screenshot backend
+mss = [
+    "mss>=9.0.0",
+]
+# Windows-specific extras (cursor position via win32, etc.)
+windows = [
+    "pywin32>=306; sys_platform == 'win32'",
+]
+# PTY support
+pty = [
+    "pywinpty>=2.0.0; sys_platform == 'win32'",
+]
+all = [
+    "cua-auto[mss,windows,pty]",
+]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+    "ruff>=0.1.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/trycua/cua"
+Documentation = "https://docs.trycua.com"
+Repository = "https://github.com/trycua/cua"
+Issues = "https://github.com/trycua/cua/issues"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build]
+include = [
+    "cua_auto/**",
+    "README.md",
+    "LICENSE",
+]
+exclude = [
+    "cua_auto/**/__pycache__",
+    "**/.DS_Store",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["cua_auto"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W"]
+ignore = ["E501"]

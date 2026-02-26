@@ -61,10 +61,13 @@ jobs:
             --verbose
             --no-progress
             --accept 100..=399
-            --exclude '^file://'
+            --scheme https
+            --scheme http
             --exclude 'localhost'
             --exclude '127\.0\.0\.1'
             --exclude 'example\.com'
+            --exclude 'cua\.ai'
+            --exclude 'platform\.openai\.com'
             './docs/content/**/*.mdx'
           token: ${{ secrets.GITHUB_TOKEN }}
           fail: true

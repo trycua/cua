@@ -44,4 +44,7 @@ from .computer import Computer
 # Provider components
 from .providers.base import VMProviderType
 
-__all__ = ["Computer", "VMProviderType"]
+# PTY client
+from .pty import PtyHandle, PtyInterface
+
+__all__ = ["Computer", "PtyHandle", "PtyInterface", "VMProviderType"]

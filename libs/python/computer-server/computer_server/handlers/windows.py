@@ -375,6 +375,27 @@ class WindowsAutomationHandler(BaseAutomationHandler):
             return {"success": False, "error": str(e)}
 
     @require_unlocked_desktop
+    async def middle_click(
+        self, x: Optional[int] = None, y: Optional[int] = None
+    ) -> Dict[str, Any]:
+        """Perform a middle mouse click at the specified coordinates.
+
+        Args:
+            x (Optional[int]): The x-coordinate to click at. If None, clicks at current position.
+            y (Optional[int]): The y-coordinate to click at. If None, clicks at current position.
+
+        Returns:
+            Dict[str, Any]: A dictionary with success status and optional error message.
+        """
+        try:
+            if x is not None and y is not None:
+                self.mouse.position = (x, y)
+            self.mouse.click(MouseButton.middle, 1)
+            return {"success": True}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    @require_unlocked_desktop
     async def double_click(
         self, x: Optional[int] = None, y: Optional[int] = None
     ) -> Dict[str, Any]:

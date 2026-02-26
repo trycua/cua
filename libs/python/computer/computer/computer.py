@@ -286,6 +286,7 @@ class Computer:
         self._interface = None
         self._original_interface = None  # Keep reference to original interface
         self._tracing_wrapper = None  # Tracing wrapper for interface
+        self._pty_interface = None  # Cached PtyInterface; invalidated on reconnect
         self.use_host_computer_server = use_host_computer_server
 
         # Initialize tracing
@@ -676,6 +677,7 @@ class Computer:
 
     async def disconnect(self) -> None:
         """Disconnect from the computer's WebSocket interface."""
+        self._pty_interface = None
         if self._interface:
             self._interface.close()
 
@@ -799,6 +801,7 @@ class Computer:
             self.logger.info(f"Re-initializing interface for {self.os_type} at {ip_address}")
             from .interface.base import BaseComputerInterface
 
+            self._pty_interface = None
             if (
                 self.provider_type in (VMProviderType.CLOUD, VMProviderType.CLOUDV2)
                 and self.api_key
@@ -1051,6 +1054,35 @@ class Computer:
             return self._tracing_wrapper
 
         return result_interface
+
+    @property
+    def pty(self) -> "PtyInterface":
+        """Return a :class:`~computer.pty.PtyInterface` for spawning interactive PTY sessions.
+
+        The computer must be started (``async with Computer()`` or ``await run()``)
+        before accessing this property.
+
+        Example::
+
+            async with Computer(provider_type="docker", name="my-vm") as c:
+                handle = await c.pty.create(command="bash", cols=80, rows=24,
+                                             on_data=lambda d: print(d.decode()))
+                await handle.send_stdin(b"echo hello\\n")
+                await handle.send_stdin(b"exit\\n")
+                await handle.wait()
+        """
+        from .pty import PtyInterface
+
+        if self._interface is None:
+            raise RuntimeError("Computer not started. Use 'async with Computer()' first.")
+        if self._pty_interface is None:
+            protocol = "https" if self.api_key else "http"
+            port = getattr(self._interface, "_api_port", None) or self.api_port or 8000
+            ip = getattr(self._interface, "ip_address", "localhost")
+            base_url = f"{protocol}://{ip}:{port}"
+            vm_name = getattr(getattr(self, "config", None), "name", None) or None
+            self._pty_interface = PtyInterface(base_url, api_key=self.api_key, vm_name=vm_name)
+        return self._pty_interface
 
     @property
     def tracing(self) -> ComputerTracing:

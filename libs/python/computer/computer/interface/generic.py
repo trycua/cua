@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import aiohttp
 import websockets
+from core.http import cua_version_headers
 from PIL import Image
 
 from ..logger import Logger, LogLevel
@@ -708,7 +709,7 @@ class GenericComputerInterface(BaseComputerInterface):
         url = f"{protocol}://{self.ip_address}:{port}/playwright_exec"
 
         payload = {"command": command, "params": params or {}}
-        headers = {"Content-Type": "application/json"}
+        headers = {"Content-Type": "application/json", **cua_version_headers()}
         if self.api_key:
             headers["X-API-Key"] = self.api_key
         if self.vm_name:
@@ -947,7 +948,7 @@ class GenericComputerInterface(BaseComputerInterface):
             payload = {"command": command, "params": params or {}}
 
             # Prepare headers
-            headers = {"Content-Type": "application/json"}
+            headers = {"Content-Type": "application/json", **cua_version_headers()}
             if self.api_key:
                 headers["X-API-Key"] = self.api_key
             if self.vm_name:

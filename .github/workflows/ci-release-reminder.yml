@@ -27,6 +27,7 @@ jobs:
           # Map paths to publishable services
           declare -A PATH_TO_SERVICE=(
             ["libs/python/cua-cli/"]="pypi/cli"
+            ["libs/python/cua-auto/"]="pypi/auto"
             ["libs/python/agent/"]="pypi/agent"
             ["libs/python/computer/"]="pypi/computer"
             ["libs/python/core/"]="pypi/core"

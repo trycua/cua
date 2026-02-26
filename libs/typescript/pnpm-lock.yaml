@@ -15,8 +15,8 @@ importers:
   agent:
     dependencies:
       '@trycua/core':
-        specifier: ^0.1.2
-        version: 0.1.4
+        specifier: workspace:^
+        version: link:../core
       peerjs:
         specifier: ^1.5.4
         version: 1.5.5
@@ -46,8 +46,8 @@ importers:
   computer:
     dependencies:
       '@trycua/core':
-        specifier: ^0.1.2
-        version: 0.1.4
+        specifier: workspace:^
+        version: link:../core
       pino:
         specifier: ^9.7.0
         version: 9.14.0
@@ -1049,9 +1049,6 @@ packages:
 
   '@standard-schema/spec@1.1.0':
     resolution: {integrity: sha512-l2aFy5jALhniG5HgqrD6jXLi/rUWrKvqN/qJx6yoJsgKhblVd+iqqU4RCXavm/jPityDo5TCvKMnpjKnOriy0w==}
-
-  '@trycua/core@0.1.4':
-    resolution: {integrity: sha512-ZRO0VmzHpvkUkGKTk8AZTlHqWqOSlURcW/ckqraPOtGZev0Pe1mCiPEhY2c/xZ4zye6y7Ut7fqGTwRuKOJ3Q7A==}
 
   '@tybys/wasm-util@0.10.1':
     resolution: {integrity: sha512-9tTaPJLSiejZKx+Bmog4uSubteqTvFrVrURwkmHixBo0G4seD0zUxp98E1DzUBJxLQ3NPwXrGKDiVjwx/DpPsg==}
@@ -2812,13 +2809,6 @@ snapshots:
     optional: true
 
   '@standard-schema/spec@1.1.0': {}
-
-  '@trycua/core@0.1.4':
-    dependencies:
-      '@types/uuid': 10.0.0
-      pino: 9.14.0
-      posthog-node: 5.24.10
-      uuid: 11.1.0
 
   '@tybys/wasm-util@0.10.1':
     dependencies:

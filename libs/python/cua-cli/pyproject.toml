@@ -1,6 +1,6 @@
 [project]
 name = "cua-cli"
-version = "0.1.4"
+version = "0.1.6"
 description = "Unified CLI for CUA - Computer-Use Agents"
 readme = "README.md"
 license = "MIT"
@@ -24,12 +24,14 @@ classifiers = [
     "Programming Language :: Python :: 3.13",
     "Environment :: Console",
 ]
-requires-python = ">=3.11,<3.14"
+requires-python = ">=3.12,<3.14"
 
 dependencies = [
     # Core CUA packages
-    "cua-computer>=0.4.0",
-    "cua-core>=0.1.0",
+    "cua-computer>=0.5.0",
+    "cua-core>=0.1.18",
+    # Host automation (used by cua do switch host)
+    "cua-auto[all]>=0.1.0",
     # HTTP client
     "aiohttp>=3.9.0",
     # CLI output

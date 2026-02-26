@@ -305,6 +305,7 @@ All packages are managed through a single consolidated workflow: [Bump Version &
 **Python (PyPI):**
 
 - `pypi/agent` - AI agent library
+- `pypi/auto` - Cross-platform automation library (mouse, keyboard, screen, window, clipboard, shell)
 - `pypi/bench` - Benchmark toolkit for computer-use RL environments
 - `pypi/computer` - Computer-use interface library
 - `pypi/computer-server` - Server component for VM
@@ -365,6 +366,7 @@ make show-versions
 Each package uses its own tag format defined in `.bumpversion.cfg`:
 
 - **cua-agent**: `agent-v{version}` (e.g., `agent-v0.4.35`)
+- **cua-auto**: `auto-v{version}` (e.g., `auto-v0.1.0`)
 - **cua-bench**: `bench-v{version}` (e.g., `bench-v0.1.0`)
 - **cua-computer**: `computer-v{version}` (e.g., `computer-v0.4.7`)
 - **cua-computer-server**: `computer-server-v{version}` (e.g., `computer-server-v0.1.27`)

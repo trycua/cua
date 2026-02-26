@@ -53,7 +53,7 @@ dependencies = [
     "docker>=7.0.0",
     # CUA SDK
     "cua-computer>=0.4.19",
-    "cua-core",
+    "cua-core>=0.1.18",
 ]
 
 [project.optional-dependencies]

@@ -1,4 +1,4 @@
-@import "tw-animate-css";
+@import 'tw-animate-css';
 
 /* Standalone dark mode - works with both class and media query */
 @custom-variant dark (&:where(.dark, .dark *));

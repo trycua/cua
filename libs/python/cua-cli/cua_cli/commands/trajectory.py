@@ -3,6 +3,7 @@
 Subcommands:
   ls      List trajectory sessions
   view    Zip + serve locally, open cua.ai/trajectory-viewer
+  share   Upload trajectory and get a shareable HTTPS link
   export  Generate a self-contained HTML trajectory report
   clean   Delete old sessions
   stop    Stop the local file server
@@ -44,6 +45,9 @@ Examples:
   cua trajectory view                       View latest session in browser
   cua trajectory view my-container          View latest for specific machine
   cua trajectory view --port 9090           Use a custom port
+  cua trajectory share                       Share latest session (get HTTPS link)
+  cua trajectory share my-container          Share latest for specific machine
+  cua trajectory share --no-open             Share without opening browser
   cua trajectory export                     Export latest session as HTML report
   cua trajectory export my-machine          Export latest session for a machine
   cua trajectory export --output out.html   Specify output path
@@ -75,6 +79,26 @@ Examples:
             type=int,
             default=8089,
             help="Port for the local file server (default: 8089)",
+        )
+
+        # share
+        share_p = sub.add_parser("share", help="Upload trajectory and get a shareable HTTPS link")
+        share_p.add_argument(
+            "target",
+            nargs="?",
+            default=None,
+            help="Machine name, session timestamp, or path (default: latest session)",
+        )
+        share_p.add_argument(
+            "--no-open",
+            action="store_true",
+            help="Do not open the link in a browser after uploading",
+        )
+        share_p.add_argument(
+            "--api-url",
+            default=None,
+            metavar="URL",
+            help="API base URL (default: CUA_API_URL env or https://cua.ai)",
         )
 
         # export
@@ -247,6 +271,120 @@ def _cmd_view(args: argparse.Namespace) -> int:
     return 0
 
 
+# ── share ────────────────────────────────────────────────────────────────────
+
+
+_DEFAULT_API_URL = "https://cua.ai"
+
+
+def _get_api_url(args: argparse.Namespace) -> str:
+    """Resolve the API base URL from args, env, or default."""
+    explicit = getattr(args, "api_url", None)
+    if explicit:
+        return explicit.rstrip("/")
+    env_url = os.environ.get("CUA_API_URL")
+    if env_url:
+        return env_url.rstrip("/")
+    return _DEFAULT_API_URL
+
+
+def _upload_trajectory(zip_path: Path, api_url: str) -> dict:
+    """Upload a trajectory ZIP file and return the JSON response.
+
+    Uses urllib to avoid adding new dependencies. Falls back to a
+    clear error message if the upload fails.
+    """
+    import urllib.error
+    import urllib.request
+
+    upload_url = f"{api_url}/api/trajectories/upload"
+
+    # Build multipart/form-data body manually
+    boundary = f"----CuaTrajectoryUpload{os.getpid()}"
+    file_data = zip_path.read_bytes()
+    filename = zip_path.name
+
+    body = (
+        (
+            f"--{boundary}\r\n"
+            f'Content-Disposition: form-data; name="file"; filename="{filename}"\r\n'
+            f"Content-Type: application/zip\r\n"
+            f"\r\n"
+        ).encode("utf-8")
+        + file_data
+        + f"\r\n--{boundary}--\r\n".encode("utf-8")
+    )
+
+    headers = {
+        "Content-Type": f"multipart/form-data; boundary={boundary}",
+        "Content-Length": str(len(body)),
+    }
+
+    req = urllib.request.Request(upload_url, data=body, headers=headers, method="POST")
+
+    try:
+        with urllib.request.urlopen(req, timeout=120) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        error_body = e.read().decode("utf-8", errors="replace")
+        try:
+            error_json = json.loads(error_body)
+            detail = error_json.get("details") or error_json.get("error") or error_body
+        except (json.JSONDecodeError, ValueError):
+            detail = error_body
+        raise RuntimeError(f"Upload failed (HTTP {e.code}): {detail}") from e
+    except urllib.error.URLError as e:
+        raise RuntimeError(f"Could not connect to {api_url}: {e.reason}") from e
+
+
+def _cmd_share(args: argparse.Namespace) -> int:
+    target = getattr(args, "target", None)
+    no_open = getattr(args, "no_open", False)
+    api_url = _get_api_url(args)
+
+    session_path = _resolve_session(target)
+    if not session_path:
+        label = f" for '{target}'" if target else ""
+        print(f"No trajectory session found{label}.", file=sys.stderr)
+        return 1
+
+    session_dir = Path(session_path)
+    machine = session_dir.parent.name
+    session_ts = session_dir.name
+
+    print(f"Sharing: {machine}/{session_ts}")
+
+    # Zip the session
+    print("Zipping trajectory...")
+    zip_path = zip_trajectory(session_dir)
+    size_mb = zip_path.stat().st_size / (1024 * 1024)
+    print(f"ZIP created: {zip_path.name} ({size_mb:.1f} MB)")
+
+    # Upload
+    print(f"Uploading to {api_url}...")
+    try:
+        result = _upload_trajectory(zip_path, api_url)
+    except RuntimeError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+    viewer_url = result.get("url", "")
+    expires_at = result.get("expiresAt", "")
+
+    print()
+    print(f"Shareable link: {viewer_url}")
+    if expires_at:
+        print(f"Expires: {expires_at}")
+
+    if not no_open and viewer_url:
+        try:
+            webbrowser.open(viewer_url)
+        except Exception:
+            pass
+
+    return 0
+
+
 # ── export ───────────────────────────────────────────────────────────────────
 
 
@@ -413,6 +551,7 @@ def execute(args: argparse.Namespace) -> int:
     dispatch = {
         "ls": _cmd_ls,
         "view": _cmd_view,
+        "share": _cmd_share,
         "export": _cmd_export,
         "clean": _cmd_clean,
         "stop": _cmd_stop,

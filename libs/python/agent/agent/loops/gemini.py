@@ -643,7 +643,7 @@ def _map_gemini_fc_to_computer_call(
             action = {"type": "playwright_exec", "command": "visit_url", "params": {"url": url}}
         else:
             return None
-    elif name == "open_web_browser":
+    elif name in ("open_web_browser", "open_browser"):
         # Open browser with blank page or google
         action = {
             "type": "playwright_exec",
@@ -837,7 +837,9 @@ class GeminiComputerUseConfig(AsyncAgentConfig):
 
         # Debug: print raw function calls from response
         try:
-            for p in response.candidates[0].content.parts:
+            _dbg_candidates = getattr(response, "candidates", None) or []
+            _dbg_parts = getattr(getattr(_dbg_candidates[0] if _dbg_candidates else None, "content", None), "parts", None) or []
+            for p in _dbg_parts:
                 if hasattr(p, "function_call") and p.function_call:
                     print(
                         f"[DEBUG] Raw function_call from model: name={p.function_call.name}, args={dict(p.function_call.args or {})}"
@@ -876,11 +878,16 @@ class GeminiComputerUseConfig(AsyncAgentConfig):
         # Parse output into internal items
         output_items: List[Dict[str, Any]] = []
 
-        candidate = response.candidates[0]
+        candidates = getattr(response, "candidates", None) or []
+        if not candidates:
+            return {"output": output_items, "usage": usage}
+
+        candidate = candidates[0]
         # Text parts from the model (assistant message)
         text_parts: List[str] = []
         function_calls: List[Dict[str, Any]] = []
-        for p in candidate.content.parts:
+        parts = getattr(getattr(candidate, "content", None), "parts", None) or []
+        for p in parts:
             # Check for thinking/reasoning content first
             if getattr(p, "thought", False) and getattr(p, "text", None):
                 output_items.append(make_reasoning_item(p.text))

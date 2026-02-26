@@ -83,6 +83,10 @@ def _fail(msg: str) -> int:
     return 1
 
 
+class _PtyUnavailable(Exception):
+    """Raised when the remote PTY endpoint is unreachable; triggers run_command fallback."""
+
+
 # ── provider / connection helpers ─────────────────────────────────────────────
 
 
@@ -1313,7 +1317,7 @@ async def _shell_remote_pty(
                 resp.raise_for_status()
                 data = await resp.json()
     except Exception as e:
-        return _fail(f"Failed to create PTY session: {e}")
+        raise _PtyUnavailable(str(e)) from e
 
     pid: int = data["pid"]
 
@@ -1457,7 +1461,11 @@ def _cmd_shell(args: argparse.Namespace) -> int:
 
     from cua_cli.utils.async_utils import run_async
 
-    return run_async(_shell_remote_pty(provider, name, command, cols=cols, rows=rows))
+    try:
+        return run_async(_shell_remote_pty(provider, name, command, cols=cols, rows=rows))
+    except _PtyUnavailable as e:
+        print(f"⚠️  PTY unavailable ({e}), falling back to run_command", file=sys.stderr)
+        return _cmd_shell_noninteractive(command, args)
 
 
 def _cmd_open(args: argparse.Namespace) -> int:

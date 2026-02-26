@@ -47,11 +47,6 @@ _SPECIAL: dict = {
     "option_r": _Key.alt_r,
     "capslock": _Key.caps_lock,
     "caps_lock": _Key.caps_lock,
-    "insert": _Key.insert,
-    "print_screen": _Key.print_screen,
-    "pause": _Key.pause,
-    "num_lock": _Key.num_lock,
-    "scroll_lock": _Key.scroll_lock,
     "f1": _Key.f1,
     "f2": _Key.f2,
     "f3": _Key.f3,
@@ -73,6 +68,18 @@ _SPECIAL: dict = {
     "f19": _Key.f19,
     "f20": _Key.f20,
 }
+
+# Keys that may not exist on all platforms (e.g. macOS lacks insert, print_screen)
+for _name, _attr in [
+    ("insert", "insert"),
+    ("print_screen", "print_screen"),
+    ("pause", "pause"),
+    ("num_lock", "num_lock"),
+    ("scroll_lock", "scroll_lock"),
+]:
+    _val = getattr(_Key, _attr, None)
+    if _val is not None:
+        _SPECIAL[_name] = _val
 
 
 def _resolve(key: str) -> Optional[Union[str, _Key]]:

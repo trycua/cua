@@ -18,7 +18,7 @@ Usage::
     title = window.get_active_window_title()
 """
 
-__version__ = "0.1.1"
+__version__ = "0.1.2"
 
 # terminal and shell have no display dependency — always safe to import.
 from cua_auto import shell, terminal

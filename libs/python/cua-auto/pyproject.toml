@@ -1,6 +1,6 @@
 [project]
 name = "cua-auto"
-version = "0.1.1"
+version = "0.1.2"
 description = "Cross-platform automation library — mouse, keyboard, screen, window, clipboard, shell"
 readme = "README.md"
 license = "MIT"

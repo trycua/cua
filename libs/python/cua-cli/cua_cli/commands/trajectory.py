@@ -3,6 +3,7 @@
 Subcommands:
   ls      List trajectory sessions
   view    Zip + serve locally, open cua.ai/trajectory-viewer
+  export  Generate a self-contained HTML trajectory report
   clean   Delete old sessions
   stop    Stop the local file server
 """
@@ -43,6 +44,9 @@ Examples:
   cua trajectory view                       View latest session in browser
   cua trajectory view my-container          View latest for specific machine
   cua trajectory view --port 9090           Use a custom port
+  cua trajectory export                     Export latest session as HTML report
+  cua trajectory export my-machine          Export latest session for a machine
+  cua trajectory export --output out.html   Specify output path
   cua trajectory stop                       Stop the file server
   cua trajectory clean --older-than 7       Delete sessions older than 7 days
   cua trajectory clean --machine my-ct -y   Delete all sessions for a machine
@@ -71,6 +75,34 @@ Examples:
             type=int,
             default=8089,
             help="Port for the local file server (default: 8089)",
+        )
+
+        # export
+        export_p = sub.add_parser("export", help="Generate a self-contained HTML trajectory report")
+        export_p.add_argument(
+            "target",
+            nargs="?",
+            default=None,
+            help="Machine name, session timestamp, or path (default: latest session)",
+        )
+        export_p.add_argument(
+            "--output",
+            "-o",
+            default=None,
+            metavar="PATH",
+            help="Output HTML file path (default: report.html inside session dir)",
+        )
+        export_p.add_argument(
+            "--quality",
+            "-q",
+            type=int,
+            default=75,
+            help="JPEG compression quality 1-100 (default: 75)",
+        )
+        export_p.add_argument(
+            "--no-open",
+            action="store_true",
+            help="Do not open the report in a browser after generating",
         )
 
         # clean
@@ -215,6 +247,53 @@ def _cmd_view(args: argparse.Namespace) -> int:
     return 0
 
 
+# ── export ───────────────────────────────────────────────────────────────────
+
+
+def _cmd_export(args: argparse.Namespace) -> int:
+    from cua_cli.utils.trajectory_html import generate_html
+
+    target = getattr(args, "target", None)
+    output = getattr(args, "output", None)
+    quality = getattr(args, "quality", 75)
+    no_open = getattr(args, "no_open", False)
+
+    session_path = _resolve_session(target)
+    if not session_path:
+        label = f" for '{target}'" if target else ""
+        print(f"No trajectory session found{label}.", file=sys.stderr)
+        return 1
+
+    session_dir = Path(session_path)
+    machine = session_dir.parent.name
+    session_ts = session_dir.name
+
+    # Determine output path
+    if output:
+        out_path = Path(output).expanduser().resolve()
+    else:
+        out_path = session_dir / "report.html"
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+
+    print(f"Exporting: {machine}/{session_ts}")
+    print("Generating HTML report...")
+
+    html = generate_html(session_dir, jpeg_quality=quality)
+    out_path.write_text(html, encoding="utf-8")
+
+    size_mb = out_path.stat().st_size / (1024 * 1024)
+    print(f"Report saved: {out_path}  ({size_mb:.1f} MB)")
+
+    if not no_open:
+        try:
+            webbrowser.open(out_path.as_uri())
+        except Exception:
+            pass
+
+    return 0
+
+
 # ── stop ─────────────────────────────────────────────────────────────────────
 
 
@@ -334,6 +413,7 @@ def execute(args: argparse.Namespace) -> int:
     dispatch = {
         "ls": _cmd_ls,
         "view": _cmd_view,
+        "export": _cmd_export,
         "clean": _cmd_clean,
         "stop": _cmd_stop,
     }

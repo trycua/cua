@@ -1316,6 +1316,8 @@ async def _shell_remote_pty(
             ) as resp:
                 resp.raise_for_status()
                 data = await resp.json()
+    except aiohttp.ClientResponseError as e:
+        raise _PtyUnavailable(f"{e.status} {e.message} ({e.request_info.real_url})") from e
     except Exception as e:
         raise _PtyUnavailable(str(e)) from e
 
@@ -1464,6 +1466,8 @@ def _cmd_shell(args: argparse.Namespace) -> int:
     try:
         return run_async(_shell_remote_pty(provider, name, command, cols=cols, rows=rows))
     except _PtyUnavailable as e:
+        if not command:
+            return _fail(f"PTY unavailable: {e}")
         print(f"⚠️  PTY unavailable ({e}), falling back to run_command", file=sys.stderr)
         return _cmd_shell_noninteractive(command, args)
 

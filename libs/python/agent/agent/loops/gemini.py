@@ -838,7 +838,14 @@ class GeminiComputerUseConfig(AsyncAgentConfig):
         # Debug: print raw function calls from response
         try:
             _dbg_candidates = getattr(response, "candidates", None) or []
-            _dbg_parts = getattr(getattr(_dbg_candidates[0] if _dbg_candidates else None, "content", None), "parts", None) or []
+            _dbg_parts = (
+                getattr(
+                    getattr(_dbg_candidates[0] if _dbg_candidates else None, "content", None),
+                    "parts",
+                    None,
+                )
+                or []
+            )
             for p in _dbg_parts:
                 if hasattr(p, "function_call") and p.function_call:
                     print(

@@ -1,7 +1,7 @@
 name: "CI: Check Links"
 
 on:
-  pull_request_target:
+  pull_request:
     branches: [main, master]
   push:
     branches:
@@ -82,7 +82,7 @@ jobs:
           } >> "$GITHUB_ENV"
 
       - name: Send results to Slack
-        if: always() && github.ref == 'refs/heads/main'
+        if: always() && github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: rtCamp/action-slack-notify@v2
         env:
           SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}

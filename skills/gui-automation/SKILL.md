@@ -1,6 +1,6 @@
 ---
 name: gui-automation
-description: Use when you need to visually interact with a GUI — test buttons, fill forms, verify visual layouts, fuzz web pages, automate user flows, take screenshots, or perform end-to-end QA on any application. Works on cloud VMs, Docker containers, local machines, and sandboxes. Install: pip install cua.
+description: Use when you need to visually interact with a GUI, test buttons, fill forms, verify visual layouts, fuzz web pages, automate user flows, take screenshots, or perform end-to-end QA on any application. Works on GUI sandboxes (cloud VMs, Docker containers), and local machines. Install: pip install cua.
 ---
 
 # GUI Automation

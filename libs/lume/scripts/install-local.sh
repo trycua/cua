@@ -142,9 +142,11 @@ build_lume() {
 
     cp -f "$BUILD_PATH/lume" "$APP_BUNDLE/Contents/MacOS/lume"
 
-    # Copy resource bundle alongside the executable
+    # Copy resource bundle to Contents/Resources/ (not MacOS/ — flat bundles
+    # without Info.plist cause codesign to fail with "bundle format unrecognized")
+    mkdir -p "$APP_BUNDLE/Contents/Resources"
     if [ -d "$BUILD_PATH/lume_lume.bundle" ]; then
-      cp -rf "$BUILD_PATH/lume_lume.bundle" "$APP_BUNDLE/Contents/MacOS/"
+      cp -rf "$BUILD_PATH/lume_lume.bundle" "$APP_BUNDLE/Contents/Resources/"
     fi
 
     # Stamp Info.plist with version

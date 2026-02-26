@@ -16,9 +16,11 @@ mkdir -p "$APP_BUNDLE/Contents/MacOS"
 
 cp -f .build/release/lume "$APP_BUNDLE/Contents/MacOS/lume"
 
-# Copy resource bundle alongside the executable for Bundle.module resolution
+# Copy resource bundle to Contents/Resources/ (not MacOS/ — flat bundles
+# without Info.plist cause codesign to fail with "bundle format unrecognized")
+mkdir -p "$APP_BUNDLE/Contents/Resources"
 if [ -d ".build/release/lume_lume.bundle" ]; then
-  cp -rf .build/release/lume_lume.bundle "$APP_BUNDLE/Contents/MacOS/"
+  cp -rf .build/release/lume_lume.bundle "$APP_BUNDLE/Contents/Resources/"
 fi
 
 # Stamp Info.plist with version from VERSION file
@@ -31,7 +33,7 @@ if [ -f "./resources/embedded.provisionprofile" ]; then
 fi
 
 # Ad-hoc sign the bundle
-codesign --force --entitlement ./resources/lume.entitlements --sign - "$APP_BUNDLE/Contents/MacOS/lume"
+codesign --force --entitlements ./resources/lume.entitlements --sign - "$APP_BUNDLE/Contents/MacOS/lume"
 codesign --force --sign - "$APP_BUNDLE"
 
 # Create wrapper script

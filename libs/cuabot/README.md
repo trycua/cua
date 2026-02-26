@@ -36,5 +36,5 @@ cuabot --click 100 200     # Click at coordinates
 
 ## Documentation
 
-- [Getting Started](https://cua.ai/docs/cuabot/cuabot)
-- [Installation Guide](https://cua.ai/docs/cuabot/install)
+- [Getting Started](https://docs.trycua.com/cuabot/guide/getting-started/introduction)
+- [Installation Guide](https://docs.trycua.com/cuabot/guide/getting-started/installation)

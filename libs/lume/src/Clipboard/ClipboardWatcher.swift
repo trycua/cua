@@ -14,8 +14,22 @@ public actor ClipboardWatcher {
     private var lastVMContent: String = ""
     private var lastHostChangeCount: Int = 0
 
+    // Cached SSH client to avoid reconnecting every poll cycle
+    private var cachedSSHClient: SSHClient?
+    private var cachedIPAddress: String?
+
+    // Error suppression to avoid flooding logs with repeated failures
+    private var consecutiveFailures: Int = 0
+    private var lastLoggedError: String?
+
     /// Polling interval for clipboard changes
     private static let pollInterval: TimeInterval = 1.0
+
+    /// Backoff interval when SSH is unavailable
+    private static let backoffInterval: TimeInterval = 5.0
+
+    /// Number of consecutive failures before suppressing logs
+    private static let errorLogThreshold: Int = 3
 
     /// Delay before starting to watch (allows VM to boot and get IP)
     /// Set to 0 since we gracefully handle SSH not being available yet
@@ -49,7 +63,8 @@ public actor ClipboardWatcher {
 
             while !Task.isCancelled {
                 await self.syncBidirectional()
-                try? await Task.sleep(nanoseconds: UInt64(Self.pollInterval * 1_000_000_000))
+                let interval = await self.currentPollInterval()
+                try? await Task.sleep(nanoseconds: UInt64(interval * 1_000_000_000))
             }
 
             Logger.info("Clipboard sync stopped", metadata: ["vm": self.vmName])
@@ -61,6 +76,14 @@ public actor ClipboardWatcher {
         watchTask?.cancel()
         watchTask = nil
         isRunning = false
+        cachedSSHClient = nil
+        cachedIPAddress = nil
+    }
+
+    private func currentPollInterval() -> TimeInterval {
+        consecutiveFailures >= Self.errorLogThreshold
+            ? Self.backoffInterval
+            : Self.pollInterval
     }
 
     private func initializeState() {
@@ -121,6 +144,7 @@ public actor ClipboardWatcher {
             let result = try await sshClient.execute(command: command, timeout: 10)
 
             if result.exitCode == 0 {
+                resetFailureState()
                 Logger.debug("Clipboard synced to VM", metadata: [
                     "vm": vmName,
                     "size": "\(content.utf8.count)"
@@ -129,10 +153,7 @@ public actor ClipboardWatcher {
             }
             return false
         } catch {
-            Logger.debug("Failed to sync clipboard to VM", metadata: [
-                "vm": vmName,
-                "error": error.localizedDescription
-            ])
+            handleSyncError("Failed to sync clipboard to VM", error: error)
             return false
         }
     }
@@ -167,16 +188,48 @@ public actor ClipboardWatcher {
             lastHostChangeCount = NSPasteboard.general.changeCount
             lastHostContent = content
 
+            resetFailureState()
             Logger.debug("Clipboard synced from VM", metadata: [
                 "vm": vmName,
                 "size": "\(content.utf8.count)"
             ])
         } catch {
-            Logger.debug("Failed to sync clipboard from VM", metadata: [
+            handleSyncError("Failed to sync clipboard from VM", error: error)
+        }
+    }
+
+    /// Log sync errors with suppression to avoid flooding output.
+    /// Logs the first occurrence and when the error changes, then suppresses
+    /// repeated identical errors.
+    private func handleSyncError(_ message: String, error: Error) {
+        // Invalidate cached client on error so we reconnect next cycle
+        cachedSSHClient = nil
+
+        consecutiveFailures += 1
+        let errorDesc = error.localizedDescription
+
+        if errorDesc != lastLoggedError {
+            // New error type — always log it
+            Logger.debug(message, metadata: [
                 "vm": vmName,
-                "error": error.localizedDescription
+                "error": errorDesc
+            ])
+            lastLoggedError = errorDesc
+        } else if consecutiveFailures == Self.errorLogThreshold {
+            // Threshold reached — log once that we're suppressing
+            Logger.debug("Clipboard sync errors repeating, suppressing further logs until resolved", metadata: [
+                "vm": vmName
             ])
         }
+        // Otherwise: same error, already suppressed — don't log
+    }
+
+    private func resetFailureState() {
+        if consecutiveFailures >= Self.errorLogThreshold {
+            Logger.debug("Clipboard sync recovered", metadata: ["vm": vmName])
+        }
+        consecutiveFailures = 0
+        lastLoggedError = nil
     }
 
     private func getSSHClient() async -> SSHClient? {
@@ -192,12 +245,20 @@ public actor ClipboardWatcher {
                 return nil
             }
 
-            return SSHClient(
+            // Reuse cached client if IP hasn't changed
+            if let cached = cachedSSHClient, cachedIPAddress == ipAddress {
+                return cached
+            }
+
+            let client = SSHClient(
                 host: ipAddress,
                 port: 22,
                 user: "lume",
                 password: "lume"
             )
+            cachedSSHClient = client
+            cachedIPAddress = ipAddress
+            return client
         } catch {
             return nil
         }

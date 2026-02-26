@@ -7,6 +7,7 @@ from typing import Any, Optional
 from urllib.parse import quote
 
 import aiohttp
+from core.http import cua_version_headers
 from cua_cli.auth.store import require_api_key
 from cua_cli.utils.async_utils import run_async
 from cua_cli.utils.output import (
@@ -37,6 +38,7 @@ async def _api_request(
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Accept": "application/json",
+        **cua_version_headers(),
     }
 
     if json is not None:
@@ -342,22 +344,7 @@ def cmd_get(args: argparse.Namespace) -> int:
 
     async def _get():
         async with _get_provider() as provider:
-            # First get from list to get full details including password
-            vms = await provider.list_vms()
-            vm_info = next((vm for vm in vms if vm.get("name") == args.name), None)
-
-            # Also probe the VM directly for status
-            status_info = await provider.get_vm(args.name)
-
-            if vm_info:
-                # Merge status info (only if get_vm returned a real status)
-                probe_status = status_info.get("status")
-                if probe_status and probe_status != "not_found":
-                    vm_info["status"] = probe_status
-                vm_info["os_type"] = status_info.get("os_type") or vm_info.get("os_type")
-                return vm_info
-            else:
-                return status_info
+            return await provider.get_vm(args.name)
 
     result = run_async(_get())
 
@@ -538,7 +525,9 @@ def cmd_vnc(args: argparse.Namespace) -> int:
 
     if host and password:
         encoded_password = quote(password, safe="")
-        vnc_url = f"https://{host}/vnc.html?autoconnect=true&password={encoded_password}&show_dot=true"
+        vnc_url = (
+            f"https://{host}/vnc.html?autoconnect=true&password={encoded_password}&show_dot=true"
+        )
     else:
         print_error("Could not determine VNC URL. Sandbox may not be ready.")
         return 1

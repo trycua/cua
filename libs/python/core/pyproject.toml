@@ -4,7 +4,7 @@ build-backend = "pdm.backend"
 
 [project]
 name = "cua-core"
-version = "0.1.17"
+version = "0.1.18"
 description = "Core functionality for Cua including telemetry and shared utilities"
 readme = "README.md"
 authors = [
@@ -22,16 +22,11 @@ otel = [
     "opentelemetry-sdk>=1.20.0",
     "opentelemetry-exporter-otlp-proto-http>=1.20.0",
 ]
-# Sentry for error tracking
-sentry = [
-    "sentry-sdk>=1.39.0",
-]
 # All telemetry features
 telemetry = [
     "opentelemetry-api>=1.20.0",
     "opentelemetry-sdk>=1.20.0",
     "opentelemetry-exporter-otlp-proto-http>=1.20.0",
-    "sentry-sdk>=1.39.0",
 ]
 
 [tool.pdm]

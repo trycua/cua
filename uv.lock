@@ -1039,7 +1039,7 @@ wheels = [
 
 [[package]]
 name = "cua-agent"
-version = "0.7.24"
+version = "0.7.27"
 source = { editable = "libs/python/agent" }
 dependencies = [
     { name = "aiohttp" },
@@ -1208,7 +1208,7 @@ requires-dist = [
 
 [[package]]
 name = "cua-computer"
-version = "0.5.12"
+version = "0.5.14"
 source = { editable = "libs/python/computer" }
 dependencies = [
     { name = "aiohttp" },
@@ -1252,7 +1252,7 @@ provides-extras = ["lume", "lumier", "ui", "all"]
 
 [[package]]
 name = "cua-computer-server"
-version = "0.3.16"
+version = "0.3.18"
 source = { editable = "libs/python/computer-server" }
 dependencies = [
     { name = "aiohttp" },
@@ -1318,7 +1318,7 @@ provides-extras = ["macos", "linux", "windows"]
 
 [[package]]
 name = "cua-core"
-version = "0.1.16"
+version = "0.1.17"
 source = { editable = "libs/python/core" }
 dependencies = [
     { name = "posthog" },
@@ -1330,14 +1330,10 @@ otel = [
     { name = "opentelemetry-exporter-otlp-proto-http" },
     { name = "opentelemetry-sdk" },
 ]
-sentry = [
-    { name = "sentry-sdk" },
-]
 telemetry = [
     { name = "opentelemetry-api" },
     { name = "opentelemetry-exporter-otlp-proto-http" },
     { name = "opentelemetry-sdk" },
-    { name = "sentry-sdk" },
 ]
 
 [package.dev-dependencies]
@@ -1354,10 +1350,8 @@ requires-dist = [
     { name = "opentelemetry-sdk", marker = "extra == 'otel'", specifier = ">=1.20.0" },
     { name = "opentelemetry-sdk", marker = "extra == 'telemetry'", specifier = ">=1.20.0" },
     { name = "posthog", specifier = ">=3.20.0" },
-    { name = "sentry-sdk", marker = "extra == 'sentry'", specifier = ">=1.39.0" },
-    { name = "sentry-sdk", marker = "extra == 'telemetry'", specifier = ">=1.39.0" },
 ]
-provides-extras = ["otel", "sentry", "telemetry"]
+provides-extras = ["otel", "telemetry"]
 
 [package.metadata.requires-dev]
 dev = [{ name = "pytest", specifier = ">=8.3.5" }]
@@ -1452,6 +1446,7 @@ docs-scripts = [
     { name = "crawl4ai" },
     { name = "fastmcp" },
     { name = "gitpython" },
+    { name = "griffe" },
     { name = "lancedb" },
     { name = "markdown-it-py" },
     { name = "markitdown" },
@@ -1504,6 +1499,7 @@ docs-scripts = [
     { name = "crawl4ai", specifier = ">=0.4.0" },
     { name = "fastmcp", specifier = ">=2.14.0" },
     { name = "gitpython", specifier = ">=3.1.43" },
+    { name = "griffe", specifier = ">=2.0.0" },
     { name = "lancedb", specifier = ">=0.4.0" },
     { name = "markdown-it-py", specifier = ">=3.0.0" },
     { name = "markitdown", specifier = ">=0.0.1" },
@@ -2231,6 +2227,38 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/b5/ba/56699ff9b7c76ca12f1cdc27a886d0f81f2189c3455ff9f65246780f713d/greenlet-3.3.0-cp313-cp313-musllinux_1_2_aarch64.whl", hash = "sha256:ab97cf74045343f6c60a39913fa59710e4bd26a536ce7ab2397adf8b27e67c39", size = 1567256, upload-time = "2025-12-04T15:04:25.276Z" },
     { url = "https://files.pythonhosted.org/packages/1e/37/f31136132967982d698c71a281a8901daf1a8fbab935dce7c0cf15f942cc/greenlet-3.3.0-cp313-cp313-musllinux_1_2_x86_64.whl", hash = "sha256:5375d2e23184629112ca1ea89a53389dddbffcf417dad40125713d88eb5f96e8", size = 1636483, upload-time = "2025-12-04T14:27:30.804Z" },
     { url = "https://files.pythonhosted.org/packages/7e/71/ba21c3fb8c5dce83b8c01f458a42e99ffdb1963aeec08fff5a18588d8fd7/greenlet-3.3.0-cp313-cp313-win_amd64.whl", hash = "sha256:9ee1942ea19550094033c35d25d20726e4f1c40d59545815e1128ac58d416d38", size = 301833, upload-time = "2025-12-04T14:32:23.929Z" },
+]
+
+[[package]]
+name = "griffe"
+version = "2.0.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "griffecli" },
+    { name = "griffelib" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/8b/94/ee21d41e7eb4f823b94603b9d40f86d3c7fde80eacc2c3c71845476dddaa/griffe-2.0.0-py3-none-any.whl", hash = "sha256:5418081135a391c3e6e757a7f3f156f1a1a746cc7b4023868ff7d5e2f9a980aa", size = 5214, upload-time = "2026-02-09T19:09:44.105Z" },
+]
+
+[[package]]
+name = "griffecli"
+version = "2.0.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "colorama" },
+    { name = "griffelib" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/e6/ed/d93f7a447bbf7a935d8868e9617cbe1cadf9ee9ee6bd275d3040fbf93d60/griffecli-2.0.0-py3-none-any.whl", hash = "sha256:9f7cd9ee9b21d55e91689358978d2385ae65c22f307a63fb3269acf3f21e643d", size = 9345, upload-time = "2026-02-09T19:09:42.554Z" },
+]
+
+[[package]]
+name = "griffelib"
+version = "2.0.0"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/4d/51/c936033e16d12b627ea334aaaaf42229c37620d0f15593456ab69ab48161/griffelib-2.0.0-py3-none-any.whl", hash = "sha256:01284878c966508b6d6f1dbff9b6fa607bc062d8261c5c7253cb285b06422a7f", size = 142004, upload-time = "2026-02-09T19:09:40.561Z" },
 ]
 
 [[package]]
@@ -9302,19 +9330,6 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/4a/b6/08fe2ce819e02ccb0296f4843e3f195764ce9829cbda61b7513f29b95718/sentencepiece-0.2.1-cp313-cp313t-macosx_10_13_universal2.whl", hash = "sha256:8dd4b477a7b069648d19363aad0cab9bad2f4e83b2d179be668efa672500dc94", size = 1946052, upload-time = "2025-08-12T07:00:08.136Z" },
     { url = "https://files.pythonhosted.org/packages/ab/d9/1ea0e740591ff4c6fc2b6eb1d7510d02f3fb885093f19b2f3abd1363b402/sentencepiece-0.2.1-cp313-cp313t-macosx_10_13_x86_64.whl", hash = "sha256:0c0f672da370cc490e4c59d89e12289778310a0e71d176c541e4834759e1ae07", size = 1327408, upload-time = "2025-08-12T07:00:09.572Z" },
     { url = "https://files.pythonhosted.org/packages/99/7e/1fb26e8a21613f6200e1ab88824d5d203714162cf2883248b517deb500b7/sentencepiece-0.2.1-cp313-cp313t-macosx_11_0_arm64.whl", hash = "sha256:ad8493bea8432dae8d6830365352350f3b4144415a1d09c4c8cb8d30cf3b6c3c", size = 1254857, upload-time = "2025-08-12T07:00:11.021Z" },
-]
-
-[[package]]
-name = "sentry-sdk"
-version = "2.49.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "certifi" },
-    { name = "urllib3" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/02/94/23ac26616a883f492428d9ee9ad6eee391612125326b784dbfc30e1e7bab/sentry_sdk-2.49.0.tar.gz", hash = "sha256:c1878599cde410d481c04ef50ee3aedd4f600e4d0d253f4763041e468b332c30", size = 387228, upload-time = "2026-01-08T09:56:25.642Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/88/43/1c586f9f413765201234541857cb82fda076f4b0f7bad4a0ec248da39cf3/sentry_sdk-2.49.0-py2.py3-none-any.whl", hash = "sha256:6ea78499133874445a20fe9c826c9e960070abeb7ae0cdf930314ab16bb97aa0", size = 415693, upload-time = "2026-01-08T09:56:21.872Z" },
 ]
 
 [[package]]

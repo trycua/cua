@@ -1,12 +1,22 @@
 """Authentication commands for CUA CLI."""
 
 import argparse
+import os
 from pathlib import Path
+from typing import Any, Optional
 
+import aiohttp
+from core.http import cua_version_headers
 from cua_cli.auth.browser import authenticate_via_browser
 from cua_cli.auth.store import clear_credentials, get_api_key, save_api_key
 from cua_cli.utils.async_utils import run_async
 from cua_cli.utils.output import print_error, print_info, print_success
+
+DEFAULT_API_BASE = "https://api.cua.ai"
+
+
+def _get_api_base() -> str:
+    return os.environ.get("CUA_API_BASE", DEFAULT_API_BASE).rstrip("/")
 
 
 def register_parser(subparsers: argparse._SubParsersAction) -> None:
@@ -45,6 +55,13 @@ def register_parser(subparsers: argparse._SubParsersAction) -> None:
         description="Remove all stored authentication credentials",
     )
 
+    # status command
+    auth_subparsers.add_parser(
+        "status",
+        help="Show authentication status and account info",
+        description="Display current user, credits, and API key info",
+    )
+
     # env command
     env_parser = auth_subparsers.add_parser(
         "env",
@@ -74,11 +91,13 @@ def execute(args: argparse.Namespace) -> int:
         return cmd_login(args)
     elif cmd == "logout":
         return cmd_logout(args)
+    elif cmd == "status":
+        return cmd_status(args)
     elif cmd == "env":
         return cmd_env(args)
     else:
         print_error("Usage: cua auth <command>")
-        print_info("Commands: login, logout, env")
+        print_info("Commands: login, logout, status, env")
         return 1
 
 
@@ -130,6 +149,62 @@ def cmd_logout(args: argparse.Namespace) -> int:
     """
     clear_credentials()
     print_success("Credentials cleared.")
+    return 0
+
+
+def cmd_status(args: argparse.Namespace) -> int:
+    """Handle the status command — show auth status and account info."""
+    api_key = get_api_key()
+    if not api_key:
+        print_error("Not logged in. Run 'cua auth login' first.")
+        return 1
+
+    async def _fetch():
+        url = f"{_get_api_base()}/v1/me"
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Accept": "application/json",
+            **cua_version_headers(),
+        }
+        async with aiohttp.ClientSession() as session:
+            timeout = aiohttp.ClientTimeout(total=10)
+            async with session.get(url, headers=headers, timeout=timeout) as resp:
+                try:
+                    data = await resp.json(content_type=None)
+                except Exception:
+                    text = await resp.text()
+                    return resp.status, {"error": text}
+                return resp.status, data
+
+    try:
+        status_code, data = run_async(_fetch())
+    except Exception as e:
+        print_error(f"Failed to reach API: {e}")
+        return 1
+
+    if status_code == 401:
+        clear_credentials()
+        print_error("Session expired. Run 'cua auth login' to re-authenticate.")
+        return 1
+
+    if status_code != 200:
+        print_error(f"Failed to fetch account info (HTTP {status_code})")
+        return 1
+
+    ws = data.get("workspace", {})
+    org = data.get("organization", {})
+    credits = data.get("credits", {})
+    key_info = data.get("api_key", {})
+
+    print_success("Logged in to cua.ai")
+    print_info(f"  Workspace: {ws.get('name', 'unknown')} ({ws.get('slug', 'unknown')})")
+    print_info(f"  Organization: {org.get('name', 'unknown')} ({org.get('plan_type', 'unknown')})")
+    print_info(f"  Credits: {credits.get('balance', 0):.2f} remaining")
+    print_info(f"  API key: {key_info.get('masked_value', 'unknown')}")
+
+    if key_info.get("expires_at"):
+        print_info(f"  Expires: {key_info['expires_at']}")
+
     return 0
 
 

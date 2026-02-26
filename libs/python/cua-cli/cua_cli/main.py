@@ -5,7 +5,7 @@ import logging
 import sys
 
 from cua_cli import __version__
-from cua_cli.commands import auth, image, mcp, platform, sandbox, skills
+from cua_cli.commands import auth, do, image, mcp, platform, sandbox, skills, trajectory
 from cua_cli.utils.output import print_error
 
 
@@ -19,6 +19,7 @@ def create_parser() -> argparse.ArgumentParser:
 Examples:
   cua auth login              Authenticate via browser
   cua auth login --api-key    Authenticate with API key
+  cua auth status             Show account info and credits
   cua sb list                 List all sandboxes
   cua sb create --os linux    Create a new Linux sandbox
   cua image list              List cloud images
@@ -26,6 +27,10 @@ Examples:
   cua image create linux-docker   Create a local image
   cua image shell <name>      Interactive shell into image
   cua platform list           Show available platforms
+  cua do switch docker my-ct  Select automation target VM
+  cua do screenshot           Take a screenshot
+  cua do click 100 200        Click at coordinates
+  cua do type "hello"         Type text
 
 For more information, visit https://docs.trycua.com
 """,
@@ -47,6 +52,9 @@ For more information, visit https://docs.trycua.com
     platform.register_parser(subparsers)
     skills.register_parser(subparsers)
     mcp.register_parser(subparsers)
+    do.register_parser(subparsers)
+    do.register_host_consent_parser(subparsers)
+    trajectory.register_parser(subparsers)
 
     return parser
 
@@ -80,6 +88,12 @@ def main() -> int:
             return skills.execute(args)
         elif args.command == "serve-mcp":
             return mcp.execute(args)
+        elif args.command == "do":
+            return do.execute(args)
+        elif args.command == "do-host-consent":
+            return do.execute_host_consent(args)
+        elif args.command in ("trajectory", "traj"):
+            return trajectory.execute(args)
         else:
             print_error(f"Unknown command: {args.command}")
             return 1

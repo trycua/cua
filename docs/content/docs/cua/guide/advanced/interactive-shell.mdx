@@ -1,0 +1,77 @@
+---
+title: Interactive Shell
+description: Open a live PTY session inside a sandbox or local machine from the CLI or Python SDK
+---
+
+The `cua do shell` command and `computer.pty` API give you an interactive terminal (PTY) session inside any sandbox or local machine — similar to SSH, but without any network setup.
+
+## CLI
+
+```bash
+# Switch to a target first
+cua do switch docker my-container
+# or
+cua do switch host
+
+# Open an interactive shell (bash / PowerShell on host)
+cua do shell
+
+# Run a specific program interactively
+cua do shell python3
+cua do shell vim /etc/hosts
+
+# Override terminal dimensions
+cua do shell --cols 220 --rows 50
+```
+
+The shell is fully interactive — arrow keys, tab completion, and `Ctrl+C` all work. When stdin is piped (non-TTY), the command runs non-interactively and its output is printed normally.
+
+## Python SDK
+
+```python
+from computer import Computer
+
+async with Computer(provider_type="docker", name="my-container") as c:
+    handle = await c.pty.create(
+        command="bash",
+        cols=80,
+        rows=24,
+        on_data=lambda chunk: print(chunk.decode(errors="replace"), end="", flush=True),
+    )
+
+    await handle.send_stdin(b"echo hello\n")
+    await handle.send_stdin(b"exit\n")
+    code = await handle.wait()
+    print(f"exited {code}")
+```
+
+### PtyHandle methods
+
+| Method | Description |
+|---|---|
+| `send_stdin(data: bytes)` | Write bytes to the terminal's stdin |
+| `resize(cols, rows)` | Resize the terminal window |
+| `kill()` | Kill the session process |
+| `disconnect()` | Close the WebSocket without killing the process |
+| `wait()` | Block until the session exits; returns the exit code |
+
+### Reconnecting
+
+```python
+# Disconnect and reconnect later (process keeps running)
+await handle.disconnect()
+
+handle2 = await c.pty.connect(
+    handle.pid,
+    on_data=lambda chunk: print(chunk.decode(errors="replace"), end=""),
+)
+```
+
+## How it works
+
+The PTY stack has four layers:
+
+1. **`cua-auto`** — spawns a real PTY process (`pty` on Unix, `pywinpty` on Windows)
+2. **`computer-server`** — exposes `/pty` REST endpoints and a WebSocket for I/O
+3. **`computer`** — Python client (`PtyInterface`) connecting over HTTP + WebSocket
+4. **`cua do shell`** — sets your terminal to raw mode and proxies I/O through the WebSocket

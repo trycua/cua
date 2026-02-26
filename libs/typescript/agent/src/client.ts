@@ -1,4 +1,5 @@
 import { Peer } from 'peerjs';
+import { cuaVersionHeaders } from '@trycua/core';
 import type { AgentRequest, AgentResponse, ConnectionType, AgentClientOptions } from './types';
 
 export class AgentClient {
@@ -52,6 +53,7 @@ export class AgentClient {
     try {
       const headers: Record<string, string> = {
         'Content-Type': 'application/json',
+        ...cuaVersionHeaders('agent', __CUA_VERSION__),
       };
       if (this.options.apiKey) {
         headers['X-API-Key'] = this.options.apiKey;

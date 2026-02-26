@@ -52,6 +52,7 @@ from . import adobe_photoshop  # noqa: F401
 from . import calendar  # noqa: F401
 from . import godot  # noqa: F401
 from . import notes  # noqa: F401
+from . import openshot  # noqa: F401
 from . import reminders  # noqa: F401
 from . import unity  # noqa: F401
 from .registry import (

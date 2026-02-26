@@ -12,6 +12,10 @@ import type {
 } from './types';
 import type { AgentMessage, Chat, ModelProvider } from '../types';
 
+const CUA_VERSION_HEADERS: Record<string, string> = {
+  'X-Cua-Client-Version': `playground:${__CUA_VERSION__}`,
+};
+
 // =============================================================================
 // API Error Helper
 // =============================================================================
@@ -42,6 +46,7 @@ class CloudPersistenceAdapter implements PersistenceAdapter {
       headers: {
         Authorization: `Bearer ${this.apiKey}`,
         'Content-Type': 'application/json',
+        ...CUA_VERSION_HEADERS,
         ...options?.headers,
       },
     });
@@ -137,6 +142,7 @@ class CloudComputerAdapter implements ComputerAdapter {
       headers: {
         Authorization: `Bearer ${this.apiKey}`,
         'Content-Type': 'application/json',
+        ...CUA_VERSION_HEADERS,
         ...options?.headers,
       },
     });
@@ -217,7 +223,7 @@ class CloudInferenceAdapter implements InferenceAdapter {
   async getAvailableModels(): Promise<ModelProvider[]> {
     try {
       const response = await fetch(`${this.baseUrl}/v1/models`, {
-        headers: { Authorization: `Bearer ${this.apiKey}` },
+        headers: { Authorization: `Bearer ${this.apiKey}`, ...CUA_VERSION_HEADERS },
       });
 
       if (!response.ok) {

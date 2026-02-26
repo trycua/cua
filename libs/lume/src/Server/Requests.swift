@@ -2,11 +2,22 @@ import ArgumentParser
 import Foundation
 import Virtualization
 
+private func parseNetworkModeString(_ value: String) throws -> NetworkMode {
+    guard let mode = NetworkMode.parse(value) else {
+        throw ValidationError(
+            "Invalid network mode '\(value)'. Expected 'nat', 'bridged', or 'bridged:<interface>'."
+        )
+    }
+    return mode
+}
+
 struct RunVMRequest: Codable {
     let noDisplay: Bool?
     let sharedDirectories: [SharedDirectoryRequest]?
     let recoveryMode: Bool?
     let storage: String?
+    let network: String?
+    let clipboard: Bool?
 
     struct SharedDirectoryRequest: Codable {
         let hostPath: String
@@ -32,6 +43,13 @@ struct RunVMRequest: Codable {
                 readOnly: dir.readOnly ?? false
             )
         }
+    }
+
+    func parseNetworkMode() throws -> NetworkMode? {
+        guard let network else {
+            return nil
+        }
+        return try parseNetworkModeString(network)
     }
 }
 
@@ -67,12 +85,21 @@ struct CreateVMRequest: Codable {
     let storage: String?
     /// Preset name or path to YAML config file for unattended macOS Setup Assistant automation
     let unattended: String?
+    /// Network mode: "nat" (default), "bridged", or "bridged:<interface>"
+    let network: String?
 
     func parse() throws -> (memory: UInt64, diskSize: UInt64) {
         return (
             memory: try parseSize(memory),
             diskSize: try parseSize(diskSize)
         )
+    }
+
+    func parseNetworkMode() throws -> NetworkMode {
+        guard let network else {
+            return .nat
+        }
+        return try parseNetworkModeString(network)
     }
 }
 

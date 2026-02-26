@@ -42,6 +42,8 @@ export {
   useFindDefaultModel,
 } from './hooks/usePlayground';
 export { useAgentRequest } from './hooks/useAgentRequest';
+export { useComputerMapping } from './hooks/useComputerMapping';
+export { useSelectedComputer } from './hooks/useSelectedComputer';
 export { useDarkMode } from './hooks/useDarkMode';
 
 // Primitive Components
@@ -83,9 +85,14 @@ export { PlaygroundContent } from './components/composed/PlaygroundContent';
 
 // Modals
 export { SettingsModal } from './components/modals/SettingsModal';
-export { CustomComputerModal } from './components/modals/CustomComputerModal';
+export { AddSandboxModal, CustomComputerModal } from './components/modals/AddSandboxModal';
+export type { AddSandboxModalProps } from './components/modals/AddSandboxModal';
 export { ExportTrajectoryModal } from './components/modals';
 export { ReplayTrajectoryModal } from './components/modals';
+
+// Constants
+export { SANDBOX_PRESETS, MACOS_PRESET } from './constants/sandboxPresets';
+export type { SandboxPreset } from './constants/sandboxPresets';
 
 // Trajectory Viewer
 export { default as TrajectoryViewer } from './components/TrajectoryViewer';

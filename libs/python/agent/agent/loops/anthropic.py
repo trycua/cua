@@ -673,6 +673,10 @@ def _convert_responses_items_to_completion_messages(
                 # Screenshot result - convert to OpenAI format with image_url content
                 image_url = output.get("image_url", "")
 
+                # Reset scale factors for each new screenshot so stale values
+                # from a previous downscale don't carry over.
+                scale_factors = (1.0, 1.0)
+
                 # Downscale screenshot if it exceeds recommended max resolution
                 if image_url and image_url.startswith("data:"):
                     try:

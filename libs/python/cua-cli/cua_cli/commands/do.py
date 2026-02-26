@@ -1176,8 +1176,7 @@ def _cmd_shell_noninteractive(command: str | None, args: argparse.Namespace) -> 
             await _print_context(state["provider"], state.get("name", ""), state)
             return _fail(f"exit {rc_code}: {stderr or stdout}")
         _maybe_record_turn(args, state, "shell", {"command": command})
-        preview = (stdout[:80] + "…") if len(stdout) > 80 else stdout
-        rc = _ok(preview if preview else "done")
+        rc = _ok(stdout if stdout else "done")
         await _print_context(state["provider"], state.get("name", ""), state)
         return rc
 

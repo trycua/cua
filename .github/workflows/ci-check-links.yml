@@ -21,8 +21,8 @@ jobs:
         with:
           # Check all markdown files
           # Exclude news.ycombinator.com as it returns 503 for automated requests (anti-bot protection)
-          # Exclude specific cua.ai URLs that return transient/expected errors
-          args: --verbose --no-progress --max-cache-age 1d --accept 200..=299,403 --exclude '^file://' --exclude 'localhost' --exclude '127\.0\.0\.1' --exclude 'news\.ycombinator\.com' --exclude '^https://cua\.ai/?$' --exclude '^https://api\.cua\.ai/?$' '**/*.md'
+          # Specific URL exclusions are in .lycheeignore
+          args: --verbose --no-progress --max-cache-age 1d --accept 200..=299,403 --exclude '^file://' --exclude 'localhost' --exclude '127\.0\.0\.1' --exclude 'news\.ycombinator\.com' '**/*.md'
           # Output results to file for parsing
           output: lychee-output.md
           # Don't fail the build on broken links (warning mode)
@@ -45,24 +45,24 @@ jobs:
             cat lychee-output.md
           fi
 
-          # Set status based on exit code
-          if [ "$EXIT_CODE" = "0" ]; then
-            echo "STATUS_ICON=✅" >> $GITHUB_ENV
-            echo "STATUS_TEXT=All links are working" >> $GITHUB_ENV
-            echo "COLOR=#36a64f" >> $GITHUB_ENV
-          elif [ "$EXIT_CODE" = "1" ]; then
-            echo "STATUS_ICON=⚠️" >> $GITHUB_ENV
-            echo "STATUS_TEXT=Found broken links" >> $GITHUB_ENV
-            echo "COLOR=#ffa500" >> $GITHUB_ENV
-          else
+          # Set status: check output file exists first (means lychee actually ran)
+          if [ ! -f "lychee-output.md" ]; then
             echo "STATUS_ICON=❌" >> $GITHUB_ENV
             echo "STATUS_TEXT=Link checker failed to run" >> $GITHUB_ENV
             echo "COLOR=#dc3545" >> $GITHUB_ENV
+          elif [ "$EXIT_CODE" = "0" ]; then
+            echo "STATUS_ICON=✅" >> $GITHUB_ENV
+            echo "STATUS_TEXT=All links are working" >> $GITHUB_ENV
+            echo "COLOR=#36a64f" >> $GITHUB_ENV
+          else
+            echo "STATUS_ICON=⚠️" >> $GITHUB_ENV
+            echo "STATUS_TEXT=Found broken links" >> $GITHUB_ENV
+            echo "COLOR=#ffa500" >> $GITHUB_ENV
           fi
 
-          # Extract up to 5 broken links (lines like "- [404] https://...")
+          # Extract up to 5 broken links (lychee format: "* [404] <https://...> | ...")
           if [ -f "lychee-output.md" ]; then
-            BROKEN=$(grep -E '^\- \[[0-9]+\]' lychee-output.md | sed 's/^- //' | sed 's/ |.*//' | head -5 || true)
+            BROKEN=$(grep -oP '\[\d+\] <?\Khttps?://[^\s|>]+' lychee-output.md | sed 's/[>]*$//' | head -5 | sed 's/^/• /' || true)
           else
             BROKEN=""
           fi

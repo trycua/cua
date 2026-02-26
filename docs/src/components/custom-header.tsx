@@ -9,6 +9,7 @@ import { SearchToggle } from 'fumadocs-ui/components/layout/search-toggle';
 import { ThemeToggle } from 'fumadocs-ui/components/layout/theme-toggle';
 import { ChevronsUpDown, Check, Menu } from 'lucide-react';
 import { useSidebar } from 'fumadocs-ui/provider';
+import { docsSites as docsSitesConfig } from '@/lib/docs-sites';
 import LogoBlack from '@/assets/cuala-icon-black.svg';
 import LogoWhite from '@/assets/cuala-icon-white.svg';
 import CuaBenchLogoBlack from '@/assets/cuabench-logo-black.svg';
@@ -20,115 +21,17 @@ import LumeIconWhite from '@/assets/lume-icon-white.svg';
 import CuaBotLogoBlack from '@/assets/cuabot-logo-black.svg';
 import CuaBotLogoWhite from '@/assets/cuabot-logo-white.svg';
 
-const docsSites = [
-  {
-    name: 'Cua',
-    label: 'Docs',
-    href: '/cua/guide/get-started/what-is-cua',
-    prefix: '/cua',
-    isDefault: true,
-    description: 'Computer Use Agent SDK',
-    logoBlack: LogoBlack,
-    logoWhite: LogoWhite,
-    iconWidth: 24,
-    iconHeight: 24,
-    dropdownIconWidth: 28,
-    dropdownIconHeight: 28,
-    navTabs: [
-      { name: 'Guide', href: '/cua/guide/get-started/what-is-cua', prefix: '/cua/guide' },
-      { name: 'Examples', href: '/cua/examples/automation/form-filling', prefix: '/cua/examples' },
-      { name: 'Reference', href: '/cua/reference/computer-sdk', prefix: '/cua/reference' },
-    ],
-  },
-  {
-    name: 'Cua Bench',
-    label: 'Docs',
-    href: '/cuabench/guide/getting-started/introduction',
-    prefix: '/cuabench',
-    isDefault: false,
-    description: 'Benchmarking toolkit',
-    logoBlack: CuaBenchLogoBlack,
-    logoWhite: CuaBenchLogoWhite,
-    iconWidth: 36,
-    iconHeight: 22,
-    dropdownIconWidth: 42,
-    dropdownIconHeight: 25,
-    navTabs: [
-      {
-        name: 'Guide',
-        href: '/cuabench/guide/getting-started/introduction',
-        prefix: '/cuabench/guide',
-      },
-      {
-        name: 'Examples',
-        href: '/cuabench/examples/custom-agent',
-        prefix: '/cuabench/examples',
-      },
-      {
-        name: 'Reference',
-        href: '/cuabench/reference/cli-reference',
-        prefix: '/cuabench/reference',
-      },
-    ],
-  },
-  {
-    name: 'Cua-Bot',
-    label: 'Docs',
-    href: '/cuabot/guide/getting-started/introduction',
-    prefix: '/cuabot',
-    isDefault: false,
-    description: 'Co-op computer-use for any agent',
-    logoBlack: CuaBotLogoBlack,
-    logoWhite: CuaBotLogoWhite,
-    iconWidth: 24,
-    iconHeight: 24,
-    dropdownIconWidth: 28,
-    dropdownIconHeight: 28,
-    navTabs: [
-      {
-        name: 'Guide',
-        href: '/cuabot/guide/getting-started/introduction',
-        prefix: '/cuabot/guide',
-      },
-      {
-        name: 'Reference',
-        href: '/cuabot/reference',
-        prefix: '/cuabot/reference',
-      },
-    ],
-  },
-  {
-    name: 'Lume',
-    label: 'Docs',
-    href: '/lume/guide/getting-started/introduction',
-    prefix: '/lume',
-    isDefault: false,
-    description: 'macOS VM CLI and Framework',
-    logoBlack: LumeIconBlack,
-    logoWhite: LumeIconWhite,
-    iconWidth: 24,
-    iconHeight: 24,
-    dropdownIconWidth: 28,
-    dropdownIconHeight: 28,
-    navTabs: [
-      {
-        name: 'Guide',
-        href: '/lume/guide/getting-started/introduction',
-        prefix: '/lume/guide',
-      },
-      {
-        name: 'Examples',
-        href: '/lume/examples',
-        prefix: '/lume/examples',
-      },
-      {
-        name: 'Reference',
-        href: '/lume/reference/cli-reference',
-        prefix: '/lume/reference',
-      },
-    ],
-  },
-];
+const siteLogos: Record<string, { logoBlack: typeof LogoBlack; logoWhite: typeof LogoWhite }> = {
+  cua: { logoBlack: LogoBlack, logoWhite: LogoWhite },
+  cuabench: { logoBlack: CuaBenchLogoBlack, logoWhite: CuaBenchLogoWhite },
+  cuabot: { logoBlack: CuaBotLogoBlack, logoWhite: CuaBotLogoWhite },
+  lume: { logoBlack: LumeIconBlack, logoWhite: LumeIconWhite },
+};
+
+const docsSites = docsSitesConfig.map((site) => ({
+  ...site,
+  ...siteLogos[site.slug],
+}));
 
 export function CustomHeader() {
   const pathname = usePathname();

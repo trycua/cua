@@ -1,5 +1,9 @@
 {
-  "title": "Cua-Bench",
-  "description": "Framework for benchmarking and training computer-use agents",
-  "pages": ["guide", "examples", "reference"]
+  "title": "Cua Bench",
+  "description": "Benchmarking toolkit",
+  "pages": [
+    "guide",
+    "examples",
+    "reference"
+  ]
 }

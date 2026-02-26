@@ -1,5 +1,9 @@
 {
   "title": "Lume",
-  "description": "CLI and framework for macOS VMs using Apple Virtualization",
-  "pages": ["guide", "examples", "reference"]
+  "description": "macOS VM CLI and Framework",
+  "pages": [
+    "guide",
+    "examples",
+    "reference"
+  ]
 }

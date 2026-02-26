@@ -308,6 +308,16 @@ class GenericComputerInterface(BaseComputerInterface):
             width_scale = screenshot_width / screen_size["width"]
             height_scale = screenshot_height / screen_size["height"]
 
+            self.logger.debug(
+                "Screenshot box scaling: screen=%dx%d, screenshot=%dx%d, scale=%.4fx%.4f",
+                screen_size["width"],
+                screen_size["height"],
+                screenshot_width,
+                screenshot_height,
+                width_scale,
+                height_scale,
+            )
+
             # Scale box coordinates from screen space to screenshot space
             for box in boxes:
                 scaled_box = (
@@ -315,6 +325,17 @@ class GenericComputerInterface(BaseComputerInterface):
                     int(box[1] * height_scale),  # y
                     int(box[2] * width_scale),  # width
                     int(box[3] * height_scale),  # height
+                )
+                self.logger.debug(
+                    "Scaling box: (%d,%d,%d,%d) -> (%d,%d,%d,%d)",
+                    box[0],
+                    box[1],
+                    box[2],
+                    box[3],
+                    scaled_box[0],
+                    scaled_box[1],
+                    scaled_box[2],
+                    scaled_box[3],
                 )
                 screenshot = draw_box(
                     screenshot,
@@ -327,6 +348,7 @@ class GenericComputerInterface(BaseComputerInterface):
                 )
 
         if scale_factor != 1.0:
+            self.logger.debug("Resizing screenshot with scale_factor=%.4f", scale_factor)
             screenshot = resize_image(screenshot, scale_factor)
 
         return screenshot
@@ -649,6 +671,21 @@ class GenericComputerInterface(BaseComputerInterface):
         screen_x = x * width_scale
         screen_y = y * height_scale
 
+        self.logger.debug(
+            "to_screen_coordinates: (%.1f,%.1f) -> (%.1f,%.1f) "
+            "(screen=%dx%d, screenshot=%dx%d, scale=%.4fx%.4f)",
+            x,
+            y,
+            screen_x,
+            screen_y,
+            screen_size["width"],
+            screen_size["height"],
+            screenshot_width,
+            screenshot_height,
+            width_scale,
+            height_scale,
+        )
+
         return screen_x, screen_y
 
     async def to_screenshot_coordinates(self, x: float, y: float) -> tuple[float, float]:
@@ -673,6 +710,21 @@ class GenericComputerInterface(BaseComputerInterface):
         # Convert coordinates
         screenshot_x = x * width_scale
         screenshot_y = y * height_scale
+
+        self.logger.debug(
+            "to_screenshot_coordinates: (%.1f,%.1f) -> (%.1f,%.1f) "
+            "(screen=%dx%d, screenshot=%dx%d, scale=%.4fx%.4f)",
+            x,
+            y,
+            screenshot_x,
+            screenshot_y,
+            screen_size["width"],
+            screen_size["height"],
+            screenshot_width,
+            screenshot_height,
+            width_scale,
+            height_scale,
+        )
 
         return screenshot_x, screenshot_y
 

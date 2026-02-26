@@ -4,6 +4,7 @@ Anthropic hosted tools agent loop implementation using liteLLM
 
 import asyncio
 import json
+import logging
 from typing import Any, AsyncGenerator, Dict, List, Optional, Tuple, Union
 
 import litellm
@@ -32,6 +33,8 @@ from ..responses import (
 )
 from ..types import AgentCapability, AgentResponse, Messages, Tools
 
+logger = logging.getLogger(__name__)
+
 # Recommended maximum resolution for Anthropic's computer-use API.
 # Screenshots larger than this are internally downscaled by the API, causing
 # coordinate mismatches. We proactively downscale to avoid the offset.
@@ -41,7 +44,10 @@ RECOMMENDED_MAX_HEIGHT = 768
 
 def _scale_coordinate(coord: int, scale: float) -> int:
     """Scale a single coordinate value by a factor and round to int."""
-    return int(round(coord * scale))
+    scaled = int(round(coord * scale))
+    if scale != 1.0:
+        logger.debug("Scaling coordinate: %d * %.4f -> %d", coord, scale, scaled)
+    return scaled
 
 
 # Model version mapping to tool version and beta flag
@@ -97,8 +103,20 @@ async def _map_computer_tool_to_anthropic(computer_tool: Any, tool_version: str)
     # Cap dimensions to recommended max so they match downscaled screenshots
     if width > RECOMMENDED_MAX_WIDTH or height > RECOMMENDED_MAX_HEIGHT:
         scale = min(RECOMMENDED_MAX_WIDTH / width, RECOMMENDED_MAX_HEIGHT / height)
-        width = int(width * scale)
-        height = int(height * scale)
+        new_width = int(width * scale)
+        new_height = int(height * scale)
+        logger.debug(
+            "Capping tool dimensions: %dx%d -> %dx%d (scale=%.4f)",
+            width,
+            height,
+            new_width,
+            new_height,
+            scale,
+        )
+        width = new_width
+        height = new_height
+    else:
+        logger.debug("Tool dimensions within limits: %dx%d", width, height)
 
     return {
         "type": tool_version,
@@ -686,6 +704,16 @@ def _convert_responses_items_to_completion_messages(
 
                             # Store scale factors for coordinate upscaling
                             scale_factors = (orig_w / new_w, orig_h / new_h)
+                            logger.debug(
+                                "Downscaled screenshot: %dx%d -> %dx%d (scale=%.4f, upscale_factors=%.4fx%.4f)",
+                                orig_w,
+                                orig_h,
+                                new_w,
+                                new_h,
+                                scale,
+                                scale_factors[0],
+                                scale_factors[1],
+                            )
                     except Exception:
                         pass  # If downscaling fails, send original image
 

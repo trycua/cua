@@ -63,7 +63,7 @@ jobs:
             --accept 100..=399
             --scheme https
             --scheme http
-            --exclude '^/'
+            --base 'https://cua.ai'
             --exclude 'localhost'
             --exclude '127\.0\.0\.1'
             --exclude 'example\.com'

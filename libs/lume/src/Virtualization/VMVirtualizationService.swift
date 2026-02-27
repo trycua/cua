@@ -91,11 +91,31 @@ class BaseVirtualizationService: VMVirtualizationService {
     }
 
     func pause() async throws {
-        try await virtualMachine.pause()
+        try await withCheckedThrowingContinuation {
+            (continuation: CheckedContinuation<Void, Error>) in
+            virtualMachine.pause { result in
+                switch result {
+                case .success:
+                    continuation.resume()
+                case .failure(let error):
+                    continuation.resume(throwing: error)
+                }
+            }
+        }
     }
 
     func resume() async throws {
-        try await virtualMachine.resume()
+        try await withCheckedThrowingContinuation {
+            (continuation: CheckedContinuation<Void, Error>) in
+            virtualMachine.resume { result in
+                switch result {
+                case .success:
+                    continuation.resume()
+                case .failure(let error):
+                    continuation.resume(throwing: error)
+                }
+            }
+        }
     }
 
     func getVirtualMachine() -> Any {

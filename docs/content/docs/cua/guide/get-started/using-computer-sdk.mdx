@@ -321,19 +321,12 @@ The Computer SDK lets you connect to your sandbox and perform basic interactions
         ```
       </Tab>
       <Tab value="Your host desktop">
-        First, install and run `cua-computer-server`:
-        ```bash
-        pip install cua-computer-server
-        python -m computer_server
-        ```
+        <Callout type="info" title="Host desktop support (TypeScript)">
+          Connecting to a local host desktop is currently supported in **Python only** via `cua-computer-server`.
+          The TypeScript SDK does not yet support host desktop connections.
 
-        Then, use the `Computer` object to connect:
-        ```typescript
-        import { Computer } from '@trycua/computer';
-
-        const computer = new Computer({ useHostComputerServer: true });
-        await computer.run(); // Connect to the host desktop
-        ```
+          Feature parity is planned (see [#916](https://github.com/trycua/cua/issues/916)).
+        </Callout>
       </Tab>
     </Tabs>
 

@@ -235,7 +235,12 @@ final class LumeController {
 
     @MainActor
     public func clone(
-        name: String, newName: String, sourceLocation: String? = nil, destLocation: String? = nil
+        name: String, 
+        newName: String, 
+        sourceLocation: String? = nil, 
+        destLocation: String? = nil,
+        compact: Bool = false,
+        expandBy: String? = nil
     ) throws {
         let normalizedName = normalizeVMName(name: name)
         let normalizedNewName = normalizeVMName(name: newName)
@@ -279,12 +284,40 @@ final class LumeController {
             }
 
             // Copy the VM directory
-            try home.copyVMDirectory(
-                from: normalizedName,
-                to: normalizedNewName,
-                sourceLocation: sourceLocation,
-                destLocation: destLocation
-            )
+            // If we need to modify the disk (compact or expand), we need to handle copying manually
+            if compact || expandBy != nil {
+                try home.copyVMDirectoryManual(
+                    from: normalizedName,
+                    to: normalizedNewName,
+                    sourceLocation: sourceLocation,
+                    destLocation: destLocation,
+                    compact: compact
+                )
+                
+                // Handle expansion if requested
+                if let expandAmountStr = expandBy {
+                    let expandAmount = try parseSize(expandAmountStr)
+                    let destVM = try get(name: normalizedNewName, storage: destLocation)
+                    let currentSize = try destVM.getDiskSize()
+                    let newSize = currentSize.total + expandAmount
+                    
+                    Logger.info("Expanding disk", metadata: [
+                        "current": "\(currentSize.total)",
+                        "add": "\(expandAmount)",
+                        "new": "\(newSize)"
+                    ])
+                    
+                    try destVM.resizeDisk(newSize)
+                }
+            } else {
+                // Standard copy
+                try home.copyVMDirectory(
+                    from: normalizedName,
+                    to: normalizedNewName,
+                    sourceLocation: sourceLocation,
+                    destLocation: destLocation
+                )
+            }
 
             // Update MAC address in the cloned VM to ensure uniqueness
             let clonedVM = try get(name: normalizedNewName, storage: destLocation)
@@ -1553,4 +1586,151 @@ final class LumeController {
         // Verify VM exists (this will throw if not found)
         _ = try self.validateVMExists(name)
     }
+
+    // MARK: - Resize VM Disk
+
+    @MainActor
+    public func resize(
+        name: String,
+        compact: Bool = false,
+        size: String? = nil,
+        expandBy: String? = nil,
+        storage: String? = nil,
+        force: Bool = false
+    ) async throws {
+        let normalizedName = normalizeVMName(name: name)
+        Logger.info(
+            "Resizing VM disk",
+            metadata: [
+                "vm": normalizedName,
+                "compact": "\\(compact)",
+                "size": size ?? "nil",
+                "expandBy": expandBy ?? "nil",
+                "storage": storage ?? "default"
+            ])
+
+        do {
+            // Validate VM exists
+            let actualLocation = try self.validateVMExists(normalizedName, storage: storage)
+
+            // Get the VM and check if it's running
+            let vm = try get(name: normalizedName, storage: storage)
+            if vm.details.status == "running" {
+                Logger.error("Cannot resize a running VM", metadata: ["vm": normalizedName])
+                throw VMError.alreadyRunning(normalizedName)
+            }
+
+            // Get current disk size for confirmation
+            let currentDiskSize = try vm.getDiskSize()
+            
+            // Show confirmation unless force flag is set
+            if !force {
+                print("Current disk size: \\(formatBytes(currentDiskSize.total))")
+                print("Used: \\(formatBytes(currentDiskSize.used))")
+                
+                if compact {
+                    let potentialSavings = currentDiskSize.total - currentDiskSize.used
+                    print("Potential space savings: ~\\(formatBytes(potentialSavings))")
+                } else if let sizeStr = size {
+                    print("New size: \\(sizeStr)")
+                } else if let expandStr = expandBy {
+                    print("Expanding by: \\(expandStr)")
+                }
+                
+                print("\\nAre you sure you want to resize '\\(normalizedName)'? [y/N] ", terminator: "")
+                guard let response = readLine()?.lowercased(),
+                      response == "y" || response == "yes"
+                else {
+                    print("Resize cancelled")
+                    return
+                }
+            }
+
+            // Perform the resize operation
+            if compact {
+                Logger.info("Compacting disk", metadata: ["vm": normalizedName])
+                try await vm.compactDisk()
+                Logger.info("Disk compacted successfully", metadata: ["vm": normalizedName])
+            } else if let sizeStr = size {
+                let newSize = try parseSize(sizeStr)
+                Logger.info("Resizing disk to absolute size", metadata: [
+                    "vm": normalizedName,
+                    "newSize": "\\(newSize)"
+                ])
+                try vm.resizeDisk(newSize)
+                Logger.info("Disk resized successfully", metadata: ["vm": normalizedName])
+            } else if let expandStr = expandBy {
+                let expandAmount = try parseSize(expandStr)
+                let newSize = currentDiskSize.total + expandAmount
+                Logger.info("Expanding disk", metadata: [
+                    "vm": normalizedName,
+                    "current": "\\(currentDiskSize.total)",
+                    "add": "\\(expandAmount)",
+                    "new": "\\(newSize)"
+                ])
+                try vm.resizeDisk(newSize)
+                Logger.info("Disk expanded successfully", metadata: ["vm": normalizedName])
+            }
+
+            // Show new size
+            let newDiskSize = try vm.getDiskSize()
+            print("\\nResize complete!")
+            print("New disk size: \\(formatBytes(newDiskSize.total))")
+            print("Used: \\(formatBytes(newDiskSize.used))")
+
+        } catch {
+            Logger.error("Failed to resize VM disk", metadata: ["error": error.localizedDescription])
+            throw error
+        }
+    }
+
+    // MARK: - Helper Functions
+
+    /// Parse size string (e.g., "10GB", "512MB") to bytes
+    private func parseSize(_ sizeStr: String) throws -> UInt64 {
+        let trimmed = sizeStr.trimmingCharacters(in: .whitespaces).uppercased()
+        
+        // Extract number and unit
+        var numberStr = ""
+        var unit = ""
+        
+        for char in trimmed {
+            if char.isNumber || char == "." {
+                numberStr.append(char)
+            } else {
+                unit.append(char)
+            }
+        }
+        
+        guard let number = Double(numberStr) else {
+            throw ValidationError("Invalid size format: \\(sizeStr)")
+        }
+        
+        let multiplier: UInt64
+        switch unit {
+        case "B", "":
+            multiplier = 1
+        case "KB":
+            multiplier = 1024
+        case "MB":
+            multiplier = 1024 * 1024
+        case "GB", "G":
+            multiplier = 1024 * 1024 * 1024
+        case "TB":
+            multiplier = 1024 * 1024 * 1024 * 1024
+        default:
+            throw ValidationError("Unknown size unit: \\(unit). Use B, KB, MB, GB, or TB")
+        }
+        
+        return UInt64(number * Double(multiplier))
+    }
+
+    /// Format bytes to human-readable string
+    private func formatBytes(_ bytes: UInt64) -> String {
+        let formatter = ByteCountFormatter()
+        formatter.allowedUnits = [.useGB, .useMB]
+        formatter.countStyle = .file
+        return formatter.string(fromByteCount: Int64(bytes))
+    }
 }
+

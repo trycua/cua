@@ -236,6 +236,7 @@ enum TelemetryEvent {
     static let stop = "lume_stop"
     static let delete = "lume_delete"
     static let clone = "lume_clone"
+    static let resize = "lume_resize"
     static let pull = "lume_pull"
     static let push = "lume_push"
     static let serve = "lume_serve"

@@ -3,10 +3,13 @@
   "version": "0.0.0",
   "private": true,
   "scripts": {
+    "prebuild": "tsx scripts/sync-docs-meta.ts",
     "build": "next build",
+    "predev": "tsx scripts/sync-docs-meta.ts",
     "dev": "next dev --turbo -p 8090",
     "start": "next start -p 8090",
     "postinstall": "fumadocs-mdx",
+    "docs:sync-meta": "tsx scripts/sync-docs-meta.ts",
     "docs:generate": "tsx ../scripts/docs-generators/runner.ts",
     "docs:check": "tsx ../scripts/docs-generators/runner.ts --check",
     "docs:list": "tsx ../scripts/docs-generators/runner.ts --list",

@@ -184,7 +184,18 @@ final class DefaultVNCService: VNCService {
 
     func openClient(url: String) async throws {
         let processRunner = DefaultProcessRunner()
-        try processRunner.run(executable: "/usr/bin/open", arguments: [url])
+        do {
+            // Force a fresh Screen Sharing instance to avoid stale/paused sessions.
+            try processRunner.run(
+                executable: "/usr/bin/open",
+                arguments: ["-n", "-a", "Screen Sharing", url]
+            )
+        } catch {
+            Logger.info("Failed to open Screen Sharing explicitly, falling back to default URL open", metadata: [
+                "error": "\(error)"
+            ])
+            try processRunner.run(executable: "/usr/bin/open", arguments: [url])
+        }
     }
 
     /// Connect a VNC client to the server for sending input events

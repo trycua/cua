@@ -480,22 +480,13 @@ def _convert_responses_items_to_completion_messages(
                 # }
                 scroll_x = action.get("scroll_x", 0)
                 scroll_y = action.get("scroll_y", 0)
-                # Determine direction and amount from scroll values
-                if scroll_x > 0:
-                    direction = "left"
-                    amount = scroll_x
-                elif scroll_x < 0:
-                    direction = "right"
-                    amount = -scroll_x
-                elif scroll_y > 0:
-                    direction = "up"
-                    amount = scroll_y
-                elif scroll_y < 0:
-                    direction = "down"
-                    amount = -scroll_y
+                # Fixed scroll mapping for Anthropic models
+                if abs(scroll_y) >= abs(scroll_x):
+                    direction = "down" if scroll_y > 0 else "up"
+                    amount = abs(scroll_y)
                 else:
-                    direction = "down"
-                    amount = 3
+                    direction = "right" if scroll_x > 0 else "left"
+                    amount = abs(scroll_x)
 
                 tool_use_content.append(
                     {
@@ -537,13 +528,23 @@ def _convert_responses_items_to_completion_messages(
                 #     "id": "call_1",
                 #     "type": "function"
                 # }
-                path = action.get("path", [])
-                start_coord = [0, 0]
-                end_coord = [0, 0]
-                if isinstance(path, list) and len(path) >= 2:
-                    start_coord = [path[0].get("x", 0), path[0].get("y", 0)]
-                    end_coord = [path[-1].get("x", 0), path[-1].get("y", 0)]
 
+                # Fixed drag coordinates for Anthropic models
+                path = action.get("path", [])
+                if isinstance(path, list) and len(path) >= 2:
+                    start_coord = [
+                        int(path[0].get("x", 0)),
+                        int(path[0].get("y", 0))
+                    ]
+                    end_coord = [
+                        int(path[-1].get("x", start_coord[0])),
+                        int(path[-1].get("y", start_coord[1]))
+                    ]
+                else:
+                    # Fallback if path is invalid
+                    start_coord = [0, 0]
+                    end_coord = [0, 0]
+                
                 tool_use_content.append(
                     {
                         "type": "tool_use",

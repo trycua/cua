@@ -201,7 +201,9 @@ def cmd_local_list(args: argparse.Namespace) -> int:
 
         style = "green" if "ready" in status else "red"
 
-        console.print(f"{name:<20} {platform:<15} {size:<10} {created:<12} [{style}]{status}[/{style}]")
+        console.print(
+            f"{name:<20} {platform:<15} {size:<10} {created:<12} [{style}]{status}[/{style}]"
+        )
 
     print("\n" + "=" * 85)
     print("\nCommands:")

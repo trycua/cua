@@ -470,7 +470,7 @@ async for result in agent.run(task):
                 print(f"  Text: {action.get('text')}")
 ```
 
-This detailed information is invaluable for debugging, logging, and understanding the agent's decision-making process in an agentic system. More details can be found in the [OpenAI Agent SDK Specification](https://platform.openai.com/docs/guides/responses-vs-chat-completions).
+This detailed information is invaluable for debugging, logging, and understanding the agent's decision-making process in an agentic system. More details can be found in the [OpenAI Agent SDK Specification](https://developers.openai.com/api/docs/guides/migrate-to-responses).
 
 ## Building a Gradio UI
 

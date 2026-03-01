@@ -7,6 +7,7 @@
     "custom-tools",
     "sandboxed-python",
     "local-computer-server",
+    "interactive-shell",
     "human-in-the-loop",
     "vnc-recorder",
     "demonstration-guided-skills",

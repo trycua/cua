@@ -21,6 +21,7 @@ jobs:
           # Service → tag prefix → directory
           declare -A SERVICE_TAG_DIR
           SERVICE_TAG_DIR["pypi/cli"]="cli-v|libs/python/cua-cli/"
+          SERVICE_TAG_DIR["pypi/auto"]="auto-v|libs/python/cua-auto/"
           SERVICE_TAG_DIR["pypi/agent"]="agent-v|libs/python/agent/"
           SERVICE_TAG_DIR["pypi/computer"]="computer-v|libs/python/computer/"
           SERVICE_TAG_DIR["pypi/core"]="core-v|libs/python/core/"

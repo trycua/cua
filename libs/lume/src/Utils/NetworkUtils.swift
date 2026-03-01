@@ -2,6 +2,38 @@ import Foundation
 import Network
 
 enum NetworkUtils {
+    /// Runs a process with a timeout, killing it if it exceeds the deadline.
+    /// Prevents `lume ls` and other commands from hanging when subprocesses
+    /// (lsof, nc, ping) get stuck during concurrent VM state transitions.
+    /// - Parameters:
+    ///   - process: The configured Process to run
+    ///   - timeout: Maximum time to wait in seconds
+    /// - Returns: true if the process completed successfully (exit code 0), false otherwise
+    private static func runWithTimeout(_ process: Process, timeout: TimeInterval) -> Bool {
+        do {
+            try process.run()
+        } catch {
+            return false
+        }
+
+        let deadline = Date().addingTimeInterval(timeout)
+        // Poll for process completion with 100ms intervals
+        while process.isRunning {
+            if Date() > deadline {
+                process.terminate()
+                // Give it a moment to terminate gracefully
+                Thread.sleep(forTimeInterval: 0.1)
+                if process.isRunning {
+                    // Force kill via SIGKILL if terminate (SIGTERM) didn't work
+                    kill(process.processIdentifier, SIGKILL)
+                }
+                return false
+            }
+            Thread.sleep(forTimeInterval: 0.1)
+        }
+        return process.terminationStatus == 0
+    }
+
     /// Checks if an IP address is reachable by sending a ping
     /// - Parameter ipAddress: The IP address to check
     /// - Returns: true if the IP is reachable, false otherwise
@@ -14,13 +46,7 @@ enum NetworkUtils {
         process.standardOutput = pipe
         process.standardError = pipe
 
-        do {
-            try process.run()
-            process.waitUntilExit()
-            return process.terminationStatus == 0
-        } catch {
-            return false
-        }
+        return runWithTimeout(process, timeout: 3)
     }
 
     /// Checks if a TCP port is open on an IP address
@@ -40,13 +66,8 @@ enum NetworkUtils {
         process.standardOutput = pipe
         process.standardError = pipe
 
-        do {
-            try process.run()
-            process.waitUntilExit()
-            return process.terminationStatus == 0
-        } catch {
-            return false
-        }
+        // Process timeout = nc timeout + 2s buffer for process overhead
+        return runWithTimeout(process, timeout: timeout + 2)
     }
 
     /// Checks if SSH (port 22) is available on an IP address
@@ -69,13 +90,8 @@ enum NetworkUtils {
         process.standardOutput = pipe
         process.standardError = pipe
 
-        do {
-            try process.run()
-            process.waitUntilExit()
-            // lsof returns 0 if it finds a matching process
-            return process.terminationStatus == 0
-        } catch {
-            return false
-        }
+        // lsof should complete quickly for local port checks;
+        // 5s timeout guards against hangs during VM state transitions
+        return runWithTimeout(process, timeout: 5)
     }
 }

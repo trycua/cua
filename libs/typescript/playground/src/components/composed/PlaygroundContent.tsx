@@ -2,7 +2,7 @@
 // Adapted from cloud/src/website/app/components/playground/PlaygroundContent.tsx
 
 import { AnimatePresence, motion } from 'motion/react';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { EmptyStateWithInput } from './EmptyState';
 import { PlaygroundLayout } from './PlaygroundLayout';
 import { ChatProvider } from '../../context/ChatProvider';
@@ -13,6 +13,7 @@ import {
   usePlayground,
 } from '../../hooks/usePlayground';
 import type { Chat, Computer } from '../../types';
+import { AddSandboxModal } from '../modals/AddSandboxModal';
 
 // Re-export for convenience
 export { EmptyStateWithInput } from './EmptyState';
@@ -82,6 +83,11 @@ interface PlaygroundContentProps {
   onExamplePromptSelected?: (promptId: string, promptTitle: string) => void;
   /** Optional toast callback */
   onToast?: (message: string, type?: 'success' | 'error' | 'info') => void;
+  /** Optional class name for the root layout container (can override default h-screen w-screen) */
+  className?: string;
+
+  /** Render prop for cloud VM creation wizard. Injected by cloud website. */
+  renderCloudCreate?: (props: { onCreated: () => void; onCancel: () => void }) => React.ReactNode;
 }
 
 /**
@@ -109,12 +115,15 @@ export function PlaygroundContent({
   onPlaygroundViewed,
   onExamplePromptSelected,
   onToast,
+  className,
+  renderCloudCreate,
 }: PlaygroundContentProps) {
   const { state, dispatch, adapters } = usePlayground();
   const activeChat = useActiveChat();
   const isActiveChatGenerating = useIsChatGenerating(activeChat?.id ?? null);
   const defaultModel = useFindDefaultModel();
   const [isMobile, setIsMobile] = useState(false);
+  const [showAddSandboxModal, setShowAddSandboxModal] = useState(false);
   // Track chat IDs that need to auto-send their first message
   const pendingFirstMessageRef = useRef<Set<string>>(new Set());
 
@@ -254,6 +263,14 @@ export function PlaygroundContent({
     };
   }, [computers, defaultModel]);
 
+  const handleOpenAddSandbox = useCallback(() => {
+    setShowAddSandboxModal(true);
+  }, []);
+
+  const handleCloseAddSandbox = useCallback(() => {
+    setShowAddSandboxModal(false);
+  }, []);
+
   // Check if active chat needs to auto-send its first message
   const shouldAutoSend = activeChat ? pendingFirstMessageRef.current.has(activeChat.id) : false;
 
@@ -276,6 +293,7 @@ export function PlaygroundContent({
             selectionHint={selectionHint}
             onExamplePromptSelected={onExamplePromptSelected}
             onToast={onToast}
+            onAddComputer={handleOpenAddSandbox}
           />
         ) : (
           <motion.div
@@ -303,6 +321,7 @@ export function PlaygroundContent({
   return (
     <>
       <PlaygroundLayout
+        className={className}
         isDarkMode={isDarkMode}
         onToggleTheme={onToggleTheme}
         renderThemeToggle={renderThemeToggle}
@@ -322,6 +341,12 @@ export function PlaygroundContent({
       </PlaygroundLayout>
 
       {settingsModal}
+
+      <AddSandboxModal
+        isOpen={showAddSandboxModal}
+        onClose={handleCloseAddSandbox}
+        renderCloudCreate={renderCloudCreate}
+      />
     </>
   );
 }

@@ -60,9 +60,34 @@ def get_agent_configs() -> List[AgentConfigInfo]:
     return _agent_configs.copy()
 
 
+def _strip_cua_prefix(model: str) -> str:
+    """Strip the ``cua/<provider>/`` routing prefix so the bare model name
+    can be matched against registered agent patterns.
+
+    Examples:
+        cua/google/gemini-3-flash-preview  ->  gemini-3-flash-preview
+        cua/anthropic/claude-sonnet-4-6    ->  claude-sonnet-4-6
+        gemini-3-flash-preview             ->  gemini-3-flash-preview  (unchanged)
+    """
+    parts = model.split("/")
+    if parts[0] == "cua" and len(parts) >= 3:
+        return "/".join(parts[2:])
+    return model
+
+
 def find_agent_config(model: str) -> Optional[AgentConfigInfo]:
-    """Find the best matching agent config for a model"""
+    """Find the best matching agent config for a model.
+
+    For each registered config (checked in priority order), tries the
+    original model string first and then the bare model name with the
+    ``cua/<provider>/`` routing prefix stripped.  This ensures that
+    routed models (e.g. ``cua/google/gemini-3-flash-preview``) resolve
+    to the same agent loop as their bare counterparts.
+    """
+    stripped = _strip_cua_prefix(model)
     for config_info in _agent_configs:
         if config_info.matches_model(model):
+            return config_info
+        if stripped != model and config_info.matches_model(stripped):
             return config_info
     return None

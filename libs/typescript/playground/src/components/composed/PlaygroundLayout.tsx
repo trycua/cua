@@ -16,6 +16,7 @@ import { motion } from 'motion/react';
 import { type ReactNode, useEffect, useState } from 'react';
 import { ChatList } from './ChatList';
 import { useActiveChat, usePlayground } from '../../hooks/usePlayground';
+import { cn } from '../../utils/cn';
 import type { Chat } from '../../types';
 
 interface PlaygroundLayoutProps {
@@ -51,6 +52,8 @@ interface PlaygroundLayoutProps {
   onChatSelect?: () => void;
   /** Toast callback for user notifications */
   onToast?: (message: string, type?: 'success' | 'error' | 'info') => void;
+  /** Optional class name for the root container (can override default h-screen w-screen) */
+  className?: string;
 }
 
 export function PlaygroundLayout({
@@ -70,6 +73,7 @@ export function PlaygroundLayout({
   chatsLoading = false,
   onChatSelect,
   onToast,
+  className,
 }: PlaygroundLayoutProps) {
   const { state, dispatch } = usePlayground();
   const { isSidebarCollapsed } = state;
@@ -115,7 +119,12 @@ export function PlaygroundLayout({
   const LinkComponent = renderLink || defaultRenderLink;
 
   return (
-    <div className="relative flex h-screen w-screen flex-col overflow-hidden bg-white dark:bg-[#0C0C0C]">
+    <div
+      className={cn(
+        'relative flex h-screen w-screen flex-col overflow-hidden bg-white dark:bg-[#0C0C0C]',
+        className
+      )}
+    >
       {loadingBar}
 
       {/* Top header bar */}

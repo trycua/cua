@@ -9,6 +9,7 @@ on:
         type: choice
         options:
           - pypi/agent
+          - pypi/auto
           - pypi/bench
           - pypi/bench-ui
           - pypi/cli
@@ -52,6 +53,10 @@ jobs:
           case "${{ inputs.service }}" in
             "pypi/agent")
               echo "directory=libs/python/agent" >> $GITHUB_OUTPUT
+              echo "type=python" >> $GITHUB_OUTPUT
+              ;;
+            "pypi/auto")
+              echo "directory=libs/python/cua-auto" >> $GITHUB_OUTPUT
               echo "type=python" >> $GITHUB_OUTPUT
               ;;
             "pypi/bench")
@@ -210,6 +215,15 @@ jobs:
           cd libs/python/agent
           VERSION=$(python -c "import tomllib; from pathlib import Path; data = tomllib.loads(Path('pyproject.toml').read_text()); print(data['project']['version'])")
           echo "Agent version: $VERSION"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Capture bumped auto version
+        if: ${{ inputs.service == 'pypi/auto' }}
+        id: auto_version
+        run: |
+          cd libs/python/cua-auto
+          VERSION=$(python -c "import tomllib; from pathlib import Path; data = tomllib.loads(Path('pyproject.toml').read_text()); print(data['project']['version'])")
+          echo "Auto version: $VERSION"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Capture bumped bench version

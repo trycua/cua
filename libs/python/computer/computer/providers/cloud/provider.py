@@ -22,6 +22,7 @@ import os
 from urllib.parse import urlparse
 
 import aiohttp
+from core.http import cua_version_headers
 
 DEFAULT_API_BASE = os.getenv("CUA_API_BASE", "https://api.cua.ai")
 
@@ -54,6 +55,13 @@ class CloudProvider(BaseVMProvider):
         # Host caching dictionary: {vm_name: host_string}
         self._host_cache: Dict[str, str] = {}
 
+    def _base_headers(self) -> Dict[str, str]:
+        return {
+            "Authorization": f"Bearer {self.api_key}",
+            "Accept": "application/json",
+            **cua_version_headers(),
+        }
+
     @property
     def provider_type(self) -> VMProviderType:
         return VMProviderType.CLOUD
@@ -75,7 +83,7 @@ class CloudProvider(BaseVMProvider):
 
         # Query the API for authoritative VM info
         url = f"{self.api_base}/v1/vms/{name}"
-        headers = {"Authorization": f"Bearer {self.api_key}", "Accept": "application/json"}
+        headers = self._base_headers()
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.get(url, headers=headers) as resp:
@@ -112,10 +120,7 @@ class CloudProvider(BaseVMProvider):
 
     async def list_vms(self) -> ListVMsResponse:
         url = f"{self.api_base}/v1/vms"
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Accept": "application/json",
-        }
+        headers = self._base_headers()
         async with aiohttp.ClientSession() as session:
             async with session.get(url, headers=headers) as resp:
                 if resp.status == 200:
@@ -175,10 +180,7 @@ class CloudProvider(BaseVMProvider):
     ) -> Dict[str, Any]:
         """Start a VM via public API. Returns a minimal status."""
         url = f"{self.api_base}/v1/vms/{name}/start"
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Accept": "application/json",
-        }
+        headers = self._base_headers()
         async with aiohttp.ClientSession() as session:
             async with session.post(url, headers=headers) as resp:
                 if resp.status in (200, 201, 202, 204):
@@ -194,10 +196,7 @@ class CloudProvider(BaseVMProvider):
     async def stop_vm(self, name: str, storage: Optional[str] = None) -> Dict[str, Any]:
         """Stop a VM via public API."""
         url = f"{self.api_base}/v1/vms/{name}/stop"
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Accept": "application/json",
-        }
+        headers = self._base_headers()
         async with aiohttp.ClientSession() as session:
             async with session.post(url, headers=headers) as resp:
                 if resp.status in (200, 202):
@@ -220,10 +219,7 @@ class CloudProvider(BaseVMProvider):
     async def restart_vm(self, name: str, storage: Optional[str] = None) -> Dict[str, Any]:
         """Restart a VM via public API."""
         url = f"{self.api_base}/v1/vms/{name}/restart"
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Accept": "application/json",
-        }
+        headers = self._base_headers()
         async with aiohttp.ClientSession() as session:
             async with session.post(url, headers=headers) as resp:
                 if resp.status in (200, 202):

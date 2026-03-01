@@ -84,7 +84,7 @@ Think of it like this:
 3. It sends back instructions (like "click here" or "type this")
 4. We execute those instructions in our VM
 
-The [Responses API](https://platform.openai.com/docs/guides/responses) is OpenAI's newest way to interact with their AI models. It comes with several built-in tools:
+The [Responses API](https://developers.openai.com/api/docs/guides/migrate-to-responses) is OpenAI's newest way to interact with their AI models. It comes with several built-in tools:
 
 - **Web search**: Let the AI search the internet
 - **File search**: Help the AI find documents

@@ -45,4 +45,11 @@ export type {
   ChatAction,
 } from './chat';
 
-export { VMStatus, isVM, isCustomComputer, getComputerId, getComputerName } from './chat';
+export {
+  VMStatus,
+  isVM,
+  isCustomComputer,
+  getComputerId,
+  getComputerName,
+  getComputerStatus,
+} from './chat';

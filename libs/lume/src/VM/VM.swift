@@ -1,4 +1,5 @@
 import Foundation
+import CoreGraphics
 
 // MARK: - Support Types
 
@@ -245,7 +246,7 @@ class VM {
                     "port": "\(vncPort)",
                 ])
             let vncInfo = try await setupSession(
-                noDisplay: noDisplay, port: vncPort, sharedDirectories: sharedDirectories)
+                port: vncPort, sharedDirectories: sharedDirectories)
             Logger.info(
                 "VNC setup successful", metadata: ["name": vmDirContext.name, "vncInfo": vncInfo])
 
@@ -258,6 +259,13 @@ class VM {
                 "Starting VM via virtualization service", metadata: ["name": vmDirContext.name])
             try await service.start()
             Logger.info("VM started successfully", metadata: ["name": vmDirContext.name])
+
+            // Open the VNC client only after VM start to avoid connecting to an empty framebuffer.
+            if !noDisplay {
+                await waitForVisibleFramebufferBeforeOpeningClient()
+                Logger.info("Starting VNC session", metadata: ["name": vmDirContext.name])
+                try await vncService.openClient(url: vncInfo)
+            }
 
             // Start clipboard watcher for automatic host-to-VM clipboard sync
             // Requires SSH/Remote Login to be enabled on the VM
@@ -684,7 +692,7 @@ class VM {
 
     /// Main session setup method that handles VNC and persists session data
     private func setupSession(
-        noDisplay: Bool, port: Int = 0, sharedDirectories: [SharedDirectory] = []
+        port: Int = 0, sharedDirectories: [SharedDirectory] = []
     ) async throws -> String {
         // Start the VNC service and get the URL
         let url = try await startVNCService(port: port)
@@ -692,13 +700,71 @@ class VM {
         // Save the session data
         saveSessionData(url: url, sharedDirectories: sharedDirectories)
 
-        // Open the VNC client if needed
-        if !noDisplay {
-            Logger.info("Starting VNC session", metadata: ["name": vmDirContext.name])
-            try await vncService.openClient(url: url)
+        return url
+    }
+
+    /// Avoid opening Screen Sharing on an all-black initial framebuffer.
+    /// This only runs for the real VNC service (not mocks in tests).
+    private func waitForVisibleFramebufferBeforeOpeningClient() async {
+        guard vncService is DefaultVNCService else {
+            return
         }
 
-        return url
+        do {
+            try await vncService.connectInputClient()
+            defer { vncService.disconnectInputClient() }
+
+            let timeoutSeconds = 30
+            for _ in 0..<timeoutSeconds {
+                if let image = try? await vncService.captureFramebuffer(),
+                    framebufferHasVisiblePixels(image)
+                {
+                    Logger.info(
+                        "Detected visible VM framebuffer content before opening VNC client",
+                        metadata: ["name": vmDirContext.name]
+                    )
+                    return
+                }
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+            }
+
+            Logger.info(
+                "Timed out waiting for visible framebuffer content; opening VNC client anyway",
+                metadata: ["name": vmDirContext.name, "timeout_seconds": "\(timeoutSeconds)"]
+            )
+        } catch {
+            Logger.info(
+                "Framebuffer readiness check failed; opening VNC client anyway",
+                metadata: ["name": vmDirContext.name, "error": "\(error)"]
+            )
+        }
+    }
+
+    /// Fast heuristic: sample bytes from the framebuffer and treat any non-zero value as visible content.
+    private func framebufferHasVisiblePixels(_ image: CGImage) -> Bool {
+        guard let dataProvider = image.dataProvider,
+            let data = dataProvider.data,
+            let bytes = CFDataGetBytePtr(data)
+        else {
+            // If we can't inspect pixels, do not block client opening.
+            return true
+        }
+
+        let count = CFDataGetLength(data)
+        guard count > 0 else {
+            return false
+        }
+
+        let stride = max(1, count / 4096)
+        var index = 0
+        while index < count {
+            if bytes[index] != 0 {
+                return true
+            }
+            index += stride
+        }
+
+        return false
     }
 
     // MARK: - Platform-specific Methods
@@ -847,7 +913,7 @@ class VM {
             virtualizationService = try virtualizationServiceFactory(config)
 
             let vncInfo = try await setupSession(
-                noDisplay: noDisplay, port: vncPort, sharedDirectories: sharedDirectories)
+                port: vncPort, sharedDirectories: sharedDirectories)
             Logger.info("VNC info", metadata: ["vncInfo": vncInfo])
 
             // Start the VM
@@ -855,6 +921,12 @@ class VM {
                 throw VMError.internalError("Virtualization service not initialized")
             }
             try await service.start()
+
+            if !noDisplay {
+                await waitForVisibleFramebufferBeforeOpeningClient()
+                Logger.info("Starting VNC session", metadata: ["name": vmDirContext.name])
+                try await vncService.openClient(url: vncInfo)
+            }
 
             while true {
                 try await Task.sleep(nanoseconds: UInt64(1e9))

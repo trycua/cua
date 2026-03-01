@@ -94,7 +94,7 @@ Individual permissions: `sandbox:list`, `sandbox:create`, `sandbox:delete`, `san
 ## Environment Variables
 
 - `CUA_API_KEY`: API key for authentication
-- `CUA_API_BASE`: API base URL (default: https://api.cua.ai)
+- `CUA_API_BASE`: API base URL (default: `https://api.cua.ai`)
 - `CUA_WEBSITE_URL`: Website URL for OAuth (default: https://cua.ai)
 - `CUA_MCP_PERMISSIONS`: Default MCP permissions (comma-separated)
 - `CUA_SANDBOX`: Default sandbox name for computer commands

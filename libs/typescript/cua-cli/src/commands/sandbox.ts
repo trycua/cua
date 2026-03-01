@@ -1,6 +1,6 @@
 import type { Argv } from 'yargs';
 import { ensureApiKeyInteractive } from '../auth';
-import { http } from '../http';
+import { http, CUA_VERSION_HEADERS } from '../http';
 import { clearApiKey } from '../storage';
 import type { SandboxItem } from '../util';
 import { openInBrowser, printSandboxList } from '../util';
@@ -69,6 +69,7 @@ async function fetchSandboxDetails(
 
       try {
         const statusRes = await fetch(statusUrl, {
+          headers: { ...CUA_VERSION_HEADERS },
           signal: statusController.signal,
         });
         clearTimeout(statusTimeout);
@@ -98,6 +99,7 @@ async function fetchSandboxDetails(
             'Content-Type': 'application/json',
             'X-Container-Name': sandbox.name,
             'X-API-Key': token,
+            ...CUA_VERSION_HEADERS,
           },
           body: JSON.stringify({
             command: 'version',

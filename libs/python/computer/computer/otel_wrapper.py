@@ -15,8 +15,6 @@ from .interface.base import BaseComputerInterface
 # Import OTEL functions - available when cua-core[telemetry] is installed
 try:
     from core.telemetry import (
-        add_breadcrumb,
-        capture_exception,
         create_span,
         is_otel_enabled,
         record_error,
@@ -133,15 +131,6 @@ class OtelInterfaceWrapper:
             status = "success"
             error_type = None
 
-            # Add breadcrumb for debugging
-            if OTEL_AVAILABLE:
-                add_breadcrumb(
-                    category="computer",
-                    message=f"Computer action: {name}",
-                    level="info",
-                    data={"action": name, "os_type": self._os_type},
-                )
-
             try:
                 with create_span(
                     f"computer.{name}",
@@ -154,15 +143,6 @@ class OtelInterfaceWrapper:
                 status = "error"
                 error_type = type(e).__name__
 
-                # Capture exception in Sentry
-                if OTEL_AVAILABLE:
-                    capture_exception(
-                        e,
-                        context={
-                            "action": name,
-                            "os_type": self._os_type,
-                        },
-                    )
                 raise
 
             finally:

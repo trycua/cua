@@ -21,7 +21,7 @@ lume ipsw
 # Output: https://updates.cdn-apple.com/...
 
 # Download it (using curl, wget, or your browser)
-curl -L -o ~/Downloads/macos.ipsw "$(lume ipsw)"
+curl -L -o ~/Downloads/macos.ipsw "$(lume ipsw 2>/dev/null | tail -1)"
 
 # Create the VM with the downloaded file
 lume create my-vm --os macos --ipsw ~/Downloads/macos.ipsw

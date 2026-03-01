@@ -1,4 +1,7 @@
+import { readFileSync } from 'node:fs';
 import { defineConfig } from 'tsdown';
+
+const pkg = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf-8'));
 
 export default defineConfig([
   {
@@ -6,6 +9,9 @@ export default defineConfig([
     platform: 'browser',
     dts: true,
     copy: ['./src/styles.css'],
+    define: {
+      __CUA_VERSION__: JSON.stringify(pkg.version),
+    },
     external: [
       // React - MUST be external to avoid duplicate React instances
       'react',

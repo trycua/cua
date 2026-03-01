@@ -7,6 +7,7 @@ from typing import Any, Optional
 from urllib.parse import quote
 
 import aiohttp
+from core.http import cua_version_headers
 from cua_cli.auth.store import require_api_key
 
 DEFAULT_API_BASE = "https://api.cua.ai"
@@ -28,6 +29,7 @@ class CloudAPIClient:
         return {
             "Authorization": f"Bearer {self.api_key}",
             "Accept": "application/json",
+            **cua_version_headers(),
         }
 
     async def _request(

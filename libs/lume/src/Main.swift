@@ -4,7 +4,9 @@ import Foundation
 @main
 struct Lume: AsyncParsableCommand {
     static var configuration: CommandConfiguration {
-        CommandConfiguration(
+        _ = _parseTopLevelOptions  // Trigger parsing of top-level options and banner display
+
+        return CommandConfiguration(
             commandName: "lume",
             abstract: "A lightweight CLI and local API server to build, run and manage macOS VMs.",
             version: Version.current,
@@ -12,6 +14,31 @@ struct Lume: AsyncParsableCommand {
             helpNames: .long
         )
     }
+
+    // Run top-level parse once using a static stored property
+    private static let _parseTopLevelOptions: Void = {
+        let args = CommandLine.arguments
+
+        // Check if help is requested and print banner
+        if args.count == 1 || args.contains("--help") ||
+           (args.count == 2 && args[1] == "help") {
+            printBanner()
+        }
+
+        // Parse --config option
+        for (index, arg) in args.enumerated() {
+            if arg == "--config" && index + 1 < args.count {
+                let configPath = args[index + 1]
+                SettingsManager.shared.setCustomConfigPath(configPath)
+                break
+            }
+        }
+    }()
+
+    @Option(name: .long,
+        help: "Path to config file (default: $XDG_CONFIG_HOME/lume/config.yaml, falling back to ~/.config/lume/config.yaml if XDG_CONFIG_HOME is not set)"
+    )
+    var config: String?
 }
 
 // MARK: - Version Management
@@ -36,49 +63,15 @@ extension Lume {
         print(banner)
         print()
     }
-
-    static func shouldShowBanner() -> Bool {
-        let args = CommandLine.arguments.dropFirst()
-        // Show banner when: no args, --help, -h, help, or just the root command
-        if args.isEmpty {
-            return true
-        }
-        if args.contains("--help") || args.contains("-h") {
-            return true
-        }
-        // Check if first arg is "help" (e.g., "lume help")
-        if args.first == "help" && args.count == 1 {
-            return true
-        }
-        return false
-    }
 }
 
 // MARK: - Command Execution
 extension Lume {
-    public static func main() async {
+    func run() async throws {
         // Record installation event on first run (sent regardless of telemetry opt-out)
         TelemetryClient.shared.recordInstallation()
 
-        // Print banner when showing help
-        if shouldShowBanner() {
-            printBanner()
-        }
-
-        do {
-            try await executeCommand()
-        } catch {
-            exit(withError: error)
-        }
-    }
-
-    private static func executeCommand() async throws {
-        var command = try parseAsRoot()
-
-        if var asyncCommand = command as? AsyncParsableCommand {
-            try await asyncCommand.run()
-        } else {
-            try command.run()
-        }
+        // If no subcommand is provided, show help
+        throw CleanExit.helpRequest(self)
     }
 }

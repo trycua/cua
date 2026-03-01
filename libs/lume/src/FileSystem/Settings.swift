@@ -48,10 +48,19 @@ final class SettingsManager: @unchecked Sendable {
 
     static let shared = SettingsManager()
     private let fileManager: FileManager
+    private var customConfigFilePath: String?
 
-    // Get the config directory following XDG spec
+    // Get the config directory
     private var configDir: String {
-        // Check XDG_CONFIG_HOME environment variable first
+        // If a custom config file path is set (via --config), use its directory
+        if let customPath = customConfigFilePath {
+            let expanded = (customPath as NSString).expandingTildeInPath
+            let dirPath = (expanded as NSString).deletingLastPathComponent
+            if !dirPath.isEmpty {
+                return dirPath
+            }
+        }
+        // Check XDG_CONFIG_HOME environment variable
         if let xdgConfigHome = ProcessInfo.processInfo.environment["XDG_CONFIG_HOME"] {
             return "\(xdgConfigHome)/lume"
         }
@@ -59,19 +68,31 @@ final class SettingsManager: @unchecked Sendable {
         return (Constants.fallbackConfigDir as NSString).expandingTildeInPath
     }
 
+    private var configFileName: String {
+        if let customPath = customConfigFilePath {
+            return (customPath as NSString).lastPathComponent
+        } else {
+            return Constants.configFileName
+        }
+    }
+
     // Path to config file
     private var configFilePath: String {
-        return "\(configDir)/\(Constants.configFileName)"
+        return "\(configDir)/\(configFileName)"
     }
 
     // MARK: - Initialization
 
     init(fileManager: FileManager = .default) {
         self.fileManager = fileManager
-        ensureConfigDirectoryExists()
     }
 
     // MARK: - Settings Access
+
+    /// Sets a custom config file path (for --config option)
+    func setCustomConfigPath(_ path: String) {
+        self.customConfigFilePath = path
+    }
 
     func getSettings() -> LumeSettings {
         if let settings = readSettingsFromFile() {
@@ -287,10 +308,6 @@ final class SettingsManager: @unchecked Sendable {
     }
 
     // MARK: - Private Helpers
-
-    private func ensureConfigDirectoryExists() {
-        try? fileManager.createDirectory(atPath: configDir, withIntermediateDirectories: true)
-    }
 
     private func readSettingsFromFile() -> LumeSettings? {
         // Read from YAML file

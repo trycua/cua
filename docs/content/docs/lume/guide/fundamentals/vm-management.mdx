@@ -9,15 +9,15 @@ Once you've [created a VM](/lume/guide/getting-started/quickstart), here's how t
 
 ## Quick reference
 
-| Task | Command |
-|------|---------|
-| List VMs | `lume ls` |
-| Get details | `lume get my-vm` |
-| Run | `lume run my-vm` |
+| Task         | Command                       |
+| ------------ | ----------------------------- |
+| List VMs     | `lume ls`                     |
+| Get details  | `lume get my-vm`              |
+| Run          | `lume run my-vm`              |
 | Run headless | `lume run my-vm --no-display` |
-| Stop | `lume stop my-vm` |
-| Clone | `lume clone my-vm backup` |
-| Delete | `lume delete my-vm` |
+| Stop         | `lume stop my-vm`             |
+| Clone        | `lume clone my-vm backup`     |
+| Delete       | `lume delete my-vm`           |
 
 ## Run a VM
 
@@ -73,7 +73,8 @@ Any ARM64 Linux distribution works. Download the ARM64 (aarch64) ISO, not x86_64
 - **Fedora** - [fedoraproject.org](https://fedoraproject.org/)
 
 <Callout type="info">
-Linux VMs have no licensing restrictions—run as many concurrent instances as your hardware supports. Only macOS VMs are limited to 2 per Mac.
+  Linux VMs have no licensing restrictions—run as many concurrent instances as your hardware
+  supports. Only macOS VMs are limited to 2 per Mac.
 </Callout>
 
 ## Stop a VM
@@ -101,7 +102,7 @@ lume get my-vm
 ## Change VM settings
 
 <Callout type="warn">
-Stop the VM before changing settings. Disk size can only increase, not decrease.
+  Stop the VM before changing settings. Disk size can only increase, not decrease.
 </Callout>
 
 ```bash
@@ -207,7 +208,8 @@ lume prune
 ```
 
 <Callout type="info">
-Enable caching if you frequently pull the same images or images sharing base layers. With caching disabled, each `lume pull` downloads everything fresh.
+  Enable caching if you frequently pull the same images or images sharing base layers. With caching
+  disabled, each `lume pull` downloads everything fresh.
 </Callout>
 
 ## What's next

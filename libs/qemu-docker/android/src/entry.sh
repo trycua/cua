@@ -81,5 +81,8 @@ else
     fi
 fi
 
+info "Updating cua-computer-server and cua-agent..."
+uv add --directory /opt/cua-server cua-computer-server "cua-agent[all]"
+
 info "Starting Computer Server..."
 DISPLAY= uv run --directory /opt/cua-server python -m computer_server --host 0.0.0.0 --port 8000 --log-level info

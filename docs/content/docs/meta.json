@@ -1,5 +1,5 @@
 {
   "title": "Home",
   "description": "Documentation Home",
-  "pages": ["cua", "cuabench", "lume"]
+  "pages": ["cua", "cuabench", "cuabot", "lume"]
 }

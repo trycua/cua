@@ -1,0 +1,16 @@
+# Source files (use compiled dist/ instead)
+src/
+tsconfig.json
+
+# Development files
+*.log
+.env
+.env.local
+
+# Test files
+__tests__/
+*.test.ts
+*.test.js
+
+# Docker (published separately)
+Dockerfile

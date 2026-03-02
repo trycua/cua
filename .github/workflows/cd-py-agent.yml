@@ -181,23 +181,4 @@ jobs:
       release_name: "cua-agent v${{ needs.prepare.outputs.version }}"
       module_path: "libs/python/agent"
       body: |
-        ## Dependencies
-        * cua-computer: ${{ needs.prepare.outputs.computer_version }}
-        * cua-som: ${{ needs.prepare.outputs.som_version }}
-
-        ## Installation Options
-
-        ### Basic installation with Anthropic
-        ```bash
-        pip install cua-agent[anthropic]==${{ needs.prepare.outputs.version }}
-        ```
-
-        ### With SOM (recommended)
-        ```bash
-        pip install cua-agent[som]==${{ needs.prepare.outputs.version }}
-        ```
-
-        ### All features
-        ```bash
-        pip install cua-agent[all]==${{ needs.prepare.outputs.version }}
-        ```
+        **Dependencies:** cua-computer ${{ needs.prepare.outputs.computer_version }}, cua-som ${{ needs.prepare.outputs.som_version }}

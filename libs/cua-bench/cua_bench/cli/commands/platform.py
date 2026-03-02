@@ -300,13 +300,44 @@ def register_parser(subparsers):
     platform_parser.set_defaults(platform_command="list")
 
 
+def _deprecation_notice(cmd_name: str) -> None:
+    """Print deprecation notice for cb platform commands."""
+    import sys
+
+    equivalent = f"cua platform {cmd_name}"
+    print(
+        f"\033[33m⚠ Deprecation: 'cb platform {cmd_name}' is deprecated. "
+        f"Use '{equivalent}' instead.\033[0m",
+        file=sys.stderr,
+    )
+
+
 def execute(args) -> int:
-    """Execute the platform command."""
+    """Execute the platform command.
+
+    Delegates to cua_cli with a deprecation warning. Users should migrate
+    to 'cua platform' commands.
+    """
     cmd = getattr(args, "platform_command", "list")
 
+    try:
+        from cua_cli.commands import platform as cua_platform
+    except ImportError:
+        # Fall back to local implementations if cua-cli is not installed
+        if cmd == "list":
+            return cmd_list(args)
+        elif cmd == "info":
+            return cmd_info(args)
+        else:
+            return cmd_list(args)
+
+    # Delegate to cua_cli with deprecation warning
     if cmd == "list":
-        return cmd_list(args)
+        _deprecation_notice("list")
+        return cua_platform.cmd_list(args)
     elif cmd == "info":
-        return cmd_info(args)
+        _deprecation_notice("info")
+        return cua_platform.cmd_info(args)
     else:
-        return cmd_list(args)
+        _deprecation_notice("list")
+        return cua_platform.cmd_list(args)

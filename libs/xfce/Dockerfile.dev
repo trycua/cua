@@ -23,6 +23,8 @@ RUN apt-get update && apt-get install -y \
     zip \
     xdg-utils \
     gcc \
+    # DHCP client for networking
+    isc-dhcp-client \
     # Qt/XCB runtime deps for PyQt5 (libqxcb.so)
     libxcb-icccm4 \
     libxcb-image0 \

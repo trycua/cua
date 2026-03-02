@@ -1,0 +1,6 @@
+{
+  "title": "Reference",
+  "description": "API and CLI reference for Cua-Bot",
+  "icon": "FileText",
+  "pages": ["changelog"]
+}

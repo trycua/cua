@@ -70,11 +70,4 @@ jobs:
     with:
       tag_name: "bench-v${{ needs.prepare.outputs.version }}"
       release_name: "cua-bench v${{ needs.prepare.outputs.version }}"
-      body: |
-        ## Toolkit for computer-use RL environments and benchmarks
-
-        ## Installation
-
-        ```bash
-        pip install cua-bench==${{ needs.prepare.outputs.version }}
-        ```
+      body: ""

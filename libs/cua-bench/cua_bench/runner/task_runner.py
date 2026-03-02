@@ -400,6 +400,7 @@ class TaskRunner:
         # Task configuration
         env_path: Optional[Path] = None,
         task_index: int = 0,
+        setup_config: Optional[dict] = None,
         # Environment configuration
         memory: str = "8G",
         cpus: str = "8",
@@ -501,7 +502,8 @@ class TaskRunner:
         # Create network
         await create_network(network_name)
 
-        # Start environment container
+        # Start environment container with setup_config for display resolution
+        _setup_config = setup_config or {}
         await self._start_env_container(
             task_id=task_id,
             network_name=network_name,
@@ -513,6 +515,8 @@ class TaskRunner:
             vnc_port=vnc_port,
             api_port=api_port,
             overlay_path=overlay_path,
+            width=_setup_config.get("width"),
+            height=_setup_config.get("height"),
         )
 
         # Build URLs
@@ -547,11 +551,18 @@ class TaskRunner:
                             "_task_cfg": task_cfg,  # Store for evaluation
                         }
 
-                        # Create remote session
+                        # Extract setup_config from task if available
+                        setup_config = {}
+                        if hasattr(task_cfg, "computer") and task_cfg.computer:
+                            setup_config = task_cfg.computer.get("setup_config", {})
+
+                        # Create remote session with setup_config values
                         session_obj = RemoteDesktopSession(
                             api_url=api_url,
                             vnc_url=vnc_url or "",
-                            os_type=config.get("os_type", "linux"),
+                            os_type=setup_config.get("os_type", config.get("os_type", "linux")),
+                            width=setup_config.get("width", 1024),
+                            height=setup_config.get("height", 768),
                         )
 
                         # Wait for environment to be ready
@@ -592,6 +603,8 @@ class TaskRunner:
         vnc_port: Optional[int],
         api_port: Optional[int],
         overlay_path: Optional[Path] = None,
+        width: Optional[int] = None,
+        height: Optional[int] = None,
     ) -> ContainerInfo:
         """Start the environment container.
 
@@ -609,6 +622,10 @@ class TaskRunner:
             env_vars["CPU_CORES"] = cpus
             if not os.path.exists("/dev/kvm"):
                 env_vars["KVM"] = "N"
+
+        # Add display resolution if specified
+        if width is not None and height is not None:
+            env_vars["VNC_RESOLUTION"] = f"{width}x{height}"
 
         # Build volumes
         volumes = []

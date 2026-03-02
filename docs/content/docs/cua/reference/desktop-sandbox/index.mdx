@@ -7,43 +7,43 @@ Desktop sandbox environments provide isolated desktops for running Computer-Usin
 
 ## Sandbox Options
 
-### [macOS Sandbox](/cua/reference/desktop-sandbox/macos)
+### macOS Sandbox
 
-Native macOS virtual machines on Apple Silicon using Apple's Virtualization Framework. Near-native performance for macOS automation.
+Native macOS virtual machines on Apple Silicon using Apple's Virtualization Framework. Near-native performance for macOS automation. [Learn more →](/cua/reference/desktop-sandbox/macos)
 
 - **Lume** - Native CLI for VM management
 - **Lumier** - Docker wrapper for containerized deployments
 
-### [Linux Container](/cua/reference/desktop-sandbox/linux-container)
+### Linux Container
 
-Docker containers running Linux desktops. Fast startup, low resource usage.
+Docker containers running Linux desktops. Fast startup, low resource usage. [Learn more →](/cua/reference/desktop-sandbox/linux-container)
 
-| Container | Description |
-|-----------|-------------|
-| [Kasm](/cua/reference/desktop-sandbox/linux-container/kasm) | KasmWeb-based Ubuntu with XFCE |
+| Container                                                   | Description                        |
+| ----------------------------------------------------------- | ---------------------------------- |
+| [Kasm](/cua/reference/desktop-sandbox/linux-container/kasm) | KasmWeb-based Ubuntu with XFCE     |
 | [XFCE](/cua/reference/desktop-sandbox/linux-container/xfce) | Vanilla XFCE, minimal dependencies |
 
-### [QEMU Container](/cua/reference/desktop-sandbox/qemu-container)
+### QEMU Container
 
-Full virtual machines running in Docker via QEMU/KVM. Complete OS isolation, supports Windows.
+Full virtual machines running in Docker via QEMU/KVM. Complete OS isolation, supports Windows. [Learn more →](/cua/reference/desktop-sandbox/qemu-container)
 
-| Container | OS | Description |
-|-----------|-----|-------------|
-| [Windows](/cua/reference/desktop-sandbox/qemu-container/windows) | Windows 11 | Windows desktop with KVM |
-| [Linux](/cua/reference/desktop-sandbox/qemu-container/linux) | Ubuntu 22.04 | Full Ubuntu VM |
-| [Android](/cua/reference/desktop-sandbox/qemu-container/android) | Android 11 | Android emulator |
+| Container                                                        | OS           | Description              |
+| ---------------------------------------------------------------- | ------------ | ------------------------ |
+| [Windows](/cua/reference/desktop-sandbox/qemu-container/windows) | Windows 11   | Windows desktop with KVM |
+| [Linux](/cua/reference/desktop-sandbox/qemu-container/linux)     | Ubuntu 22.04 | Full Ubuntu VM           |
+| [Android](/cua/reference/desktop-sandbox/qemu-container/android) | Android 11   | Android emulator         |
 
 ## Quick Comparison
 
-| Feature | macOS (Lume) | Linux Container | QEMU VM |
-|---------|--------------|-----------------|---------|
-| Performance | Near-native | Native | Virtualized |
-| Startup Time | Minutes | Seconds | 30s-2min |
-| Host Requirements | Apple Silicon | Docker | KVM support |
-| Windows Support | No | No | Yes |
-| Resource Usage | Medium | Low | High |
-| Memory Snapshots | Yes | No | Yes |
-| Filesystem Snapshots | Yes | Yes | Yes |
+| Feature              | macOS (Lume)  | Linux Container | QEMU VM     |
+| -------------------- | ------------- | --------------- | ----------- |
+| Performance          | Near-native   | Native          | Virtualized |
+| Startup Time         | Minutes       | Seconds         | 30s-2min    |
+| Host Requirements    | Apple Silicon | Docker          | KVM support |
+| Windows Support      | No            | No              | Yes         |
+| Resource Usage       | Medium        | Low             | High        |
+| Memory Snapshots     | Yes           | No              | Yes         |
+| Filesystem Snapshots | Yes           | Yes             | Yes         |
 
 ### Snapshot Capabilities
 

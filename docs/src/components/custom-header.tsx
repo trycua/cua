@@ -7,7 +7,8 @@ import { usePathname } from 'next/navigation';
 import { cn } from 'fumadocs-ui/utils/cn';
 import { SearchToggle } from 'fumadocs-ui/components/layout/search-toggle';
 import { ThemeToggle } from 'fumadocs-ui/components/layout/theme-toggle';
-import { ChevronsUpDown, Check } from 'lucide-react';
+import { ChevronsUpDown, Check, Menu } from 'lucide-react';
+import { useSidebar } from 'fumadocs-ui/provider';
 import LogoBlack from '@/assets/cuala-icon-black.svg';
 import LogoWhite from '@/assets/cuala-icon-white.svg';
 import CuaBenchLogoBlack from '@/assets/cuabench-logo-black.svg';
@@ -16,6 +17,8 @@ import McpBlack from '@/assets/mcp-black.svg';
 import McpWhite from '@/assets/mcp-white.svg';
 import LumeIconBlack from '@/assets/lume-icon-black.svg';
 import LumeIconWhite from '@/assets/lume-icon-white.svg';
+import CuaBotLogoBlack from '@/assets/cuabot-logo-black.svg';
+import CuaBotLogoWhite from '@/assets/cuabot-logo-white.svg';
 
 const docsSites = [
   {
@@ -29,8 +32,8 @@ const docsSites = [
     logoWhite: LogoWhite,
     iconWidth: 24,
     iconHeight: 24,
-    dropdownIconWidth: 20,
-    dropdownIconHeight: 20,
+    dropdownIconWidth: 28,
+    dropdownIconHeight: 28,
     navTabs: [
       { name: 'Guide', href: '/cua/guide/get-started/what-is-cua', prefix: '/cua/guide' },
       { name: 'Examples', href: '/cua/examples/automation/form-filling', prefix: '/cua/examples' },
@@ -48,8 +51,8 @@ const docsSites = [
     logoWhite: CuaBenchLogoWhite,
     iconWidth: 36,
     iconHeight: 22,
-    dropdownIconWidth: 30,
-    dropdownIconHeight: 18,
+    dropdownIconWidth: 42,
+    dropdownIconHeight: 25,
     navTabs: [
       {
         name: 'Guide',
@@ -58,8 +61,8 @@ const docsSites = [
       },
       {
         name: 'Examples',
-        href: '/cuabench/guide/examples/custom-agent',
-        prefix: '/cuabench/guide/examples',
+        href: '/cuabench/examples/custom-agent',
+        prefix: '/cuabench/examples',
       },
       {
         name: 'Reference',
@@ -79,8 +82,8 @@ const docsSites = [
     logoWhite: LumeIconWhite,
     iconWidth: 24,
     iconHeight: 24,
-    dropdownIconWidth: 20,
-    dropdownIconHeight: 20,
+    dropdownIconWidth: 28,
+    dropdownIconHeight: 28,
     navTabs: [
       {
         name: 'Guide',
@@ -99,12 +102,39 @@ const docsSites = [
       },
     ],
   },
+  {
+    name: 'Cua-Bot',
+    label: 'Docs',
+    href: '/cuabot/guide/getting-started/introduction',
+    prefix: '/cuabot',
+    isDefault: false,
+    description: 'Co-op computer-use for any agent',
+    logoBlack: CuaBotLogoBlack,
+    logoWhite: CuaBotLogoWhite,
+    iconWidth: 24,
+    iconHeight: 24,
+    dropdownIconWidth: 28,
+    dropdownIconHeight: 28,
+    navTabs: [
+      {
+        name: 'Guide',
+        href: '/cuabot/guide/getting-started/introduction',
+        prefix: '/cuabot/guide',
+      },
+      {
+        name: 'Reference',
+        href: '/cuabot/reference',
+        prefix: '/cuabot/reference',
+      },
+    ],
+  },
 ];
 
 export function CustomHeader() {
   const pathname = usePathname();
   const [isOpen, setIsOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
+  const { open: sidebarOpen, setOpen: setSidebarOpen } = useSidebar();
 
   // Determine current docs site based on pathname
   const currentSite =
@@ -127,26 +157,32 @@ export function CustomHeader() {
     <header className="fixed top-0 left-0 right-0 z-40 border-b border-fd-border bg-fd-background/80 backdrop-blur-sm">
       <div className="container mx-auto flex h-14 items-center justify-between px-4">
         {/* Left: Logo and Nav */}
-        <div className="flex items-center gap-6">
+        <div className="flex items-center gap-4 md:gap-6">
+          {/* Hamburger Menu Button - visible on mobile only, opens native fumadocs sidebar */}
+          <button
+            onClick={() => setSidebarOpen(!sidebarOpen)}
+            className="inline-flex md:hidden h-9 w-9 items-center justify-center rounded-md text-fd-muted-foreground transition-colors hover:bg-fd-accent hover:text-fd-foreground"
+            aria-label="Toggle sidebar"
+          >
+            <Menu className="h-5 w-5" />
+          </button>
+
           {/* Docs Switcher - wraps logo, name, and label */}
           <div className="relative" ref={dropdownRef}>
             <button
               onClick={() => setIsOpen(!isOpen)}
               className="flex items-center gap-2 rounded-lg px-2 py-1.5 transition-colors hover:bg-fd-accent"
             >
-              {/* Logo */}
+              {/* Logo - fixed width container to prevent layout shift */}
               {currentSite.logoBlack && currentSite.logoWhite && (
-                <div
-                  className="relative flex h-6 items-center justify-center"
-                  style={{ width: currentSite.iconWidth }}
-                >
+                <div className="relative flex h-6 w-6 shrink-0 items-center justify-center">
                   <Image
                     width={currentSite.iconWidth}
                     height={currentSite.iconHeight}
                     src={currentSite.logoBlack}
                     aria-label="Logo"
-                    className="block dark:hidden"
-                    style={{ width: currentSite.iconWidth, height: currentSite.iconHeight }}
+                    className="block dark:hidden object-contain"
+                    style={{ maxWidth: 24, maxHeight: 24 }}
                     alt="Logo"
                   />
                   <Image
@@ -154,14 +190,17 @@ export function CustomHeader() {
                     height={currentSite.iconHeight}
                     src={currentSite.logoWhite}
                     aria-label="Logo"
-                    className="hidden dark:block"
-                    style={{ width: currentSite.iconWidth, height: currentSite.iconHeight }}
+                    className="hidden dark:block object-contain"
+                    style={{ maxWidth: 24, maxHeight: 24 }}
                     alt="Logo"
                   />
                 </div>
               )}
-              {/* Site name and label */}
-              <span className="font-semibold" style={{ fontFamily: 'var(--font-urbanist)' }}>
+              {/* Site name and label - whitespace-nowrap prevents layout shift */}
+              <span
+                className="whitespace-nowrap font-semibold"
+                style={{ fontFamily: 'var(--font-urbanist)' }}
+              >
                 {currentSite.name}
               </span>
               <span className="text-sky-500 font-medium">{currentSite.label}</span>

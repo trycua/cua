@@ -38,6 +38,7 @@ class AgentConfigInfo(BaseModel):
     agent_class: type
     models_regex: str
     priority: int = 0
+    tool_type: Optional[str] = None  # "browser" | "mobile" | None (flexible)
 
     def matches_model(self, model: str) -> bool:
         """Check if this agent config matches the given model"""

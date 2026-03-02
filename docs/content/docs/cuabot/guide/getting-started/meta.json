@@ -1,0 +1,7 @@
+{
+  "title": "Getting Started",
+  "description": "Get started with Cua-Bot",
+  "icon": "Rocket",
+  "defaultOpen": true,
+  "pages": ["introduction", "installation"]
+}

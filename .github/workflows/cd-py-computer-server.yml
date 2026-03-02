@@ -88,20 +88,4 @@ jobs:
       tag_name: "computer-server-v${{ needs.prepare.outputs.version }}"
       release_name: "cua-computer-server v${{ needs.prepare.outputs.version }}"
       module_path: "libs/python/computer-server"
-      body: |
-        ## Computer Server for the Computer Universal Automation (Cua) project
-
-        A FastAPI-based server implementation for computer control.
-
-        ## Usage
-
-        ```bash
-        # Run the server
-        cua-computer-server
-        ```
-
-        ## Installation
-
-        ```bash
-        pip install cua-computer-server==${{ needs.prepare.outputs.version }}
-        ```
+      body: ""

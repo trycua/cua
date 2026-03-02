@@ -225,6 +225,103 @@ def build_nous_system(functions: List[Dict[str, Any]]) -> Optional[Dict[str, Any
     return {"role": "system", "content": content}
 
 
+def fix_fara_tool_call_format(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Fix tool call format in conversation history for FARA compatibility.
+
+    The shared `convert_responses_items_to_completion_messages` function outputs:
+    - Tool name as "computer" (should be "computer_use")
+    - Action key as "type" (should be "action")
+
+    This function post-processes assistant messages to fix these issues.
+    """
+    import re
+
+    # Valid FARA action types
+    valid_actions = {
+        "left_click",
+        "right_click",
+        "middle_click",
+        "double_click",
+        "triple_click",
+        "click",
+        "type",
+        "key",
+        "scroll",
+        "hscroll",
+        "mouse_move",
+        "wait",
+        "visit_url",
+        "web_search",
+        "history_back",
+        "screenshot",
+        "terminate",
+    }
+
+    fixed_messages = []
+    for msg in messages:
+        if msg.get("role") != "assistant":
+            fixed_messages.append(msg)
+            continue
+
+        content = msg.get("content", "")
+        if not isinstance(content, str) or "<tool_call>" not in content:
+            fixed_messages.append(msg)
+            continue
+
+        # Find and fix all tool calls in the content
+        def fix_tool_call(match):
+            tool_call_content = match.group(1)
+            try:
+                tool_call = json.loads(tool_call_content)
+
+                # Fix tool name: "computer" -> "computer_use"
+                if tool_call.get("name") == "computer":
+                    tool_call["name"] = "computer_use"
+
+                # Fix arguments: "type" -> "action" and x/y -> coordinate
+                args = tool_call.get("arguments", {})
+                if isinstance(args, dict):
+                    # If "type" contains a valid action, rename to "action"
+                    if "type" in args and args["type"] in valid_actions:
+                        args["action"] = args.pop("type")
+
+                    # Convert internal x/y format back to FARA coordinate format
+                    if "x" in args and "y" in args and "coordinate" not in args:
+                        args["coordinate"] = [args.pop("x"), args.pop("y")]
+
+                    # Normalize action names: "click" -> "left_click"
+                    if args.get("action") == "click":
+                        args["action"] = "left_click"
+
+                    # Remove "button" field - FARA doesn't use it (action name implies button)
+                    args.pop("button", None)
+
+                    # If "action" is empty but we can infer from other keys
+                    if args.get("action") == "" and "coordinate" in args:
+                        args["action"] = "left_click"
+
+                    tool_call["arguments"] = args
+
+                return f"<tool_call>\n{json.dumps(tool_call)}\n</tool_call>"
+            except (json.JSONDecodeError, TypeError):
+                return match.group(0)  # Return original if parsing fails
+
+        # Match <tool_call>...</tool_call> or <tool_call>...</tool_call>
+        fixed_content = re.sub(
+            r"<tool_call>\s*(\{.*?\})\s*</tool_call>", fix_tool_call, content, flags=re.DOTALL
+        )
+
+        # Also handle malformed closing tags like <tool_call> used as closing
+        fixed_content = re.sub(
+            r"<tool_call>(\{.*?\})<tool_call>", fix_tool_call, fixed_content, flags=re.DOTALL
+        )
+
+        fixed_messages.append({**msg, "content": fixed_content})
+
+    return fixed_messages
+
+
 def parse_tool_call_from_text(text: str) -> Optional[Dict[str, Any]]:
     """Extract JSON object within <tool_call>...</tool_call> from model text.
 
@@ -482,3 +579,239 @@ def convert_fara_args_to_browser_tool_format(args: Dict[str, Any]) -> Dict[str, 
 
     # For any other action, return cleaned args (just action + known fields)
     return result
+
+
+def _convert_responses_items_to_fara_messages(
+    messages: List[Dict[str, Any]],
+    allow_images_in_tool_results: bool = False,
+) -> List[Dict[str, Any]]:
+    """
+    Convert SDK responses_items format to FARA-compatible completion messages.
+
+    This is FARA's dedicated conversion layer (similar to Anthropic's pattern).
+    It handles the conversion from SDK's OpenAI-style format to FARA's native format:
+
+    SDK format:
+        {"type": "click", "x": 100, "y": 200, "button": "left"}
+
+    FARA format (in XML tool_call):
+        {"name": "computer_use", "arguments": {"action": "left_click", "coordinate": [100, 200]}}
+    """
+    completion_messages: List[Dict[str, Any]] = []
+
+    for message in messages:
+        msg_type = message.get("type")
+        role = message.get("role")
+
+        # Handle user messages
+        if role == "user" or msg_type == "user":
+            content = message.get("content", "")
+            if isinstance(content, list):
+                converted_content = []
+                for item in content:
+                    if isinstance(item, dict):
+                        item_type = item.get("type")
+                        if item_type == "input_image":
+                            image_url = item.get("image_url", "")
+                            if image_url and image_url != "[omitted]":
+                                converted_content.append(
+                                    {"type": "image_url", "image_url": {"url": image_url}}
+                                )
+                        elif item_type == "input_text":
+                            converted_content.append({"type": "text", "text": item.get("text", "")})
+                        elif item_type == "image_url":
+                            # Already in correct format
+                            converted_content.append(item)
+                        elif item_type == "text":
+                            converted_content.append(item)
+                        else:
+                            converted_content.append(item)
+                    else:
+                        converted_content.append({"type": "text", "text": str(item)})
+                completion_messages.append({"role": "user", "content": converted_content})
+            else:
+                completion_messages.append({"role": "user", "content": content})
+
+        # Handle assistant messages
+        elif role == "assistant" and msg_type == "message":
+            content = message.get("content", [])
+            if isinstance(content, str):
+                completion_messages.append({"role": "assistant", "content": content})
+            elif isinstance(content, list):
+                text_parts = []
+                for item in content:
+                    if isinstance(item, dict) and item.get("type") == "output_text":
+                        text_parts.append(item.get("text", ""))
+                completion_messages.append({"role": "assistant", "content": "\n".join(text_parts)})
+
+        # Handle reasoning
+        elif msg_type == "reasoning":
+            summary = message.get("summary", [])
+            reasoning_text = ""
+            if isinstance(summary, list) and summary:
+                for item in summary:
+                    if isinstance(item, dict) and item.get("type") == "summary_text":
+                        reasoning_text = item.get("text", "")
+                        break
+            if reasoning_text:
+                completion_messages.append({"role": "assistant", "content": reasoning_text})
+
+        # Handle computer_call - convert SDK format to FARA's XML tool_call format
+        elif msg_type == "computer_call":
+            action = message.get("action", {})
+            action_type = action.get("type")
+
+            # Convert SDK action to FARA format
+            fara_args = _sdk_action_to_fara_args(action)
+
+            # Build FARA's XML tool_call format
+            tool_call_json = json.dumps({"name": "computer_use", "arguments": fara_args})
+            tool_call_text = f"<tool_call>\n{tool_call_json}\n</tool_call>"
+
+            # Append to last assistant message or create new one
+            if completion_messages and completion_messages[-1].get("role") == "assistant":
+                prev_content = completion_messages[-1].get("content", "")
+                completion_messages[-1]["content"] = f"{prev_content}\n{tool_call_text}".strip()
+            else:
+                completion_messages.append({"role": "assistant", "content": tool_call_text})
+
+        # Handle computer_call_output - convert to FARA's tool_response format
+        elif msg_type == "computer_call_output":
+            output = message.get("output", {})
+
+            # Build response content
+            if isinstance(output, dict) and output.get("type") == "input_image":
+                image_url = output.get("image_url", "")
+                response_text = "<tool_response>\nAction executed successfully. Here is the next screenshot.\n</tool_response>"
+
+                # Add as user message with image
+                if allow_images_in_tool_results and image_url and image_url != "[omitted]":
+                    completion_messages.append(
+                        {
+                            "role": "user",
+                            "content": [
+                                {"type": "text", "text": response_text},
+                                {"type": "image_url", "image_url": {"url": image_url}},
+                            ],
+                        }
+                    )
+                else:
+                    completion_messages.append(
+                        {
+                            "role": "user",
+                            "content": [
+                                {"type": "text", "text": response_text},
+                            ],
+                        }
+                    )
+            elif isinstance(output, dict) and output.get("terminated"):
+                response_text = "<tool_response>\nTask terminated.\n</tool_response>"
+                completion_messages.append({"role": "user", "content": response_text})
+            else:
+                response_text = f"<tool_response>\n{json.dumps(output) if isinstance(output, dict) else str(output)}\n</tool_response>"
+                completion_messages.append({"role": "user", "content": response_text})
+
+        # Handle function_call (non-computer tools)
+        elif msg_type == "function_call":
+            fn_name = message.get("name", "")
+            fn_args = message.get("arguments", "{}")
+
+            tool_call_json = json.dumps(
+                {
+                    "name": fn_name,
+                    "arguments": json.loads(fn_args) if isinstance(fn_args, str) else fn_args,
+                }
+            )
+            tool_call_text = f"<tool_call>\n{tool_call_json}\n</tool_call>"
+
+            if completion_messages and completion_messages[-1].get("role") == "assistant":
+                prev_content = completion_messages[-1].get("content", "")
+                completion_messages[-1]["content"] = f"{prev_content}\n{tool_call_text}".strip()
+            else:
+                completion_messages.append({"role": "assistant", "content": tool_call_text})
+
+        # Handle function_call_output
+        elif msg_type == "function_call_output":
+            output = message.get("output", "")
+            response_text = f"<tool_response>\n{output}\n</tool_response>"
+            completion_messages.append({"role": "user", "content": response_text})
+
+    return completion_messages
+
+
+def _sdk_action_to_fara_args(action: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Convert SDK action format to FARA arguments format.
+
+    SDK format:  {"type": "click", "x": 100, "y": 200, "button": "left"}
+    FARA format: {"action": "left_click", "coordinate": [100, 200]}
+    """
+    action_type = action.get("type", "")
+
+    # Click actions
+    if action_type == "click":
+        button = action.get("button", "left")
+        action_name = {
+            "left": "left_click",
+            "right": "right_click",
+            "wheel": "middle_click",
+            "middle": "middle_click",
+        }.get(button, "left_click")
+        return {"action": action_name, "coordinate": [action.get("x", 0), action.get("y", 0)]}
+
+    if action_type == "double_click":
+        return {"action": "double_click", "coordinate": [action.get("x", 0), action.get("y", 0)]}
+
+    # Type action
+    if action_type == "type":
+        result = {"action": "type", "text": action.get("text", "")}
+        # Include coordinate if present (for click-then-type)
+        if "x" in action and "y" in action:
+            result["coordinate"] = [action.get("x", 0), action.get("y", 0)]
+        return result
+
+    # Keypress action
+    if action_type == "keypress":
+        keys = action.get("keys", [])
+        return {"action": "key", "keys": keys}
+
+    # Move action
+    if action_type in ("move", "mouse_move"):
+        return {"action": "mouse_move", "coordinate": [action.get("x", 0), action.get("y", 0)]}
+
+    # Scroll action
+    if action_type == "scroll":
+        scroll_x = action.get("scroll_x", 0)
+        scroll_y = action.get("scroll_y", 0)
+        # FARA uses pixels (positive = up/left, negative = down/right)
+        pixels = scroll_y if scroll_y != 0 else scroll_x
+        result = {"action": "scroll", "pixels": pixels}
+        if "x" in action and "y" in action:
+            result["coordinate"] = [action.get("x", 0), action.get("y", 0)]
+        return result
+
+    # Drag action
+    if action_type == "drag":
+        path = action.get("path", [])
+        if len(path) >= 2:
+            return {
+                "action": "left_click_drag",
+                "start_coordinate": [path[0].get("x", 0), path[0].get("y", 0)],
+                "end_coordinate": [path[-1].get("x", 0), path[-1].get("y", 0)],
+            }
+        return {"action": "left_click_drag"}
+
+    # Screenshot
+    if action_type == "screenshot":
+        return {"action": "screenshot"}
+
+    # Wait
+    if action_type == "wait":
+        return {"action": "wait"}
+
+    # Terminate
+    if action_type == "terminate":
+        return {"action": "terminate", "status": action.get("status", "success")}
+
+    # Fallback - return as-is with type renamed to action
+    return {"action": action_type, **{k: v for k, v in action.items() if k != "type"}}

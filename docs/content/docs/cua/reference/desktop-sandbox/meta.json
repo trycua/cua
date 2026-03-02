@@ -1,5 +1,5 @@
 {
   "title": "Desktop Sandbox",
   "icon": "Container",
-  "pages": ["macos", "linux-container", "qemu-container"]
+  "pages": ["macos", "linux-container", "qemu-container", "changelog"]
 }

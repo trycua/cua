@@ -1,6 +1,6 @@
 [project]
 name = "cua-bench"
-version = "0.2.3"
+version = "0.2.4"
 description = "Toolkit for computer-use RL environments and benchmarks"
 readme = "README.md"
 license = "MIT"
@@ -53,7 +53,7 @@ dependencies = [
     "docker>=7.0.0",
     # CUA SDK
     "cua-computer>=0.4.19",
-    "cua-core",
+    "cua-core>=0.1.18",
 ]
 
 [project.optional-dependencies]
@@ -101,6 +101,14 @@ dev = [
     "pytest>=8.0.0",
     "pytest-asyncio>=0.23.0",
     "ruff>=0.1.0",
+]
+
+# RL training
+rl = [
+    "torch>=2.0.0",
+    "torchvision>=0.15.0",
+    "transformers>=4.57.0,<5.0",
+    "verl"
 ]
 
 [project.urls]

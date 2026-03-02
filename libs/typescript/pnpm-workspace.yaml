@@ -2,5 +2,6 @@ packages:
   - "computer"
   - "core"
   - "agent"
+  - "playground"
 
 minimumReleaseAge: 46080

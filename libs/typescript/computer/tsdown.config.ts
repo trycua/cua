@@ -1,4 +1,7 @@
+import { readFileSync } from 'node:fs';
 import { defineConfig } from 'tsdown';
+
+const pkg = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf-8'));
 
 export default defineConfig([
   {
@@ -6,5 +9,8 @@ export default defineConfig([
     platform: 'node',
     dts: true,
     external: ['child_process', 'util'],
+    define: {
+      __CUA_VERSION__: JSON.stringify(pkg.version),
+    },
   },
 ]);

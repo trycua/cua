@@ -96,6 +96,7 @@ enum VMConfigError: CustomNSError, LocalizedError {
     case invalidHardwareModel
     case invalidDiskSize
     case malformedSizeInput(String)
+    case noBridgeInterfaceFound(requested: String?, available: String)
     
     var errorDescription: String? {
         switch self {
@@ -113,6 +114,11 @@ enum VMConfigError: CustomNSError, LocalizedError {
             return "Invalid disk size"
         case .malformedSizeInput(let input):
             return "Malformed size input: \(input)"
+        case .noBridgeInterfaceFound(let requested, let available):
+            if let requested = requested {
+                return "Bridge network interface '\(requested)' not found. Available interfaces: \(available)"
+            }
+            return "No bridge network interfaces available on this host. Available: \(available)"
         }
     }
     
@@ -127,6 +133,7 @@ enum VMConfigError: CustomNSError, LocalizedError {
         case .invalidHardwareModel: return 5
         case .invalidDiskSize: return 6
         case .malformedSizeInput: return 7
+        case .noBridgeInterfaceFound: return 8
         }
     }
 }

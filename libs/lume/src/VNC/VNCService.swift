@@ -17,7 +17,7 @@ protocol VNCService {
     func captureFramebuffer() async throws -> CGImage
     func sendMouseClick(at point: CGPoint, button: VNCMouseButton) async throws
     func sendKeyPress(_ keyCode: UInt16, modifiers: VNCKeyModifiers) async throws
-    func sendText(_ text: String) async throws
+    func sendText(_ text: String, delayMs: Int?) async throws
     func sendCharWithModifiers(_ char: Character, modifiers: VNCKeyModifiers) async throws
 
     // VNC client for input
@@ -184,7 +184,18 @@ final class DefaultVNCService: VNCService {
 
     func openClient(url: String) async throws {
         let processRunner = DefaultProcessRunner()
-        try processRunner.run(executable: "/usr/bin/open", arguments: [url])
+        do {
+            // Force a fresh Screen Sharing instance to avoid stale/paused sessions.
+            try processRunner.run(
+                executable: "/usr/bin/open",
+                arguments: ["-n", "-a", "Screen Sharing", url]
+            )
+        } catch {
+            Logger.info("Failed to open Screen Sharing explicitly, falling back to default URL open", metadata: [
+                "error": "\(error)"
+            ])
+            try processRunner.run(executable: "/usr/bin/open", arguments: [url])
+        }
     }
 
     /// Connect a VNC client to the server for sending input events
@@ -330,10 +341,13 @@ final class DefaultVNCService: VNCService {
         Logger.debug("Key press sent via VNC client")
     }
 
-    func sendText(_ text: String) async throws {
+    func sendText(_ text: String, delayMs: Int? = nil) async throws {
         guard let client = vncClient else {
             throw UnattendedError.inputSimulationFailed("VNC input client not connected")
         }
+
+        // Use provided delay or default to 50ms
+        let delayNs = UInt64(delayMs ?? 50) * 1_000_000
 
         // Type each character using X11 keysyms
         for char in text {
@@ -344,14 +358,13 @@ final class DefaultVNCService: VNCService {
             }
 
             try await client.sendKeyEvent(key: keysym, down: true)
-            try await Task.sleep(nanoseconds: 30_000_000) // 30ms
             try await client.sendKeyEvent(key: keysym, down: false)
 
             if needsShift {
                 try await client.sendKeyEvent(key: X11Keysym.shiftL.rawValue, down: false)
             }
 
-            try await Task.sleep(nanoseconds: 30_000_000) // 30ms between characters
+            try await Task.sleep(nanoseconds: delayNs) // between characters
         }
     }
 

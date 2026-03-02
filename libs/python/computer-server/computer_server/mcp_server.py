@@ -170,6 +170,11 @@ def create_mcp_server() -> FastMCP:
                     new_width = int(width * max_dimension / height)
                 img = img.resize((new_width, new_height), PILImage.Resampling.LANCZOS)
 
+                # Initialize coordinate scaling if not already configured
+                # This ensures clicks are properly scaled from resized space to actual device space
+                if not _target_width:
+                    _configure_scaling(target_width=new_width, target_height=new_height)
+
         # Convert to RGB if necessary (for JPEG compatibility)
         if img.mode in ("RGBA", "P"):
             img = img.convert("RGB")

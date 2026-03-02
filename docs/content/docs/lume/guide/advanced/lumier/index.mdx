@@ -21,17 +21,18 @@ Open `http://localhost:8006` in your browser—you'll see a macOS desktop.
 
 ## When to use Lumier vs Lume directly
 
-| Use Lumier when... | Use Lume directly when... |
-|--------------------|---------------------------|
-| You want browser-based VNC access | You prefer native VNC clients |
-| You're distributing VM environments | You're running locally for development |
-| You want Docker Compose orchestration | You need maximum performance |
-| You're building Docker-based workflows | You want full CLI control |
+| Use Lumier when...                     | Use Lume directly when...              |
+| -------------------------------------- | -------------------------------------- |
+| You want browser-based VNC access      | You prefer native VNC clients          |
+| You're distributing VM environments    | You're running locally for development |
+| You want Docker Compose orchestration  | You need maximum performance           |
+| You're building Docker-based workflows | You want full CLI control              |
 
 ## How it works
 
 <Callout type="info">
-Docker is the delivery mechanism, not an isolation layer. Lumier connects to the Lume service on your host Mac to create real VMs using Apple's Virtualization Framework.
+  Docker is the delivery mechanism, not an isolation layer. Lumier connects to the Lume service on
+  your host Mac to create real VMs using Apple's Virtualization Framework.
 </Callout>
 
 ```
@@ -53,6 +54,7 @@ Docker is the delivery mechanism, not an isolation layer. Lumier connects to the
 ```
 
 The Docker container provides:
+
 - noVNC server for browser access
 - Environment variable configuration
 - Lifecycle hooks for automation

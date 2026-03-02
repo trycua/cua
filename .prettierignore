@@ -31,8 +31,12 @@ venv/
 pnpm-lock.yaml
 uv.lock
 
-# Docs with complex JSX formatting
-docs/content/docs/get-started/quickstart.mdx
+# Auto-generated docs source
+docs/.source/
+docs/next-env.d.ts
+
+# MDX files (prettier mangles {/* */} comment syntax into {/_ _/})
+*.mdx
 
 # Git worktrees (separate branches)
 .worktrees/

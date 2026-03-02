@@ -70,11 +70,4 @@ jobs:
     with:
       tag_name: "bench-ui-v${{ needs.prepare.outputs.version }}"
       release_name: "cua-bench-ui v${{ needs.prepare.outputs.version }}"
-      body: |
-        ## Lightweight webUI window controller for Cua bench
-
-        ## Installation
-
-        ```bash
-        pip install cua-bench-ui==${{ needs.prepare.outputs.version }}
-        ```
+      body: ""

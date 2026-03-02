@@ -23,6 +23,8 @@ RUN apt-get update && apt-get install -y \
     zip \
     xdg-utils \
     gcc \
+    # DHCP client for networking
+    isc-dhcp-client \
     # Qt/XCB runtime deps for PyQt5 (libqxcb.so)
     libxcb-icccm4 \
     libxcb-image0 \
@@ -121,8 +123,8 @@ RUN git clone https://github.com/trycua/noVNC.git /opt/noVNC && \
 RUN mkdir -p /home/cua/.cache && \
     chown -R cua:cua /home/cua/.cache
 
-# Install computer-server
-RUN uv pip install --system cua-computer-server
+# Install computer-server and cua-agent
+RUN uv pip install --system cua-computer-server "cua-agent[all]"
 
 # Install GTK and WebKit dependencies for pywebview
 RUN apt-get update && apt-get install -y \

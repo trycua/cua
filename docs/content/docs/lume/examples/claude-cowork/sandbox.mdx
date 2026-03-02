@@ -53,7 +53,7 @@ Add the Lume MCP server to your Claude Desktop config:
 ```
 
 <Callout type="info">
-If `lume` isn't in your PATH, use the full path: `/Users/yourname/.local/bin/lume`
+  If `lume` isn't in your PATH, use the full path: `/Users/yourname/.local/bin/lume`
 </Callout>
 
 ### 2. Restart Claude Desktop
@@ -70,15 +70,15 @@ lume create sandbox --os macos --ipsw latest --unattended tahoe
 
 ## Available MCP tools
 
-| Tool | Description |
-|------|-------------|
-| `lume_list_vms` | List all VMs with status and IP addresses |
-| `lume_get_vm` | Get detailed VM info |
-| `lume_run_vm` | Start a VM with optional shared directory |
-| `lume_stop_vm` | Stop a running VM |
-| `lume_clone_vm` | Clone a VM (for golden images) |
-| `lume_delete_vm` | Delete a VM |
-| `lume_exec` | Execute commands inside the VM |
+| Tool             | Description                               |
+| ---------------- | ----------------------------------------- |
+| `lume_list_vms`  | List all VMs with status and IP addresses |
+| `lume_get_vm`    | Get detailed VM info                      |
+| `lume_run_vm`    | Start a VM with optional shared directory |
+| `lume_stop_vm`   | Stop a running VM                         |
+| `lume_clone_vm`  | Clone a VM (for golden images)            |
+| `lume_delete_vm` | Delete a VM                               |
+| `lume_exec`      | Execute commands inside the VM            |
 
 ## Example workflow
 
@@ -150,12 +150,12 @@ VM 'sandbox' started from clean state.
 
 ## Advantages over SSH
 
-| Feature | SSH (Claude Code) | MCP (Claude Cowork) |
-|---------|------------------|---------------------|
-| VM lifecycle | Manual (`lume run/stop`) | Automated via tools |
-| IP lookup | Manual (`lume get`) | Automatic |
-| Credentials | User provides | Configured once |
-| Reset workflow | Script required | Natural language |
+| Feature        | SSH (Claude Code)        | MCP (Claude Cowork) |
+| -------------- | ------------------------ | ------------------- |
+| VM lifecycle   | Manual (`lume run/stop`) | Automated via tools |
+| IP lookup      | Manual (`lume get`)      | Automatic           |
+| Credentials    | User provides            | Configured once     |
+| Reset workflow | Script required          | Natural language    |
 
 With MCP, Cowork can manage the entire VM lifecycle through conversation.
 

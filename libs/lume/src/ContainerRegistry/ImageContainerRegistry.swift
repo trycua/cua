@@ -114,6 +114,24 @@ enum OCIMediaType {
     }
 }
 
+/// Annotation keys for multi-layer chunked disk images.
+enum OCIAnnotation {
+    static let partNumber = "org.trycua.lume.part.number"
+    static let partTotal  = "org.trycua.lume.part.total"
+    static let partOffset = "org.trycua.lume.part.offset"
+    static let chunkSize  = "org.trycua.lume.chunk.size"
+}
+
+/// Holds per-chunk upload results for manifest construction.
+struct DiskChunkDescriptor {
+    let partNumber: Int
+    let compressedDigest: String
+    let compressedSize: Int
+    let uncompressedDigest: String
+    let uncompressedSize: UInt64
+    let diskOffset: UInt64
+}
+
 /// OCI config JSON structure expected by the macOS-vz kubelet.
 struct KubeletOCIConfig: Codable {
     let mediatype: String?
@@ -2879,6 +2897,7 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
                 vmDirPath: vmDirPath,
                 imageName: imageName,
                 tags: tags,
+                chunkSizeMb: chunkSizeMb,
                 verbose: verbose,
                 dryRun: dryRun
             )
@@ -3864,6 +3883,53 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
         }
     }
 
+    /// Gunzip-decompress a chunk and write it sparsely into an output file handle,
+    /// skipping zero-filled 4 MB blocks to create holes in the sparse file.
+    private func gunzipChunkAndWriteSparse(
+        inputPath: URL, outputHandle: FileHandle, startOffset: UInt64
+    ) throws -> UInt64 {
+        guard FileManager.default.fileExists(atPath: inputPath.path) else {
+            Logger.error("Compressed chunk not found at: \(inputPath.path)")
+            return 0
+        }
+
+        let sourceData = try Data(
+            contentsOf: inputPath, options: .alwaysMapped)
+        var currentWriteOffset = startOffset
+        var totalDecompressedBytes: UInt64 = 0
+        var sourceReadOffset = 0
+
+        // Use zlib decompression (gzip is zlib with a header); .zlib handles both
+        let filter = try InputFilter(.decompress, using: .zlib) { (length: Int) -> Data? in
+            let bytesAvailable = sourceData.count - sourceReadOffset
+            if bytesAvailable == 0 {
+                return nil
+            }
+            let bytesToRead = min(length, bytesAvailable)
+            let chunk = sourceData.subdata(in: sourceReadOffset..<sourceReadOffset + bytesToRead)
+            sourceReadOffset += bytesToRead
+            return chunk
+        }
+
+        while let decompressedData = try filter.readData(ofLength: Self.holeGranularityBytes) {
+            if decompressedData.isEmpty { break }
+
+            if decompressedData.count == Self.holeGranularityBytes
+                && decompressedData == Self.zeroChunk
+            {
+                // Zero chunk — skip write, leave as sparse hole
+                currentWriteOffset += UInt64(decompressedData.count)
+            } else {
+                try outputHandle.seek(toOffset: currentWriteOffset)
+                try outputHandle.write(contentsOf: decompressedData)
+                currentWriteOffset += UInt64(decompressedData.count)
+            }
+            totalDecompressedBytes += UInt64(decompressedData.count)
+        }
+
+        return totalDecompressedBytes
+    }
+
     /// Build the kubelet-compatible config JSON blob from a VMConfig.
     private func createKubeletConfigData(_ vmConfig: VMConfig) throws -> Data {
         let hardwareModelData = vmConfig.hardwareModel?.base64EncodedString() ?? ""
@@ -3941,20 +4007,87 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
         ]
     }
 
+    /// Build an OCI manifest with multiple disk chunk layers.
+    private func createOCIManifest(
+        configDigest: String, configSize: Int,
+        auxDigest: String, auxSize: Int,
+        diskChunks: [DiskChunkDescriptor],
+        totalUncompressedSize: UInt64,
+        vmConfig: VMConfig?
+    ) -> [String: Any] {
+        let configEntry: [String: Any] = [
+            "mediaType": OCIMediaType.config,
+            "digest": configDigest,
+            "size": configSize,
+            "annotations": ["org.opencontainers.image.title": "config.json"],
+        ]
+
+        let auxLayer: [String: Any] = [
+            "mediaType": OCIMediaType.aux,
+            "digest": auxDigest,
+            "size": auxSize,
+            "annotations": ["org.opencontainers.image.title": "aux.img"],
+        ]
+
+        let totalParts = diskChunks.count
+        let diskChunkLayers: [[String: Any]] = diskChunks.sorted { $0.partNumber < $1.partNumber }
+            .map { chunk in
+                [
+                    "mediaType": OCIMediaType.disk,
+                    "digest": chunk.compressedDigest,
+                    "size": chunk.compressedSize,
+                    "annotations": [
+                        "org.opencontainers.image.title": "disk.img.part.\(chunk.partNumber)",
+                        "com.agoda.macosvz.content.uncompressed-size": "\(chunk.uncompressedSize)",
+                        "com.agoda.macosvz.content.uncompressed-digest": chunk.uncompressedDigest,
+                        OCIAnnotation.partNumber: "\(chunk.partNumber)",
+                        OCIAnnotation.partTotal: "\(totalParts)",
+                        OCIAnnotation.partOffset: "\(chunk.diskOffset)",
+                        OCIAnnotation.chunkSize: "\(chunk.uncompressedSize)",
+                    ],
+                ]
+            }
+
+        var manifestAnnotations: [String: String] = [
+            "org.trycua.lume.upload-time": ISO8601DateFormatter().string(from: Date()),
+            "org.trycua.lume.total-uncompressed-size": "\(totalUncompressedSize)",
+        ]
+        if let cfg = vmConfig {
+            manifestAnnotations["org.trycua.lume.os"] = cfg.os
+            if let v = cfg.cpuCount    { manifestAnnotations["org.trycua.lume.cpu-count"]    = "\(v)" }
+            if let v = cfg.memorySize  { manifestAnnotations["org.trycua.lume.memory-size"]  = "\(v)" }
+            if let v = cfg.diskSize    { manifestAnnotations["org.trycua.lume.disk-size"]    = "\(v)" }
+            manifestAnnotations["org.trycua.lume.display"]      = cfg.display.string
+            manifestAnnotations["org.trycua.lume.network-mode"] = cfg.networkMode.description
+        }
+
+        return [
+            "schemaVersion": 2,
+            "mediaType": "application/vnd.oci.image.manifest.v1+json",
+            "config": configEntry,
+            "layers": [auxLayer] + diskChunkLayers,
+            "annotations": manifestAnnotations,
+        ]
+    }
+
     /// Push a VM in OCI-compliant format (kubelet-compatible).
     private func pushOCI(
         vmDirPath: String,
         imageName: String,
         tags: [String],
+        chunkSizeMb: Int = 512,
         verbose: Bool,
         dryRun: Bool
     ) async throws {
+        let chunkSize = UInt64(chunkSizeMb) * 1024 * 1024
+
         Logger.info(
-            "Pushing VM in OCI-compliant format",
+            "Pushing VM in OCI-compliant format (chunked)",
             metadata: [
                 "vm_path": vmDirPath,
                 "imageName": imageName,
                 "tags": tags.joined(separator: ", "),
+                "chunk_size": "\(chunkSizeMb)MB",
                 "dry_run": "\(dryRun)",
             ])
 
@@ -4020,37 +4153,74 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
             }
         }
 
-        // ── Disk (gzip-compressed) ───────────────────────────────────────────
+        // ── Disk (chunked gzip-compressed) ──────────────────────────────────
         guard FileManager.default.fileExists(atPath: diskPath.path) else {
             throw PushError.fileCreationFailed(diskPath.path)
         }
 
-        let gzippedDiskPath = workDir.appendingPathComponent("disk.img.gz")
-        Logger.info("Gzip-compressing disk.img (this may take a while)...")
-        let (diskCompDigest, diskCompSize, diskUncompDigest, diskUncompSize) =
-            try gzipFile(inputPath: diskPath, outputPath: gzippedDiskPath)
+        let diskAttrs = try FileManager.default.attributesOfItem(atPath: diskPath.path)
+        let diskSize = diskAttrs[.size] as? UInt64 ?? 0
+        let chunkCount = Int((diskSize + chunkSize - 1) / chunkSize)
 
-        if !dryRun {
-            if !(try await blobExists(
-                repository: repository, digest: diskCompDigest, token: token))
-            {
-                Logger.info("Uploading gzip-compressed disk blob")
-                _ = try await uploadBlobFromPath(
-                    repository: repository,
-                    path: gzippedDiskPath,
-                    digest: diskCompDigest,
-                    token: token)
-            } else {
-                Logger.info("Disk blob already exists")
+        Logger.info("Disk size: \(diskSize) bytes, splitting into \(chunkCount) chunks of \(chunkSizeMb) MB")
+
+        let diskHandle = try FileHandle(forReadingFrom: diskPath)
+        defer { try? diskHandle.close() }
+
+        var diskChunks: [DiskChunkDescriptor] = []
+
+        for partNumber in 0..<chunkCount {
+            let offset = UInt64(partNumber) * chunkSize
+            let thisChunkSize = min(chunkSize, diskSize - offset)
+
+            Logger.info("Processing chunk \(partNumber + 1)/\(chunkCount) (offset: \(offset), size: \(thisChunkSize))")
+
+            // Extract chunk to temp file
+            let chunkPath = workDir.appendingPathComponent("disk.img.part.\(partNumber)")
+            let gzChunkPath = workDir.appendingPathComponent("disk.img.part.\(partNumber).gz")
+
+            try diskHandle.seek(toOffset: offset)
+            let chunkData = diskHandle.readData(ofLength: Int(thisChunkSize))
+            try chunkData.write(to: chunkPath)
+
+            // Gzip-compress the chunk
+            let (compDigest, compSize, uncompDigest, uncompSize) =
+                try gzipFile(inputPath: chunkPath, outputPath: gzChunkPath)
+
+            // Upload if needed
+            if !dryRun {
+                if !(try await blobExists(repository: repository, digest: compDigest, token: token)) {
+                    Logger.info("Uploading disk chunk \(partNumber + 1)/\(chunkCount)")
+                    _ = try await uploadBlobFromPath(
+                        repository: repository,
+                        path: gzChunkPath,
+                        digest: compDigest,
+                        token: token)
+                } else {
+                    Logger.info("Disk chunk \(partNumber + 1)/\(chunkCount) already exists")
+                }
             }
+
+            diskChunks.append(DiskChunkDescriptor(
+                partNumber: partNumber,
+                compressedDigest: compDigest,
+                compressedSize: compSize,
+                uncompressedDigest: uncompDigest,
+                uncompressedSize: uncompSize,
+                diskOffset: offset
+            ))
+
+            // Clean up temp files to conserve disk space
+            try? FileManager.default.removeItem(at: chunkPath)
+            try? FileManager.default.removeItem(at: gzChunkPath)
         }
 
         // ── Manifest ─────────────────────────────────────────────────────────
         let manifest = createOCIManifest(
             configDigest: configDigest, configSize: configSize,
             auxDigest: auxDigest, auxSize: auxSize,
-            diskDigest: diskCompDigest, diskSize: diskCompSize,
-            uncompressedDiskDigest: diskUncompDigest, uncompressedDiskSize: diskUncompSize,
+            diskChunks: diskChunks,
+            totalUncompressedSize: diskSize,
             vmConfig: vmConfig
         )
 
@@ -4062,7 +4232,7 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
                 try await pushManifest(
                     repository: repository, tag: tag, manifest: manifestData, token: token)
             }
-            Logger.info("OCI push complete")
+            Logger.info("OCI push complete (\(chunkCount) disk chunks)")
         } else {
             Logger.info("Dry-run complete — manifest not uploaded")
         }
@@ -4084,69 +4254,78 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
         try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: tempDir) }
 
-        // Collect all descriptors: config + layers
-        var allLayers: [Layer] = manifest.layers
-        if let configLayer = manifest.config {
-            allLayers.insert(configLayer, at: 0)
-        }
+        // ── Detect format: single-blob vs chunked ────────────────────────────
+        let diskLayers = manifest.layers.filter { $0.mediaType == OCIMediaType.disk }
+        let isChunked = diskLayers.count > 1
+            || (diskLayers.count == 1 && diskLayers[0].annotations?[OCIAnnotation.partNumber] != nil)
 
+        // ── Download config & aux (shared by both paths) ─────────────────────
         var configData: Data?
-        var auxBlobPath: URL?
-        var diskBlobPath: URL?
-        var diskUncompressedSize: UInt64?
-        var diskIsCompressed = false
-
-        for layer in allLayers {
+        if let configLayer = manifest.config {
             let blobDest = tempDir.appendingPathComponent(
-                layer.digest.replacingOccurrences(of: ":", with: "_"))
-            Logger.info("Downloading layer: \(layer.mediaType) (\(layer.digest.prefix(19))…)")
+                configLayer.digest.replacingOccurrences(of: ":", with: "_"))
+            Logger.info("Downloading config layer (\(configLayer.digest.prefix(19))…)")
             try await downloadLayer(
                 repository: repository,
-                digest: layer.digest,
-                mediaType: layer.mediaType,
+                digest: configLayer.digest,
+                mediaType: configLayer.mediaType,
                 token: token,
                 to: blobDest,
                 maxRetries: 5,
                 progress: downloadProgress
             )
+            configData = try Data(contentsOf: blobDest)
+        }
 
-            switch layer.mediaType {
-            case OCIMediaType.config:
-                configData = try Data(contentsOf: blobDest)
-
-            case OCIMediaType.aux:
-                auxBlobPath = blobDest
-
-            case OCIMediaType.disk:
-                diskBlobPath = blobDest
-                if let sizeStr = layer.annotations?["com.agoda.macosvz.content.uncompressed-size"],
-                    let size = UInt64(sizeStr)
-                {
-                    diskUncompressedSize = size
-                    diskIsCompressed = true
-                }
-
-            default:
-                Logger.info("Ignoring unexpected layer: \(layer.mediaType)")
-            }
+        var auxBlobPath: URL?
+        if let auxLayer = manifest.layers.first(where: { $0.mediaType == OCIMediaType.aux }) {
+            let blobDest = tempDir.appendingPathComponent(
+                auxLayer.digest.replacingOccurrences(of: ":", with: "_"))
+            Logger.info("Downloading aux layer (\(auxLayer.digest.prefix(19))…)")
+            try await downloadLayer(
+                repository: repository,
+                digest: auxLayer.digest,
+                mediaType: auxLayer.mediaType,
+                token: token,
+                to: blobDest,
+                maxRetries: 5,
+                progress: downloadProgress
+            )
+            auxBlobPath = blobDest
         }
 
         // ── Process config ────────────────────────────────────────────────────
         var vmConfig: VMConfig?
+        var diskUncompressedSize: UInt64?
+
         if let data = configData,
             let kubeletCfg = try? JSONDecoder().decode(KubeletOCIConfig.self, from: data)
         {
             let hardwareModel     = Data(base64Encoded: kubeletCfg.hardwareModelData)
             let machineIdentifier = Data(base64Encoded: kubeletCfg.machineIdData)
 
-            // Recover Lume-specific fields from manifest annotations if available
             let ann = manifest.annotations
             let cpuCount    = ann?["org.trycua.lume.cpu-count"].flatMap(Int.init)
             let memorySize  = ann?["org.trycua.lume.memory-size"].flatMap(UInt64.init)
-            let diskSize    = ann?["org.trycua.lume.disk-size"].flatMap(UInt64.init)
-                             ?? diskUncompressedSize
             let display     = ann?["org.trycua.lume.display"] ?? "1920x1080"
             let netModeStr  = ann?["org.trycua.lume.network-mode"] ?? "nat"
+
+            // For disk size, prefer manifest annotation, then sum of chunk sizes
+            if let totalSizeStr = ann?["org.trycua.lume.total-uncompressed-size"],
+               let totalSize = UInt64(totalSizeStr) {
+                diskUncompressedSize = totalSize
+            } else if isChunked {
+                diskUncompressedSize = diskLayers.compactMap {
+                    $0.annotations?["com.agoda.macosvz.content.uncompressed-size"].flatMap(UInt64.init)
+                }.reduce(0, +)
+            } else if let singleLayer = diskLayers.first,
+                      let sizeStr = singleLayer.annotations?["com.agoda.macosvz.content.uncompressed-size"],
+                      let size = UInt64(sizeStr) {
+                diskUncompressedSize = size
+            }
+
+            let diskSize = ann?["org.trycua.lume.disk-size"].flatMap(UInt64.init)
+                         ?? diskUncompressedSize
 
             vmConfig = try? VMConfig(
                 os: kubeletCfg.os,
@@ -4160,7 +4339,7 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
             )
         }
 
-        // Write config.json (Lume VMConfig format)
+        // Write config.json
         let configDest = destination.appendingPathComponent("config.json")
         if let cfg = vmConfig {
             let encoder = JSONEncoder()
@@ -4177,14 +4356,103 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
         }
 
         // ── Process disk ──────────────────────────────────────────────────────
-        if let blobPath = diskBlobPath {
-            let diskDest = destination.appendingPathComponent("disk.img")
-            if diskIsCompressed {
+        let diskDest = destination.appendingPathComponent("disk.img")
+
+        if isChunked {
+            // ── Chunked path: parallel download + sparse reassembly ──────────
+            let sortedChunks = diskLayers.sorted {
+                let a = Int($0.annotations?[OCIAnnotation.partNumber] ?? "0") ?? 0
+                let b = Int($1.annotations?[OCIAnnotation.partNumber] ?? "0") ?? 0
+                return a < b
+            }
+
+            // Compute total uncompressed size from chunks if not already known
+            let totalSize = diskUncompressedSize ?? sortedChunks.compactMap {
+                $0.annotations?["com.agoda.macosvz.content.uncompressed-size"].flatMap(UInt64.init)
+            }.reduce(0, +)
+
+            Logger.info("Chunked disk: \(sortedChunks.count) parts, total uncompressed size: \(totalSize)")
+
+            // Create sparse output file pre-sized to total
+            FileManager.default.createFile(atPath: diskDest.path, contents: nil)
+            let diskHandle = try FileHandle(forWritingTo: diskDest)
+            try diskHandle.truncate(atOffset: totalSize)
+            try diskHandle.close()
+
+            // Download chunks in parallel (4 concurrent)
+            try await withThrowingTaskGroup(of: (Int, URL, UInt64).self) { group in
+                let maxConcurrent = 4
+                var enqueued = 0
+
+                for (idx, chunk) in sortedChunks.enumerated() {
+                    // Throttle: wait for one to complete before adding more
+                    if enqueued >= maxConcurrent {
+                        let (completedIdx, completedPath, completedOffset) = try await group.next()!
+                        // Decompress and write sparse
+                        Logger.info("Decompressing chunk \(completedIdx + 1)/\(sortedChunks.count)")
+                        let handle = try FileHandle(forWritingTo: diskDest)
+                        let _ = try gunzipChunkAndWriteSparse(
+                            inputPath: completedPath, outputHandle: handle, startOffset: completedOffset)
+                        try handle.close()
+                        try? FileManager.default.removeItem(at: completedPath)
+                    }
+
+                    let chunkOffset = UInt64(chunk.annotations?[OCIAnnotation.partOffset] ?? "0") ?? 0
+
+                    group.addTask {
+                        let blobDest = tempDir.appendingPathComponent(
+                            chunk.digest.replacingOccurrences(of: ":", with: "_"))
+                        Logger.info("Downloading chunk \(idx + 1)/\(sortedChunks.count) (\(chunk.digest.prefix(19))…)")
+                        try await self.downloadLayer(
+                            repository: repository,
+                            digest: chunk.digest,
+                            mediaType: chunk.mediaType,
+                            token: token,
+                            to: blobDest,
+                            maxRetries: 5,
+                            progress: self.downloadProgress
+                        )
+                        return (idx, blobDest, chunkOffset)
+                    }
+                    enqueued += 1
+                }
+
+                // Drain remaining
+                for try await (completedIdx, completedPath, completedOffset) in group {
+                    Logger.info("Decompressing chunk \(completedIdx + 1)/\(sortedChunks.count)")
+                    let handle = try FileHandle(forWritingTo: diskDest)
+                    let _ = try gunzipChunkAndWriteSparse(
+                        inputPath: completedPath, outputHandle: handle, startOffset: completedOffset)
+                    try handle.close()
+                    try? FileManager.default.removeItem(at: completedPath)
+                }
+            }
+
+            Logger.info("Disk image reassembled from \(sortedChunks.count) chunks")
+
+        } else if let singleDiskLayer = diskLayers.first {
+            // ── Single-blob fallback (backward compat) ───────────────────────
+            let blobDest = tempDir.appendingPathComponent(
+                singleDiskLayer.digest.replacingOccurrences(of: ":", with: "_"))
+            Logger.info("Downloading single disk layer (\(singleDiskLayer.digest.prefix(19))…)")
+            try await downloadLayer(
+                repository: repository,
+                digest: singleDiskLayer.digest,
+                mediaType: singleDiskLayer.mediaType,
+                token: token,
+                to: blobDest,
+                maxRetries: 5,
+                progress: downloadProgress
+            )
+
+            let hasUncompressedSize = singleDiskLayer.annotations?[
+                "com.agoda.macosvz.content.uncompressed-size"] != nil
+            if hasUncompressedSize {
                 Logger.info("Decompressing disk image (gzip)…")
-                try gunzipFile(inputPath: blobPath, outputPath: diskDest)
+                try gunzipFile(inputPath: blobDest, outputPath: diskDest)
                 Logger.info("Disk image decompressed")
             } else {
-                try FileManager.default.copyItem(at: blobPath, to: diskDest)
+                try FileManager.default.copyItem(at: blobDest, to: diskDest)
                 Logger.info("Saved disk.img (uncompressed)")
             }
         }

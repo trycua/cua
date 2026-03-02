@@ -83,6 +83,7 @@ struct Layer: Codable, Equatable {
     let mediaType: String
     let digest: String
     let size: Int
+    let annotations: [String: String]?
 }
 
 struct Manifest: Codable {
@@ -90,6 +91,41 @@ struct Manifest: Codable {
     let config: Layer?
     let mediaType: String
     let schemaVersion: Int
+    let annotations: [String: String]?
+}
+
+// MARK: - OCI-Compliant Format (kubelet-compatible)
+
+enum ImageFormat {
+    case oci     // kubelet-compatible: single gzip-compressed disk, agoda media types
+    case legacy  // Lume legacy: LZ4-chunked disk, trycua media types
+}
+
+/// Media type constants for the OCI-compliant kubelet image format.
+enum OCIMediaType {
+    static let config = "application/vnd.agoda.macosvz.config.v1+json"
+    static let disk   = "application/vnd.agoda.macosvz.disk.image.v1"
+    static let aux    = "application/vnd.agoda.macosvz.aux.image.v1"
+
+    static func detect(_ manifest: Manifest) -> ImageFormat {
+        let hasOCIDisk = manifest.layers.contains { $0.mediaType == disk }
+        let hasOCIConfig = manifest.config?.mediaType == config
+        return (hasOCIDisk || hasOCIConfig) ? .oci : .legacy
+    }
+}
+
+/// OCI config JSON structure expected by the macOS-vz kubelet.
+struct KubeletOCIConfig: Codable {
+    let mediatype: String?
+    let os: String
+    let hardwareModelData: String
+    let machineIdData: String
+    let storage: [KubeletStorageItem]?
+}
+
+struct KubeletStorageItem: Codable {
+    let mediatype: String
+    let file: String
 }
 
 struct RepositoryTag: Codable {
@@ -782,9 +818,26 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
             try? FileManager.default.removeItem(at: tempVMDir)
         }
 
+        // Auto-detect image format from manifest layer media types
+        let imageFormat = OCIMediaType.detect(manifest)
+        Logger.info("Detected image format: \(imageFormat == .oci ? "OCI-compliant" : "legacy Lume")")
+
+        // OCI-compliant images bypass the legacy cache/assembly path
+        if imageFormat == .oci {
+            Logger.info("Pulling OCI-compliant image")
+            try await pullOCI(
+                manifest: manifest,
+                repository: "\(self.organization)/\(imageName)",
+                token: token,
+                to: tempVMDir
+            )
+        }
+
         // Check if caching is enabled and if we have a valid cached version
         Logger.info("Caching enabled: \(cachingEnabled)")
-        if cachingEnabled && validateCache(manifest: manifest, manifestId: manifestId) {
+        if imageFormat == .oci {
+            // OCI pull already populated tempVMDir; skip legacy cache logic
+        } else if cachingEnabled && validateCache(manifest: manifest, manifestId: manifestId) {
             Logger.info("Using cached version of image")
             try await copyFromCache(manifest: manifest, manifestId: manifestId, to: tempVMDir)
         } else {
@@ -2818,8 +2871,19 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
         chunkSizeMb: Int = 512,
         verbose: Bool = false,
         dryRun: Bool = false,
-        reassemble: Bool = false
+        reassemble: Bool = false,
+        legacy: Bool = false
     ) async throws {
+        if !legacy {
+            try await pushOCI(
+                vmDirPath: vmDirPath,
+                imageName: imageName,
+                tags: tags,
+                verbose: verbose,
+                dryRun: dryRun
+            )
+            return
+        }
         Logger.info(
             "Pushing VM to registry",
             metadata: [
@@ -3745,6 +3809,387 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
         }
 
         return "hash-calculation-failed"
+    }
+
+    // MARK: - OCI-Compliant Format Support
+
+    /// Gzip-compress a file, returning digest/size info for both the compressed and uncompressed forms.
+    private func gzipFile(inputPath: URL, outputPath: URL) throws -> (
+        compressedDigest: String, compressedSize: Int,
+        uncompressedDigest: String, uncompressedSize: UInt64
+    ) {
+        let uncompressedAttrs = try FileManager.default.attributesOfItem(atPath: inputPath.path)
+        let uncompressedSize = uncompressedAttrs[.size] as? UInt64 ?? 0
+        let uncompressedDigest = "sha256:" + calculateSHA256(filePath: inputPath.path)
+
+        FileManager.default.createFile(atPath: outputPath.path, contents: nil)
+        let outputHandle = try FileHandle(forWritingTo: outputPath)
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/gzip")
+        process.arguments = ["-c", inputPath.path]
+        process.standardOutput = outputHandle
+
+        try process.run()
+        process.waitUntilExit()
+        try outputHandle.close()
+
+        guard process.terminationStatus == 0 else {
+            throw PushError.blobUploadFailed
+        }
+
+        let compressedAttrs = try FileManager.default.attributesOfItem(atPath: outputPath.path)
+        let compressedSize = Int(compressedAttrs[.size] as? UInt64 ?? 0)
+        let compressedDigest = "sha256:" + calculateSHA256(filePath: outputPath.path)
+
+        return (compressedDigest, compressedSize, uncompressedDigest, uncompressedSize)
+    }
+
+    /// Gunzip a file to an output path.
+    private func gunzipFile(inputPath: URL, outputPath: URL) throws {
+        FileManager.default.createFile(atPath: outputPath.path, contents: nil)
+        let outputHandle = try FileHandle(forWritingTo: outputPath)
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/gunzip")
+        process.arguments = ["-c", inputPath.path]
+        process.standardOutput = outputHandle
+
+        try process.run()
+        process.waitUntilExit()
+        try outputHandle.close()
+
+        guard process.terminationStatus == 0 else {
+            throw PullError.layerDownloadFailed(inputPath.lastPathComponent)
+        }
+    }
+
+    /// Build the kubelet-compatible config JSON blob from a VMConfig.
+    private func createKubeletConfigData(_ vmConfig: VMConfig) throws -> Data {
+        let hardwareModelData = vmConfig.hardwareModel?.base64EncodedString() ?? ""
+        let machineIdData = vmConfig.machineIdentifier?.base64EncodedString() ?? ""
+
+        let configObj: [String: Any] = [
+            "mediatype": OCIMediaType.config,
+            "os": vmConfig.os,
+            "hardwareModelData": hardwareModelData,
+            "machineIdData": machineIdData,
+            "storage": [
+                ["mediatype": OCIMediaType.aux,  "file": "aux.img"],
+                ["mediatype": OCIMediaType.disk, "file": "disk.img"],
+            ],
+        ]
+        return try JSONSerialization.data(
+            withJSONObject: configObj, options: [.prettyPrinted, .sortedKeys])
+    }
+
+    /// Build an OCI-compliant manifest dictionary (kubelet-compatible).
+    private func createOCIManifest(
+        configDigest: String, configSize: Int,
+        auxDigest: String, auxSize: Int,
+        diskDigest: String, diskSize: Int,
+        uncompressedDiskDigest: String, uncompressedDiskSize: UInt64,
+        vmConfig: VMConfig?
+    ) -> [String: Any] {
+        // Config entry (in manifest's "config" field)
+        let configEntry: [String: Any] = [
+            "mediaType": OCIMediaType.config,
+            "digest": configDigest,
+            "size": configSize,
+            "annotations": ["org.opencontainers.image.title": "config.json"],
+        ]
+
+        // Aux (nvram) layer — stored uncompressed, title annotation only
+        let auxLayer: [String: Any] = [
+            "mediaType": OCIMediaType.aux,
+            "digest": auxDigest,
+            "size": auxSize,
+            "annotations": ["org.opencontainers.image.title": "aux.img"],
+        ]
+
+        // Disk layer — gzip-compressed with size/digest annotations
+        let diskLayer: [String: Any] = [
+            "mediaType": OCIMediaType.disk,
+            "digest": diskDigest,
+            "size": diskSize,
+            "annotations": [
+                "org.opencontainers.image.title": "disk.img",
+                "com.agoda.macosvz.content.uncompressed-size": "\(uncompressedDiskSize)",
+                "com.agoda.macosvz.content.uncompressed-digest": uncompressedDiskDigest,
+            ],
+        ]
+
+        // Manifest-level annotations (preserve Lume config for round-trip pulls)
+        var manifestAnnotations: [String: String] = [
+            "org.trycua.lume.upload-time": ISO8601DateFormatter().string(from: Date()),
+        ]
+        if let cfg = vmConfig {
+            manifestAnnotations["org.trycua.lume.os"] = cfg.os
+            if let v = cfg.cpuCount    { manifestAnnotations["org.trycua.lume.cpu-count"]    = "\(v)" }
+            if let v = cfg.memorySize  { manifestAnnotations["org.trycua.lume.memory-size"]  = "\(v)" }
+            if let v = cfg.diskSize    { manifestAnnotations["org.trycua.lume.disk-size"]    = "\(v)" }
+            manifestAnnotations["org.trycua.lume.display"]      = cfg.display.string
+            manifestAnnotations["org.trycua.lume.network-mode"] = cfg.networkMode.description
+        }
+
+        return [
+            "schemaVersion": 2,
+            "mediaType": "application/vnd.oci.image.manifest.v1+json",
+            "config": configEntry,
+            "layers": [auxLayer, diskLayer],
+            "annotations": manifestAnnotations,
+        ]
+    }
+
+    /// Push a VM in OCI-compliant format (kubelet-compatible).
+    private func pushOCI(
+        vmDirPath: String,
+        imageName: String,
+        tags: [String],
+        verbose: Bool,
+        dryRun: Bool
+    ) async throws {
+        Logger.info(
+            "Pushing VM in OCI-compliant format",
+            metadata: [
+                "vm_path": vmDirPath,
+                "imageName": imageName,
+                "tags": tags.joined(separator: ", "),
+                "dry_run": "\(dryRun)",
+            ])
+
+        if !dryRun {
+            let (username, token) = getCredentialsFromEnvironment()
+            guard username != nil, token != nil else {
+                Logger.error(
+                    "Missing GitHub credentials. Set GITHUB_USERNAME and GITHUB_TOKEN env vars.")
+                throw PushError.authenticationFailed
+            }
+        }
+
+        var token = ""
+        if !dryRun {
+            Logger.info("Getting registry authentication token")
+            token = try await getToken(
+                repository: "\(self.organization)/\(imageName)",
+                scopes: ["pull", "push"],
+                requireAllScopes: true)
+        }
+
+        let vmDirURL   = URL(fileURLWithPath: vmDirPath)
+        let diskPath   = vmDirURL.appendingPathComponent("disk.img")
+        let nvramPath  = vmDirURL.appendingPathComponent("nvram.bin")
+        let configPath = vmDirURL.appendingPathComponent("config.json")
+        let workDir    = vmDirURL.appendingPathComponent(".lume_oci_push_cache")
+        try FileManager.default.createDirectory(at: workDir, withIntermediateDirectories: true)
+
+        let repository = "\(self.organization)/\(imageName)"
+
+        // ── Config ──────────────────────────────────────────────────────────
+        let vmConfig = try? JSONDecoder().decode(VMConfig.self, from: Data(contentsOf: configPath))
+        let fallbackConfig = try VMConfig(os: "darwin", display: "1920x1080")
+        let configData = try createKubeletConfigData(vmConfig ?? fallbackConfig)
+        let configDigest = "sha256:" + configData.sha256String()
+        let configSize   = configData.count
+
+        if !dryRun {
+            if !(try await blobExists(repository: repository, digest: configDigest, token: token)) {
+                Logger.info("Uploading OCI config blob")
+                _ = try await uploadBlobFromData(
+                    repository: repository, data: configData, token: token)
+            } else {
+                Logger.info("OCI config blob already exists")
+            }
+        }
+
+        // ── Aux (nvram) ──────────────────────────────────────────────────────
+        guard FileManager.default.fileExists(atPath: nvramPath.path) else {
+            throw PushError.fileCreationFailed(nvramPath.path)
+        }
+        let nvramData   = try Data(contentsOf: nvramPath)
+        let auxDigest   = "sha256:" + nvramData.sha256String()
+        let auxSize     = nvramData.count
+
+        if !dryRun {
+            if !(try await blobExists(repository: repository, digest: auxDigest, token: token)) {
+                Logger.info("Uploading aux (nvram) blob")
+                _ = try await uploadBlobFromData(
+                    repository: repository, data: nvramData, token: token)
+            } else {
+                Logger.info("Aux blob already exists")
+            }
+        }
+
+        // ── Disk (gzip-compressed) ───────────────────────────────────────────
+        guard FileManager.default.fileExists(atPath: diskPath.path) else {
+            throw PushError.fileCreationFailed(diskPath.path)
+        }
+
+        let gzippedDiskPath = workDir.appendingPathComponent("disk.img.gz")
+        Logger.info("Gzip-compressing disk.img (this may take a while)...")
+        let (diskCompDigest, diskCompSize, diskUncompDigest, diskUncompSize) =
+            try gzipFile(inputPath: diskPath, outputPath: gzippedDiskPath)
+
+        if !dryRun {
+            if !(try await blobExists(
+                repository: repository, digest: diskCompDigest, token: token))
+            {
+                Logger.info("Uploading gzip-compressed disk blob")
+                _ = try await uploadBlobFromPath(
+                    repository: repository,
+                    path: gzippedDiskPath,
+                    digest: diskCompDigest,
+                    token: token)
+            } else {
+                Logger.info("Disk blob already exists")
+            }
+        }
+
+        // ── Manifest ─────────────────────────────────────────────────────────
+        let manifest = createOCIManifest(
+            configDigest: configDigest, configSize: configSize,
+            auxDigest: auxDigest, auxSize: auxSize,
+            diskDigest: diskCompDigest, diskSize: diskCompSize,
+            uncompressedDiskDigest: diskUncompDigest, uncompressedDiskSize: diskUncompSize,
+            vmConfig: vmConfig
+        )
+
+        if !dryRun {
+            let manifestData = try JSONSerialization.data(
+                withJSONObject: manifest, options: [.prettyPrinted, .sortedKeys])
+            for tag in tags {
+                Logger.info("Pushing OCI manifest for tag: \(tag)")
+                try await pushManifest(
+                    repository: repository, tag: tag, manifest: manifestData, token: token)
+            }
+            Logger.info("OCI push complete")
+        } else {
+            Logger.info("Dry-run complete — manifest not uploaded")
+        }
+    }
+
+    /// Pull an OCI-compliant image (kubelet format) into `destination` as a Lume VM directory.
+    private func pullOCI(
+        manifest: Manifest,
+        repository: String,
+        token: String,
+        to destination: URL
+    ) async throws {
+        Logger.info("Downloading OCI-compliant layers")
+        try FileManager.default.createDirectory(
+            at: destination, withIntermediateDirectories: true)
+
+        let tempDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("lume_oci_\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        // Collect all descriptors: config + layers
+        var allLayers: [Layer] = manifest.layers
+        if let configLayer = manifest.config {
+            allLayers.insert(configLayer, at: 0)
+        }
+
+        var configData: Data?
+        var auxBlobPath: URL?
+        var diskBlobPath: URL?
+        var diskUncompressedSize: UInt64?
+        var diskIsCompressed = false
+
+        for layer in allLayers {
+            let blobDest = tempDir.appendingPathComponent(
+                layer.digest.replacingOccurrences(of: ":", with: "_"))
+            Logger.info("Downloading layer: \(layer.mediaType) (\(layer.digest.prefix(19))…)")
+            try await downloadLayer(
+                repository: repository,
+                digest: layer.digest,
+                mediaType: layer.mediaType,
+                token: token,
+                to: blobDest,
+                maxRetries: 5,
+                progress: downloadProgress
+            )
+
+            switch layer.mediaType {
+            case OCIMediaType.config:
+                configData = try Data(contentsOf: blobDest)
+
+            case OCIMediaType.aux:
+                auxBlobPath = blobDest
+
+            case OCIMediaType.disk:
+                diskBlobPath = blobDest
+                if let sizeStr = layer.annotations?["com.agoda.macosvz.content.uncompressed-size"],
+                    let size = UInt64(sizeStr)
+                {
+                    diskUncompressedSize = size
+                    diskIsCompressed = true
+                }
+
+            default:
+                Logger.info("Ignoring unexpected layer: \(layer.mediaType)")
+            }
+        }
+
+        // ── Process config ────────────────────────────────────────────────────
+        var vmConfig: VMConfig?
+        if let data = configData,
+            let kubeletCfg = try? JSONDecoder().decode(KubeletOCIConfig.self, from: data)
+        {
+            let hardwareModel     = Data(base64Encoded: kubeletCfg.hardwareModelData)
+            let machineIdentifier = Data(base64Encoded: kubeletCfg.machineIdData)
+
+            // Recover Lume-specific fields from manifest annotations if available
+            let ann = manifest.annotations
+            let cpuCount    = ann?["org.trycua.lume.cpu-count"].flatMap(Int.init)
+            let memorySize  = ann?["org.trycua.lume.memory-size"].flatMap(UInt64.init)
+            let diskSize    = ann?["org.trycua.lume.disk-size"].flatMap(UInt64.init)
+                             ?? diskUncompressedSize
+            let display     = ann?["org.trycua.lume.display"] ?? "1920x1080"
+            let netModeStr  = ann?["org.trycua.lume.network-mode"] ?? "nat"
+
+            vmConfig = try? VMConfig(
+                os: kubeletCfg.os,
+                cpuCount: cpuCount,
+                memorySize: memorySize,
+                diskSize: diskSize,
+                display: display,
+                hardwareModel: hardwareModel,
+                machineIdentifier: machineIdentifier,
+                networkMode: NetworkMode.parse(netModeStr) ?? .nat
+            )
+        }
+
+        // Write config.json (Lume VMConfig format)
+        let configDest = destination.appendingPathComponent("config.json")
+        if let cfg = vmConfig {
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = .prettyPrinted
+            let data = try encoder.encode(cfg)
+            try data.write(to: configDest)
+        }
+
+        // ── Process aux (nvram) ───────────────────────────────────────────────
+        if let auxPath = auxBlobPath {
+            let nvramDest = destination.appendingPathComponent("nvram.bin")
+            try FileManager.default.copyItem(at: auxPath, to: nvramDest)
+            Logger.info("Saved nvram.bin")
+        }
+
+        // ── Process disk ──────────────────────────────────────────────────────
+        if let blobPath = diskBlobPath {
+            let diskDest = destination.appendingPathComponent("disk.img")
+            if diskIsCompressed {
+                Logger.info("Decompressing disk image (gzip)…")
+                try gunzipFile(inputPath: blobPath, outputPath: diskDest)
+                Logger.info("Disk image decompressed")
+            } else {
+                try FileManager.default.copyItem(at: blobPath, to: diskDest)
+                Logger.info("Saved disk.img (uncompressed)")
+            }
+        }
+
+        Logger.info("OCI pull complete")
     }
 }
 

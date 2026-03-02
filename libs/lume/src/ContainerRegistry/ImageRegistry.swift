@@ -23,6 +23,7 @@ protocol ImageRegistry: Sendable {
     ///   - verbose: Enable verbose logging
     ///   - dryRun: Prepare files without uploading
     ///   - reassemble: In dry-run mode, verify integrity by reassembling
+    ///   - legacy: Use legacy Lume LZ4-chunked format instead of OCI-compliant format
     func push(
         vmDirPath: String,
         imageName: String,
@@ -30,7 +31,8 @@ protocol ImageRegistry: Sendable {
         chunkSizeMb: Int,
         verbose: Bool,
         dryRun: Bool,
-        reassemble: Bool
+        reassemble: Bool,
+        legacy: Bool
     ) async throws
 
     /// Get list of cached/available images
@@ -50,7 +52,8 @@ extension ImageRegistry {
         chunkSizeMb: Int = 512,
         verbose: Bool = false,
         dryRun: Bool = false,
-        reassemble: Bool = false
+        reassemble: Bool = false,
+        legacy: Bool = false
     ) async throws {
         try await push(
             vmDirPath: vmDirPath,
@@ -59,7 +62,8 @@ extension ImageRegistry {
             chunkSizeMb: chunkSizeMb,
             verbose: verbose,
             dryRun: dryRun,
-            reassemble: reassemble
+            reassemble: reassemble,
+            legacy: legacy
         )
     }
 }

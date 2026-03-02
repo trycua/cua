@@ -1110,7 +1110,8 @@ final class LumeController {
         chunkSizeMb: Int = 512,
         verbose: Bool = false,
         dryRun: Bool = false,
-        reassemble: Bool = false
+        reassemble: Bool = false,
+        legacy: Bool = false
     ) async throws {
         do {
             Logger.info(
@@ -1152,7 +1153,8 @@ final class LumeController {
                 chunkSizeMb: chunkSizeMb,
                 verbose: verbose,
                 dryRun: dryRun,
-                reassemble: reassemble
+                reassemble: reassemble,
+                legacy: legacy
             )
 
             Logger.info(

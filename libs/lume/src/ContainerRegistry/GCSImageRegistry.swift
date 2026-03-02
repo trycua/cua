@@ -113,7 +113,8 @@ class GCSImageRegistry: ImageRegistry, @unchecked Sendable {
         chunkSizeMb: Int,
         verbose: Bool,
         dryRun: Bool,
-        reassemble: Bool
+        reassemble: Bool,
+        legacy: Bool
     ) async throws {
         guard !tags.isEmpty else {
             throw GCSRegistryError.noTagsProvided

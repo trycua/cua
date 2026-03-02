@@ -36,6 +36,9 @@ struct Push: AsyncParsableCommand {
     @Flag(name: .long, help: "In dry-run mode, also reassemble chunks to verify integrity")
     var reassemble: Bool = true
 
+    @Flag(name: .long, help: "Use legacy Lume LZ4-chunked format instead of OCI-compliant format")
+    var legacy: Bool = false
+
     init() {}
 
     @MainActor
@@ -71,7 +74,8 @@ struct Push: AsyncParsableCommand {
             chunkSizeMb: chunkSizeMb,
             verbose: verbose,
             dryRun: dryRun,
-            reassemble: reassemble
+            reassemble: reassemble,
+            legacy: legacy
         )
     }
 } 

@@ -2,7 +2,7 @@
 
 _Published on August 27, 2025 by Dillon DuPont_
 
-You can now benchmark any GUI-capable agent on real computer-use tasks through our new integration with [HUD](https://hud.so), the evaluation platform for computer-use agents.
+You can now benchmark any GUI-capable agent on real computer-use tasks through our new integration with [HUD](https://hud.ai), the evaluation platform for computer-use agents.
 
 If [yesterday's 0.4 release](composite-agents.md) made it easy to compose planning and grounding models, today's update makes it easy to measure them. Configure your model, run evaluations at scale, and watch traces live in HUD.
 
@@ -11,7 +11,7 @@ If [yesterday's 0.4 release](composite-agents.md) made it easy to compose planni
 ## What you get
 
 - One-line evals on OSWorld (and more) for OpenAI, Anthropic, Hugging Face, and composed GUI models.
-- Live traces at [app.hud.so](https://app.hud.so) to see every click, type, and screenshot.
+- Live traces at [app.hud.ai](https://app.hud.ai) to see every click, type, and screenshot.
 - Zero glue code needed - we wrapped the interface for you.
 - With Cua's Agent SDK, you can benchmark any configurations of models, by just changing the `model` string.
 
@@ -72,7 +72,7 @@ Starting full dataset run...
 ╔═════════════════════════════════════════════════════════════════╗
 ║ 🚀 See your agent live at: ║
 ╟─────────────────────────────────────────────────────────────────╢
-║ https://app.hud.so/jobs/fe05805d-4da9-4fc6-84b5-5c518528fd3c ║
+║ https://app.hud.ai/jobs/fe05805d-4da9-4fc6-84b5-5c518528fd3c ║
 ╚═════════════════════════════════════════════════════════════════╝
 ```
 
@@ -84,10 +84,10 @@ Customize your evaluation with these options:
 - **Model composition**: Mix planning and grounding models with `+` (e.g., `"gpt-4+gpt-5-nano"`)
 - **Parallel scaling**: Set `max_concurrent_tasks` for throughput
 - **Local trajectories**: Save with `trajectory_dir` for offline analysis
-- **Live monitoring**: Every run gets a unique trace URL at app.hud.so
+- **Live monitoring**: Every run gets a unique trace URL at app.hud.ai
 
 ## Learn more
 
 - Notebook with end‑to‑end examples: https://github.com/trycua/cua/blob/main/notebooks/eval_osworld.ipynb
 - Docs: https://cua.ai/docs/cua/guide/integrations/hud
-- Live traces: https://app.hud.so
+- Live traces: https://app.hud.ai

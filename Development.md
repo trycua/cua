@@ -20,6 +20,7 @@ The project is organized as a monorepo with these main packages:
 
 - `libs/lume/` - Lume CLI (Swift)
 - `libs/typescript/` - TypeScript packages including `cua-cli`
+- `libs/cuabot/` - CuaBot multi-agent computer-use sandbox CLI
 
 All Python packages are part of a [uv workspace](https://docs.astral.sh/uv/concepts/projects/workspaces/) which manages a shared virtual environment and dependencies.
 
@@ -304,6 +305,7 @@ All packages are managed through a single consolidated workflow: [Bump Version &
 **Python (PyPI):**
 
 - `pypi/agent` - AI agent library
+- `pypi/auto` - Cross-platform automation library (mouse, keyboard, screen, window, clipboard, shell)
 - `pypi/bench` - Benchmark toolkit for computer-use RL environments
 - `pypi/computer` - Computer-use interface library
 - `pypi/computer-server` - Server component for VM
@@ -316,6 +318,11 @@ All packages are managed through a single consolidated workflow: [Bump Version &
 - `npm/cli` - Cua command-line interface
 - `npm/computer` - Computer client for TypeScript
 - `npm/core` - Core TypeScript utilities
+- `npm/cuabot` - Multi-agent computer-use sandbox
+
+**Docker:**
+
+- `docker/cuabot` - CuaBot container image
 
 **How to use:**
 
@@ -359,12 +366,15 @@ make show-versions
 Each package uses its own tag format defined in `.bumpversion.cfg`:
 
 - **cua-agent**: `agent-v{version}` (e.g., `agent-v0.4.35`)
+- **cua-auto**: `auto-v{version}` (e.g., `auto-v0.1.0`)
 - **cua-bench**: `bench-v{version}` (e.g., `bench-v0.1.0`)
 - **cua-computer**: `computer-v{version}` (e.g., `computer-v0.4.7`)
 - **cua-computer-server**: `computer-server-v{version}` (e.g., `computer-server-v0.1.27`)
 - **cua-core**: `core-v{version}` (e.g., `core-v0.1.9`)
 - **cua-mcp-server**: `mcp-server-v{version}` (e.g., `mcp-server-v0.1.14`)
 - **cua-som**: `som-v{version}` (e.g., `som-v0.1.3`)
+- **cuabot**: `cuabot-v{version}` (e.g., `cuabot-v1.0.0`)
+- **cuabot (docker)**: `docker-cuabot-v{version}` (e.g., `docker-cuabot-v1.0.0`)
 
 </details>
 

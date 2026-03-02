@@ -28,6 +28,7 @@ docker run --rm -it \
 ```
 
 **Access Points:**
+
 - **noVNC Web Interface**: `http://localhost:6901` (no password required)
 - **VNC Client**: `localhost:5901` (no password required)
 - **Computer Server API**: `http://localhost:8000`
@@ -78,13 +79,13 @@ async with computer:
 
 ### Environment Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `VNC_RESOLUTION` | `1024x768` | Screen resolution |
-| `VNC_COL_DEPTH` | `24` | Color depth |
-| `VNC_PORT` | `5901` | VNC server port |
-| `NOVNC_PORT` | `6901` | noVNC web interface port |
-| `API_PORT` | `8000` | Computer-server API port |
+| Variable         | Default    | Description              |
+| ---------------- | ---------- | ------------------------ |
+| `VNC_RESOLUTION` | `1024x768` | Screen resolution        |
+| `VNC_COL_DEPTH`  | `24`       | Color depth              |
+| `VNC_PORT`       | `5901`     | VNC server port          |
+| `NOVNC_PORT`     | `6901`     | noVNC web interface port |
+| `API_PORT`       | `8000`     | Computer-server API port |
 
 ### Ports
 
@@ -111,12 +112,12 @@ docker commit <container_id> cua-xfce-snapshot:latest
 
 ## Comparison with Kasm Container
 
-| Feature | Kasm Container | XFCE Container |
-|---------|----------------|----------------|
-| Base Image | KasmWeb Ubuntu | Vanilla Ubuntu |
-| VNC Server | KasmVNC | TigerVNC |
-| Dependencies | Higher | Lower |
-| Size | Larger | Smaller |
+| Feature      | Kasm Container | XFCE Container |
+| ------------ | -------------- | -------------- |
+| Base Image   | KasmWeb Ubuntu | Vanilla Ubuntu |
+| VNC Server   | KasmVNC        | TigerVNC       |
+| Dependencies | Higher         | Lower          |
+| Size         | Larger         | Smaller        |
 
 ## Building from Source
 

@@ -26,47 +26,12 @@ extension Server {
         // Record telemetry
         TelemetryClient.shared.record(event: TelemetryEvent.apiVMGet)
 
-        print("Getting VM details: name=\(name), storage=\(String(describing: storage))")
-
         do {
             let vmController = LumeController()
-            print("Created VM controller, attempting to get VM")
-            let vm = try vmController.get(name: name, storage: storage)
-            print("Successfully retrieved VM")
-
-            // Check for nil values that might cause crashes
-            if vm.vmDirContext.config.macAddress == nil {
-                print("ERROR: VM has nil macAddress")
-                return .badRequest(message: "VM configuration is invalid (nil macAddress)")
-            }
-            print("MacAddress check passed")
-
-            // Log that we're about to access details
-            print("Preparing VM details response")
-
-            // Print the full details object for debugging
-            let details = vm.details
-            print("VM DETAILS: \(details)")
-            print("  name: \(details.name)")
-            print("  os: \(details.os)")
-            print("  cpuCount: \(details.cpuCount)")
-            print("  memorySize: \(details.memorySize)")
-            print("  diskSize: \(details.diskSize)")
-            print("  display: \(details.display)")
-            print("  status: \(details.status)")
-            print("  vncUrl: \(String(describing: details.vncUrl))")
-            print("  ipAddress: \(String(describing: details.ipAddress))")
-            print("  locationName: \(details.locationName)")
-
-            // Serialize the VM details
-            print("About to serialize VM details")
-            let response = try HTTPResponse.json(vm.details)
-            print("Successfully serialized VM details")
-            return response
-
+            // Use getDetails() for consistent status including provisioning state
+            let details = try vmController.getDetails(name: name, storage: storage)
+            return try HTTPResponse.json(details)
         } catch {
-            // This will catch errors from both vmController.get and the json serialization
-            print("ERROR: Failed to get VM details: \(error.localizedDescription)")
             return .badRequest(message: error.localizedDescription)
         }
     }
@@ -100,6 +65,8 @@ extension Server {
                 unattendedConfig = try UnattendedConfig.load(from: unattendedArg)
             }
 
+            let networkMode = try request.parseNetworkMode()
+
             // Use async create - returns immediately while VM is provisioned in background
             try vmController.createAsync(
                 name: request.name,
@@ -110,7 +77,8 @@ extension Server {
                 display: request.display,
                 ipsw: request.ipsw,
                 storage: request.storage,
-                unattendedConfig: unattendedConfig
+                unattendedConfig: unattendedConfig,
+                networkMode: networkMode
             )
 
             // Return 202 Accepted - VM creation is in progress
@@ -371,7 +339,8 @@ extension Server {
             let request =
                 body.flatMap { try? JSONDecoder().decode(RunVMRequest.self, from: $0) }
                 ?? RunVMRequest(
-                    noDisplay: nil, sharedDirectories: nil, recoveryMode: nil, storage: nil)
+                    noDisplay: nil, sharedDirectories: nil, recoveryMode: nil, storage: nil,
+                    network: nil, clipboard: nil)
 
             // Record telemetry
             TelemetryClient.shared.record(event: TelemetryEvent.apiVMRun, properties: [
@@ -393,6 +362,8 @@ extension Server {
                 "Successfully parsed shared directories",
                 metadata: ["name": name, "count": "\(dirs.count)"])
 
+            let networkMode = try request.parseNetworkMode()
+
             // Start VM in background
             Logger.info("Starting VM in background", metadata: ["name": name])
             startVM(
@@ -400,7 +371,9 @@ extension Server {
                 noDisplay: request.noDisplay ?? false,
                 sharedDirectories: dirs,
                 recoveryMode: request.recoveryMode ?? false,
-                storage: request.storage
+                storage: request.storage,
+                networkMode: networkMode,
+                clipboard: request.clipboard ?? false
             )
             Logger.info("VM start initiated in background", metadata: ["name": name])
 
@@ -852,7 +825,9 @@ extension Server {
         noDisplay: Bool,
         sharedDirectories: [SharedDirectory] = [],
         recoveryMode: Bool = false,
-        storage: String? = nil
+        storage: String? = nil,
+        networkMode: NetworkMode? = nil,
+        clipboard: Bool = false
     ) {
         Logger.info(
             "Starting VM in detached task",
@@ -861,6 +836,7 @@ extension Server {
                 "noDisplay": "\(noDisplay)",
                 "recoveryMode": "\(recoveryMode)",
                 "storage": String(describing: storage),
+                "networkMode": networkMode?.description ?? "vm-config",
             ])
 
         Task.detached { @MainActor @Sendable in
@@ -880,7 +856,9 @@ extension Server {
                     noDisplay: noDisplay,
                     sharedDirectories: sharedDirectories,
                     recoveryMode: recoveryMode,
-                    storage: storage
+                    storage: storage,
+                    networkMode: networkMode,
+                    clipboard: clipboard
                 )
                 Logger.info("VM started successfully in background task", metadata: ["name": name])
             } catch {

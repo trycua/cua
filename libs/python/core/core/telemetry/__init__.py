@@ -1,14 +1,8 @@
 """This module provides the core telemetry functionality for Cua libraries.
 
-It provides a low-overhead way to collect anonymous usage data via PostHog,
-operational metrics via OpenTelemetry, and error tracking via Sentry.
+It provides a low-overhead way to collect anonymous usage data via PostHog
+and operational metrics via OpenTelemetry.
 """
-
-from core.telemetry.posthog import (
-    destroy_telemetry_client,
-    is_telemetry_enabled,
-    record_event,
-)
 
 # OpenTelemetry instrumentation for Four Golden Signals
 from core.telemetry.otel import (
@@ -21,18 +15,10 @@ from core.telemetry.otel import (
     record_tokens,
     track_concurrent,
 )
-
-# Sentry error tracking
-from core.telemetry.sentry import (
-    add_breadcrumb,
-    capture_exception,
-    capture_message,
-    flush,
-    is_sentry_enabled,
-    set_context,
-    set_tag,
-    set_user,
-    start_transaction,
+from core.telemetry.posthog import (
+    destroy_telemetry_client,
+    is_telemetry_enabled,
+    record_event,
 )
 
 __all__ = [
@@ -49,14 +35,4 @@ __all__ = [
     "create_span",
     "instrument_async",
     "instrument_sync",
-    # Sentry (error tracking)
-    "is_sentry_enabled",
-    "capture_exception",
-    "capture_message",
-    "add_breadcrumb",
-    "set_user",
-    "set_tag",
-    "set_context",
-    "start_transaction",
-    "flush",
 ]

@@ -73,7 +73,7 @@ except Exception as e:
 
 # Trigger screen recording prompt on macOS
 try:
-    from PIL import ImageGrab, Image
+    from PIL import Image, ImageGrab
 
     ImageGrab.grab()
 except Exception as e:
@@ -1054,6 +1054,18 @@ class MacOSAutomationHandler(BaseAutomationHandler):
             if x is not None and y is not None:
                 self.mouse.position = (x, y)
             self.mouse.click(Button.right, 1)
+            return {"success": True}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    async def middle_click(
+        self, x: Optional[int] = None, y: Optional[int] = None
+    ) -> Dict[str, Any]:
+        """Perform a middle mouse click at the specified coordinates."""
+        try:
+            if x is not None and y is not None:
+                self.mouse.position = (x, y)
+            self.mouse.click(Button.middle, 1)
             return {"success": True}
         except Exception as e:
             return {"success": False, "error": str(e)}

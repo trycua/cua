@@ -28,6 +28,7 @@ DEFAULT_OTEL_ENDPOINT = "https://otel.cua.ai"
 
 # Lazy initialization state
 _initialized = False
+_init_failed = False
 _init_lock = Lock()
 
 # OTEL components (lazily initialized)
@@ -69,17 +70,21 @@ def _initialize_otel() -> bool:
     Returns True if initialization succeeded, False otherwise.
     Thread-safe via lock.
     """
-    global _initialized, _meter, _tracer, _meter_provider, _tracer_provider
+    global _initialized, _init_failed, _meter, _tracer, _meter_provider, _tracer_provider
     global _operation_duration, _operations_total, _errors_total
     global _concurrent_operations, _tokens_total
 
     if _initialized:
         return True
+    if _init_failed:
+        return False
 
     with _init_lock:
         # Double-check after acquiring lock
         if _initialized:
             return True
+        if _init_failed:
+            return False
 
         if not is_otel_enabled():
             logger.debug("OpenTelemetry disabled via CUA_TELEMETRY_DISABLED")
@@ -101,10 +106,12 @@ def _initialize_otel() -> bool:
             from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
             # Create resource with service info
-            resource = Resource.create({
-                "service.name": _get_service_name(),
-                "service.version": _get_sdk_version(),
-            })
+            resource = Resource.create(
+                {
+                    "service.name": _get_service_name(),
+                    "service.version": _get_sdk_version(),
+                }
+            )
 
             endpoint = _get_otel_endpoint()
 
@@ -171,13 +178,15 @@ def _initialize_otel() -> bool:
             return True
 
         except ImportError as e:
-            logger.warning(
+            _init_failed = True
+            logger.debug(
                 f"OpenTelemetry packages not installed: {e}. "
                 "Install with: pip install opentelemetry-api opentelemetry-sdk "
                 "opentelemetry-exporter-otlp-proto-http"
             )
             return False
         except Exception as e:
+            _init_failed = True
             logger.warning(f"Failed to initialize OpenTelemetry: {e}")
             return False
 
@@ -200,6 +209,7 @@ def _get_sdk_version() -> str:
     """Get the CUA SDK version."""
     try:
         from core import __version__
+
         return __version__
     except ImportError:
         return "unknown"
@@ -400,6 +410,7 @@ def instrument_async(
         async def run(self, prompt: str, model: str = "claude-3"):
             ...
     """
+
     def decorator(func: F) -> F:
         @wraps(func)
         async def wrapper(*args: Any, **kwargs: Any) -> Any:
@@ -461,6 +472,7 @@ def instrument_sync(
         def screenshot(self):
             ...
     """
+
     def decorator(func: F) -> F:
         @wraps(func)
         def wrapper(*args: Any, **kwargs: Any) -> Any:

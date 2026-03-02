@@ -57,7 +57,7 @@ export function printSandboxList(
   if (items.length === 0) console.log('No sandboxes found');
 }
 
-export async function openInBrowser(url: string) {
+export function openInBrowser(url: string) {
   const platform = process.platform;
   let cmd: string;
   let args: string[] = [];
@@ -72,7 +72,8 @@ export async function openInBrowser(url: string) {
     args = [url];
   }
   try {
-    await Bun.spawn({ cmd: [cmd, ...args] }).exited;
+    // Don't wait for browser process - just spawn and let it run
+    Bun.spawn({ cmd: [cmd, ...args], stdout: 'ignore', stderr: 'ignore' });
   } catch {
     console.error(`Failed to open browser. Please visit: ${url}`);
   }

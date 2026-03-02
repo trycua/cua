@@ -27,11 +27,14 @@ async def evaluate(task_cfg: cb.Task, session: cb.DesktopSession) -> list[float]
 
 ## Available Apps
 
-| App | Name | Platforms |
-|-----|------|-----------|
-| Godot | `godot` | Linux, Windows, macOS |
-| Unity | `unity` | Linux, Windows, macOS |
+| App             | Name              | Platforms             |
+| --------------- | ----------------- | --------------------- |
+| Godot           | `godot`           | Linux, Windows, macOS |
+| Unity           | `unity`           | Linux, Windows, macOS |
 | Adobe Photoshop | `adobe_photoshop` | Linux (WINE), Windows |
+| Notes           | `notes`           | macOS                 |
+| Reminders       | `reminders`       | macOS                 |
+| Calendar        | `calendar`        | macOS                 |
 
 ## Contributing Apps
 
@@ -83,10 +86,10 @@ from . import chrome  # noqa: F401
 
 ## Platform Matrix
 
-| Method | Linux | Windows | macOS |
-|--------|-------|---------|-------|
-| `install` | ✅ | ✅ | ✅ |
-| `launch` | ✅ | ✅ | ✅ |
-| `uninstall` | ✅ | ⚠️ | ⚠️ |
+| Method      | Linux | Windows | macOS |
+| ----------- | ----- | ------- | ----- |
+| `install`   | ✅    | ✅      | ✅    |
+| `launch`    | ✅    | ✅      | ✅    |
+| `uninstall` | ✅    | ⚠️      | ⚠️    |
 
 ✅ = Supported, ⚠️ = Partial support

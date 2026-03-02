@@ -79,13 +79,23 @@ try {
     $pythonVersion = & $pythonExe --version 2>&1
     Write-Host "Python version: $pythonVersion"
 
-    # Step 2: Create a dedicated virtual environment in mapped Desktop folder (persistent)
-    Write-Host "Step 2: Creating virtual environment (if needed)..."
+    # Step 2: Install UV package manager (standalone, before creating venv)
+    Write-Host "Step 2: Installing UV package manager..."
+    try {
+        powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+        Write-Host "UV installed successfully"
+    } catch {
+        Write-Host "UV install warning: $($_.Exception.Message)"
+        throw "Failed to install UV"
+    }
+
+    # Step 3: Create virtual environment using UV
+    Write-Host "Step 3: Creating virtual environment with UV (if needed)..."
     $cachePath = "C:\Users\WDAGUtilityAccount\Desktop\wsb_cache"
     $venvPath = "C:\Users\WDAGUtilityAccount\Desktop\wsb_cache\venv"
     if (!(Test-Path $venvPath)) {
-        Write-Host "Creating venv at: $venvPath"
-        & $pythonExe -m venv $venvPath
+        Write-Host "Creating venv with UV at: $venvPath"
+        uv venv $venvPath
     } else {
         Write-Host "Venv already exists at: $venvPath"
     }
@@ -104,19 +114,13 @@ try {
     }
     Write-Host "Using venv Python: $venvPython"
 
-    # Step 3: Install cua-computer-server into the venv
-    Write-Host "Step 3: Installing cua-computer-server..."
-    
-    Write-Host "Upgrading pip..."
-    & $venvPython -m pip install --upgrade pip --quiet
-    
-    Write-Host "Installing cua-computer-server..."
-    & $venvPython -m pip install cua-computer-server
-    
+    # Step 4: Install cua-computer-server using UV
+    Write-Host "Step 4: Installing cua-computer-server with UV..."
+    uv pip install --project $venvPath cua-computer-server
     Write-Host "cua-computer-server installation completed."
 
-    # Step 4: Start computer server in background using the venv Python
-    Write-Host "Step 4: Starting computer server in background..."
+    # Step 5: Start computer server in background using the venv Python
+    Write-Host "Step 5: Starting computer server in background..."
     Write-Host "Starting computer server with: $venvPython"
     
     # Start the computer server in the background

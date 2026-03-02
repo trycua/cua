@@ -190,11 +190,11 @@ You: Install jq, uninstall it, and verify it's completely removed with no leftov
 
 ## Why this matters
 
-| Testing Approach | Clean Environment | Isolated | Resettable |
-|-----------------|-------------------|----------|------------|
-| Host machine | No | No | No |
-| Docker | Yes | Yes | Yes (but no macOS) |
-| **macOS VM** | **Yes** | **Yes** | **Yes** |
+| Testing Approach | Clean Environment | Isolated | Resettable         |
+| ---------------- | ----------------- | -------- | ------------------ |
+| Host machine     | No                | No       | No                 |
+| Docker           | Yes               | Yes      | Yes (but no macOS) |
+| **macOS VM**     | **Yes**           | **Yes**  | **Yes**            |
 
 Homebrew is macOS-specific. Testing Homebrew formulas requires macOS, and testing them properly requires isolation.
 

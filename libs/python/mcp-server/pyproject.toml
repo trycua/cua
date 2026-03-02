@@ -7,7 +7,7 @@ name = "cua-mcp-server"
 description = "MCP Server for Computer-Use Agent (Cua)"
 readme = "README.md"
 requires-python = ">=3.12,<3.14"
-version = "0.1.15"
+version = "0.1.16"
 authors = [
     {name = "TryCua", email = "gh@trycua.com"}
 ]

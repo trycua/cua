@@ -34,7 +34,7 @@ from core.telemetry import is_telemetry_enabled, record_event
 from PIL import Image
 
 from . import helpers
-from .interface.factory import InterfaceFactory
+from .interface.factory import InterfaceFactory, OSType
 from .logger import Logger, LogLevel
 from .models import Computer as ComputerConfig
 from .models import Display
@@ -45,8 +45,6 @@ from .tracing_wrapper import TracingInterfaceWrapper
 # Import OTEL functions for session-level metrics
 try:
     from core.telemetry import (
-        add_breadcrumb,
-        capture_exception,
         is_otel_enabled,
         record_operation,
         track_concurrent,
@@ -59,6 +57,7 @@ except ImportError:
     def is_otel_enabled() -> bool:
         return False
 
+
 SYSTEM_INFO = {
     "os": platform.system().lower(),
     "os_version": platform.release(),
@@ -68,8 +67,6 @@ SYSTEM_INFO = {
 # Import provider related modules
 from .providers.base import VMProviderType
 from .providers.factory import VMProviderFactory
-
-OSType = Literal["macos", "linux", "windows", "android"]
 
 
 class Computer:
@@ -127,7 +124,7 @@ class Computer:
                     Defaults to "1024x768"
             memory: The VM memory allocation. Defaults to "8GB"
             cpu: The VM CPU allocation. Defaults to "4"
-            os_type: The operating system type ('macos' or 'linux')
+            os_type: The operating system type ('macos', 'linux', 'windows', 'android')
             name: The VM name
             image: The VM image name
             shared_directories: Optional list of directory paths to share with the VM
@@ -152,6 +149,13 @@ class Computer:
         self.logger = Logger("computer", verbosity)
         self.logger.info("Initializing Computer...")
 
+        # Normalize provider_type to enum early to ensure consistent comparisons
+        if isinstance(provider_type, str):
+            try:
+                provider_type = VMProviderType(provider_type.lower())
+            except ValueError:
+                provider_type = VMProviderType.UNKNOWN
+
         # Fall back to environment variable for api_key if not provided
         if api_key is None:
             api_key = os.environ.get("CUA_API_KEY")
@@ -173,12 +177,21 @@ class Computer:
         self.os_type = os_type
         self.provider_type = provider_type
         self.ephemeral = ephemeral
-        self.api_key = api_key if self.provider_type == VMProviderType.CLOUD else None
+        self.api_key = (
+            api_key
+            if self.provider_type in (VMProviderType.CLOUD, VMProviderType.CLOUDV2)
+            else None
+        )
         self.timeout = timeout
 
         # Set default API port if not specified
         if self.api_port is None:
-            self.api_port = 8443 if self.api_key else 8000
+            if self.provider_type == VMProviderType.CLOUDV2:
+                self.api_port = 443
+            elif self.api_key:
+                self.api_port = 8443
+            else:
+                self.api_port = 8000
 
         self.experiments = experiments or []
 
@@ -273,6 +286,7 @@ class Computer:
         self._interface = None
         self._original_interface = None  # Keep reference to original interface
         self._tracing_wrapper = None  # Tracing wrapper for interface
+        self._pty_interface = None  # Cached PtyInterface; invalidated on reconnect
         self.use_host_computer_server = use_host_computer_server
 
         # Initialize tracing
@@ -396,6 +410,12 @@ class Computer:
                                     ephemeral=ephemeral,
                                 )
                             elif self.provider_type == VMProviderType.CLOUD:
+                                self.config.vm_provider = VMProviderFactory.create_provider(
+                                    self.provider_type,
+                                    api_key=self.api_key,
+                                    verbose=verbose,
+                                )
+                            elif self.provider_type == VMProviderType.CLOUDV2:
                                 self.config.vm_provider = VMProviderFactory.create_provider(
                                     self.provider_type,
                                     api_key=self.api_key,
@@ -572,7 +592,11 @@ class Computer:
             from .interface.base import BaseComputerInterface
 
             # Pass authentication credentials if using cloud provider
-            if self.provider_type == VMProviderType.CLOUD and self.api_key and self.config.name:
+            if (
+                self.provider_type in (VMProviderType.CLOUD, VMProviderType.CLOUDV2)
+                and self.api_key
+                and self.config.name
+            ):
                 interface = cast(
                     BaseComputerInterface,
                     InterfaceFactory.create_interface_for_os(
@@ -634,16 +658,6 @@ class Computer:
                     os_type=self.os_type,
                     provider=str(self.provider_type),
                 )
-                add_breadcrumb(
-                    category="computer",
-                    message=f"Computer session started ({self.os_type})",
-                    level="info",
-                    data={
-                        "os_type": self.os_type,
-                        "provider": str(self.provider_type),
-                        "duration_seconds": duration_seconds,
-                    },
-                )
         except Exception as e:
             # Record failed session start
             if OTEL_AVAILABLE and is_otel_enabled() and self._telemetry_enabled:
@@ -654,13 +668,6 @@ class Computer:
                     status="error",
                     os_type=self.os_type,
                 )
-                capture_exception(
-                    e,
-                    context={
-                        "operation": "computer.session.start",
-                        "os_type": self.os_type,
-                    },
-                )
             raise
         finally:
             # Log initialization time for performance monitoring
@@ -670,6 +677,7 @@ class Computer:
 
     async def disconnect(self) -> None:
         """Disconnect from the computer's WebSocket interface."""
+        self._pty_interface = None
         if self._interface:
             self._interface.close()
 
@@ -710,15 +718,6 @@ class Computer:
                     duration_seconds=duration_seconds,
                     status="success",
                     os_type=self.os_type,
-                )
-                add_breadcrumb(
-                    category="computer",
-                    message=f"Computer session stopped ({self.os_type})",
-                    level="info",
-                    data={
-                        "os_type": self.os_type,
-                        "duration_seconds": duration_seconds,
-                    },
                 )
         except Exception as e:
             self.logger.debug(
@@ -802,7 +801,12 @@ class Computer:
             self.logger.info(f"Re-initializing interface for {self.os_type} at {ip_address}")
             from .interface.base import BaseComputerInterface
 
-            if self.provider_type == VMProviderType.CLOUD and self.api_key and self.config.name:
+            self._pty_interface = None
+            if (
+                self.provider_type in (VMProviderType.CLOUD, VMProviderType.CLOUDV2)
+                and self.api_key
+                and self.config.name
+            ):
                 self._interface = cast(
                     BaseComputerInterface,
                     InterfaceFactory.create_interface_for_os(
@@ -1028,13 +1032,8 @@ class Computer:
             and self._original_interface is not None
         ):
             # Create OTEL wrapper if it doesn't exist
-            if (
-                not hasattr(self, "_otel_wrapper")
-                or self._otel_wrapper is None
-            ):
-                self._otel_wrapper = OtelInterfaceWrapper(
-                    self._original_interface, self.os_type
-                )
+            if not hasattr(self, "_otel_wrapper") or self._otel_wrapper is None:
+                self._otel_wrapper = OtelInterfaceWrapper(self._original_interface, self.os_type)
             result_interface = self._otel_wrapper
 
         # Return tracing wrapper if tracing is active and we have an original interface
@@ -1055,6 +1054,35 @@ class Computer:
             return self._tracing_wrapper
 
         return result_interface
+
+    @property
+    def pty(self) -> "PtyInterface":
+        """Return a :class:`~computer.pty.PtyInterface` for spawning interactive PTY sessions.
+
+        The computer must be started (``async with Computer()`` or ``await run()``)
+        before accessing this property.
+
+        Example::
+
+            async with Computer(provider_type="docker", name="my-vm") as c:
+                handle = await c.pty.create(command="bash", cols=80, rows=24,
+                                             on_data=lambda d: print(d.decode()))
+                await handle.send_stdin(b"echo hello\\n")
+                await handle.send_stdin(b"exit\\n")
+                await handle.wait()
+        """
+        from .pty import PtyInterface
+
+        if self._interface is None:
+            raise RuntimeError("Computer not started. Use 'async with Computer()' first.")
+        if self._pty_interface is None:
+            protocol = "https" if self.api_key else "http"
+            port = getattr(self._interface, "_api_port", None) or self.api_port or 8000
+            ip = getattr(self._interface, "ip_address", "localhost")
+            base_url = f"{protocol}://{ip}:{port}"
+            vm_name = getattr(getattr(self, "config", None), "name", None) or None
+            self._pty_interface = PtyInterface(base_url, api_key=self.api_key, vm_name=vm_name)
+        return self._pty_interface
 
     @property
     def tracing(self) -> ComputerTracing:
@@ -1129,10 +1157,10 @@ class Computer:
 
     # Add virtual environment management functions to computer interface
     async def venv_install(self, venv_name: str, requirements: list[str]):
-        """Install packages in a virtual environment.
+        """Install packages in a UV project.
 
         Args:
-            venv_name: Name of the virtual environment
+            venv_name: Name of the UV project
             requirements: List of package requirements to install
 
         Returns:
@@ -1144,35 +1172,40 @@ class Computer:
             # Use %USERPROFILE% for home directory and cmd.exe semantics
             venv_path = f"%USERPROFILE%\\.venvs\\{venv_name}"
             ensure_dir_cmd = 'if not exist "%USERPROFILE%\\.venvs" mkdir "%USERPROFILE%\\.venvs"'
-            create_cmd = f'if not exist "{venv_path}" python -m venv "{venv_path}"'
-            requirements_str = " ".join(requirements)
-            # Activate via activate.bat and install
-            install_cmd = (
-                f'call "{venv_path}\\Scripts\\activate.bat" && pip install {requirements_str}'
-                if requirements_str
-                else "echo No requirements to install"
-            )
+            # Initialize UV project if it doesn't exist
+            create_cmd = f'if not exist "{venv_path}" uv init --vcs none --no-readme --no-workspace --no-pin-python "{venv_path}"'
             await self.interface.run_command(ensure_dir_cmd)
             await self.interface.run_command(create_cmd)
-            return await self.interface.run_command(install_cmd)
+            # Install packages
+            if requirements_str := " ".join(requirements):
+                install_cmd = f'uv add --directory "{venv_path}" {requirements_str}'
+                return await self.interface.run_command(install_cmd)
+            return await self.interface.run_command("echo No requirements to install")
+        elif self.os_type == "android":
+            # Android: Use hardcoded path as $HOME may not be set
+            venv_path = f"/home/androidusr/.venvs/{venv_name}"
+            # Initialize UV project if it doesn't exist
+            create_cmd = f'mkdir -p "/home/androidusr/.venvs" && (test -d "{venv_path}" || uv init --vcs none --no-readme --no-workspace --no-pin-python "{venv_path}")'
+            await self.interface.run_command(create_cmd)
+            # Install packages
+            if requirements_str := " ".join(requirements):
+                install_cmd = f'uv add --directory "{venv_path}" {requirements_str}'
+                return await self.interface.run_command(install_cmd)
+            return await self.interface.run_command("echo No requirements to install")
         else:
             # POSIX (macOS/Linux)
             venv_path = f"$HOME/.venvs/{venv_name}"
-            create_cmd = f'mkdir -p "$HOME/.venvs" && python -m venv "{venv_path}"'
-            # Check if venv exists, if not create it
-            check_cmd = f'test -d "{venv_path}" || ({create_cmd})'
-            _ = await self.interface.run_command(check_cmd)
+            # Initialize UV project if it doesn't exist
+            create_cmd = f'mkdir -p "$HOME/.venvs" && (test -d "{venv_path}" || uv init --vcs none --no-readme --no-workspace --no-pin-python "{venv_path}")'
+            await self.interface.run_command(create_cmd)
             # Install packages
-            requirements_str = " ".join(requirements)
-            install_cmd = (
-                f'. "{venv_path}/bin/activate" && pip install {requirements_str}'
-                if requirements_str
-                else "echo No requirements to install"
-            )
-        return await self.interface.run_command(install_cmd)
+            if requirements_str := " ".join(requirements):
+                install_cmd = f'uv add --directory "{venv_path}" {requirements_str}'
+                return await self.interface.run_command(install_cmd)
+            return await self.interface.run_command("echo No requirements to install")
 
     async def pip_install(self, requirements: list[str]):
-        """Install packages using the system Python/pip (no venv).
+        """Install packages using the system Python with UV (no venv).
 
         Args:
             requirements: List of package requirements to install globally/user site.
@@ -1184,44 +1217,57 @@ class Computer:
         if not requirements:
             return await self.interface.run_command("echo No requirements to install")
 
-        # Use python -m pip for cross-platform consistency
         reqs = " ".join(requirements)
-        install_cmd = f"python -m pip install {reqs}"
+        install_cmd = f"uv pip install --system {reqs}"
         return await self.interface.run_command(install_cmd)
 
     async def venv_cmd(self, venv_name: str, command: str):
-        """Execute a shell command in a virtual environment.
+        """Execute a shell command in a UV project.
 
         Args:
-            venv_name: Name of the virtual environment
-            command: Shell command to execute in the virtual environment
+            venv_name: Name of the UV project
+            command: Shell command to execute in the UV project
 
         Returns:
             Tuple of (stdout, stderr) from the command execution
         """
         if self.os_type == "windows":
             # Windows (cmd.exe)
-            venv_path = f"%USERPROFILE%\\.venvs\\{venv_name}"
+            project_path = f"%USERPROFILE%\\.venvs\\{venv_name}"
             # Check existence and signal if missing
-            check_cmd = f'if not exist "{venv_path}" (echo VENV_NOT_FOUND) else (echo VENV_FOUND)'
+            check_cmd = (
+                f'if not exist "{project_path}" (echo VENV_NOT_FOUND) else (echo VENV_FOUND)'
+            )
             result = await self.interface.run_command(check_cmd)
             if "VENV_NOT_FOUND" in getattr(result, "stdout", ""):
-                # Auto-create the venv with no requirements
+                # Auto-create the UV project with no requirements
                 await self.venv_install(venv_name, [])
-            # Activate and run the command
-            full_command = f'call "{venv_path}\\Scripts\\activate.bat" && {command}'
+            # Execute command in project
+            full_command = f'uv run --directory "{project_path}" {command}'
+            return await self.interface.run_command(full_command)
+        elif self.os_type == "android":
+            # Android: Use hardcoded path as $HOME may not be set
+            project_path = f"/home/androidusr/.venvs/{venv_name}"
+            # Check if UV project exists
+            check_cmd = f'test -d "{project_path}"'
+            result = await self.interface.run_command(check_cmd)
+            if result.stderr or "test:" in result.stdout:  # project doesn't exist
+                # Auto-create the UV project with no requirements
+                await self.venv_install(venv_name, [])
+            # Execute command in project
+            full_command = f'uv run --directory "{project_path}" {command}'
             return await self.interface.run_command(full_command)
         else:
             # POSIX (macOS/Linux)
-            venv_path = f"$HOME/.venvs/{venv_name}"
-            # Check if virtual environment exists
-            check_cmd = f'test -d "{venv_path}"'
+            project_path = f"$HOME/.venvs/{venv_name}"
+            # Check if UV project exists
+            check_cmd = f'test -d "{project_path}"'
             result = await self.interface.run_command(check_cmd)
-            if result.stderr or "test:" in result.stdout:  # venv doesn't exist
-                # Auto-create the venv with no requirements
+            if result.stderr or "test:" in result.stdout:  # project doesn't exist
+                # Auto-create the UV project with no requirements
                 await self.venv_install(venv_name, [])
-            # Activate virtual environment and run command
-            full_command = f'. "{venv_path}/bin/activate" && {command}'
+            # Execute command in project
+            full_command = f'uv run --directory "{project_path}" {command}'
             return await self.interface.run_command(full_command)
 
     async def venv_exec(self, venv_name: str, python_func, *args, **kwargs):
@@ -1307,6 +1353,20 @@ print(f"<<<VENV_EXEC_START>>>{{output_json}}<<<VENV_EXEC_END>>>")
         # Encode the Python code in base64 to avoid shell escaping issues
         encoded_code = base64.b64encode(python_code.encode("utf-8")).decode("ascii")
 
+        # Detect if function is async
+        import inspect
+
+        is_async = inspect.iscoroutinefunction(python_func)
+
+        # Update the execution code to handle async functions
+        if is_async:
+            # For async functions, we need to run them with asyncio
+            python_code = python_code.replace(
+                f"result = {func_name}(*args, **kwargs)",
+                f"import asyncio\n    result = asyncio.run({func_name}(*args, **kwargs))",
+            )
+            encoded_code = base64.b64encode(python_code.encode("utf-8")).decode("ascii")
+
         # Execute the Python code in the virtual environment
         python_command = (
             f"python -c \"import base64; exec(base64.b64decode('{encoded_code}').decode('utf-8'))\""
@@ -1384,12 +1444,23 @@ print(f"<<<VENV_EXEC_START>>>{{output_json}}<<<VENV_EXEC_END>>>")
         reqs_list = requirements or []
         reqs_json = json.dumps(reqs_list)
 
+        # Detect if function is async
+        import inspect
+
+        is_async = inspect.iscoroutinefunction(python_func)
+
         # Create Python code that will define and execute the function
         args_b64 = base64.b64encode(args_json.encode("utf-8")).decode("ascii")
         kwargs_b64 = base64.b64encode(kwargs_json.encode("utf-8")).decode("ascii")
 
-        payload_code = (
-            f'''
+        # Choose the execution statement based on whether function is async
+        exec_statement = (
+            f"import asyncio\n    _ = asyncio.run({func_name}(*args, **kwargs))"
+            if is_async
+            else f"_ = {func_name}(*args, **kwargs)"
+        )
+
+        payload_code = f'''
 import json
 import traceback
 import base64
@@ -1397,67 +1468,106 @@ import base64
 try:
     # Define the function from source
 {textwrap.indent(func_source, "    ")}
-    
+
     # Deserialize args and kwargs from base64 JSON
     _args_b64 = """{args_b64}"""
     _kwargs_b64 = """{kwargs_b64}"""
     args = json.loads(base64.b64decode(_args_b64).decode('utf-8'))
     kwargs = json.loads(base64.b64decode(_kwargs_b64).decode('utf-8'))
-    
-    # Ensure requirements inside the active venv
-    for pkg in json.loads('''
-            + repr(reqs_json)
-            + """):
+
+    # Ensure requirements in UV project
+    for pkg in json.loads({repr(reqs_json)}):
         if pkg:
-            import subprocess, sys
-            subprocess.run([sys.executable, '-m', 'pip', 'install', pkg], check=False)
-    _ = {func_name}(*args, **kwargs)
+            import subprocess, sys, os
+            # Get project path from current working directory (set by uv run)
+            project_path = os.getcwd()
+            subprocess.run(['uv', 'add', '--directory', project_path, pkg], check=False)
+    {exec_statement}
 except Exception:
     import sys
     sys.stderr.write(traceback.format_exc())
-"""
-        )
+'''
         payload_b64 = base64.b64encode(payload_code.encode("utf-8")).decode("ascii")
 
+        # Auto-create UV project if needed
+        await self.venv_install(venv_name, [])
+
         if self.os_type == "windows":
-            # Launcher spawns detached child and prints its PID
+            # Launcher spawns detached child using uv run and prints its PID
+            venv_path = f"%USERPROFILE%\\.venvs\\{venv_name}"
             launcher_code = f"""
 import base64, subprocess, os, sys
 DETACHED_PROCESS = 0x00000008
 CREATE_NEW_PROCESS_GROUP = 0x00000200
 creationflags = DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
 code = base64.b64decode("{payload_b64}").decode("utf-8")
-p = subprocess.Popen(["python", "-c", code], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=creationflags)
+# Expand environment variables in path
+venv_path = os.path.join(os.path.expandvars('%USERPROFILE%'), '.venvs', '{venv_name}')
+p = subprocess.Popen(["uv", "run", "--directory", venv_path, "python", "-c", code], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=creationflags, cwd=venv_path)
 print(p.pid)
 """
             launcher_b64 = base64.b64encode(launcher_code.encode("utf-8")).decode("ascii")
-            venv_path = f"%USERPROFILE%\\.venvs\\{venv_name}"
-            cmd = (
-                'cmd /c "'
-                f'call "{venv_path}\\Scripts\\activate.bat" && '
-                f"python -c \"import base64; exec(base64.b64decode('{launcher_b64}').decode('utf-8'))\""
-                '"'
-            )
+            # Use UV to run the launcher code in the project
+            cmd = f"uv run --directory \"{venv_path}\" python -c \"import base64; exec(base64.b64decode('{launcher_b64}').decode('utf-8'))\""
             result = await self.interface.run_command(cmd)
-            pid_str = (result.stdout or "").strip().splitlines()[-1].strip()
+            stdout_lines = (result.stdout or "").strip().splitlines()
+            if not stdout_lines:
+                raise Exception(
+                    f"Failed to launch background process. No output received.\n"
+                    f"stdout: {result.stdout}\n"
+                    f"stderr: {result.stderr}"
+                )
+            pid_str = stdout_lines[-1].strip()
             return int(pid_str)
-        else:
+        elif self.os_type == "android":
             log = f"/tmp/cua_bg_{int(_time.time())}.log"
+            venv_path = f"/home/androidusr/.venvs/{venv_name}"
             launcher_code = f"""
 import base64, subprocess, os, sys
 code = base64.b64decode("{payload_b64}").decode("utf-8")
+# Use hardcoded path for Android
+venv_path = "/home/androidusr/.venvs/{venv_name}"
 with open("{log}", "ab", buffering=0) as f:
-    p = subprocess.Popen(["python", "-c", code], stdout=f, stderr=subprocess.STDOUT, preexec_fn=getattr(os, "setsid", None))
+    p = subprocess.Popen(["uv", "run", "--directory", venv_path, "python", "-c", code], stdout=f, stderr=subprocess.STDOUT, preexec_fn=getattr(os, "setsid", None), cwd=venv_path)
 print(p.pid)
 """
             launcher_b64 = base64.b64encode(launcher_code.encode("utf-8")).decode("ascii")
+            # Run the launcher code in the project
+            cmd = f"uv run --directory \"{venv_path}\" python -c \"import base64; exec(base64.b64decode('{launcher_b64}').decode('utf-8'))\""
+            result = await self.interface.run_command(cmd)
+            stdout_lines = (result.stdout or "").strip().splitlines()
+            if not stdout_lines:
+                raise Exception(
+                    f"Failed to launch background process. No output received.\n"
+                    f"stdout: {result.stdout}\n"
+                    f"stderr: {result.stderr}"
+                )
+            pid_str = stdout_lines[-1].strip()
+            return int(pid_str)
+        else:
+            log = f"/tmp/cua_bg_{int(_time.time())}.log"
             venv_path = f"$HOME/.venvs/{venv_name}"
-            shell = (
-                f'. "{venv_path}/bin/activate" && '
-                f"python -c \"import base64; exec(base64.b64decode('{launcher_b64}').decode('utf-8'))\""
-            )
-            result = await self.interface.run_command(shell)
-            pid_str = (result.stdout or "").strip().splitlines()[-1].strip()
+            launcher_code = f"""
+import base64, subprocess, os, sys
+code = base64.b64decode("{payload_b64}").decode("utf-8")
+# Expand home directory in path
+venv_path = os.path.join(os.path.expanduser('~'), '.venvs', '{venv_name}')
+with open("{log}", "ab", buffering=0) as f:
+    p = subprocess.Popen(["uv", "run", "--directory", venv_path, "python", "-c", code], stdout=f, stderr=subprocess.STDOUT, preexec_fn=getattr(os, "setsid", None), cwd=venv_path)
+print(p.pid)
+"""
+            launcher_b64 = base64.b64encode(launcher_code.encode("utf-8")).decode("ascii")
+            # Run the launcher code in the project
+            cmd = f"uv run --directory \"{venv_path}\" python -c \"import base64; exec(base64.b64decode('{launcher_b64}').decode('utf-8'))\""
+            result = await self.interface.run_command(cmd)
+            stdout_lines = (result.stdout or "").strip().splitlines()
+            if not stdout_lines:
+                raise Exception(
+                    f"Failed to launch background process. No output received.\n"
+                    f"stdout: {result.stdout}\n"
+                    f"stderr: {result.stderr}"
+                )
+            pid_str = stdout_lines[-1].strip()
             return int(pid_str)
 
     async def python_exec(self, python_func, *args, **kwargs):
@@ -1483,9 +1593,21 @@ print(p.pid)
         except Exception as e:
             raise Exception(f"Failed to reconstruct function source: {e}")
 
+        # Detect if function is async
+        import inspect
+
+        is_async = inspect.iscoroutinefunction(python_func)
+
         # Create Python code that will define and execute the function
         args_b64 = base64.b64encode(args_json.encode("utf-8")).decode("ascii")
         kwargs_b64 = base64.b64encode(kwargs_json.encode("utf-8")).decode("ascii")
+
+        # Choose the execution statement based on whether function is async
+        exec_statement = (
+            f"import asyncio\n    result = asyncio.run({func_name}(*args, **kwargs))"
+            if is_async
+            else f"result = {func_name}(*args, **kwargs)"
+        )
 
         python_code = f'''
 import json
@@ -1495,15 +1617,15 @@ import base64
 try:
     # Define the function from source
 {textwrap.indent(func_source, "    ")}
-    
+
     # Deserialize args and kwargs from base64 JSON
     _args_b64 = """{args_b64}"""
     _kwargs_b64 = """{kwargs_b64}"""
     args = json.loads(base64.b64decode(_args_b64).decode('utf-8'))
     kwargs = json.loads(base64.b64decode(_kwargs_b64).decode('utf-8'))
-    
+
     # Execute the function
-    result = {func_name}(*args, **kwargs)
+    {exec_statement}
 
     # Create success output payload
     output_payload = {{
@@ -1511,7 +1633,7 @@ try:
         "result": result,
         "error": None
     }}
-    
+
 except Exception as e:
     # Create error output payload
     output_payload = {{
@@ -1533,9 +1655,9 @@ print(f"<<<VENV_EXEC_START>>>{{output_json}}<<<VENV_EXEC_END>>>")
 '''
 
         encoded_code = base64.b64encode(python_code.encode("utf-8")).decode("ascii")
-        python_command = (
-            f"python -c \"import base64; exec(base64.b64decode('{encoded_code}').decode('utf-8'))\""
-        )
+        # Use python3 on POSIX systems, python on Windows
+        python_cmd = "python" if self.os_type == "windows" else "python3"
+        python_command = f"{python_cmd} -c \"import base64; exec(base64.b64decode('{encoded_code}').decode('utf-8'))\""
         result = await self.interface.run_command(python_command)
 
         start_marker = "<<<VENV_EXEC_START>>>"
@@ -1596,9 +1718,21 @@ print(f"<<<VENV_EXEC_START>>>{{output_json}}<<<VENV_EXEC_END>>>")
         except Exception as e:
             raise Exception(f"Failed to reconstruct function source: {e}")
 
+        # Detect if function is async
+        import inspect
+
+        is_async = inspect.iscoroutinefunction(python_func)
+
         # Create Python code that will define and execute the function
         args_b64 = base64.b64encode(args_json.encode("utf-8")).decode("ascii")
         kwargs_b64 = base64.b64encode(kwargs_json.encode("utf-8")).decode("ascii")
+
+        # Choose the execution statement based on whether function is async
+        exec_statement = (
+            f"import asyncio\n    _ = asyncio.run({func_name}(*args, **kwargs))"
+            if is_async
+            else f"_ = {func_name}(*args, **kwargs)"
+        )
 
         payload_code = f'''
 import json
@@ -1608,14 +1742,14 @@ import base64
 try:
     # Define the function from source
 {textwrap.indent(func_source, "    ")}
-    
+
     # Deserialize args and kwargs from base64 JSON
     _args_b64 = """{args_b64}"""
     _kwargs_b64 = """{kwargs_b64}"""
     args = json.loads(base64.b64decode(_args_b64).decode('utf-8'))
     kwargs = json.loads(base64.b64decode(_kwargs_b64).decode('utf-8'))
-    
-    _ = {func_name}(*args, **kwargs)
+
+    {exec_statement}
 except Exception:
     import sys
     sys.stderr.write(traceback.format_exc())
@@ -1633,9 +1767,17 @@ p = subprocess.Popen(["python", "-c", code], stdout=subprocess.DEVNULL, stderr=s
 print(p.pid)
 """
             launcher_b64 = base64.b64encode(launcher_code.encode("utf-8")).decode("ascii")
+            # Use python on Windows
             cmd = f"python -c \"import base64; exec(base64.b64decode('{launcher_b64}').decode('utf-8'))\""
             result = await self.interface.run_command(cmd)
-            pid_str = (result.stdout or "").strip().splitlines()[-1].strip()
+            stdout_lines = (result.stdout or "").strip().splitlines()
+            if not stdout_lines:
+                raise Exception(
+                    f"Failed to launch background process. No output received.\n"
+                    f"stdout: {result.stdout}\n"
+                    f"stderr: {result.stderr}"
+                )
+            pid_str = stdout_lines[-1].strip()
             return int(pid_str)
         else:
             log = f"/tmp/cua_bg_{int(_time.time())}.log"
@@ -1643,13 +1785,21 @@ print(p.pid)
 import base64, subprocess, os, sys
 code = base64.b64decode("{payload_b64}").decode("utf-8")
 with open("{log}", "ab", buffering=0) as f:
-    p = subprocess.Popen(["python", "-c", code], stdout=f, stderr=subprocess.STDOUT, preexec_fn=getattr(os, "setsid", None))
+    p = subprocess.Popen(["python3", "-c", code], stdout=f, stderr=subprocess.STDOUT, preexec_fn=getattr(os, "setsid", None))
 print(p.pid)
 """
             launcher_b64 = base64.b64encode(launcher_code.encode("utf-8")).decode("ascii")
-            cmd = f"python -c \"import base64; exec(base64.b64decode('{launcher_b64}').decode('utf-8'))\""
+            # Use python3 on POSIX systems
+            cmd = f"python3 -c \"import base64; exec(base64.b64decode('{launcher_b64}').decode('utf-8'))\""
             result = await self.interface.run_command(cmd)
-            pid_str = (result.stdout or "").strip().splitlines()[-1].strip()
+            stdout_lines = (result.stdout or "").strip().splitlines()
+            if not stdout_lines:
+                raise Exception(
+                    f"Failed to launch background process. No output received.\n"
+                    f"stdout: {result.stdout}\n"
+                    f"stderr: {result.stderr}"
+                )
+            pid_str = stdout_lines[-1].strip()
             return int(pid_str)
 
     def python_command(

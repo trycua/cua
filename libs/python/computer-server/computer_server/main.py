@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import hashlib
 import inspect
 import json
@@ -13,6 +14,7 @@ from typing import Any, Dict, List, Literal, Optional, Union, cast
 
 import aiohttp
 import uvicorn
+from core.telemetry import record_event
 from fastapi import (
     FastAPI,
     Header,
@@ -26,6 +28,14 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 from .browser import get_browser_manager
 from .handlers.factory import OS_TYPE, HandlerFactory
+
+# Try to import MCP server for SSE integration
+try:
+    from .mcp_server import create_mcp_server
+
+    HAS_MCP = True
+except ImportError:
+    HAS_MCP = False
 
 # Authentication session TTL (in seconds). Override via env var CUA_AUTH_TTL_SECONDS. Default: 60s
 AUTH_SESSION_TTL_SECONDS: int = int(os.environ.get("CUA_AUTH_TTL_SECONDS", "60"))
@@ -44,12 +54,26 @@ logger.setLevel(logging.INFO)
 # Configure WebSocket with larger message size
 WEBSOCKET_MAX_SIZE = 1024 * 1024 * 10  # 10MB limit
 
-# Configure application with WebSocket settings
+# Create MCP app first if available (needed for lifespan)
+_mcp_http_app = None
+if HAS_MCP:
+    try:
+        mcp_server = create_mcp_server()
+        # Configure FastMCP to use "/" as its internal path, then mount at /mcp
+        # This results in endpoint at /mcp (mount) + / (internal) = /mcp
+        _mcp_http_app = mcp_server.http_app(path="/")
+        logger.info("MCP server created for /mcp endpoint (streamable HTTP transport)")
+    except Exception as e:
+        logger.warning(f"Failed to create MCP server: {e}")
+
+# Configure application with WebSocket settings and MCP lifespan
 app = FastAPI(
     title="Computer API",
     description="API for the Computer project",
     version="0.1.0",
     websocket_max_size=WEBSOCKET_MAX_SIZE,
+    lifespan=_mcp_http_app.lifespan if _mcp_http_app else None,
+    redirect_slashes=False,
 )
 
 # CORS configuration
@@ -61,6 +85,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Mount MCP server at /mcp - FastMCP's internal path is "/" so endpoint is /mcp
+if _mcp_http_app:
+    app.mount("/mcp", _mcp_http_app)
 
 protocol_version = 1
 try:
@@ -84,6 +112,46 @@ except Exception:
     desktop_handler,
     window_handler,
 ) = HandlerFactory.create_handlers()
+
+
+# Helper function for direction-based scrolling
+async def _scroll_direction_handler(direction: str, clicks: int = 1) -> Dict[str, Any]:
+    """
+    Scroll in a specified direction.
+
+    Args:
+        direction: One of 'up', 'down', 'left', 'right'
+        clicks: Number of scroll clicks (default: 1)
+    """
+    direction = direction.lower()
+    if direction == "down":
+        return await automation_handler.scroll_down(clicks)
+    elif direction == "up":
+        return await automation_handler.scroll_up(clicks)
+    elif direction in ("left", "right"):
+        # For horizontal scrolling, use scroll with x amount
+        x_amount = -300 if direction == "left" else 300
+        return await automation_handler.scroll(x_amount * clicks, 0)
+    else:
+        raise ValueError(f"Invalid direction: {direction}. Use 'up', 'down', 'left', or 'right'.")
+
+
+# Command aliases for common alternative names
+COMMAND_ALIASES = {
+    "type": "type_text",
+    "key": "press_key",
+    "tap": "left_click",
+    "click": "left_click",
+    "shell": "run_command",
+    "exec": "run_command",
+    "read_file": "read_text",
+    "write_file": "write_text",
+    "ls": "list_dir",
+    "mkdir": "create_dir",
+    "rm": "delete_file",
+    "rmdir": "delete_dir",
+}
+
 handlers = {
     "version": lambda: {"protocol": protocol_version, "package": package_version},
     # App-Use commands
@@ -141,6 +209,7 @@ handlers = {
     "scroll": automation_handler.scroll,
     "scroll_down": automation_handler.scroll_down,
     "scroll_up": automation_handler.scroll_up,
+    "scroll_direction": _scroll_direction_handler,
     # Screen actions
     "screenshot": automation_handler.screenshot,
     "get_cursor_position": automation_handler.get_cursor_position,
@@ -202,8 +271,10 @@ class AuthenticationManager:
         logger.info(f"Authenticating with TryCUA API for container: {container_name}")
 
         try:
+            from core.http import cua_version_headers
+
             async with aiohttp.ClientSession() as session:
-                headers = {"Authorization": f"Bearer {api_key}"}
+                headers = {"Authorization": f"Bearer {api_key}", **cua_version_headers()}
 
                 async with session.get(
                     f"https://www.cua.ai/api/vm/auth?container_name={container_name}",
@@ -259,6 +330,28 @@ class ConnectionManager:
 manager = ConnectionManager()
 auth_manager = AuthenticationManager()
 
+# PTY session manager (lazy-initialised)
+from .pty_manager import PtyManager
+
+pty_manager = PtyManager()
+
+
+def _resolve_command(command: str) -> str:
+    """Resolve command aliases to their canonical names."""
+    return COMMAND_ALIASES.get(command, command)
+
+
+def _suggest_similar_commands(command: str) -> List[str]:
+    """Suggest similar commands for typos."""
+    all_commands = list(handlers.keys()) + list(COMMAND_ALIASES.keys())
+    suggestions = []
+    command_lower = command.lower()
+    for cmd in all_commands:
+        # Simple similarity: starts with same letter or contains the input
+        if cmd.lower().startswith(command_lower[:2]) or command_lower in cmd.lower():
+            suggestions.append(cmd)
+    return suggestions[:5]
+
 
 @app.get("/status")
 async def status():
@@ -266,7 +359,45 @@ async def status():
     features = []
     if HAS_AGENT:
         features.append("agent")
+    if HAS_MCP:
+        features.append("mcp")
     return {"status": "ok", "os_type": OS_TYPE, "features": features}
+
+
+@app.get("/commands")
+async def list_commands():
+    """List all available commands and their aliases."""
+    commands_info = {}
+    for cmd_name, handler_func in handlers.items():
+        try:
+            sig = inspect.signature(handler_func)
+            params = [
+                {
+                    "name": p.name,
+                    "required": p.default == inspect.Parameter.empty,
+                    "default": None if p.default == inspect.Parameter.empty else p.default,
+                }
+                for p in sig.parameters.values()
+            ]
+        except (ValueError, TypeError):
+            params = []
+        commands_info[cmd_name] = {"params": params}
+
+    # Add alias information
+    aliases_by_command: Dict[str, List[str]] = {}
+    for alias, canonical in COMMAND_ALIASES.items():
+        if canonical not in aliases_by_command:
+            aliases_by_command[canonical] = []
+        aliases_by_command[canonical].append(alias)
+
+    for cmd_name in commands_info:
+        if cmd_name in aliases_by_command:
+            commands_info[cmd_name]["aliases"] = aliases_by_command[cmd_name]
+
+    return {
+        "commands": commands_info,
+        "aliases": COMMAND_ALIASES,
+    }
 
 
 @app.websocket("/ws", name="websocket_endpoint")
@@ -326,6 +457,17 @@ async def websocket_endpoint(websocket: WebSocket):
             logger.info(f"Authentication successful for VM: {client_container_name}")
             await websocket.send_json({"success": True, "message": "Authentication successful"})
 
+            # Emit vm_session_started event for funnel tracking
+            api_key_hash = hashlib.sha256(client_api_key.encode()).hexdigest()
+            record_event(
+                "vm_session_started",
+                {
+                    "api_key_hash": api_key_hash,
+                    "vm_id": client_container_name,
+                    "connection_type": "websocket",
+                },
+            )
+
         except Exception as e:
             logger.error(f"Error during authentication handshake: {str(e)}")
             await websocket.send_json({"success": False, "error": "Authentication failed"})
@@ -340,10 +482,15 @@ async def websocket_endpoint(websocket: WebSocket):
                 command = data.get("command")
                 params = data.get("params", {})
 
+                # Resolve command aliases
+                command = _resolve_command(command)
+
                 if command not in handlers:
-                    await websocket.send_json(
-                        {"success": False, "error": f"Unknown command: {command}"}
-                    )
+                    suggestions = _suggest_similar_commands(command)
+                    error_msg = f"Unknown command: {command}"
+                    if suggestions:
+                        error_msg += f". Did you mean: {', '.join(suggestions)}?"
+                    await websocket.send_json({"success": False, "error": error_msg})
                     continue
 
                 try:
@@ -422,6 +569,9 @@ async def cmd_endpoint(
     if not command:
         raise HTTPException(status_code=400, detail="Command is required")
 
+    # Resolve command aliases
+    command = _resolve_command(command)
+
     # Check if CONTAINER_NAME is set (indicating cloud provider)
     server_container_name = os.environ.get("CONTAINER_NAME")
 
@@ -443,8 +593,23 @@ async def cmd_endpoint(
         if not is_authenticated:
             raise HTTPException(status_code=401, detail="Authentication failed")
 
+        # Emit vm_session_started event for funnel tracking
+        api_key_hash = hashlib.sha256(api_key.encode()).hexdigest()
+        record_event(
+            "vm_session_started",
+            {
+                "api_key_hash": api_key_hash,
+                "vm_id": container_name,
+                "connection_type": "http",
+            },
+        )
+
     if command not in handlers:
-        raise HTTPException(status_code=400, detail=f"Unknown command: {command}")
+        suggestions = _suggest_similar_commands(command)
+        error_msg = f"Unknown command: {command}"
+        if suggestions:
+            error_msg += f". Did you mean: {', '.join(suggestions)}?"
+        raise HTTPException(status_code=400, detail=error_msg)
 
     async def generate_response():
         """Generate streaming response for the command execution"""
@@ -481,6 +646,243 @@ async def cmd_endpoint(
             "Connection": "keep-alive",
         },
     )
+
+
+async def _require_auth(
+    container_name: Optional[str],
+    api_key: Optional[str],
+) -> None:
+    """Raise HTTPException(401) when cloud auth is configured and credentials are invalid."""
+    server_container_name = os.environ.get("CONTAINER_NAME")
+    if not server_container_name:
+        return  # local development — no auth required
+    if not container_name:
+        raise HTTPException(status_code=401, detail="Container name required")
+    if not api_key:
+        raise HTTPException(status_code=401, detail="API key required")
+    if not await auth_manager.auth(container_name, api_key):
+        raise HTTPException(status_code=401, detail="Authentication failed")
+
+
+# ---------------------------------------------------------------------------
+# PTY endpoints
+# ---------------------------------------------------------------------------
+
+
+@app.post("/pty")
+async def pty_create(
+    request: Request,
+    container_name: Optional[str] = Header(None, alias="X-Container-Name"),
+    api_key: Optional[str] = Header(None, alias="X-API-Key"),
+):
+    """Spawn a new PTY session.
+
+    Body (JSON, all fields optional):
+    ``{"command": str, "cols": int, "rows": int, "cwd": str, "envs": dict}``
+
+    Returns: ``{"pid": int, "cols": int, "rows": int}``
+    """
+    await _require_auth(container_name, api_key)
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    info = await pty_manager.create(
+        command=body.get("command"),
+        cols=int(body.get("cols", 80)),
+        rows=int(body.get("rows", 24)),
+        cwd=body.get("cwd"),
+        envs=body.get("envs"),
+    )
+    return info
+
+
+@app.get("/pty/{pid}")
+async def pty_info(
+    pid: int,
+    container_name: Optional[str] = Header(None, alias="X-Container-Name"),
+    api_key: Optional[str] = Header(None, alias="X-API-Key"),
+):
+    """Return metadata for PTY session *pid*.
+
+    Returns: ``{"pid": int, "cols": int, "rows": int}``
+    """
+    await _require_auth(container_name, api_key)
+    info = pty_manager.get_info(pid)
+    if info is None:
+        from fastapi import HTTPException
+
+        raise HTTPException(status_code=404, detail=f"PTY session {pid} not found")
+    return info
+
+
+@app.delete("/pty/{pid}")
+async def pty_kill(
+    pid: int,
+    container_name: Optional[str] = Header(None, alias="X-Container-Name"),
+    api_key: Optional[str] = Header(None, alias="X-API-Key"),
+):
+    """Kill PTY session *pid*.
+
+    Returns: ``{"killed": bool}``
+    """
+    await _require_auth(container_name, api_key)
+    killed = await pty_manager.kill(pid)
+    return {"killed": killed}
+
+
+@app.post("/pty/{pid}/stdin")
+async def pty_stdin(
+    pid: int,
+    request: Request,
+    container_name: Optional[str] = Header(None, alias="X-Container-Name"),
+    api_key: Optional[str] = Header(None, alias="X-API-Key"),
+):
+    """Write data to stdin of PTY session *pid*.
+
+    Body: ``{"data": "<base64-encoded bytes>"}``
+    """
+    await _require_auth(container_name, api_key)
+    body = await request.json()
+    raw = base64.b64decode(body.get("data", ""))
+    await pty_manager.send_stdin(pid, raw)
+    return {"ok": True}
+
+
+@app.post("/pty/{pid}/resize")
+async def pty_resize(
+    pid: int,
+    request: Request,
+    container_name: Optional[str] = Header(None, alias="X-Container-Name"),
+    api_key: Optional[str] = Header(None, alias="X-API-Key"),
+):
+    """Resize the terminal for PTY session *pid*.
+
+    Body: ``{"cols": int, "rows": int}``
+    """
+    await _require_auth(container_name, api_key)
+    body = await request.json()
+    await pty_manager.resize(pid, int(body.get("cols", 80)), int(body.get("rows", 24)))
+    return {"ok": True}
+
+
+@app.get("/pty/{pid}/stream")
+async def pty_stream(
+    pid: int,
+    container_name: Optional[str] = Header(None, alias="X-Container-Name"),
+    api_key: Optional[str] = Header(None, alias="X-API-Key"),
+):
+    """SSE stream for PTY session *pid*.
+
+    Events:
+    - ``data: {"type": "output", "data": "<base64>"}``
+    - ``data: {"type": "exit", "code": <int>}``
+    """
+    await _require_auth(container_name, api_key)
+
+    q = pty_manager.subscribe(pid)
+
+    async def _generate():
+        try:
+            while True:
+                msg = await q.get()
+                if msg["type"] == "output":
+                    payload = {"type": "output", "data": base64.b64encode(msg["data"]).decode()}
+                else:
+                    payload = {"type": "exit", "code": msg.get("code", 0)}
+                yield f"data: {json.dumps(payload)}\n\n"
+                if msg["type"] == "exit":
+                    break
+        finally:
+            pty_manager.unsubscribe(pid, q)
+
+    return StreamingResponse(
+        _generate(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
+    )
+
+
+@app.websocket("/pty/{pid}/ws")
+async def pty_ws(
+    pid: int,
+    websocket: WebSocket,
+):
+    """WebSocket endpoint for interactive PTY session *pid*.
+
+    Auth (when CONTAINER_NAME is set): pass ``api_key`` and
+    ``container_name`` as query parameters, e.g.
+    ``/pty/123/ws?api_key=…&container_name=…``.
+
+    Client → Server messages (JSON):
+    - ``{"type": "stdin",   "data": "<base64>"}``
+    - ``{"type": "resize",  "cols": N, "rows": N}``
+    - ``{"type": "disconnect"}``
+
+    Server → Client messages (JSON):
+    - ``{"type": "output", "data": "<base64>"}``
+    - ``{"type": "exit",   "code": N}``
+    """
+    container_name = websocket.query_params.get("container_name")
+    api_key = websocket.query_params.get("api_key")
+    try:
+        await _require_auth(container_name, api_key)
+    except HTTPException:
+        await websocket.close(code=1008)  # 1008 = Policy Violation
+        return
+
+    await websocket.accept()
+
+    q = pty_manager.subscribe(pid)
+
+    async def _send_output():
+        """Forward PTY output to the WebSocket client."""
+        try:
+            while True:
+                msg = await q.get()
+                if msg["type"] == "output":
+                    payload = {"type": "output", "data": base64.b64encode(msg["data"]).decode()}
+                else:
+                    payload = {"type": "exit", "code": msg.get("code", 0)}
+                await websocket.send_text(json.dumps(payload))
+                if msg["type"] == "exit":
+                    break
+        except Exception:
+            pass
+        finally:
+            pty_manager.unsubscribe(pid, q)
+
+    output_task = asyncio.create_task(_send_output())
+
+    try:
+        while True:
+            try:
+                raw = await websocket.receive_text()
+            except WebSocketDisconnect:
+                break
+            except Exception:
+                break
+
+            try:
+                msg = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+
+            msg_type = msg.get("type")
+            if msg_type == "stdin":
+                data = base64.b64decode(msg.get("data", ""))
+                await pty_manager.send_stdin(pid, data)
+            elif msg_type == "resize":
+                await pty_manager.resize(pid, int(msg.get("cols", 80)), int(msg.get("rows", 24)))
+            elif msg_type == "disconnect":
+                break
+    finally:
+        output_task.cancel()
+        pty_manager.unsubscribe(pid, q)
+        try:
+            await websocket.close()
+        except Exception:
+            pass
 
 
 @app.post("/responses")
@@ -568,12 +970,46 @@ async def agent_response_endpoint(
     # and delegates to our existing automation/file/accessibility handlers.
     from agent.computers import AsyncComputerHandler  # runtime-checkable Protocol
 
+    class DirectComputerInterface:
+        """Interface wrapper providing BrowserTool compatibility.
+
+        Matches the same interface shape as Computer.interface so BrowserTool
+        works identically with both Computer (cloud) and DirectComputer (local).
+        """
+
+        def __init__(self, automation_handler, browser_manager):
+            self._auto = automation_handler
+            self._browser = browser_manager
+
+        @property
+        def interface(self):
+            """Return automation handler for hotkey, move_cursor, etc."""
+            return self._auto
+
+        async def playwright_exec(self, command: str, params: dict) -> dict:
+            """Execute browser command via browser_manager."""
+            return await self._browser.execute_command(command, params)
+
     class DirectComputer(AsyncComputerHandler):
         def __init__(self):
             # use module-scope handler singletons created by HandlerFactory
             self._auto = automation_handler
             self._file = file_handler
             self._access = accessibility_handler
+            # Create interface for BrowserTool compatibility
+            self._interface = DirectComputerInterface(automation_handler, get_browser_manager())
+
+        @property
+        def interface(self):
+            """Return interface compatible with BrowserTool.
+
+            This matches Computer.interface shape so BrowserTool works with either:
+            - computer.interface.interface.hotkey() -> automation
+            - computer.interface.playwright_exec() -> browser commands
+            - direct_computer.interface.interface.hotkey() -> automation
+            - direct_computer.interface.playwright_exec() -> browser commands
+            """
+            return self._interface
 
         async def get_environment(self) -> Literal["windows", "mac", "linux", "browser"]:
             sys = platform.system().lower()

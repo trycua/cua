@@ -133,10 +133,12 @@ class PlaygroundServer:
             error = None
 
             with _EnvOverride(env_overrides):
-                # Use pre-configured agent if available, otherwise create new one
-                if self.agent_instance:
+                # Use pre-configured agent only if model matches, otherwise create new one
+                # This ensures the model picker in the UI is respected
+                if self.agent_instance and self.agent_instance.model == model:
                     agent = self.agent_instance
                 else:
+                    # Model changed or no pre-configured agent - create new agent with requested model
                     agent = ComputerAgent(model=model, **agent_kwargs)  # type: ignore[arg-type]
 
                 total_output: List[Any] = []

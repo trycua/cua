@@ -1,0 +1,74 @@
+name: "CD: cua-auto (PyPI)"
+
+on:
+  push:
+    tags:
+      - "auto-v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to publish (without v prefix)"
+        required: true
+        default: "0.1.0"
+  workflow_call:
+    inputs:
+      version:
+        description: "Version to publish"
+        required: true
+        type: string
+
+# Adding permissions at workflow level
+permissions:
+  contents: write
+
+jobs:
+  prepare:
+    runs-on: macos-latest
+    outputs:
+      version: ${{ steps.get-version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Determine version
+        id: get-version
+        run: |
+          # Check inputs.version first (set by workflow_call)
+          if [ -n "${{ inputs.version }}" ]; then
+            VERSION=${{ inputs.version }}
+          elif [ "${{ github.event_name }}" == "push" ]; then
+            # Extract version from tag (for package-specific tags)
+            if [[ "${{ github.ref }}" =~ ^refs/tags/auto-v([0-9]+\.[0-9]+\.[0-9]+) ]]; then
+              VERSION=${BASH_REMATCH[1]}
+            else
+              echo "Invalid tag format for auto"
+              exit 1
+            fi
+          elif [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            # Use version from workflow dispatch
+            VERSION=${{ github.event.inputs.version }}
+          else
+            echo "No version provided"
+            exit 1
+          fi
+          echo "VERSION=$VERSION"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+  publish:
+    needs: prepare
+    uses: ./.github/workflows/py-reusable-publish.yml
+    with:
+      package_name: "auto"
+      package_dir: "libs/python/cua-auto"
+      version: ${{ needs.prepare.outputs.version }}
+      base_package_name: "cua-auto"
+    secrets:
+      PYPI_TOKEN: ${{ secrets.PYPI_TOKEN }}
+
+  create-release:
+    needs: [prepare, publish]
+    uses: ./.github/workflows/release-github-reusable.yml
+    with:
+      tag_name: "auto-v${{ needs.prepare.outputs.version }}"
+      release_name: "cua-auto v${{ needs.prepare.outputs.version }}"
+      module_path: "libs/python/cua-auto"
+      body: ""

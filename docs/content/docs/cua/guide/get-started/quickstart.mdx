@@ -1,0 +1,184 @@
+---
+title: Quickstart
+description: Get a computer-use agent running in 5 minutes
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+This guide gets you from zero to a working computer-use agent using Cua Cloud sandboxes.
+
+<Callout type="info">
+  **Prerequisites:** Python 3.12 or 3.13 and a free Cua account at [cua.ai](https://cua.ai/signin).
+</Callout>
+
+## 1. Install the Cua CLI and SDKs
+
+```bash
+pip install cua-cli cua-computer "cua-agent[all]"
+```
+
+## 2. Authenticate
+
+Login with your Cua account:
+
+```bash
+cua auth login
+```
+
+This opens your browser for authentication. Once complete, your API key is stored locally.
+
+To export your API key to a `.env` file for use in scripts:
+
+```bash
+cua auth env
+```
+
+## 3. Create a Cloud Sandbox
+
+Create a Linux sandbox:
+
+```bash
+cua sandbox create --os linux --size small --region north-america
+```
+
+Note the sandbox name from the output (e.g., `curious-fox-123`).
+
+You can view all your sandboxes:
+
+```bash
+cua sandbox list
+```
+
+## 4. Take a Screenshot (Hello World)
+
+Create a file `hello.py`:
+
+```python
+import os
+import asyncio
+from computer import Computer
+
+# Load API key from environment (or set directly)
+os.environ["CUA_API_KEY"] = "sk_cua-api01_..."  # or use: cua auth env
+
+computer = Computer(
+    os_type="linux",
+    provider_type="cloud",
+    name="curious-fox-123"  # your sandbox name
+)
+
+async def main():
+    await computer.run()  # Connect to the sandbox
+
+    try:
+        # Take a screenshot
+        screenshot = await computer.interface.screenshot()
+        screenshot.save("screenshot.png")
+        print("Screenshot saved to screenshot.png")
+
+        # Click at coordinates (100, 100)
+        await computer.interface.left_click(100, 100)
+
+        # Type some text
+        await computer.interface.type_text("Hello from Cua!")
+    finally:
+        await computer.disconnect()
+
+asyncio.run(main())
+```
+
+Run it:
+
+```bash
+python hello.py
+```
+
+## 5. Run an Agent
+
+Now let's add AI. Create `agent.py`:
+
+```python
+import os
+import asyncio
+from computer import Computer
+from agent import ComputerAgent
+
+os.environ["CUA_API_KEY"] = "sk_cua-api01_..."  # or use: cua auth env
+
+computer = Computer(
+    os_type="linux",
+    provider_type="cloud",
+    name="curious-fox-123"  # your sandbox name
+)
+
+async def main():
+    await computer.run()
+
+    try:
+        agent = ComputerAgent(
+            model="cua/anthropic/claude-sonnet-4.5",
+            tools=[computer],
+        )
+
+        messages = [{"role": "user", "content": "Open Firefox and go to google.com"}]
+
+        async for result in agent.run(messages):
+            for item in result["output"]:
+                if item["type"] == "message":
+                    print(item["content"][0]["text"])
+    finally:
+        await computer.disconnect()
+
+asyncio.run(main())
+```
+
+Run it:
+
+```bash
+python agent.py
+```
+
+The agent will observe the screen, decide what actions to take, and execute them to complete your task.
+
+## 6. Open the Desktop in Your Browser
+
+Watch your agent work in real-time:
+
+```bash
+cua sandbox vnc curious-fox-123
+```
+
+This opens a browser window showing the sandbox desktop.
+
+## 7. Clean Up
+
+When you're done, stop your sandbox to avoid charges:
+
+```bash
+cua sandbox stop curious-fox-123
+```
+
+Or delete it entirely:
+
+```bash
+cua sandbox delete curious-fox-123
+```
+
+## CLI Reference
+
+| Command                                                        | Description                        |
+| -------------------------------------------------------------- | ---------------------------------- |
+| `cua auth login`                                               | Authenticate with your Cua account |
+| `cua auth env`                                                 | Export API key to `.env` file      |
+| `cua sandbox list`                                             | List all sandboxes                 |
+| `cua sandbox create --os <os> --size <size> --region <region>` | Create a sandbox                   |
+| `cua sandbox vnc <name>`                                       | Open sandbox in browser            |
+| `cua sandbox start <name>`                                     | Start a stopped sandbox            |
+| `cua sandbox stop <name>`                                      | Stop a sandbox                     |
+| `cua sandbox delete <name>`                                    | Delete a sandbox                   |
+
+## Next Steps
+
+- [Using the Computer SDK](/cua/guide/get-started/using-computer-sdk) - Learn low-level computer control
+- [Using the Agent SDK](/cua/guide/get-started/using-agent-sdk) - Advanced AI agent configuration
+- [Self-Hosted Sandboxes](/cua/guide/get-started/self-hosted-sandboxes) - Run sandboxes locally with Docker

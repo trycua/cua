@@ -18,11 +18,24 @@ import re
 import signal
 import subprocess
 import sys
+import time
 from collections import defaultdict
 from pathlib import Path
 from typing import Optional
 
 from cua_bench.runner.docker_utils import allocate_ports, generate_task_id
+
+# Telemetry imports (optional)
+try:
+    from cua_bench.telemetry import (
+        track_batch_job_started,
+        track_batch_task_completed,
+        track_task_execution_failed,
+    )
+
+    _telemetry_available = True
+except ImportError:
+    _telemetry_available = False
 
 RESET = "\033[0m"
 BOLD = "\033[1m"
@@ -1477,6 +1490,19 @@ async def _cmd_run_dataset_async(args) -> int:
     # Check if --wait mode
     wait_mode = getattr(args, "wait", False)
 
+    # Track batch job started
+    if _telemetry_available:
+        track_batch_job_started(
+            dataset_name=dataset_path.name,
+            task_count=len(tasks),
+            variant_count=len(task_variants),
+            parallelism=max_parallel,
+            agent=agent_display,
+            model=getattr(args, "model", None),
+            run_id=run_id,
+            provider_type=provider_type,
+        )
+
     if wait_mode:
         # --wait mode: Run tasks directly with semaphore
         print(f"{CYAN}Running dataset: {dataset_path.name}{RESET}")
@@ -1511,6 +1537,9 @@ async def _cmd_run_dataset_async(args) -> int:
             log_print(
                 f"{GREY}[{task_num}/{len(task_variants)}] Starting {task_path.name} variant={variant_id}{RESET}"
             )
+
+            # Track task start time
+            task_start_time = time.time()
 
             runner = TaskRunner()
             try:
@@ -1553,6 +1582,24 @@ async def _cmd_run_dataset_async(args) -> int:
                 final_status = "completed" if result.success else "failed"
                 manager.update_session(session_id, {"status": final_status})
 
+                # Track batch task completed
+                if _telemetry_available:
+                    task_duration = time.time() - task_start_time
+                    reward_val = None
+                    try:
+                        reward_val = float(reward_str) if reward_str != "?" else None
+                    except ValueError:
+                        pass
+                    track_batch_task_completed(
+                        env_name=task_path.name,
+                        task_index=variant_id,
+                        success=result.success,
+                        reward=reward_val,
+                        total_steps=0,  # Not tracked at this level
+                        duration_seconds=task_duration,
+                        run_id=run_id,
+                    )
+
                 if result.success:
                     log_print(
                         f"{GREEN}[{task_num}/{len(task_variants)}] ✓ {task_path.name} variant={variant_id}{RESET} reward={reward_color}{reward_str}{RESET}"
@@ -1569,6 +1616,19 @@ async def _cmd_run_dataset_async(args) -> int:
                 log_print(
                     f"{RED}[{task_num}/{len(task_variants)}] ✗ {task_path.name} variant={variant_id} error={str(e)}{RESET}"
                 )
+
+                # Track task failure
+                if _telemetry_available:
+                    task_duration = time.time() - task_start_time
+                    track_task_execution_failed(
+                        env_name=task_path.name,
+                        task_index=variant_id,
+                        error_type=type(e).__name__,
+                        error_message=str(e),
+                        stage="execution",
+                        run_id=run_id,
+                    )
+
                 return None
             finally:
                 await runner.cleanup_all()

@@ -21,12 +21,13 @@ struct Create: AsyncParsableCommand {
     var cpu: Int = 4
 
     @Option(
-        help: "Memory size, e.g., 8192MB or 8GB. Defaults to 8GB.", transform: { try parseSize($0) }
+        help: "Memory size (e.g., 8, 8GB, or 8192MB). Numbers without units are treated as GB. Defaults to 8GB.",
+        transform: { try parseSize($0) }
     )
     var memory: UInt64 = 8 * 1024 * 1024 * 1024
 
     @Option(
-        help: "Disk size, e.g., 20480MB or 20GB. Defaults to 50GB.",
+        help: "Disk size (e.g., 50, 50GB, or 51200MB). Numbers without units are treated as GB. Defaults to 50GB.",
         transform: { try parseSize($0) })
     var diskSize: UInt64 = 50 * 1024 * 1024 * 1024
 
@@ -71,6 +72,22 @@ struct Create: AsyncParsableCommand {
         help: "Port to use for the VNC server during unattended setup. Defaults to 0 (auto-assign)")
     var vncPort: Int = 0
 
+    @Option(
+        name: .customLong("network"),
+        help: "Network mode: 'nat' (default), 'bridged' (auto-select interface), or 'bridged:<interface>' (e.g. 'bridged:en0')")
+    var network: String = "nat"
+
+    private var parsedNetworkMode: NetworkMode {
+        get throws {
+            guard let mode = NetworkMode.parse(network) else {
+                throw ValidationError(
+                    "Invalid network mode '\(network)'. Expected 'nat', 'bridged', or 'bridged:<interface>'."
+                )
+            }
+            return mode
+        }
+    }
+
     init() {
     }
 
@@ -79,6 +96,13 @@ struct Create: AsyncParsableCommand {
         // Validate unattended is only used with macOS
         if unattended != nil && os.lowercased() != "macos" {
             throw ValidationError("--unattended is only supported for macOS VMs")
+        }
+
+        // Sanity check disk size
+        let minDiskSizeGB: UInt64 = os.lowercased() == "macos" ? 30 : 10
+        let minDiskSize = minDiskSizeGB * 1024 * 1024 * 1024
+        if diskSize < minDiskSize {
+            throw ValidationError("Disk size \(diskSize / (1024 * 1024 * 1024))GB is too small. Minimum recommended size for \(os) is \(minDiskSizeGB)GB.")
         }
 
         // Load unattended config if provided
@@ -116,7 +140,8 @@ struct Create: AsyncParsableCommand {
             debug: debug,
             debugDir: debugDir,
             noDisplay: unattendedConfig != nil ? true : noDisplay,  // Default to no-display for unattended
-            vncPort: vncPort
+            vncPort: vncPort,
+            networkMode: parsedNetworkMode
         )
     }
 }

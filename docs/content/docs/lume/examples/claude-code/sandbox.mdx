@@ -5,7 +5,7 @@ description: Run Claude Code CLI safely in an isolated macOS VM
 
 import { Callout } from 'fumadocs-ui/components/callout';
 
-Run [Claude Code](https://docs.anthropic.com/en/docs/claude-code) on your host while it executes commands inside a sandboxed macOS VM via SSH. No MCP required—just the `lume` CLI and SSH.
+Run [Claude Code](https://code.claude.com/docs) on your host while it executes commands inside a sandboxed macOS VM via SSH. No MCP required—just the `lume` CLI and SSH.
 
 ## Why sandbox Claude Code?
 
@@ -73,7 +73,7 @@ curl -fsSL https://claude.ai/install.sh | bash
 brew install --cask claude-code
 ```
 
-See [Claude Code docs](https://docs.anthropic.com/en/docs/claude-code) for other installation methods.
+See [Claude Code docs](https://code.claude.com/docs) for other installation methods.
 
 ## Step 5: Use Claude Code with the sandbox
 
@@ -89,13 +89,15 @@ Then tell Claude:
 > Install any dependencies you need, run builds, execute tests—all inside that VM."
 
 Claude Code will:
+
 1. SSH into the sandbox VM
 2. Navigate to your shared project
 3. Run commands in the isolated environment
 4. Report results back to you
 
 <Callout type="info">
-Claude Code runs on your host but executes commands via SSH inside the VM. Your host system stays untouched—only the sandbox and shared files are affected.
+  Claude Code runs on your host but executes commands via SSH inside the VM. Your host system stays
+  untouched—only the sandbox and shared files are affected.
 </Callout>
 
 ## Example session
@@ -157,18 +159,19 @@ echo "Then tell Claude to SSH into lume@$VM_IP"
 ## Security considerations
 
 <Callout type="warn">
-The shared folder is read/write. Claude can modify or delete files in that folder. For sensitive work:
-- Share a copy of your project, not the original
-- Use git to track changes and revert if needed
-- Clone the VM before risky operations
+  The shared folder is read/write. Claude can modify or delete files in that folder. For sensitive
+  work: - Share a copy of your project, not the original - Use git to track changes and revert if
+  needed - Clone the VM before risky operations
 </Callout>
 
 The VM itself is fully isolated—code running inside cannot:
+
 - Access files outside the shared folder
 - Modify your host system
 - Read your host's environment variables or credentials
 
 But it can:
+
 - Access the network
 - Install software inside the VM
 - Consume CPU/memory
@@ -178,4 +181,4 @@ But it can:
 - [Homebrew Testing](/lume/examples/claude-code/homebrew-testing) — Test packages in a clean environment
 - [Claude Cowork with MCP](/lume/examples/claude-cowork/sandbox) — Use MCP for native VM integration
 - [Unattended Setup](/lume/guide/fundamentals/unattended-setup) — Customize the VM configuration
-- [Claude Code docs](https://docs.anthropic.com/en/docs/claude-code) — Learn more about Claude Code's capabilities
+- [Claude Code docs](https://code.claude.com/docs) — Learn more about Claude Code's capabilities

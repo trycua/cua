@@ -50,6 +50,17 @@ const config = {
         destination: '/get-started/quickstart',
         permanent: true,
       },
+      // Redirect old /api URLs to SDK landing pages
+      {
+        source: '/cua/reference/computer-sdk/api',
+        destination: '/cua/reference/computer-sdk',
+        permanent: true,
+      },
+      {
+        source: '/cua/reference/agent-sdk/api',
+        destination: '/cua/reference/agent-sdk',
+        permanent: true,
+      },
     ];
   },
   images: {

@@ -14,20 +14,168 @@ from litellm.responses.litellm_completion_transformation.transformation import (
 from ...decorators import register_agent
 from ...loops.base import AsyncAgentConfig
 from ...responses import (
-    convert_completion_messages_to_responses_items,
-    convert_responses_items_to_completion_messages,
+    make_click_item,
+    make_double_click_item,
+    make_drag_item,
+    make_keypress_item,
+    make_move_item,
+    make_output_text_item,
     make_reasoning_item,
+    make_screenshot_item,
+    make_scroll_item,
+    make_type_item,
+    make_wait_item,
 )
 from ...types import AgentCapability
 from .helpers import (
+    _convert_responses_items_to_fara_messages,
     build_nous_system,
-    convert_qwen_tool_args_to_computer_action,
     parse_tool_call_from_text,
-    unnormalize_coordinate,
 )
 
 
-@register_agent(models=r"(?i).*fara-7b.*")
+def _scale_fara_coordinates(
+    args: Dict[str, Any],
+    original_dims: Tuple[int, int],
+    resized_dims: Tuple[int, int],
+) -> Dict[str, Any]:
+    """
+    Scale FARA coordinates from resized image space to original viewport space.
+
+    FARA outputs pixel coordinates on the resized image (after smart_resize).
+    This scales them back to the original browser viewport, matching FARA's
+    convert_resized_coords_to_original() in fara_agent.py:
+        scale_x = og_w / rsz_w
+        return [coords[0] * scale_x, coords[1] * scale_y]
+
+    Args:
+        args: Action arguments containing "coordinate" key
+        original_dims: (width, height) of original browser viewport
+        resized_dims: (width, height) after smart_resize
+    """
+    coord = args.get("coordinate")
+    if not coord or not isinstance(coord, (list, tuple)) or len(coord) < 2:
+        return args
+
+    x, y = float(coord[0]), float(coord[1])
+    original_w, original_h = float(original_dims[0]), float(original_dims[1])
+    resized_w, resized_h = float(resized_dims[0]), float(resized_dims[1])
+
+    # Scale from resized to original: x_final = x * (original / resized)
+    scale_x = original_w / resized_w
+    scale_y = original_h / resized_h
+
+    x_scaled = max(0.0, min(original_w, x * scale_x))
+    y_scaled = max(0.0, min(original_h, y * scale_y))
+
+    return {**args, "coordinate": [round(x_scaled), round(y_scaled)]}
+
+
+def _fara_args_to_sdk_item(args: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """
+    Convert FARA model output args to SDK item using make_*_item helpers.
+
+    FARA format: {"action": "left_click", "coordinate": [100, 200]}
+    SDK format:  ResponseComputerToolCallParam with action={"type": "click", "x": 100, "y": 200}
+    """
+    action = args.get("action", "")
+    coordinate = args.get("coordinate", [0, 0])
+    x = coordinate[0] if len(coordinate) > 0 else 0
+    y = coordinate[1] if len(coordinate) > 1 else 0
+
+    # Click actions
+    if action in ("left_click", "click"):
+        return make_click_item(x=x, y=y, button="left")
+    if action == "right_click":
+        return make_click_item(x=x, y=y, button="right")
+    if action == "middle_click":
+        return make_click_item(x=x, y=y, button="wheel")
+    if action == "double_click":
+        return make_double_click_item(x=x, y=y)
+
+    # Type action
+    if action == "type":
+        return make_type_item(text=args.get("text", ""))
+
+    # Key action
+    if action in ("key", "keypress"):
+        keys = args.get("keys", [])
+        if isinstance(keys, str):
+            keys = keys.split("+")
+        return make_keypress_item(keys=keys)
+
+    # Move action
+    if action in ("mouse_move", "move"):
+        return make_move_item(x=x, y=y)
+
+    # Scroll action
+    if action == "scroll":
+        pixels = args.get("pixels") or 0  # Handle None explicitly
+        # FARA: positive = up, negative = down
+        scroll_y = -pixels  # SDK: positive = down
+        return make_scroll_item(x=x, y=y, scroll_x=0, scroll_y=scroll_y)
+
+    if action == "hscroll":
+        pixels = args.get("pixels") or 0  # Handle None explicitly
+        return make_scroll_item(x=x, y=y, scroll_x=pixels, scroll_y=0)
+
+    # Drag action
+    if action == "left_click_drag":
+        start_coord = args.get("start_coordinate", [0, 0])
+        end_coord = args.get("end_coordinate", [0, 0])
+        return make_drag_item(
+            path=[
+                {"x": start_coord[0], "y": start_coord[1]},
+                {"x": end_coord[0], "y": end_coord[1]},
+            ]
+        )
+
+    # Screenshot
+    if action == "screenshot":
+        return make_screenshot_item()
+
+    # Wait
+    if action == "wait":
+        return make_wait_item()
+
+    # Terminate - return None so no action is executed
+    # The caller checks for terminate action and adds an assistant message to stop the loop
+    if action == "terminate":
+        return None
+
+    # FARA browser-specific actions - create computer_call items directly
+    # agent.py uses getattr(computer, action_type) to call these methods
+    if action == "visit_url":
+        return {
+            "type": "computer_call",
+            "call_id": f"call_{id(args)}",
+            "action": {"type": "visit_url", "url": args.get("url", "")},
+            "pending_safety_checks": [],
+            "status": "completed",
+        }
+
+    if action == "web_search":
+        return {
+            "type": "computer_call",
+            "call_id": f"call_{id(args)}",
+            "action": {"type": "web_search", "query": args.get("query", "")},
+            "pending_safety_checks": [],
+            "status": "completed",
+        }
+
+    if action == "history_back":
+        return {
+            "type": "computer_call",
+            "call_id": f"call_{id(args)}",
+            "action": {"type": "history_back"},
+            "pending_safety_checks": [],
+            "status": "completed",
+        }
+
+    return None
+
+
+@register_agent(models=r"(?i).*fara-7b.*", tool_type="browser")
 class FaraVlmConfig(AsyncAgentConfig):
     async def predict_step(
         self,
@@ -74,10 +222,10 @@ class FaraVlmConfig(AsyncAgentConfig):
                         "usage": {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0},
                     }
 
-        # Build messages using NousFnCallPrompt system with tool schema in text
-        # Start with converted conversation (images/text preserved)
-        converted_msgs = convert_responses_items_to_completion_messages(
-            messages, allow_images_in_tool_results=False, use_xml_tools=True
+        # Build messages using FARA's dedicated conversion layer
+        # This converts SDK format to FARA's native format (action + coordinate)
+        converted_msgs = _convert_responses_items_to_fara_messages(
+            messages, allow_images_in_tool_results=False
         )
 
         # Build function schemas from tools array
@@ -89,19 +237,19 @@ class FaraVlmConfig(AsyncAgentConfig):
                 tool_type = tool.get("type")
 
                 if tool_type == "computer":
-                    # For computer tools, use QWEN3_COMPUTER_TOOL schema
+                    # For computer tools, use FARA_COMPUTER_TOOL schema
                     computer = tool.get("computer")
                     if computer and is_agent_computer(computer):
-                        function_schemas.append(QWEN3_COMPUTER_TOOL["function"])
+                        function_schemas.append(FARA_COMPUTER_TOOL["function"])
                 elif tool_type == "function":
                     # For function tools, use the provided function schema
                     function_schema = tool.get("function")
                     if function_schema:
                         function_schemas.append(function_schema)
 
-        # If no tools provided or no computer tool found, use default QWEN3_COMPUTER_TOOL
+        # If no tools provided or no computer tool found, use default FARA_COMPUTER_TOOL
         if not function_schemas:
-            function_schemas = [QWEN3_COMPUTER_TOOL["function"]]
+            function_schemas = [FARA_COMPUTER_TOOL["function"]]
 
         # Prepend Nous-generated system if available
         nous_system = build_nous_system(function_schemas)
@@ -153,7 +301,9 @@ class FaraVlmConfig(AsyncAgentConfig):
             completion_messages.append(screenshot_msg)
 
         # Smart-resize all screenshots and attach min/max pixel hints. Fail fast if deps missing.
-        # Also record the last resized width/height to unnormalize coordinates later.
+        # Track both original and resized dimensions for coordinate scaling.
+        last_original_w: Optional[int] = None
+        last_original_h: Optional[int] = None
         last_rw: Optional[int] = None
         last_rh: Optional[int] = None
         MIN_PIXELS = 3136
@@ -188,6 +338,8 @@ class FaraVlmConfig(AsyncAgentConfig):
                         # Attach hints on this image block
                         part["min_pixels"] = MIN_PIXELS
                         part["max_pixels"] = MAX_PIXELS
+                        # Track both original and resized dimensions
+                        last_original_w, last_original_h = w, h
                         last_rw, last_rh = rw, rh
 
         api_kwargs: Dict[str, Any] = {
@@ -226,10 +378,20 @@ class FaraVlmConfig(AsyncAgentConfig):
         reasoning_text = message.get("reasoning") or ""
 
         output_items: List[Dict[str, Any]] = []
+        has_terminate = False
 
         # Add reasoning if present (Ollama Cloud format)
         if reasoning_text:
             output_items.append(make_reasoning_item(reasoning_text))
+
+        # Extract thoughts (text before <tool_call> tag)
+        thoughts = ""
+        if "<tool_call>" in content_text:
+            thoughts = content_text.split("<tool_call>")[0].strip()
+
+        # Add thoughts as assistant message if present
+        if thoughts:
+            output_items.append(make_output_text_item(thoughts))
 
         # Priority 1: Try to parse tool call from content text (OpenRouter format)
         tool_call = parse_tool_call_from_text(content_text)
@@ -237,38 +399,34 @@ class FaraVlmConfig(AsyncAgentConfig):
         if tool_call and isinstance(tool_call, dict):
             fn_name = tool_call.get("name") or "computer"
             raw_args = tool_call.get("arguments") or {}
-            # Unnormalize coordinates to actual screen size using last resized dims
-            if last_rw is None or last_rh is None:
+
+            # Scale coordinates from resized image space to original viewport
+            if (
+                last_rw is None
+                or last_rh is None
+                or last_original_w is None
+                or last_original_h is None
+            ):
                 raise RuntimeError(
-                    "No screenshots found to derive dimensions for coordinate unnormalization."
+                    "No screenshots found to derive dimensions for coordinate scaling."
                 )
-            args = await unnormalize_coordinate(raw_args, (last_rw, last_rh))
+            args = _scale_fara_coordinates(
+                raw_args,
+                original_dims=(last_original_w, last_original_h),
+                resized_dims=(last_rw, last_rh),
+            )
 
-            # Extract thoughts (text before <tool_call> tag)
-            thoughts = ""
-            if "<tool_call>" in content_text:
-                thoughts = content_text.split("<tool_call>")[0].strip()
+            # Convert FARA output to SDK format using make_*_item helpers
+            if fn_name in ("computer", "computer_use"):
+                item = _fara_args_to_sdk_item(args)
+                if item:
+                    output_items.append(item)
+                # Check for terminate (even if item is None)
+                if args.get("action") == "terminate":
+                    has_terminate = True
 
-            # Build an OpenAI-style tool call so we can reuse the converter
-            fake_cm = {
-                "role": "assistant",
-                "content": thoughts,  # Preserve thoughts before tool call
-                "tool_calls": [
-                    {
-                        "type": "function",
-                        "id": "call_0",
-                        "function": {
-                            "name": fn_name,
-                            "arguments": json.dumps(args),
-                        },
-                    }
-                ],
-            }
-            output_items.extend(convert_completion_messages_to_responses_items([fake_cm]))
         elif tool_calls_array:
             # Priority 2: Use tool_calls field if present (Ollama Cloud format)
-            # Process and unnormalize coordinates in tool calls
-            processed_tool_calls = []
             for tc in tool_calls_array:
                 function = tc.get("function", {})
                 fn_name = function.get("name", "computer")
@@ -277,57 +435,29 @@ class FaraVlmConfig(AsyncAgentConfig):
                 try:
                     args = json.loads(args_str)
 
-                    # Unnormalize coordinates if present
+                    # Scale coordinates from resized image space to original viewport
                     if "coordinate" in args and last_rw is not None and last_rh is not None:
-                        args = await unnormalize_coordinate(args, (last_rw, last_rh))
+                        if last_original_w is not None and last_original_h is not None:
+                            args = _scale_fara_coordinates(
+                                args,
+                                original_dims=(last_original_w, last_original_h),
+                                resized_dims=(last_rw, last_rh),
+                            )
 
-                    # Convert Qwen format to Computer Calls format if this is a computer tool
-                    if fn_name == "computer":
-                        converted_action = convert_qwen_tool_args_to_computer_action(args)
-                        if converted_action:
-                            args = converted_action
-
-                    processed_tool_calls.append(
-                        {
-                            "type": tc.get("type", "function"),
-                            "id": tc.get("id", "call_0"),
-                            "function": {
-                                "name": fn_name,
-                                "arguments": json.dumps(args),
-                            },
-                        }
-                    )
+                    # Convert FARA output to SDK format
+                    if fn_name in ("computer", "computer_use"):
+                        item = _fara_args_to_sdk_item(args)
+                        if item:
+                            output_items.append(item)
+                        # Check for terminate (even if item is None)
+                        if args.get("action") == "terminate":
+                            has_terminate = True
                 except json.JSONDecodeError:
-                    # Keep original if parsing fails
-                    processed_tool_calls.append(tc)
-
-            fake_cm = {
-                "role": "assistant",
-                "content": content_text if content_text else "",
-                "tool_calls": processed_tool_calls,
-            }
-            output_items.extend(convert_completion_messages_to_responses_items([fake_cm]))
-        else:
-            # No tool calls found in either format, return text response
-            fake_cm = {"role": "assistant", "content": content_text}
-            output_items.extend(convert_completion_messages_to_responses_items([fake_cm]))
-
-        # Check if this is a terminate action - if so, add a final assistant message to stop the loop
-        has_terminate = False
-        for item in output_items:
-            if item.get("type") == "computer_call":
-                action = item.get("action", {})
-                if action.get("type") == "terminate":
-                    has_terminate = True
-                    break
-            elif item.get("type") == "function_call":
-                try:
-                    args = json.loads(item.get("arguments", "{}"))
-                    if args.get("action") == "terminate":
-                        has_terminate = True
-                        break
-                except:
                     pass
+
+        elif content_text:
+            # No tool calls found, return text response
+            output_items.append(make_output_text_item(content_text))
 
         # If terminate detected, ensure LAST item is an assistant message to exit the loop
         # The generic agent loop checks: while new_items[-1].get("role") != "assistant"
@@ -359,7 +489,7 @@ class FaraVlmConfig(AsyncAgentConfig):
         reduced_tool = {
             "type": "function",
             "function": {
-                **QWEN3_COMPUTER_TOOL["function"],
+                **FARA_COMPUTER_TOOL["function"],
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -432,18 +562,25 @@ class FaraVlmConfig(AsyncAgentConfig):
         content_text = ((choice.get("message") or {}).get("content")) or ""
         tool_call = parse_tool_call_from_text(content_text) or {}
         args = tool_call.get("arguments") or {}
-        args = await unnormalize_coordinate(args, (rh, rw))
+        # Scale from resized image space to original viewport
+        args = _scale_fara_coordinates(
+            args,
+            original_dims=(w, h),
+            resized_dims=(rw, rh),
+        )
         coord = args.get("coordinate")
         if isinstance(coord, (list, tuple)) and len(coord) >= 2:
             return int(coord[0]), int(coord[1])
         return None
 
 
-# ComputerUse tool schema (OpenAI function tool format)
-QWEN3_COMPUTER_TOOL: dict[str, Any] = {
+# FARA-specific ComputerUse tool schema (OpenAI function tool format)
+# This schema is tailored for FARA-7B model and includes browser-specific actions
+# NOTE: Tool name MUST be "computer_use" to match what FARA-7B was trained on
+FARA_COMPUTER_TOOL: dict[str, Any] = {
     "type": "function",
     "function": {
-        "name": "computer",
+        "name": "computer_use",
         "description": (
             "Use a mouse and keyboard to interact with a computer, and take screenshots.\n"
             "* This is an interface to a desktop GUI. You do not have access to a terminal or applications menu. You must click on desktop icons to start applications.\n"
@@ -451,7 +588,8 @@ QWEN3_COMPUTER_TOOL: dict[str, Any] = {
             "* The screen's resolution is 1000x1000.\n"
             "* Whenever you intend to move the cursor to click on an element like an icon, you should consult a screenshot to determine the coordinates of the element before moving the cursor.\n"
             "* If you tried clicking on a program or link but it failed to load, even after waiting, try adjusting your cursor position so that the tip of the cursor visually falls on the element that you want to click.\n"
-            "* Make sure to click any buttons, links, icons, etc with the cursor tip in the center of the element. Don't click boxes on their edges."
+            "* Make sure to click any buttons, links, icons, etc with the cursor tip in the center of the element. Don't click boxes on their edges.\n"
+            "* Use terminate action when you have completed the task or cannot proceed further."
         ),
         "parameters": {
             "type": "object",
@@ -472,6 +610,10 @@ QWEN3_COMPUTER_TOOL: dict[str, Any] = {
                         "hscroll",
                         "screenshot",
                         "wait",
+                        "visit_url",
+                        "web_search",
+                        "history_back",
+                        "terminate",
                     ],
                     "type": "string",
                 },
@@ -481,7 +623,7 @@ QWEN3_COMPUTER_TOOL: dict[str, Any] = {
                     "items": {"type": "string"},
                 },
                 "text": {
-                    "description": "Required only by action=type and action=answer.",
+                    "description": "Required only by action=type.",
                     "type": "string",
                 },
                 "coordinate": {
@@ -498,6 +640,19 @@ QWEN3_COMPUTER_TOOL: dict[str, Any] = {
                 "time": {
                     "description": "Seconds to wait (action=wait).",
                     "type": "number",
+                },
+                "url": {
+                    "description": "The URL to visit. Required only by action=visit_url.",
+                    "type": "string",
+                },
+                "query": {
+                    "description": "The search query. Required only by action=web_search.",
+                    "type": "string",
+                },
+                "status": {
+                    "description": "Task completion status. Required only by action=terminate.",
+                    "type": "string",
+                    "enum": ["success", "failure"],
                 },
             },
             "required": ["action"],

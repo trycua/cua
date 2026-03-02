@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Virtualization
 
@@ -15,6 +16,7 @@ struct VMVirtualizationServiceContext {
     let nvramPath: Path
     let recoveryMode: Bool
     let usbMassStoragePaths: [Path]?
+    let networkMode: NetworkMode
 }
 
 /// Protocol defining the interface for virtualization operations
@@ -91,7 +93,7 @@ class BaseVirtualizationService: VMVirtualizationService {
     func pause() async throws {
         try await withCheckedThrowingContinuation {
             (continuation: CheckedContinuation<Void, Error>) in
-            virtualMachine.start { result in
+            virtualMachine.pause { result in
                 switch result {
                 case .success:
                     continuation.resume()
@@ -105,7 +107,7 @@ class BaseVirtualizationService: VMVirtualizationService {
     func resume() async throws {
         try await withCheckedThrowingContinuation {
             (continuation: CheckedContinuation<Void, Error>) in
-            virtualMachine.start { result in
+            virtualMachine.resume { result in
                 switch result {
                 case .success:
                     continuation.resume()
@@ -121,20 +123,28 @@ class BaseVirtualizationService: VMVirtualizationService {
     }
 
     // Helper methods for creating common configurations
-    static func createStorageDeviceConfiguration(diskPath: Path, readOnly: Bool = false) throws
+    static func createStorageDeviceConfiguration(
+        diskPath: Path,
+        readOnly: Bool = false,
+        cachingMode: VZDiskImageCachingMode = .automatic
+    ) throws
         -> VZStorageDeviceConfiguration
     {
         return VZVirtioBlockDeviceConfiguration(
             attachment: try VZDiskImageStorageDeviceAttachment(
                 url: diskPath.url,
                 readOnly: readOnly,
-                cachingMode: VZDiskImageCachingMode.automatic,
+                cachingMode: cachingMode,
                 synchronizationMode: VZDiskImageSynchronizationMode.fsync
             )
         )
     }
 
-    static func createUSBMassStorageDeviceConfiguration(diskPath: Path, readOnly: Bool = false)
+    static func createUSBMassStorageDeviceConfiguration(
+        diskPath: Path,
+        readOnly: Bool = false,
+        cachingMode: VZDiskImageCachingMode = .automatic
+    )
         throws
         -> VZStorageDeviceConfiguration
     {
@@ -143,24 +153,59 @@ class BaseVirtualizationService: VMVirtualizationService {
                 attachment: try VZDiskImageStorageDeviceAttachment(
                     url: diskPath.url,
                     readOnly: readOnly,
-                    cachingMode: VZDiskImageCachingMode.automatic,
+                    cachingMode: cachingMode,
                     synchronizationMode: VZDiskImageSynchronizationMode.fsync
                 )
             )
         } else {
             // Fallback to normal storage device if USB mass storage not available
-            return try createStorageDeviceConfiguration(diskPath: diskPath, readOnly: readOnly)
+            return try createStorageDeviceConfiguration(
+                diskPath: diskPath, readOnly: readOnly, cachingMode: cachingMode)
         }
     }
 
-    static func createNetworkDeviceConfiguration(macAddress: String) throws
-        -> VZNetworkDeviceConfiguration
-    {
+    static func createNetworkDeviceConfiguration(
+        macAddress: String,
+        networkMode: NetworkMode = .nat
+    ) throws -> VZNetworkDeviceConfiguration {
         let network = VZVirtioNetworkDeviceConfiguration()
         guard let vzMacAddress = VZMACAddress(string: macAddress) else {
             throw VMConfigError.invalidMachineIdentifier
         }
-        network.attachment = VZNATNetworkDeviceAttachment()
+
+        switch networkMode {
+        case .nat:
+            network.attachment = VZNATNetworkDeviceAttachment()
+        case .bridged(let interfaceName):
+            let availableInterfaces = VZBridgedNetworkInterface.networkInterfaces
+            guard let bridgeInterface = availableInterfaces.first(where: { iface in
+                if let name = interfaceName {
+                    return iface.identifier == name
+                }
+                // Auto-select: prefer the first active interface
+                return true
+            }) else {
+                if let name = interfaceName {
+                    let available = availableInterfaces.map { $0.identifier }.joined(separator: ", ")
+                    throw VMConfigError.noBridgeInterfaceFound(
+                        requested: name,
+                        available: available.isEmpty ? "none" : available
+                    )
+                }
+                throw VMConfigError.noBridgeInterfaceFound(
+                    requested: nil,
+                    available: "none"
+                )
+            }
+            Logger.info(
+                "Using bridged network interface",
+                metadata: [
+                    "interface": bridgeInterface.identifier,
+                    "localizedName": bridgeInterface.localizedDisplayName ?? "unknown",
+                ])
+            network.attachment = VZBridgedNetworkDeviceAttachment(interface: bridgeInterface)
+        }
+
         network.macAddress = vzMacAddress
         return network
     }
@@ -214,15 +259,25 @@ final class DarwinVirtualizationService: BaseVirtualizationService {
         vzConfig.bootLoader = VZMacOSBootLoader()
 
         // Graphics configuration
+        // Use host screen-based display configuration when available for better
+        // display compositor integration (helps with screenshot capture in VMs)
         let display = VMDisplayResolution(string: config.display)!
         let graphics = VZMacGraphicsDeviceConfiguration()
-        graphics.displays = [
-            VZMacGraphicsDisplayConfiguration(
-                widthInPixels: display.width,
-                heightInPixels: display.height,
-                pixelsPerInch: 220  // Retina display density
-            )
-        ]
+        if let hostMainScreen = NSScreen.main {
+            let vmScreenSize = NSSize(width: display.width, height: display.height)
+            graphics.displays = [
+                VZMacGraphicsDisplayConfiguration(for: hostMainScreen, sizeInPoints: vmScreenSize)
+            ]
+        } else {
+            // Fallback to pixel-based configuration if no host screen available
+            graphics.displays = [
+                VZMacGraphicsDisplayConfiguration(
+                    widthInPixels: display.width,
+                    heightInPixels: display.height,
+                    pixelsPerInch: 220
+                )
+            ]
+        }
         vzConfig.graphicsDevices = [graphics]
 
         // Common configurations
@@ -242,7 +297,10 @@ final class DarwinVirtualizationService: BaseVirtualizationService {
         }
         vzConfig.storageDevices = storageDevices
         vzConfig.networkDevices = [
-            try createNetworkDeviceConfiguration(macAddress: config.macAddress)
+            try createNetworkDeviceConfiguration(
+                macAddress: config.macAddress,
+                networkMode: config.networkMode
+            )
         ]
         vzConfig.memoryBalloonDevices = [VZVirtioTraditionalMemoryBalloonDeviceConfiguration()]
         vzConfig.entropyDevices = [VZVirtioEntropyDeviceConfiguration()]
@@ -379,25 +437,36 @@ final class LinuxVirtualizationService: BaseVirtualizationService {
         // Common configurations
         vzConfig.keyboards = [VZUSBKeyboardConfiguration()]
         vzConfig.pointingDevices = [VZUSBScreenCoordinatePointingDeviceConfiguration()]
-        var storageDevices = [try createStorageDeviceConfiguration(diskPath: config.diskPath)]
+        // Use .cached caching mode for Linux VMs to prevent filesystem corruption.
+        // The default .automatic mode causes EXT4/filesystem corruption in Linux guests
+        // due to a known issue in Apple's Virtualization framework.
+        // See: https://github.com/utmapp/UTM/pull/5919, https://github.com/lima-vm/lima/pull/2026
+        let diskCachingMode = VZDiskImageCachingMode.cached
+        var storageDevices = [try createStorageDeviceConfiguration(
+            diskPath: config.diskPath, cachingMode: diskCachingMode)]
         if let mount = config.mount {
             storageDevices.append(
-                try createStorageDeviceConfiguration(diskPath: mount, readOnly: true))
+                try createStorageDeviceConfiguration(
+                    diskPath: mount, readOnly: true, cachingMode: diskCachingMode))
         }
         // Add USB mass storage devices if specified
         if #available(macOS 15.0, *), let usbPaths = config.usbMassStoragePaths, !usbPaths.isEmpty {
             for usbPath in usbPaths {
                 storageDevices.append(
-                    try createUSBMassStorageDeviceConfiguration(diskPath: usbPath, readOnly: true))
+                    try createUSBMassStorageDeviceConfiguration(
+                        diskPath: usbPath, readOnly: true, cachingMode: diskCachingMode))
             }
         }
         vzConfig.storageDevices = storageDevices
         vzConfig.networkDevices = [
-            try createNetworkDeviceConfiguration(macAddress: config.macAddress)
+            try createNetworkDeviceConfiguration(
+                macAddress: config.macAddress,
+                networkMode: config.networkMode
+            )
         ]
         vzConfig.memoryBalloonDevices = [VZVirtioTraditionalMemoryBalloonDeviceConfiguration()]
         vzConfig.entropyDevices = [VZVirtioEntropyDeviceConfiguration()]
-        
+
         // Audio configuration
         let soundDeviceConfiguration = VZVirtioSoundDeviceConfiguration()
         let inputAudioStreamConfiguration = VZVirtioSoundDeviceInputStreamConfiguration()

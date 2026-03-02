@@ -21,7 +21,7 @@ lume ipsw
 # Output: https://updates.cdn-apple.com/...
 
 # Download it (using curl, wget, or your browser)
-curl -L -o ~/Downloads/macos.ipsw "$(lume ipsw)"
+curl -L -o ~/Downloads/macos.ipsw "$(lume ipsw 2>/dev/null | tail -1)"
 
 # Create the VM with the downloaded file
 lume create my-vm --os macos --ipsw ~/Downloads/macos.ipsw
@@ -38,7 +38,8 @@ lume create my-vm --os macos --ipsw latest
 ```
 
 <Callout type="info">
-The IPSW file is ~15GB. If you plan to create multiple VMs, downloading manually and reusing the file saves time and bandwidth.
+  The IPSW file is ~15GB. If you plan to create multiple VMs, downloading manually and reusing the
+  file saves time and bandwidth.
 </Callout>
 
 ## Configure VM storage location (optional)
@@ -67,7 +68,8 @@ lume create my-vm --os macos --ipsw latest --storage /path/to/vm/directory
 ```
 
 <Callout type="info">
-VM disk images can grow large (~50GB+). Using an external SSD keeps your internal storage free and can improve performance for I/O-heavy workloads.
+  VM disk images can grow large (~50GB+). Using an external SSD keeps your internal storage free and
+  can improve performance for I/O-heavy workloads.
 </Callout>
 
 ## Create a Linux VM
@@ -86,7 +88,8 @@ lume run ubuntu-vm
 ```
 
 <Callout type="info">
-Linux VMs require ARM64 ISO images (not x86). Ubuntu, Debian, and Fedora all provide ARM64 server and desktop images.
+  Linux VMs require ARM64 ISO images (not x86). Ubuntu, Debian, and Fedora all provide ARM64 server
+  and desktop images.
 </Callout>
 
 ## Run your VM
@@ -108,11 +111,11 @@ lume create dev-vm --os macos --ipsw latest \
   --disk-size 100GB
 ```
 
-| Resource | Default | Notes |
-|----------|---------|-------|
-| CPU | 4 cores | Max is your Mac's core count |
-| Memory | 8GB | Leave headroom for your host |
-| Disk | 50GB | Uses sparse files—only consumes actual usage |
+| Resource | Default | Notes                                        |
+| -------- | ------- | -------------------------------------------- |
+| CPU      | 4 cores | Max is your Mac's core count                 |
+| Memory   | 8GB     | Leave headroom for your host                 |
+| Disk     | 50GB    | Uses sparse files—only consumes actual usage |
 
 ## Change display resolution
 
@@ -124,12 +127,12 @@ lume set my-vm --display 1920x1080
 
 The change takes effect on the next VM start. After starting the VM, go to **System Settings → Displays**, enable **Show all resolutions**, and select your new resolution. Common resolutions:
 
-| Resolution | Aspect Ratio | Use Case |
-|------------|--------------|----------|
-| 1024x768 | 4:3 | Default, low resource usage |
-| 1280x800 | 16:10 | MacBook-style |
-| 1920x1080 | 16:9 | Full HD |
-| 2560x1440 | 16:9 | QHD |
+| Resolution | Aspect Ratio | Use Case                    |
+| ---------- | ------------ | --------------------------- |
+| 1024x768   | 4:3          | Default, low resource usage |
+| 1280x800   | 16:10        | MacBook-style               |
+| 1920x1080  | 16:9         | Full HD                     |
+| 2560x1440  | 16:9         | QHD                         |
 
 ## Automate the Setup Assistant
 

@@ -343,6 +343,49 @@ final class LumeController {
         }
     }
 
+    /// Gets VM details using the lightweight path (includes provisioning status)
+    /// Use this instead of get().details when you need accurate status including provisioning state
+    @MainActor
+    public func getDetails(name: String, storage: String? = nil) throws -> VMDetails {
+        let normalizedName = normalizeVMName(name: name)
+        do {
+            let vmDir: VMDirectory
+            let locationName: String
+
+            if let storagePath = storage, storagePath.contains("/") || storagePath.contains("\\") {
+                // Storage is a direct path
+                vmDir = try home.getVMDirectoryFromPath(normalizedName, storagePath: storagePath)
+                guard vmDir.initialized() else {
+                    if vmDir.exists() {
+                        throw VMError.notInitialized(normalizedName)
+                    } else {
+                        throw VMError.notFound(normalizedName)
+                    }
+                }
+                locationName = storagePath
+            } else {
+                // Storage is nil or a named location - find the VM
+                let actualLocation = try self.validateVMExists(normalizedName, storage: storage)
+                vmDir = try home.getVMDirectory(normalizedName, storage: actualLocation)
+                locationName = actualLocation ?? "home"
+            }
+
+            // Use the lightweight path that includes provisioning status
+            guard let details = getVMDetailsLightweight(vmDir: vmDir, locationName: locationName) else {
+                throw VMError.notFound(normalizedName)
+            }
+            return details
+        } catch {
+            Logger.error(
+                "Failed to get VM details",
+                metadata: [
+                    "vmName": normalizedName, "storage": storage ?? "home",
+                    "error": error.localizedDescription,
+                ])
+            throw error
+        }
+    }
+
     @MainActor
     public func create(
         name: String,
@@ -357,7 +400,8 @@ final class LumeController {
         debug: Bool = false,
         debugDir: String? = nil,
         noDisplay: Bool = true,
-        vncPort: Int = 0
+        vncPort: Int = 0,
+        networkMode: NetworkMode = .nat
     ) async throws {
         Logger.info(
             "Creating VM",
@@ -394,7 +438,8 @@ final class LumeController {
                 cpuCount: cpuCount,
                 memorySize: memorySize,
                 diskSize: diskSize,
-                display: display
+                display: display,
+                networkMode: networkMode
             )
             try vmDir.saveConfig(config)
 
@@ -424,7 +469,8 @@ final class LumeController {
                 debugDir: debugDir,
                 noDisplay: noDisplay,
                 vncPort: vncPort,
-                vmDir: vmDir
+                vmDir: vmDir,
+                networkMode: networkMode
             )
 
             // Clear provisioning marker on success
@@ -463,7 +509,8 @@ final class LumeController {
         display: String,
         ipsw: String?,
         storage: String? = nil,
-        unattendedConfig: UnattendedConfig? = nil
+        unattendedConfig: UnattendedConfig? = nil,
+        networkMode: NetworkMode = .nat
     ) throws {
         Logger.info(
             "Starting async VM creation",
@@ -477,6 +524,37 @@ final class LumeController {
         // Validate parameters upfront (this checks VM doesn't already exist)
         try validateCreateParameters(name: name, os: os, ipsw: ipsw, storage: storage)
 
+        // Create VM directory and provisioning marker BEFORE spawning background task
+        // so VM appears in list immediately with "provisioning" status
+        let vmDir = try home.getVMDirectory(name, storage: storage)
+
+        do {
+            try FileManager.default.createDirectory(
+                atPath: vmDir.dir.path,
+                withIntermediateDirectories: true
+            )
+
+            // Create minimal config so VM shows up in list
+            let config = try VMConfig(
+                os: os,
+                cpuCount: cpuCount,
+                memorySize: memorySize,
+                diskSize: diskSize,
+                display: display,
+                networkMode: networkMode
+            )
+            try vmDir.saveConfig(config)
+
+            // Write provisioning marker
+            try vmDir.saveProvisioningMarker(ProvisioningMarker(operation: "ipsw_install"))
+            Logger.info("Provisioning marker created", metadata: ["name": name])
+        } catch {
+            // Clean up if we fail to set up provisioning marker
+            try? vmDir.delete()
+            Logger.error("Failed to create VM", metadata: ["error": error.localizedDescription])
+            throw error
+        }
+
         Logger.info("Spawning background task for VM creation", metadata: ["name": name])
 
         // All parameters passed to Task are value types (Sendable)
@@ -484,43 +562,6 @@ final class LumeController {
         Task.detached { @MainActor @Sendable in
             // Create a new controller for the background task
             let controller = LumeController()
-
-            // Get the VM directory
-            let vmDir: VMDirectory
-            do {
-                vmDir = try controller.home.getVMDirectory(name, storage: storage)
-            } catch {
-                Logger.error("Failed to get VM directory",
-                            metadata: ["name": name, "error": error.localizedDescription])
-                return
-            }
-
-            // Create the VM directory and write provisioning marker first
-            // so VM appears in list immediately
-            do {
-                try FileManager.default.createDirectory(
-                    atPath: vmDir.dir.path,
-                    withIntermediateDirectories: true
-                )
-
-                // Create minimal config so VM shows up in list
-                let config = try VMConfig(
-                    os: os,
-                    cpuCount: cpuCount,
-                    memorySize: memorySize,
-                    diskSize: diskSize,
-                    display: display
-                )
-                try vmDir.saveConfig(config)
-
-                // Write provisioning marker
-                try vmDir.saveProvisioningMarker(ProvisioningMarker(operation: "ipsw_install"))
-                Logger.info("Provisioning marker created", metadata: ["name": name])
-            } catch {
-                Logger.error("Failed to create provisioning marker",
-                            metadata: ["name": name, "error": error.localizedDescription])
-                return
-            }
 
             do {
                 // Run the internal create which does all the work
@@ -535,7 +576,8 @@ final class LumeController {
                     ipsw: ipsw,
                     storage: storage,
                     unattendedConfig: unattendedConfig,
-                    vmDir: vmDir
+                    vmDir: vmDir,
+                    networkMode: networkMode
                 )
 
                 // Clear marker on success
@@ -573,7 +615,8 @@ final class LumeController {
         debugDir: String? = nil,
         noDisplay: Bool = true,
         vncPort: Int = 0,
-        vmDir: VMDirectory? = nil
+        vmDir: VMDirectory? = nil,
+        networkMode: NetworkMode = .nat
     ) async throws {
         Logger.info(
             "Creating VM (internal)",
@@ -588,7 +631,8 @@ final class LumeController {
             cpuCount: cpuCount,
             memorySize: memorySize,
             diskSize: diskSize,
-            display: display
+            display: display,
+            networkMode: networkMode
         )
 
         // Track the temp directory for cleanup on failure
@@ -855,7 +899,9 @@ final class LumeController {
         vncPort: Int = 0,
         recoveryMode: Bool = false,
         storage: String? = nil,
-        usbMassStoragePaths: [Path]? = nil
+        usbMassStoragePaths: [Path]? = nil,
+        networkMode: NetworkMode? = nil,
+        clipboard: Bool = false
     ) async throws {
         let normalizedName = normalizeVMName(name: name)
         Logger.info(
@@ -870,6 +916,7 @@ final class LumeController {
                 "recovery_mode": "\(recoveryMode)",
                 "storage_param": storage ?? "home", // Log the original param
                 "usb_storage_devices": "\(usbMassStoragePaths?.count ?? 0)",
+                "network_override": networkMode?.description ?? "vm-config",
             ])
 
         do {
@@ -951,7 +998,9 @@ final class LumeController {
                 mount: mount,
                 vncPort: vncPort,
                 recoveryMode: recoveryMode,
-                usbMassStoragePaths: usbMassStoragePaths)
+                usbMassStoragePaths: usbMassStoragePaths,
+                networkMode: networkMode,
+                clipboard: clipboard)
             Logger.info("VM started successfully", metadata: ["name": normalizedName])
         } catch {
             SharedVM.shared.removeVM(name: normalizedName)
@@ -987,53 +1036,22 @@ final class LumeController {
         storage: String? = nil
     ) async throws {
         do {
-            // Convert non-sparse image to sparse version if needed
-            var actualImage = image
-            var actualName = name
-
-            // Split the image to get name and tag for both sparse and non-sparse cases
+            // Split the image to get name and tag
             let components = image.split(separator: ":")
             guard components.count == 2 else {
                 throw ValidationError("Invalid image format. Expected format: name:tag")
             }
 
-            let originalName = String(components[0])
+            let imageName = String(components[0])
             let tag = String(components[1])
 
-            // For consistent VM naming, strip "-sparse" suffix if present when no name provided
-            let normalizedBaseName: String
-            if originalName.hasSuffix("-sparse") {
-                normalizedBaseName = String(originalName.dropLast(7))  // drop "-sparse"
-            } else {
-                normalizedBaseName = originalName
-            }
-
             // Set default VM name if not provided
-            if actualName == nil {
-                actualName = "\(normalizedBaseName)_\(tag)"
-            }
-
-            // Convert non-sparse image to sparse version if needed
-            if !image.contains("-sparse") {
-                // Create sparse version of the image name
-                actualImage = "\(originalName)-sparse:\(tag)"
-
-                Logger.info(
-                    "Converting to sparse image",
-                    metadata: [
-                        "original": image,
-                        "sparse": actualImage,
-                        "vm_name": actualName ?? "default",
-                    ]
-                )
-            }
-
-            let vmName = actualName ?? "default"  // Just use actualName as it's already normalized
+            let vmName = name ?? "\(imageName)_\(tag)"
 
             Logger.info(
                 "Pulling image",
                 metadata: [
-                    "image": actualImage,
+                    "image": image,
                     "name": vmName,
                     "registry": registry,
                     "organization": organization,
@@ -1041,7 +1059,7 @@ final class LumeController {
                 ])
 
             try self.validatePullParameters(
-                image: actualImage,
+                image: image,
                 name: vmName,
                 registry: registry,
                 organization: organization,
@@ -1051,7 +1069,7 @@ final class LumeController {
             let imageRegistry = try RegistryFactory.createRegistry(
                 registry: registry, organization: organization)
             let _ = try await imageRegistry.pull(
-                image: actualImage,
+                image: image,
                 name: vmName,
                 locationName: storage)
 
@@ -1069,7 +1087,7 @@ final class LumeController {
             Logger.info(
                 "Image pulled successfully",
                 metadata: [
-                    "image": actualImage,
+                    "image": image,
                     "name": vmName,
                     "registry": registry,
                     "organization": organization,
@@ -1304,7 +1322,8 @@ final class LumeController {
         cpuCount: Int,
         memorySize: UInt64,
         diskSize: UInt64,
-        display: String
+        display: String,
+        networkMode: NetworkMode = .nat
     ) async throws -> VM {
         let config = try VMConfig(
             os: os,
@@ -1312,7 +1331,8 @@ final class LumeController {
             memorySize: memorySize,
             diskSize: diskSize,
             macAddress: VZMACAddress.randomLocallyAdministered().string,
-            display: display
+            display: display,
+            networkMode: networkMode
         )
 
         let vmDirContext = VMDirContext(

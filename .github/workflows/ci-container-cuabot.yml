@@ -1,0 +1,16 @@
+name: "CI: Container CuaBot"
+
+on:
+  pull_request:
+    paths:
+      - "libs/cuabot/Dockerfile"
+      - "libs/cuabot/src/**"
+      - ".github/workflows/ci-container-cuabot.yml"
+      - ".github/workflows/docker-reusable-build.yml"
+
+jobs:
+  build:
+    uses: ./.github/workflows/docker-reusable-build.yml
+    with:
+      image_name: cuabot
+      context_dir: libs/cuabot

@@ -45,7 +45,7 @@ At the time of writing, the **computer-use-preview** model has limited availabil
 - Cannot be used in the OpenAI Playground
 - Outside of ChatGPT Operator, usage is restricted to the new **Responses API**
 
-Luckily, the `@trycua/computer` library can be used in conjunction with other models, like [Anthropic’s Computer Use](https://docs.anthropic.com/en/docs/agents-and-tools/tool-use/computer-use-tool) or [UI-TARS](https://huggingface.co/ByteDance-Seed/UI-TARS-1.5-7B). You’ll just have to write your own handler to parse the model output for interfacing with the container.
+Luckily, the `@trycua/computer` library can be used in conjunction with other models, like [Anthropic’s Computer Use](https://platform.claude.com/docs/en/agents-and-tools/tool-use/computer-use-tool) or [UI-TARS](https://huggingface.co/ByteDance-Seed/UI-TARS-1.5-7B). You’ll just have to write your own handler to parse the model output for interfacing with the container.
 
 ### Cua Cloud Containers
 

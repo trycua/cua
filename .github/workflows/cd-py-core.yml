@@ -71,11 +71,4 @@ jobs:
       tag_name: "core-v${{ needs.prepare.outputs.version }}"
       release_name: "cua-core v${{ needs.prepare.outputs.version }}"
       module_path: "libs/python/core"
-      body: |
-        ## Base package for Cua project with telemetry and core utilities
-
-        ## Installation
-
-        ```bash
-        pip install cua-core==${{ needs.prepare.outputs.version }}
-        ```
+      body: ""

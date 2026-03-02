@@ -37,7 +37,7 @@ on:
 
 jobs:
   build-and-push:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.platform == 'linux/arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
     strategy:
       fail-fast: false
       matrix:
@@ -47,6 +47,12 @@ jobs:
         exclude:
           - platform: ${{ inputs.skip_arm64 && 'linux/arm64' || 'none' }}
     steps:
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache
+          sudo docker system prune -af
+          df -h /
+
       - name: Checkout
         uses: actions/checkout@v4
 

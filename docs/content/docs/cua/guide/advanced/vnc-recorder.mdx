@@ -1,0 +1,154 @@
+---
+title: VNC Recorder
+description: Record human demonstrations from Cua sandboxes for training and evaluation
+---
+
+Cua sandboxes include a [noVNC fork](https://github.com/trycua/novnc) with built-in recording capabilities. This lets you capture human demonstrations as replayable session files for training data collection, evaluation baselines, or debugging.
+
+<video controls width="100%">
+  <source src="/docs/videos/demonstration-recorder.mp4" type="video/mp4" />
+</video>
+
+## Recording with the Cua CLI
+
+The easiest way to record demonstrations is with the `cua skills` command.
+
+### 1. Start recording
+
+Connect to a sandbox and start recording:
+
+```bash
+# Record from a Cua Cloud sandbox
+cua skills record --sandbox my-sandbox
+
+# Or record from any VNC URL
+cua skills record --vnc-url http://localhost:8006/vnc.html
+```
+
+This opens the VNC interface with recording enabled. You'll be prompted for a skill name and description after recording.
+
+### 2. Perform your demonstration
+
+Interact with the sandbox normally. All mouse and keyboard input is captured along with video.
+
+### 3. Stop and save
+
+Click **Stop Recording** in the VNC panel. The CLI processes the recording, generates captions using a VLM, and saves the skill to `~/.cua/skills/<name>/`.
+
+### 4. Replay
+
+View the recorded video:
+
+```bash
+cua skills replay my-skill
+```
+
+List all saved skills:
+
+```bash
+cua skills list
+```
+
+Read a skill's prompt:
+
+```bash
+cua skills read my-skill
+```
+
+---
+
+## Manual Recording
+
+### 1. Start a sandbox and open the VNC UI
+
+Start a sandbox using [Docker](/cua/guide/get-started/set-up-sandbox) or [Cua Cloud](/cua/guide/get-started/set-up-sandbox). The VNC UI will be available at:
+
+- **Docker**: `http://localhost:8006`
+- **Cloud**: `https://{sandbox-name}.sandbox.cua.ai/vnc.html`
+
+### 2. Enable recording
+
+Add `autorecord=1` to the VNC URL to automatically start recording when you connect:
+
+```
+http://localhost:8006/vnc.html?autoconnect=1&autorecord=1
+```
+
+Or click the **record button** in the control bar before connecting.
+
+### 3. Perform your demonstration
+
+Interact with the sandbox normally. All VNC traffic (screen updates and input events) is captured.
+
+### 4. Download the recording
+
+Click **Stop Recording**, then **Download** to save the session as a `.js` file.
+
+### 5. Replay the recording
+
+Start the playback UI:
+
+```bash
+# Clone the noVNC fork
+git clone https://github.com/trycua/novnc
+cd novnc
+
+# Move your recording into the recordings folder
+mv ~/Downloads/vnc-recording-*.js ./recordings/
+
+# Start the local server
+./utils/novnc_proxy
+```
+
+Then open the playback URL:
+
+```
+http://localhost:6080/tests/vnc_playback.html?data=../recordings/your-recording.js
+```
+
+## Streaming to External Server
+
+For automated pipelines, stream recordings directly to a custom server using the `record_url` parameter. The recording data is streamed as a websockify stream over WebSocket.
+
+Here's a simple recording server:
+
+```python
+import asyncio
+import websockets
+
+async def handle_recording(websocket):
+    with open("recording.bin", "wb") as f:
+        async for message in websocket:
+            f.write(message)
+    print("Recording saved")
+
+async def main():
+    async with websockets.serve(handle_recording, "localhost", 6090):
+        print("Recording server running on ws://localhost:6090")
+        await asyncio.Future()
+
+asyncio.run(main())
+```
+
+Then connect with streaming enabled:
+
+```
+http://localhost:8006/vnc.html?autoconnect=1&autorecord=1&record_url=ws://localhost:6090
+```
+
+Recording data streams to disk in real-time via WebSocket, so the file is ready immediately when the session ends.
+
+## URL Parameters
+
+| Parameter             | Description                                    |
+| --------------------- | ---------------------------------------------- |
+| `autorecord=1`        | Start recording when connection is established |
+| `record_url=ws://...` | Stream recording to external WebSocket server  |
+
+For more details on prompting agents with demonstrations, see [Demonstration-Guided Skills](/cua/guide/advanced/demonstration-guided-skills).
+
+## Reference
+
+For related capabilities, see:
+
+- [ShowUI-Aloha](https://github.com/showlab/ShowUI-Aloha) - Human-taught GUI agent that learns from demonstrations

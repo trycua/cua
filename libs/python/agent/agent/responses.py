@@ -717,7 +717,7 @@ def convert_completion_messages_to_responses_items(
                     function = tool_call.get("function", {})
                     function_name = function.get("name")
 
-                    if function_name == "computer":
+                    if function_name in ("computer", "computer_use"):
                         # Parse computer action
                         try:
                             action = json.loads(function.get("arguments", "{}"))

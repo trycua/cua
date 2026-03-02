@@ -1,0 +1,72 @@
+---
+title: Windows Native Task
+description: Build a Unity project creation task using app helpers on Windows
+---
+
+Create a task where agents must create a Unity project on Windows. This shows how to use app helpers for installation and file system checks for evaluation.
+
+## Prerequisites
+
+Create a Windows VM image:
+
+```bash
+cb image create windows-qemu --download-iso
+```
+
+## Create the Task
+
+Create `tasks/unity_project/main.py`:
+
+```python
+import cua_bench as cb
+
+
+@cb.tasks_config(split="train")
+def load():
+    return [
+        cb.Task(
+            description="Create a new Unity 3D project called 'MyGame' and save it to Desktop/UnityProjects/",
+            metadata={"project_name": "MyGame"},
+            computer={
+                "provider": "native",
+                "setup_config": {"os_type": "windows", "width": 1920, "height": 1080},
+            },
+        )
+    ]
+
+
+@cb.setup_task(split="train")
+async def start(task_cfg: cb.Task, session: cb.DesktopSession):
+    """Install Unity using the app helper."""
+    await session.apps.unity.install(with_shortcut=True)
+
+
+@cb.evaluate_task(split="train")
+async def evaluate(task_cfg: cb.Task, session: cb.DesktopSession) -> list[float]:
+    """Check if the Unity project was created."""
+    project_name = task_cfg.metadata["project_name"]
+
+    result = await session.run_command(
+        f'if exist "%USERPROFILE%\\Desktop\\UnityProjects\\{project_name}\\Assets" (echo FOUND) else (echo NOT_FOUND)',
+        check=False,
+    )
+
+    if "FOUND" in result["stdout"]:
+        return [1.0]
+    return [0.0]
+
+
+if __name__ == "__main__":
+    cb.interact(__file__)
+```
+
+## Run It
+
+```bash
+cb interact tasks/unity_project
+```
+
+## Next Steps
+
+- [macOS Native Task](/cuabench/examples/macos-native-task) - Use osascript-based app helpers
+- [App Helpers](/cuabench/guide/fundamentals/app-helpers) - Full API reference

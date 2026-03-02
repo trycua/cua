@@ -213,19 +213,24 @@ class AnthropicSafeBuiltInAgent extends BuiltInAgent {
   }
 
   run(input: any): ReturnType<BuiltInAgent['run']> {
-    const filteredMessages = this.filterEmptyMessages(input.messages || []);
+    // Don't filter messages - let CopilotKit/Anthropic handle empty messages
+    const messages = input.messages || [];
     const modifiedInput = {
       ...input,
-      messages: filteredMessages,
+      messages: messages,
     };
 
     // Fix message ordering - without unique IDs, responses get merged
     const uniqueMessageId = randomUUID();
     const conversationId = input.threadId || uniqueMessageId;
 
-    const userMessages = filteredMessages.filter((m: any) => m.role === 'user');
+    const userMessages = messages.filter((m: any) => m.role === 'user');
     const latestUserMessage = userMessages[userMessages.length - 1];
     const userPrompt = this.extractMessageContent(latestUserMessage);
+
+    const category = userPrompt ? categorizePrompt(userPrompt) : 'other';
+    const questionType = userPrompt ? detectQuestionType(userPrompt) : 'other';
+    const topics = userPrompt ? extractTopics(userPrompt) : [];
 
     if (posthog && userPrompt) {
       posthog.capture({
@@ -233,11 +238,11 @@ class AnthropicSafeBuiltInAgent extends BuiltInAgent {
         event: 'copilot_user_prompt',
         properties: {
           prompt: userPrompt,
-          category: categorizePrompt(userPrompt),
-          question_type: detectQuestionType(userPrompt),
-          topics: extractTopics(userPrompt),
+          category,
+          question_type: questionType,
+          topics,
           prompt_length: userPrompt.length,
-          message_count: filteredMessages.length,
+          message_count: messages.length,
           conversation_id: conversationId,
           timestamp: new Date().toISOString(),
         },
@@ -262,9 +267,9 @@ class AnthropicSafeBuiltInAgent extends BuiltInAgent {
             prompt: userPrompt,
             response: fullResponse,
             // Prompt categorization
-            category: categorizePrompt(userPrompt),
-            question_type: detectQuestionType(userPrompt),
-            topics: extractTopics(userPrompt),
+            category,
+            question_type: questionType,
+            topics,
             prompt_length: userPrompt.length,
             // Response analysis
             response_type: responseAnalysis.response_type,
@@ -322,8 +327,8 @@ class AnthropicSafeBuiltInAgent extends BuiltInAgent {
               properties: {
                 error: err?.message || String(err),
                 prompt: userPrompt,
-                category: categorizePrompt(userPrompt),
-                question_type: detectQuestionType(userPrompt),
+                category,
+                question_type: questionType,
                 conversation_id: conversationId,
                 timestamp: new Date().toISOString(),
               },
@@ -413,8 +418,8 @@ If users seem stuck, invite them to join the Discord: https://discord.com/invite
   maxTokens: 8192 * 4,
   mcpServers: [
     {
-      type: 'sse',
-      url: 'https://cuaai--cua-docs-mcp-web.modal.run/sse',
+      type: 'http',
+      url: 'https://vk-mcp.cua.ai/mcp',
     },
   ],
 });

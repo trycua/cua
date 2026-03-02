@@ -1,4 +1,5 @@
 import Foundation
+import CoreGraphics
 
 // MARK: - Support Types
 
@@ -40,6 +41,7 @@ class VM {
     @MainActor
     private var virtualizationService: VMVirtualizationService?
     internal let vncService: VNCService
+    private var clipboardWatcher: ClipboardWatcher?
     internal let virtualizationServiceFactory:
         (VMVirtualizationServiceContext) throws -> VMVirtualizationService
     private let vncServiceFactory: (VMDirectory) -> VNCService
@@ -125,7 +127,8 @@ class VM {
             vncUrl: vncUrl,
             ipAddress: ipAddress,
             sshAvailable: sshAvailable,
-            locationName: vmDirContext.storage ?? "home"
+            locationName: vmDirContext.storage ?? "home",
+            networkMode: vmDirContext.config.networkMode.description
         )
     }
 
@@ -133,7 +136,8 @@ class VM {
 
     func run(
         noDisplay: Bool, sharedDirectories: [SharedDirectory], mount: Path?, vncPort: Int = 0,
-        recoveryMode: Bool = false, usbMassStoragePaths: [Path]? = nil
+        recoveryMode: Bool = false, usbMassStoragePaths: [Path]? = nil,
+        networkMode: NetworkMode? = nil, clipboard: Bool = false
     ) async throws {
         Logger.info(
             "VM.run method called",
@@ -220,7 +224,8 @@ class VM {
                 sharedDirectories: sharedDirectories,
                 mount: mount,
                 recoveryMode: recoveryMode,
-                usbMassStoragePaths: usbMassStoragePaths
+                usbMassStoragePaths: usbMassStoragePaths,
+                networkMode: networkMode
             )
             Logger.info(
                 "Successfully created virtualization service context",
@@ -241,7 +246,7 @@ class VM {
                     "port": "\(vncPort)",
                 ])
             let vncInfo = try await setupSession(
-                noDisplay: noDisplay, port: vncPort, sharedDirectories: sharedDirectories)
+                port: vncPort, sharedDirectories: sharedDirectories)
             Logger.info(
                 "VNC setup successful", metadata: ["name": vmDirContext.name, "vncInfo": vncInfo])
 
@@ -255,6 +260,20 @@ class VM {
             try await service.start()
             Logger.info("VM started successfully", metadata: ["name": vmDirContext.name])
 
+            // Open the VNC client only after VM start to avoid connecting to an empty framebuffer.
+            if !noDisplay {
+                await waitForVisibleFramebufferBeforeOpeningClient()
+                Logger.info("Starting VNC session", metadata: ["name": vmDirContext.name])
+                try await vncService.openClient(url: vncInfo)
+            }
+
+            // Start clipboard watcher for automatic host-to-VM clipboard sync
+            // Requires SSH/Remote Login to be enabled on the VM
+            if clipboard {
+                clipboardWatcher = ClipboardWatcher(vmName: vmDirContext.name, storage: vmDirContext.storage)
+                await clipboardWatcher?.start()
+            }
+
             while true {
                 try await Task.sleep(nanoseconds: UInt64(1e9))
             }
@@ -266,6 +285,8 @@ class VM {
                     "error": error.localizedDescription,
                     "errorType": "\(type(of: error))",
                 ])
+            await clipboardWatcher?.stop()
+            clipboardWatcher = nil
             virtualizationService = nil
             vncService.stop()
 
@@ -298,6 +319,8 @@ class VM {
                 Logger.info(
                     "Stopping VM via virtualization service", metadata: ["name": vmDirContext.name])
                 try await service.stop()
+                await clipboardWatcher?.stop()
+                clipboardWatcher = nil
                 virtualizationService = nil
                 vncService.stop()
                 Logger.info(
@@ -669,7 +692,7 @@ class VM {
 
     /// Main session setup method that handles VNC and persists session data
     private func setupSession(
-        noDisplay: Bool, port: Int = 0, sharedDirectories: [SharedDirectory] = []
+        port: Int = 0, sharedDirectories: [SharedDirectory] = []
     ) async throws -> String {
         // Start the VNC service and get the URL
         let url = try await startVNCService(port: port)
@@ -677,13 +700,71 @@ class VM {
         // Save the session data
         saveSessionData(url: url, sharedDirectories: sharedDirectories)
 
-        // Open the VNC client if needed
-        if !noDisplay {
-            Logger.info("Starting VNC session", metadata: ["name": vmDirContext.name])
-            try await vncService.openClient(url: url)
+        return url
+    }
+
+    /// Avoid opening Screen Sharing on an all-black initial framebuffer.
+    /// This only runs for the real VNC service (not mocks in tests).
+    private func waitForVisibleFramebufferBeforeOpeningClient() async {
+        guard vncService is DefaultVNCService else {
+            return
         }
 
-        return url
+        do {
+            try await vncService.connectInputClient()
+            defer { vncService.disconnectInputClient() }
+
+            let timeoutSeconds = 30
+            for _ in 0..<timeoutSeconds {
+                if let image = try? await vncService.captureFramebuffer(),
+                    framebufferHasVisiblePixels(image)
+                {
+                    Logger.info(
+                        "Detected visible VM framebuffer content before opening VNC client",
+                        metadata: ["name": vmDirContext.name]
+                    )
+                    return
+                }
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+            }
+
+            Logger.info(
+                "Timed out waiting for visible framebuffer content; opening VNC client anyway",
+                metadata: ["name": vmDirContext.name, "timeout_seconds": "\(timeoutSeconds)"]
+            )
+        } catch {
+            Logger.info(
+                "Framebuffer readiness check failed; opening VNC client anyway",
+                metadata: ["name": vmDirContext.name, "error": "\(error)"]
+            )
+        }
+    }
+
+    /// Fast heuristic: sample bytes from the framebuffer and treat any non-zero value as visible content.
+    private func framebufferHasVisiblePixels(_ image: CGImage) -> Bool {
+        guard let dataProvider = image.dataProvider,
+            let data = dataProvider.data,
+            let bytes = CFDataGetBytePtr(data)
+        else {
+            // If we can't inspect pixels, do not block client opening.
+            return true
+        }
+
+        let count = CFDataGetLength(data)
+        guard count > 0 else {
+            return false
+        }
+
+        let stride = max(1, count / 4096)
+        var index = 0
+        while index < count {
+            if bytes[index] != 0 {
+                return true
+            }
+            index += stride
+        }
+
+        return false
     }
 
     // MARK: - Platform-specific Methods
@@ -699,10 +780,14 @@ class VM {
         sharedDirectories: [SharedDirectory] = [],
         mount: Path? = nil,
         recoveryMode: Bool = false,
-        usbMassStoragePaths: [Path]? = nil
+        usbMassStoragePaths: [Path]? = nil,
+        networkMode: NetworkMode? = nil
     ) throws -> VMVirtualizationServiceContext {
         // This is a diagnostic log to track actual file paths on disk for debugging
         try validateDiskState()
+
+        // Use provided networkMode, falling back to config value
+        let effectiveNetworkMode = networkMode ?? vmDirContext.config.networkMode
 
         return VMVirtualizationServiceContext(
             cpuCount: cpuCount,
@@ -716,7 +801,8 @@ class VM {
             diskPath: vmDirContext.diskPath,
             nvramPath: vmDirContext.nvramPath,
             recoveryMode: recoveryMode,
-            usbMassStoragePaths: usbMassStoragePaths
+            usbMassStoragePaths: usbMassStoragePaths,
+            networkMode: effectiveNetworkMode
         )
     }
 
@@ -827,7 +913,7 @@ class VM {
             virtualizationService = try virtualizationServiceFactory(config)
 
             let vncInfo = try await setupSession(
-                noDisplay: noDisplay, port: vncPort, sharedDirectories: sharedDirectories)
+                port: vncPort, sharedDirectories: sharedDirectories)
             Logger.info("VNC info", metadata: ["vncInfo": vncInfo])
 
             // Start the VM
@@ -835,6 +921,12 @@ class VM {
                 throw VMError.internalError("Virtualization service not initialized")
             }
             try await service.start()
+
+            if !noDisplay {
+                await waitForVisibleFramebufferBeforeOpeningClient()
+                Logger.info("Starting VNC session", metadata: ["name": vmDirContext.name])
+                try await vncService.openClient(url: vncInfo)
+            }
 
             while true {
                 try await Task.sleep(nanoseconds: UInt64(1e9))

@@ -972,6 +972,24 @@ class MacOSAutomationHandler(BaseAutomationHandler):
     mouse = MouseController()
     keyboard = KeyboardController()
 
+    @staticmethod
+    def _resolve_pynput_key(key: str):
+        """Resolve incoming key name to a pynput Key value.
+
+        The client Key enum uses 'command' as the value for Key.COMMAND, but
+        pynput expects 'cmd'. This method resolves the alias before lookup.
+        """
+        normalized = key.lower().strip()
+        key_aliases = {
+            "command": "cmd",
+        }
+        resolved_name = key_aliases.get(normalized, normalized)
+        if hasattr(Key, resolved_name):
+            return getattr(Key, resolved_name)
+        if len(key) == 1:
+            return key
+        return None
+
     async def mouse_down(
         self, x: Optional[int] = None, y: Optional[int] = None, button: str = "left"
     ) -> Dict[str, Any]:
@@ -1246,13 +1264,15 @@ class MacOSAutomationHandler(BaseAutomationHandler):
             Dictionary containing success status and error message if failed
         """
         try:
-            k = getattr(Key, key) if hasattr(Key, key) else (key if len(key) == 1 else None)
+            k = self._resolve_pynput_key(key)
             if k is None:
+                logger.warning("press_key: unknown key %r", key)
                 return {"success": False, "error": f"Unknown key: {key}"}
             self.keyboard.press(k)
             self.keyboard.release(k)
             return {"success": True}
         except Exception as e:
+            logger.error("press_key failed for key %r: %s", key, e)
             return {"success": False, "error": str(e)}
 
     async def hotkey(self, keys: List[str]) -> Dict[str, Any]:
@@ -1267,8 +1287,9 @@ class MacOSAutomationHandler(BaseAutomationHandler):
         try:
             seq = []
             for k in keys:
-                kk = getattr(Key, k) if hasattr(Key, k) else (k if len(k) == 1 else None)
+                kk = self._resolve_pynput_key(k)
                 if kk is None:
+                    logger.warning("hotkey: unknown key %r in keys %r", k, keys)
                     return {"success": False, "error": f"Unknown key in hotkey: {k}"}
                 seq.append(kk)
             for k in seq[:-1]:
@@ -1280,6 +1301,7 @@ class MacOSAutomationHandler(BaseAutomationHandler):
                 self.keyboard.release(k)
             return {"success": True}
         except Exception as e:
+            logger.error("hotkey failed for keys %r: %s", keys, e)
             return {"success": False, "error": str(e)}
 
     # Scrolling Actions

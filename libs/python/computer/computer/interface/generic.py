@@ -165,6 +165,19 @@ class GenericComputerInterface(BaseComputerInterface):
         await self._send_command("drag", {"path": path, "button": button, "duration": duration})
         await self._handle_delay(delay)
 
+    @staticmethod
+    def _normalize_key_for_backend(key: str) -> str:
+        """Normalize key aliases to backend-compatible names.
+
+        The Key enum uses 'command' as the value for Key.COMMAND, but pynput
+        (used by the backend) expects 'cmd'. This method normalizes outbound
+        key names to prevent silent failures.
+        """
+        key_aliases = {
+            "command": "cmd",
+        }
+        return key_aliases.get(key, key)
+
     # Keyboard Actions
     async def key_down(self, key: "KeyType", delay: Optional[float] = None) -> None:
         await self._send_command("key_down", {"key": key})
@@ -213,6 +226,7 @@ class GenericComputerInterface(BaseComputerInterface):
         else:
             raise ValueError(f"Invalid key type: {type(key)}. Must be Key enum or string.")
 
+        actual_key = self._normalize_key_for_backend(actual_key)
         await self._send_command("press_key", {"key": actual_key})
         await self._handle_delay(delay)
 
@@ -249,15 +263,15 @@ class GenericComputerInterface(BaseComputerInterface):
         actual_keys = []
         for key in keys:
             if isinstance(key, Key):
-                actual_keys.append(key.value)
+                resolved = self._normalize_key_for_backend(key.value)
             elif isinstance(key, str):
                 # Try to convert to enum if it matches a known key
                 key_or_enum = Key.from_string(key)
-                actual_keys.append(
-                    key_or_enum.value if isinstance(key_or_enum, Key) else key_or_enum
-                )
+                normalized = key_or_enum.value if isinstance(key_or_enum, Key) else key_or_enum
+                resolved = self._normalize_key_for_backend(normalized)
             else:
                 raise ValueError(f"Invalid key type: {type(key)}. Must be Key enum or string.")
+            actual_keys.append(resolved)
 
         await self._send_command("hotkey", {"keys": actual_keys})
         await self._handle_delay(delay)

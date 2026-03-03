@@ -41,6 +41,17 @@ logger = logging.getLogger(__name__)
 RECOMMENDED_MAX_WIDTH = 1024
 RECOMMENDED_MAX_HEIGHT = 768
 
+BEDROCK_MIN_RETRY_ATTEMPTS = 8
+BEDROCK_INITIAL_RETRY_DELAY_SECONDS = 6.0
+BEDROCK_MAX_RETRY_DELAY_SECONDS = 45.0
+BEDROCK_RETRYABLE_ERROR_MARKERS = (
+    "throttl",
+    "rate limit",
+    "too many requests",
+    "service unavailable",
+    "429",
+)
+
 
 def _scale_coordinate(coord: int, scale: float) -> int:
     """Scale a single coordinate value by a factor and round to int."""
@@ -260,6 +271,39 @@ async def _prepare_tools_for_bedrock(tool_schemas: List[Dict[str, Any]]) -> Tool
 
 def _is_bedrock_model(model: str) -> bool:
     return model.lower().startswith("bedrock/")
+
+
+def _is_bedrock_retryable_error(exc: Exception) -> bool:
+    err_text = f"{type(exc).__name__}: {exc}".lower()
+    return any(marker in err_text for marker in BEDROCK_RETRYABLE_ERROR_MARKERS)
+
+
+async def _acompletion_with_bedrock_backoff(
+    api_kwargs: Dict[str, Any], max_retries: int
+) -> Any:
+    retries = max(0, int(max_retries))
+    for attempt in range(retries + 1):
+        try:
+            return await litellm.acompletion(**api_kwargs)
+        except Exception as exc:
+            if attempt >= retries or not _is_bedrock_retryable_error(exc):
+                raise
+
+            retry_number = attempt + 1
+            delay_seconds = min(
+                BEDROCK_INITIAL_RETRY_DELAY_SECONDS * (2**attempt),
+                BEDROCK_MAX_RETRY_DELAY_SECONDS,
+            )
+            logger.warning(
+                "Bedrock rate limit error, retrying in %.1fs (%d/%d): %s",
+                delay_seconds,
+                retry_number,
+                retries,
+                exc,
+            )
+            await asyncio.sleep(delay_seconds)
+
+    raise RuntimeError("Bedrock completion retry loop exited unexpectedly")
 
 
 def _convert_responses_items_to_completion_messages(
@@ -1919,6 +1963,7 @@ class AnthropicHostedToolsConfig(AsyncAgentConfig):
         Supports Anthropic's computer use models with hosted tools.
         """
         tools = tools or []
+        is_bedrock = _is_bedrock_model(model)
 
         # Get tool configuration for this model
         tool_config = _get_tool_config_for_model(model)
@@ -1947,12 +1992,17 @@ class AnthropicHostedToolsConfig(AsyncAgentConfig):
             **kwargs,
         }
 
-        if _is_bedrock_model(model):
+        bedrock_retry_attempts = 0
+
+        if is_bedrock:
             # Helps Bedrock Converse handle tool-result + image follow-up turns.
             api_kwargs["assistant_continue_message"] = True
+            api_kwargs["num_retries"] = 0
+            requested_retries = 3 if max_retries is None else max_retries
+            bedrock_retry_attempts = max(requested_retries, BEDROCK_MIN_RETRY_ATTEMPTS)
 
         # Add beta header for computer use
-        if anthropic_tools and not _is_bedrock_model(model):
+        if anthropic_tools and not is_bedrock:
             api_kwargs["headers"] = {"anthropic-beta": tool_config["beta_flag"]}
 
         # Call API start hook
@@ -1960,7 +2010,13 @@ class AnthropicHostedToolsConfig(AsyncAgentConfig):
             await _on_api_start(api_kwargs)
 
         # Use liteLLM acompletion
-        response = await litellm.acompletion(**api_kwargs)
+        if is_bedrock:
+            response = await _acompletion_with_bedrock_backoff(
+                api_kwargs=api_kwargs,
+                max_retries=bedrock_retry_attempts,
+            )
+        else:
+            response = await litellm.acompletion(**api_kwargs)
 
         # Call API end hook
         if _on_api_end:

@@ -165,6 +165,18 @@ class GenericComputerInterface(BaseComputerInterface):
         await self._send_command("drag", {"path": path, "button": button, "duration": duration})
         await self._handle_delay(delay)
 
+    @staticmethod
+    def _normalize_key_for_backend(key: str) -> str:
+        """Normalize key aliases to backend-compatible names."""
+        key_aliases = {
+            "command": "cmd",
+            "meta": "cmd",
+            "super": "cmd",
+            "control": "ctrl",
+            "option": "alt",
+        }
+        return key_aliases.get(key, key)
+
     # Keyboard Actions
     async def key_down(self, key: "KeyType", delay: Optional[float] = None) -> None:
         await self._send_command("key_down", {"key": key})
@@ -194,11 +206,11 @@ class GenericComputerInterface(BaseComputerInterface):
             await interface.press(Key.ENTER)
 
             # Using direct values
-            await interface.press('pagedown')
-            await interface.press('enter')
+            await interface.press("pagedown")
+            await interface.press("enter")
 
             # Using single characters
-            await interface.press('a')
+            await interface.press("a")
             ```
 
         Raises:
@@ -213,7 +225,18 @@ class GenericComputerInterface(BaseComputerInterface):
         else:
             raise ValueError(f"Invalid key type: {type(key)}. Must be Key enum or string.")
 
-        await self._send_command("press_key", {"key": actual_key})
+        actual_key = self._normalize_key_for_backend(actual_key)
+
+        self.logger.info(f"Keyboard press request: input={key!r}, normalized={actual_key!r}")
+        result = await self._send_command("press_key", {"key": actual_key})
+        if not result.get("success", True):
+            self.logger.warning(
+                "Keyboard press failed: "
+                f"input={key!r}, normalized={actual_key!r}, error={result.get('error')}, "
+                f"message={result.get('message')}"
+            )
+        else:
+            self.logger.info(f"Keyboard press succeeded: normalized={actual_key!r}")
         await self._handle_delay(delay)
 
     async def press_key(self, key: "KeyType", delay: Optional[float] = None) -> None:
@@ -240,7 +263,7 @@ class GenericComputerInterface(BaseComputerInterface):
             await interface.hotkey(Key.COMMAND, Key.V)  # Paste
 
             # Using mixed formats
-            await interface.hotkey(Key.COMMAND, 'a')  # Select all
+            await interface.hotkey(Key.COMMAND, "a")  # Select all
             ```
 
         Raises:
@@ -249,17 +272,25 @@ class GenericComputerInterface(BaseComputerInterface):
         actual_keys = []
         for key in keys:
             if isinstance(key, Key):
-                actual_keys.append(key.value)
+                actual_keys.append(self._normalize_key_for_backend(key.value))
             elif isinstance(key, str):
                 # Try to convert to enum if it matches a known key
                 key_or_enum = Key.from_string(key)
-                actual_keys.append(
-                    key_or_enum.value if isinstance(key_or_enum, Key) else key_or_enum
-                )
+                normalized_key = key_or_enum.value if isinstance(key_or_enum, Key) else key_or_enum
+                actual_keys.append(self._normalize_key_for_backend(normalized_key))
             else:
                 raise ValueError(f"Invalid key type: {type(key)}. Must be Key enum or string.")
 
-        await self._send_command("hotkey", {"keys": actual_keys})
+        self.logger.info(f"Hotkey request: input={keys!r}, normalized={actual_keys!r}")
+        result = await self._send_command("hotkey", {"keys": actual_keys})
+        if not result.get("success", True):
+            self.logger.warning(
+                "Hotkey failed: "
+                f"input={keys!r}, normalized={actual_keys!r}, error={result.get('error')}, "
+                f"message={result.get('message')}"
+            )
+        else:
+            self.logger.info(f"Hotkey succeeded: normalized={actual_keys!r}")
         await self._handle_delay(delay)
 
     # Scrolling Actions

@@ -67,6 +67,10 @@ def get_json(obj: Any, max_depth: int = 10) -> Any:
         if seen is None:
             seen = set()
 
+        # Handle bytes early
+        if isinstance(o, bytes):
+            return f"<bytes:{len(o)}>"
+
         # Use model_dump() if available
         if hasattr(o, "model_dump"):
             return o.model_dump()
@@ -632,6 +636,7 @@ class ComputerAgent:
         """Called when an LLM API call is about to start."""
         for callback in self.callbacks:
             if hasattr(callback, "on_api_start"):
+                kwargs["test_key_this_is_for_Debgugging_remove_me"] = "test_value"
                 await callback.on_api_start(get_json(kwargs))
 
     async def _on_api_end(self, kwargs: Dict[str, Any], result: Any) -> None:

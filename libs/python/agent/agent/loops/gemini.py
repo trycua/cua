@@ -74,8 +74,7 @@ def _sanitize_for_json(obj: Any) -> Any:
     if obj is None:
         return None
     if isinstance(obj, bytes):
-        # Convert bytes to base64 string for JSON serialization
-        return f"<bytes:{base64.b64encode(obj).decode('ascii')}>"
+        return f"<bytes:{len(obj)}>"
     if isinstance(obj, (str, int, float, bool)):
         return obj
     # Handle enums early — just use their value

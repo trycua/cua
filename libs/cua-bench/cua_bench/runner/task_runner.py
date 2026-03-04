@@ -210,6 +210,8 @@ class TaskRunner:
         remove_images_after: bool = False,
         # Provider type
         provider_type: Optional[str] = None,
+        # Dev mode: list of local package paths to mount and install
+        dev_paths: Optional[List[str]] = None,
     ) -> TaskResult:
         """Run a task with 2-container architecture.
 
@@ -319,6 +321,7 @@ class TaskRunner:
                 oracle=oracle,
                 output_dir=output_dir,
                 is_simulated=is_simulated,
+                dev_paths=dev_paths,
             )
 
             # 3.5. Start streaming agent logs to file if requested
@@ -781,6 +784,7 @@ class TaskRunner:
         oracle: bool,
         output_dir: Optional[str],
         is_simulated: bool = False,
+        dev_paths: Optional[List[str]] = None,
     ) -> ContainerInfo:
         """Start the agent container.
 
@@ -869,6 +873,20 @@ class TaskRunner:
         if cua_bench_path.exists() and (cua_bench_path / "computers").exists():
             volumes.append(f"{cua_bench_path}:/app/cua_bench:ro")
 
+        # --with mode: mount and pip install local packages
+        dev_install_cmd = ""
+        if dev_paths:
+            install_parts = []
+            for i, dev_path in enumerate(dev_paths):
+                abs_path = Path(dev_path).absolute()
+                container_path = f"/app/dev_{i}"
+                volumes.append(f"{abs_path}:{container_path}:ro")
+                # Copy to tmp first since pip needs a writable source dir to build
+                install_parts.append(
+                    f"(cp -r {container_path} /tmp/dev_{i} && pip install /tmp/dev_{i} 2>&1 | tail -1)"
+                )
+            dev_install_cmd = " && ".join(install_parts) + " && "
+
         # Build command
         if agent_command:
             # Custom command for Docker image agents
@@ -890,6 +908,11 @@ class TaskRunner:
                     command.extend(["--model", model])
                 if max_steps:
                     command.extend(["--max-steps", str(max_steps)])
+
+        # In --with mode, wrap command to install local packages first
+        if dev_paths and dev_install_cmd:
+            original_cmd = " ".join(command)
+            command = ["bash", "-c", f"{dev_install_cmd}{original_cmd}"]
 
         # Start container (not detached - we want to wait for it)
         return await start_container(

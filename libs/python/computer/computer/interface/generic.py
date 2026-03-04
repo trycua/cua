@@ -180,11 +180,27 @@ class GenericComputerInterface(BaseComputerInterface):
 
     # Keyboard Actions
     async def key_down(self, key: "KeyType", delay: Optional[float] = None) -> None:
-        await self._send_command("key_down", {"key": key})
+        if isinstance(key, Key):
+            actual_key = key.value
+        elif isinstance(key, str):
+            key_or_enum = Key.from_string(key)
+            actual_key = key_or_enum.value if isinstance(key_or_enum, Key) else key_or_enum
+        else:
+            raise ValueError(f"Invalid key type: {type(key)}. Must be Key enum or string.")
+        actual_key = self._normalize_key_for_backend(actual_key)
+        await self._send_command("key_down", {"key": actual_key})
         await self._handle_delay(delay)
 
     async def key_up(self, key: "KeyType", delay: Optional[float] = None) -> None:
-        await self._send_command("key_up", {"key": key})
+        if isinstance(key, Key):
+            actual_key = key.value
+        elif isinstance(key, str):
+            key_or_enum = Key.from_string(key)
+            actual_key = key_or_enum.value if isinstance(key_or_enum, Key) else key_or_enum
+        else:
+            raise ValueError(f"Invalid key type: {type(key)}. Must be Key enum or string.")
+        actual_key = self._normalize_key_for_backend(actual_key)
+        await self._send_command("key_up", {"key": actual_key})
         await self._handle_delay(delay)
 
     async def type_text(self, text: str, delay: Optional[float] = None) -> None:

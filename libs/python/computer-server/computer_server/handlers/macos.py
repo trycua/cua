@@ -1213,12 +1213,14 @@ class MacOSAutomationHandler(BaseAutomationHandler):
             Dictionary containing success status and error message if failed
         """
         try:
-            k = getattr(Key, key) if hasattr(Key, key) else (key if len(key) == 1 else None)
+            k = self._resolve_pynput_key(key)
             if k is None:
+                logger.warning("key_down: unknown key %r", key)
                 return {"success": False, "error": f"Unknown key: {key}"}
             self.keyboard.press(k)
             return {"success": True}
         except Exception as e:
+            logger.error("key_down failed for key %r: %s", key, e)
             return {"success": False, "error": str(e)}
 
     async def key_up(self, key: str) -> Dict[str, Any]:
@@ -1231,12 +1233,14 @@ class MacOSAutomationHandler(BaseAutomationHandler):
             Dictionary containing success status and error message if failed
         """
         try:
-            k = getattr(Key, key) if hasattr(Key, key) else (key if len(key) == 1 else None)
+            k = self._resolve_pynput_key(key)
             if k is None:
+                logger.warning("key_up: unknown key %r", key)
                 return {"success": False, "error": f"Unknown key: {key}"}
             self.keyboard.release(k)
             return {"success": True}
         except Exception as e:
+            logger.error("key_up failed for key %r: %s", key, e)
             return {"success": False, "error": str(e)}
 
     async def type_text(self, text: str) -> Dict[str, Any]:

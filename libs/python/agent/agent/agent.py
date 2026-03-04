@@ -67,6 +67,10 @@ def get_json(obj: Any, max_depth: int = 10) -> Any:
         if seen is None:
             seen = set()
 
+        # Handle bytes early
+        if isinstance(o, bytes):
+            return f"<bytes:{len(o)}>"
+
         # Use model_dump() if available
         if hasattr(o, "model_dump"):
             return o.model_dump()

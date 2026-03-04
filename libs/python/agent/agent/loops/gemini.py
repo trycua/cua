@@ -830,11 +830,7 @@ class GeminiComputerUseConfig(AsyncAgentConfig):
 
         if _on_api_start:
             await _on_api_start(
-                _sanitize_for_json({
-                    "model": api_kwargs["model"],
-                    "contents": api_kwargs["contents"],
-                    "config": api_kwargs["config"],
-                })
+                _sanitize_for_json(api_kwargs)
             )
 
         response = client.models.generate_content(**api_kwargs)

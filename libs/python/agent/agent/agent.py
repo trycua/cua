@@ -636,7 +636,6 @@ class ComputerAgent:
         """Called when an LLM API call is about to start."""
         for callback in self.callbacks:
             if hasattr(callback, "on_api_start"):
-                kwargs["test_key_this_is_for_Debgugging_remove_me"] = "test_value"
                 await callback.on_api_start(get_json(kwargs))
 
     async def _on_api_end(self, kwargs: Dict[str, Any], result: Any) -> None:

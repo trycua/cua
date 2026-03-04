@@ -4,10 +4,7 @@ Gemini Computer Use agent loop
 Maps internal Agent SDK message format to Google's Gemini Computer Use API and back.
 
 Supported models:
-- gemini-2.5-computer-use-preview-10-2025 (uses built-in ComputerUse tool)
-- gemini-3-flash-preview (and variants) (uses custom function declarations)
-- gemini-3-pro-preview (and variants) (uses custom function declarations)
-- gemini-3.1-pro-preview-computer-use (and variants) (uses custom function declarations)
+- gemini-(2.5/3/3.1)-(flash/pro/computer-use-preview)
 
 Key features:
 - Lazy import of google.genai

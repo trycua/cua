@@ -17,6 +17,7 @@ Key features:
 from __future__ import annotations
 
 import base64
+import enum
 import io
 import uuid
 from typing import Any, Dict, List, Optional, Tuple
@@ -77,16 +78,23 @@ def _sanitize_for_json(obj: Any) -> Any:
         return f"<bytes:{base64.b64encode(obj).decode('ascii')}>"
     if isinstance(obj, (str, int, float, bool)):
         return obj
+    # Handle enums early — just use their value
+    if isinstance(obj, enum.Enum):
+        return obj.value
     if isinstance(obj, dict):
         return {k: _sanitize_for_json(v) for k, v in obj.items()}
     if isinstance(obj, (list, tuple)):
         return [_sanitize_for_json(item) for item in obj]
-    # Handle objects with __dict__ (like Gemini SDK response objects)
-    if hasattr(obj, "__dict__"):
-        return {k: _sanitize_for_json(v) for k, v in obj.__dict__.items() if not k.startswith("_")}
     # Handle objects with model_dump (Pydantic models)
     if hasattr(obj, "model_dump"):
         return _sanitize_for_json(obj.model_dump())
+    # Handle objects with __dict__ (like Gemini SDK response objects)
+    if hasattr(obj, "__dict__"):
+        return {
+            k: _sanitize_for_json(v)
+            for k, v in obj.__dict__.items()
+            if not k.startswith("__")
+        }
     # Fallback to string representation
     return str(obj)
 
@@ -822,11 +830,11 @@ class GeminiComputerUseConfig(AsyncAgentConfig):
 
         if _on_api_start:
             await _on_api_start(
-                {
+                _sanitize_for_json({
                     "model": api_kwargs["model"],
-                    # "contents": api_kwargs["contents"], # Disabled for now
+                    "contents": api_kwargs["contents"],
                     "config": api_kwargs["config"],
-                }
+                })
             )
 
         response = client.models.generate_content(**api_kwargs)

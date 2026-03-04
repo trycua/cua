@@ -84,12 +84,19 @@ def get_json(obj: Any, max_depth: int = 10) -> Any:
         if hasattr(o, "__class__") and "computer" in o.__class__.__name__.lower():
             return f"<computer:{o.__class__.__name__}>"
 
+        # Handle enums — just use their value
+        import enum
+        if isinstance(o, enum.Enum):
+            return o.value
+
         # Handle objects with __dict__
         if hasattr(o, "__dict__"):
             seen.add(obj_id)
             try:
                 result = {}
                 for k, v in o.__dict__.items():
+                    if k.startswith("__"):
+                        continue
                     if v is not None:
                         # Recursively serialize with updated depth and seen set
                         serialized_value = custom_serializer(v, depth + 1, seen.copy())

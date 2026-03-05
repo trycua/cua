@@ -3614,9 +3614,10 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
         return digest
     }
 
-    private func uploadBlobFromPath(repository: String, path: URL, digest: String, token: String)
-        async throws -> String
-    {
+    private func uploadBlobFromPath(
+        repository: String, path: URL, digest: String, token: String,
+        onProgress: (@Sendable (Int64, Int64) -> Void)? = nil
+    ) async throws -> String {
         // Check if blob already exists
         if try await blobExists(repository: repository, digest: digest, token: token) {
             Logger.debug("Blob already exists: \(digest)")
@@ -3626,14 +3627,15 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
         // Initiate upload
         let uploadURL = try await startBlobUpload(repository: repository, token: token)
 
-        // Load data from file
-        let data = try Data(contentsOf: path)
+        // Upload blob from file with progress tracking
+        try await uploadBlobFromFile(
+            url: uploadURL, filePath: path, digest: digest, token: token,
+            onProgress: onProgress)
 
-        // Upload blob
-        try await uploadBlob(url: uploadURL, data: data, digest: digest, token: token)
-
-        // Report progress
-        await uploadProgress.addProgress(Int64(data.count))
+        // Report progress to legacy tracker
+        let attrs = try FileManager.default.attributesOfItem(atPath: path.path)
+        let size = attrs[.size] as? Int64 ?? 0
+        await uploadProgress.addProgress(size)
 
         return digest
     }
@@ -3694,6 +3696,45 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
 
         Logger.debug("Blob upload initiated. Upload URL: \(uploadURL.absoluteString)")
         return uploadURL.absoluteURL  // Ensure it's absolute
+    }
+
+    /// Upload a blob from a file path with real byte-level progress tracking.
+    private func uploadBlobFromFile(
+        url: URL, filePath: URL, digest: String, token: String,
+        onProgress: (@Sendable (Int64, Int64) -> Void)? = nil
+    ) async throws {
+        var components = URLComponents(url: url, resolvingAgainstBaseURL: true)!
+        var queryItems = components.queryItems ?? []
+        queryItems.append(URLQueryItem(name: "digest", value: digest))
+        components.queryItems = queryItems
+
+        guard let uploadURL = components.url else {
+            throw PushError.invalidURL
+        }
+
+        let attrs = try FileManager.default.attributesOfItem(atPath: filePath.path)
+        let fileSize = attrs[.size] as? Int64 ?? 0
+
+        var request = URLRequest(url: uploadURL)
+        request.httpMethod = "PUT"
+        request.timeoutInterval = 3600
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
+        request.setValue("\(fileSize)", forHTTPHeaderField: "Content-Length")
+
+        let config = URLSessionConfiguration.default
+        config.timeoutIntervalForRequest = 3600
+        config.timeoutIntervalForResource = 7200
+
+        let delegate = UploadProgressDelegate(
+            totalBytes: fileSize, onProgress: onProgress)
+        let session = URLSession(configuration: config, delegate: delegate, delegateQueue: nil)
+
+        let (_, response) = try await session.upload(for: request, fromFile: filePath)
+
+        guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 201 else {
+            throw PushError.blobUploadFailed
+        }
     }
 
     private func uploadBlob(url: URL, data: Data, digest: String, token: String) async throws {
@@ -4185,22 +4226,43 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
             // ── Single-layer mode (kubelet-compatible, no chunking) ──────────
             Logger.info("Disk size: \(diskSize) bytes, compressing as single layer")
 
+            let singleProgress = LayerProgressDisplay()
+            await singleProgress.addLayer(id: "config", label: "config.json", totalBytes: Int64(configSize))
+            await singleProgress.markDone(id: "config")
+            await singleProgress.addLayer(id: "nvram", label: "nvram.bin", totalBytes: Int64(auxSize))
+            await singleProgress.markDone(id: "nvram")
+            await singleProgress.addLayer(id: "disk", label: "disk.img", totalBytes: Int64(diskSize))
+            await singleProgress.updateStatus(id: "disk", status: .compressing)
+
             let gzDiskPath = workDir.appendingPathComponent("disk.img.gz")
             let (compDigest, compSize, uncompDigest, uncompSize) =
                 try gzipFile(inputPath: diskPath, outputPath: gzDiskPath)
 
             if !dryRun {
                 if !(try await blobExists(repository: repository, digest: compDigest, token: token)) {
-                    Logger.debug("Uploading disk blob (single layer)")
+                    await singleProgress.updateStatus(id: "disk", status: .pushing)
+                    await singleProgress.updateProgress(
+                        id: "disk", completedBytes: 0, totalBytes: Int64(compSize))
                     _ = try await uploadBlobFromPath(
                         repository: repository,
                         path: gzDiskPath,
                         digest: compDigest,
-                        token: token)
+                        token: token,
+                        onProgress: { sent, total in
+                            Task {
+                                await singleProgress.updateProgress(
+                                    id: "disk", completedBytes: sent, totalBytes: total)
+                            }
+                        })
+                    await singleProgress.markDone(id: "disk", bytes: Int64(compSize))
                 } else {
-                    Logger.debug("Disk blob already exists")
+                    await singleProgress.markExists(id: "disk")
                 }
+            } else {
+                await singleProgress.markDone(id: "disk", bytes: Int64(compSize))
             }
+
+            await singleProgress.finish()
 
             try? FileManager.default.removeItem(at: gzDiskPath)
 
@@ -4266,20 +4328,26 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
                         let (compDigest, compSize, uncompDigest, uncompSize) =
                             try self.gzipFile(inputPath: chunkPath, outputPath: gzChunkPath)
 
-                        await progress.updateProgress(
-                            id: chunkId, completedBytes: Int64(compSize) / 2,
-                            totalBytes: Int64(compSize))
-
                         if !dryRun {
                             if !(try await self.blobExists(
                                 repository: repository, digest: compDigest, token: token))
                             {
                                 await progress.updateStatus(id: chunkId, status: .pushing)
+                                await progress.updateProgress(
+                                    id: chunkId, completedBytes: 0,
+                                    totalBytes: Int64(compSize))
                                 _ = try await self.uploadBlobFromPath(
                                     repository: repository,
                                     path: gzChunkPath,
                                     digest: compDigest,
-                                    token: token)
+                                    token: token,
+                                    onProgress: { sent, total in
+                                        Task {
+                                            await progress.updateProgress(
+                                                id: chunkId, completedBytes: sent,
+                                                totalBytes: total)
+                                        }
+                                    })
                                 await progress.markDone(id: chunkId, bytes: Int64(compSize))
                             } else {
                                 await progress.markExists(id: chunkId)
@@ -4586,6 +4654,25 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
     }
 }
 
+/// Delegate that tracks upload byte progress via URLSession callbacks.
+final class UploadProgressDelegate: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+    private let totalBytes: Int64
+    private let onProgress: (@Sendable (Int64, Int64) -> Void)?
+
+    init(totalBytes: Int64, onProgress: (@Sendable (Int64, Int64) -> Void)?) {
+        self.totalBytes = totalBytes
+        self.onProgress = onProgress
+    }
+
+    func urlSession(
+        _ session: URLSession, task: URLSessionTask,
+        didSendBodyData bytesSent: Int64, totalBytesSent: Int64,
+        totalBytesExpectedToSend: Int64
+    ) {
+        onProgress?(totalBytesSent, totalBytes)
+    }
+}
+
 /// Docker-style multi-line progress display for concurrent layer operations.
 /// Each layer gets its own line, updated in-place using ANSI escape codes.
 actor LayerProgressDisplay {
@@ -4666,15 +4753,21 @@ actor LayerProgressDisplay {
 
         var lines = 0
         var waitingCount = 0
+        var waitingShown = 0
         var doneCount = 0
 
-        // Only show active layers (compressing/pushing/downloading/decompressing)
-        // and a compact summary for waiting/done
+        // Show active layers, up to 5 waiting, and a compact summary for done
         for id in layerOrder {
             guard let layer = layers[id] else { continue }
             switch layer.status {
             case .waiting:
                 waitingCount += 1
+                if waitingShown < 5 {
+                    let line = formatLayer(layer)
+                    print("\u{1B}[2K\(line)")
+                    lines += 1
+                    waitingShown += 1
+                }
             case .done, .exists:
                 doneCount += 1
             default:
@@ -4693,8 +4786,9 @@ actor LayerProgressDisplay {
         let total = layers.count
 
         var summary = "\u{1B}[2K\(doneCount)/\(total) done"
-        if waitingCount > 0 {
-            summary += " | \(waitingCount) waiting"
+        let hiddenWaiting = waitingCount - waitingShown
+        if hiddenWaiting > 0 {
+            summary += " | +\(hiddenWaiting) waiting"
         }
         summary += " | \(formatBytes(totalDone))/\(formatBytes(totalAll))"
         summary += " | \(formatSpeed(speed)) | \(formatTime(elapsed))"
@@ -4728,10 +4822,11 @@ actor LayerProgressDisplay {
         case .compressing:
             return "\(label)  🗜  Compressing..."
         case .pushing:
-            let bar = progressBar(
-                progress: layer.totalBytes > 0
-                    ? Double(layer.completedBytes) / Double(layer.totalBytes) : 0)
-            return "\(label)  \(bar) Pushing \(formatBytes(layer.completedBytes))/\(formatBytes(layer.totalBytes))"
+            let progress = layer.totalBytes > 0
+                ? Double(layer.completedBytes) / Double(layer.totalBytes) : 0
+            let bar = progressBar(progress: progress)
+            let pct = Int(progress * 100)
+            return "\(label)  \(bar) \(pct)% ⬆ \(formatBytes(layer.completedBytes))/\(formatBytes(layer.totalBytes))"
         case .downloading:
             let bar = progressBar(
                 progress: layer.totalBytes > 0

@@ -1,6 +1,7 @@
 import ArgumentParser
+import CZlib
 import CommonCrypto
-import Compression  // Add this import
+import Compression
 import Darwin
 import Foundation
 import Swift
@@ -3880,36 +3881,106 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
 
     // MARK: - OCI-Compliant Format Support
 
-    /// Gzip-compress a file, returning digest/size info for both the compressed and uncompressed forms.
-    private func gzipFile(inputPath: URL, outputPath: URL) throws -> (
+    /// Gzip-compress a file using in-process zlib (streaming, sparse-aware).
+    /// Computes SHA256 digests for both uncompressed and compressed data in a single pass.
+    private func gzipFile(
+        inputPath: URL, outputPath: URL,
+        onProgress: ((_ bytesRead: UInt64, _ totalBytes: UInt64) -> Void)? = nil
+    ) throws -> (
         compressedDigest: String, compressedSize: Int,
         uncompressedDigest: String, uncompressedSize: UInt64
     ) {
+        let inputHandle = try FileHandle(forReadingFrom: inputPath)
+        defer { try? inputHandle.close() }
+
         let uncompressedAttrs = try FileManager.default.attributesOfItem(atPath: inputPath.path)
         let uncompressedSize = uncompressedAttrs[.size] as? UInt64 ?? 0
-        let uncompressedDigest = "sha256:" + calculateSHA256(filePath: inputPath.path)
 
         FileManager.default.createFile(atPath: outputPath.path, contents: nil)
         let outputHandle = try FileHandle(forWritingTo: outputPath)
+        defer { try? outputHandle.close() }
 
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/gzip")
-        process.arguments = ["-c", inputPath.path]
-        process.standardOutput = outputHandle
-
-        try process.run()
-        process.waitUntilExit()
-        try outputHandle.close()
-
-        guard process.terminationStatus == 0 else {
+        // Initialize zlib with gzip format (windowBits = MAX_WBITS + 16 = 31)
+        var stream = CZlib.z_stream()
+        let initResult = CZlib.deflateInit2_(
+            &stream,
+            Z_DEFAULT_COMPRESSION,
+            Z_DEFLATED,
+            MAX_WBITS + 16,  // gzip header/trailer
+            MAX_MEM_LEVEL,
+            Z_DEFAULT_STRATEGY,
+            ZLIB_VERSION,
+            Int32(MemoryLayout<CZlib.z_stream>.size)
+        )
+        guard initResult == Z_OK else {
             throw PushError.blobUploadFailed
         }
+        defer { CZlib.deflateEnd(&stream) }
 
-        let compressedAttrs = try FileManager.default.attributesOfItem(atPath: outputPath.path)
-        let compressedSize = Int(compressedAttrs[.size] as? UInt64 ?? 0)
-        let compressedDigest = "sha256:" + calculateSHA256(filePath: outputPath.path)
+        // SHA256 contexts for both uncompressed and compressed data
+        var uncompCtx = CC_SHA256_CTX()
+        CC_SHA256_Init(&uncompCtx)
+        var compCtx = CC_SHA256_CTX()
+        CC_SHA256_Init(&compCtx)
 
-        return (compressedDigest, compressedSize, uncompressedDigest, uncompressedSize)
+        let readSize = 4 * 1024 * 1024  // 4MB blocks (matches sparse granularity)
+        let outputBufSize = readSize + 1024
+        let outputBuf = UnsafeMutablePointer<UInt8>.allocate(capacity: outputBufSize)
+        defer { outputBuf.deallocate() }
+        var totalCompressed: Int = 0
+        var totalRead: UInt64 = 0
+
+        while true {
+            let inputData = inputHandle.readData(ofLength: readSize)
+            let isLast = inputData.count < readSize
+            totalRead += UInt64(inputData.count)
+            onProgress?(totalRead, uncompressedSize)
+
+            // Update uncompressed digest
+            inputData.withUnsafeBytes { ptr in
+                if let base = ptr.baseAddress {
+                    CC_SHA256_Update(&uncompCtx, base, CC_LONG(inputData.count))
+                }
+            }
+
+            // Compress
+            try inputData.withUnsafeBytes { inputPtr in
+                stream.next_in = UnsafeMutablePointer<UInt8>(
+                    mutating: inputPtr.baseAddress?.assumingMemoryBound(to: UInt8.self))
+                stream.avail_in = UInt32(inputData.count)
+
+                repeat {
+                    stream.next_out = outputBuf
+                    stream.avail_out = UInt32(outputBufSize)
+
+                    let status = CZlib.deflate(&stream, isLast ? Z_FINISH : Z_NO_FLUSH)
+                    guard status == Z_OK || status == Z_BUF_ERROR || status == Z_STREAM_END else {
+                        throw PushError.blobUploadFailed
+                    }
+
+                    let produced = outputBufSize - Int(stream.avail_out)
+                    if produced > 0 {
+                        CC_SHA256_Update(&compCtx, outputBuf, CC_LONG(produced))
+                        try outputHandle.write(contentsOf: Data(
+                            bytesNoCopy: outputBuf, count: produced, deallocator: .none))
+                        totalCompressed += produced
+                    }
+                } while stream.avail_out == 0
+            }
+
+            if isLast { break }
+        }
+
+        // Finalize digests
+        var uncompHash = [UInt8](repeating: 0, count: Int(CC_SHA256_DIGEST_LENGTH))
+        CC_SHA256_Final(&uncompHash, &uncompCtx)
+        let uncompressedDigest = "sha256:" + uncompHash.map { String(format: "%02x", $0) }.joined()
+
+        var compHash = [UInt8](repeating: 0, count: Int(CC_SHA256_DIGEST_LENGTH))
+        CC_SHA256_Final(&compHash, &compCtx)
+        let compressedDigest = "sha256:" + compHash.map { String(format: "%02x", $0) }.joined()
+
+        return (compressedDigest, totalCompressed, uncompressedDigest, uncompressedSize)
     }
 
     /// Gunzip a file to an output path.
@@ -4236,7 +4307,13 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
 
             let gzDiskPath = workDir.appendingPathComponent("disk.img.gz")
             let (compDigest, compSize, uncompDigest, uncompSize) =
-                try gzipFile(inputPath: diskPath, outputPath: gzDiskPath)
+                try gzipFile(inputPath: diskPath, outputPath: gzDiskPath) { bytesRead, totalBytes in
+                    Task {
+                        await singleProgress.updateProgress(
+                            id: "disk", completedBytes: Int64(bytesRead),
+                            totalBytes: Int64(totalBytes))
+                    }
+                }
 
             if !dryRun {
                 if !(try await blobExists(repository: repository, digest: compDigest, token: token)) {
@@ -4326,7 +4403,15 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
                         try chunkData.write(to: chunkPath)
 
                         let (compDigest, compSize, uncompDigest, uncompSize) =
-                            try self.gzipFile(inputPath: chunkPath, outputPath: gzChunkPath)
+                            try self.gzipFile(
+                                inputPath: chunkPath, outputPath: gzChunkPath
+                            ) { bytesRead, totalBytes in
+                                Task {
+                                    await progress.updateProgress(
+                                        id: chunkId, completedBytes: Int64(bytesRead),
+                                        totalBytes: Int64(totalBytes))
+                                }
+                            }
 
                         if !dryRun {
                             if !(try await self.blobExists(
@@ -4791,7 +4876,14 @@ actor LayerProgressDisplay {
             summary += " | +\(hiddenWaiting) waiting"
         }
         summary += " | \(formatBytes(totalDone))/\(formatBytes(totalAll))"
-        summary += " | \(formatSpeed(speed)) | \(formatTime(elapsed))"
+        summary += " | \(formatSpeed(speed))"
+        if totalDone > 0 && totalAll > totalDone {
+            let remainingBytes = Double(totalAll - totalDone)
+            let eta = speed > 0 ? remainingBytes / speed : 0
+            summary += " | ETA \(formatTime(eta))"
+        } else {
+            summary += " | \(formatTime(elapsed))"
+        }
         print(summary)
         lines += 1
 
@@ -4820,6 +4912,12 @@ actor LayerProgressDisplay {
         case .waiting:
             return "\(label)  ⏳ Waiting"
         case .compressing:
+            if layer.totalBytes > 0 && layer.completedBytes > 0 {
+                let progress = Double(layer.completedBytes) / Double(layer.totalBytes)
+                let bar = progressBar(progress: progress)
+                let pct = Int(progress * 100)
+                return "\(label)  \(bar) \(pct)% 🗜 \(formatBytes(layer.completedBytes))/\(formatBytes(layer.totalBytes))"
+            }
             return "\(label)  🗜  Compressing..."
         case .pushing:
             let progress = layer.totalBytes > 0

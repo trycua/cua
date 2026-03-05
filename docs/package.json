@@ -18,8 +18,10 @@
     "docs:check-links:external": "tsx scripts/check-links.ts --external"
   },
   "dependencies": {
+    "@ai-sdk/amazon-bedrock": "^3.0.73",
     "@ai-sdk/anthropic": "^3.0.9",
     "@anthropic-ai/sdk": "^0.71.2",
+    "@vercel/functions": "^2.0.0",
     "@copilotkit/react-core": "1.50.1",
     "@copilotkit/react-ui": "1.50.1",
     "@copilotkit/runtime": "1.50.1",

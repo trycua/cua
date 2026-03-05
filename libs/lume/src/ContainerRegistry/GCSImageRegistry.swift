@@ -120,12 +120,6 @@ class GCSImageRegistry: ImageRegistry, @unchecked Sendable {
         guard !tags.isEmpty else {
             throw GCSRegistryError.noTagsProvided
         }
-        if singleLayer {
-            throw GCSRegistryError.unsupportedPushMode("single-layer")
-        }
-        if legacy {
-            throw GCSRegistryError.unsupportedPushMode("legacy")
-        }
 
         let vmDir = URL(fileURLWithPath: vmDirPath)
         guard FileManager.default.fileExists(atPath: vmDirPath) else {
@@ -593,7 +587,6 @@ public enum GCSRegistryError: Error, LocalizedError {
     case archiveCreationFailed(String)
     case vmDirectoryNotFound(String)
     case noTagsProvided
-    case unsupportedPushMode(String)
 
     public var errorDescription: String? {
         switch self {
@@ -621,8 +614,6 @@ public enum GCSRegistryError: Error, LocalizedError {
             return "VM directory not found: \(path)"
         case .noTagsProvided:
             return "At least one tag must be provided"
-        case .unsupportedPushMode(let mode):
-            return "GCS registry does not support \(mode) push mode"
         }
     }
 }

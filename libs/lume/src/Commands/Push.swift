@@ -66,7 +66,11 @@ struct Push: AsyncParsableCommand {
         guard !allTags.isEmpty else {
              throw ValidationError("At least one tag must be provided.")
         }
-        
+
+        if singleLayer && legacy {
+            throw ValidationError("--single-layer and --legacy are mutually exclusive.")
+        }
+
         try await controller.pushImage(
             name: name,
             imageName: imageName, // Pass base image name

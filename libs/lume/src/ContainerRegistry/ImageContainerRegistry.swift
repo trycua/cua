@@ -3896,25 +3896,34 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
             return 0
         }
 
-        let sourceData = try Data(
-            contentsOf: inputPath, options: .alwaysMapped)
-        var currentWriteOffset = startOffset
-        var totalDecompressedBytes: UInt64 = 0
-        var sourceReadOffset = 0
+        // Decompress gzip to a temp file via /usr/bin/gunzip, then read in
+        // granularity-sized blocks for sparse writing.  Apple's Compression
+        // framework (.zlib) only handles raw DEFLATE — not gzip headers.
+        let decompressedPath = inputPath.appendingPathExtension("raw")
+        defer { try? FileManager.default.removeItem(at: decompressedPath) }
 
-        // Use zlib decompression (gzip is zlib with a header); .zlib handles both
-        let filter = try InputFilter(.decompress, using: .zlib) { (length: Int) -> Data? in
-            let bytesAvailable = sourceData.count - sourceReadOffset
-            if bytesAvailable == 0 {
-                return nil
-            }
-            let bytesToRead = min(length, bytesAvailable)
-            let chunk = sourceData.subdata(in: sourceReadOffset..<sourceReadOffset + bytesToRead)
-            sourceReadOffset += bytesToRead
-            return chunk
+        FileManager.default.createFile(atPath: decompressedPath.path, contents: nil)
+        let tempHandle = try FileHandle(forWritingTo: decompressedPath)
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/gunzip")
+        process.arguments = ["-c", inputPath.path]
+        process.standardOutput = tempHandle
+        try process.run()
+        process.waitUntilExit()
+        try tempHandle.close()
+
+        guard process.terminationStatus == 0 else {
+            throw PullError.layerDownloadFailed(inputPath.lastPathComponent)
         }
 
-        while let decompressedData = try filter.readData(ofLength: Self.holeGranularityBytes) {
+        let readHandle = try FileHandle(forReadingFrom: decompressedPath)
+        defer { try? readHandle.close() }
+
+        var currentWriteOffset = startOffset
+        var totalDecompressedBytes: UInt64 = 0
+
+        while true {
+            let decompressedData = readHandle.readData(ofLength: Self.holeGranularityBytes)
             if decompressedData.isEmpty { break }
 
             if decompressedData.count == Self.holeGranularityBytes
@@ -4424,7 +4433,11 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
                 for (idx, chunk) in sortedChunks.enumerated() {
                     // Throttle: wait for one to complete before adding more
                     if enqueued >= maxConcurrent {
-                        let (completedIdx, completedPath, completedOffset) = try await group.next()!
+                        guard let result = try await group.next() else {
+                            Logger.error("Task group unexpectedly empty while throttling downloads")
+                            continue
+                        }
+                        let (completedIdx, completedPath, completedOffset) = result
                         // Decompress and write sparse
                         Logger.info("Decompressing chunk \(completedIdx + 1)/\(sortedChunks.count)")
                         let handle = try FileHandle(forWritingTo: diskDest)

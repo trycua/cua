@@ -65,12 +65,18 @@ struct Convert: AsyncParsableCommand {
 
         // Step 1: Pull the legacy source image into a temp VM
         Logger.info("Step 1/3: Pulling source image '\(sourceImage)'…")
-        try await controller.pullImage(
-            image: sourceImage,
-            name: tempVMName,
-            registry: registry,
-            organization: organization
-        )
+        do {
+            try await controller.pullImage(
+                image: sourceImage,
+                name: tempVMName,
+                registry: registry,
+                organization: organization
+            )
+        } catch {
+            Logger.error("Pull failed, cleaning up temp VM: \(error.localizedDescription)")
+            try? await controller.delete(name: tempVMName)
+            throw error
+        }
 
         // Step 2: Push the temp VM in OCI-compliant format
         Logger.info("Step 2/3: Pushing '\(sourceImage)' as OCI-compliant '\(targetImage)'…")

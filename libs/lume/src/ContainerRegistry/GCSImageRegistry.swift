@@ -114,6 +114,7 @@ class GCSImageRegistry: ImageRegistry, @unchecked Sendable {
         verbose: Bool,
         dryRun: Bool,
         reassemble: Bool,
+        singleLayer: Bool,
         legacy: Bool
     ) async throws {
         guard !tags.isEmpty else {

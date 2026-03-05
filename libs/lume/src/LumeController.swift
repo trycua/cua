@@ -1111,6 +1111,7 @@ final class LumeController {
         verbose: Bool = false,
         dryRun: Bool = false,
         reassemble: Bool = false,
+        singleLayer: Bool = false,
         legacy: Bool = false
     ) async throws {
         do {
@@ -1154,6 +1155,7 @@ final class LumeController {
                 verbose: verbose,
                 dryRun: dryRun,
                 reassemble: reassemble,
+                singleLayer: singleLayer,
                 legacy: legacy
             )
 

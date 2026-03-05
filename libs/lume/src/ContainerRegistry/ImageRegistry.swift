@@ -32,6 +32,7 @@ protocol ImageRegistry: Sendable {
         verbose: Bool,
         dryRun: Bool,
         reassemble: Bool,
+        singleLayer: Bool,
         legacy: Bool
     ) async throws
 
@@ -53,6 +54,7 @@ extension ImageRegistry {
         verbose: Bool = false,
         dryRun: Bool = false,
         reassemble: Bool = false,
+        singleLayer: Bool = false,
         legacy: Bool = false
     ) async throws {
         try await push(
@@ -63,6 +65,7 @@ extension ImageRegistry {
             verbose: verbose,
             dryRun: dryRun,
             reassemble: reassemble,
+            singleLayer: singleLayer,
             legacy: legacy
         )
     }

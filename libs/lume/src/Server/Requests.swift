@@ -150,11 +150,12 @@ struct PushRequest: Codable {
     var organization: String // Organization/user in the registry
     let storage: String? // Optional VM storage location or direct path
     var chunkSizeMb: Int // Chunk size
+    var singleLayer: Bool // Push as single disk layer (kubelet-compatible)
     // dryRun and reassemble are less common for API, default to false?
     // verbose is usually handled by server logging
 
     enum CodingKeys: String, CodingKey {
-        case name, imageName, tags, registry, organization, storage, chunkSizeMb
+        case name, imageName, tags, registry, organization, storage, chunkSizeMb, singleLayer
     }
 
     // Provide default values for optional fields during decoding
@@ -167,5 +168,6 @@ struct PushRequest: Codable {
         organization = try container.decodeIfPresent(String.self, forKey: .organization) ?? "trycua"
         storage = try container.decodeIfPresent(String.self, forKey: .storage)
         chunkSizeMb = try container.decodeIfPresent(Int.self, forKey: .chunkSizeMb) ?? 512
+        singleLayer = try container.decodeIfPresent(Bool.self, forKey: .singleLayer) ?? false
     }
 }

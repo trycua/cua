@@ -36,6 +36,9 @@ struct Push: AsyncParsableCommand {
     @Flag(name: .long, help: "In dry-run mode, also reassemble chunks to verify integrity")
     var reassemble: Bool = true
 
+    @Flag(name: .long, help: "Push as a single disk layer (kubelet-compatible, no chunking)")
+    var singleLayer: Bool = false
+
     @Flag(name: .long, help: "Use legacy Lume LZ4-chunked format instead of OCI-compliant format")
     var legacy: Bool = false
 
@@ -75,6 +78,7 @@ struct Push: AsyncParsableCommand {
             verbose: verbose,
             dryRun: dryRun,
             reassemble: reassemble,
+            singleLayer: singleLayer,
             legacy: legacy
         )
     }

@@ -463,7 +463,6 @@ function createBedrockProvider() {
     },
   });
 }
-}
 
 const bedrock = createBedrockProvider();
 

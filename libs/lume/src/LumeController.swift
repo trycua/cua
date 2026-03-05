@@ -1073,7 +1073,7 @@ final class LumeController {
                 name: vmName,
                 locationName: storage)
 
-            Logger.info(
+            Logger.debug(
                 "Setting new VM mac address",
                 metadata: [
                     "vm_name": vmName,

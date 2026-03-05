@@ -410,6 +410,12 @@ let cachedCredentials: {
 let credentialExpiry: number = 0;
 
 // Get Bedrock provider with Vercel OIDC support
+let credentialsRefreshPromise: Promise<{
+  accessKeyId: string;
+  secretAccessKey: string;
+  sessionToken?: string;
+}> | null = null;
+
 function createBedrockProvider() {
   return createAmazonBedrock({
     region: 'us-east-1',
@@ -428,23 +434,35 @@ function createBedrockProvider() {
         return cachedCredentials;
       }
 
+      if (credentialsRefreshPromise) {
+        return credentialsRefreshPromise;
+      }
+
       // Use Vercel's awsCredentialsProvider which handles OIDC token retrieval server-side
-      const credProvider = awsCredentialsProvider({
-        roleArn: AWS_ROLE_ARN,
-      });
+      credentialsRefreshPromise = (async () => {
+        const credProvider = awsCredentialsProvider({
+          roleArn: AWS_ROLE_ARN,
+        });
 
-      const creds = await credProvider();
-      cachedCredentials = {
-        accessKeyId: creds.accessKeyId,
-        secretAccessKey: creds.secretAccessKey,
-        sessionToken: creds.sessionToken,
-      };
-      // Cache for 40 minutes (Vercel caches token for 45 min max)
-      credentialExpiry = Date.now() + 40 * 60 * 1000;
+        const creds = await credProvider();
+        cachedCredentials = {
+          accessKeyId: creds.accessKeyId,
+          secretAccessKey: creds.secretAccessKey,
+          sessionToken: creds.sessionToken,
+        };
+        // Cache for 40 minutes (Vercel caches token for 45 min max)
+        credentialExpiry = Date.now() + 40 * 60 * 1000;
+        return cachedCredentials;
+      })();
 
-      return cachedCredentials;
+      try {
+        return await credentialsRefreshPromise;
+      } finally {
+        credentialsRefreshPromise = null;
+      }
     },
   });
+}
 }
 
 const bedrock = createBedrockProvider();

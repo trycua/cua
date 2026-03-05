@@ -46,6 +46,8 @@ struct Push: AsyncParsableCommand {
 
     @MainActor
     func run() async throws {
+        if verbose { Logger.setVerbose() }
+
         // Record telemetry
         TelemetryClient.shared.record(event: TelemetryEvent.push)
 

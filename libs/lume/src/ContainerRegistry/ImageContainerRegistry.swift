@@ -807,12 +807,12 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
             ])
 
         // Get anonymous token
-        Logger.info("Getting registry authentication token")
+        Logger.debug("Getting registry authentication token")
         let token = try await getToken(
             repository: "\(self.organization)/\(imageName)", scopes: ["pull"])
 
         // Fetch manifest
-        Logger.info("Fetching Image manifest")
+        Logger.debug("Fetching Image manifest")
         let (manifest, manifestDigest): (Manifest, String) = try await fetchManifest(
             repository: "\(self.organization)/\(imageName)",
             tag: imageTag,
@@ -839,11 +839,11 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
 
         // Auto-detect image format from manifest layer media types
         let imageFormat = OCIMediaType.detect(manifest)
-        Logger.info("Detected image format: \(imageFormat == .oci ? "OCI-compliant" : "legacy Lume")")
+        Logger.debug("Detected image format: \(imageFormat == .oci ? "OCI-compliant" : "legacy Lume")")
 
         // OCI-compliant images bypass the legacy cache/assembly path
         if imageFormat == .oci {
-            Logger.info("Pulling OCI-compliant image")
+            Logger.debug("Pulling OCI-compliant image")
             try await pullOCI(
                 manifest: manifest,
                 repository: "\(self.organization)/\(imageName)",
@@ -853,7 +853,7 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
         }
 
         // Check if caching is enabled and if we have a valid cached version
-        Logger.info("Caching enabled: \(cachingEnabled)")
+        Logger.debug("Caching enabled: \(cachingEnabled)")
         if imageFormat == .oci {
             // OCI pull already populated tempVMDir; skip legacy cache logic
         } else if cachingEnabled && validateCache(manifest: manifest, manifestId: manifestId) {
@@ -2941,7 +2941,7 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
         // Get authentication token only if not in dry-run mode
         var token: String = ""
         if !dryRun {
-            Logger.info("Getting registry authentication token")
+            Logger.debug("Getting registry authentication token")
             token = try await getToken(
                 repository: "\(self.organization)/\(imageName)",
                 scopes: ["pull", "push"],
@@ -4295,7 +4295,7 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
 
         if singleLayer {
             // ── Single-layer mode (kubelet-compatible, no chunking) ──────────
-            Logger.info("Disk size: \(diskSize) bytes, compressing as single layer")
+            Logger.debug("Disk size: \(diskSize) bytes, compressing as single layer")
 
             let singleProgress = LayerProgressDisplay()
             await singleProgress.addLayer(id: "config", label: "config.json", totalBytes: Int64(configSize))

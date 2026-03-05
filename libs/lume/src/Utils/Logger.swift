@@ -21,14 +21,19 @@ struct Logger {
         }
     }
 
-    /// Set via LUME_LOG_LEVEL env var ("debug", "info", "error"). Defaults to "info".
-    static let minLevel: Level = {
+    /// Set via LUME_LOG_LEVEL env var ("debug", "info", "error"), or call setVerbose().
+    nonisolated(unsafe) static var minLevel: Level = {
         if let env = ProcessInfo.processInfo.environment["LUME_LOG_LEVEL"],
            let level = Level(rawValue: env.lowercased()) {
             return level
         }
         return .info
     }()
+
+    /// Enable debug logging (called by --verbose flag).
+    static func setVerbose() {
+        minLevel = .debug
+    }
 
     static func info(_ message: String, metadata: Metadata = [:]) {
         log(.info, message, metadata)

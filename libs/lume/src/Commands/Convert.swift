@@ -41,6 +41,8 @@ struct Convert: AsyncParsableCommand {
 
     @MainActor
     func run() async throws {
+        if verbose { Logger.setVerbose() }
+
         TelemetryClient.shared.record(event: TelemetryEvent.push)
 
         let targetComponents = targetImage.split(separator: ":")

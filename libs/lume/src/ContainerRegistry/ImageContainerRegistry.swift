@@ -3710,13 +3710,17 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
 
         var request = URLRequest(url: uploadURL)
         request.httpMethod = "PUT"
-        request.timeoutInterval = 600  // 10 minutes for large blob uploads
+        request.timeoutInterval = 3600  // 1 hour for large blob uploads
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         request.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
         request.setValue("\(data.count)", forHTTPHeaderField: "Content-Length")
         request.httpBody = data
 
-        let (_, response) = try await URLSession.shared.data(for: request)
+        let config = URLSessionConfiguration.default
+        config.timeoutIntervalForRequest = 3600
+        config.timeoutIntervalForResource = 7200
+        let session = URLSession(configuration: config)
+        let (_, response) = try await session.data(for: request)
 
         guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 201 else {
             throw PushError.blobUploadFailed

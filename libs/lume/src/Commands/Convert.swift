@@ -34,6 +34,9 @@ struct Convert: AsyncParsableCommand {
     @Flag(name: .long, help: "Prepare files without uploading to registry")
     var dryRun: Bool = false
 
+    @Flag(name: .long, help: "Push as a single disk layer (kubelet-compatible, no chunking)")
+    var singleLayer: Bool = false
+
     init() {}
 
     @MainActor
@@ -90,6 +93,7 @@ struct Convert: AsyncParsableCommand {
                 verbose: verbose,
                 dryRun: dryRun,
                 reassemble: false,
+                singleLayer: singleLayer,
                 legacy: false  // OCI-compliant output
             )
         } catch {

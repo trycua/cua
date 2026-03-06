@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+import re
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 from .registry import App, install, launch, uninstall
 
@@ -116,30 +118,123 @@ def _get_field(node: List[Any], key: str) -> Optional[str]:
     return None
 
 
-def _parse_kicad_netlist_components(netlist: str) -> List[dict]:
-    """Parse KiCad .net (s-expression) netlist into a list of component dicts.
+def _get_libsource(node: List[Any]) -> Tuple[Optional[str], Optional[str]]:
+    """From (comp ... (libsource (lib "L") (part "P")) ...) return (lib, part)."""
+    for item in node[1:]:
+        if isinstance(item, list) and item and item[0] == "libsource":
+            return (_get_field(item, "lib"), _get_field(item, "part"))
+    return (None, None)
 
-    Returns list of dicts with keys ref, type, value, nodes (nodes from nets).
-    """
-    tokens = _tokenize_sexpr(netlist)
-    if not tokens or tokens[0] != "(":
-        return []
-    tree, _ = _parse_sexpr(tokens, 0)
-    components_node = _find_in_tree(tree, "components")
-    if not components_node:
-        return []
-    comps: List[dict] = []
-    for node in components_node[1:]:
-        if not isinstance(node, list) or not node or node[0] != "comp":
-            continue
+
+def _collect_comp_refs(node: Any, out: List[dict]) -> None:
+    """Recursively find (comp ...) nodes and append structured dicts to out."""
+    if not isinstance(node, list):
+        return
+    if node and node[0] == "comp":
         ref = _get_field(node, "ref")
-        if ref is None:
-            continue
-        value = _get_field(node, "value") or ""
-        prefix = ref[0].upper() if ref else ""
-        ctype = _SPICE_TYPE_MAP.get(prefix, "unknown")
-        comps.append({"ref": ref, "type": ctype, "value": value, "nodes": []})
-    return comps
+        value = _get_field(node, "value")
+        lib, part = _get_libsource(node)
+        if ref is not None:
+            prefix = ref[0].upper() if ref else ""
+            out.append({
+                "ref": ref,
+                "type": _SPICE_TYPE_MAP.get(prefix, "unknown"),
+                "value": value or "",
+                "lib": lib or "",
+                "part": part or "",
+                "nodes": [],
+            })
+        return
+    for child in node:
+        _collect_comp_refs(child, out)
+
+
+def _parse_kicad_netlist(content: str) -> Dict[str, Any]:
+    """Parse KiCad .net (s-expression) into components and nets.
+
+    Returns:
+        {
+            "components": [{"ref": "R1", "value": "100", "lib": "Device",
+                            "part": "R_US", "type": "resistor", "nodes": []}, ...],
+            "nets": [((ref, pin), ...), ...]   # each net is a sorted tuple of (ref, pin)
+        }
+    """
+    content = content.strip()
+    if not content:
+        return {"components": [], "nets": []}
+
+    tokens = _tokenize_sexpr(content)
+    if not tokens or tokens[0] != "(":
+        return {"components": [], "nets": []}
+    tree, _ = _parse_sexpr(tokens, 0)
+
+    components: List[dict] = []
+    comps_section = _find_in_tree(tree, "components")
+    if comps_section is not None:
+        _collect_comp_refs(comps_section, components)
+
+    nets: List[tuple] = []
+    nets_section = _find_in_tree(tree, "nets")
+    if nets_section is not None:
+        for child in nets_section[1:]:
+            if isinstance(child, list) and child and child[0] == "net":
+                nodes: List[Tuple[str, str]] = []
+                for sub in child[1:]:
+                    if isinstance(sub, list) and sub and sub[0] == "node":
+                        r = _get_field(sub, "ref")
+                        p = _get_field(sub, "pin")
+                        if r is not None and p is not None:
+                            nodes.append((r, p))
+                if nodes:
+                    nets.append(tuple(sorted(nodes)))
+
+    return {"components": components, "nets": nets}
+
+
+def _normalize_value(value: str) -> str:
+    """Normalize component value for loose comparison (e.g. '100' vs '100Ω')."""
+    v = value.strip()
+    return re.sub(r"\s*[ΩohmOHM]\s*$", "", v, flags=re.IGNORECASE)
+
+
+def _component_key(c: dict) -> Tuple[str, str, str]:
+    """Stable sort key: (ref_prefix, normalized_value, part)."""
+    ref = c.get("ref", "")
+    prefix = (ref.rstrip("0123456789") or ref).upper()
+    value = _normalize_value(c.get("value", ""))
+    part = (c.get("part") or c.get("value") or "").strip()
+    return (prefix, value, part)
+
+
+def _compare_kicad_netlists(
+    candidate_content: str,
+    reference_content: str,
+    *,
+    require_same_components: bool = True,
+    require_same_nets: bool = True,
+) -> float:
+    """Compare candidate KiCad netlist to reference. Returns score in [0.0, 1.0].
+
+    Components are matched by (ref_prefix, normalized_value, part) — ref numbers
+    (R1 vs R2) and order may differ. Nets are matched by their set of (ref, pin)
+    connections — net names/codes are ignored.
+    """
+    ref = _parse_kicad_netlist(reference_content)
+    cand = _parse_kicad_netlist(candidate_content)
+
+    if not ref["components"] and not ref["nets"]:
+        return 0.0 if (cand["components"] or cand["nets"]) else 1.0
+
+    scores: List[float] = []
+    if require_same_components:
+        scores.append(
+            1.0 if sorted(_component_key(c) for c in ref["components"])
+            == sorted(_component_key(c) for c in cand["components"]) else 0.0
+        )
+    if require_same_nets:
+        scores.append(1.0 if set(ref["nets"]) == set(cand["nets"]) else 0.0)
+
+    return sum(scores) / len(scores) if scores else 1.0
 
 
 class KiCad(App):
@@ -366,19 +461,54 @@ class KiCad(App):
     ) -> List[dict]:
         """Read and parse a netlist into structured components.
 
-        Supports SPICE (.cir) and KiCad (.net) formats. For .net files uses
-        s-expression parsing; for others uses SPICE line format.
+        Supports SPICE (.cir) and KiCad (.net) formats.
 
         Args:
             netlist_path: Path to the .cir or .net file on the VM.
 
         Returns:
-            List of dicts with keys ``ref``, ``type``, ``value``, ``nodes``.
+            List of dicts with keys ``ref``, ``type``, ``value``, ``lib``,
+            ``part``, ``nodes``.
         """
         netlist = await self.read_netlist(netlist_path=netlist_path)
         if netlist_path.rstrip("/").endswith(".net"):
-            return _parse_kicad_netlist_components(netlist)
+            return _parse_kicad_netlist(netlist)["components"]
         return _parse_spice_components(netlist)
+
+    async def compare_netlist(
+        self: "BoundApp",
+        *,
+        candidate_path: str,
+        reference_path: str,
+        require_same_components: bool = True,
+        require_same_nets: bool = True,
+    ) -> float:
+        """Compare the agent's output netlist against a reference.
+
+        Reads the candidate from the VM and the reference from the local
+        filesystem, returning a structural similarity score in [0.0, 1.0].
+
+        Components are matched by (ref_prefix, normalized_value, part) —
+        ref numbers and order may differ. Nets are matched by their set of
+        (ref, pin) connections — net names are ignored.
+
+        Args:
+            candidate_path: Path to the candidate .net file on the VM.
+            reference_path: Absolute path to the reference .net file locally.
+            require_same_components: Include component-set check (default True).
+            require_same_nets: Include net-topology check (default True).
+
+        Returns:
+            Score 0.0 (no match) to 1.0 (exact match).
+        """
+        candidate = await self.read_netlist(netlist_path=candidate_path)
+        reference = Path(reference_path).read_text(encoding="utf-8", errors="replace")
+        return _compare_kicad_netlists(
+            candidate,
+            reference,
+            require_same_components=require_same_components,
+            require_same_nets=require_same_nets,
+        )
 
     async def simulate_operating_point(
         self: "BoundApp",

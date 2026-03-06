@@ -8,7 +8,7 @@ falls back to component-count checking when only ``expected_components`` is set.
 Adding a new task variant:
     1. Add a dict to TASK_VARIANTS with at minimum a ``description`` key.
     2. Optionally include ``reference_netlist`` (path relative to this file's
-       directory) for full structural comparison via netlist_compare.py.
+       directory) for full structural comparison via session.apps.kicad.compare_netlist().
     3. Optionally include ``expected_components`` (dict of ref-prefix → count)
        as a lighter-weight fallback when no reference netlist is available.
     4. Optionally include ``initial_circuit_file`` (path relative to this
@@ -18,7 +18,6 @@ Adding a new task variant:
 from pathlib import Path
 
 import cua_bench as cb
-from netlist_compare import compare_kicad_netlists, load_reference_netlist
 
 NETLIST_PATH = "/home/cua/output.net"
 _TASK_DIR = Path(__file__).resolve().parent
@@ -107,8 +106,10 @@ async def evaluate(task_cfg: cb.Task, session: cb.DesktopSession) -> list[float]
     # --- Path 1: full structural comparison ---
     ref_path = meta.get("reference_netlist")
     if ref_path:
-        reference = load_reference_netlist(ref_path, _TASK_DIR)
-        score = compare_kicad_netlists(netlist, reference)
+        score = await session.apps.kicad.compare_netlist(
+            candidate_path=NETLIST_PATH,
+            reference_path=str(_TASK_DIR / ref_path),
+        )
         print(f"Evaluation (structural): score={score:.3f}")
         return [score]
 

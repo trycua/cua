@@ -4298,6 +4298,7 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
             Logger.debug("Disk size: \(diskSize) bytes, compressing as single layer")
 
             let singleProgress = LayerProgressDisplay()
+            await singleProgress.setTotalUncompressed(Int64(diskSize))
             await singleProgress.addLayer(id: "config", label: "config.json", totalBytes: Int64(configSize))
             await singleProgress.markDone(id: "config")
             await singleProgress.addLayer(id: "nvram", label: "nvram.bin", totalBytes: Int64(auxSize))
@@ -4318,6 +4319,7 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
 
             if !dryRun {
                 if !(try await blobExists(repository: repository, digest: compDigest, token: token)) {
+                    await singleProgress.registerUploadWork(compressedBytes: Int64(compSize), uncompressedBytes: Int64(uncompSize))
                     await singleProgress.updateStatus(id: "disk", status: .pushing)
                     await singleProgress.updateProgress(
                         id: "disk", completedBytes: 0, totalBytes: Int64(compSize))
@@ -4333,6 +4335,7 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
                                     id: "disk", completedBytes: sent, totalBytes: total)
                             }
                         })
+                    await singleProgress.reportUploadDone(Int64(compSize))
                     await singleProgress.markDone(id: "disk", bytes: Int64(compSize))
                 } else {
                     await singleProgress.markExists(id: "disk")
@@ -4359,6 +4362,7 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
             Logger.debug("Disk size: \(diskSize) bytes, splitting into \(chunkCount) chunks of \(chunkSizeMb) MB")
 
             let progress = LayerProgressDisplay()
+            await progress.setTotalUncompressed(Int64(diskSize))
             await progress.addLayer(id: "config", label: "config.json", totalBytes: Int64(configSize))
             await progress.markDone(id: "config")
             await progress.addLayer(id: "nvram", label: "nvram.bin", totalBytes: Int64(auxSize))
@@ -4394,7 +4398,7 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
 
             // Channel connecting compress workers → upload workers
             let (uploadStream, uploadContinuation) = AsyncStream<CompressedChunk>.makeStream(
-                bufferingPolicy: .bufferingNewest(maxCompressWorkers + 2))
+                bufferingPolicy: .unbounded)
 
             // ── Run compress + upload pipelines concurrently ──
             try await withThrowingTaskGroup(of: Void.self) { pipeline in
@@ -4448,8 +4452,13 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
                                 try? FileManager.default.removeItem(at: chunkPath)
 
                                 let isDuplicate = await seenDigests.markSeen(digest: compDigest)
+                                await progress.setDigest(id: chunkId, digest: compDigest)
                                 if isDuplicate {
+                                    await progress.registerSkipped(compressedBytes: Int64(compSize), uncompressedBytes: Int64(thisChunkSize))
                                     await progress.markExists(id: chunkId)
+                                } else {
+                                    await progress.updateStatus(
+                                        id: chunkId, status: .waitingUpload)
                                 }
 
                                 return CompressedChunk(
@@ -4518,6 +4527,7 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
                                     repository: repository, digest: chunkCopy.compDigest,
                                     token: token))
                                 {
+                                    await progress.registerUploadWork(compressedBytes: Int64(chunkCopy.compSize), uncompressedBytes: Int64(chunkCopy.uncompSize))
                                     await progress.updateStatus(
                                         id: chunkCopy.chunkId, status: .pushing)
                                     await progress.updateProgress(
@@ -4537,9 +4547,11 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
                                                     totalBytes: total)
                                             }
                                         })
+                                    await progress.reportUploadDone(Int64(chunkCopy.compSize))
                                     await progress.markDone(
                                         id: chunkCopy.chunkId, bytes: Int64(chunkCopy.compSize))
                                 } else {
+                                    await progress.registerSkipped(compressedBytes: Int64(chunkCopy.compSize), uncompressedBytes: Int64(chunkCopy.uncompSize))
                                     await progress.markExists(id: chunkCopy.chunkId)
                                 }
 
@@ -4739,8 +4751,9 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
             for (idx, chunk) in sortedChunks.enumerated() {
                 await pullProgress.addLayer(
                     id: "chunk-\(idx)",
-                    label: "disk chunk \(idx + 1)/\(sortedChunks.count)",
-                    totalBytes: Int64(chunk.size))
+                    label: "disk layer \(idx + 1)/\(sortedChunks.count)",
+                    totalBytes: Int64(chunk.size),
+                    mode: .pull)
             }
 
             // Download chunks in parallel (4 concurrent)
@@ -4899,6 +4912,7 @@ actor LayerProgressDisplay {
     enum LayerStatus {
         case waiting
         case compressing
+        case waitingUpload
         case pushing
         case downloading
         case decompressing
@@ -4907,11 +4921,18 @@ actor LayerProgressDisplay {
         case error(String)
     }
 
+    enum LayerMode {
+        case push
+        case pull
+    }
+
     struct LayerState {
         let label: String
         var totalBytes: Int64
         var completedBytes: Int64 = 0
         var status: LayerStatus = .waiting
+        var digest: String?
+        var mode: LayerMode = .push
     }
 
     private var layers: [String: LayerState] = [:]
@@ -4934,10 +4955,20 @@ actor LayerProgressDisplay {
     private var hasSeenUpload: Bool = false
     private var smoothedUploadSpeed: Double = 0
     private var smoothedCompressSpeed: Double = 0
+    // Track compressed bytes for upload ETA
+    private var totalUploadBytes: Int64 = 0      // compressed bytes registered for upload
+    private var totalUploadedBytes: Int64 = 0    // compressed bytes actually uploaded
+    private var totalUncompressedRegistered: Int64 = 0  // uncompressed bytes of registered layers
+    private var totalUncompressedAll: Int64 = 0  // total uncompressed bytes across all layers
+    private var skippedBytes: Int64 = 0          // compressed bytes of dedup/exists layers (no upload)
 
-    func addLayer(id: String, label: String, totalBytes: Int64 = 0) {
-        layers[id] = LayerState(label: label, totalBytes: totalBytes)
+    func addLayer(id: String, label: String, totalBytes: Int64 = 0, mode: LayerMode = .push) {
+        layers[id] = LayerState(label: label, totalBytes: totalBytes, mode: mode)
         layerOrder.append(id)
+    }
+
+    func setDigest(id: String, digest: String) {
+        layers[id]?.digest = digest
     }
 
     func updateStatus(id: String, status: LayerStatus) {
@@ -4951,6 +4982,24 @@ actor LayerProgressDisplay {
         }
         layers[id]?.completedBytes = completedBytes
         render()
+    }
+
+    func setTotalUncompressed(_ bytes: Int64) {
+        totalUncompressedAll = bytes
+    }
+
+    func registerUploadWork(compressedBytes: Int64, uncompressedBytes: Int64) {
+        totalUploadBytes += compressedBytes
+        totalUncompressedRegistered += uncompressedBytes
+    }
+
+    func registerSkipped(compressedBytes: Int64, uncompressedBytes: Int64) {
+        skippedBytes += compressedBytes
+        totalUncompressedRegistered += uncompressedBytes
+    }
+
+    func reportUploadDone(_ bytes: Int64) {
+        totalUploadedBytes += bytes
     }
 
     func reportCompressBytes(id: String, _ bytes: Int64) {
@@ -4992,14 +5041,26 @@ actor LayerProgressDisplay {
     }
 
     private func forceRender() {
+        // Get terminal height to cap output
+        var ws = winsize()
+        let termHeight: Int
+        if ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == 0 && ws.ws_row > 0 {
+            termHeight = Int(ws.ws_row) - 1  // leave 1 line margin
+        } else {
+            termHeight = 40  // fallback
+        }
+
         // Move cursor up to overwrite previous render
         if lineCount > 0 {
             print("\u{1B}[\(lineCount)A", terminator: "")
         }
 
-        var lines = 0
         var doneCount = 0
-        // Show only active layers (compressing/pushing/etc), skip waiting, done, and dedup
+        var doneLayers: [LayerState] = []
+        var waitingUploadLayers: [LayerState] = []
+        var activeLayers: [LayerState] = []
+        var isCompressing = false
+
         for id in layerOrder {
             guard let layer = layers[id] else { continue }
             switch layer.status {
@@ -5007,16 +5068,76 @@ actor LayerProgressDisplay {
                 break
             case .done, .exists:
                 doneCount += 1
+                doneLayers.append(layer)
+            case .waitingUpload:
+                waitingUploadLayers.append(layer)
+            case .compressing:
+                isCompressing = true
             default:
-                // Hide compressing layers at 100% — they're transitioning to upload or dedup
-                if case .compressing = layer.status,
-                   layer.totalBytes > 0, layer.completedBytes >= layer.totalBytes {
-                    break
-                }
-                let line = formatLayer(layer)
-                print("\u{1B}[2K\(line)")
-                lines += 1
+                activeLayers.append(layer)
             }
+        }
+
+        // Build all output lines into an array, then cap to terminal height
+        var outputLines: [String] = []
+
+        // Done layers: deduplicate by digest, then first 10 ... last 10
+        if !doneLayers.isEmpty {
+            var seenDigests = Swift.Set<String>()
+            var uniqueDone: [LayerState] = []
+            for layer in doneLayers {
+                let key = layer.digest ?? layer.label
+                if !seenDigests.contains(key) {
+                    seenDigests.insert(key)
+                    uniqueDone.append(layer)
+                }
+            }
+            let showDone: [LayerState]
+            if uniqueDone.count <= 20 {
+                showDone = uniqueDone
+            } else {
+                showDone = Array(uniqueDone.prefix(10)) + Array(uniqueDone.suffix(10))
+            }
+            for (i, layer) in showDone.enumerated() {
+                if uniqueDone.count > 20 && i == 10 {
+                    outputLines.append("...")
+                }
+                outputLines.append(formatLayer(layer))
+            }
+        }
+
+        // Aggregate compression progress as single line
+        if isCompressing && totalUncompressedAll > 0 {
+            let totalCompressed = layerCompressedBytes.values.reduce(Int64(0), +)
+            let pct = Double(totalCompressed) / Double(totalUncompressedAll)
+            let bar = progressBar(progress: pct)
+            let label = "disk.img".padding(toLength: 12, withPad: " ", startingAt: 0)
+            outputLines.append("\(label): Compressing \(bar) \(formatBytes(totalCompressed))/\(formatBytes(totalUncompressedAll))")
+        }
+
+        // Waiting-for-upload layers
+        for layer in waitingUploadLayers {
+            outputLines.append(formatLayer(layer))
+        }
+
+        // Active layers (uploading, downloading, etc.)
+        for layer in activeLayers {
+            outputLines.append(formatLayer(layer))
+        }
+
+        // Reserve 1 line for summary
+        let maxLayerLines = termHeight - 1
+        if outputLines.count > maxLayerLines {
+            // Keep last N lines (active/uploading are most important, at the end)
+            let overflow = outputLines.count - maxLayerLines
+            outputLines = ["... (\(overflow) more)"] + Array(outputLines.suffix(maxLayerLines - 1))
+        }
+
+        // Print all lines, clearing each
+        var lines = 0
+        for line in outputLines {
+            print("\u{1B}[2K\(line)")
+            lines += 1
         }
 
         // Update throughput tracking
@@ -5066,12 +5187,15 @@ actor LayerProgressDisplay {
         summary += " | \(formatBytes(totalDone))/\(formatBytes(totalAll))"
         // ETA first
         if hasSeenUpload && smoothedUploadSpeed > 0 {
-            let doneBytes = layers.values.filter {
-                if case .done = $0.status { return true }
-                if case .exists = $0.status { return true }
-                return false
-            }.reduce(Int64(0)) { $0 + $1.totalBytes }
-            let remaining = Double(totalAll - doneBytes)
+            // Estimate total compressed upload size using observed compression ratio
+            // ratio = total_compressed_seen / total_uncompressed_seen
+            let seenCompressed = totalUploadBytes + skippedBytes
+            let ratio = totalUncompressedRegistered > 0
+                ? Double(seenCompressed) / Double(totalUncompressedRegistered)
+                : 0.5
+            // Extrapolate total compressed bytes for all layers (minus skipped)
+            let estimatedTotalUpload = Double(totalUncompressedAll) * ratio - Double(skippedBytes)
+            let remaining = max(0, estimatedTotalUpload - Double(totalUploadedBytes))
             let eta = remaining / smoothedUploadSpeed
             summary += " | ETA \(formatTime(eta)) (uploading)"
         } else if smoothedCompressSpeed > 0 && totalDone > 0 && totalAll > totalDone {
@@ -5107,40 +5231,52 @@ actor LayerProgressDisplay {
     }
 
     private func formatLayer(_ layer: LayerState) -> String {
-        let label = layer.label.count > 18
-            ? String(layer.label.prefix(18))
-            : layer.label.padding(toLength: 18, withPad: " ", startingAt: 0)
+        // For digest-based labels (upload/download/done), use first 12 chars of digest
+        // For compression, use the chunk label
+        let id: String
+        if let digest = layer.digest {
+            let short = digest.hasPrefix("sha256:")
+                ? String(digest.dropFirst(7).prefix(12))
+                : String(digest.prefix(12))
+            id = short.padding(toLength: 12, withPad: " ", startingAt: 0)
+        } else {
+            let short = layer.label.count > 12
+                ? String(layer.label.prefix(12))
+                : layer.label
+            id = short.padding(toLength: 12, withPad: " ", startingAt: 0)
+        }
 
         switch layer.status {
         case .waiting:
-            return "\(label)  ⏳ Waiting"
+            return "\(id): Waiting"
         case .compressing:
             if layer.totalBytes > 0 && layer.completedBytes > 0 {
-                let progress = Double(layer.completedBytes) / Double(layer.totalBytes)
-                let bar = progressBar(progress: progress)
-                let pct = Int(progress * 100)
-                return "\(label)  \(bar) \(pct)% 🗜 \(formatBytes(layer.completedBytes))/\(formatBytes(layer.totalBytes))"
+                let pct = Double(layer.completedBytes) / Double(layer.totalBytes)
+                let bar = progressBar(progress: pct)
+                return "\(id): Compressing \(bar) \(formatBytes(layer.completedBytes))/\(formatBytes(layer.totalBytes))"
             }
-            return "\(label)  🗜  Compressing..."
+            return "\(id): Compressing..."
+        case .waitingUpload:
+            return "\(id): Waiting"
         case .pushing:
-            let progress = layer.totalBytes > 0
+            let pct = layer.totalBytes > 0
                 ? Double(layer.completedBytes) / Double(layer.totalBytes) : 0
-            let bar = progressBar(progress: progress)
-            let pct = Int(progress * 100)
-            return "\(label)  \(bar) \(pct)% ⬆ \(formatBytes(layer.completedBytes))/\(formatBytes(layer.totalBytes))"
+            let bar = progressBar(progress: pct)
+            return "\(id): Uploading   \(bar) \(formatBytes(layer.completedBytes))/\(formatBytes(layer.totalBytes))"
         case .downloading:
-            let bar = progressBar(
-                progress: layer.totalBytes > 0
-                    ? Double(layer.completedBytes) / Double(layer.totalBytes) : 0)
-            return "\(label)  \(bar) Pulling \(formatBytes(layer.completedBytes))/\(formatBytes(layer.totalBytes))"
+            let pct = layer.totalBytes > 0
+                ? Double(layer.completedBytes) / Double(layer.totalBytes) : 0
+            let bar = progressBar(progress: pct)
+            return "\(id): Downloading \(bar) \(formatBytes(layer.completedBytes))/\(formatBytes(layer.totalBytes))"
         case .decompressing:
-            return "\(label)  🗜  Decompressing..."
+            return "\(id): Extracting..."
         case .exists:
-            return "\(label)  ✓ Already exists"
+            return "\(id): Already exists"
         case .done:
-            return "\(label)  ✓ Done (\(formatBytes(layer.totalBytes)))"
+            let action = layer.mode == .push ? "Push complete" : "Pull complete"
+            return "\(id): \(action)"
         case .error(let msg):
-            return "\(label)  ✗ \(msg)"
+            return "\(id): Error: \(msg)"
         }
     }
 

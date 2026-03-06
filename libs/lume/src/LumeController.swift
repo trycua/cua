@@ -1048,7 +1048,7 @@ final class LumeController {
             // Set default VM name if not provided
             let vmName = name ?? "\(imageName)_\(tag)"
 
-            Logger.info(
+            Logger.debug(
                 "Pulling image",
                 metadata: [
                     "image": image,
@@ -1084,7 +1084,7 @@ final class LumeController {
             let vm = try get(name: vmName, storage: storage)
             try vm.setMacAddress(VZMACAddress.randomLocallyAdministered().string)
 
-            Logger.info(
+            Logger.debug(
                 "Image pulled successfully",
                 metadata: [
                     "image": image,
@@ -1115,7 +1115,7 @@ final class LumeController {
         legacy: Bool = false
     ) async throws {
         do {
-            Logger.info(
+            Logger.debug(
                 "Pushing VM to registry",
                 metadata: [
                     "name": name,

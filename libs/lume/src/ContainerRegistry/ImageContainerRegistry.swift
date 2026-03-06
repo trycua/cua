@@ -796,7 +796,7 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
         let imageName = String(components.first!)
         let imageTag = String(tag)
 
-        Logger.info(
+        Logger.debug(
             "Pulling image",
             metadata: [
                 "image": image,
@@ -822,7 +822,7 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
         // Get manifest identifier using the manifest's own digest
         let manifestId = getManifestIdentifier(manifest, manifestDigest: manifestDigest)
 
-        Logger.info(
+        Logger.debug(
             "Pulling image",
             metadata: [
                 "repository": imageName,
@@ -2906,7 +2906,7 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
             )
             return
         }
-        Logger.info(
+        Logger.debug(
             "Pushing VM to registry",
             metadata: [
                 "vm_path": vmDirPath,
@@ -4210,7 +4210,7 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
     ) async throws {
         let chunkSize = UInt64(chunkSizeMb) * 1024 * 1024
 
-        Logger.info(
+        Logger.debug(
             "Pushing VM in OCI-compliant format\(singleLayer ? " (single-layer)" : " (chunked)")",
             metadata: [
                 "vm_path": vmDirPath,
@@ -4309,6 +4309,7 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
             let (compDigest, compSize, uncompDigest, uncompSize) =
                 try gzipFile(inputPath: diskPath, outputPath: gzDiskPath) { bytesRead, totalBytes in
                     Task {
+                        await singleProgress.reportCompressBytes(id: "disk", Int64(bytesRead))
                         await singleProgress.updateProgress(
                             id: "disk", completedBytes: Int64(bytesRead),
                             totalBytes: Int64(totalBytes))
@@ -4327,6 +4328,7 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
                         token: token,
                         onProgress: { sent, total in
                             Task {
+                                await singleProgress.reportUploadBytes(id: "disk", sent)
                                 await singleProgress.updateProgress(
                                     id: "disk", completedBytes: sent, totalBytes: total)
                             }
@@ -4354,7 +4356,7 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
         } else {
             // ── Chunked mode (default, parallel) ─────────────────────────────
             let chunkCount = Int((diskSize + chunkSize - 1) / chunkSize)
-            Logger.info("Disk size: \(diskSize) bytes, splitting into \(chunkCount) chunks of \(chunkSizeMb) MB")
+            Logger.debug("Disk size: \(diskSize) bytes, splitting into \(chunkCount) chunks of \(chunkSizeMb) MB")
 
             let progress = LayerProgressDisplay()
             await progress.addLayer(id: "config", label: "config.json", totalBytes: Int64(configSize))
@@ -4364,104 +4366,205 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
             for i in 0..<chunkCount {
                 let estSize = Int64(min(chunkSize, diskSize - UInt64(i) * chunkSize))
                 await progress.addLayer(
-                    id: "chunk-\(i)", label: "disk chunk \(i + 1)/\(chunkCount)",
+                    id: "chunk-\(i)", label: "disk layer \(i + 1)/\(chunkCount)",
                     totalBytes: estSize)
             }
 
-            var diskChunks = [DiskChunkDescriptor?](repeating: nil, count: chunkCount)
+            let chunkCollector = ChunkCollector(count: chunkCount)
 
-            let maxConcurrent = 4
-            try await withThrowingTaskGroup(
-                of: (Int, DiskChunkDescriptor).self
-            ) { group in
-                var enqueued = 0
+            // Track seen digests for deduplication (content-addressable)
+            let seenDigests = DigestTracker()
 
-                for partNumber in 0..<chunkCount {
-                    if enqueued >= maxConcurrent {
-                        if let (idx, desc) = try await group.next() {
-                            diskChunks[idx] = desc
-                        }
-                    }
+            // Compressed chunk ready for upload
+            struct CompressedChunk: Sendable {
+                let partNumber: Int
+                let chunkId: String
+                let gzPath: URL
+                let compDigest: String
+                let compSize: Int
+                let uncompDigest: String
+                let uncompSize: UInt64
+                let diskOffset: UInt64
+                let isDuplicate: Bool
+            }
 
-                    let offset = UInt64(partNumber) * chunkSize
-                    let thisChunkSize = min(chunkSize, diskSize - offset)
-                    let chunkId = "chunk-\(partNumber)"
-                    let capturedToken = token
+            let maxCompressWorkers = 4
+            let maxUploadWorkers = 4
+            let capturedToken = token
 
-                    group.addTask { [self] in
-                        let token = capturedToken
-                        await progress.updateStatus(id: chunkId, status: .compressing)
+            // Channel connecting compress workers → upload workers
+            let (uploadStream, uploadContinuation) = AsyncStream<CompressedChunk>.makeStream(
+                bufferingPolicy: .bufferingNewest(maxCompressWorkers + 2))
 
-                        // Each task opens its own file handle for thread safety
-                        let handle = try FileHandle(forReadingFrom: diskPath)
-                        try handle.seek(toOffset: offset)
-                        let chunkData = handle.readData(ofLength: Int(thisChunkSize))
-                        try handle.close()
+            // ── Run compress + upload pipelines concurrently ──
+            try await withThrowingTaskGroup(of: Void.self) { pipeline in
 
-                        let chunkPath = workDir.appendingPathComponent("disk.img.part.\(partNumber)")
-                        let gzChunkPath = workDir.appendingPathComponent("disk.img.part.\(partNumber).gz")
-                        try chunkData.write(to: chunkPath)
+                // ── Compression pipeline: N parallel workers ──
+                pipeline.addTask { [self] in
+                    try await withThrowingTaskGroup(
+                        of: CompressedChunk.self
+                    ) { compressGroup in
+                        var enqueued = 0
 
-                        let (compDigest, compSize, uncompDigest, uncompSize) =
-                            try self.gzipFile(
-                                inputPath: chunkPath, outputPath: gzChunkPath
-                            ) { bytesRead, totalBytes in
-                                Task {
-                                    await progress.updateProgress(
-                                        id: chunkId, completedBytes: Int64(bytesRead),
-                                        totalBytes: Int64(totalBytes))
+                        for partNumber in 0..<chunkCount {
+                            // Throttle compress workers
+                            if enqueued >= maxCompressWorkers {
+                                if let result = try await compressGroup.next() {
+                                    uploadContinuation.yield(result)
                                 }
                             }
 
-                        if !dryRun {
-                            if !(try await self.blobExists(
-                                repository: repository, digest: compDigest, token: token))
-                            {
-                                await progress.updateStatus(id: chunkId, status: .pushing)
-                                await progress.updateProgress(
-                                    id: chunkId, completedBytes: 0,
-                                    totalBytes: Int64(compSize))
-                                _ = try await self.uploadBlobFromPath(
-                                    repository: repository,
-                                    path: gzChunkPath,
-                                    digest: compDigest,
-                                    token: token,
-                                    onProgress: { sent, total in
+                            let offset = UInt64(partNumber) * chunkSize
+                            let thisChunkSize = min(chunkSize, diskSize - offset)
+                            let chunkId = "chunk-\(partNumber)"
+
+                            compressGroup.addTask { [self] in
+                                await progress.updateStatus(id: chunkId, status: .compressing)
+
+                                let handle = try FileHandle(forReadingFrom: diskPath)
+                                try handle.seek(toOffset: offset)
+                                let chunkData = handle.readData(ofLength: Int(thisChunkSize))
+                                try handle.close()
+
+                                let chunkPath = workDir.appendingPathComponent(
+                                    "disk.img.part.\(partNumber)")
+                                let gzChunkPath = workDir.appendingPathComponent(
+                                    "disk.img.part.\(partNumber).gz")
+                                try chunkData.write(to: chunkPath)
+
+                                let (compDigest, compSize, uncompDigest, uncompSize) =
+                                    try self.gzipFile(
+                                        inputPath: chunkPath, outputPath: gzChunkPath
+                                    ) { bytesRead, totalBytes in
                                         Task {
+                                            await progress.reportCompressBytes(
+                                                id: chunkId, Int64(bytesRead))
                                             await progress.updateProgress(
-                                                id: chunkId, completedBytes: sent,
-                                                totalBytes: total)
+                                                id: chunkId, completedBytes: Int64(bytesRead),
+                                                totalBytes: Int64(totalBytes))
                                         }
-                                    })
-                                await progress.markDone(id: chunkId, bytes: Int64(compSize))
-                            } else {
-                                await progress.markExists(id: chunkId)
+                                    }
+
+                                try? FileManager.default.removeItem(at: chunkPath)
+
+                                let isDuplicate = await seenDigests.markSeen(digest: compDigest)
+                                if isDuplicate {
+                                    await progress.markExists(id: chunkId)
+                                }
+
+                                return CompressedChunk(
+                                    partNumber: partNumber,
+                                    chunkId: chunkId,
+                                    gzPath: gzChunkPath,
+                                    compDigest: compDigest,
+                                    compSize: compSize,
+                                    uncompDigest: uncompDigest,
+                                    uncompSize: uncompSize,
+                                    diskOffset: offset,
+                                    isDuplicate: isDuplicate
+                                )
                             }
-                        } else {
-                            await progress.markDone(id: chunkId, bytes: Int64(compSize))
+                            enqueued += 1
                         }
 
-                        try? FileManager.default.removeItem(at: chunkPath)
-                        try? FileManager.default.removeItem(at: gzChunkPath)
-
-                        return (
-                            partNumber,
-                            DiskChunkDescriptor(
-                                partNumber: partNumber,
-                                compressedDigest: compDigest,
-                                compressedSize: compSize,
-                                uncompressedDigest: uncompDigest,
-                                uncompressedSize: uncompSize,
-                                diskOffset: offset
-                            )
-                        )
+                        // Drain remaining compress results
+                        for try await result in compressGroup {
+                            uploadContinuation.yield(result)
+                        }
                     }
-                    enqueued += 1
+                    // Signal no more chunks to upload
+                    uploadContinuation.finish()
                 }
 
-                // Drain remaining
-                for try await (idx, desc) in group {
-                    diskChunks[idx] = desc
+                // ── Upload pipeline: N parallel workers consuming from queue ──
+                pipeline.addTask { [self] in
+                    try await withThrowingTaskGroup(
+                        of: (Int, DiskChunkDescriptor).self
+                    ) { uploadGroup in
+                        var enqueued = 0
+
+                        for await chunk in uploadStream {
+                            let desc = DiskChunkDescriptor(
+                                partNumber: chunk.partNumber,
+                                compressedDigest: chunk.compDigest,
+                                compressedSize: chunk.compSize,
+                                uncompressedDigest: chunk.uncompDigest,
+                                uncompressedSize: chunk.uncompSize,
+                                diskOffset: chunk.diskOffset
+                            )
+
+                            // Duplicate or dry-run: no upload needed
+                            if chunk.isDuplicate || dryRun {
+                                if !chunk.isDuplicate {
+                                    await progress.markDone(
+                                        id: chunk.chunkId, bytes: Int64(chunk.compSize))
+                                }
+                                try? FileManager.default.removeItem(at: chunk.gzPath)
+                                await chunkCollector.set(index: chunk.partNumber, desc: desc)
+                                continue
+                            }
+
+                            // Throttle upload workers
+                            if enqueued >= maxUploadWorkers {
+                                if let (idx, d) = try await uploadGroup.next() {
+                                    await chunkCollector.set(index: idx, desc: d)
+                                }
+                            }
+
+                            let chunkCopy = chunk
+                            uploadGroup.addTask { [self] in
+                                let token = capturedToken
+                                if !(try await self.blobExists(
+                                    repository: repository, digest: chunkCopy.compDigest,
+                                    token: token))
+                                {
+                                    await progress.updateStatus(
+                                        id: chunkCopy.chunkId, status: .pushing)
+                                    await progress.updateProgress(
+                                        id: chunkCopy.chunkId, completedBytes: 0,
+                                        totalBytes: Int64(chunkCopy.compSize))
+                                    _ = try await self.uploadBlobFromPath(
+                                        repository: repository,
+                                        path: chunkCopy.gzPath,
+                                        digest: chunkCopy.compDigest,
+                                        token: token,
+                                        onProgress: { sent, total in
+                                            Task {
+                                                await progress.reportUploadBytes(
+                                                    id: chunkCopy.chunkId, sent)
+                                                await progress.updateProgress(
+                                                    id: chunkCopy.chunkId, completedBytes: sent,
+                                                    totalBytes: total)
+                                            }
+                                        })
+                                    await progress.markDone(
+                                        id: chunkCopy.chunkId, bytes: Int64(chunkCopy.compSize))
+                                } else {
+                                    await progress.markExists(id: chunkCopy.chunkId)
+                                }
+
+                                try? FileManager.default.removeItem(at: chunkCopy.gzPath)
+
+                                return (
+                                    chunkCopy.partNumber,
+                                    DiskChunkDescriptor(
+                                        partNumber: chunkCopy.partNumber,
+                                        compressedDigest: chunkCopy.compDigest,
+                                        compressedSize: chunkCopy.compSize,
+                                        uncompressedDigest: chunkCopy.uncompDigest,
+                                        uncompressedSize: chunkCopy.uncompSize,
+                                        diskOffset: chunkCopy.diskOffset
+                                    )
+                                )
+                            }
+                            enqueued += 1
+                        }
+
+                        // Drain remaining uploads
+                        for try await (idx, desc) in uploadGroup {
+                            await chunkCollector.set(index: idx, desc: desc)
+                        }
+                    }
                 }
             }
 
@@ -4470,7 +4573,7 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
             manifest = createOCIManifest(
                 configDigest: configDigest, configSize: configSize,
                 auxDigest: auxDigest, auxSize: auxSize,
-                diskChunks: diskChunks.compactMap { $0 },
+                diskChunks: await chunkCollector.getAll(),
                 totalUncompressedSize: diskSize,
                 vmConfig: vmConfig
             )
@@ -4758,6 +4861,38 @@ final class UploadProgressDelegate: NSObject, URLSessionTaskDelegate, @unchecked
     }
 }
 
+/// Thread-safe collector for chunk descriptors from parallel workers.
+actor ChunkCollector {
+    private var chunks: [DiskChunkDescriptor?]
+
+    init(count: Int) {
+        chunks = [DiskChunkDescriptor?](repeating: nil, count: count)
+    }
+
+    func set(index: Int, desc: DiskChunkDescriptor) {
+        chunks[index] = desc
+    }
+
+    func getAll() -> [DiskChunkDescriptor] {
+        chunks.compactMap { $0 }
+    }
+}
+
+
+/// Tracks seen digests for content-addressable deduplication across chunks.
+actor DigestTracker {
+    private var seen: Swift.Set<String> = []
+
+    /// Returns true if the digest was already seen (duplicate), false if first time.
+    func markSeen(digest: String) -> Bool {
+        if seen.contains(digest) {
+            return true
+        }
+        seen.insert(digest)
+        return false
+    }
+}
+
 /// Docker-style multi-line progress display for concurrent layer operations.
 /// Each layer gets its own line, updated in-place using ANSI escape codes.
 actor LayerProgressDisplay {
@@ -4785,6 +4920,21 @@ actor LayerProgressDisplay {
     private var lastRenderTime: Date = .distantPast
     private var startTime: Date = Date()
 
+    // Separate throughput tracking for compress vs upload
+    // Per-layer byte counters for accurate parallel tracking
+    private var layerCompressedBytes: [String: Int64] = [:]
+    private var layerUploadedBytes: [String: Int64] = [:]
+    private var lastCompressedTotal: Int64 = 0
+    private var lastUploadedTotal: Int64 = 0
+    private var lastSpeedTime: Date = Date()
+    private var compressSpeed: Double = 0
+    private var uploadSpeed: Double = 0
+    private var smoothedOverallSpeed: Double = 0
+    private var lastTotalDone: Int64 = 0
+    private var hasSeenUpload: Bool = false
+    private var smoothedUploadSpeed: Double = 0
+    private var smoothedCompressSpeed: Double = 0
+
     func addLayer(id: String, label: String, totalBytes: Int64 = 0) {
         layers[id] = LayerState(label: label, totalBytes: totalBytes)
         layerOrder.append(id)
@@ -4803,10 +4953,20 @@ actor LayerProgressDisplay {
         render()
     }
 
+    func reportCompressBytes(id: String, _ bytes: Int64) {
+        layerCompressedBytes[id] = bytes
+    }
+
+    func reportUploadBytes(id: String, _ bytes: Int64) {
+        layerUploadedBytes[id] = bytes
+    }
+
     func markDone(id: String, bytes: Int64? = nil) {
         if let b = bytes { layers[id]?.completedBytes = b }
         layers[id]?.status = .done
-        if layers[id]?.completedBytes == 0, let total = layers[id]?.totalBytes {
+        let current = layers[id]?.completedBytes ?? 0
+        if current == 0 {
+            let total = layers[id]?.totalBytes ?? 0
             layers[id]?.completedBytes = total
         }
         render()
@@ -4814,7 +4974,8 @@ actor LayerProgressDisplay {
 
     func markExists(id: String) {
         layers[id]?.status = .exists
-        layers[id]?.completedBytes = layers[id]?.totalBytes ?? 0
+        let total = layers[id]?.totalBytes ?? 0
+        layers[id]?.completedBytes = total
         render()
     }
 
@@ -4837,52 +4998,94 @@ actor LayerProgressDisplay {
         }
 
         var lines = 0
-        var waitingCount = 0
-        var waitingShown = 0
         var doneCount = 0
-
-        // Show active layers, up to 5 waiting, and a compact summary for done
+        // Show only active layers (compressing/pushing/etc), skip waiting, done, and dedup
         for id in layerOrder {
             guard let layer = layers[id] else { continue }
             switch layer.status {
             case .waiting:
-                waitingCount += 1
-                if waitingShown < 5 {
-                    let line = formatLayer(layer)
-                    print("\u{1B}[2K\(line)")
-                    lines += 1
-                    waitingShown += 1
-                }
+                break
             case .done, .exists:
                 doneCount += 1
             default:
-                // Active layer — show it
+                // Hide compressing layers at 100% — they're transitioning to upload or dedup
+                if case .compressing = layer.status,
+                   layer.totalBytes > 0, layer.completedBytes >= layer.totalBytes {
+                    break
+                }
                 let line = formatLayer(layer)
                 print("\u{1B}[2K\(line)")
                 lines += 1
             }
         }
 
-        // Summary line
-        let elapsed = Date().timeIntervalSince(startTime)
+        // Update throughput tracking
+        let now = Date()
+        let elapsed = now.timeIntervalSince(startTime)
+        let dt = now.timeIntervalSince(lastSpeedTime)
+        if dt >= 0.5 {
+            let compressedTotal = layerCompressedBytes.values.reduce(Int64(0), +)
+            let uploadedTotal = layerUploadedBytes.values.reduce(Int64(0), +)
+            let dCompress = Double(compressedTotal - lastCompressedTotal)
+            let dUpload = Double(uploadedTotal - lastUploadedTotal)
+            // Exponential smoothing for display speed (responsive, alpha=0.3)
+            let alpha = 0.3
+            compressSpeed = alpha * (dCompress / dt) + (1 - alpha) * compressSpeed
+            uploadSpeed = alpha * (dUpload / dt) + (1 - alpha) * uploadSpeed
+
+            // Heavier smoothing for ETA speeds (alpha=0.1) — stable, won't flicker
+            // Only decay toward zero slowly; between-chunk gaps won't kill the estimate
+            let etaAlpha = 0.1
+            if dUpload > 0 {
+                hasSeenUpload = true
+                smoothedUploadSpeed = smoothedUploadSpeed > 0
+                    ? etaAlpha * (dUpload / dt) + (1 - etaAlpha) * smoothedUploadSpeed
+                    : dUpload / dt
+            } else if smoothedUploadSpeed > 0 {
+                // Decay very slowly when no upload data (gap between chunks)
+                smoothedUploadSpeed *= 0.98
+            }
+            if dCompress > 0 {
+                smoothedCompressSpeed = smoothedCompressSpeed > 0
+                    ? etaAlpha * (dCompress / dt) + (1 - etaAlpha) * smoothedCompressSpeed
+                    : dCompress / dt
+            } else if smoothedCompressSpeed > 0 {
+                smoothedCompressSpeed *= 0.98
+            }
+
+            lastCompressedTotal = compressedTotal
+            lastUploadedTotal = uploadedTotal
+            lastSpeedTime = now
+        }
+
         let totalDone = layers.values.reduce(Int64(0)) { $0 + $1.completedBytes }
         let totalAll = layers.values.reduce(Int64(0)) { $0 + $1.totalBytes }
-        let speed = elapsed > 0 ? Double(totalDone) / elapsed : 0
         let total = layers.count
 
         var summary = "\u{1B}[2K\(doneCount)/\(total) done"
-        let hiddenWaiting = waitingCount - waitingShown
-        if hiddenWaiting > 0 {
-            summary += " | +\(hiddenWaiting) waiting"
-        }
         summary += " | \(formatBytes(totalDone))/\(formatBytes(totalAll))"
-        summary += " | \(formatSpeed(speed))"
-        if totalDone > 0 && totalAll > totalDone {
-            let remainingBytes = Double(totalAll - totalDone)
-            let eta = speed > 0 ? remainingBytes / speed : 0
-            summary += " | ETA \(formatTime(eta))"
+        // ETA first
+        if hasSeenUpload && smoothedUploadSpeed > 0 {
+            let doneBytes = layers.values.filter {
+                if case .done = $0.status { return true }
+                if case .exists = $0.status { return true }
+                return false
+            }.reduce(Int64(0)) { $0 + $1.totalBytes }
+            let remaining = Double(totalAll - doneBytes)
+            let eta = remaining / smoothedUploadSpeed
+            summary += " | ETA \(formatTime(eta)) (uploading)"
+        } else if smoothedCompressSpeed > 0 && totalDone > 0 && totalAll > totalDone {
+            let eta = Double(totalAll - totalDone) / smoothedCompressSpeed
+            summary += " | ETA \(formatTime(eta)) (compressing)"
         } else {
             summary += " | \(formatTime(elapsed))"
+        }
+        // Speeds after ETA
+        if compressSpeed > 0 {
+            summary += " | 🗜 \(formatSpeed(compressSpeed))"
+        }
+        if uploadSpeed > 0 {
+            summary += " | ⬆ \(formatSpeed(uploadSpeed))"
         }
         print(summary)
         lines += 1
@@ -4965,9 +5168,19 @@ actor LayerProgressDisplay {
     }
 
     private func formatTime(_ seconds: TimeInterval) -> String {
-        let mins = Int(seconds) / 60
-        let secs = Int(seconds) % 60
-        return String(format: "%d:%02d", mins, secs)
+        let total = Int(seconds)
+        if total >= 3600 {
+            let hrs = total / 3600
+            let mins = (total % 3600) / 60
+            let secs = total % 60
+            return String(format: "%dh %dm %ds", hrs, mins, secs)
+        } else if total >= 60 {
+            let mins = total / 60
+            let secs = total % 60
+            return String(format: "%dm %ds", mins, secs)
+        } else {
+            return String(format: "%ds", total)
+        }
     }
 }
 

@@ -59,7 +59,7 @@ struct Convert: AsyncParsableCommand {
 
         let controller = LumeController()
 
-        Logger.info(
+        Logger.debug(
             "Converting legacy image to OCI-compliant format",
             metadata: [
                 "source": sourceImage,

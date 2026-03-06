@@ -8,7 +8,16 @@ from typing import Any, Optional
 import aiohttp
 from core.http import cua_version_headers
 from cua_cli.auth.browser import authenticate_via_browser
-from cua_cli.auth.store import clear_credentials, get_api_key, save_api_key
+from cua_cli.auth.store import (
+    clear_credentials,
+    delete_workspace,
+    get_active_workspace,
+    get_api_key,
+    list_workspaces,
+    save_api_key,
+    save_workspace,
+    set_active_workspace,
+)
 from cua_cli.utils.async_utils import run_async
 from cua_cli.utils.output import print_error, print_info, print_success
 
@@ -48,11 +57,28 @@ def register_parser(subparsers: argparse._SubParsersAction) -> None:
         help="API key for direct authentication (skips browser flow)",
     )
 
-    # logout command
+    # list command
     auth_subparsers.add_parser(
+        "list",
+        help="List cached workspaces",
+        description="Show all workspaces with cached credentials",
+    )
+
+    # logout command
+    logout_parser = auth_subparsers.add_parser(
         "logout",
         help="Clear stored credentials",
-        description="Remove all stored authentication credentials",
+        description="Remove stored authentication credentials",
+    )
+    logout_parser.add_argument(
+        "--workspace",
+        type=str,
+        help="Remove credentials for a specific workspace slug",
+    )
+    logout_parser.add_argument(
+        "--all",
+        action="store_true",
+        help="Remove all workspace credentials",
     )
 
     # status command
@@ -93,73 +119,20 @@ def execute(args: argparse.Namespace) -> int:
         return cmd_logout(args)
     elif cmd == "status":
         return cmd_status(args)
+    elif cmd == "list":
+        return cmd_list(args)
     elif cmd == "env":
         return cmd_env(args)
     else:
         print_error("Usage: cua auth <command>")
-        print_info("Commands: login, logout, status, env")
+        print_info("Commands: login, logout, status, list, env")
         return 1
 
 
-def cmd_login(args: argparse.Namespace) -> int:
-    """Handle the login command.
+def _fetch_me(api_key: str) -> tuple[int, dict]:
+    """Call /v1/me to get workspace metadata for an API key."""
 
-    Args:
-        args: Parsed command-line arguments
-
-    Returns:
-        Exit code
-    """
-    # Check if already logged in
-    existing_key = get_api_key()
-    if existing_key and not args.api_key:
-        print_info("Already authenticated. Use 'cua auth logout' to clear credentials.")
-        return 0
-
-    if args.api_key:
-        # Direct API key authentication
-        api_key = args.api_key
-        print_info("Authenticating with provided API key...")
-    else:
-        # Browser-based authentication
-        try:
-            api_key = run_async(authenticate_via_browser())
-        except TimeoutError as e:
-            print_error(str(e))
-            return 1
-        except RuntimeError as e:
-            print_error(str(e))
-            return 1
-
-    # Save the API key
-    save_api_key(api_key)
-    print_success("Successfully authenticated!")
-
-    return 0
-
-
-def cmd_logout(args: argparse.Namespace) -> int:
-    """Handle the logout command.
-
-    Args:
-        args: Parsed command-line arguments
-
-    Returns:
-        Exit code
-    """
-    clear_credentials()
-    print_success("Credentials cleared.")
-    return 0
-
-
-def cmd_status(args: argparse.Namespace) -> int:
-    """Handle the status command — show auth status and account info."""
-    api_key = get_api_key()
-    if not api_key:
-        print_error("Not logged in. Run 'cua auth login' first.")
-        return 1
-
-    async def _fetch():
+    async def _do():
         url = f"{_get_api_base()}/v1/me"
         headers = {
             "Authorization": f"Bearer {api_key}",
@@ -176,8 +149,135 @@ def cmd_status(args: argparse.Namespace) -> int:
                     return resp.status, {"error": text}
                 return resp.status, data
 
+    return run_async(_do())
+
+
+def cmd_login(args: argparse.Namespace) -> int:
+    """Handle the login command."""
+    if args.api_key:
+        # Direct API key authentication — discover workspace via /v1/me
+        api_key = args.api_key
+        print_info("Authenticating with provided API key...")
+        try:
+            status_code, data = _fetch_me(api_key)
+        except Exception as e:
+            print_error(f"Failed to reach API: {e}")
+            return 1
+
+        if status_code != 200:
+            print_error(f"API key validation failed (HTTP {status_code})")
+            return 1
+
+        ws = data.get("workspace", {})
+        org = data.get("organization", {})
+        slug = ws.get("slug", "default")
+        name = ws.get("name", slug)
+        org_name = org.get("name", "")
+        save_workspace(slug, api_key, name, org_name)
+        set_active_workspace(slug)
+        print_success(f"Authenticated and switched to workspace: {name} ({slug})")
+    else:
+        # Browser-based authentication
+        try:
+            result = run_async(authenticate_via_browser())
+        except TimeoutError as e:
+            print_error(str(e))
+            return 1
+        except RuntimeError as e:
+            print_error(str(e))
+            return 1
+
+        if result.workspace_slug:
+            save_workspace(
+                result.workspace_slug,
+                result.token,
+                result.workspace_name,
+                result.org_name,
+            )
+            set_active_workspace(result.workspace_slug)
+            print_success(
+                f"Authenticated and switched to workspace: "
+                f"{result.workspace_name} ({result.workspace_slug})"
+            )
+        else:
+            # Fallback if website didn't send workspace metadata
+            save_api_key(result.token)
+            print_success("Successfully authenticated!")
+
+    return 0
+
+
+def cmd_logout(args: argparse.Namespace) -> int:
+    """Handle the logout command."""
+    if getattr(args, "all", False):
+        clear_credentials()
+        print_success("All credentials cleared.")
+        return 0
+
+    ws_slug = getattr(args, "workspace", None)
+    if ws_slug:
+        delete_workspace(ws_slug)
+        active = get_active_workspace()
+        if active == ws_slug:
+            # Active workspace was removed — pick another or clear
+            remaining = list_workspaces()
+            if remaining:
+                set_active_workspace(remaining[0]["slug"])
+                print_info(f"Switched to workspace: {remaining[0]['name']} ({remaining[0]['slug']})")
+            else:
+                from cua_cli.auth.store import _get_store, ACTIVE_WORKSPACE_KEY
+
+                _get_store().delete(ACTIVE_WORKSPACE_KEY)
+        print_success(f"Removed credentials for workspace: {ws_slug}")
+        return 0
+
+    # No flags — remove only the active workspace
+    active = get_active_workspace()
+    if active:
+        delete_workspace(active)
+        remaining = list_workspaces()
+        if remaining:
+            set_active_workspace(remaining[0]["slug"])
+            print_success(f"Logged out of workspace: {active}")
+            print_info(
+                f"Switched to workspace: {remaining[0]['name']} ({remaining[0]['slug']}). "
+                f"Use 'cua set workspace <slug>' to switch."
+            )
+        else:
+            from cua_cli.auth.store import _get_store, ACTIVE_WORKSPACE_KEY
+
+            _get_store().delete(ACTIVE_WORKSPACE_KEY)
+            print_success(f"Logged out of workspace: {active}")
+    else:
+        clear_credentials()
+        print_success("Credentials cleared.")
+    return 0
+
+
+def cmd_list(args: argparse.Namespace) -> int:
+    """Handle the list command — show all cached workspaces."""
+    workspaces = list_workspaces()
+    if not workspaces:
+        print_info("No workspaces cached. Run 'cua auth login' to add one.")
+        return 0
+
+    for ws in workspaces:
+        marker = "* " if ws["is_active"] else "  "
+        name_part = f" ({ws['name']})" if ws["name"] else ""
+        org_part = f" - {ws['org']}" if ws["org"] else ""
+        print(f"{marker}{ws['slug']}{name_part}{org_part}")
+    return 0
+
+
+def cmd_status(args: argparse.Namespace) -> int:
+    """Handle the status command — show auth status and account info."""
+    api_key = get_api_key()
+    if not api_key:
+        print_error("Not logged in. Run 'cua auth login' first.")
+        return 1
+
     try:
-        status_code, data = run_async(_fetch())
+        status_code, data = _fetch_me(api_key)
     except Exception as e:
         print_error(f"Failed to reach API: {e}")
         return 1
@@ -196,7 +296,9 @@ def cmd_status(args: argparse.Namespace) -> int:
     credits = data.get("credits", {})
     key_info = data.get("api_key", {})
 
-    print_success("Logged in to cua.ai")
+    active_slug = get_active_workspace()
+    active_label = f" [active: {active_slug}]" if active_slug else ""
+    print_success(f"Logged in to cua.ai{active_label}")
     print_info(f"  Workspace: {ws.get('name', 'unknown')} ({ws.get('slug', 'unknown')})")
     print_info(f"  Organization: {org.get('name', 'unknown')} ({org.get('plan_type', 'unknown')})")
     print_info(f"  Credits: {credits.get('balance', 0):.2f} remaining")

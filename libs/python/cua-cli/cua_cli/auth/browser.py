@@ -5,6 +5,7 @@ import os
 import platform
 import subprocess
 import urllib.parse
+from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from threading import Thread
 from typing import Optional
@@ -16,10 +17,23 @@ DEFAULT_WEBSITE_URL = "https://cua.ai"
 AUTH_TIMEOUT_SECONDS = 120
 
 
+@dataclass
+class AuthResult:
+    """Result from browser authentication containing token and workspace metadata."""
+
+    token: str
+    workspace_slug: str
+    workspace_name: str
+    org_name: str
+
+
 class CallbackHandler(BaseHTTPRequestHandler):
     """HTTP request handler for OAuth callback."""
 
     token: Optional[str] = None
+    workspace_slug: Optional[str] = None
+    workspace_name: Optional[str] = None
+    org_name: Optional[str] = None
     error: Optional[str] = None
 
     def do_GET(self) -> None:
@@ -29,6 +43,9 @@ class CallbackHandler(BaseHTTPRequestHandler):
 
         if "token" in params:
             CallbackHandler.token = params["token"][0]
+            CallbackHandler.workspace_slug = params.get("workspace_slug", [""])[0]
+            CallbackHandler.workspace_name = params.get("workspace_name", [""])[0]
+            CallbackHandler.org_name = params.get("org_name", [""])[0]
             self._send_response(
                 200,
                 "<html><body><h1>Authentication successful!</h1>"
@@ -85,7 +102,8 @@ def open_browser(url: str) -> bool:
 
 async def authenticate_via_browser(
     website_url: Optional[str] = None,
-) -> str:
+    workspace_slug: Optional[str] = None,
+) -> AuthResult:
     """Authenticate via browser OAuth flow.
 
     Starts a local HTTP server to receive the callback, opens the browser
@@ -94,9 +112,10 @@ async def authenticate_via_browser(
     Args:
         website_url: Base URL for the authentication page. Defaults to CUA_WEBSITE_URL
                     env var or https://cua.ai
+        workspace_slug: Optional workspace slug to pre-select in the browser
 
     Returns:
-        The API token
+        AuthResult with token and workspace metadata
 
     Raises:
         TimeoutError: If authentication times out
@@ -106,6 +125,9 @@ async def authenticate_via_browser(
 
     # Reset handler state
     CallbackHandler.token = None
+    CallbackHandler.workspace_slug = None
+    CallbackHandler.workspace_name = None
+    CallbackHandler.org_name = None
     CallbackHandler.error = None
 
     # Start local server on dynamic port
@@ -116,6 +138,8 @@ async def authenticate_via_browser(
     # Build auth URL
     encoded_callback = urllib.parse.quote(callback_url, safe="")
     auth_url = f"{website_url}/cli-auth?callback_url={encoded_callback}"
+    if workspace_slug:
+        auth_url += f"&workspace_slug={urllib.parse.quote(workspace_slug, safe='')}"
 
     # Start server in background thread
     server_thread = Thread(target=server.handle_request, daemon=True)
@@ -142,7 +166,12 @@ async def authenticate_via_browser(
         if not CallbackHandler.token:
             raise RuntimeError("Authentication failed: No token received")
 
-        return CallbackHandler.token
+        return AuthResult(
+            token=CallbackHandler.token,
+            workspace_slug=CallbackHandler.workspace_slug or "",
+            workspace_name=CallbackHandler.workspace_name or "",
+            org_name=CallbackHandler.org_name or "",
+        )
 
     finally:
         server.server_close()

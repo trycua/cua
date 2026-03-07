@@ -113,8 +113,13 @@ class GenericWindowHandler(BaseWindowHandler):
                 proc = subprocess.Popen([app, *args])
             else:
                 # allow shell command like "libreoffice --writer"
-                # use shlex.split instead of shell=True to prevent command injection
-                proc = subprocess.Popen(shlex.split(app))
+                # avoid shell=True to prevent command injection
+                if platform.system().lower() == "windows":
+                    # On Windows, pass string directly to CreateProcess()
+                    # which handles Windows command-line parsing correctly
+                    proc = subprocess.Popen(app)
+                else:
+                    proc = subprocess.Popen(shlex.split(app))
             return {"success": True, "pid": proc.pid}
         except Exception as e:
             return {"success": False, "error": str(e)}

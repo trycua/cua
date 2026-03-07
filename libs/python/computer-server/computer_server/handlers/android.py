@@ -349,8 +349,8 @@ class AndroidAutomationHandler(BaseAutomationHandler):
         return {}
 
     # Scrolling Actions
-    async def scroll(self, x: int, y: int) -> Dict[str, Any]:
-        """Scroll by x and y amounts."""
+    async def scroll(self, x: Optional[int] = None, y: Optional[int] = None) -> Dict[str, Any]:
+        """Scroll by x and y amounts. Uses screen center as starting point."""
         # Get screen size to calculate swipe positions
         screen_size = await self.get_screen_size()
         width, height = screen_size["width"], screen_size["height"]
@@ -358,9 +358,14 @@ class AndroidAutomationHandler(BaseAutomationHandler):
         # Use center of screen as starting point
         center_x, center_y = width // 2, height // 2
 
+        # Default scroll amounts if not provided (x=0 for no horizontal scroll,
+        # y=height*0.4 for reasonable vertical scroll down)
+        scroll_amount_x = 0 if x is None else x
+        scroll_amount_y = int(height * 0.4) if y is None else y
+
         # Calculate end points (negative y means scroll down, positive means scroll up)
-        end_x = center_x + x
-        end_y = center_y - y  # Inverted because swipe up scrolls content down
+        end_x = center_x + scroll_amount_x
+        end_y = center_y - scroll_amount_y  # Inverted because swipe up scrolls content down
 
         success, output = await adb_exec.run(
             "shell",

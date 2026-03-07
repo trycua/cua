@@ -10,6 +10,7 @@ Includes:
 import base64
 import os
 import platform
+import shlex
 import subprocess
 import webbrowser
 from pathlib import Path
@@ -112,7 +113,8 @@ class GenericWindowHandler(BaseWindowHandler):
                 proc = subprocess.Popen([app, *args])
             else:
                 # allow shell command like "libreoffice --writer"
-                proc = subprocess.Popen(app, shell=True)
+                # use shlex.split instead of shell=True to prevent command injection
+                proc = subprocess.Popen(shlex.split(app))
             return {"success": True, "pid": proc.pid}
         except Exception as e:
             return {"success": False, "error": str(e)}

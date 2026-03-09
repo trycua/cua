@@ -23,8 +23,9 @@ class TestConvertResponsesToCompletionMessages:
 
     def test_empty_messages_returns_empty_list(self):
         """Empty input should return empty output."""
-        result = _convert_responses_items_to_completion_messages([])
+        result, scale_factors = _convert_responses_items_to_completion_messages([])
         assert result == []
+        assert scale_factors == (1.0, 1.0)
 
     # --- User message tests ---
 
@@ -32,7 +33,7 @@ class TestConvertResponsesToCompletionMessages:
         """User message with string content should be preserved."""
         messages = [{"role": "user", "content": "Hello, world!"}]
 
-        result = _convert_responses_items_to_completion_messages(messages)
+        result, _ = _convert_responses_items_to_completion_messages(messages)
 
         assert len(result) == 1
         assert result[0]["role"] == "user"
@@ -48,7 +49,7 @@ class TestConvertResponsesToCompletionMessages:
             }
         ]
 
-        result = _convert_responses_items_to_completion_messages(messages)
+        result, _ = _convert_responses_items_to_completion_messages(messages)
 
         assert len(result) == 1
         assert result[0]["role"] == "user"
@@ -64,7 +65,7 @@ class TestConvertResponsesToCompletionMessages:
             }
         ]
 
-        result = _convert_responses_items_to_completion_messages(messages)
+        result, _ = _convert_responses_items_to_completion_messages(messages)
 
         assert len(result) == 1
         assert result[0]["role"] == "user"
@@ -80,7 +81,7 @@ class TestConvertResponsesToCompletionMessages:
             }
         ]
 
-        result = _convert_responses_items_to_completion_messages(messages)
+        result, _ = _convert_responses_items_to_completion_messages(messages)
 
         # Message with only filtered content should be dropped, not sent with empty content
         assert len(result) == 0
@@ -91,7 +92,7 @@ class TestConvertResponsesToCompletionMessages:
         """Assistant message with string content should be preserved."""
         messages = [{"role": "assistant", "content": "I can help you with that."}]
 
-        result = _convert_responses_items_to_completion_messages(messages)
+        result, _ = _convert_responses_items_to_completion_messages(messages)
 
         assert len(result) == 1
         assert result[0]["role"] == "assistant"
@@ -110,7 +111,7 @@ class TestConvertResponsesToCompletionMessages:
             }
         ]
 
-        result = _convert_responses_items_to_completion_messages(messages)
+        result, _ = _convert_responses_items_to_completion_messages(messages)
 
         assert len(result) == 1
         assert result[0]["role"] == "assistant"
@@ -128,7 +129,7 @@ class TestConvertResponsesToCompletionMessages:
             }
         ]
 
-        result = _convert_responses_items_to_completion_messages(messages)
+        result, _ = _convert_responses_items_to_completion_messages(messages)
 
         assert len(result) == 1
         assert result[0]["role"] == "assistant"
@@ -138,7 +139,7 @@ class TestConvertResponsesToCompletionMessages:
         """Reasoning message with empty summary should not create a message."""
         messages = [{"type": "reasoning", "summary": []}]
 
-        result = _convert_responses_items_to_completion_messages(messages)
+        result, _ = _convert_responses_items_to_completion_messages(messages)
 
         assert result == []
 
@@ -155,7 +156,7 @@ class TestConvertResponsesToCompletionMessages:
             }
         ]
 
-        result = _convert_responses_items_to_completion_messages(messages)
+        result, _ = _convert_responses_items_to_completion_messages(messages)
 
         assert len(result) == 1
         assert result[0]["role"] == "assistant"
@@ -179,7 +180,7 @@ class TestConvertResponsesToCompletionMessages:
             },
         ]
 
-        result = _convert_responses_items_to_completion_messages(messages)
+        result, _ = _convert_responses_items_to_completion_messages(messages)
 
         # Should be combined into one assistant message
         assert len(result) == 1
@@ -202,7 +203,7 @@ class TestConvertResponsesToCompletionMessages:
             },
         ]
 
-        result = _convert_responses_items_to_completion_messages(messages)
+        result, _ = _convert_responses_items_to_completion_messages(messages)
 
         assert len(result) == 2
         assert result[1]["role"] == "function"
@@ -221,7 +222,7 @@ class TestConvertResponsesToCompletionMessages:
             }
         ]
 
-        result = _convert_responses_items_to_completion_messages(messages)
+        result, _ = _convert_responses_items_to_completion_messages(messages)
 
         assert len(result) == 1
         assert result[0]["role"] == "assistant"
@@ -241,7 +242,7 @@ class TestConvertResponsesToCompletionMessages:
             }
         ]
 
-        result = _convert_responses_items_to_completion_messages(messages)
+        result, _ = _convert_responses_items_to_completion_messages(messages)
 
         tool_call = result[0]["tool_calls"][0]
         args = json.loads(tool_call["function"]["arguments"])
@@ -257,7 +258,7 @@ class TestConvertResponsesToCompletionMessages:
             }
         ]
 
-        result = _convert_responses_items_to_completion_messages(messages)
+        result, _ = _convert_responses_items_to_completion_messages(messages)
 
         tool_call = result[0]["tool_calls"][0]
         args = json.loads(tool_call["function"]["arguments"])
@@ -273,7 +274,7 @@ class TestConvertResponsesToCompletionMessages:
             }
         ]
 
-        result = _convert_responses_items_to_completion_messages(messages)
+        result, _ = _convert_responses_items_to_completion_messages(messages)
 
         tool_call = result[0]["tool_calls"][0]
         args = json.loads(tool_call["function"]["arguments"])
@@ -290,7 +291,7 @@ class TestConvertResponsesToCompletionMessages:
             }
         ]
 
-        result = _convert_responses_items_to_completion_messages(messages)
+        result, _ = _convert_responses_items_to_completion_messages(messages)
 
         tool_call = result[0]["tool_calls"][0]
         args = json.loads(tool_call["function"]["arguments"])
@@ -307,7 +308,7 @@ class TestConvertResponsesToCompletionMessages:
             }
         ]
 
-        result = _convert_responses_items_to_completion_messages(messages)
+        result, _ = _convert_responses_items_to_completion_messages(messages)
 
         tool_call = result[0]["tool_calls"][0]
         args = json.loads(tool_call["function"]["arguments"])
@@ -324,7 +325,7 @@ class TestConvertResponsesToCompletionMessages:
             }
         ]
 
-        result = _convert_responses_items_to_completion_messages(messages)
+        result, _ = _convert_responses_items_to_completion_messages(messages)
 
         tool_call = result[0]["tool_calls"][0]
         args = json.loads(tool_call["function"]["arguments"])
@@ -343,7 +344,7 @@ class TestConvertResponsesToCompletionMessages:
             }
         ]
 
-        result = _convert_responses_items_to_completion_messages(messages)
+        result, _ = _convert_responses_items_to_completion_messages(messages)
 
         tool_call = result[0]["tool_calls"][0]
         args = json.loads(tool_call["function"]["arguments"])
@@ -362,7 +363,7 @@ class TestConvertResponsesToCompletionMessages:
             }
         ]
 
-        result = _convert_responses_items_to_completion_messages(messages)
+        result, _ = _convert_responses_items_to_completion_messages(messages)
 
         tool_call = result[0]["tool_calls"][0]
         args = json.loads(tool_call["function"]["arguments"])
@@ -380,7 +381,7 @@ class TestConvertResponsesToCompletionMessages:
             }
         ]
 
-        result = _convert_responses_items_to_completion_messages(messages)
+        result, _ = _convert_responses_items_to_completion_messages(messages)
 
         tool_call = result[0]["tool_calls"][0]
         args = json.loads(tool_call["function"]["arguments"])
@@ -397,7 +398,7 @@ class TestConvertResponsesToCompletionMessages:
             }
         ]
 
-        result = _convert_responses_items_to_completion_messages(messages)
+        result, _ = _convert_responses_items_to_completion_messages(messages)
 
         tool_call = result[0]["tool_calls"][0]
         args = json.loads(tool_call["function"]["arguments"])
@@ -413,7 +414,7 @@ class TestConvertResponsesToCompletionMessages:
             }
         ]
 
-        result = _convert_responses_items_to_completion_messages(messages)
+        result, _ = _convert_responses_items_to_completion_messages(messages)
 
         tool_call = result[0]["tool_calls"][0]
         args = json.loads(tool_call["function"]["arguments"])
@@ -437,7 +438,7 @@ class TestConvertResponsesToCompletionMessages:
             },
         ]
 
-        result = _convert_responses_items_to_completion_messages(messages)
+        result, _ = _convert_responses_items_to_completion_messages(messages)
 
         assert len(result) == 2
         assert result[1]["role"] == "function"
@@ -460,7 +461,7 @@ class TestConvertResponsesToCompletionMessages:
             },
         ]
 
-        result = _convert_responses_items_to_completion_messages(messages)
+        result, _ = _convert_responses_items_to_completion_messages(messages)
 
         assert len(result) == 2
         assert result[1]["role"] == "function"
@@ -490,7 +491,7 @@ class TestConvertResponsesToCompletionMessages:
             },
         ]
 
-        result = _convert_responses_items_to_completion_messages(messages)
+        result, _ = _convert_responses_items_to_completion_messages(messages)
 
         # Should have: user, assistant (reasoning + tool_calls merged), function (output)
         # Reasoning and computer_call get merged into same assistant message
@@ -516,7 +517,7 @@ class TestConvertResponsesToCompletionMessages:
             },
         ]
 
-        result = _convert_responses_items_to_completion_messages(messages)
+        result, _ = _convert_responses_items_to_completion_messages(messages)
 
         # Both calls should be in the same assistant message
         assert len(result) == 1
@@ -533,7 +534,7 @@ class TestConvertResponsesToCompletionMessages:
             }
         ]
 
-        result = _convert_responses_items_to_completion_messages(messages)
+        result, _ = _convert_responses_items_to_completion_messages(messages)
 
         tool_call = result[0]["tool_calls"][0]
         args = json.loads(tool_call["function"]["arguments"])
@@ -549,7 +550,7 @@ class TestConvertResponsesToCompletionMessages:
             }
         ]
 
-        result = _convert_responses_items_to_completion_messages(messages)
+        result, _ = _convert_responses_items_to_completion_messages(messages)
 
         tool_call = result[0]["tool_calls"][0]
         args = json.loads(tool_call["function"]["arguments"])

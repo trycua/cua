@@ -90,6 +90,7 @@ def get_json(obj: Any, max_depth: int = 10) -> Any:
 
         # Handle enums — just use their value
         import enum
+
         if isinstance(o, enum.Enum):
             return o.value
 

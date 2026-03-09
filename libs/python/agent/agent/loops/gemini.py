@@ -89,11 +89,7 @@ def _sanitize_for_json(obj: Any) -> Any:
         return _sanitize_for_json(obj.model_dump())
     # Handle objects with __dict__ (like Gemini SDK response objects)
     if hasattr(obj, "__dict__"):
-        return {
-            k: _sanitize_for_json(v)
-            for k, v in obj.__dict__.items()
-            if not k.startswith("__")
-        }
+        return {k: _sanitize_for_json(v) for k, v in obj.__dict__.items() if not k.startswith("__")}
     # Fallback to string representation
     return str(obj)
 
@@ -828,9 +824,7 @@ class GeminiComputerUseConfig(AsyncAgentConfig):
         }
 
         if _on_api_start:
-            await _on_api_start(
-                _sanitize_for_json(api_kwargs)
-            )
+            await _on_api_start(_sanitize_for_json(api_kwargs))
 
         response = client.models.generate_content(**api_kwargs)
 

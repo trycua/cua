@@ -9,7 +9,10 @@ import aiohttp
 from core.http import cua_version_headers
 from cua_cli.auth.browser import authenticate_via_browser
 from cua_cli.auth.store import (
+    ACTIVE_WORKSPACE_KEY,
+    _get_store,
     clear_credentials,
+    clear_legacy_credentials,
     delete_workspace,
     get_active_workspace,
     get_api_key,
@@ -170,12 +173,18 @@ def cmd_login(args: argparse.Namespace) -> int:
 
         ws = data.get("workspace", {})
         org = data.get("organization", {})
-        slug = ws.get("slug", "default")
-        name = ws.get("name", slug)
-        org_name = org.get("name", "")
-        save_workspace(slug, api_key, name, org_name)
-        set_active_workspace(slug)
-        print_success(f"Authenticated and switched to workspace: {name} ({slug})")
+        slug = ws.get("slug")
+        if slug:
+            name = ws.get("name", slug)
+            org_name = org.get("name", "")
+            save_workspace(slug, api_key, name, org_name)
+            set_active_workspace(slug)
+            print_success(f"Authenticated and switched to workspace: {name} ({slug})")
+        else:
+            # Legacy fallback — no workspace metadata from API
+            save_api_key(api_key)
+            _get_store().delete(ACTIVE_WORKSPACE_KEY)
+            print_success("Successfully authenticated!")
     else:
         # Browser-based authentication
         try:
@@ -202,6 +211,7 @@ def cmd_login(args: argparse.Namespace) -> int:
         else:
             # Fallback if website didn't send workspace metadata
             save_api_key(result.token)
+            _get_store().delete(ACTIVE_WORKSPACE_KEY)
             print_success("Successfully authenticated!")
 
     return 0
@@ -227,8 +237,6 @@ def cmd_logout(args: argparse.Namespace) -> int:
                     f"Switched to workspace: {remaining[0]['name']} ({remaining[0]['slug']})"
                 )
             else:
-                from cua_cli.auth.store import ACTIVE_WORKSPACE_KEY, _get_store
-
                 _get_store().delete(ACTIVE_WORKSPACE_KEY)
         print_success(f"Removed credentials for workspace: {ws_slug}")
         return 0
@@ -246,12 +254,10 @@ def cmd_logout(args: argparse.Namespace) -> int:
                 f"Use 'cua workspace set <slug>' to switch workspaces."
             )
         else:
-            from cua_cli.auth.store import ACTIVE_WORKSPACE_KEY, _get_store
-
             _get_store().delete(ACTIVE_WORKSPACE_KEY)
             print_success(f"Logged out of workspace: {active}")
     else:
-        clear_credentials()
+        clear_legacy_credentials()
         print_success("Credentials cleared.")
     return 0
 
@@ -298,6 +304,11 @@ def cmd_status(args: argparse.Namespace) -> int:
         return 1
 
     if status_code == 401:
+        # Don't mutate cached workspaces if the token came from the environment
+        if os.environ.get("CUA_API_KEY"):
+            print_error("Session expired. The CUA_API_KEY environment variable is invalid.")
+            return 1
+
         active = get_active_workspace()
         if active:
             delete_workspace(active)
@@ -309,11 +320,9 @@ def cmd_status(args: argparse.Namespace) -> int:
                     f"Switched to workspace: {remaining[0]['name']} ({remaining[0]['slug']})"
                 )
             else:
-                from cua_cli.auth.store import ACTIVE_WORKSPACE_KEY, _get_store
-
                 _get_store().delete(ACTIVE_WORKSPACE_KEY)
         else:
-            clear_credentials()
+            clear_legacy_credentials()
             print_info("Removed expired credentials.")
         print_error("Session expired. Run 'cua auth login' to re-authenticate.")
         return 1

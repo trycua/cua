@@ -208,6 +208,7 @@ def list_workspaces() -> list[dict]:
             ws["is_active"] = ws["slug"] == active
             result.append(ws)
 
+    result.sort(key=lambda ws: ws["slug"])
     return result
 
 
@@ -269,6 +270,11 @@ def clear_credentials() -> None:
     store = _get_store()
     clear_all_workspaces()
     store.delete(API_KEY_NAME)
+
+
+def clear_legacy_credentials() -> None:
+    """Clear only the legacy API key (not workspace data)."""
+    _get_store().delete(API_KEY_NAME)
 
 
 def require_api_key() -> str:

@@ -1,6 +1,7 @@
 """Workspace commands for Cua CLI."""
 
 import argparse
+import asyncio
 import os
 
 import aiohttp
@@ -62,8 +63,14 @@ def execute(args: argparse.Namespace) -> int:
         return 1
 
 
-def _validate_workspace_key(api_key: str) -> tuple[bool, dict]:
-    """Validate an API key by calling /v1/me. Returns (valid, data)."""
+def _validate_workspace_key(api_key: str) -> tuple[bool | None, dict]:
+    """Validate an API key by calling /v1/me.
+
+    Returns:
+        (True, data)  — valid key (HTTP 200)
+        (False, data)  — explicitly invalid/expired (HTTP 401)
+        (None, {})    — transport error or unexpected HTTP status
+    """
 
     async def _do():
         url = f"{_get_api_base()}/v1/me"
@@ -83,9 +90,16 @@ def _validate_workspace_key(api_key: str) -> tuple[bool, dict]:
 
     try:
         status_code, data = run_async(_do())
-        return status_code == 200, data
+        if status_code == 200:
+            return True, data
+        elif status_code == 401:
+            return False, data
+        else:
+            return None, {}
+    except (aiohttp.ClientError, asyncio.TimeoutError, OSError):
+        return None, {}
     except Exception:
-        return False, {}
+        return None, {}
 
 
 def cmd_set(args: argparse.Namespace) -> int:
@@ -98,13 +112,19 @@ def cmd_set(args: argparse.Namespace) -> int:
         if stored_key:
             # Validate the stored key
             valid, _data = _validate_workspace_key(stored_key)
-            if valid:
+            if valid is True:
                 set_active_workspace(slug)
                 ws_name = _get_store().get(f"workspace:{slug}:name") or slug
                 print_success(f"Switched to workspace: {ws_name} ({slug})")
                 return 0
+            elif valid is None:
+                # Transport error — don't delete cached credentials
+                print_error(
+                    f"Could not verify credentials for '{slug}' (API unreachable). Try again later."
+                )
+                return 1
             else:
-                # Stale key — remove and fall through to browser auth
+                # Explicitly expired (401) — remove and fall through to browser auth
                 print_info(f"Credentials for '{slug}' are expired. Re-authenticating...")
                 delete_workspace(slug)
 
@@ -116,6 +136,12 @@ def cmd_set(args: argparse.Namespace) -> int:
             return 1
 
         if result.workspace_slug:
+            if result.workspace_slug != slug:
+                print_error(
+                    f"Authenticated workspace '{result.workspace_slug}' does not match "
+                    f"requested workspace '{slug}'."
+                )
+                return 1
             save_workspace(
                 result.workspace_slug,
                 result.token,
@@ -155,6 +181,25 @@ def cmd_set(args: argparse.Namespace) -> int:
         return 1
 
     selected = workspaces[idx]
+
+    # Validate the selected workspace's session before switching
+    stored_key = get_workspace_api_key(selected["slug"])
+    if stored_key:
+        valid, _data = _validate_workspace_key(stored_key)
+        if valid is None:
+            print_error(
+                f"Could not verify credentials for '{selected['slug']}' (API unreachable). "
+                f"Try again later."
+            )
+            return 1
+        elif valid is False:
+            delete_workspace(selected["slug"])
+            print_error(
+                f"Credentials for '{selected['slug']}' are expired. "
+                f"Run 'cua auth login' to re-authenticate."
+            )
+            return 1
+
     set_active_workspace(selected["slug"])
     print_success(f"Switched to workspace: {selected['name']} ({selected['slug']})")
     return 0

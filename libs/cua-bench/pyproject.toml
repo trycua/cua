@@ -62,6 +62,11 @@ all = [
     "cua-bench[browser,agents,cloud]",
 ]
 
+# Packaging scripts (e.g. package_kicad_submission.py)
+packaging = [
+    "boto3>=1.26.0",
+]
+
 # Browser automation (for simulated environments)
 browser = [
     "playwright>=1.40.0",

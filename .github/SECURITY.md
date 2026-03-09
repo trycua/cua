@@ -12,7 +12,7 @@ Please report vulnerabilities using one of the following methods:
 
 1. **GitHub Security Advisories (preferred):** Use the [GitHub private vulnerability reporting](https://github.com/trycua/cua/security/advisories/new) feature to submit a report confidentially.
 
-2. **Email:** Send details to **security@cua.ai** with the subject line `[SECURITY] <brief description>`.
+2. **Email:** Send details to **team@trycua.com** with the subject line `[SECURITY] <brief description>`.
 
 ### What to Include
 

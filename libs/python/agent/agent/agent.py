@@ -803,6 +803,7 @@ class ComputerAgent:
                         "move": ["x", "y"],
                         "drag": ["start_x", "start_y", "end_x", "end_y"],
                         "wait": ["seconds", "ms"],
+                        "terminate": ["status"],
                     }
 
                     # Extract only relevant action arguments, filtering out empty values
@@ -813,8 +814,8 @@ class ComputerAgent:
                             continue
                         # Include if it's a relevant param OR if param map doesn't have this action
                         if k in relevant_params or action_type not in action_param_map:
-                            # Filter out empty/default values
-                            if v is not None and v != "" and v != [] and v != 0:
+                            # Filter out empty/default values but allow numeric zero (valid for coordinates/scroll)
+                            if v is not None and v != "" and v != []:
                                 action_args[k] = v
 
                     # Execute the computer action
@@ -862,10 +863,15 @@ class ComputerAgent:
                     else:
                         # Return both the function output AND a user message with the screenshot
                         # This allows the model to see the screenshot result
+                        # Preserve actual action_result so failures/errors aren't masked
+                        if action_result is not None:
+                            output_content = json.dumps(action_result)
+                        else:
+                            output_content = json.dumps({"success": True, "screenshot_captured": True})
                         call_output = {
                             "type": "function_call_output",
                             "call_id": item.get("call_id"),
-                            "output": f"Action '{action_type}' completed. Screenshot captured.",
+                            "output": output_content,
                         }
                         # Include screenshot as a user message with image content
                         image_message = {

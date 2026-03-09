@@ -73,6 +73,7 @@ async def _map_computer_tool_to_openai(computer_handler: Any, use_native_tool: b
                             "drag",
                             "screenshot",
                             "wait",
+                            "terminate",
                         ],
                     },
                     "x": {
@@ -104,6 +105,27 @@ async def _map_computer_tool_to_openai(computer_handler: Any, use_native_tool: b
                         "description": "Mouse button for click action.",
                         "type": "string",
                         "enum": ["left", "right", "middle"],
+                    },
+                    "start_x": {
+                        "description": "Starting X coordinate for drag action.",
+                        "type": "integer",
+                    },
+                    "start_y": {
+                        "description": "Starting Y coordinate for drag action.",
+                        "type": "integer",
+                    },
+                    "end_x": {
+                        "description": "Ending X coordinate for drag action.",
+                        "type": "integer",
+                    },
+                    "end_y": {
+                        "description": "Ending Y coordinate for drag action.",
+                        "type": "integer",
+                    },
+                    "status": {
+                        "description": "Status for terminate action.",
+                        "type": "string",
+                        "enum": ["success", "failure"],
                     },
                 },
                 "required": ["action"],
@@ -299,13 +321,46 @@ Task: Click {instruction}. Output ONLY a click action on the target element.""",
             # Fallback to default dimensions if image parsing fails
             display_width, display_height = 1024, 768
 
-        # Prepare computer tool for click actions
-        computer_tool = {
-            "type": "computer_use_preview",
-            "display_width": display_width,
-            "display_height": display_height,
-            "environment": "windows",
-        }
+        # Prepare computer tool for click actions - use native format only for models that support it
+        use_native = _is_native_computer_use_model(model)
+        if use_native:
+            # Native computer_use_preview format (for computer-use-preview model)
+            computer_tool = {
+                "type": "computer_use_preview",
+                "display_width": display_width,
+                "display_height": display_height,
+                "environment": "windows",
+            }
+        else:
+            # Standard function calling format (for GPT-5.4 etc)
+            computer_tool = {
+                "type": "function",
+                "name": "computer",
+                "description": (
+                    f"Use a mouse and keyboard to interact with a computer, and take screenshots.\n"
+                    f"Screen resolution: {display_width}x{display_height} pixels.\n"
+                    f"Environment: windows."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "action": {
+                            "description": "The action to perform.",
+                            "type": "string",
+                            "enum": ["click"],
+                        },
+                        "x": {
+                            "description": "X coordinate for click action.",
+                            "type": "integer",
+                        },
+                        "y": {
+                            "description": "Y coordinate for click action.",
+                            "type": "integer",
+                        },
+                    },
+                    "required": ["action", "x", "y"],
+                },
+            }
 
         # Prepare API call kwargs
         api_kwargs = {
@@ -326,17 +381,32 @@ Task: Click {instruction}. Output ONLY a click action on the target element.""",
         output_dict = response if isinstance(response, dict) else response.model_dump()
         output_items = output_dict.get("output", [])
 
-        # Look for computer_call with click action
+        # Look for click coordinates in the response
         for item in output_items:
+            if not isinstance(item, dict):
+                continue
+
+            # Native format: computer_call with action dict
             if (
-                isinstance(item, dict)
-                and item.get("type") == "computer_call"
+                item.get("type") == "computer_call"
                 and isinstance(item.get("action"), dict)
             ):
-
                 action = item["action"]
                 if action.get("x") is not None and action.get("y") is not None:
                     return (int(action.get("x")), int(action.get("y")))
+
+            # Function calling format: function_call with arguments
+            if item.get("type") == "function_call" and item.get("name") == "computer":
+                try:
+                    arguments = item.get("arguments", "{}")
+                    if isinstance(arguments, str):
+                        args = json.loads(arguments)
+                    else:
+                        args = arguments
+                    if args.get("x") is not None and args.get("y") is not None:
+                        return (int(args.get("x")), int(args.get("y")))
+                except (json.JSONDecodeError, TypeError):
+                    continue
 
         return None
 

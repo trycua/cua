@@ -31,9 +31,8 @@ async def start(task_cfg: cb.Task, session: cb.DesktopSession) -> None:
             continue
         rel = local_path.relative_to(initial_dir)
         remote_path = f"{_REMOTE_PROJECT_DIR}/{rel.as_posix()}"
-        await session.run_command(
-            f"mkdir -p $(dirname '{remote_path}')", check=False
-        )
+        remote_dir = f"{_REMOTE_PROJECT_DIR}/{rel.parent.as_posix()}"
+        await session.run_command(f"mkdir -p '{remote_dir}'", check=False)
         await session.write_bytes(remote_path, local_path.read_bytes())
 
     try:

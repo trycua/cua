@@ -227,7 +227,7 @@ def cmd_logout(args: argparse.Namespace) -> int:
                     f"Switched to workspace: {remaining[0]['name']} ({remaining[0]['slug']})"
                 )
             else:
-                from cua_cli.auth.store import _get_store, ACTIVE_WORKSPACE_KEY
+                from cua_cli.auth.store import ACTIVE_WORKSPACE_KEY, _get_store
 
                 _get_store().delete(ACTIVE_WORKSPACE_KEY)
         print_success(f"Removed credentials for workspace: {ws_slug}")
@@ -246,7 +246,7 @@ def cmd_logout(args: argparse.Namespace) -> int:
                 f"Use 'cua workspace set <slug>' to switch workspaces."
             )
         else:
-            from cua_cli.auth.store import _get_store, ACTIVE_WORKSPACE_KEY
+            from cua_cli.auth.store import ACTIVE_WORKSPACE_KEY, _get_store
 
             _get_store().delete(ACTIVE_WORKSPACE_KEY)
             print_success(f"Logged out of workspace: {active}")
@@ -309,7 +309,7 @@ def cmd_status(args: argparse.Namespace) -> int:
                     f"Switched to workspace: {remaining[0]['name']} ({remaining[0]['slug']})"
                 )
             else:
-                from cua_cli.auth.store import _get_store, ACTIVE_WORKSPACE_KEY
+                from cua_cli.auth.store import ACTIVE_WORKSPACE_KEY, _get_store
 
                 _get_store().delete(ACTIVE_WORKSPACE_KEY)
         else:

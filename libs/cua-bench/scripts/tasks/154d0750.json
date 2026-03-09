@@ -1,0 +1,25 @@
+{
+  "initial_circuit": {
+    "s3Key": "prd/af9031bd-2574-4579-8b85-c58a7cb6b04a/20759971-f670-403e-85cd-eaa27764f300/514eeba9-d4e6-4e68-8f77-e0bead9797ed_submission_2026-03-01T20:04:37.329Z.zip",
+    "filename": "kicad_AdjustableLDO_circuit.zip",
+    "uploadedAt": "2026-03-01T20:04:38.695Z",
+    "s3Uri": "s3://daas-blobs/prd/af9031bd-2574-4579-8b85-c58a7cb6b04a/20759971-f670-403e-85cd-eaa27764f300/514eeba9-d4e6-4e68-8f77-e0bead9797ed_submission_2026-03-01T20:04:37.329Z.zip"
+  },
+  "circuit_prompt": "Modify R2 to produce an output of 1.8V.  Select R2 to the closest standard E96 1% resistor value.",
+  "circuit_pcb_file": {
+    "s3Key": "prd/af9031bd-2574-4579-8b85-c58a7cb6b04a/20759971-f670-403e-85cd-eaa27764f300/514eeba9-d4e6-4e68-8f77-e0bead9797ed_submission_2026-03-01T20:05:36.487Z.zip",
+    "filename": "kicad_AdjustableLDO_circuit_modified.zip",
+    "uploadedAt": "2026-03-01T20:05:37.780Z",
+    "s3Uri": "s3://daas-blobs/prd/af9031bd-2574-4579-8b85-c58a7cb6b04a/20759971-f670-403e-85cd-eaa27764f300/514eeba9-d4e6-4e68-8f77-e0bead9797ed_submission_2026-03-01T20:05:36.487Z.zip"
+  },
+  "netlist": {
+    "s3Key": "prd/af9031bd-2574-4579-8b85-c58a7cb6b04a/20759971-f670-403e-85cd-eaa27764f300/514eeba9-d4e6-4e68-8f77-e0bead9797ed_submission_2026-03-01T20:05:50.068Z.zip",
+    "filename": "kicad_AdjustableLDO_netlist_modified.zip",
+    "uploadedAt": "2026-03-01T20:05:51.337Z",
+    "s3Uri": "s3://daas-blobs/prd/af9031bd-2574-4579-8b85-c58a7cb6b04a/20759971-f670-403e-85cd-eaa27764f300/514eeba9-d4e6-4e68-8f77-e0bead9797ed_submission_2026-03-01T20:05:50.068Z.zip"
+  },
+  "difficulty": "easy",
+  "time_taken": "",
+  "task_type_discriminator": "submission-47b12c07-19f8-43a9-ac9d-ea1d1a9351d3",
+  "submission_id": "154d0750-3c05-419d-92a5-a08ba74bbcb2"
+}

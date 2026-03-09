@@ -1,0 +1,20 @@
+{
+  "initial_circuit": null,
+  "circuit_prompt": "Design a 555 timer-based LED flasher circuit in astable mode using an NE555P. Use a 1k\u2126 resistor for R1, a 50k\u2126 resistor for R2, and a 10\u00b5F electrolytic capacitor for C1 to set the timing. Include a 0.01\u00b5F decoupling capacitor on the control pin, a 330\u2126 current-limiting resistor for the LED, and screw terminals for power input and signal output.",
+  "circuit_pcb_file": {
+    "s3Key": "prd/af9031bd-2574-4579-8b85-c58a7cb6b04a/dd65f357-c030-4d0e-a560-b7b74fdff71f/b8bdb769-cbbc-4341-a1ad-58c5d570a5f2_submission_2026-03-01T20:06:30.522Z.zip",
+    "filename": "kicad_multivibrator_circuit.zip",
+    "uploadedAt": "2026-03-01T20:06:30.861Z",
+    "s3Uri": "s3://daas-blobs/prd/af9031bd-2574-4579-8b85-c58a7cb6b04a/dd65f357-c030-4d0e-a560-b7b74fdff71f/b8bdb769-cbbc-4341-a1ad-58c5d570a5f2_submission_2026-03-01T20:06:30.522Z.zip"
+  },
+  "netlist": {
+    "s3Key": "prd/af9031bd-2574-4579-8b85-c58a7cb6b04a/dd65f357-c030-4d0e-a560-b7b74fdff71f/b8bdb769-cbbc-4341-a1ad-58c5d570a5f2_submission_2026-03-01T20:06:40.452Z.zip",
+    "filename": "kicad_multivibrator_netlist.zip",
+    "uploadedAt": "2026-03-01T20:06:40.750Z",
+    "s3Uri": "s3://daas-blobs/prd/af9031bd-2574-4579-8b85-c58a7cb6b04a/dd65f357-c030-4d0e-a560-b7b74fdff71f/b8bdb769-cbbc-4341-a1ad-58c5d570a5f2_submission_2026-03-01T20:06:40.452Z.zip"
+  },
+  "difficulty": "easy",
+  "time_taken": "1 hr",
+  "task_type_discriminator": "submission-47b12c07-19f8-43a9-ac9d-ea1d1a9351d3",
+  "submission_id": "5dbc9e02-3a8f-49bb-8561-40e4b0c5353e"
+}

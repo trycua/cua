@@ -1,0 +1,19 @@
+{
+  "circuit_prompt": "Design a passive RC band-pass filter for audio signals with corner frequencies near 1 kHz and 10 kHz. Implement it as a cascaded high-pass stage followed by a low-pass stage using 10 k\u03a9 resistors, a 15 nF capacitor for the high-pass section, and a 1.5 nF capacitor for the low-pass section. Include 2-pin input and output connectors sharing a common ground. Create the KiCad schematic and export the KiCad netlist for the design.",
+  "circuit_pcb_file": {
+    "s3Key": "prd/af9031bd-2574-4579-8b85-c58a7cb6b04a/53f26c96-3bf6-4d5b-bd36-dc634d70e8c7/b8bdb769-cbbc-4341-a1ad-58c5d570a5f2_submission_2026-02-22T22:58:45.602Z.zip",
+    "filename": "kicad_rcbandpass_circuit.zip",
+    "uploadedAt": "2026-02-22T22:58:45.976Z",
+    "s3Uri": "s3://daas-blobs/prd/af9031bd-2574-4579-8b85-c58a7cb6b04a/53f26c96-3bf6-4d5b-bd36-dc634d70e8c7/b8bdb769-cbbc-4341-a1ad-58c5d570a5f2_submission_2026-02-22T22:58:45.602Z.zip"
+  },
+  "netlist": {
+    "s3Key": "prd/af9031bd-2574-4579-8b85-c58a7cb6b04a/53f26c96-3bf6-4d5b-bd36-dc634d70e8c7/b8bdb769-cbbc-4341-a1ad-58c5d570a5f2_submission_2026-02-22T23:05:53.151Z.zip",
+    "filename": "kicad_rcbandpass_netlist.zip",
+    "uploadedAt": "2026-02-22T23:05:53.545Z",
+    "s3Uri": "s3://daas-blobs/prd/af9031bd-2574-4579-8b85-c58a7cb6b04a/53f26c96-3bf6-4d5b-bd36-dc634d70e8c7/b8bdb769-cbbc-4341-a1ad-58c5d570a5f2_submission_2026-02-22T23:05:53.151Z.zip"
+  },
+  "difficulty": "easy",
+  "time_taken": "1 hr",
+  "task_type_discriminator": "submission-47b12c07-19f8-43a9-ac9d-ea1d1a9351d3",
+  "submission_id": "a6dd38a9-71df-42b7-99a4-d3e33bb01c5b"
+}

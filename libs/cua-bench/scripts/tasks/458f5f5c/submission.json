@@ -1,0 +1,20 @@
+{
+  "initial_circuit": null,
+  "circuit_prompt": "Design a microphone preamplifier that conditions a raw mic signal into a clean, ADC-safe input for a 3.3 V microcontroller.\nUse an LM741 op-amp powered from a +12 V single supply. Create a mid-rail bias reference using three 56 k\u03a9 resistors, and AC-couple the microphone input with a 4.7 \u00b5F electrolytic capacitor into the biased input stage. Configure adjustable gain using a 50 k\u03a9 potentiometer (RV1) in the feedback path, and include a 1.1 k\u03a9 resistor and a 4.7 \u00b5F capacitor connected to the inverting input as part of the gain-setting and low-frequency shaping network. At the output, include a 1.1 k\u03a9 load resistor and AC-couple the output using a 4.7 \u00b5F capacitor. After the coupling capacitor, add an ADC interface that attenuates the signal using an 18 k\u03a9 / 1.1 k\u03a9 divider and clamps the ADC node with two Schottky diodes to the 3.3 V rail and ground for input protection. Tie all grounds together and generate the complete schematic.",
+  "circuit_pcb_file": {
+    "s3Key": "prd/af9031bd-2574-4579-8b85-c58a7cb6b04a/079bab7d-2b69-41f0-9afa-d66d730a6d87/b8bdb769-cbbc-4341-a1ad-58c5d570a5f2_submission_2026-03-04T08:05:41.487Z.zip",
+    "filename": "kicad_Mic Preamp_circuit.zip",
+    "uploadedAt": "2026-03-04T08:05:41.768Z",
+    "s3Uri": "s3://daas-blobs/prd/af9031bd-2574-4579-8b85-c58a7cb6b04a/079bab7d-2b69-41f0-9afa-d66d730a6d87/b8bdb769-cbbc-4341-a1ad-58c5d570a5f2_submission_2026-03-04T08:05:41.487Z.zip"
+  },
+  "netlist": {
+    "s3Key": "prd/af9031bd-2574-4579-8b85-c58a7cb6b04a/079bab7d-2b69-41f0-9afa-d66d730a6d87/b8bdb769-cbbc-4341-a1ad-58c5d570a5f2_submission_2026-03-04T08:05:47.415Z.zip",
+    "filename": "kicad_Mic Preamp_netlist.zip",
+    "uploadedAt": "2026-03-04T08:05:47.551Z",
+    "s3Uri": "s3://daas-blobs/prd/af9031bd-2574-4579-8b85-c58a7cb6b04a/079bab7d-2b69-41f0-9afa-d66d730a6d87/b8bdb769-cbbc-4341-a1ad-58c5d570a5f2_submission_2026-03-04T08:05:47.415Z.zip"
+  },
+  "difficulty": "medium",
+  "time_taken": "2h",
+  "task_type_discriminator": "submission-47b12c07-19f8-43a9-ac9d-ea1d1a9351d3",
+  "submission_id": "458f5f5c-1347-479c-a94b-9bf4748de65a"
+}

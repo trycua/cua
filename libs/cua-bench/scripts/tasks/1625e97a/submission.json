@@ -1,0 +1,25 @@
+{
+  "initial_circuit": {
+    "s3Key": "prd/af9031bd-2574-4579-8b85-c58a7cb6b04a/900dcf72-bf2c-402b-ba00-ffc6f53db5f1/b8bdb769-cbbc-4341-a1ad-58c5d570a5f2_submission_2026-03-02T11:24:23.579Z.zip",
+    "filename": "kicad_votage regulator_circuit.zip",
+    "uploadedAt": "2026-03-02T11:24:23.943Z",
+    "s3Uri": "s3://daas-blobs/prd/af9031bd-2574-4579-8b85-c58a7cb6b04a/900dcf72-bf2c-402b-ba00-ffc6f53db5f1/b8bdb769-cbbc-4341-a1ad-58c5d570a5f2_submission_2026-03-02T11:24:23.579Z.zip"
+  },
+  "circuit_prompt": "Modify the existing uA7805 regulated 5V power supply by adding a power-on indicator LED with a 1 k\u03a9 series resistor across the 5V output to indicate when the supply is active. Add a 1 k\u03a9 minimum load resistor across the 5V output to help maintain stable regulation. Also add a 1N4001 diode between the regulator output and input to protect the regulator. Keep all existing components and connections unchanged.",
+  "circuit_pcb_file": {
+    "s3Key": "prd/af9031bd-2574-4579-8b85-c58a7cb6b04a/900dcf72-bf2c-402b-ba00-ffc6f53db5f1/b8bdb769-cbbc-4341-a1ad-58c5d570a5f2_submission_2026-03-02T11:24:36.131Z.zip",
+    "filename": "kicad_voltage regulator_circuit_modify.zip",
+    "uploadedAt": "2026-03-02T11:24:36.434Z",
+    "s3Uri": "s3://daas-blobs/prd/af9031bd-2574-4579-8b85-c58a7cb6b04a/900dcf72-bf2c-402b-ba00-ffc6f53db5f1/b8bdb769-cbbc-4341-a1ad-58c5d570a5f2_submission_2026-03-02T11:24:36.131Z.zip"
+  },
+  "netlist": {
+    "s3Key": "prd/af9031bd-2574-4579-8b85-c58a7cb6b04a/900dcf72-bf2c-402b-ba00-ffc6f53db5f1/b8bdb769-cbbc-4341-a1ad-58c5d570a5f2_submission_2026-03-02T11:24:46.914Z.zip",
+    "filename": "kicad_voltage regulator_netlist_modify.zip",
+    "uploadedAt": "2026-03-02T11:24:47.187Z",
+    "s3Uri": "s3://daas-blobs/prd/af9031bd-2574-4579-8b85-c58a7cb6b04a/900dcf72-bf2c-402b-ba00-ffc6f53db5f1/b8bdb769-cbbc-4341-a1ad-58c5d570a5f2_submission_2026-03-02T11:24:46.914Z.zip"
+  },
+  "difficulty": "medium",
+  "time_taken": "2 hr",
+  "task_type_discriminator": "submission-47b12c07-19f8-43a9-ac9d-ea1d1a9351d3",
+  "submission_id": "1625e97a-b9b2-4e00-bacc-389cab5e5640"
+}

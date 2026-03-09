@@ -1,0 +1,25 @@
+{
+  "initial_circuit": {
+    "s3Key": "prd/af9031bd-2574-4579-8b85-c58a7cb6b04a/4b45397b-ad39-4aca-9c05-2131c4f9af65/514eeba9-d4e6-4e68-8f77-e0bead9797ed_submission_2026-03-01T06:37:37.139Z.zip",
+    "filename": "kicad_activelowpass_circuit.zip",
+    "uploadedAt": "2026-03-01T06:37:37.367Z",
+    "s3Uri": "s3://daas-blobs/prd/af9031bd-2574-4579-8b85-c58a7cb6b04a/4b45397b-ad39-4aca-9c05-2131c4f9af65/514eeba9-d4e6-4e68-8f77-e0bead9797ed_submission_2026-03-01T06:37:37.139Z.zip"
+  },
+  "circuit_prompt": "Modify the circuit to set the pole frequency to 4kHz but keep the passband gain the same.",
+  "circuit_pcb_file": {
+    "s3Key": "prd/af9031bd-2574-4579-8b85-c58a7cb6b04a/4b45397b-ad39-4aca-9c05-2131c4f9af65/514eeba9-d4e6-4e68-8f77-e0bead9797ed_submission_2026-03-01T06:39:02.160Z.zip",
+    "filename": "kicad_activelowpass_circuit_modified.zip",
+    "uploadedAt": "2026-03-01T06:39:02.366Z",
+    "s3Uri": "s3://daas-blobs/prd/af9031bd-2574-4579-8b85-c58a7cb6b04a/4b45397b-ad39-4aca-9c05-2131c4f9af65/514eeba9-d4e6-4e68-8f77-e0bead9797ed_submission_2026-03-01T06:39:02.160Z.zip"
+  },
+  "netlist": {
+    "s3Key": "prd/af9031bd-2574-4579-8b85-c58a7cb6b04a/4b45397b-ad39-4aca-9c05-2131c4f9af65/514eeba9-d4e6-4e68-8f77-e0bead9797ed_submission_2026-03-01T06:39:10.129Z.zip",
+    "filename": "kicad_activelowpass_netlist_modified.zip",
+    "uploadedAt": "2026-03-01T06:39:10.286Z",
+    "s3Uri": "s3://daas-blobs/prd/af9031bd-2574-4579-8b85-c58a7cb6b04a/4b45397b-ad39-4aca-9c05-2131c4f9af65/514eeba9-d4e6-4e68-8f77-e0bead9797ed_submission_2026-03-01T06:39:10.129Z.zip"
+  },
+  "difficulty": "easy",
+  "time_taken": "Unknown (had multiple interruptions).",
+  "task_type_discriminator": "submission-47b12c07-19f8-43a9-ac9d-ea1d1a9351d3",
+  "submission_id": "84ec333e-3a9d-4aa6-ab8b-8575bbf2dbab"
+}

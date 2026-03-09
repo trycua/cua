@@ -1,0 +1,19 @@
+{
+  "circuit_prompt": "Design a KiCad-style schematic of a switching, step-down voltage regulator to convert 48 Vdc to 3.3 Vdc. Use the LM2576HVS-3.3 from Texas Instruments.  \n\n\t\u2022 Pin 1 is the input and should be connected to both the input of 48 Vdc and a polarized capacitor (C1) of 100 uF. C1 has its negative terminal connected to ground.  \n\t\u2022 Pin 2 is connected to both a catch diode 1N5822 cathode and an inductor of 100 uH.  The other end of the diode is connected to ground. The other end of the inductor is connected to both Pin 4 and the positive end of polarized capacitor (C2) of 1000 uF. The other end of C2 is grounded.\nPins 3 and 5 should be connected directly to ground.",
+  "circuit_pcb_file": {
+    "s3Key": "prd/af9031bd-2574-4579-8b85-c58a7cb6b04a/4983cb03-35a1-4c52-8bf6-e73854656682/514eeba9-d4e6-4e68-8f77-e0bead9797ed_submission_2026-02-22T19:10:10.668Z.zip",
+    "filename": "kicad_smps3p3V_circuit.zip",
+    "uploadedAt": "2026-02-22T19:10:11.201Z",
+    "s3Uri": "s3://daas-blobs/prd/af9031bd-2574-4579-8b85-c58a7cb6b04a/4983cb03-35a1-4c52-8bf6-e73854656682/514eeba9-d4e6-4e68-8f77-e0bead9797ed_submission_2026-02-22T19:10:10.668Z.zip"
+  },
+  "netlist": {
+    "s3Key": "prd/af9031bd-2574-4579-8b85-c58a7cb6b04a/4983cb03-35a1-4c52-8bf6-e73854656682/514eeba9-d4e6-4e68-8f77-e0bead9797ed_submission_2026-02-22T19:10:18.685Z.zip",
+    "filename": "kicad_smps3p3V_netlist.zip",
+    "uploadedAt": "2026-02-22T19:10:19.019Z",
+    "s3Uri": "s3://daas-blobs/prd/af9031bd-2574-4579-8b85-c58a7cb6b04a/4983cb03-35a1-4c52-8bf6-e73854656682/514eeba9-d4e6-4e68-8f77-e0bead9797ed_submission_2026-02-22T19:10:18.685Z.zip"
+  },
+  "difficulty": "easy",
+  "time_taken": "",
+  "task_type_discriminator": "submission-47b12c07-19f8-43a9-ac9d-ea1d1a9351d3",
+  "submission_id": "c4baee36-ea0a-4451-81f0-fd540d47326c"
+}

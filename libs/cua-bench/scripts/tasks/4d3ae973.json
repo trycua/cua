@@ -1,0 +1,19 @@
+{
+  "circuit_prompt": "Create voltage divider circuit with following input data:\nInput Voltage Vin=+12 V ; V stands for voltage.\nVout=5 V\nR1=14 K Ohm ; resister one\nR2=10 K Ohm ; resister 2\nConnect the three header PIN with last one to ground and it is GND with voltage 0. Connect other part of the PIN as you create the dividercircuit.\nPlease follow the IEEE symbols.",
+  "circuit_pcb_file": {
+    "s3Key": "prd/af9031bd-2574-4579-8b85-c58a7cb6b04a/c35a88cc-0404-4e21-a3be-d3d0a2bba7cc/81726ed0-aad3-4651-8af6-24480f6854a3_submission_2026-02-23T20:04:42.069Z.zip",
+    "filename": "librepcb_voltagedivider_circuit.zip",
+    "uploadedAt": "2026-02-23T20:04:19.410Z",
+    "s3Uri": "s3://daas-blobs/prd/af9031bd-2574-4579-8b85-c58a7cb6b04a/c35a88cc-0404-4e21-a3be-d3d0a2bba7cc/81726ed0-aad3-4651-8af6-24480f6854a3_submission_2026-02-23T20:04:42.069Z.zip"
+  },
+  "netlist": {
+    "s3Key": "prd/af9031bd-2574-4579-8b85-c58a7cb6b04a/c35a88cc-0404-4e21-a3be-d3d0a2bba7cc/81726ed0-aad3-4651-8af6-24480f6854a3_submission_2026-02-23T20:05:14.675Z.zip",
+    "filename": "librepcb_voltagedividers_netlist.zip",
+    "uploadedAt": "2026-02-23T20:04:51.820Z",
+    "s3Uri": "s3://daas-blobs/prd/af9031bd-2574-4579-8b85-c58a7cb6b04a/c35a88cc-0404-4e21-a3be-d3d0a2bba7cc/81726ed0-aad3-4651-8af6-24480f6854a3_submission_2026-02-23T20:05:14.675Z.zip"
+  },
+  "difficulty": "easy",
+  "time_taken": "28",
+  "task_type_discriminator": "submission-47b12c07-19f8-43a9-ac9d-ea1d1a9351d3",
+  "submission_id": "4d3ae973-f981-4195-a630-535343254caa"
+}

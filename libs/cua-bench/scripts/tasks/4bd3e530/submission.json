@@ -1,0 +1,20 @@
+{
+  "initial_circuit": null,
+  "circuit_prompt": "Give me a KiCad schematic for a simple +5V LED flasher using a 2N3904 transistor where a 2-lead self-flashing LED drives a second brighter LED. Use a 1k resistor and 100uF capacitor in the collector timing network, and use 10k and 4.7k resistors to bias the base and load the output.",
+  "circuit_pcb_file": {
+    "s3Key": "prd/af9031bd-2574-4579-8b85-c58a7cb6b04a/7eb11ad8-3083-459c-a289-9ae1b9ef9054/b8bdb769-cbbc-4341-a1ad-58c5d570a5f2_submission_2026-02-28T21:37:29.329Z.zip",
+    "filename": "kicad_SingleTransistorLEDFlasher_circuit.zip",
+    "uploadedAt": "2026-02-28T21:37:29.661Z",
+    "s3Uri": "s3://daas-blobs/prd/af9031bd-2574-4579-8b85-c58a7cb6b04a/7eb11ad8-3083-459c-a289-9ae1b9ef9054/b8bdb769-cbbc-4341-a1ad-58c5d570a5f2_submission_2026-02-28T21:37:29.329Z.zip"
+  },
+  "netlist": {
+    "s3Key": "prd/af9031bd-2574-4579-8b85-c58a7cb6b04a/7eb11ad8-3083-459c-a289-9ae1b9ef9054/b8bdb769-cbbc-4341-a1ad-58c5d570a5f2_submission_2026-02-28T21:38:11.630Z.zip",
+    "filename": "kicad_SingleTransistorLEDFlasher_netlist.zip",
+    "uploadedAt": "2026-02-28T21:38:11.851Z",
+    "s3Uri": "s3://daas-blobs/prd/af9031bd-2574-4579-8b85-c58a7cb6b04a/7eb11ad8-3083-459c-a289-9ae1b9ef9054/b8bdb769-cbbc-4341-a1ad-58c5d570a5f2_submission_2026-02-28T21:38:11.630Z.zip"
+  },
+  "difficulty": "easy",
+  "time_taken": "1hr",
+  "task_type_discriminator": "submission-47b12c07-19f8-43a9-ac9d-ea1d1a9351d3",
+  "submission_id": "4bd3e530-8e59-43cf-9c1f-1e9cdb742ef2"
+}

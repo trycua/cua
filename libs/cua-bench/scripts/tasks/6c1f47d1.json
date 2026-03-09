@@ -1,0 +1,25 @@
+{
+  "initial_circuit": {
+    "s3Key": "prd/af9031bd-2574-4579-8b85-c58a7cb6b04a/77b00a66-ee0f-460a-ae3b-5df7a4fea001/81726ed0-aad3-4651-8af6-24480f6854a3_submission_2026-03-09T01:10:22.004Z.zip",
+    "filename": "librepcb_BJT_origin_Schematics.zip",
+    "uploadedAt": "2026-03-09T01:10:21.457Z",
+    "s3Uri": "s3://daas-blobs/prd/af9031bd-2574-4579-8b85-c58a7cb6b04a/77b00a66-ee0f-460a-ae3b-5df7a4fea001/81726ed0-aad3-4651-8af6-24480f6854a3_submission_2026-03-09T01:10:22.004Z.zip"
+  },
+  "circuit_prompt": "Design and analyze a single stage NPN BJT amplifier. Create an schematic and investigate that how an external load may be named as R_{L} impacts the voltage gain for the whole system. Use following inputs: \nan NPN transsistor, VCC of 12 volts as input. Bias resistors as R1 and R2 of 47 and 10 K Ohms respectively. \nEmitter resistance 1 K Ohm. \nThe capacitors used are: 100 micro farad with Emitter. C_{IN} and C_{OUT} are 10 micro fard each.",
+  "circuit_pcb_file": {
+    "s3Key": "prd/af9031bd-2574-4579-8b85-c58a7cb6b04a/77b00a66-ee0f-460a-ae3b-5df7a4fea001/81726ed0-aad3-4651-8af6-24480f6854a3_submission_2026-03-09T01:21:25.671Z.zip",
+    "filename": "librepcb_BJT_modified_schematic.zip",
+    "uploadedAt": "2026-03-09T01:21:25.357Z",
+    "s3Uri": "s3://daas-blobs/prd/af9031bd-2574-4579-8b85-c58a7cb6b04a/77b00a66-ee0f-460a-ae3b-5df7a4fea001/81726ed0-aad3-4651-8af6-24480f6854a3_submission_2026-03-09T01:21:25.671Z.zip"
+  },
+  "netlist": {
+    "s3Key": "prd/af9031bd-2574-4579-8b85-c58a7cb6b04a/77b00a66-ee0f-460a-ae3b-5df7a4fea001/81726ed0-aad3-4651-8af6-24480f6854a3_submission_2026-03-09T01:19:20.962Z.zip",
+    "filename": "librepcb_BJT_modfd_Netlist.zip",
+    "uploadedAt": "2026-03-09T01:19:20.276Z",
+    "s3Uri": "s3://daas-blobs/prd/af9031bd-2574-4579-8b85-c58a7cb6b04a/77b00a66-ee0f-460a-ae3b-5df7a4fea001/81726ed0-aad3-4651-8af6-24480f6854a3_submission_2026-03-09T01:19:20.962Z.zip"
+  },
+  "difficulty": "medium",
+  "time_taken": "35 minutes.",
+  "task_type_discriminator": "submission-47b12c07-19f8-43a9-ac9d-ea1d1a9351d3",
+  "submission_id": "6c1f47d1-d922-4231-b02a-aaa59b89a260"
+}

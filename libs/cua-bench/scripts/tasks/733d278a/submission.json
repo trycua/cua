@@ -1,0 +1,25 @@
+{
+  "initial_circuit": {
+    "s3Key": "prd/af9031bd-2574-4579-8b85-c58a7cb6b04a/7a05048c-5790-4ea4-b1a4-4eed24202917/b8bdb769-cbbc-4341-a1ad-58c5d570a5f2_submission_2026-03-04T08:03:02.202Z.zip",
+    "filename": "kicad_motor driver_circuit.zip",
+    "uploadedAt": "2026-03-04T08:03:02.633Z",
+    "s3Uri": "s3://daas-blobs/prd/af9031bd-2574-4579-8b85-c58a7cb6b04a/7a05048c-5790-4ea4-b1a4-4eed24202917/b8bdb769-cbbc-4341-a1ad-58c5d570a5f2_submission_2026-03-04T08:03:02.202Z.zip"
+  },
+  "circuit_prompt": "Modify the discrete BJT-based H-bridge motor driver shown in the attached schematic to improve switching behavior and reduce motor noise. Add a 100 nF ceramic capacitor across the motor terminals to suppress high-frequency switching spikes and electromagnetic interference (EMI). Add two 10 k\u03a9 pull-down resistors on the two control input lines so the bridge defaults to OFF when the inputs are floating. Keep all existing components and connections unchanged.",
+  "circuit_pcb_file": {
+    "s3Key": "prd/af9031bd-2574-4579-8b85-c58a7cb6b04a/7a05048c-5790-4ea4-b1a4-4eed24202917/b8bdb769-cbbc-4341-a1ad-58c5d570a5f2_submission_2026-03-04T08:04:20.422Z.zip",
+    "filename": "kicad_motor driver_circuit_modify.zip",
+    "uploadedAt": "2026-03-04T08:04:20.811Z",
+    "s3Uri": "s3://daas-blobs/prd/af9031bd-2574-4579-8b85-c58a7cb6b04a/7a05048c-5790-4ea4-b1a4-4eed24202917/b8bdb769-cbbc-4341-a1ad-58c5d570a5f2_submission_2026-03-04T08:04:20.422Z.zip"
+  },
+  "netlist": {
+    "s3Key": "prd/af9031bd-2574-4579-8b85-c58a7cb6b04a/7a05048c-5790-4ea4-b1a4-4eed24202917/b8bdb769-cbbc-4341-a1ad-58c5d570a5f2_submission_2026-03-04T08:04:26.371Z.zip",
+    "filename": "kicad_motor driver_netlist_modify.zip",
+    "uploadedAt": "2026-03-04T08:04:26.481Z",
+    "s3Uri": "s3://daas-blobs/prd/af9031bd-2574-4579-8b85-c58a7cb6b04a/7a05048c-5790-4ea4-b1a4-4eed24202917/b8bdb769-cbbc-4341-a1ad-58c5d570a5f2_submission_2026-03-04T08:04:26.371Z.zip"
+  },
+  "difficulty": "medium",
+  "time_taken": "2 hr",
+  "task_type_discriminator": "submission-47b12c07-19f8-43a9-ac9d-ea1d1a9351d3",
+  "submission_id": "733d278a-fae9-4489-8b54-87385b83cfca"
+}

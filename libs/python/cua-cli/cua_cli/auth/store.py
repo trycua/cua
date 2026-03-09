@@ -175,7 +175,7 @@ def set_active_workspace(slug: str) -> None:
 
 
 def list_workspaces() -> list[dict]:
-    """List all cached workspaces.
+    """List all authenticated workspaces.
 
     Returns:
         List of dicts with keys: slug, name, org, is_active

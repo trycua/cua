@@ -93,11 +93,11 @@ def cmd_set(args: argparse.Namespace) -> int:
     slug = getattr(args, "slug", None)
 
     if slug:
-        # Check if we have a cached key for this workspace
-        cached_key = get_workspace_api_key(slug)
-        if cached_key:
-            # Validate the cached key
-            valid, _data = _validate_workspace_key(cached_key)
+        # Check if we have a stored key for this workspace
+        stored_key = get_workspace_api_key(slug)
+        if stored_key:
+            # Validate the stored key
+            valid, _data = _validate_workspace_key(stored_key)
             if valid:
                 set_active_workspace(slug)
                 ws_name = _get_store().get(f"workspace:{slug}:name") or slug
@@ -105,10 +105,10 @@ def cmd_set(args: argparse.Namespace) -> int:
                 return 0
             else:
                 # Stale key — remove and fall through to browser auth
-                print_info(f"Cached credentials for '{slug}' are expired. Re-authenticating...")
+                print_info(f"Credentials for '{slug}' are expired. Re-authenticating...")
                 delete_workspace(slug)
 
-        # Not cached or stale — trigger browser auth with hint
+        # Not authenticated or stale — trigger browser auth with hint
         try:
             result = run_async(authenticate_via_browser(workspace_slug=slug))
         except (TimeoutError, RuntimeError) as e:
@@ -132,10 +132,10 @@ def cmd_set(args: argparse.Namespace) -> int:
             return 1
         return 0
 
-    # No slug — interactive selection from cached workspaces
+    # No slug — interactive selection from authenticated workspaces
     workspaces = list_workspaces()
     if not workspaces:
-        print_info("No workspaces cached. Run 'cua auth login' to add one.")
+        print_info("No authenticated workspaces. Run 'cua auth login' to add one.")
         return 0
 
     print_info("Select a workspace:")

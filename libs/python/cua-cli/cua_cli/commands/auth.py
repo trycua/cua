@@ -60,8 +60,8 @@ def register_parser(subparsers: argparse._SubParsersAction) -> None:
     # list command
     auth_subparsers.add_parser(
         "list",
-        help="List cached workspaces",
-        description="Show all workspaces with cached credentials",
+        help="List authenticated workspaces",
+        description="Show all authenticated workspaces",
     )
 
     # logout command
@@ -257,10 +257,10 @@ def cmd_logout(args: argparse.Namespace) -> int:
 
 
 def cmd_list(args: argparse.Namespace) -> int:
-    """Handle the list command — show all cached workspaces."""
+    """Handle the list command — show all authenticated workspaces."""
     workspaces = list_workspaces()
     if not workspaces:
-        print_info("No workspaces cached. Run 'cua auth login' to add one.")
+        print_info("No authenticated workspaces. Run 'cua auth login' to add one.")
         return 0
 
     # Group by org

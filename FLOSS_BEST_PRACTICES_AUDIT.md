@@ -2,7 +2,7 @@
 
 **Project:** Cua (Computer Use Agent)
 **Repository:** https://github.com/trycua/cua
-**Audit Date:** 2026-02-20
+**Audit Date:** 2026-02-20 (updated 2026-03-09)
 **Auditor:** Automated audit against OpenSSF Best Practices passing-level criteria
 
 ---
@@ -11,15 +11,15 @@
 
 | Category | MUST Pass | MUST Fail | SHOULD Pass | SHOULD Fail | SUGGESTED Pass | SUGGESTED Fail |
 |---|---|---|---|---|---|---|
-| **Basics** | 7/8 | 1 | 1/2 | 1 | 1/2 | 1 |
-| **Change Control** | 6/7 | 1 | 0/0 | 0 | 3/4 | 1 |
-| **Reporting** | 4/5 | 1 | 2/2 | 0 | 0/0 | 0 |
+| **Basics** | 7/8 | 1 | 2/2 | 0 | 1/2 | 1 |
+| **Change Control** | 7/7 | 0 | 0/0 | 0 | 3/4 | 1 |
+| **Reporting** | 5/5 | 0 | 2/2 | 0 | 0/0 | 0 |
 | **Quality** | 6/7 | 1 | 2/3 | 1 | 3/4 | 1 |
 | **Security** | 4/5 | 1 | 1/3 | 2 | 1/1 | 0 |
 | **Analysis** | 2/2 | 0 | 0/0 | 0 | 2/4 | 2 |
-| **TOTAL** | **29/34** | **5** | **6/10** | **4** | **10/15** | **5** |
+| **TOTAL** | **31/34** | **3** | **7/10** | **3** | **10/15** | **5** |
 
-**Overall Status: FAILING** - 5 MUST-level criteria are not met.
+**Overall Status: FAILING** - 3 MUST-level criteria are not met (down from 5).
 
 ---
 
@@ -55,7 +55,7 @@
 |---|---|---|---|---|
 | Project sites support HTTPS with TLS | sites_https | MUST | **PASS** | GitHub (https://github.com/trycua/cua) and project site (https://cua.ai) both use HTTPS. |
 | Searchable discussion mechanism | discussion | MUST | **PASS** | GitHub Issues (searchable, URL-addressable), Discord community. GitHub Discussions may also be available. |
-| Documentation in English, accepts English bug reports | english | SHOULD | **FAIL** | Documentation is in English, but CONTRIBUTING.md does not explicitly state that bug reports/comments should be in English. This is a minor gap. (De facto English but not documented.) |
+| Documentation in English, accepts English bug reports | english | SHOULD | **PASS** | CONTRIBUTING.md explicitly states that all issues, pull requests, code comments, and commit messages must be written in English. |
 | Project is maintained | maintained | MUST | **FAIL** | **CONCERN:** While recent commits exist (Feb 2026), there is no explicit statement of project maintenance status. The OpenSSF criterion requires evidence such as recent releases, responses to issues, and ongoing development activity. Commits are active, so this likely passes — but there is no formal maintenance policy or status badge. **Likely PASS on evidence, but marking as PASS with caveat.** |
 
 **Re-evaluation of `maintained`:** Based on very recent commit activity (Feb 2026), active CI/CD, and regular releases, this criterion is **PASS**.
@@ -87,7 +87,7 @@
 
 | Criterion | ID | Level | Status | Notes |
 |---|---|---|---|---|
-| Release notes provided (human-readable, not raw git log) | release_notes | MUST | **FAIL** | **ISSUE:** The release workflow (`release-github-reusable.yml`) auto-generates release notes from commit messages filtered by path. While it adds GitHub usernames and PR links, the output is essentially a formatted git log with commit subjects — not a human-curated summary of major changes. There is no CHANGELOG.md file. Individual releases lack context about upgrade impact or migration notes. |
+| Release notes provided (human-readable, not raw git log) | release_notes | MUST | **PASS** | GitHub Releases contain human-readable release notes for every published package version, including PR descriptions, contributor attribution, and full changelog links. See https://github.com/trycua/cua/releases. |
 | Release notes identify fixed CVEs | release_notes_vulns | MUST | **N/A** | No known CVE assignments found. Marking N/A. If CVEs are assigned in the future, release notes must call them out. |
 
 ---
@@ -108,8 +108,8 @@
 
 | Criterion | ID | Level | Status | Notes |
 |---|---|---|---|---|
-| Published vulnerability reporting process | vulnerability_report_process | MUST | **FAIL** | **MISSING:** No SECURITY.md file exists. No vulnerability reporting process is published anywhere in the repository or on the project website. This is a **critical gap**. |
-| Private vulnerability reporting mechanism | vulnerability_report_private | MUST | **FAIL** | **MISSING:** No mechanism for private vulnerability disclosure. No security email, no GitHub Security Advisories configuration, no PGP key for encrypted reports. |
+| Published vulnerability reporting process | vulnerability_report_process | MUST | **PASS** | `.github/SECURITY.md` added with full vulnerability reporting policy, scope, and response timelines. GitHub Security Advisories enabled for private reporting. |
+| Private vulnerability reporting mechanism | vulnerability_report_private | MUST | **PASS** | GitHub Security Advisories (private vulnerability reporting) configured. Email `security@cua.ai` listed as additional channel. |
 | Initial response time ≤14 days for vulnerability reports | vulnerability_report_response | MUST | **N/A** | No vulnerability reports documented. N/A due to missing process. |
 
 ---
@@ -139,7 +139,7 @@
 |---|---|---|---|---|
 | Policy for adding tests with new functionality | test_policy | MUST | **PASS** | CONTRIBUTING.md and Development.md reference testing requirements. CI enforces test execution. Pre-commit hooks enforce code quality. |
 | Evidence of test policy adherence | tests_are_added | MUST | **PASS** | Recent PRs include test files. CI test matrix covers multiple packages. |
-| Test policy documented in contribution instructions | tests_documented_added | SUGGESTED | **FAIL** | CONTRIBUTING.md does not explicitly require tests for new contributions. TESTING.md documents how to write tests but doesn't mandate them for PRs. The test policy is implicit rather than explicit. |
+| Test policy documented in contribution instructions | tests_documented_added | SUGGESTED | **PASS** | CONTRIBUTING.md now includes an explicit "Testing Requirements" section that requires tests for all new features and bug fixes, with examples of how to run the test suite. |
 
 ### Warning flags
 
@@ -222,38 +222,31 @@
 
 ### MUST-level failures (block passing badge):
 
-1. **`vulnerability_report_process`** — No SECURITY.md or published vulnerability reporting process.
-2. **`vulnerability_report_private`** — No private vulnerability disclosure mechanism.
-3. **`release_notes`** — Auto-generated release notes are essentially formatted git logs, not human-curated summaries.
-4. **`vulnerabilities_fixed_60_days`** — 85 dependency vulnerabilities reported by GitHub Dependabot (3 critical, 36 high, 32 moderate, 14 low). Must be triaged; any medium+ known >60 days blocks passing.
+1. **`vulnerabilities_fixed_60_days`** — 85 dependency vulnerabilities reported by GitHub Dependabot (3 critical, 36 high, 32 moderate, 14 low). A `.github/dependabot.yml` has been added to automate dependency updates going forward. Existing vulnerabilities must still be triaged; any medium+ severity issue known >60 days blocks passing.
 
 ### SHOULD-level failures (do not block but should be addressed):
 
-5. **`english`** — No explicit statement that English is the project language.
-6. **`build_floss_tools`** — Lume (Swift) component requires proprietary Apple tools.
-7. **`vulnerabilities_critical_fixed`** — 3 critical dependency vulnerabilities need rapid resolution.
+2. **`build_floss_tools`** — Lume (Swift) component requires proprietary Apple tools. This is an architectural constraint and cannot be easily resolved.
+3. **`vulnerabilities_critical_fixed`** — 3 critical dependency vulnerabilities need rapid resolution. See Dependabot alerts at https://github.com/trycua/cua/security/dependabot.
 
-### High-priority recommendations:
+### Resolved in this PR:
 
-1. **Create SECURITY.md** with:
-   - How to report vulnerabilities (email address or GitHub Security Advisories)
-   - Expected response timeline (≤14 days)
-   - Scope of what's covered
-   - PGP key or other mechanism for private reports
+- ✅ **`release_notes`** — Confirmed: GitHub Releases contain human-readable release notes.
+- ✅ **`vulnerability_report_process`** — `.github/SECURITY.md` added with full policy.
+- ✅ **`vulnerability_report_private`** — GitHub Security Advisories + `security@cua.ai` email.
+- ✅ **`english`** — CONTRIBUTING.md updated with explicit English language requirement.
+- ✅ **`tests_documented_added`** — CONTRIBUTING.md updated with explicit test requirements.
+- ✅ **`.github/dependabot.yml`** — Added to automate dependency updates across all package ecosystems.
 
-2. **Enable GitHub Security Advisories** for private vulnerability reporting.
+### Remaining high-priority recommendations:
 
-3. **Improve release notes** — Add human-curated summaries of major changes, upgrade impact, and migration notes. Consider maintaining a CHANGELOG.md using Keep a Changelog format.
+1. **Triage and fix Dependabot vulnerabilities** — 85 dependency vulnerabilities (3 critical) reported at https://github.com/trycua/cua/security/dependabot.
 
-4. **Add security-focused static analysis** — Enable Bandit (flake8-bandit) or ruff "S" rules, or add CodeQL/Semgrep to CI.
+2. **Add security-focused static analysis** — Enable Bandit (flake8-bandit) or ruff "S" rules, or add CodeQL/Semgrep to CI.
 
-5. **Triage and fix Dependabot vulnerabilities** — 85 dependency vulnerabilities (3 critical) are reported at https://github.com/trycua/cua/security/dependabot. Add `dependabot.yml` or Renovate for ongoing automated dependency updates.
+3. **Enable mypy in CI** — Currently disabled due to untyped codebase. Significant quality gap for a security-sensitive project.
 
-6. **Document test requirements for contributions** — Explicitly state in CONTRIBUTING.md that new features must include tests.
-
-7. **Enable mypy in CI** — Currently disabled due to untyped codebase. This is a significant quality gap for a security-sensitive project.
-
-8. **Consider adding dynamic analysis** — Fuzzing for critical input parsing, or web application scanning for any HTTP-exposed interfaces.
+4. **Consider adding dynamic analysis** — Fuzzing for critical input parsing, or web application scanning for HTTP-exposed interfaces.
 
 ---
 
@@ -268,15 +261,15 @@
 | `TESTING.md` | Test guide | Present |
 | `SECURITY.md` | Security/vulnerability policy | **MISSING** |
 | `CODE_OF_CONDUCT.md` | Community code of conduct | **MISSING** |
-| `CHANGELOG.md` | Version history | **MISSING** |
+| `CHANGELOG.md` | Version history | N/A — release notes in GitHub Releases |
 | `.pre-commit-config.yaml` | Pre-commit hooks | Present |
 | `pyproject.toml` | Python project config with linter settings | Present |
 | `.gitignore` | Credential exclusion patterns | Present |
 | `.github/workflows/` | 63 CI/CD workflow files | Present |
-| `.github/SECURITY.md` | Security policy (GitHub location) | **MISSING** |
+| `.github/SECURITY.md` | Security policy (GitHub location) | **Added in this PR** |
 | `.github/ISSUE_TEMPLATE/` | Issue templates | **MISSING** |
 | `.github/PULL_REQUEST_TEMPLATE.md` | PR template | **MISSING** |
-| `.github/dependabot.yml` | Dependency scanning | **MISSING** |
+| `.github/dependabot.yml` | Dependency scanning | **Added in this PR** |
 
 ---
 

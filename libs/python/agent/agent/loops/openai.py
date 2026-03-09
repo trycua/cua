@@ -15,8 +15,14 @@ from ..decorators import register_agent
 from ..types import AgentCapability, AgentResponse, Messages, Tools
 
 
-async def _map_computer_tool_to_openai(computer_handler: Any) -> Dict[str, Any]:
-    """Map a computer tool to OpenAI's computer-use-preview tool schema"""
+async def _map_computer_tool_to_openai(computer_handler: Any, use_native_tool: bool = True) -> Dict[str, Any]:
+    """Map a computer tool to OpenAI's tool schema.
+
+    Args:
+        computer_handler: The computer handler instance
+        use_native_tool: If True, use native computer_use_preview format (for computer-use-preview model).
+                        If False, use standard function calling format (for GPT-5.4 etc).
+    """
     # Get dimensions from the computer handler
     try:
         width, height = await computer_handler.get_dimensions()
@@ -31,32 +37,118 @@ async def _map_computer_tool_to_openai(computer_handler: Any) -> Dict[str, Any]:
         # Fallback to default environment if method fails
         environment = "linux"
 
-    return {
-        "type": "computer_use_preview",
-        "display_width": width,
-        "display_height": height,
-        "environment": environment,  # mac, windows, linux, browser
-    }
+    if use_native_tool:
+        # Native computer_use_preview format (for computer-use-preview model)
+        return {
+            "type": "computer_use_preview",
+            "display_width": width,
+            "display_height": height,
+            "environment": environment,  # mac, windows, linux, browser
+        }
+    else:
+        # Standard function calling format (for GPT-5.4 etc)
+        # Responses API requires: {type, name, description, parameters} at root level
+        return {
+            "type": "function",
+            "name": "computer",
+            "description": (
+                f"Use a mouse and keyboard to interact with a computer, and take screenshots.\n"
+                f"Screen resolution: {width}x{height} pixels.\n"
+                f"Environment: {environment}."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "description": "The action to perform.",
+                        "type": "string",
+                        "enum": [
+                            "click",
+                            "double_click",
+                            "right_click",
+                            "type",
+                            "keypress",
+                            "scroll",
+                            "move",
+                            "drag",
+                            "screenshot",
+                            "wait",
+                        ],
+                    },
+                    "x": {
+                        "description": "X coordinate for click/move/scroll actions.",
+                        "type": "integer",
+                    },
+                    "y": {
+                        "description": "Y coordinate for click/move/scroll actions.",
+                        "type": "integer",
+                    },
+                    "text": {
+                        "description": "Text to type (for action=type).",
+                        "type": "string",
+                    },
+                    "keys": {
+                        "description": "Keys to press (for action=keypress). Example: ['ctrl', 'c']",
+                        "type": "array",
+                        "items": {"type": "string"},
+                    },
+                    "scroll_x": {
+                        "description": "Horizontal scroll amount. Positive=right, negative=left.",
+                        "type": "integer",
+                    },
+                    "scroll_y": {
+                        "description": "Vertical scroll amount. Positive=down, negative=up.",
+                        "type": "integer",
+                    },
+                    "button": {
+                        "description": "Mouse button for click action.",
+                        "type": "string",
+                        "enum": ["left", "right", "middle"],
+                    },
+                },
+                "required": ["action"],
+            },
+        }
 
 
-async def _prepare_tools_for_openai(tool_schemas: List[Dict[str, Any]]) -> Tools:
-    """Prepare tools for OpenAI API format"""
+def _is_native_computer_use_model(model: str) -> bool:
+    """Check if the model supports native computer_use_preview tool format."""
+    import re
+    # Only computer-use-preview models support native computer_use_preview tool
+    # GPT 5.4 does NOT support computer_use_preview - it uses function calling
+    return bool(re.search(r"computer-use-preview", model, re.IGNORECASE))
+
+
+async def _prepare_tools_for_openai(tool_schemas: List[Dict[str, Any]], model: str = "") -> Tools:
+    """Prepare tools for OpenAI API format.
+
+    Args:
+        tool_schemas: List of tool schemas to prepare
+        model: Model name to determine tool format
+    """
     openai_tools = []
+    use_native = _is_native_computer_use_model(model)
 
     for schema in tool_schemas:
         if schema["type"] == "computer":
-            # Map computer tool to OpenAI format
-            computer_tool = await _map_computer_tool_to_openai(schema["computer"])
+            # Map computer tool to OpenAI format (native or function based on model)
+            computer_tool = await _map_computer_tool_to_openai(schema["computer"], use_native_tool=use_native)
             openai_tools.append(computer_tool)
         elif schema["type"] == "function":
-            # Function tools use OpenAI-compatible schema directly (liteLLM expects this format)
-            # Schema should be: {type, name, description, parameters}
-            openai_tools.append({"type": "function", **schema["function"]})
+            # Function tools for Responses API need: {type, name, description, parameters}
+            # Note: parameters are at the root level, NOT nested under 'function'
+            func = schema["function"]
+            openai_tools.append({
+                "type": "function",
+                "name": func["name"],
+                "description": func.get("description", ""),
+                "parameters": func.get("parameters", {}),
+            })
 
     return openai_tools
 
 
-@register_agent(models=r".*(^|/)computer-use-preview")
+@register_agent(models=r".*(computer-use-preview|gpt-?5\.?4)")
 class OpenAIComputerUseConfig:
     """
     OpenAI computer-use-preview agent configuration using liteLLM responses.
@@ -101,7 +193,7 @@ class OpenAIComputerUseConfig:
         tools = tools or []
 
         # Prepare tools for OpenAI API
-        openai_tools = await _prepare_tools_for_openai(tools)
+        openai_tools = await _prepare_tools_for_openai(tools, model=model)
 
         # Prepare API call kwargs
         api_kwargs = {
@@ -126,16 +218,32 @@ class OpenAIComputerUseConfig:
         if _on_api_end:
             await _on_api_end(api_kwargs, response)
 
-        # Extract usage information
-        usage = {
-            **response.usage.model_dump(),
-            "response_cost": response._hidden_params.get("response_cost", 0.0),
-        }
+        # Extract usage information - handle both dict and Pydantic model responses
+        if isinstance(response, dict):
+            response_usage = response.get("usage", {})
+            usage = response_usage if isinstance(response_usage, dict) else {}
+            output_dict = response
+        else:
+            # Response is a Pydantic model - but usage might be dict or model
+            response_usage = response.usage
+            if hasattr(response_usage, "model_dump"):
+                usage = response_usage.model_dump()
+            elif isinstance(response_usage, dict):
+                usage = response_usage
+            else:
+                usage = {}
+            output_dict = response.model_dump()
+
+        # Add response cost if available
+        if hasattr(response, "_hidden_params"):
+            usage["response_cost"] = response._hidden_params.get("response_cost", 0.0)
+        elif isinstance(response, dict):
+            usage["response_cost"] = response.get("_hidden_params", {}).get("response_cost", 0.0)
+
         if _on_usage:
             await _on_usage(usage)
 
         # Return in the expected format
-        output_dict = response.model_dump()
         output_dict["usage"] = usage
         return output_dict
 
@@ -214,8 +322,8 @@ Task: Click {instruction}. Output ONLY a click action on the target element.""",
         # Use liteLLM responses
         response = await litellm.aresponses(**api_kwargs)
 
-        # Extract click coordinates from response output
-        output_dict = response.model_dump()
+        # Extract click coordinates from response output - handle both dict and Pydantic model
+        output_dict = response if isinstance(response, dict) else response.model_dump()
         output_items = output_dict.get("output", [])
 
         # Look for computer_call with click action

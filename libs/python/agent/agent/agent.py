@@ -782,6 +782,106 @@ class ComputerAgent:
 
             if item_type == "function_call":
                 await self._on_function_call_start(item)
+
+                # Special handling for "computer" function calls (from GPT 5.4 etc)
+                # These need to be treated like computer_call items
+                if item.get("name") == "computer" and computer:
+                    args = json.loads(item.get("arguments", "{}"))
+                    action_type = args.get("action")
+                    if not action_type:
+                        raise ToolError("Computer function call missing 'action' argument")
+
+                    # Map action types to their relevant parameters
+                    action_param_map = {
+                        "screenshot": [],  # No parameters
+                        "click": ["x", "y", "button"],
+                        "double_click": ["x", "y"],
+                        "right_click": ["x", "y"],
+                        "type": ["text"],
+                        "keypress": ["keys"],
+                        "scroll": ["x", "y", "scroll_x", "scroll_y"],
+                        "move": ["x", "y"],
+                        "drag": ["start_x", "start_y", "end_x", "end_y"],
+                        "wait": ["seconds", "ms"],
+                    }
+
+                    # Extract only relevant action arguments, filtering out empty values
+                    relevant_params = action_param_map.get(action_type, [])
+                    action_args = {}
+                    for k, v in args.items():
+                        if k == "action":
+                            continue
+                        # Include if it's a relevant param OR if param map doesn't have this action
+                        if k in relevant_params or action_type not in action_param_map:
+                            # Filter out empty/default values
+                            if v is not None and v != "" and v != [] and v != 0:
+                                action_args[k] = v
+
+                    # Execute the computer action
+                    computer_method = getattr(computer, action_type, None)
+                    action_result = None
+                    if computer_method:
+                        action_result = await computer_method(**action_args)
+                    else:
+                        raise ToolError(f"Unknown computer action: {action_type}")
+
+                    # Track computer action execution
+                    if self.telemetry_enabled and is_telemetry_enabled():
+                        record_event(
+                            "computer_action_executed",
+                            {"action_type": action_type},
+                        )
+                        record_event(
+                            "agent_tool_executed",
+                            {"tool_type": "computer", "tool_name": action_type},
+                        )
+
+                    # Check if this was a terminate action
+                    is_terminate = action_type == "terminate" or (
+                        isinstance(action_result, dict) and action_result.get("terminated")
+                    )
+
+                    # Take screenshot after action (skip for terminate)
+                    if not is_terminate:
+                        if self.screenshot_delay and self.screenshot_delay > 0:
+                            await asyncio.sleep(self.screenshot_delay)
+                        screenshot_base64 = await computer.screenshot()
+                        await self._on_screenshot(screenshot_base64, "screenshot_after")
+
+                    # Create function call output for GPT 5.4 etc
+                    # Note: function_call_output only supports text, so we include the
+                    # screenshot as a separate user message with image content
+                    if is_terminate:
+                        output_content = json.dumps(action_result if action_result else {"terminated": True})
+                        call_output = {
+                            "type": "function_call_output",
+                            "call_id": item.get("call_id"),
+                            "output": output_content,
+                        }
+                        result = [call_output]
+                    else:
+                        # Return both the function output AND a user message with the screenshot
+                        # This allows the model to see the screenshot result
+                        call_output = {
+                            "type": "function_call_output",
+                            "call_id": item.get("call_id"),
+                            "output": f"Action '{action_type}' completed. Screenshot captured.",
+                        }
+                        # Include screenshot as a user message with image content
+                        image_message = {
+                            "role": "user",
+                            "content": [
+                                {
+                                    "type": "input_image",
+                                    "image_url": f"data:image/png;base64,{screenshot_base64}",
+                                }
+                            ],
+                        }
+                        result = [call_output, image_message]
+
+                    await self._on_function_call_end(item, result)
+                    return result
+
                 # Perform function call
                 function = self._get_tool(item.get("name"))
                 if not function:

@@ -223,7 +223,9 @@ def cmd_logout(args: argparse.Namespace) -> int:
             remaining = list_workspaces()
             if remaining:
                 set_active_workspace(remaining[0]["slug"])
-                print_info(f"Switched to workspace: {remaining[0]['name']} ({remaining[0]['slug']})")
+                print_info(
+                    f"Switched to workspace: {remaining[0]['name']} ({remaining[0]['slug']})"
+                )
             else:
                 from cua_cli.auth.store import _get_store, ACTIVE_WORKSPACE_KEY
 
@@ -241,7 +243,7 @@ def cmd_logout(args: argparse.Namespace) -> int:
             print_success(f"Logged out of workspace: {active}")
             print_info(
                 f"Switched to workspace: {remaining[0]['name']} ({remaining[0]['slug']}). "
-                f"Use 'cua set workspace <slug>' to switch."
+                f"Use 'cua workspace set <slug>' to switch workspaces."
             )
         else:
             from cua_cli.auth.store import _get_store, ACTIVE_WORKSPACE_KEY
@@ -261,11 +263,24 @@ def cmd_list(args: argparse.Namespace) -> int:
         print_info("No workspaces cached. Run 'cua auth login' to add one.")
         return 0
 
+    # Group by org
+    by_org: dict[str, list[dict]] = {}
     for ws in workspaces:
-        marker = "* " if ws["is_active"] else "  "
-        name_part = f" ({ws['name']})" if ws["name"] else ""
-        org_part = f" - {ws['org']}" if ws["org"] else ""
-        print(f"{marker}{ws['slug']}{name_part}{org_part}")
+        org = ws["org"] or "Unknown"
+        by_org.setdefault(org, []).append(ws)
+
+    from rich.console import Console
+
+    c = Console()
+    for org, org_workspaces in by_org.items():
+        c.print(f"[bold]{org}[/bold]")
+        for ws in org_workspaces:
+            name = ws["name"] or ws["slug"]
+            slug = ws["slug"]
+            if ws["is_active"]:
+                c.print(f"  [green]* {name} ({slug})[/green]")
+            else:
+                c.print(f"    {name} ({slug})")
     return 0
 
 
@@ -283,7 +298,21 @@ def cmd_status(args: argparse.Namespace) -> int:
         return 1
 
     if status_code == 401:
-        clear_credentials()
+        active = get_active_workspace()
+        if active:
+            delete_workspace(active)
+            print_info(f"Removed expired credentials for workspace: {active}")
+            remaining = list_workspaces()
+            if remaining:
+                set_active_workspace(remaining[0]["slug"])
+                print_info(f"Switched to workspace: {remaining[0]['name']} ({remaining[0]['slug']})")
+            else:
+                from cua_cli.auth.store import _get_store, ACTIVE_WORKSPACE_KEY
+
+                _get_store().delete(ACTIVE_WORKSPACE_KEY)
+        else:
+            clear_credentials()
+            print_info("Removed expired credentials.")
         print_error("Session expired. Run 'cua auth login' to re-authenticate.")
         return 1
 
@@ -302,10 +331,6 @@ def cmd_status(args: argparse.Namespace) -> int:
     print_info(f"  Workspace: {ws.get('name', 'unknown')} ({ws.get('slug', 'unknown')})")
     print_info(f"  Organization: {org.get('name', 'unknown')} ({org.get('plan_type', 'unknown')})")
     print_info(f"  Credits: {credits.get('balance', 0):.2f} remaining")
-    print_info(f"  API key: {key_info.get('masked_value', 'unknown')}")
-
-    if key_info.get("expires_at"):
-        print_info(f"  Expires: {key_info['expires_at']}")
 
     return 0
 

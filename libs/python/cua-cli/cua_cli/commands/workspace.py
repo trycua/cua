@@ -1,4 +1,4 @@
-"""Set/configuration commands for CUA CLI."""
+"""Workspace commands for CUA CLI."""
 
 import argparse
 import os
@@ -7,6 +7,7 @@ import aiohttp
 from core.http import cua_version_headers
 from cua_cli.auth.browser import authenticate_via_browser
 from cua_cli.auth.store import (
+    _get_store,
     delete_workspace,
     get_workspace_api_key,
     list_workspaces,
@@ -24,24 +25,25 @@ def _get_api_base() -> str:
 
 
 def register_parser(subparsers: argparse._SubParsersAction) -> None:
-    """Register the set command and subcommands."""
-    set_parser = subparsers.add_parser(
-        "set",
-        help="Configuration commands",
-        description="Set CLI configuration values",
-    )
-
-    set_subparsers = set_parser.add_subparsers(
-        dest="set_command",
-        help="Configuration command",
-    )
-
-    ws_parser = set_subparsers.add_parser(
+    """Register the workspace command and subcommands."""
+    ws_parser = subparsers.add_parser(
         "workspace",
+        help="Workspace commands",
+        description="Manage workspaces",
+        aliases=["ws"],
+    )
+
+    ws_subparsers = ws_parser.add_subparsers(
+        dest="workspace_command",
+        help="Workspace command",
+    )
+
+    set_parser = ws_subparsers.add_parser(
+        "set",
         help="Switch active workspace",
         description="Switch to a different workspace",
     )
-    ws_parser.add_argument(
+    set_parser.add_argument(
         "slug",
         nargs="?",
         help="Workspace slug to switch to",
@@ -49,14 +51,14 @@ def register_parser(subparsers: argparse._SubParsersAction) -> None:
 
 
 def execute(args: argparse.Namespace) -> int:
-    """Execute set command based on subcommand."""
-    cmd = getattr(args, "set_command", None)
+    """Execute workspace command based on subcommand."""
+    cmd = getattr(args, "workspace_command", None)
 
-    if cmd == "workspace":
-        return cmd_workspace(args)
+    if cmd == "set":
+        return cmd_set(args)
     else:
-        print_error("Usage: cua set <command>")
-        print_info("Commands: workspace")
+        print_error("Usage: cua workspace <command>")
+        print_info("Commands: set")
         return 1
 
 
@@ -86,8 +88,8 @@ def _validate_workspace_key(api_key: str) -> tuple[bool, dict]:
         return False, {}
 
 
-def cmd_workspace(args: argparse.Namespace) -> int:
-    """Handle the workspace switch command."""
+def cmd_set(args: argparse.Namespace) -> int:
+    """Handle the workspace set command."""
     slug = getattr(args, "slug", None)
 
     if slug:
@@ -98,7 +100,8 @@ def cmd_workspace(args: argparse.Namespace) -> int:
             valid, _data = _validate_workspace_key(cached_key)
             if valid:
                 set_active_workspace(slug)
-                print_success(f"Switched to workspace: {slug}")
+                ws_name = _get_store().get(f"workspace:{slug}:name") or slug
+                print_success(f"Switched to workspace: {ws_name} ({slug})")
                 return 0
             else:
                 # Stale key — remove and fall through to browser auth

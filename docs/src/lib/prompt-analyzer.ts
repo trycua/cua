@@ -1,4 +1,6 @@
-import Anthropic from '@anthropic-ai/sdk';
+import { createAmazonBedrock } from '@ai-sdk/amazon-bedrock';
+import { generateText } from 'ai';
+import { awsCredentialsProvider } from '@vercel/functions/oidc';
 
 export interface PromptAnalysisResult {
   actionability: { score: number; rationale: string };
@@ -21,14 +23,53 @@ export interface AnalyzedPrompt {
 
 const SCORE_THRESHOLD = 7;
 
-let anthropicClient: Anthropic | null = null;
+// Default AWS role ARN for Vercel OIDC
+const AWS_ROLE_ARN =
+  process.env.AWS_ROLE_ARN || 'arn:aws:iam::296062593712:role/vercel-bedrock-role';
 
-function getClient(): Anthropic | null {
-  if (!process.env.ANTHROPIC_API_KEY) return null;
-  if (!anthropicClient) {
-    anthropicClient = new Anthropic();
-  }
-  return anthropicClient;
+// Cache for AWS credentials (tokens are cached for up to 45 min by Vercel)
+let cachedCredentials: {
+  accessKeyId: string;
+  secretAccessKey: string;
+  sessionToken?: string;
+} | null = null;
+let credentialExpiry: number = 0;
+
+function createBedrockProvider() {
+  return createAmazonBedrock({
+    region: 'us-east-1',
+    credentialProvider: async () => {
+      // Check for static credentials first (for local dev)
+      if (process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY) {
+        return {
+          accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+          secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
+          sessionToken: process.env.AWS_SESSION_TOKEN,
+        };
+      }
+
+      // Return cached credentials if still valid (with 5 min buffer)
+      if (cachedCredentials && Date.now() < credentialExpiry - 5 * 60 * 1000) {
+        return cachedCredentials;
+      }
+
+      // Use Vercel's awsCredentialsProvider which handles OIDC token retrieval server-side
+      const credProvider = awsCredentialsProvider({
+        roleArn: AWS_ROLE_ARN,
+      });
+
+      const creds = await credProvider();
+      cachedCredentials = {
+        accessKeyId: creds.accessKeyId,
+        secretAccessKey: creds.secretAccessKey,
+        sessionToken: creds.sessionToken,
+      };
+      // Cache for 40 minutes (Vercel caches token for 45 min max)
+      credentialExpiry = Date.now() + 40 * 60 * 1000;
+
+      return cachedCredentials;
+    },
+  });
 }
 
 function buildBatchPrompt(prompts: PromptContext[]): string {
@@ -104,25 +145,17 @@ function parseBatchResponse(text: string, prompts: PromptContext[]): AnalyzedPro
 }
 
 export async function analyzeBatchForSlack(prompts: PromptContext[]): Promise<AnalyzedPrompt[]> {
-  const client = getClient();
-  if (!client) return [];
-
   // Filter out trivial prompts
   const filtered = prompts.filter((p) => p.prompt.trim().length >= 15);
   if (filtered.length === 0) return [];
 
-  const response = await client.messages.create({
-    model: 'claude-haiku-4-5-20251001',
-    max_tokens: 4096,
-    messages: [
-      {
-        role: 'user',
-        content: buildBatchPrompt(filtered),
-      },
-    ],
-  });
+  const bedrock = createBedrockProvider();
 
-  const text = response.content[0]?.type === 'text' ? response.content[0].text : '';
+  const { text } = await generateText({
+    model: bedrock('us.anthropic.claude-haiku-4-5-20251001-v1:0'),
+    maxOutputTokens: 4096,
+    prompt: buildBatchPrompt(filtered),
+  });
 
   return parseBatchResponse(text, filtered);
 }

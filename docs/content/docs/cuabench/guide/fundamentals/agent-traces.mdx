@@ -96,21 +96,17 @@ Opens an interactive viewer showing:
 - Action details and metadata
 - Agent reasoning (if available)
 
-### View All Traces in a Run
+### View Agent Trajectories from a Run
 
 ```bash
-# View all task traces in a grid
-cb trace grid <run_id>
+# Open agent trajectories in the cua.ai trajectory viewer
+cb trace traj <run_id>
 
 # Example
-cb trace grid 96d41b51
+cb trace traj 96d41b51
 ```
 
-Shows a grid view of all task traces in the run, useful for:
-
-- Comparing agent performance across variants
-- Quickly identifying failures
-- Reviewing oracle solutions
+Zips and serves the cua-agent trajectory recordings from the run artifacts folder, then opens [cua.ai/trajectory-viewer](https://cua.ai/trajectory-viewer). For runs with multiple tasks, an index page is shown so you can open each session individually.
 
 ## Recording Custom Events
 

@@ -133,6 +133,13 @@ def main():
             dest="provider_type",
             help="Provider type (simulated, native) - usually auto-detected from task config",
         )
+        parser.add_argument(
+            "--with",
+            dest="dev_paths",
+            action="append",
+            metavar="PATH",
+            help="Mount and pip install a local package into the agent container (can be repeated)",
+        )
 
     # cb run task <path>
     run_task_parser = run_subparsers.add_parser(

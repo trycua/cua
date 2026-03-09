@@ -42,6 +42,9 @@ RUN python -m pip install --upgrade pip && \
     python -m pip install --no-cache-dir -e .[all] && \
     playwright install --with-deps chromium
 
+# Install cua-agent and non torch optional deps
+RUN python -m pip install --no-cache-dir cua-agent[qwen,omni,gemini]
+
 # Create a non-root user and set ownership
 RUN useradd -m -u 1000 cuauser && \
     chown -R cuauser:cuauser /app && \

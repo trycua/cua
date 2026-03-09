@@ -1,4 +1,4 @@
-"""Workspace commands for CUA CLI."""
+"""Workspace commands for Cua CLI."""
 
 import argparse
 import os

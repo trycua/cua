@@ -1,4 +1,4 @@
-"""Authentication commands for CUA CLI."""
+"""Authentication commands for Cua CLI."""
 
 import argparse
 import os
@@ -37,7 +37,7 @@ def register_parser(subparsers: argparse._SubParsersAction) -> None:
     auth_parser = subparsers.add_parser(
         "auth",
         help="Authentication commands",
-        description="Manage authentication for CUA cloud services",
+        description="Manage authentication for Cua cloud services",
     )
 
     auth_subparsers = auth_parser.add_subparsers(
@@ -48,7 +48,7 @@ def register_parser(subparsers: argparse._SubParsersAction) -> None:
     # login command
     login_parser = auth_subparsers.add_parser(
         "login",
-        help="Authenticate with CUA cloud",
+        help="Authenticate with Cua cloud",
         description="Authenticate via browser or API key",
     )
     login_parser.add_argument(

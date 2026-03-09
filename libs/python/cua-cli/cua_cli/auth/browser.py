@@ -1,4 +1,4 @@
-"""Browser-based OAuth authentication for CUA CLI."""
+"""Browser-based OAuth authentication for Cua CLI."""
 
 import asyncio
 import os

@@ -1,4 +1,4 @@
-"""SQLite-based credential storage for CUA CLI."""
+"""SQLite-based credential storage for Cua CLI."""
 
 import os
 import sqlite3

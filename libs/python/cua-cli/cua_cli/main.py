@@ -1,4 +1,4 @@
-"""Main entry point for CUA CLI."""
+"""Main entry point for Cua CLI."""
 
 import argparse
 import logging
@@ -14,7 +14,7 @@ def create_parser() -> argparse.ArgumentParser:
     """Create the main argument parser with all subcommands."""
     parser = argparse.ArgumentParser(
         prog="cua",
-        description="CUA CLI - Unified command-line interface for Computer-Use Agents",
+        description="Cua CLI - Unified command-line interface for Computer-Use Agents",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="For more information, visit https://docs.trycua.com",
     )

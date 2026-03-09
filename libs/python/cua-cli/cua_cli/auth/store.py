@@ -129,9 +129,7 @@ class CredentialStore:
         """
         conn = sqlite3.connect(self.db_path)
         try:
-            cursor = conn.execute(
-                "SELECT key, value FROM kv WHERE key LIKE ?", (prefix + "%",)
-            )
+            cursor = conn.execute("SELECT key, value FROM kv WHERE key LIKE ?", (prefix + "%",))
             return cursor.fetchall()
         finally:
             conn.close()

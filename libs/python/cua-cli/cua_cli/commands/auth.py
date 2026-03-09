@@ -305,7 +305,9 @@ def cmd_status(args: argparse.Namespace) -> int:
             remaining = list_workspaces()
             if remaining:
                 set_active_workspace(remaining[0]["slug"])
-                print_info(f"Switched to workspace: {remaining[0]['name']} ({remaining[0]['slug']})")
+                print_info(
+                    f"Switched to workspace: {remaining[0]['name']} ({remaining[0]['slug']})"
+                )
             else:
                 from cua_cli.auth.store import _get_store, ACTIVE_WORKSPACE_KEY
 

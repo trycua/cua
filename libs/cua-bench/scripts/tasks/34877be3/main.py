@@ -4,7 +4,7 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
-import cb
+import cua_bench as cb
 
 _SUBMISSION_ID = "34877be3-b628-4b67-bfef-6ac7007e4514"
 _REMOTE_PROJECT_DIR = "/home/cua/kicad_project"

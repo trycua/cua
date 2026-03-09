@@ -35,7 +35,7 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
-import cb
+import cua_bench as cb
 
 _SUBMISSION_ID = "{submission_id}"
 _REMOTE_PROJECT_DIR = "{remote_project_dir}"

@@ -33,7 +33,7 @@ dependencies = [
     # Mouse + keyboard control (cross-platform)
     "pynput>=1.7.0",
     # Screenshot + image processing
-    "pillow>=10.0.0",
+    "pillow>=12.1.1",
     # Clipboard access (cross-platform)
     "pyperclip>=1.9.0",
     # Window management (cross-platform)

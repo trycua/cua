@@ -170,7 +170,8 @@ class BrowserTool(BaseComputerTool):
 * history_back: Go back to the previous page in the browser history.
 * pause_and_memorize_fact: Pause and memorize a fact for future reference.
 * wait: Wait specified seconds for the change to happen.
-* terminate: Terminate the current task and report its completion status.""",
+* terminate: Terminate the current task and report its completion status.
+* screenshot: Take a screenshot of the current screen.""",
                     "enum": [
                         "key",
                         "type",
@@ -183,14 +184,16 @@ class BrowserTool(BaseComputerTool):
                         "pause_and_memorize_fact",
                         "wait",
                         "terminate",
+                        "screenshot",
                     ],
                     "type": "string",
                 },
-                "keys": {"description": "Required only by action=key.", "type": "array"},
+                "keys": {"description": "Required only by action=key.", "type": "array", "items": {"type": "string"}},
                 "text": {"description": "Required only by action=type.", "type": "string"},
                 "coordinate": {
                     "description": "(x, y) coordinates for mouse actions. Required only by action=left_click, action=mouse_move, and action=type.",
                     "type": "array",
+                    "items": {"type": "number"},
                 },
                 "pixels": {
                     "description": "Amount of scrolling. Positive = up, Negative = down. Required only by action=scroll.",
@@ -282,6 +285,8 @@ class BrowserTool(BaseComputerTool):
                 return await self._action_wait(params)
             elif action == "terminate":
                 return await self._action_terminate(params)
+            elif action == "screenshot":
+                return await self._action_screenshot(params)
             else:
                 return {"success": False, "error": f"Unknown action: {action}"}
         except Exception as e:
@@ -410,6 +415,14 @@ class BrowserTool(BaseComputerTool):
             message += f"\nMemorized facts: {self._facts}"
 
         return {"success": True, "status": status, "message": message, "terminated": True}
+
+    async def _action_screenshot(self, params: dict) -> dict:
+        """Take a screenshot of the current screen."""
+        try:
+            screenshot_b64 = await self.screenshot()
+            return {"success": True, "screenshot": screenshot_b64}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
 
     # Legacy methods for backward compatibility
     async def visit_url(self, url: str) -> dict:

@@ -51,13 +51,14 @@ def extract_computer_call_outputs(
     items: List[Dict[str, Any]], screenshot_dir: Optional[Path]
 ) -> List[Dict[str, Any]]:
     """
-    Save any base64-encoded screenshots from computer_call_output entries to files and
-    replace their image_url with the saved file path when a call_id is present.
+    Save any base64-encoded screenshots from computer_call_output or function_call_output
+    entries to files and replace their image_url with the saved file path when a call_id is present.
 
     Only operates if screenshot_dir is provided and exists; otherwise returns items unchanged.
 
     Args:
-        items: List of message/result dicts potentially containing computer_call_output entries
+        items: List of message/result dicts potentially containing computer_call_output
+               or function_call_output entries
         screenshot_dir: Directory to write screenshots into
 
     Returns:
@@ -101,6 +102,94 @@ def extract_computer_call_outputs(
                     new_output = dict(output)
                     new_output["image_url"] = str(out_path)
                     msg["output"] = new_output
+
+            elif msg.get("type") == "function_call_output":
+                # Handle function_call_output from GPT 5.4 / BrowserTool
+                call_id = msg.get("call_id")
+                output = msg.get("output", "")
+
+                # Parse output if it's a string
+                if isinstance(output, str):
+                    try:
+                        output_dict = json.loads(output)
+                    except (json.JSONDecodeError, TypeError):
+                        output_dict = None
+                else:
+                    output_dict = output
+
+                if isinstance(output_dict, dict) and call_id:
+                    image_data = None
+                    image_key = None
+
+                    # Format 1: {"type": "input_image", "image_url": "data:image/png;base64,..."}
+                    if output_dict.get("type") == "input_image":
+                        image_url = output_dict.get("image_url", "")
+                        if isinstance(image_url, str) and image_url.startswith("data:"):
+                            image_data = image_url.split(",", 1)[1] if "," in image_url else None
+                            image_key = "image_url"
+
+                    # Format 2: {"success": True, "screenshot": "base64data"}
+                    elif output_dict.get("screenshot"):
+                        image_data = output_dict.get("screenshot")
+                        image_key = "screenshot"
+
+                    if image_data and image_key:
+                        out_path = screenshot_dir / f"{call_id}.png"
+                        if not out_path.exists():
+                            try:
+                                img_bytes = base64.b64decode(image_data)
+                                out_path.parent.mkdir(parents=True, exist_ok=True)
+                                with open(out_path, "wb") as f:
+                                    f.write(img_bytes)
+                            except Exception:
+                                pass
+                        # Update output to reference file path
+                        new_output_dict = dict(output_dict)
+                        new_output_dict[image_key] = str(out_path)
+                        msg["output"] = json.dumps(new_output_dict)
+
+            elif msg.get("role") == "user":
+                # Handle user messages with input_image content (GPT-5.4 sibling screenshot messages)
+                # These accompany function_call_output for computer calls
+                content = msg.get("content", [])
+                if isinstance(content, list):
+                    new_content = []
+                    content_modified = False
+                    for content_item in content:
+                        if isinstance(content_item, dict) and content_item.get("type") == "input_image":
+                            image_url = content_item.get("image_url", "")
+                            if isinstance(image_url, str) and image_url.startswith("data:"):
+                                # Generate a unique ID for this screenshot
+                                screenshot_id = str(uuid.uuid4())[:8]
+                                try:
+                                    ext = image_url.split(";", 1)[0].split("/")[-1]
+                                    if not ext:
+                                        ext = "png"
+                                except Exception:
+                                    ext = "png"
+                                out_path = screenshot_dir / f"user_screenshot_{screenshot_id}.{ext}"
+                                if not out_path.exists():
+                                    try:
+                                        b64_payload = image_url.split(",", 1)[1]
+                                        img_bytes = base64.b64decode(b64_payload)
+                                        out_path.parent.mkdir(parents=True, exist_ok=True)
+                                        with open(out_path, "wb") as f:
+                                            f.write(img_bytes)
+                                    except Exception:
+                                        new_content.append(content_item)
+                                        continue
+                                # Update image_url to file path
+                                new_item = dict(content_item)
+                                new_item["image_url"] = str(out_path)
+                                new_content.append(new_item)
+                                content_modified = True
+                            else:
+                                new_content.append(content_item)
+                        else:
+                            new_content.append(content_item)
+                    if content_modified:
+                        msg["content"] = new_content
+
         except Exception:
             # do not block on malformed entries; keep original
             pass
@@ -417,6 +506,133 @@ class TrajectorySaverCallback(AsyncCallbackHandler):
                         print(f"Failed to annotate screenshot: {e}")
 
                     break  # Only process the first screenshot found
+
+        # Increment turn counter
+        self.current_turn += 1
+
+    @override
+    async def on_function_call_end(
+        self, item: Dict[str, Any], result: List[Dict[str, Any]]
+    ) -> None:
+        """
+        Called when a function call has completed.
+        Saves screenshots and function call output for GPT 5.4 / BrowserTool.
+        """
+        if not self.trajectory_id:
+            return
+
+        self._save_artifact("function_call_result", {"item": item, "result": result})
+
+        # Extract coordinates from function call arguments if present
+        x_coord, y_coord = None, None
+        try:
+            arguments = item.get("arguments", "{}")
+            if isinstance(arguments, str):
+                args_dict = json.loads(arguments)
+            else:
+                args_dict = arguments
+
+            # Check for coordinate array format (BrowserTool style)
+            coord = args_dict.get("coordinate")
+            if coord and isinstance(coord, list) and len(coord) >= 2:
+                x_coord, y_coord = coord[0], coord[1]
+            # Check for x/y format (computer_use style)
+            elif "x" in args_dict and "y" in args_dict:
+                x_coord, y_coord = args_dict.get("x"), args_dict.get("y")
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+        # Look for screenshot in the result
+        screenshot_found = False
+        for result_item in result:
+            if screenshot_found:
+                break
+
+            if result_item.get("type") == "function_call_output":
+                output = result_item.get("output", "")
+
+                # Parse output if it's a string
+                if isinstance(output, str):
+                    try:
+                        output_dict = json.loads(output)
+                    except (json.JSONDecodeError, TypeError):
+                        # Try to evaluate as Python literal (for stringified dicts)
+                        try:
+                            import ast
+                            output_dict = ast.literal_eval(output)
+                        except (ValueError, SyntaxError):
+                            continue
+                else:
+                    output_dict = output
+
+                if not isinstance(output_dict, dict):
+                    continue
+
+                # Extract screenshot from various formats
+                image_data = None
+
+                # Format 1: {"type": "input_image", "image_url": "data:image/png;base64,..."}
+                if output_dict.get("type") == "input_image":
+                    image_url = output_dict.get("image_url", "")
+                    if image_url.startswith("data:image/"):
+                        image_data = image_url.split(",", 1)[1]
+                    elif image_url:
+                        image_data = image_url
+
+                # Format 2: {"success": True, "screenshot": "base64data"}
+                elif output_dict.get("screenshot"):
+                    image_data = output_dict.get("screenshot")
+
+                if image_data:
+                    try:
+                        # Decode the image
+                        image_bytes = base64.b64decode(image_data)
+
+                        # If we have coordinates, draw crosshair annotation
+                        if x_coord is not None and y_coord is not None and x_coord != 0 and y_coord != 0:
+                            annotated_image = self._draw_crosshair_on_image(
+                                image_bytes, int(x_coord), int(y_coord)
+                            )
+                            self._save_artifact("screenshot_action", annotated_image)
+                        else:
+                            # Save plain screenshot without crosshair
+                            self._save_artifact("screenshot", image_bytes)
+
+                        screenshot_found = True
+
+                    except Exception as e:
+                        # If processing fails, just log and continue
+                        print(f"Failed to process screenshot from function call: {e}")
+
+            # Handle sibling user messages with input_image content (GPT-5.4 computer calls)
+            # These accompany function_call_output and contain the actual screenshot
+            elif result_item.get("role") == "user":
+                content = result_item.get("content", [])
+                if isinstance(content, list):
+                    for content_item in content:
+                        if isinstance(content_item, dict) and content_item.get("type") == "input_image":
+                            image_url = content_item.get("image_url", "")
+                            if isinstance(image_url, str) and image_url.startswith("data:"):
+                                try:
+                                    b64_payload = image_url.split(",", 1)[1]
+                                    image_bytes = base64.b64decode(b64_payload)
+
+                                    # If we have coordinates, draw crosshair annotation
+                                    if x_coord is not None and y_coord is not None and x_coord != 0 and y_coord != 0:
+                                        annotated_image = self._draw_crosshair_on_image(
+                                            image_bytes, int(x_coord), int(y_coord)
+                                        )
+                                        self._save_artifact("screenshot_action", annotated_image)
+                                    else:
+                                        # Save plain screenshot without crosshair
+                                        self._save_artifact("screenshot", image_bytes)
+
+                                    screenshot_found = True
+                                    break
+
+                                except Exception as e:
+                                    # If processing fails, just log and continue
+                                    print(f"Failed to process screenshot from user message: {e}")
 
         # Increment turn counter
         self.current_turn += 1

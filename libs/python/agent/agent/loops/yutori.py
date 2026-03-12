@@ -145,11 +145,11 @@ def _convert_n1_action_to_computer_action(
 
     if fn_name == "type":
         text = args.get("text", "")
-        action: Dict[str, Any] = {"action": "type", "text": text}
-        # Handle press_enter_after by appending Enter keypress
         if args.get("press_enter_after"):
-            action["text"] = text + "\n"
-        return action
+            text = text + "\n"
+        # Note: clear_before_typing is not supported by the framework's type action.
+        # n1 rarely emits this flag; when it does, the field may already be empty.
+        return {"action": "type", "text": text}
 
     if fn_name == "key_press":
         key_comb = args.get("key_comb", "")
@@ -160,9 +160,14 @@ def _convert_n1_action_to_computer_action(
     if fn_name == "wait":
         return {"action": "wait"}
 
-    # Navigation actions are not computer actions — return None to signal function_call
-    if fn_name in ("goto_url", "go_back", "refresh"):
-        return None
+    if fn_name == "go_back":
+        return {"action": "history_back"}
+
+    if fn_name == "refresh":
+        return {"action": "keypress", "keys": ["F5"]}
+
+    if fn_name == "goto_url":
+        return {"action": "visit_url", "url": args.get("url", "")}
 
     return None
 
@@ -217,7 +222,6 @@ class YutoriN1Config(AsyncAgentConfig):
                 screen_width, screen_height = await computer_handler.get_dimensions()
             except Exception:
                 pass
-
         # Convert messages from Responses API format to chat completions format
         completion_messages = convert_responses_items_to_completion_messages(
             messages,
@@ -367,7 +371,7 @@ class YutoriN1Config(AsyncAgentConfig):
                     # Only use content_text once
                     content_text = ""
                 else:
-                    # Navigation or custom tool — emit as function_call
+                    # Custom tool — emit as function_call
                     output_items.append(
                         make_function_call_item(fn_name, args, call_id=tc_id)
                     )

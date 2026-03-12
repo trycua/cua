@@ -221,7 +221,12 @@ class YutoriN1Config(AsyncAgentConfig):
             try:
                 screen_width, screen_height = await computer_handler.get_dimensions()
             except Exception:
-                pass
+                # BrowserTool doesn't have get_dimensions() but has viewport attrs
+                vw = getattr(computer_handler, "viewport_width", None)
+                vh = getattr(computer_handler, "viewport_height", None)
+                if vw and vh:
+                    screen_width, screen_height = vw, vh
+
         # Convert messages from Responses API format to chat completions format
         completion_messages = convert_responses_items_to_completion_messages(
             messages,

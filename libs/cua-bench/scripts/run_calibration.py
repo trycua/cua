@@ -131,12 +131,12 @@ def main() -> None:
             print(f"  [{model_name}] Launching {args.attempts} simultaneous runs...")
             run_ids = []
             for i in range(args.attempts):
-                run_id = start_run(task_path, model_id, args.max_steps)
-                if run_id:
+                try:
+                    run_id = start_run(task_path, model_id, args.max_steps)
                     print(f"    run {i+1}: {run_id}")
                     run_ids.append(run_id)
-                else:
-                    print(f"    run {i+1}: FAILED to get run ID")
+                except Exception as e:
+                    print(f"    run {i+1}: FAILED to start — {e}")
 
             wait_for_runs(run_ids)
 

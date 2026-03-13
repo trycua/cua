@@ -21,6 +21,7 @@ from . import (
     uiins,
     uitars,
     uitars2,
+    yutori,
 )
 
 __all__ = [
@@ -41,4 +42,5 @@ __all__ = [
     "uiins",
     "uitars",
     "uitars2",
+    "yutori",
 ]

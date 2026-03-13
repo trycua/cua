@@ -62,6 +62,11 @@ class cuaComputerHandler(AsyncComputerHandler):
         assert self.interface is not None
         await self.interface.double_click(x, y)
 
+    async def right_click(self, x: int, y: int) -> None:
+        """Right click at coordinates."""
+        assert self.interface is not None
+        await self.interface.right_click(x, y)
+
     async def scroll(self, x: int, y: int, scroll_x: int, scroll_y: int) -> None:
         """Scroll at coordinates with specified scroll amounts."""
         assert self.interface is not None
@@ -96,9 +101,26 @@ class cuaComputerHandler(AsyncComputerHandler):
             # Handle key combinations
             await self.interface.hotkey(*keys)
 
-    async def drag(self, path: List[Dict[str, int]]) -> None:
-        """Drag along specified path."""
+    async def drag(
+        self,
+        path: Optional[List[Dict[str, int]]] = None,
+        start_x: Optional[int] = None,
+        start_y: Optional[int] = None,
+        end_x: Optional[int] = None,
+        end_y: Optional[int] = None,
+    ) -> None:
+        """Drag along specified path or from start to end coordinates.
+
+        Supports two formats:
+        - path: List of {x, y} points to drag through
+        - start_x, start_y, end_x, end_y: Simple drag from start to end
+        """
         assert self.interface is not None
+
+        # If start/end coordinates provided, convert to path format
+        if start_x is not None and start_y is not None and end_x is not None and end_y is not None:
+            path = [{"x": start_x, "y": start_y}, {"x": end_x, "y": end_y}]
+
         if not path:
             return
 
@@ -113,6 +135,17 @@ class cuaComputerHandler(AsyncComputerHandler):
         # End drag at last point
         end = path[-1]
         await self.interface.mouse_up(end["x"], end["y"])
+
+    async def terminate(self, status: str = "success") -> Dict[str, Any]:
+        """Terminate the current task and report its completion status.
+
+        Args:
+            status: Status of the task ("success" or "failure")
+
+        Returns:
+            Dict with terminated flag and status
+        """
+        return {"success": True, "status": status, "terminated": True}
 
     async def get_current_url(self) -> str:
         """Get current URL (for browser environments)."""

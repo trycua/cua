@@ -1,230 +1,34 @@
 ---
 title: Build a Custom Agent
-description: Create your own agent to solve computer-use tasks
+description: Add your own agent to cua-bench
 ---
 
-In this tutorial, you'll build a custom agent that can interact with desktop environments. You'll start with a simple rule-based agent and progressively add intelligence.
+# Build a Custom Agent
 
-**Time:** ~20 minutes
-**Prerequisites:** cua-bench installed, basic Python knowledge
+Add a custom agent to cua-bench by extending `BaseAgent` and registering it.
 
-## What You'll Build
+## 1. Create your agent file
 
-A custom agent that can:
-
-1. Take screenshots of the desktop
-2. Analyze what it sees
-3. Decide on actions (click, type, etc.)
-4. Execute those actions
-
-## Agent Architecture
-
-Every agent in cua-bench extends the `BaseAgent` class and implements the `perform_task()` method:
+Create `cua_bench/agents/my_agent.py`:
 
 ```python
-from cua_bench.agents import BaseAgent, AgentResult
-
-class MyAgent(BaseAgent):
-    @staticmethod
-    def name() -> str:
-        return "my-agent"
-
-    async def perform_task(
-        self,
-        task_description: str,
-        session: DesktopSession,
-        logging_dir: Path | None = None,
-    ) -> AgentResult:
-        # Your agent logic here
-        pass
-```
-
-## Step 1: Scaffold the Agent
-
-Use the CLI to create the agent structure:
-
-```bash
-cb agent init my-agent --output-dir ./agents
-```
-
-This creates:
-
-```
-agents/
-├── __init__.py
-├── agent.py
-└── requirements.txt
-```
-
-## Step 2: Implement a Basic Agent
-
-Edit `agents/agent.py`:
-
-```python
-import cua_bench as cb
-from cua_bench.agents import BaseAgent, AgentResult, FailureMode
-from pathlib import Path
-
-
-class MyAgent(BaseAgent):
-    """A simple rule-based agent."""
-
-    @staticmethod
-    def name() -> str:
-        return "my-agent"
-
-    async def perform_task(
-        self,
-        task_description: str,
-        session: cb.DesktopSession,
-        logging_dir: Path | None = None,
-    ) -> AgentResult:
-        """Perform the task by taking screenshots and clicking."""
-
-        # Step 1: Take a screenshot
-        screenshot = await session.screenshot()
-
-        # Step 2: Simple strategy - click the center of the screen
-        # (We'll make this smarter later)
-        center_x = 256
-        center_y = 256
-
-        await session.execute_action(cb.ClickAction(x=center_x, y=center_y))
-
-        # Return result with token counts (for cost tracking)
-        return AgentResult(
-            total_input_tokens=0,
-            total_output_tokens=0,
-            failure_mode=FailureMode.NONE
-        )
-```
-
-This basic agent just clicks the center of the screen—not very smart, but it's a starting point!
-
-## Step 3: Register the Agent
-
-Create or edit `.cua/agents.yaml` in your project root:
-
-```yaml
-agents:
-  - name: my-agent
-    import_path: agents.agent:MyAgent
-    defaults:
-      max_steps: 20
-```
-
-## Step 4: Test the Agent
-
-Run the agent against a simple task:
-
-```bash
-# First, create a simple button task (from previous example)
-# Then run your agent against it
-
-cb run task tasks/my-button-task --agent my-agent
-```
-
-The agent will click the center—which probably won't hit the button. Let's make it smarter.
-
-## Step 5: Add Screenshot Analysis
-
-Now let's add actual intelligence. We'll use a simple approach: look for elements and click them.
-
-```python
-import cua_bench as cb
-from cua_bench.agents import BaseAgent, AgentResult, FailureMode
-from pathlib import Path
 import base64
-
-
-class MyAgent(BaseAgent):
-    """An agent that analyzes screenshots to find targets."""
-
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-        self.max_steps = kwargs.get("max_steps", 20)
-
-    @staticmethod
-    def name() -> str:
-        return "my-agent"
-
-    async def perform_task(
-        self,
-        task_description: str,
-        session: cb.DesktopSession,
-        logging_dir: Path | None = None,
-    ) -> AgentResult:
-        """Perform task with screenshot analysis."""
-
-        total_input_tokens = 0
-        total_output_tokens = 0
-
-        for step in range(self.max_steps):
-            # Take screenshot
-            screenshot_bytes = await session.screenshot()
-
-            # Save screenshot for debugging
-            if logging_dir:
-                screenshot_path = logging_dir / f"step_{step}.png"
-                screenshot_path.write_bytes(screenshot_bytes)
-
-            # Analyze and decide action
-            action = await self._decide_action(
-                task_description,
-                screenshot_bytes,
-                step
-            )
-
-            if action is None:
-                # Agent thinks task is complete
-                break
-
-            # Execute the action
-            await session.execute_action(action)
-
-        return AgentResult(
-            total_input_tokens=total_input_tokens,
-            total_output_tokens=total_output_tokens,
-            failure_mode=FailureMode.NONE
-        )
-
-    async def _decide_action(
-        self,
-        task_description: str,
-        screenshot: bytes,
-        step: int
-    ) -> cb.Action | None:
-        """Decide what action to take based on the screenshot."""
-
-        # For now, use a simple heuristic:
-        # Click slightly below center where buttons often are
-        if step == 0:
-            return cb.ClickAction(x=256, y=300)
-
-        # After first click, assume done
-        return None
-```
-
-## Step 6: Integrate with an LLM
-
-For real intelligence, integrate with a language model. Here's an example using Anthropic's Claude:
-
-```python
-import anthropic
-import cua_bench as cb
-from cua_bench.agents import BaseAgent, AgentResult, FailureMode
 from pathlib import Path
-import base64
+from typing import TYPE_CHECKING
+
+from . import register_agent
+from .base import AgentResult, BaseAgent, FailureMode
+
+if TYPE_CHECKING:
+    from ..computers import DesktopSession
 
 
+@register_agent("my-agent")
 class MyAgent(BaseAgent):
-    """An LLM-powered agent."""
-
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.model = kwargs.get("model", "claude-sonnet-4-20250514")
-        self.max_steps = kwargs.get("max_steps", 20)
-        self.client = anthropic.Anthropic()
+        self.max_steps = int(kwargs.get("max_steps", 50))
 
     @staticmethod
     def name() -> str:
@@ -233,224 +37,14 @@ class MyAgent(BaseAgent):
     async def perform_task(
         self,
         task_description: str,
-        session: cb.DesktopSession,
+        session: "DesktopSession",
         logging_dir: Path | None = None,
+        tracer=None,
     ) -> AgentResult:
-        """Perform task using LLM for decisions."""
+        instruction = self._render_instruction(task_description)
 
-        total_input_tokens = 0
-        total_output_tokens = 0
-
-        for step in range(self.max_steps):
-            # Take screenshot
-            screenshot_bytes = await session.screenshot()
-
-            # Ask LLM what to do
-            action, input_tokens, output_tokens = await self._ask_llm(
-                task_description,
-                screenshot_bytes
-            )
-
-            total_input_tokens += input_tokens
-            total_output_tokens += output_tokens
-
-            if action is None:
-                break
-
-            await session.execute_action(action)
-
-        return AgentResult(
-            total_input_tokens=total_input_tokens,
-            total_output_tokens=total_output_tokens,
-            failure_mode=FailureMode.NONE
-        )
-
-    async def _ask_llm(
-        self,
-        task_description: str,
-        screenshot: bytes
-    ) -> tuple[cb.Action | None, int, int]:
-        """Ask the LLM what action to take."""
-
-        # Encode screenshot as base64
-        screenshot_b64 = base64.standard_b64encode(screenshot).decode()
-
-        response = self.client.messages.create(
-            model=self.model,
-            max_tokens=1024,
-            messages=[{
-                "role": "user",
-                "content": [
-                    {
-                        "type": "image",
-                        "source": {
-                            "type": "base64",
-                            "media_type": "image/png",
-                            "data": screenshot_b64,
-                        }
-                    },
-                    {
-                        "type": "text",
-                        "text": f"""Task: {task_description}
-
-Look at this screenshot and decide what action to take.
-
-Respond with ONE of:
-- CLICK x y (to click at coordinates)
-- TYPE text (to type text)
-- DONE (if task is complete)
-
-Example: CLICK 150 200"""
-                    }
-                ]
-            }]
-        )
-
-        # Parse response
-        response_text = response.content[0].text.strip()
-        action = self._parse_action(response_text)
-
-        return (
-            action,
-            response.usage.input_tokens,
-            response.usage.output_tokens
-        )
-
-    def _parse_action(self, response: str) -> cb.Action | None:
-        """Parse LLM response into an action."""
-
-        if response.startswith("DONE"):
-            return None
-
-        if response.startswith("CLICK"):
-            parts = response.split()
-            if len(parts) >= 3:
-                x, y = int(parts[1]), int(parts[2])
-                return cb.ClickAction(x=x, y=y)
-
-        if response.startswith("TYPE"):
-            text = response[5:].strip()
-            return cb.TypeAction(text=text)
-
-        # Default: no action
-        return None
-```
-
-## Step 7: Run with Custom Model
-
-Update your agent registration to accept model configuration:
-
-```yaml
-agents:
-  - name: my-agent
-    import_path: agents.agent:MyAgent
-    defaults:
-      model: claude-sonnet-4-20250514
-      max_steps: 20
-```
-
-Then run:
-
-```bash
-export ANTHROPIC_API_KEY=sk-...
-cb run task tasks/my-button-task --agent my-agent
-```
-
-## Advanced: Build a Docker Image
-
-For production use, package your agent as a Docker image:
-
-### Create Dockerfile
-
-```dockerfile
-FROM python:3.11-slim
-
-WORKDIR /app
-
-# Install dependencies
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
-# Copy agent code
-COPY agents/ ./agents/
-
-# Set entrypoint
-ENTRYPOINT ["python", "-m", "agents.agent"]
-```
-
-### Build and Push
-
-```bash
-# Build
-docker build -t myregistry/my-agent:latest .
-
-# Push to registry
-cb agent push myregistry/my-agent:latest
-```
-
-### Register Docker Agent
-
-```yaml
-agents:
-  - name: my-agent-docker
-    image: myregistry/my-agent:latest
-    defaults:
-      model: claude-sonnet-4-20250514
-      max_steps: 50
-```
-
-## Available Actions
-
-Your agent can execute these actions via `session.execute_action()`:
-
-| Action                                   | Description                                   |
-| ---------------------------------------- | --------------------------------------------- |
-| `ClickAction(x, y)`                      | Single click at coordinates                   |
-| `RightClickAction(x, y)`                 | Right-click                                   |
-| `DoubleClickAction(x, y)`                | Double-click                                  |
-| `DragAction(from_x, from_y, to_x, to_y)` | Drag from one point to another                |
-| `TypeAction(text)`                       | Type text                                     |
-| `KeyAction(key)`                         | Press a single key (e.g., "return", "escape") |
-| `HotkeyAction(keys)`                     | Press key combination (e.g., ["ctrl", "c"])   |
-| `ScrollAction(direction, amount)`        | Scroll up/down                                |
-| `WaitAction(seconds)`                    | Wait for a duration                           |
-
-## Complete Code
-
-<details>
-<summary>agents/agent.py (LLM-powered)</summary>
-
-```python
-import anthropic
-import cua_bench as cb
-from cua_bench.agents import BaseAgent, AgentResult, FailureMode
-from pathlib import Path
-import base64
-
-
-class MyAgent(BaseAgent):
-    """An LLM-powered computer-use agent."""
-
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-        self.model = kwargs.get("model", "claude-sonnet-4-20250514")
-        self.max_steps = kwargs.get("max_steps", 20)
-        self.client = anthropic.Anthropic()
-
-    @staticmethod
-    def name() -> str:
-        return "my-agent"
-
-    async def perform_task(
-        self,
-        task_description: str,
-        session: cb.DesktopSession,
-        logging_dir: Path | None = None,
-    ) -> AgentResult:
-        """Perform task using LLM for decisions."""
-
-        total_input_tokens = 0
-        total_output_tokens = 0
+        total_input = 0
+        total_output = 0
 
         for step in range(self.max_steps):
             screenshot_bytes = await session.screenshot()
@@ -458,120 +52,87 @@ class MyAgent(BaseAgent):
             if logging_dir:
                 (logging_dir / f"step_{step}.png").write_bytes(screenshot_bytes)
 
-            action, in_tokens, out_tokens = await self._ask_llm(
-                task_description, screenshot_bytes
-            )
+            # Your logic: send screenshot to an LLM, parse action, etc.
+            # action = await self._decide(instruction, screenshot_bytes)
 
-            total_input_tokens += in_tokens
-            total_output_tokens += out_tokens
-
-            if action is None:
-                break
-
-            await session.execute_action(action)
+            # if action is None:
+            #     break
+            # await session.execute_action(action)
 
         return AgentResult(
-            total_input_tokens=total_input_tokens,
-            total_output_tokens=total_output_tokens,
-            failure_mode=FailureMode.NONE
+            total_input_tokens=total_input,
+            total_output_tokens=total_output,
+            failure_mode=FailureMode.NONE,
         )
-
-    async def _ask_llm(
-        self, task_description: str, screenshot: bytes
-    ) -> tuple[cb.Action | None, int, int]:
-        """Ask the LLM what action to take."""
-
-        screenshot_b64 = base64.standard_b64encode(screenshot).decode()
-
-        response = self.client.messages.create(
-            model=self.model,
-            max_tokens=1024,
-            messages=[{
-                "role": "user",
-                "content": [
-                    {
-                        "type": "image",
-                        "source": {
-                            "type": "base64",
-                            "media_type": "image/png",
-                            "data": screenshot_b64,
-                        }
-                    },
-                    {
-                        "type": "text",
-                        "text": f"""Task: {task_description}
-
-Look at this screenshot and decide what action to take.
-
-Respond with ONE of:
-- CLICK x y (to click at coordinates)
-- TYPE text (to type text)
-- KEY key (to press a key like "return")
-- DONE (if task is complete)
-
-Example: CLICK 150 200"""
-                    }
-                ]
-            }]
-        )
-
-        response_text = response.content[0].text.strip()
-        action = self._parse_action(response_text)
-
-        return (action, response.usage.input_tokens, response.usage.output_tokens)
-
-    def _parse_action(self, response: str) -> cb.Action | None:
-        """Parse LLM response into an action."""
-
-        response = response.upper().strip()
-
-        if response.startswith("DONE"):
-            return None
-
-        if response.startswith("CLICK"):
-            parts = response.split()
-            if len(parts) >= 3:
-                return cb.ClickAction(x=int(parts[1]), y=int(parts[2]))
-
-        if response.startswith("TYPE"):
-            text = response[5:].strip()
-            return cb.TypeAction(text=text)
-
-        if response.startswith("KEY"):
-            key = response[4:].strip().lower()
-            return cb.KeyAction(key=key)
-
-        return None
 ```
 
-</details>
+## 2. Register the import
 
-<details>
-<summary>.cua/agents.yaml</summary>
+Add one line to `cua_bench/agents/__init__.py`:
 
-```yaml
-agents:
-  - name: my-agent
-    import_path: agents.agent:MyAgent
-    defaults:
-      model: claude-sonnet-4-20250514
-      max_steps: 20
+```python
+from .my_agent import MyAgent  # noqa: E402
 ```
 
-</details>
+This triggers `@register_agent("my-agent")` at import time.
 
-<details>
-<summary>agents/requirements.txt</summary>
+## 3. Run it
 
+```bash
+cb run task tasks/my-task --agent my-agent
+cb run task tasks/my-task --agent my-agent --agent-kwarg model=gpt-4o --agent-kwarg max_steps=100
 ```
-cua-bench
-anthropic>=0.20.0
+
+## 4. Develop without rebuilding the Docker image
+
+Use `--with` to mount your local cua-bench (or any local package) into the agent container:
+
+```bash
+cb run task tasks/my-task --agent my-agent --with ../libs/cua-bench
 ```
 
-</details>
+This mounts the path into the container and runs `pip install` on it before the agent starts. You can repeat `--with` for multiple packages.
 
-## Next Steps
+## Reference
 
-- Build a [Universal Task](/cuabench/examples/universal-task) with custom GUIs
-- See the [Custom Agents Guide](/cuabench/guide/advanced/custom-agents) for more details
-- Explore the [Adapters](/cuabench/guide/fundamentals/adapters) for benchmark integrations
+### BaseAgent interface
+
+| Method / Property | Description |
+| --- | --- |
+| `name()` (static, abstract) | Return the agent name string |
+| `perform_task(task_description, session, logging_dir, tracer)` (abstract) | Run the agent loop, return `AgentResult` |
+| `version` | Optional version string (set via `kwargs`) |
+| `_render_instruction(text)` | Render through a Jinja2 `prompt_template` if one was provided |
+
+### AgentResult
+
+```python
+@dataclass
+class AgentResult:
+    total_input_tokens: int = 0
+    total_output_tokens: int = 0
+    failure_mode: FailureMode = FailureMode.UNSET  # NONE, UNKNOWN, MAX_STEPS_EXCEEDED
+```
+
+### Available actions
+
+All importable from `cua_bench` (e.g. `from cua_bench import ClickAction`):
+
+| Action | Fields |
+| --- | --- |
+| `ClickAction` | `x, y` |
+| `RightClickAction` | `x, y` |
+| `DoubleClickAction` | `x, y` |
+| `MiddleClickAction` | `x, y` |
+| `DragAction` | `from_x, from_y, to_x, to_y, duration=1.0` |
+| `MoveToAction` | `x, y, duration=0.0` |
+| `ScrollAction` | `direction="up", amount=100` |
+| `TypeAction` | `text` |
+| `KeyAction` | `key` |
+| `HotkeyAction` | `keys` (list) |
+| `WaitAction` | `seconds=1.0` |
+| `DoneAction` | (none) |
+
+### kwargs
+
+All `--agent-kwarg` values from the CLI arrive as strings in `**kwargs`. Cast as needed (e.g. `int(kwargs.get("max_steps", 50))`). Built-in kwargs handled by `BaseAgent`: `version`, `prompt_template`.

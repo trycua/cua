@@ -1,14 +1,19 @@
 """Sandbox management commands for CUA CLI."""
 
 import argparse
+import asyncio
+import base64
+import json
 import os
+import shutil
+import sys
 import webbrowser
 from typing import Any, Optional
 from urllib.parse import quote
 
 import aiohttp
 from core.http import cua_version_headers
-from cua_cli.auth.store import require_api_key
+from cua_cli.auth.store import get_api_key, require_api_key
 from cua_cli.utils.async_utils import run_async
 from cua_cli.utils.output import (
     print_error,
@@ -203,6 +208,57 @@ def register_parser(subparsers: argparse._SubParsersAction) -> None:
             help="Sandbox name",
         )
 
+        # shell command
+        # Note: Options must come before 'name' due to argparse REMAINDER behavior
+        # Usage: cua sb shell [--cols N] [--rows N] <name> [command...]
+        shell_parser = sb_subparsers.add_parser(
+            "shell",
+            help="Open interactive shell or run command in sandbox",
+        )
+        shell_parser.add_argument(
+            "--cols",
+            type=int,
+            default=None,
+            help="Terminal width (default: auto-detect)",
+        )
+        shell_parser.add_argument(
+            "--rows",
+            type=int,
+            default=None,
+            help="Terminal height (default: auto-detect)",
+        )
+        shell_parser.add_argument(
+            "name",
+            help="Sandbox name",
+        )
+        shell_parser.add_argument(
+            "shell_command",
+            nargs=argparse.REMAINDER,
+            help="Command to run (optional, opens interactive shell if omitted)",
+        )
+
+        # exec command
+        # Note: --json must come before 'name' due to argparse REMAINDER behavior
+        # Usage: cua sb exec [--json] <name> <command...>
+        exec_parser = sb_subparsers.add_parser(
+            "exec",
+            help="Execute command in sandbox (non-interactive)",
+        )
+        exec_parser.add_argument(
+            "--json",
+            action="store_true",
+            help="Output as JSON",
+        )
+        exec_parser.add_argument(
+            "name",
+            help="Sandbox name",
+        )
+        exec_parser.add_argument(
+            "exec_command",
+            nargs=argparse.REMAINDER,
+            help="Command to execute",
+        )
+
 
 def execute(args: argparse.Namespace) -> int:
     """Execute sandbox command based on subcommand."""
@@ -226,9 +282,15 @@ def execute(args: argparse.Namespace) -> int:
         return cmd_suspend(args)
     elif cmd in ("vnc", "open"):
         return cmd_vnc(args)
+    elif cmd == "shell":
+        return cmd_shell(args)
+    elif cmd == "exec":
+        return cmd_exec(args)
     else:
         print_error("Usage: cua sandbox <command>")
-        print_info("Commands: list, create, get, delete, start, stop, restart, suspend, vnc")
+        print_info(
+            "Commands: list, create, get, delete, start, stop, restart, suspend, vnc, shell, exec"
+        )
         return 1
 
 
@@ -535,3 +597,312 @@ def cmd_vnc(args: argparse.Namespace) -> int:
     print_info(f"Opening VNC: {vnc_url}")
     webbrowser.open(vnc_url)
     return 0
+
+
+def _default_shell() -> str:
+    """Get the default shell for the platform."""
+    return "powershell" if sys.platform == "win32" else "bash"
+
+
+async def _get_sandbox_api_url(name: str) -> tuple[str, str]:
+    """Get the API URL and api_key for a sandbox.
+
+    Returns:
+        Tuple of (api_url, api_key)
+
+    Raises:
+        ValueError: If sandbox not found or not ready
+    """
+    api_key = require_api_key()
+    async with _get_provider() as provider:
+        vm = await provider.get_vm(name)
+        if not vm:
+            raise ValueError(f"Sandbox '{name}' not found")
+        if vm.get("status") == "not_found":
+            raise ValueError(f"Sandbox '{name}' not found")
+        api_url = vm.get("api_url")
+        if not api_url:
+            raise ValueError(f"Sandbox '{name}' has no API URL (is it running?)")
+        return api_url, api_key
+
+
+async def _shell_interactive(
+    name: str,
+    api_url: str,
+    api_key: str,
+    command: Optional[str],
+    cols: Optional[int],
+    rows: Optional[int],
+) -> int:
+    """Run an interactive PTY session via WebSocket."""
+    import signal
+    import threading
+
+    _auto_cols, _auto_rows = shutil.get_terminal_size((80, 24))
+    cols = cols if cols is not None else _auto_cols
+    rows = rows if rows is not None else _auto_rows
+
+    ws_url = api_url.replace("https://", "wss://").replace("http://", "ws://")
+
+    headers = {
+        "X-API-Key": api_key,
+        "X-Container-Name": name,
+        "Content-Type": "application/json",
+    }
+    ws_params = {
+        "api_key": api_key,
+        "container_name": name,
+    }
+
+    # Create PTY session
+    try:
+        async with aiohttp.ClientSession() as http:
+            async with http.post(
+                f"{api_url}/pty",
+                json={"command": command or _default_shell(), "cols": cols, "rows": rows},
+                headers=headers,
+                timeout=aiohttp.ClientTimeout(total=15),
+            ) as resp:
+                if resp.status == 401:
+                    raise ValueError("Authentication failed. Is the sandbox running?")
+                resp.raise_for_status()
+                data = await resp.json()
+    except aiohttp.ClientResponseError as e:
+        raise ValueError(f"PTY unavailable: {e.status} {e.message}") from e
+    except aiohttp.ClientError as e:
+        raise ValueError(f"Connection failed: {e}") from e
+
+    pid: int = data["pid"]
+    exit_code_cell: list[int] = [0]
+    done_event = asyncio.Event()
+
+    if sys.platform == "win32":
+        import msvcrt
+
+        async def _run_ws() -> None:
+            async with aiohttp.ClientSession() as http:
+                async with http.ws_connect(f"{ws_url}/pty/{pid}/ws", params=ws_params) as ws:
+
+                    def _stdin_loop() -> None:
+                        while not done_event.is_set():
+                            try:
+                                ch = msvcrt.getch()
+                                if ch:
+                                    encoded = base64.b64encode(ch).decode()
+                                    asyncio.run_coroutine_threadsafe(
+                                        ws.send_str(json.dumps({"type": "stdin", "data": encoded})),
+                                        asyncio.get_event_loop(),
+                                    )
+                            except Exception:
+                                break
+
+                    t = threading.Thread(target=_stdin_loop, daemon=True)
+                    t.start()
+
+                    async for raw_msg in ws:
+                        if raw_msg.type == aiohttp.WSMsgType.TEXT:
+                            try:
+                                msg = json.loads(raw_msg.data)
+                            except Exception:
+                                continue
+                            if msg.get("type") == "output":
+                                chunk = base64.b64decode(msg["data"])
+                                sys.stdout.buffer.write(chunk)
+                                sys.stdout.buffer.flush()
+                            elif msg.get("type") == "exit":
+                                exit_code_cell[0] = int(msg.get("code", 0))
+                                break
+                        elif raw_msg.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR):
+                            break
+                    done_event.set()
+
+        await _run_ws()
+    else:
+        import termios
+        import tty
+
+        old_settings = termios.tcgetattr(sys.stdin.fileno())
+        tty.setraw(sys.stdin.fileno())
+
+        loop = asyncio.get_event_loop()
+
+        async def _run_ws() -> None:
+            async with aiohttp.ClientSession() as http:
+                async with http.ws_connect(f"{ws_url}/pty/{pid}/ws", params=ws_params) as ws:
+
+                    def _resize(_sig=None, _frame=None) -> None:
+                        c, r = shutil.get_terminal_size((80, 24))
+                        asyncio.run_coroutine_threadsafe(
+                            ws.send_str(json.dumps({"type": "resize", "cols": c, "rows": r})),
+                            loop,
+                        )
+
+                    signal.signal(signal.SIGWINCH, _resize)
+
+                    def _stdin_loop() -> None:
+                        while not done_event.is_set():
+                            try:
+                                ch = sys.stdin.buffer.read(1)
+                                if not ch:
+                                    break
+                                encoded = base64.b64encode(ch).decode()
+                                asyncio.run_coroutine_threadsafe(
+                                    ws.send_str(json.dumps({"type": "stdin", "data": encoded})),
+                                    loop,
+                                )
+                            except Exception:
+                                break
+
+                    t = threading.Thread(target=_stdin_loop, daemon=True)
+                    t.start()
+
+                    async for raw_msg in ws:
+                        if raw_msg.type == aiohttp.WSMsgType.TEXT:
+                            try:
+                                msg = json.loads(raw_msg.data)
+                            except Exception:
+                                continue
+                            if msg.get("type") == "output":
+                                chunk = base64.b64decode(msg["data"])
+                                sys.stdout.buffer.write(chunk)
+                                sys.stdout.buffer.flush()
+                            elif msg.get("type") == "exit":
+                                exit_code_cell[0] = int(msg.get("code", 0))
+                                break
+                        elif raw_msg.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR):
+                            break
+                    done_event.set()
+
+        try:
+            await _run_ws()
+        finally:
+            try:
+                termios.tcsetattr(sys.stdin.fileno(), termios.TCSADRAIN, old_settings)
+            except Exception:
+                pass
+            signal.signal(signal.SIGWINCH, signal.SIG_DFL)
+
+    return exit_code_cell[0]
+
+
+async def _exec_noninteractive(
+    name: str,
+    api_url: str,
+    api_key: str,
+    command: str,
+) -> dict:
+    """Execute a command non-interactively and return result."""
+    headers = {
+        "X-API-Key": api_key,
+        "X-Container-Name": name,
+        "Content-Type": "application/json",
+    }
+
+    # Use the /cmd endpoint with run_command for non-interactive execution
+    async with aiohttp.ClientSession() as http:
+        async with http.post(
+            f"{api_url}/cmd",
+            json={"command": "run_command", "params": {"command": command}},
+            headers=headers,
+            timeout=aiohttp.ClientTimeout(total=120),
+        ) as resp:
+            if resp.status == 401:
+                return {"success": False, "error": "Authentication failed"}
+            text = await resp.text()
+            # Parse SSE-style response
+            for line in text.splitlines():
+                if line.startswith("data: "):
+                    try:
+                        return json.loads(line[6:])
+                    except json.JSONDecodeError:
+                        pass
+            # Try parsing as plain JSON
+            try:
+                return json.loads(text)
+            except json.JSONDecodeError:
+                return {"success": False, "error": f"Unexpected response: {text[:200]}"}
+
+
+def cmd_shell(args: argparse.Namespace) -> int:
+    """Open interactive shell or run command in sandbox."""
+    command_parts = getattr(args, "shell_command", [])
+    command = " ".join(command_parts).strip() if command_parts else None
+
+    cols: Optional[int] = getattr(args, "cols", None)
+    rows: Optional[int] = getattr(args, "rows", None)
+
+    async def _run() -> int:
+        try:
+            api_url, api_key = await _get_sandbox_api_url(args.name)
+        except ValueError as e:
+            print_error(str(e))
+            return 1
+
+        # Non-interactive mode when stdin is not a TTY
+        if not sys.stdin.isatty():
+            if not command:
+                print_error("No command provided for non-interactive mode")
+                return 1
+            result = await _exec_noninteractive(args.name, api_url, api_key, command)
+            if not result.get("success", True):
+                print_error(result.get("error", "Command failed"))
+                return 1
+            stdout = result.get("stdout", "").strip()
+            stderr = result.get("stderr", "").strip()
+            returncode = result.get("returncode") or result.get("return_code") or 0
+            if stdout:
+                print(stdout)
+            if stderr:
+                print(stderr, file=sys.stderr)
+            return returncode
+
+        # Interactive mode
+        try:
+            return await _shell_interactive(args.name, api_url, api_key, command, cols, rows)
+        except ValueError as e:
+            print_error(str(e))
+            return 1
+
+    return run_async(_run())
+
+
+def cmd_exec(args: argparse.Namespace) -> int:
+    """Execute command in sandbox (non-interactive)."""
+    command_parts = getattr(args, "exec_command", [])
+    command = " ".join(command_parts).strip() if command_parts else None
+
+    if not command:
+        print_error("No command provided")
+        print_info("Usage: cua sb exec <name> <command>")
+        return 1
+
+    async def _run() -> int:
+        try:
+            api_url, api_key = await _get_sandbox_api_url(args.name)
+        except ValueError as e:
+            print_error(str(e))
+            return 1
+
+        result = await _exec_noninteractive(args.name, api_url, api_key, command)
+
+        if args.json:
+            print_json(result)
+            # Return the actual exit code from the command
+            return result.get("returncode") or result.get("return_code") or 0
+
+        if not result.get("success", True):
+            print_error(result.get("error", "Command failed"))
+            return 1
+
+        stdout = result.get("stdout", "").strip()
+        stderr = result.get("stderr", "").strip()
+        returncode = result.get("returncode") or result.get("return_code") or 0
+
+        if stdout:
+            print(stdout)
+        if stderr:
+            print(stderr, file=sys.stderr)
+
+        return returncode
+
+    return run_async(_run())

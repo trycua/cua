@@ -42,7 +42,7 @@ def start_run(task_path: Path, model_id: str, max_steps: int) -> str:
     result = subprocess.run(
         [CB, "run", "dataset", str(task_path.parent),
          "--agent", "cua-agent", "--model", model_id, "--max-steps", str(max_steps),
-         "--max-parallel", "1", "--task-filter", task_path.name],
+         "--max-parallel", "5", "--task-filter", task_path.name],
         capture_output=True, text=True, cwd=str(SCRIPT_DIR.parent),
     )
     clean = re.sub(r"\x1b\[[0-9;]*m", "", result.stdout)

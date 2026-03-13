@@ -19,17 +19,16 @@ import os
 
 import pytest
 import pytest_asyncio
-
-from cua_sandbox.sandbox import Sandbox
 from cua_sandbox.localhost import Localhost
+from cua_sandbox.sandbox import Sandbox
+from cua_sandbox.transport.http import HTTPTransport
 from cua_sandbox.transport.local import LocalTransport
 from cua_sandbox.transport.websocket import WebSocketTransport
-from cua_sandbox.transport.http import HTTPTransport
-
 
 # ---------------------------------------------------------------------------
 # Helper: read env config
 # ---------------------------------------------------------------------------
+
 
 def _env_bool(key: str, default: bool = False) -> bool:
     val = os.environ.get(key, "")
@@ -48,6 +47,7 @@ CONTAINER_NAME = os.environ.get("CUA_TEST_CONTAINER_NAME")
 # ---------------------------------------------------------------------------
 # Transport fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest_asyncio.fixture
 async def local_transport():
@@ -81,13 +81,15 @@ async def http_transport():
 # Sandbox fixtures (one per transport)
 # ---------------------------------------------------------------------------
 
+
 @pytest_asyncio.fixture
 async def local_sandbox():
     if not LOCAL_ENABLED:
         pytest.skip("CUA_TEST_LOCAL disabled")
-    sb = await Sandbox.create(local=True, name="test-local")
-    yield sb
-    await sb.close()
+    host = Localhost()
+    await host._connect()
+    yield host
+    await host.close()
 
 
 @pytest_asyncio.fixture
@@ -104,8 +106,10 @@ async def http_sandbox():
     if not HTTP_URL:
         pytest.skip("CUA_TEST_HTTP_URL not set")
     sb = await Sandbox.create(
-        http_url=HTTP_URL, api_key=API_KEY,
-        container_name=CONTAINER_NAME, name="test-http",
+        http_url=HTTP_URL,
+        api_key=API_KEY,
+        container_name=CONTAINER_NAME,
+        name="test-http",
     )
     yield sb
     await sb.close()
@@ -124,6 +128,7 @@ async def localhost_instance():
 # ---------------------------------------------------------------------------
 # Parametrized "any sandbox" fixture — runs test against every available backend
 # ---------------------------------------------------------------------------
+
 
 def _sandbox_params():
     params = []

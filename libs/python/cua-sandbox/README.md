@@ -1,35 +1,55 @@
 # cua-sandbox
 
-Sandboxed VM and container environments with a unified Python API.
+Sandboxed VM environments with a unified Python API. Cloud by default.
+
+```bash
+pip install cua-sandbox
+```
+
+## Localhost (unsandboxed)
+
+Direct host control — **not sandboxed**, use with caution.
 
 ```python
-import asyncio
-from cua_sandbox import Image, sandbox
+from cua_sandbox import localhost
 
-async def main():
-    # Windows VM
-    image = Image.windows("11").winget_install("Git.Git", "VSCode")
-    async with sandbox(image) as win:
-        await win.shell.run("ver")
-        await win.mouse.click(500, 300)
+async with localhost() as host:
+    await host.shell.run("echo hello")
+    await host.screenshot()
+```
 
-    # macOS VM
-    image = Image.macos("15").run("brew install jq")
-    async with sandbox(image) as mac:
-        await mac.shell.run("sw_vers")
-        await mac.screenshot()
+## Ephemeral Cloud VM
 
-    # Linux VM
-    image = Image.linux("ubuntu", "24.04").apt_install("curl", "jq")
-    async with sandbox(image) as vm:
-        await vm.shell.run("uname -a")
-        await vm.keyboard.type("hello")
+Created on enter, destroyed on exit.
 
-    # Linux VM (from OCI registry)
-    image = Image.from_registry("ghcr.io/cirruslabs/ubuntu:latest")
-    async with sandbox(image) as ctr:
-        await ctr.shell.run("cat /etc/os-release")
-        await ctr.file.upload("data.csv", "/tmp/data.csv")
+```python
+from cua_sandbox import sandbox, Image
 
-asyncio.run(main())
+async with sandbox(image=Image.linux()) as sb:
+    await sb.shell.run("uname -a")
+    await sb.screenshot()
+```
+
+## Persistent Cloud VM
+
+Connect to an existing VM by name. Not destroyed on exit.
+
+```python
+from cua_sandbox import sandbox
+
+async with sandbox(name="my-vm") as sb:
+    result = await sb.shell.run("whoami")
+    print(result.stdout)
+```
+
+## Ephemeral Local VM
+
+Spins up a local VM using QEMU or Lume, destroyed on exit.
+
+```python
+from cua_sandbox import sandbox, Image
+from cua_sandbox.runtime import QEMURuntime
+
+async with sandbox(local=True, image=Image.linux()) as sb:
+    await sb.shell.run("uname -a")
 ```

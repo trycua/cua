@@ -1039,7 +1039,7 @@ wheels = [
 
 [[package]]
 name = "cua-agent"
-version = "0.7.29"
+version = "0.7.30"
 source = { editable = "libs/python/agent" }
 dependencies = [
     { name = "aiohttp" },
@@ -1191,7 +1191,7 @@ provides-extras = ["openai", "anthropic", "qwen", "omni", "uitars", "uitars-mlx"
 
 [[package]]
 name = "cua-auto"
-version = "0.1.1"
+version = "0.1.2"
 source = { editable = "libs/python/cua-auto" }
 dependencies = [
     { name = "pillow" },

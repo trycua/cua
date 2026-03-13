@@ -6,7 +6,7 @@
     "source.organizeImports": "explicit",
     "source.fixAll": "explicit"
   },
-  "extensions.ignoreRecommendations": false,
+  "extensions.ignoreRecommendations": true,
   "python.formatting.provider": "black",
   "[python]": {
     "editor.defaultFormatter": "ms-python.black-formatter",

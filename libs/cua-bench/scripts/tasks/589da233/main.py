@@ -36,27 +36,38 @@ async def start(task_cfg: cb.Task, session: cb.DesktopSession) -> None:
         await session.write_bytes(remote_path, local_path.read_bytes())
 
     try:
-        await session.apps.kicad.launch()
+        await session.apps.kicad.launch(project_path='/home/cua/kicad_project/kicad_currentdivider_circuit/kicad_currentdivider_circuit.kicad_pro')
     except Exception:
         pass
     await asyncio.sleep(5)
 
 
+@cb.solve_task(split="train")
+async def solve(task_cfg: cb.Task, session: cb.DesktopSession) -> None:
+    """Oracle solver: upload reference.net directly to the expected output path."""
+    await session.run_command(f"mkdir -p '{_REMOTE_PROJECT_DIR}'", check=False)
+    await session.write_bytes(
+        f"{_REMOTE_PROJECT_DIR}/output.net",
+        (_HARNESS_DIR / "reference.net").read_bytes(),
+    )
+
+
 @cb.evaluate_task(split="train")
 async def evaluate(task_cfg: cb.Task, session: cb.DesktopSession) -> float:
-    from cua_bench.netlist_compare import compare_kicad_netlists, load_reference_netlist
+    from cua_bench.netlist_compare import (
+        compare_kicad_netlists,
+        load_reference_netlist,
+    )
 
-    reference = load_reference_netlist(_HARNESS_DIR / "reference.net")
+    reference = load_reference_netlist(_HARNESS_DIR / "reference.net", _HARNESS_DIR)
 
-    # Try common netlist output locations
+    # Try common netlist output locations first
     candidate_paths = [
         f"{_REMOTE_PROJECT_DIR}/{_SUBMISSION_ID}.net",
         f"{_REMOTE_PROJECT_DIR}/output.net",
     ]
     for path in candidate_paths:
-        result = await session.run_command(
-            f"cat '{path}'", check=False
-        )
+        result = await session.run_command(f"cat '{path}'", check=False)
         candidate = result.get("stdout", "")
         if candidate.strip():
             return compare_kicad_netlists(candidate, reference)
@@ -68,6 +79,22 @@ async def evaluate(task_cfg: cb.Task, session: cb.DesktopSession) -> float:
     net_path = result.get("stdout", "").strip()
     if net_path:
         result = await session.run_command(f"cat '{net_path}'", check=False)
+        candidate = result.get("stdout", "")
+        if candidate.strip():
+            return compare_kicad_netlists(candidate, reference)
+
+    # Fall back: agent edited schematic without exporting — use kicad-cli to generate netlist
+    result = await session.run_command(
+        f"find {_REMOTE_PROJECT_DIR} -name '*.kicad_sch' | head -1", check=False
+    )
+    sch_path = result.get("stdout", "").strip()
+    if sch_path:
+        out_net = "/tmp/kicad_eval_output.net"
+        await session.run_command(
+            f"kicad-cli sch export netlist '{sch_path}' -o '{out_net}'",
+            check=False,
+        )
+        result = await session.run_command(f"cat '{out_net}'", check=False)
         candidate = result.get("stdout", "")
         if candidate.strip():
             return compare_kicad_netlists(candidate, reference)

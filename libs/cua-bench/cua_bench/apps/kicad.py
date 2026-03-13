@@ -41,14 +41,7 @@ class KiCad(App):
         *,
         with_shortcut: bool = True,
     ) -> None:
-        """Install KiCad on Linux via apt."""
-        result = await self.session.run_command("which kicad", check=False)
-        if not result.get("stdout", "").strip():
-            await self.session.run_command(
-                "sudo DEBIAN_FRONTEND=noninteractive apt-get update -qq"
-                " && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y kicad",
-                check=True,
-            )
+        """KiCad 9 is pre-installed in the image; just create the desktop shortcut."""
         if with_shortcut:
             await self.session.run_command(
                 "ln -sf /usr/bin/kicad ~/Desktop/KiCad || true",

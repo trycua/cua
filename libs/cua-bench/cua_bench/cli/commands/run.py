@@ -1397,7 +1397,8 @@ async def _cmd_run_dataset_async(args) -> int:
     # Apply task filter if specified
     task_filter = getattr(args, "task_filter", None)
     if task_filter:
-        tasks = [t for t in tasks if fnmatch.fnmatch(t.name, task_filter)]
+        _patterns = [p.strip() for p in task_filter.split(",")]
+        tasks = [t for t in tasks if any(fnmatch.fnmatch(t.name, p) for p in _patterns)]
         if not tasks:
             print(f"{RED}Error: No tasks match filter: {task_filter}{RESET}")
             return 1

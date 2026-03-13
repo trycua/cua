@@ -137,11 +137,14 @@ def parse_kicad_netlist(content: str) -> dict[str, Any]:
         _collect_comp_refs(comps_section, components)
 
     nets: list[tuple[tuple[str, str], ...]] = []
+    net_names: list[str] = []
     nets_section = _find_in_tree(tree, "nets")
     if nets_section is not None:
-        net_nodes: list[tuple[str, str]] = []
         for child in nets_section[1:]:
             if isinstance(child, list) and child and child[0] == "net":
+                name = _get_field(child, "name")
+                if name:
+                    net_names.append(name)
                 nodes: list[tuple[str, str]] = []
                 for sub in child[1:]:
                     if isinstance(sub, list) and sub and sub[0] == "node":
@@ -152,7 +155,7 @@ def parse_kicad_netlist(content: str) -> dict[str, Any]:
                 if nodes:
                     nets.append(tuple(sorted(nodes)))
 
-    return {"components": components, "nets": nets}
+    return {"components": components, "nets": nets, "net_names": net_names}
 
 
 def _normalize_value(value: str) -> str:
@@ -187,6 +190,8 @@ def compare_kicad_netlists(
     *,
     require_same_components: bool = True,
     require_same_nets: bool = True,
+    require_same_net_names: bool = True,
+    _override_candidate: dict[str, Any] | None = None,
 ) -> float:
     """Compare candidate KiCad netlist to reference. Returns score in [0.0, 1.0].
 
@@ -208,7 +213,7 @@ def compare_kicad_netlists(
         weighted average (0.5 each when both required).
     """
     ref = parse_kicad_netlist(reference_content)
-    cand = parse_kicad_netlist(candidate_content)
+    cand = _override_candidate if _override_candidate is not None else parse_kicad_netlist(candidate_content)
 
     if not ref["components"] and not ref["nets"]:
         # Reference is empty/invalid: treat as no reference
@@ -226,9 +231,110 @@ def compare_kicad_netlists(
         nets_ok = _nets_match(ref["nets"], cand["nets"])
         scores.append(1.0 if nets_ok else 0.0)
 
+    if require_same_net_names:
+        ref_names = set(ref.get("net_names", []))
+        cand_names = set(cand.get("net_names", []))
+        # Only compare if reference has net names to compare against
+        names_ok = (not ref_names) or (ref_names == cand_names)
+        scores.append(1.0 if names_ok else 0.0)
+
     if not scores:
         return 1.0
     return sum(scores) / len(scores)
+
+
+def parse_kicad_schematic(content: str) -> dict[str, Any]:
+    """Parse a KiCad .kicad_sch file and extract placed component instances.
+
+    Returns the same shape as parse_kicad_netlist (components list, empty nets)
+    so it can be compared against a reference netlist using compare_kicad_netlists.
+
+    Components are extracted from top-level ``(symbol (lib_id "Lib:Part") ...)``
+    nodes (placed instances), not from ``lib_symbols`` definitions.
+    """
+    content = content.strip()
+    if not content:
+        return {"components": [], "nets": []}
+
+    tokens = _tokenize_sexpr(content)
+    if not tokens or tokens[0] != "(":
+        return {"components": [], "nets": []}
+    tree, _ = _parse_sexpr(tokens, 0)
+
+    # tree is ["kicad_sch", ...]
+    components: list[dict[str, Any]] = []
+    net_names: list[str] = []
+
+    for child in tree[1:]:
+        if not isinstance(child, list) or not child:
+            continue
+        if child[0] != "symbol":
+            continue
+        # Instance: first element after "symbol" is a list starting with "lib_id"
+        # Definition (inside lib_symbols): first element is a quoted string
+        if len(child) < 2 or not isinstance(child[1], list):
+            continue
+        if not child[1] or child[1][0] != "lib_id":
+            continue
+
+        # Extract lib_id value e.g. "Device:R"
+        lib_id_raw = child[1][1] if len(child[1]) > 1 else ""
+        if isinstance(lib_id_raw, str) and lib_id_raw.startswith('"'):
+            lib_id_raw = lib_id_raw[1:-1]
+        lib, _, part = lib_id_raw.partition(":")
+
+        # Extract Reference and Value from properties
+        ref = None
+        value = None
+        for item in child[1:]:
+            if not isinstance(item, list) or len(item) < 3:
+                continue
+            if item[0] != "property":
+                continue
+            prop_name = item[1]
+            if isinstance(prop_name, str) and prop_name.startswith('"'):
+                prop_name = prop_name[1:-1]
+            prop_val = item[2]
+            if isinstance(prop_val, str) and prop_val.startswith('"'):
+                prop_val = prop_val[1:-1]
+            if prop_name == "Reference":
+                ref = prop_val
+            elif prop_name == "Value":
+                value = prop_val
+
+        if ref is not None and not ref.startswith("#"):
+            components.append({
+                "ref": ref,
+                "value": value or "",
+                "lib": lib,
+                "part": part or value or "",
+            })
+        # Power symbols define net names (e.g. lib_id "power:+5V" → net "+5V")
+        if lib == "power" and value and not value.startswith("PWR_FLAG"):
+            net_names.append(value)
+
+    return {"components": components, "nets": [], "net_names": net_names}
+
+
+def compare_schematic_to_netlist(
+    schematic_content: str,
+    reference_content: str,
+) -> float:
+    """Compare a candidate .kicad_sch against a reference .net by component set.
+
+    Nets cannot be extracted from a schematic without running KiCad, so only
+    components are compared. Returns 1.0 if component sets match, 0.0 otherwise.
+    """
+    cand = parse_kicad_schematic(schematic_content)
+    return compare_kicad_netlists(
+        # Build a minimal .net string isn't needed — pass parsed data via a shim
+        # Instead reuse compare_kicad_netlists with require_same_nets=False
+        "",
+        reference_content,
+        require_same_components=True,
+        require_same_nets=False,
+        _override_candidate=cand,
+    )
 
 
 def load_reference_netlist(reference_path: str | Path, task_dir: Path) -> str:

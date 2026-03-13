@@ -1,7 +1,8 @@
 # Cua Docker XFCE Container
 # Vanilla XFCE desktop with noVNC and computer-server
+# Uses the official KiCad 9 image as base (Debian Bookworm + KiCad 9 pre-installed)
 
-FROM ubuntu:22.04
+FROM kicad/kicad:9.0-full
 
 # Avoid prompts from apt
 ENV DEBIAN_FRONTEND=noninteractive
@@ -15,17 +16,18 @@ ENV API_PORT=8000
 ENV VNC_RESOLUTION=1024x768
 ENV VNC_COL_DEPTH=24
 
-# Install system dependencies first (including sudo)
+USER root
+
+# Install system dependencies
 RUN apt-get update && apt-get install -y \
     # System utilities
     sudo \
     unzip \
     zip \
     xdg-utils \
-    gcc \
     # DHCP client for networking
     isc-dhcp-client \
-    # Qt/XCB runtime deps for PyQt5 (libqxcb.so)
+    # Qt/XCB runtime deps for KiCad/XFCE
     libxcb-icccm4 \
     libxcb-image0 \
     libxcb-keysyms1 \
@@ -44,124 +46,81 @@ RUN apt-get update && apt-get install -y \
     dbus-x11 \
     # VNC server
     tigervnc-standalone-server \
-    tigervnc-common \
+    tigervnc-tools \
     # noVNC dependencies
-    # python will be installed via deadsnakes as 3.12 \
     git \
     net-tools \
-    netcat \
+    netcat-openbsd \
     supervisor \
-    # Computer-server dependencies
-    # python-tk/dev for 3.12 will be installed later \
+    # computer-server dependencies (screenshot, mouse, clipboard)
     gnome-screenshot \
     wmctrl \
     ffmpeg \
     socat \
     xclip \
-    # Browser
+    # Browser (used by agent)
     wget \
-    software-properties-common \
-    # Build tools
-    build-essential \
-    libncursesw5-dev \
-    libssl-dev \
-    libsqlite3-dev \
-    tk-dev \
-    libgl1-mesa-dev \
-    libgdbm-dev \
-    libc6-dev \
-    libbz2-dev \
-    libffi-dev \
-    zlib1g-dev \
-    && rm -rf /var/lib/apt/lists/*
-
-# Install Python 3.12 from deadsnakes (keep system python3 for apt)
-RUN add-apt-repository -y ppa:deadsnakes/ppa && \
-    apt-get update && apt-get install -y \
-    python3.12 python3.12-venv python3.12-dev python3.12-tk \
-    && \
-    python3.12 -m ensurepip --upgrade && \
-    python3.12 -m pip install --upgrade pip setuptools wheel && \
-    python3.12 -m pip install uv && \
-    rm -rf /var/lib/apt/lists/*
-
-# Ensure 'python' points to Python 3.12
-RUN update-alternatives --install /usr/bin/python python /usr/bin/python3.12 2
-
-# Remove screensavers and power manager to avoid popups and lock screens
-RUN apt-get remove -y \
-    xfce4-power-manager \
-    xfce4-power-manager-data \
-    xfce4-power-manager-plugins \
-    xfce4-screensaver \
-    light-locker \
-    xscreensaver \
-    xscreensaver-data || true
-
-# Create user after sudo is installed
-RUN useradd -m -s /bin/bash -G sudo cua && \
-    echo "cua:cua" | chpasswd && \
-    echo "cua ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
-
-# Install Firefox from Mozilla PPA (snap-free) - inline to avoid script issues
-RUN apt-get update && \
-    add-apt-repository -y ppa:mozillateam/ppa && \
-    echo 'Package: *\nPin: release o=LP-PPA-mozillateam\nPin-Priority: 1001' > /etc/apt/preferences.d/mozilla-firefox && \
-    apt-get update && \
-    apt-get install -y firefox && \
-    echo 'pref("datareporting.policy.firstRunURL", "");\npref("datareporting.policy.dataSubmissionEnabled", false);\npref("datareporting.healthreport.service.enabled", false);\npref("datareporting.healthreport.uploadEnabled", false);\npref("trailhead.firstrun.branches", "nofirstrun-empty");\npref("browser.aboutwelcome.enabled", false);' > /usr/lib/firefox/browser/defaults/preferences/firefox.js && \
-    update-alternatives --install /usr/bin/x-www-browser x-www-browser /usr/bin/firefox 100 && \
-    update-alternatives --install /usr/bin/gnome-www-browser gnome-www-browser /usr/bin/firefox 100 && \
-    rm -rf /var/lib/apt/lists/*
-
-# Install noVNC
-RUN git clone https://github.com/trycua/noVNC.git /opt/noVNC && \
-    git clone https://github.com/novnc/websockify /opt/noVNC/utils/websockify && \
-    ln -s /opt/noVNC/vnc.html /opt/noVNC/index.html
-
-# Pre-create cache directory with correct ownership before pip install
-RUN mkdir -p /home/cua/.cache && \
-    chown -R cua:cua /home/cua/.cache
-
-# Install computer-server and cua-agent
-RUN uv pip install --system cua-computer-server "cua-agent[all]"
-
-# Install GTK and WebKit dependencies for pywebview
-RUN apt-get update && apt-get install -y \
-    python3-gi \
-    python3-gi-cairo \
+    ca-certificates \
+    firefox-esr \
+    # GTK/WebKit for pywebview (cua-bench-ui task display)
     gir1.2-gtk-3.0 \
     gir1.2-webkit2-4.1 \
     libgirepository1.0-dev \
     libcairo2-dev \
     pkg-config \
     gobject-introspection \
+    # Python pip to bootstrap uv
+    python3-pip \
     && rm -rf /var/lib/apt/lists/*
 
-# Install pywebview with GTK backend, used by cua-bench for web UIs
-RUN uv pip install --system "pywebview[gtk]"
-RUN uv pip install --system cua-bench-ui>=0.7.0 --no-cache-dir
+# Install uv, Python 3.13, and create venv at /opt/venv
+# Python 3.13 satisfies cua-bench-ui's >=3.12 requirement (Bookworm only has 3.11)
+RUN pip3 install --break-system-packages uv && \
+    uv python install 3.13 && \
+    uv venv /opt/venv --python 3.13 && \
+    ln -sf /opt/venv/bin/python3 /usr/local/bin/python3 && \
+    ln -sf /opt/venv/bin/python3 /usr/local/bin/python
 
-# Install playwright and Firefox dependencies
-RUN uv pip install --system playwright && \
-    python3.12 -m playwright install --with-deps firefox
+# Remove screensavers and power manager to avoid popups and lock screens
+RUN apt-get remove -y \
+    xfce4-power-manager \
+    xfce4-screensaver \
+    light-locker \
+    xscreensaver || true
 
-# Fix any cache files created by pip
-RUN chown -R cua:cua /home/cua/.cache
+# Create cua user
+RUN useradd -m -s /bin/bash -G sudo cua && \
+    echo "cua:cua" | chpasswd && \
+    echo "cua ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
+
+# Configure Firefox ESR
+RUN echo 'pref("datareporting.policy.firstRunURL", "");\npref("datareporting.policy.dataSubmissionEnabled", false);\npref("datareporting.healthreport.service.enabled", false);\npref("datareporting.healthreport.uploadEnabled", false);\npref("trailhead.firstrun.branches", "nofirstrun-empty");\npref("browser.aboutwelcome.enabled", false);' > /usr/lib/firefox-esr/browser/defaults/preferences/firefox.js && \
+    update-alternatives --install /usr/bin/x-www-browser x-www-browser /usr/bin/firefox-esr 100 && \
+    update-alternatives --install /usr/bin/gnome-www-browser gnome-www-browser /usr/bin/firefox-esr 100
+
+# Install noVNC
+RUN git clone https://github.com/trycua/noVNC.git /opt/noVNC && \
+    git clone https://github.com/novnc/websockify /opt/noVNC/utils/websockify && \
+    ln -s /opt/noVNC/vnc.html /opt/noVNC/index.html
+
+# Install Python packages into /opt/venv (Python 3.13)
+RUN uv pip install --python /opt/venv/bin/python3 \
+    cua-computer-server \
+    "cua-agent[all]" \
+    "pywebview[gtk]" \
+    "cua-bench-ui>=0.7.0"
 
 # Copy startup scripts
 COPY src/supervisor/ /etc/supervisor/conf.d/
 COPY src/scripts/ /usr/local/bin/
-
-# Make scripts executable
 RUN chmod +x /usr/local/bin/*.sh
 
-# Setup VNC
+# Set ownership and switch to cua user
 RUN chown -R cua:cua /home/cua
 USER cua
 WORKDIR /home/cua
 
-# Create VNC directory (no password needed with SecurityTypes None)
+# Create VNC directory
 RUN mkdir -p $HOME/.vnc
 
 # Configure XFCE for first start
@@ -176,12 +135,10 @@ COPY --chown=cua:cua src/xfce-config/xfce4-power-manager.xml $HOME/.config/xfce4
 RUN echo "[Desktop Entry]\nHidden=true" > $HOME/.config/autostart/xfce4-tips-autostart.desktop && \
     echo "[Desktop Entry]\nHidden=true" > $HOME/.config/autostart/xfce4-screensaver.desktop && \
     echo "[Desktop Entry]\nHidden=true" > $HOME/.config/autostart/light-locker.desktop && \
-    echo "[Desktop Entry]\nHidden=true" > $HOME/.config/autostart/xfce4-power-manager.desktop && \
-    chown -R cua:cua $HOME/.config
+    echo "[Desktop Entry]\nHidden=true" > $HOME/.config/autostart/xfce4-power-manager.desktop
 
-# Create storage and shared directories, and Firefox cache directory
-RUN mkdir -p $HOME/storage $HOME/shared $HOME/.cache/dconf $HOME/.mozilla/firefox && \
-    chown -R cua:cua $HOME/storage $HOME/shared $HOME/.cache $HOME/.mozilla $HOME/.vnc
+# Create storage and shared directories
+RUN mkdir -p $HOME/storage $HOME/shared $HOME/.cache/dconf $HOME/.mozilla/firefox
 
 USER root
 

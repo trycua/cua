@@ -67,38 +67,65 @@ async def start(task_cfg: cb.Task, session: cb.DesktopSession) -> None:
         await session.write_bytes(remote_path, local_path.read_bytes())
 
     try:
-        await session.apps.kicad.launch()
+        await session.apps.kicad.launch(project_path={project_path!r})
     except Exception:
         pass
     await asyncio.sleep(5)
 
 
+@cb.solve_task(split="train")
+async def solve(task_cfg: cb.Task, session: cb.DesktopSession) -> None:
+    """Oracle solver: upload reference.net directly to the expected output path."""
+    await session.run_command(f"mkdir -p '{{_REMOTE_PROJECT_DIR}}'", check=False)
+    await session.write_bytes(
+        f"{{_REMOTE_PROJECT_DIR}}/output.net",
+        (_HARNESS_DIR / "reference.net").read_bytes(),
+    )
+
+
 @cb.evaluate_task(split="train")
 async def evaluate(task_cfg: cb.Task, session: cb.DesktopSession) -> float:
-    from cua_bench.netlist_compare import compare_kicad_netlists, load_reference_netlist
+    from cua_bench.netlist_compare import (
+        compare_kicad_netlists,
+        load_reference_netlist,
+    )
 
-    reference = load_reference_netlist(_HARNESS_DIR / "reference.net")
+    reference = load_reference_netlist(_HARNESS_DIR / "reference.net", _HARNESS_DIR)
 
-    # Try common netlist output locations
+    # Try common netlist output locations first
     candidate_paths = [
         f"{{_REMOTE_PROJECT_DIR}}/{{_SUBMISSION_ID}}.net",
         f"{{_REMOTE_PROJECT_DIR}}/output.net",
     ]
     for path in candidate_paths:
-        result = await session.run_command(
-            f"cat \'{{path}}\'", check=False
-        )
+        result = await session.run_command(f"cat '{{path}}'", check=False)
         candidate = result.get("stdout", "")
         if candidate.strip():
             return compare_kicad_netlists(candidate, reference)
 
     # Search for any .net file in the project dir
     result = await session.run_command(
-        f"find {{_REMOTE_PROJECT_DIR}} -name \'*.net\' | head -1", check=False
+        f"find {{_REMOTE_PROJECT_DIR}} -name '*.net' | head -1", check=False
     )
     net_path = result.get("stdout", "").strip()
     if net_path:
-        result = await session.run_command(f"cat \'{{net_path}}\'", check=False)
+        result = await session.run_command(f"cat '{{net_path}}'", check=False)
+        candidate = result.get("stdout", "")
+        if candidate.strip():
+            return compare_kicad_netlists(candidate, reference)
+
+    # Fall back: agent edited schematic without exporting — use kicad-cli to generate netlist
+    result = await session.run_command(
+        f"find {{_REMOTE_PROJECT_DIR}} -name '*.kicad_sch' | head -1", check=False
+    )
+    sch_path = result.get("stdout", "").strip()
+    if sch_path:
+        out_net = "/tmp/kicad_eval_output.net"
+        await session.run_command(
+            f"kicad-cli sch export netlist '{{sch_path}}' -o '{{out_net}}'",
+            check=False,
+        )
+        result = await session.run_command(f"cat '{{out_net}}'", check=False)
         candidate = result.get("stdout", "")
         if candidate.strip():
             return compare_kicad_netlists(candidate, reference)
@@ -151,7 +178,8 @@ def _slugify(text: str) -> str:
 
 def package(submission: dict, output_dir: Path) -> None:
     sub_id = submission["submission_id"]
-    pcb_uri = submission["circuit_pcb_file"]["s3Uri"]
+    initial_circuit = submission.get("initial_circuit")
+    pcb_uri = initial_circuit["s3Uri"] if initial_circuit else None
     netlist_uri = submission["netlist"]["s3Uri"]
     description = submission.get("circuit_prompt", "").strip()
     difficulty = submission.get("difficulty", "unknown")
@@ -164,10 +192,21 @@ def package(submission: dict, output_dir: Path) -> None:
     reference_net = _first_net_file(netlist_zip)
     (output_dir / "reference.net").write_bytes(reference_net)
 
-    # Download and extract PCB files → initial/
-    print(f"  Downloading PCB: {pcb_uri}")
-    pcb_zip = _download_zip(pcb_uri)
-    _extract_kicad_zip(pcb_zip, output_dir / "initial")
+    # Download and extract PCB files → initial/ (empty for start-from-scratch tasks)
+    if pcb_uri:
+        print(f"  Downloading PCB: {pcb_uri}")
+        pcb_zip = _download_zip(pcb_uri)
+        _extract_kicad_zip(pcb_zip, output_dir / "initial")
+    else:
+        print("  No initial circuit (start from scratch)")
+        (output_dir / "initial").mkdir(parents=True, exist_ok=True)
+
+    # Derive remote .kicad_pro path from the zip filename (stem = folder and project name)
+    if initial_circuit:
+        stem = Path(initial_circuit["filename"]).stem  # e.g. "kicad_555timer_circuit"
+        project_path = f"{_REMOTE_PROJECT_DIR}/{stem}/{stem}.kicad_pro"
+    else:
+        project_path = None
 
     # Generate main.py
     main_py = _MAIN_PY_TEMPLATE.format(
@@ -175,6 +214,7 @@ def package(submission: dict, output_dir: Path) -> None:
         remote_project_dir=_REMOTE_PROJECT_DIR,
         description=description,
         difficulty=difficulty,
+        project_path=project_path,
     )
     (output_dir / "main.py").write_text(main_py, encoding="utf-8")
 

@@ -478,8 +478,15 @@ final class LumeController {
             Logger.info("Provisioning marker cleared", metadata: ["name": name])
 
         } catch {
-            // Clear provisioning marker on failure (vmDir may have been deleted by createInternal)
+            // Clear provisioning marker and cleanup the pre-created directory on failure
+            // so a partial stub does not block future creates while remaining invisible to delete/list.
             vmDir.clearProvisioningMarker()
+            do {
+                try vmDir.delete()
+            } catch let cleanupError {
+                Logger.error("Failed to clean up VM directory after creation failure",
+                           metadata: ["error": cleanupError.localizedDescription])
+            }
             Logger.error("Failed to create VM", metadata: ["error": error.localizedDescription])
             throw error
         }

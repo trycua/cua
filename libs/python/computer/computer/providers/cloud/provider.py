@@ -34,18 +34,21 @@ class CloudProvider(BaseVMProvider):
         api_key: str,
         verbose: bool = False,
         api_base: Optional[str] = None,
+        os_type: Optional[str] = None,
         **kwargs,
     ):
         """
         Args:
             api_key: API key for authentication
-            name: Name of the VM
             verbose: Enable verbose logging
+            api_base: Override for the CUA API base URL
+            os_type: OS type of the VM ('macos', 'linux', etc.)
         """
         assert api_key, "api_key required for CloudProvider"
         self.api_key = api_key
         self.verbose = verbose
         self.api_base = (api_base or DEFAULT_API_BASE).rstrip("/")
+        self.os_type = os_type
 
     @property
     def provider_type(self) -> VMProviderType:
@@ -60,18 +63,22 @@ class CloudProvider(BaseVMProvider):
     async def get_vm(self, name: str, storage: Optional[str] = None) -> Dict[str, Any]:
         """Get VM information by querying the VM status endpoint.
 
-        - Build hostname via get_ip(name) → "{name}.containers.cloud.trycua.com"
-        - Probe https://{hostname}:8443/status with a short timeout
-        - If JSON contains a "status" field, return it; otherwise infer
-        - Fallback to DNS resolve check to distinguish unknown vs not_found
+        For macOS VMs: probes https://{name}-api.cua.sh/status (Cloudflare-proxied, port 443)
+        For other VMs: probes https://{name}.containers.cloud.trycua.com:8443/status
         """
         hostname = await self.get_ip(name=name)
 
-        # Try HTTPS probe to the computer-server status endpoint (8443)
+        # macOS VMs are Cloudflare-proxied (port 443), others use direct port 8443
+        if self.os_type == "macos":
+            base_url = f"https://{hostname}"
+        else:
+            base_url = f"https://{hostname}:8443"
+
+        # Try HTTPS probe to the computer-server status endpoint
         try:
             timeout = aiohttp.ClientTimeout(total=3)
             async with aiohttp.ClientSession(timeout=timeout) as session:
-                url = f"https://{hostname}:8443/status"
+                url = f"{base_url}/status"
                 async with session.get(url, allow_redirects=False) as resp:
                     status_code = resp.status
                     vm_status: str
@@ -90,11 +97,11 @@ class CloudProvider(BaseVMProvider):
                     return {
                         "name": name,
                         "status": "running" if vm_status == "ok" else vm_status,
-                        "api_url": f"https://{hostname}:8443",
+                        "api_url": base_url,
                         "os_type": vm_os_type,
                     }
         except Exception:
-            return {"name": name, "status": "not_found", "api_url": f"https://{hostname}:8443"}
+            return {"name": name, "status": "not_found", "api_url": base_url}
 
     async def list_vms(self) -> ListVMsResponse:
         url = f"{self.api_base}/v1/vms"
@@ -118,16 +125,22 @@ class CloudProvider(BaseVMProvider):
                             vm = dict(item) if isinstance(item, dict) else {}
                             name = vm.get("name")
                             password = vm.get("password")
+                            source = vm.get("source", "")
+                            is_macos = source == "macos-sandbox" or vm.get("os") == "macos"
                             if isinstance(name, str) and name:
-                                host = f"{name}.containers.cloud.trycua.com"
-                                # api_url: always set if missing
-                                if not vm.get("api_url"):
-                                    vm["api_url"] = f"https://{host}:8443"
-                                # vnc_url: only when password available
-                                if not vm.get("vnc_url") and isinstance(password, str) and password:
-                                    vm["vnc_url"] = (
-                                        f"https://{host}/vnc.html?autoconnect=true&password={password}"
-                                    )
+                                if is_macos:
+                                    host = f"{name}-api.cua.sh"
+                                    if not vm.get("api_url"):
+                                        vm["api_url"] = f"https://{host}"
+                                else:
+                                    host = f"{name}.containers.cloud.trycua.com"
+                                    if not vm.get("api_url"):
+                                        vm["api_url"] = f"https://{host}:8443"
+                                    # vnc_url: only when password available
+                                    if not vm.get("vnc_url") and isinstance(password, str) and password:
+                                        vm["vnc_url"] = (
+                                            f"https://{host}/vnc.html?autoconnect=true&password={password}"
+                                        )
                             enriched.append(vm)
                         return enriched  # type: ignore[return-value]
                     logger.warning("Unexpected response for list_vms; expected list")
@@ -231,11 +244,13 @@ class CloudProvider(BaseVMProvider):
         self, name: Optional[str] = None, storage: Optional[str] = None, retry_delay: int = 2
     ) -> str:
         """
-        Return the VM's IP address as '{container_name}.containers.cloud.trycua.com'.
-        Uses the provided 'name' argument (the VM name requested by the caller),
-        falling back to self.name only if 'name' is None.
-        Retries up to 3 times with retry_delay seconds if hostname is not available.
+        Return the VM's hostname.
+
+        For macOS VMs: '{name}-api.cua.sh' (Cloudflare-proxied)
+        For other VMs: '{name}.containers.cloud.trycua.com'
         """
         if name is None:
             raise ValueError("VM name is required for CloudProvider.get_ip")
+        if self.os_type == "macos":
+            return f"{name}-api.cua.sh"
         return f"{name}.containers.cloud.trycua.com"

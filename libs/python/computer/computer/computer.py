@@ -330,6 +330,7 @@ class Computer:
                                     self.provider_type,
                                     api_key=self.api_key,
                                     verbose=verbose,
+                                    os_type=self.os_type,
                                 )
                             elif self.provider_type == VMProviderType.WINSANDBOX:
                                 self.config.vm_provider = VMProviderFactory.create_provider(

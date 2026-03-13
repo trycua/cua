@@ -3,6 +3,8 @@ import { type BaseComputerInterface, InterfaceFactory } from '../../interface/in
 import type { CloudComputerConfig, VMProviderType } from '../types';
 import { BaseComputer } from './base';
 
+const DEFAULT_API_BASE = process.env.CUA_API_BASE || 'https://api.cua.ai';
+
 /**
  * Cloud-specific computer implementation
  */
@@ -11,6 +13,7 @@ export class CloudComputer extends BaseComputer {
   protected apiKey: string;
   private iface?: BaseComputerInterface;
   private initialized = false;
+  private resolvedIp?: string;
 
   protected logger = pino({ name: 'computer.provider_cloud' });
 
@@ -20,7 +23,39 @@ export class CloudComputer extends BaseComputer {
   }
 
   get ip() {
-    return `${this.name}.containers.cloud.trycua.com`;
+    return this.resolvedIp || `${this.name}.containers.cloud.trycua.com`;
+  }
+
+  /**
+   * Fetch the API endpoint hostname from the management API.
+   * Looks for an 'api' endpoint in the VM's endpoints list.
+   */
+  private async fetchApiHost(): Promise<string | null> {
+    const apiBase = DEFAULT_API_BASE.replace(/\/+$/, '');
+    try {
+      const resp = await fetch(`${apiBase}/v1/vms`, {
+        headers: {
+          Authorization: `Bearer ${this.apiKey}`,
+          Accept: 'application/json',
+        },
+        signal: AbortSignal.timeout(5000),
+      });
+      if (!resp.ok) return null;
+      const data = await resp.json();
+      if (!Array.isArray(data)) return null;
+      for (const item of data) {
+        if (item?.name !== this.name) continue;
+        for (const ep of item.endpoints || []) {
+          if (ep?.name === 'api' && ep?.host) {
+            return ep.host;
+          }
+        }
+        break;
+      }
+    } catch (e) {
+      this.logger.debug(`Failed to fetch VM endpoint info from API: ${e}`);
+    }
+    return null;
   }
 
   /**
@@ -33,6 +68,13 @@ export class CloudComputer extends BaseComputer {
     }
 
     try {
+      // Resolve the correct endpoint hostname from the API
+      const apiHost = await this.fetchApiHost();
+      if (apiHost) {
+        this.resolvedIp = apiHost;
+        this.logger.info(`Using API endpoint hostname: ${apiHost}`);
+      }
+
       // For cloud provider, the VM is already running, we just need to connect
       const ipAddress = this.ip;
       this.logger.info(`Connecting to cloud VM at ${ipAddress}`);

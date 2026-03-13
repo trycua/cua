@@ -46,6 +46,8 @@ class CloudProvider(BaseVMProvider):
         self.api_key = api_key
         self.verbose = verbose
         self.api_base = (api_base or DEFAULT_API_BASE).rstrip("/")
+        # Cache for VM endpoint info fetched from the API
+        self._endpoint_cache: Dict[str, str] = {}
 
     @property
     def provider_type(self) -> VMProviderType:
@@ -60,7 +62,7 @@ class CloudProvider(BaseVMProvider):
     async def get_vm(self, name: str, storage: Optional[str] = None) -> Dict[str, Any]:
         """Get VM information by querying the VM status endpoint.
 
-        - Build hostname via get_ip(name) → "{name}.containers.cloud.trycua.com"
+        - Build hostname via get_ip(name) which queries the API for endpoint info
         - Probe https://{hostname}:8443/status with a short timeout
         - If JSON contains a "status" field, return it; otherwise infer
         - Fallback to DNS resolve check to distinguish unknown vs not_found
@@ -119,14 +121,30 @@ class CloudProvider(BaseVMProvider):
                             name = vm.get("name")
                             password = vm.get("password")
                             if isinstance(name, str) and name:
-                                host = f"{name}.containers.cloud.trycua.com"
+                                # Try to get hostname from API endpoints first
+                                api_host = None
+                                vnc_host = None
+                                for ep in vm.get("endpoints", []):
+                                    if isinstance(ep, dict):
+                                        if ep.get("name") == "api" and ep.get("host"):
+                                            api_host = ep["host"]
+                                            # Cache endpoint for get_ip()
+                                            self._endpoint_cache[name] = api_host
+                                        elif ep.get("name") == "vnc" and ep.get("host"):
+                                            vnc_host = ep["host"]
+
+                                # Fall back to legacy hostname pattern
+                                if not api_host:
+                                    api_host = f"{name}.containers.cloud.trycua.com"
+
                                 # api_url: always set if missing
                                 if not vm.get("api_url"):
-                                    vm["api_url"] = f"https://{host}:8443"
+                                    vm["api_url"] = f"https://{api_host}:8443"
                                 # vnc_url: only when password available
                                 if not vm.get("vnc_url") and isinstance(password, str) and password:
+                                    vhost = vnc_host or api_host
                                     vm["vnc_url"] = (
-                                        f"https://{host}/vnc.html?autoconnect=true&password={password}"
+                                        f"https://{vhost}/vnc.html?autoconnect=true&password={password}"
                                     )
                             enriched.append(vm)
                         return enriched  # type: ignore[return-value]
@@ -227,15 +245,71 @@ class CloudProvider(BaseVMProvider):
             "message": "update_vm not supported by public API",
         }
 
+    async def _fetch_vm_api_host(self, name: str) -> Optional[str]:
+        """Fetch the API endpoint hostname for a VM from the management API.
+
+        Queries the /v1/vms endpoint and looks for an 'api' endpoint in the
+        VM's endpoints list. This is needed for macOS sandbox VMs and Incus VMs
+        that use per-instance DNS names (e.g., {name}-api.cua.sh) instead of
+        the legacy {name}.containers.cloud.trycua.com pattern.
+
+        Returns:
+            The API endpoint hostname (without port), or None if not found.
+        """
+        # Check cache first
+        if name in self._endpoint_cache:
+            return self._endpoint_cache[name]
+
+        url = f"{self.api_base}/v1/vms"
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Accept": "application/json",
+        }
+        try:
+            timeout = aiohttp.ClientTimeout(total=5)
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.get(url, headers=headers) as resp:
+                    if resp.status != 200:
+                        return None
+                    data = await resp.json(content_type=None)
+                    if not isinstance(data, list):
+                        return None
+                    for item in data:
+                        if not isinstance(item, dict):
+                            continue
+                        if item.get("name") != name:
+                            continue
+                        # Look for an 'api' endpoint
+                        for ep in item.get("endpoints", []):
+                            if isinstance(ep, dict) and ep.get("name") == "api":
+                                host = ep.get("host")
+                                if host:
+                                    self._endpoint_cache[name] = host
+                                    return host
+                        break
+        except Exception as e:
+            logger.debug(f"Failed to fetch VM endpoint info from API: {e}")
+        return None
+
     async def get_ip(
         self, name: Optional[str] = None, storage: Optional[str] = None, retry_delay: int = 2
     ) -> str:
         """
-        Return the VM's IP address as '{container_name}.containers.cloud.trycua.com'.
-        Uses the provided 'name' argument (the VM name requested by the caller),
-        falling back to self.name only if 'name' is None.
-        Retries up to 3 times with retry_delay seconds if hostname is not available.
+        Return the VM's hostname for direct connection.
+
+        First queries the management API to discover the correct endpoint hostname
+        (e.g., '{name}-api.cua.sh' for Incus/macOS VMs). Falls back to the legacy
+        pattern '{name}.containers.cloud.trycua.com' if the API doesn't return
+        endpoint info.
         """
         if name is None:
             raise ValueError("VM name is required for CloudProvider.get_ip")
+
+        # Try to get the endpoint hostname from the API
+        api_host = await self._fetch_vm_api_host(name)
+        if api_host:
+            logger.info(f"Using API endpoint hostname for {name}: {api_host}")
+            return api_host
+
+        # Fall back to legacy hostname pattern
         return f"{name}.containers.cloud.trycua.com"

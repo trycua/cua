@@ -192,6 +192,7 @@ def compare_kicad_netlists(
     require_same_nets: bool = True,
     require_same_net_names: bool = True,
     _override_candidate: dict[str, Any] | None = None,
+    verbose: bool = True,
 ) -> float:
     """Compare candidate KiCad netlist to reference. Returns score in [0.0, 1.0].
 
@@ -220,16 +221,19 @@ def compare_kicad_netlists(
         return 0.0 if (cand["components"] or cand["nets"]) else 1.0
 
     scores: list[float] = []
+    checks: dict[str, bool] = {}
 
     if require_same_components:
         ref_keys = sorted(_component_key(c) for c in ref["components"])
         cand_keys = sorted(_component_key(c) for c in cand["components"])
         comp_ok = ref_keys == cand_keys
         scores.append(1.0 if comp_ok else 0.0)
+        checks["components"] = comp_ok
 
     if require_same_nets:
         nets_ok = _nets_match(ref["nets"], cand["nets"])
         scores.append(1.0 if nets_ok else 0.0)
+        checks["nets"] = nets_ok
 
     if require_same_net_names:
         ref_names = set(ref.get("net_names", []))
@@ -237,10 +241,18 @@ def compare_kicad_netlists(
         # Only compare if reference has net names to compare against
         names_ok = (not ref_names) or (ref_names == cand_names)
         scores.append(1.0 if names_ok else 0.0)
+        checks["net_names"] = names_ok
 
     if not scores:
         return 1.0
-    return sum(scores) / len(scores)
+
+    score = sum(scores) / len(scores)
+
+    if verbose:
+        parts = ", ".join(f"{k}={'PASS' if v else 'FAIL'}" for k, v in checks.items())
+        print(f"Netlist comparison: {parts} → {score:.3f}")
+
+    return score
 
 
 def parse_kicad_schematic(content: str) -> dict[str, Any]:

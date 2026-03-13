@@ -325,7 +325,7 @@ class Computer:
                                     verbose=verbose,
                                     ephemeral=ephemeral,
                                 )
-                            elif self.provider_type == VMProviderType.CLOUD:
+                            elif self.provider_type in (VMProviderType.CLOUD, VMProviderType.CLOUDV2):
                                 self.config.vm_provider = VMProviderFactory.create_provider(
                                     self.provider_type,
                                     api_key=self.api_key,
@@ -492,7 +492,7 @@ class Computer:
             from .interface.base import BaseComputerInterface
 
             # Pass authentication credentials if using cloud provider
-            if self.provider_type == VMProviderType.CLOUD and self.api_key and self.config.name:
+            if self.provider_type in (VMProviderType.CLOUD, VMProviderType.CLOUDV2) and self.api_key and self.config.name:
                 self._interface = cast(
                     BaseComputerInterface,
                     InterfaceFactory.create_interface_for_os(
@@ -664,7 +664,7 @@ class Computer:
             self.logger.info(f"Re-initializing interface for {self.os_type} at {ip_address}")
             from .interface.base import BaseComputerInterface
 
-            if self.provider_type == VMProviderType.CLOUD and self.api_key and self.config.name:
+            if self.provider_type in (VMProviderType.CLOUD, VMProviderType.CLOUDV2) and self.api_key and self.config.name:
                 self._interface = cast(
                     BaseComputerInterface,
                     InterfaceFactory.create_interface_for_os(

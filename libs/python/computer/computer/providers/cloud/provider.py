@@ -27,7 +27,10 @@ DEFAULT_API_BASE = os.getenv("CUA_API_BASE", "https://api.cua.ai")
 
 
 class CloudProvider(BaseVMProvider):
-    """Cloud VM Provider implementation."""
+    """Cloud VM Provider implementation (legacy).
+
+    Uses the fixed hostname pattern {name}.containers.cloud.trycua.com.
+    """
 
     def __init__(
         self,
@@ -46,8 +49,6 @@ class CloudProvider(BaseVMProvider):
         self.api_key = api_key
         self.verbose = verbose
         self.api_base = (api_base or DEFAULT_API_BASE).rstrip("/")
-        # Cache for VM endpoint info fetched from the API
-        self._endpoint_cache: Dict[str, str] = {}
 
     @property
     def provider_type(self) -> VMProviderType:
@@ -62,7 +63,7 @@ class CloudProvider(BaseVMProvider):
     async def get_vm(self, name: str, storage: Optional[str] = None) -> Dict[str, Any]:
         """Get VM information by querying the VM status endpoint.
 
-        - Build hostname via get_ip(name) which queries the API for endpoint info
+        - Build hostname via get_ip(name) → "{name}.containers.cloud.trycua.com"
         - Probe https://{hostname}:8443/status with a short timeout
         - If JSON contains a "status" field, return it; otherwise infer
         - Fallback to DNS resolve check to distinguish unknown vs not_found
@@ -121,30 +122,14 @@ class CloudProvider(BaseVMProvider):
                             name = vm.get("name")
                             password = vm.get("password")
                             if isinstance(name, str) and name:
-                                # Try to get hostname from API endpoints first
-                                api_host = None
-                                vnc_host = None
-                                for ep in vm.get("endpoints", []):
-                                    if isinstance(ep, dict):
-                                        if ep.get("name") == "api" and ep.get("host"):
-                                            api_host = ep["host"]
-                                            # Cache endpoint for get_ip()
-                                            self._endpoint_cache[name] = api_host
-                                        elif ep.get("name") == "vnc" and ep.get("host"):
-                                            vnc_host = ep["host"]
-
-                                # Fall back to legacy hostname pattern
-                                if not api_host:
-                                    api_host = f"{name}.containers.cloud.trycua.com"
-
+                                host = f"{name}.containers.cloud.trycua.com"
                                 # api_url: always set if missing
                                 if not vm.get("api_url"):
-                                    vm["api_url"] = f"https://{api_host}:8443"
+                                    vm["api_url"] = f"https://{host}:8443"
                                 # vnc_url: only when password available
                                 if not vm.get("vnc_url") and isinstance(password, str) and password:
-                                    vhost = vnc_host or api_host
                                     vm["vnc_url"] = (
-                                        f"https://{vhost}/vnc.html?autoconnect=true&password={password}"
+                                        f"https://{host}/vnc.html?autoconnect=true&password={password}"
                                     )
                             enriched.append(vm)
                         return enriched  # type: ignore[return-value]
@@ -245,18 +230,44 @@ class CloudProvider(BaseVMProvider):
             "message": "update_vm not supported by public API",
         }
 
+    async def get_ip(
+        self, name: Optional[str] = None, storage: Optional[str] = None, retry_delay: int = 2
+    ) -> str:
+        """
+        Return the VM's IP address as '{container_name}.containers.cloud.trycua.com'.
+        Uses the provided 'name' argument (the VM name requested by the caller),
+        falling back to self.name only if 'name' is None.
+        Retries up to 3 times with retry_delay seconds if hostname is not available.
+        """
+        if name is None:
+            raise ValueError("VM name is required for CloudProvider.get_ip")
+        return f"{name}.containers.cloud.trycua.com"
+
+
+class CloudV2Provider(CloudProvider):
+    """Cloud V2 Provider for Incus/macOS sandbox VMs.
+
+    Resolves endpoint hostnames from the management API (e.g., {name}-api.cua.sh)
+    instead of using the legacy {name}.containers.cloud.trycua.com pattern.
+    """
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self._endpoint_cache: Dict[str, str] = {}
+
+    @property
+    def provider_type(self) -> VMProviderType:
+        return VMProviderType.CLOUDV2
+
     async def _fetch_vm_api_host(self, name: str) -> Optional[str]:
         """Fetch the API endpoint hostname for a VM from the management API.
 
         Queries the /v1/vms endpoint and looks for an 'api' endpoint in the
-        VM's endpoints list. This is needed for macOS sandbox VMs and Incus VMs
-        that use per-instance DNS names (e.g., {name}-api.cua.sh) instead of
-        the legacy {name}.containers.cloud.trycua.com pattern.
+        VM's endpoints list.
 
         Returns:
             The API endpoint hostname (without port), or None if not found.
         """
-        # Check cache first
         if name in self._endpoint_cache:
             return self._endpoint_cache[name]
 
@@ -279,7 +290,6 @@ class CloudProvider(BaseVMProvider):
                             continue
                         if item.get("name") != name:
                             continue
-                        # Look for an 'api' endpoint
                         for ep in item.get("endpoints", []):
                             if isinstance(ep, dict) and ep.get("name") == "api":
                                 host = ep.get("host")
@@ -294,22 +304,73 @@ class CloudProvider(BaseVMProvider):
     async def get_ip(
         self, name: Optional[str] = None, storage: Optional[str] = None, retry_delay: int = 2
     ) -> str:
-        """
-        Return the VM's hostname for direct connection.
+        """Return the VM's hostname for direct connection.
 
-        First queries the management API to discover the correct endpoint hostname
+        Queries the management API to discover the correct endpoint hostname
         (e.g., '{name}-api.cua.sh' for Incus/macOS VMs). Falls back to the legacy
-        pattern '{name}.containers.cloud.trycua.com' if the API doesn't return
-        endpoint info.
+        pattern if the API doesn't return endpoint info.
         """
         if name is None:
-            raise ValueError("VM name is required for CloudProvider.get_ip")
+            raise ValueError("VM name is required for CloudV2Provider.get_ip")
 
-        # Try to get the endpoint hostname from the API
         api_host = await self._fetch_vm_api_host(name)
         if api_host:
             logger.info(f"Using API endpoint hostname for {name}: {api_host}")
             return api_host
 
-        # Fall back to legacy hostname pattern
         return f"{name}.containers.cloud.trycua.com"
+
+    async def list_vms(self) -> ListVMsResponse:
+        url = f"{self.api_base}/v1/vms"
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Accept": "application/json",
+        }
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, headers=headers) as resp:
+                if resp.status == 200:
+                    try:
+                        data = await resp.json(content_type=None)
+                    except Exception:
+                        text = await resp.text()
+                        logger.error(f"Failed to parse list_vms JSON: {text}")
+                        return []
+                    if isinstance(data, list):
+                        enriched: List[Dict[str, Any]] = []
+                        for item in data:
+                            vm = dict(item) if isinstance(item, dict) else {}
+                            name = vm.get("name")
+                            password = vm.get("password")
+                            if isinstance(name, str) and name:
+                                # Use endpoint info from the API response
+                                api_host = None
+                                vnc_host = None
+                                for ep in vm.get("endpoints", []):
+                                    if isinstance(ep, dict):
+                                        if ep.get("name") == "api" and ep.get("host"):
+                                            api_host = ep["host"]
+                                            self._endpoint_cache[name] = api_host
+                                        elif ep.get("name") == "vnc" and ep.get("host"):
+                                            vnc_host = ep["host"]
+
+                                if not api_host:
+                                    api_host = f"{name}.containers.cloud.trycua.com"
+
+                                if not vm.get("api_url"):
+                                    vm["api_url"] = f"https://{api_host}:8443"
+                                if not vm.get("vnc_url") and isinstance(password, str) and password:
+                                    vhost = vnc_host or api_host
+                                    vm["vnc_url"] = (
+                                        f"https://{vhost}/vnc.html?autoconnect=true&password={password}"
+                                    )
+                            enriched.append(vm)
+                        return enriched  # type: ignore[return-value]
+                    logger.warning("Unexpected response for list_vms; expected list")
+                    return []
+                elif resp.status == 401:
+                    logger.error("Unauthorized: invalid CUA API key for list_vms")
+                    return []
+                else:
+                    text = await resp.text()
+                    logger.error(f"list_vms failed: HTTP {resp.status} - {text}")
+                    return []

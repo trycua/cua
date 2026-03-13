@@ -7,6 +7,7 @@ from .cua_adapter import CUAAdapter
 from .huggingfacelocal_adapter import HuggingFaceLocalAdapter
 from .human_adapter import HumanAdapter
 from .mlxvlm_adapter import MLXVLMAdapter
+from .yutori_adapter import YutoriAdapter
 
 __all__ = [
     "AzureMLAdapter",
@@ -14,4 +15,5 @@ __all__ = [
     "HumanAdapter",
     "MLXVLMAdapter",
     "CUAAdapter",
+    "YutoriAdapter",
 ]

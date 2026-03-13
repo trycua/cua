@@ -31,6 +31,7 @@ from .adapters import (
     HuggingFaceLocalAdapter,
     HumanAdapter,
     MLXVLMAdapter,
+    YutoriAdapter,
 )
 from .callbacks import (
     BudgetManagerCallback,
@@ -297,12 +298,14 @@ class ComputerAgent:
         mlx_adapter = MLXVLMAdapter()
         cua_adapter = CUAAdapter()
         azure_ml_adapter = AzureMLAdapter()
+        yutori_adapter = YutoriAdapter()
         litellm.custom_provider_map = [
             {"provider": "huggingface-local", "custom_handler": hf_adapter},
             {"provider": "human", "custom_handler": human_adapter},
             {"provider": "mlx", "custom_handler": mlx_adapter},
             {"provider": "cua", "custom_handler": cua_adapter},
             {"provider": "azure_ml", "custom_handler": azure_ml_adapter},
+            {"provider": "yutori", "custom_handler": yutori_adapter},
         ]
         litellm.suppress_debug_info = True
 

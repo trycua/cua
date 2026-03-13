@@ -127,25 +127,30 @@ def main() -> None:
             continue
 
         print(f"\n=== Task: {task_id} ===")
+
+        # Launch all models simultaneously
+        model_run_ids: dict[str, list[str]] = {model_name: [] for model_name, _ in MODELS}
         for model_name, model_id in MODELS:
             print(f"  [{model_name}] Launching {args.attempts} simultaneous runs...")
-            run_ids = []
             for i in range(args.attempts):
                 try:
                     run_id = start_run(task_path, model_id, args.max_steps)
-                    print(f"    run {i+1}: {run_id}")
-                    run_ids.append(run_id)
+                    print(f"    [{model_name}] run {i+1}: {run_id}")
+                    model_run_ids[model_name].append(run_id)
                 except Exception as e:
-                    print(f"    run {i+1}: FAILED to start — {e}")
+                    print(f"    [{model_name}] run {i+1}: FAILED to start — {e}")
 
-            wait_for_runs(run_ids)
+        # Wait for all runs across all models
+        all_run_ids = [rid for rids in model_run_ids.values() for rid in rids]
+        wait_for_runs(all_run_ids)
 
+        # Extract scores per model
+        for model_name, _ in MODELS:
             scores = []
-            for run_id in run_ids:
+            for run_id in model_run_ids[model_name]:
                 score = extract_score(run_id, task_id)
                 scores.append(score if score is not None else 0.0)
-                print(f"    {run_id}: {score}")
-
+                print(f"    [{model_name}] {run_id}: {score}")
             results[task_id][model_name] = scores
             pass_rate = sum(1 for s in scores if s > 0) / len(scores) if scores else 0.0
             print(f"  [{model_name}] pass rate: {pass_rate:.0%} ({sum(1 for s in scores if s > 0)}/{len(scores)})")

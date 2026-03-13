@@ -35,7 +35,7 @@ Both styles work identically - use whichever you prefer!
 ### Available Commands
 
 - **Authentication** - `cua auth login`, `cua auth env`, `cua auth logout` (also available as flat commands: `cua login`, `cua env`, `cua logout`)
-- **Sandbox Management** - `cua list`, `cua create`, `cua get`, `cua start`, `cua stop`, `cua restart`, `cua delete`, `cua vnc`
+- **Sandbox Management** - `cua list`, `cua create`, `cua get`, `cua start`, `cua stop`, `cua restart`, `cua delete`, `cua vnc`, `cua shell`, `cua exec`
 
 ## Authentication Commands
 
@@ -344,6 +344,103 @@ Opening NoVNC: https://my-dev-sandbox.sandbox.cua.ai/vnc.html?autoconnect=true&p
 ```
 
 This command automatically opens your default browser to the VNC interface with the correct password pre-filled.
+
+### `cua shell`
+
+Open an interactive shell session in a running sandbox.
+
+```bash
+cua shell <name>
+
+# Run a command through the shell
+cua shell <name> <command...>
+
+# Specify terminal size
+cua shell --cols 120 --rows 40 <name>
+```
+
+**Options:**
+
+- `--cols <number>` - Terminal width in columns (default: current terminal width or 80)
+- `--rows <number>` - Terminal height in rows (default: current terminal height or 24)
+
+**Examples:**
+
+```bash
+# Open interactive bash shell
+$ cua shell my-dev-sandbox
+root@sandbox:~# ls
+Desktop  Documents  Downloads
+root@sandbox:~# exit
+exit
+
+# Run a single command through the shell
+$ cua shell my-dev-sandbox echo "Hello from sandbox"
+Hello from sandbox
+
+# Check system info
+$ cua shell my-dev-sandbox uname -a
+Linux sandbox 5.15.0 #1 SMP x86_64 GNU/Linux
+```
+
+<Callout type="info">
+  The shell command connects via WebSocket to the sandbox's PTY endpoint, providing a full interactive terminal experience with proper TTY handling.
+</Callout>
+
+### `cua exec`
+
+Execute a command directly in a sandbox without an interactive shell.
+
+```bash
+cua exec <name> <command...>
+
+# Get JSON output
+cua exec --json <name> <command...>
+```
+
+**Options:**
+
+- `--json` - Output result as JSON including stdout, stderr, and exit code
+
+**Examples:**
+
+```bash
+# Run a command
+$ cua exec my-dev-sandbox ls -la /tmp
+total 8
+drwxrwxrwt 2 root root 4096 Mar 13 10:00 .
+drwxr-xr-x 1 root root 4096 Mar 13 09:00 ..
+
+# Get JSON output with exit code
+$ cua exec --json my-dev-sandbox echo "test"
+{
+  "stdout": "test\n",
+  "stderr": "",
+  "return_code": 0
+}
+
+# Check exit codes for scripting
+$ cua exec my-dev-sandbox test -f /etc/passwd && echo "File exists"
+File exists
+```
+
+**Exit Codes:**
+
+The `exec` command returns the exit code from the executed command, making it suitable for scripting:
+
+```bash
+# Returns 0 on success
+cua exec my-sandbox true
+echo $?  # 0
+
+# Returns non-zero on failure
+cua exec my-sandbox false
+echo $?  # 1
+```
+
+<Callout type="info">
+  Unlike `cua shell`, the `exec` command runs commands non-interactively without PTY allocation. Use `shell` for interactive sessions and `exec` for automation scripts.
+</Callout>
 
 ## Global Options
 

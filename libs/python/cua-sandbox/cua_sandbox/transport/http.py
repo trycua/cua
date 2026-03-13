@@ -11,7 +11,6 @@ import json
 from typing import Any, Dict, Optional
 
 import httpx
-
 from cua_sandbox.transport.base import Transport
 
 
@@ -43,6 +42,7 @@ class HTTPTransport(Transport):
         headers: Dict[str, str] = {}
         if self._api_key:
             headers["X-API-Key"] = self._api_key
+            headers["Authorization"] = f"Bearer {self._api_key}"
         if self._container_name:
             headers["X-Container-Name"] = self._container_name
         self._client = httpx.AsyncClient(
@@ -91,7 +91,17 @@ class HTTPTransport(Transport):
 
     async def get_screen_size(self) -> Dict[str, int]:
         result = await self._cmd("get_screen_size")
-        return {"width": result["width"], "height": result["height"]}
+        # Flatten nested responses and normalize key names
+        data = result
+        if isinstance(data, dict):
+            # Unwrap nested: {"result": {...}}, {"size": {...}}
+            data = data.get("size", data.get("result", data))
+        if isinstance(data, dict):
+            w = data.get("width") or data.get("screen_width") or data.get("w")
+            h = data.get("height") or data.get("screen_height") or data.get("h")
+            if w is not None and h is not None:
+                return {"width": int(w), "height": int(h)}
+        raise KeyError(f"Cannot extract screen size from response: {result}")
 
     async def get_environment(self) -> str:
         # computer-server doesn't have a dedicated endpoint; use /status

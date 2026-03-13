@@ -6,14 +6,14 @@ Auth priority: per-call > configure() > ~/.cua/credentials > CUA_API_KEY env var
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Optional
 
 
 @dataclass
 class _Config:
     api_key: Optional[str] = None
-    base_url: str = "https://api.trycua.com"
+    base_url: str = "https://api.cua.ai"
 
 
 _global_config = _Config()
@@ -61,9 +61,9 @@ def _read_credentials_key() -> Optional[str]:
             for line in f:
                 line = line.strip()
                 if line.startswith("api_key="):
-                    return line[len("api_key="):]
+                    return line[len("api_key=") :]
                 if line.startswith("api_key ="):
-                    return line[len("api_key ="):].strip()
+                    return line[len("api_key =") :].strip()
     except FileNotFoundError:
         pass
     return None

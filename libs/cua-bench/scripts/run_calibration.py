@@ -94,9 +94,9 @@ def print_summary(results: dict, task_ids: list[str], output: Path) -> None:
         rates = {}
         for model_name, _ in MODELS:
             scores = row.get(model_name, [])
-            rates[model_name] = sum(1 for s in scores if s > 0) / len(scores) if scores else None
-        claude = f"{rates['claude']:.0%}" if rates["claude"] is not None else "  pending"
-        openai = f"{rates['openai']:.0%}" if rates["openai"] is not None else "  pending"
+            rates[model_name] = sum(1 for s in scores if s > 0) / len(scores) if scores is not None and len(scores) > 0 else None
+        claude = f"{rates['claude']:.0%}" if rates["claude"] is not None else "pending"
+        openai = f"{rates['openai']:.0%}" if rates["openai"] is not None else "pending"
         print(f"{task_id:<12} {claude:>10} {openai:>10}")
     output.write_text(json.dumps(results, indent=2))
     print(f"(results written to {output})\n")

@@ -84,6 +84,24 @@ def extract_score(run_id: str, task_id: str) -> float | None:
     return None
 
 
+def print_summary(results: dict, task_ids: list[str], output: Path) -> None:
+    """Print running summary table and flush results to disk."""
+    print("\n=== Summary so far ===")
+    print(f"{'Task':<12} {'Claude':>10} {'OpenAI':>10}")
+    print("-" * 34)
+    for task_id in task_ids:
+        row = results[task_id]
+        rates = {}
+        for model_name, _ in MODELS:
+            scores = row.get(model_name, [])
+            rates[model_name] = sum(1 for s in scores if s > 0) / len(scores) if scores else None
+        claude = f"{rates['claude']:.0%}" if rates["claude"] is not None else "  pending"
+        openai = f"{rates['openai']:.0%}" if rates["openai"] is not None else "  pending"
+        print(f"{task_id:<12} {claude:>10} {openai:>10}")
+    output.write_text(json.dumps(results, indent=2))
+    print(f"(results written to {output})\n")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--tasks", required=True, help="Comma-separated task IDs")
@@ -132,19 +150,7 @@ def main() -> None:
             pass_rate = sum(1 for s in scores if s > 0) / len(scores) if scores else 0.0
             print(f"  [{model_name}] pass rate: {pass_rate:.0%} ({sum(1 for s in scores if s > 0)}/{len(scores)})")
 
-    # Summary
-    print("\n=== Summary ===")
-    print(f"{'Task':<12} {'Claude':>10} {'OpenAI':>10}")
-    print("-" * 34)
-    for task_id in task_ids:
-        row = results[task_id]
-        for model_name, _ in MODELS:
-            scores = row[model_name]
-            row[model_name + "_pass_rate"] = sum(1 for s in scores if s > 0) / len(scores) if scores else 0.0
-        print(f"{task_id:<12} {row['claude_pass_rate']:>9.0%} {row['openai_pass_rate']:>9.0%}")
-
-    args.output.write_text(json.dumps(results, indent=2))
-    print(f"\nWrote {args.output}")
+        print_summary(results, task_ids, args.output)
 
 
 if __name__ == "__main__":

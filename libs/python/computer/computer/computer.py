@@ -315,7 +315,7 @@ class Computer:
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Stop the computer."""
-        await self.disconnect()
+        await self.stop()
 
     def __enter__(self):
         """Start the computer."""
@@ -401,7 +401,7 @@ class Computer:
                                     )
                                 self.config.vm_provider = VMProviderFactory.create_provider(
                                     self.provider_type,
-                                    port=port,
+                                    provider_port=port,
                                     host=host,
                                     storage=storage,
                                     shared_path=shared_path,
@@ -413,7 +413,7 @@ class Computer:
                             elif self.provider_type == VMProviderType.LUME:
                                 self.config.vm_provider = VMProviderFactory.create_provider(
                                     self.provider_type,
-                                    port=port,
+                                    provider_port=port,
                                     host=host,
                                     storage=storage,
                                     verbose=verbose,
@@ -434,7 +434,7 @@ class Computer:
                             elif self.provider_type == VMProviderType.WINSANDBOX:
                                 self.config.vm_provider = VMProviderFactory.create_provider(
                                     self.provider_type,
-                                    port=port,
+                                    provider_port=port,
                                     host=host,
                                     storage=storage,
                                     verbose=verbose,
@@ -444,7 +444,7 @@ class Computer:
                             elif self.provider_type == VMProviderType.DOCKER:
                                 self.config.vm_provider = VMProviderFactory.create_provider(
                                     self.provider_type,
-                                    port=port,
+                                    provider_port=port,
                                     host=host,
                                     storage=storage,
                                     shared_path=shared_path,

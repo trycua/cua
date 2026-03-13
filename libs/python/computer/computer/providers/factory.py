@@ -55,6 +55,11 @@ class VMProviderFactory:
             except ValueError:
                 provider_type = VMProviderType.UNKNOWN
 
+        # Backward compatibility for older callers that passed `port=...`.
+        port_alias = kwargs.pop("port", None)
+        if port_alias is not None:
+            provider_port = port_alias
+
         if provider_type == VMProviderType.LUME:
             try:
                 from .lume import HAS_LUME, LumeProvider

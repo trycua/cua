@@ -8,7 +8,9 @@ import json
 import logging
 import os
 import re
+import socket
 import subprocess
+import time
 import urllib.parse
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -26,6 +28,9 @@ from ..lume_api import (
 
 # Setup logging
 logger = logging.getLogger(__name__)
+
+DEFAULT_LUME_PORT = 7777
+LEGACY_LUME_PORT = 3000
 
 
 class LumeProvider(BaseVMProvider):
@@ -61,6 +66,8 @@ class LumeProvider(BaseVMProvider):
         self.storage = storage
         self.verbose = verbose
         self.ephemeral = ephemeral  # If True, VMs will be deleted after stopping
+        self._server_process: Optional[subprocess.Popen[str]] = None
+        self._manages_server = False
 
         # Base API URL for Lume API calls
         self.api_base_url = f"http://{self.host}:{self.port}"
@@ -74,13 +81,103 @@ class LumeProvider(BaseVMProvider):
 
     async def __aenter__(self):
         """Enter async context manager."""
-        # No initialization needed, just return self
+        self._ensure_server()
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Exit async context manager."""
-        # No cleanup needed
-        pass
+        self._stop_managed_server()
+
+    def _candidate_ports(self) -> List[int]:
+        ports = [self.port]
+        for candidate in (DEFAULT_LUME_PORT, LEGACY_LUME_PORT):
+            if candidate not in ports:
+                ports.append(candidate)
+        return ports
+
+    def _is_server_ready(self, port: Optional[int] = None, timeout: float = 0.5) -> bool:
+        target_port = self.port if port is None else port
+        try:
+            with socket.create_connection((self.host, target_port), timeout=timeout):
+                return True
+        except OSError:
+            return False
+
+    def _attach_to_existing_server(self) -> bool:
+        if self.host not in {"localhost", "127.0.0.1", "::1"}:
+            return False
+
+        for candidate in self._candidate_ports():
+            if not self._is_server_ready(candidate):
+                continue
+            if candidate != self.port:
+                self.logger.info(
+                    "Found running Lume API server on port %s, switching from %s",
+                    candidate,
+                    self.port,
+                )
+                self.port = candidate
+                self.api_base_url = f"http://{self.host}:{self.port}"
+            return True
+
+        return False
+
+    def _start_server(self) -> None:
+        if self.host not in {"localhost", "127.0.0.1", "::1"}:
+            raise RuntimeError(
+                f"Lume API server at {self.host}:{self.port} is unreachable. "
+                "Start `lume serve` on that host or use a reachable local server."
+            )
+
+        self.logger.info("Starting local Lume API server on port %s", self.port)
+        self._server_process = subprocess.Popen(  # noqa: S603
+            ["lume", "serve", "--port", str(self.port)],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            text=True,
+        )
+        self._manages_server = True
+
+    def _wait_for_server(self, timeout_seconds: float = 15.0) -> None:
+        deadline = time.time() + timeout_seconds
+        while time.time() < deadline:
+            if self._is_server_ready():
+                return
+            if self._server_process and self._server_process.poll() is not None:
+                self._manages_server = False
+                raise RuntimeError(
+                    f"`lume serve --port {self.port}` exited before becoming ready."
+                )
+            time.sleep(0.25)
+
+        raise RuntimeError(
+            f"Lume API server did not become ready on {self.host}:{self.port} within "
+            f"{timeout_seconds:.0f}s."
+        )
+
+    def _ensure_server(self) -> None:
+        if self._is_server_ready():
+            return
+        if self._attach_to_existing_server():
+            return
+        self._start_server()
+        self._wait_for_server()
+
+    def _stop_managed_server(self) -> None:
+        if not self._manages_server or self._server_process is None:
+            return
+
+        if self._server_process.poll() is None:
+            self.logger.info("Stopping managed Lume API server on port %s", self.port)
+            self._server_process.terminate()
+            try:
+                self._server_process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                self._server_process.kill()
+                self._server_process.wait(timeout=5)
+
+        self._server_process = None
+        self._manages_server = False
 
     def _lume_api_get(
         self, vm_name: str = "", storage: Optional[str] = None, debug: bool = False

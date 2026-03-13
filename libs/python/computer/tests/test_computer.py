@@ -55,6 +55,18 @@ class TestComputerContextManager:
         assert callable(Computer.__aenter__)
         assert callable(Computer.__aexit__)
 
+    @pytest.mark.asyncio
+    async def test_async_context_exit_stops_computer(self, disable_telemetry):
+        """`async with Computer(...)` should stop the VM, not just disconnect."""
+        from computer import Computer
+
+        computer = Computer(use_host_computer_server=True)
+        computer.stop = AsyncMock()
+
+        await computer.__aexit__(None, None, None)
+
+        computer.stop.assert_awaited_once()
+
 
 class TestComputerInterface:
     """Test Computer.interface property (SRP: Only tests interface access)."""

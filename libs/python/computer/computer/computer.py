@@ -220,10 +220,24 @@ class Computer:
         # for VM file sharing
         self.shared_path = None
         if shared_directories and len(shared_directories) > 0:
-            self.shared_path = shared_directories[0]
-            self.logger.info(
-                f"Using first shared directory for VM file sharing: {self.shared_path}"
-            )
+            # Validate that shared directories exist before using them
+            valid_directories = []
+            for path in shared_directories:
+                abs_path = os.path.abspath(os.path.expanduser(path))
+                if os.path.exists(abs_path):
+                    valid_directories.append(path)
+                else:
+                    self.logger.warning(f"Shared directory does not exist: {path}")
+            
+            if valid_directories:
+                self.shared_path = valid_directories[0]
+                self.shared_directories = valid_directories
+                self.logger.info(
+                    f"Using first shared directory for VM file sharing: {self.shared_path}"
+                )
+            else:
+                self.shared_directories = []
+                self.logger.warning("No valid shared directories found")
 
         # Store telemetry preference
         self._telemetry_enabled = telemetry_enabled

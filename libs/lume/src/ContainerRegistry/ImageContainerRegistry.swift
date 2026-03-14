@@ -1,6 +1,7 @@
 import ArgumentParser
+import CZlib
 import CommonCrypto
-import Compression  // Add this import
+import Compression
 import Darwin
 import Foundation
 import Swift
@@ -83,6 +84,7 @@ struct Layer: Codable, Equatable {
     let mediaType: String
     let digest: String
     let size: Int
+    let annotations: [String: String]?
 }
 
 struct Manifest: Codable {
@@ -90,6 +92,59 @@ struct Manifest: Codable {
     let config: Layer?
     let mediaType: String
     let schemaVersion: Int
+    let annotations: [String: String]?
+}
+
+// MARK: - OCI-Compliant Format (kubelet-compatible)
+
+enum ImageFormat {
+    case oci     // kubelet-compatible: single gzip-compressed disk, agoda media types
+    case legacy  // Lume legacy: LZ4-chunked disk, trycua media types
+}
+
+/// Media type constants for the OCI-compliant kubelet image format.
+enum OCIMediaType {
+    static let config = "application/vnd.agoda.macosvz.config.v1+json"
+    static let disk   = "application/vnd.agoda.macosvz.disk.image.v1"
+    static let aux    = "application/vnd.agoda.macosvz.aux.image.v1"
+
+    static func detect(_ manifest: Manifest) -> ImageFormat {
+        let hasOCIDisk = manifest.layers.contains { $0.mediaType == disk }
+        let hasOCIConfig = manifest.config?.mediaType == config
+        return (hasOCIDisk || hasOCIConfig) ? .oci : .legacy
+    }
+}
+
+/// Annotation keys for multi-layer chunked disk images.
+enum OCIAnnotation {
+    static let partNumber = "org.trycua.lume.part.number"
+    static let partTotal  = "org.trycua.lume.part.total"
+    static let partOffset = "org.trycua.lume.part.offset"
+    static let chunkSize  = "org.trycua.lume.chunk.size"
+}
+
+/// Holds per-chunk upload results for manifest construction.
+struct DiskChunkDescriptor {
+    let partNumber: Int
+    let compressedDigest: String
+    let compressedSize: Int
+    let uncompressedDigest: String
+    let uncompressedSize: UInt64
+    let diskOffset: UInt64
+}
+
+/// OCI config JSON structure expected by the macOS-vz kubelet.
+struct KubeletOCIConfig: Codable {
+    let mediatype: String?
+    let os: String
+    let hardwareModelData: String
+    let machineIdData: String
+    let storage: [KubeletStorageItem]?
+}
+
+struct KubeletStorageItem: Codable {
+    let mediatype: String
+    let file: String
 }
 
 struct RepositoryTag: Codable {
@@ -516,7 +571,7 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
         let reassembledCachePath = getImageCacheDirectory(manifestId: manifestId)
             .appendingPathComponent("disk.img.reassembled")
         if FileManager.default.fileExists(atPath: reassembledCachePath.path) {
-            Logger.info("Found reassembled disk image in cache validation")
+            Logger.debug("Found reassembled disk image in cache validation")
 
             // If we have a reassembled image, we only need to make sure the manifest matches
             guard let cachedManifest = loadCachedManifest(manifestId: manifestId),
@@ -741,7 +796,7 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
         let imageName = String(components.first!)
         let imageTag = String(tag)
 
-        Logger.info(
+        Logger.debug(
             "Pulling image",
             metadata: [
                 "image": image,
@@ -752,12 +807,12 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
             ])
 
         // Get anonymous token
-        Logger.info("Getting registry authentication token")
+        Logger.debug("Getting registry authentication token")
         let token = try await getToken(
             repository: "\(self.organization)/\(imageName)", scopes: ["pull"])
 
         // Fetch manifest
-        Logger.info("Fetching Image manifest")
+        Logger.debug("Fetching Image manifest")
         let (manifest, manifestDigest): (Manifest, String) = try await fetchManifest(
             repository: "\(self.organization)/\(imageName)",
             tag: imageTag,
@@ -767,7 +822,7 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
         // Get manifest identifier using the manifest's own digest
         let manifestId = getManifestIdentifier(manifest, manifestDigest: manifestDigest)
 
-        Logger.info(
+        Logger.debug(
             "Pulling image",
             metadata: [
                 "repository": imageName,
@@ -782,10 +837,27 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
             try? FileManager.default.removeItem(at: tempVMDir)
         }
 
+        // Auto-detect image format from manifest layer media types
+        let imageFormat = OCIMediaType.detect(manifest)
+        Logger.debug("Detected image format: \(imageFormat == .oci ? "OCI-compliant" : "legacy Lume")")
+
+        // OCI-compliant images bypass the legacy cache/assembly path
+        if imageFormat == .oci {
+            Logger.debug("Pulling OCI-compliant image")
+            try await pullOCI(
+                manifest: manifest,
+                repository: "\(self.organization)/\(imageName)",
+                token: token,
+                to: tempVMDir
+            )
+        }
+
         // Check if caching is enabled and if we have a valid cached version
-        Logger.info("Caching enabled: \(cachingEnabled)")
-        if cachingEnabled && validateCache(manifest: manifest, manifestId: manifestId) {
-            Logger.info("Using cached version of image")
+        Logger.debug("Caching enabled: \(cachingEnabled)")
+        if imageFormat == .oci {
+            // OCI pull already populated tempVMDir; skip legacy cache logic
+        } else if cachingEnabled && validateCache(manifest: manifest, manifestId: manifestId) {
+            Logger.debug("Using cached version of image")
             try await copyFromCache(manifest: manifest, manifestId: manifestId, to: tempVMDir)
         } else {
             // If caching is disabled, log it
@@ -1043,7 +1115,7 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
             withIntermediateDirectories: true)
 
         // Log the final destination
-        Logger.info(
+        Logger.debug(
             "Moving files to VM directory",
             metadata: [
                 "destination": vmDir.dir.path,
@@ -1055,15 +1127,15 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
 
         // If caching is disabled, clean up the cache entry
         if !cachingEnabled {
-            Logger.info("Caching disabled - cleaning up temporary cache entry")
+            Logger.debug("Caching disabled - cleaning up temporary cache entry")
             try? cleanupCacheEntry(manifestId: manifestId)
         }
 
-        Logger.info("Download complete: Files extracted to \(vmDir.dir.path)")
-        Logger.info(
+        Logger.debug("Download complete: Files extracted to \(vmDir.dir.path)")
+        Logger.debug(
             "Note: Actual disk usage is significantly lower than reported size due to macOS sparse file system"
         )
-        Logger.info(
+        Logger.debug(
             "Run 'lume run \(vmName)' to reduce the disk image file size by using macOS sparse file system"
         )
         return vmDir
@@ -1477,7 +1549,7 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
     private func copyFromCache(manifest: Manifest, manifestId: String, to destination: URL)
         async throws
     {
-        Logger.info("Copying from cache...")
+        Logger.debug("Copying from cache...")
 
         // Define output URL and expected size variable scope here
         let outputURL = destination.appendingPathComponent("disk.img")
@@ -1490,7 +1562,7 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
 
         // First check if we already have a reassembled image in the cache
         if FileManager.default.fileExists(atPath: reassembledCachePath.path) {
-            Logger.info("Found reassembled disk image in cache, using it directly")
+            Logger.debug("Found reassembled disk image in cache, using it directly")
 
             // Copy reassembled disk image
             try FileManager.default.copyItem(at: reassembledCachePath, to: outputURL)
@@ -1501,7 +1573,7 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
                     at: nvramCachePath,
                     to: destination.appendingPathComponent("nvram.bin")
                 )
-                Logger.info("Using cached nvram.bin file")
+                Logger.debug("Using cached nvram.bin file")
             } else {
                 // Look for nvram in layer cache if needed
                 let nvramLayers = manifest.layers.filter {
@@ -1517,7 +1589,7 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
                         )
                         // Also save it to the dedicated nvram location for future use
                         try FileManager.default.copyItem(at: cachedNvram, to: nvramCachePath)
-                        Logger.info("Recovered nvram.bin from layer cache")
+                        Logger.debug("Recovered nvram.bin from layer cache")
                     }
                 }
             }
@@ -1529,7 +1601,7 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
                     at: configCachePath,
                     to: destination.appendingPathComponent("config.json")
                 )
-                Logger.info("Using cached config.json file")
+                Logger.debug("Using cached config.json file")
             } else {
                 // Look for config in layer cache if needed
                 let configLayers = manifest.layers.filter {
@@ -1545,17 +1617,17 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
                         )
                         // Also save it to the dedicated config location for future use
                         try FileManager.default.copyItem(at: cachedConfig, to: configCachePath)
-                        Logger.info("Recovered config.json from layer cache")
+                        Logger.debug("Recovered config.json from layer cache")
                     }
                 }
             }
 
-            Logger.info("Cache copy complete using reassembled image")
+            Logger.debug("Cache copy complete using reassembled image")
             return
         }
 
         // If we don't have a reassembled image, proceed with legacy part handling
-        Logger.info("No reassembled image found, using part-based reassembly")
+        Logger.debug("No reassembled image found, using part-based reassembly")
 
         // Instantiate collector
         let diskPartsCollector = DiskPartsCollector()
@@ -1931,7 +2003,7 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
             }
         }
 
-        Logger.info("Cache copy complete")
+        Logger.debug("Cache copy complete")
     }
 
     private func getToken(
@@ -1945,7 +2017,7 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
         // Build scope string from scopes array
         let scopeString = scopes.joined(separator: ",")
 
-        Logger.info("Requesting token with scopes: \(scopeString) for repository: \(repository)")
+        Logger.debug("Requesting token with scopes: \(scopeString) for repository: \(repository)")
 
         // Request both pull and push scope for uploads
         let url = URL(
@@ -1964,12 +2036,12 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
             if let authData = authString.data(using: .utf8) {
                 let base64Auth = authData.base64EncodedString()
                 request.setValue("Basic \(base64Auth)", forHTTPHeaderField: "Authorization")
-                Logger.info("Adding Basic Authentication header to token request")
+                Logger.debug("Adding Basic Authentication header to token request")
             } else {
                 Logger.error("Failed to encode credentials for Basic Auth")
             }
         } else {
-            Logger.info("No credentials found in environment for token request")
+            Logger.debug("No credentials found in environment for token request")
             // Allow anonymous request for pull scope, but push scope likely requires auth
         }
         // *** End Basic Auth addition ***
@@ -2818,9 +2890,23 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
         chunkSizeMb: Int = 512,
         verbose: Bool = false,
         dryRun: Bool = false,
-        reassemble: Bool = false
+        reassemble: Bool = false,
+        singleLayer: Bool = false,
+        legacy: Bool = false
     ) async throws {
-        Logger.info(
+        if !legacy {
+            try await pushOCI(
+                vmDirPath: vmDirPath,
+                imageName: imageName,
+                tags: tags,
+                chunkSizeMb: chunkSizeMb,
+                singleLayer: singleLayer,
+                verbose: verbose,
+                dryRun: dryRun
+            )
+            return
+        }
+        Logger.debug(
             "Pushing VM to registry",
             metadata: [
                 "vm_path": vmDirPath,
@@ -2855,7 +2941,7 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
         // Get authentication token only if not in dry-run mode
         var token: String = ""
         if !dryRun {
-            Logger.info("Getting registry authentication token")
+            Logger.debug("Getting registry authentication token")
             token = try await getToken(
                 repository: "\(self.organization)/\(imageName)",
                 scopes: ["pull", "push"],
@@ -3513,7 +3599,7 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
 
         // Check if blob already exists
         if try await blobExists(repository: repository, digest: digest, token: token) {
-            Logger.info("Blob already exists: \(digest)")
+            Logger.debug("Blob already exists: \(digest)")
             return digest
         }
 
@@ -3529,26 +3615,28 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
         return digest
     }
 
-    private func uploadBlobFromPath(repository: String, path: URL, digest: String, token: String)
-        async throws -> String
-    {
+    private func uploadBlobFromPath(
+        repository: String, path: URL, digest: String, token: String,
+        onProgress: (@Sendable (Int64, Int64) -> Void)? = nil
+    ) async throws -> String {
         // Check if blob already exists
         if try await blobExists(repository: repository, digest: digest, token: token) {
-            Logger.info("Blob already exists: \(digest)")
+            Logger.debug("Blob already exists: \(digest)")
             return digest
         }
 
         // Initiate upload
         let uploadURL = try await startBlobUpload(repository: repository, token: token)
 
-        // Load data from file
-        let data = try Data(contentsOf: path)
+        // Upload blob from file with progress tracking
+        try await uploadBlobFromFile(
+            url: uploadURL, filePath: path, digest: digest, token: token,
+            onProgress: onProgress)
 
-        // Upload blob
-        try await uploadBlob(url: uploadURL, data: data, digest: digest, token: token)
-
-        // Report progress
-        await uploadProgress.addProgress(Int64(data.count))
+        // Report progress to legacy tracker
+        let attrs = try FileManager.default.attributesOfItem(atPath: path.path)
+        let size = attrs[.size] as? Int64 ?? 0
+        await uploadProgress.addProgress(size)
 
         return digest
     }
@@ -3607,8 +3695,47 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
             throw PushError.invalidURL
         }
 
-        Logger.info("Blob upload initiated. Upload URL: \(uploadURL.absoluteString)")
+        Logger.debug("Blob upload initiated. Upload URL: \(uploadURL.absoluteString)")
         return uploadURL.absoluteURL  // Ensure it's absolute
+    }
+
+    /// Upload a blob from a file path with real byte-level progress tracking.
+    private func uploadBlobFromFile(
+        url: URL, filePath: URL, digest: String, token: String,
+        onProgress: (@Sendable (Int64, Int64) -> Void)? = nil
+    ) async throws {
+        var components = URLComponents(url: url, resolvingAgainstBaseURL: true)!
+        var queryItems = components.queryItems ?? []
+        queryItems.append(URLQueryItem(name: "digest", value: digest))
+        components.queryItems = queryItems
+
+        guard let uploadURL = components.url else {
+            throw PushError.invalidURL
+        }
+
+        let attrs = try FileManager.default.attributesOfItem(atPath: filePath.path)
+        let fileSize = attrs[.size] as? Int64 ?? 0
+
+        var request = URLRequest(url: uploadURL)
+        request.httpMethod = "PUT"
+        request.timeoutInterval = 3600
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
+        request.setValue("\(fileSize)", forHTTPHeaderField: "Content-Length")
+
+        let config = URLSessionConfiguration.default
+        config.timeoutIntervalForRequest = 3600
+        config.timeoutIntervalForResource = 7200
+
+        let delegate = UploadProgressDelegate(
+            totalBytes: fileSize, onProgress: onProgress)
+        let session = URLSession(configuration: config, delegate: delegate, delegateQueue: nil)
+
+        let (_, response) = try await session.upload(for: request, fromFile: filePath)
+
+        guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 201 else {
+            throw PushError.blobUploadFailed
+        }
     }
 
     private func uploadBlob(url: URL, data: Data, digest: String, token: String) async throws {
@@ -3625,12 +3752,17 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
 
         var request = URLRequest(url: uploadURL)
         request.httpMethod = "PUT"
+        request.timeoutInterval = 3600  // 1 hour for large blob uploads
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         request.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
         request.setValue("\(data.count)", forHTTPHeaderField: "Content-Length")
         request.httpBody = data
 
-        let (_, response) = try await URLSession.shared.data(for: request)
+        let config = URLSessionConfiguration.default
+        config.timeoutIntervalForRequest = 3600
+        config.timeoutIntervalForResource = 7200
+        let session = URLSession(configuration: config)
+        let (_, response) = try await session.data(for: request)
 
         guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 201 else {
             throw PushError.blobUploadFailed
@@ -3745,6 +3877,1446 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
         }
 
         return "hash-calculation-failed"
+    }
+
+    // MARK: - OCI-Compliant Format Support
+
+    /// Gzip-compress a file using in-process zlib (streaming, sparse-aware).
+    /// Computes SHA256 digests for both uncompressed and compressed data in a single pass.
+    private func gzipFile(
+        inputPath: URL, outputPath: URL,
+        onProgress: ((_ bytesRead: UInt64, _ totalBytes: UInt64) -> Void)? = nil
+    ) throws -> (
+        compressedDigest: String, compressedSize: Int,
+        uncompressedDigest: String, uncompressedSize: UInt64
+    ) {
+        let inputHandle = try FileHandle(forReadingFrom: inputPath)
+        defer { try? inputHandle.close() }
+
+        let uncompressedAttrs = try FileManager.default.attributesOfItem(atPath: inputPath.path)
+        let uncompressedSize = uncompressedAttrs[.size] as? UInt64 ?? 0
+
+        FileManager.default.createFile(atPath: outputPath.path, contents: nil)
+        let outputHandle = try FileHandle(forWritingTo: outputPath)
+        defer { try? outputHandle.close() }
+
+        // Initialize zlib with gzip format (windowBits = MAX_WBITS + 16 = 31)
+        var stream = CZlib.z_stream()
+        let initResult = CZlib.deflateInit2_(
+            &stream,
+            Z_DEFAULT_COMPRESSION,
+            Z_DEFLATED,
+            MAX_WBITS + 16,  // gzip header/trailer
+            MAX_MEM_LEVEL,
+            Z_DEFAULT_STRATEGY,
+            ZLIB_VERSION,
+            Int32(MemoryLayout<CZlib.z_stream>.size)
+        )
+        guard initResult == Z_OK else {
+            throw PushError.blobUploadFailed
+        }
+        defer { CZlib.deflateEnd(&stream) }
+
+        // SHA256 contexts for both uncompressed and compressed data
+        var uncompCtx = CC_SHA256_CTX()
+        CC_SHA256_Init(&uncompCtx)
+        var compCtx = CC_SHA256_CTX()
+        CC_SHA256_Init(&compCtx)
+
+        let readSize = 4 * 1024 * 1024  // 4MB blocks (matches sparse granularity)
+        let outputBufSize = readSize + 1024
+        let outputBuf = UnsafeMutablePointer<UInt8>.allocate(capacity: outputBufSize)
+        defer { outputBuf.deallocate() }
+        var totalCompressed: Int = 0
+        var totalRead: UInt64 = 0
+
+        while true {
+            let inputData = inputHandle.readData(ofLength: readSize)
+            let isLast = inputData.count < readSize
+            totalRead += UInt64(inputData.count)
+            onProgress?(totalRead, uncompressedSize)
+
+            // Update uncompressed digest
+            inputData.withUnsafeBytes { ptr in
+                if let base = ptr.baseAddress {
+                    CC_SHA256_Update(&uncompCtx, base, CC_LONG(inputData.count))
+                }
+            }
+
+            // Compress
+            try inputData.withUnsafeBytes { inputPtr in
+                stream.next_in = UnsafeMutablePointer<UInt8>(
+                    mutating: inputPtr.baseAddress?.assumingMemoryBound(to: UInt8.self))
+                stream.avail_in = UInt32(inputData.count)
+
+                repeat {
+                    stream.next_out = outputBuf
+                    stream.avail_out = UInt32(outputBufSize)
+
+                    let status = CZlib.deflate(&stream, isLast ? Z_FINISH : Z_NO_FLUSH)
+                    guard status == Z_OK || status == Z_BUF_ERROR || status == Z_STREAM_END else {
+                        throw PushError.blobUploadFailed
+                    }
+
+                    let produced = outputBufSize - Int(stream.avail_out)
+                    if produced > 0 {
+                        CC_SHA256_Update(&compCtx, outputBuf, CC_LONG(produced))
+                        try outputHandle.write(contentsOf: Data(
+                            bytesNoCopy: outputBuf, count: produced, deallocator: .none))
+                        totalCompressed += produced
+                    }
+                } while stream.avail_out == 0
+            }
+
+            if isLast { break }
+        }
+
+        // Finalize digests
+        var uncompHash = [UInt8](repeating: 0, count: Int(CC_SHA256_DIGEST_LENGTH))
+        CC_SHA256_Final(&uncompHash, &uncompCtx)
+        let uncompressedDigest = "sha256:" + uncompHash.map { String(format: "%02x", $0) }.joined()
+
+        var compHash = [UInt8](repeating: 0, count: Int(CC_SHA256_DIGEST_LENGTH))
+        CC_SHA256_Final(&compHash, &compCtx)
+        let compressedDigest = "sha256:" + compHash.map { String(format: "%02x", $0) }.joined()
+
+        return (compressedDigest, totalCompressed, uncompressedDigest, uncompressedSize)
+    }
+
+    /// Gunzip a file to an output path.
+    private func gunzipFile(inputPath: URL, outputPath: URL) throws {
+        FileManager.default.createFile(atPath: outputPath.path, contents: nil)
+        let outputHandle = try FileHandle(forWritingTo: outputPath)
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/gunzip")
+        process.arguments = ["-c", inputPath.path]
+        process.standardOutput = outputHandle
+
+        try process.run()
+        process.waitUntilExit()
+        try outputHandle.close()
+
+        guard process.terminationStatus == 0 else {
+            throw PullError.layerDownloadFailed(inputPath.lastPathComponent)
+        }
+    }
+
+    /// Gunzip-decompress a chunk and write it sparsely into an output file handle,
+    /// skipping zero-filled 4 MB blocks to create holes in the sparse file.
+    private func gunzipChunkAndWriteSparse(
+        inputPath: URL, outputHandle: FileHandle, startOffset: UInt64
+    ) throws -> UInt64 {
+        guard FileManager.default.fileExists(atPath: inputPath.path) else {
+            Logger.error("Compressed chunk not found at: \(inputPath.path)")
+            return 0
+        }
+
+        // Decompress gzip to a temp file via /usr/bin/gunzip, then read in
+        // granularity-sized blocks for sparse writing.  Apple's Compression
+        // framework (.zlib) only handles raw DEFLATE — not gzip headers.
+        let decompressedPath = inputPath.appendingPathExtension("raw")
+        defer { try? FileManager.default.removeItem(at: decompressedPath) }
+
+        FileManager.default.createFile(atPath: decompressedPath.path, contents: nil)
+        let tempHandle = try FileHandle(forWritingTo: decompressedPath)
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/gunzip")
+        process.arguments = ["-c", inputPath.path]
+        process.standardOutput = tempHandle
+        try process.run()
+        process.waitUntilExit()
+        try tempHandle.close()
+
+        guard process.terminationStatus == 0 else {
+            throw PullError.layerDownloadFailed(inputPath.lastPathComponent)
+        }
+
+        let readHandle = try FileHandle(forReadingFrom: decompressedPath)
+        defer { try? readHandle.close() }
+
+        var currentWriteOffset = startOffset
+        var totalDecompressedBytes: UInt64 = 0
+
+        while true {
+            let decompressedData = readHandle.readData(ofLength: Self.holeGranularityBytes)
+            if decompressedData.isEmpty { break }
+
+            if decompressedData.count == Self.holeGranularityBytes
+                && decompressedData == Self.zeroChunk
+            {
+                // Zero chunk — skip write, leave as sparse hole
+                currentWriteOffset += UInt64(decompressedData.count)
+            } else {
+                try outputHandle.seek(toOffset: currentWriteOffset)
+                try outputHandle.write(contentsOf: decompressedData)
+                currentWriteOffset += UInt64(decompressedData.count)
+            }
+            totalDecompressedBytes += UInt64(decompressedData.count)
+        }
+
+        return totalDecompressedBytes
+    }
+
+    /// Build the kubelet-compatible config JSON blob from a VMConfig.
+    private func createKubeletConfigData(_ vmConfig: VMConfig) throws -> Data {
+        let hardwareModelData = vmConfig.hardwareModel?.base64EncodedString() ?? ""
+        let machineIdData = vmConfig.machineIdentifier?.base64EncodedString() ?? ""
+
+        let configObj: [String: Any] = [
+            "mediatype": OCIMediaType.config,
+            "os": vmConfig.os,
+            "hardwareModelData": hardwareModelData,
+            "machineIdData": machineIdData,
+            "storage": [
+                ["mediatype": OCIMediaType.aux,  "file": "aux.img"],
+                ["mediatype": OCIMediaType.disk, "file": "disk.img"],
+            ],
+        ]
+        return try JSONSerialization.data(
+            withJSONObject: configObj, options: [.prettyPrinted, .sortedKeys])
+    }
+
+    /// Build an OCI-compliant manifest dictionary (kubelet-compatible).
+    private func createOCIManifest(
+        configDigest: String, configSize: Int,
+        auxDigest: String, auxSize: Int,
+        diskDigest: String, diskSize: Int,
+        uncompressedDiskDigest: String, uncompressedDiskSize: UInt64,
+        vmConfig: VMConfig?
+    ) -> [String: Any] {
+        // Config entry (in manifest's "config" field)
+        let configEntry: [String: Any] = [
+            "mediaType": OCIMediaType.config,
+            "digest": configDigest,
+            "size": configSize,
+            "annotations": ["org.opencontainers.image.title": "config.json"],
+        ]
+
+        // Aux (nvram) layer — stored uncompressed, title annotation only
+        let auxLayer: [String: Any] = [
+            "mediaType": OCIMediaType.aux,
+            "digest": auxDigest,
+            "size": auxSize,
+            "annotations": ["org.opencontainers.image.title": "aux.img"],
+        ]
+
+        // Disk layer — gzip-compressed with size/digest annotations
+        let diskLayer: [String: Any] = [
+            "mediaType": OCIMediaType.disk,
+            "digest": diskDigest,
+            "size": diskSize,
+            "annotations": [
+                "org.opencontainers.image.title": "disk.img",
+                "com.agoda.macosvz.content.uncompressed-size": "\(uncompressedDiskSize)",
+                "com.agoda.macosvz.content.uncompressed-digest": uncompressedDiskDigest,
+            ],
+        ]
+
+        // Manifest-level annotations (preserve Lume config for round-trip pulls)
+        var manifestAnnotations: [String: String] = [
+            "org.trycua.lume.upload-time": ISO8601DateFormatter().string(from: Date()),
+        ]
+        if let cfg = vmConfig {
+            manifestAnnotations["org.trycua.lume.os"] = cfg.os
+            if let v = cfg.cpuCount    { manifestAnnotations["org.trycua.lume.cpu-count"]    = "\(v)" }
+            if let v = cfg.memorySize  { manifestAnnotations["org.trycua.lume.memory-size"]  = "\(v)" }
+            if let v = cfg.diskSize    { manifestAnnotations["org.trycua.lume.disk-size"]    = "\(v)" }
+            manifestAnnotations["org.trycua.lume.display"]      = cfg.display.string
+            manifestAnnotations["org.trycua.lume.network-mode"] = cfg.networkMode.description
+        }
+
+        return [
+            "schemaVersion": 2,
+            "mediaType": "application/vnd.oci.image.manifest.v1+json",
+            "config": configEntry,
+            "layers": [auxLayer, diskLayer],
+            "annotations": manifestAnnotations,
+        ]
+    }
+
+    /// Build an OCI manifest with multiple disk chunk layers.
+    private func createOCIManifest(
+        configDigest: String, configSize: Int,
+        auxDigest: String, auxSize: Int,
+        diskChunks: [DiskChunkDescriptor],
+        totalUncompressedSize: UInt64,
+        vmConfig: VMConfig?
+    ) -> [String: Any] {
+        let configEntry: [String: Any] = [
+            "mediaType": OCIMediaType.config,
+            "digest": configDigest,
+            "size": configSize,
+            "annotations": ["org.opencontainers.image.title": "config.json"],
+        ]
+
+        let auxLayer: [String: Any] = [
+            "mediaType": OCIMediaType.aux,
+            "digest": auxDigest,
+            "size": auxSize,
+            "annotations": ["org.opencontainers.image.title": "aux.img"],
+        ]
+
+        let totalParts = diskChunks.count
+        let diskChunkLayers: [[String: Any]] = diskChunks.sorted { $0.partNumber < $1.partNumber }
+            .map { chunk in
+                [
+                    "mediaType": OCIMediaType.disk,
+                    "digest": chunk.compressedDigest,
+                    "size": chunk.compressedSize,
+                    "annotations": [
+                        "org.opencontainers.image.title": "disk.img.part.\(chunk.partNumber)",
+                        "com.agoda.macosvz.content.uncompressed-size": "\(chunk.uncompressedSize)",
+                        "com.agoda.macosvz.content.uncompressed-digest": chunk.uncompressedDigest,
+                        OCIAnnotation.partNumber: "\(chunk.partNumber)",
+                        OCIAnnotation.partTotal: "\(totalParts)",
+                        OCIAnnotation.partOffset: "\(chunk.diskOffset)",
+                        OCIAnnotation.chunkSize: "\(chunk.uncompressedSize)",
+                    ],
+                ]
+            }
+
+        var manifestAnnotations: [String: String] = [
+            "org.trycua.lume.upload-time": ISO8601DateFormatter().string(from: Date()),
+            "org.trycua.lume.total-uncompressed-size": "\(totalUncompressedSize)",
+        ]
+        if let cfg = vmConfig {
+            manifestAnnotations["org.trycua.lume.os"] = cfg.os
+            if let v = cfg.cpuCount    { manifestAnnotations["org.trycua.lume.cpu-count"]    = "\(v)" }
+            if let v = cfg.memorySize  { manifestAnnotations["org.trycua.lume.memory-size"]  = "\(v)" }
+            if let v = cfg.diskSize    { manifestAnnotations["org.trycua.lume.disk-size"]    = "\(v)" }
+            manifestAnnotations["org.trycua.lume.display"]      = cfg.display.string
+            manifestAnnotations["org.trycua.lume.network-mode"] = cfg.networkMode.description
+        }
+
+        return [
+            "schemaVersion": 2,
+            "mediaType": "application/vnd.oci.image.manifest.v1+json",
+            "config": configEntry,
+            "layers": [auxLayer] + diskChunkLayers,
+            "annotations": manifestAnnotations,
+        ]
+    }
+
+    /// Push a VM in OCI-compliant format (kubelet-compatible).
+    private func pushOCI(
+        vmDirPath: String,
+        imageName: String,
+        tags: [String],
+        chunkSizeMb: Int = 512,
+        singleLayer: Bool = false,
+        verbose: Bool,
+        dryRun: Bool
+    ) async throws {
+        let chunkSize = UInt64(chunkSizeMb) * 1024 * 1024
+
+        Logger.debug(
+            "Pushing VM in OCI-compliant format\(singleLayer ? " (single-layer)" : " (chunked)")",
+            metadata: [
+                "vm_path": vmDirPath,
+                "imageName": imageName,
+                "tags": tags.joined(separator: ", "),
+                "chunk_size": "\(chunkSizeMb)MB",
+                "single_layer": "\(singleLayer)",
+                "dry_run": "\(dryRun)",
+            ])
+
+        if !dryRun {
+            let (username, token) = getCredentialsFromEnvironment()
+            guard username != nil, token != nil else {
+                Logger.error(
+                    "Missing GitHub credentials. Set GITHUB_USERNAME and GITHUB_TOKEN env vars.")
+                throw PushError.authenticationFailed
+            }
+        }
+
+        var token = ""
+        if !dryRun {
+            Logger.debug("Getting registry authentication token")
+            token = try await getToken(
+                repository: "\(self.organization)/\(imageName)",
+                scopes: ["pull", "push"],
+                requireAllScopes: true)
+        }
+
+        let vmDirURL   = URL(fileURLWithPath: vmDirPath)
+        let diskPath   = vmDirURL.appendingPathComponent("disk.img")
+        let nvramPath  = vmDirURL.appendingPathComponent("nvram.bin")
+        let configPath = vmDirURL.appendingPathComponent("config.json")
+        let workDir    = vmDirURL.appendingPathComponent(".lume_oci_push_cache")
+        try FileManager.default.createDirectory(at: workDir, withIntermediateDirectories: true)
+
+        let repository = "\(self.organization)/\(imageName)"
+
+        // ── Config ──────────────────────────────────────────────────────────
+        let vmConfig = try? JSONDecoder().decode(VMConfig.self, from: Data(contentsOf: configPath))
+        let fallbackConfig = try VMConfig(os: "darwin", display: "1920x1080")
+        let configData = try createKubeletConfigData(vmConfig ?? fallbackConfig)
+        let configDigest = "sha256:" + configData.sha256String()
+        let configSize   = configData.count
+
+        if !dryRun {
+            if !(try await blobExists(repository: repository, digest: configDigest, token: token)) {
+                Logger.debug("Uploading OCI config blob")
+                _ = try await uploadBlobFromData(
+                    repository: repository, data: configData, token: token)
+            } else {
+                Logger.debug("OCI config blob already exists")
+            }
+        }
+
+        // ── Aux (nvram) ──────────────────────────────────────────────────────
+        guard FileManager.default.fileExists(atPath: nvramPath.path) else {
+            throw PushError.fileCreationFailed(nvramPath.path)
+        }
+        let nvramData   = try Data(contentsOf: nvramPath)
+        let auxDigest   = "sha256:" + nvramData.sha256String()
+        let auxSize     = nvramData.count
+
+        if !dryRun {
+            if !(try await blobExists(repository: repository, digest: auxDigest, token: token)) {
+                Logger.debug("Uploading aux (nvram) blob")
+                _ = try await uploadBlobFromData(
+                    repository: repository, data: nvramData, token: token)
+            } else {
+                Logger.debug("Aux blob already exists")
+            }
+        }
+
+        // ── Disk ─────────────────────────────────────────────────────────────
+        guard FileManager.default.fileExists(atPath: diskPath.path) else {
+            throw PushError.fileCreationFailed(diskPath.path)
+        }
+
+        let diskAttrs = try FileManager.default.attributesOfItem(atPath: diskPath.path)
+        let diskSize = diskAttrs[.size] as? UInt64 ?? 0
+
+        let manifest: [String: Any]
+
+        if singleLayer {
+            // ── Single-layer mode (kubelet-compatible, no chunking) ──────────
+            Logger.debug("Disk size: \(diskSize) bytes, compressing as single layer")
+
+            let singleProgress = LayerProgressDisplay()
+            await singleProgress.setTotalUncompressed(Int64(diskSize))
+            await singleProgress.addLayer(id: "config", label: "config.json", totalBytes: Int64(configSize))
+            await singleProgress.markDone(id: "config")
+            await singleProgress.addLayer(id: "nvram", label: "nvram.bin", totalBytes: Int64(auxSize))
+            await singleProgress.markDone(id: "nvram")
+            await singleProgress.addLayer(id: "disk", label: "disk.img", totalBytes: Int64(diskSize))
+            await singleProgress.updateStatus(id: "disk", status: .compressing)
+
+            let gzDiskPath = workDir.appendingPathComponent("disk.img.gz")
+            let (compDigest, compSize, uncompDigest, uncompSize) =
+                try gzipFile(inputPath: diskPath, outputPath: gzDiskPath) { bytesRead, totalBytes in
+                    Task {
+                        await singleProgress.reportCompressBytes(id: "disk", Int64(bytesRead))
+                        await singleProgress.updateProgress(
+                            id: "disk", completedBytes: Int64(bytesRead),
+                            totalBytes: Int64(totalBytes))
+                    }
+                }
+
+            if !dryRun {
+                if !(try await blobExists(repository: repository, digest: compDigest, token: token)) {
+                    await singleProgress.registerUploadWork(compressedBytes: Int64(compSize), uncompressedBytes: Int64(uncompSize))
+                    await singleProgress.updateStatus(id: "disk", status: .pushing)
+                    await singleProgress.updateProgress(
+                        id: "disk", completedBytes: 0, totalBytes: Int64(compSize))
+                    _ = try await uploadBlobFromPath(
+                        repository: repository,
+                        path: gzDiskPath,
+                        digest: compDigest,
+                        token: token,
+                        onProgress: { sent, total in
+                            Task {
+                                await singleProgress.reportUploadBytes(id: "disk", sent)
+                                await singleProgress.updateProgress(
+                                    id: "disk", completedBytes: sent, totalBytes: total)
+                            }
+                        })
+                    await singleProgress.reportUploadDone(Int64(compSize))
+                    await singleProgress.markDone(id: "disk", bytes: Int64(compSize))
+                } else {
+                    await singleProgress.markExists(id: "disk")
+                }
+            } else {
+                await singleProgress.markDone(id: "disk", bytes: Int64(compSize))
+            }
+
+            await singleProgress.finish()
+
+            try? FileManager.default.removeItem(at: gzDiskPath)
+
+            manifest = createOCIManifest(
+                configDigest: configDigest, configSize: configSize,
+                auxDigest: auxDigest, auxSize: auxSize,
+                diskDigest: compDigest, diskSize: compSize,
+                uncompressedDiskDigest: uncompDigest, uncompressedDiskSize: uncompSize,
+                vmConfig: vmConfig
+            )
+
+        } else {
+            // ── Chunked mode (default, parallel) ─────────────────────────────
+            let chunkCount = Int((diskSize + chunkSize - 1) / chunkSize)
+            Logger.debug("Disk size: \(diskSize) bytes, splitting into \(chunkCount) chunks of \(chunkSizeMb) MB")
+
+            let progress = LayerProgressDisplay()
+            await progress.setTotalUncompressed(Int64(diskSize))
+            await progress.addLayer(id: "config", label: "config.json", totalBytes: Int64(configSize))
+            await progress.markDone(id: "config")
+            await progress.addLayer(id: "nvram", label: "nvram.bin", totalBytes: Int64(auxSize))
+            await progress.markDone(id: "nvram")
+            for i in 0..<chunkCount {
+                let estSize = Int64(min(chunkSize, diskSize - UInt64(i) * chunkSize))
+                await progress.addLayer(
+                    id: "chunk-\(i)", label: "disk layer \(i + 1)/\(chunkCount)",
+                    totalBytes: estSize)
+            }
+
+            let chunkCollector = ChunkCollector(count: chunkCount)
+
+            // Track seen digests for deduplication (content-addressable)
+            let seenDigests = DigestTracker()
+
+            // Compressed chunk ready for upload
+            struct CompressedChunk: Sendable {
+                let partNumber: Int
+                let chunkId: String
+                let gzPath: URL
+                let compDigest: String
+                let compSize: Int
+                let uncompDigest: String
+                let uncompSize: UInt64
+                let diskOffset: UInt64
+                let isDuplicate: Bool
+            }
+
+            let maxCompressWorkers = 4
+            let maxUploadWorkers = 4
+            let capturedToken = token
+
+            // Channel connecting compress workers → upload workers
+            let (uploadStream, uploadContinuation) = AsyncStream<CompressedChunk>.makeStream(
+                bufferingPolicy: .unbounded)
+
+            // ── Run compress + upload pipelines concurrently ──
+            try await withThrowingTaskGroup(of: Void.self) { pipeline in
+
+                // ── Compression pipeline: N parallel workers ──
+                pipeline.addTask { [self] in
+                    try await withThrowingTaskGroup(
+                        of: CompressedChunk.self
+                    ) { compressGroup in
+                        var enqueued = 0
+
+                        for partNumber in 0..<chunkCount {
+                            // Throttle compress workers
+                            if enqueued >= maxCompressWorkers {
+                                if let result = try await compressGroup.next() {
+                                    uploadContinuation.yield(result)
+                                }
+                            }
+
+                            let offset = UInt64(partNumber) * chunkSize
+                            let thisChunkSize = min(chunkSize, diskSize - offset)
+                            let chunkId = "chunk-\(partNumber)"
+
+                            compressGroup.addTask { [self] in
+                                await progress.updateStatus(id: chunkId, status: .compressing)
+
+                                let handle = try FileHandle(forReadingFrom: diskPath)
+                                try handle.seek(toOffset: offset)
+                                let chunkData = handle.readData(ofLength: Int(thisChunkSize))
+                                try handle.close()
+
+                                let chunkPath = workDir.appendingPathComponent(
+                                    "disk.img.part.\(partNumber)")
+                                let gzChunkPath = workDir.appendingPathComponent(
+                                    "disk.img.part.\(partNumber).gz")
+                                try chunkData.write(to: chunkPath)
+
+                                let (compDigest, compSize, uncompDigest, uncompSize) =
+                                    try self.gzipFile(
+                                        inputPath: chunkPath, outputPath: gzChunkPath
+                                    ) { bytesRead, totalBytes in
+                                        Task {
+                                            await progress.reportCompressBytes(
+                                                id: chunkId, Int64(bytesRead))
+                                            await progress.updateProgress(
+                                                id: chunkId, completedBytes: Int64(bytesRead),
+                                                totalBytes: Int64(totalBytes))
+                                        }
+                                    }
+
+                                try? FileManager.default.removeItem(at: chunkPath)
+
+                                let isDuplicate = await seenDigests.markSeen(digest: compDigest)
+                                await progress.setDigest(id: chunkId, digest: compDigest)
+                                if isDuplicate {
+                                    await progress.registerSkipped(compressedBytes: Int64(compSize), uncompressedBytes: Int64(thisChunkSize))
+                                    await progress.markExists(id: chunkId)
+                                } else {
+                                    await progress.updateStatus(
+                                        id: chunkId, status: .waitingUpload)
+                                }
+
+                                return CompressedChunk(
+                                    partNumber: partNumber,
+                                    chunkId: chunkId,
+                                    gzPath: gzChunkPath,
+                                    compDigest: compDigest,
+                                    compSize: compSize,
+                                    uncompDigest: uncompDigest,
+                                    uncompSize: uncompSize,
+                                    diskOffset: offset,
+                                    isDuplicate: isDuplicate
+                                )
+                            }
+                            enqueued += 1
+                        }
+
+                        // Drain remaining compress results
+                        for try await result in compressGroup {
+                            uploadContinuation.yield(result)
+                        }
+                    }
+                    // Signal no more chunks to upload
+                    uploadContinuation.finish()
+                }
+
+                // ── Upload pipeline: N parallel workers consuming from queue ──
+                pipeline.addTask { [self] in
+                    try await withThrowingTaskGroup(
+                        of: (Int, DiskChunkDescriptor).self
+                    ) { uploadGroup in
+                        var enqueued = 0
+
+                        for await chunk in uploadStream {
+                            let desc = DiskChunkDescriptor(
+                                partNumber: chunk.partNumber,
+                                compressedDigest: chunk.compDigest,
+                                compressedSize: chunk.compSize,
+                                uncompressedDigest: chunk.uncompDigest,
+                                uncompressedSize: chunk.uncompSize,
+                                diskOffset: chunk.diskOffset
+                            )
+
+                            // Duplicate or dry-run: no upload needed
+                            if chunk.isDuplicate || dryRun {
+                                if !chunk.isDuplicate {
+                                    await progress.markDone(
+                                        id: chunk.chunkId, bytes: Int64(chunk.compSize))
+                                }
+                                try? FileManager.default.removeItem(at: chunk.gzPath)
+                                await chunkCollector.set(index: chunk.partNumber, desc: desc)
+                                continue
+                            }
+
+                            // Throttle upload workers
+                            if enqueued >= maxUploadWorkers {
+                                if let (idx, d) = try await uploadGroup.next() {
+                                    await chunkCollector.set(index: idx, desc: d)
+                                }
+                            }
+
+                            let chunkCopy = chunk
+                            uploadGroup.addTask { [self] in
+                                let token = capturedToken
+                                if !(try await self.blobExists(
+                                    repository: repository, digest: chunkCopy.compDigest,
+                                    token: token))
+                                {
+                                    await progress.registerUploadWork(compressedBytes: Int64(chunkCopy.compSize), uncompressedBytes: Int64(chunkCopy.uncompSize))
+                                    await progress.updateStatus(
+                                        id: chunkCopy.chunkId, status: .pushing)
+                                    await progress.updateProgress(
+                                        id: chunkCopy.chunkId, completedBytes: 0,
+                                        totalBytes: Int64(chunkCopy.compSize))
+                                    _ = try await self.uploadBlobFromPath(
+                                        repository: repository,
+                                        path: chunkCopy.gzPath,
+                                        digest: chunkCopy.compDigest,
+                                        token: token,
+                                        onProgress: { sent, total in
+                                            Task {
+                                                await progress.reportUploadBytes(
+                                                    id: chunkCopy.chunkId, sent)
+                                                await progress.updateProgress(
+                                                    id: chunkCopy.chunkId, completedBytes: sent,
+                                                    totalBytes: total)
+                                            }
+                                        })
+                                    await progress.reportUploadDone(Int64(chunkCopy.compSize))
+                                    await progress.markDone(
+                                        id: chunkCopy.chunkId, bytes: Int64(chunkCopy.compSize))
+                                } else {
+                                    await progress.registerSkipped(compressedBytes: Int64(chunkCopy.compSize), uncompressedBytes: Int64(chunkCopy.uncompSize))
+                                    await progress.markExists(id: chunkCopy.chunkId)
+                                }
+
+                                try? FileManager.default.removeItem(at: chunkCopy.gzPath)
+
+                                return (
+                                    chunkCopy.partNumber,
+                                    DiskChunkDescriptor(
+                                        partNumber: chunkCopy.partNumber,
+                                        compressedDigest: chunkCopy.compDigest,
+                                        compressedSize: chunkCopy.compSize,
+                                        uncompressedDigest: chunkCopy.uncompDigest,
+                                        uncompressedSize: chunkCopy.uncompSize,
+                                        diskOffset: chunkCopy.diskOffset
+                                    )
+                                )
+                            }
+                            enqueued += 1
+                        }
+
+                        // Drain remaining uploads
+                        for try await (idx, desc) in uploadGroup {
+                            await chunkCollector.set(index: idx, desc: desc)
+                        }
+                    }
+                }
+            }
+
+            await progress.finish()
+
+            manifest = createOCIManifest(
+                configDigest: configDigest, configSize: configSize,
+                auxDigest: auxDigest, auxSize: auxSize,
+                diskChunks: await chunkCollector.getAll(),
+                totalUncompressedSize: diskSize,
+                vmConfig: vmConfig
+            )
+        }
+
+        // ── Push manifest ────────────────────────────────────────────────────
+        if !dryRun {
+            let manifestData = try JSONSerialization.data(
+                withJSONObject: manifest, options: [.prettyPrinted, .sortedKeys])
+            for tag in tags {
+                Logger.info("Pushing OCI manifest for tag: \(tag)")
+                try await pushManifest(
+                    repository: repository, tag: tag, manifest: manifestData, token: token)
+            }
+            Logger.info("OCI push complete\(singleLayer ? " (single layer)" : "")")
+        } else {
+            Logger.info("Dry-run complete — manifest not uploaded")
+        }
+    }
+
+    /// Pull an OCI-compliant image (kubelet format) into `destination` as a Lume VM directory.
+    private func pullOCI(
+        manifest: Manifest,
+        repository: String,
+        token: String,
+        to destination: URL
+    ) async throws {
+        Logger.info("Downloading OCI-compliant layers")
+        try FileManager.default.createDirectory(
+            at: destination, withIntermediateDirectories: true)
+
+        let tempDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("lume_oci_\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        // ── Detect format: single-blob vs chunked ────────────────────────────
+        let diskLayers = manifest.layers.filter { $0.mediaType == OCIMediaType.disk }
+        let isChunked = diskLayers.count > 1
+            || (diskLayers.count == 1 && diskLayers[0].annotations?[OCIAnnotation.partNumber] != nil)
+
+        // ── Download config & aux (shared by both paths) ─────────────────────
+        var configData: Data?
+        if let configLayer = manifest.config {
+            let blobDest = tempDir.appendingPathComponent(
+                configLayer.digest.replacingOccurrences(of: ":", with: "_"))
+            Logger.info("Downloading config layer (\(configLayer.digest.prefix(19))…)")
+            try await downloadLayer(
+                repository: repository,
+                digest: configLayer.digest,
+                mediaType: configLayer.mediaType,
+                token: token,
+                to: blobDest,
+                maxRetries: 5,
+                progress: downloadProgress
+            )
+            configData = try Data(contentsOf: blobDest)
+        }
+
+        var auxBlobPath: URL?
+        if let auxLayer = manifest.layers.first(where: { $0.mediaType == OCIMediaType.aux }) {
+            let blobDest = tempDir.appendingPathComponent(
+                auxLayer.digest.replacingOccurrences(of: ":", with: "_"))
+            Logger.info("Downloading aux layer (\(auxLayer.digest.prefix(19))…)")
+            try await downloadLayer(
+                repository: repository,
+                digest: auxLayer.digest,
+                mediaType: auxLayer.mediaType,
+                token: token,
+                to: blobDest,
+                maxRetries: 5,
+                progress: downloadProgress
+            )
+            auxBlobPath = blobDest
+        }
+
+        // ── Process config ────────────────────────────────────────────────────
+        var vmConfig: VMConfig?
+        var diskUncompressedSize: UInt64?
+
+        if let data = configData,
+            let kubeletCfg = try? JSONDecoder().decode(KubeletOCIConfig.self, from: data)
+        {
+            let hardwareModel     = Data(base64Encoded: kubeletCfg.hardwareModelData)
+            let machineIdentifier = Data(base64Encoded: kubeletCfg.machineIdData)
+
+            let ann = manifest.annotations
+            let cpuCount    = ann?["org.trycua.lume.cpu-count"].flatMap(Int.init)
+            let memorySize  = ann?["org.trycua.lume.memory-size"].flatMap(UInt64.init)
+            let display     = ann?["org.trycua.lume.display"] ?? "1920x1080"
+            let netModeStr  = ann?["org.trycua.lume.network-mode"] ?? "nat"
+
+            // For disk size, prefer manifest annotation, then sum of chunk sizes
+            if let totalSizeStr = ann?["org.trycua.lume.total-uncompressed-size"],
+               let totalSize = UInt64(totalSizeStr) {
+                diskUncompressedSize = totalSize
+            } else if isChunked {
+                diskUncompressedSize = diskLayers.compactMap {
+                    $0.annotations?["com.agoda.macosvz.content.uncompressed-size"].flatMap(UInt64.init)
+                }.reduce(0, +)
+            } else if let singleLayer = diskLayers.first,
+                      let sizeStr = singleLayer.annotations?["com.agoda.macosvz.content.uncompressed-size"],
+                      let size = UInt64(sizeStr) {
+                diskUncompressedSize = size
+            }
+
+            let diskSize = ann?["org.trycua.lume.disk-size"].flatMap(UInt64.init)
+                         ?? diskUncompressedSize
+
+            vmConfig = try? VMConfig(
+                os: kubeletCfg.os,
+                cpuCount: cpuCount,
+                memorySize: memorySize,
+                diskSize: diskSize,
+                display: display,
+                hardwareModel: hardwareModel,
+                machineIdentifier: machineIdentifier,
+                networkMode: NetworkMode.parse(netModeStr) ?? .nat
+            )
+        }
+
+        // Write config.json
+        let configDest = destination.appendingPathComponent("config.json")
+        if let cfg = vmConfig {
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = .prettyPrinted
+            let data = try encoder.encode(cfg)
+            try data.write(to: configDest)
+        }
+
+        // ── Process aux (nvram) ───────────────────────────────────────────────
+        if let auxPath = auxBlobPath {
+            let nvramDest = destination.appendingPathComponent("nvram.bin")
+            try FileManager.default.copyItem(at: auxPath, to: nvramDest)
+            Logger.info("Saved nvram.bin")
+        }
+
+        // ── Process disk ──────────────────────────────────────────────────────
+        let diskDest = destination.appendingPathComponent("disk.img")
+
+        if isChunked {
+            // ── Chunked path: parallel download + sparse reassembly ──────────
+            let sortedChunks = diskLayers.sorted {
+                let a = Int($0.annotations?[OCIAnnotation.partNumber] ?? "0") ?? 0
+                let b = Int($1.annotations?[OCIAnnotation.partNumber] ?? "0") ?? 0
+                return a < b
+            }
+
+            // Compute total uncompressed size from chunks if not already known
+            let totalSize = diskUncompressedSize ?? sortedChunks.compactMap {
+                $0.annotations?["com.agoda.macosvz.content.uncompressed-size"].flatMap(UInt64.init)
+            }.reduce(0, +)
+
+            Logger.info("Chunked disk: \(sortedChunks.count) parts, total uncompressed size: \(totalSize)")
+
+            // Create sparse output file pre-sized to total
+            FileManager.default.createFile(atPath: diskDest.path, contents: nil)
+            let diskHandle = try FileHandle(forWritingTo: diskDest)
+            try diskHandle.truncate(atOffset: totalSize)
+            try diskHandle.close()
+
+            let pullProgress = LayerProgressDisplay()
+            for (idx, chunk) in sortedChunks.enumerated() {
+                await pullProgress.addLayer(
+                    id: "chunk-\(idx)",
+                    label: "disk layer \(idx + 1)/\(sortedChunks.count)",
+                    totalBytes: Int64(chunk.size),
+                    mode: .pull)
+            }
+
+            // Download chunks in parallel (4 concurrent)
+            try await withThrowingTaskGroup(of: (Int, URL, UInt64).self) { group in
+                let maxConcurrent = 4
+                var enqueued = 0
+
+                for (idx, chunk) in sortedChunks.enumerated() {
+                    // Throttle: wait for one to complete before adding more
+                    if enqueued >= maxConcurrent {
+                        guard let result = try await group.next() else {
+                            Logger.error("Task group unexpectedly empty while throttling downloads")
+                            continue
+                        }
+                        let (completedIdx, completedPath, completedOffset) = result
+                        await pullProgress.updateStatus(
+                            id: "chunk-\(completedIdx)", status: .decompressing)
+                        let handle = try FileHandle(forWritingTo: diskDest)
+                        let _ = try gunzipChunkAndWriteSparse(
+                            inputPath: completedPath, outputHandle: handle,
+                            startOffset: completedOffset)
+                        try handle.close()
+                        try? FileManager.default.removeItem(at: completedPath)
+                        await pullProgress.markDone(id: "chunk-\(completedIdx)")
+                    }
+
+                    let chunkOffset =
+                        UInt64(chunk.annotations?[OCIAnnotation.partOffset] ?? "0") ?? 0
+
+                    group.addTask {
+                        let blobDest = tempDir.appendingPathComponent(
+                            chunk.digest.replacingOccurrences(of: ":", with: "_"))
+                        await pullProgress.updateStatus(
+                            id: "chunk-\(idx)", status: .downloading)
+                        try await self.downloadLayer(
+                            repository: repository,
+                            digest: chunk.digest,
+                            mediaType: chunk.mediaType,
+                            token: token,
+                            to: blobDest,
+                            maxRetries: 5,
+                            progress: self.downloadProgress
+                        )
+                        return (idx, blobDest, chunkOffset)
+                    }
+                    enqueued += 1
+                }
+
+                // Drain remaining
+                for try await (completedIdx, completedPath, completedOffset) in group {
+                    await pullProgress.updateStatus(
+                        id: "chunk-\(completedIdx)", status: .decompressing)
+                    let handle = try FileHandle(forWritingTo: diskDest)
+                    let _ = try gunzipChunkAndWriteSparse(
+                        inputPath: completedPath, outputHandle: handle,
+                        startOffset: completedOffset)
+                    try handle.close()
+                    try? FileManager.default.removeItem(at: completedPath)
+                    await pullProgress.markDone(id: "chunk-\(completedIdx)")
+                }
+            }
+
+            await pullProgress.finish()
+            Logger.info("Disk image reassembled from \(sortedChunks.count) chunks")
+
+        } else if let singleDiskLayer = diskLayers.first {
+            // ── Single-blob fallback (backward compat) ───────────────────────
+            let blobDest = tempDir.appendingPathComponent(
+                singleDiskLayer.digest.replacingOccurrences(of: ":", with: "_"))
+            Logger.info("Downloading single disk layer (\(singleDiskLayer.digest.prefix(19))…)")
+            try await downloadLayer(
+                repository: repository,
+                digest: singleDiskLayer.digest,
+                mediaType: singleDiskLayer.mediaType,
+                token: token,
+                to: blobDest,
+                maxRetries: 5,
+                progress: downloadProgress
+            )
+
+            let uncompSizeStr = singleDiskLayer.annotations?[
+                "com.agoda.macosvz.content.uncompressed-size"]
+            if let sizeStr = uncompSizeStr, let uncompSize = UInt64(sizeStr), uncompSize > 0 {
+                Logger.info("Decompressing disk image (gzip, sparse-aware)…")
+                FileManager.default.createFile(atPath: diskDest.path, contents: nil)
+                let diskHandle = try FileHandle(forWritingTo: diskDest)
+                try diskHandle.truncate(atOffset: uncompSize)
+                let _ = try gunzipChunkAndWriteSparse(
+                    inputPath: blobDest, outputHandle: diskHandle, startOffset: 0)
+                try diskHandle.close()
+                Logger.info("Disk image decompressed (sparse)")
+            } else {
+                try FileManager.default.copyItem(at: blobDest, to: diskDest)
+                Logger.info("Saved disk.img (uncompressed)")
+            }
+        }
+
+        Logger.info("OCI pull complete")
+    }
+}
+
+/// Delegate that tracks upload byte progress via URLSession callbacks.
+final class UploadProgressDelegate: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+    private let totalBytes: Int64
+    private let onProgress: (@Sendable (Int64, Int64) -> Void)?
+
+    init(totalBytes: Int64, onProgress: (@Sendable (Int64, Int64) -> Void)?) {
+        self.totalBytes = totalBytes
+        self.onProgress = onProgress
+    }
+
+    func urlSession(
+        _ session: URLSession, task: URLSessionTask,
+        didSendBodyData bytesSent: Int64, totalBytesSent: Int64,
+        totalBytesExpectedToSend: Int64
+    ) {
+        onProgress?(totalBytesSent, totalBytes)
+    }
+}
+
+/// Thread-safe collector for chunk descriptors from parallel workers.
+actor ChunkCollector {
+    private var chunks: [DiskChunkDescriptor?]
+
+    init(count: Int) {
+        chunks = [DiskChunkDescriptor?](repeating: nil, count: count)
+    }
+
+    func set(index: Int, desc: DiskChunkDescriptor) {
+        chunks[index] = desc
+    }
+
+    func getAll() -> [DiskChunkDescriptor] {
+        chunks.compactMap { $0 }
+    }
+}
+
+
+/// Tracks seen digests for content-addressable deduplication across chunks.
+actor DigestTracker {
+    private var seen: Swift.Set<String> = []
+
+    /// Returns true if the digest was already seen (duplicate), false if first time.
+    func markSeen(digest: String) -> Bool {
+        if seen.contains(digest) {
+            return true
+        }
+        seen.insert(digest)
+        return false
+    }
+}
+
+/// Docker-style multi-line progress display for concurrent layer operations.
+/// Each layer gets its own line, updated in-place using ANSI escape codes.
+actor LayerProgressDisplay {
+    enum LayerStatus {
+        case waiting
+        case compressing
+        case waitingUpload
+        case pushing
+        case downloading
+        case decompressing
+        case exists
+        case done
+        case error(String)
+    }
+
+    enum LayerMode {
+        case push
+        case pull
+    }
+
+    struct LayerState {
+        let label: String
+        var totalBytes: Int64
+        var completedBytes: Int64 = 0
+        var status: LayerStatus = .waiting
+        var digest: String?
+        var mode: LayerMode = .push
+    }
+
+    private var layers: [String: LayerState] = [:]
+    private var layerOrder: [String] = []
+    private var lineCount = 0
+    private var lastRenderTime: Date = .distantPast
+    private var startTime: Date = Date()
+
+    // Separate throughput tracking for compress vs upload
+    // Per-layer byte counters for accurate parallel tracking
+    private var layerCompressedBytes: [String: Int64] = [:]
+    private var layerUploadedBytes: [String: Int64] = [:]
+    private var lastCompressedTotal: Int64 = 0
+    private var lastUploadedTotal: Int64 = 0
+    private var lastSpeedTime: Date = Date()
+    private var compressSpeed: Double = 0
+    private var uploadSpeed: Double = 0
+    private var smoothedOverallSpeed: Double = 0
+    private var lastTotalDone: Int64 = 0
+    private var hasSeenUpload: Bool = false
+    private var smoothedUploadSpeed: Double = 0
+    private var smoothedCompressSpeed: Double = 0
+    // Track compressed bytes for upload ETA
+    private var totalUploadBytes: Int64 = 0      // compressed bytes registered for upload
+    private var totalUploadedBytes: Int64 = 0    // compressed bytes actually uploaded
+    private var totalUncompressedRegistered: Int64 = 0  // uncompressed bytes of registered layers
+    private var totalUncompressedAll: Int64 = 0  // total uncompressed bytes across all layers
+    private var skippedBytes: Int64 = 0          // compressed bytes of dedup/exists layers (no upload)
+
+    func addLayer(id: String, label: String, totalBytes: Int64 = 0, mode: LayerMode = .push) {
+        layers[id] = LayerState(label: label, totalBytes: totalBytes, mode: mode)
+        layerOrder.append(id)
+    }
+
+    func setDigest(id: String, digest: String) {
+        layers[id]?.digest = digest
+    }
+
+    func updateStatus(id: String, status: LayerStatus) {
+        layers[id]?.status = status
+        render()
+    }
+
+    func updateProgress(id: String, completedBytes: Int64, totalBytes: Int64? = nil) {
+        if let total = totalBytes {
+            layers[id]?.totalBytes = total
+        }
+        layers[id]?.completedBytes = completedBytes
+        render()
+    }
+
+    func setTotalUncompressed(_ bytes: Int64) {
+        totalUncompressedAll = bytes
+    }
+
+    func registerUploadWork(compressedBytes: Int64, uncompressedBytes: Int64) {
+        totalUploadBytes += compressedBytes
+        totalUncompressedRegistered += uncompressedBytes
+    }
+
+    func registerSkipped(compressedBytes: Int64, uncompressedBytes: Int64) {
+        skippedBytes += compressedBytes
+        totalUncompressedRegistered += uncompressedBytes
+    }
+
+    func reportUploadDone(_ bytes: Int64) {
+        totalUploadedBytes += bytes
+    }
+
+    func reportCompressBytes(id: String, _ bytes: Int64) {
+        layerCompressedBytes[id] = bytes
+    }
+
+    func reportUploadBytes(id: String, _ bytes: Int64) {
+        layerUploadedBytes[id] = bytes
+    }
+
+    func markDone(id: String, bytes: Int64? = nil) {
+        if let b = bytes { layers[id]?.completedBytes = b }
+        layers[id]?.status = .done
+        let current = layers[id]?.completedBytes ?? 0
+        if current == 0 {
+            let total = layers[id]?.totalBytes ?? 0
+            layers[id]?.completedBytes = total
+        }
+        render()
+    }
+
+    func markExists(id: String) {
+        layers[id]?.status = .exists
+        let total = layers[id]?.totalBytes ?? 0
+        layers[id]?.completedBytes = total
+        render()
+    }
+
+    func finish() {
+        forceRender()
+        print()  // Final newline
+    }
+
+    private func render() {
+        let now = Date()
+        guard now.timeIntervalSince(lastRenderTime) >= 0.15 else { return }
+        lastRenderTime = now
+        forceRender()
+    }
+
+    private func forceRender() {
+        // Get terminal height to cap output
+        var ws = winsize()
+        let termHeight: Int
+        if ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == 0 && ws.ws_row > 0 {
+            termHeight = Int(ws.ws_row) - 1  // leave 1 line margin
+        } else {
+            termHeight = 40  // fallback
+        }
+
+        // Move cursor up to overwrite previous render
+        if lineCount > 0 {
+            print("\u{1B}[\(lineCount)A", terminator: "")
+        }
+
+        var doneCount = 0
+        var doneLayers: [LayerState] = []
+        var waitingUploadLayers: [LayerState] = []
+        var activeLayers: [LayerState] = []
+        var isCompressing = false
+
+        for id in layerOrder {
+            guard let layer = layers[id] else { continue }
+            switch layer.status {
+            case .waiting:
+                break
+            case .done, .exists:
+                doneCount += 1
+                doneLayers.append(layer)
+            case .waitingUpload:
+                waitingUploadLayers.append(layer)
+            case .compressing:
+                isCompressing = true
+            default:
+                activeLayers.append(layer)
+            }
+        }
+
+        // Build all output lines into an array, then cap to terminal height
+        var outputLines: [String] = []
+
+        // Done layers: deduplicate by digest, then first 10 ... last 10
+        if !doneLayers.isEmpty {
+            var seenDigests = Swift.Set<String>()
+            var uniqueDone: [LayerState] = []
+            for layer in doneLayers {
+                let key = layer.digest ?? layer.label
+                if !seenDigests.contains(key) {
+                    seenDigests.insert(key)
+                    uniqueDone.append(layer)
+                }
+            }
+            let showDone: [LayerState]
+            if uniqueDone.count <= 20 {
+                showDone = uniqueDone
+            } else {
+                showDone = Array(uniqueDone.prefix(10)) + Array(uniqueDone.suffix(10))
+            }
+            for (i, layer) in showDone.enumerated() {
+                if uniqueDone.count > 20 && i == 10 {
+                    outputLines.append("...")
+                }
+                outputLines.append(formatLayer(layer))
+            }
+        }
+
+        // Aggregate compression progress as single line
+        if isCompressing && totalUncompressedAll > 0 {
+            let totalCompressed = layerCompressedBytes.values.reduce(Int64(0), +)
+            let pct = Double(totalCompressed) / Double(totalUncompressedAll)
+            let bar = progressBar(progress: pct)
+            let label = "disk.img".padding(toLength: 12, withPad: " ", startingAt: 0)
+            outputLines.append("\(label): Compressing \(bar) \(formatBytes(totalCompressed))/\(formatBytes(totalUncompressedAll))")
+        }
+
+        // Waiting-for-upload layers
+        for layer in waitingUploadLayers {
+            outputLines.append(formatLayer(layer))
+        }
+
+        // Active layers (uploading, downloading, etc.)
+        for layer in activeLayers {
+            outputLines.append(formatLayer(layer))
+        }
+
+        // Reserve 1 line for summary
+        let maxLayerLines = termHeight - 1
+        if outputLines.count > maxLayerLines {
+            // Keep last N lines (active/uploading are most important, at the end)
+            let overflow = outputLines.count - maxLayerLines
+            outputLines = ["... (\(overflow) more)"] + Array(outputLines.suffix(maxLayerLines - 1))
+        }
+
+        // Print all lines, clearing each
+        var lines = 0
+        for line in outputLines {
+            print("\u{1B}[2K\(line)")
+            lines += 1
+        }
+
+        // Update throughput tracking
+        let now = Date()
+        let elapsed = now.timeIntervalSince(startTime)
+        let dt = now.timeIntervalSince(lastSpeedTime)
+        if dt >= 0.5 {
+            let compressedTotal = layerCompressedBytes.values.reduce(Int64(0), +)
+            let uploadedTotal = layerUploadedBytes.values.reduce(Int64(0), +)
+            let dCompress = Double(compressedTotal - lastCompressedTotal)
+            let dUpload = Double(uploadedTotal - lastUploadedTotal)
+            // Exponential smoothing for display speed (responsive, alpha=0.3)
+            let alpha = 0.3
+            compressSpeed = alpha * (dCompress / dt) + (1 - alpha) * compressSpeed
+            uploadSpeed = alpha * (dUpload / dt) + (1 - alpha) * uploadSpeed
+
+            // Heavier smoothing for ETA speeds (alpha=0.1) — stable, won't flicker
+            // Only decay toward zero slowly; between-chunk gaps won't kill the estimate
+            let etaAlpha = 0.1
+            if dUpload > 0 {
+                hasSeenUpload = true
+                smoothedUploadSpeed = smoothedUploadSpeed > 0
+                    ? etaAlpha * (dUpload / dt) + (1 - etaAlpha) * smoothedUploadSpeed
+                    : dUpload / dt
+            } else if smoothedUploadSpeed > 0 {
+                // Decay very slowly when no upload data (gap between chunks)
+                smoothedUploadSpeed *= 0.98
+            }
+            if dCompress > 0 {
+                smoothedCompressSpeed = smoothedCompressSpeed > 0
+                    ? etaAlpha * (dCompress / dt) + (1 - etaAlpha) * smoothedCompressSpeed
+                    : dCompress / dt
+            } else if smoothedCompressSpeed > 0 {
+                smoothedCompressSpeed *= 0.98
+            }
+
+            lastCompressedTotal = compressedTotal
+            lastUploadedTotal = uploadedTotal
+            lastSpeedTime = now
+        }
+
+        let totalDone = layers.values.reduce(Int64(0)) { $0 + $1.completedBytes }
+        let totalAll = layers.values.reduce(Int64(0)) { $0 + $1.totalBytes }
+        let total = layers.count
+
+        var summary = "\u{1B}[2K\(doneCount)/\(total) done"
+        summary += " | \(formatBytes(totalDone))/\(formatBytes(totalAll))"
+        // ETA first
+        if hasSeenUpload && smoothedUploadSpeed > 0 {
+            // Estimate total compressed upload size using observed compression ratio
+            // ratio = total_compressed_seen / total_uncompressed_seen
+            let seenCompressed = totalUploadBytes + skippedBytes
+            let ratio = totalUncompressedRegistered > 0
+                ? Double(seenCompressed) / Double(totalUncompressedRegistered)
+                : 0.5
+            // Extrapolate total compressed bytes for all layers (minus skipped)
+            let estimatedTotalUpload = Double(totalUncompressedAll) * ratio - Double(skippedBytes)
+            let remaining = max(0, estimatedTotalUpload - Double(totalUploadedBytes))
+            let eta = remaining / smoothedUploadSpeed
+            summary += " | ETA \(formatTime(eta)) (uploading)"
+        } else if smoothedCompressSpeed > 0 && totalDone > 0 && totalAll > totalDone {
+            let eta = Double(totalAll - totalDone) / smoothedCompressSpeed
+            summary += " | ETA \(formatTime(eta)) (compressing)"
+        } else {
+            summary += " | \(formatTime(elapsed))"
+        }
+        // Speeds after ETA
+        if compressSpeed > 0 {
+            summary += " | 🗜 \(formatSpeed(compressSpeed))"
+        }
+        if uploadSpeed > 0 {
+            summary += " | ⬆ \(formatSpeed(uploadSpeed))"
+        }
+        print(summary)
+        lines += 1
+
+        // Clear any leftover lines from previous render that had more lines
+        if lines < lineCount {
+            for _ in 0..<(lineCount - lines) {
+                print("\u{1B}[2K")
+            }
+            // Move back up to just after our content
+            let extra = lineCount - lines
+            if extra > 0 {
+                print("\u{1B}[\(extra)A", terminator: "")
+            }
+        }
+
+        lineCount = lines
+        fflush(stdout)
+    }
+
+    private func formatLayer(_ layer: LayerState) -> String {
+        // For digest-based labels (upload/download/done), use first 12 chars of digest
+        // For compression, use the chunk label
+        let id: String
+        if let digest = layer.digest {
+            let short = digest.hasPrefix("sha256:")
+                ? String(digest.dropFirst(7).prefix(12))
+                : String(digest.prefix(12))
+            id = short.padding(toLength: 12, withPad: " ", startingAt: 0)
+        } else {
+            let short = layer.label.count > 12
+                ? String(layer.label.prefix(12))
+                : layer.label
+            id = short.padding(toLength: 12, withPad: " ", startingAt: 0)
+        }
+
+        switch layer.status {
+        case .waiting:
+            return "\(id): Waiting"
+        case .compressing:
+            if layer.totalBytes > 0 && layer.completedBytes > 0 {
+                let pct = Double(layer.completedBytes) / Double(layer.totalBytes)
+                let bar = progressBar(progress: pct)
+                return "\(id): Compressing \(bar) \(formatBytes(layer.completedBytes))/\(formatBytes(layer.totalBytes))"
+            }
+            return "\(id): Compressing..."
+        case .waitingUpload:
+            return "\(id): Waiting"
+        case .pushing:
+            let pct = layer.totalBytes > 0
+                ? Double(layer.completedBytes) / Double(layer.totalBytes) : 0
+            let bar = progressBar(progress: pct)
+            return "\(id): Uploading   \(bar) \(formatBytes(layer.completedBytes))/\(formatBytes(layer.totalBytes))"
+        case .downloading:
+            let pct = layer.totalBytes > 0
+                ? Double(layer.completedBytes) / Double(layer.totalBytes) : 0
+            let bar = progressBar(progress: pct)
+            return "\(id): Downloading \(bar) \(formatBytes(layer.completedBytes))/\(formatBytes(layer.totalBytes))"
+        case .decompressing:
+            return "\(id): Extracting..."
+        case .exists:
+            return "\(id): Already exists"
+        case .done:
+            let action = layer.mode == .push ? "Push complete" : "Pull complete"
+            return "\(id): \(action)"
+        case .error(let msg):
+            return "\(id): Error: \(msg)"
+        }
+    }
+
+    private func progressBar(progress: Double, width: Int = 25) -> String {
+        let filled = Int(progress * Double(width))
+        let empty = width - filled
+        return
+            "[" + String(repeating: "█", count: max(0, filled))
+            + String(repeating: "░", count: max(0, empty)) + "]"
+    }
+
+    private func formatBytes(_ bytes: Int64) -> String {
+        let units = ["B", "KB", "MB", "GB"]
+        var size = Double(bytes)
+        var idx = 0
+        while size > 1024 && idx < units.count - 1 {
+            size /= 1024
+            idx += 1
+        }
+        return String(format: "%.1f %@", size, units[idx])
+    }
+
+    private func formatSpeed(_ bytesPerSec: Double) -> String {
+        return formatBytes(Int64(bytesPerSec)) + "/s"
+    }
+
+    private func formatTime(_ seconds: TimeInterval) -> String {
+        let total = Int(seconds)
+        if total >= 3600 {
+            let hrs = total / 3600
+            let mins = (total % 3600) / 60
+            let secs = total % 60
+            return String(format: "%dh %dm %ds", hrs, mins, secs)
+        } else if total >= 60 {
+            let mins = total / 60
+            let secs = total % 60
+            return String(format: "%dm %ds", mins, secs)
+        } else {
+            return String(format: "%ds", total)
+        }
     }
 }
 

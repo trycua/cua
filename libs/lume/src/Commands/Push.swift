@@ -36,10 +36,18 @@ struct Push: AsyncParsableCommand {
     @Flag(name: .long, help: "In dry-run mode, also reassemble chunks to verify integrity")
     var reassemble: Bool = true
 
+    @Flag(name: .long, help: "Push as a single disk layer (kubelet-compatible, no chunking)")
+    var singleLayer: Bool = false
+
+    @Flag(name: .long, help: "Use legacy Lume LZ4-chunked format instead of OCI-compliant format")
+    var legacy: Bool = false
+
     init() {}
 
     @MainActor
     func run() async throws {
+        if verbose { Logger.setVerbose() }
+
         // Record telemetry
         TelemetryClient.shared.record(event: TelemetryEvent.push)
 
@@ -60,7 +68,11 @@ struct Push: AsyncParsableCommand {
         guard !allTags.isEmpty else {
              throw ValidationError("At least one tag must be provided.")
         }
-        
+
+        if singleLayer && legacy {
+            throw ValidationError("--single-layer and --legacy are mutually exclusive.")
+        }
+
         try await controller.pushImage(
             name: name,
             imageName: imageName, // Pass base image name
@@ -71,7 +83,9 @@ struct Push: AsyncParsableCommand {
             chunkSizeMb: chunkSizeMb,
             verbose: verbose,
             dryRun: dryRun,
-            reassemble: reassemble
+            reassemble: reassemble,
+            singleLayer: singleLayer,
+            legacy: legacy
         )
     }
 } 

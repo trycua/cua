@@ -21,6 +21,8 @@ const geistMono = Geist_Mono({
 
 const urbanist = Urbanist({
   subsets: ['latin'],
+  weight: ['100', '300', '400', '500', '600', '700'],
+  style: ['normal', 'italic'],
   variable: '--font-urbanist',
 });
 
@@ -59,7 +61,10 @@ export default function Layout({ children }: { children: ReactNode }) {
           </Suspense>
           <AnalyticsTracker />
           <CopilotKitProvider>
-            <RootProvider search={{ options: { api: '/docs/api/search' } }}>
+            <RootProvider
+              search={{ options: { api: '/docs/api/search' } }}
+              theme={{ defaultTheme: 'dark' }}
+            >
               {children}
             </RootProvider>
             <Footer />

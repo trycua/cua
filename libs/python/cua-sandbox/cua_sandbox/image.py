@@ -21,9 +21,83 @@ Usage::
 
 from __future__ import annotations
 
-import copy
-from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
+import logging
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Dict, Optional, Tuple
+
+logger = logging.getLogger(__name__)
+
+_IMAGE_CACHE = Path.home() / ".cua" / "cua-sandbox" / "image-cache"
+
+
+def _download_image(url: str) -> str:
+    """Download an image URL to the local cache, extract if zipped.
+
+    Returns the path to the final disk image (qcow2, img, etc.).
+    Skips download if the file already exists in the cache.
+    """
+    import hashlib
+    import urllib.request
+
+    _IMAGE_CACHE.mkdir(parents=True, exist_ok=True)
+
+    # Determine filename from URL
+    url_filename = url.rsplit("/", 1)[-1].split("?")[0]
+    # Use hash prefix to avoid collisions
+    url_hash = hashlib.sha256(url.encode()).hexdigest()[:12]
+    download_path = _IMAGE_CACHE / f"{url_hash}_{url_filename}"
+
+    # Check if we already have the extracted result
+    if download_path.suffix.lower() == ".zip":
+        # Look for an already-extracted disk image
+        extracted = _find_disk_image(_IMAGE_CACHE / url_hash)
+        if extracted:
+            logger.info(f"Using cached image: {extracted}")
+            return str(extracted)
+
+    if not download_path.exists():
+        logger.info(f"Downloading {url} → {download_path}")
+        urllib.request.urlretrieve(url, str(download_path))
+        logger.info(f"Download complete: {download_path}")
+
+    # Extract zip files
+    if download_path.suffix.lower() == ".zip":
+        import zipfile
+
+        extract_dir = _IMAGE_CACHE / url_hash
+        extract_dir.mkdir(parents=True, exist_ok=True)
+        logger.info(f"Extracting {download_path} → {extract_dir}")
+        with zipfile.ZipFile(download_path) as zf:
+            zf.extractall(extract_dir)
+        # Find the disk image inside
+        disk = _find_disk_image(extract_dir)
+        if not disk:
+            raise FileNotFoundError(
+                f"No disk image found in {download_path}. "
+                f"Contents: {[f.name for f in extract_dir.rglob('*') if f.is_file()]}"
+            )
+        logger.info(f"Extracted disk image: {disk}")
+        return str(disk)
+
+    return str(download_path)
+
+
+def _find_disk_image(directory: Path) -> Optional[Path]:
+    """Find a disk image file in a directory."""
+    for ext in (".qcow2", ".img", ".raw", ".vhdx", ".vmdk"):
+        for f in directory.rglob(f"*{ext}"):
+            return f
+    return None
+
+
+_INSTALL_OS_MAP: Dict[str, Tuple[str, ...]] = {
+    "apt_install": ("linux",),
+    "brew_install": ("macos",),
+    "choco_install": ("windows",),
+    "winget_install": ("windows",),
+    "apk_install": ("android",),
+}
 
 
 @dataclass(frozen=True)
@@ -34,7 +108,7 @@ class Image:
     can be forked at any point.
     """
 
-    os_type: str  # "linux" | "macos" | "windows"
+    os_type: str  # "linux" | "macos" | "windows" | "android"
     distro: str  # e.g. "ubuntu", "macos", "windows"
     version: str  # e.g. "24.04", "15", "11"
     kind: Optional[str] = None  # "container" | "vm" | None (resolved after registry pull)
@@ -44,11 +118,14 @@ class Image:
     _files: Tuple[Tuple[str, str], ...] = ()  # (src, dst)
     _registry: Optional[str] = None  # OCI registry reference
     _disk_path: Optional[str] = None  # local disk file path (qcow2, vhdx, raw)
+    _agent_type: Optional[str] = None  # e.g. "osworld" for OSWorld Flask server
 
     # ── Constructors ─────────────────────────────────────────────────────
 
     @classmethod
-    def linux(cls, distro: str = "ubuntu", version: str = "24.04", kind: str = "container") -> Image:
+    def linux(
+        cls, distro: str = "ubuntu", version: str = "24.04", kind: str = "container"
+    ) -> Image:
         """Linux image. Defaults to 'container' (Docker/XFCE). Use kind='vm' for QEMU."""
         return cls(os_type="linux", distro=distro, version=version, kind=kind)
 
@@ -63,17 +140,47 @@ class Image:
         return cls(os_type="windows", distro="windows", version=version, kind=kind)
 
     @classmethod
+    def android(cls, version: str = "14", kind: str = "vm") -> Image:
+        """Android image. Always a VM (QEMU emulator)."""
+        return cls(os_type="android", distro="android", version=version, kind=kind)
+
+    @classmethod
     def from_registry(cls, ref: str) -> Image:
         """Create an image from a registry reference. kind is resolved after pull."""
         return cls(os_type="linux", distro="registry", version="latest", kind=None, _registry=ref)
 
     @classmethod
-    def from_file(cls, path: str, *, os_type: str = "windows", kind: str = "vm") -> Image:
-        """Create an image from a local disk file (qcow2, vhdx, raw, img).
+    def from_file(
+        cls,
+        path: str,
+        *,
+        os_type: str = "windows",
+        kind: str = "vm",
+        agent_type: Optional[str] = None,
+    ) -> Image:
+        """Create an image from a local disk, ISO file, or URL.
 
-        For JSON/YAML image specs, use ``Image.from_dict()`` instead.
+        Supported formats: qcow2, vhdx, raw, img, iso.
+        URLs (http/https) are downloaded automatically. Zip files are extracted.
+        For ISOs, the runtime will create a qcow2 disk and attach the ISO
+        as a CD-ROM for installation/boot.
+
+        Args:
+            path: Local file path or URL (http/https).
+            os_type: OS type hint ("linux", "windows", "macos", "android").
+            kind: "vm" or "container".
+            agent_type: Agent type hint (e.g. "osworld" for OSWorld Flask server).
         """
-        return cls(os_type=os_type, distro="local", version="local", kind=kind, _disk_path=path)
+        if path.startswith(("http://", "https://")):
+            path = _download_image(path)
+        return cls(
+            os_type=os_type,
+            distro="local",
+            version="local",
+            kind=kind,
+            _disk_path=path,
+            _agent_type=agent_type,
+        )
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> Image:
@@ -96,6 +203,15 @@ class Image:
             img = img.copy(src, dst)
         return img
 
+    def _check_os(self, layer_type: str) -> None:
+        """Raise ValueError if this install method is incompatible with os_type."""
+        allowed = _INSTALL_OS_MAP.get(layer_type)
+        if allowed and self.os_type not in allowed:
+            raise ValueError(
+                f"{layer_type} is not supported on {self.os_type!r} images. "
+                f"Supported OS types: {', '.join(allowed)}"
+            )
+
     # ── Chainable mutations (return new Image) ───────────────────────────
 
     def _add_layer(self, layer: Dict[str, Any]) -> Image:
@@ -110,6 +226,7 @@ class Image:
             _files=self._files,
             _registry=self._registry,
             _disk_path=self._disk_path,
+            _agent_type=self._agent_type,
         )
 
     def _with(self, **kwargs) -> Image:
@@ -125,25 +242,35 @@ class Image:
             "_files": self._files,
             "_registry": self._registry,
             "_disk_path": self._disk_path,
+            "_agent_type": self._agent_type,
         }
         fields.update(kwargs)
         return Image(**fields)
 
     def apt_install(self, *packages: str) -> Image:
         """Install packages via apt (Linux only)."""
+        self._check_os("apt_install")
         return self._add_layer({"type": "apt_install", "packages": list(packages)})
 
     def brew_install(self, *packages: str) -> Image:
         """Install packages via Homebrew (macOS)."""
+        self._check_os("brew_install")
         return self._add_layer({"type": "brew_install", "packages": list(packages)})
 
     def choco_install(self, *packages: str) -> Image:
         """Install packages via Chocolatey (Windows)."""
+        self._check_os("choco_install")
         return self._add_layer({"type": "choco_install", "packages": list(packages)})
 
     def winget_install(self, *packages: str) -> Image:
         """Install packages via winget (Windows)."""
+        self._check_os("winget_install")
         return self._add_layer({"type": "winget_install", "packages": list(packages)})
+
+    def apk_install(self, *apk_paths: str) -> Image:
+        """Install APK files via adb (Android only)."""
+        self._check_os("apk_install")
+        return self._add_layer({"type": "apk_install", "packages": list(apk_paths)})
 
     def uv_install(self, *packages: str) -> Image:
         """Install Python packages via uv add into the cua-server project."""
@@ -208,7 +335,9 @@ class Image:
                 lines.append(f"brew install {pkgs}")
             elif lt == "winget_install":
                 for pkg in layer["packages"]:
-                    lines.append(f"winget install --accept-source-agreements --accept-package-agreements -e --id {pkg}")
+                    lines.append(
+                        f"winget install --accept-source-agreements --accept-package-agreements -e --id {pkg}"
+                    )
             elif lt == "uv_install":
                 pkgs = " ".join(layer["packages"])
                 lines.append(f"uv add --directory ~/cua-server {pkgs}")
@@ -218,6 +347,9 @@ class Image:
             elif lt == "pip_install":
                 pkgs = " ".join(layer["packages"])
                 lines.append(f"pip install {pkgs}")
+            elif lt == "apk_install":
+                for apk in layer["packages"]:
+                    lines.append(f"adb install {apk}")
             elif lt == "run":
                 lines.append(layer["command"])
         return "\n".join(lines) + "\n"

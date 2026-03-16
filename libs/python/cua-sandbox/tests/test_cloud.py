@@ -85,6 +85,23 @@ async def test_cloud_no_image_no_name_errors():
 
 
 @skip_no_key
+async def test_cloud_ephemeral_linux():
+    """Create an ephemeral cloud Linux VM, use it, and destroy on exit."""
+    from cua_sandbox import Image
+
+    async with sandbox(image=Image.linux(), api_key=API_KEY) as sb:
+        assert sb.name is not None
+        # Wait for VM to be ready, then take a screenshot
+        screenshot = await sb.screenshot()
+        assert screenshot[:4] == b"\x89PNG"
+        assert len(screenshot) > 1000
+        # Run a shell command
+        result = await sb.shell.run("echo ephemeral-test")
+        assert result.success
+        assert "ephemeral-test" in result.stdout
+
+
+@skip_no_key
 async def test_cloud_invalid_api_key_errors():
     """An invalid (reversed) API key should get an HTTP error from the API."""
     reversed_key = API_KEY[::-1]

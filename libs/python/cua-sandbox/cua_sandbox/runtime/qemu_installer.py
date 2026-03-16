@@ -9,7 +9,6 @@ import shutil
 import tempfile
 import zipfile
 from pathlib import Path
-from typing import Optional
 
 import httpx
 
@@ -53,6 +52,11 @@ def qemu_bin(arch: str = "x86_64") -> str:
         _download_portable()
         if local_bin.exists():
             return str(local_bin)
+
+    if platform.system() == "Darwin":
+        raise RuntimeError(
+            f"{binary} not found. Install QEMU via Homebrew:\n\n" f"  brew install qemu\n"
+        )
 
     raise RuntimeError(
         f"{binary} not found. Install QEMU or, on Windows, let cua-sandbox "

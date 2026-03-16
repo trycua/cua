@@ -90,6 +90,10 @@ cloud = [
     "google-genai>=1.41.0",
     # cli spinner
     "yaspin>=3.1.0",
+    # qwen tool-call formatting (used by generic_vlm.py for API-based Qwen calls)
+    "qwen-agent",
+    "qwen-vl-utils",
+    "Pillow>=10.0.0",
 ]
 all = [
     # uitars requirements

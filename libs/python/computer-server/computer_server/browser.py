@@ -143,6 +143,14 @@ class BrowserManager:
                 else:
                     self.page = await self.context.new_page()
 
+                # Navigate to a default page so the browser isn't blank
+                default_url = os.environ.get("BROWSER_DEFAULT_URL", "https://www.google.com")
+                try:
+                    await self.page.goto(default_url, wait_until="domcontentloaded", timeout=15000)
+                    logger.info(f"Navigated to default page: {default_url}")
+                except Exception as e:
+                    logger.warning(f"Failed to load default page ({default_url}): {e}")
+
                 self._initialized = True
                 logger.info("Browser initialized successfully")
 

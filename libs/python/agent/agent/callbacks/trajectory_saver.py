@@ -156,7 +156,10 @@ def extract_computer_call_outputs(
                     new_content = []
                     content_modified = False
                     for content_item in content:
-                        if isinstance(content_item, dict) and content_item.get("type") == "input_image":
+                        if (
+                            isinstance(content_item, dict)
+                            and content_item.get("type") == "input_image"
+                        ):
                             image_url = content_item.get("image_url", "")
                             if isinstance(image_url, str) and image_url.startswith("data:"):
                                 # Generate a unique ID for this screenshot
@@ -559,6 +562,7 @@ class TrajectorySaverCallback(AsyncCallbackHandler):
                         # Try to evaluate as Python literal (for stringified dicts)
                         try:
                             import ast
+
                             output_dict = ast.literal_eval(output)
                         except (ValueError, SyntaxError):
                             continue
@@ -589,7 +593,12 @@ class TrajectorySaverCallback(AsyncCallbackHandler):
                         image_bytes = base64.b64decode(image_data)
 
                         # If we have coordinates, draw crosshair annotation
-                        if x_coord is not None and y_coord is not None and x_coord != 0 and y_coord != 0:
+                        if (
+                            x_coord is not None
+                            and y_coord is not None
+                            and x_coord != 0
+                            and y_coord != 0
+                        ):
                             annotated_image = self._draw_crosshair_on_image(
                                 image_bytes, int(x_coord), int(y_coord)
                             )
@@ -610,7 +619,10 @@ class TrajectorySaverCallback(AsyncCallbackHandler):
                 content = result_item.get("content", [])
                 if isinstance(content, list):
                     for content_item in content:
-                        if isinstance(content_item, dict) and content_item.get("type") == "input_image":
+                        if (
+                            isinstance(content_item, dict)
+                            and content_item.get("type") == "input_image"
+                        ):
                             image_url = content_item.get("image_url", "")
                             if isinstance(image_url, str) and image_url.startswith("data:"):
                                 try:
@@ -618,7 +630,12 @@ class TrajectorySaverCallback(AsyncCallbackHandler):
                                     image_bytes = base64.b64decode(b64_payload)
 
                                     # If we have coordinates, draw crosshair annotation
-                                    if x_coord is not None and y_coord is not None and x_coord != 0 and y_coord != 0:
+                                    if (
+                                        x_coord is not None
+                                        and y_coord is not None
+                                        and x_coord != 0
+                                        and y_coord != 0
+                                    ):
                                         annotated_image = self._draw_crosshair_on_image(
                                             image_bytes, int(x_coord), int(y_coord)
                                         )

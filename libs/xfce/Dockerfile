@@ -125,7 +125,7 @@ RUN mkdir -p /home/cua/.cache && \
     chown -R cua:cua /home/cua/.cache
 
 # Install computer-server and cua-agent
-RUN uv pip install --system cua-computer-server "cua-agent[cloud]"
+RUN uv pip install --system cua-computer-server "cua-agent[cloud]>=0.7.35"
 
 # Install GTK and WebKit dependencies for pywebview
 RUN apt-get update && apt-get install -y \

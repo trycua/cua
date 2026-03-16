@@ -245,8 +245,8 @@ async def main():
             print(f"Running task {task_index}: {task_cfg.description}")
 
             # Create output directory
-            output_dir = Path("/tmp/td_output")
-            output_dir.mkdir(exist_ok=True)
+            output_dir = Path(os.environ.get("CUA_OUTPUT_DIR", "/tmp/td_output"))
+            output_dir.mkdir(exist_ok=True, parents=True)
 
             # Start tracing
             try:
@@ -282,8 +282,8 @@ async def main():
                 print(f"Warning: Failed to record reset event: {e}")
 
         # Create output directory (after task setup)
-        output_dir = Path("/tmp/td_output")
-        output_dir.mkdir(exist_ok=True)
+        output_dir = Path(os.environ.get("CUA_OUTPUT_DIR", "/tmp/td_output"))
+        output_dir.mkdir(exist_ok=True, parents=True)
 
         # Run solver or agent
         if not args["dump_mode"]:

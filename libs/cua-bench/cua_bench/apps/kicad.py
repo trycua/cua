@@ -55,20 +55,31 @@ class KiCad(App):
         project_path: str | None = None,
     ) -> None:
         """Launch KiCad on Linux."""
-        cmd = "kicad"
+        kicad_args = ["/usr/bin/kicad"]
         if project_path:
-            cmd += f" '{project_path}'"
-        # Use setsid to put KiCad in its own session so the shell exits immediately
-        # and run_command returns rather than waiting for the GUI process to finish.
-        # Catch any connection-level errors: KiCad may have started even if the
-        # REST/WebSocket response was not received cleanly.
+            kicad_args.append(project_path)
+        kicad_args_repr = repr(kicad_args)
+        # Use Python's Popen with close_fds=True and start_new_session=True so that
+        # KiCad is fully detached from the cua-computer-server's subprocess pipes.
+        # A plain shell `& ` keeps inherited file descriptors (stdout/stderr pipes)
+        # open in the background process, which causes run_command to block until
+        # KiCad exits (which could be hours).  Popen with these flags avoids that.
+        launch_script = (
+            "import subprocess, os; "
+            f"subprocess.Popen({kicad_args_repr}, "
+            "env={**os.environ, 'DISPLAY': ':1'}, "
+            "close_fds=True, start_new_session=True, "
+            "stdin=open('/dev/null'), "
+            "stdout=open('/dev/null', 'w'), "
+            "stderr=open('/dev/null', 'w'))"
+        )
         try:
             await self.session.run_command(
-                f"setsid {cmd} >/dev/null 2>&1 </dev/null &", check=False
+                f"python3 -c \"{launch_script}\"", check=False
             )
         except Exception:
             pass
-        await asyncio.sleep(5)
+        await asyncio.sleep(15)
 
     # =========================================================================
     # Custom methods (platform-agnostic, called via session.apps.kicad.*)

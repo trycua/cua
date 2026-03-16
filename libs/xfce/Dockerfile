@@ -2,7 +2,7 @@
 # Vanilla XFCE desktop with noVNC and computer-server
 # Uses the official KiCad 9 image as base (Debian Bookworm + KiCad 9 pre-installed)
 
-FROM kicad/kicad:9.0-full
+FROM kicad/kicad:9.0
 
 # Avoid prompts from apt
 ENV DEBIAN_FRONTEND=noninteractive
@@ -108,7 +108,23 @@ RUN uv pip install --python /opt/venv/bin/python3 \
     cua-computer-server \
     "cua-agent[all]" \
     "pywebview[gtk]" \
-    "cua-bench-ui>=0.7.0"
+    "cua-bench-ui>=0.7.0" \
+    "aiohttp>=3.9.0" \
+    "aiofiles>=23.0.0" \
+    "websockets>=12.0" \
+    "rich>=14.2.0" \
+    "tqdm>=4.66.0" \
+    "jinja2>=3.1.0" \
+    "pyquery>=2.0.1" \
+    "html5lib>=1.1" \
+    "beautifulsoup4>=4.14.2" \
+    "pillow>=11.0.0" \
+    "numpy>=2.0.0" \
+    "python-dotenv>=1.0.0" \
+    "psutil>=5.9.0" \
+    "datasets>=3.0.0" \
+    "matplotlib>=3.8.0" \
+    "anthropic>=0.26.0"
 
 # Copy startup scripts
 COPY src/supervisor/ /etc/supervisor/conf.d/

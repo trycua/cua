@@ -23,7 +23,6 @@ OUTPUT_FILE = TASKS_DIR / "calibration_results.json"
 
 MODELS = [
     ("claude", "anthropic/claude-opus-4-6"),
-    ("openai", "openai/computer-use-preview"),
 ]
 
 
@@ -52,8 +51,22 @@ def start_run(task_path: Path, model_id: str, max_steps: int) -> str:
     raise RuntimeError(f"No run ID in output:\n{result.stdout}\n{result.stderr}")
 
 
+def kill_containers() -> None:
+    """Stop and remove any lingering cua-* Docker containers."""
+    result = subprocess.run(
+        ["docker", "ps", "-q", "--filter", "name=cua-"],
+        capture_output=True, text=True,
+    )
+    ids = result.stdout.strip().split() if result.stdout.strip() else []
+    if ids:
+        subprocess.run(["docker", "stop", "--time", "10"] + ids,
+                       capture_output=True)
+        subprocess.run(["docker", "rm", "-f"] + ids,
+                       capture_output=True)
+
+
 def wait_for_runs(run_ids: list[str]) -> None:
-    """Block until all run IDs reach a terminal state."""
+    """Block until all run IDs reach a terminal state, then kill any lingering containers."""
     pending = set(run_ids)
     print(f"    Waiting for {len(pending)} runs...", end="", flush=True)
     while pending:
@@ -82,6 +95,15 @@ def extract_score(run_id: str, task_id: str) -> float | None:
     except Exception:
         pass
     return None
+
+
+def is_server_error(run_id: str, task_id: str) -> bool:
+    """Return True if the run failed due to a remote 500/server error."""
+    log = RUNS_DIR / run_id / f"{task_id}_v0" / "run.log"
+    if not log.exists():
+        return False
+    text = log.read_text(errors="replace")
+    return "500 Internal Server Error" in text or "InternalServerError" in text
 
 
 def print_summary(results: dict, task_ids: list[str], output: Path) -> None:
@@ -143,6 +165,24 @@ def main() -> None:
         # Wait for all runs across all models
         all_run_ids = [rid for rids in model_run_ids.values() for rid in rids]
         wait_for_runs(all_run_ids)
+
+        # Retry any OpenAI runs that failed with a server 500 error
+        retry_ids = []
+        for model_name, model_id in MODELS:
+            if model_name != "openai":
+                continue
+            for i, run_id in enumerate(model_run_ids[model_name]):
+                if is_server_error(run_id, task_id):
+                    print(f"    [openai] {run_id}: 500 server error — retrying...")
+                    try:
+                        new_id = start_run(task_path, model_id, args.max_steps)
+                        print(f"    [openai] retry run: {new_id}")
+                        model_run_ids[model_name][i] = new_id
+                        retry_ids.append(new_id)
+                    except Exception as e:
+                        print(f"    [openai] retry FAILED to start — {e}")
+        if retry_ids:
+            wait_for_runs(retry_ids)
 
         # Extract scores per model
         for model_name, _ in MODELS:

@@ -927,6 +927,8 @@ async def _cmd_run_task_async(args) -> int:
     # Log provider
     if provider_type in ("simulated", "webtop"):
         print(f"{GREY}Provider: simulated - agent will use local Playwright session{RESET}")
+    elif provider_type == "daytona":
+        print(f"{GREY}Provider: daytona - running fully remote in Daytona sandboxes{RESET}")
     elif provider_type in ("native", "computer"):
         print(f"{GREY}Provider: native - using 2-container architecture{RESET}")
     else:
@@ -1034,6 +1036,8 @@ async def _cmd_run_task_async(args) -> int:
     # Show environment type based on provider
     if provider_type in ("simulated", "webtop"):
         print("  Environment: simulated (Playwright)")
+    elif provider_type == "daytona":
+        print(f"  Environment: {image_name} (daytona)")
     else:
         print(f"  Environment: {image_name} ({env_type})")
 
@@ -1287,6 +1291,8 @@ async def _cmd_run_task_detached(args) -> int:
     # Add provider type to command (will be passed to subprocess which calls run_task)
     if provider_type in ("simulated", "webtop"):
         cmd.extend(["--provider-type", "simulated"])
+    elif provider_type == "daytona":
+        cmd.extend(["--provider-type", "daytona"])
 
     # Start background process
     # Set environment variables for UTF-8 encoding on Windows
@@ -1389,6 +1395,8 @@ async def _cmd_run_dataset_async(args) -> int:
     # Log provider
     if provider_type in ("simulated", "webtop"):
         print(f"{GREY}Provider: simulated - agents will use local Playwright sessions{RESET}")
+    elif provider_type == "daytona":
+        print(f"{GREY}Provider: daytona - running fully remote in Daytona sandboxes{RESET}")
     elif provider_type in ("native", "computer"):
         print(f"{GREY}Provider: native - using 2-container architecture{RESET}")
     else:
@@ -1677,6 +1685,8 @@ async def _cmd_run_dataset_async(args) -> int:
         # Show environment based on provider
         if provider_type in ("simulated", "webtop"):
             print(f"  {BOLD}Env:{RESET}         simulated (Playwright)")
+        elif provider_type == "daytona":
+            print(f"  {BOLD}Image:{RESET}       {image_name} (daytona)")
         else:
             print(f"  {BOLD}Image:{RESET}       {image_name}")
 
@@ -1725,6 +1735,10 @@ async def _cmd_run_dataset_async(args) -> int:
             cmd.extend(["--task-filter", task_filter])
         if user_output_dir:
             cmd.extend(["--output-dir", str(user_output_dir)])
+        if provider_type in ("simulated", "webtop"):
+            cmd.extend(["--provider-type", "simulated"])
+        elif provider_type == "daytona":
+            cmd.extend(["--provider-type", "daytona"])
 
         # Set UTF-8 encoding
         env_vars = os.environ.copy()

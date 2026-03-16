@@ -16,11 +16,15 @@ from cua_sandbox.transport.base import Transport
 from cua_sandbox.transport.http import HTTPTransport
 
 _POLL_INTERVAL = 2.0  # seconds between status polls
-_POLL_TIMEOUT = 300.0  # max seconds to wait for VM to be running
+_POLL_TIMEOUT = 600.0  # max seconds to wait for VM to be running
 
 
 class CloudTransport(Transport):
     """Transport that provisions / connects to a CUA cloud VM."""
+
+    _DEFAULT_CPU = 1
+    _DEFAULT_MEMORY_MB = 4096
+    _DEFAULT_DISK_GB = 64
 
     def __init__(
         self,
@@ -30,14 +34,18 @@ class CloudTransport(Transport):
         base_url: Optional[str] = None,
         # Creation params (used only when creating a new VM)
         image: Optional[Any] = None,
-        configuration: str = "small",
+        cpu: Optional[int] = None,
+        memory_mb: Optional[int] = None,
+        disk_gb: Optional[int] = None,
         region: str = "us-east-1",
     ):
         self._name = name
         self._api_key_override = api_key
         self._base_url = base_url or get_base_url()
         self._image = image
-        self._configuration = configuration
+        self._cpu = cpu
+        self._memory_mb = memory_mb
+        self._disk_gb = disk_gb
         self._region = region
         self._inner: Optional[HTTPTransport] = None
         self._api_client: Optional[httpx.AsyncClient] = None
@@ -76,6 +84,9 @@ class CloudTransport(Transport):
         cs_url = self._resolve_endpoint(vm_info)
         self._inner = HTTPTransport(cs_url, api_key=api_key, container_name=self._name)
         await self._inner.connect()
+
+        # Wait for computer-server to be reachable (it may lag behind VM "running" status)
+        await self._wait_for_server_ready()
 
     async def disconnect(self) -> None:
         if self._inner:
@@ -142,9 +153,16 @@ class CloudTransport(Transport):
             )
         body: Dict[str, Any] = {
             "os": os_type,
-            "configuration": self._configuration,
             "region": self._region,
         }
+        # If any resource spec is provided, send explicit specs (defaulting missing to small).
+        # Otherwise, send configuration="small" for backwards compat with legacy API.
+        if any(v is not None for v in (self._cpu, self._memory_mb, self._disk_gb)):
+            body["cpu"] = self._cpu or self._DEFAULT_CPU
+            body["memoryMb"] = self._memory_mb or self._DEFAULT_MEMORY_MB
+            body["diskGb"] = self._disk_gb or self._DEFAULT_DISK_GB
+        else:
+            body["configuration"] = "small"
         resp = await self._api_client.post("/v1/vms", json=body)
         resp.raise_for_status()
         return resp.json()
@@ -162,6 +180,23 @@ class CloudTransport(Transport):
             elapsed += _POLL_INTERVAL
             vm_info = await self._get_vm(self._name)  # type: ignore[arg-type]
         return vm_info
+
+    async def _wait_for_server_ready(self) -> None:
+        """Poll the computer-server until it responds (retries on connection/HTTP errors)."""
+        assert self._inner
+        elapsed = 0.0
+        last_err: Optional[Exception] = None
+        while elapsed < _POLL_TIMEOUT:
+            try:
+                await self._inner.get_screen_size()
+                return  # Server is ready
+            except Exception as e:
+                last_err = e
+                await asyncio.sleep(_POLL_INTERVAL)
+                elapsed += _POLL_INTERVAL
+        raise TimeoutError(
+            f"Computer-server for VM {self._name!r} not reachable within {_POLL_TIMEOUT}s: {last_err}"
+        )
 
     @staticmethod
     def _resolve_endpoint(vm_info: dict) -> str:

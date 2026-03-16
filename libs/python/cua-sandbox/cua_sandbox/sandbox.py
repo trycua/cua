@@ -70,6 +70,11 @@ def _auto_runtime(image: Image) -> "Runtime":
 
         return LumeRuntime()
 
+    if image.os_type == "android":
+        from cua_sandbox.runtime.android_emulator import AndroidEmulatorRuntime
+
+        return AndroidEmulatorRuntime()
+
     if image.os_type == "windows" and _plat.system() == "Windows":
         from cua_sandbox.runtime.hyperv import _has_hyperv
 
@@ -77,6 +82,12 @@ def _auto_runtime(image: Image) -> "Runtime":
             from cua_sandbox.runtime.hyperv import HyperVRuntime
 
             return HyperVRuntime()
+
+    # If image has a disk path (from_file), use bare-metal QEMU
+    if image._disk_path:
+        from cua_sandbox.runtime.qemu import QEMURuntime
+
+        return QEMURuntime(mode="bare-metal")
 
     # Linux VM or Windows VM on non-Windows host → QEMU
     from cua_sandbox.runtime.qemu import QEMURuntime
@@ -136,6 +147,9 @@ class Sandbox:
 
     async def _connect(self) -> None:
         await self._transport.connect()
+        # Update name from transport (e.g. CloudTransport resolves name after creating a VM)
+        if self.name is None and isinstance(self._transport, CloudTransport):
+            self.name = self._transport.name
 
     async def close(self) -> None:
         """Disconnect transport. If ephemeral, destroy the VM/container."""
@@ -181,7 +195,9 @@ class Sandbox:
         runtime: Optional[Runtime] = None,
         name: Optional[str] = None,
         ephemeral: Optional[bool] = None,
-        configuration: str = "small",
+        cpu: Optional[int] = None,
+        memory_mb: Optional[int] = None,
+        disk_gb: Optional[int] = None,
         region: str = "us-east-1",
     ) -> Sandbox:
         """Create and connect a persistent Sandbox.
@@ -200,7 +216,9 @@ class Sandbox:
             ephemeral: Whether to destroy the VM on close. None (default) infers:
                        True when creating a new VM (image=...), False when connecting
                        to an existing one (name=...).
-            configuration: Cloud VM size (default "small").
+            cpu: Number of CPUs for the cloud VM.
+            memory_mb: Memory in MB for the cloud VM.
+            disk_gb: Disk size in GB for the cloud VM.
             region: Cloud VM region (default "us-east-1").
         """
         # Infer ephemeral: True when creating (image provided), False when connecting (name only)
@@ -219,7 +237,9 @@ class Sandbox:
                     name=name,
                     api_key=api_key,
                     image=image,
-                    configuration=configuration,
+                    cpu=cpu,
+                    memory_mb=memory_mb,
+                    disk_gb=disk_gb,
                     region=region,
                 )
                 sb = cls(transport, name=name, _ephemeral=ephemeral)
@@ -229,11 +249,58 @@ class Sandbox:
         if image and runtime:
             sb_name = name or "cua-sandbox"
             rt_info = await runtime.start(image, sb_name)
-            transport = HTTPTransport(
-                f"http://{rt_info.host}:{rt_info.api_port}",
-                api_key=api_key,
-                container_name=container_name,
-            )
+            if rt_info.environment == "android" and not rt_info.qmp_port:
+                from cua_sandbox.transport.adb import ADBTransport
+
+                # Android emulator runtime — use ADB transport
+                adb_serial = f"emulator-{rt_info.api_port - 1}"
+                sdk_root = None
+                if hasattr(runtime, "_sdk") and runtime._sdk:
+                    sdk_root = str(runtime._sdk)
+                transport = ADBTransport(serial=adb_serial, sdk_root=sdk_root)
+            elif rt_info.agent_type == "osworld":
+                from cua_sandbox.transport.osworld import OSWorldTransport
+
+                transport = OSWorldTransport(
+                    f"http://{rt_info.host}:{rt_info.api_port}",
+                )
+            elif rt_info.vnc_port and rt_info.ssh_port:
+                from cua_sandbox.transport.vncssh import VNCSSHTransport
+
+                # Wait for SSH to be reachable before connecting transport
+                await runtime.is_ready(rt_info)
+                transport = VNCSSHTransport(
+                    ssh_host=rt_info.host,
+                    ssh_port=rt_info.ssh_port,
+                    ssh_username=rt_info.ssh_username or "admin",
+                    ssh_password=rt_info.ssh_password or "admin",
+                    vnc_host=rt_info.vnc_host or rt_info.host,
+                    vnc_port=rt_info.vnc_port,
+                    vnc_password=rt_info.vnc_password,
+                    environment=rt_info.environment or image.os_type,
+                )
+            elif rt_info.vnc_port and not rt_info.qmp_port:
+                from cua_sandbox.transport.vnc import VNCTransport
+
+                transport = VNCTransport(
+                    host=rt_info.host,
+                    port=rt_info.vnc_port,
+                    environment=rt_info.environment or image.os_type,
+                )
+            elif rt_info.qmp_port:
+                from cua_sandbox.transport.qmp import QMPTransport
+
+                transport = QMPTransport(
+                    qmp_host=rt_info.host,
+                    qmp_port=rt_info.qmp_port,
+                    environment=rt_info.environment or image.os_type,
+                )
+            else:
+                transport = HTTPTransport(
+                    f"http://{rt_info.host}:{rt_info.api_port}",
+                    api_key=api_key,
+                    container_name=container_name,
+                )
         else:
             transport = _make_transport(
                 ws_url=ws_url,
@@ -241,7 +308,9 @@ class Sandbox:
                 api_key=api_key,
                 container_name=container_name,
                 name=name,
-                configuration=configuration,
+                cpu=cpu,
+                memory_mb=memory_mb,
+                disk_gb=disk_gb,
                 region=region,
             )
         sb = cls(
@@ -262,7 +331,9 @@ def _make_transport(
     api_key: Optional[str] = None,
     container_name: Optional[str] = None,
     name: Optional[str] = None,
-    configuration: str = "small",
+    cpu: Optional[int] = None,
+    memory_mb: Optional[int] = None,
+    disk_gb: Optional[int] = None,
     region: str = "us-east-1",
 ) -> Transport:
     if ws_url:
@@ -273,7 +344,9 @@ def _make_transport(
     return CloudTransport(
         name=name,
         api_key=api_key,
-        configuration=configuration,
+        cpu=cpu,
+        memory_mb=memory_mb,
+        disk_gb=disk_gb,
         region=region,
     )
 
@@ -290,7 +363,9 @@ async def sandbox(
     runtime: Optional["Runtime"] = None,
     name: Optional[str] = None,
     ephemeral: Optional[bool] = None,
-    configuration: str = "small",
+    cpu: Optional[int] = None,
+    memory_mb: Optional[int] = None,
+    disk_gb: Optional[int] = None,
     region: str = "us-east-1",
 ) -> AsyncIterator[Sandbox]:
     """Create a sandboxed VM and yield it as an async context manager.
@@ -309,13 +384,19 @@ async def sandbox(
                    when connecting by name. Override explicitly to change behavior.
         api_key: CUA API key for cloud sandboxes.
         runtime: Explicit runtime backend (DockerRuntime, QEMURuntime, etc.).
-        configuration: Cloud VM size (default ``"small"``).
+        cpu: Number of CPUs for the cloud VM (default 2).
+        memory_mb: Memory in MB for the cloud VM (default 4096).
+        disk_gb: Disk size in GB for the cloud VM (default 64).
         region: Cloud VM region (default ``"us-east-1"``).
 
     Examples::
 
         # Cloud VM — created and destroyed on exit (ephemeral inferred True)
         async with sandbox(image=Image.linux()) as sb:
+            await sb.shell.run("whoami")
+
+        # Cloud VM with custom resources
+        async with sandbox(image=Image.linux(), cpu=4, memory_mb=8192, disk_gb=128) as sb:
             await sb.shell.run("whoami")
 
         # Cloud VM — connect to existing (ephemeral inferred False)
@@ -340,7 +421,9 @@ async def sandbox(
         runtime=runtime,
         name=name,
         ephemeral=ephemeral,
-        configuration=configuration,
+        cpu=cpu,
+        memory_mb=memory_mb,
+        disk_gb=disk_gb,
         region=region,
     )
     try:

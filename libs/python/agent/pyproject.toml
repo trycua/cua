@@ -83,6 +83,18 @@ hud = [
 gemini = [
     "google-genai>=1.41.0",
 ]
+# API-only extras for cloud/container deployments — excludes torch/transformers/local models.
+# Supports: openai, anthropic, gemini, uitars (API mode).
+cloud = [
+    # gemini API SDK
+    "google-genai>=1.41.0",
+    # cli spinner
+    "yaspin>=3.1.0",
+    # qwen tool-call formatting (used by generic_vlm.py for API-based Qwen calls)
+    "qwen-agent",
+    "qwen-vl-utils",
+    "Pillow>=10.0.0",
+]
 all = [
     # uitars requirements
     "mlx-vlm>=0.1.27; sys_platform == 'darwin'",

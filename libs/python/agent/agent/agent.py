@@ -30,6 +30,7 @@ from .adapters import (
     CUAAdapter,
     HuggingFaceLocalAdapter,
     HumanAdapter,
+    MiniMaxAdapter,
     MLXVLMAdapter,
     YutoriAdapter,
 )
@@ -299,6 +300,7 @@ class ComputerAgent:
         cua_adapter = CUAAdapter()
         azure_ml_adapter = AzureMLAdapter()
         yutori_adapter = YutoriAdapter()
+        minimax_adapter = MiniMaxAdapter()
         litellm.custom_provider_map = [
             {"provider": "huggingface-local", "custom_handler": hf_adapter},
             {"provider": "human", "custom_handler": human_adapter},
@@ -306,6 +308,7 @@ class ComputerAgent:
             {"provider": "cua", "custom_handler": cua_adapter},
             {"provider": "azure_ml", "custom_handler": azure_ml_adapter},
             {"provider": "yutori", "custom_handler": yutori_adapter},
+            {"provider": "minimax", "custom_handler": minimax_adapter},
         ]
         litellm.suppress_debug_info = True
 

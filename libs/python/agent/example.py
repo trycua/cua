@@ -108,6 +108,9 @@ async def main():
             # TODO: add local mlx provider
             # model="mlx-community/UI-TARS-1.5-7B-6bit",
             # model="ollama_chat/0000/ui-tars-1.5-7b",
+            # == MiniMax (M2.5 with 204K context) ==
+            # model="minimax/MiniMax-M2.5",
+            # model="minimax/MiniMax-M2.5-highspeed",
             # == Omniparser + Any LLM ==
             # model="omniparser+..."
             # model="omniparser+anthropic/claude-opus-4-20250514",

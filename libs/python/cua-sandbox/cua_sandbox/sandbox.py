@@ -29,6 +29,7 @@ from cua_sandbox.image import Image
 from cua_sandbox.interfaces import (
     Clipboard,
     Keyboard,
+    Mobile,
     Mouse,
     Screen,
     Shell,
@@ -144,6 +145,7 @@ class Sandbox:
         self.shell = Shell(transport)
         self.window = Window(transport)
         self.terminal = Terminal(transport)
+        self.mobile = Mobile(transport)
 
     async def _connect(self) -> None:
         await self._transport.connect()

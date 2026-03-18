@@ -25,6 +25,7 @@ app = modal.App("cua-docs-mcp")
 # Create persistent volumes for storing data
 docs_volume = modal.Volume.from_name("cua-docs-data", create_if_missing=True)
 code_volume = modal.Volume.from_name("cua-code-index", create_if_missing=True)
+repo_volume = modal.Volume.from_name("cua-repo-snapshot", create_if_missing=True)
 
 # GitHub token secret for cloning
 github_secret = modal.Secret.from_name("github-secret", required_keys=["GITHUB_TOKEN"])
@@ -58,6 +59,11 @@ DB_PATH = f"{VOLUME_PATH}/docs_db"
 CODE_VOLUME_PATH = "/code_data"
 CODE_REPO_PATH = f"{CODE_VOLUME_PATH}/repo"
 CODE_DB_PATH = f"{CODE_VOLUME_PATH}/code_db"
+
+# Repo snapshot volume mount path
+REPO_VOLUME_PATH = "/repo_data"
+REPO_CLONES_PATH = f"{REPO_VOLUME_PATH}/clones"
+REPO_DB_PATH = f"{REPO_VOLUME_PATH}/repo_db"
 
 
 # =============================================================================
@@ -1493,13 +1499,335 @@ async def scheduled_code_index():
 
 
 # =============================================================================
+# Repo Snapshot Database
+# =============================================================================
+
+
+@app.function(
+    image=image,
+    volumes={REPO_VOLUME_PATH: repo_volume},
+    secrets=[github_secret],
+    timeout=1800,  # 30 minutes
+    cpu=2.0,
+    memory=4096,
+)
+def generate_repo_db(num_commits: int = 50) -> dict:
+    """Generate a lightweight SQLite snapshot of both trycua repos.
+
+    Creates /repo_data/repo_db/repo.sqlite containing:
+      - Latest HEAD file contents for trycua/cua and trycua/cloud
+      - Last `num_commits` commits per repo with metadata and per-commit file lists
+      - FTS5 full-text search on both files and commit messages
+
+    Args:
+        num_commits: How many recent commits to index per repo (default: 50)
+
+    Returns:
+        Dict with counts of files, commits, and commit_files indexed.
+    """
+    import datetime
+    import os
+    import re
+    import subprocess
+
+    print(f"Generating repo snapshot database (last {num_commits} commits per repo)...")
+
+    github_token = os.environ.get("GITHUB_TOKEN", "")
+
+    REPOS = {
+        "cua": "https://github.com/trycua/cua.git",
+        "cloud": "https://github.com/trycua/cloud.git",
+    }
+
+    SOURCE_EXTENSIONS = {
+        ".py", ".ts", ".tsx", ".js", ".jsx",
+        ".md", ".mdx", ".rst", ".txt",
+        ".yaml", ".yml", ".toml", ".json", ".jsonc",
+        ".sh", ".bash", ".zsh",
+        ".nix",
+        ".go", ".rs", ".c", ".cpp", ".h", ".hpp",
+        ".sql", ".css", ".scss", ".html", ".xml",
+    }
+    SKIP_PATTERNS = {
+        "package-lock.json", "yarn.lock", "pnpm-lock.yaml",
+        "poetry.lock", "Cargo.lock", ".gitignore", ".DS_Store",
+    }
+    SKIP_DIRS = {
+        "node_modules", ".git", "__pycache__", ".venv", "venv",
+        "dist", "build", ".next", "target",
+    }
+    MAX_FILE_SIZE = 150_000
+
+    EXTENSION_TO_LANGUAGE = {
+        ".py": "python", ".ts": "typescript", ".tsx": "typescript",
+        ".js": "javascript", ".jsx": "javascript",
+        ".md": "markdown", ".mdx": "markdown", ".rst": "rst", ".txt": "text",
+        ".yaml": "yaml", ".yml": "yaml", ".toml": "toml",
+        ".json": "json", ".jsonc": "json",
+        ".sh": "shell", ".bash": "shell", ".zsh": "shell",
+        ".nix": "nix", ".go": "go", ".rs": "rust",
+        ".c": "c", ".cpp": "cpp", ".h": "c", ".hpp": "cpp",
+        ".sql": "sql", ".css": "css", ".scss": "scss",
+        ".html": "html", ".xml": "xml",
+    }
+
+    def detect_language(path: str) -> str:
+        p = Path(path)
+        if p.name.lower() in ("dockerfile", "containerfile"):
+            return "dockerfile"
+        return EXTENSION_TO_LANGUAGE.get(p.suffix.lower(), "text")
+
+    def should_index(path: str) -> bool:
+        p = Path(path)
+        if p.name in SKIP_PATTERNS:
+            return False
+        if set(p.parts) & SKIP_DIRS:
+            return False
+        if p.name.lower() in ("dockerfile", "containerfile", "makefile"):
+            return True
+        return p.suffix.lower() in SOURCE_EXTENSIONS
+
+    def run_git(args, cwd, check=True):
+        return subprocess.run(
+            ["git"] + args, cwd=cwd, check=check,
+            capture_output=True, text=True,
+        )
+
+    def ensure_clone(repo_name: str, repo_url: str) -> str:
+        dest = Path(REPO_CLONES_PATH) / f"{repo_name}.git"
+        url = repo_url.replace("https://", f"https://{github_token}@") if github_token else repo_url
+        if dest.exists():
+            print(f"  [{repo_name}] Fetching updates...")
+            subprocess.run(
+                ["git", "fetch", "--all", "--tags", "--prune"],
+                cwd=str(dest), check=True, capture_output=True,
+            )
+        else:
+            print(f"  [{repo_name}] Cloning {repo_url}...")
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            subprocess.run(
+                ["git", "clone", "--bare", url, str(dest)],
+                check=True, capture_output=True,
+            )
+        return str(dest)
+
+    # Build database
+    db_dir = Path(REPO_DB_PATH)
+    db_dir.mkdir(parents=True, exist_ok=True)
+    db_path = db_dir / "repo.sqlite"
+
+    if db_path.exists():
+        db_path.unlink()
+
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    cursor.execute("PRAGMA journal_mode=WAL")
+    cursor.execute("PRAGMA synchronous=NORMAL")
+
+    # Schema
+    cursor.execute("""
+        CREATE TABLE files (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            repo TEXT NOT NULL, path TEXT NOT NULL,
+            content TEXT NOT NULL, language TEXT NOT NULL, size INTEGER NOT NULL,
+            UNIQUE(repo, path)
+        )
+    """)
+    cursor.execute("""
+        CREATE VIRTUAL TABLE files_fts USING fts5(
+            content, repo UNINDEXED, path UNINDEXED, language UNINDEXED,
+            content='files', content_rowid='id'
+        )
+    """)
+    cursor.execute("""
+        CREATE TRIGGER files_ai AFTER INSERT ON files BEGIN
+            INSERT INTO files_fts(rowid, content, repo, path, language)
+            VALUES (new.id, new.content, new.repo, new.path, new.language);
+        END
+    """)
+
+    cursor.execute("""
+        CREATE TABLE commits (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            repo TEXT NOT NULL, hash TEXT NOT NULL, short_hash TEXT NOT NULL,
+            author_name TEXT, author_email TEXT, date TEXT NOT NULL,
+            subject TEXT NOT NULL, body TEXT,
+            files_changed INTEGER DEFAULT 0, insertions INTEGER DEFAULT 0, deletions INTEGER DEFAULT 0,
+            UNIQUE(repo, hash)
+        )
+    """)
+    cursor.execute("""
+        CREATE VIRTUAL TABLE commits_fts USING fts5(
+            subject, body, repo UNINDEXED, hash UNINDEXED, author_name UNINDEXED, date UNINDEXED,
+            content='commits', content_rowid='id'
+        )
+    """)
+    cursor.execute("""
+        CREATE TRIGGER commits_ai AFTER INSERT ON commits BEGIN
+            INSERT INTO commits_fts(rowid, subject, body, repo, hash, author_name, date)
+            VALUES (new.id, new.subject, new.body, new.repo, new.hash, new.author_name, new.date);
+        END
+    """)
+
+    cursor.execute("""
+        CREATE TABLE commit_files (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            commit_id INTEGER NOT NULL REFERENCES commits(id),
+            repo TEXT NOT NULL, path TEXT NOT NULL,
+            change_type TEXT NOT NULL, additions INTEGER DEFAULT 0, deletions INTEGER DEFAULT 0
+        )
+    """)
+    cursor.execute("CREATE INDEX idx_cf_commit ON commit_files(commit_id)")
+    cursor.execute("CREATE INDEX idx_cf_path   ON commit_files(repo, path)")
+
+    cursor.execute("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+    conn.commit()
+
+    total_files = total_commits = total_cf = 0
+
+    for repo_name, repo_url in REPOS.items():
+        print(f"\n=== {repo_name} ===")
+        repo_path = ensure_clone(repo_name, repo_url)
+
+        # Index files at HEAD
+        result = run_git(["ls-tree", "-r", "--name-only", "HEAD"], cwd=repo_path)
+        eligible = [f for f in result.stdout.strip().split("\n") if f and should_index(f)]
+        print(f"  [{repo_name}] {len(eligible)} eligible files at HEAD")
+
+        for file_path in eligible:
+            try:
+                raw = subprocess.run(
+                    ["git", "show", f"HEAD:{file_path}"],
+                    cwd=repo_path, check=True, capture_output=True,
+                ).stdout
+            except subprocess.CalledProcessError:
+                continue
+            if b"\x00" in raw[:8192] or len(raw) > MAX_FILE_SIZE:
+                continue
+            content = raw.decode("utf-8", errors="replace")
+            cursor.execute(
+                "INSERT OR REPLACE INTO files (repo, path, content, language, size) VALUES (?,?,?,?,?)",
+                (repo_name, file_path, content, detect_language(file_path), len(raw)),
+            )
+            total_files += 1
+        conn.commit()
+
+        # Index commits
+        sep = "\x1f"
+        fmt = sep.join(["%H", "%h", "%an", "%ae", "%aI", "%s", "%b"])
+        log = run_git(["log", f"-{num_commits}", f"--format={fmt}"], cwd=repo_path)
+        commit_rows = []
+        for line in log.stdout.split("\n"):
+            if not line.strip():
+                continue
+            parts = line.split(sep)
+            if len(parts) < 6:
+                continue
+            commit_rows.append({
+                "hash": parts[0].strip(), "short_hash": parts[1].strip(),
+                "author_name": parts[2].strip(), "author_email": parts[3].strip(),
+                "date": parts[4].strip(), "subject": parts[5].strip(),
+                "body": parts[6].strip() if len(parts) > 6 else "",
+            })
+
+        print(f"  [{repo_name}] {len(commit_rows)} commits")
+
+        for commit in commit_rows:
+            # Stats
+            stat = run_git(["show", "--stat", "--format=", commit["hash"]], cwd=repo_path, check=False)
+            files_changed = insertions = deletions = 0
+            for sline in reversed(stat.stdout.strip().split("\n")):
+                sline = sline.strip()
+                if "file" in sline and "changed" in sline:
+                    m = re.search(r"(\d+) file", sline)
+                    if m: files_changed = int(m.group(1))
+                    m = re.search(r"(\d+) insertion", sline)
+                    if m: insertions = int(m.group(1))
+                    m = re.search(r"(\d+) deletion", sline)
+                    if m: deletions = int(m.group(1))
+                    break
+
+            cursor.execute(
+                """INSERT OR REPLACE INTO commits
+                   (repo, hash, short_hash, author_name, author_email, date,
+                    subject, body, files_changed, insertions, deletions)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+                (repo_name, commit["hash"], commit["short_hash"],
+                 commit["author_name"], commit["author_email"], commit["date"],
+                 commit["subject"], commit["body"],
+                 files_changed, insertions, deletions),
+            )
+            commit_id = cursor.lastrowid
+            total_commits += 1
+
+            # Changed files
+            ns = run_git(["show", "--numstat", "--format=", commit["hash"]], cwd=repo_path, check=False)
+            types_result = run_git(["show", "--name-status", "--format=", commit["hash"]], cwd=repo_path, check=False)
+            type_map: dict[str, str] = {}
+            for tline in types_result.stdout.strip().split("\n"):
+                tp = tline.split("\t")
+                if len(tp) >= 2:
+                    type_map[tp[-1].strip()] = tp[0][0]
+
+            for nline in ns.stdout.strip().split("\n"):
+                np = nline.split("\t")
+                if len(np) < 3:
+                    continue
+                adds = int(np[0]) if np[0].isdigit() else 0
+                dels = int(np[1]) if np[1].isdigit() else 0
+                fpath = np[2].strip()
+                if " => " in fpath:
+                    fpath = fpath.split(" => ")[-1].strip("}")
+                cursor.execute(
+                    """INSERT INTO commit_files
+                       (commit_id, repo, path, change_type, additions, deletions)
+                       VALUES (?,?,?,?,?,?)""",
+                    (commit_id, repo_name, fpath, type_map.get(fpath, "M"), adds, dels),
+                )
+                total_cf += 1
+
+        conn.commit()
+
+    # Metadata
+    cursor.execute("INSERT INTO meta VALUES (?,?)", ("generated_at", datetime.datetime.utcnow().isoformat() + "Z"))
+    cursor.execute("INSERT INTO meta VALUES (?,?)", ("num_commits", str(num_commits)))
+    cursor.execute("INSERT INTO meta VALUES (?,?)", ("repos", "cua,cloud"))
+    conn.commit()
+    conn.close()
+
+    repo_volume.commit()
+
+    size_mb = db_path.stat().st_size / 1_048_576
+    print(f"\nRepo DB complete: {total_files} files, {total_commits} commits, {total_cf} commit_files, {size_mb:.1f} MB")
+
+    return {"files": total_files, "commits": total_commits, "commit_files": total_cf, "size_mb": round(size_mb, 2)}
+
+
+@app.function(
+    image=image,
+    volumes={REPO_VOLUME_PATH: repo_volume},
+    secrets=[github_secret],
+    schedule=modal.Cron("0 7 * * *"),  # Daily at 7 AM UTC
+    timeout=1800,
+    cpu=2.0,
+    memory=4096,
+)
+def scheduled_repo_db():
+    """Scheduled daily repo snapshot database generation"""
+    print("Running scheduled repo snapshot generation...")
+    result = generate_repo_db.remote()
+    print(f"Repo DB generation complete: {result}")
+    return result
+
+
+# =============================================================================
 # MCP Server
 # =============================================================================
 
 
 @app.function(
     image=image,
-    volumes={VOLUME_PATH: docs_volume, CODE_VOLUME_PATH: code_volume},
+    volumes={VOLUME_PATH: docs_volume, CODE_VOLUME_PATH: code_volume, REPO_VOLUME_PATH: repo_volume},
     cpu=1.0,
     memory=2048,
     keep_warm=1,  # Keep one container warm to avoid cold start latency
@@ -1614,6 +1942,17 @@ IMPORTANT: Always cite sources - URLs for docs, component@version:path for code.
         except Exception as e:
             print(f"  Warning: Could not load code SQLite: {e}")
 
+    # Repo SQLite (latest HEAD files + recent commits)
+    _repo_sqlite_conn = None
+    repo_sqlite_path = Path(REPO_DB_PATH) / "repo.sqlite"
+    if repo_sqlite_path.exists():
+        try:
+            _repo_sqlite_conn = sqlite3.connect(f"file:{repo_sqlite_path}?mode=ro", uri=True)
+            _repo_sqlite_conn.row_factory = sqlite3.Row
+            print(f"  Repo SQLite loaded from {repo_sqlite_path}")
+        except Exception as e:
+            print(f"  Warning: Could not load repo SQLite: {e}")
+
     print("Database initialization complete.")
 
     def get_lance_table():
@@ -1643,6 +1982,14 @@ IMPORTANT: Always cite sources - URLs for docs, component@version:path for code.
                 "Code SQLite database not found. Run generate_code_index_parallel and aggregate_code_databases first."
             )
         return _code_sqlite_conn
+
+    def get_repo_sqlite_conn():
+        """Get read-only SQLite connection for the repo snapshot database (eagerly loaded)."""
+        if _repo_sqlite_conn is None:
+            raise RuntimeError(
+                "Repo SQLite database not found. Run generate_repo_db first."
+            )
+        return _repo_sqlite_conn
 
     # =================== DOCUMENTATION QUERY TOOLS (READ-ONLY) ===================
 
@@ -1851,6 +2198,43 @@ IMPORTANT: Always cite sources - URLs for docs, component@version:path for code.
 
         return formatted
 
+    # =================== REPO QUERY TOOL (READ-ONLY) ===================
+
+    @mcp.tool()
+    def query_repo_db(sql: str) -> list[dict]:
+        """
+        Execute a SQL query against the live repo snapshot database.
+        READ-ONLY. Contains the latest HEAD files and last 50 commits for
+        trycua/cua and trycua/cloud.
+
+        Tables:
+          files        -- repo, path, content, language, size
+          files_fts    -- FTS5 virtual table over file content
+          commits      -- repo, hash, short_hash, author_name, author_email,
+                          date, subject, body, files_changed, insertions, deletions
+          commits_fts  -- FTS5 virtual table over subject + body
+          commit_files -- commit_id, repo, path, change_type, additions, deletions
+          meta         -- key/value build metadata
+
+        Examples:
+          SELECT repo, COUNT(*) FROM files GROUP BY repo
+          SELECT content FROM files WHERE repo='cua' AND path='libs/agent/agent/core.py'
+          SELECT short_hash, date, subject FROM commits WHERE repo='cloud' ORDER BY date DESC LIMIT 10
+          SELECT c.short_hash, c.subject FROM commits_fts
+            JOIN commits c ON commits_fts.rowid = c.id
+            WHERE commits_fts MATCH 'fix bug' ORDER BY rank LIMIT 5
+
+        Args:
+            sql: SQL SELECT query to execute
+
+        Returns:
+            List of dicts, one per row
+        """
+        conn = get_repo_sqlite_conn()
+        cursor = conn.cursor()
+        cursor.execute(sql)
+        return [dict(row) for row in cursor.fetchall()]
+
     # Create SSE app directly - endpoints at /sse (GET) and /messages (POST)
     from starlette.middleware import Middleware
 
@@ -1879,16 +2263,20 @@ IMPORTANT: Always cite sources - URLs for docs, component@version:path for code.
 def main(
     skip_docs: bool = False,
     skip_code: bool = False,
+    skip_repo: bool = False,
     parallel: bool = True,
     code_only: bool = False,
+    repo_commits: int = 50,
 ):
     """Run initial crawl and database generation
 
     Args:
         skip_docs: Skip documentation crawl and indexing
         skip_code: Skip code indexing
+        skip_repo: Skip repo snapshot database generation
         parallel: Use parallel code indexing (default: True)
         code_only: Only run code indexing (shortcut for --skip-docs)
+        repo_commits: Number of commits to index per repo (default: 50)
     """
     if code_only:
         skip_docs = True
@@ -1919,5 +2307,10 @@ def main(
         print("Aggregating code databases...")
         agg_result = aggregate_code_databases.remote()
         print(f"Aggregation: {agg_result}")
+
+    if not skip_repo:
+        print(f"Generating repo snapshot database (last {repo_commits} commits per repo)...")
+        repo_result = generate_repo_db.remote(num_commits=repo_commits)
+        print(f"Repo DB: {repo_result}")
 
     print("Done! Deploy with: modal deploy docs/scripts/modal_app.py")

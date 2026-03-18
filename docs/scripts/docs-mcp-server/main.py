@@ -35,6 +35,7 @@ OTEL_SERVICE_NAME = os.environ.get("OTEL_SERVICE_NAME", "cua-docs-mcp")
 # Database paths (configurable via environment)
 DOCS_DB_PATH = os.environ.get("DOCS_DB_PATH", "/data/docs_db")
 CODE_DB_PATH = os.environ.get("CODE_DB_PATH", "/data/code_db")
+REPO_DB_PATH = os.environ.get("REPO_DB_PATH", "/data/repo_db")
 
 # Initialize OpenTelemetry for metrics and tracing
 _tracer = None
@@ -123,9 +124,12 @@ Documentation:
 - query_docs_db: Execute SQL queries against the documentation SQLite database
 - query_docs_vectors: Execute vector similarity searches against the documentation LanceDB
 
-Code:
+Code (by version/tag):
 - query_code_db: Execute SQL queries against the code search SQLite database
 - query_code_vectors: Execute vector similarity searches against the code LanceDB
+
+Repository (latest HEAD + recent commits):
+- query_repo_db: Execute SQL queries against the live repo snapshot database
 
 All tools are READ-ONLY. Only SELECT queries are allowed for SQL databases.
 
@@ -157,7 +161,7 @@ Components include: agent, computer, mcp-server, som, etc.
 3. Semantic code search:
    - Use query_code_vectors with natural language queries like "screenshot capture implementation"
 
-IMPORTANT: Always cite sources - URLs for docs, component@version:path for code.""",
+IMPORTANT: Always cite sources - URLs for docs, component@version:path for code, repo:path for live files.""",
 )
 
 # Initialize embedding model - load eagerly to avoid cold start on first search
@@ -213,6 +217,17 @@ if code_sqlite_path.exists():
     except Exception as e:
         print(f"  Warning: Could not load code SQLite: {e}")
 
+# Repo SQLite (latest file snapshot + recent commits)
+_repo_sqlite_conn = None
+repo_sqlite_path = Path(REPO_DB_PATH) / "repo.sqlite"
+if repo_sqlite_path.exists():
+    try:
+        _repo_sqlite_conn = sqlite3.connect(f"file:{repo_sqlite_path}?mode=ro", uri=True)
+        _repo_sqlite_conn.row_factory = sqlite3.Row
+        print(f"  Repo SQLite loaded from {repo_sqlite_path}")
+    except Exception as e:
+        print(f"  Warning: Could not load repo SQLite: {e}")
+
 print("Database initialization complete.")
 
 
@@ -250,6 +265,15 @@ def get_code_sqlite_conn():
             "Code SQLite database not found. Ensure code_index.sqlite is present in CODE_DB_PATH."
         )
     return _code_sqlite_conn
+
+
+def get_repo_sqlite_conn():
+    """Get read-only SQLite connection for the repo snapshot database (eagerly loaded)."""
+    if _repo_sqlite_conn is None:
+        raise RuntimeError(
+            "Repo SQLite database not found. Ensure repo.sqlite is present in REPO_DB_PATH."
+        )
+    return _repo_sqlite_conn
 
 
 # =================== DOCUMENTATION QUERY TOOLS (READ-ONLY) ===================
@@ -495,6 +519,132 @@ def query_code_vectors(
         raise
     finally:
         record_request("query_code_vectors", time.perf_counter() - start_time, status)
+
+
+# =================== REPO QUERY TOOL (READ-ONLY) ===================
+
+
+@mcp.tool()
+def query_repo_db(sql: str) -> list[dict]:
+    """
+    Execute a SQL query against the live repo snapshot database.
+    The database is READ-ONLY and contains two things:
+      1. The latest file contents (HEAD) of trycua/cua and trycua/cloud
+      2. The last 50 commits from each repo with per-commit file change lists
+
+    Database Schema:
+
+    Table: files  -- Latest HEAD snapshot of all source files
+    - id       INTEGER PRIMARY KEY AUTOINCREMENT
+    - repo     TEXT NOT NULL           -- "cua" or "cloud"
+    - path     TEXT NOT NULL           -- File path relative to repo root
+    - content  TEXT NOT NULL           -- Full file content
+    - language TEXT NOT NULL           -- Detected language (python, typescript, …)
+    - size     INTEGER NOT NULL        -- File size in bytes
+    - UNIQUE(repo, path)
+
+    Virtual Table: files_fts (FTS5 full-text search over file content)
+    - content  TEXT                    -- Full-text indexed file content
+    - repo     TEXT UNINDEXED
+    - path     TEXT UNINDEXED
+    - language TEXT UNINDEXED
+
+    Table: commits  -- Recent git commits (last 50 per repo)
+    - id            INTEGER PRIMARY KEY AUTOINCREMENT
+    - repo          TEXT NOT NULL      -- "cua" or "cloud"
+    - hash          TEXT NOT NULL      -- Full commit SHA
+    - short_hash    TEXT NOT NULL      -- 7-char short SHA
+    - author_name   TEXT
+    - author_email  TEXT
+    - date          TEXT NOT NULL      -- ISO 8601 timestamp
+    - subject       TEXT NOT NULL      -- Commit headline
+    - body          TEXT               -- Commit body / description
+    - files_changed INTEGER
+    - insertions    INTEGER
+    - deletions     INTEGER
+    - UNIQUE(repo, hash)
+
+    Virtual Table: commits_fts (FTS5 full-text search over commit messages)
+    - subject      TEXT               -- Full-text indexed commit subject
+    - body         TEXT               -- Full-text indexed commit body
+    - repo         TEXT UNINDEXED
+    - hash         TEXT UNINDEXED
+    - author_name  TEXT UNINDEXED
+    - date         TEXT UNINDEXED
+
+    Table: commit_files  -- Files changed in each commit
+    - id          INTEGER PRIMARY KEY AUTOINCREMENT
+    - commit_id   INTEGER NOT NULL REFERENCES commits(id)
+    - repo        TEXT NOT NULL
+    - path        TEXT NOT NULL       -- File path
+    - change_type TEXT NOT NULL       -- A=added, M=modified, D=deleted, R=renamed
+    - additions   INTEGER
+    - deletions   INTEGER
+
+    Table: meta  -- Database build metadata
+    - key   TEXT PRIMARY KEY          -- e.g. "generated_at", "num_commits", "repos"
+    - value TEXT NOT NULL
+
+    Example queries:
+
+    1. List all repos and file counts:
+       SELECT repo, COUNT(*) as file_count FROM files GROUP BY repo
+
+    2. Full-text search across all files:
+       SELECT f.repo, f.path, snippet(files_fts, 0, '>>>', '<<<', '...', 64) as snippet
+       FROM files_fts JOIN files f ON files_fts.rowid = f.id
+       WHERE files_fts MATCH 'computer use agent'
+       ORDER BY rank LIMIT 10
+
+    3. Read a specific file:
+       SELECT content FROM files WHERE repo = 'cua' AND path = 'libs/agent/agent/core.py'
+
+    4. Recent commits for a repo:
+       SELECT short_hash, date, author_name, subject, files_changed, insertions, deletions
+       FROM commits WHERE repo = 'cua' ORDER BY date DESC LIMIT 20
+
+    5. Search commit messages:
+       SELECT c.repo, c.short_hash, c.date, c.subject,
+              snippet(commits_fts, 0, '>>>', '<<<', '...', 40) as match
+       FROM commits_fts JOIN commits c ON commits_fts.rowid = c.id
+       WHERE commits_fts MATCH 'fix bug'
+       ORDER BY rank LIMIT 10
+
+    6. Files changed in the most recent commit:
+       SELECT cf.path, cf.change_type, cf.additions, cf.deletions
+       FROM commit_files cf
+       JOIN commits c ON c.id = cf.commit_id
+       WHERE c.repo = 'cua'
+       ORDER BY c.date DESC, cf.path
+       LIMIT 1  -- get just the latest commit's row to find its id, then filter
+
+    7. Which commits touched a given file:
+       SELECT c.short_hash, c.date, c.subject, cf.change_type
+       FROM commit_files cf JOIN commits c ON c.id = cf.commit_id
+       WHERE cf.repo = 'cua' AND cf.path LIKE '%agent/core%'
+       ORDER BY c.date DESC
+
+    8. Database build info:
+       SELECT key, value FROM meta
+
+    Args:
+        sql: SQL SELECT query to execute
+
+    Returns:
+        List of dictionaries, one per row, with column names as keys
+    """
+    start_time = time.perf_counter()
+    status = "success"
+    try:
+        conn = get_repo_sqlite_conn()
+        cursor = conn.cursor()
+        cursor.execute(sql)
+        return [dict(row) for row in cursor.fetchall()]
+    except Exception:
+        status = "error"
+        raise
+    finally:
+        record_request("query_repo_db", time.perf_counter() - start_time, status)
 
 
 # Create the ASGI app

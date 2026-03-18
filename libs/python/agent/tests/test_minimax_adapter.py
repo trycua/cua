@@ -58,6 +58,14 @@ class TestModelNormalization:
         adapter = MiniMaxAdapter()
         assert adapter._normalize_model("minimax/MiniMax-M2.5-highspeed") == "MiniMax-M2.5-highspeed"
 
+    def test_strip_m27_prefix(self):
+        adapter = MiniMaxAdapter()
+        assert adapter._normalize_model("minimax/MiniMax-M2.7") == "MiniMax-M2.7"
+
+    def test_m27_highspeed_model(self):
+        adapter = MiniMaxAdapter()
+        assert adapter._normalize_model("minimax/MiniMax-M2.7-highspeed") == "MiniMax-M2.7-highspeed"
+
 
 class TestAPIKeyResolution:
     """Tests for API key resolution logic."""
@@ -227,6 +235,18 @@ class TestBuildParams:
         params = adapter._build_params(kwargs)
         assert params["model"] == "openai/MiniMax-M2.5-highspeed"
 
+    def test_m27_model_routing(self):
+        adapter = MiniMaxAdapter(api_key="test-key")
+        kwargs = {"model": "minimax/MiniMax-M2.7", "messages": []}
+        params = adapter._build_params(kwargs)
+        assert params["model"] == "openai/MiniMax-M2.7"
+
+    def test_m27_highspeed_model_routing(self):
+        adapter = MiniMaxAdapter(api_key="test-key")
+        kwargs = {"model": "minimax/MiniMax-M2.7-highspeed", "messages": []}
+        params = adapter._build_params(kwargs)
+        assert params["model"] == "openai/MiniMax-M2.7-highspeed"
+
 
 class TestCompletion:
     """Tests for completion and acompletion methods."""
@@ -311,6 +331,22 @@ class TestComputerAgentMiniMaxIntegration:
 
         agent = ComputerAgent(model="minimax/MiniMax-M2.5-highspeed")
         assert agent.model == "minimax/MiniMax-M2.5-highspeed"
+
+    @patch("agent.agent.litellm")
+    def test_agent_initialization_with_minimax_m27(self, mock_litellm, disable_telemetry):
+        """Test that ComputerAgent can be initialized with MiniMax M2.7 model."""
+        from agent import ComputerAgent
+
+        agent = ComputerAgent(model="minimax/MiniMax-M2.7")
+        assert agent.model == "minimax/MiniMax-M2.7"
+
+    @patch("agent.agent.litellm")
+    def test_agent_initialization_with_minimax_m27_highspeed(self, mock_litellm, disable_telemetry):
+        """Test that ComputerAgent can be initialized with MiniMax M2.7 highspeed model."""
+        from agent import ComputerAgent
+
+        agent = ComputerAgent(model="minimax/MiniMax-M2.7-highspeed")
+        assert agent.model == "minimax/MiniMax-M2.7-highspeed"
 
     @patch("agent.agent.litellm")
     def test_minimax_registered_in_provider_map(self, mock_litellm, disable_telemetry):

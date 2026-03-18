@@ -54,3 +54,25 @@ class TestMiniMaxLiveCompletion:
             max_tokens=10,
         )
         assert response is not None
+
+    def test_m27_sync_completion(self):
+        """Test synchronous completion with MiniMax M2.7."""
+        adapter = MiniMaxAdapter()
+        response = adapter.completion(
+            model="minimax/MiniMax-M2.7",
+            messages=[{"role": "user", "content": "Say hello in one word."}],
+            temperature=0.7,
+            max_tokens=10,
+        )
+        assert response is not None
+        assert hasattr(response, "choices") or isinstance(response, dict)
+
+    def test_m27_highspeed_model(self):
+        """Test completion with MiniMax M2.7 highspeed variant."""
+        adapter = MiniMaxAdapter()
+        response = adapter.completion(
+            model="minimax/MiniMax-M2.7-highspeed",
+            messages=[{"role": "user", "content": "Say hi."}],
+            max_tokens=10,
+        )
+        assert response is not None

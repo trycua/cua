@@ -2,7 +2,8 @@
 MiniMax adapter for litellm - routes minimax/ prefixed models to the MiniMax API.
 
 MiniMax provides OpenAI-compatible API endpoints at https://api.minimax.io/v1.
-Supported models: MiniMax-M2.5, MiniMax-M2.5-highspeed (204K context window).
+Supported models: MiniMax-M2.7 (default), MiniMax-M2.7-highspeed,
+MiniMax-M2.5, MiniMax-M2.5-highspeed (204K context window).
 
 Environment variable: MINIMAX_API_KEY
 """

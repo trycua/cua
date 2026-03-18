@@ -845,6 +845,7 @@ class TaskRunner:
         api_keys = [
             "ANTHROPIC_API_KEY",
             "OPENAI_API_KEY",
+            "OPENAI_ENDPOINT",
             "GOOGLE_API_KEY",
             "GOOGLE_CLOUD_PROJECT",
             "AZURE_OPENAI_API_KEY",

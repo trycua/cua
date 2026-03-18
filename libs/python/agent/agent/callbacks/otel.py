@@ -79,6 +79,7 @@ class OtelCallback(AsyncCallbackHandler):
             return
 
         self.run_start_time = time.perf_counter()
+        self.step_start_time = self.run_start_time
         self.step_count = 0
 
     async def on_run_end(

@@ -349,11 +349,26 @@ class BaseAutomationHandler(ABC):
 
     # Command Execution
     async def run_command(self, command: str) -> Dict[str, Any]:
-        """Run a shell command locally and return its output."""
+        """Run a shell command locally and return its output.
+
+        When IS_CUA_ANDROID env var is set, routes the command through
+        ``adb shell`` so execution runs inside the Android emulator.
+        """
+        import os
+
         try:
-            process = await asyncio.create_subprocess_shell(
-                command, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
-            )
+            if os.environ.get("IS_CUA_ANDROID") == "true":
+                process = await asyncio.create_subprocess_exec(
+                    "adb",
+                    "shell",
+                    command,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+            else:
+                process = await asyncio.create_subprocess_shell(
+                    command, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+                )
             stdout, stderr = await process.communicate()
             return {
                 "success": True,

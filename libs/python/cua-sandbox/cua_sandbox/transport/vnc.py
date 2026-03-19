@@ -46,6 +46,11 @@ class VNCTransport(Transport):
         )
         logger.info(f"VNC connected to {self._host}:{self._port}")
 
+    async def get_display_url(self, *, share: bool = False) -> str:
+        if share:
+            raise NotImplementedError("share=True is not supported for local VNC transports.")
+        return f"vnc://{self._host}:{self._port}"
+
     async def disconnect(self) -> None:
         if self._client:
             try:

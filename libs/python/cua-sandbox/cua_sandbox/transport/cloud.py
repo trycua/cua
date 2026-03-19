@@ -126,6 +126,25 @@ class CloudTransport(Transport):
         assert self._inner, "Transport not connected"
         return await self._inner.get_environment()
 
+    async def get_display_url(self, *, share: bool = False) -> str:
+        if not self._name:
+            raise ValueError("Transport not connected — no VM name available")
+        if not share:
+            return f"https://cua.ai/connect/incus/{self._name}"
+        vm_info = await self._get_vm(self._name)
+        password = vm_info.get("password", "")
+        for ep in vm_info.get("endpoints", []):
+            if ep.get("name") == "vnc":
+                host = ep["host"]
+                url = f"https://{host}"
+                if password:
+                    url += f"/?password={password}"
+                return url
+        raise ValueError(
+            f"VM '{self._name}' has no VNC endpoint. "
+            "Only Android and desktop VMs expose a VNC endpoint."
+        )
+
     # ── Helpers ─────────────────────────────────────────────────────────
 
     @property

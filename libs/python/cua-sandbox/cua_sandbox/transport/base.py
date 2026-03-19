@@ -7,7 +7,7 @@ underlying computer (local host, WebSocket to computer-server, or cloud API).
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 
 class Transport(ABC):
@@ -36,3 +36,16 @@ class Transport(ABC):
     @abstractmethod
     async def get_environment(self) -> str:
         """Return 'windows', 'mac', 'linux', or 'browser'."""
+
+    async def get_display_url(self, *, share: bool = False) -> str:
+        """Return a URL to view this sandbox's display.
+
+        Args:
+            share: If True, return a public link with embedded credentials
+                   (cloud only). If False, return a direct connection URL
+                   (localhost VNC for local runtimes; auth-gated URL for cloud).
+
+        Raises NotImplementedError for transports that don't expose a display
+        (e.g. HTTP, ADB).
+        """
+        raise NotImplementedError(f"{type(self).__name__} does not support get_display_url().")

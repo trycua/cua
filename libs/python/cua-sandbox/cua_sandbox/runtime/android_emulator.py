@@ -18,6 +18,7 @@ import logging
 import os
 import platform as _plat
 import shutil
+import socket
 import subprocess
 from pathlib import Path
 from typing import Optional
@@ -165,6 +166,28 @@ def _ensure_sdk() -> Path:
     return sdk
 
 
+def _find_free_emulator_port() -> int:
+    """Return a free odd adb_port (console_port = adb_port - 1, must be even).
+
+    Scans even console ports 5554–5682; returns the first pair where both
+    console_port and adb_port are not in use (TCP bind check).
+    """
+    for console_port in range(5554, 5684, 2):  # 5554, 5556, ..., 5682
+        adb_port = console_port + 1
+        free = True
+        for port in (console_port, adb_port):
+            try:
+                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                    s.bind(("127.0.0.1", port))
+            except OSError:
+                free = False
+                break
+        if free:
+            return adb_port
+    raise RuntimeError("No free Android emulator port pair found in range 5554–5682")
+
+
 def _find_bin(sdk: Path, name: str) -> str:
     """Find a binary in the SDK."""
     candidates = [
@@ -198,7 +221,7 @@ class AndroidEmulatorRuntime(Runtime):
         device_id: str = "pixel",
         memory_mb: int = 4096,
         cpu_count: int = 4,
-        adb_port: int = 5555,
+        adb_port: Optional[int] = None,
         no_boot_anim: bool = True,
         gpu_mode: str = "swiftshader_indirect",
         headless: bool = True,
@@ -219,6 +242,13 @@ class AndroidEmulatorRuntime(Runtime):
     async def start(self, image: Image, name: str, **opts) -> RuntimeInfo:
         self._sdk = _ensure_sdk()
         self._avd_name = name
+
+        # Resolve port lazily so callers don't need to pick one
+        if self.adb_port is None:
+            self.adb_port = _find_free_emulator_port()
+            logger.info(
+                f"Auto-selected emulator port: console={self.adb_port - 1}, adb={self.adb_port}"
+            )
 
         arch = "arm64-v8a" if _plat.machine() in ("arm64", "aarch64") else "x86_64"
         package = f"system-images;android-{self.api_level};{self.img_type};{arch}"

@@ -476,7 +476,9 @@ class TestCmdShell:
         subparsers = parser.add_subparsers()
         sandbox.register_parser(subparsers)
 
-        args = parser.parse_args(["sb", "shell", "--cols", "120", "--rows", "40", "my-sandbox", "ls"])
+        args = parser.parse_args(
+            ["sb", "shell", "--cols", "120", "--rows", "40", "my-sandbox", "ls"]
+        )
         assert args.cols == 120
         assert args.rows == 40
         assert args.name == "my-sandbox"

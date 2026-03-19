@@ -15,7 +15,9 @@ from ..decorators import register_agent
 from ..types import AgentCapability, AgentResponse, Messages, Tools
 
 
-async def _map_computer_tool_to_openai(computer_handler: Any, use_native_tool: bool = True) -> Dict[str, Any]:
+async def _map_computer_tool_to_openai(
+    computer_handler: Any, use_native_tool: bool = True
+) -> Dict[str, Any]:
     """Map a computer tool to OpenAI's tool schema.
 
     Args:
@@ -155,18 +157,22 @@ async def _prepare_tools_for_openai(tool_schemas: List[Dict[str, Any]], model: s
     for schema in tool_schemas:
         if schema["type"] == "computer":
             # Map computer tool to OpenAI format (native or function based on model)
-            computer_tool = await _map_computer_tool_to_openai(schema["computer"], use_native_tool=use_native)
+            computer_tool = await _map_computer_tool_to_openai(
+                schema["computer"], use_native_tool=use_native
+            )
             openai_tools.append(computer_tool)
         elif schema["type"] == "function":
             # Function tools for Responses API need: {type, name, description, parameters}
             # Note: parameters are at the root level, NOT nested under 'function'
             func = schema["function"]
-            openai_tools.append({
-                "type": "function",
-                "name": func["name"],
-                "description": func.get("description", ""),
-                "parameters": func.get("parameters", {}),
-            })
+            openai_tools.append(
+                {
+                    "type": "function",
+                    "name": func["name"],
+                    "description": func.get("description", ""),
+                    "parameters": func.get("parameters", {}),
+                }
+            )
 
     return openai_tools
 
@@ -388,10 +394,7 @@ Task: Click {instruction}. Output ONLY a click action on the target element.""",
                 continue
 
             # Native format: computer_call with action dict
-            if (
-                item.get("type") == "computer_call"
-                and isinstance(item.get("action"), dict)
-            ):
+            if item.get("type") == "computer_call" and isinstance(item.get("action"), dict):
                 action = item["action"]
                 if action.get("x") is not None and action.get("y") is not None:
                     return (int(action.get("x")), int(action.get("y")))

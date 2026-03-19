@@ -188,7 +188,11 @@ class BrowserTool(BaseComputerTool):
                     ],
                     "type": "string",
                 },
-                "keys": {"description": "Required only by action=key.", "type": "array", "items": {"type": "string"}},
+                "keys": {
+                    "description": "Required only by action=key.",
+                    "type": "array",
+                    "items": {"type": "string"},
+                },
                 "text": {"description": "Required only by action=type.", "type": "string"},
                 "coordinate": {
                     "description": "(x, y) coordinates for mouse actions. Required only by action=left_click, action=mouse_move, and action=type.",

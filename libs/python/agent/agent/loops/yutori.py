@@ -370,16 +370,12 @@ class YutoriN1Config(AsyncAgentConfig):
                             }
                         ],
                     }
-                    output_items.extend(
-                        convert_completion_messages_to_responses_items([fake_cm])
-                    )
+                    output_items.extend(convert_completion_messages_to_responses_items([fake_cm]))
                     # Only use content_text once
                     content_text = ""
                 else:
                     # Custom tool — emit as function_call
-                    output_items.append(
-                        make_function_call_item(fn_name, args, call_id=tc_id)
-                    )
+                    output_items.append(make_function_call_item(fn_name, args, call_id=tc_id))
         else:
             # No tool calls — task is complete
             if content_text:

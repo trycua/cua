@@ -687,8 +687,14 @@ async def pty_create(
         body = await request.json()
     except Exception:
         body = {}
+    # On Android, always use adb shell regardless of any caller-supplied command,
+    # so that PTY sessions run inside the emulator rather than on the host.
+    if os.environ.get("IS_CUA_ANDROID") == "true":
+        command = "adb shell"
+    else:
+        command = body.get("command")
     info = await pty_manager.create(
-        command=body.get("command"),
+        command=command,
         cols=int(body.get("cols", 80)),
         rows=int(body.get("rows", 24)),
         cwd=body.get("cwd"),

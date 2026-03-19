@@ -872,7 +872,7 @@ def _cmd_snapshot(args: argparse.Namespace) -> int:
                     print("Interactive elements:")
                     for el in elements:
                         print(
-                            f"  • {el.get('name','?')} [{el.get('type','?')}]  ({el.get('x','?')}, {el.get('y','?')})"
+                            f"  • {el.get('name', '?')} [{el.get('type', '?')}]  ({el.get('x', '?')}, {el.get('y', '?')})"
                         )
             except json.JSONDecodeError:
                 print(f"✅ snapshot — {save_path}")

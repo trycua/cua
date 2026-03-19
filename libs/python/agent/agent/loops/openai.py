@@ -136,6 +136,7 @@ async def _map_computer_tool_to_openai(computer_handler: Any, use_native_tool: b
 def _is_native_computer_use_model(model: str) -> bool:
     """Check if the model supports native computer_use_preview tool format."""
     import re
+
     # Only computer-use-preview models support native computer_use_preview tool
     # GPT 5.4 does NOT support computer_use_preview - it uses function calling
     return bool(re.search(r"computer-use-preview", model, re.IGNORECASE))

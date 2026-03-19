@@ -138,10 +138,12 @@ class _VNCConnection:
     def capture_screenshot(self) -> bytes:
         """Capture the screen and return PNG bytes."""
         client = self._ensure_connected()
+        # refreshScreen updates the internal screen image
+        client.refreshScreen(incremental=False)
+        screen = client.protocol.screen
         buf = BytesIO()
-        client.captureScreen(buf)
-        buf.seek(0)
-        return buf.read()
+        screen.save(buf, format="PNG")
+        return buf.getvalue()
 
     # -- Mouse --------------------------------------------------------------
 
@@ -244,8 +246,8 @@ class _VNCConnection:
     def screen_size(self) -> Tuple[int, int]:
         client = self._ensure_connected()
         proto = client.protocol
-        if proto is not None:
-            return proto.image.size
+        if proto is not None and proto.screen is not None:
+            return proto.screen.size
         return (0, 0)
 
     @property

@@ -574,6 +574,9 @@ class LinuxAutomationHandler(BaseAutomationHandler):
     async def run_command(self, command: str) -> Dict[str, Any]:
         """Execute a shell command asynchronously.
 
+        When IS_CUA_ANDROID is set, routes the command through `adb shell`
+        so execution runs inside the Android emulator.
+
         Args:
             command: The shell command to execute.
 
@@ -582,13 +585,20 @@ class LinuxAutomationHandler(BaseAutomationHandler):
                            and return code, or error message if failed.
         """
         try:
-            # Create subprocess
-            process = await asyncio.create_subprocess_shell(
-                command, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
-            )
-            # Wait for the subprocess to finish
+            if os.environ.get("IS_CUA_ANDROID") == "true":
+                # Route through adb shell to run inside the emulator
+                process = await asyncio.create_subprocess_exec(
+                    "adb",
+                    "shell",
+                    command,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+            else:
+                process = await asyncio.create_subprocess_shell(
+                    command, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+                )
             stdout, stderr = await process.communicate()
-            # Return decoded output
             return {
                 "success": True,
                 "stdout": stdout.decode() if stdout else "",

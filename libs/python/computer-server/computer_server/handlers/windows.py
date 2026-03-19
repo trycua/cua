@@ -756,13 +756,19 @@ class WindowsAutomationHandler(BaseAutomationHandler):
             return data.decode("utf-8", errors="replace")
 
         try:
-            # Create subprocess
-            process = await asyncio.create_subprocess_shell(
-                command, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
-            )
-            # Wait for the subprocess to finish
+            if os.environ.get("IS_CUA_ANDROID") == "true":
+                process = await asyncio.create_subprocess_exec(
+                    "adb",
+                    "shell",
+                    command,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+            else:
+                process = await asyncio.create_subprocess_shell(
+                    command, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+                )
             stdout, stderr = await process.communicate()
-            # Return decoded output
             return {
                 "success": True,
                 "stdout": decode_output(stdout),

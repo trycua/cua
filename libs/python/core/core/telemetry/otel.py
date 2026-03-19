@@ -48,10 +48,18 @@ _tokens_total: Optional[Any] = None  # Counter
 def is_otel_enabled() -> bool:
     """Check if OpenTelemetry is enabled.
 
-    Returns True unless CUA_TELEMETRY_DISABLED is set to a truthy value.
+    Returns True unless CUA_TELEMETRY_DISABLED is set to a truthy value
+    or ENVIRONMENT indicates a staging instance.
     """
     disabled = os.environ.get("CUA_TELEMETRY_DISABLED", "").lower()
-    return disabled not in {"1", "true", "yes", "on"}
+    if disabled in {"1", "true", "yes", "on"}:
+        return False
+
+    environment = os.environ.get("ENVIRONMENT", "").lower()
+    if environment.startswith("staging"):
+        return False
+
+    return True
 
 
 def _get_otel_endpoint() -> str:

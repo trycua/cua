@@ -310,7 +310,9 @@ class VNCAutomationHandler(BaseAutomationHandler):
         except Exception as e:
             return {"success": False, "error": str(e)}
 
-    async def middle_click(self, x: Optional[int] = None, y: Optional[int] = None) -> Dict[str, Any]:
+    async def middle_click(
+        self, x: Optional[int] = None, y: Optional[int] = None
+    ) -> Dict[str, Any]:
         try:
             cx, cy = self._resolve_coords(x, y)
             await asyncio.to_thread(self._conn.mouse_click, cx, cy, 2)
@@ -318,7 +320,9 @@ class VNCAutomationHandler(BaseAutomationHandler):
         except Exception as e:
             return {"success": False, "error": str(e)}
 
-    async def double_click(self, x: Optional[int] = None, y: Optional[int] = None) -> Dict[str, Any]:
+    async def double_click(
+        self, x: Optional[int] = None, y: Optional[int] = None
+    ) -> Dict[str, Any]:
         try:
             cx, cy = self._resolve_coords(x, y)
             await asyncio.to_thread(self._conn.mouse_click, cx, cy, 1, 2)

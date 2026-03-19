@@ -1,507 +1,256 @@
 """
 VNC backend for automation and accessibility handlers.
 
-Connects to a VNC (RFB) server to perform screenshots, mouse clicks, keyboard
-input, and scrolling over the network. This bypasses macOS TCC permissions
-entirely since all interaction happens through the VNC protocol.
+A cross-platform alternative to the native (OS-specific) handlers. Connects to
+any VNC server to perform screenshots, mouse, keyboard, and scroll operations
+over the RFB protocol. Works with Linux, macOS, and Windows targets — the only
+requirement is a reachable VNC server.
+
+Built on vncdotool (Twisted-based RFB client). The Twisted reactor runs in a
+background daemon thread; all handler methods bridge from asyncio via
+`asyncio.to_thread`.
 
 Usage:
-    Set env vars before starting the computer-server:
-        CUA_VNC_HOST=127.0.0.1
-        CUA_VNC_PORT=5900
-        CUA_VNC_PASSWORD=secret
+    # Via CLI
+    python -m computer_server --vnc-host 192.168.64.1 --vnc-port 5900 --vnc-password secret
 
-    Or the factory will auto-detect when CUA_VNC_HOST is set.
+    # Via env vars
+    CUA_VNC_HOST=192.168.64.1 CUA_VNC_PORT=5900 CUA_VNC_PASSWORD=secret python -m computer_server
 """
 
 import asyncio
 import base64
-import hashlib
 import logging
-import os
-import struct
+import threading
 from io import BytesIO
 from typing import Any, Dict, List, Optional, Tuple
-
-from PIL import Image
 
 from .base import BaseAccessibilityHandler, BaseAutomationHandler
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# RFB protocol constants
-# ---------------------------------------------------------------------------
-
-# Client → Server message types
-RFB_SET_PIXEL_FORMAT = 0
-RFB_SET_ENCODINGS = 2
-RFB_FRAMEBUFFER_UPDATE_REQUEST = 3
-RFB_KEY_EVENT = 4
-RFB_POINTER_EVENT = 5
-RFB_CLIENT_CUT_TEXT = 6
-
-# Server → Client message types
-RFB_FRAMEBUFFER_UPDATE = 0
-
-# Encoding types
-RFB_ENCODING_RAW = 0
-RFB_ENCODING_DESKTOP_SIZE = -223
-
-# VNC auth type
-RFB_AUTH_NONE = 1
-RFB_AUTH_VNC = 2
-
-# Scroll button masks (RFB protocol: buttons 4/5 are scroll wheel)
-RFB_SCROLL_UP = 0x08  # button 4
-RFB_SCROLL_DOWN = 0x10  # button 5
-
-
-# ---------------------------------------------------------------------------
-# X11 keysym mappings
-# ---------------------------------------------------------------------------
-
-_SPECIAL_KEYS = {
-    "return": 0xFF0D,
-    "enter": 0xFF0D,
-    "tab": 0xFF09,
-    "escape": 0xFF1B,
-    "esc": 0xFF1B,
-    "backspace": 0xFF08,
-    "delete": 0xFFFF,
-    "space": 0x0020,
-    "up": 0xFF52,
-    "down": 0xFF54,
-    "left": 0xFF51,
-    "right": 0xFF53,
-    "home": 0xFF50,
-    "end": 0xFF57,
-    "pageup": 0xFF55,
-    "page_up": 0xFF55,
-    "pagedown": 0xFF56,
-    "page_down": 0xFF56,
-    "insert": 0xFF63,
-    "f1": 0xFFBE,
-    "f2": 0xFFBF,
-    "f3": 0xFFC0,
-    "f4": 0xFFC1,
-    "f5": 0xFFC2,
-    "f6": 0xFFC3,
-    "f7": 0xFFC4,
-    "f8": 0xFFC5,
-    "f9": 0xFFC6,
-    "f10": 0xFFC7,
-    "f11": 0xFFC8,
-    "f12": 0xFFC9,
-    "shift": 0xFFE1,
-    "shift_l": 0xFFE1,
-    "shift_r": 0xFFE2,
-    "ctrl": 0xFFE3,
-    "ctrl_l": 0xFFE3,
-    "ctrl_r": 0xFFE4,
-    "control": 0xFFE3,
-    "control_l": 0xFFE3,
-    "control_r": 0xFFE4,
-    # VNC/macOS quirk: option maps to Meta, command maps to Alt
-    "alt": 0xFFE9,
-    "alt_l": 0xFFE9,
-    "alt_r": 0xFFEA,
-    "option": 0xFFE7,
-    "option_l": 0xFFE7,
-    "option_r": 0xFFE8,
-    "meta": 0xFFE7,
-    "meta_l": 0xFFE7,
-    "meta_r": 0xFFE8,
-    "command": 0xFFE9,
-    "cmd": 0xFFE9,
-    "super": 0xFFEB,
-    "super_l": 0xFFEB,
-    "super_r": 0xFFEC,
-    "caps_lock": 0xFFE5,
-    "num_lock": 0xFF7F,
+# Key name aliases: map cua-computer-server key names → vncdotool key names.
+# vncdotool's KEYMAP already covers most X11 keysym names; these bridge
+# the naming differences used by the rest of the computer-server API.
+_KEY_ALIASES = {
+    "return": "enter",
+    "escape": "esc",
+    "backspace": "bsp",
+    "delete": "del",
+    "page_up": "pgup",
+    "pageup": "pgup",
+    "page_down": "pgdn",
+    "pagedown": "pgdn",
+    "insert": "ins",
+    "caps_lock": "caplk",
+    "num_lock": "numlk",
+    "shift_l": "lshift",
+    "shift_r": "rshift",
+    "ctrl_l": "lctrl",
+    "ctrl_r": "rctrl",
+    "control": "ctrl",
+    "control_l": "lctrl",
+    "control_r": "rctrl",
+    "alt_l": "lalt",
+    "alt_r": "ralt",
+    "meta_l": "lmeta",
+    "meta_r": "rmeta",
+    "super_l": "lsuper",
+    "super_r": "rsuper",
+    # macOS-specific names
+    "command": "alt",
+    "cmd": "alt",
+    "option": "meta",
+    "option_l": "lmeta",
+    "option_r": "rmeta",
 }
 
-# Characters that require Shift
-_SHIFT_CHARS = set('~!@#$%^&*()_+{}|:"<>?ABCDEFGHIJKLMNOPQRSTUVWXYZ')
-
-# Shifted symbol → base keysym
-_SHIFTED_SYMBOL_MAP = {
-    "~": 0x0060,
-    "!": 0x0031,
-    "@": 0x0032,
-    "#": 0x0033,
-    "$": 0x0034,
-    "%": 0x0035,
-    "^": 0x0036,
-    "&": 0x0037,
-    "*": 0x0038,
-    "(": 0x0039,
-    ")": 0x0030,
-    "_": 0x002D,
-    "+": 0x003D,
-    "{": 0x005B,
-    "}": 0x005D,
-    "|": 0x005C,
-    ":": 0x003B,
-    '"': 0x0027,
-    "<": 0x002C,
-    ">": 0x002E,
-    "?": 0x002F,
-}
+# Button name → vncdotool button number (1-indexed)
+_BUTTON_MAP = {"left": 1, "middle": 2, "right": 3}
 
 
-def _key_to_keysym(key: str) -> int:
-    """Convert a key name or character to an X11 keysym."""
+def _translate_key(key: str) -> str:
+    """Translate a key name to vncdotool's KEYMAP name."""
     lower = key.lower()
-    if lower in _SPECIAL_KEYS:
-        return _SPECIAL_KEYS[lower]
-    if len(key) == 1:
-        # Single character — use its Unicode code point (works for ASCII)
-        return ord(key)
-    raise ValueError(f"Unknown key: {key}")
-
-
-def _char_to_keysym(ch: str) -> Tuple[int, bool]:
-    """Convert a character to (keysym, needs_shift)."""
-    if ch in _SHIFTED_SYMBOL_MAP:
-        return _SHIFTED_SYMBOL_MAP[ch], True
-    if ch.isupper():
-        return ord(ch.lower()), True
-    return ord(ch), False
+    return _KEY_ALIASES.get(lower, lower)
 
 
 # ---------------------------------------------------------------------------
-# VNC DES auth helper
+# Lazy vncdotool client wrapper
 # ---------------------------------------------------------------------------
 
 
-def _vnc_des_encrypt(password: str, challenge: bytes) -> bytes:
-    """Encrypt a VNC auth challenge using DES-ECB with bit-reversed key."""
-    try:
-        from Crypto.Cipher import DES
-    except ImportError:
-        try:
-            from Cryptodome.Cipher import DES
-        except ImportError:
-            raise ImportError(
-                "VNC authentication requires pycryptodome. "
-                "Install with: pip install pycryptodome"
-            )
+class _VNCConnection:
+    """Manages a vncdotool ThreadedVNCClientProxy lifecycle.
 
-    # Pad/truncate password to 8 bytes
-    key_bytes = (password.encode("ascii") + b"\x00" * 8)[:8]
-
-    # VNC quirk: reverse bits of each byte
-    def reverse_bits(b: int) -> int:
-        result = 0
-        for _ in range(8):
-            result = (result << 1) | (b & 1)
-            b >>= 1
-        return result
-
-    key_bytes = bytes(reverse_bits(b) for b in key_bytes)
-
-    cipher = DES.new(key_bytes, DES.MODE_ECB)
-    return cipher.encrypt(challenge[:8]) + cipher.encrypt(challenge[8:16])
-
-
-# ---------------------------------------------------------------------------
-# RFB Client
-# ---------------------------------------------------------------------------
-
-
-class RFBClient:
-    """Async RFB (VNC) protocol client.
-
-    Handles connection, authentication, framebuffer capture, and input events.
+    All methods are synchronous (blocking) — the handler calls them via
+    asyncio.to_thread to avoid blocking the event loop.
     """
 
     def __init__(self, host: str, port: int, password: str = ""):
-        self.host = host
-        self.port = port
-        self.password = password
-        self.reader: Optional[asyncio.StreamReader] = None
-        self.writer: Optional[asyncio.StreamWriter] = None
-        self.width: int = 0
-        self.height: int = 0
-        self.bpp: int = 32
-        self.depth: int = 24
-        self.big_endian: bool = False
-        self.true_colour: bool = True
-        self.red_max: int = 255
-        self.green_max: int = 255
-        self.blue_max: int = 255
-        self.red_shift: int = 16
-        self.green_shift: int = 8
-        self.blue_shift: int = 0
-        self._name: str = ""
-        self._connected: bool = False
-        self._lock = asyncio.Lock()
-        # Track cursor position for relative operations
+        self._host = host
+        self._port = port
+        self._password = password
+        self._client = None
+        self._lock = threading.Lock()
+        # Track cursor position locally (vncdotool also tracks via client.x/y)
         self._cursor_x: int = 0
         self._cursor_y: int = 0
 
-    @property
-    def connected(self) -> bool:
-        return self._connected
+    def _ensure_connected(self):
+        """Lazily connect to the VNC server. Returns the vncdotool client."""
+        if self._client is not None:
+            return self._client
+        with self._lock:
+            if self._client is not None:
+                return self._client
+            from vncdotool import api
 
-    async def connect(self) -> None:
-        """Establish TCP connection and perform RFB handshake."""
-        self.reader, self.writer = await asyncio.wait_for(
-            asyncio.open_connection(self.host, self.port), timeout=10.0
-        )
-        await self._handshake()
-        self._connected = True
-        logger.info(f"VNC connected to {self.host}:{self.port} ({self.width}x{self.height})")
-
-    async def disconnect(self) -> None:
-        """Close the connection."""
-        self._connected = False
-        if self.writer:
-            self.writer.close()
-            try:
-                await self.writer.wait_closed()
-            except Exception:
-                pass
-            self.writer = None
-            self.reader = None
-
-    async def _read_exact(self, n: int) -> bytes:
-        """Read exactly n bytes."""
-        assert self.reader is not None
-        data = await asyncio.wait_for(self.reader.readexactly(n), timeout=30.0)
-        return data
-
-    async def _send(self, data: bytes) -> None:
-        """Send data to server."""
-        assert self.writer is not None
-        self.writer.write(data)
-        await self.writer.drain()
-
-    async def _handshake(self) -> None:
-        """Perform RFB protocol handshake."""
-        # 1. Protocol version
-        server_version = await self._read_exact(12)
-        logger.debug(f"Server version: {server_version!r}")
-        await self._send(b"RFB 003.008\n")
-
-        # 2. Security types
-        num_types = struct.unpack("!B", await self._read_exact(1))[0]
-        if num_types == 0:
-            # Connection failed — read reason
-            reason_len = struct.unpack("!I", await self._read_exact(4))[0]
-            reason = (await self._read_exact(reason_len)).decode("utf-8", errors="replace")
-            raise ConnectionError(f"VNC connection refused: {reason}")
-
-        security_types = list(await self._read_exact(num_types))
-        logger.debug(f"Security types: {security_types}")
-
-        # Choose auth type
-        if RFB_AUTH_NONE in security_types and not self.password:
-            await self._send(struct.pack("!B", RFB_AUTH_NONE))
-        elif RFB_AUTH_VNC in security_types:
-            await self._send(struct.pack("!B", RFB_AUTH_VNC))
-            # VNC auth challenge
-            challenge = await self._read_exact(16)
-            response = _vnc_des_encrypt(self.password, challenge)
-            await self._send(response)
-        else:
-            raise ConnectionError(f"No supported security type (got {security_types})")
-
-        # 3. Security result
-        result = struct.unpack("!I", await self._read_exact(4))[0]
-        if result != 0:
-            # Try to read failure reason
-            try:
-                reason_len = struct.unpack("!I", await self._read_exact(4))[0]
-                reason = (await self._read_exact(reason_len)).decode("utf-8", errors="replace")
-            except Exception:
-                reason = "unknown"
-            raise ConnectionError(f"VNC authentication failed: {reason}")
-
-        # 4. ClientInit — shared flag = 1 (allow other clients)
-        await self._send(struct.pack("!B", 1))
-
-        # 5. ServerInit
-        header = await self._read_exact(24)
-        self.width, self.height = struct.unpack("!HH", header[0:4])
-        # Pixel format (16 bytes at offset 4)
-        pf = header[4:20]
-        self.bpp = pf[0]
-        self.depth = pf[1]
-        self.big_endian = bool(pf[2])
-        self.true_colour = bool(pf[3])
-        self.red_max, self.green_max, self.blue_max = struct.unpack("!HHH", pf[4:10])
-        self.red_shift, self.green_shift, self.blue_shift = pf[10], pf[11], pf[12]
-
-        # Desktop name
-        name_len = struct.unpack("!I", header[20:24])[0]
-        self._name = (await self._read_exact(name_len)).decode("utf-8", errors="replace")
-
-        # 6. Set encodings (Raw + DesktopSize)
-        encodings = [RFB_ENCODING_RAW, RFB_ENCODING_DESKTOP_SIZE]
-        msg = struct.pack("!BxH", RFB_SET_ENCODINGS, len(encodings))
-        for enc in encodings:
-            msg += struct.pack("!i", enc)
-        await self._send(msg)
-
-    async def capture_framebuffer(self) -> Image.Image:
-        """Request and read a full framebuffer update, returning a PIL Image."""
-        async with self._lock:
-            # Request full framebuffer update (incremental=0)
-            msg = struct.pack(
-                "!BBHHHH",
-                RFB_FRAMEBUFFER_UPDATE_REQUEST,
-                0,  # non-incremental
-                0, 0,  # x, y
-                self.width, self.height,
+            server_str = f"{self._host}::{self._port}"
+            logger.info(f"VNC connecting to {self._host}:{self._port}")
+            client = api.connect(
+                server_str,
+                password=self._password or None,
             )
-            await self._send(msg)
+            client.timeout = 30
+            self._client = client
+            logger.info("VNC connected")
+            return client
 
-            # Read response
-            return await self._read_framebuffer_update()
+    def disconnect(self):
+        with self._lock:
+            if self._client is not None:
+                try:
+                    self._client.disconnect()
+                except Exception:
+                    pass
+                self._client = None
 
-    async def _read_framebuffer_update(self) -> Image.Image:
-        """Read a FramebufferUpdate message and assemble into an image."""
-        # Allocate pixel buffer
-        pixels = bytearray(self.width * self.height * 4)  # RGBA
+    def _reset_on_error(self):
+        """Disconnect so next call reconnects."""
+        try:
+            self.disconnect()
+        except Exception:
+            pass
 
-        while True:
-            msg_type = struct.unpack("!B", await self._read_exact(1))[0]
+    # -- Screenshot ---------------------------------------------------------
 
-            if msg_type != RFB_FRAMEBUFFER_UPDATE:
-                # Skip unexpected messages
-                # Bell (2): no payload
-                # ServerCutText (3): 7 bytes header + text
-                if msg_type == 2:
-                    continue
-                elif msg_type == 3:
-                    _ = await self._read_exact(3)  # padding
-                    text_len = struct.unpack("!I", await self._read_exact(4))[0]
-                    _ = await self._read_exact(text_len)
-                    continue
-                else:
-                    logger.warning(f"Unexpected RFB message type: {msg_type}")
-                    continue
+    def capture_screenshot(self) -> bytes:
+        """Capture the screen and return PNG bytes."""
+        client = self._ensure_connected()
+        buf = BytesIO()
+        client.captureScreen(buf)
+        buf.seek(0)
+        return buf.read()
 
-            # FramebufferUpdate header
-            _ = await self._read_exact(1)  # padding
-            num_rects = struct.unpack("!H", await self._read_exact(2))[0]
+    # -- Mouse --------------------------------------------------------------
 
-            for _ in range(num_rects):
-                rect_header = await self._read_exact(12)
-                rx, ry, rw, rh = struct.unpack("!HH HH", rect_header[0:8])
-                encoding = struct.unpack("!i", rect_header[8:12])[0]
-
-                if encoding == RFB_ENCODING_RAW:
-                    bytes_per_pixel = self.bpp // 8
-                    data = await self._read_exact(rw * rh * bytes_per_pixel)
-                    self._copy_rect_to_buffer(pixels, rx, ry, rw, rh, data)
-
-                elif encoding == RFB_ENCODING_DESKTOP_SIZE:
-                    self.width = rw
-                    self.height = rh
-                    pixels = bytearray(self.width * self.height * 4)
-
-                else:
-                    logger.warning(f"Unsupported encoding: {encoding}")
-
-            # Build PIL image from pixel buffer
-            img = Image.frombytes("RGBA", (self.width, self.height), bytes(pixels))
-            return img
-
-    def _copy_rect_to_buffer(
-        self,
-        buffer: bytearray,
-        x: int,
-        y: int,
-        w: int,
-        h: int,
-        data: bytes,
-    ) -> None:
-        """Copy rectangle pixel data into the framebuffer."""
-        bytes_per_pixel = self.bpp // 8
-        stride = self.width * 4  # output stride (RGBA)
-
-        for row in range(h):
-            src_offset = row * w * bytes_per_pixel
-            dst_offset = ((y + row) * self.width + x) * 4
-
-            for col in range(w):
-                sp = src_offset + col * bytes_per_pixel
-                dp = dst_offset + col * 4
-
-                if bytes_per_pixel == 4:
-                    pixel = struct.unpack_from("I" if not self.big_endian else "!I", data, sp)[0]
-                elif bytes_per_pixel == 2:
-                    pixel = struct.unpack_from("H" if not self.big_endian else "!H", data, sp)[0]
-                else:
-                    pixel = data[sp]
-
-                r = ((pixel >> self.red_shift) & self.red_max) * 255 // max(self.red_max, 1)
-                g = ((pixel >> self.green_shift) & self.green_max) * 255 // max(self.green_max, 1)
-                b = ((pixel >> self.blue_shift) & self.blue_max) * 255 // max(self.blue_max, 1)
-
-                buffer[dp] = r
-                buffer[dp + 1] = g
-                buffer[dp + 2] = b
-                buffer[dp + 3] = 255
-
-    # -----------------------------------------------------------------------
-    # Input events
-    # -----------------------------------------------------------------------
-
-    async def pointer_event(self, x: int, y: int, button_mask: int = 0) -> None:
-        """Send a pointer (mouse) event."""
-        x = max(0, min(x, self.width - 1))
-        y = max(0, min(y, self.height - 1))
+    def mouse_move(self, x: int, y: int):
+        client = self._ensure_connected()
+        client.mouseMove(x, y)
         self._cursor_x = x
         self._cursor_y = y
-        await self._send(struct.pack("!BBHH", RFB_POINTER_EVENT, button_mask, x, y))
 
-    async def key_event(self, keysym: int, down: bool) -> None:
-        """Send a key press/release event."""
-        await self._send(struct.pack("!BBxxI", RFB_KEY_EVENT, 1 if down else 0, keysym))
-
-    async def send_key(self, keysym: int) -> None:
-        """Press and release a key."""
-        await self.key_event(keysym, True)
-        await asyncio.sleep(0.02)
-        await self.key_event(keysym, False)
-
-    async def send_text(self, text: str, delay: float = 0.03) -> None:
-        """Type a string character by character."""
-        for ch in text:
-            keysym, needs_shift = _char_to_keysym(ch)
-            if needs_shift:
-                await self.key_event(_SPECIAL_KEYS["shift"], True)
-            await self.key_event(keysym, True)
-            await asyncio.sleep(0.01)
-            await self.key_event(keysym, False)
-            if needs_shift:
-                await self.key_event(_SPECIAL_KEYS["shift"], False)
-            await asyncio.sleep(delay)
-
-    async def mouse_click(
-        self, x: int, y: int, button_mask: int = 1, clicks: int = 1
-    ) -> None:
-        """Click at coordinates. button_mask: 1=left, 2=middle, 4=right."""
-        # Move to position
-        await self.pointer_event(x, y, 0)
-        await asyncio.sleep(0.03)
+    def mouse_click(self, x: int, y: int, button: int = 1, clicks: int = 1):
+        client = self._ensure_connected()
+        client.mouseMove(x, y)
+        self._cursor_x = x
+        self._cursor_y = y
         for _ in range(clicks):
-            # Press
-            await self.pointer_event(x, y, button_mask)
-            await asyncio.sleep(0.05)
-            # Release
-            await self.pointer_event(x, y, 0)
-            await asyncio.sleep(0.05)
+            client.mousePress(button)
 
-    async def client_cut_text(self, text: str) -> None:
-        """Send clipboard text to the VNC server."""
-        encoded = text.encode("latin-1", errors="replace")
-        msg = struct.pack("!BxxxI", RFB_CLIENT_CUT_TEXT, len(encoded))
-        await self._send(msg + encoded)
+    def mouse_down(self, x: int, y: int, button: int = 1):
+        client = self._ensure_connected()
+        client.mouseMove(x, y)
+        self._cursor_x = x
+        self._cursor_y = y
+        client.mouseDown(button)
+
+    def mouse_up(self, x: int, y: int, button: int = 1):
+        client = self._ensure_connected()
+        client.mouseMove(x, y)
+        self._cursor_x = x
+        self._cursor_y = y
+        client.mouseUp(button)
+
+    def mouse_drag(self, x: int, y: int, step: int = 1):
+        client = self._ensure_connected()
+        client.mouseDrag(x, y, step=step)
+        self._cursor_x = x
+        self._cursor_y = y
+
+    def scroll(self, x: int, y: int):
+        """Scroll. y>0 = down (button 5), y<0 = up (button 4)."""
+        client = self._ensure_connected()
+        if y > 0:
+            for _ in range(y):
+                client.mousePress(5)
+        elif y < 0:
+            for _ in range(abs(y)):
+                client.mousePress(4)
+        # Horizontal: button 6 (right), button 7 (left) — not universally supported
+        if x > 0:
+            for _ in range(x):
+                client.mousePress(6)
+        elif x < 0:
+            for _ in range(abs(x)):
+                client.mousePress(7)
+
+    # -- Keyboard -----------------------------------------------------------
+
+    def key_press(self, key: str):
+        client = self._ensure_connected()
+        client.keyPress(_translate_key(key))
+
+    def key_down(self, key: str):
+        client = self._ensure_connected()
+        client.keyDown(_translate_key(key))
+
+    def key_up(self, key: str):
+        client = self._ensure_connected()
+        client.keyUp(_translate_key(key))
+
+    def type_text(self, text: str):
+        """Type text character by character, handling shift for uppercase/symbols."""
+        client = self._ensure_connected()
+        for ch in text:
+            if ch == " ":
+                client.keyPress("space")
+            elif ch == "\n":
+                client.keyPress("enter")
+            elif ch == "\t":
+                client.keyPress("tab")
+            else:
+                # vncdotool's keyPress handles single characters directly
+                client.keyPress(ch)
+
+    def hotkey(self, keys: List[str]):
+        """Press a key combination (e.g. ['command', 'a'])."""
+        client = self._ensure_connected()
+        translated = [_translate_key(k) for k in keys]
+        # vncdotool supports "modifier-key" syntax: "alt-a", "ctrl-shift-c"
+        combo = "-".join(translated)
+        client.keyPress(combo)
+
+    # -- Clipboard ----------------------------------------------------------
+
+    def paste_text(self, text: str):
+        client = self._ensure_connected()
+        client.paste(text)
+
+    # -- Info ---------------------------------------------------------------
+
+    @property
+    def screen_size(self) -> Tuple[int, int]:
+        client = self._ensure_connected()
+        proto = client.protocol
+        if proto is not None:
+            return proto.image.size
+        return (0, 0)
+
+    @property
+    def cursor_position(self) -> Tuple[int, int]:
+        return self._cursor_x, self._cursor_y
 
 
 # ---------------------------------------------------------------------------
@@ -510,10 +259,10 @@ class RFBClient:
 
 
 class VNCAutomationHandler(BaseAutomationHandler):
-    """Automation handler that operates via VNC/RFB protocol.
+    """Cross-platform automation handler that operates via VNC/RFB protocol.
 
-    All screenshot, mouse, and keyboard operations go through a VNC
-    connection, bypassing local TCC permissions entirely.
+    Works with any OS target (Linux, macOS, Windows) that has a VNC server.
+    All operations go through the network, bypassing local permission systems.
     """
 
     def __init__(
@@ -522,80 +271,62 @@ class VNCAutomationHandler(BaseAutomationHandler):
         port: int = 5900,
         password: str = "",
     ):
-        self._host = host
-        self._port = port
-        self._password = password
-        self._client: Optional[RFBClient] = None
+        self._conn = _VNCConnection(host, port, password)
 
-    async def _ensure_connected(self) -> RFBClient:
-        """Lazily connect (or reconnect) to the VNC server."""
-        if self._client is not None and self._client.connected:
-            return self._client
-        client = RFBClient(self._host, self._port, self._password)
-        await client.connect()
-        self._client = client
-        return client
+    def _resolve_coords(self, x: Optional[int], y: Optional[int]) -> Tuple[int, int]:
+        if x is not None and y is not None:
+            return x, y
+        return self._conn.cursor_position
 
     # -- Screenshot ---------------------------------------------------------
 
     async def screenshot(self) -> Dict[str, Any]:
         try:
-            client = await self._ensure_connected()
-            img = await client.capture_framebuffer()
-            buf = BytesIO()
-            img.save(buf, format="PNG", optimize=True)
-            image_data = base64.b64encode(buf.getvalue()).decode()
+            png_bytes = await asyncio.to_thread(self._conn.capture_screenshot)
+            image_data = base64.b64encode(png_bytes).decode()
             return {"success": True, "image_data": image_data}
         except Exception as e:
             logger.error(f"VNC screenshot error: {e}")
-            # Reset connection on failure
-            if self._client:
-                await self._client.disconnect()
-                self._client = None
+            self._conn._reset_on_error()
             return {"success": False, "error": f"VNC screenshot error: {e}"}
 
     # -- Mouse actions ------------------------------------------------------
 
     async def left_click(self, x: Optional[int] = None, y: Optional[int] = None) -> Dict[str, Any]:
         try:
-            client = await self._ensure_connected()
-            cx, cy = self._resolve_coords(client, x, y)
-            await client.mouse_click(cx, cy, button_mask=1)
+            cx, cy = self._resolve_coords(x, y)
+            await asyncio.to_thread(self._conn.mouse_click, cx, cy, 1)
             return {"success": True}
         except Exception as e:
             return {"success": False, "error": str(e)}
 
     async def right_click(self, x: Optional[int] = None, y: Optional[int] = None) -> Dict[str, Any]:
         try:
-            client = await self._ensure_connected()
-            cx, cy = self._resolve_coords(client, x, y)
-            await client.mouse_click(cx, cy, button_mask=4)
+            cx, cy = self._resolve_coords(x, y)
+            await asyncio.to_thread(self._conn.mouse_click, cx, cy, 3)
             return {"success": True}
         except Exception as e:
             return {"success": False, "error": str(e)}
 
     async def middle_click(self, x: Optional[int] = None, y: Optional[int] = None) -> Dict[str, Any]:
         try:
-            client = await self._ensure_connected()
-            cx, cy = self._resolve_coords(client, x, y)
-            await client.mouse_click(cx, cy, button_mask=2)
+            cx, cy = self._resolve_coords(x, y)
+            await asyncio.to_thread(self._conn.mouse_click, cx, cy, 2)
             return {"success": True}
         except Exception as e:
             return {"success": False, "error": str(e)}
 
     async def double_click(self, x: Optional[int] = None, y: Optional[int] = None) -> Dict[str, Any]:
         try:
-            client = await self._ensure_connected()
-            cx, cy = self._resolve_coords(client, x, y)
-            await client.mouse_click(cx, cy, button_mask=1, clicks=2)
+            cx, cy = self._resolve_coords(x, y)
+            await asyncio.to_thread(self._conn.mouse_click, cx, cy, 1, 2)
             return {"success": True}
         except Exception as e:
             return {"success": False, "error": str(e)}
 
     async def move_cursor(self, x: int, y: int) -> Dict[str, Any]:
         try:
-            client = await self._ensure_connected()
-            await client.pointer_event(x, y, 0)
+            await asyncio.to_thread(self._conn.mouse_move, x, y)
             return {"success": True}
         except Exception as e:
             return {"success": False, "error": str(e)}
@@ -604,10 +335,9 @@ class VNCAutomationHandler(BaseAutomationHandler):
         self, x: Optional[int] = None, y: Optional[int] = None, button: str = "left"
     ) -> Dict[str, Any]:
         try:
-            client = await self._ensure_connected()
-            cx, cy = self._resolve_coords(client, x, y)
-            mask = {"left": 1, "middle": 2, "right": 4}.get(button, 1)
-            await client.pointer_event(cx, cy, mask)
+            cx, cy = self._resolve_coords(x, y)
+            btn = _BUTTON_MAP.get(button, 1)
+            await asyncio.to_thread(self._conn.mouse_down, cx, cy, btn)
             return {"success": True}
         except Exception as e:
             return {"success": False, "error": str(e)}
@@ -616,9 +346,9 @@ class VNCAutomationHandler(BaseAutomationHandler):
         self, x: Optional[int] = None, y: Optional[int] = None, button: str = "left"
     ) -> Dict[str, Any]:
         try:
-            client = await self._ensure_connected()
-            cx, cy = self._resolve_coords(client, x, y)
-            await client.pointer_event(cx, cy, 0)
+            cx, cy = self._resolve_coords(x, y)
+            btn = _BUTTON_MAP.get(button, 1)
+            await asyncio.to_thread(self._conn.mouse_up, cx, cy, btn)
             return {"success": True}
         except Exception as e:
             return {"success": False, "error": str(e)}
@@ -627,21 +357,16 @@ class VNCAutomationHandler(BaseAutomationHandler):
         self, x: int, y: int, button: str = "left", duration: float = 0.5
     ) -> Dict[str, Any]:
         try:
-            client = await self._ensure_connected()
-            mask = {"left": 1, "middle": 2, "right": 4}.get(button, 1)
-            sx, sy = client._cursor_x, client._cursor_y
-            steps = max(int(duration * 60), 10)
-            # Press
-            await client.pointer_event(sx, sy, mask)
-            # Interpolate
-            for i in range(1, steps + 1):
-                t = i / steps
-                ix = int(sx + (x - sx) * t)
-                iy = int(sy + (y - sy) * t)
-                await client.pointer_event(ix, iy, mask)
-                await asyncio.sleep(duration / steps)
-            # Release
-            await client.pointer_event(x, y, 0)
+            btn = _BUTTON_MAP.get(button, 1)
+            cx, cy = self._conn.cursor_position
+
+            def _drag():
+                self._conn.mouse_down(cx, cy, btn)
+                step = max(1, int(1 / max(duration, 0.01) * 5))
+                self._conn.mouse_drag(x, y, step=step)
+                self._conn.mouse_up(x, y, btn)
+
+            await asyncio.to_thread(_drag)
             return {"success": True}
         except Exception as e:
             return {"success": False, "error": str(e)}
@@ -650,18 +375,17 @@ class VNCAutomationHandler(BaseAutomationHandler):
         self, path: List[Tuple[int, int]], button: str = "left", duration: float = 0.5
     ) -> Dict[str, Any]:
         try:
-            client = await self._ensure_connected()
-            mask = {"left": 1, "middle": 2, "right": 4}.get(button, 1)
             if not path:
                 return {"success": False, "error": "Empty path"}
-            # Press at first point
-            await client.pointer_event(path[0][0], path[0][1], mask)
-            step_delay = duration / max(len(path), 1)
-            for px, py in path[1:]:
-                await client.pointer_event(px, py, mask)
-                await asyncio.sleep(step_delay)
-            # Release
-            await client.pointer_event(path[-1][0], path[-1][1], 0)
+            btn = _BUTTON_MAP.get(button, 1)
+
+            def _drag_path():
+                self._conn.mouse_down(path[0][0], path[0][1], btn)
+                for px, py in path[1:]:
+                    self._conn.mouse_move(px, py)
+                self._conn.mouse_up(path[-1][0], path[-1][1], btn)
+
+            await asyncio.to_thread(_drag_path)
             return {"success": True}
         except Exception as e:
             return {"success": False, "error": str(e)}
@@ -670,52 +394,35 @@ class VNCAutomationHandler(BaseAutomationHandler):
 
     async def type_text(self, text: str) -> Dict[str, Any]:
         try:
-            client = await self._ensure_connected()
-            await client.send_text(text)
+            await asyncio.to_thread(self._conn.type_text, text)
             return {"success": True}
         except Exception as e:
             return {"success": False, "error": str(e)}
 
     async def press_key(self, key: str) -> Dict[str, Any]:
         try:
-            client = await self._ensure_connected()
-            keysym = _key_to_keysym(key)
-            await client.send_key(keysym)
+            await asyncio.to_thread(self._conn.key_press, key)
             return {"success": True}
         except Exception as e:
             return {"success": False, "error": str(e)}
 
     async def key_down(self, key: str) -> Dict[str, Any]:
         try:
-            client = await self._ensure_connected()
-            keysym = _key_to_keysym(key)
-            await client.key_event(keysym, True)
+            await asyncio.to_thread(self._conn.key_down, key)
             return {"success": True}
         except Exception as e:
             return {"success": False, "error": str(e)}
 
     async def key_up(self, key: str) -> Dict[str, Any]:
         try:
-            client = await self._ensure_connected()
-            keysym = _key_to_keysym(key)
-            await client.key_event(keysym, False)
+            await asyncio.to_thread(self._conn.key_up, key)
             return {"success": True}
         except Exception as e:
             return {"success": False, "error": str(e)}
 
     async def hotkey(self, keys: List[str]) -> Dict[str, Any]:
         try:
-            client = await self._ensure_connected()
-            keysyms = [_key_to_keysym(k) for k in keys]
-            # Press all modifiers, then last key
-            for ks in keysyms:
-                await client.key_event(ks, True)
-                await asyncio.sleep(0.02)
-            await asyncio.sleep(0.1)
-            # Release in reverse order
-            for ks in reversed(keysyms):
-                await client.key_event(ks, False)
-                await asyncio.sleep(0.02)
+            await asyncio.to_thread(self._conn.hotkey, keys)
             return {"success": True}
         except Exception as e:
             return {"success": False, "error": str(e)}
@@ -724,24 +431,7 @@ class VNCAutomationHandler(BaseAutomationHandler):
 
     async def scroll(self, x: int, y: int) -> Dict[str, Any]:
         try:
-            client = await self._ensure_connected()
-            cx, cy = client._cursor_x, client._cursor_y
-            # Vertical scroll
-            if y != 0:
-                btn = RFB_SCROLL_UP if y < 0 else RFB_SCROLL_DOWN
-                for _ in range(abs(y)):
-                    await client.pointer_event(cx, cy, btn)
-                    await asyncio.sleep(0.02)
-                    await client.pointer_event(cx, cy, 0)
-                    await asyncio.sleep(0.02)
-            # Horizontal scroll (buttons 6/7 — not universally supported)
-            if x != 0:
-                btn = 0x20 if x > 0 else 0x40
-                for _ in range(abs(x)):
-                    await client.pointer_event(cx, cy, btn)
-                    await asyncio.sleep(0.02)
-                    await client.pointer_event(cx, cy, 0)
-                    await asyncio.sleep(0.02)
+            await asyncio.to_thread(self._conn.scroll, x, y)
             return {"success": True}
         except Exception as e:
             return {"success": False, "error": str(e)}
@@ -756,34 +446,26 @@ class VNCAutomationHandler(BaseAutomationHandler):
 
     async def get_screen_size(self) -> Dict[str, Any]:
         try:
-            client = await self._ensure_connected()
-            return {
-                "success": True,
-                "size": {"width": client.width, "height": client.height},
-            }
+            w, h = await asyncio.to_thread(lambda: self._conn.screen_size)
+            return {"success": True, "size": {"width": w, "height": h}}
         except Exception as e:
             return {"success": False, "error": str(e)}
 
     async def get_cursor_position(self) -> Dict[str, Any]:
         try:
-            client = await self._ensure_connected()
-            return {
-                "success": True,
-                "position": {"x": client._cursor_x, "y": client._cursor_y},
-            }
+            x, y = self._conn.cursor_position
+            return {"success": True, "position": {"x": x, "y": y}}
         except Exception as e:
             return {"success": False, "error": str(e)}
 
     # -- Clipboard ----------------------------------------------------------
 
     async def copy_to_clipboard(self) -> Dict[str, Any]:
-        # VNC protocol doesn't support reading remote clipboard
         return {"success": False, "error": "Reading clipboard not supported over VNC"}
 
     async def set_clipboard(self, text: str) -> Dict[str, Any]:
         try:
-            client = await self._ensure_connected()
-            await client.client_cut_text(text)
+            await asyncio.to_thread(self._conn.paste_text, text)
             return {"success": True}
         except Exception as e:
             return {"success": False, "error": str(e)}
@@ -791,26 +473,14 @@ class VNCAutomationHandler(BaseAutomationHandler):
     # -- Shell command ------------------------------------------------------
 
     async def run_command(self, command: str) -> Dict[str, Any]:
-        # Cannot run commands via VNC — this would need SSH
         return {
             "success": False,
             "error": "Shell commands not supported over VNC. Use SSH instead.",
         }
 
-    # -- Helpers ------------------------------------------------------------
-
-    @staticmethod
-    def _resolve_coords(
-        client: RFBClient, x: Optional[int], y: Optional[int]
-    ) -> Tuple[int, int]:
-        """Resolve coordinates, falling back to current cursor position."""
-        if x is not None and y is not None:
-            return x, y
-        return client._cursor_x, client._cursor_y
-
 
 # ---------------------------------------------------------------------------
-# Accessibility Handler (stub for VNC)
+# Accessibility Handler (stub)
 # ---------------------------------------------------------------------------
 
 

@@ -50,7 +50,7 @@ windows = [
     "pywin32>=310"
 ]
 vnc = [
-    "pycryptodome>=3.20.0"
+    "vncdotool>=1.2.0"
 ]
 
 [project.urls]

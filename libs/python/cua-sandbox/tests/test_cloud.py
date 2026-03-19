@@ -102,6 +102,23 @@ async def test_cloud_ephemeral_linux():
 
 
 @skip_no_key
+async def test_cloud_ephemeral_android():
+    """Create an ephemeral Android cloud VM, verify screenshot and display URL."""
+    from cua_sandbox import Image
+
+    async with sandbox(image=Image.android("14"), api_key=API_KEY) as sb:
+        assert sb.name is not None
+        screenshot = await sb.screenshot()
+        assert screenshot[:4] == b"\x89PNG"
+        assert len(screenshot) > 1000
+        env = await sb.get_environment()
+        assert env == "android"
+        display_url = await sb.get_display_url(share=True)
+        assert ".cua.sh" in display_url
+        assert "password=" in display_url
+
+
+@skip_no_key
 async def test_cloud_invalid_api_key_errors():
     """An invalid (reversed) API key should get an HTTP error from the API."""
     reversed_key = API_KEY[::-1]

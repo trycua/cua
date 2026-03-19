@@ -460,25 +460,7 @@ class VNCAutomationHandler(BaseAutomationHandler):
         except Exception as e:
             return {"success": False, "error": str(e)}
 
-    # -- Clipboard ----------------------------------------------------------
-
-    async def copy_to_clipboard(self) -> Dict[str, Any]:
-        return {"success": False, "error": "Reading clipboard not supported over VNC"}
-
-    async def set_clipboard(self, text: str) -> Dict[str, Any]:
-        try:
-            await asyncio.to_thread(self._conn.paste_text, text)
-            return {"success": True}
-        except Exception as e:
-            return {"success": False, "error": str(e)}
-
-    # -- Shell command ------------------------------------------------------
-
-    async def run_command(self, command: str) -> Dict[str, Any]:
-        return {
-            "success": False,
-            "error": "Shell commands not supported over VNC. Use SSH instead.",
-        }
+    # Clipboard and run_command inherited from BaseAutomationHandler
 
 
 # ---------------------------------------------------------------------------

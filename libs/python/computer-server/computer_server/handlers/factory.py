@@ -59,8 +59,14 @@ class HandlerFactory:
             NotImplementedError: If the current OS is not supported
             RuntimeError: If unable to determine the current OS
         """
+        backend = os.environ.get("CUA_BACKEND", "native")
         vnc_host = os.environ.get("CUA_VNC_HOST")
-        if vnc_host:
+        if backend == "vnc" or vnc_host:
+            if not vnc_host:
+                raise RuntimeError(
+                    "CUA_VNC_HOST must be set when using VNC backend "
+                    "(--backend=vnc requires --vnc-host)"
+                )
             from .vnc import VNCAccessibilityHandler, VNCAutomationHandler
 
             vnc_port = int(os.environ.get("CUA_VNC_PORT", "5900"))

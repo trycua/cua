@@ -1,5 +1,10 @@
+import asyncio
+import logging
+import sys
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional, Tuple
+
+logger = logging.getLogger(__name__)
 
 
 class BaseAccessibilityHandler(ABC):
@@ -322,17 +327,39 @@ class BaseAutomationHandler(ABC):
         pass
 
     # Clipboard Actions
-    @abstractmethod
     async def copy_to_clipboard(self) -> Dict[str, Any]:
-        """Get the current clipboard content."""
-        pass
+        """Get the current clipboard content using pyperclip."""
+        try:
+            import pyperclip
 
-    @abstractmethod
+            content = pyperclip.paste()
+            return {"success": True, "content": content}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
     async def set_clipboard(self, text: str) -> Dict[str, Any]:
-        """Set the clipboard content."""
-        pass
+        """Set the clipboard content using pyperclip."""
+        try:
+            import pyperclip
 
-    @abstractmethod
+            pyperclip.copy(text)
+            return {"success": True}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    # Command Execution
     async def run_command(self, command: str) -> Dict[str, Any]:
-        """Run a command and return the output."""
-        pass
+        """Run a shell command locally and return its output."""
+        try:
+            process = await asyncio.create_subprocess_shell(
+                command, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+            )
+            stdout, stderr = await process.communicate()
+            return {
+                "success": True,
+                "stdout": stdout.decode() if stdout else "",
+                "stderr": stderr.decode() if stderr else "",
+                "return_code": process.returncode,
+            }
+        except Exception as e:
+            return {"success": False, "error": str(e)}

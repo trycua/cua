@@ -695,42 +695,9 @@ class WindowsAutomationHandler(BaseAutomationHandler):
         except Exception as e:
             return {"success": False, "error": str(e)}
 
-    # Clipboard Actions
-    async def copy_to_clipboard(self) -> Dict[str, Any]:
-        """Get the current content of the clipboard.
+    # Clipboard inherited from BaseAutomationHandler
 
-        Returns:
-            Dict[str, Any]: A dictionary containing the success status and either
-                           clipboard content or an error message.
-                           Structure: {"success": bool, "content": str} or
-                                    {"success": bool, "error": str}
-        """
-        try:
-            import pyperclip
-
-            content = pyperclip.paste()
-            return {"success": True, "content": content}
-        except Exception as e:
-            return {"success": False, "error": str(e)}
-
-    async def set_clipboard(self, text: str) -> Dict[str, Any]:
-        """Set the clipboard content to the specified text.
-
-        Args:
-            text (str): The text to copy to the clipboard.
-
-        Returns:
-            Dict[str, Any]: A dictionary with success status and optional error message.
-        """
-        try:
-            import pyperclip
-
-            pyperclip.copy(text)
-            return {"success": True}
-        except Exception as e:
-            return {"success": False, "error": str(e)}
-
-    # Command Execution
+    # Command Execution (Windows override for multi-encoding support)
     async def run_command(self, command: str) -> Dict[str, Any]:
         """Execute a shell command asynchronously.
 

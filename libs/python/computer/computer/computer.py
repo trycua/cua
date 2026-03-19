@@ -112,6 +112,10 @@ class Computer:
         api_key: Optional[str] = None,
         experiments: Optional[List[str]] = None,
         timeout: int = 100,
+        backend: Literal["native", "vnc"] = "native",
+        vnc_host: Optional[str] = None,
+        vnc_port: int = 5900,
+        vnc_password: str = "",
         run_opts: Optional[Dict[str, Any]] = None,
     ):
         """Initialize a new Computer instance.
@@ -143,6 +147,10 @@ class Computer:
             api_key: Optional API key for cloud providers (defaults to CUA_API_KEY environment variable)
             experiments: Optional list of experimental features to enable (e.g. ["app-use"])
             timeout: Timeout in seconds for connecting to the computer interface
+            backend: Handler backend for the computer-server: 'native' (OS-specific) or 'vnc'. Defaults to 'native'.
+            vnc_host: VNC server host (required when backend='vnc')
+            vnc_port: VNC server port (default: 5900)
+            vnc_password: VNC server password
             run_opts: Optional dictionary of provider-specific run options.
         """
 
@@ -194,6 +202,10 @@ class Computer:
                 self.api_port = 8000
 
         self.experiments = experiments or []
+        self.backend = backend
+        self.vnc_host = vnc_host
+        self.vnc_port = vnc_port
+        self.vnc_password = vnc_password
 
         if "app-use" in self.experiments:
             assert self.os_type == "macos", "App use experiment is only supported on macOS"
@@ -531,6 +543,16 @@ class Computer:
                     # Add shared directories if available
                     if self.shared_directories:
                         run_opts["shared_directories"] = shared_dirs.copy()
+
+                    # Pass backend configuration as env vars for the computer-server
+                    if self.backend == "vnc":
+                        run_opts.setdefault("env", {})
+                        run_opts["env"]["CUA_BACKEND"] = "vnc"
+                        if self.vnc_host:
+                            run_opts["env"]["CUA_VNC_HOST"] = self.vnc_host
+                            run_opts["env"]["CUA_VNC_PORT"] = str(self.vnc_port)
+                            if self.vnc_password:
+                                run_opts["env"]["CUA_VNC_PASSWORD"] = self.vnc_password
 
                     # Merge custom run_opts
                     run_opts.update(self.custom_run_opts)

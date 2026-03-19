@@ -502,12 +502,21 @@ class AndroidAutomationHandler(BaseAutomationHandler):
     # Other
     async def run_command(self, command: str) -> Dict[str, Any]:
         """Run a shell command inside the Android emulator via adb shell."""
-        success, output = await adb_exec.run("shell", command, decode=True)
+        process = await asyncio.create_subprocess_exec(
+            "adb",
+            "-s",
+            "emulator-5554",
+            "shell",
+            command,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await process.communicate()
         return {
-            "stdout": output if success else "",
-            "stderr": "" if success else output,
-            "return_code": 0 if success else 1,
-            "success": success,
+            "success": process.returncode == 0,
+            "stdout": stdout.decode() if stdout else "",
+            "stderr": stderr.decode() if stderr else "",
+            "return_code": process.returncode,
         }
 
 

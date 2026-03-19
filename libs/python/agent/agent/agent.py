@@ -91,6 +91,7 @@ def get_json(obj: Any, max_depth: int = 10) -> Any:
 
         # Handle enums — just use their value
         import enum
+
         if isinstance(o, enum.Enum):
             return o.value
 
@@ -856,7 +857,9 @@ class ComputerAgent:
                     # Note: function_call_output only supports text, so we include the
                     # screenshot as a separate user message with image content
                     if is_terminate:
-                        output_content = json.dumps(action_result if action_result else {"terminated": True})
+                        output_content = json.dumps(
+                            action_result if action_result else {"terminated": True}
+                        )
                         call_output = {
                             "type": "function_call_output",
                             "call_id": item.get("call_id"),
@@ -870,7 +873,9 @@ class ComputerAgent:
                         if action_result is not None:
                             output_content = json.dumps(action_result)
                         else:
-                            output_content = json.dumps({"success": True, "screenshot_captured": True})
+                            output_content = json.dumps(
+                                {"success": True, "screenshot_captured": True}
+                            )
                         call_output = {
                             "type": "function_call_output",
                             "call_id": item.get("call_id"),

@@ -49,6 +49,9 @@ linux = [
 windows = [
     "pywin32>=310"
 ]
+vnc = [
+    "vncdotool>=1.2.0"
+]
 
 [project.urls]
 homepage = "https://github.com/trycua/cua"

@@ -170,6 +170,17 @@ class Sandbox:
     async def get_environment(self) -> str:
         return await self._transport.get_environment()
 
+    async def get_display_url(self, *, share: bool = False) -> str:
+        """Return a URL to view this sandbox's display.
+
+        Args:
+            share: If True, return a public link with embedded credentials
+                   (cloud only). If False, return a direct connection URL —
+                   localhost VNC for local runtimes, or the auth-gated
+                   https://cua.ai/connect/incus/{name} for cloud.
+        """
+        return await self._transport.get_display_url(share=share)
+
     async def get_dimensions(self) -> tuple[int, int]:
         return await self.screen.size()
 

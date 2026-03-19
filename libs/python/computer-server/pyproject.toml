@@ -49,6 +49,9 @@ linux = [
 windows = [
     "pywin32>=310"
 ]
+vnc = [
+    "pycryptodome>=3.20.0"
+]
 
 [project.urls]
 homepage = "https://github.com/trycua/cua"

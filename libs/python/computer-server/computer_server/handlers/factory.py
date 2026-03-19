@@ -1,3 +1,5 @@
+import logging
+import os
 from typing import Tuple
 
 from computer_server.diorama.base import BaseDioramaHandler
@@ -10,6 +12,8 @@ from .base import (
     BaseFileHandler,
     BaseWindowHandler,
 )
+
+logger = logging.getLogger(__name__)
 
 OS_TYPE = get_current_os()
 
@@ -55,7 +59,22 @@ class HandlerFactory:
             NotImplementedError: If the current OS is not supported
             RuntimeError: If unable to determine the current OS
         """
-        if OS_TYPE == "android":
+        vnc_host = os.environ.get("CUA_VNC_HOST")
+        if vnc_host:
+            from .vnc import VNCAccessibilityHandler, VNCAutomationHandler
+
+            vnc_port = int(os.environ.get("CUA_VNC_PORT", "5900"))
+            vnc_password = os.environ.get("CUA_VNC_PASSWORD", "")
+            logger.info(f"Using VNC backend → {vnc_host}:{vnc_port}")
+            return (
+                VNCAccessibilityHandler(),
+                VNCAutomationHandler(host=vnc_host, port=vnc_port, password=vnc_password),
+                BaseDioramaHandler(),
+                GenericFileHandler(),
+                GenericDesktopHandler(),
+                GenericWindowHandler(),
+            )
+        elif OS_TYPE == "android":
             return (
                 AndroidAccessibilityHandler(),
                 AndroidAutomationHandler(),

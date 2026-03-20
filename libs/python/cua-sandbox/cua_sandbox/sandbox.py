@@ -5,19 +5,21 @@ as interface objects backed by a Transport.
 
 Usage::
 
-    from cua_sandbox import sandbox, Image
+    from cua_sandbox import Sandbox, Image
 
-    # Cloud VM (default — create and destroy on exit)
-    async with sandbox(image=Image.linux()) as sb:
-        await sb.shell.run("uname -a")
+    # Provision a new persistent sandbox
+    sb = await Sandbox.create(Image.desktop("ubuntu"))
+    await sb.shell.run("uname -a")
+    await sb.disconnect()
 
-    # Cloud VM (connect to existing, not destroyed on exit)
-    async with sandbox(name="my-vm") as sb:
-        await sb.screenshot()
+    # Connect to an existing sandbox by name
+    sb = await Sandbox.connect("my-sandbox")
+    await sb.screenshot()
+    await sb.disconnect()
 
-    # Local VM via QEMU (sandboxed, not cloud)
-    async with sandbox(local=True, image=Image.linux()) as sb:
-        result = await sb.shell.run("uname -a")
+    # Ephemeral — auto-destroyed on exit
+    async with Sandbox.ephemeral(Image.desktop("ubuntu")) as sb:
+        await sb.shell.run("whoami")
 """
 
 from __future__ import annotations
@@ -46,11 +48,7 @@ if TYPE_CHECKING:
 
 
 def _auto_runtime(image: Image) -> "Runtime":
-    """Pick a runtime automatically based on image.os_type and image.kind.
-
-    If kind is None (unresolved registry image), the runtime must be provided
-    explicitly or resolved after pulling the image manifest.
-    """
+    """Pick a runtime automatically based on image.os_type and image.kind."""
     import platform as _plat
 
     if image.kind is None:
@@ -106,23 +104,24 @@ class Sandbox:
     Sandboxes are always isolated — they never control the host machine
     directly. For unsandboxed host control, use :func:`cua_sandbox.localhost`.
 
-    There are two ways to obtain a Sandbox:
+    There are three ways to obtain a Sandbox:
 
-    1. **Context manager** (recommended for ephemeral use)::
+    1. **Persistent** — provision and keep alive after the script exits::
 
-           async with sandbox(image=Image.linux()) as sb:
-               await sb.shell.run("whoami")
-
-    2. **Factory method** (for persistent / long-lived sessions)::
-
-           sb = await Sandbox.create(name="my-vm")
+           sb = await Sandbox.create(Image.desktop("ubuntu"))
            await sb.shell.run("whoami")
-           await sb.close()
+           await sb.disconnect()
 
-    By default, sandboxes created with ``image=`` are ephemeral — the VM is
-    destroyed when the context manager exits or ``close()`` is called. Sandboxes
-    connected by ``name=`` are not destroyed. Override with ``ephemeral=True``
-    or ``ephemeral=False``.
+    2. **Connect** — attach to an already-running sandbox by name::
+
+           sb = await Sandbox.connect("my-sandbox")
+           await sb.screenshot()
+           await sb.disconnect()
+
+    3. **Ephemeral** — auto-destroyed when the ``async with`` block exits::
+
+           async with Sandbox.ephemeral(Image.desktop("ubuntu")) as sb:
+               await sb.shell.run("whoami")
     """
 
     def __init__(
@@ -153,10 +152,14 @@ class Sandbox:
         if self.name is None and isinstance(self._transport, CloudTransport):
             self.name = self._transport.name
 
-    async def close(self) -> None:
-        """Disconnect transport. If ephemeral, destroy the VM/container."""
+    async def disconnect(self) -> None:
+        """Drop the transport connection. The sandbox keeps running."""
         await self._transport.disconnect()
-        if self._ephemeral and isinstance(self._transport, CloudTransport):
+
+    async def destroy(self) -> None:
+        """Disconnect and permanently delete the sandbox (VM/container)."""
+        await self._transport.disconnect()
+        if isinstance(self._transport, CloudTransport):
             await self._transport.delete_vm()
         if self._runtime and self._runtime_info:
             await self._runtime.stop(self._runtime_info.name or self.name or "cua-sandbox")
@@ -175,9 +178,7 @@ class Sandbox:
 
         Args:
             share: If True, return a public link with embedded credentials
-                   (cloud only). If False, return a direct connection URL —
-                   localhost VNC for local runtimes, or the auth-gated
-                   https://cua.ai/connect/incus/{name} for cloud.
+                   (cloud only). If False, return a direct connection URL.
         """
         return await self._transport.get_display_url(share=share)
 
@@ -191,12 +192,166 @@ class Sandbox:
         return self
 
     async def __aexit__(self, *exc: Any) -> None:
-        await self.close()
+        await self.disconnect()
 
-    # ── Factory ──────────────────────────────────────────────────────────
+    # ── Public factory methods ───────────────────────────────────────────
 
     @classmethod
     async def create(
+        cls,
+        image: Image,
+        *,
+        name: Optional[str] = None,
+        api_key: Optional[str] = None,
+        local: bool = False,
+        runtime: Optional["Runtime"] = None,
+        cpu: Optional[int] = None,
+        memory_mb: Optional[int] = None,
+        disk_gb: Optional[int] = None,
+        region: str = "us-east-1",
+    ) -> "Sandbox":
+        """Provision a new persistent sandbox and return it connected.
+
+        The sandbox is kept alive after your script exits — call ``close()``
+        when you are done, or use :meth:`ephemeral` if you want it destroyed
+        automatically.
+
+        Args:
+            image: Image to run (e.g. ``Image.desktop("ubuntu")``).
+            name: Optional name to assign to the sandbox.
+            api_key: CUA API key for cloud sandboxes.
+            local: Use a local runtime instead of cloud.
+            runtime: Explicit runtime backend (DockerRuntime, QEMURuntime, etc.).
+            cpu: Number of CPUs for the cloud sandbox.
+            memory_mb: Memory in MB for the cloud sandbox.
+            disk_gb: Disk size in GB for the cloud sandbox.
+            region: Cloud region (default ``"us-east-1"``).
+
+        Example::
+
+            sb = await Sandbox.create(Image.desktop("ubuntu"))
+            await sb.shell.run("uname -a")
+            print(sb.name)  # save to reconnect later
+            await sb.disconnect()
+        """
+        return await cls._create(
+            image=image,
+            name=name,
+            ephemeral=False,
+            api_key=api_key,
+            local=local,
+            runtime=runtime,
+            cpu=cpu,
+            memory_mb=memory_mb,
+            disk_gb=disk_gb,
+            region=region,
+        )
+
+    @classmethod
+    async def connect(
+        cls,
+        name: str,
+        *,
+        api_key: Optional[str] = None,
+        ws_url: Optional[str] = None,
+        http_url: Optional[str] = None,
+        container_name: Optional[str] = None,
+        cpu: Optional[int] = None,
+        memory_mb: Optional[int] = None,
+        disk_gb: Optional[int] = None,
+        region: str = "us-east-1",
+    ) -> "Sandbox":
+        """Connect to an existing sandbox by name and return it connected.
+
+        The sandbox is not destroyed when you call ``close()`` — it keeps
+        running. Use this to reconnect to a sandbox created with
+        :meth:`create`.
+
+        Args:
+            name: Name of the existing sandbox.
+            api_key: CUA API key for cloud sandboxes.
+            ws_url: WebSocket URL for a remote computer-server.
+            http_url: HTTP base URL for a remote computer-server.
+            container_name: Container name for cloud auth (HTTP transport).
+            cpu: Reserved — ignored for existing sandboxes.
+            memory_mb: Reserved — ignored for existing sandboxes.
+            disk_gb: Reserved — ignored for existing sandboxes.
+            region: Cloud region (default ``"us-east-1"``).
+
+        Example::
+
+            sb = await Sandbox.connect("my-sandbox")
+            await sb.screenshot()
+            await sb.disconnect()
+        """
+        return await cls._create(
+            name=name,
+            ephemeral=False,
+            api_key=api_key,
+            ws_url=ws_url,
+            http_url=http_url,
+            container_name=container_name,
+            cpu=cpu,
+            memory_mb=memory_mb,
+            disk_gb=disk_gb,
+            region=region,
+        )
+
+    @classmethod
+    @asynccontextmanager
+    async def ephemeral(
+        cls,
+        image: Image,
+        *,
+        name: Optional[str] = None,
+        api_key: Optional[str] = None,
+        local: bool = False,
+        runtime: Optional["Runtime"] = None,
+        cpu: Optional[int] = None,
+        memory_mb: Optional[int] = None,
+        disk_gb: Optional[int] = None,
+        region: str = "us-east-1",
+    ) -> AsyncIterator["Sandbox"]:
+        """Create an ephemeral sandbox that is automatically destroyed on exit.
+
+        Args:
+            image: Image to run (e.g. ``Image.desktop("ubuntu")``).
+            name: Optional name to assign to the sandbox.
+            api_key: CUA API key for cloud sandboxes.
+            local: Use a local runtime instead of cloud.
+            runtime: Explicit runtime backend (DockerRuntime, QEMURuntime, etc.).
+            cpu: Number of CPUs for the cloud sandbox.
+            memory_mb: Memory in MB for the cloud sandbox.
+            disk_gb: Disk size in GB for the cloud sandbox.
+            region: Cloud region (default ``"us-east-1"``).
+
+        Example::
+
+            async with Sandbox.ephemeral(Image.desktop("ubuntu")) as sb:
+                await sb.shell.run("whoami")
+            # sandbox is destroyed here
+        """
+        sb = await cls._create(
+            image=image,
+            name=name,
+            ephemeral=True,
+            api_key=api_key,
+            local=local,
+            runtime=runtime,
+            cpu=cpu,
+            memory_mb=memory_mb,
+            disk_gb=disk_gb,
+            region=region,
+        )
+        try:
+            yield sb
+        finally:
+            await sb.destroy()
+
+    # ── Internal factory ─────────────────────────────────────────────────
+
+    @classmethod
+    async def _create(
         cls,
         *,
         local: bool = False,
@@ -205,36 +360,15 @@ class Sandbox:
         api_key: Optional[str] = None,
         container_name: Optional[str] = None,
         image: Optional[Image] = None,
-        runtime: Optional[Runtime] = None,
+        runtime: Optional["Runtime"] = None,
         name: Optional[str] = None,
         ephemeral: Optional[bool] = None,
         cpu: Optional[int] = None,
         memory_mb: Optional[int] = None,
         disk_gb: Optional[int] = None,
         region: str = "us-east-1",
-    ) -> Sandbox:
-        """Create and connect a persistent Sandbox.
-
-        Args:
-            local: Use a local runtime (QEMU, Docker, Lume) instead of cloud.
-                   Requires image + runtime (or auto-selects runtime from image).
-            ws_url: WebSocket URL for a remote computer-server.
-            http_url: HTTP base URL for a remote computer-server (REST/SSE fallback).
-            api_key: API key for cloud connections.
-            container_name: Container name for cloud auth (HTTP transport).
-            image: Image spec — used for cloud VM creation or local runtime.
-            runtime: Runtime backend (DockerRuntime, QEMURuntime, LumeRuntime, HyperVRuntime).
-                     If omitted with image and not local, defaults to cloud.
-            name: Name for the sandbox / VM / container.
-            ephemeral: Whether to destroy the VM on close. None (default) infers:
-                       True when creating a new VM (image=...), False when connecting
-                       to an existing one (name=...).
-            cpu: Number of CPUs for the cloud VM.
-            memory_mb: Memory in MB for the cloud VM.
-            disk_gb: Disk size in GB for the cloud VM.
-            region: Cloud VM region (default "us-east-1").
-        """
-        # Infer ephemeral: True when creating (image provided), False when connecting (name only)
+    ) -> "Sandbox":
+        """Internal workhorse — all public factories delegate here."""
         if ephemeral is None:
             ephemeral = bool(image)
 
@@ -265,7 +399,6 @@ class Sandbox:
             if rt_info.environment == "android" and not rt_info.qmp_port:
                 from cua_sandbox.transport.adb import ADBTransport
 
-                # Android emulator runtime — use ADB transport
                 adb_serial = f"emulator-{rt_info.api_port - 1}"
                 sdk_root = None
                 if hasattr(runtime, "_sdk") and runtime._sdk:
@@ -280,7 +413,6 @@ class Sandbox:
             elif rt_info.vnc_port and rt_info.ssh_port:
                 from cua_sandbox.transport.vncssh import VNCSSHTransport
 
-                # Wait for SSH to be reachable before connecting transport
                 await runtime.is_ready(rt_info)
                 transport = VNCSSHTransport(
                     ssh_host=rt_info.host,
@@ -353,7 +485,6 @@ def _make_transport(
         return WebSocketTransport(ws_url, api_key=api_key)
     if http_url:
         return HTTPTransport(http_url, api_key=api_key, container_name=container_name)
-    # Default: cloud transport — connects by name, or errors on missing image/API key
     return CloudTransport(
         name=name,
         api_key=api_key,
@@ -381,50 +512,13 @@ async def sandbox(
     disk_gb: Optional[int] = None,
     region: str = "us-east-1",
 ) -> AsyncIterator[Sandbox]:
-    """Create a sandboxed VM and yield it as an async context manager.
+    """Async context manager for a sandboxed environment.
 
-    The sandbox is always isolated — it never controls the host machine.
-    For unsandboxed host control, use :func:`cua_sandbox.localhost`.
-
-    Args:
-        local: Use a local runtime (QEMU, Docker, Lume) instead of cloud.
-               Requires ``image`` (runtime is auto-selected if omitted).
-        image: Image spec for VM creation. Determines the OS and VM type.
-               Use ``Image.linux()``, ``Image.windows()``, or ``Image.macos()``.
-        name: Connect to an existing cloud VM by name instead of creating one.
-        ephemeral: Whether to destroy the VM on exit. ``None`` (default) infers
-                   from context: ``True`` when creating (``image=...``), ``False``
-                   when connecting by name. Override explicitly to change behavior.
-        api_key: CUA API key for cloud sandboxes.
-        runtime: Explicit runtime backend (DockerRuntime, QEMURuntime, etc.).
-        cpu: Number of CPUs for the cloud VM (default 2).
-        memory_mb: Memory in MB for the cloud VM (default 4096).
-        disk_gb: Disk size in GB for the cloud VM (default 64).
-        region: Cloud VM region (default ``"us-east-1"``).
-
-    Examples::
-
-        # Cloud VM — created and destroyed on exit (ephemeral inferred True)
-        async with sandbox(image=Image.linux()) as sb:
-            await sb.shell.run("whoami")
-
-        # Cloud VM with custom resources
-        async with sandbox(image=Image.linux(), cpu=4, memory_mb=8192, disk_gb=128) as sb:
-            await sb.shell.run("whoami")
-
-        # Cloud VM — connect to existing (ephemeral inferred False)
-        async with sandbox(name="my-vm") as sb:
-            await sb.screenshot()
-
-        # Cloud VM — create but keep alive after exit
-        async with sandbox(image=Image.linux(), ephemeral=False) as sb:
-            print(sb.name)  # save this to reconnect later
-
-        # Local VM via QEMU (sandboxed, not cloud)
-        async with sandbox(local=True, image=Image.linux()) as sb:
-            await sb.shell.run("whoami")
+    .. deprecated::
+        Prefer ``Sandbox.create()``, ``Sandbox.connect()``, or
+        ``Sandbox.ephemeral()`` instead.
     """
-    sb = await Sandbox.create(
+    sb = await Sandbox._create(
         local=local,
         ws_url=ws_url,
         http_url=http_url,
@@ -442,4 +536,7 @@ async def sandbox(
     try:
         yield sb
     finally:
-        await sb.close()
+        if sb._ephemeral:
+            await sb.destroy()
+        else:
+            await sb.disconnect()

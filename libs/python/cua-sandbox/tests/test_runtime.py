@@ -12,7 +12,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
-from cua_sandbox import Image, sandbox
+from cua_sandbox import Image, Sandbox
 
 pytestmark = pytest.mark.asyncio
 
@@ -76,9 +76,9 @@ def _has_android_image() -> bool:
 async def test_linux_container():
     from cua_sandbox.runtime import DockerRuntime
 
-    async with sandbox(
+    async with Sandbox.ephemeral(
+        Image.linux("ubuntu", "24.04"),
         local=True,
-        image=Image.linux("ubuntu", "24.04"),
         runtime=DockerRuntime(api_port=18000, vnc_port=16901, ephemeral=True),
         name="cua-test-linux-container",
     ) as sb:
@@ -97,9 +97,9 @@ async def test_linux_container():
 async def test_linux_vm():
     from cua_sandbox.runtime import QEMURuntime
 
-    async with sandbox(
+    async with Sandbox.ephemeral(
+        Image.linux("ubuntu", "24.04"),
         local=True,
-        image=Image.linux("ubuntu", "24.04"),
         runtime=QEMURuntime(mode="docker", api_port=18001, vnc_port=18006, ephemeral=True),
         name="cua-test-linux-vm",
     ) as sb:
@@ -119,9 +119,9 @@ async def test_linux_vm():
 async def test_windows_vm():
     from cua_sandbox.runtime import QEMURuntime
 
-    async with sandbox(
+    async with Sandbox.ephemeral(
+        Image.windows("11"),
         local=True,
-        image=Image.windows("11"),
         runtime=QEMURuntime(mode="bare-metal", api_port=18002),
         name="cua-test-windows-vm",
     ) as sb:
@@ -139,9 +139,9 @@ async def test_windows_vm():
 async def test_windows_hyperv():
     from cua_sandbox.runtime import HyperVRuntime
 
-    async with sandbox(
+    async with Sandbox.ephemeral(
+        Image.windows("11"),
         local=True,
-        image=Image.windows("11"),
         runtime=HyperVRuntime(api_port=18003),
         name="cua-test-hyperv",
     ) as sb:
@@ -159,9 +159,9 @@ async def test_windows_hyperv():
 async def test_macos_vm():
     from cua_sandbox.runtime import LumeRuntime
 
-    async with sandbox(
+    async with Sandbox.ephemeral(
+        Image.macos("15"),
         local=True,
-        image=Image.macos("15"),
         runtime=LumeRuntime(api_port=18005),
         name="cua-test-macos-vm",
     ) as sb:
@@ -202,9 +202,9 @@ async def test_android_vm_baremetal():
     from cua_sandbox.runtime import QEMURuntime
 
     android_disk = str(Path.home() / ".cua" / "cua-sandbox" / "qemu-storage" / "android-x86.qcow2")
-    async with sandbox(
+    async with Sandbox.ephemeral(
+        Image.from_file(android_disk, os_type="android", kind="vm"),
         local=True,
-        image=Image.from_file(android_disk, os_type="android", kind="vm"),
         runtime=QEMURuntime(
             mode="bare-metal", api_port=18010, vnc_display=10, memory_mb=4096, cpu_count=4
         ),
@@ -226,9 +226,9 @@ async def test_android_vm_from_iso():
     from cua_sandbox.runtime import QEMURuntime
 
     iso_path = _get_android_iso()
-    async with sandbox(
+    async with Sandbox.ephemeral(
+        Image.from_file(iso_path, os_type="android", kind="vm"),
         local=True,
-        image=Image.from_file(iso_path, os_type="android", kind="vm"),
         runtime=QEMURuntime(
             mode="bare-metal",
             api_port=18030,
@@ -262,9 +262,9 @@ async def test_android_vm_docker():
     """Test Android VM via QEMU inside Docker."""
     from cua_sandbox.runtime import QEMURuntime
 
-    async with sandbox(
+    async with Sandbox.ephemeral(
+        Image.android("14"),
         local=True,
-        image=Image.android("14"),
         runtime=QEMURuntime(mode="docker", api_port=18011, vnc_port=18080, ephemeral=True),
         name="cua-test-android-docker",
     ) as sb:
@@ -288,13 +288,13 @@ async def test_osworld_ubuntu_vm():
     """Test OSWorld Ubuntu VM via bare-metal QEMU with OSWorld transport."""
     from cua_sandbox.runtime import QEMURuntime
 
-    async with sandbox(
-        local=True,
-        image=Image.from_file(
+    async with Sandbox.ephemeral(
+        Image.from_file(
             "https://huggingface.co/datasets/xlangai/ubuntu_osworld/resolve/main/Ubuntu.qcow2.zip",
             os_type="linux",
             agent_type="osworld",
         ),
+        local=True,
         runtime=QEMURuntime(
             mode="bare-metal", api_port=18020, vnc_display=20, memory_mb=4096, cpu_count=4
         ),
@@ -328,9 +328,9 @@ async def test_android_emulator():
     """Test Android emulator boots to homescreen."""
     from cua_sandbox.runtime import AndroidEmulatorRuntime
 
-    async with sandbox(
+    async with Sandbox.ephemeral(
+        Image.android("14"),
         local=True,
-        image=Image.android("14"),
         runtime=AndroidEmulatorRuntime(memory_mb=4096, cpu_count=4, adb_port=5559),
         name="cua-test-android-sdk",
     ) as sb:
@@ -345,9 +345,9 @@ async def test_android_emulator_apk_install():
     from cua_sandbox.runtime import AndroidEmulatorRuntime
 
     img = Image.android("14").apk_install("https://f-droid.org/F-Droid.apk")
-    async with sandbox(
+    async with Sandbox.ephemeral(
+        img,
         local=True,
-        image=img,
         runtime=AndroidEmulatorRuntime(memory_mb=4096, cpu_count=4, adb_port=5561),
         name="cua-test-android-apk",
     ) as sb:
@@ -374,9 +374,9 @@ async def test_tart_ubuntu():
     """Test Ubuntu VM via Tart (Apple VZ)."""
     from cua_sandbox.runtime import TartRuntime
 
-    async with sandbox(
+    async with Sandbox.ephemeral(
+        Image.from_registry("ghcr.io/cirruslabs/ubuntu:latest"),
         local=True,
-        image=Image.from_registry("ghcr.io/cirruslabs/ubuntu:latest"),
         runtime=TartRuntime(ephemeral=True, display="1024x768"),
         name="cua-test-tart-ubuntu",
     ) as sb:
@@ -395,9 +395,9 @@ async def test_tart_macos_tahoe():
     """Test macOS Tahoe VM via Tart (Apple VZ)."""
     from cua_sandbox.runtime import TartRuntime
 
-    async with sandbox(
+    async with Sandbox.ephemeral(
+        Image.from_registry("ghcr.io/cirruslabs/macos-tahoe-base:latest"),
         local=True,
-        image=Image.from_registry("ghcr.io/cirruslabs/macos-tahoe-base:latest"),
         runtime=TartRuntime(ephemeral=True),
         name="cua-test-tart-tahoe",
     ) as sb:
@@ -412,9 +412,9 @@ async def test_tart_macos_sequoia_cua():
     """Test CUA macOS Sequoia sparse image via Tart."""
     from cua_sandbox.runtime import TartRuntime
 
-    async with sandbox(
+    async with Sandbox.ephemeral(
+        Image.from_registry("ghcr.io/trycua/macos-sequoia-cua-sparse:latest-oci-layered"),
         local=True,
-        image=Image.from_registry("ghcr.io/trycua/macos-sequoia-cua-sparse:latest-oci-layered"),
         runtime=TartRuntime(ephemeral=True),
         name="cua-test-tart-sequoia",
     ) as sb:

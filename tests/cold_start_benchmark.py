@@ -10,7 +10,7 @@ import os
 import time
 import urllib.request
 
-from cua_sandbox import Image, sandbox
+from cua_sandbox import Image, Sandbox
 
 OS_CONFIGS = [
     ("linux", Image.linux()),
@@ -24,7 +24,7 @@ async def measure_cold_start(image, timeout: float = 120) -> tuple[float | None,
     """Create an ephemeral sandbox and return (seconds, error)."""
     t0 = time.time()
     try:
-        async with sandbox(image=image) as sb:
+        async with Sandbox.ephemeral(image) as sb:
             elapsed = time.time() - t0
             # Quick health check
             screenshot = await sb.screenshot()

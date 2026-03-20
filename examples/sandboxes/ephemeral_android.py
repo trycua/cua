@@ -39,13 +39,11 @@ Available sb.mobile.* methods:
 
 import asyncio
 
-from cua_sandbox import Image, sandbox
+from cua_sandbox import Image, Sandbox
 
 
 async def main():
-    image = Image.android("14")
-
-    async with sandbox(image=image) as sb:
+    async with Sandbox.ephemeral(Image.android("14")) as sb:
         # Take a screenshot
         screenshot = await sb.screenshot()
         with open("/tmp/android-ephemeral-screenshot.png", "wb") as f:

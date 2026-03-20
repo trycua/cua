@@ -21,8 +21,8 @@ from contextlib import contextmanager
 from typing import Any, Iterator, Optional
 
 from cua_sandbox.image import Image
-from cua_sandbox.sandbox import Sandbox as _AsyncSandbox
 from cua_sandbox.localhost import Localhost as _AsyncLocalhost
+from cua_sandbox.sandbox import Sandbox as _AsyncSandbox
 
 
 def _get_or_create_loop() -> asyncio.AbstractEventLoop:
@@ -42,6 +42,7 @@ def _run(coro: Any) -> Any:
         asyncio.get_running_loop()
         # We're inside an existing event loop (e.g. Jupyter) — use nest_asyncio pattern
         import nest_asyncio
+
         nest_asyncio.apply()
         return asyncio.get_event_loop().run_until_complete(coro)
     except RuntimeError:
@@ -57,11 +58,13 @@ class _SyncProxy:
     def __getattr__(self, name: str) -> Any:
         attr = getattr(self._async_obj, name)
         if asyncio.iscoroutinefunction(attr):
+
             def sync_wrapper(*args: Any, **kwargs: Any) -> Any:
                 return _run(attr(*args, **kwargs))
+
             return sync_wrapper
         # If the attribute is an interface object, wrap it too
-        if hasattr(attr, '_t'):  # Interface objects have _t (transport)
+        if hasattr(attr, "_t"):  # Interface objects have _t (transport)
             return _SyncProxy(attr)
         return attr
 
@@ -79,12 +82,12 @@ def sandbox(
     name: Optional[str] = None,
 ) -> Iterator[_SyncProxy]:
     """Synchronous context manager yielding a sync-wrapped Sandbox."""
-    sb = _run(_AsyncSandbox.create(local=local, ws_url=ws_url, api_key=api_key, name=name))
+    sb = _run(_AsyncSandbox._create(local=local, ws_url=ws_url, api_key=api_key, name=name))
     proxy = _SyncProxy(sb)
     try:
         yield proxy
     finally:
-        _run(sb.close())
+        _run(sb.disconnect())
 
 
 @contextmanager
@@ -96,4 +99,4 @@ def localhost() -> Iterator[_SyncProxy]:
     try:
         yield proxy
     finally:
-        _run(host.close())
+        _run(host.disconnect())

@@ -8,7 +8,7 @@ Boots Android 14 via QEMU-in-Docker, installs F-Droid, and opens VNC.
 import asyncio
 import subprocess
 
-from cua_sandbox import Image, sandbox
+from cua_sandbox import Image, Sandbox
 from cua_sandbox.runtime import QEMURuntime
 
 VNC_PORT = 18080
@@ -27,12 +27,7 @@ async def main():
     # Android 14 + F-Droid APK (downloaded and installed via ADB post-boot)
     image = Image.android("14").apk_install("https://f-droid.org/F-Droid.apk")
 
-    async with sandbox(
-        local=True,
-        image=image,
-        runtime=runtime,
-        name="android-vnc-demo",
-    ) as sb:
+    async with Sandbox.ephemeral(image, local=True, runtime=runtime, name="android-vnc-demo") as sb:
         # Open VNC viewer
         subprocess.Popen(["open", f"vnc://localhost:{VNC_PORT}"])
 

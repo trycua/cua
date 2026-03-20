@@ -3,6 +3,8 @@ import base64
 import logging
 from typing import Any, Dict, List, Optional, Tuple
 
+logger = logging.getLogger(__name__)
+
 from ..utils.helpers import CommandExecutor
 
 logger = logging.getLogger(__name__)

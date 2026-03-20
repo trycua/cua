@@ -86,10 +86,8 @@ async def http_transport():
 async def local_sandbox():
     if not LOCAL_ENABLED:
         pytest.skip("CUA_TEST_LOCAL disabled")
-    host = Localhost()
-    await host._connect()
-    yield host
-    await host.disconnect()
+    async with Localhost.connect() as host:
+        yield host
 
 
 @pytest_asyncio.fixture
@@ -119,10 +117,8 @@ async def http_sandbox():
 async def localhost_instance():
     if not LOCAL_ENABLED:
         pytest.skip("CUA_TEST_LOCAL disabled")
-    host = Localhost()
-    await host._connect()
-    yield host
-    await host.disconnect()
+    async with Localhost.connect() as host:
+        yield host
 
 
 # ---------------------------------------------------------------------------

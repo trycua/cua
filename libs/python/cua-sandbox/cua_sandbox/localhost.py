@@ -14,7 +14,7 @@ Usage::
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
-from typing import Any, AsyncIterator, Optional
+from typing import AsyncIterator, Optional
 
 from cua_sandbox.interfaces import (
     Clipboard,
@@ -25,6 +25,7 @@ from cua_sandbox.interfaces import (
     Terminal,
     Window,
 )
+from cua_sandbox.sandbox import _ConnectResult
 from cua_sandbox.transport.local import LocalTransport
 
 
@@ -59,12 +60,30 @@ class Localhost:
     async def get_dimensions(self) -> tuple[int, int]:
         return await self.screen.size()
 
-    async def __aenter__(self) -> Localhost:
-        await self._connect()
-        return self
+    @classmethod
+    def connect(cls) -> "_ConnectResult":
+        """Connect to the local machine.
 
-    async def __aexit__(self, *exc: Any) -> None:
-        await self.disconnect()
+        Supports both ``await`` and ``async with``.
+
+        Examples::
+
+            # plain await
+            host = await Localhost.connect()
+            await host.shell.run("echo hello")
+            await host.disconnect()
+
+            # context manager
+            async with Localhost.connect() as host:
+                await host.shell.run("echo hello")
+        """
+
+        async def _factory() -> "Localhost":
+            host = cls()
+            await host._connect()
+            return host
+
+        return _ConnectResult(_factory)
 
     def __repr__(self) -> str:
         return "Localhost()"
@@ -72,10 +91,10 @@ class Localhost:
 
 @asynccontextmanager
 async def localhost() -> AsyncIterator[Localhost]:
-    """Async context manager yielding a Localhost instance."""
-    host = Localhost()
-    await host._connect()
-    try:
+    """Async context manager yielding a Localhost instance.
+
+    .. deprecated::
+        Prefer ``Localhost.connect()`` instead.
+    """
+    async with Localhost.connect() as host:
         yield host
-    finally:
-        await host.disconnect()

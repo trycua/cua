@@ -67,9 +67,9 @@ async with Sandbox.ephemeral(Image.linux(), local=True, runtime=QEMURuntime()) a
 Direct host control — **not sandboxed**, use with caution.
 
 ```python
-from cua_sandbox import localhost
+from cua_sandbox import Localhost
 
-async with localhost() as host:
+async with Localhost.connect() as host:
     await host.shell.run("echo hello")
     await host.screenshot()
 ```

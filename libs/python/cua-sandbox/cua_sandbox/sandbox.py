@@ -12,10 +12,13 @@ Usage::
     await sb.shell.run("uname -a")
     await sb.disconnect()
 
-    # Connect to an existing sandbox by name
+    # Connect to an existing sandbox by name (plain await or async with)
     sb = await Sandbox.connect("my-sandbox")
     await sb.screenshot()
     await sb.disconnect()
+
+    async with Sandbox.connect("my-sandbox") as sb:  # disconnects on exit
+        await sb.screenshot()
 
     # Ephemeral — auto-destroyed on exit
     async with Sandbox.ephemeral(Image.desktop("ubuntu")) as sb:
@@ -25,7 +28,15 @@ Usage::
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
-from typing import TYPE_CHECKING, Any, AsyncIterator, Optional
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    AsyncIterator,
+    Callable,
+    Coroutine,
+    Optional,
+    TypeVar,
+)
 
 from cua_sandbox.image import Image
 from cua_sandbox.interfaces import (
@@ -45,6 +56,39 @@ from cua_sandbox.transport.websocket import WebSocketTransport
 
 if TYPE_CHECKING:
     from cua_sandbox.runtime.base import Runtime, RuntimeInfo
+
+_T = TypeVar("_T")
+
+
+class _ConnectResult:
+    """Returned by connect() — supports both ``await`` and ``async with``.
+
+    Usage::
+
+        # plain await
+        sb = await Sandbox.connect("name")
+
+        # context manager — disconnects on exit (sandbox keeps running)
+        async with Sandbox.connect("name") as sb:
+            ...
+    """
+
+    __slots__ = ("_factory", "_instance")
+
+    def __init__(self, factory: Callable[[], Coroutine[Any, Any, _T]]) -> None:
+        self._factory = factory
+        self._instance: Any = None
+
+    def __await__(self) -> Any:
+        return self._factory().__await__()
+
+    async def __aenter__(self) -> Any:
+        self._instance = await self._factory()
+        return self._instance
+
+    async def __aexit__(self, *exc: Any) -> None:
+        if self._instance is not None:
+            await self._instance.disconnect()
 
 
 def _auto_runtime(image: Image) -> "Runtime":
@@ -248,7 +292,7 @@ class Sandbox:
         )
 
     @classmethod
-    async def connect(
+    def connect(
         cls,
         name: str,
         *,
@@ -260,12 +304,11 @@ class Sandbox:
         memory_mb: Optional[int] = None,
         disk_gb: Optional[int] = None,
         region: str = "us-east-1",
-    ) -> "Sandbox":
-        """Connect to an existing sandbox by name and return it connected.
+    ) -> "_ConnectResult":
+        """Connect to an existing sandbox by name.
 
-        The sandbox is not destroyed when you call ``close()`` — it keeps
-        running. Use this to reconnect to a sandbox created with
-        :meth:`create`.
+        Supports both ``await`` and ``async with``. When used as a context
+        manager, ``disconnect()`` is called on exit — the sandbox keeps running.
 
         Args:
             name: Name of the existing sandbox.
@@ -273,29 +316,35 @@ class Sandbox:
             ws_url: WebSocket URL for a remote computer-server.
             http_url: HTTP base URL for a remote computer-server.
             container_name: Container name for cloud auth (HTTP transport).
-            cpu: Reserved — ignored for existing sandboxes.
-            memory_mb: Reserved — ignored for existing sandboxes.
-            disk_gb: Reserved — ignored for existing sandboxes.
             region: Cloud region (default ``"us-east-1"``).
 
-        Example::
+        Examples::
 
+            # plain await
             sb = await Sandbox.connect("my-sandbox")
             await sb.screenshot()
             await sb.disconnect()
+
+            # context manager — disconnects on exit, sandbox keeps running
+            async with Sandbox.connect("my-sandbox") as sb:
+                await sb.screenshot()
         """
-        return await cls._create(
-            name=name,
-            ephemeral=False,
-            api_key=api_key,
-            ws_url=ws_url,
-            http_url=http_url,
-            container_name=container_name,
-            cpu=cpu,
-            memory_mb=memory_mb,
-            disk_gb=disk_gb,
-            region=region,
-        )
+
+        async def _factory() -> "Sandbox":
+            return await cls._create(
+                name=name,
+                ephemeral=False,
+                api_key=api_key,
+                ws_url=ws_url,
+                http_url=http_url,
+                container_name=container_name,
+                cpu=cpu,
+                memory_mb=memory_mb,
+                disk_gb=disk_gb,
+                region=region,
+            )
+
+        return _ConnectResult(_factory)
 
     @classmethod
     @asynccontextmanager

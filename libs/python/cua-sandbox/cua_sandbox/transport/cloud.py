@@ -88,6 +88,10 @@ class CloudTransport(Transport):
         # Wait for computer-server to be reachable (it may lag behind VM "running" status)
         await self._wait_for_server_ready()
 
+        # Apply image layers (e.g. APK installs) after server is ready
+        if self._image and self._image._layers:
+            await self._apply_image_layers()
+
     async def disconnect(self) -> None:
         if self._inner:
             await self._inner.disconnect()
@@ -216,6 +220,27 @@ class CloudTransport(Transport):
         raise TimeoutError(
             f"Computer-server for VM {self._name!r} not reachable within {_POLL_TIMEOUT}s: {last_err}"
         )
+
+    async def _apply_image_layers(self) -> None:
+        """Apply image layers (APK installs, shell commands) after the VM is ready."""
+        assert self._inner
+        for layer in self._image._layers:
+            lt = layer["type"]
+            if lt == "apk_install":
+                for apk in layer["packages"]:
+                    dest = "/data/local/tmp/cua_install.apk"
+                    await self._inner.send(
+                        "run_command",
+                        command=f"curl -fsSL -o {dest} '{apk}'",
+                        timeout=120,
+                    )
+                    await self._inner.send(
+                        "run_command",
+                        command=f"pm install -r {dest}",
+                        timeout=60,
+                    )
+            elif lt == "run":
+                await self._inner.send("run_command", command=layer["command"], timeout=60)
 
     @staticmethod
     def _resolve_endpoint(vm_info: dict) -> str:

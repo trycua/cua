@@ -489,22 +489,27 @@ class LinuxAutomationHandler(BaseAutomationHandler):
             return {"success": False, "error": str(e)}
 
     # Screen Actions
-    async def screenshot(self) -> Dict[str, Any]:
+    async def screenshot(self, format: str = "png", quality: int = 85) -> Dict[str, Any]:
         """Take a screenshot of the current screen.
 
-        Returns:
-            Dict[str, Any]: A dictionary containing success status and base64-encoded image data,
-                           or error message if failed.
+        Args:
+            format: "png" (lossless, default) or "jpeg" (lossy, smaller).
+            quality: JPEG quality 1-95, ignored for PNG.
         """
         try:
             screenshot = ImageGrab.grab()
             if not isinstance(screenshot, Image.Image):
                 return {"success": False, "error": "Failed to capture screenshot"}
             buffered = BytesIO()
-            screenshot.save(buffered, format="PNG", optimize=True)
+            if format == "jpeg":
+                screenshot.convert("RGB").save(
+                    buffered, format="JPEG", quality=quality, optimize=True
+                )
+            else:
+                screenshot.save(buffered, format="PNG", optimize=True)
             buffered.seek(0)
             image_data = base64.b64encode(buffered.getvalue()).decode()
-            return {"success": True, "image_data": image_data}
+            return {"success": True, "image_data": image_data, "format": format}
         except Exception as e:
             return {"success": False, "error": f"Screenshot error: {str(e)}"}
 

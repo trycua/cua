@@ -307,8 +307,13 @@ class BaseAutomationHandler(ABC):
 
     # Screen Actions
     @abstractmethod
-    async def screenshot(self) -> Dict[str, Any]:
-        """Take a screenshot and return base64 encoded image data."""
+    async def screenshot(self, format: str = "png", quality: int = 85) -> Dict[str, Any]:
+        """Take a screenshot and return base64 encoded image data.
+
+        Args:
+            format: Image format - "png" (lossless, default) or "jpeg" (lossy, smaller).
+            quality: JPEG quality 1-95, ignored for PNG.
+        """
         pass
 
     @abstractmethod

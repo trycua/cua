@@ -1,6 +1,9 @@
 import asyncio
 import base64
+import logging
 from typing import Any, Dict, List, Optional, Tuple
+
+logger = logging.getLogger(__name__)
 
 from ..utils.helpers import CommandExecutor
 from .base import (

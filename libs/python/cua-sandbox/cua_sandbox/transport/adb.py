@@ -65,7 +65,95 @@ class ADBTransport(Transport):
                 "stderr": result.stderr.decode(errors="replace"),
                 "returncode": result.returncode,
             }
+        if action == "multitouch_gesture":
+            return self._multitouch_gesture(**params)
         raise ValueError(f"Unknown action: {action}")
+
+    def _multitouch_gesture(
+        self,
+        fingers: list,
+        screen_w: int,
+        screen_h: int,
+        duration_ms: int = 400,
+        steps: int = 0,
+    ) -> Any:
+        """Inject multi-touch via MT Protocol B sendevent (local ADB).
+
+        Calls ``adb root`` to restart adbd as root so plain ``sendevent``
+        works without ``su`` inside the Android shell.
+        """
+        import re
+        import time
+
+        # Restart adbd as root
+        self._adb_cmd("root", timeout=10)
+        time.sleep(1.0)  # wait for adbd to restart
+
+        # Find touch device
+        dev_result = self._adb_cmd(
+            "shell",
+            "for f in /dev/input/event*; do "
+            "  getevent -p \"$f\" 2>/dev/null | grep -q '0035' "
+            '    && echo "$f" && break; '
+            "done",
+        )
+        dev = dev_result.stdout.decode(errors="replace").strip() or "/dev/input/event1"
+
+        # Detect axis max
+        axis_max = 32767
+        gp_result = self._adb_cmd("shell", f"getevent -p {dev} 2>/dev/null | grep '0035'")
+        gp_out = gp_result.stdout.decode(errors="replace")
+        m = re.search(r"max\s+(\d+)", gp_out)
+        if m:
+            axis_max = int(m.group(1))
+
+        n_steps = steps if steps > 0 else max(5, duration_ms // 20)
+        step_delay = (duration_ms / 1000) / n_steps
+
+        EV_SYN, EV_KEY, EV_ABS = 0, 1, 3
+        SYN_REPORT, BTN_TOUCH = 0, 330
+        SLOT, TID, MTX, MTY, PRESS = 47, 57, 53, 54, 58
+        TID_NONE = 4294967295
+
+        def px_to_raw(px: int, dim: int) -> int:
+            return max(0, min(axis_max, int(px * axis_max / dim)))
+
+        def se(t: int, c: int, v: int) -> str:
+            return f"sendevent {dev} {t} {c} {v}"
+
+        cmds: list[str] = []
+        for idx, finger in enumerate(fingers):
+            x1, y1 = finger["start"]
+            cmds += [
+                se(EV_ABS, SLOT, idx),
+                se(EV_ABS, TID, idx),
+                se(EV_ABS, MTX, px_to_raw(x1, screen_w)),
+                se(EV_ABS, MTY, px_to_raw(y1, screen_h)),
+                se(EV_ABS, PRESS, 64),
+            ]
+        cmds += [se(EV_KEY, BTN_TOUCH, 1), se(EV_SYN, SYN_REPORT, 0)]
+
+        for i in range(1, n_steps + 1):
+            t = i / n_steps
+            for idx, finger in enumerate(fingers):
+                x1, y1 = finger["start"]
+                x2, y2 = finger["end"]
+                cmds += [
+                    se(EV_ABS, SLOT, idx),
+                    se(EV_ABS, MTX, px_to_raw(int(x1 + (x2 - x1) * t), screen_w)),
+                    se(EV_ABS, MTY, px_to_raw(int(y1 + (y2 - y1) * t), screen_h)),
+                ]
+            cmds += [se(EV_SYN, SYN_REPORT, 0), f"sleep {step_delay:.3f}"]
+
+        for idx in range(len(fingers)):
+            cmds += [se(EV_ABS, SLOT, idx), se(EV_ABS, TID, TID_NONE)]
+        cmds += [se(EV_KEY, BTN_TOUCH, 0), se(EV_SYN, SYN_REPORT, 0)]
+
+        result = self._adb_cmd("shell", " && ".join(cmds), timeout=60)
+        return {
+            "stdout": result.stdout.decode(errors="replace"),
+            "returncode": result.returncode,
+        }
 
     async def screenshot(self) -> bytes:
         assert self._adb is not None, "Transport not connected"

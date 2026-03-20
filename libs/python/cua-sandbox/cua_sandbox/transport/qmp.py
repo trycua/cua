@@ -183,7 +183,7 @@ class QMPTransport(Transport):
             f"Supported: {', '.join(sorted(_ACTION_DISPATCH.keys()))}"
         )
 
-    async def screenshot(self) -> bytes:
+    async def screenshot(self, format: str = "png", quality: int = 95) -> bytes:
         """Capture a screenshot via QMP screendump → PPM → PNG."""
         ppm_path = str(self._tmpdir / "screen.ppm")
         await self._execute("screendump", {"filename": ppm_path})
@@ -198,7 +198,9 @@ class QMPTransport(Transport):
         if w and h:
             self._screen_w = w
             self._screen_h = h
-        return png_bytes
+        from cua_sandbox.transport.base import convert_screenshot
+
+        return convert_screenshot(png_bytes, format, quality)
 
     async def get_screen_size(self) -> Dict[str, int]:
         return {"width": self._screen_w, "height": self._screen_h}

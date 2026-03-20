@@ -97,6 +97,7 @@ _INSTALL_OS_MAP: Dict[str, Tuple[str, ...]] = {
     "choco_install": ("windows",),
     "winget_install": ("windows",),
     "apk_install": ("android",),
+    "pwa_install": ("android",),
 }
 
 
@@ -272,6 +273,21 @@ class Image:
         self._check_os("apk_install")
         return self._add_layer({"type": "apk_install", "packages": list(apk_paths)})
 
+    def pwa_install(self, manifest_url: str) -> Image:
+        """Build an APK from a PWA manifest URL via Bubblewrap and install it (Android only).
+
+        Bubblewrap reads the Web App Manifest at *manifest_url*, generates a
+        Trusted Web Activity (TWA) APK, signs it with a debug key, and installs
+        it via adb.  Node.js and the Android SDK must be present on the host
+        (they are pre-installed in the cua Android image).
+
+        Args:
+            manifest_url: Full URL to the PWA's ``manifest.json``.
+                          Example: ``"https://example.com/manifest.json"``
+        """
+        self._check_os("pwa_install")
+        return self._add_layer({"type": "pwa_install", "manifest_url": manifest_url})
+
     def uv_install(self, *packages: str) -> Image:
         """Install Python packages via uv add into the cua-server project."""
         return self._add_layer({"type": "uv_install", "packages": list(packages)})
@@ -350,6 +366,16 @@ class Image:
             elif lt == "apk_install":
                 for apk in layer["packages"]:
                     lines.append(f"adb install {apk}")
+            elif lt == "pwa_install":
+                manifest_url = layer["manifest_url"]
+                lines.append(
+                    # Install bubblewrap CLI (once), init a TWA project from the
+                    # manifest URL, build a debug APK, then install it via adb.
+                    f"npm install -g @bubblewrap/cli 2>/dev/null || true\n"
+                    f"_BWW_DIR=$(mktemp -d)\n"
+                    f"(cd \"$_BWW_DIR\" && bubblewrap init --manifest '{manifest_url}' --directory . --skipPwaValidation && bubblewrap build --skipSigning)\n"
+                    f'adb install "$_BWW_DIR/app-release-unsigned.apk"'
+                )
             elif lt == "run":
                 lines.append(layer["command"])
         return "\n".join(lines) + "\n"

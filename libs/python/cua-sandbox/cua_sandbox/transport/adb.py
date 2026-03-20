@@ -155,7 +155,7 @@ class ADBTransport(Transport):
             "returncode": result.returncode,
         }
 
-    async def screenshot(self) -> bytes:
+    async def screenshot(self, format: str = "png", quality: int = 95) -> bytes:
         assert self._adb is not None, "Transport not connected"
         # exec-out screencap -p returns PNG directly to stdout
         result = self._adb_cmd("exec-out", "screencap", "-p", timeout=15)

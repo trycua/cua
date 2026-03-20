@@ -83,7 +83,7 @@ class SSHTransport(Transport):
             }
         raise NotImplementedError(f"SSH transport does not support action: {action}")
 
-    async def screenshot(self) -> bytes:
+    async def screenshot(self, format: str = "png", quality: int = 95) -> bytes:
         raise NotImplementedError(
             "SSH transport does not support screenshots. "
             "Use VNCSSHTransport for screenshot support over SSH-tunneled VNC."

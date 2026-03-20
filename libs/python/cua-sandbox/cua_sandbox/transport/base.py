@@ -10,6 +10,27 @@ from abc import ABC, abstractmethod
 from typing import Any, Dict
 
 
+def convert_screenshot(png_bytes: bytes, format: str, quality: int) -> bytes:
+    """Convert raw PNG bytes to the requested format.
+
+    Args:
+        png_bytes: Raw PNG image bytes.
+        format: "png", "jpeg", or "jpg".
+        quality: JPEG quality (1-95), ignored for PNG.
+    """
+    fmt = format.lower()
+    if fmt in ("jpeg", "jpg"):
+        from io import BytesIO
+
+        from PIL import Image as PILImage
+
+        img = PILImage.open(BytesIO(png_bytes)).convert("RGB")
+        buf = BytesIO()
+        img.save(buf, format="JPEG", quality=quality)
+        return buf.getvalue()
+    return png_bytes
+
+
 class Transport(ABC):
     """Base class for all transports."""
 

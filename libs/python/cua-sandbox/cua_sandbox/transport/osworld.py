@@ -56,11 +56,13 @@ class OSWorldTransport(Transport):
             return resp.json()
         raise ValueError(f"Unknown action: {action}")
 
-    async def screenshot(self) -> bytes:
+    async def screenshot(self, format: str = "png", quality: int = 95) -> bytes:
         assert self._client is not None, "Transport not connected"
         resp = await self._client.get("/screenshot")
         resp.raise_for_status()
-        return resp.content
+        from cua_sandbox.transport.base import convert_screenshot
+
+        return convert_screenshot(resp.content, format, quality)
 
     async def get_screen_size(self) -> Dict[str, int]:
         assert self._client is not None, "Transport not connected"

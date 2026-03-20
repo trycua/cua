@@ -20,17 +20,20 @@ Usage
 
 Environment variables
 ─────────────────────
-  CUA_ANDROID_TEST_APK   path to a pre-built TouchTest debug APK
-                         default: <repo-root>/examples/touch_test_app/app/
-                                  build/outputs/apk/debug/app-debug.apk
+  CUA_ANDROID_TEST_APK   path or URL to a pre-built TouchTest debug APK
+                         default: latest release from
+                         https://github.com/trycua/android-touch-test-app
   CUA_TEST_API_KEY       Anthropic API key (cloud tests only)
   CUA_ANDROID_API_LEVEL  Android API level to boot  (default: 34)
   CUA_ANDROID_AVD_NAME   AVD name                   (default: cua-multitouch-test)
 
-Building the APK
-────────────────
-  cd examples/touch_test_app && ./gradlew assembleDebug
-  Requires Android SDK + JDK 17+.
+APK source
+──────────
+  The TouchTest APK is built and released from:
+  https://github.com/trycua/android-touch-test-app
+
+  Latest release download:
+  https://github.com/trycua/android-touch-test-app/releases/latest/download/app-debug.apk
 """
 
 from __future__ import annotations
@@ -39,7 +42,7 @@ import asyncio
 import json
 import os
 import re
-import subprocess
+import urllib.request
 from pathlib import Path
 
 import pytest
@@ -51,19 +54,12 @@ from cua_sandbox.transport.adb import ADBTransport
 
 # ── Config ─────────────────────────────────────────────────────────────────
 
-_REPO_ROOT = Path(__file__).parent.parent.parent.parent.parent  # cua-clean/
-_DEFAULT_APK = (
-    _REPO_ROOT
-    / "examples"
-    / "touch_test_app"
-    / "app"
-    / "build"
-    / "outputs"
-    / "apk"
-    / "debug"
-    / "app-debug.apk"
+_APK_RELEASE_URL = (
+    "https://github.com/trycua/android-touch-test-app" "/releases/latest/download/app-debug.apk"
 )
-_APK_PATH = Path(os.environ.get("CUA_ANDROID_TEST_APK", str(_DEFAULT_APK)))
+_APK_ENV = os.environ.get("CUA_ANDROID_TEST_APK", "")
+# If env var is a local path use it directly; otherwise download from releases.
+_APK_PATH = Path(_APK_ENV) if _APK_ENV and not _APK_ENV.startswith("http") else None
 _APK_PACKAGE = "com.cuatest.touchtest"
 _APK_ACTIVITY = "com.cuatest.touchtest/.MainActivity"
 _LOG_TAG = "TouchTest"
@@ -80,17 +76,20 @@ _AXIS_MAX = 32767  # raw axis range on virtio/goldfish touch devices
 # ── Helpers ────────────────────────────────────────────────────────────────
 
 
-def _build_apk() -> Path:
-    if _APK_PATH.exists():
-        return _APK_PATH
-    app_dir = _REPO_ROOT / "examples" / "touch_test_app"
-    if not app_dir.exists():
-        pytest.skip(f"TouchTest app source not found at {app_dir}")
-    print("\n[setup] Building APK via Gradle …")
-    subprocess.run(["./gradlew", "assembleDebug"], cwd=str(app_dir), check=True, timeout=300)
-    if not _APK_PATH.exists():
-        raise FileNotFoundError(f"Gradle succeeded but APK not found at {_APK_PATH}")
-    return _APK_PATH
+def _get_apk() -> Path:
+    """Return path to the TouchTest APK, downloading from GitHub Releases if needed."""
+    if _APK_PATH is not None:
+        if _APK_PATH.exists():
+            return _APK_PATH
+        raise FileNotFoundError(f"CUA_ANDROID_TEST_APK set but file not found: {_APK_PATH}")
+
+    # Download from latest release
+    cache = Path("/tmp/cua-touch-test-app-debug.apk")
+    if not cache.exists():
+        url = os.environ.get("CUA_ANDROID_TEST_APK", _APK_RELEASE_URL)
+        print(f"\n[setup] Downloading TouchTest APK from {url} …")
+        urllib.request.urlretrieve(url, cache)
+    return cache
 
 
 def _px_to_raw(px: int, screen_dim: int) -> int:
@@ -235,7 +234,7 @@ async def local_android_sb():
     APK, escalate to root, launch the app, and yield the ready Sandbox.
     Shared across all local tests so we only pay the boot cost once.
     """
-    apk = _build_apk()
+    apk = _get_apk()
 
     runtime = AndroidEmulatorRuntime(
         api_level=_API_LEVEL,

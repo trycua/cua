@@ -11,9 +11,8 @@ import json
 from typing import Any, Dict, Optional
 
 import websockets
-from websockets.asyncio.client import ClientConnection
-
 from cua_sandbox.transport.base import Transport
+from websockets.asyncio.client import ClientConnection
 
 
 class WebSocketTransport(Transport):
@@ -52,12 +51,15 @@ class WebSocketTransport(Transport):
             raise RuntimeError(f"Remote error: {resp['error']}")
         return resp.get("result") if isinstance(resp, dict) else resp
 
-    async def screenshot(self) -> bytes:
+    async def screenshot(self, format: str = "png", quality: int = 95) -> bytes:
         resp = await self._request({"command": "screenshot"})
         b64 = resp.get("result", resp.get("screenshot", ""))
         if isinstance(b64, dict):
             b64 = b64.get("base64", "")
-        return base64.b64decode(b64)
+        png = base64.b64decode(b64)
+        from cua_sandbox.transport.base import convert_screenshot
+
+        return convert_screenshot(png, format, quality)
 
     async def get_screen_size(self) -> Dict[str, int]:
         resp = await self._request({"command": "get_screen_size"})

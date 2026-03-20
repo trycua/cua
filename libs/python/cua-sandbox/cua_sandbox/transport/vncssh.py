@@ -130,7 +130,7 @@ class VNCSSHTransport(Transport):
             }
         raise NotImplementedError(f"VNCSSHTransport does not support action: {action}")
 
-    async def screenshot(self) -> bytes:
+    async def screenshot(self, format: str = "png", quality: int = 95) -> bytes:
         if not self._vnc_client:
             raise RuntimeError("VNC not connected")
 
@@ -141,7 +141,9 @@ class VNCSSHTransport(Transport):
         await loop.run_in_executor(None, self._vnc_client.captureScreen, tmp_path)
         data = Path(tmp_path).read_bytes()
         Path(tmp_path).unlink(missing_ok=True)
-        return data
+        from cua_sandbox.transport.base import convert_screenshot
+
+        return convert_screenshot(data, format, quality)
 
     async def get_screen_size(self) -> Dict[str, int]:
         if not self._vnc_client:

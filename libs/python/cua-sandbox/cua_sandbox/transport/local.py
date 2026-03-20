@@ -7,7 +7,6 @@ blocking the event loop.
 from __future__ import annotations
 
 import asyncio
-import base64
 import platform
 from typing import Any, Dict
 
@@ -28,9 +27,9 @@ class LocalTransport(Transport):
         return await asyncio.to_thread(self._dispatch, action, params)
 
     def _dispatch(self, command: str, params: dict) -> Any:
-        import cua_auto.mouse as mouse
-        import cua_auto.keyboard as keyboard
         import cua_auto.clipboard as clipboard
+        import cua_auto.keyboard as keyboard
+        import cua_auto.mouse as mouse
         import cua_auto.shell as shell
         import cua_auto.window as window
 
@@ -40,13 +39,22 @@ class LocalTransport(Transport):
             "right_click": lambda p: mouse.right_click(p["x"], p["y"]),
             "double_click": lambda p: mouse.double_click(p["x"], p["y"]),
             "move_cursor": lambda p: mouse.move_to(p["x"], p["y"]),
-            "scroll": lambda p: (mouse.move_to(p.get("x", 0), p.get("y", 0)), mouse.scroll(p.get("scroll_x", 0), p.get("scroll_y", 3))),
-            "mouse_down": lambda p: mouse.mouse_down(p.get("x"), p.get("y"), p.get("button", "left")),
+            "scroll": lambda p: (
+                mouse.move_to(p.get("x", 0), p.get("y", 0)),
+                mouse.scroll(p.get("scroll_x", 0), p.get("scroll_y", 3)),
+            ),
+            "mouse_down": lambda p: mouse.mouse_down(
+                p.get("x"), p.get("y"), p.get("button", "left")
+            ),
             "mouse_up": lambda p: mouse.mouse_up(p.get("x"), p.get("y"), p.get("button", "left")),
-            "drag": lambda p: mouse.drag(p["start_x"], p["start_y"], p["end_x"], p["end_y"], p.get("button", "left")),
+            "drag": lambda p: mouse.drag(
+                p["start_x"], p["start_y"], p["end_x"], p["end_y"], p.get("button", "left")
+            ),
             # Keyboard
             "type_text": lambda p: keyboard.type_text(p["text"]),
-            "hotkey": lambda p: keyboard.hotkey(p["keys"] if isinstance(p["keys"], list) else [p["keys"]]),
+            "hotkey": lambda p: keyboard.hotkey(
+                p["keys"] if isinstance(p["keys"], list) else [p["keys"]]
+            ),
             "key_down": lambda p: keyboard.key_down(p["key"]),
             "key_up": lambda p: keyboard.key_up(p["key"]),
             # Clipboard
@@ -63,11 +71,15 @@ class LocalTransport(Transport):
             raise ValueError(f"Unknown local command: {command}")
         return handler(params)
 
-    async def screenshot(self) -> bytes:
-        return await asyncio.to_thread(self._screenshot_sync)
+    async def screenshot(self, format: str = "png", quality: int = 95) -> bytes:
+        png = await asyncio.to_thread(self._screenshot_sync)
+        from cua_sandbox.transport.base import convert_screenshot
+
+        return convert_screenshot(png, format, quality)
 
     def _screenshot_sync(self) -> bytes:
         import cua_auto.screen as screen
+
         return screen.screenshot_bytes()
 
     async def get_screen_size(self) -> Dict[str, int]:
@@ -75,6 +87,7 @@ class LocalTransport(Transport):
 
     def _screen_size_sync(self) -> Dict[str, int]:
         import cua_auto.screen as screen
+
         w, h = screen.screen_size()
         return {"width": w, "height": h}
 

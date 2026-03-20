@@ -270,107 +270,109 @@ async def _reset_between_tests(request, local_android_sb: Sandbox):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Local tests
+# Shared test logic (mixin)
 # ══════════════════════════════════════════════════════════════════════════════
 
 
-@pytest.mark.asyncio
-class TestAndroidMultitouchLocal:
-    """Full touch action suite against a bare-metal AndroidEmulatorRuntime."""
+class _MultitouchTests:
+    """
+    Full touch action suite.  Subclasses must expose a ``sb`` fixture that
+    yields a ready Sandbox with the TouchTest APK installed and running.
+    """
 
     # ── Single-touch ──────────────────────────────────────────────────────
 
-    async def test_tap(self, local_android_sb: Sandbox):
-        w, h = await local_android_sb.get_dimensions()
-        await local_android_sb.mobile.tap(w // 2, h // 2)
+    async def test_tap(self, sb: Sandbox):
+        w, h = await sb.get_dimensions()
+        await sb.mobile.tap(w // 2, h // 2)
         await asyncio.sleep(_SETTLE_S)
 
-        te = await _read_events(local_android_sb)
+        te = await _read_events(sb)
         assert te, "No touch events received"
         assert _has_action(te, "ACTION_DOWN")
         assert _has_action(te, "ACTION_UP")
         assert _max_pointer_count(te) == 1
 
-    async def test_long_press(self, local_android_sb: Sandbox):
-        w, h = await local_android_sb.get_dimensions()
-        await local_android_sb.mobile.long_press(w // 2, h // 2, duration_ms=800)
+    async def test_long_press(self, sb: Sandbox):
+        w, h = await sb.get_dimensions()
+        await sb.mobile.long_press(w // 2, h // 2, duration_ms=800)
         await asyncio.sleep(_SETTLE_S)
 
-        te = await _read_events(local_android_sb)
+        te = await _read_events(sb)
         assert _has_action(te, "ACTION_DOWN")
         assert _has_action(te, "ACTION_UP")
         assert _max_pointer_count(te) == 1
 
-    async def test_double_tap(self, local_android_sb: Sandbox):
-        w, h = await local_android_sb.get_dimensions()
-        await local_android_sb.mobile.double_tap(w // 2, h // 2, delay=0.12)
+    async def test_double_tap(self, sb: Sandbox):
+        w, h = await sb.get_dimensions()
+        await sb.mobile.double_tap(w // 2, h // 2, delay=0.12)
         await asyncio.sleep(_SETTLE_S)
 
-        te = await _read_events(local_android_sb)
+        te = await _read_events(sb)
         downs = [e for e in te if e.get("action") == "ACTION_DOWN"]
         ups = [e for e in te if e.get("action") == "ACTION_UP"]
         assert len(downs) >= 2, f"Expected 2 ACTION_DOWNs, got {len(downs)}"
         assert len(ups) >= 2, f"Expected 2 ACTION_UPs,   got {len(ups)}"
         assert _max_pointer_count(te) == 1
 
-    async def test_swipe(self, local_android_sb: Sandbox):
-        w, h = await local_android_sb.get_dimensions()
-        await local_android_sb.mobile.swipe(w // 2, h * 3 // 4, w // 2, h // 4, duration_ms=300)
+    async def test_swipe(self, sb: Sandbox):
+        w, h = await sb.get_dimensions()
+        await sb.mobile.swipe(w // 2, h * 3 // 4, w // 2, h // 4, duration_ms=300)
         await asyncio.sleep(_SETTLE_S)
 
-        te = await _read_events(local_android_sb)
+        te = await _read_events(sb)
         assert _has_action(te, "ACTION_DOWN")
         assert _has_action(te, "ACTION_MOVE"), "Swipe produced no MOVE events"
         assert _has_action(te, "ACTION_UP")
         assert _max_pointer_count(te) == 1
 
-    async def test_fling(self, local_android_sb: Sandbox):
-        w, h = await local_android_sb.get_dimensions()
-        await local_android_sb.mobile.fling(w // 2, h * 3 // 4, w // 2, h // 4)
+    async def test_fling(self, sb: Sandbox):
+        w, h = await sb.get_dimensions()
+        await sb.mobile.fling(w // 2, h * 3 // 4, w // 2, h // 4)
         await asyncio.sleep(_SETTLE_S)
 
-        te = await _read_events(local_android_sb)
+        te = await _read_events(sb)
         assert _has_action(te, "ACTION_DOWN")
         assert _has_action(te, "ACTION_UP")
         assert _max_pointer_count(te) == 1
 
-    async def test_scroll_up(self, local_android_sb: Sandbox):
-        w, h = await local_android_sb.get_dimensions()
-        await local_android_sb.mobile.scroll_up(w // 2, h // 2, distance=400, duration_ms=300)
+    async def test_scroll_up(self, sb: Sandbox):
+        w, h = await sb.get_dimensions()
+        await sb.mobile.scroll_up(w // 2, h // 2, distance=400, duration_ms=300)
         await asyncio.sleep(_SETTLE_S)
-        te = await _read_events(local_android_sb)
+        te = await _read_events(sb)
         assert _has_action(te, "ACTION_DOWN") and _has_action(te, "ACTION_UP")
 
-    async def test_scroll_down(self, local_android_sb: Sandbox):
-        w, h = await local_android_sb.get_dimensions()
-        await local_android_sb.mobile.scroll_down(w // 2, h // 2, distance=400, duration_ms=300)
+    async def test_scroll_down(self, sb: Sandbox):
+        w, h = await sb.get_dimensions()
+        await sb.mobile.scroll_down(w // 2, h // 2, distance=400, duration_ms=300)
         await asyncio.sleep(_SETTLE_S)
-        te = await _read_events(local_android_sb)
+        te = await _read_events(sb)
         assert _has_action(te, "ACTION_DOWN") and _has_action(te, "ACTION_UP")
 
-    async def test_scroll_left(self, local_android_sb: Sandbox):
-        w, h = await local_android_sb.get_dimensions()
-        await local_android_sb.mobile.scroll_left(w // 2, h // 2, distance=300, duration_ms=300)
+    async def test_scroll_left(self, sb: Sandbox):
+        w, h = await sb.get_dimensions()
+        await sb.mobile.scroll_left(w // 2, h // 2, distance=300, duration_ms=300)
         await asyncio.sleep(_SETTLE_S)
-        te = await _read_events(local_android_sb)
+        te = await _read_events(sb)
         assert _has_action(te, "ACTION_DOWN") and _has_action(te, "ACTION_UP")
 
-    async def test_scroll_right(self, local_android_sb: Sandbox):
-        w, h = await local_android_sb.get_dimensions()
-        await local_android_sb.mobile.scroll_right(w // 2, h // 2, distance=300, duration_ms=300)
+    async def test_scroll_right(self, sb: Sandbox):
+        w, h = await sb.get_dimensions()
+        await sb.mobile.scroll_right(w // 2, h // 2, distance=300, duration_ms=300)
         await asyncio.sleep(_SETTLE_S)
-        te = await _read_events(local_android_sb)
+        te = await _read_events(sb)
         assert _has_action(te, "ACTION_DOWN") and _has_action(te, "ACTION_UP")
 
     # ── SDK pinch (MT Protocol B via sendevent) ────────────────────────────
 
-    async def test_pinch_in(self, local_android_sb: Sandbox):
+    async def test_pinch_in(self, sb: Sandbox):
         """sb.mobile.pinch_in delivers genuine pointer_count == 2 events."""
-        w, h = await local_android_sb.get_dimensions()
-        await local_android_sb.mobile.pinch_in(w // 2, h // 2, spread=200, duration_ms=400)
+        w, h = await sb.get_dimensions()
+        await sb.mobile.pinch_in(w // 2, h // 2, spread=200, duration_ms=400)
         await asyncio.sleep(_SETTLE_S)
 
-        te = await _read_events(local_android_sb)
+        te = await _read_events(sb)
         assert te, "No events received"
         assert (
             _max_pointer_count(te) >= 2
@@ -379,13 +381,13 @@ class TestAndroidMultitouchLocal:
             te, "ACTION_POINTER_DOWN"
         ), f"Missing ACTION_POINTER_DOWN — actions: {[e.get('action') for e in te]}"
 
-    async def test_pinch_out(self, local_android_sb: Sandbox):
+    async def test_pinch_out(self, sb: Sandbox):
         """sb.mobile.pinch_out delivers genuine pointer_count == 2 events."""
-        w, h = await local_android_sb.get_dimensions()
-        await local_android_sb.mobile.pinch_out(w // 2, h // 2, spread=200, duration_ms=400)
+        w, h = await sb.get_dimensions()
+        await sb.mobile.pinch_out(w // 2, h // 2, spread=200, duration_ms=400)
         await asyncio.sleep(_SETTLE_S)
 
-        te = await _read_events(local_android_sb)
+        te = await _read_events(sb)
         assert te, "No events received"
         assert (
             _max_pointer_count(te) >= 2
@@ -394,15 +396,11 @@ class TestAndroidMultitouchLocal:
 
     # ── SDK gesture() — arbitrary multi-finger paths ──────────────────────
 
-    async def test_gesture_pinch_out(self, local_android_sb: Sandbox):
-        """
-        sb.mobile.gesture() with two finger paths produces pointer_count == 2.
-        gesture() accepts a sequence of (x, y) waypoints per finger and
-        interpolates them into a single MT Protocol B sendevent script.
-        """
-        w, h = await local_android_sb.get_dimensions()
+    async def test_gesture_pinch_out(self, sb: Sandbox):
+        """sb.mobile.gesture() with two finger paths produces pointer_count == 2."""
+        w, h = await sb.get_dimensions()
         cx, cy, spread = w // 2, h // 2, 200
-        await local_android_sb.mobile.gesture(
+        await sb.mobile.gesture(
             (cx - 20, cy),
             (cx - spread, cy),  # finger 0: start → end
             (cx + 20, cy),
@@ -410,16 +408,16 @@ class TestAndroidMultitouchLocal:
         )
         await asyncio.sleep(_SETTLE_S)
 
-        te = await _read_events(local_android_sb)
+        te = await _read_events(sb)
         assert te, "No events received from gesture()"
         assert _max_pointer_count(te) >= 2
         assert _has_action(te, "ACTION_POINTER_DOWN")
 
-    async def test_gesture_two_finger_swipe(self, local_android_sb: Sandbox):
+    async def test_gesture_two_finger_swipe(self, sb: Sandbox):
         """Two parallel fingers moving down together."""
-        w, h = await local_android_sb.get_dimensions()
+        w, h = await sb.get_dimensions()
         offset = 150
-        await local_android_sb.mobile.gesture(
+        await sb.mobile.gesture(
             (w // 2 - offset, h // 4),
             (w // 2 - offset, h * 3 // 4),
             (w // 2 + offset, h // 4),
@@ -427,7 +425,7 @@ class TestAndroidMultitouchLocal:
         )
         await asyncio.sleep(_SETTLE_S)
 
-        te = await _read_events(local_android_sb)
+        te = await _read_events(sb)
         assert te, "No events received"
         move_two = [
             e for e in te if e.get("action") == "ACTION_MOVE" and e.get("pointer_count", 0) >= 2
@@ -436,13 +434,10 @@ class TestAndroidMultitouchLocal:
 
     # ── True multi-touch via raw sendevent ────────────────────────────────
 
-    async def test_true_multitouch_pinch_in(self, local_android_sb: Sandbox):
-        """
-        Raw MT Protocol B pinch-in: both fingers in one SYN_REPORT frame,
-        delivered as a single adb shell invocation.
-        """
-        dev = await _find_touch_device(local_android_sb)
-        w, h = await local_android_sb.get_dimensions()
+    async def test_true_multitouch_pinch_in(self, sb: Sandbox):
+        """Raw MT Protocol B pinch-in: both fingers in one SYN_REPORT frame."""
+        dev = await _find_touch_device(sb)
+        w, h = await sb.get_dimensions()
         cx, cy, spread = w // 2, h // 2, 250
 
         script = _build_two_finger_script(
@@ -458,17 +453,17 @@ class TestAndroidMultitouchLocal:
             screen_w=w,
             screen_h=h,
         )
-        await local_android_sb.shell.run(script, timeout=60)
+        await sb.shell.run(script, timeout=60)
         await asyncio.sleep(_SETTLE_S)
 
-        te = await _read_events(local_android_sb)
+        te = await _read_events(sb)
         assert te, "No touch events — check sendevent permissions"
         assert _max_pointer_count(te) >= 2
         assert _has_action(te, "ACTION_POINTER_DOWN")
 
-    async def test_true_multitouch_pinch_out(self, local_android_sb: Sandbox):
-        dev = await _find_touch_device(local_android_sb)
-        w, h = await local_android_sb.get_dimensions()
+    async def test_true_multitouch_pinch_out(self, sb: Sandbox):
+        dev = await _find_touch_device(sb)
+        w, h = await sb.get_dimensions()
         cx, cy, spread = w // 2, h // 2, 250
 
         script = _build_two_finger_script(
@@ -484,17 +479,17 @@ class TestAndroidMultitouchLocal:
             screen_w=w,
             screen_h=h,
         )
-        await local_android_sb.shell.run(script, timeout=60)
+        await sb.shell.run(script, timeout=60)
         await asyncio.sleep(_SETTLE_S)
 
-        te = await _read_events(local_android_sb)
+        te = await _read_events(sb)
         assert te, "No touch events"
         assert _max_pointer_count(te) >= 2
 
-    async def test_true_multitouch_two_finger_swipe(self, local_android_sb: Sandbox):
+    async def test_true_multitouch_two_finger_swipe(self, sb: Sandbox):
         """Two parallel fingers moving in the same direction."""
-        dev = await _find_touch_device(local_android_sb)
-        w, h = await local_android_sb.get_dimensions()
+        dev = await _find_touch_device(sb)
+        w, h = await sb.get_dimensions()
         offset = 150
 
         script = _build_two_finger_script(
@@ -512,20 +507,20 @@ class TestAndroidMultitouchLocal:
             steps=15,
             step_delay=0.02,
         )
-        await local_android_sb.shell.run(script, timeout=60)
+        await sb.shell.run(script, timeout=60)
         await asyncio.sleep(_SETTLE_S)
 
-        te = await _read_events(local_android_sb)
+        te = await _read_events(sb)
         assert te, "No touch events"
         move_with_two = [
             e for e in te if e.get("action") == "ACTION_MOVE" and e.get("pointer_count", 0) >= 2
         ]
         assert move_with_two, "No ACTION_MOVE events with pointer_count >= 2"
 
-    async def test_pointer_ids_are_distinct(self, local_android_sb: Sandbox):
+    async def test_pointer_ids_are_distinct(self, sb: Sandbox):
         """Each finger in a two-finger gesture must carry a unique pointer id."""
-        dev = await _find_touch_device(local_android_sb)
-        w, h = await local_android_sb.get_dimensions()
+        dev = await _find_touch_device(sb)
+        w, h = await sb.get_dimensions()
         cx, cy = w // 2, h // 2
 
         script = _build_two_finger_script(
@@ -542,10 +537,10 @@ class TestAndroidMultitouchLocal:
             screen_h=h,
             steps=8,
         )
-        await local_android_sb.shell.run(script, timeout=60)
+        await sb.shell.run(script, timeout=60)
         await asyncio.sleep(_SETTLE_S)
 
-        te = await _read_events(local_android_sb)
+        te = await _read_events(sb)
         two_ptr = [e for e in te if e.get("pointer_count", 0) >= 2]
         assert two_ptr, "No two-pointer events found"
         for ev in two_ptr:
@@ -554,41 +549,63 @@ class TestAndroidMultitouchLocal:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Cloud tests  (no-op — implementation TBD)
+# Local tests
 # ══════════════════════════════════════════════════════════════════════════════
 
 
 @pytest.mark.asyncio
-class TestAndroidMultitouchCloud:
+class TestAndroidMultitouchLocal(_MultitouchTests):
+    """Full touch action suite against a bare-metal AndroidEmulatorRuntime."""
+
+    @pytest_asyncio.fixture
+    async def sb(self, local_android_sb: Sandbox):
+        await _reset(local_android_sb)
+        return local_android_sb
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Cloud tests
+# ══════════════════════════════════════════════════════════════════════════════
+
+skip_no_api_key = pytest.mark.skipif(not _API_KEY, reason="CUA_TEST_API_KEY not set")
+
+
+@pytest_asyncio.fixture(scope="session", loop_scope="session")
+async def cloud_android_sb():
     """
-    Touch action suite against a cloud-hosted Android VM.
-
-    All tests are skipped until cloud Android sandbox support is wired up.
-    Set CUA_TEST_API_KEY to opt in when ready.
+    Spin up an ephemeral cloud Android VM, install the TouchTest APK, escalate
+    to root, launch the app, and yield the ready Sandbox.
+    Shared across all cloud tests so we only pay the boot cost once.
     """
+    if not _API_KEY:
+        pytest.skip("CUA_TEST_API_KEY not set — cloud tests skipped")
 
-    @pytest_asyncio.fixture(autouse=True)
-    async def _skip_if_no_key(self):
-        if not _API_KEY:
-            pytest.skip("CUA_TEST_API_KEY not set — cloud tests skipped")
+    async with sandbox(image=Image.android("14"), api_key=_API_KEY) as sb:
+        # Download and install the APK directly on the device
+        await sb.shell.run(
+            f"curl -fsSL -o /data/local/tmp/touchtest.apk '{_APK_RELEASE_URL}'",
+            timeout=120,
+        )
+        result = await sb.shell.run("pm install -r /data/local/tmp/touchtest.apk", timeout=60)
+        assert "Success" in result.stdout, f"APK install failed: {result.stdout}"
 
-    async def test_tap(self):
-        pytest.skip("cloud Android multitouch not yet implemented")
+        # Escalate to root so sendevent can write to /dev/input/*
+        await sb.shell.run("su root id", timeout=15)
+        await asyncio.sleep(1.5)
 
-    async def test_pinch_in(self):
-        pytest.skip("cloud Android multitouch not yet implemented")
+        # Launch app
+        await sb.shell.run(f"am start -n {_APK_ACTIVITY}")
+        await asyncio.sleep(_LAUNCH_WAIT_S)
 
-    async def test_pinch_out(self):
-        pytest.skip("cloud Android multitouch not yet implemented")
+        yield sb
 
-    async def test_gesture_pinch_out(self):
-        pytest.skip("cloud Android multitouch not yet implemented")
 
-    async def test_true_multitouch_pinch_in(self):
-        pytest.skip("cloud Android multitouch not yet implemented")
+@pytest.mark.asyncio
+@pytest.mark.skipif(not _API_KEY, reason="CUA_TEST_API_KEY not set")
+class TestAndroidMultitouchCloud(_MultitouchTests):
+    """Full touch action suite against a cloud-hosted Android VM."""
 
-    async def test_true_multitouch_pinch_out(self):
-        pytest.skip("cloud Android multitouch not yet implemented")
-
-    async def test_true_multitouch_two_finger_swipe(self):
-        pytest.skip("cloud Android multitouch not yet implemented")
+    @pytest_asyncio.fixture
+    async def sb(self, cloud_android_sb: Sandbox):
+        await _reset(cloud_android_sb)
+        return cloud_android_sb

@@ -219,6 +219,11 @@ handlers = {
     "set_clipboard": automation_handler.set_clipboard,
 }
 
+# Android-only commands — registered only when the Android handler is active
+# so non-Android server instances don't fail at startup with AttributeError.
+if hasattr(automation_handler, "multitouch_gesture"):
+    handlers["multitouch_gesture"] = automation_handler.multitouch_gesture
+
 
 class AuthenticationManager:
     def __init__(self):

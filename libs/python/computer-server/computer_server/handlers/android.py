@@ -10,6 +10,7 @@ from .base import (
     BaseDesktopHandler,
     BaseFileHandler,
     BaseWindowHandler,
+    normalize_screenshot_format,
 )
 
 # Map common key names to Android keycodes
@@ -439,16 +440,35 @@ class AndroidAutomationHandler(BaseAutomationHandler):
         return {}
 
     # Screen Actions
-    async def screenshot(self) -> Dict[str, Any]:
-        """Take a screenshot and return base64 encoded image."""
+    async def screenshot(self, format: str = "png", quality: int = 95) -> Dict[str, Any]:
+        """Take a screenshot and return base64 encoded image.
+
+        Args:
+            format: "png" (lossless, default) or "jpeg" / "jpg" (lossy, ~5-10x smaller).
+            quality: JPEG quality 1-95 (clamped); ignored for PNG.
+        """
+        try:
+            fmt, quality = normalize_screenshot_format(format, quality)
+        except ValueError as e:
+            return {"success": False, "error": str(e)}
         try:
             success, output = await adb_exec.run("shell", "screencap", "-p")
-            if success and output:
-                image_b64 = base64.b64encode(output).decode("utf-8")
-                return {"success": True, "image_data": image_b64}
-            else:
+            if not (success and output):
                 error_msg = output.decode("utf-8") if isinstance(output, bytes) else str(output)
                 return {"success": False, "error": f"Screenshot failed: {error_msg}"}
+
+            if fmt == "jpeg":
+                from io import BytesIO
+
+                from PIL import Image as PILImage
+
+                img = PILImage.open(BytesIO(output)).convert("RGB")
+                buf = BytesIO()
+                img.save(buf, format="JPEG", quality=quality, optimize=True)
+                output = buf.getvalue()
+
+            image_b64 = base64.b64encode(output).decode("utf-8")
+            return {"success": True, "image_data": image_b64, "format": fmt}
         except Exception as e:
             return {"success": False, "error": f"Screenshot error: {str(e)}"}
 

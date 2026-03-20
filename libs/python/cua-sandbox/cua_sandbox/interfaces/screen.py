@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import base64
-from typing import Dict, Tuple
+from typing import Tuple
 
 from cua_sandbox.transport.base import Transport
 
@@ -14,13 +14,18 @@ class Screen:
     def __init__(self, transport: Transport):
         self._t = transport
 
-    async def screenshot(self) -> bytes:
-        """Capture a screenshot and return raw PNG bytes."""
-        return await self._t.screenshot()
+    async def screenshot(self, format: str = "png", quality: int = 85) -> bytes:
+        """Capture a screenshot and return raw image bytes.
 
-    async def screenshot_base64(self) -> str:
+        Args:
+            format: "png" (lossless, default) or "jpeg" (lossy, ~5-10x smaller).
+            quality: JPEG quality 1-95, ignored for PNG.
+        """
+        return await self._t.screenshot(format=format, quality=quality)
+
+    async def screenshot_base64(self, format: str = "png", quality: int = 85) -> str:
         """Capture a screenshot and return as a base64-encoded string."""
-        raw = await self._t.screenshot()
+        raw = await self._t.screenshot(format=format, quality=quality)
         return base64.b64encode(raw).decode("ascii")
 
     async def size(self) -> Tuple[int, int]:

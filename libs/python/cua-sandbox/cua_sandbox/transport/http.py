@@ -81,9 +81,10 @@ class HTTPTransport(Transport):
         result = await self._cmd(action, params if params else None)
         return result.get("result", result)
 
-    async def screenshot(self) -> bytes:
-        result = await self._cmd("screenshot")
-        # computer-server returns {"success": true, "base64_image": "..."}
+    async def screenshot(self, format: str = "png", quality: int = 85) -> bytes:
+        params = None if format == "png" else {"format": format, "quality": quality}
+        result = await self._cmd("screenshot", params)
+        # computer-server returns {"success": true, "image_data": "..."}
         b64 = result.get("image_data", result.get("base64_image", result.get("result", "")))
         if isinstance(b64, dict):
             b64 = b64.get("image_data", b64.get("base64_image", b64.get("base64", "")))

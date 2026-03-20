@@ -118,9 +118,9 @@ class CloudTransport(Transport):
         assert self._inner, "Transport not connected"
         return await self._inner.send(action, **params)
 
-    async def screenshot(self) -> bytes:
+    async def screenshot(self, format: str = "png", quality: int = 85) -> bytes:
         assert self._inner, "Transport not connected"
-        return await self._inner.screenshot()
+        return await self._inner.screenshot(format=format, quality=quality)
 
     async def get_screen_size(self) -> Dict[str, int]:
         assert self._inner, "Transport not connected"

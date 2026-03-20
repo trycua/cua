@@ -208,11 +208,15 @@ class Sandbox:
         if self._runtime and self._runtime_info:
             await self._runtime.stop(self._runtime_info.name or self.name or "cua-sandbox")
 
-    async def screenshot(self, text: Optional[str] = None) -> bytes:
-        return await self._transport.screenshot()
+    async def screenshot(
+        self, text: Optional[str] = None, format: str = "png", quality: int = 85
+    ) -> bytes:
+        return await self._transport.screenshot(format=format, quality=quality)
 
-    async def screenshot_base64(self, text: Optional[str] = None) -> str:
-        return await self.screen.screenshot_base64()
+    async def screenshot_base64(
+        self, text: Optional[str] = None, format: str = "png", quality: int = 85
+    ) -> str:
+        return await self.screen.screenshot_base64(format=format, quality=quality)
 
     async def get_environment(self) -> str:
         return await self._transport.get_environment()

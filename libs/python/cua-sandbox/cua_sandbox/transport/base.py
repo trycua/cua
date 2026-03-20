@@ -26,8 +26,13 @@ class Transport(ABC):
         """Send a command and return the result."""
 
     @abstractmethod
-    async def screenshot(self) -> bytes:
-        """Capture a screenshot and return raw PNG bytes."""
+    async def screenshot(self, format: str = "png", quality: int = 85) -> bytes:
+        """Capture a screenshot and return raw image bytes.
+
+        Args:
+            format: "png" (lossless, default) or "jpeg" (lossy, ~5-10x smaller).
+            quality: JPEG quality 1-95, ignored for PNG.
+        """
 
     @abstractmethod
     async def get_screen_size(self) -> Dict[str, int]:

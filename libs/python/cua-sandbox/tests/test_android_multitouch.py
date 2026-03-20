@@ -50,7 +50,6 @@ import pytest_asyncio
 from cua_sandbox.image import Image
 from cua_sandbox.runtime.android_emulator import AndroidEmulatorRuntime
 from cua_sandbox.sandbox import Sandbox, sandbox
-from cua_sandbox.transport.adb import ADBTransport
 
 # ── Config ─────────────────────────────────────────────────────────────────
 
@@ -246,10 +245,8 @@ async def local_android_sb():
     image = Image.android(str(_API_LEVEL)).apk_install(str(apk))
 
     async with sandbox(runtime=runtime, image=image, name=_AVD_NAME) as sb:
-        transport: ADBTransport = sb._transport
-
-        # Escalate adbd to root so sendevent can write to /dev/input/*
-        transport._adb_cmd("root", timeout=15)
+        # Escalate to root so sendevent can write to /dev/input/*
+        await sb.shell.run("su root id", timeout=15)
         await asyncio.sleep(1.5)
 
         # Launch app
@@ -580,15 +577,8 @@ async def cloud_android_sb():
     if not _API_KEY:
         pytest.skip("CUA_TEST_API_KEY not set — cloud tests skipped")
 
-    async with sandbox(image=Image.android("14"), api_key=_API_KEY) as sb:
-        # Download and install the APK directly on the device
-        await sb.shell.run(
-            f"curl -fsSL -o /data/local/tmp/touchtest.apk '{_APK_RELEASE_URL}'",
-            timeout=120,
-        )
-        result = await sb.shell.run("pm install -r /data/local/tmp/touchtest.apk", timeout=60)
-        assert "Success" in result.stdout, f"APK install failed: {result.stdout}"
-
+    image = Image.android("14").apk_install(_APK_RELEASE_URL)
+    async with sandbox(image=image, api_key=_API_KEY) as sb:
         # Escalate to root so sendevent can write to /dev/input/*
         await sb.shell.run("su root id", timeout=15)
         await asyncio.sleep(1.5)

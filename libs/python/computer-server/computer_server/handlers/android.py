@@ -634,53 +634,23 @@ class AndroidAutomationHandler(BaseAutomationHandler):
         return {"success": success, "output": output}
 
     async def run_command(self, command: str) -> Dict[str, Any]:
-        """Run a shell command.
-
-        Commands containing 'uv', 'python', or '/home/androidusr' run on the container host.
-        Other commands run in the Android emulator via adb shell.
-        """
-        # Check if this command should run on the host
-        should_run_on_host = any(
-            keyword in command for keyword in ["uv", "python", "/home/androidusr"]
+        """Run a shell command inside the Android emulator via adb shell."""
+        process = await asyncio.create_subprocess_exec(
+            "adb",
+            "-s",
+            "emulator-5554",
+            "shell",
+            command,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
         )
-
-        if should_run_on_host:
-            # Run on container host
-            import os
-            import subprocess
-
-            try:
-                # Clear VIRTUAL_ENV to avoid UV conflicts
-                env = os.environ.copy()
-                env.pop("VIRTUAL_ENV", None)
-
-                result = subprocess.run(
-                    command, shell=True, capture_output=True, text=True, timeout=300, env=env
-                )
-                return {
-                    "stdout": result.stdout,
-                    "stderr": result.stderr,
-                    "return_code": result.returncode,
-                    "success": result.returncode == 0,
-                }
-            except subprocess.TimeoutExpired:
-                return {
-                    "stdout": "",
-                    "stderr": "Command timed out",
-                    "return_code": -1,
-                    "success": False,
-                }
-            except Exception as e:
-                return {"stdout": "", "stderr": str(e), "return_code": -1, "success": False}
-        else:
-            # Run in Android emulator via adb shell
-            success, output = await adb_exec.run("shell", command, decode=True)
-            return {
-                "stdout": output if success else "",
-                "stderr": "" if success else output,
-                "return_code": 0 if success else 1,
-                "success": success,
-            }
+        stdout, stderr = await process.communicate()
+        return {
+            "success": process.returncode == 0,
+            "stdout": stdout.decode() if stdout else "",
+            "stderr": stderr.decode() if stderr else "",
+            "return_code": process.returncode,
+        }
 
 
 class AndroidFileHandler(BaseFileHandler):

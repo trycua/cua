@@ -8,7 +8,7 @@ Auto-installs the Android SDK, creates an AVD, and boots to homescreen.
 
 import asyncio
 
-from cua_sandbox import Image, sandbox
+from cua_sandbox import Image, Sandbox
 from cua_sandbox.runtime import AndroidEmulatorRuntime
 
 
@@ -19,11 +19,8 @@ async def main():
     # Android 14 + F-Droid installed via ADB after boot
     image = Image.android("14").apk_install("https://f-droid.org/F-Droid.apk")
 
-    async with sandbox(
-        local=True,  # Use local=False for cloud infra
-        image=image,
-        runtime=runtime,
-        name="android-baremetal-demo",
+    async with Sandbox.ephemeral(
+        image, local=True, runtime=runtime, name="android-baremetal-demo"
     ) as sb:
         screenshot = await sb.screenshot()
         with open("/tmp/android-baremetal-screenshot.png", "wb") as f:

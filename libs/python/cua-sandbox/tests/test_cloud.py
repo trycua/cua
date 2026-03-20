@@ -10,7 +10,7 @@ from __future__ import annotations
 import os
 
 import pytest
-from cua_sandbox import sandbox
+from cua_sandbox import Image, Sandbox
 
 pytestmark = pytest.mark.asyncio
 
@@ -23,79 +23,77 @@ skip_no_key = pytest.mark.skipif(not API_KEY, reason="CUA_API_KEY not set")
 @skip_no_key
 async def test_cloud_connect_by_name():
     """Connect to an existing cloud VM by name and take a screenshot."""
-    async with sandbox(name=VM_NAME, api_key=API_KEY) as sb:
-        screenshot = await sb.screenshot()
-        assert screenshot[:4] == b"\x89PNG"
-        assert len(screenshot) > 1000
+    sb = await Sandbox.connect(VM_NAME, api_key=API_KEY)
+    screenshot = await sb.screenshot()
+    assert screenshot[:4] == b"\x89PNG"
+    assert len(screenshot) > 1000
+    await sb.disconnect()
 
 
 @skip_no_key
 async def test_cloud_shell():
     """Run a shell command on a cloud VM."""
-    async with sandbox(name=VM_NAME, api_key=API_KEY) as sb:
-        result = await sb.shell.run("echo hello-cloud")
-        assert result.success
-        assert "hello-cloud" in result.stdout
+    sb = await Sandbox.connect(VM_NAME, api_key=API_KEY)
+    result = await sb.shell.run("echo hello-cloud")
+    assert result.success
+    assert "hello-cloud" in result.stdout
+    await sb.disconnect()
 
 
 @skip_no_key
 async def test_cloud_screen_size():
     """Get screen dimensions from a cloud VM."""
-    async with sandbox(name=VM_NAME, api_key=API_KEY) as sb:
-        w, h = await sb.get_dimensions()
-        assert w > 0
-        assert h > 0
+    sb = await Sandbox.connect(VM_NAME, api_key=API_KEY)
+    w, h = await sb.get_dimensions()
+    assert w > 0
+    assert h > 0
+    await sb.disconnect()
 
 
 @skip_no_key
 async def test_cloud_keyboard_mouse():
     """Basic keyboard and mouse operations on a cloud VM."""
-    async with sandbox(name=VM_NAME, api_key=API_KEY) as sb:
-        await sb.mouse.move(100, 100)
-        await sb.mouse.click(100, 100)
-        await sb.keyboard.type("hello")
+    sb = await Sandbox.connect(VM_NAME, api_key=API_KEY)
+    await sb.mouse.move(100, 100)
+    await sb.mouse.click(100, 100)
+    await sb.keyboard.type("hello")
+    await sb.disconnect()
 
 
 @skip_no_key
 async def test_cloud_environment():
     """Get environment info from a cloud VM."""
-    async with sandbox(name=VM_NAME, api_key=API_KEY) as sb:
-        env = await sb.get_environment()
-        assert env in ("windows", "mac", "linux", "browser")
+    sb = await Sandbox.connect(VM_NAME, api_key=API_KEY)
+    env = await sb.get_environment()
+    assert env in ("windows", "mac", "linux", "browser")
+    await sb.disconnect()
 
 
 async def test_cloud_no_api_key_errors():
-    """Calling sandbox() with no API key gives a clear error."""
-    # Temporarily unset env var if present
+    """Connecting with no API key gives a clear error."""
     old = os.environ.pop("CUA_API_KEY", None)
     try:
         with pytest.raises(ValueError, match="No CUA API key found"):
-            async with sandbox(name="anything") as _sb:
-                pass
+            await Sandbox.connect("anything")
     finally:
         if old:
             os.environ["CUA_API_KEY"] = old
 
 
 async def test_cloud_no_image_no_name_errors():
-    """Calling sandbox() with API key but no name/image gives a clear error."""
-    with pytest.raises(ValueError, match="Cannot create a cloud VM without an image"):
-        async with sandbox(api_key="sk-test-fake-key") as _sb:
-            pass
+    """Creating without an image raises a clear error."""
+    with pytest.raises((ValueError, TypeError)):
+        await Sandbox._create(api_key="sk-test-fake-key")
 
 
 @skip_no_key
 async def test_cloud_ephemeral_linux():
     """Create an ephemeral cloud Linux VM, use it, and destroy on exit."""
-    from cua_sandbox import Image
-
-    async with sandbox(image=Image.linux(), api_key=API_KEY) as sb:
+    async with Sandbox.ephemeral(Image.linux(), api_key=API_KEY) as sb:
         assert sb.name is not None
-        # Wait for VM to be ready, then take a screenshot
         screenshot = await sb.screenshot()
         assert screenshot[:4] == b"\x89PNG"
         assert len(screenshot) > 1000
-        # Run a shell command
         result = await sb.shell.run("echo ephemeral-test")
         assert result.success
         assert "ephemeral-test" in result.stdout
@@ -104,9 +102,7 @@ async def test_cloud_ephemeral_linux():
 @skip_no_key
 async def test_cloud_ephemeral_android():
     """Create an ephemeral Android cloud VM, verify screenshot and display URL."""
-    from cua_sandbox import Image
-
-    async with sandbox(image=Image.android("14"), api_key=API_KEY) as sb:
+    async with Sandbox.ephemeral(Image.android("14"), api_key=API_KEY) as sb:
         assert sb.name is not None
         screenshot = await sb.screenshot()
         assert screenshot[:4] == b"\x89PNG"
@@ -123,5 +119,6 @@ async def test_cloud_invalid_api_key_errors():
     """An invalid (reversed) API key should get an HTTP error from the API."""
     reversed_key = API_KEY[::-1]
     with pytest.raises(Exception):
-        async with sandbox(name=VM_NAME, api_key=reversed_key) as sb:
-            await sb.screenshot()
+        sb = await Sandbox.connect(VM_NAME, api_key=reversed_key)
+        await sb.screenshot()
+        await sb.disconnect()

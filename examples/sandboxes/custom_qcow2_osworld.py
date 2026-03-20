@@ -9,7 +9,7 @@ for screenshots and commands.
 
 import asyncio
 
-from cua_sandbox import Image, sandbox
+from cua_sandbox import Image, Sandbox
 from cua_sandbox.runtime import QEMURuntime
 
 OSWORLD_IMAGE = (
@@ -35,12 +35,7 @@ async def main():
         agent_type="osworld",
     )
 
-    async with sandbox(
-        local=True,
-        image=image,
-        runtime=runtime,
-        name="osworld-demo",
-    ) as sb:
+    async with Sandbox.ephemeral(image, local=True, runtime=runtime, name="osworld-demo") as sb:
         screenshot = await sb.screenshot()
         with open("/tmp/osworld-screenshot.png", "wb") as f:
             f.write(screenshot)

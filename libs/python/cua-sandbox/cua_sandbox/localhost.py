@@ -16,7 +16,15 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 from typing import Any, AsyncIterator, Optional
 
-from cua_sandbox.interfaces import Clipboard, Keyboard, Mouse, Screen, Shell, Terminal, Window
+from cua_sandbox.interfaces import (
+    Clipboard,
+    Keyboard,
+    Mouse,
+    Screen,
+    Shell,
+    Terminal,
+    Window,
+)
 from cua_sandbox.transport.local import LocalTransport
 
 
@@ -36,7 +44,7 @@ class Localhost:
     async def _connect(self) -> None:
         await self._transport.connect()
 
-    async def close(self) -> None:
+    async def disconnect(self) -> None:
         await self._transport.disconnect()
 
     async def screenshot(self, text: Optional[str] = None) -> bytes:
@@ -56,7 +64,7 @@ class Localhost:
         return self
 
     async def __aexit__(self, *exc: Any) -> None:
-        await self.close()
+        await self.disconnect()
 
     def __repr__(self) -> str:
         return "Localhost()"
@@ -70,4 +78,4 @@ async def localhost() -> AsyncIterator[Localhost]:
     try:
         yield host
     finally:
-        await host.close()
+        await host.disconnect()

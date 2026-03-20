@@ -89,30 +89,30 @@ async def local_sandbox():
     host = Localhost()
     await host._connect()
     yield host
-    await host.close()
+    await host.disconnect()
 
 
 @pytest_asyncio.fixture
 async def ws_sandbox():
     if not WS_URL:
         pytest.skip("CUA_TEST_WS_URL not set")
-    sb = await Sandbox.create(ws_url=WS_URL, api_key=API_KEY, name="test-ws")
+    sb = await Sandbox._create(ws_url=WS_URL, api_key=API_KEY, name="test-ws")
     yield sb
-    await sb.close()
+    await sb.disconnect()
 
 
 @pytest_asyncio.fixture
 async def http_sandbox():
     if not HTTP_URL:
         pytest.skip("CUA_TEST_HTTP_URL not set")
-    sb = await Sandbox.create(
+    sb = await Sandbox._create(
         http_url=HTTP_URL,
         api_key=API_KEY,
         container_name=CONTAINER_NAME,
         name="test-http",
     )
     yield sb
-    await sb.close()
+    await sb.disconnect()
 
 
 @pytest_asyncio.fixture
@@ -122,7 +122,7 @@ async def localhost_instance():
     host = Localhost()
     await host._connect()
     yield host
-    await host.close()
+    await host.disconnect()
 
 
 # ---------------------------------------------------------------------------

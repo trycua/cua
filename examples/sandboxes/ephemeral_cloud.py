@@ -8,13 +8,11 @@ the VM on exit.
 
 import asyncio
 
-from cua_sandbox import Image, sandbox
+from cua_sandbox import Image, Sandbox
 
 
 async def main():
-    image = Image.linux()
-
-    async with sandbox(image=image) as sb:
+    async with Sandbox.ephemeral(Image.linux()) as sb:
         screenshot = await sb.screenshot()
         with open("/tmp/ephemeral-cloud-screenshot.png", "wb") as f:
             f.write(screenshot)

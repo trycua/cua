@@ -7,8 +7,8 @@ on an Android VM.
 
 Layout
 ──────
-  TestAndroidMultitouchLocal   bare-metal AndroidEmulatorRuntime via sandbox()
-  TestAndroidMultitouchCloud   cloud Android VM via sandbox()  [no-op, TBD]
+  TestAndroidMultitouchLocal   bare-metal AndroidEmulatorRuntime via Sandbox.ephemeral()
+  TestAndroidMultitouchCloud   cloud Android VM via Sandbox.ephemeral()
 
 Usage
 ─────
@@ -49,7 +49,7 @@ import pytest
 import pytest_asyncio
 from cua_sandbox.image import Image
 from cua_sandbox.runtime.android_emulator import AndroidEmulatorRuntime
-from cua_sandbox.sandbox import Sandbox, sandbox
+from cua_sandbox.sandbox import Sandbox
 
 # ── Config ─────────────────────────────────────────────────────────────────
 
@@ -138,7 +138,7 @@ def event_loop():
 @pytest_asyncio.fixture(scope="session", loop_scope="session")
 async def local_android_sb():
     """
-    Boot a single AndroidEmulatorRuntime via sandbox(), install the TouchTest
+    Boot a single AndroidEmulatorRuntime via Sandbox.ephemeral(), install the TouchTest
     APK, escalate to root, launch the app, and yield the ready Sandbox.
     Shared across all local tests so we only pay the boot cost once.
     """
@@ -153,7 +153,7 @@ async def local_android_sb():
 
     image = Image.android(str(_API_LEVEL)).apk_install(str(apk))
 
-    async with sandbox(runtime=runtime, image=image, name=_AVD_NAME) as sb:
+    async with Sandbox.ephemeral(image, runtime=runtime, name=_AVD_NAME) as sb:
         # Launch app
         await sb.shell.run(f"am start -n {_APK_ACTIVITY}")
         await asyncio.sleep(_LAUNCH_WAIT_S)
@@ -444,7 +444,7 @@ async def cloud_android_sb():
         pytest.skip("CUA_TEST_API_KEY not set — cloud tests skipped")
 
     image = Image.android("14").apk_install(_APK_RELEASE_URL)
-    async with sandbox(image=image, api_key=_API_KEY) as sb:
+    async with Sandbox.ephemeral(image, api_key=_API_KEY) as sb:
         # Launch app
         await sb.shell.run(f"am start -n {_APK_ACTIVITY}")
         await asyncio.sleep(_LAUNCH_WAIT_S)

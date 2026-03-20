@@ -3,10 +3,10 @@ AsyncComputerHandler for the cua-agent ComputerAgent.
 
 Usage::
 
-    from cua_sandbox import sandbox
+    from cua_sandbox import Image, Sandbox
     from cua_sandbox.agent import SandboxHandler, LocalhostHandler
 
-    async with sandbox(local=True) as sb:
+    async with Sandbox.ephemeral(Image.linux(), local=True) as sb:
         handler = SandboxHandler(sb)
         agent = ComputerAgent(model="...", tools=[handler])
 """
@@ -17,8 +17,8 @@ import asyncio
 import base64
 from typing import Any, Dict, List, Literal, Optional, Union
 
-from cua_sandbox.sandbox import Sandbox
 from cua_sandbox.localhost import Localhost
+from cua_sandbox.sandbox import Sandbox
 
 
 class SandboxHandler:

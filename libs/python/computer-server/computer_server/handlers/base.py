@@ -186,6 +186,30 @@ class BaseWindowHandler(ABC):
         pass
 
 
+_SUPPORTED_FORMATS = {"png", "jpeg"}
+_FORMAT_ALIASES = {"jpg": "jpeg"}
+
+
+def normalize_screenshot_format(format: str, quality: int) -> tuple[str, int]:
+    """Normalize and validate screenshot format/quality.
+
+    Returns ``(normalized_format, clamped_quality)`` or raises ``ValueError``.
+
+    - Lowercases the format string.
+    - Maps "jpg" → "jpeg".
+    - Rejects anything not in ``{"png", "jpeg"}``.
+    - Clamps JPEG quality to 1–95 (silently caps values above 95).
+    """
+    fmt = _FORMAT_ALIASES.get(format.lower(), format.lower())
+    if fmt not in _SUPPORTED_FORMATS:
+        raise ValueError(
+            f"Unsupported screenshot format {format!r}. " f"Supported: {sorted(_SUPPORTED_FORMATS)}"
+        )
+    if fmt == "jpeg":
+        quality = max(1, min(95, quality))
+    return fmt, quality
+
+
 class BaseAutomationHandler(ABC):
     """Abstract base class for OS-specific automation handlers.
 
@@ -312,7 +336,7 @@ class BaseAutomationHandler(ABC):
 
     # Screen Actions
     @abstractmethod
-    async def screenshot(self, format: str = "png", quality: int = 85) -> Dict[str, Any]:
+    async def screenshot(self, format: str = "png", quality: int = 95) -> Dict[str, Any]:
         """Take a screenshot and return base64 encoded image data.
 
         Args:

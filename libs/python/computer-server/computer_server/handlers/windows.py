@@ -63,7 +63,11 @@ except Exception as e:
     )
     WINDOWS_API_AVAILABLE = False
 
-from .base import BaseAccessibilityHandler, BaseAutomationHandler
+from .base import (
+    BaseAccessibilityHandler,
+    BaseAutomationHandler,
+    normalize_screenshot_format,
+)
 
 
 class WindowsAccessibilityHandler(BaseAccessibilityHandler):
@@ -632,20 +636,24 @@ class WindowsAutomationHandler(BaseAutomationHandler):
 
     # Screen Actions
     @require_unlocked_desktop
-    async def screenshot(self, format: str = "png", quality: int = 85) -> Dict[str, Any]:
+    async def screenshot(self, format: str = "png", quality: int = 95) -> Dict[str, Any]:
         """Capture a screenshot of the entire screen.
 
         Args:
-            format: "png" (lossless, default) or "jpeg" (lossy, smaller).
-            quality: JPEG quality 1-95, ignored for PNG.
+            format: "png" (lossless, default), "jpeg" or "jpg" (lossy, smaller).
+            quality: JPEG quality 1-95 (clamped); ignored for PNG.
         """
+        try:
+            fmt, quality = normalize_screenshot_format(format, quality)
+        except ValueError as e:
+            return {"success": False, "error": str(e)}
         try:
             screenshot = ImageGrab.grab()
             if not isinstance(screenshot, Image.Image):
                 return {"success": False, "error": "Failed to capture screenshot"}
 
             buffered = BytesIO()
-            if format == "jpeg":
+            if fmt == "jpeg":
                 screenshot.convert("RGB").save(
                     buffered, format="JPEG", quality=quality, optimize=True
                 )
@@ -653,7 +661,7 @@ class WindowsAutomationHandler(BaseAutomationHandler):
                 screenshot.save(buffered, format="PNG", optimize=True)
             buffered.seek(0)
             image_data = base64.b64encode(buffered.getvalue()).decode()
-            return {"success": True, "image_data": image_data, "format": format}
+            return {"success": True, "image_data": image_data, "format": fmt}
         except Exception as e:
             return {"success": False, "error": f"Screenshot error: {str(e)}"}
 

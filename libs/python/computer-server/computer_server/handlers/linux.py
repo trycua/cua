@@ -28,7 +28,11 @@ from pynput.keyboard import Key
 from pynput.mouse import Button
 from pynput.mouse import Controller as MouseController
 
-from .base import BaseAccessibilityHandler, BaseAutomationHandler
+from .base import (
+    BaseAccessibilityHandler,
+    BaseAutomationHandler,
+    normalize_screenshot_format,
+)
 
 
 class LinuxAccessibilityHandler(BaseAccessibilityHandler):
@@ -489,19 +493,23 @@ class LinuxAutomationHandler(BaseAutomationHandler):
             return {"success": False, "error": str(e)}
 
     # Screen Actions
-    async def screenshot(self, format: str = "png", quality: int = 85) -> Dict[str, Any]:
+    async def screenshot(self, format: str = "png", quality: int = 95) -> Dict[str, Any]:
         """Take a screenshot of the current screen.
 
         Args:
-            format: "png" (lossless, default) or "jpeg" (lossy, smaller).
-            quality: JPEG quality 1-95, ignored for PNG.
+            format: "png" (lossless, default), "jpeg" or "jpg" (lossy, smaller).
+            quality: JPEG quality 1-95 (clamped); ignored for PNG.
         """
+        try:
+            fmt, quality = normalize_screenshot_format(format, quality)
+        except ValueError as e:
+            return {"success": False, "error": str(e)}
         try:
             screenshot = ImageGrab.grab()
             if not isinstance(screenshot, Image.Image):
                 return {"success": False, "error": "Failed to capture screenshot"}
             buffered = BytesIO()
-            if format == "jpeg":
+            if fmt == "jpeg":
                 screenshot.convert("RGB").save(
                     buffered, format="JPEG", quality=quality, optimize=True
                 )
@@ -509,7 +517,7 @@ class LinuxAutomationHandler(BaseAutomationHandler):
                 screenshot.save(buffered, format="PNG", optimize=True)
             buffered.seek(0)
             image_data = base64.b64encode(buffered.getvalue()).decode()
-            return {"success": True, "image_data": image_data, "format": format}
+            return {"success": True, "image_data": image_data, "format": fmt}
         except Exception as e:
             return {"success": False, "error": f"Screenshot error: {str(e)}"}
 

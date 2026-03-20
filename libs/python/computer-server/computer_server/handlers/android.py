@@ -4,8 +4,6 @@ import logging
 from typing import Any, Dict, List, Optional, Tuple
 
 from ..utils.helpers import CommandExecutor
-
-logger = logging.getLogger(__name__)
 from .base import (
     BaseAccessibilityHandler,
     BaseAutomationHandler,
@@ -32,6 +30,7 @@ ANDROID_KEY_MAP = {
     "right": "22",
 }
 
+logger = logging.getLogger(__name__)
 adb_exec = CommandExecutor("adb", "-s", "emulator-5554")
 
 
@@ -547,25 +546,30 @@ class AndroidAutomationHandler(BaseAutomationHandler):
             logger.warning("adb root failed (output: %r); sendevent may lack permissions", root_out)
         await asyncio.sleep(1.0)  # wait for adbd to restart
 
-        # Find the touchscreen event device
+        # Find the touchscreen event device.
+        # Use `getevent -p` (no file arg) to list all devices at once and search
+        # for "0035  :" which is the ABS axis definition syntax for ABS_MT_POSITION_X.
+        # This avoids false matches from keyboard devices whose KEY listing contains
+        # 0035 as a scancode (e.g. "AT Translated Set 2 keyboard").
         ok, dev_out = await adb_exec.run(
             "shell",
-            "for f in /dev/input/event*; do "
-            "  getevent -p \"$f\" 2>/dev/null | grep -q '0035' "
-            '    && echo "$f" && break; '
-            "done",
+            "getevent -p 2>/dev/null | awk '/add device/{dev=$NF} /0035  :/{print dev; exit}'",
             decode=True,
         )
         if ok and dev_out.strip():
             dev = dev_out.strip()
         else:
-            dev = "/dev/input/event1"
+            dev = "/dev/input/event2"
             logger.warning("touch device detection failed; falling back to %s", dev)
 
-        # Detect axis max from getevent -p (e.g. "max 32767")
+        # Detect axis max from getevent -p for the detected device
         axis_max = 32767
+        dev_name = dev.split("/")[-1]  # e.g. "event2"
         ok2, gp_out = await adb_exec.run(
-            "shell", f"getevent -p {dev} 2>/dev/null | grep '0035'", decode=True
+            "shell",
+            "getevent -p 2>/dev/null | awk "
+            f"'/add device.*{dev_name}/{{found=1}} found && /0035  :/{{print; exit}}'",
+            decode=True,
         )
         if ok2 and "max" in gp_out:
             import re as _re

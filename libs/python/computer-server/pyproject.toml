@@ -4,7 +4,7 @@ build-backend = "pdm.backend"
 
 [project]
 name = "cua-computer-server"
-version = "0.3.20"
+version = "0.3.25"
 
 description = "Server component for the Computer-Use Interface (CUI) framework powering Cua"
 authors = [
@@ -48,6 +48,9 @@ linux = [
 ]
 windows = [
     "pywin32>=310"
+]
+vnc = [
+    "vncdotool>=1.2.0"
 ]
 
 [project.urls]

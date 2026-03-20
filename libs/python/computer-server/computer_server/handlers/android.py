@@ -525,7 +525,15 @@ class AndroidAutomationHandler(BaseAutomationHandler):
         duration_ms: int = 400,
         steps: int = 0,
     ) -> Dict[str, Any]:
-        """Inject a multi-touch gesture via MT Protocol B sendevent.
+        """Inject a multi-touch gesture via sendevent.
+
+        Supports two hardware topologies:
+
+        * **virtio-input** (cloud VMs): 11 separate ``virtio_input_multi_touch_N``
+          devices, one per finger (event2–event12).  Each finger is written to its
+          own device with ``ABS_MT_SLOT=0``; no cross-device slot sharing.
+        * **Single MT device** (local AVDs): classic MT Protocol B — all fingers
+          on one device via ``ABS_MT_SLOT`` 0, 1, …
 
         Uses ``adb root`` to restart adbd as root so that ``sendevent`` can
         write to ``/dev/input/event*`` without requiring ``su`` inside the
@@ -543,25 +551,36 @@ class AndroidAutomationHandler(BaseAutomationHandler):
         await adb_exec.run("root", decode=True)
         await asyncio.sleep(1.0)  # wait for adbd to restart
 
-        # Find the touchscreen event device.
+        # Enumerate all touch devices and detect topology.
         # Use `getevent -p` (no file arg) to list all devices at once and search
         # for "0035  :" which is the ABS axis definition syntax for ABS_MT_POSITION_X.
         # This avoids false matches from keyboard devices whose KEY listing contains
         # 0035 as a scancode (e.g. "AT Translated Set 2 keyboard" on cloud VMs).
         ok, dev_out = await adb_exec.run(
             "shell",
-            "getevent -p 2>/dev/null | awk '/add device/{dev=$NF} /0035  :/{print dev; exit}'",
+            "getevent -p 2>/dev/null | awk '/add device/{dev=$NF} /0035  :/{print dev}'",
             decode=True,
         )
+        touch_devs: List[str] = []
         if ok and dev_out.strip():
-            dev = dev_out.strip()
-        else:
-            dev = "/dev/input/event2"
-            logger.warning("touch device detection failed; falling back to %s", dev)
+            touch_devs = [d for d in dev_out.strip().splitlines() if d.strip()]
 
-        # Detect axis max from getevent -p for the detected device
+        if not touch_devs:
+            touch_devs = ["/dev/input/event2"]
+            logger.warning("touch device detection failed; falling back to %s", touch_devs[0])
+
+        # On virtio VMs, getevent -p lists 11 separate virtio_input_multi_touch_N
+        # devices (event2..event12).  Android only reads the lowest-numbered one
+        # (event2 = virtio_input_multi_touch_1) and supports multiple slots on it.
+        # Sort numerically and always use the lowest-numbered device for all fingers
+        # via standard MT Protocol B slots — writing to separate devices does NOT
+        # produce multi-finger events from Android's perspective.
+        touch_devs.sort(key=lambda d: int(d.replace("/dev/input/event", "") or "0"))
+        dev = touch_devs[0]
+
+        # Detect axis max from the first touch device
         axis_max = 32767
-        dev_name = dev.split("/")[-1]  # e.g. "event2"
+        dev_name = dev.split("/")[-1]
         ok2, gp_out = await adb_exec.run(
             "shell",
             "getevent -p 2>/dev/null | awk "
@@ -586,22 +605,26 @@ class AndroidAutomationHandler(BaseAutomationHandler):
         def px_to_raw(px: int, dim: int) -> int:
             return max(0, min(axis_max, int(px * axis_max / dim)))
 
-        def se(t: int, c: int, v: int) -> str:
+        def se(dev: str, t: int, c: int, v: int) -> str:
             return f"sendevent {dev} {t} {c} {v}"
 
         cmds: List[str] = []
+
+        # MT Protocol B on the primary touch device: all fingers via slots.
+        # This works for both local AVDs (single MT device) and virtio VMs
+        # (where event2 = virtio_input_multi_touch_1 supports up to 11 slots).
 
         # Touch down — all fingers in one SYN_REPORT frame
         for idx, finger in enumerate(fingers):
             x1, y1 = finger["start"]
             cmds += [
-                se(EV_ABS, SLOT, idx),
-                se(EV_ABS, TID, idx),
-                se(EV_ABS, MTX, px_to_raw(x1, screen_w)),
-                se(EV_ABS, MTY, px_to_raw(y1, screen_h)),
-                se(EV_ABS, PRESS, 64),
+                se(dev, EV_ABS, SLOT, idx),
+                se(dev, EV_ABS, TID, idx),
+                se(dev, EV_ABS, MTX, px_to_raw(x1, screen_w)),
+                se(dev, EV_ABS, MTY, px_to_raw(y1, screen_h)),
+                se(dev, EV_ABS, PRESS, 64),
             ]
-        cmds += [se(EV_KEY, BTN_TOUCH, 1), se(EV_SYN, SYN_REPORT, 0)]
+        cmds += [se(dev, EV_KEY, BTN_TOUCH, 1), se(dev, EV_SYN, SYN_REPORT, 0)]
 
         # Interpolated movement
         for i in range(1, n_steps + 1):
@@ -610,69 +633,39 @@ class AndroidAutomationHandler(BaseAutomationHandler):
                 x1, y1 = finger["start"]
                 x2, y2 = finger["end"]
                 cmds += [
-                    se(EV_ABS, SLOT, idx),
-                    se(EV_ABS, MTX, px_to_raw(int(x1 + (x2 - x1) * t), screen_w)),
-                    se(EV_ABS, MTY, px_to_raw(int(y1 + (y2 - y1) * t), screen_h)),
+                    se(dev, EV_ABS, SLOT, idx),
+                    se(dev, EV_ABS, MTX, px_to_raw(int(x1 + (x2 - x1) * t), screen_w)),
+                    se(dev, EV_ABS, MTY, px_to_raw(int(y1 + (y2 - y1) * t), screen_h)),
                 ]
-            cmds += [se(EV_SYN, SYN_REPORT, 0), f"sleep {step_delay:.3f}"]
+            cmds += [se(dev, EV_SYN, SYN_REPORT, 0), f"sleep {step_delay:.3f}"]
 
         # Touch up — all fingers in one SYN_REPORT frame
         for idx in range(len(fingers)):
-            cmds += [se(EV_ABS, SLOT, idx), se(EV_ABS, TID, TID_NONE)]
-        cmds += [se(EV_KEY, BTN_TOUCH, 0), se(EV_SYN, SYN_REPORT, 0)]
+            cmds += [se(dev, EV_ABS, SLOT, idx), se(dev, EV_ABS, TID, TID_NONE)]
+        cmds += [se(dev, EV_KEY, BTN_TOUCH, 0), se(dev, EV_SYN, SYN_REPORT, 0)]
 
         script = " && ".join(cmds)
         success, output = await adb_exec.run("shell", script, decode=True)
         return {"success": success, "output": output}
 
     async def run_command(self, command: str) -> Dict[str, Any]:
-        """Run a shell command.
-
-        Commands containing 'uv', 'python', or '/home/androidusr' run on the container host.
-        Other commands run in the Android emulator via adb shell.
-        """
-        # Check if this command should run on the host
-        should_run_on_host = any(
-            keyword in command for keyword in ["uv", "python", "/home/androidusr"]
+        """Run a shell command inside the Android emulator via adb shell."""
+        process = await asyncio.create_subprocess_exec(
+            "adb",
+            "-s",
+            "emulator-5554",
+            "shell",
+            command,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
         )
-
-        if should_run_on_host:
-            # Run on container host
-            import os
-            import subprocess
-
-            try:
-                # Clear VIRTUAL_ENV to avoid UV conflicts
-                env = os.environ.copy()
-                env.pop("VIRTUAL_ENV", None)
-
-                result = subprocess.run(
-                    command, shell=True, capture_output=True, text=True, timeout=300, env=env
-                )
-                return {
-                    "stdout": result.stdout,
-                    "stderr": result.stderr,
-                    "return_code": result.returncode,
-                    "success": result.returncode == 0,
-                }
-            except subprocess.TimeoutExpired:
-                return {
-                    "stdout": "",
-                    "stderr": "Command timed out",
-                    "return_code": -1,
-                    "success": False,
-                }
-            except Exception as e:
-                return {"stdout": "", "stderr": str(e), "return_code": -1, "success": False}
-        else:
-            # Run in Android emulator via adb shell
-            success, output = await adb_exec.run("shell", command, decode=True)
-            return {
-                "stdout": output if success else "",
-                "stderr": "" if success else output,
-                "return_code": 0 if success else 1,
-                "success": success,
-            }
+        stdout, stderr = await process.communicate()
+        return {
+            "success": process.returncode == 0,
+            "stdout": stdout.decode() if stdout else "",
+            "stderr": stderr.decode() if stderr else "",
+            "return_code": process.returncode,
+        }
 
 
 class AndroidFileHandler(BaseFileHandler):

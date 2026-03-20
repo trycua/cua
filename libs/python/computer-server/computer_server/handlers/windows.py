@@ -698,42 +698,9 @@ class WindowsAutomationHandler(BaseAutomationHandler):
         except Exception as e:
             return {"success": False, "error": str(e)}
 
-    # Clipboard Actions
-    async def copy_to_clipboard(self) -> Dict[str, Any]:
-        """Get the current content of the clipboard.
+    # Clipboard inherited from BaseAutomationHandler
 
-        Returns:
-            Dict[str, Any]: A dictionary containing the success status and either
-                           clipboard content or an error message.
-                           Structure: {"success": bool, "content": str} or
-                                    {"success": bool, "error": str}
-        """
-        try:
-            import pyperclip
-
-            content = pyperclip.paste()
-            return {"success": True, "content": content}
-        except Exception as e:
-            return {"success": False, "error": str(e)}
-
-    async def set_clipboard(self, text: str) -> Dict[str, Any]:
-        """Set the clipboard content to the specified text.
-
-        Args:
-            text (str): The text to copy to the clipboard.
-
-        Returns:
-            Dict[str, Any]: A dictionary with success status and optional error message.
-        """
-        try:
-            import pyperclip
-
-            pyperclip.copy(text)
-            return {"success": True}
-        except Exception as e:
-            return {"success": False, "error": str(e)}
-
-    # Command Execution
+    # Command Execution (Windows override for multi-encoding support)
     async def run_command(self, command: str) -> Dict[str, Any]:
         """Execute a shell command asynchronously.
 
@@ -759,13 +726,19 @@ class WindowsAutomationHandler(BaseAutomationHandler):
             return data.decode("utf-8", errors="replace")
 
         try:
-            # Create subprocess
-            process = await asyncio.create_subprocess_shell(
-                command, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
-            )
-            # Wait for the subprocess to finish
+            if os.environ.get("IS_CUA_ANDROID") == "true":
+                process = await asyncio.create_subprocess_exec(
+                    "adb",
+                    "shell",
+                    command,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+            else:
+                process = await asyncio.create_subprocess_shell(
+                    command, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+                )
             stdout, stderr = await process.communicate()
-            # Return decoded output
             return {
                 "success": True,
                 "stdout": decode_output(stdout),

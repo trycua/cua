@@ -1,8 +1,11 @@
 import asyncio
 import base64
+import logging
 from typing import Any, Dict, List, Optional, Tuple
 
 from ..utils.helpers import CommandExecutor
+
+logger = logging.getLogger(__name__)
 from .base import (
     BaseAccessibilityHandler,
     BaseAutomationHandler,
@@ -521,9 +524,27 @@ class AndroidAutomationHandler(BaseAutomationHandler):
             screen_h:    Screen height in pixels.
             duration_ms: Total gesture duration in milliseconds.
             steps:       Interpolation steps (0 = auto).
+
+        Raises:
+            ValueError:   If fewer than 2 fingers are provided or a finger dict
+                          is missing ``start``/``end`` keys.
+            RuntimeError: If sendevent injection fails.
         """
+        # Validate fingers
+        if len(fingers) < 2:
+            raise ValueError(f"multitouch_gesture requires at least 2 fingers, got {len(fingers)}")
+        for i, finger in enumerate(fingers):
+            if "start" not in finger or "end" not in finger:
+                raise ValueError(
+                    f"fingers[{i}] must have 'start' and 'end' keys, got: {list(finger.keys())}"
+                )
+            if len(finger["start"]) != 2 or len(finger["end"]) != 2:
+                raise ValueError(f"fingers[{i}] 'start' and 'end' must be [x, y] pairs")
+
         # Restart adbd as root so sendevent works without su
-        await adb_exec.run("root", decode=True)
+        ok_root, root_out = await adb_exec.run("root", decode=True)
+        if not ok_root:
+            logger.warning("adb root failed (output: %r); sendevent may lack permissions", root_out)
         await asyncio.sleep(1.0)  # wait for adbd to restart
 
         # Find the touchscreen event device
@@ -535,7 +556,11 @@ class AndroidAutomationHandler(BaseAutomationHandler):
             "done",
             decode=True,
         )
-        dev = dev_out.strip() if ok and dev_out.strip() else "/dev/input/event1"
+        if ok and dev_out.strip():
+            dev = dev_out.strip()
+        else:
+            dev = "/dev/input/event1"
+            logger.warning("touch device detection failed; falling back to %s", dev)
 
         # Detect axis max from getevent -p (e.g. "max 32767")
         axis_max = 32767
@@ -597,7 +622,9 @@ class AndroidAutomationHandler(BaseAutomationHandler):
 
         script = " && ".join(cmds)
         success, output = await adb_exec.run("shell", script, decode=True)
-        return {"success": success, "output": output}
+        if not success:
+            raise RuntimeError(f"multitouch_gesture sendevent failed: {output}")
+        return {}
 
     async def run_command(self, command: str) -> Dict[str, Any]:
         """Run a shell command.

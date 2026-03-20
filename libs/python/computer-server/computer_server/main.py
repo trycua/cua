@@ -161,7 +161,6 @@ handlers = {
     "find_element": accessibility_handler.find_element,
     # Shell commands
     "run_command": automation_handler.run_command,
-    "multitouch_gesture": automation_handler.multitouch_gesture,
     # File system commands
     "file_exists": file_handler.file_exists,
     "directory_exists": file_handler.directory_exists,
@@ -219,6 +218,11 @@ handlers = {
     "copy_to_clipboard": automation_handler.copy_to_clipboard,
     "set_clipboard": automation_handler.set_clipboard,
 }
+
+# Android-only commands — registered only when the Android handler is active
+# so non-Android server instances don't fail at startup with AttributeError.
+if hasattr(automation_handler, "multitouch_gesture"):
+    handlers["multitouch_gesture"] = automation_handler.multitouch_gesture
 
 
 class AuthenticationManager:

@@ -223,21 +223,47 @@ class CloudTransport(Transport):
 
     async def _apply_image_layers(self) -> None:
         """Apply image layers (APK installs, shell commands) after the VM is ready."""
+        import base64
+        import hashlib
+        import urllib.request
+        from pathlib import Path
+
         assert self._inner
         for layer in self._image._layers:
             lt = layer["type"]
             if lt == "apk_install":
                 for apk in layer["packages"]:
                     dest = "/data/local/tmp/cua_install.apk"
+                    # Resolve APK to local bytes (download URL if needed)
+                    if apk.startswith(("http://", "https://")):
+                        cache_dir = Path.home() / ".cua" / "cua-sandbox" / "apk-cache"
+                        cache_dir.mkdir(parents=True, exist_ok=True)
+                        cache_file = cache_dir / (
+                            hashlib.sha256(apk.encode()).hexdigest()[:16] + ".apk"
+                        )
+                        if not cache_file.exists():
+                            urllib.request.urlretrieve(apk, cache_file)
+                        apk_bytes = cache_file.read_bytes()
+                    else:
+                        apk_bytes = Path(apk).read_bytes()
+                    # Push to device via write_bytes (base64), then install
                     await self._inner.send(
-                        "run_command",
-                        command=f"curl -fsSL -o {dest} '{apk}'",
-                        timeout=120,
+                        "write_bytes",
+                        path=dest,
+                        content_b64=base64.b64encode(apk_bytes).decode(),
                     )
+                    # Install; on signature mismatch uninstall existing and retry.
+                    # The script always exits 0 so run_command does not raise.
                     await self._inner.send(
                         "run_command",
-                        command=f"pm install -r {dest}",
-                        timeout=60,
+                        command=(
+                            f"out=$(pm install -r {dest} 2>&1); "
+                            f'if echo "$out" | grep -q INSTALL_FAILED_UPDATE_INCOMPATIBLE; then '
+                            f'  pkg=$(echo "$out" | sed -n "s/.*Package \\(\\S*\\) signatures.*/\\1/p"); '
+                            f'  pm uninstall "$pkg"; pm install -r {dest}; '
+                            f'else echo "$out"; fi; true'
+                        ),
+                        timeout=90,
                     )
             elif lt == "run":
                 await self._inner.send("run_command", command=layer["command"], timeout=60)

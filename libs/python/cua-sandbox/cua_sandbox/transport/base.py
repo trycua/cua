@@ -26,7 +26,7 @@ class Transport(ABC):
         """Send a command and return the result."""
 
     @abstractmethod
-    async def screenshot(self, format: str = "png", quality: int = 85) -> bytes:
+    async def screenshot(self, format: str = "png", quality: int = 95) -> bytes:
         """Capture a screenshot and return raw image bytes.
 
         Args:

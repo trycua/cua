@@ -14,7 +14,7 @@ class Screen:
     def __init__(self, transport: Transport):
         self._t = transport
 
-    async def screenshot(self, format: str = "png", quality: int = 85) -> bytes:
+    async def screenshot(self, format: str = "png", quality: int = 95) -> bytes:
         """Capture a screenshot and return raw image bytes.
 
         Args:
@@ -23,7 +23,7 @@ class Screen:
         """
         return await self._t.screenshot(format=format, quality=quality)
 
-    async def screenshot_base64(self, format: str = "png", quality: int = 85) -> str:
+    async def screenshot_base64(self, format: str = "png", quality: int = 95) -> str:
         """Capture a screenshot and return as a base64-encoded string."""
         raw = await self._t.screenshot(format=format, quality=quality)
         return base64.b64encode(raw).decode("ascii")

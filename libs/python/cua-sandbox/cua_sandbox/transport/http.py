@@ -81,7 +81,7 @@ class HTTPTransport(Transport):
         result = await self._cmd(action, params if params else None)
         return result.get("result", result)
 
-    async def screenshot(self, format: str = "png", quality: int = 85) -> bytes:
+    async def screenshot(self, format: str = "png", quality: int = 95) -> bytes:
         params = None if format == "png" else {"format": format, "quality": quality}
         result = await self._cmd("screenshot", params)
         # computer-server returns {"success": true, "image_data": "..."}

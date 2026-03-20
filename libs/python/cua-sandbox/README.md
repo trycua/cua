@@ -27,21 +27,25 @@ from cua_sandbox import Sandbox, Image
 
 sb = await Sandbox.create(Image.linux())
 await sb.shell.run("uname -a")
-print(sb.name)        # save this to reconnect later
-await sb.disconnect() # drop connection, sandbox keeps running
+print(sb.name)  # save this to reconnect later
+await sb.disconnect()
 ```
 
 ## Connect to existing sandbox
 
-Attach to a sandbox that's already running.
+Attach to a sandbox that's already running. Works as a plain await or context manager.
 
 ```python
 from cua_sandbox import Sandbox
 
+# plain await
 sb = await Sandbox.connect("my-sandbox")
-result = await sb.shell.run("whoami")
-print(result.stdout)
+await sb.shell.run("whoami")
 await sb.disconnect()
+
+# context manager — disconnects on exit, sandbox keeps running
+async with Sandbox.connect("my-sandbox") as sb:
+    await sb.shell.run("whoami")
 ```
 
 ## Destroy a sandbox

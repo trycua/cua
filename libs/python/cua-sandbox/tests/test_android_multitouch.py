@@ -69,8 +69,6 @@ _AVD_NAME = os.environ.get("CUA_ANDROID_AVD_NAME", "cua-multitouch-test")
 _API_KEY = os.environ.get("CUA_TEST_API_KEY")
 _SETTLE_S = 0.6
 _LAUNCH_WAIT_S = 3.0
-_AXIS_MAX = 32767  # raw axis range on virtio/goldfish touch devices
-
 
 # ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -89,10 +87,6 @@ def _get_apk() -> Path:
         print(f"\n[setup] Downloading TouchTest APK from {url} …")
         urllib.request.urlretrieve(url, cache)
     return cache
-
-
-def _px_to_raw(px: int, screen_dim: int) -> int:
-    return max(0, min(_AXIS_MAX, int(px * _AXIS_MAX / screen_dim)))
 
 
 def _parse_touch_events(logcat_stdout: str) -> list[dict]:
@@ -117,94 +111,9 @@ def _has_action(events: list[dict], action: str) -> bool:
     return any(e.get("action") == action for e in events)
 
 
-def _build_two_finger_script(
-    dev: str,
-    x1s: int,
-    y1s: int,
-    x2s: int,
-    y2s: int,
-    x1e: int,
-    y1e: int,
-    x2e: int,
-    y2e: int,
-    screen_w: int,
-    screen_h: int,
-    steps: int = 12,
-    step_delay: float = 0.025,
-) -> str:
-    """
-    Single chained shell command that injects a true two-finger gesture via
-    Linux MT Protocol B sendevent calls.  Both finger positions share one
-    SYN_REPORT frame at every step, so Android sees pointer_count == 2.
-    """
-    EV_SYN, EV_KEY, EV_ABS = 0, 1, 3
-    SYN_REPORT = 0
-    BTN_TOUCH = 330
-    SLOT, TID, MTX, MTY, PRESS = 47, 57, 53, 54, 58
-    TID_NONE = 4294967295
-
-    def rx(px: int) -> int:
-        return _px_to_raw(px, screen_w)
-
-    def ry(px: int) -> int:
-        return _px_to_raw(px, screen_h)
-
-    def se(t: int, c: int, v: int) -> str:
-        return f"sendevent {dev} {t} {c} {v}"
-
-    def sync() -> str:
-        return se(EV_SYN, SYN_REPORT, 0)
-
-    cmds: list[str] = [
-        se(EV_ABS, SLOT, 0),
-        se(EV_ABS, TID, 0),
-        se(EV_ABS, MTX, rx(x1s)),
-        se(EV_ABS, MTY, ry(y1s)),
-        se(EV_ABS, PRESS, 64),
-        se(EV_ABS, SLOT, 1),
-        se(EV_ABS, TID, 1),
-        se(EV_ABS, MTX, rx(x2s)),
-        se(EV_ABS, MTY, ry(y2s)),
-        se(EV_ABS, PRESS, 64),
-        se(EV_KEY, BTN_TOUCH, 1),
-        sync(),
-    ]
-    for i in range(1, steps + 1):
-        t = i / steps
-        cmds += [
-            se(EV_ABS, SLOT, 0),
-            se(EV_ABS, MTX, rx(int(x1s + (x1e - x1s) * t))),
-            se(EV_ABS, MTY, ry(int(y1s + (y1e - y1s) * t))),
-            se(EV_ABS, SLOT, 1),
-            se(EV_ABS, MTX, rx(int(x2s + (x2e - x2s) * t))),
-            se(EV_ABS, MTY, ry(int(y2s + (y2e - y2s) * t))),
-            sync(),
-            f"sleep {step_delay:.3f}",
-        ]
-    cmds += [
-        se(EV_ABS, SLOT, 0),
-        se(EV_ABS, TID, TID_NONE),
-        se(EV_ABS, SLOT, 1),
-        se(EV_ABS, TID, TID_NONE),
-        se(EV_KEY, BTN_TOUCH, 0),
-        sync(),
-    ]
-    return " && ".join(cmds)
-
-
 async def _read_events(sb: Sandbox) -> list[dict]:
     result = await sb.shell.run(f"logcat -d -s {_LOG_TAG}", timeout=10)
     return _parse_touch_events(result.stdout)
-
-
-async def _find_touch_device(sb: Sandbox) -> str:
-    result = await sb.shell.run(
-        "for f in /dev/input/event*; do "
-        '  getevent -p "$f" 2>/dev/null | grep -q \'0035\' && echo "$f" && break; '
-        "done"
-    )
-    dev = result.stdout.strip()
-    return dev if dev else "/dev/input/event1"
 
 
 async def _reset(sb: Sandbox) -> None:
@@ -245,10 +154,6 @@ async def local_android_sb():
     image = Image.android(str(_API_LEVEL)).apk_install(str(apk))
 
     async with sandbox(runtime=runtime, image=image, name=_AVD_NAME) as sb:
-        # Escalate to root so sendevent can write to /dev/input/*
-        await sb.shell.run("su root id", timeout=15)
-        await asyncio.sleep(1.5)
-
         # Launch app
         await sb.shell.run(f"am start -n {_APK_ACTIVITY}")
         await asyncio.sleep(_LAUNCH_WAIT_S)
@@ -429,54 +334,35 @@ class _MultitouchTests:
         ]
         assert move_two, "No ACTION_MOVE events with pointer_count >= 2"
 
-    # ── True multi-touch via raw sendevent ────────────────────────────────
+    # ── True multi-touch via MT Protocol B (server-side injection) ───────────
 
     async def test_true_multitouch_pinch_in(self, sb: Sandbox):
-        """Raw MT Protocol B pinch-in: both fingers in one SYN_REPORT frame."""
-        dev = await _find_touch_device(sb)
+        """MT Protocol B pinch-in via the multitouch_gesture server action."""
         w, h = await sb.get_dimensions()
         cx, cy, spread = w // 2, h // 2, 250
-
-        script = _build_two_finger_script(
-            dev,
-            x1s=cx - spread,
-            y1s=cy,
-            x2s=cx + spread,
-            y2s=cy,
-            x1e=cx - 30,
-            y1e=cy,
-            x2e=cx + 30,
-            y2e=cy,
-            screen_w=w,
-            screen_h=h,
+        await sb.mobile.gesture(
+            (cx - spread, cy),
+            (cx - 30, cy),
+            (cx + spread, cy),
+            (cx + 30, cy),
         )
-        await sb.shell.run(script, timeout=60)
         await asyncio.sleep(_SETTLE_S)
 
         te = await _read_events(sb)
-        assert te, "No touch events — check sendevent permissions"
+        assert te, "No touch events"
         assert _max_pointer_count(te) >= 2
         assert _has_action(te, "ACTION_POINTER_DOWN")
 
     async def test_true_multitouch_pinch_out(self, sb: Sandbox):
-        dev = await _find_touch_device(sb)
+        """MT Protocol B pinch-out via the multitouch_gesture server action."""
         w, h = await sb.get_dimensions()
         cx, cy, spread = w // 2, h // 2, 250
-
-        script = _build_two_finger_script(
-            dev,
-            x1s=cx - 30,
-            y1s=cy,
-            x2s=cx + 30,
-            y2s=cy,
-            x1e=cx - spread,
-            y1e=cy,
-            x2e=cx + spread,
-            y2e=cy,
-            screen_w=w,
-            screen_h=h,
+        await sb.mobile.gesture(
+            (cx - 30, cy),
+            (cx - spread, cy),
+            (cx + 30, cy),
+            (cx + spread, cy),
         )
-        await sb.shell.run(script, timeout=60)
         await asyncio.sleep(_SETTLE_S)
 
         te = await _read_events(sb)
@@ -485,26 +371,16 @@ class _MultitouchTests:
 
     async def test_true_multitouch_two_finger_swipe(self, sb: Sandbox):
         """Two parallel fingers moving in the same direction."""
-        dev = await _find_touch_device(sb)
         w, h = await sb.get_dimensions()
         offset = 150
-
-        script = _build_two_finger_script(
-            dev,
-            x1s=w // 2 - offset,
-            y1s=h * 3 // 4,
-            x2s=w // 2 + offset,
-            y2s=h * 3 // 4,
-            x1e=w // 2 - offset,
-            y1e=h // 4,
-            x2e=w // 2 + offset,
-            y2e=h // 4,
-            screen_w=w,
-            screen_h=h,
+        await sb.mobile.gesture(
+            (w // 2 - offset, h * 3 // 4),
+            (w // 2 - offset, h // 4),
+            (w // 2 + offset, h * 3 // 4),
+            (w // 2 + offset, h // 4),
+            duration_ms=300,
             steps=15,
-            step_delay=0.02,
         )
-        await sb.shell.run(script, timeout=60)
         await asyncio.sleep(_SETTLE_S)
 
         te = await _read_events(sb)
@@ -516,25 +392,15 @@ class _MultitouchTests:
 
     async def test_pointer_ids_are_distinct(self, sb: Sandbox):
         """Each finger in a two-finger gesture must carry a unique pointer id."""
-        dev = await _find_touch_device(sb)
         w, h = await sb.get_dimensions()
         cx, cy = w // 2, h // 2
-
-        script = _build_two_finger_script(
-            dev,
-            x1s=cx - 200,
-            y1s=cy,
-            x2s=cx + 200,
-            y2s=cy,
-            x1e=cx - 50,
-            y1e=cy,
-            x2e=cx + 50,
-            y2e=cy,
-            screen_w=w,
-            screen_h=h,
+        await sb.mobile.gesture(
+            (cx - 200, cy),
+            (cx - 50, cy),
+            (cx + 200, cy),
+            (cx + 50, cy),
             steps=8,
         )
-        await sb.shell.run(script, timeout=60)
         await asyncio.sleep(_SETTLE_S)
 
         te = await _read_events(sb)
@@ -554,7 +420,7 @@ class _MultitouchTests:
 class TestAndroidMultitouchLocal(_MultitouchTests):
     """Full touch action suite against a bare-metal AndroidEmulatorRuntime."""
 
-    @pytest_asyncio.fixture
+    @pytest_asyncio.fixture(loop_scope="session")
     async def sb(self, local_android_sb: Sandbox):
         await _reset(local_android_sb)
         return local_android_sb
@@ -579,10 +445,6 @@ async def cloud_android_sb():
 
     image = Image.android("14").apk_install(_APK_RELEASE_URL)
     async with sandbox(image=image, api_key=_API_KEY) as sb:
-        # Escalate to root so sendevent can write to /dev/input/*
-        await sb.shell.run("su root id", timeout=15)
-        await asyncio.sleep(1.5)
-
         # Launch app
         await sb.shell.run(f"am start -n {_APK_ACTIVITY}")
         await asyncio.sleep(_LAUNCH_WAIT_S)
@@ -590,12 +452,12 @@ async def cloud_android_sb():
         yield sb
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="session")
 @pytest.mark.skipif(not _API_KEY, reason="CUA_TEST_API_KEY not set")
 class TestAndroidMultitouchCloud(_MultitouchTests):
     """Full touch action suite against a cloud-hosted Android VM."""
 
-    @pytest_asyncio.fixture
+    @pytest_asyncio.fixture(loop_scope="session")
     async def sb(self, cloud_android_sb: Sandbox):
         await _reset(cloud_android_sb)
         return cloud_android_sb

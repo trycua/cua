@@ -98,19 +98,19 @@ struct Manifest: Codable {
 // MARK: - OCI-Compliant Format (kubelet-compatible)
 
 enum ImageFormat {
-    case oci     // kubelet-compatible: single gzip-compressed disk, agoda media types
+    case oci     // kubelet-compatible: single gzip-compressed disk, trycua media types
     case legacy  // Lume legacy: LZ4-chunked disk, trycua media types
 }
 
 /// Media type constants for the OCI-compliant kubelet image format.
 enum OCIMediaType {
-    static let config = "application/vnd.agoda.macosvz.config.v1+json"
-    static let disk   = "application/vnd.agoda.macosvz.disk.image.v1"
-    static let aux    = "application/vnd.agoda.macosvz.aux.image.v1"
+    static let config = "application/vnd.trycua.lume.config.v1+json"
+    static let disk   = "application/vnd.trycua.lume.disk.v1"
+    static let aux    = "application/vnd.trycua.lume.aux.v1"
 
     static func detect(_ manifest: Manifest) -> ImageFormat {
         let hasOCIDisk = manifest.layers.contains { $0.mediaType == disk }
-        let hasOCIConfig = manifest.config?.mediaType == config
+        let hasOCIConfig = manifest.config?.mediaType == config || manifest.config?.mediaType == LegacyMediaType.config
         return (hasOCIDisk || hasOCIConfig) ? .oci : .legacy
     }
 }
@@ -121,6 +121,24 @@ enum OCIAnnotation {
     static let partTotal  = "org.trycua.lume.part.total"
     static let partOffset = "org.trycua.lume.part.offset"
     static let chunkSize  = "org.trycua.lume.chunk.size"
+}
+
+/// Legacy annotation keys (Agoda-era) for backward-compatible pull.
+enum LegacyAnnotation {
+    static let uncompressedSize   = "com.agoda.macosvz.content.uncompressed-size"
+    static let uncompressedDigest = "com.agoda.macosvz.content.uncompressed-digest"
+}
+
+/// Legacy media types (Agoda-era) for backward-compatible pull.
+enum LegacyMediaType {
+    static let config = "application/vnd.agoda.macosvz.config.v1+json"
+    static let disk   = "application/vnd.agoda.macosvz.disk.image.v1"
+    static let aux    = "application/vnd.agoda.macosvz.aux.image.v1"
+}
+
+/// Look up an annotation by key, falling back to a legacy key.
+func annotationOrLegacy(_ annotations: [String: String]?, key: String, legacyKey: String) -> String? {
+    annotations?[key] ?? annotations?[legacyKey]
 }
 
 /// Holds per-chunk upload results for manifest construction.
@@ -4108,8 +4126,8 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
             "size": diskSize,
             "annotations": [
                 "org.opencontainers.image.title": "disk.img",
-                "com.agoda.macosvz.content.uncompressed-size": "\(uncompressedDiskSize)",
-                "com.agoda.macosvz.content.uncompressed-digest": uncompressedDiskDigest,
+                "org.trycua.lume.content.uncompressed-size": "\(uncompressedDiskSize)",
+                "org.trycua.lume.content.uncompressed-digest": uncompressedDiskDigest,
             ],
         ]
 
@@ -4166,8 +4184,8 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
                     "size": chunk.compressedSize,
                     "annotations": [
                         "org.opencontainers.image.title": "disk.img.part.\(chunk.partNumber)",
-                        "com.agoda.macosvz.content.uncompressed-size": "\(chunk.uncompressedSize)",
-                        "com.agoda.macosvz.content.uncompressed-digest": chunk.uncompressedDigest,
+                        "org.trycua.lume.content.uncompressed-size": "\(chunk.uncompressedSize)",
+                        "org.trycua.lume.content.uncompressed-digest": chunk.uncompressedDigest,
                         OCIAnnotation.partNumber: "\(chunk.partNumber)",
                         OCIAnnotation.partTotal: "\(totalParts)",
                         OCIAnnotation.partOffset: "\(chunk.diskOffset)",
@@ -4684,10 +4702,10 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
                 diskUncompressedSize = totalSize
             } else if isChunked {
                 diskUncompressedSize = diskLayers.compactMap {
-                    $0.annotations?["com.agoda.macosvz.content.uncompressed-size"].flatMap(UInt64.init)
+                    $0.annotations?["org.trycua.lume.content.uncompressed-size"].flatMap(UInt64.init)
                 }.reduce(0, +)
             } else if let singleLayer = diskLayers.first,
-                      let sizeStr = singleLayer.annotations?["com.agoda.macosvz.content.uncompressed-size"],
+                      let sizeStr = annotationOrLegacy(singleLayer.annotations, key: "org.trycua.lume.content.uncompressed-size", legacyKey: LegacyAnnotation.uncompressedSize),
                       let size = UInt64(sizeStr) {
                 diskUncompressedSize = size
             }
@@ -4736,7 +4754,7 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
 
             // Compute total uncompressed size from chunks if not already known
             let totalSize = diskUncompressedSize ?? sortedChunks.compactMap {
-                $0.annotations?["com.agoda.macosvz.content.uncompressed-size"].flatMap(UInt64.init)
+                $0.annotations?["org.trycua.lume.content.uncompressed-size"].flatMap(UInt64.init)
             }.reduce(0, +)
 
             Logger.info("Chunked disk: \(sortedChunks.count) parts, total uncompressed size: \(totalSize)")
@@ -4834,8 +4852,7 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
                 progress: downloadProgress
             )
 
-            let uncompSizeStr = singleDiskLayer.annotations?[
-                "com.agoda.macosvz.content.uncompressed-size"]
+            let uncompSizeStr = annotationOrLegacy(singleDiskLayer.annotations, key: "org.trycua.lume.content.uncompressed-size", legacyKey: LegacyAnnotation.uncompressedSize)
             if let sizeStr = uncompSizeStr, let uncompSize = UInt64(sizeStr), uncompSize > 0 {
                 Logger.info("Decompressing disk image (gzip, sparse-aware)…")
                 FileManager.default.createFile(atPath: diskDest.path, contents: nil)

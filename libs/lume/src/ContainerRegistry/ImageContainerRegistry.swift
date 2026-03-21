@@ -278,7 +278,7 @@ actor ProgressTracker {
             let totalElapsed = now.timeIntervalSince(startTime)
             let overallAvgSpeed = totalElapsed > 0 ? Double(downloadedBytes) / totalElapsed : 0
 
-            let progress = Double(downloadedBytes) / Double(totalBytes)
+            let progress = totalBytes > 0 ? Double(downloadedBytes) / Double(totalBytes) : 0.0
             logSpeedProgress(
                 current: progress,
                 currentSpeed: currentSpeed,

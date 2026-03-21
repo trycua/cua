@@ -34,7 +34,7 @@ struct Push: AsyncParsableCommand {
     var dryRun: Bool = false
     
     @Flag(name: .long, help: "In dry-run mode, also reassemble chunks to verify integrity")
-    var reassemble: Bool = true
+    var reassemble: Bool = false
 
     @Flag(name: .long, help: "Push as a single disk layer (kubelet-compatible, no chunking)")
     var singleLayer: Bool = false

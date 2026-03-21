@@ -18,6 +18,12 @@ struct Clone: AsyncParsableCommand {
     @Option(name: .customLong("dest-storage"), help: "Destination VM storage location")
     var destStorage: String?
 
+    @Flag(help: "Compact the disk image by removing unused space (zeroed blocks). Experimental.")
+    var compact: Bool = false
+
+    @Option(help: "Expand the disk size by the specified amount (e.g., 5GB, 1024MB)")
+    var expandBy: String?
+
     init() {}
 
     @MainActor
@@ -30,7 +36,9 @@ struct Clone: AsyncParsableCommand {
             name: name,
             newName: newName,
             sourceLocation: sourceStorage,
-            destLocation: destStorage
+            destLocation: destStorage,
+            compact: compact,
+            expandBy: expandBy
         )
     }
 }

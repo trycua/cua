@@ -25,12 +25,18 @@ class BrowserManager:
     Uses persistent context to maintain cookies and sessions.
     """
 
-    def __init__(self):
-        """Initialize the BrowserManager."""
+    def __init__(self, default_url: Optional[str] = None):
+        """Initialize the BrowserManager.
+
+        Args:
+            default_url: URL to navigate to on startup instead of about:blank.
+                         Falls back to BROWSER_DEFAULT_URL env var, then https://www.google.com.
+        """
         self.playwright = None
         self.browser: Optional[Browser] = None
         self.context: Optional[BrowserContext] = None
         self.page: Optional[Page] = None
+        self.default_url = default_url or os.environ.get("BROWSER_DEFAULT_URL", "https://www.google.com")
         self._initialized = False
         self._initialization_error: Optional[str] = None
         self._lock = asyncio.Lock()
@@ -142,6 +148,13 @@ class BrowserManager:
                     self.page = pages[0]
                 else:
                     self.page = await self.context.new_page()
+
+                # Navigate to a default page so the browser isn't blank
+                try:
+                    await self.page.goto(self.default_url, wait_until="domcontentloaded", timeout=15000)
+                    logger.info(f"Navigated to default page: {self.default_url}")
+                except Exception as e:
+                    logger.warning(f"Failed to load default page ({self.default_url}): {e}")
 
                 self._initialized = True
                 logger.info("Browser initialized successfully")
@@ -366,9 +379,14 @@ class BrowserManager:
 _browser_manager: Optional[BrowserManager] = None
 
 
-def get_browser_manager() -> BrowserManager:
-    """Get or create the global BrowserManager instance."""
+def get_browser_manager(default_url: Optional[str] = None) -> BrowserManager:
+    """Get or create the global BrowserManager instance.
+
+    Args:
+        default_url: URL to navigate to on startup instead of about:blank.
+                     Only used when creating a new instance (first call).
+    """
     global _browser_manager
     if _browser_manager is None:
-        _browser_manager = BrowserManager()
+        _browser_manager = BrowserManager(default_url=default_url)
     return _browser_manager

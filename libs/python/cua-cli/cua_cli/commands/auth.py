@@ -3,7 +3,6 @@
 import argparse
 import os
 from pathlib import Path
-from typing import Any, Optional
 
 import aiohttp
 from core.http import cua_version_headers

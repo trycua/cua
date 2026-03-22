@@ -13,7 +13,7 @@ from urllib.parse import quote
 
 import aiohttp
 from core.http import cua_version_headers
-from cua_cli.auth.store import get_api_key, require_api_key
+from cua_cli.auth.store import require_api_key
 from cua_cli.utils.async_utils import run_async
 from cua_cli.utils.output import (
     print_error,

@@ -38,7 +38,7 @@ docs = [
     "mkdocs>=1.5.0",
 ]
 docs-scripts = [
-    "crawl4ai>=0.4.0",
+    "crawl4ai>=0.8.0",
     "playwright>=1.40.0",
     "lancedb>=0.4.0",
     "sentence-transformers>=2.2.0",
@@ -64,6 +64,14 @@ examples = []
 
 [tool.uv]
 package = false
+# Security: constrain vulnerable transitive dependencies to safe minimum versions
+constraint-dependencies = [
+    "authlib>=1.6.7",       # GHSA-7wc2-qxgw-g8gg: JWT alg:none bypass (HIGH)
+    "cryptography>=46.0.5", # GHSA-r6ph-v2qm-q3c2: ECDH subgroup attack (HIGH)
+    "urllib3>=2.6.3",       # GHSA-38jv-5279-wg99: decompression bomb bypass (HIGH)
+    "werkzeug>=3.1.6",      # GHSA-29vq-49wr-vm6x: Windows device names (MODERATE)
+    "aiohttp>=3.13.3",      # GHSA-jj3x-wxrx-4x23, GHSA-6jhg-hg63-jvvf: DoS (MODERATE/LOW)
+]
 
 [tool.uv.workspace]
 members = [

@@ -54,6 +54,7 @@ dependencies = [
     # CUA SDK
     "cua-computer>=0.4.19",
     "cua-core>=0.1.18",
+    "playwright>=1.55.0",
 ]
 
 [project.optional-dependencies]

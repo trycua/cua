@@ -85,6 +85,32 @@ except Exception as e:
     logger.debug(f"Failed to trigger screenshot permissions prompt: {e}")
 
 
+# Fix: pynput's MouseController.position setter uses CGEventPost with
+# kCGEventMouseMoved internally, which silently fails in macOS VMs running
+# under Apple's Virtualization.framework (Tart, Lume, or any VZVirtualMachine-
+# based hypervisor). The cursor doesn't move but no error is raised.
+#
+# CGWarpMouseCursorPosition works reliably in both VM and bare-metal environments.
+# This descriptor replaces pynput's default position property with a CGWarp-based
+# implementation. See: https://github.com/trycua/cua/issues/1162
+class _CGWarpPosition:
+    """Descriptor that uses CGWarpMouseCursorPosition instead of pynput's default."""
+
+    def __get__(self, obj, objtype=None):
+        if obj is None:
+            return self
+        pos = CGEventGetLocation(CGEventCreate(None))
+        return (int(pos.x), int(pos.y))
+
+    def __set__(self, obj, value):
+        x, y = value
+        CGWarpMouseCursorPosition((float(x), float(y)))
+        CGAssociateMouseAndMouseCursorPosition(True)
+
+
+MouseController.position = _CGWarpPosition()
+
+
 # Constants for accessibility API
 kAXErrorSuccess = 0
 kAXRoleAttribute = "AXRole"

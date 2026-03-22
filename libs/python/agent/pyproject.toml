@@ -29,6 +29,7 @@ requires-python = ">=3.12,<3.14"
 [project.optional-dependencies]
 openai = []
 anthropic = []
+minimax = []
 qwen = [
     "qwen-vl-utils",
     "qwen-agent",

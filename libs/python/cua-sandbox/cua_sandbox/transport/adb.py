@@ -166,35 +166,48 @@ class ADBTransport(Transport):
         }
 
     async def screenshot(self, format: str = "png", quality: int = 95) -> bytes:
+        import struct
+
         assert self._adb is not None, "Transport not connected"
-        # exec-out screencap -p returns PNG directly to stdout
-        result = await self._adb_cmd_async("exec-out", "screencap", "-p", timeout=15)
-        if result.returncode == 0 and len(result.stdout) > 100 and result.stdout[:4] == b"\x89PNG":
-            png_data = result.stdout
-        else:
-            # Fallback: screencap to file then pull
-            await self._adb_cmd_async("shell", "screencap", "-p", "/sdcard/screenshot.png")
-            result = await self._adb_cmd_async(
-                "exec-out", "cat", "/sdcard/screenshot.png", timeout=15
-            )
+        fmt = format.lower()
+
+        if fmt in ("jpeg", "jpg"):
+            # Raw RGBA screencap: 12-byte header (w, h, pixel_format as uint32 LE)
+            # followed by raw RGBA pixels. Avoids emulator-side PNG encode.
+            result = await self._adb_cmd_async("exec-out", "screencap", timeout=15)
+            if result.returncode == 0 and len(result.stdout) > 12:
+                w, h, _pf = struct.unpack_from("<III", result.stdout, 0)
+                rgba = result.stdout[12:]
+                if len(rgba) == w * h * 4:
+                    import simplejpeg
+
+                    return simplejpeg.encode_jpeg(
+                        memoryview(rgba).cast("B", (h, w, 4)),
+                        quality=quality,
+                        colorspace="RGBA",
+                        fastdct=True,
+                    )
+            # Fallback to PNG path if raw screencap fails
+            result = await self._adb_cmd_async("exec-out", "screencap", "-p", timeout=15)
             if result.returncode == 0 and result.stdout[:4] == b"\x89PNG":
-                png_data = result.stdout
-            else:
-                raise RuntimeError(
-                    f"ADB screenshot failed: {result.stderr.decode(errors='replace')}"
+                from io import BytesIO
+
+                import simplejpeg
+                from PIL import Image as PILImage
+
+                img = PILImage.open(BytesIO(result.stdout)).convert("RGB")
+                import numpy as np
+
+                return simplejpeg.encode_jpeg(
+                    np.array(img), quality=quality, colorspace="RGB", fastdct=True
                 )
+            raise RuntimeError(f"ADB screenshot failed: {result.stderr.decode(errors='replace')}")
 
-        if format.lower() in ("jpeg", "jpg"):
-            from io import BytesIO
-
-            from PIL import Image as PILImage
-
-            img = PILImage.open(BytesIO(png_data)).convert("RGB")
-            buf = BytesIO()
-            img.save(buf, format="JPEG", quality=quality, optimize=True)
-            return buf.getvalue()
-
-        return png_data
+        # PNG: use -p flag for direct PNG output
+        result = await self._adb_cmd_async("exec-out", "screencap", "-p", timeout=15)
+        if result.returncode == 0 and result.stdout[:4] == b"\x89PNG":
+            return result.stdout
+        raise RuntimeError(f"ADB screenshot failed: {result.stderr.decode(errors='replace')}")
 
     async def get_screen_size(self) -> Dict[str, int]:
         result = await self._adb_cmd_async("shell", "wm", "size")

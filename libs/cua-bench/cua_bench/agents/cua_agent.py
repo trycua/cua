@@ -47,7 +47,10 @@ class CuaAgent(BaseAgent):
         self.model = kwargs.get("model", "anthropic/claude-sonnet-4-20250514")
         self.max_steps = kwargs.get("max_steps", 100)
         # Number of times to retry the entire task when a transient API error occurs.
-        self.task_retries = int(kwargs.get("task_retries", 2))
+        # Task-level retry restarts agent.run() from scratch but does NOT reset the
+        # desktop environment, so it is unsafe by default for evaluations.
+        # Only enable via --agent-kwarg task_retries=N when the task is idempotent.
+        self.task_retries = int(kwargs.get("task_retries", 0))
 
     @staticmethod
     def name() -> str:

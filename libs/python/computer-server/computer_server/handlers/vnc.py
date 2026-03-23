@@ -121,6 +121,7 @@ class _VNCConnection:
 
             @defer.inlineCallbacks
             def _do():
+                client = None
                 try:
                     reactor.connectTCP(self._host, self._port, factory)
                     client = yield factory.deferred
@@ -129,6 +130,8 @@ class _VNCConnection:
                 except Exception as e:
                     error_holder[0] = e
                 finally:
+                    if client is not None and hasattr(client, "transport") and client.transport:
+                        client.transport.loseConnection()
                     done_event.set()
 
             _do()

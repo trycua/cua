@@ -222,6 +222,10 @@ class VM {
             let lumeConfigDir = FileManager.default.temporaryDirectory
                 .appendingPathComponent("lume-config-\(vmDirContext.name)")
             try? FileManager.default.createDirectory(at: lumeConfigDir, withIntermediateDirectories: true)
+            // Remove stale vnc.env from a previous run so the guest doesn't
+            // read outdated port/password before the new file is written.
+            try? FileManager.default.removeItem(
+                at: lumeConfigDir.appendingPathComponent("vnc.env"))
             let lumeConfigSharedDir = SharedDirectory(
                 hostPath: lumeConfigDir.path, tag: "lume-config", readOnly: true)
             var allSharedDirectories = sharedDirectories
@@ -931,6 +935,8 @@ class VM {
             let lumeConfigDir = FileManager.default.temporaryDirectory
                 .appendingPathComponent("lume-config-\(vmDirContext.name)")
             try? FileManager.default.createDirectory(at: lumeConfigDir, withIntermediateDirectories: true)
+            try? FileManager.default.removeItem(
+                at: lumeConfigDir.appendingPathComponent("vnc.env"))
             let lumeConfigSharedDir = SharedDirectory(
                 hostPath: lumeConfigDir.path, tag: "lume-config", readOnly: true)
             var allSharedDirectories = sharedDirectories

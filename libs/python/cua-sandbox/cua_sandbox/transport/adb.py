@@ -160,13 +160,29 @@ class ADBTransport(Transport):
         # exec-out screencap -p returns PNG directly to stdout
         result = self._adb_cmd("exec-out", "screencap", "-p", timeout=15)
         if result.returncode == 0 and len(result.stdout) > 100 and result.stdout[:4] == b"\x89PNG":
-            return result.stdout
-        # Fallback: screencap to file then pull
-        self._adb_cmd("shell", "screencap", "-p", "/sdcard/screenshot.png")
-        result = self._adb_cmd("exec-out", "cat", "/sdcard/screenshot.png", timeout=15)
-        if result.returncode == 0 and result.stdout[:4] == b"\x89PNG":
-            return result.stdout
-        raise RuntimeError(f"ADB screenshot failed: {result.stderr.decode(errors='replace')}")
+            png_data = result.stdout
+        else:
+            # Fallback: screencap to file then pull
+            self._adb_cmd("shell", "screencap", "-p", "/sdcard/screenshot.png")
+            result = self._adb_cmd("exec-out", "cat", "/sdcard/screenshot.png", timeout=15)
+            if result.returncode == 0 and result.stdout[:4] == b"\x89PNG":
+                png_data = result.stdout
+            else:
+                raise RuntimeError(
+                    f"ADB screenshot failed: {result.stderr.decode(errors='replace')}"
+                )
+
+        if format.lower() in ("jpeg", "jpg"):
+            from io import BytesIO
+
+            from PIL import Image as PILImage
+
+            img = PILImage.open(BytesIO(png_data)).convert("RGB")
+            buf = BytesIO()
+            img.save(buf, format="JPEG", quality=quality, optimize=True)
+            return buf.getvalue()
+
+        return png_data
 
     async def get_screen_size(self) -> Dict[str, int]:
         result = self._adb_cmd("shell", "wm", "size")

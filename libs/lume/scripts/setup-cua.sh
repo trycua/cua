@@ -398,37 +398,61 @@ if [ -z "$GATEWAY_IP" ]; then
     GATEWAY_IP="192.168.64.1"
 fi
 
-# Read VNC config from lume shared directory if available.
-# Lume automatically shares a "lume-config" VirtioFS volume containing vnc.env
-# with the assigned VNC port and password for this VM.
-LUME_CONFIG_MOUNT="/tmp/lume-config"
-LUME_CONFIG="$LUME_CONFIG_MOUNT/vnc.env"
+# Read VNC config — check multiple sources in priority order:
+# 1. Local vnc.env (written by host via lume ssh, or cached from VirtioFS)
+# 2. VirtioFS lume-config mount (may be blocked by macOS TCC in LaunchAgents)
 LUME_VNC_PORT=""
 LUME_VNC_PASSWORD=""
+LOCAL_VNC_ENV="$HOME/.cua-server/vnc.env"
 
-# Try to mount the lume-config VirtioFS share and read VNC config
-mkdir -p "$LUME_CONFIG_MOUNT" 2>/dev/null
-if mount | grep -q "lume-config"; then
-    echo "lume-config already mounted" >> "$LOG_FILE"
-elif mount_virtiofs lume-config "$LUME_CONFIG_MOUNT" 2>/dev/null; then
-    echo "Mounted lume-config VirtioFS share" >> "$LOG_FILE"
-else
-    echo "lume-config VirtioFS share not available, using defaults" >> "$LOG_FILE"
+# Source 1: local vnc.env (most reliable — not subject to TCC restrictions)
+if [ -s "$LOCAL_VNC_ENV" ]; then
+    eval "$(cat "$LOCAL_VNC_ENV")"
+    LUME_VNC_PORT="${VNC_PORT:-}"
+    LUME_VNC_PASSWORD="${VNC_PASSWORD:-}"
+    echo "Read VNC config from local vnc.env: port=$LUME_VNC_PORT" >> "$LOG_FILE"
 fi
 
-# Wait up to 10s for vnc.env to appear (written by host after VNC starts)
-for i in $(seq 1 10); do
-    if [ -f "$LUME_CONFIG" ]; then
-        eval "$(cat "$LUME_CONFIG")"
-        LUME_VNC_PORT="${VNC_PORT:-}"
-        LUME_VNC_PASSWORD="${VNC_PASSWORD:-}"
-        echo "Read VNC config from lume shared dir: port=$LUME_VNC_PORT" >> "$LOG_FILE"
-        break
+# Source 2: VirtioFS lume-config (fallback — may need sudo due to TCC)
+if [ -z "$LUME_VNC_PORT" ]; then
+    LUME_CONFIG_MOUNT="/tmp/lume-config"
+    LUME_CONFIG="$LUME_CONFIG_MOUNT/vnc.env"
+    mkdir -p "$LUME_CONFIG_MOUNT" 2>/dev/null
+    if mount | grep -q "lume-config"; then
+        echo "lume-config already mounted" >> "$LOG_FILE"
+    elif mount_virtiofs lume-config "$LUME_CONFIG_MOUNT" 2>/dev/null; then
+        echo "Mounted lume-config VirtioFS share" >> "$LOG_FILE"
+    else
+        echo "lume-config VirtioFS not available" >> "$LOG_FILE"
     fi
-    sleep 1
-done
 
-# Set VNC backend env vars — prefer lume-config values, fall back to defaults
+    # Try reading vnc.env (wait up to 10s for it to appear)
+    for i in $(seq 1 10); do
+        # Try direct read first, then sudo (TCC may block direct access)
+        VNC_ENV_CONTENT=""
+        if VNC_ENV_CONTENT=$(cat "$LUME_CONFIG" 2>/dev/null) && [ -n "$VNC_ENV_CONTENT" ]; then
+            true
+        elif VNC_ENV_CONTENT=$(sudo -n cat "$LUME_CONFIG" 2>/dev/null) && [ -n "$VNC_ENV_CONTENT" ]; then
+            true
+        fi
+        if [ -n "$VNC_ENV_CONTENT" ]; then
+            eval "$VNC_ENV_CONTENT"
+            LUME_VNC_PORT="${VNC_PORT:-}"
+            LUME_VNC_PASSWORD="${VNC_PASSWORD:-}"
+            echo "Read VNC config from VirtioFS: port=$LUME_VNC_PORT" >> "$LOG_FILE"
+            # Cache locally for future restarts
+            echo "$VNC_ENV_CONTENT" > "$LOCAL_VNC_ENV"
+            break
+        fi
+        sleep 1
+    done
+fi
+
+if [ -z "$LUME_VNC_PORT" ]; then
+    echo "No VNC config found, using defaults (port=__VNC_PORT__)" >> "$LOG_FILE"
+fi
+
+# Set VNC backend env vars — prefer discovered values, fall back to defaults
 export CUA_BACKEND=vnc
 export CUA_VNC_HOST="$GATEWAY_IP"
 export CUA_VNC_PORT="${LUME_VNC_PORT:-__VNC_PORT__}"
@@ -448,7 +472,7 @@ playwright install firefox >> "$LOG_FILE" 2>&1 || true
 
 # Start server with VNC backend pointing at lume's VNC on the host
 echo "Starting CUA computer server (vnc backend) on port __PORT__..." >> "$LOG_FILE"
-echo "  VNC target: $GATEWAY_IP:__VNC_PORT__ (password: __VNC_PASSWORD__)" >> "$LOG_FILE"
+echo "  VNC target: $CUA_VNC_HOST:$CUA_VNC_PORT" >> "$LOG_FILE"
 python -m computer_server --port __PORT__ >> "$LOG_FILE" 2>&1
 SCRIPT_EOF
 

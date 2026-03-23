@@ -45,6 +45,11 @@ struct Run: AsyncParsableCommand {
         help: "Port to use for the VNC server. Defaults to 0 (auto-assign)")
     var vncPort: Int = 0
 
+    @Option(
+        name: [.customLong("vnc-password")],
+        help: "Password for the VNC server. Defaults to a random passphrase")
+    var vncPassword: String?
+
     @Option(help: "For MacOS VMs only, boot into the VM in recovery mode")
     var recoveryMode: Bool = false
 
@@ -133,6 +138,7 @@ struct Run: AsyncParsableCommand {
             registry: registry,
             organization: organization,
             vncPort: vncPort,
+            vncPassword: vncPassword,
             recoveryMode: recoveryMode,
             storage: storage,
             usbMassStoragePaths: parsedUSBStorageDevices.isEmpty ? nil : parsedUSBStorageDevices,

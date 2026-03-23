@@ -1,20 +1,51 @@
 #!/bin/bash
 #
-# setup-cua-computer.sh
-# Makes a Lume macOS VM image cua-computer compatible
+# setup-cua.sh
+# Makes a Lume macOS VM fully cua-compatible
 #
 # This script runs ON the VM itself (not the host).
-# It installs cua-computer-server, cua-agent, Playwright, and configures
-# the VM for headless CUA operation (auto-login, disable sleep, LaunchAgent).
+# It installs cua-computer-server, cua-agent, Playwright, noVNC (web-based VNC
+# proxying to lume's built-in VNC on the host), supervisor, and configures the
+# VM for headless CUA operation (auto-login, disable sleep, LaunchAgent).
+#
+# In Lume VMs, the display is provided by the Virtualization Framework and
+# exposed through lume's built-in VNC server on the host. macOS Screen Sharing
+# inside the VM has no framebuffer to capture. Therefore, noVNC/websockify
+# inside the VM proxies to lume's VNC on the host (via the gateway IP).
 #
 # Usage:
-#   lume ssh <vm-name> "curl -fsSL <url> | bash"
-#   lume ssh <vm-name> < setup-cua-computer.sh
+#   # Copy the script into the VM first, then run with a generous timeout:
+#   lume ssh <vm-name> "cat > /tmp/setup.sh && chmod +x /tmp/setup.sh" < setup-cua.sh
+#   lume ssh <vm-name> --timeout 600 "bash /tmp/setup.sh --yes"
+#
 #   # Or copy and run directly inside the VM:
-#   ./setup-cua-computer.sh [--yes] [--port PORT]
+#   ./setup-cua.sh [--yes] [--port PORT] [--host-vnc-port PORT]
+#
+# Important: Start the VM with a fixed VNC port and password so websockify can find it:
+#   lume run <vm-name> --vnc-port 5901 --vnc-password lume
+#
+# Note: Port 5900 is often used by the host's Screen Sharing service, so we
+# default to 5901. Use --host-vnc-port to match whatever --vnc-port you pass
+# to lume run.
+#
+# Accessing noVNC remotely (from outside the host):
+#   1. SSH tunnel: ssh -L 6080:<vm-ip>:6080 user@host
+#   2. Open: http://localhost:6080/vnc.html?host=localhost&port=6080
+#   The ?host=localhost&port=6080 params ensure the websocket connects through
+#   the tunnel instead of trying to reach the VM IP directly.
+#
+# Note: The default lume ssh timeout is 60s, which is too short for this script
+# (Homebrew + Xcode CLT + pip installs can take 5-10 minutes). Use --timeout 600
+# or --timeout 0 (unlimited) when running via lume ssh.
 #
 # Prerequisites:
 #   - macOS VM created via lume (with SSH enabled, user lume/lume)
+#
+# Host troubleshooting:
+#   If VMs fail to start with "Unable to access security information", the host's
+#   login keychain is likely locked (common after host reboot/crash on macOS Sequoia+).
+#   Fix: security unlock-keychain -p '<host-password>' ~/Library/Keychains/login.keychain-db
+#   Prevention: enable auto-login on the host so the keychain unlocks at boot.
 #
 
 set -e
@@ -33,6 +64,9 @@ AUTO_YES=false
 CUA_SERVER_PORT=8443
 VM_PASSWORD="${VM_PASSWORD:-lume}"
 CUA_DIR="$HOME/.cua-server"
+NOVNC_PORT=6080
+HOST_VNC_PORT="${HOST_VNC_PORT:-5901}"
+VNC_PASSWORD="${VNC_PASSWORD:-lume}"
 
 # Parse arguments
 while [ "$#" -gt 0 ]; do
@@ -44,13 +78,28 @@ while [ "$#" -gt 0 ]; do
             CUA_SERVER_PORT="$2"
             shift
             ;;
+        --host-vnc-port)
+            HOST_VNC_PORT="$2"
+            shift
+            ;;
+        --vnc-password)
+            VNC_PASSWORD="$2"
+            shift
+            ;;
         --help)
             echo "Usage: $0 [OPTIONS]"
             echo ""
             echo "Options:"
-            echo "  --yes, -y       Non-interactive mode (accept all prompts)"
-            echo "  --port PORT     CUA computer server port (default: 8443)"
-            echo "  --help          Show this help message"
+            echo "  --yes, -y                  Non-interactive mode (accept all prompts)"
+            echo "  --port PORT                CUA computer server port (default: 8443)"
+            echo "  --host-vnc-port PORT       Lume VNC port on the host (default: 5901)"
+            echo "  --vnc-password PWD         Lume VNC password (from 'lume ls' output)"
+            echo "  --help                     Show this help message"
+            echo ""
+            echo "Environment variables:"
+            echo "  VM_PASSWORD                VM user password (default: lume)"
+            echo "  HOST_VNC_PORT              Lume VNC port on the host (default: 5901)"
+            echo "  VNC_PASSWORD               Lume VNC password (from 'lume ls' output)"
             exit 0
             ;;
         *)
@@ -63,6 +112,12 @@ done
 
 CURRENT_USER="$(whoami)"
 USER_HOME="$HOME"
+
+# Auto-detect host gateway IP
+GATEWAY_IP=$(route get default 2>/dev/null | grep gateway | awk '{print $2}')
+if [ -z "$GATEWAY_IP" ]; then
+    GATEWAY_IP="192.168.64.1"
+fi
 
 # ============================================
 # Helpers
@@ -174,7 +229,7 @@ install_system_deps() {
     ensure_brew
 
     local deps_needed=()
-    for pkg in ffmpeg; do
+    for pkg in ffmpeg supervisor wget; do
         if ! brew list "$pkg" &>/dev/null; then
             deps_needed+=("$pkg")
         fi
@@ -227,17 +282,94 @@ setup_cua_server() {
     pip install playwright && playwright install firefox || \
         echo -e "${YELLOW}Playwright install failed (non-blocking, BrowserTool may not work)${NC}"
 
+    # Install websockify for noVNC and vncdotool for VNC backend
+    echo "Installing websockify and vncdotool..."
+    pip install websockify vncdotool
+
     deactivate
 
     echo -e "${GREEN}CUA server and agent installed${NC}"
 }
 
 # ============================================
-# Phase 5: Startup Script + LaunchAgent
+# Phase 5: noVNC + Websockify
+# ============================================
+
+setup_novnc() {
+    print_phase "Phase 5: noVNC (Web-based VNC)"
+
+    if ! confirm "Install noVNC and websockify (web VNC on port $NOVNC_PORT)?"; then
+        echo -e "${YELLOW}Skipping noVNC setup.${NC}"
+        return 0
+    fi
+
+    ensure_brew
+
+    local NOVNC_DIR="/usr/local/share/novnc"
+
+    setup_sudo
+
+    # Download noVNC
+    echo "Installing noVNC..."
+    cd /tmp
+    rm -rf noVNC-master noVNC-master.zip
+    wget -q https://github.com/trycua/noVNC/archive/refs/heads/master.zip -O noVNC-master.zip
+    unzip -q noVNC-master.zip
+
+    if [ "$AUTO_YES" = true ]; then
+        sudo -A rm -rf "$NOVNC_DIR"
+        sudo -A mkdir -p "$NOVNC_DIR"
+        sudo -A mv noVNC-master/* "$NOVNC_DIR/"
+        sudo -A ln -sf "$NOVNC_DIR/vnc.html" "$NOVNC_DIR/index.html"
+        sudo -A chmod -R 755 "$NOVNC_DIR"
+    else
+        sudo rm -rf "$NOVNC_DIR"
+        sudo mkdir -p "$NOVNC_DIR"
+        sudo mv noVNC-master/* "$NOVNC_DIR/"
+        sudo ln -sf "$NOVNC_DIR/vnc.html" "$NOVNC_DIR/index.html"
+        sudo chmod -R 755 "$NOVNC_DIR"
+    fi
+
+    rm -rf noVNC-master noVNC-master.zip
+
+    # Configure supervisor for websockify
+    # Proxies to lume's built-in VNC on the host via the gateway IP.
+    # The host VNC port must match the --vnc-port used with lume run.
+    local SUPERVISOR_CONF_DIR="/opt/homebrew/etc/supervisor.d"
+    local SUPERVISOR_LOG_DIR="/opt/homebrew/var/log/supervisor"
+    local VENV_PYTHON="$CUA_DIR/venv/bin/python3"
+
+    mkdir -p "$SUPERVISOR_CONF_DIR"
+    mkdir -p "$SUPERVISOR_LOG_DIR"
+
+    cat > "$SUPERVISOR_CONF_DIR/websockify.ini" <<EOF
+[program:websockify]
+command=$VENV_PYTHON -m websockify --web $NOVNC_DIR $NOVNC_PORT $GATEWAY_IP:$HOST_VNC_PORT
+directory=$NOVNC_DIR
+autostart=true
+autorestart=true
+startsecs=5
+startretries=3
+stopwaitsecs=10
+redirect_stderr=true
+stdout_logfile=$SUPERVISOR_LOG_DIR/websockify.log
+stdout_logfile_maxbytes=10MB
+stdout_logfile_backups=5
+environment=HOME="$USER_HOME",PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin",DISPLAY=":0"
+EOF
+
+    chmod 644 "$SUPERVISOR_CONF_DIR/websockify.ini"
+
+    echo -e "${GREEN}noVNC installed${NC}"
+    echo "  websockify will proxy port $NOVNC_PORT -> $GATEWAY_IP:$HOST_VNC_PORT (lume VNC)"
+}
+
+# ============================================
+# Phase 6: Startup Script + LaunchAgent
 # ============================================
 
 create_startup_script() {
-    print_phase "Phase 5: Startup Script & LaunchAgent"
+    print_phase "Phase 6: Startup Script & LaunchAgent"
 
     if ! confirm "Create CUA server startup script and LaunchAgent?"; then
         echo -e "${YELLOW}Skipping LaunchAgent setup.${NC}"
@@ -260,6 +392,48 @@ source venv/bin/activate
 
 export DISPLAY=:0
 
+# Auto-detect host gateway IP for VNC backend
+GATEWAY_IP=$(route get default 2>/dev/null | grep gateway | awk '{print $2}')
+if [ -z "$GATEWAY_IP" ]; then
+    GATEWAY_IP="192.168.64.1"
+fi
+
+# Read VNC config from lume shared directory if available.
+# Lume automatically shares a "lume-config" VirtioFS volume containing vnc.env
+# with the assigned VNC port and password for this VM.
+LUME_CONFIG_MOUNT="/tmp/lume-config"
+LUME_CONFIG="$LUME_CONFIG_MOUNT/vnc.env"
+LUME_VNC_PORT=""
+LUME_VNC_PASSWORD=""
+
+# Try to mount the lume-config VirtioFS share and read VNC config
+mkdir -p "$LUME_CONFIG_MOUNT" 2>/dev/null
+if mount | grep -q "lume-config"; then
+    echo "lume-config already mounted" >> "$LOG_FILE"
+elif mount_virtiofs lume-config "$LUME_CONFIG_MOUNT" 2>/dev/null; then
+    echo "Mounted lume-config VirtioFS share" >> "$LOG_FILE"
+else
+    echo "lume-config VirtioFS share not available, using defaults" >> "$LOG_FILE"
+fi
+
+# Wait up to 10s for vnc.env to appear (written by host after VNC starts)
+for i in $(seq 1 10); do
+    if [ -f "$LUME_CONFIG" ]; then
+        eval "$(cat "$LUME_CONFIG")"
+        LUME_VNC_PORT="${VNC_PORT:-}"
+        LUME_VNC_PASSWORD="${VNC_PASSWORD:-}"
+        echo "Read VNC config from lume shared dir: port=$LUME_VNC_PORT" >> "$LOG_FILE"
+        break
+    fi
+    sleep 1
+done
+
+# Set VNC backend env vars — prefer lume-config values, fall back to defaults
+export CUA_BACKEND=vnc
+export CUA_VNC_HOST="$GATEWAY_IP"
+export CUA_VNC_PORT="${LUME_VNC_PORT:-__VNC_PORT__}"
+export CUA_VNC_PASSWORD="${LUME_VNC_PASSWORD:-__VNC_PASSWORD__}"
+
 # Update packages
 echo "Updating cua-agent..." >> "$LOG_FILE"
 pip install --upgrade --no-input "cua-agent[all]" >> "$LOG_FILE" 2>&1 || true
@@ -272,13 +446,16 @@ echo "Ensuring Playwright Firefox..." >> "$LOG_FILE"
 pip install --upgrade --no-input playwright >> "$LOG_FILE" 2>&1 || true
 playwright install firefox >> "$LOG_FILE" 2>&1 || true
 
-# Start server
-echo "Starting CUA computer server on port __PORT__..." >> "$LOG_FILE"
+# Start server with VNC backend pointing at lume's VNC on the host
+echo "Starting CUA computer server (vnc backend) on port __PORT__..." >> "$LOG_FILE"
+echo "  VNC target: $GATEWAY_IP:__VNC_PORT__ (password: __VNC_PASSWORD__)" >> "$LOG_FILE"
 python -m computer_server --port __PORT__ >> "$LOG_FILE" 2>&1
 SCRIPT_EOF
 
-    # Stamp the port
+    # Stamp the port and VNC settings
     sed -i '' "s/__PORT__/$CUA_SERVER_PORT/g" "$STARTUP_SCRIPT"
+    sed -i '' "s/__VNC_PORT__/$HOST_VNC_PORT/g" "$STARTUP_SCRIPT"
+    sed -i '' "s/__VNC_PASSWORD__/$VNC_PASSWORD/g" "$STARTUP_SCRIPT"
     chmod +x "$STARTUP_SCRIPT"
 
     # Create LaunchAgent
@@ -309,6 +486,12 @@ SCRIPT_EOF
         <string>$USER_HOME</string>
         <key>DISPLAY</key>
         <string>:0</string>
+        <key>CUA_BACKEND</key>
+        <string>vnc</string>
+        <key>CUA_VNC_PORT</key>
+        <string>$HOST_VNC_PORT</string>
+        <key>CUA_VNC_PASSWORD</key>
+        <string>$VNC_PASSWORD</string>
     </dict>
 
     <key>ProgramArguments</key>
@@ -346,13 +529,13 @@ EOF
 }
 
 # ============================================
-# Phase 6: System Configuration
+# Phase 7: System Configuration + Auto-Login
 # ============================================
 
 configure_system() {
-    print_phase "Phase 6: System Configuration"
+    print_phase "Phase 7: System Configuration"
 
-    if ! confirm "Disable screen lock, screensaver, and sleep?"; then
+    if ! confirm "Disable screen lock, screensaver, sleep, and enable auto-login?"; then
         echo -e "${YELLOW}Skipping system configuration.${NC}"
         return 0
     fi
@@ -374,11 +557,67 @@ configure_system() {
     # Enable full keyboard navigation (needed for accessibility automation)
     defaults write NSGlobalDomain AppleKeyboardUIMode -int 3
 
-    echo -e "${GREEN}System configured (no sleep, no screensaver, full keyboard nav)${NC}"
+    # Configure auto-login (ensures GUI session + unlocked keychain on boot)
+    echo "Configuring auto-login for $CURRENT_USER..."
+
+    if [ "$AUTO_YES" = true ]; then
+        sudo -A defaults write /Library/Preferences/com.apple.loginwindow autoLoginUser "$CURRENT_USER"
+    else
+        sudo defaults write /Library/Preferences/com.apple.loginwindow autoLoginUser "$CURRENT_USER"
+    fi
+
+    # Create kcpassword file (XOR-encrypted password for auto-login)
+    python3 << PYEOF
+password = "$VM_PASSWORD"
+key = bytes.fromhex("7d895223d2bcddeaa3b91f")
+padded_len = ((len(password) + 11) // 12) * 12
+padded = password + "\x00" * (padded_len - len(password))
+result = bytearray()
+for i, char in enumerate(padded.encode("utf-8")):
+    result.append(char ^ key[i % len(key)])
+with open("/tmp/kcpassword", "wb") as f:
+    f.write(result)
+PYEOF
+
+    if [ "$AUTO_YES" = true ]; then
+        sudo -A mv /tmp/kcpassword /etc/kcpassword
+        sudo -A chown root:wheel /etc/kcpassword
+        sudo -A chmod 600 /etc/kcpassword
+    else
+        sudo mv /tmp/kcpassword /etc/kcpassword
+        sudo chown root:wheel /etc/kcpassword
+        sudo chmod 600 /etc/kcpassword
+    fi
+
+    echo -e "${GREEN}System configured (no sleep, no screensaver, full keyboard nav, auto-login)${NC}"
 }
 
 # ============================================
-# Phase 7: Verification
+# Phase 8: Start Services
+# ============================================
+
+start_services() {
+    print_phase "Phase 8: Start Services"
+
+    ensure_brew
+
+    # Start supervisor (manages websockify)
+    if command -v brew &>/dev/null; then
+        echo "Starting supervisor..."
+        brew services start supervisor 2>/dev/null || true
+        sleep 3
+
+        if command -v supervisorctl &>/dev/null; then
+            supervisorctl reread 2>/dev/null || true
+            supervisorctl update 2>/dev/null || true
+        fi
+    fi
+
+    echo -e "${GREEN}Services started${NC}"
+}
+
+# ============================================
+# Phase 9: Verification
 # ============================================
 
 verify() {
@@ -386,6 +625,7 @@ verify() {
 
     echo "System:"
     echo "  User:    $CURRENT_USER"
+    echo "  Gateway: $GATEWAY_IP"
     sw_vers | sed 's/^/  /'
 
     echo ""
@@ -431,6 +671,22 @@ verify() {
         echo -e "  ${YELLOW}~${NC} Playwright (may not be installed)"
     fi
 
+    # noVNC / websockify
+    if command -v supervisorctl &>/dev/null && supervisorctl status websockify 2>/dev/null | grep -q RUNNING; then
+        echo -e "  ${GREEN}✓${NC} noVNC + websockify (port $NOVNC_PORT -> $GATEWAY_IP:$HOST_VNC_PORT)"
+    elif [ -d "/usr/local/share/novnc" ]; then
+        echo -e "  ${YELLOW}~${NC} noVNC installed (websockify may not be running yet)"
+    else
+        echo -e "  ${RED}✗${NC} noVNC"
+    fi
+
+    # Auto-login
+    if defaults read /Library/Preferences/com.apple.loginwindow autoLoginUser 2>/dev/null | grep -q "$CURRENT_USER"; then
+        echo -e "  ${GREEN}✓${NC} Auto-login ($CURRENT_USER)"
+    else
+        echo -e "  ${YELLOW}~${NC} Auto-login (may need reboot)"
+    fi
+
     # LaunchAgent
     local PLIST="$USER_HOME/Library/LaunchAgents/com.trycua.computer_server.plist"
     if [ -f "$PLIST" ]; then
@@ -444,13 +700,29 @@ verify() {
     echo -e "${GREEN}  Setup Complete!${NC}"
     echo -e "${GREEN}========================================${NC}"
     echo ""
-    echo "CUA computer server will start on port $CUA_SERVER_PORT at next login."
+    echo "Services:"
+    echo "  CUA server:  port $CUA_SERVER_PORT (starts at login via LaunchAgent)"
+    echo "  noVNC:       port $NOVNC_PORT -> $GATEWAY_IP:$HOST_VNC_PORT (lume VNC)"
     echo ""
-    echo "To start it now (from the host):"
+    echo "Start the VM with a fixed VNC port and password (from the host):"
+    echo "  lume run <vm-name> --vnc-port $HOST_VNC_PORT --vnc-password $VNC_PASSWORD"
+    echo ""
+    echo "To start CUA server now (from the host):"
     echo "  lume ssh <vm-name> 'launchctl load ~/Library/LaunchAgents/com.trycua.computer_server.plist'"
     echo ""
     echo "To test from the host:"
-    echo "  curl http://<vm-ip>:$CUA_SERVER_PORT/health"
+    echo "  curl http://<vm-ip>:$CUA_SERVER_PORT/status"
+    echo ""
+    echo "To access noVNC from the host network:"
+    echo "  http://<vm-ip>:$NOVNC_PORT/vnc.html"
+    echo ""
+    echo "To access noVNC remotely (from outside the host):"
+    echo "  1. SSH tunnel:  ssh -L $NOVNC_PORT:<vm-ip>:$NOVNC_PORT user@host"
+    echo "  2. Open:        http://localhost:$NOVNC_PORT/vnc.html?host=localhost&port=$NOVNC_PORT"
+    echo ""
+    echo "VNC password: $VNC_PASSWORD"
+    echo ""
+    echo "NOTE: A reboot is recommended for auto-login to take effect."
     echo ""
 }
 
@@ -463,14 +735,16 @@ echo "  ⠀⣀⣀⡀⠀⠀⠀⠀⢀⣀⣀⣀⡀⠘⠋⢉⠙⣷⠀⠀ ⠀"
 echo " ⠀⠀⢀⣴⣿⡿⠋⣉⠁⣠⣾⣿⣿⣿⣿⡿⠿⣦⡈⠀⣿⡇⠃⠀"
 echo " ⠀⠀⠀⣽⣿⣧⠀⠃⢰⣿⣿⡏⠙⣿⠿⢧⣀⣼⣷⠀⡿⠃⠀⠀"
 echo " ⠀⠀⠀⠉⣿⣿⣦⠀⢿⣿⣿⣷⣾⡏⠀⠀⢹⣿⣿⠀⠀⠀⠀⠀⠀"
-echo -e " ⠀⠀⠀⠀⠀⠉⠛⠁⠈⠿⣿⣿⣿⣷⣄⣠⡼⠟⠁${NC}  ${BLUE}CUA Computer Setup${NC}"
-echo -e "${BLUE}           Make a Lume VM cua-computer compatible${NC}"
+echo -e " ⠀⠀⠀⠀⠀⠉⠛⠁⠈⠿⣿⣿⣿⣷⣄⣠⡼⠟⠁${NC}  ${BLUE}CUA Setup${NC}"
+echo -e "${BLUE}           Make a Lume VM cua-compatible${NC}"
 echo ""
 
 install_homebrew
 install_python
 install_system_deps
 setup_cua_server
+setup_novnc
 create_startup_script
 configure_system
+start_services
 verify

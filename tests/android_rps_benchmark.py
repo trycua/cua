@@ -1,48 +1,27 @@
-"""Android VM fleet benchmark — validate cloud infra for large-scale RL training.
+"""Android VM fleet benchmark — measure max achievable RPS for a given sandbox count.
 
-Provisions N Android sandboxes in parallel, then drives them at a target
-aggregate RPS. Reports achieved throughput, latency percentiles, and a
-PASS/FAIL verdict.
-
-Capacity estimates (per cloud Android VM, quickboot snapshot ~6s cold start):
-  screenshot only   :  2.5–7 RPS  (150–400ms ADB screencap + JPEG encode)
-  RL step (tap+obs) :  1.7–3 RPS  (action + screenshot, sequential)
-
-Fleet throughput scales linearly with sandbox count until hitting:
-  - Incus host KVM slots / CPU cores
-  - Memory per VM (~4 GB each)
-  - Traefik reverse-proxy saturation
-  - Network bandwidth (screenshots ~20–100 KB JPEG each)
+Provisions N Android sandboxes in parallel, then drives them as fast as possible
+(no rate limiting). Reports achieved throughput and latency percentiles.
 
 Usage:
-    # Validate 20 RPS across 8 sandboxes
-    python tests/android_rps_benchmark.py --target-rps 20 --sandboxes 8 --duration 30
-
-    # Full RL-step stress test at 100 RPS
-    python tests/android_rps_benchmark.py --target-rps 100 --sandboxes 40 --duration 60 --action step
-
-    # Quick smoke test
-    python tests/android_rps_benchmark.py --target-rps 4 --sandboxes 2 --duration 15
+    python tests/android_rps_benchmark.py --sandboxes 2 --duration 30
+    python tests/android_rps_benchmark.py --sandboxes 8 --duration 60 --action step
 """
 
 from __future__ import annotations
 
 import argparse
 import asyncio
+import builtins
+import functools
 import math
 import statistics
 import time
 from dataclasses import dataclass, field
-from typing import Optional
 
 from cua_sandbox import Image, Sandbox
 
-# ── Configurable pass/fail thresholds ─────────────────────────────────────────
-
-DEFAULT_MIN_ACHIEVED_FRACTION = 0.95  # achieved RPS must be ≥ 95% of target
-DEFAULT_MAX_ERROR_RATE = 0.05  # ≤ 5% errors
-DEFAULT_MAX_P99_MS = 5_000  # p99 latency ≤ 5 s
-
+print = functools.partial(builtins.print, flush=True)
 
 # ── Data types ────────────────────────────────────────────────────────────────
 
@@ -55,16 +34,9 @@ class SandboxStats:
     errors: int = 0
     latencies: list[float] = field(default_factory=list)
 
-    @property
-    def rps(self) -> float:
-        if not self.latencies:
-            return 0.0
-        return len(self.latencies) / sum(self.latencies)
-
 
 @dataclass
 class BenchmarkResult:
-    target_rps: float
     achieved_rps: float
     sandboxes: int
     duration: float
@@ -72,8 +44,6 @@ class BenchmarkResult:
     total_errors: int
     provision_times: list[float]
     all_latencies: list[float]
-    passed: bool
-    fail_reasons: list[str]
 
     @property
     def error_rate(self) -> float:
@@ -107,31 +77,6 @@ def _percentile(data: list[float], p: float) -> float:
     lo = int(idx)
     hi = min(lo + 1, len(s) - 1)
     return s[lo] + (idx - lo) * (s[hi] - s[lo])
-
-
-class _TokenBucket:
-    """Async token bucket for aggregate rate limiting across workers."""
-
-    def __init__(self, rate: float):
-        self._rate = rate
-        self._tokens = float(rate)
-        self._last = time.monotonic()
-        self._lock = asyncio.Lock()
-
-    async def acquire(self) -> None:
-        while True:
-            async with self._lock:
-                now = time.monotonic()
-                self._tokens = min(
-                    self._rate,
-                    self._tokens + (now - self._last) * self._rate,
-                )
-                self._last = now
-                if self._tokens >= 1.0:
-                    self._tokens -= 1.0
-                    return
-                wait = (1.0 - self._tokens) / self._rate
-            await asyncio.sleep(wait)
 
 
 # ── Sandbox lifecycle ─────────────────────────────────────────────────────────
@@ -184,7 +129,7 @@ def _ts() -> str:
 
 async def _do_screenshot(sb: Sandbox, name: str) -> None:
     t0 = time.monotonic()
-    data = await sb.screenshot()
+    data = await sb.screenshot(format="jpeg")
     elapsed = time.monotonic() - t0
     print(f"  {_ts()}  {name}  screenshot  {elapsed*1000:.0f}ms  {len(data)}B")
     if len(data) < 500:
@@ -204,7 +149,7 @@ async def _do_step(sb: Sandbox, name: str) -> None:
     print(f"  {_ts()}  {name}  tap         {t_tap*1000:.0f}ms")
 
     t_ss0 = time.monotonic()
-    data = await sb.screenshot()
+    data = await sb.screenshot(format="jpeg")
     t_ss = time.monotonic() - t_ss0
     print(f"  {_ts()}  {name}  screenshot  {t_ss*1000:.0f}ms  {len(data)}B")
 
@@ -225,16 +170,12 @@ _ACTION_FNS = {
 async def _worker(
     sb: Sandbox,
     stats: SandboxStats,
-    bucket: _TokenBucket,
     stop_event: asyncio.Event,
     action: str,
 ) -> None:
-    """Drive one sandbox at the rate-limited pace until stop_event is set."""
+    """Drive one sandbox as fast as possible until stop_event is set."""
     fn = _ACTION_FNS[action]
     while not stop_event.is_set():
-        await bucket.acquire()
-        if stop_event.is_set():
-            break
         t0 = time.monotonic()
         try:
             await fn(sb, stats.name)
@@ -257,7 +198,6 @@ async def _progress_reporter(
     all_stats: list[SandboxStats],
     t_start: float,
     duration: float,
-    target_rps: float,
     stop_event: asyncio.Event,
 ) -> None:
     interval = max(5.0, duration / 6)
@@ -269,10 +209,9 @@ async def _progress_reporter(
         total_reqs = sum(s.requests for s in all_stats)
         total_errs = sum(s.errors for s in all_stats)
         rps = total_reqs / elapsed if elapsed > 0 else 0.0
-        pct = rps / target_rps * 100
         remain = max(0, duration - elapsed)
         print(
-            f"  t={elapsed:>5.1f}s  {rps:>6.1f}/{target_rps:.0f} RPS ({pct:.0f}%)  "
+            f"  t={elapsed:>5.1f}s  {rps:>6.1f} RPS  "
             f"reqs={total_reqs}  errs={total_errs}  remain={remain:.0f}s"
         )
 
@@ -281,14 +220,10 @@ async def _progress_reporter(
 
 
 async def run_benchmark(
-    target_rps: float,
     n_sandboxes: int,
     duration: float,
     action: str,
     image: Image,
-    min_achieved_fraction: float = DEFAULT_MIN_ACHIEVED_FRACTION,
-    max_error_rate: float = DEFAULT_MAX_ERROR_RATE,
-    max_p99_ms: float = DEFAULT_MAX_P99_MS,
 ) -> BenchmarkResult:
 
     # ── Provision ──────────────────────────────────────────────────────────
@@ -306,26 +241,19 @@ async def run_benchmark(
     )
 
     # ── Load test ─────────────────────────────────────────────────────────
-    bucket = _TokenBucket(rate=target_rps)
     stop_event = asyncio.Event()
     t_start = time.monotonic()
 
     global _t_bench_start
     _t_bench_start = t_start
 
-    per_sb = target_rps / actual
-    print(
-        f"\n── Load test: {target_rps} RPS × {duration}s ──\n"
-        f"  action={action}  sandboxes={actual}  {per_sb:.1f} RPS/sandbox"
-    )
+    print(f"\n── Load test: max RPS × {duration}s ──\n  action={action}  sandboxes={actual}")
 
     workers = [
-        asyncio.create_task(_worker(sb, st, bucket, stop_event, action))
+        asyncio.create_task(_worker(sb, st, stop_event, action))
         for sb, st in zip(sandboxes, all_stats)
     ]
-    reporter = asyncio.create_task(
-        _progress_reporter(all_stats, t_start, duration, target_rps, stop_event)
-    )
+    reporter = asyncio.create_task(_progress_reporter(all_stats, t_start, duration, stop_event))
 
     await asyncio.sleep(duration)
     stop_event.set()
@@ -347,21 +275,7 @@ async def run_benchmark(
     all_latencies = [lat for s in all_stats for lat in s.latencies]
     achieved_rps = total_reqs / elapsed if elapsed > 0 else 0.0
 
-    fail_reasons: list[str] = []
-    if achieved_rps < target_rps * min_achieved_fraction:
-        fail_reasons.append(
-            f"achieved RPS {achieved_rps:.1f} < {target_rps * min_achieved_fraction:.1f} "
-            f"({min_achieved_fraction*100:.0f}% of target)"
-        )
-    err_rate = total_errs / max(total_reqs, 1)
-    if err_rate > max_error_rate:
-        fail_reasons.append(f"error rate {err_rate*100:.1f}% > {max_error_rate*100:.0f}%")
-    p99_ms = _percentile(all_latencies, 99) * 1000
-    if p99_ms > max_p99_ms:
-        fail_reasons.append(f"p99 latency {p99_ms:.0f}ms > {max_p99_ms:.0f}ms")
-
     return BenchmarkResult(
-        target_rps=target_rps,
         achieved_rps=achieved_rps,
         sandboxes=actual,
         duration=elapsed,
@@ -369,8 +283,6 @@ async def run_benchmark(
         total_errors=total_errs,
         provision_times=provision_times,
         all_latencies=all_latencies,
-        passed=not fail_reasons,
-        fail_reasons=fail_reasons,
     )
 
 
@@ -378,18 +290,14 @@ async def run_benchmark(
 
 
 def print_report(result: BenchmarkResult) -> None:
-    status = "PASS ✓" if result.passed else "FAIL ✗"
     bar = "─" * 58
     print(f"\n{'═'*58}")
-    print(f"  Android VM Fleet Benchmark  [{status}]")
+    print("  Android VM Fleet Benchmark")
     print(f"{'═'*58}")
     print(f"  {bar}")
     print("  Throughput")
-    print(f"  {'Target RPS':<24} {result.target_rps:.1f}")
-    print(
-        f"  {'Achieved RPS':<24} {result.achieved_rps:.2f}  "
-        f"({result.achieved_rps / result.target_rps * 100:.0f}% of target)"
-    )
+    print(f"  {'Achieved RPS':<24} {result.achieved_rps:.2f}")
+    print(f"  {'RPS / sandbox':<24} {result.achieved_rps / max(result.sandboxes, 1):.2f}")
     print(f"  {'Sandboxes':<24} {result.sandboxes}")
     print(f"  {'Duration':<24} {result.duration:.1f}s")
     print(f"  {'Total requests':<24} {result.total_requests}")
@@ -407,20 +315,6 @@ def print_report(result: BenchmarkResult) -> None:
         print(f"  {'p99':<24} {result.p99 * 1000:.0f}ms")
     else:
         print("  (no successful requests)")
-    print(f"  {bar}")
-
-    if result.passed:
-        print(f"  Infrastructure sustains {result.target_rps:.0f} RPS. Ready for RL at scale.")
-    else:
-        print("  Failures:")
-        for r in result.fail_reasons:
-            print(f"    • {r}")
-        if result.all_latencies:
-            rps_per_sb = result.achieved_rps / max(result.sandboxes, 1)
-            needed_sb = math.ceil(result.target_rps / rps_per_sb) if rps_per_sb > 0 else "∞"
-            print(f"\n  Per-sandbox throughput : ~{rps_per_sb:.1f} RPS")
-            print(f"  Sandboxes to hit target: ~{needed_sb}")
-
     print(f"{'═'*58}\n")
 
 
@@ -429,100 +323,47 @@ def print_report(result: BenchmarkResult) -> None:
 
 def _parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
-        description="Validate Android VM cloud infra for large-scale RL training.",
+        description="Measure max RPS for a fleet of Android sandboxes.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
-Capacity estimates (per cloud Android VM, quickboot snapshot):
-  screenshot        :  2.5–7 RPS    (150–400ms per call)
-  RL step (tap+obs) :  1.7–3 RPS    (action + screenshot, sequential)
-
-Pass conditions (all must hold):
-  • achieved RPS ≥ 95% of --target-rps
-  • error rate   ≤ 5%  (override: --max-error-rate)
-  • p99 latency  ≤ 5s  (override: --max-p99-ms)
-
 Examples:
-  python tests/android_rps_benchmark.py --target-rps 20 --sandboxes 8 --duration 30
-  python tests/android_rps_benchmark.py --target-rps 100 --sandboxes 40 --duration 60 --action step
-  python tests/android_rps_benchmark.py --target-rps 5 --sandboxes 2 --duration 15
+  python tests/android_rps_benchmark.py --sandboxes 2 --duration 30
+  python tests/android_rps_benchmark.py --sandboxes 8 --duration 60 --action step
         """,
     )
     p.add_argument(
-        "--target-rps",
-        type=float,
-        required=True,
-        help="Target aggregate requests/steps per second across the whole fleet.",
+        "--sandboxes", type=int, default=2, help="Number of Android sandboxes (default: 2)."
     )
     p.add_argument(
-        "--sandboxes",
-        type=int,
-        default=None,
-        help=(
-            "Number of Android sandboxes to provision. "
-            "Defaults to ceil(target_rps / 3) — assuming ~3 RPS per sandbox."
-        ),
-    )
-    p.add_argument(
-        "--duration",
-        type=float,
-        default=30.0,
-        help="Load-test duration in seconds (default: 30).",
+        "--duration", type=float, default=30.0, help="Load-test duration in seconds (default: 30)."
     )
     p.add_argument(
         "--action",
         choices=list(_ACTION_FNS),
         default="screenshot",
-        help=(
-            "Action to benchmark. "
-            "'screenshot' = observation only; "
-            "'step' = tap + screenshot (full RL step). "
-            "Default: screenshot."
-        ),
+        help="'screenshot' = observation only; 'step' = tap + screenshot. Default: screenshot.",
     )
-    p.add_argument(
-        "--android-version",
-        default="14",
-        help="Android version to use (default: 14).",
-    )
-    p.add_argument(
-        "--max-error-rate",
-        type=float,
-        default=DEFAULT_MAX_ERROR_RATE,
-        help=f"Max acceptable error rate 0–1 (default: {DEFAULT_MAX_ERROR_RATE}).",
-    )
-    p.add_argument(
-        "--max-p99-ms",
-        type=float,
-        default=DEFAULT_MAX_P99_MS,
-        help=f"Max acceptable p99 latency in ms (default: {DEFAULT_MAX_P99_MS}).",
-    )
+    p.add_argument("--android-version", default="14", help="Android version (default: 14).")
     return p.parse_args()
 
 
-async def _main() -> bool:
+async def _main() -> None:
     args = _parse_args()
-    n_sandboxes = args.sandboxes or math.ceil(args.target_rps / 3)
     image = Image.android(args.android_version)
 
     print("Android RL Fleet Benchmark")
     print(
-        f"  target_rps={args.target_rps}  sandboxes={n_sandboxes}  "
-        f"duration={args.duration}s  action={args.action}  android={args.android_version}"
+        f"  sandboxes={args.sandboxes}  duration={args.duration}s  action={args.action}  android={args.android_version}"
     )
 
     result = await run_benchmark(
-        target_rps=args.target_rps,
-        n_sandboxes=n_sandboxes,
+        n_sandboxes=args.sandboxes,
         duration=args.duration,
         action=args.action,
         image=image,
-        max_error_rate=args.max_error_rate,
-        max_p99_ms=args.max_p99_ms,
     )
     print_report(result)
-    return result.passed
 
 
 if __name__ == "__main__":
-    passed = asyncio.run(_main())
-    raise SystemExit(0 if passed else 1)
+    asyncio.run(_main())

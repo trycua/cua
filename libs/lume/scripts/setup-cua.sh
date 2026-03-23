@@ -21,12 +21,10 @@
 #   # Or copy and run directly inside the VM:
 #   ./setup-cua.sh [--yes] [--port PORT] [--host-vnc-port PORT]
 #
-# Important: Start the VM with a fixed VNC port and password so websockify can find it:
-#   lume run <vm-name> --vnc-port 5901 --vnc-password lume
-#
-# Note: Port 5900 is often used by the host's Screen Sharing service, so we
-# default to 5901. Use --host-vnc-port to match whatever --vnc-port you pass
-# to lume run.
+# VNC: Lume auto-generates a random VNC port and password for each VM and
+# delivers them to ~/.vnc.env inside the VM via SSH. The startup script and
+# websockify read this file automatically — no manual --vnc-port or
+# --vnc-password flags are needed.
 #
 # Accessing noVNC remotely (from outside the host):
 #   1. SSH tunnel: ssh -L 6080:<vm-ip>:6080 user@host
@@ -65,8 +63,8 @@ CUA_SERVER_PORT=8443
 VM_PASSWORD="${VM_PASSWORD:-lume}"
 CUA_DIR="$HOME/.cua-server"
 NOVNC_PORT=6080
-HOST_VNC_PORT="${HOST_VNC_PORT:-5901}"
-VNC_PASSWORD="${VNC_PASSWORD:-lume}"
+HOST_VNC_PORT="${HOST_VNC_PORT:-}"
+VNC_PASSWORD="${VNC_PASSWORD:-}"
 
 # Parse arguments
 while [ "$#" -gt 0 ]; do
@@ -79,10 +77,12 @@ while [ "$#" -gt 0 ]; do
             shift
             ;;
         --host-vnc-port)
+            echo -e "${YELLOW}Note: --host-vnc-port is deprecated. Lume auto-generates VNC ports.${NC}"
             HOST_VNC_PORT="$2"
             shift
             ;;
         --vnc-password)
+            echo -e "${YELLOW}Note: --vnc-password is deprecated. Lume auto-generates VNC passwords.${NC}"
             VNC_PASSWORD="$2"
             shift
             ;;
@@ -92,14 +92,14 @@ while [ "$#" -gt 0 ]; do
             echo "Options:"
             echo "  --yes, -y                  Non-interactive mode (accept all prompts)"
             echo "  --port PORT                CUA computer server port (default: 8443)"
-            echo "  --host-vnc-port PORT       Lume VNC port on the host (default: 5901)"
-            echo "  --vnc-password PWD         Lume VNC password (from 'lume ls' output)"
+            echo "  --host-vnc-port PORT       (deprecated) Lume auto-generates VNC ports"
+            echo "  --vnc-password PWD         (deprecated) Lume auto-generates VNC passwords"
             echo "  --help                     Show this help message"
             echo ""
             echo "Environment variables:"
             echo "  VM_PASSWORD                VM user password (default: lume)"
-            echo "  HOST_VNC_PORT              Lume VNC port on the host (default: 5901)"
-            echo "  VNC_PASSWORD               Lume VNC password (from 'lume ls' output)"
+            echo "  HOST_VNC_PORT              (deprecated) Lume auto-generates VNC ports"
+            echo "  VNC_PASSWORD               (deprecated) Lume auto-generates VNC passwords"
             exit 0
             ;;
         *)
@@ -334,7 +334,7 @@ setup_novnc() {
 
     # Configure supervisor for websockify
     # Proxies to lume's built-in VNC on the host via the gateway IP.
-    # The host VNC port must match the --vnc-port used with lume run.
+    # The VNC port is read from ~/.vnc.env (written by lume via SSH).
     local SUPERVISOR_CONF_DIR="/opt/homebrew/etc/supervisor.d"
     local SUPERVISOR_LOG_DIR="/opt/homebrew/var/log/supervisor"
     local VENV_PYTHON="$CUA_DIR/venv/bin/python3"
@@ -342,9 +342,35 @@ setup_novnc() {
     mkdir -p "$SUPERVISOR_CONF_DIR"
     mkdir -p "$SUPERVISOR_LOG_DIR"
 
+    # Create a wrapper script that reads VNC config from ~/.vnc.env
+    local WEBSOCKIFY_WRAPPER="$CUA_DIR/start_websockify.sh"
+    cat > "$WEBSOCKIFY_WRAPPER" <<'WSEOF'
+#!/bin/bash
+# Read VNC port from ~/.vnc.env (written by lume via SSH after VM boot)
+VNC_PORT=""
+if [ -s "$HOME/.vnc.env" ]; then
+    eval "$(cat "$HOME/.vnc.env")"
+fi
+if [ -z "$VNC_PORT" ]; then
+    echo "No ~/.vnc.env found — websockify cannot start without VNC port" >&2
+    exit 1
+fi
+
+GATEWAY_IP=$(route get default 2>/dev/null | grep gateway | awk '{print $2}')
+if [ -z "$GATEWAY_IP" ]; then
+    GATEWAY_IP="192.168.64.1"
+fi
+
+exec __VENV_PYTHON__ -m websockify --web __NOVNC_DIR__ __NOVNC_PORT__ "$GATEWAY_IP:$VNC_PORT"
+WSEOF
+    sed -i '' "s|__VENV_PYTHON__|$VENV_PYTHON|g" "$WEBSOCKIFY_WRAPPER"
+    sed -i '' "s|__NOVNC_DIR__|$NOVNC_DIR|g" "$WEBSOCKIFY_WRAPPER"
+    sed -i '' "s|__NOVNC_PORT__|$NOVNC_PORT|g" "$WEBSOCKIFY_WRAPPER"
+    chmod +x "$WEBSOCKIFY_WRAPPER"
+
     cat > "$SUPERVISOR_CONF_DIR/websockify.ini" <<EOF
 [program:websockify]
-command=$VENV_PYTHON -m websockify --web $NOVNC_DIR $NOVNC_PORT $GATEWAY_IP:$HOST_VNC_PORT
+command=/bin/bash $WEBSOCKIFY_WRAPPER
 directory=$NOVNC_DIR
 autostart=true
 autorestart=true
@@ -361,7 +387,7 @@ EOF
     chmod 644 "$SUPERVISOR_CONF_DIR/websockify.ini"
 
     echo -e "${GREEN}noVNC installed${NC}"
-    echo "  websockify will proxy port $NOVNC_PORT -> $GATEWAY_IP:$HOST_VNC_PORT (lume VNC)"
+    echo "  websockify will proxy port $NOVNC_PORT -> lume VNC (port from ~/.vnc.env)"
 }
 
 # ============================================
@@ -398,41 +424,66 @@ if [ -z "$GATEWAY_IP" ]; then
     GATEWAY_IP="192.168.64.1"
 fi
 
-# Read VNC config from lume shared directory if available.
-# Lume automatically shares a "lume-config" VirtioFS volume containing vnc.env
-# with the assigned VNC port and password for this VM.
-LUME_CONFIG_MOUNT="/tmp/lume-config"
-LUME_CONFIG="$LUME_CONFIG_MOUNT/vnc.env"
+# Read VNC config — check multiple sources in priority order:
+# 1. Local vnc.env (written by host via lume ssh, or cached from VirtioFS)
+# 2. VirtioFS lume-config mount (may be blocked by macOS TCC in LaunchAgents)
 LUME_VNC_PORT=""
 LUME_VNC_PASSWORD=""
+LOCAL_VNC_ENV="$HOME/.vnc.env"
 
-# Try to mount the lume-config VirtioFS share and read VNC config
-mkdir -p "$LUME_CONFIG_MOUNT" 2>/dev/null
-if mount | grep -q "lume-config"; then
-    echo "lume-config already mounted" >> "$LOG_FILE"
-elif mount_virtiofs lume-config "$LUME_CONFIG_MOUNT" 2>/dev/null; then
-    echo "Mounted lume-config VirtioFS share" >> "$LOG_FILE"
-else
-    echo "lume-config VirtioFS share not available, using defaults" >> "$LOG_FILE"
+# Source 1: local vnc.env (most reliable — not subject to TCC restrictions)
+if [ -s "$LOCAL_VNC_ENV" ]; then
+    eval "$(cat "$LOCAL_VNC_ENV")"
+    LUME_VNC_PORT="${VNC_PORT:-}"
+    LUME_VNC_PASSWORD="${VNC_PASSWORD:-}"
+    echo "Read VNC config from local vnc.env: port=$LUME_VNC_PORT" >> "$LOG_FILE"
 fi
 
-# Wait up to 10s for vnc.env to appear (written by host after VNC starts)
-for i in $(seq 1 10); do
-    if [ -f "$LUME_CONFIG" ]; then
-        eval "$(cat "$LUME_CONFIG")"
-        LUME_VNC_PORT="${VNC_PORT:-}"
-        LUME_VNC_PASSWORD="${VNC_PASSWORD:-}"
-        echo "Read VNC config from lume shared dir: port=$LUME_VNC_PORT" >> "$LOG_FILE"
-        break
+# Source 2: VirtioFS lume-config (fallback — may need sudo due to TCC)
+if [ -z "$LUME_VNC_PORT" ]; then
+    LUME_CONFIG_MOUNT="/tmp/lume-config"
+    LUME_CONFIG="$LUME_CONFIG_MOUNT/vnc.env"
+    mkdir -p "$LUME_CONFIG_MOUNT" 2>/dev/null
+    if mount | grep -q "lume-config"; then
+        echo "lume-config already mounted" >> "$LOG_FILE"
+    elif mount_virtiofs lume-config "$LUME_CONFIG_MOUNT" 2>/dev/null; then
+        echo "Mounted lume-config VirtioFS share" >> "$LOG_FILE"
+    else
+        echo "lume-config VirtioFS not available" >> "$LOG_FILE"
     fi
-    sleep 1
-done
 
-# Set VNC backend env vars — prefer lume-config values, fall back to defaults
+    # Try reading vnc.env (wait up to 10s for it to appear)
+    for i in $(seq 1 10); do
+        # Try direct read first, then sudo (TCC may block direct access)
+        VNC_ENV_CONTENT=""
+        if VNC_ENV_CONTENT=$(cat "$LUME_CONFIG" 2>/dev/null) && [ -n "$VNC_ENV_CONTENT" ]; then
+            true
+        elif VNC_ENV_CONTENT=$(sudo -n cat "$LUME_CONFIG" 2>/dev/null) && [ -n "$VNC_ENV_CONTENT" ]; then
+            true
+        fi
+        if [ -n "$VNC_ENV_CONTENT" ]; then
+            eval "$VNC_ENV_CONTENT"
+            LUME_VNC_PORT="${VNC_PORT:-}"
+            LUME_VNC_PASSWORD="${VNC_PASSWORD:-}"
+            echo "Read VNC config from VirtioFS: port=$LUME_VNC_PORT" >> "$LOG_FILE"
+            # Cache locally for future restarts
+            echo "$VNC_ENV_CONTENT" > "$LOCAL_VNC_ENV"
+            break
+        fi
+        sleep 1
+    done
+fi
+
+if [ -z "$LUME_VNC_PORT" ]; then
+    echo "WARNING: No VNC config found in ~/.vnc.env or VirtioFS. VNC backend may not work." >> "$LOG_FILE"
+    echo "Lume should auto-deliver VNC config via SSH. Check that the VM was started with 'lume run'." >> "$LOG_FILE"
+fi
+
+# Set VNC backend env vars — prefer discovered values
 export CUA_BACKEND=vnc
 export CUA_VNC_HOST="$GATEWAY_IP"
-export CUA_VNC_PORT="${LUME_VNC_PORT:-__VNC_PORT__}"
-export CUA_VNC_PASSWORD="${LUME_VNC_PASSWORD:-__VNC_PASSWORD__}"
+export CUA_VNC_PORT="${LUME_VNC_PORT:-5900}"
+export CUA_VNC_PASSWORD="${LUME_VNC_PASSWORD:-}"
 
 # Update packages
 echo "Updating cua-agent..." >> "$LOG_FILE"
@@ -448,14 +499,12 @@ playwright install firefox >> "$LOG_FILE" 2>&1 || true
 
 # Start server with VNC backend pointing at lume's VNC on the host
 echo "Starting CUA computer server (vnc backend) on port __PORT__..." >> "$LOG_FILE"
-echo "  VNC target: $GATEWAY_IP:__VNC_PORT__ (password: __VNC_PASSWORD__)" >> "$LOG_FILE"
+echo "  VNC target: $CUA_VNC_HOST:$CUA_VNC_PORT" >> "$LOG_FILE"
 python -m computer_server --port __PORT__ >> "$LOG_FILE" 2>&1
 SCRIPT_EOF
 
-    # Stamp the port and VNC settings
+    # Stamp the server port
     sed -i '' "s/__PORT__/$CUA_SERVER_PORT/g" "$STARTUP_SCRIPT"
-    sed -i '' "s/__VNC_PORT__/$HOST_VNC_PORT/g" "$STARTUP_SCRIPT"
-    sed -i '' "s/__VNC_PASSWORD__/$VNC_PASSWORD/g" "$STARTUP_SCRIPT"
     chmod +x "$STARTUP_SCRIPT"
 
     # Create LaunchAgent
@@ -488,10 +537,6 @@ SCRIPT_EOF
         <string>:0</string>
         <key>CUA_BACKEND</key>
         <string>vnc</string>
-        <key>CUA_VNC_PORT</key>
-        <string>$HOST_VNC_PORT</string>
-        <key>CUA_VNC_PASSWORD</key>
-        <string>$VNC_PASSWORD</string>
     </dict>
 
     <key>ProgramArguments</key>
@@ -673,7 +718,7 @@ verify() {
 
     # noVNC / websockify
     if command -v supervisorctl &>/dev/null && supervisorctl status websockify 2>/dev/null | grep -q RUNNING; then
-        echo -e "  ${GREEN}✓${NC} noVNC + websockify (port $NOVNC_PORT -> $GATEWAY_IP:$HOST_VNC_PORT)"
+        echo -e "  ${GREEN}✓${NC} noVNC + websockify (port $NOVNC_PORT -> lume VNC)"
     elif [ -d "/usr/local/share/novnc" ]; then
         echo -e "  ${YELLOW}~${NC} noVNC installed (websockify may not be running yet)"
     else
@@ -702,10 +747,10 @@ verify() {
     echo ""
     echo "Services:"
     echo "  CUA server:  port $CUA_SERVER_PORT (starts at login via LaunchAgent)"
-    echo "  noVNC:       port $NOVNC_PORT -> $GATEWAY_IP:$HOST_VNC_PORT (lume VNC)"
+    echo "  noVNC:       port $NOVNC_PORT -> lume VNC (auto-configured via ~/.vnc.env)"
     echo ""
-    echo "Start the VM with a fixed VNC port and password (from the host):"
-    echo "  lume run <vm-name> --vnc-port $HOST_VNC_PORT --vnc-password $VNC_PASSWORD"
+    echo "VNC config is auto-delivered by lume. Just run:"
+    echo "  lume run <vm-name>"
     echo ""
     echo "To start CUA server now (from the host):"
     echo "  lume ssh <vm-name> 'launchctl load ~/Library/LaunchAgents/com.trycua.computer_server.plist'"
@@ -719,8 +764,6 @@ verify() {
     echo "To access noVNC remotely (from outside the host):"
     echo "  1. SSH tunnel:  ssh -L $NOVNC_PORT:<vm-ip>:$NOVNC_PORT user@host"
     echo "  2. Open:        http://localhost:$NOVNC_PORT/vnc.html?host=localhost&port=$NOVNC_PORT"
-    echo ""
-    echo "VNC password: $VNC_PASSWORD"
     echo ""
     echo "NOTE: A reboot is recommended for auto-login to take effect."
     echo ""

@@ -403,7 +403,7 @@ fi
 # 2. VirtioFS lume-config mount (may be blocked by macOS TCC in LaunchAgents)
 LUME_VNC_PORT=""
 LUME_VNC_PASSWORD=""
-LOCAL_VNC_ENV="$HOME/.cua-server/vnc.env"
+LOCAL_VNC_ENV="$HOME/.vnc.env"
 
 # Source 1: local vnc.env (most reliable — not subject to TCC restrictions)
 if [ -s "$LOCAL_VNC_ENV" ]; then

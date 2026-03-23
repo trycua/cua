@@ -708,7 +708,7 @@ class VM {
         vmName: String, storage: String?, port: Int, password: String
     ) async {
         let envContent = "VNC_PORT=\(port)\nVNC_PASSWORD=\(password)"
-        let command = "mkdir -p ~/.cua-server && echo '\(envContent)' > ~/.cua-server/vnc.env"
+        let command = "echo '\(envContent)' > ~/.vnc.env"
 
         for _ in 1...6 {
             do {

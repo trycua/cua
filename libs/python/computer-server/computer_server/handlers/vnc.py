@@ -172,6 +172,7 @@ class _VNCConnection:
             buf = BytesIO()
             screen.save(buf, format="PNG")
             defer.returnValue(buf.getvalue())
+
         return self._with_client(_do)
 
     # -- Mouse --------------------------------------------------------------
@@ -189,6 +190,7 @@ class _VNCConnection:
             yield client.mouseMove(x, y)
             for _ in range(clicks):
                 yield client.mousePress(button)
+
         self._with_client(_do)
         self._cursor_x = x
         self._cursor_y = y
@@ -200,6 +202,7 @@ class _VNCConnection:
         def _do(client):
             yield client.mouseMove(x, y)
             yield client.mouseDown(button)
+
         self._with_client(_do)
         self._cursor_x = x
         self._cursor_y = y
@@ -211,6 +214,7 @@ class _VNCConnection:
         def _do(client):
             yield client.mouseMove(x, y)
             yield client.mouseUp(button)
+
         self._with_client(_do)
         self._cursor_x = x
         self._cursor_y = y
@@ -232,12 +236,14 @@ class _VNCConnection:
                 iy = sy + dy * i // steps
                 yield client.mouseMove(ix, iy)
             yield client.mouseUp(1)
+
         self._with_client(_do)
         self._cursor_x = x
         self._cursor_y = y
 
-    def drag_to(self, start_x: int, start_y: int, end_x: int, end_y: int,
-                button: int = 1, step: int = 5):
+    def drag_to(
+        self, start_x: int, start_y: int, end_x: int, end_y: int, button: int = 1, step: int = 5
+    ):
         """Drag from start to end on a single connection."""
         from twisted.internet import defer
 
@@ -254,6 +260,7 @@ class _VNCConnection:
                 iy = start_y + dy * i // steps
                 yield client.mouseMove(ix, iy)
             yield client.mouseUp(button)
+
         self._with_client(_do)
         self._cursor_x = end_x
         self._cursor_y = end_y
@@ -269,6 +276,7 @@ class _VNCConnection:
             for px, py in path[1:]:
                 yield client.mouseMove(px, py)
             yield client.mouseUp(button)
+
         self._with_client(_do)
         self._cursor_x = path[-1][0]
         self._cursor_y = path[-1][1]
@@ -296,6 +304,7 @@ class _VNCConnection:
             elif x < 0:
                 for _ in range(abs(x)):
                     yield client.keyPress("left")
+
         self._with_client(_do)
 
     # -- Keyboard -----------------------------------------------------------
@@ -324,6 +333,7 @@ class _VNCConnection:
                     yield client.keyPress("tab")
                 else:
                     yield client.keyPress(ch)
+
         self._with_client(_do)
 
     def hotkey(self, keys: List[str]):
@@ -349,6 +359,7 @@ class _VNCConnection:
             if client.screen is not None:
                 defer.returnValue(client.screen.size)
             defer.returnValue((0, 0))
+
         return self._with_client(_do)
 
     @property

@@ -63,6 +63,7 @@ jobs:
             --accept 100..=399
             --scheme https
             --scheme http
+            --root-dir ${{ github.workspace }}/docs/content/docs
             --exclude 'localhost'
             --exclude '127\.0\.0\.1'
             --exclude 'example\.com'

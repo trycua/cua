@@ -478,8 +478,9 @@ final class LumeController {
             Logger.info("Provisioning marker cleared", metadata: ["name": name])
 
         } catch {
-            // Clear provisioning marker on failure (vmDir may have been deleted by createInternal)
-            vmDir.clearProvisioningMarker()
+            // Clean up the pre-created directory on failure. If deletion fails, keep the
+            // provisioning marker intact so the leftover VM remains discoverable.
+            cleanupFailedCreateVMDirectory(vmDir, context: "creation")
             Logger.error("Failed to create VM", metadata: ["error": error.localizedDescription])
             throw error
         }
@@ -585,17 +586,23 @@ final class LumeController {
                 Logger.info("Async VM creation completed successfully", metadata: ["name": name])
 
             } catch {
-                // Clear marker and cleanup on failure
-                vmDir.clearProvisioningMarker()
-                do {
-                    try vmDir.delete()
-                } catch let cleanupError {
-                    Logger.error("Failed to clean up VM directory after async creation failure",
-                               metadata: ["error": cleanupError.localizedDescription])
-                }
+                // Clean up the pre-created directory on failure. If deletion fails, keep the
+                // provisioning marker intact so the leftover VM remains discoverable.
+                controller.cleanupFailedCreateVMDirectory(vmDir, context: "async creation")
                 Logger.error("Async VM creation failed",
                             metadata: ["name": name, "error": error.localizedDescription])
             }
+        }
+    }
+
+    private func cleanupFailedCreateVMDirectory(_ vmDir: VMDirectory, context: String) {
+        do {
+            if vmDir.exists() {
+                try vmDir.delete()
+            }
+        } catch let cleanupError {
+            Logger.error("Failed to clean up VM directory after \(context) failure",
+                       metadata: ["error": cleanupError.localizedDescription])
         }
     }
 
@@ -1048,7 +1055,7 @@ final class LumeController {
             // Set default VM name if not provided
             let vmName = name ?? "\(imageName)_\(tag)"
 
-            Logger.info(
+            Logger.debug(
                 "Pulling image",
                 metadata: [
                     "image": image,
@@ -1073,7 +1080,7 @@ final class LumeController {
                 name: vmName,
                 locationName: storage)
 
-            Logger.info(
+            Logger.debug(
                 "Setting new VM mac address",
                 metadata: [
                     "vm_name": vmName,
@@ -1084,7 +1091,7 @@ final class LumeController {
             let vm = try get(name: vmName, storage: storage)
             try vm.setMacAddress(VZMACAddress.randomLocallyAdministered().string)
 
-            Logger.info(
+            Logger.debug(
                 "Image pulled successfully",
                 metadata: [
                     "image": image,
@@ -1110,10 +1117,12 @@ final class LumeController {
         chunkSizeMb: Int = 512,
         verbose: Bool = false,
         dryRun: Bool = false,
-        reassemble: Bool = false
+        reassemble: Bool = false,
+        singleLayer: Bool = false,
+        legacy: Bool = false
     ) async throws {
         do {
-            Logger.info(
+            Logger.debug(
                 "Pushing VM to registry",
                 metadata: [
                     "name": name,
@@ -1152,7 +1161,9 @@ final class LumeController {
                 chunkSizeMb: chunkSizeMb,
                 verbose: verbose,
                 dryRun: dryRun,
-                reassemble: reassemble
+                reassemble: reassemble,
+                singleLayer: singleLayer,
+                legacy: legacy
             )
 
             Logger.info(

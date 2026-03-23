@@ -56,7 +56,7 @@ Our slot landed at **2:30 a.m.** (_perks of the cheapest sponsor tier_). Thirty 
 **Our track rules were simple:**
 
 1. Build a Computer-Use Agent with the [Cua framework](https://github.com/trycua/cua)
-2. Benchmark the agent on [HUD](https://www.hud.so)
+2. Benchmark the agent on [HUD](https://www.hud.ai)
 3. Use [OSWorld-Tiny](https://huggingface.co/datasets/ddupont/OSWorld-Tiny-Public): a 14-task distillation of the full benchmark (~360 tasks, >1h)
 
 **Suggestions:**
@@ -108,7 +108,7 @@ We skipped a full end-to-end **Cua × HUD** dry-run. It showed.
 - ~**30** hackers gave the track a serious try; **5** crossed the finish line
 - All submissions were **solo**, mostly undergrads
 - Judging: OSWorld-Tiny on HUD, with Cua + HUD reruns to verify scores
-- Final leaderboard: [HUD Leaderboard](https://www.hud.so/leaderboards/ddupont/OSWorld-Tiny-Public)
+- Final leaderboard: [HUD Leaderboard](https://www.hud.ai/leaderboards/ddupont/OSWorld-Tiny-Public)
 
 ![hack-leaderboard](./assets/hack-leaderboard.png)
 

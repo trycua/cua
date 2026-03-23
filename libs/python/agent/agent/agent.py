@@ -6,6 +6,8 @@ import asyncio
 import hashlib
 import inspect
 import json
+import random
+import time
 from pathlib import Path
 from typing import (
     Any,
@@ -67,6 +69,10 @@ def get_json(obj: Any, max_depth: int = 10) -> Any:
         if seen is None:
             seen = set()
 
+        # Handle bytes early
+        if isinstance(o, bytes):
+            return f"<bytes:{len(o)}>"
+
         # Use model_dump() if available
         if hasattr(o, "model_dump"):
             return o.model_dump()
@@ -84,12 +90,20 @@ def get_json(obj: Any, max_depth: int = 10) -> Any:
         if hasattr(o, "__class__") and "computer" in o.__class__.__name__.lower():
             return f"<computer:{o.__class__.__name__}>"
 
+        # Handle enums — just use their value
+        import enum
+
+        if isinstance(o, enum.Enum):
+            return o.value
+
         # Handle objects with __dict__
         if hasattr(o, "__dict__"):
             seen.add(obj_id)
             try:
                 result = {}
                 for k, v in o.__dict__.items():
+                    if k.startswith("__"):
+                        continue
                     if v is not None:
                         # Recursively serialize with updated depth and seen set
                         serialized_value = custom_serializer(v, depth + 1, seen.copy())
@@ -174,6 +188,70 @@ def hash_api_key(api_key: Optional[str]) -> Optional[str]:
     if not api_key:
         return None
     return hashlib.sha256(api_key.encode()).hexdigest()
+
+
+def _is_retryable_error(exc: BaseException) -> bool:
+    """Return True if the exception is a transient error that warrants a retry."""
+    # asyncio / network timeouts
+    if isinstance(exc, (asyncio.TimeoutError, TimeoutError)):
+        return True
+    # liteLLM error types
+    try:
+        import litellm.exceptions as _le
+
+        retryable_types = (
+            _le.RateLimitError,
+            _le.ServiceUnavailableError,
+            _le.APIConnectionError,
+            _le.Timeout,
+            _le.InternalServerError,
+        )
+        if isinstance(exc, retryable_types):
+            return True
+    except Exception:
+        pass
+    # Generic heuristic: 429 / 5xx in the message
+    msg = str(exc).lower()
+    if any(k in msg for k in ("timeout", "rate limit", "503", "502", "429", "connection")):
+        return True
+    return False
+
+
+async def _predict_step_with_retry(
+    agent_loop,
+    loop_kwargs: dict,
+    hooks: dict,
+    max_retries: int = 3,
+    base_delay: float = 2.0,
+) -> Any:
+    """
+    Call agent_loop.predict_step() with exponential backoff retries on transient errors.
+
+    Args:
+        agent_loop: The agent loop instance.
+        loop_kwargs: Keyword arguments for predict_step.
+        hooks: Dict of lifecycle hook callables (_on_api_start, etc.).
+        max_retries: Maximum number of retry attempts (total attempts = max_retries + 1).
+        base_delay: Base delay in seconds for the first retry; doubles each attempt.
+    """
+    if max_retries is None:
+        max_retries = 0
+    last_exc: Optional[BaseException] = None
+    for attempt in range(max_retries + 1):
+        try:
+            return await agent_loop.predict_step(**loop_kwargs, **hooks)
+        except Exception as exc:
+            last_exc = exc
+            if attempt < max_retries and _is_retryable_error(exc):
+                delay = base_delay * (2**attempt) + random.uniform(0, 1)
+                print(
+                    f"[cua-agent] Transient error on step (attempt {attempt + 1}/{max_retries + 1}): "
+                    f"{type(exc).__name__}: {exc}. Retrying in {delay:.1f}s …"
+                )
+                await asyncio.sleep(delay)
+            else:
+                raise
+    raise last_exc  # unreachable, but satisfies type checkers
 
 
 class ComputerAgent:
@@ -893,7 +971,9 @@ class ComputerAgent:
                 "tools": self.tool_schemas,
                 "stream": False,
                 "computer_handler": self.computer_handler,
-                "max_retries": self.max_retries,
+                # Inner liteLLM retries are disabled here; _predict_step_with_retry
+                # is the sole retry layer so the two don't stack.
+                "max_retries": 0,
                 "use_prompt_caching": self.use_prompt_caching,
                 **merged_kwargs,
             }
@@ -928,13 +1008,17 @@ class ComputerAgent:
                     )
             # ---------------------------------
 
-            # Run agent loop iteration
-            result = await self.agent_loop.predict_step(
-                **loop_kwargs,
-                _on_api_start=self._on_api_start,
-                _on_api_end=self._on_api_end,
-                _on_usage=self._on_usage,
-                _on_screenshot=self._on_screenshot,
+            # Run agent loop iteration (with automatic retry on transient errors)
+            result = await _predict_step_with_retry(
+                self.agent_loop,
+                loop_kwargs,
+                hooks={
+                    "_on_api_start": self._on_api_start,
+                    "_on_api_end": self._on_api_end,
+                    "_on_usage": self._on_usage,
+                    "_on_screenshot": self._on_screenshot,
+                },
+                max_retries=self.max_retries,
             )
             result = get_json(result)
 

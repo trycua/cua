@@ -513,7 +513,8 @@ extension Server {
                     chunkSizeMb: request.chunkSizeMb,
                     verbose: false,  // Verbose typically handled by server logs
                     dryRun: false,  // Default API behavior is likely non-dry-run
-                    reassemble: false  // Default API behavior is likely non-reassemble
+                    reassemble: false,  // Default API behavior is likely non-reassemble
+                    singleLayer: request.singleLayer
                 )
                 print(
                     "Background push completed successfully for image: \(request.imageName):\(request.tags.joined(separator: ","))"

@@ -4,9 +4,7 @@ Gemini Computer Use agent loop
 Maps internal Agent SDK message format to Google's Gemini Computer Use API and back.
 
 Supported models:
-- gemini-2.5-computer-use-preview-10-2025 (uses built-in ComputerUse tool)
-- gemini-3-flash-preview (and variants) (uses custom function declarations)
-- gemini-3-pro-preview (and variants) (uses custom function declarations)
+- gemini-(2.5/3/3.1)-(flash/pro/computer-use-preview)
 
 Key features:
 - Lazy import of google.genai
@@ -19,6 +17,7 @@ Key features:
 from __future__ import annotations
 
 import base64
+import enum
 import io
 import uuid
 from typing import Any, Dict, List, Optional, Tuple
@@ -75,20 +74,22 @@ def _sanitize_for_json(obj: Any) -> Any:
     if obj is None:
         return None
     if isinstance(obj, bytes):
-        # Convert bytes to base64 string for JSON serialization
-        return f"<bytes:{base64.b64encode(obj).decode('ascii')}>"
+        return f"<bytes:{len(obj)}>"
     if isinstance(obj, (str, int, float, bool)):
         return obj
+    # Handle enums early — just use their value
+    if isinstance(obj, enum.Enum):
+        return obj.value
     if isinstance(obj, dict):
         return {k: _sanitize_for_json(v) for k, v in obj.items()}
     if isinstance(obj, (list, tuple)):
         return [_sanitize_for_json(item) for item in obj]
-    # Handle objects with __dict__ (like Gemini SDK response objects)
-    if hasattr(obj, "__dict__"):
-        return {k: _sanitize_for_json(v) for k, v in obj.__dict__.items() if not k.startswith("_")}
     # Handle objects with model_dump (Pydantic models)
     if hasattr(obj, "model_dump"):
         return _sanitize_for_json(obj.model_dump())
+    # Handle objects with __dict__ (like Gemini SDK response objects)
+    if hasattr(obj, "__dict__"):
+        return {k: _sanitize_for_json(v) for k, v in obj.__dict__.items() if not k.startswith("__")}
     # Fallback to string representation
     return str(obj)
 
@@ -339,9 +340,9 @@ def _denormalize(v: int, size: int) -> int:
         return 0
 
 
-def _is_gemini_3_model(model: str) -> bool:
-    """Check if the model is a Gemini 3 model (Flash or Pro Preview)."""
-    return "gemini-3" in model.lower() or "gemini-2.0" in model.lower()
+def _has_builtin_computer_use(model: str) -> bool:
+    """Check if the model has a built-in ComputerUse tool (e.g. gemini-2.5-computer-use-preview)."""
+    return "computer-use" in model.lower()
 
 
 def _build_custom_function_declarations(types: Any) -> List[Any]:
@@ -683,8 +684,9 @@ def _map_gemini_fc_to_computer_call(
 # - gemini-2.5-computer-use-preview-* : Uses built-in ComputerUse tool
 # - gemini-3-flash-preview-* : Uses custom function declarations
 # - gemini-3-pro-preview-* : Uses custom function declarations
+# - gemini-3.1-pro-preview-* : Uses custom function declarations
 @register_agent(
-    models=r"^(gemini-2\.5-computer-use-preview.*|gemini-3-flash-preview.*|gemini-3-pro-preview.*)$"
+    models=r"^(gemini-2\.5-computer-use-preview.*|gemini-3(\.\d+)?-flash-preview.*|gemini-3(\.\d+)?-pro-preview.*)$"
 )
 class GeminiComputerUseConfig(AsyncAgentConfig):
     async def predict_step(
@@ -751,18 +753,15 @@ class GeminiComputerUseConfig(AsyncAgentConfig):
         contents, (screen_w, screen_h) = _convert_messages_to_gemini_contents(messages, types)
 
         # Compose tools config based on model type
-        # Gemini 2.5 Computer Use Preview uses built-in ComputerUse tool
-        # Gemini 3 Flash/Pro Preview uses custom function declarations
-        is_gemini_3 = _is_gemini_3_model(model)
+        # Models with "computer-use" in the name use built-in ComputerUse tool
+        # All other models use custom function declarations
+        has_builtin_cu = _has_builtin_computer_use(model)
 
-        if is_gemini_3:
-            # Use custom function declarations for Gemini 3 models
+        if not has_builtin_cu:
             custom_functions = _build_custom_function_declarations(types)
-            print(f"[DEBUG] Using custom function declarations for Gemini 3 model: {model}")
+            print(f"[DEBUG] Using custom function declarations for model: {model}")
             print(f"[DEBUG] Number of custom functions: {len(custom_functions)}")
 
-            # Build system instruction with coordinate system and screen resolution context
-            # to improve coordinate precision for Gemini 3 models
             system_instruction = (
                 f"You are controlling a computer with screen resolution {screen_w}x{screen_h} pixels. "
                 "When using coordinate-based functions (click_at, type_text_at, hover_at, scroll_at, drag_and_drop), "
@@ -801,7 +800,7 @@ class GeminiComputerUseConfig(AsyncAgentConfig):
                 computer_environment.lower(), types.Environment.ENVIRONMENT_BROWSER
             )
 
-            print(f"[DEBUG] Using built-in ComputerUse tool for Gemini 2.5 model: {model}")
+            print(f"[DEBUG] Using built-in ComputerUse tool for model: {model}")
             print(f"[DEBUG] Environment: {resolved_environment}")
             print(f"[DEBUG] Excluded functions: {excluded}")
 
@@ -825,13 +824,7 @@ class GeminiComputerUseConfig(AsyncAgentConfig):
         }
 
         if _on_api_start:
-            await _on_api_start(
-                {
-                    "model": api_kwargs["model"],
-                    # "contents": api_kwargs["contents"], # Disabled for now
-                    "config": api_kwargs["config"],
-                }
-            )
+            await _on_api_start(_sanitize_for_json(api_kwargs))
 
         response = client.models.generate_content(**api_kwargs)
 
@@ -948,10 +941,10 @@ class GeminiComputerUseConfig(AsyncAgentConfig):
         client, model = _create_gemini_client(model, genai, kwargs)
 
         # Build tools config based on model type
-        is_gemini_3 = _is_gemini_3_model(model)
+        has_builtin_cu = _has_builtin_computer_use(model)
 
-        if is_gemini_3:
-            # For Gemini 3 models, use only click_at function declaration
+        if not has_builtin_cu:
+            # Use only click_at function declaration for models without built-in ComputerUse
             click_function = types.FunctionDeclaration(
                 name="click_at",
                 description="Click at the specified x,y coordinates on the screen. x and y are normalized 0-999 where 0 is the left/top edge and 999 is the right/bottom edge of the screen. Look carefully at the screenshot to identify the exact position of the target element before clicking.",

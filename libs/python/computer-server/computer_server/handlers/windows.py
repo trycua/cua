@@ -63,7 +63,11 @@ except Exception as e:
     )
     WINDOWS_API_AVAILABLE = False
 
-from .base import BaseAccessibilityHandler, BaseAutomationHandler
+from .base import (
+    BaseAccessibilityHandler,
+    BaseAutomationHandler,
+    normalize_screenshot_format,
+)
 
 
 class WindowsAccessibilityHandler(BaseAccessibilityHandler):
@@ -632,25 +636,32 @@ class WindowsAutomationHandler(BaseAutomationHandler):
 
     # Screen Actions
     @require_unlocked_desktop
-    async def screenshot(self) -> Dict[str, Any]:
+    async def screenshot(self, format: str = "png", quality: int = 95) -> Dict[str, Any]:
         """Capture a screenshot of the entire screen.
 
-        Returns:
-            Dict[str, Any]: A dictionary containing the success status and either
-                           base64-encoded image data or an error message.
-                           Structure: {"success": bool, "image_data": str} or
-                                    {"success": bool, "error": str}
+        Args:
+            format: "png" (lossless, default), "jpeg" or "jpg" (lossy, smaller).
+            quality: JPEG quality 1-95 (clamped); ignored for PNG.
         """
+        try:
+            fmt, quality = normalize_screenshot_format(format, quality)
+        except ValueError as e:
+            return {"success": False, "error": str(e)}
         try:
             screenshot = ImageGrab.grab()
             if not isinstance(screenshot, Image.Image):
                 return {"success": False, "error": "Failed to capture screenshot"}
 
             buffered = BytesIO()
-            screenshot.save(buffered, format="PNG", optimize=True)
+            if fmt == "jpeg":
+                screenshot.convert("RGB").save(
+                    buffered, format="JPEG", quality=quality, optimize=True
+                )
+            else:
+                screenshot.save(buffered, format="PNG", optimize=True)
             buffered.seek(0)
             image_data = base64.b64encode(buffered.getvalue()).decode()
-            return {"success": True, "image_data": image_data}
+            return {"success": True, "image_data": image_data, "format": fmt}
         except Exception as e:
             return {"success": False, "error": f"Screenshot error: {str(e)}"}
 
@@ -695,42 +706,9 @@ class WindowsAutomationHandler(BaseAutomationHandler):
         except Exception as e:
             return {"success": False, "error": str(e)}
 
-    # Clipboard Actions
-    async def copy_to_clipboard(self) -> Dict[str, Any]:
-        """Get the current content of the clipboard.
+    # Clipboard inherited from BaseAutomationHandler
 
-        Returns:
-            Dict[str, Any]: A dictionary containing the success status and either
-                           clipboard content or an error message.
-                           Structure: {"success": bool, "content": str} or
-                                    {"success": bool, "error": str}
-        """
-        try:
-            import pyperclip
-
-            content = pyperclip.paste()
-            return {"success": True, "content": content}
-        except Exception as e:
-            return {"success": False, "error": str(e)}
-
-    async def set_clipboard(self, text: str) -> Dict[str, Any]:
-        """Set the clipboard content to the specified text.
-
-        Args:
-            text (str): The text to copy to the clipboard.
-
-        Returns:
-            Dict[str, Any]: A dictionary with success status and optional error message.
-        """
-        try:
-            import pyperclip
-
-            pyperclip.copy(text)
-            return {"success": True}
-        except Exception as e:
-            return {"success": False, "error": str(e)}
-
-    # Command Execution
+    # Command Execution (Windows override for multi-encoding support)
     async def run_command(self, command: str) -> Dict[str, Any]:
         """Execute a shell command asynchronously.
 
@@ -756,13 +734,19 @@ class WindowsAutomationHandler(BaseAutomationHandler):
             return data.decode("utf-8", errors="replace")
 
         try:
-            # Create subprocess
-            process = await asyncio.create_subprocess_shell(
-                command, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
-            )
-            # Wait for the subprocess to finish
+            if os.environ.get("IS_CUA_ANDROID") == "true":
+                process = await asyncio.create_subprocess_exec(
+                    "adb",
+                    "shell",
+                    command,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+            else:
+                process = await asyncio.create_subprocess_shell(
+                    command, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+                )
             stdout, stderr = await process.communicate()
-            # Return decoded output
             return {
                 "success": True,
                 "stdout": decode_output(stdout),

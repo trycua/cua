@@ -164,15 +164,15 @@ lume run macos-sequoia-vanilla:latest
 
 ## Packages
 
-| Package                                                               | Description                                                |
-| --------------------------------------------------------------------- | ---------------------------------------------------------- |
-| [cuabot](https://docs.trycua.com/cuabot/guide/getting-started/introduction) | Multi-agent computer-use sandbox CLI                  |
-| [cua-agent](https://cua.ai/docs/cua/reference/agent-sdk)              | AI agent framework for computer-use tasks                  |
-| [cua-computer](https://cua.ai/docs/cua/reference/computer-sdk)        | SDK for controlling desktop environments                   |
-| [cua-computer-server](https://cua.ai/docs/cua/reference/computer-sdk) | Driver for UI interactions and code execution in sandboxes |
-| [cua-bench](https://cua.ai/docs/cuabench)                             | Benchmarks and RL environments for computer-use            |
-| [lume](https://cua.ai/docs/lume)                                      | macOS/Linux VM management on Apple Silicon                 |
-| [lumier](https://cua.ai/docs/lume/guide/advanced/lumier)              | Docker-compatible interface for Lume VMs                   |
+| Package                                                                     | Description                                                |
+| --------------------------------------------------------------------------- | ---------------------------------------------------------- |
+| [cuabot](https://docs.trycua.com/cuabot/guide/getting-started/introduction) | Multi-agent computer-use sandbox CLI                       |
+| [cua-agent](https://cua.ai/docs/cua/reference/agent-sdk)                    | AI agent framework for computer-use tasks                  |
+| [cua-computer](https://cua.ai/docs/cua/reference/computer-sdk)              | SDK for controlling desktop environments                   |
+| [cua-computer-server](https://cua.ai/docs/cua/reference/computer-sdk)       | Driver for UI interactions and code execution in sandboxes |
+| [cua-bench](https://cua.ai/docs/cuabench)                                   | Benchmarks and RL environments for computer-use            |
+| [lume](https://cua.ai/docs/lume)                                            | macOS/Linux VM management on Apple Silicon                 |
+| [lumier](https://cua.ai/docs/lume/guide/advanced/lumier)                    | Docker-compatible interface for Lume VMs                   |
 
 ## Resources
 

@@ -586,6 +586,8 @@ def cmd_stop(args) -> int:
 
 async def _cmd_stop_async(args) -> int:
     """Stop a run asynchronously."""
+    import signal
+
     from cua_bench.sessions import list_sessions, manager
     from cua_bench.sessions.providers.docker import DockerProvider
 
@@ -594,12 +596,33 @@ async def _cmd_stop_async(args) -> int:
         print(f"{RED}Error: run_id required{RESET}")
         return 1
 
+    # Kill the background orchestrator process first so it can't restart containers
+    pid_file = _get_run_output_dir(run_id) / "run.pid"
+    if pid_file.exists():
+        try:
+            pid = int(pid_file.read_text().strip())
+            os.kill(pid, signal.SIGTERM)
+            print(f"{CYAN}Sent SIGTERM to orchestrator process (pid {pid}){RESET}")
+            # Give it a moment to clean up, then SIGKILL if still alive
+            await asyncio.sleep(2)
+            try:
+                sigkill = getattr(signal, "SIGKILL", None)
+                if sigkill is not None:
+                    os.kill(pid, sigkill)
+            except ProcessLookupError:
+                pass  # Already exited cleanly
+        except (ValueError, ProcessLookupError):
+            pass  # PID file stale or process already gone
+        finally:
+            pid_file.unlink(missing_ok=True)
+
     sessions = list_sessions()
     run_sessions = [s for s in sessions if s.get("run_id") == run_id]
 
     if not run_sessions:
-        print(f"{RED}Error: No sessions found for run: {run_id}{RESET}")
-        return 1
+        print(f"{YELLOW}No active sessions found for run: {run_id}{RESET}")
+        print(f"\n{GREEN}✓ Run stopped{RESET}")
+        return 0
 
     print(f"{CYAN}Stopping run: {run_id} ({len(run_sessions)} sessions)...{RESET}")
 
@@ -1069,6 +1092,7 @@ async def _cmd_run_task_async(args) -> int:
             output_dir=session_output_dir,  # Use the session output dir
             stream_agent_logs=True,  # Stream logs to run.log
             provider_type=provider_type,  # Pass detected provider type
+            dev_paths=getattr(args, "dev_paths", None),
         )
 
         if result.success:
@@ -1089,6 +1113,18 @@ async def _cmd_run_task_async(args) -> int:
         log_file = Path(session_output_dir) / "run.log"
         if log_file.exists():
             print(f"\n{GREY}Full logs saved to: {log_file}{RESET}")
+
+        # Summary
+        task_name = task_path.name
+        model_name = getattr(args, "model", None) or "default"
+        print("\n")
+        if result.success:
+            print(f"Task '{task_name}' completed successfully with model '{model_name}'.")
+        else:
+            print(
+                f"Task '{task_name}' failed (exit code {result.exit_code}) with model '{model_name}'."
+            )
+        print(f"Logs and artifacts: {session_output_dir}")
 
         # Update session status before cleanup
         try:
@@ -1561,6 +1597,7 @@ async def _cmd_run_dataset_async(args) -> int:
                     stream_agent_logs=True,  # Stream agent logs to <task_output_dir>/run.log
                     cleanup_before=False,
                     provider_type=provider_type,  # Pass detected provider type
+                    dev_paths=getattr(args, "dev_paths", None),
                 )
 
                 # Extract reward from logs if available
@@ -1662,6 +1699,19 @@ async def _cmd_run_dataset_async(args) -> int:
 
         log_print(summary)
 
+        # Summary
+        model_name = getattr(args, "model", None) or "default"
+        print("\n")
+        if failed_count == 0:
+            print(
+                f"All {len(results)} tasks in '{dataset_path.name}' passed with model '{model_name}'."
+            )
+        else:
+            print(
+                f"{failed_count}/{len(results)} tasks in '{dataset_path.name}' failed with model '{model_name}'."
+            )
+        print(f"Logs and artifacts: {output_dir}")
+
         return 0 if failed_count == 0 else 1
 
     else:
@@ -1735,12 +1785,18 @@ async def _cmd_run_dataset_async(args) -> int:
         log_handle = open(global_log_file, "w", encoding="utf-8", buffering=1)
 
         # Start detached subprocess
-        subprocess.Popen(
+        proc = subprocess.Popen(
             cmd,
             stdout=log_handle,
             stderr=subprocess.STDOUT,
             env=env_vars,
         )
+        # Close the parent's copy of the fd; the subprocess has its own inherited copy.
+        log_handle.close()
+
+        # Save PID so `cb run stop` can kill the process
+        pid_file = output_dir / "run.pid"
+        pid_file.write_text(str(proc.pid))
 
         return 0
 

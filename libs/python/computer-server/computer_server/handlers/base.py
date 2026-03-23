@@ -1,5 +1,10 @@
+import asyncio
+import logging
+import sys
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional, Tuple
+
+logger = logging.getLogger(__name__)
 
 
 class BaseAccessibilityHandler(ABC):
@@ -181,6 +186,30 @@ class BaseWindowHandler(ABC):
         pass
 
 
+_SUPPORTED_FORMATS = {"png", "jpeg"}
+_FORMAT_ALIASES = {"jpg": "jpeg"}
+
+
+def normalize_screenshot_format(format: str, quality: int) -> tuple[str, int]:
+    """Normalize and validate screenshot format/quality.
+
+    Returns ``(normalized_format, clamped_quality)`` or raises ``ValueError``.
+
+    - Lowercases the format string.
+    - Maps "jpg" → "jpeg".
+    - Rejects anything not in ``{"png", "jpeg"}``.
+    - Clamps JPEG quality to 1–95 (silently caps values above 95).
+    """
+    fmt = _FORMAT_ALIASES.get(format.lower(), format.lower())
+    if fmt not in _SUPPORTED_FORMATS:
+        raise ValueError(
+            f"Unsupported screenshot format {format!r}. " f"Supported: {sorted(_SUPPORTED_FORMATS)}"
+        )
+    if fmt == "jpeg":
+        quality = max(1, min(95, quality))
+    return fmt, quality
+
+
 class BaseAutomationHandler(ABC):
     """Abstract base class for OS-specific automation handlers.
 
@@ -307,8 +336,13 @@ class BaseAutomationHandler(ABC):
 
     # Screen Actions
     @abstractmethod
-    async def screenshot(self) -> Dict[str, Any]:
-        """Take a screenshot and return base64 encoded image data."""
+    async def screenshot(self, format: str = "png", quality: int = 95) -> Dict[str, Any]:
+        """Take a screenshot and return base64 encoded image data.
+
+        Args:
+            format: Image format - "png" (lossless, default) or "jpeg" (lossy, smaller).
+            quality: JPEG quality 1-95, ignored for PNG.
+        """
         pass
 
     @abstractmethod
@@ -322,17 +356,54 @@ class BaseAutomationHandler(ABC):
         pass
 
     # Clipboard Actions
-    @abstractmethod
     async def copy_to_clipboard(self) -> Dict[str, Any]:
-        """Get the current clipboard content."""
-        pass
+        """Get the current clipboard content using pyperclip."""
+        try:
+            import pyperclip
 
-    @abstractmethod
+            content = pyperclip.paste()
+            return {"success": True, "content": content}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
     async def set_clipboard(self, text: str) -> Dict[str, Any]:
-        """Set the clipboard content."""
-        pass
+        """Set the clipboard content using pyperclip."""
+        try:
+            import pyperclip
 
-    @abstractmethod
+            pyperclip.copy(text)
+            return {"success": True}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    # Command Execution
     async def run_command(self, command: str) -> Dict[str, Any]:
-        """Run a command and return the output."""
-        pass
+        """Run a shell command locally and return its output.
+
+        When IS_CUA_ANDROID env var is set, routes the command through
+        ``adb shell`` so execution runs inside the Android emulator.
+        """
+        import os
+
+        try:
+            if os.environ.get("IS_CUA_ANDROID") == "true":
+                process = await asyncio.create_subprocess_exec(
+                    "adb",
+                    "shell",
+                    command,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+            else:
+                process = await asyncio.create_subprocess_shell(
+                    command, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+                )
+            stdout, stderr = await process.communicate()
+            return {
+                "success": True,
+                "stdout": stdout.decode() if stdout else "",
+                "stderr": stderr.decode() if stderr else "",
+                "return_code": process.returncode,
+            }
+        except Exception as e:
+            return {"success": False, "error": str(e)}

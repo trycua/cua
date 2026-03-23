@@ -107,7 +107,8 @@ class _VNCConnection:
         Twisted Deferreds.
         """
         import threading
-        from twisted.internet import reactor, defer
+
+        from twisted.internet import defer, reactor
         from vncdotool.client import VNCDoToolFactory
 
         result_holder: list = [None]

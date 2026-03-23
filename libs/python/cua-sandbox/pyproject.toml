@@ -35,6 +35,7 @@ dependencies = [
     "vncdotool>=1.2.0",
     "paramiko>=4.0.0",
     "grpcio>=1.60.0",
+    "protobuf>=4.21.0",
 ]
 
 [project.optional-dependencies]

@@ -30,7 +30,13 @@ class GRPCEmulatorTransport(Transport):
         self._stub: Optional[pb2_grpc.EmulatorControllerStub] = None
 
     async def connect(self) -> None:
-        self._channel = grpc.aio.insecure_channel(f"{self._host}:{self._grpc_port}")
+        self._channel = grpc.aio.insecure_channel(
+            f"{self._host}:{self._grpc_port}",
+            options=[
+                ("grpc.max_receive_message_length", 32 * 1024 * 1024),  # 32MB
+                ("grpc.max_send_message_length", 32 * 1024 * 1024),
+            ],
+        )
         self._stub = pb2_grpc.EmulatorControllerStub(self._channel)
 
     async def disconnect(self) -> None:

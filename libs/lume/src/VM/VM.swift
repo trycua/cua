@@ -264,13 +264,15 @@ class VM {
             let vncInfo = try await setupSession(
                 port: vncPort, password: vncPassword, sharedDirectories: sharedDirectories)
 
-            // Write VNC connection info to the shared config directory so the
-            // guest can read it via mount_virtiofs.
+            // Parse VNC port and password from the VNC URL for config distribution.
             // URL format: vnc://:password@host:port — URLComponents needs http:// to parse correctly.
+            var vncPortValue: Int?
+            var vncPasswordValue: String?
             if let components = URLComponents(string: vncInfo.replacingOccurrences(of: "vnc://", with: "http://")),
                let port = components.port {
-                let password = components.password ?? ""
-                let envContent = "VNC_PORT=\(port)\nVNC_PASSWORD=\(password)\n"
+                vncPortValue = port
+                vncPasswordValue = components.password ?? ""
+                let envContent = "VNC_PORT=\(port)\nVNC_PASSWORD=\(vncPasswordValue!)\n"
                 try? envContent.write(
                     to: lumeConfigDir.appendingPathComponent("vnc.env"),
                     atomically: true, encoding: .utf8)
@@ -295,6 +297,18 @@ class VM {
                 await waitForVisibleFramebufferBeforeOpeningClient()
                 Logger.info("Starting VNC session", metadata: ["name": vmDirContext.name])
                 try await vncService.openClient(url: vncInfo)
+            }
+
+            // Write VNC config into VM via SSH (background task).
+            // VirtioFS mounts are blocked by macOS TCC for LaunchAgent processes,
+            // so we also write vnc.env directly to the guest's home directory.
+            if let port = vncPortValue, let password = vncPasswordValue {
+                let vmName = vmDirContext.name
+                let storage = vmDirContext.storage
+                Task.detached {
+                    await VM.writeVNCConfigViaSSH(
+                        vmName: vmName, storage: storage, port: port, password: password)
+                }
             }
 
             // Start clipboard watcher for automatic host-to-VM clipboard sync
@@ -687,6 +701,44 @@ class VM {
         return vncService.url
     }
 
+    /// Best-effort write of VNC config into the VM via SSH.
+    /// Silently gives up if SSH is not available (e.g., SSH disabled on the VM).
+    /// The guest can still read config from VirtioFS or use hardcoded defaults.
+    static func writeVNCConfigViaSSH(
+        vmName: String, storage: String?, port: Int, password: String
+    ) async {
+        let envContent = "VNC_PORT=\(port)\nVNC_PASSWORD=\(password)"
+        let command = "mkdir -p ~/.cua-server && echo '\(envContent)' > ~/.cua-server/vnc.env"
+
+        for _ in 1...6 {
+            do {
+                let details = try await MainActor.run {
+                    let controller = LumeController()
+                    return try controller.getDetails(name: vmName, storage: storage)
+                }
+                guard details.status == "running",
+                      let ip = details.ipAddress, !ip.isEmpty,
+                      details.sshAvailable == true else {
+                    try? await Task.sleep(nanoseconds: 5_000_000_000)
+                    continue
+                }
+
+                let client = SystemSSHClient(host: ip, port: 22, user: "lume", password: "lume")
+                let result = try client.execute(command: command, timeout: 10)
+                if result.exitCode == 0 {
+                    Logger.info("Wrote VNC config to VM via SSH", metadata: [
+                        "name": vmName, "port": "\(port)"])
+                    return
+                }
+            } catch {
+                // SSH not available — silently retry or give up
+            }
+            try? await Task.sleep(nanoseconds: 5_000_000_000)
+        }
+        // Silent give-up: SSH may be disabled on this VM, which is fine.
+        // The guest can still discover VNC config via VirtioFS or defaults.
+    }
+
     /// Sets up the VNC service and returns the VNC URL
     private func startVNCService(port: Int = 0, password: String? = nil) async throws -> String {
         guard let service = virtualizationService else {
@@ -958,10 +1010,13 @@ class VM {
             Logger.info("VNC info", metadata: ["vncInfo": vncInfo])
 
             // Write VNC config to shared directory for guest discovery
+            var vncPortValue: Int?
+            var vncPasswordValue: String?
             if let components = URLComponents(string: vncInfo.replacingOccurrences(of: "vnc://", with: "http://")),
                let port = components.port {
-                let password = components.password ?? ""
-                let envContent = "VNC_PORT=\(port)\nVNC_PASSWORD=\(password)\n"
+                vncPortValue = port
+                vncPasswordValue = components.password ?? ""
+                let envContent = "VNC_PORT=\(port)\nVNC_PASSWORD=\(vncPasswordValue!)\n"
                 try? envContent.write(
                     to: lumeConfigDir.appendingPathComponent("vnc.env"),
                     atomically: true, encoding: .utf8)
@@ -977,6 +1032,16 @@ class VM {
                 await waitForVisibleFramebufferBeforeOpeningClient()
                 Logger.info("Starting VNC session", metadata: ["name": vmDirContext.name])
                 try await vncService.openClient(url: vncInfo)
+            }
+
+            // Write VNC config into VM via SSH (background task)
+            if let port = vncPortValue, let password = vncPasswordValue {
+                let vmName = vmDirContext.name
+                let storage = vmDirContext.storage
+                Task.detached {
+                    await VM.writeVNCConfigViaSSH(
+                        vmName: vmName, storage: storage, port: port, password: password)
+                }
             }
 
             while true {

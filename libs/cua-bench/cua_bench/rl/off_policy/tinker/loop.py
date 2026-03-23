@@ -96,7 +96,7 @@ def run(config: TrainingConfig) -> None:
     service_client = ServiceClient(api_key=api_key)
 
     # --- Set up training client ---
-    lora_config = tt.LoraConfig(rank=config.lora_rank, seed=config.lora_seed)
+    # lora_config = tt.LoraConfig(rank=config.lora_rank, seed=config.lora_seed)
 
     if config.resume_from:
         print(f"[loop] Resuming training from checkpoint: {config.resume_from}")
@@ -107,7 +107,9 @@ def run(config: TrainingConfig) -> None:
         print(f"[loop] Starting fresh LoRA training on {config.base_model}")
         training_client = service_client.create_lora_training_client(
             base_model=config.base_model,
-            lora_config=lora_config,
+            rank=config.lora_rank,
+            seed=config.lora_seed
+            # lora_config=lora_config,
         )
 
     # --- Frozen reference client ---

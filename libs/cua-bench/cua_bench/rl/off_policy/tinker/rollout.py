@@ -25,7 +25,8 @@ from pathlib import Path
 # Internal helpers
 # ---------------------------------------------------------------------------
 
-_RUN_ID_RE = re.compile(r"run-[a-f0-9][-a-f0-9]{6,}")
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+_RUN_ID_RE = re.compile(r"Run ID:\s+([a-f0-9-]{8,})")
 
 
 def _get_run_output_dir(run_id: str) -> Path:
@@ -34,8 +35,9 @@ def _get_run_output_dir(run_id: str) -> Path:
 
 
 def _parse_run_id(text: str) -> str | None:
-    m = _RUN_ID_RE.search(text)
-    return m.group(0) if m else None
+    clean = _ANSI_RE.sub("", text)
+    m = _RUN_ID_RE.search(clean)
+    return m.group(1) if m else None
 
 
 def _terminal_statuses() -> frozenset[str]:
@@ -113,11 +115,18 @@ def run_rollouts(
         "--model", model,
         "--max-steps", str(max_steps),
     ]
+    
+    # breakpoint()
 
     print(f"[rollout] Launching: {' '.join(cmd)}")
     proc = subprocess.run(cmd, capture_output=True, text=True, env=env)
 
     combined_output = proc.stdout + proc.stderr
+    
+    # print(combined_output)
+    
+    breakpoint()
+    
     run_id = _parse_run_id(combined_output)
 
     if run_id is None:

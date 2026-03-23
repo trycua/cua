@@ -54,20 +54,26 @@ class Episode:
 def _extract_action_text(output_items: list[dict]) -> str:
     """Reconstruct printable text from ComputerAgent SDK output items.
 
-    The SDK returns a list of typed blocks:
-      - ``{"type": "message", "content": [{"text": "..."}]}``
+    The SDK returns a list of typed blocks such as:
+      - ``{"type": "message", "content": [{"type": "output_text", "text": "..."}]}``
+      - ``{"type": "computer_call", "action": {...}, "call_id": "..."}``
       - ``{"type": "tool_use", "name": "click", "input": {...}}``
 
-    We join all text content and JSON-serialised tool calls so the tokenizer
-    receives a single string that faithfully represents the model's response.
+    We join all text content and JSON-serialised tool/computer calls so the
+    tokenizer receives a single string that faithfully represents the model's
+    response.
     """
     parts: list[str] = []
     for item in output_items:
         kind = item.get("type")
         if kind == "message":
             for block in item.get("content", []):
-                if isinstance(block, dict) and "text" in block:
-                    parts.append(block["text"])
+                if isinstance(block, dict):
+                    text = block.get("text")
+                    if text:
+                        parts.append(text)
+        elif kind == "computer_call":
+            parts.append(json.dumps({"action": item.get("action")}))
         elif kind == "tool_use":
             parts.append(
                 json.dumps({"tool": item.get("name"), "input": item.get("input")})
@@ -114,9 +120,12 @@ def load_episode(trace_dir: str | Path) -> Optional[Episode]:
     if "evaluate" not in by_event:
         return None
 
-    terminal_reward = float(
-        json.loads(by_event["evaluate"][0]["data_json"]).get("result", 0.0)
-    )
+    raw_result = json.loads(by_event["evaluate"][0]["data_json"]).get("result", 0.0)
+    # result may be a list (e.g. [0.0]) or a scalar
+    if isinstance(raw_result, list):
+        terminal_reward = float(raw_result[0]) if raw_result else 0.0
+    else:
+        terminal_reward = float(raw_result)
 
     # Task description and initial screenshot come from the reset event.
     task_description = ""
@@ -181,7 +190,7 @@ def load_run(run_dir: str | Path) -> list[Episode]:
     """
     run_path = Path(run_dir)
     episodes: list[Episode] = []
-    for trace_dir in sorted(run_path.glob("task_*_trace")):
+    for trace_dir in sorted(run_path.glob("*/task_*_trace")):
         try:
             ep = load_episode(trace_dir)
             if ep is not None:

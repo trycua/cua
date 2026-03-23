@@ -232,6 +232,12 @@ class CuaAgent(BaseAgent):
         print("CUA Agent initialized with model:", self.model)
 
         # Run the agent and track usage (with task-level retry on transient API errors)
+        total_usage = {
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0,
+            "response_cost": 0.0,
+        }
         last_exc: BaseException | None = None
         for attempt in range(self.task_retries + 1):
             if attempt > 0:
@@ -243,13 +249,6 @@ class CuaAgent(BaseAgent):
                 await asyncio.sleep(delay)
 
             try:
-                total_usage = {
-                    "prompt_tokens": 0,
-                    "completion_tokens": 0,
-                    "total_tokens": 0,
-                    "response_cost": 0.0,
-                }
-
                 step = 0
                 task_completed = False
 

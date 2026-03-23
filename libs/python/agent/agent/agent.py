@@ -234,6 +234,8 @@ async def _predict_step_with_retry(
         max_retries: Maximum number of retry attempts (total attempts = max_retries + 1).
         base_delay: Base delay in seconds for the first retry; doubles each attempt.
     """
+    if max_retries is None:
+        max_retries = 0
     last_exc: Optional[BaseException] = None
     for attempt in range(max_retries + 1):
         try:
@@ -969,7 +971,9 @@ class ComputerAgent:
                 "tools": self.tool_schemas,
                 "stream": False,
                 "computer_handler": self.computer_handler,
-                "max_retries": self.max_retries,
+                # Inner liteLLM retries are disabled here; _predict_step_with_retry
+                # is the sole retry layer so the two don't stack.
+                "max_retries": 0,
                 "use_prompt_caching": self.use_prompt_caching,
                 **merged_kwargs,
             }

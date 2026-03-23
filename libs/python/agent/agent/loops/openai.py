@@ -379,6 +379,7 @@ Task: Click {instruction}. Output ONLY a click action on the target element.""",
             "reasoning": {"summary": "concise"},
             "truncation": "auto",
             "max_tokens": 200,  # Keep response short for click prediction
+            "request_timeout": kwargs.pop("request_timeout", 120),
             **kwargs,
         }
 

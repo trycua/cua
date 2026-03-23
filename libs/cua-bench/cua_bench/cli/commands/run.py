@@ -606,7 +606,9 @@ async def _cmd_stop_async(args) -> int:
             # Give it a moment to clean up, then SIGKILL if still alive
             await asyncio.sleep(2)
             try:
-                os.kill(pid, signal.SIGKILL)
+                sigkill = getattr(signal, "SIGKILL", None)
+                if sigkill is not None:
+                    os.kill(pid, sigkill)
             except ProcessLookupError:
                 pass  # Already exited cleanly
         except (ValueError, ProcessLookupError):
@@ -1789,6 +1791,8 @@ async def _cmd_run_dataset_async(args) -> int:
             stderr=subprocess.STDOUT,
             env=env_vars,
         )
+        # Close the parent's copy of the fd; the subprocess has its own inherited copy.
+        log_handle.close()
 
         # Save PID so `cb run stop` can kill the process
         pid_file = output_dir / "run.pid"

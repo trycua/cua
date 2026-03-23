@@ -1922,6 +1922,7 @@ Task: Click {instruction}. Output ONLY a click action on the target element.""",
             "stream": False,
             "max_tokens": 100,  # Keep response short for click prediction
             "headers": {"anthropic-beta": tool_config["beta_flag"]},
+            "request_timeout": kwargs.pop("request_timeout", 120),
         }
         # Thread optional API params
         if "api_key" in kwargs and kwargs.get("api_key") is not None:

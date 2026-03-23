@@ -69,7 +69,8 @@ class GRPCEmulatorTransport(Transport):
 
     async def get_screen_size(self) -> Dict[str, int]:
         assert self._stub is not None, "Transport not connected"
-        img_fmt = pb2.ImageFormat(format=pb2.ImageFormat.PNG, width=1, height=1)
+        # Request with no width/height — emulator returns native display dimensions
+        img_fmt = pb2.ImageFormat(format=pb2.ImageFormat.PNG)
         response = await self._stub.getScreenshot(img_fmt)
         return {"width": response.format.width, "height": response.format.height}
 
@@ -77,6 +78,38 @@ class GRPCEmulatorTransport(Transport):
         return "android"
 
     async def send(self, action: str, **params: Any) -> Any:
-        raise NotImplementedError(
-            f"GRPCEmulatorTransport.send({action!r}) not implemented — use ADBTransport for shell/input"
-        )
+        assert self._stub is not None, "Transport not connected"
+
+        if action in ("left_click", "right_click", "double_click"):
+            x, y = int(params["x"]), int(params["y"])
+            n_taps = 2 if action == "double_click" else 1
+            for _ in range(n_taps):
+                # press
+                await self._stub.sendTouch(
+                    pb2.TouchEvent(touches=[pb2.Touch(x=x, y=y, identifier=0, pressure=1)])
+                )
+                # release
+                await self._stub.sendTouch(
+                    pb2.TouchEvent(touches=[pb2.Touch(x=x, y=y, identifier=0, pressure=0)])
+                )
+            return {}
+
+        if action in ("mouse_down",):
+            x, y = int(params["x"]), int(params["y"])
+            await self._stub.sendTouch(
+                pb2.TouchEvent(touches=[pb2.Touch(x=x, y=y, identifier=0, pressure=1)])
+            )
+            return {}
+
+        if action in ("mouse_up",):
+            x, y = int(params["x"]), int(params["y"])
+            await self._stub.sendTouch(
+                pb2.TouchEvent(touches=[pb2.Touch(x=x, y=y, identifier=0, pressure=0)])
+            )
+            return {}
+
+        if action == "move_cursor":
+            # No meaningful hover on Android — no-op
+            return {}
+
+        raise NotImplementedError(f"GRPCEmulatorTransport.send({action!r}) not implemented")

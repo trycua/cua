@@ -45,6 +45,9 @@ RUN python -m pip install --upgrade pip && \
 # Install cua-agent and non torch optional deps
 RUN python -m pip install --no-cache-dir cua-agent[qwen,omni,gemini]
 
+# Install OpenTelemetry packages
+RUN python -m pip install --no-cache-dir opentelemetry-api opentelemetry-sdk opentelemetry-exporter-otlp-proto-http
+
 # Create a non-root user and set ownership
 RUN useradd -m -u 1000 cuauser && \
     chown -R cuauser:cuauser /app && \

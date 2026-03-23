@@ -586,6 +586,8 @@ def cmd_stop(args) -> int:
 
 async def _cmd_stop_async(args) -> int:
     """Stop a run asynchronously."""
+    import signal
+
     from cua_bench.sessions import list_sessions, manager
     from cua_bench.sessions.providers.docker import DockerProvider
 
@@ -594,12 +596,31 @@ async def _cmd_stop_async(args) -> int:
         print(f"{RED}Error: run_id required{RESET}")
         return 1
 
+    # Kill the background orchestrator process first so it can't restart containers
+    pid_file = _get_run_output_dir(run_id) / "run.pid"
+    if pid_file.exists():
+        try:
+            pid = int(pid_file.read_text().strip())
+            os.kill(pid, signal.SIGTERM)
+            print(f"{CYAN}Sent SIGTERM to orchestrator process (pid {pid}){RESET}")
+            # Give it a moment to clean up, then SIGKILL if still alive
+            await asyncio.sleep(2)
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass  # Already exited cleanly
+        except (ValueError, ProcessLookupError):
+            pass  # PID file stale or process already gone
+        finally:
+            pid_file.unlink(missing_ok=True)
+
     sessions = list_sessions()
     run_sessions = [s for s in sessions if s.get("run_id") == run_id]
 
     if not run_sessions:
-        print(f"{RED}Error: No sessions found for run: {run_id}{RESET}")
-        return 1
+        print(f"{YELLOW}No active sessions found for run: {run_id}{RESET}")
+        print(f"\n{GREEN}✓ Run stopped{RESET}")
+        return 0
 
     print(f"{CYAN}Stopping run: {run_id} ({len(run_sessions)} sessions)...{RESET}")
 
@@ -1762,12 +1783,16 @@ async def _cmd_run_dataset_async(args) -> int:
         log_handle = open(global_log_file, "w", encoding="utf-8", buffering=1)
 
         # Start detached subprocess
-        subprocess.Popen(
+        proc = subprocess.Popen(
             cmd,
             stdout=log_handle,
             stderr=subprocess.STDOUT,
             env=env_vars,
         )
+
+        # Save PID so `cb run stop` can kill the process
+        pid_file = output_dir / "run.pid"
+        pid_file.write_text(str(proc.pid))
 
         return 0
 

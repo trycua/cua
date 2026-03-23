@@ -1800,6 +1800,9 @@ class AnthropicHostedToolsConfig(AsyncAgentConfig):
             "tools": anthropic_tools if anthropic_tools else None,
             "stream": stream,
             "num_retries": max_retries,
+            # Bound each request so a stalled connection doesn't block forever.
+            # Callers can override via kwargs (e.g. request_timeout=120).
+            "request_timeout": kwargs.pop("request_timeout", 120),
             **kwargs,
         }
 

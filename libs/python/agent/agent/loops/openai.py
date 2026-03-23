@@ -233,6 +233,7 @@ class OpenAIComputerUseConfig:
             "reasoning": {"summary": "concise"},
             "truncation": "auto",
             "num_retries": max_retries,
+            "request_timeout": kwargs.pop("request_timeout", 120),
             **kwargs,
         }
 

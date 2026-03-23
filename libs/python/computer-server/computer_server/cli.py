@@ -120,7 +120,9 @@ def main() -> None:
         os.environ["CUA_BACKEND"] = "vnc"
         if args.vnc_host:
             os.environ["CUA_VNC_HOST"] = args.vnc_host
-        os.environ["CUA_VNC_PORT"] = str(args.vnc_port)
+        # Only override env vars from CLI args when explicitly provided
+        if args.vnc_port != 5900 or "CUA_VNC_PORT" not in os.environ:
+            os.environ["CUA_VNC_PORT"] = str(args.vnc_port)
         if args.vnc_password:
             os.environ["CUA_VNC_PASSWORD"] = args.vnc_password
         vnc_host = args.vnc_host or os.environ.get("CUA_VNC_HOST")

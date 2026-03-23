@@ -21,7 +21,6 @@ Usage:
 import asyncio
 import base64
 import logging
-import threading
 from io import BytesIO
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -81,7 +80,12 @@ def _translate_key(key: str) -> str:
 
 
 class _VNCConnection:
-    """Manages a vncdotool ThreadedVNCClientProxy lifecycle.
+    """Manages vncdotool client connections to a VNC server.
+
+    Uses fresh connections per operation to avoid a bug in vncdotool's
+    ThreadedVNCClientProxy where the Twisted deferred chain corrupts
+    coordinate state after operations like refreshScreen.  Each public
+    method creates its own connection, executes, and disconnects.
 
     All methods are synchronous (blocking) — the handler calls them via
     asyncio.to_thread to avoid blocking the event loop.
@@ -91,164 +95,257 @@ class _VNCConnection:
         self._host = host
         self._port = port
         self._password = password
-        self._client = None
-        self._lock = threading.Lock()
-        # Track cursor position locally (vncdotool also tracks via client.x/y)
+        # Track cursor position locally
         self._cursor_x: int = 0
         self._cursor_y: int = 0
 
-    def _ensure_connected(self):
-        """Lazily connect to the VNC server. Returns the vncdotool client."""
-        if self._client is not None:
-            return self._client
-        with self._lock:
-            if self._client is not None:
-                return self._client
-            from vncdotool import api
+    def _with_client(self, fn):
+        """Execute fn(client) with a fresh VNC connection via the global Twisted reactor.
 
-            server_str = f"{self._host}::{self._port}"
-            logger.info(f"VNC connecting to {self._host}:{self._port}")
-            client = api.connect(
-                server_str,
-                password=self._password or None,
+        Starts the reactor in a background thread on first use, then reuses it.
+        ``fn(client)`` receives a raw ``VNCDoToolClient`` whose methods return
+        Twisted Deferreds.
+        """
+        import threading
+        from twisted.internet import reactor, defer
+        from vncdotool.client import VNCDoToolFactory
+
+        result_holder: list = [None]
+        error_holder: list = [None]
+        done_event = threading.Event()
+
+        def _work():
+            factory = VNCDoToolFactory()
+            factory.password = self._password or None
+
+            @defer.inlineCallbacks
+            def _do():
+                try:
+                    reactor.connectTCP(self._host, self._port, factory)
+                    client = yield factory.deferred
+                    res = yield defer.maybeDeferred(fn, client)
+                    result_holder[0] = res
+                except Exception as e:
+                    error_holder[0] = e
+                finally:
+                    done_event.set()
+
+            _do()
+
+        # Ensure the reactor is running in a background thread
+        if not reactor.running:
+            t = threading.Thread(
+                target=reactor.run,
+                kwargs={"installSignalHandlers": False},
+                daemon=True,
             )
-            client.timeout = 30
-            self._client = client
-            logger.info("VNC connected")
-            return client
+            t.start()
+
+        reactor.callFromThread(_work)
+        done_event.wait(timeout=30)
+        if not done_event.is_set():
+            raise TimeoutError("VNC operation timed out")
+        if error_holder[0] is not None:
+            raise error_holder[0]
+        return result_holder[0]
 
     def disconnect(self):
-        with self._lock:
-            if self._client is not None:
-                try:
-                    self._client.disconnect()
-                except Exception:
-                    pass
-                self._client = None
+        pass  # No persistent connection to close
 
     def _reset_on_error(self):
-        """Disconnect so next call reconnects."""
-        try:
-            self.disconnect()
-        except Exception:
-            pass
+        pass  # No persistent connection to reset
 
     # -- Screenshot ---------------------------------------------------------
 
     def capture_screenshot(self) -> bytes:
         """Capture the screen and return PNG bytes."""
-        client = self._ensure_connected()
-        # refreshScreen updates the internal screen image
-        client.refreshScreen(incremental=False)
-        screen = client.protocol.screen
-        buf = BytesIO()
-        screen.save(buf, format="PNG")
-        return buf.getvalue()
+        from twisted.internet import defer
+
+        @defer.inlineCallbacks
+        def _do(client):
+            yield client.refreshScreen(incremental=False)
+            screen = client.screen
+            buf = BytesIO()
+            screen.save(buf, format="PNG")
+            defer.returnValue(buf.getvalue())
+        return self._with_client(_do)
 
     # -- Mouse --------------------------------------------------------------
 
     def mouse_move(self, x: int, y: int):
-        client = self._ensure_connected()
-        client.mouseMove(x, y)
+        self._with_client(lambda c: c.mouseMove(x, y))
         self._cursor_x = x
         self._cursor_y = y
 
     def mouse_click(self, x: int, y: int, button: int = 1, clicks: int = 1):
-        client = self._ensure_connected()
-        client.mouseMove(x, y)
+        from twisted.internet import defer
+
+        @defer.inlineCallbacks
+        def _do(client):
+            yield client.mouseMove(x, y)
+            for _ in range(clicks):
+                yield client.mousePress(button)
+        self._with_client(_do)
         self._cursor_x = x
         self._cursor_y = y
-        for _ in range(clicks):
-            client.mousePress(button)
 
     def mouse_down(self, x: int, y: int, button: int = 1):
-        client = self._ensure_connected()
-        client.mouseMove(x, y)
+        from twisted.internet import defer
+
+        @defer.inlineCallbacks
+        def _do(client):
+            yield client.mouseMove(x, y)
+            yield client.mouseDown(button)
+        self._with_client(_do)
         self._cursor_x = x
         self._cursor_y = y
-        client.mouseDown(button)
 
     def mouse_up(self, x: int, y: int, button: int = 1):
-        client = self._ensure_connected()
-        client.mouseMove(x, y)
+        from twisted.internet import defer
+
+        @defer.inlineCallbacks
+        def _do(client):
+            yield client.mouseMove(x, y)
+            yield client.mouseUp(button)
+        self._with_client(_do)
         self._cursor_x = x
         self._cursor_y = y
-        client.mouseUp(button)
 
     def mouse_drag(self, x: int, y: int, step: int = 1):
-        client = self._ensure_connected()
-        client.mouseDrag(x, y, step=step)
+        from twisted.internet import defer
+
+        sx, sy = self._cursor_x, self._cursor_y
+
+        @defer.inlineCallbacks
+        def _do(client):
+            # Move in increments from current position to target
+            dx, dy = x - sx, y - sy
+            steps = max(abs(dx), abs(dy)) // max(step, 1)
+            steps = max(steps, 1)
+            yield client.mouseDown(1)
+            for i in range(1, steps + 1):
+                ix = sx + dx * i // steps
+                iy = sy + dy * i // steps
+                yield client.mouseMove(ix, iy)
+            yield client.mouseUp(1)
+        self._with_client(_do)
         self._cursor_x = x
         self._cursor_y = y
 
+    def drag_to(self, start_x: int, start_y: int, end_x: int, end_y: int,
+                button: int = 1, step: int = 5):
+        """Drag from start to end on a single connection."""
+        from twisted.internet import defer
+
+        @defer.inlineCallbacks
+        def _do(client):
+            yield client.mouseMove(start_x, start_y)
+            yield client.mouseDown(button)
+            # Manual drag in increments instead of mouseDrag (avoids doPoll)
+            dx, dy = end_x - start_x, end_y - start_y
+            steps = max(abs(dx), abs(dy)) // max(step, 1)
+            steps = max(steps, 1)
+            for i in range(1, steps + 1):
+                ix = start_x + dx * i // steps
+                iy = start_y + dy * i // steps
+                yield client.mouseMove(ix, iy)
+            yield client.mouseUp(button)
+        self._with_client(_do)
+        self._cursor_x = end_x
+        self._cursor_y = end_y
+
+    def drag_path(self, path: List[Tuple[int, int]], button: int = 1):
+        """Drag along a path of points on a single connection."""
+        from twisted.internet import defer
+
+        @defer.inlineCallbacks
+        def _do(client):
+            yield client.mouseMove(path[0][0], path[0][1])
+            yield client.mouseDown(button)
+            for px, py in path[1:]:
+                yield client.mouseMove(px, py)
+            yield client.mouseUp(button)
+        self._with_client(_do)
+        self._cursor_x = path[-1][0]
+        self._cursor_y = path[-1][1]
+
     def scroll(self, x: int, y: int):
-        """Scroll. y>0 = down (button 5), y<0 = up (button 4)."""
-        client = self._ensure_connected()
-        if y > 0:
-            for _ in range(y):
-                client.mousePress(5)
-        elif y < 0:
-            for _ in range(abs(y)):
-                client.mousePress(4)
-        # Horizontal: button 6 (right), button 7 (left) — not universally supported
-        if x > 0:
-            for _ in range(x):
-                client.mousePress(6)
-        elif x < 0:
-            for _ in range(abs(x)):
-                client.mousePress(7)
+        """Scroll. y>0 = up, y<0 = down (matches macOS native handler convention).
+
+        Uses arrow key presses instead of mouse buttons 4/5 because Apple's
+        _VZVNCServer (used by Lume) does not translate RFB mouse buttons 4-7
+        into scroll wheel events.
+        """
+        from twisted.internet import defer
+
+        @defer.inlineCallbacks
+        def _do(client):
+            if y > 0:
+                for _ in range(y):
+                    yield client.keyPress("up")
+            elif y < 0:
+                for _ in range(abs(y)):
+                    yield client.keyPress("down")
+            if x > 0:
+                for _ in range(x):
+                    yield client.keyPress("right")
+            elif x < 0:
+                for _ in range(abs(x)):
+                    yield client.keyPress("left")
+        self._with_client(_do)
 
     # -- Keyboard -----------------------------------------------------------
 
     def key_press(self, key: str):
-        client = self._ensure_connected()
-        client.keyPress(_translate_key(key))
+        self._with_client(lambda c: c.keyPress(_translate_key(key)))
 
     def key_down(self, key: str):
-        client = self._ensure_connected()
-        client.keyDown(_translate_key(key))
+        self._with_client(lambda c: c.keyDown(_translate_key(key)))
 
     def key_up(self, key: str):
-        client = self._ensure_connected()
-        client.keyUp(_translate_key(key))
+        self._with_client(lambda c: c.keyUp(_translate_key(key)))
 
     def type_text(self, text: str):
         """Type text character by character, handling shift for uppercase/symbols."""
-        client = self._ensure_connected()
-        for ch in text:
-            if ch == " ":
-                client.keyPress("space")
-            elif ch == "\n":
-                client.keyPress("enter")
-            elif ch == "\t":
-                client.keyPress("tab")
-            else:
-                # vncdotool's keyPress handles single characters directly
-                client.keyPress(ch)
+        from twisted.internet import defer
+
+        @defer.inlineCallbacks
+        def _do(client):
+            for ch in text:
+                if ch == " ":
+                    yield client.keyPress("space")
+                elif ch == "\n":
+                    yield client.keyPress("enter")
+                elif ch == "\t":
+                    yield client.keyPress("tab")
+                else:
+                    yield client.keyPress(ch)
+        self._with_client(_do)
 
     def hotkey(self, keys: List[str]):
         """Press a key combination (e.g. ['command', 'a'])."""
-        client = self._ensure_connected()
         translated = [_translate_key(k) for k in keys]
-        # vncdotool supports "modifier-key" syntax: "alt-a", "ctrl-shift-c"
         combo = "-".join(translated)
-        client.keyPress(combo)
+        self._with_client(lambda c: c.keyPress(combo))
 
     # -- Clipboard ----------------------------------------------------------
 
     def paste_text(self, text: str):
-        client = self._ensure_connected()
-        client.paste(text)
+        self._with_client(lambda c: c.paste(text))
 
     # -- Info ---------------------------------------------------------------
 
     @property
     def screen_size(self) -> Tuple[int, int]:
-        client = self._ensure_connected()
-        proto = client.protocol
-        if proto is not None and proto.screen is not None:
-            return proto.screen.size
-        return (0, 0)
+        from twisted.internet import defer
+
+        @defer.inlineCallbacks
+        def _do(client):
+            yield client.refreshScreen(incremental=False)
+            if client.screen is not None:
+                defer.returnValue(client.screen.size)
+            defer.returnValue((0, 0))
+        return self._with_client(_do)
 
     @property
     def cursor_position(self) -> Tuple[int, int]:
@@ -365,14 +462,8 @@ class VNCAutomationHandler(BaseAutomationHandler):
         try:
             btn = _BUTTON_MAP.get(button, 1)
             cx, cy = self._conn.cursor_position
-
-            def _drag():
-                self._conn.mouse_down(cx, cy, btn)
-                step = max(1, int(1 / max(duration, 0.01) * 5))
-                self._conn.mouse_drag(x, y, step=step)
-                self._conn.mouse_up(x, y, btn)
-
-            await asyncio.to_thread(_drag)
+            step = max(1, int(1 / max(duration, 0.01) * 5))
+            await asyncio.to_thread(self._conn.drag_to, cx, cy, x, y, btn, step)
             return {"success": True}
         except Exception as e:
             return {"success": False, "error": str(e)}
@@ -384,14 +475,7 @@ class VNCAutomationHandler(BaseAutomationHandler):
             if not path:
                 return {"success": False, "error": "Empty path"}
             btn = _BUTTON_MAP.get(button, 1)
-
-            def _drag_path():
-                self._conn.mouse_down(path[0][0], path[0][1], btn)
-                for px, py in path[1:]:
-                    self._conn.mouse_move(px, py)
-                self._conn.mouse_up(path[-1][0], path[-1][1], btn)
-
-            await asyncio.to_thread(_drag_path)
+            await asyncio.to_thread(self._conn.drag_path, path, btn)
             return {"success": True}
         except Exception as e:
             return {"success": False, "error": str(e)}
@@ -443,10 +527,10 @@ class VNCAutomationHandler(BaseAutomationHandler):
             return {"success": False, "error": str(e)}
 
     async def scroll_down(self, clicks: int = 1) -> Dict[str, Any]:
-        return await self.scroll(0, clicks)
+        return await self.scroll(0, -clicks)
 
     async def scroll_up(self, clicks: int = 1) -> Dict[str, Any]:
-        return await self.scroll(0, -clicks)
+        return await self.scroll(0, clicks)
 
     # -- Screen info --------------------------------------------------------
 

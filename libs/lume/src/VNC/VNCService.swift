@@ -8,7 +8,7 @@ import Network
 @MainActor
 protocol VNCService {
     var url: String? { get }
-    func start(port: Int, virtualMachine: Any?) async throws
+    func start(port: Int, password: String?, virtualMachine: Any?) async throws
     func stop()
     func openClient(url: String) async throws
 
@@ -69,8 +69,8 @@ final class DefaultVNCService: VNCService {
         }
     }
     
-    func start(port: Int, virtualMachine: Any?) async throws {
-        let password = Array(PassphraseGenerator().prefix(4)).joined(separator: "-")
+    func start(port: Int, password: String? = nil, virtualMachine: Any?) async throws {
+        let password = password ?? Array(PassphraseGenerator().prefix(4)).joined(separator: "-")
         let securityConfiguration = Dynamic._VZVNCAuthenticationSecurityConfiguration(password: password)
 
         // Store password for later VNC client connection

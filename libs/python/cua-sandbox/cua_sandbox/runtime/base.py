@@ -29,6 +29,9 @@ class RuntimeInfo:
     ssh_key_filename: Optional[str] = None
     vnc_host: Optional[str] = None  # VNC host (if different from host, e.g. localhost for Tart)
     vnc_password: Optional[str] = None
+    grpc_port: Optional[int] = (
+        None  # Set when gRPC transport should be used (emulator gRPC service)
+    )
 
 
 class Runtime(ABC):

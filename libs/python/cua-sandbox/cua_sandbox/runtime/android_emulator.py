@@ -225,6 +225,7 @@ class AndroidEmulatorRuntime(Runtime):
         no_boot_anim: bool = True,
         gpu_mode: str = "swiftshader_indirect",
         headless: bool = True,
+        grpc_port: Optional[int] = None,
     ):
         self.api_level = api_level
         self.img_type = img_type
@@ -235,6 +236,7 @@ class AndroidEmulatorRuntime(Runtime):
         self.no_boot_anim = no_boot_anim
         self.gpu_mode = gpu_mode
         self.headless = headless
+        self.grpc_port = grpc_port
         self._proc: Optional[subprocess.Popen] = None
         self._avd_name: Optional[str] = None
         self._sdk: Optional[Path] = None
@@ -317,6 +319,10 @@ class AndroidEmulatorRuntime(Runtime):
         if self.no_boot_anim:
             cmd.append("-no-boot-anim")
 
+        # gRPC service: defaults to console_port+3000 if not specified
+        resolved_grpc_port = self.grpc_port or (self.adb_port - 1 + 3000)
+        cmd += ["-grpc", str(resolved_grpc_port)]
+
         logger.info(f"Starting Android emulator: {' '.join(cmd)}")
         self._proc = subprocess.Popen(
             cmd,
@@ -336,6 +342,7 @@ class AndroidEmulatorRuntime(Runtime):
             api_port=self.adb_port,
             name=name,
             environment="android",
+            grpc_port=resolved_grpc_port,
         )
 
         # Install APKs from image layers

@@ -460,13 +460,22 @@ class Sandbox:
             sb_name = name or "cua-sandbox"
             rt_info = await runtime.start(image, sb_name)
             if rt_info.environment == "android" and not rt_info.qmp_port:
-                from cua_sandbox.transport.adb import ADBTransport
+                if rt_info.grpc_port:
+                    from cua_sandbox.transport.grpc_emulator import (
+                        GRPCEmulatorTransport,
+                    )
 
-                adb_serial = f"emulator-{rt_info.api_port - 1}"
-                sdk_root = None
-                if hasattr(runtime, "_sdk") and runtime._sdk:
-                    sdk_root = str(runtime._sdk)
-                transport = ADBTransport(serial=adb_serial, sdk_root=sdk_root)
+                    transport = GRPCEmulatorTransport(
+                        host=rt_info.host, grpc_port=rt_info.grpc_port
+                    )
+                else:
+                    from cua_sandbox.transport.adb import ADBTransport
+
+                    adb_serial = f"emulator-{rt_info.api_port - 1}"
+                    sdk_root = None
+                    if hasattr(runtime, "_sdk") and runtime._sdk:
+                        sdk_root = str(runtime._sdk)
+                    transport = ADBTransport(serial=adb_serial, sdk_root=sdk_root)
             elif rt_info.agent_type == "osworld":
                 from cua_sandbox.transport.osworld import OSWorldTransport
 

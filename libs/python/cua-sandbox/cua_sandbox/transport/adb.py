@@ -56,10 +56,20 @@ class ADBTransport(Transport):
             timeout=timeout,
         )
 
+    async def _adb_cmd_async(self, *args: str, timeout: float = 15) -> subprocess.CompletedProcess:
+        """Run _adb_cmd in a thread executor so the event loop stays responsive."""
+        import asyncio
+        import functools
+
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(
+            None, functools.partial(self._adb_cmd, *args, timeout=timeout)
+        )
+
     async def send(self, action: str, **params: Any) -> Any:
         if action in ("shell", "execute", "run_command"):
             cmd = params.get("command", "")
-            result = self._adb_cmd("shell", cmd)
+            result = await self._adb_cmd_async("shell", cmd)
             return {
                 "stdout": result.stdout.decode(errors="replace"),
                 "stderr": result.stderr.decode(errors="replace"),
@@ -158,13 +168,15 @@ class ADBTransport(Transport):
     async def screenshot(self, format: str = "png", quality: int = 95) -> bytes:
         assert self._adb is not None, "Transport not connected"
         # exec-out screencap -p returns PNG directly to stdout
-        result = self._adb_cmd("exec-out", "screencap", "-p", timeout=15)
+        result = await self._adb_cmd_async("exec-out", "screencap", "-p", timeout=15)
         if result.returncode == 0 and len(result.stdout) > 100 and result.stdout[:4] == b"\x89PNG":
             png_data = result.stdout
         else:
             # Fallback: screencap to file then pull
-            self._adb_cmd("shell", "screencap", "-p", "/sdcard/screenshot.png")
-            result = self._adb_cmd("exec-out", "cat", "/sdcard/screenshot.png", timeout=15)
+            await self._adb_cmd_async("shell", "screencap", "-p", "/sdcard/screenshot.png")
+            result = await self._adb_cmd_async(
+                "exec-out", "cat", "/sdcard/screenshot.png", timeout=15
+            )
             if result.returncode == 0 and result.stdout[:4] == b"\x89PNG":
                 png_data = result.stdout
             else:
@@ -185,7 +197,7 @@ class ADBTransport(Transport):
         return png_data
 
     async def get_screen_size(self) -> Dict[str, int]:
-        result = self._adb_cmd("shell", "wm", "size")
+        result = await self._adb_cmd_async("shell", "wm", "size")
         # Output: "Physical size: 1080x1920"
         output = result.stdout.decode().strip()
         for line in output.splitlines():

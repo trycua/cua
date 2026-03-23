@@ -211,7 +211,17 @@ class Sandbox:
     async def screenshot(
         self, text: Optional[str] = None, format: str = "png", quality: int = 95
     ) -> bytes:
-        return await self._transport.screenshot(format=format, quality=quality)
+        _MAGIC: dict[bytes, str] = {b"\x89PNG": "png", b"\xff\xd8\xff": "jpeg"}
+        data = await self._transport.screenshot(format=format, quality=quality)
+        got_format = next(
+            (fmt for magic, fmt in _MAGIC.items() if data.startswith(magic)), "unknown"
+        )
+        expected = "jpeg" if format.lower() in ("jpeg", "jpg") else format.lower()
+        if got_format != expected:
+            raise ValueError(
+                f"requested {format!r} but got {got_format!r} (magic bytes: {data[:4].hex()})"
+            )
+        return data
 
     async def screenshot_base64(
         self, text: Optional[str] = None, format: str = "png", quality: int = 95

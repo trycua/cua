@@ -176,14 +176,12 @@ class ADBTransport(Transport):
         if format.lower() in ("jpeg", "jpg"):
             from io import BytesIO
 
-            import numpy as np
-            import simplejpeg
             from PIL import Image as PILImage
 
             img = PILImage.open(BytesIO(result.stdout)).convert("RGB")
-            return simplejpeg.encode_jpeg(
-                np.asarray(img), quality=quality, colorspace="RGB", fastdct=True
-            )
+            buf = BytesIO()
+            img.save(buf, format="JPEG", quality=quality, optimize=True)
+            return buf.getvalue()
 
         return result.stdout
 

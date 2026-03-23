@@ -34,7 +34,6 @@ dependencies = [
     "oras>=0.2.40",
     "vncdotool>=1.2.0",
     "paramiko>=4.0.0",
-    "simplejpeg>=1.6.0",
 ]
 
 [project.optional-dependencies]

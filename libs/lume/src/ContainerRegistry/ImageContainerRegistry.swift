@@ -2227,10 +2227,18 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
 
                 try FileManager.default.createDirectory(
                     at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-                if FileManager.default.fileExists(atPath: url.path) {
-                    try FileManager.default.removeItem(at: url)
+                do {
+                    try FileManager.default.moveItem(at: tempURL, to: url)
+                } catch let moveError as NSError
+                    where moveError.domain == NSCocoaErrorDomain
+                        && moveError.code == NSFileWriteFileExistsError
+                {
+                    // Destination already exists from a previous interrupted download.
+                    // Use replaceItemAt for an atomic swap instead of the racy
+                    // fileExists+removeItem+moveItem pattern.
+                    _ = try FileManager.default.replaceItemAt(
+                        url, withItemAt: tempURL, backupItemName: nil, options: [])
                 }
-                try FileManager.default.moveItem(at: tempURL, to: url)
                 progress.addProgress(Int64(httpResponse.expectedContentLength))
 
                 // Always save a copy to the cache directory for use by copyFromCache,

@@ -37,7 +37,7 @@ dependencies = [
     # CLI output
     "rich>=13.0.0",
     # Image processing for skills
-    "pillow>=10.0.0",
+    "pillow>=12.1.1",
     # WebSocket for skills recording
     "websockets>=12.0",
 ]

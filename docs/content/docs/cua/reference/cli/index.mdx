@@ -27,7 +27,7 @@ CUA CLI - Unified command-line interface for Computer-Use Agents.
 
 ## main
 
-Main entry point for Cua CLI.
+Main entry point for CUA CLI.
 
 ### print_error
 
@@ -126,38 +126,6 @@ Delete a value from the store.
 
 **Returns:** True if the key was deleted, False if it didn't exist
 
-#### CredentialStore.delete_by_prefix
-
-```python
-def delete_by_prefix(self, prefix: str) -> int
-```
-
-Delete all keys matching a prefix.
-
-**Parameters:**
-
-| Name | Type | Description |
-|------|------|-------------|
-| `prefix` | `Any` | The key prefix to match (uses LIKE prefix%) |
-
-**Returns:** Number of rows deleted
-
-#### CredentialStore.list_by_prefix
-
-```python
-def list_by_prefix(self, prefix: str) -> list[tuple[str, str]]
-```
-
-List all key-value pairs matching a prefix.
-
-**Parameters:**
-
-| Name | Type | Description |
-|------|------|-------------|
-| `prefix` | `Any` | The key prefix to match (uses LIKE prefix%) |
-
-**Returns:** List of (key, value) tuples
-
 #### CredentialStore.clear
 
 ```python
@@ -172,7 +140,7 @@ Clear all stored credentials.
 def clear_credentials() -> None
 ```
 
-Clear all stored credentials including workspaces and legacy key.
+Clear all stored credentials.
 
 ### get_api_key
 
@@ -182,10 +150,7 @@ def get_api_key() -> Optional[str]
 
 Get the stored API key.
 
-Priority:
-1. CUA_API_KEY environment variable
-2. Active workspace's API key
-3. Legacy 'api_key' key (backward compat)
+First checks CUA_API_KEY environment variable, then falls back to stored credentials.
 
 **Returns:** The API key, or None if not found
 
@@ -195,7 +160,13 @@ Priority:
 def save_api_key(api_key: str) -> None
 ```
 
-Save an API key to the credential store (legacy path).
+Save an API key to the credential store.
+
+**Parameters:**
+
+| Name | Type | Description |
+|------|------|-------------|
+| `api_key` | `Any` | The API key to save |
 
 ---
 

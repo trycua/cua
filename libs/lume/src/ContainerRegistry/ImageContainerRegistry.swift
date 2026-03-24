@@ -471,6 +471,8 @@ actor TaskCounter {
 class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
     private let registry: String
     private let organization: String
+    private let username: String?
+    private let password: String?
     private let downloadProgress = ProgressTracker()  // Renamed for clarity
     private let uploadProgress = UploadProgressTracker()  // Added upload tracker
     private let cacheDirectory: URL
@@ -493,9 +495,11 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
         return "[\(completed)\(remaining)]"
     }
 
-    init(registry: String, organization: String) {
+    init(registry: String, organization: String, username: String? = nil, password: String? = nil) {
         self.registry = registry
         self.organization = organization
+        self.username = username
+        self.password = password
 
         // Get cache directory from settings
         let cacheDir = SettingsManager.shared.getCacheDirectory()
@@ -761,7 +765,8 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
     public func pull(
         image: String,
         name: String?,
-        locationName: String? = nil
+        locationName: String? = nil,
+        force: Bool = false
     ) async throws -> VMDirectory {
         guard !image.isEmpty else {
             throw ValidationError("Image name cannot be empty")
@@ -782,6 +787,25 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
         } else {
             // Named storage or default location
             vmDir = try home.getVMDirectory(vmName, storage: locationName)
+        }
+
+        // Check if image is already cached with all required files
+        let manifestDigestPath = vmDir.dir.url.appendingPathComponent(".manifest-digest")
+        if !force
+            && vmDir.exists()
+            && vmDir.diskPath.exists()
+            && vmDir.nvramPath.exists()
+            && vmDir.configPath.exists()
+            && FileManager.default.fileExists(atPath: manifestDigestPath.path)
+        {
+            Logger.info("Image already cached, skipping download")
+            return vmDir
+        }
+
+        // If force is set and directory exists, remove it before re-downloading
+        if force && vmDir.exists() {
+            Logger.info("Force flag set, removing existing VM directory")
+            try FileManager.default.removeItem(at: vmDir.dir.url)
         }
 
         // Optimize network early in the process
@@ -1130,6 +1154,10 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
             Logger.debug("Caching disabled - cleaning up temporary cache entry")
             try? cleanupCacheEntry(manifestId: manifestId)
         }
+
+        // Write manifest digest to mark this as a complete cached image
+        let digestFilePath = URL(fileURLWithPath: vmDir.dir.path).appendingPathComponent(".manifest-digest")
+        try manifestDigest.write(to: digestFilePath, atomically: true, encoding: .utf8)
 
         Logger.debug("Download complete: Files extracted to \(vmDir.dir.path)")
         Logger.debug(
@@ -3799,6 +3827,11 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
     }
 
     private func getCredentialsFromEnvironment() -> (String?, String?) {
+        // Prefer explicit credentials over environment variables
+        if let username = self.username, let password = self.password,
+           !username.isEmpty, !password.isEmpty {
+            return (username, password)
+        }
         let username =
             ProcessInfo.processInfo.environment["GITHUB_USERNAME"]
             ?? ProcessInfo.processInfo.environment["GHCR_USERNAME"]

@@ -2227,6 +2227,9 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
 
                 try FileManager.default.createDirectory(
                     at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+                if FileManager.default.fileExists(atPath: url.path) {
+                    try FileManager.default.removeItem(at: url)
+                }
                 try FileManager.default.moveItem(at: tempURL, to: url)
                 progress.addProgress(Int64(httpResponse.expectedContentLength))
 

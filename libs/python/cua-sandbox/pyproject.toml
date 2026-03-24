@@ -34,8 +34,8 @@ dependencies = [
     "oras>=0.2.40",
     "vncdotool>=1.2.0",
     "paramiko>=4.0.0",
-    "grpcio>=1.60.0",
-    "protobuf>=4.21.0",
+    "grpcio==1.78.0",
+    "protobuf==6.31.1",
 ]
 
 [project.optional-dependencies]

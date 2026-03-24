@@ -10,14 +10,13 @@ import { VersionBadge } from '@/components/version-selector';
 
 ## Overview
 
-The Cua CLI provides commands for authentication, workspace management, sandbox management, image management, skills recording, and MCP server.
+The Cua CLI provides commands for authentication, sandbox management, image management, skills recording, and MCP server.
 
 ### Command Groups
 
 | Group           | Alias     | Description                        |
 | --------------- | --------- | ---------------------------------- |
 | `cua auth`      |           | Authentication management          |
-| `cua workspace` | `cua ws`  | Workspace management               |
 | `cua sandbox`   | `cua sb`  | Sandbox lifecycle management       |
 | `cua image`     | `cua img` | Cloud image management             |
 | `cua skills`    |           | Skills recording and playback      |
@@ -27,7 +26,7 @@ The Cua CLI provides commands for authentication, workspace management, sandbox 
 
 ### `cua auth login`
 
-Authenticate with your Cua account. Discovers and stores workspace metadata for multi-workspace support.
+Authenticate with your Cua account.
 
 ```bash
 # Browser-based login
@@ -35,22 +34,6 @@ cua auth login
 
 # Direct API key login
 cua auth login --api-key sk_cua-api01_...
-```
-
-### `cua auth list`
-
-List all authenticated workspaces, grouped by organization. The active workspace is marked with `*`.
-
-```bash
-cua auth list
-```
-
-### `cua auth status`
-
-Show the current authentication status, including the active workspace, organization, plan type, and credit balance.
-
-```bash
-cua auth status
 ```
 
 ### `cua auth env`
@@ -63,42 +46,10 @@ cua auth env
 
 ### `cua auth logout`
 
-Remove workspace credentials. By default, removes only the active workspace.
+Remove the stored API key.
 
 ```bash
-# Remove active workspace credentials
 cua auth logout
-
-# Remove credentials for a specific workspace
-cua auth logout --workspace <slug>
-
-# Remove all credentials
-cua auth logout --all
-```
-
-| Flag                   | Description                              |
-| ---------------------- | ---------------------------------------- |
-| `--workspace <slug>`   | Remove credentials for specific workspace |
-| `--all`                | Remove all workspace credentials          |
-
-## Workspace Commands
-
-All workspace commands support the `cua ws` alias (e.g., `cua ws set`).
-
-### `cua workspace set <slug>`
-
-Switch to a specific workspace. Validates the stored API key and re-authenticates via the browser if the key has expired.
-
-```bash
-cua workspace set my-workspace
-```
-
-### `cua workspace set`
-
-When called without arguments, opens an interactive picker to choose from authenticated workspaces.
-
-```bash
-cua workspace set
 ```
 
 ## Sandbox Commands

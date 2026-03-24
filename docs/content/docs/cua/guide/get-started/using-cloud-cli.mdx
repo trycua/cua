@@ -45,16 +45,6 @@ cua auth env
 
 This creates or updates `.env` with your `CUA_API_KEY`.
 
-Check your current authentication status or list all authenticated workspaces:
-
-```bash
-# Show current workspace, org, and credits
-cua auth status
-
-# List all authenticated workspaces
-cua auth list
-```
-
 ## Creating a Sandbox
 
 Create a new cloud sandbox with the `create` command:
@@ -162,11 +152,8 @@ The CLI supports both grouped and flat command styles:
 | Grouped Style                | Flat Style           | Description           |
 | ---------------------------- | -------------------- | --------------------- |
 | `cua auth login`             | `cua login`          | Authenticate          |
-| `cua auth list`              |                      | List authenticated workspaces |
-| `cua auth status`            |                      | Show auth status       |
-| `cua auth logout`            | `cua logout`         | Logout active workspace |
+| `cua auth logout`            | `cua logout`         | Clear credentials     |
 | `cua auth env`               | `cua env`            | Write API key to .env |
-| `cua workspace set <slug>`   | `cua ws set <slug>`  | Switch workspace       |
 | `cua sandbox list`           | `cua list`           | List sandboxes        |
 | `cua sandbox create`         | `cua create`         | Create sandbox        |
 | `cua sandbox get <name>`     | `cua get <name>`     | Get sandbox details   |
@@ -184,23 +171,20 @@ Here's a typical workflow for setting up and using a sandbox:
 # 1. Login
 cua auth login
 
-# 2. Switch workspace (if you have multiple)
-cua workspace set
-
-# 3. Create a Linux sandbox
+# 2. Create a Linux sandbox
 cua sandbox create --os linux --size small --region north-america
 # Output: Created sandbox "curious-fox-123"
 
-# 4. Open the desktop in your browser
+# 3. Open the desktop in your browser
 cua open curious-fox-123
 
-# 5. Export your API key for SDK usage
+# 4. Export your API key for SDK usage
 cua auth env
 
-# 6. Use the sandbox with Python SDK
+# 5. Use the sandbox with Python SDK
 python my_agent.py
 
-# 7. Stop when done (preserves data, stops charges)
+# 6. Stop when done (preserves data, stops charges)
 cua stop curious-fox-123
 ```
 

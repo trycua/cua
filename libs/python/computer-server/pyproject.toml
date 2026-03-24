@@ -35,8 +35,8 @@ dependencies = [
     "pywin32>=310; sys_platform == 'win32'",
     "python-certifi-win32; sys_platform == 'win32'",
     "cua-core>=0.1.18",
-    "grpcio>=1.60.0",
-    "protobuf>=4.21.0",
+    "grpcio==1.78.0",
+    "protobuf==6.31.1",
 ]
 
 [project.optional-dependencies]

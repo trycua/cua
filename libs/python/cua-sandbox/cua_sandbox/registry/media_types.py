@@ -32,6 +32,11 @@ OCI_VM_CONFIG = "application/vnd.agoda.macosvz.config.v1+json"
 OCI_VM_DISK = "application/vnd.agoda.macosvz.disk.image.v1"
 OCI_VM_AUX = "application/vnd.agoda.macosvz.aux.image.v1"
 
+# Backward-compat: existing images on ghcr.io still use the agoda media types
+OCI_VM_CONFIG_LEGACY = "application/vnd.agoda.macosvz.config.v1+json"
+OCI_VM_DISK_LEGACY = "application/vnd.agoda.macosvz.disk.image.v1"
+OCI_VM_AUX_LEGACY = "application/vnd.agoda.macosvz.aux.image.v1"
+
 # ── Legacy Lume (LZ4-chunked) ──────────────────────────────────────────────
 
 LEGACY_DISK_CHUNK = "application/vnd.trycua.lume.disk.chunk.lz4"
@@ -48,12 +53,25 @@ DOCKER_IMAGE_CONFIG = "application/vnd.docker.container.image.v1+json"
 
 # ── Sets ────────────────────────────────────────────────────────────────────
 
-VM_MEDIA_TYPES = frozenset({
-    QEMU_CONFIG, QEMU_DISK, QEMU_DISK_GZIP,
-    OCI_VM_CONFIG, OCI_VM_DISK, OCI_VM_AUX,
-    LEGACY_DISK_CHUNK, LEGACY_AUX, LEGACY_CONFIG,
-    TART_CONFIG, TART_DISK, TART_NVRAM,
-})
+VM_MEDIA_TYPES = frozenset(
+    {
+        QEMU_CONFIG,
+        QEMU_DISK,
+        QEMU_DISK_GZIP,
+        OCI_VM_CONFIG,
+        OCI_VM_DISK,
+        OCI_VM_AUX,
+        OCI_VM_CONFIG_LEGACY,
+        OCI_VM_DISK_LEGACY,
+        OCI_VM_AUX_LEGACY,
+        LEGACY_DISK_CHUNK,
+        LEGACY_AUX,
+        LEGACY_CONFIG,
+        TART_CONFIG,
+        TART_DISK,
+        TART_NVRAM,
+    }
+)
 
 CONTAINER_LAYER_TYPES = frozenset({
     OCI_IMAGE_LAYER, OCI_IMAGE_LAYER_NONDIST, DOCKER_IMAGE_LAYER,

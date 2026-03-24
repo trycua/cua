@@ -6,19 +6,18 @@ All runtime/pull logic delegates here first to figure out what the image is.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Optional
+from typing import Optional
 
 import oras.provider
-
 from cua_sandbox.registry.media_types import (
     CONTAINER_CONFIG_TYPES,
     CONTAINER_LAYER_TYPES,
     LEGACY_DISK_CHUNK,
-    OCI_VM_AUX,
     OCI_VM_CONFIG,
+    OCI_VM_CONFIG_LEGACY,
     OCI_VM_DISK,
+    OCI_VM_DISK_LEGACY,
     QEMU_CONFIG,
     QEMU_DISK,
     QEMU_DISK_GZIP,
@@ -31,12 +30,13 @@ from cua_sandbox.registry.ref import parse_ref
 
 class ImageFormat(Enum):
     """Format of a VM image in the registry."""
-    OCI_LAYERED = "oci-layered"      # agoda media types, gzip chunks with part annotations
-    LEGACY_LZ4 = "legacy-lz4"       # trycua LZ4-chunked
+
+    OCI_LAYERED = "oci-layered"  # agoda media types, gzip chunks with part annotations
+    LEGACY_LZ4 = "legacy-lz4"  # trycua LZ4-chunked
     CHUNKED_PARTS = "chunked-parts"  # standard OCI layer type with ;part.number= in media type
-    TART = "tart"                    # Cirrus Labs Tart VM disk chunks
-    QEMU = "qemu"                   # trycua QEMU qcow2 disk + config
-    CONTAINER = "container"          # standard Docker/OCI container
+    TART = "tart"  # Cirrus Labs Tart VM disk chunks
+    QEMU = "qemu"  # trycua QEMU qcow2 disk + config
+    CONTAINER = "container"  # standard Docker/OCI container
     UNKNOWN = "unknown"
 
 
@@ -97,38 +97,38 @@ def detect_format(manifest: dict) -> ImageFormat:
     config = manifest.get("config", {})
     config_mt = config.get("mediaType", "")
 
-    # OCI-layered (agoda): config is agoda type, layers are agoda disk type
-    if config_mt == OCI_VM_CONFIG:
+    # OCI-layered (lume/agoda): config or disk layers use trycua.lume or legacy agoda types
+    if config_mt in (OCI_VM_CONFIG, OCI_VM_CONFIG_LEGACY):
         return ImageFormat.OCI_LAYERED
-    if any(l.get("mediaType") == OCI_VM_DISK for l in layers):
+    if any(layer.get("mediaType") in (OCI_VM_DISK, OCI_VM_DISK_LEGACY) for layer in layers):
         return ImageFormat.OCI_LAYERED
 
     # Legacy LZ4
     if config_mt in (LEGACY_DISK_CHUNK,):
         return ImageFormat.LEGACY_LZ4
-    if any(l.get("mediaType") == LEGACY_DISK_CHUNK for l in layers):
+    if any(layer.get("mediaType") == LEGACY_DISK_CHUNK for layer in layers):
         return ImageFormat.LEGACY_LZ4
 
     # Chunked-parts: standard OCI layer type but with ;part.number= suffix
-    for l in layers:
-        mt = l.get("mediaType", "")
+    for layer in layers:
+        mt = layer.get("mediaType", "")
         if "part.number=" in mt:
             return ImageFormat.CHUNKED_PARTS
 
     # QEMU (cua): trycua.qemu config or disk layers
     if config_mt == QEMU_CONFIG:
         return ImageFormat.QEMU
-    if any(l.get("mediaType") in (QEMU_DISK, QEMU_DISK_GZIP) for l in layers):
+    if any(layer.get("mediaType") in (QEMU_DISK, QEMU_DISK_GZIP) for layer in layers):
         return ImageFormat.QEMU
 
     # Tart (Cirrus Labs): OCI config but cirruslabs disk layers
-    if any(l.get("mediaType") in (TART_DISK, TART_CONFIG) for l in layers):
+    if any(layer.get("mediaType") in (TART_DISK, TART_CONFIG) for layer in layers):
         return ImageFormat.TART
 
     # Standard container
     if config_mt in CONTAINER_CONFIG_TYPES:
         return ImageFormat.CONTAINER
-    if any(l.get("mediaType") in CONTAINER_LAYER_TYPES for l in layers):
+    if any(layer.get("mediaType") in CONTAINER_LAYER_TYPES for layer in layers):
         return ImageFormat.CONTAINER
 
     return ImageFormat.UNKNOWN
@@ -137,14 +137,22 @@ def detect_format(manifest: dict) -> ImageFormat:
 def detect_kind(manifest: dict) -> str:
     """Classify manifest as 'vm' or 'container'."""
     fmt = detect_format(manifest)
-    if fmt in (ImageFormat.OCI_LAYERED, ImageFormat.LEGACY_LZ4, ImageFormat.CHUNKED_PARTS, ImageFormat.TART, ImageFormat.QEMU):
+    if fmt in (
+        ImageFormat.OCI_LAYERED,
+        ImageFormat.LEGACY_LZ4,
+        ImageFormat.CHUNKED_PARTS,
+        ImageFormat.TART,
+        ImageFormat.QEMU,
+    ):
         return "vm"
     if fmt == ImageFormat.CONTAINER:
         return "container"
     # Fallback: check if any layer has a VM media type
     layers = manifest.get("layers", [])
     config_mt = manifest.get("config", {}).get("mediaType", "")
-    if config_mt in VM_MEDIA_TYPES or any(l.get("mediaType") in VM_MEDIA_TYPES for l in layers):
+    if config_mt in VM_MEDIA_TYPES or any(
+        layer.get("mediaType") in VM_MEDIA_TYPES for layer in layers
+    ):
         return "vm"
     return "container"
 
@@ -162,11 +170,14 @@ def detect_os(manifest: dict) -> Optional[str]:
         if "linux" in os_val:
             return "linux"
 
-    # agoda media types → macOS
+    # lume/agoda media types → macOS
     config_mt = manifest.get("config", {}).get("mediaType", "")
-    if config_mt == OCI_VM_CONFIG:
+    if config_mt in (OCI_VM_CONFIG, OCI_VM_CONFIG_LEGACY):
         return "macos"
-    if any(l.get("mediaType") == OCI_VM_DISK for l in manifest.get("layers", [])):
+    if any(
+        layer.get("mediaType") in (OCI_VM_DISK, OCI_VM_DISK_LEGACY)
+        for layer in manifest.get("layers", [])
+    ):
         return "macos"
 
     return None
@@ -242,13 +253,18 @@ def get_layer_info(manifest: dict) -> list[dict]:
                 elif segment.startswith("part.total="):
                     part_total = segment.split("=", 1)[1]
 
-        result.append({
-            "mediaType": mt,
-            "digest": layer.get("digest", ""),
-            "size": layer.get("size", 0),
-            "title": annot.get("org.opencontainers.image.title", ""),
-            "part_number": int(part_number) if part_number is not None else None,
-            "part_total": int(part_total) if part_total is not None else None,
-            "uncompressed_size": int(annot.get("com.agoda.macosvz.content.uncompressed-size", 0)) or None,
-        })
+        result.append(
+            {
+                "mediaType": mt,
+                "digest": layer.get("digest", ""),
+                "size": layer.get("size", 0),
+                "title": annot.get("org.opencontainers.image.title", ""),
+                "part_number": int(part_number) if part_number is not None else None,
+                "part_total": int(part_total) if part_total is not None else None,
+                "uncompressed_size": int(
+                    annot.get("com.agoda.macosvz.content.uncompressed-size", 0)
+                )
+                or None,
+            }
+        )
     return result

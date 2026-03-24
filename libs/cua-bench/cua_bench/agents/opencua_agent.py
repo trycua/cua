@@ -1,21 +1,4 @@
-"""OpenCUA Agent implementation using the CUA Computer Agent SDK with an OpenCUA-compatible model.
-
-OpenCUA models are served via litellm and use the composed-grounded loop:
-the same model acts as both the grounding model (click prediction) and the
-thinking model (reasoning / action planning).
-
-Typical model strings accepted by the OpenCUA loop (must match r"(?i).*OpenCUA.*"):
-  - huggingface/OpenCUA/OpenCUA-8B          (HuggingFace Inference API)
-  - openai/OpenCUA-8B                        (local vLLM/Ollama with OpenAI-compat API)
-  - huggingface-local/path/to/OpenCUA-model  (locally-loaded HuggingFace model)
-
-Environment variables
----------------------
-OPENCUA_BASE_URL : base URL of the local inference server
-                   (e.g. http://localhost:8000/v1)
-OPENCUA_API_KEY  : API key for the endpoint (default: "EMPTY" for local servers)
-"""
-
+import asyncio
 import base64
 import os
 import sys
@@ -25,36 +8,38 @@ from typing import TYPE_CHECKING, Any, Dict, List
 from . import register_agent
 from .base import AgentResult, BaseAgent, FailureMode
 
+
+def _is_retryable_api_error(exc: BaseException) -> bool:
+    """Return True if the exception is a transient error that can be retried."""
+    if isinstance(exc, (asyncio.TimeoutError, TimeoutError)):
+        return True
+    try:
+        import litellm.exceptions as _le
+
+        if isinstance(
+            exc,
+            (
+                _le.RateLimitError,
+                _le.ServiceUnavailableError,
+                _le.APIConnectionError,
+                _le.Timeout,
+                _le.InternalServerError,
+            ),
+        ):
+            return True
+    except Exception:
+        pass
+    msg = str(exc).lower()
+    return any(k in msg for k in ("timeout", "rate limit", "503", "502", "429", "connection"))
+
+
 if TYPE_CHECKING:
     from ..computers import DesktopSession
 
 
 @register_agent("opencua")
 class OpenCUAAgent(BaseAgent):
-    """Agent implementation using an OpenCUA model via the CUA Computer Agent SDK.
-
-    The agent delegates execution to ``ComputerAgent`` from the ``cua-agent``
-    package, passing an OpenCUA model identifier.  The SDK's OpenCUA agent loop
-    (``libs/python/agent/agent/loops/opencua.py``) intercepts any model whose
-    name matches ``(?i).*OpenCUA.*`` and routes it through the composed-grounded
-    pipeline, where the same model handles both click-grounding and task reasoning.
-
-    Constructor kwargs
-    ------------------
-    model : str
-        litellm model string.  Must contain "OpenCUA" (case-insensitive) so the
-        SDK routes it to the OpenCUA loop.
-        Default: ``"openai/OpenCUA-8B"`` (assumes a local OpenAI-compatible server).
-    base_url : str | None
-        Base URL for a local inference server (e.g. ``"http://localhost:8000/v1"``).
-        Falls back to the ``OPENCUA_BASE_URL`` environment variable.
-    api_key : str | None
-        API key for the inference endpoint.
-        Falls back to the ``OPENCUA_API_KEY`` environment variable.
-        Defaults to ``"EMPTY"`` for local servers that don't require auth.
-    max_steps : int
-        Maximum number of agent steps before aborting.  Default: 50.
-    """
+    """Agent implementation using an OpenCUA model via the CUA Computer Agent SDK."""
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -62,6 +47,7 @@ class OpenCUAAgent(BaseAgent):
         self.base_url = kwargs.get("base_url") or os.environ.get("OPENAI_ENDPOINT")
         self.api_key = kwargs.get("api_key") or os.environ.get("OPENAI_API_KEY", "EMPTY")
         self.max_steps = kwargs.get("max_steps", 50)
+        self.task_retries = int(kwargs.get("task_retries", 0))
 
     @staticmethod
     def name() -> str:
@@ -165,6 +151,8 @@ class OpenCUAAgent(BaseAgent):
             ) from e
 
         instruction = self._render_instruction(task_description)
+        
+        print(f"Instruction: {instruction}")
 
         trajectory_dir = None
         if logging_dir:
@@ -199,6 +187,7 @@ class OpenCUAAgent(BaseAgent):
             ),
             **extra_kwargs,
         )
+        
         print(f"OpenCUA Agent initialized with model: {composed_model}")
 
         total_usage = {
@@ -207,45 +196,57 @@ class OpenCUAAgent(BaseAgent):
             "total_tokens": 0,
             "response_cost": 0.0,
         }
-        step = 0
-        task_completed = False
-
+        
+        last_exc: BaseException | None = None
+        
         try:
-            async for result in agent.run(instruction):
-                sys.stdout.flush()
+            step = 0
+            task_completed = False
+            
+            while step < self.max_steps and not task_completed:
                 step += 1
+                print(f"\n[Step {step}]")
 
-                for k in total_usage:
-                    total_usage[k] += result["usage"].get(k, 0)
+                async for result in agent.run(instruction):
+                    sys.stdout.flush()
+                    step += 1
 
-                if tracer:
-                    try:
-                        screenshot_bytes = await session.screenshot()
-                        tracer.record(
-                            "agent_step",
-                            {
-                                "step": step,
-                                "agent": self.name(),
-                                "model": self.model,
-                                "usage": result["usage"],
-                                "output": result["output"],
-                            },
-                            [screenshot_bytes],
-                        )
-                    except Exception as e:
-                        print(f"Warning: Failed to record agent step to tracer: {e}")
+                    for k in total_usage:
+                        total_usage[k] += result["usage"].get(k, 0)
 
-                if step >= self.max_steps:
-                    print(f"\n[Max steps reached] Stopped at step {step}/{self.max_steps}")
-                    break
+                    if tracer:
+                        try:
+                            screenshot_bytes = await session.screenshot()
+                            usage = result["usage"]
+                            if hasattr(usage, "model_dump"):
+                                usage = usage.model_dump()
+                            elif not isinstance(usage, dict):
+                                usage = dict(usage)
+                            tracer.record(
+                                "agent_step",
+                                {
+                                    "step": step,
+                                    "agent": self.name(),
+                                    "model": self.model,
+                                    "usage": usage,
+                                    "output": result["output"],
+                                },
+                                [screenshot_bytes],
+                            )
+                        except Exception as e:
+                            print(f"Warning: Failed to record agent step to tracer: {e}")
 
-                for item in result["output"]:
-                    if item["type"] == "message":
-                        content = item.get("content", [])
-                        if content and "DONE" in content[0].get("text", ""):
-                            print(f"\n[Task completed] Agent indicated completion at step {step}")
-                            task_completed = True
-                            break
+                    if step >= self.max_steps:
+                        print(f"\n[Max steps reached] Stopped at step {step}/{self.max_steps}")
+                        break
+
+                    for item in result["output"]:
+                        if item["type"] == "message":
+                            content = item.get("content", [])
+                            if content and "DONE" in content[0].get("text", ""):
+                                print(f"\n[Task completed] Agent indicated completion at step {step}")
+                                task_completed = True
+                                break
 
             print(f"\nTotal usage: {total_usage}")
             print(f"Steps completed: {step}/{self.max_steps}")
@@ -263,13 +264,17 @@ class OpenCUAAgent(BaseAgent):
                 failure_mode=failure_mode,
             )
 
-        except Exception as e:
-            print(f"Agent execution failed: {e}")
+        except Exception as exc:
             import traceback
 
+            print(f"Agent execution failed: {exc}")
             traceback.print_exc()
+
+            failure_mode = (
+                FailureMode.API_ERROR if _is_retryable_api_error(exc) else FailureMode.UNKNOWN
+            )
             return AgentResult(
                 total_input_tokens=0,
                 total_output_tokens=0,
-                failure_mode=FailureMode.UNKNOWN,
+                failure_mode=failure_mode,
             )

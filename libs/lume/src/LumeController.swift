@@ -278,8 +278,8 @@ final class LumeController {
                 // VM not found is okay, we'll create it
             }
 
-            // Copy the VM directory
-            try home.copyVMDirectory(
+            // Clone the VM directory (uses APFS clonefile for disk.img)
+            try home.cloneVMDirectory(
                 from: normalizedName,
                 to: normalizedNewName,
                 sourceLocation: sourceLocation,
@@ -1065,7 +1065,10 @@ final class LumeController {
         name: String?,
         registry: String,
         organization: String,
-        storage: String? = nil
+        storage: String? = nil,
+        username: String? = nil,
+        password: String? = nil,
+        force: Bool = false
     ) async throws {
         do {
             // Split the image to get name and tag
@@ -1095,15 +1098,18 @@ final class LumeController {
                 name: vmName,
                 registry: registry,
                 organization: organization,
-                storage: storage
+                storage: storage,
+                force: force
             )
 
             let imageRegistry = try RegistryFactory.createRegistry(
-                registry: registry, organization: organization)
+                registry: registry, organization: organization,
+                username: username, password: password)
             let _ = try await imageRegistry.pull(
                 image: image,
                 name: vmName,
-                locationName: storage)
+                locationName: storage,
+                force: force)
 
             Logger.debug(
                 "Setting new VM mac address",
@@ -1524,7 +1530,8 @@ final class LumeController {
         name: String,
         registry: String,
         organization: String,
-        storage: String? = nil
+        storage: String? = nil,
+        force: Bool = false
     ) throws {
         guard !image.isEmpty else {
             throw ValidationError("Image name cannot be empty")
@@ -1554,15 +1561,15 @@ final class LumeController {
                     throw HomeError.directoryCreationFailed(path: storage)
                 }
             }
-            
+
             // Use getVMDirectoryFromPath for direct paths
             vmDir = try home.getVMDirectoryFromPath(name, storagePath: storage)
         } else {
             // Use getVMDirectory for named storage locations
             vmDir = try home.getVMDirectory(name, storage: storage)
         }
-        
-        if vmDir.exists() {
+
+        if vmDir.exists() && !force {
             throw VMError.alreadyExists(name)
         }
     }

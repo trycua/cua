@@ -19,7 +19,9 @@ struct RegistryFactory {
     /// - Otherwise, use the registry type from settings (ghcr or gcs)
     static func createRegistry(
         registry: String? = nil,
-        organization: String? = nil
+        organization: String? = nil,
+        username: String? = nil,
+        password: String? = nil
     ) throws -> any ImageRegistry {
         let settings = SettingsManager.shared.getSettings()
         let config = settings.registry ?? .defaultConfig
@@ -32,7 +34,7 @@ struct RegistryFactory {
         if hasCliOverride {
             let registryURL = registry ?? defaultGHCRRegistry
             let org = organization ?? defaultGHCROrganization
-            return ImageContainerRegistry(registry: registryURL, organization: org)
+            return ImageContainerRegistry(registry: registryURL, organization: org, username: username, password: password)
         }
 
         // Otherwise use configured registry type
@@ -40,7 +42,9 @@ struct RegistryFactory {
         case .ghcr:
             return ImageContainerRegistry(
                 registry: config.ghcr.registry,
-                organization: config.ghcr.organization
+                organization: config.ghcr.organization,
+                username: username,
+                password: password
             )
 
         case .gcs:

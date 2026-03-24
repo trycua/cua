@@ -77,6 +77,13 @@ target-version = "py311"
 select = ["E", "F", "W"]
 ignore = ["E501"]
 
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = [
+    "tests",
+    "../../../examples/sandboxes",
+]
+
 [dependency-groups]
 dev = [
     "pytest>=9.0.2",

@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import logging
 from typing import Any, Dict, List, Optional, Tuple
 
 from ..utils.helpers import CommandExecutor
@@ -9,6 +10,7 @@ from .base import (
     BaseDesktopHandler,
     BaseFileHandler,
     BaseWindowHandler,
+    normalize_screenshot_format,
 )
 
 # Map common key names to Android keycodes
@@ -29,6 +31,7 @@ ANDROID_KEY_MAP = {
     "right": "22",
 }
 
+logger = logging.getLogger(__name__)
 adb_exec = CommandExecutor("adb", "-s", "emulator-5554")
 
 
@@ -437,16 +440,35 @@ class AndroidAutomationHandler(BaseAutomationHandler):
         return {}
 
     # Screen Actions
-    async def screenshot(self) -> Dict[str, Any]:
-        """Take a screenshot and return base64 encoded image."""
+    async def screenshot(self, format: str = "png", quality: int = 95) -> Dict[str, Any]:
+        """Take a screenshot and return base64 encoded image.
+
+        Args:
+            format: "png" (lossless, default) or "jpeg" / "jpg" (lossy, ~5-10x smaller).
+            quality: JPEG quality 1-95 (clamped); ignored for PNG.
+        """
+        try:
+            fmt, quality = normalize_screenshot_format(format, quality)
+        except ValueError as e:
+            return {"success": False, "error": str(e)}
         try:
             success, output = await adb_exec.run("shell", "screencap", "-p")
-            if success and output:
-                image_b64 = base64.b64encode(output).decode("utf-8")
-                return {"success": True, "image_data": image_b64}
-            else:
+            if not (success and output):
                 error_msg = output.decode("utf-8") if isinstance(output, bytes) else str(output)
                 return {"success": False, "error": f"Screenshot failed: {error_msg}"}
+
+            if fmt == "jpeg":
+                from io import BytesIO
+
+                from PIL import Image as PILImage
+
+                img = PILImage.open(BytesIO(output)).convert("RGB")
+                buf = BytesIO()
+                img.save(buf, format="JPEG", quality=quality, optimize=True)
+                output = buf.getvalue()
+
+            image_b64 = base64.b64encode(output).decode("utf-8")
+            return {"success": True, "image_data": image_b64, "format": fmt}
         except Exception as e:
             return {"success": False, "error": f"Screenshot error: {str(e)}"}
 
@@ -500,54 +522,155 @@ class AndroidAutomationHandler(BaseAutomationHandler):
             return {"success": False, "error": f"Set clipboard error: {str(e)}"}
 
     # Other
-    async def run_command(self, command: str) -> Dict[str, Any]:
-        """Run a shell command.
+    async def multitouch_gesture(
+        self,
+        fingers: List[Dict[str, Any]],
+        screen_w: int,
+        screen_h: int,
+        duration_ms: int = 400,
+        steps: int = 0,
+    ) -> Dict[str, Any]:
+        """Inject a multi-touch gesture via sendevent.
 
-        Commands containing 'uv', 'python', or '/home/androidusr' run on the container host.
-        Other commands run in the Android emulator via adb shell.
+        Supports two hardware topologies:
+
+        * **virtio-input** (cloud VMs): 11 separate ``virtio_input_multi_touch_N``
+          devices, one per finger (event2–event12).  Each finger is written to its
+          own device with ``ABS_MT_SLOT=0``; no cross-device slot sharing.
+        * **Single MT device** (local AVDs): classic MT Protocol B — all fingers
+          on one device via ``ABS_MT_SLOT`` 0, 1, …
+
+        Uses ``adb root`` to restart adbd as root so that ``sendevent`` can
+        write to ``/dev/input/event*`` without requiring ``su`` inside the
+        Android shell.
+
+        Args:
+            fingers:     List of ``{"start": [x, y], "end": [x, y]}`` dicts,
+                         one per finger (minimum 2).
+            screen_w:    Screen width in pixels (used for coordinate scaling).
+            screen_h:    Screen height in pixels.
+            duration_ms: Total gesture duration in milliseconds.
+            steps:       Interpolation steps (0 = auto).
         """
-        # Check if this command should run on the host
-        should_run_on_host = any(
-            keyword in command for keyword in ["uv", "python", "/home/androidusr"]
+        # Restart adbd as root so sendevent works without su
+        await adb_exec.run("root", decode=True)
+        await asyncio.sleep(1.0)  # wait for adbd to restart
+
+        # Enumerate all touch devices and detect topology.
+        # Use `getevent -p` (no file arg) to list all devices at once and search
+        # for "0035  :" which is the ABS axis definition syntax for ABS_MT_POSITION_X.
+        # This avoids false matches from keyboard devices whose KEY listing contains
+        # 0035 as a scancode (e.g. "AT Translated Set 2 keyboard" on cloud VMs).
+        ok, dev_out = await adb_exec.run(
+            "shell",
+            "getevent -p 2>/dev/null | awk '/add device/{dev=$NF} /0035  :/{print dev}'",
+            decode=True,
         )
+        touch_devs: List[str] = []
+        if ok and dev_out.strip():
+            touch_devs = [d for d in dev_out.strip().splitlines() if d.strip()]
 
-        if should_run_on_host:
-            # Run on container host
-            import os
-            import subprocess
+        if not touch_devs:
+            touch_devs = ["/dev/input/event2"]
+            logger.warning("touch device detection failed; falling back to %s", touch_devs[0])
 
-            try:
-                # Clear VIRTUAL_ENV to avoid UV conflicts
-                env = os.environ.copy()
-                env.pop("VIRTUAL_ENV", None)
+        # On virtio VMs, getevent -p lists 11 separate virtio_input_multi_touch_N
+        # devices (event2..event12).  Android only reads the lowest-numbered one
+        # (event2 = virtio_input_multi_touch_1) and supports multiple slots on it.
+        # Sort numerically and always use the lowest-numbered device for all fingers
+        # via standard MT Protocol B slots — writing to separate devices does NOT
+        # produce multi-finger events from Android's perspective.
+        touch_devs.sort(key=lambda d: int(d.replace("/dev/input/event", "") or "0"))
+        dev = touch_devs[0]
 
-                result = subprocess.run(
-                    command, shell=True, capture_output=True, text=True, timeout=300, env=env
-                )
-                return {
-                    "stdout": result.stdout,
-                    "stderr": result.stderr,
-                    "return_code": result.returncode,
-                    "success": result.returncode == 0,
-                }
-            except subprocess.TimeoutExpired:
-                return {
-                    "stdout": "",
-                    "stderr": "Command timed out",
-                    "return_code": -1,
-                    "success": False,
-                }
-            except Exception as e:
-                return {"stdout": "", "stderr": str(e), "return_code": -1, "success": False}
-        else:
-            # Run in Android emulator via adb shell
-            success, output = await adb_exec.run("shell", command, decode=True)
-            return {
-                "stdout": output if success else "",
-                "stderr": "" if success else output,
-                "return_code": 0 if success else 1,
-                "success": success,
-            }
+        # Detect axis max from the first touch device
+        axis_max = 32767
+        dev_name = dev.split("/")[-1]
+        ok2, gp_out = await adb_exec.run(
+            "shell",
+            "getevent -p 2>/dev/null | awk "
+            f"'/add device.*{dev_name}/{{found=1}} found && /0035  :/{{print; exit}}'",
+            decode=True,
+        )
+        if ok2 and "max" in gp_out:
+            import re as _re
+
+            m = _re.search(r"max\s+(\d+)", gp_out)
+            if m:
+                axis_max = int(m.group(1))
+
+        n_steps = steps if steps > 0 else max(5, duration_ms // 20)
+        step_delay = (duration_ms / 1000) / n_steps
+
+        EV_SYN, EV_KEY, EV_ABS = 0, 1, 3
+        SYN_REPORT, BTN_TOUCH = 0, 330
+        SLOT, TID, MTX, MTY, PRESS = 47, 57, 53, 54, 58
+        TID_NONE = 4294967295
+
+        def px_to_raw(px: int, dim: int) -> int:
+            return max(0, min(axis_max, int(px * axis_max / dim)))
+
+        def se(dev: str, t: int, c: int, v: int) -> str:
+            return f"sendevent {dev} {t} {c} {v}"
+
+        cmds: List[str] = []
+
+        # MT Protocol B on the primary touch device: all fingers via slots.
+        # This works for both local AVDs (single MT device) and virtio VMs
+        # (where event2 = virtio_input_multi_touch_1 supports up to 11 slots).
+
+        # Touch down — all fingers in one SYN_REPORT frame
+        for idx, finger in enumerate(fingers):
+            x1, y1 = finger["start"]
+            cmds += [
+                se(dev, EV_ABS, SLOT, idx),
+                se(dev, EV_ABS, TID, idx),
+                se(dev, EV_ABS, MTX, px_to_raw(x1, screen_w)),
+                se(dev, EV_ABS, MTY, px_to_raw(y1, screen_h)),
+                se(dev, EV_ABS, PRESS, 64),
+            ]
+        cmds += [se(dev, EV_KEY, BTN_TOUCH, 1), se(dev, EV_SYN, SYN_REPORT, 0)]
+
+        # Interpolated movement
+        for i in range(1, n_steps + 1):
+            t = i / n_steps
+            for idx, finger in enumerate(fingers):
+                x1, y1 = finger["start"]
+                x2, y2 = finger["end"]
+                cmds += [
+                    se(dev, EV_ABS, SLOT, idx),
+                    se(dev, EV_ABS, MTX, px_to_raw(int(x1 + (x2 - x1) * t), screen_w)),
+                    se(dev, EV_ABS, MTY, px_to_raw(int(y1 + (y2 - y1) * t), screen_h)),
+                ]
+            cmds += [se(dev, EV_SYN, SYN_REPORT, 0), f"sleep {step_delay:.3f}"]
+
+        # Touch up — all fingers in one SYN_REPORT frame
+        for idx in range(len(fingers)):
+            cmds += [se(dev, EV_ABS, SLOT, idx), se(dev, EV_ABS, TID, TID_NONE)]
+        cmds += [se(dev, EV_KEY, BTN_TOUCH, 0), se(dev, EV_SYN, SYN_REPORT, 0)]
+
+        script = " && ".join(cmds)
+        success, output = await adb_exec.run("shell", script, decode=True)
+        return {"success": success, "output": output}
+
+    async def run_command(self, command: str) -> Dict[str, Any]:
+        """Run a shell command inside the Android emulator via adb shell."""
+        process = await asyncio.create_subprocess_exec(
+            "adb",
+            "-s",
+            "emulator-5554",
+            "shell",
+            command,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await process.communicate()
+        return {
+            "success": process.returncode == 0,
+            "stdout": stdout.decode() if stdout else "",
+            "stderr": stderr.decode() if stderr else "",
+            "return_code": process.returncode,
+        }
 
 
 class AndroidFileHandler(BaseFileHandler):

@@ -22,10 +22,15 @@ struct Pull: AsyncParsableCommand {
     @Option(name: .customLong("storage"), help: "VM storage location to use or direct path to VM location")
     var storage: String?
 
+    @Flag(name: .long, help: "Enable verbose logging")
+    var verbose: Bool = false
+
     init() {}
 
     @MainActor
     func run() async throws {
+        if verbose { Logger.setVerbose() }
+
         // Record telemetry - only capture image name without tag for privacy
         let imageName = image.split(separator: ":").first.map(String.init) ?? image
         TelemetryClient.shared.record(event: TelemetryEvent.pull, properties: [

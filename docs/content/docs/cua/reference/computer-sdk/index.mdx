@@ -41,7 +41,7 @@ Computer is the main class for interacting with the computer.
 ### Constructor
 
 ```python
-Computer(self, display: Union[Display, Dict[str, int], str] = '1024x768', memory: str = '8GB', cpu: str = '4', os_type: OSType = 'macos', name: str = '', image: Optional[str] = None, shared_directories: Optional[List[str]] = None, use_host_computer_server: bool = False, verbosity: Union[int, LogLevel] = logging.INFO, telemetry_enabled: bool = True, provider_type: Union[str, VMProviderType] = VMProviderType.LUME, provider_port: Optional[int] = 7777, noVNC_port: Optional[int] = 8006, api_port: Optional[int] = None, host: str = 'localhost', api_host: Optional[str] = None, storage: Optional[str] = None, ephemeral: bool = False, api_key: Optional[str] = None, experiments: Optional[List[str]] = None, timeout: int = 100, run_opts: Optional[Dict[str, Any]] = None)
+Computer(self, display: Union[Display, Dict[str, int], str] = '1024x768', memory: str = '8GB', cpu: str = '4', os_type: OSType = 'macos', name: str = '', image: Optional[str] = None, shared_directories: Optional[List[str]] = None, use_host_computer_server: bool = False, verbosity: Union[int, LogLevel] = logging.INFO, telemetry_enabled: bool = True, provider_type: Union[str, VMProviderType] = VMProviderType.LUME, provider_port: Optional[int] = 7777, noVNC_port: Optional[int] = 8006, api_port: Optional[int] = None, host: str = 'localhost', api_host: Optional[str] = None, storage: Optional[str] = None, ephemeral: bool = False, api_key: Optional[str] = None, experiments: Optional[List[str]] = None, timeout: int = 100, backend: Literal['native', 'vnc'] = 'native', vnc_host: Optional[str] = None, vnc_port: int = 5900, vnc_password: str = '', run_opts: Optional[Dict[str, Any]] = None)
 ```
 
 ### Attributes
@@ -61,6 +61,10 @@ Computer(self, display: Union[Display, Dict[str, int], str] = '1024x768', memory
 | `api_key` | `Any` |  |
 | `timeout` | `Any` |  |
 | `experiments` | `Any` |  |
+| `backend` | `Any` |  |
+| `vnc_host` | `Any` |  |
+| `vnc_port` | `Any` |  |
+| `vnc_password` | `Any` |  |
 | `custom_run_opts` | `Any` |  |
 | `storage` | `Any` |  |
 | `shared_path` | `Any` |  |

@@ -15,7 +15,9 @@ from ..decorators import register_agent
 from ..types import AgentCapability, AgentResponse, Messages, Tools
 
 
-async def _map_computer_tool_to_openai(computer_handler: Any, use_native_tool: bool = True) -> Dict[str, Any]:
+async def _map_computer_tool_to_openai(
+    computer_handler: Any, use_native_tool: bool = True
+) -> Dict[str, Any]:
     """Map a computer tool to OpenAI's tool schema.
 
     Args:
@@ -136,6 +138,7 @@ async def _map_computer_tool_to_openai(computer_handler: Any, use_native_tool: b
 def _is_native_computer_use_model(model: str) -> bool:
     """Check if the model supports native computer_use_preview tool format."""
     import re
+
     # Only computer-use-preview models support native computer_use_preview tool
     # GPT 5.4 does NOT support computer_use_preview - it uses function calling
     return bool(re.search(r"computer-use-preview", model, re.IGNORECASE))
@@ -154,18 +157,22 @@ async def _prepare_tools_for_openai(tool_schemas: List[Dict[str, Any]], model: s
     for schema in tool_schemas:
         if schema["type"] == "computer":
             # Map computer tool to OpenAI format (native or function based on model)
-            computer_tool = await _map_computer_tool_to_openai(schema["computer"], use_native_tool=use_native)
+            computer_tool = await _map_computer_tool_to_openai(
+                schema["computer"], use_native_tool=use_native
+            )
             openai_tools.append(computer_tool)
         elif schema["type"] == "function":
             # Function tools for Responses API need: {type, name, description, parameters}
             # Note: parameters are at the root level, NOT nested under 'function'
             func = schema["function"]
-            openai_tools.append({
-                "type": "function",
-                "name": func["name"],
-                "description": func.get("description", ""),
-                "parameters": func.get("parameters", {}),
-            })
+            openai_tools.append(
+                {
+                    "type": "function",
+                    "name": func["name"],
+                    "description": func.get("description", ""),
+                    "parameters": func.get("parameters", {}),
+                }
+            )
 
     return openai_tools
 
@@ -226,6 +233,7 @@ class OpenAIComputerUseConfig:
             "reasoning": {"summary": "concise"},
             "truncation": "auto",
             "num_retries": max_retries,
+            "request_timeout": kwargs.pop("request_timeout", 120),
             **kwargs,
         }
 
@@ -371,6 +379,7 @@ Task: Click {instruction}. Output ONLY a click action on the target element.""",
             "reasoning": {"summary": "concise"},
             "truncation": "auto",
             "max_tokens": 200,  # Keep response short for click prediction
+            "request_timeout": kwargs.pop("request_timeout", 120),
             **kwargs,
         }
 
@@ -387,10 +396,7 @@ Task: Click {instruction}. Output ONLY a click action on the target element.""",
                 continue
 
             # Native format: computer_call with action dict
-            if (
-                item.get("type") == "computer_call"
-                and isinstance(item.get("action"), dict)
-            ):
+            if item.get("type") == "computer_call" and isinstance(item.get("action"), dict):
                 action = item["action"]
                 if action.get("x") is not None and action.get("y") is not None:
                     return (int(action.get("x")), int(action.get("y")))

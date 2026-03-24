@@ -4,7 +4,7 @@ build-backend = "pdm.backend"
 
 [project]
 name = "cua-agent"
-version = "0.7.35"
+version = "0.7.37"
 description = "Cua (Computer Use) Agent for AI-driven computer interaction"
 readme = "README.md"
 authors = [
@@ -22,7 +22,7 @@ dependencies = [
     "cua-computer>=0.5.0,<0.6.0",
     "cua-core>=0.1.18,<0.2.0",
     "certifi>=2024.2.2",
-    "litellm>=1.74.12"
+    "litellm==1.80.0"
 ]
 requires-python = ">=3.12,<3.14"
 

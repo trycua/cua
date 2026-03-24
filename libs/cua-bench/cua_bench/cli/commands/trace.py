@@ -167,6 +167,10 @@ def _html_escape(s: str) -> str:
     return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
+def _html_attr_escape(s: str) -> str:
+    return s.replace("&", "&amp;").replace('"', "&quot;").replace("<", "&lt;").replace(">", "&gt;")
+
+
 def cmd_view(args) -> int:
     """View a trace via an in-memory HTTP server."""
     identifier = args.identifier
@@ -288,16 +292,16 @@ def cmd_view(args) -> int:
             """
             <tr>
               <td>
-                <andypf-json-viewer indent="2" expanded="3" theme="monokai" show-data-types="true" show-toolbar="false" expand-icon-type="arrow" show-copy="true" show-size="true">{meta_json}</andypf-json-viewer>
+                <andypf-json-viewer indent="2" expanded="3" theme="monokai" show-data-types="true" show-toolbar="false" expand-icon-type="arrow" show-copy="true" show-size="true" data="{meta_json}"></andypf-json-viewer>
               </td>
               <td>
-                <andypf-json-viewer indent="2" expanded="3" theme="monokai" show-data-types="true" show-toolbar="false" expand-icon-type="arrow" show-copy="true" show-size="true">{data}</andypf-json-viewer>
+                <andypf-json-viewer indent="2" expanded="3" theme="monokai" show-data-types="true" show-toolbar="false" expand-icon-type="arrow" show-copy="true" show-size="true" data="{data}"></andypf-json-viewer>
               </td>
               <td>{images}</td>
             </tr>
             """.format(
-                meta_json=_html_escape(json.dumps(meta, ensure_ascii=False, indent=2)),
-                data=_html_escape(data_str),
+                meta_json=_html_attr_escape(json.dumps(meta, ensure_ascii=False)),
+                data=_html_attr_escape(data_str),
                 images="<br/>".join(imgs_html) if imgs_html else "",
             )
         )

@@ -45,11 +45,28 @@ struct Run: AsyncParsableCommand {
         help: "Port to use for the VNC server. Defaults to 0 (auto-assign)")
     var vncPort: Int = 0
 
+    @Option(
+        name: [.customLong("vnc-password")],
+        help: "Password for the VNC server. Defaults to a random passphrase")
+    var vncPassword: String?
+
     @Option(help: "For MacOS VMs only, boot into the VM in recovery mode")
     var recoveryMode: Bool = false
 
     @Option(name: .customLong("storage"), help: "VM storage location to use or direct path to VM location")
     var storage: String?
+
+    @Option(
+        name: .customLong("disk-path"),
+        help: "Override path to disk image file. When set, uses this file instead of the default disk.img in the VM directory.",
+        completion: .file())
+    var diskPath: String?
+
+    @Option(
+        name: .customLong("nvram-path"),
+        help: "Override path to NVRAM file. When set, uses this file instead of the default nvram.bin in the VM directory.",
+        completion: .file())
+    var nvramPath: String?
 
     @Option(
         name: .customLong("network"),
@@ -133,8 +150,11 @@ struct Run: AsyncParsableCommand {
             registry: registry,
             organization: organization,
             vncPort: vncPort,
+            vncPassword: vncPassword,
             recoveryMode: recoveryMode,
             storage: storage,
+            diskPath: diskPath.map { Path($0) },
+            nvramPath: nvramPath.map { Path($0) },
             usbMassStoragePaths: parsedUSBStorageDevices.isEmpty ? nil : parsedUSBStorageDevices,
             networkMode: parsedNetworkMode,
             clipboard: clipboard

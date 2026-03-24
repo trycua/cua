@@ -21,7 +21,7 @@ class YutoriAdapter(CustomLLM):
     def _normalize_model(self, model: str) -> str:
         """Strip the yutori/ prefix to get the bare model name."""
         if model.startswith("yutori/"):
-            return model[len("yutori/"):]
+            return model[len("yutori/") :]
         return model
 
     def _resolve_api_key(self, kwargs: dict | None = None) -> str:
@@ -61,7 +61,13 @@ class YutoriAdapter(CustomLLM):
             params["tool_choice"] = kwargs["tool_choice"]
 
         # Forward optional generation params
-        for key in ("temperature", "top_p", "max_completion_tokens", "max_tokens", "response_format"):
+        for key in (
+            "temperature",
+            "top_p",
+            "max_completion_tokens",
+            "max_tokens",
+            "response_format",
+        ):
             if key in kwargs:
                 params[key] = kwargs[key]
 

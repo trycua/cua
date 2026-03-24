@@ -6,6 +6,8 @@ import asyncio
 import hashlib
 import inspect
 import json
+import random
+import time
 from pathlib import Path
 from typing import (
     Any,
@@ -31,7 +33,6 @@ from .adapters import (
     HuggingFaceLocalAdapter,
     HumanAdapter,
     MLXVLMAdapter,
-    YutoriAdapter,
 )
 from .callbacks import (
     BudgetManagerCallback,
@@ -189,6 +190,70 @@ def hash_api_key(api_key: Optional[str]) -> Optional[str]:
     return hashlib.sha256(api_key.encode()).hexdigest()
 
 
+def _is_retryable_error(exc: BaseException) -> bool:
+    """Return True if the exception is a transient error that warrants a retry."""
+    # asyncio / network timeouts
+    if isinstance(exc, (asyncio.TimeoutError, TimeoutError)):
+        return True
+    # liteLLM error types
+    try:
+        import litellm.exceptions as _le
+
+        retryable_types = (
+            _le.RateLimitError,
+            _le.ServiceUnavailableError,
+            _le.APIConnectionError,
+            _le.Timeout,
+            _le.InternalServerError,
+        )
+        if isinstance(exc, retryable_types):
+            return True
+    except Exception:
+        pass
+    # Generic heuristic: 429 / 5xx in the message
+    msg = str(exc).lower()
+    if any(k in msg for k in ("timeout", "rate limit", "503", "502", "429", "connection")):
+        return True
+    return False
+
+
+async def _predict_step_with_retry(
+    agent_loop,
+    loop_kwargs: dict,
+    hooks: dict,
+    max_retries: int = 3,
+    base_delay: float = 2.0,
+) -> Any:
+    """
+    Call agent_loop.predict_step() with exponential backoff retries on transient errors.
+
+    Args:
+        agent_loop: The agent loop instance.
+        loop_kwargs: Keyword arguments for predict_step.
+        hooks: Dict of lifecycle hook callables (_on_api_start, etc.).
+        max_retries: Maximum number of retry attempts (total attempts = max_retries + 1).
+        base_delay: Base delay in seconds for the first retry; doubles each attempt.
+    """
+    if max_retries is None:
+        max_retries = 0
+    last_exc: Optional[BaseException] = None
+    for attempt in range(max_retries + 1):
+        try:
+            return await agent_loop.predict_step(**loop_kwargs, **hooks)
+        except Exception as exc:
+            last_exc = exc
+            if attempt < max_retries and _is_retryable_error(exc):
+                delay = base_delay * (2**attempt) + random.uniform(0, 1)
+                print(
+                    f"[cua-agent] Transient error on step (attempt {attempt + 1}/{max_retries + 1}): "
+                    f"{type(exc).__name__}: {exc}. Retrying in {delay:.1f}s …"
+                )
+                await asyncio.sleep(delay)
+            else:
+                raise
+    raise last_exc  # unreachable, but satisfies type checkers
+
+
 class ComputerAgent:
     """
     Main agent class that automatically selects the appropriate agent loop
@@ -299,14 +364,12 @@ class ComputerAgent:
         mlx_adapter = MLXVLMAdapter()
         cua_adapter = CUAAdapter()
         azure_ml_adapter = AzureMLAdapter()
-        yutori_adapter = YutoriAdapter()
         litellm.custom_provider_map = [
             {"provider": "huggingface-local", "custom_handler": hf_adapter},
             {"provider": "human", "custom_handler": human_adapter},
             {"provider": "mlx", "custom_handler": mlx_adapter},
             {"provider": "cua", "custom_handler": cua_adapter},
             {"provider": "azure_ml", "custom_handler": azure_ml_adapter},
-            {"provider": "yutori", "custom_handler": yutori_adapter},
         ]
         litellm.suppress_debug_info = True
 
@@ -786,112 +849,6 @@ class ComputerAgent:
 
             if item_type == "function_call":
                 await self._on_function_call_start(item)
-
-                # Special handling for "computer" function calls (from GPT 5.4 etc)
-                # These need to be treated like computer_call items
-                if item.get("name") == "computer" and computer:
-                    args = json.loads(item.get("arguments", "{}"))
-                    action_type = args.get("action")
-                    if not action_type:
-                        raise ToolError("Computer function call missing 'action' argument")
-
-                    # Map action types to their relevant parameters
-                    action_param_map = {
-                        "screenshot": [],  # No parameters
-                        "click": ["x", "y", "button"],
-                        "double_click": ["x", "y"],
-                        "right_click": ["x", "y"],
-                        "type": ["text"],
-                        "keypress": ["keys"],
-                        "scroll": ["x", "y", "scroll_x", "scroll_y"],
-                        "move": ["x", "y"],
-                        "drag": ["start_x", "start_y", "end_x", "end_y"],
-                        "wait": ["seconds", "ms"],
-                        "terminate": ["status"],
-                    }
-
-                    # Extract only relevant action arguments, filtering out empty values
-                    relevant_params = action_param_map.get(action_type, [])
-                    action_args = {}
-                    for k, v in args.items():
-                        if k == "action":
-                            continue
-                        # Include if it's a relevant param OR if param map doesn't have this action
-                        if k in relevant_params or action_type not in action_param_map:
-                            # Filter out empty/default values but allow numeric zero (valid for coordinates/scroll)
-                            if v is not None and v != "" and v != []:
-                                action_args[k] = v
-
-                    # Execute the computer action
-                    computer_method = getattr(computer, action_type, None)
-                    action_result = None
-                    if computer_method:
-                        action_result = await computer_method(**action_args)
-                    else:
-                        raise ToolError(f"Unknown computer action: {action_type}")
-
-                    # Track computer action execution
-                    if self.telemetry_enabled and is_telemetry_enabled():
-                        record_event(
-                            "computer_action_executed",
-                            {"action_type": action_type},
-                        )
-                        record_event(
-                            "agent_tool_executed",
-                            {"tool_type": "computer", "tool_name": action_type},
-                        )
-
-                    # Check if this was a terminate action
-                    is_terminate = action_type == "terminate" or (
-                        isinstance(action_result, dict) and action_result.get("terminated")
-                    )
-
-                    # Take screenshot after action (skip for terminate)
-                    if not is_terminate:
-                        if self.screenshot_delay and self.screenshot_delay > 0:
-                            await asyncio.sleep(self.screenshot_delay)
-                        screenshot_base64 = await computer.screenshot()
-                        await self._on_screenshot(screenshot_base64, "screenshot_after")
-
-                    # Create function call output for GPT 5.4 etc
-                    # Note: function_call_output only supports text, so we include the
-                    # screenshot as a separate user message with image content
-                    if is_terminate:
-                        output_content = json.dumps(action_result if action_result else {"terminated": True})
-                        call_output = {
-                            "type": "function_call_output",
-                            "call_id": item.get("call_id"),
-                            "output": output_content,
-                        }
-                        result = [call_output]
-                    else:
-                        # Return both the function output AND a user message with the screenshot
-                        # This allows the model to see the screenshot result
-                        # Preserve actual action_result so failures/errors aren't masked
-                        if action_result is not None:
-                            output_content = json.dumps(action_result)
-                        else:
-                            output_content = json.dumps({"success": True, "screenshot_captured": True})
-                        call_output = {
-                            "type": "function_call_output",
-                            "call_id": item.get("call_id"),
-                            "output": output_content,
-                        }
-                        # Include screenshot as a user message with image content
-                        image_message = {
-                            "role": "user",
-                            "content": [
-                                {
-                                    "type": "input_image",
-                                    "image_url": f"data:image/png;base64,{screenshot_base64}",
-                                }
-                            ],
-                        }
-                        result = [call_output, image_message]
-
-                    await self._on_function_call_end(item, result)
-                    return result
-
                 # Perform function call
                 function = self._get_tool(item.get("name"))
                 if not function:
@@ -1014,7 +971,9 @@ class ComputerAgent:
                 "tools": self.tool_schemas,
                 "stream": False,
                 "computer_handler": self.computer_handler,
-                "max_retries": self.max_retries,
+                # Inner liteLLM retries are disabled here; _predict_step_with_retry
+                # is the sole retry layer so the two don't stack.
+                "max_retries": 0,
                 "use_prompt_caching": self.use_prompt_caching,
                 **merged_kwargs,
             }
@@ -1049,13 +1008,17 @@ class ComputerAgent:
                     )
             # ---------------------------------
 
-            # Run agent loop iteration
-            result = await self.agent_loop.predict_step(
-                **loop_kwargs,
-                _on_api_start=self._on_api_start,
-                _on_api_end=self._on_api_end,
-                _on_usage=self._on_usage,
-                _on_screenshot=self._on_screenshot,
+            # Run agent loop iteration (with automatic retry on transient errors)
+            result = await _predict_step_with_retry(
+                self.agent_loop,
+                loop_kwargs,
+                hooks={
+                    "_on_api_start": self._on_api_start,
+                    "_on_api_end": self._on_api_end,
+                    "_on_usage": self._on_usage,
+                    "_on_screenshot": self._on_screenshot,
+                },
+                max_retries=self.max_retries,
             )
             result = get_json(result)
 

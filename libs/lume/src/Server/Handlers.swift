@@ -340,7 +340,7 @@ extension Server {
                 body.flatMap { try? JSONDecoder().decode(RunVMRequest.self, from: $0) }
                 ?? RunVMRequest(
                     noDisplay: nil, sharedDirectories: nil, recoveryMode: nil, storage: nil,
-                    network: nil, clipboard: nil)
+                    diskPath: nil, nvramPath: nil, network: nil, clipboard: nil)
 
             // Record telemetry
             TelemetryClient.shared.record(event: TelemetryEvent.apiVMRun, properties: [
@@ -372,6 +372,8 @@ extension Server {
                 sharedDirectories: dirs,
                 recoveryMode: request.recoveryMode ?? false,
                 storage: request.storage,
+                diskPath: request.diskPath.map { Path($0) },
+                nvramPath: request.nvramPath.map { Path($0) },
                 networkMode: networkMode,
                 clipboard: request.clipboard ?? false
             )
@@ -513,7 +515,8 @@ extension Server {
                     chunkSizeMb: request.chunkSizeMb,
                     verbose: false,  // Verbose typically handled by server logs
                     dryRun: false,  // Default API behavior is likely non-dry-run
-                    reassemble: false  // Default API behavior is likely non-reassemble
+                    reassemble: false,  // Default API behavior is likely non-reassemble
+                    singleLayer: request.singleLayer
                 )
                 print(
                     "Background push completed successfully for image: \(request.imageName):\(request.tags.joined(separator: ","))"
@@ -826,6 +829,8 @@ extension Server {
         sharedDirectories: [SharedDirectory] = [],
         recoveryMode: Bool = false,
         storage: String? = nil,
+        diskPath: Path? = nil,
+        nvramPath: Path? = nil,
         networkMode: NetworkMode? = nil,
         clipboard: Bool = false
     ) {
@@ -857,6 +862,8 @@ extension Server {
                     sharedDirectories: sharedDirectories,
                     recoveryMode: recoveryMode,
                     storage: storage,
+                    diskPath: diskPath,
+                    nvramPath: nvramPath,
                     networkMode: networkMode,
                     clipboard: clipboard
                 )

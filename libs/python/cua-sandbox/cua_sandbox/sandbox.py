@@ -465,8 +465,15 @@ class Sandbox:
                         GRPCEmulatorTransport,
                     )
 
+                    adb_serial = f"emulator-{rt_info.api_port - 1}"
+                    sdk_root = None
+                    if hasattr(runtime, "_sdk") and runtime._sdk:
+                        sdk_root = str(runtime._sdk)
                     transport = GRPCEmulatorTransport(
-                        host=rt_info.host, grpc_port=rt_info.grpc_port
+                        host=rt_info.host,
+                        grpc_port=rt_info.grpc_port,
+                        serial=adb_serial,
+                        sdk_root=sdk_root,
                     )
                 else:
                     from cua_sandbox.transport.adb import ADBTransport

@@ -1,4 +1,4 @@
-"""Main entry point for CUA CLI."""
+"""Main entry point for Cua CLI."""
 
 import argparse
 import logging
@@ -6,6 +6,7 @@ import sys
 
 from cua_cli import __version__
 from cua_cli.commands import auth, do, image, mcp, platform, sandbox, skills, trajectory
+from cua_cli.commands import workspace as workspace_cmd
 from cua_cli.utils.output import print_error
 
 
@@ -13,27 +14,9 @@ def create_parser() -> argparse.ArgumentParser:
     """Create the main argument parser with all subcommands."""
     parser = argparse.ArgumentParser(
         prog="cua",
-        description="CUA CLI - Unified command-line interface for Computer-Use Agents",
+        description="Cua CLI - Unified command-line interface for Computer-Use Agents",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Examples:
-  cua auth login              Authenticate via browser
-  cua auth login --api-key    Authenticate with API key
-  cua auth status             Show account info and credits
-  cua sb list                 List all sandboxes
-  cua sb create --os linux    Create a new Linux sandbox
-  cua image list              List cloud images
-  cua image list --local      List local images
-  cua image create linux-docker   Create a local image
-  cua image shell <name>      Interactive shell into image
-  cua platform list           Show available platforms
-  cua do switch docker my-ct  Select automation target VM
-  cua do screenshot           Take a screenshot
-  cua do click 100 200        Click at coordinates
-  cua do type "hello"         Type text
-
-For more information, visit https://docs.trycua.com
-""",
+        epilog="For more information, visit https://docs.trycua.com",
     )
 
     parser.add_argument(
@@ -55,6 +38,7 @@ For more information, visit https://docs.trycua.com
     do.register_parser(subparsers)
     do.register_host_consent_parser(subparsers)
     trajectory.register_parser(subparsers)
+    workspace_cmd.register_parser(subparsers)
 
     return parser
 
@@ -94,6 +78,8 @@ def main() -> int:
             return do.execute_host_consent(args)
         elif args.command in ("trajectory", "traj"):
             return trajectory.execute(args)
+        elif args.command in ("workspace", "ws"):
+            return workspace_cmd.execute(args)
         else:
             print_error(f"Unknown command: {args.command}")
             return 1

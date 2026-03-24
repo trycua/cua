@@ -821,8 +821,8 @@ async def _caption_step(
     # Build prompt
     prompt = f"""Describe this GUI action step. The overall task is: {description}
 
-Step {step_idx}: {event.get('type', 'action')}
-Event data: {json.dumps(event.get('data', {}))}
+Step {step_idx}: {event.get("type", "action")}
+Event data: {json.dumps(event.get("data", {}))}
 
 Respond with JSON only:
 {{

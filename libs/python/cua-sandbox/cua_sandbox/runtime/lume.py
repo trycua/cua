@@ -10,7 +10,6 @@ import logging
 import subprocess
 
 import httpx
-
 from cua_sandbox.image import Image
 from cua_sandbox.runtime.base import Runtime, RuntimeInfo
 from cua_sandbox.runtime.images import LUME_API_PORT, LUME_PROVIDER_PORT, MACOS_SEQUOIA
@@ -57,9 +56,20 @@ class LumeRuntime(Runtime):
             else:
                 oci_ref = image._registry or MACOS_SEQUOIA
                 logger.info(f"Pulling {oci_ref} via Lume...")
+                # Lume's pull API expects image="name:tag" with registry/organization
+                # passed separately — passing a full ref causes double-prefixing of the org.
+                pull_payload: dict = {"image": oci_ref, "name": name}
+                parts = oci_ref.split("/")
+                if len(parts) >= 3 and "." in parts[0]:
+                    pull_payload = {
+                        "image": "/".join(parts[2:]),
+                        "name": name,
+                        "registry": parts[0],
+                        "organization": parts[1],
+                    }
                 await client.post(
                     f"{lume_url}/lume/pull",
-                    json={"image": oci_ref, "name": name},
+                    json=pull_payload,
                     timeout=600,
                 )
                 logger.info(f"Running Lume VM {name}...")
@@ -105,7 +115,7 @@ class LumeRuntime(Runtime):
                     if resp.status_code == 200:
                         logger.info(f"Lume VM {info.name} computer-server is ready")
                         return True
-                except (httpx.ConnectError, httpx.ReadTimeout):
+                except (httpx.ConnectError, httpx.ReadTimeout, httpx.ConnectTimeout):
                     pass
                 await asyncio.sleep(3)
         raise TimeoutError(f"Lume VM {info.name} computer-server not ready after {timeout}s")

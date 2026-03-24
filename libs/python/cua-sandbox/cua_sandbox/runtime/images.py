@@ -19,7 +19,7 @@ QEMU_VNC_PORT = 8006
 ANDROID_API_PORT = 8000
 ANDROID_VNC_PORT = 6080
 
-LUME_API_PORT = 8000
+LUME_API_PORT = 8443
 LUME_PROVIDER_PORT = 7777
 
 # ── Default host-side ports ──────────────────────────────────────────────────

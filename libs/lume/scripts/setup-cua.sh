@@ -272,7 +272,7 @@ setup_cua_server() {
     echo "Installing cua-computer-server..."
     source "$CUA_DIR/venv/bin/activate"
     pip install --upgrade pip
-    pip install cua-computer-server
+    pip install "cua-computer-server[vnc]"
 
     echo "Installing cua-agent..."
     pip install 'cua-agent[all]'
@@ -490,7 +490,7 @@ echo "Updating cua-agent..." >> "$LOG_FILE"
 pip install --upgrade --no-input "cua-agent[all]" >> "$LOG_FILE" 2>&1 || true
 
 echo "Updating cua-computer-server..." >> "$LOG_FILE"
-pip install --upgrade --no-input cua-computer-server >> "$LOG_FILE" 2>&1 || true
+pip install --upgrade --no-input "cua-computer-server[vnc]" >> "$LOG_FILE" 2>&1 || true
 
 # Ensure Playwright Firefox
 echo "Ensuring Playwright Firefox..." >> "$LOG_FILE"

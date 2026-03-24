@@ -423,6 +423,23 @@ async def test_tart_macos_sequoia_cua():
         assert len(screenshot) > 1000
 
 
+@pytest.mark.skipif(not IS_MACOS or not _has_lume(), reason="Lume only on macOS")
+async def test_lume_macos_tahoe_cua():
+    """Test CUA macOS Tahoe image via Lume from ghcr.io/trycua/macos-tahoe-cua:latest."""
+    from cua_sandbox.runtime import LumeRuntime
+
+    async with Sandbox.ephemeral(
+        Image.from_registry("ghcr.io/trycua/macos-tahoe-cua:latest"),
+        local=True,
+        runtime=LumeRuntime(),
+        name="cua-test-lume-tahoe",
+    ) as sb:
+        screenshot = await sb.screenshot()
+        assert screenshot[:4] == b"\x89PNG"
+        assert len(screenshot) > 1000
+
+
+
 # ── 9. QEMU bare-metal error on missing binary ───────────────────────────────
 
 

@@ -10,14 +10,21 @@ struct VMDirContext {
     let home: Home
     let storage: String?
 
+    /// Optional override paths for disk and nvram files.
+    /// When set, these take precedence over the default directory-based paths.
+    /// This allows external tools (e.g. lumelet) to point lume at files
+    /// stored outside the standard VM directory layout.
+    var diskPathOverride: Path?
+    var nvramPathOverride: Path?
+
     func saveConfig() throws {
         try dir.saveConfig(config)
     }
 
     var name: String { dir.name }
     var initialized: Bool { dir.initialized() }
-    var diskPath: Path { dir.diskPath }
-    var nvramPath: Path { dir.nvramPath }
+    var diskPath: Path { diskPathOverride ?? dir.diskPath }
+    var nvramPath: Path { nvramPathOverride ?? dir.nvramPath }
 
     func setDisk(_ size: UInt64) throws {
         try dir.setDisk(size)

@@ -57,6 +57,18 @@ struct Run: AsyncParsableCommand {
     var storage: String?
 
     @Option(
+        name: .customLong("disk-path"),
+        help: "Override path to disk image file. When set, uses this file instead of the default disk.img in the VM directory.",
+        completion: .file())
+    var diskPath: String?
+
+    @Option(
+        name: .customLong("nvram-path"),
+        help: "Override path to NVRAM file. When set, uses this file instead of the default nvram.bin in the VM directory.",
+        completion: .file())
+    var nvramPath: String?
+
+    @Option(
         name: .customLong("network"),
         help: "Optional network override: 'nat', 'bridged', or 'bridged:<interface>' (e.g. 'bridged:en0'). Defaults to the VM's configured mode.")
     var network: String?
@@ -141,6 +153,8 @@ struct Run: AsyncParsableCommand {
             vncPassword: vncPassword,
             recoveryMode: recoveryMode,
             storage: storage,
+            diskPath: diskPath.map { Path($0) },
+            nvramPath: nvramPath.map { Path($0) },
             usbMassStoragePaths: parsedUSBStorageDevices.isEmpty ? nil : parsedUSBStorageDevices,
             networkMode: parsedNetworkMode,
             clipboard: clipboard

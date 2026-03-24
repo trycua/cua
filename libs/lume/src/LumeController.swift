@@ -907,6 +907,8 @@ final class LumeController {
         vncPassword: String? = nil,
         recoveryMode: Bool = false,
         storage: String? = nil,
+        diskPath: Path? = nil,
+        nvramPath: Path? = nil,
         usbMassStoragePaths: [Path]? = nil,
         networkMode: NetworkMode? = nil,
         clipboard: Bool = false
@@ -923,6 +925,8 @@ final class LumeController {
                 "vnc_port": "\(vncPort)",
                 "recovery_mode": "\(recoveryMode)",
                 "storage_param": storage ?? "home", // Log the original param
+                "disk_path_override": diskPath?.path ?? "none",
+                "nvram_path_override": nvramPath?.path ?? "none",
                 "usb_storage_devices": "\(usbMassStoragePaths?.count ?? 0)",
                 "network_override": networkMode?.description ?? "vm-config",
             ])
@@ -960,28 +964,47 @@ final class LumeController {
             let effectiveStorage: String?
             let vmDir: VMDirectory
 
+            // When disk/nvram path overrides are provided, the VM directory only needs
+            // config.json (not the full disk.img + nvram.bin). This lets external tools
+            // like lumelet store disk images in their own cache and point lume at them.
+            let hasPathOverrides = diskPath != nil || nvramPath != nil
+
             if let storagePath = storage, storagePath.contains("/") || storagePath.contains("\\") {
                 // Storage is a direct path
                 vmDir = try home.getVMDirectoryFromPath(normalizedName, storagePath: storagePath)
-                guard vmDir.initialized() else {
-                    if vmDir.exists() {
-                        throw VMError.notInitialized(normalizedName)
-                    } else {
+                if hasPathOverrides {
+                    // With path overrides, only config.json is required
+                    guard vmDir.configPath.exists() else {
                         throw VMError.notFound(normalizedName)
+                    }
+                } else {
+                    guard vmDir.initialized() else {
+                        if vmDir.exists() {
+                            throw VMError.notInitialized(normalizedName)
+                        } else {
+                            throw VMError.notFound(normalizedName)
+                        }
                     }
                 }
                 effectiveStorage = storagePath // Use the path string
                 Logger.info("Using direct storage path", metadata: ["path": storagePath])
             } else {
                 // Storage is nil or a named location - validate and get the actual name
-                let actualLocationName = try validateVMExists(normalizedName, storage: storage)
-                vmDir = try home.getVMDirectory(normalizedName, storage: actualLocationName) // Get VMDir for named location
-                effectiveStorage = actualLocationName // Use the named location string
+                if hasPathOverrides {
+                    // With overrides, try to find the VM but relax initialized check
+                    let actualLocationName = try? validateVMExists(normalizedName, storage: storage)
+                    vmDir = try home.getVMDirectory(normalizedName, storage: actualLocationName)
+                    effectiveStorage = actualLocationName
+                } else {
+                    let actualLocationName = try validateVMExists(normalizedName, storage: storage)
+                    vmDir = try home.getVMDirectory(normalizedName, storage: actualLocationName) // Get VMDir for named location
+                    effectiveStorage = actualLocationName // Use the named location string
+                }
                 Logger.info(
                     "Using named storage location",
                     metadata: [
                         "requested": storage ?? "home",
-                        "actual": actualLocationName ?? "default",
+                        "actual": effectiveStorage ?? "default",
                     ])
             }
 
@@ -997,7 +1020,7 @@ final class LumeController {
             )
 
             // Load the VM directly using the located VMDirectory and storage context
-            let vm = try self.loadVM(vmDir: vmDir, storage: effectiveStorage)
+            let vm = try self.loadVM(vmDir: vmDir, storage: effectiveStorage, diskPath: diskPath, nvramPath: nvramPath)
 
             SharedVM.shared.setVM(name: normalizedName, vm: vm)
             try await vm.run(
@@ -1360,17 +1383,21 @@ final class LumeController {
     }
 
     @MainActor
-    private func loadVM(vmDir: VMDirectory, storage: String?) throws -> VM {
-        // vmDir is now passed directly
-        guard vmDir.initialized() else {
-            throw VMError.notInitialized(vmDir.name) // Use name from vmDir
+    private func loadVM(vmDir: VMDirectory, storage: String?, diskPath: Path? = nil, nvramPath: Path? = nil) throws -> VM {
+        // With path overrides, only config.json is required (not full initialized check)
+        let hasPathOverrides = diskPath != nil || nvramPath != nil
+        if !hasPathOverrides {
+            guard vmDir.initialized() else {
+                throw VMError.notInitialized(vmDir.name)
+            }
         }
 
         let config: VMConfig = try vmDir.loadConfig()
-        // Pass the provided storage (which could be a path or named location)
-        let vmDirContext = VMDirContext(
+        var vmDirContext = VMDirContext(
             dir: vmDir, config: config, home: home, storage: storage
         )
+        vmDirContext.diskPathOverride = diskPath
+        vmDirContext.nvramPathOverride = nvramPath
 
         let imageLoader =
             config.os.lowercased() == "macos" ? imageLoaderFactory.createImageLoader() : nil

@@ -340,7 +340,7 @@ extension Server {
                 body.flatMap { try? JSONDecoder().decode(RunVMRequest.self, from: $0) }
                 ?? RunVMRequest(
                     noDisplay: nil, sharedDirectories: nil, recoveryMode: nil, storage: nil,
-                    network: nil, clipboard: nil)
+                    diskPath: nil, nvramPath: nil, network: nil, clipboard: nil)
 
             // Record telemetry
             TelemetryClient.shared.record(event: TelemetryEvent.apiVMRun, properties: [
@@ -372,6 +372,8 @@ extension Server {
                 sharedDirectories: dirs,
                 recoveryMode: request.recoveryMode ?? false,
                 storage: request.storage,
+                diskPath: request.diskPath.map { Path($0) },
+                nvramPath: request.nvramPath.map { Path($0) },
                 networkMode: networkMode,
                 clipboard: request.clipboard ?? false
             )
@@ -827,6 +829,8 @@ extension Server {
         sharedDirectories: [SharedDirectory] = [],
         recoveryMode: Bool = false,
         storage: String? = nil,
+        diskPath: Path? = nil,
+        nvramPath: Path? = nil,
         networkMode: NetworkMode? = nil,
         clipboard: Bool = false
     ) {
@@ -858,6 +862,8 @@ extension Server {
                     sharedDirectories: sharedDirectories,
                     recoveryMode: recoveryMode,
                     storage: storage,
+                    diskPath: diskPath,
+                    nvramPath: nvramPath,
                     networkMode: networkMode,
                     clipboard: clipboard
                 )

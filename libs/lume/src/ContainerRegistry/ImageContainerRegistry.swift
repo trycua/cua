@@ -102,15 +102,15 @@ enum ImageFormat {
     case legacy  // Lume legacy: LZ4-chunked disk, trycua media types
 }
 
-/// Media type constants for the OCI-compliant kubelet image format.
+/// Media type constants for the OCI image format.
 enum OCIMediaType {
     static let config = "application/vnd.trycua.lume.config.v1+json"
     static let disk   = "application/vnd.trycua.lume.disk.v1"
-    static let aux    = "application/vnd.trycua.lume.aux.v1"
+    static let nvram  = "application/vnd.trycua.lume.nvram.v1"
 
     static func detect(_ manifest: Manifest) -> ImageFormat {
         let hasOCIDisk = manifest.layers.contains { $0.mediaType == disk }
-        let hasOCIConfig = manifest.config?.mediaType == config || manifest.config?.mediaType == LegacyMediaType.config
+        let hasOCIConfig = manifest.config?.mediaType == config
         return (hasOCIDisk || hasOCIConfig) ? .oci : .legacy
     }
 }
@@ -123,24 +123,6 @@ enum OCIAnnotation {
     static let chunkSize  = "org.trycua.lume.chunk.size"
 }
 
-/// Legacy annotation keys (Agoda-era) for backward-compatible pull.
-enum LegacyAnnotation {
-    static let uncompressedSize   = "com.agoda.macosvz.content.uncompressed-size"
-    static let uncompressedDigest = "com.agoda.macosvz.content.uncompressed-digest"
-}
-
-/// Legacy media types (Agoda-era) for backward-compatible pull.
-enum LegacyMediaType {
-    static let config = "application/vnd.agoda.macosvz.config.v1+json"
-    static let disk   = "application/vnd.agoda.macosvz.disk.image.v1"
-    static let aux    = "application/vnd.agoda.macosvz.aux.image.v1"
-}
-
-/// Look up an annotation by key, falling back to a legacy key.
-func annotationOrLegacy(_ annotations: [String: String]?, key: String, legacyKey: String) -> String? {
-    annotations?[key] ?? annotations?[legacyKey]
-}
-
 /// Holds per-chunk upload results for manifest construction.
 struct DiskChunkDescriptor {
     let partNumber: Int
@@ -151,16 +133,16 @@ struct DiskChunkDescriptor {
     let diskOffset: UInt64
 }
 
-/// OCI config JSON structure expected by the macOS-vz kubelet.
-struct KubeletOCIConfig: Codable {
+/// OCI config JSON structure for lume VM images.
+struct LumeOCIConfig: Codable {
     let mediatype: String?
     let os: String
-    let hardwareModelData: String
-    let machineIdData: String
-    let storage: [KubeletStorageItem]?
+    let hardwareModel: String
+    let machineIdentifier: String
+    let storage: [LumeStorageItem]?
 }
 
-struct KubeletStorageItem: Codable {
+struct LumeStorageItem: Codable {
     let mediatype: String
     let file: String
 }
@@ -4087,29 +4069,29 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
         return totalDecompressedBytes
     }
 
-    /// Build the kubelet-compatible config JSON blob from a VMConfig.
-    private func createKubeletConfigData(_ vmConfig: VMConfig) throws -> Data {
-        let hardwareModelData = vmConfig.hardwareModel?.base64EncodedString() ?? ""
-        let machineIdData = vmConfig.machineIdentifier?.base64EncodedString() ?? ""
+    /// Build the OCI config JSON blob from a VMConfig.
+    private func createOCIConfigData(_ vmConfig: VMConfig) throws -> Data {
+        let hardwareModel = vmConfig.hardwareModel?.base64EncodedString() ?? ""
+        let machineIdentifier = vmConfig.machineIdentifier?.base64EncodedString() ?? ""
 
         let configObj: [String: Any] = [
             "mediatype": OCIMediaType.config,
             "os": vmConfig.os,
-            "hardwareModelData": hardwareModelData,
-            "machineIdData": machineIdData,
+            "hardwareModel": hardwareModel,
+            "machineIdentifier": machineIdentifier,
             "storage": [
-                ["mediatype": OCIMediaType.aux,  "file": "aux.img"],
-                ["mediatype": OCIMediaType.disk, "file": "disk.img"],
+                ["mediatype": OCIMediaType.nvram, "file": "nvram.bin"],
+                ["mediatype": OCIMediaType.disk,  "file": "disk.img"],
             ],
         ]
         return try JSONSerialization.data(
             withJSONObject: configObj, options: [.prettyPrinted, .sortedKeys])
     }
 
-    /// Build an OCI-compliant manifest dictionary (kubelet-compatible).
+    /// Build an OCI manifest dictionary.
     private func createOCIManifest(
         configDigest: String, configSize: Int,
-        auxDigest: String, auxSize: Int,
+        nvramDigest: String, nvramSize: Int,
         diskDigest: String, diskSize: Int,
         uncompressedDiskDigest: String, uncompressedDiskSize: UInt64,
         vmConfig: VMConfig?
@@ -4122,12 +4104,12 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
             "annotations": ["org.opencontainers.image.title": "config.json"],
         ]
 
-        // Aux (nvram) layer — stored uncompressed, title annotation only
-        let auxLayer: [String: Any] = [
-            "mediaType": OCIMediaType.aux,
-            "digest": auxDigest,
-            "size": auxSize,
-            "annotations": ["org.opencontainers.image.title": "aux.img"],
+        // NVRAM layer — stored uncompressed, title annotation only
+        let nvramLayer: [String: Any] = [
+            "mediaType": OCIMediaType.nvram,
+            "digest": nvramDigest,
+            "size": nvramSize,
+            "annotations": ["org.opencontainers.image.title": "nvram.bin"],
         ]
 
         // Disk layer — gzip-compressed with size/digest annotations
@@ -4159,7 +4141,7 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
             "schemaVersion": 2,
             "mediaType": "application/vnd.oci.image.manifest.v1+json",
             "config": configEntry,
-            "layers": [auxLayer, diskLayer],
+            "layers": [nvramLayer, diskLayer],
             "annotations": manifestAnnotations,
         ]
     }
@@ -4167,7 +4149,7 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
     /// Build an OCI manifest with multiple disk chunk layers.
     private func createOCIManifest(
         configDigest: String, configSize: Int,
-        auxDigest: String, auxSize: Int,
+        nvramDigest: String, nvramSize: Int,
         diskChunks: [DiskChunkDescriptor],
         totalUncompressedSize: UInt64,
         vmConfig: VMConfig?
@@ -4179,11 +4161,11 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
             "annotations": ["org.opencontainers.image.title": "config.json"],
         ]
 
-        let auxLayer: [String: Any] = [
-            "mediaType": OCIMediaType.aux,
-            "digest": auxDigest,
-            "size": auxSize,
-            "annotations": ["org.opencontainers.image.title": "aux.img"],
+        let nvramLayer: [String: Any] = [
+            "mediaType": OCIMediaType.nvram,
+            "digest": nvramDigest,
+            "size": nvramSize,
+            "annotations": ["org.opencontainers.image.title": "nvram.bin"],
         ]
 
         let totalParts = diskChunks.count
@@ -4222,7 +4204,7 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
             "schemaVersion": 2,
             "mediaType": "application/vnd.oci.image.manifest.v1+json",
             "config": configEntry,
-            "layers": [auxLayer] + diskChunkLayers,
+            "layers": [nvramLayer] + diskChunkLayers,
             "annotations": manifestAnnotations,
         ]
     }
@@ -4280,7 +4262,7 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
         // ── Config ──────────────────────────────────────────────────────────
         let vmConfig = try? JSONDecoder().decode(VMConfig.self, from: Data(contentsOf: configPath))
         let fallbackConfig = try VMConfig(os: "darwin", display: "1920x1080")
-        let configData = try createKubeletConfigData(vmConfig ?? fallbackConfig)
+        let configData = try createOCIConfigData(vmConfig ?? fallbackConfig)
         let configDigest = "sha256:" + configData.sha256String()
         let configSize   = configData.count
 
@@ -4294,21 +4276,21 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
             }
         }
 
-        // ── Aux (nvram) ──────────────────────────────────────────────────────
+        // ── NVRAM ────────────────────────────────────────────────────────────
         guard FileManager.default.fileExists(atPath: nvramPath.path) else {
             throw PushError.fileCreationFailed(nvramPath.path)
         }
         let nvramData   = try Data(contentsOf: nvramPath)
-        let auxDigest   = "sha256:" + nvramData.sha256String()
-        let auxSize     = nvramData.count
+        let nvramDigest = "sha256:" + nvramData.sha256String()
+        let nvramSize   = nvramData.count
 
         if !dryRun {
-            if !(try await blobExists(repository: repository, digest: auxDigest, token: token)) {
-                Logger.debug("Uploading aux (nvram) blob")
+            if !(try await blobExists(repository: repository, digest: nvramDigest, token: token)) {
+                Logger.debug("Uploading nvram blob")
                 _ = try await uploadBlobFromData(
                     repository: repository, data: nvramData, token: token)
             } else {
-                Logger.debug("Aux blob already exists")
+                Logger.debug("NVRAM blob already exists")
             }
         }
 
@@ -4330,7 +4312,7 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
             await singleProgress.setTotalUncompressed(Int64(diskSize))
             await singleProgress.addLayer(id: "config", label: "config.json", totalBytes: Int64(configSize))
             await singleProgress.markDone(id: "config")
-            await singleProgress.addLayer(id: "nvram", label: "nvram.bin", totalBytes: Int64(auxSize))
+            await singleProgress.addLayer(id: "nvram", label: "nvram.bin", totalBytes: Int64(nvramSize))
             await singleProgress.markDone(id: "nvram")
             await singleProgress.addLayer(id: "disk", label: "disk.img", totalBytes: Int64(diskSize))
             await singleProgress.updateStatus(id: "disk", status: .compressing)
@@ -4379,7 +4361,7 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
 
             manifest = createOCIManifest(
                 configDigest: configDigest, configSize: configSize,
-                auxDigest: auxDigest, auxSize: auxSize,
+                nvramDigest: nvramDigest, nvramSize: nvramSize,
                 diskDigest: compDigest, diskSize: compSize,
                 uncompressedDiskDigest: uncompDigest, uncompressedDiskSize: uncompSize,
                 vmConfig: vmConfig
@@ -4394,7 +4376,7 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
             await progress.setTotalUncompressed(Int64(diskSize))
             await progress.addLayer(id: "config", label: "config.json", totalBytes: Int64(configSize))
             await progress.markDone(id: "config")
-            await progress.addLayer(id: "nvram", label: "nvram.bin", totalBytes: Int64(auxSize))
+            await progress.addLayer(id: "nvram", label: "nvram.bin", totalBytes: Int64(nvramSize))
             await progress.markDone(id: "nvram")
             for i in 0..<chunkCount {
                 let estSize = Int64(min(chunkSize, diskSize - UInt64(i) * chunkSize))
@@ -4613,7 +4595,7 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
 
             manifest = createOCIManifest(
                 configDigest: configDigest, configSize: configSize,
-                auxDigest: auxDigest, auxSize: auxSize,
+                nvramDigest: nvramDigest, nvramSize: nvramSize,
                 diskChunks: await chunkCollector.getAll(),
                 totalUncompressedSize: diskSize,
                 vmConfig: vmConfig
@@ -4674,21 +4656,21 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
             configData = try Data(contentsOf: blobDest)
         }
 
-        var auxBlobPath: URL?
-        if let auxLayer = manifest.layers.first(where: { $0.mediaType == OCIMediaType.aux }) {
+        var nvramBlobPath: URL?
+        if let nvramLayer = manifest.layers.first(where: { $0.mediaType == OCIMediaType.nvram }) {
             let blobDest = tempDir.appendingPathComponent(
-                auxLayer.digest.replacingOccurrences(of: ":", with: "_"))
-            Logger.info("Downloading aux layer (\(auxLayer.digest.prefix(19))…)")
+                nvramLayer.digest.replacingOccurrences(of: ":", with: "_"))
+            Logger.info("Downloading nvram layer (\(nvramLayer.digest.prefix(19))…)")
             try await downloadLayer(
                 repository: repository,
-                digest: auxLayer.digest,
-                mediaType: auxLayer.mediaType,
+                digest: nvramLayer.digest,
+                mediaType: nvramLayer.mediaType,
                 token: token,
                 to: blobDest,
                 maxRetries: 5,
                 progress: downloadProgress
             )
-            auxBlobPath = blobDest
+            nvramBlobPath = blobDest
         }
 
         // ── Process config ────────────────────────────────────────────────────
@@ -4696,10 +4678,10 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
         var diskUncompressedSize: UInt64?
 
         if let data = configData,
-            let kubeletCfg = try? JSONDecoder().decode(KubeletOCIConfig.self, from: data)
+            let ociCfg = try? JSONDecoder().decode(LumeOCIConfig.self, from: data)
         {
-            let hardwareModel     = Data(base64Encoded: kubeletCfg.hardwareModelData)
-            let machineIdentifier = Data(base64Encoded: kubeletCfg.machineIdData)
+            let hardwareModel     = Data(base64Encoded: ociCfg.hardwareModel)
+            let machineIdentifier = Data(base64Encoded: ociCfg.machineIdentifier)
 
             let ann = manifest.annotations
             let cpuCount    = ann?["org.trycua.lume.cpu-count"].flatMap(Int.init)
@@ -4716,7 +4698,7 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
                     $0.annotations?["org.trycua.lume.content.uncompressed-size"].flatMap(UInt64.init)
                 }.reduce(0, +)
             } else if let singleLayer = diskLayers.first,
-                      let sizeStr = annotationOrLegacy(singleLayer.annotations, key: "org.trycua.lume.content.uncompressed-size", legacyKey: LegacyAnnotation.uncompressedSize),
+                      let sizeStr = singleLayer.annotations?["org.trycua.lume.content.uncompressed-size"],
                       let size = UInt64(sizeStr) {
                 diskUncompressedSize = size
             }
@@ -4725,7 +4707,7 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
                          ?? diskUncompressedSize
 
             vmConfig = try? VMConfig(
-                os: kubeletCfg.os,
+                os: ociCfg.os,
                 cpuCount: cpuCount,
                 memorySize: memorySize,
                 diskSize: diskSize,
@@ -4745,10 +4727,10 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
             try data.write(to: configDest)
         }
 
-        // ── Process aux (nvram) ───────────────────────────────────────────────
-        if let auxPath = auxBlobPath {
+        // ── Process nvram ────────────────────────────────────────────────────
+        if let nvramPath = nvramBlobPath {
             let nvramDest = destination.appendingPathComponent("nvram.bin")
-            try FileManager.default.copyItem(at: auxPath, to: nvramDest)
+            try FileManager.default.copyItem(at: nvramPath, to: nvramDest)
             Logger.info("Saved nvram.bin")
         }
 
@@ -4863,7 +4845,7 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
                 progress: downloadProgress
             )
 
-            let uncompSizeStr = annotationOrLegacy(singleDiskLayer.annotations, key: "org.trycua.lume.content.uncompressed-size", legacyKey: LegacyAnnotation.uncompressedSize)
+            let uncompSizeStr = singleDiskLayer.annotations?["org.trycua.lume.content.uncompressed-size"]
             if let sizeStr = uncompSizeStr, let uncompSize = UInt64(sizeStr), uncompSize > 0 {
                 Logger.info("Decompressing disk image (gzip, sparse-aware)…")
                 FileManager.default.createFile(atPath: diskDest.path, contents: nil)

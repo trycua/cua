@@ -8,7 +8,6 @@ import subprocess
 from typing import Optional
 
 import httpx
-
 from cua_sandbox.image import Image
 from cua_sandbox.runtime.base import Runtime, RuntimeInfo
 from cua_sandbox.runtime.images import (
@@ -32,9 +31,11 @@ def _has_docker() -> bool:
 def _has_kvm() -> bool:
     """Check if /dev/kvm is available (Linux/WSL2 only)."""
     import platform
+
     if platform.system() != "Linux":
         return False
     from pathlib import Path
+
     return Path("/dev/kvm").exists()
 
 
@@ -102,9 +103,15 @@ class DockerRuntime(Runtime):
         subprocess.run(["docker", "rm", "-f", name], capture_output=True)
 
         cmd = [
-            "docker", "run", "-d", "--name", name,
-            "-p", f"{self.api_port}:{internal_api}",
-            "-p", f"{self.vnc_port}:{internal_vnc}",
+            "docker",
+            "run",
+            "-d",
+            "--name",
+            name,
+            "-p",
+            f"{self.api_port}:{internal_api}",
+            "-p",
+            f"{self.vnc_port}:{internal_vnc}",
             *extra_flags,
             docker_image,
         ]
@@ -139,7 +146,13 @@ class DockerRuntime(Runtime):
                     if resp.status_code == 200:
                         logger.info(f"Container {info.name} is ready")
                         return True
-                except (httpx.ConnectError, httpx.ReadTimeout, httpx.RemoteProtocolError, httpx.ConnectTimeout):
+                except (
+                    httpx.ConnectError,
+                    httpx.ReadTimeout,
+                    httpx.RemoteProtocolError,
+                    httpx.ConnectTimeout,
+                    httpx.ReadError,
+                ):
                     pass
                 await asyncio.sleep(2)
         raise TimeoutError(f"Container {info.name} not ready after {timeout}s")

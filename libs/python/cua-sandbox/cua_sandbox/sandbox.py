@@ -440,6 +440,9 @@ class Sandbox:
             from cua_sandbox.registry.resolve import resolve_image_kind
 
             image = resolve_image_kind(image)
+        if image and not runtime and local:
+            # local=True with no runtime → auto-select based on image type
+            runtime = _auto_runtime(image)
         if image and not runtime and not local:
             # image without runtime and not local → cloud creation
             if not any([ws_url, http_url]):
@@ -503,7 +506,9 @@ class Sandbox:
                     vnc_password=rt_info.vnc_password,
                     environment=rt_info.environment or image.os_type,
                 )
-            elif rt_info.vnc_port and not rt_info.qmp_port:
+            elif rt_info.vnc_port and not rt_info.qmp_port and not rt_info.api_port:
+                # VNC-only transport: QEMU VMs without a computer-server HTTP API.
+                # When api_port is also set (e.g. Docker containers, Lume VMs), prefer HTTP.
                 from cua_sandbox.transport.vnc import VNCTransport
 
                 transport = VNCTransport(

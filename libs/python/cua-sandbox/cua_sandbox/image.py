@@ -131,8 +131,16 @@ class Image:
         return cls(os_type="linux", distro=distro, version=version, kind=kind)
 
     @classmethod
-    def macos(cls, version: str = "15", kind: str = "vm") -> Image:
-        """macOS image. Always a VM (Apple Virtualization / Lume)."""
+    def macos(cls, version: str = "26", kind: str = "vm") -> Image:
+        """macOS image. Always a VM (Apple Virtualization / Lume).
+
+        Supported versions: ``"15"`` / ``"sequoia"``, ``"26"`` / ``"tahoe"``.
+        """
+        from cua_sandbox.runtime.images import MACOS_VERSION_IMAGES
+
+        if version not in MACOS_VERSION_IMAGES:
+            supported = ", ".join(f'"{v}"' for v in MACOS_VERSION_IMAGES)
+            raise ValueError(f"Unsupported macOS version {version!r}. Supported: {supported}")
         return cls(os_type="macos", distro="macos", version=version, kind=kind)
 
     @classmethod

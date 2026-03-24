@@ -12,7 +12,12 @@ import subprocess
 import httpx
 from cua_sandbox.image import Image
 from cua_sandbox.runtime.base import Runtime, RuntimeInfo
-from cua_sandbox.runtime.images import LUME_API_PORT, LUME_PROVIDER_PORT, MACOS_SEQUOIA
+from cua_sandbox.runtime.images import (
+    LUME_API_PORT,
+    LUME_PROVIDER_PORT,
+    MACOS_SEQUOIA,
+    MACOS_VERSION_IMAGES,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -54,7 +59,11 @@ class LumeRuntime(Runtime):
             if vm.get("status") == "running":
                 logger.info(f"Lume VM {name} already running")
             else:
-                oci_ref = image._registry or MACOS_SEQUOIA
+                oci_ref = (
+                    image._registry
+                    or MACOS_VERSION_IMAGES.get(image.version or "")
+                    or MACOS_SEQUOIA
+                )
                 logger.info(f"Pulling {oci_ref} via Lume...")
                 # Lume's pull API expects image="name:tag" with registry/organization
                 # passed separately — passing a full ref causes double-prefixing of the org.
@@ -67,11 +76,15 @@ class LumeRuntime(Runtime):
                         "registry": parts[0],
                         "organization": parts[1],
                     }
-                await client.post(
-                    f"{lume_url}/lume/pull",
-                    json=pull_payload,
-                    timeout=600,
-                )
+                try:
+                    await client.post(
+                        f"{lume_url}/lume/pull",
+                        json=pull_payload,
+                        timeout=600,
+                    )
+                except httpx.ReadError:
+                    # Lume closes the connection when pull starts asynchronously.
+                    pass
                 logger.info(f"Running Lume VM {name}...")
                 await client.post(
                     f"{lume_url}/lume/vms/{name}/run",
@@ -88,7 +101,7 @@ class LumeRuntime(Runtime):
         await self.is_ready(info)
         return info
 
-    async def _wait_for_ip(self, name: str, lume_url: str, timeout: float = 300) -> str:
+    async def _wait_for_ip(self, name: str, lume_url: str, timeout: float = 3600) -> str:
         deadline = asyncio.get_event_loop().time() + timeout
         async with httpx.AsyncClient(timeout=10) as client:
             while asyncio.get_event_loop().time() < deadline:
@@ -115,7 +128,12 @@ class LumeRuntime(Runtime):
                     if resp.status_code == 200:
                         logger.info(f"Lume VM {info.name} computer-server is ready")
                         return True
-                except (httpx.ConnectError, httpx.ReadTimeout, httpx.ConnectTimeout):
+                except (
+                    httpx.ConnectError,
+                    httpx.ReadTimeout,
+                    httpx.ConnectTimeout,
+                    httpx.ReadError,
+                ):
                     pass
                 await asyncio.sleep(3)
         raise TimeoutError(f"Lume VM {info.name} computer-server not ready after {timeout}s")

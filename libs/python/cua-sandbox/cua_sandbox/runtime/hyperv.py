@@ -22,7 +22,6 @@ from pathlib import Path
 from typing import Optional
 
 import httpx
-
 from cua_sandbox.builder.windows_unattend import (
     create_unattend_iso,
     download_windows_iso,
@@ -40,7 +39,8 @@ def _has_hyperv() -> bool:
     try:
         result = subprocess.run(
             ["powershell", "-Command", "Get-Command New-VM -ErrorAction Stop"],
-            capture_output=True, text=True,
+            capture_output=True,
+            text=True,
         )
         return result.returncode == 0
     except (subprocess.SubprocessError, FileNotFoundError):
@@ -51,7 +51,8 @@ def _ps(cmd: str) -> str:
     """Run a PowerShell command and return stdout. Raises on failure."""
     result = subprocess.run(
         ["powershell", "-NoProfile", "-Command", cmd],
-        capture_output=True, text=True,
+        capture_output=True,
+        text=True,
     )
     if result.returncode != 0:
         raise RuntimeError(f"PowerShell error: {result.stderr.strip()}")
@@ -173,7 +174,9 @@ class HyperVRuntime(Runtime):
             logger.info(f"Using cached base image: {base_vhdx}")
             return base_vhdx
 
-        logger.info("Building base Windows image (first-time setup, ~15-30 min with Hyper-V acceleration)...")
+        logger.info(
+            "Building base Windows image (first-time setup, ~15-30 min with Hyper-V acceleration)..."
+        )
 
         work_dir = self.cache_dir / "build"
         work_dir.mkdir(parents=True, exist_ok=True)
@@ -253,9 +256,7 @@ class HyperVRuntime(Runtime):
         logger.info(f"Base image cached: {base_vhdx}")
         return base_vhdx
 
-    async def _build_user_layer(
-        self, image: Image, parent: Path, user_layer: Path
-    ) -> Path:
+    async def _build_user_layer(self, image: Image, parent: Path, user_layer: Path) -> Path:
         """Apply user Image layers on top of the base image."""
         logger.info(f"Building user layer ({len(image._layers)} layers)...")
 
@@ -284,6 +285,7 @@ class HyperVRuntime(Runtime):
             await self.is_ready(info, timeout=300)
 
             from cua_sandbox.builder.executor import LayerExecutor
+
             executor = LayerExecutor(f"http://{ip}:{self.api_port}")
             await executor.execute_layers(list(image._layers))
 
@@ -295,11 +297,16 @@ class HyperVRuntime(Runtime):
 
         build_disk.rename(user_layer)
         meta = user_layer.with_suffix(".json")
-        meta.write_text(json.dumps({
-            "os_type": image.os_type,
-            "layers": list(image._layers),
-            "parent": str(parent),
-        }, indent=2))
+        meta.write_text(
+            json.dumps(
+                {
+                    "os_type": image.os_type,
+                    "layers": list(image._layers),
+                    "parent": str(parent),
+                },
+                indent=2,
+            )
+        )
 
         logger.info(f"User layer cached: {user_layer}")
         return user_layer
@@ -351,10 +358,13 @@ class HyperVRuntime(Runtime):
                     if resp.status_code == 200:
                         logger.info(f"Hyper-V VM {info.name} computer-server is ready")
                         return True
-                except (httpx.ConnectError, httpx.ReadTimeout,
-                        httpx.RemoteProtocolError, httpx.ConnectTimeout):
+                except (
+                    httpx.ConnectError,
+                    httpx.ReadTimeout,
+                    httpx.RemoteProtocolError,
+                    httpx.ConnectTimeout,
+                    httpx.ReadError,
+                ):
                     pass
                 await asyncio.sleep(3)
-        raise TimeoutError(
-            f"Hyper-V VM {info.name} computer-server not ready after {timeout}s"
-        )
+        raise TimeoutError(f"Hyper-V VM {info.name} computer-server not ready after {timeout}s")

@@ -7,6 +7,7 @@ Skips automatically when the required runtime isn't available.
 
 from __future__ import annotations
 
+import os
 import platform
 import subprocess
 from pathlib import Path
@@ -18,6 +19,10 @@ pytestmark = pytest.mark.asyncio
 
 IS_WINDOWS = platform.system() == "Windows"
 IS_MACOS = platform.system() == "Darwin"
+
+
+def _has_cua_api_key() -> bool:
+    return bool(os.environ.get("CUA_API_KEY"))
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -160,9 +165,9 @@ async def test_macos_vm():
     from cua_sandbox.runtime import LumeRuntime
 
     async with Sandbox.ephemeral(
-        Image.macos("15"),
+        Image.macos("26"),
         local=True,
-        runtime=LumeRuntime(api_port=18005),
+        runtime=LumeRuntime(),
         name="cua-test-macos-vm",
     ) as sb:
         result = await sb.shell.run("sw_vers")
@@ -454,3 +459,153 @@ def test_qemu_baremetal_missing_binary_error():
         from cua_sandbox.runtime.qemu_installer import qemu_bin
 
         qemu_bin("x86_64")
+
+
+# ── 10. Auto-runtime (local=True, no explicit runtime) ───────────────────────
+
+
+@pytest.mark.skipif(not _has_docker(), reason="Docker not available")
+async def test_auto_runtime_linux_container():
+    """local=True with no runtime auto-selects DockerRuntime for linux container images."""
+    async with Sandbox.ephemeral(
+        Image.linux("ubuntu", "24.04"),  # kind="container" by default
+        local=True,
+        name="cua-test-auto-linux-container",
+    ) as sb:
+        result = await sb.shell.run("uname -s")
+        assert result.success
+        assert "Linux" in result.stdout
+
+        screenshot = await sb.screenshot()
+        assert screenshot[:4] == b"\x89PNG"
+
+
+@pytest.mark.skipif(not _has_docker(), reason="Docker not available")
+async def test_auto_runtime_linux_vm():
+    """local=True with no runtime auto-selects QEMURuntime(docker) for linux vm images."""
+    async with Sandbox.ephemeral(
+        Image.linux("ubuntu", "24.04", kind="vm"),
+        local=True,
+        name="cua-test-auto-linux-vm",
+    ) as sb:
+        result = await sb.shell.run("uname -s")
+        assert result.success
+        assert "Linux" in result.stdout
+
+        screenshot = await sb.screenshot()
+        assert screenshot[:4] == b"\x89PNG"
+
+
+@pytest.mark.skipif(not IS_MACOS or not _has_lume(), reason="Lume only on macOS")
+async def test_auto_runtime_macos():
+    """local=True with no runtime auto-selects LumeRuntime for macOS images."""
+    async with Sandbox.ephemeral(
+        Image.macos("26"),
+        local=True,
+        name="cua-test-auto-macos",
+    ) as sb:
+        result = await sb.shell.run("sw_vers")
+        assert result.success
+        assert "macOS" in result.stdout or "Mac" in result.stdout
+
+        screenshot = await sb.screenshot()
+        assert screenshot[:4] == b"\x89PNG"
+
+
+@pytest.mark.skipif(not _has_android_sdk(), reason="Android SDK not available")
+async def test_auto_runtime_android():
+    """local=True with no runtime auto-selects AndroidEmulatorRuntime for android images."""
+    async with Sandbox.ephemeral(
+        Image.android("14"),
+        local=True,
+        name="cua-test-auto-android",
+    ) as sb:
+        screenshot = await sb.screenshot()
+        assert screenshot[:4] == b"\x89PNG"
+        assert len(screenshot) > 10000
+
+
+@pytest.mark.skipif(not IS_WINDOWS, reason="Windows host only")
+@pytest.mark.skipif(not _has_qemu(), reason="QEMU not available")
+async def test_auto_runtime_windows():
+    """local=True with no runtime auto-selects HyperV or QEMU for Windows images."""
+    async with Sandbox.ephemeral(
+        Image.windows("11"),
+        local=True,
+        name="cua-test-auto-windows",
+    ) as sb:
+        result = await sb.shell.run("ver")
+        assert result.success or "Windows" in result.stdout
+
+        screenshot = await sb.screenshot()
+        assert screenshot[:4] == b"\x89PNG"
+
+
+# ── 11. Cloud sandboxes (local=False) ────────────────────────────────────────
+
+
+@pytest.mark.skipif(not _has_cua_api_key(), reason="CUA_API_KEY not set")
+async def test_cloud_linux_ephemeral():
+    """Cloud sandbox: Sandbox.ephemeral with linux image (local=False)."""
+    async with Sandbox.ephemeral(
+        Image.linux("ubuntu", "24.04"),
+        name="cua-test-cloud-linux",
+    ) as sb:
+        result = await sb.shell.run("uname -s")
+        assert result.success
+        assert "Linux" in result.stdout
+
+        screenshot = await sb.screenshot()
+        assert screenshot[:4] == b"\x89PNG"
+
+
+@pytest.mark.skipif(not _has_cua_api_key(), reason="CUA_API_KEY not set")
+async def test_cloud_android_ephemeral():
+    """Cloud sandbox: Sandbox.ephemeral with android image (local=False)."""
+    async with Sandbox.ephemeral(
+        Image.android("14"),
+        name="cua-test-cloud-android",
+    ) as sb:
+        screenshot = await sb.screenshot()
+        assert screenshot[:4] == b"\x89PNG"
+        assert len(screenshot) > 1000
+
+
+# ── 12. Sandbox.create (persistent) ─────────────────────────────────────────
+
+
+@pytest.mark.skipif(not _has_docker(), reason="Docker not available")
+async def test_create_persistent_linux():
+    """Sandbox.create provisions a persistent sandbox that survives disconnect."""
+    from cua_sandbox.runtime import DockerRuntime
+
+    sb = await Sandbox.create(
+        Image.linux("ubuntu", "24.04"),
+        local=True,
+        runtime=DockerRuntime(api_port=18090, vnc_port=18091, ephemeral=True),
+        name="cua-test-create-linux",
+    )
+    try:
+        result = await sb.shell.run("echo persistent")
+        assert result.success
+        assert "persistent" in result.stdout
+
+        screenshot = await sb.screenshot()
+        assert screenshot[:4] == b"\x89PNG"
+    finally:
+        await sb.disconnect()
+
+
+@pytest.mark.skipif(not _has_cua_api_key(), reason="CUA_API_KEY not set")
+async def test_create_persistent_cloud_linux():
+    """Sandbox.create provisions a persistent cloud sandbox."""
+    sb = await Sandbox.create(
+        Image.linux("ubuntu", "24.04"),
+        name="cua-test-create-cloud-linux",
+    )
+    try:
+        result = await sb.shell.run("echo persistent")
+        assert result.success
+        assert "persistent" in result.stdout
+    finally:
+        await sb.disconnect()

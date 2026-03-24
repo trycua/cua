@@ -8,6 +8,16 @@ QEMU_WINDOWS = "trycua/cua-qemu-windows:latest"
 QEMU_ANDROID = "trycua/cua-qemu-android:latest"
 MACOS_SEQUOIA = "trycua/macos-sequoia:latest"
 
+# ── macOS version → OCI image ref ────────────────────────────────────────────
+# Maps macOS version strings (and codename aliases) to ghcr.io image refs.
+# Codenames: Sequoia = 15, Tahoe = 26
+MACOS_VERSION_IMAGES: dict[str, str] = {
+    "15": "ghcr.io/trycua/macos-sequoia-cua:latest",
+    "sequoia": "ghcr.io/trycua/macos-sequoia-cua:latest",
+    "26": "ghcr.io/trycua/macos-tahoe-cua:latest",
+    "tahoe": "ghcr.io/trycua/macos-tahoe-cua:latest",
+}
+
 # ── Internal ports (inside the container) ────────────────────────────────────
 
 XFCE_API_PORT = 8000

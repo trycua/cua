@@ -49,7 +49,7 @@ mcp = [
 ]
 # Skills recording with LLM captioning
 skills = [
-    "litellm>=1.74.0",
+    "litellm==1.81.12",
 ]
 # Full installation
 all = [

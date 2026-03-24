@@ -22,7 +22,7 @@ dependencies = [
     "cua-computer>=0.5.0,<0.6.0",
     "cua-core>=0.1.18,<0.2.0",
     "certifi>=2024.2.2",
-    "litellm>=1.74.12"
+    "litellm==1.81.12"
 ]
 requires-python = ">=3.12,<3.14"
 

@@ -17,7 +17,7 @@ struct Lume: AsyncParsableCommand {
 // MARK: - Version Management
 extension Lume {
     enum Version {
-        static let current: String = "0.3.2"
+        static let current: String = "0.3.3"
     }
 }
 

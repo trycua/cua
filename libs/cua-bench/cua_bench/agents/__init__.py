@@ -100,6 +100,8 @@ def list_agents(config_loader: "ConfigLoader | None" = None) -> list[str]:
 from .cua_agent import CuaAgent  # noqa: E402
 from .gemini import GeminiAgent  # noqa: E402
 from .opencua_agent import OpenCUAAgent  # noqa: E402
+from .qwen3vl_agent import Qwen3VLAgent  # noqa: E402
+from .qwen35_agent import Qwen35Agent  # noqa: E402
 
 __all__ = [
     "BaseAgent",
@@ -108,6 +110,8 @@ __all__ = [
     "CuaAgent",
     "GeminiAgent",
     "OpenCUAAgent",
+    "Qwen3VLAgent",
+    "Qwen35Agent",
     "register_agent",
     "get_agent",
     "list_agents",

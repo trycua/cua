@@ -37,13 +37,13 @@ if TYPE_CHECKING:
     from ..computers import DesktopSession
 
 
-@register_agent("opencua")
-class OpenCUAAgent(BaseAgent):
-    """Agent implementation using an OpenCUA model via the CUA Computer Agent SDK."""
+@register_agent("qwen3vl")
+class Qwen3VLAgent(BaseAgent):
+    """Agent implementation using a Qwen3-VL model via the CUA Computer Agent SDK."""
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self.model = kwargs.get("model", "openai/opencua-7b")
+        self.model = kwargs.get("model", "openai/qwen3-vl")
         self.base_url = kwargs.get("base_url") or os.environ.get("OPENAI_ENDPOINT")
         self.api_key = kwargs.get("api_key") or os.environ.get("OPENAI_API_KEY", "EMPTY")
         self.max_steps = kwargs.get("max_steps", 50)
@@ -51,7 +51,7 @@ class OpenCUAAgent(BaseAgent):
 
     @staticmethod
     def name() -> str:
-        return "opencua"
+        return "qwen3vl"
 
     def _create_custom_computer(self, session: "DesktopSession") -> Dict[str, Any]:
         """Build a computer-handler dict from a DesktopSession."""
@@ -115,7 +115,7 @@ class OpenCUAAgent(BaseAgent):
             await session.execute_action(WaitAction(seconds=ms / 1000.0))
 
         async def get_dimensions():
-            return (1024, 768)
+            return (1920, 1080)
 
         async def get_environment():
             return "linux"
@@ -141,17 +141,17 @@ class OpenCUAAgent(BaseAgent):
         logging_dir: Path | None = None,
         tracer=None,
     ) -> AgentResult:
-        """Run the task using the OpenCUA model via the CUA Computer Agent SDK."""
+        """Run the task using the Qwen3-VL model via the CUA Computer Agent SDK."""
         try:
             from agent import ComputerAgent
         except ImportError as e:
             raise RuntimeError(
-                "opencua-agent requires the `cua-agent` package to be installed. "
+                "qwen3vl-agent requires the `cua-agent` package to be installed. "
                 "Install it with: pip install cua-agent"
             ) from e
 
         instruction = self._render_instruction(task_description)
-        
+
         print(f"Instruction: {instruction}")
 
         trajectory_dir = None
@@ -161,23 +161,15 @@ class OpenCUAAgent(BaseAgent):
 
         custom_computer = self._create_custom_computer(session)
 
-        # Extra litellm kwargs forwarded to the OpenCUA loop
+        # Extra litellm kwargs forwarded to the loop
         extra_kwargs: Dict[str, Any] = {}
         if self.base_url:
             extra_kwargs["base_url"] = self.base_url
         if self.api_key:
             extra_kwargs["api_key"] = self.api_key
 
-        # OpenCUAConfig only declares "click" capability, so it cannot be used
-        # directly as the top-level agent loop.  Using "model+model" routes
-        # through ComposedGroundedConfig (capabilities: ["click", "step"]),
-        # which uses the same OpenCUA model for both grounding (click prediction)
-        # and thinking (task reasoning) — identical to what OpenCUAConfig does
-        # internally in its own predict_step.
-        composed_model = f"{self.model}+{self.model}"
-
         agent = ComputerAgent(
-            model=composed_model,
+            model=self.model,
             tools=[custom_computer],
             only_n_most_recent_images=3,
             trajectory_dir=trajectory_dir,
@@ -187,8 +179,8 @@ class OpenCUAAgent(BaseAgent):
             ),
             **extra_kwargs,
         )
-        
-        print(f"OpenCUA Agent initialized with model: {composed_model}")
+
+        print(f"Qwen3VL Agent initialized with model: {self.model}")
 
         total_usage = {
             "prompt_tokens": 0,
@@ -196,13 +188,11 @@ class OpenCUAAgent(BaseAgent):
             "total_tokens": 0,
             "response_cost": 0.0,
         }
-        
-        last_exc: BaseException | None = None
-        
+
         try:
             step = 0
             task_completed = False
-            
+
             async for result in agent.run(instruction):
                 sys.stdout.flush()
                 step += 1
@@ -249,8 +239,8 @@ class OpenCUAAgent(BaseAgent):
 
             if task_completed:
                 failure_mode = FailureMode.NONE
-            elif step >= self.max_steps:
-                failure_mode = FailureMode.MAX_STEPS_EXCEEDED
+            # elif step >= self.max_steps:
+            #     failure_mode = FailureMode.MAX_STEPS_EXCEEDED
             else:
                 failure_mode = FailureMode.NONE
 

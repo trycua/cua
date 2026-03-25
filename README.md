@@ -69,7 +69,7 @@
 
 ---
 
-## Cua - Agentic UI Automation & Code Execution
+## Cua - Agent-Ready Sandboxes for Any OS
 
 Build agents that see screens, click buttons, and complete tasks autonomously. One API for any VM or container image — cloud or local.
 
@@ -85,6 +85,7 @@ async with Sandbox.ephemeral(Image.linux()) as sb:   # or .macos() .windows() .a
     screenshot = await sb.screenshot()
     await sb.mouse.click(100, 200)
     await sb.keyboard.type("Hello from Cua!")
+    await sb.mobile.gesture((100, 500), (100, 200))  # multi-touch gestures
 ```
 
 |                    | Linux container | Linux VM | macOS | Windows | Android | BYOI (.qcow2, .iso) |

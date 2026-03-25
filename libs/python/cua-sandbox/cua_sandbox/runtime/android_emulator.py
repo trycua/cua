@@ -437,6 +437,16 @@ class AndroidEmulatorRuntime(Runtime):
 
         env = _java_env()
         java_home = env.get("JAVA_HOME", "")
+        # Prefer Java 21 for Gradle compatibility (bubblewrap uses Gradle 8.x)
+        for _j21 in (
+            Path("/opt/homebrew/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home"),
+            Path("/usr/local/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home"),
+        ):
+            if _j21.exists():
+                java_home = str(_j21)
+                env["JAVA_HOME"] = java_home
+                env["PATH"] = f"{_j21 / 'bin'}:{env.get('PATH', '')}"
+                break
         jdk_bin = Path(java_home) / "bin" if java_home else Path(".")
         keytool = str(jdk_bin / "keytool") if (jdk_bin / "keytool").exists() else "keytool"
 
@@ -465,36 +475,46 @@ class AndroidEmulatorRuntime(Runtime):
                 )
 
         # ── 2. Auto-configure ~/.bubblewrap/config.json ──────────────────────
+        # bubblewrap expects jdkPath to be the .jdk bundle root on macOS
+        # (it appends Contents/Home internally).  Gradle also requires Java ≤ 21.
+        def _bubblewrap_jdk_path() -> str:
+            """Return the .jdk bundle path suitable for bubblewrap's jdkPath.
+
+            Prefers openjdk@21 (Gradle-compatible) over newer versions.
+            On macOS returns the .jdk bundle root; elsewhere the JDK home.
+            """
+            candidates = [
+                # Prefer Java 21 — Gradle 8.x supports up to Java 21
+                Path("/opt/homebrew/opt/openjdk@21/libexec/openjdk.jdk"),
+                Path("/usr/local/opt/openjdk@21/libexec/openjdk.jdk"),
+                Path("/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk"),
+                # Fall back to whatever _java_env() found
+                Path(java_home).parent.parent if java_home.endswith("Contents/Home") else None,
+                Path(java_home) if java_home else None,
+            ]
+            for c in candidates:
+                if c and c.exists():
+                    return str(c)
+            return java_home  # last resort
+
         bw_config = Path.home() / ".bubblewrap" / "config.json"
         bw_config.parent.mkdir(parents=True, exist_ok=True)
         if not bw_config.exists() or not _json.loads(bw_config.read_text()).get("jdkPath"):
             sdk = _sdk_path()
-            if not java_home:
-                # Fall back: ask java itself for its home
-                try:
-                    r = subprocess.run(
-                        ["java", "-XshowSettings:property", "-version"],
-                        capture_output=True,
-                        text=True,
-                        timeout=5,
-                    )
-                    for line in (r.stdout + r.stderr).splitlines():
-                        if "java.home" in line:
-                            java_home = line.split("=", 1)[1].strip()
-                            break
-                except Exception:
-                    pass
-            cfg = {"jdkPath": java_home or str(jdk_bin.parent), "androidSdkPath": str(sdk)}
+            cfg = {
+                "jdkPath": _bubblewrap_jdk_path(),
+                "androidSdkPath": str(sdk),
+            }
             bw_config.write_text(_json.dumps(cfg, indent=2))
             logger.info(f"Wrote ~/.bubblewrap/config.json: jdkPath={cfg['jdkPath']}")
         else:
             cfg = _json.loads(bw_config.read_text())
-            # Keep existing jdkPath but patch androidSdkPath if it points nowhere
+            # Patch androidSdkPath if it no longer exists
             if not Path(cfg.get("androidSdkPath", "")).exists():
                 cfg["androidSdkPath"] = str(_sdk_path())
                 bw_config.write_text(_json.dumps(cfg, indent=2))
 
-        # ── 2b. Ensure build-tools is installed (required by bubblewrap) ────────
+        # ── 2b. Ensure build-tools + tools stub (both required by bubblewrap) ─
         sdk = Path(cfg["androidSdkPath"])
         sdkmanager = sdk / "cmdline-tools" / "latest" / "bin" / "sdkmanager"
         if sdkmanager.exists() and not any(
@@ -502,16 +522,14 @@ class AndroidEmulatorRuntime(Runtime):
         ):
             logger.info("Installing Android build-tools (required by bubblewrap) …")
             subprocess.run(
-                [
-                    str(sdkmanager),
-                    f"--sdk_root={sdk}",
-                    "build-tools;34.0.0",
-                ],
+                [str(sdkmanager), f"--sdk_root={sdk}", "build-tools;34.0.0"],
                 input=b"y\n",
                 capture_output=True,
                 timeout=300,
                 env=env,
             )
+        # bubblewrap validates SDK by checking for tools/ or bin/ at sdk root
+        (sdk / "tools").mkdir(exist_ok=True)
 
         # ── 3. Determine package ID and cache directory ──────────────────────
         if not package_name:
@@ -634,10 +652,13 @@ class AndroidEmulatorRuntime(Runtime):
             raise RuntimeError(f"bubblewrap update failed:\n{update_result.stderr}")
 
         # ── 8. bubblewrap build → signed APK ─────────────────────────────────
-        jdk_path = cfg.get("jdkPath", java_home)
+        # JAVA_HOME for gradle must point to Contents/Home, not the .jdk bundle.
+        jdk_bundle = Path(cfg.get("jdkPath", java_home))
+        contents_home = jdk_bundle / "Contents" / "Home"
+        gradle_java_home = str(contents_home) if contents_home.exists() else str(jdk_bundle)
         bw_env = {
             **os.environ,
-            "JAVA_HOME": jdk_path,
+            "JAVA_HOME": gradle_java_home,
             "BUBBLEWRAP_KEYSTORE_PASSWORD": keystore_password,
             "BUBBLEWRAP_KEY_PASSWORD": keystore_password,
         }

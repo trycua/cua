@@ -99,11 +99,31 @@ class LumeRuntime(Runtime):
                             json=pull_payload,
                             timeout=1800,
                         )
-                    except (httpx.ReadError, httpx.RemoteProtocolError) as e:
-                        raise RuntimeError(
-                            f"Lume pull failed for '{name}' (connection dropped — "
-                            f"check GITHUB_TOKEN is set in lume's environment): {e}"
-                        ) from e
+                    except (httpx.ReadError, httpx.RemoteProtocolError):
+                        # Lume v0.3.x drops the HTTP connection after pull
+                        # completes. Check if the VM was actually created.
+                        logger.info(
+                            f"Lume sync pull connection dropped — checking if VM '{name}' was created..."
+                        )
+                        try:
+                            check = await client.get(f"{lume_url}/lume/vms/{name}", timeout=10)
+                            if check.status_code == 200:
+                                vm_data = check.json()
+                                if vm_data.get("status") not in ("", None, "error"):
+                                    logger.info(
+                                        f"VM '{name}' exists after connection drop — pull succeeded"
+                                    )
+                                    # fall through to run the VM
+                                    pull_resp = check  # dummy, not used further
+                            else:
+                                raise RuntimeError(
+                                    f"Lume pull failed for '{name}': connection dropped and VM not found"
+                                    " (check GITHUB_TOKEN is set in lume's LaunchAgent plist)"
+                                )
+                        except httpx.HTTPError as check_err:
+                            raise RuntimeError(
+                                f"Lume pull failed for '{name}': connection dropped and could not verify VM: {check_err}"
+                            ) from check_err
                     if pull_resp.status_code >= 400:
                         try:
                             detail = pull_resp.json()

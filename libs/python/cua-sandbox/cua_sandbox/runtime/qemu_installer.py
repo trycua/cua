@@ -30,9 +30,10 @@ def qemu_bin(arch: str = "x86_64") -> str:
 
     Resolution order:
       1. Already on PATH → use it
-      2. Already downloaded to ~/.cua/cua-sandbox/qemu/ → use it
-      3. Windows only: download portable zip → extract → use it
-      4. Raise RuntimeError
+      2. Common macOS Homebrew/MacPorts install locations (may not be on PATH)
+      3. Already downloaded to ~/.cua/cua-sandbox/qemu/ → use it
+      4. Windows only: download portable zip → extract → use it
+      5. Raise RuntimeError with install instructions
     """
     binary = f"qemu-system-{arch}"
 
@@ -41,13 +42,24 @@ def qemu_bin(arch: str = "x86_64") -> str:
     if found:
         return found
 
-    # 2. Portable install
+    # 2. Common macOS install locations not always on PATH in subprocess envs
+    if platform.system() == "Darwin":
+        for prefix in (
+            "/opt/homebrew/bin",  # Homebrew on Apple Silicon
+            "/usr/local/bin",  # Homebrew on Intel
+            "/opt/local/bin",  # MacPorts
+        ):
+            candidate = os.path.join(prefix, binary)
+            if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+                return candidate
+
+    # 3. Portable install
     exe_name = f"{binary}.exe" if platform.system() == "Windows" else binary
     local_bin = QEMU_DIR / QEMU_INNER_DIR / exe_name
     if local_bin.exists():
         return str(local_bin)
 
-    # 3. Auto-download (Windows only)
+    # 4. Auto-download (Windows only)
     if platform.system() == "Windows":
         _download_portable()
         if local_bin.exists():
@@ -55,7 +67,10 @@ def qemu_bin(arch: str = "x86_64") -> str:
 
     if platform.system() == "Darwin":
         raise RuntimeError(
-            f"{binary} not found. Install QEMU via Homebrew:\n\n" f"  brew install qemu\n"
+            f"{binary} not found. Install QEMU via Homebrew or MacPorts:\n\n"
+            f"  brew install qemu\n"
+            f"       — or —\n"
+            f"  sudo port install qemu\n"
         )
 
     raise RuntimeError(

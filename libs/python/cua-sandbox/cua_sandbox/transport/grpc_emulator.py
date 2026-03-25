@@ -243,16 +243,26 @@ class GRPCEmulatorTransport(Transport):
 
     # ── Tunnel ────────────────────────────────────────────────────────────────
 
-    async def forward_tunnel(self, sandbox_port: int) -> "TunnelInfo":
-        """Forward *sandbox_port* via ``adb forward tcp:0 tcp:<sandbox>``."""
+    async def forward_tunnel(self, sandbox_port: int | str) -> "TunnelInfo":
+        """Forward a sandbox TCP port or abstract socket to a free host port.
+
+        - ``int`` → ``adb forward tcp:0 tcp:<sandbox_port>``
+        - ``str`` → ``adb forward tcp:0 localabstract:<sandbox_port>``
+          (e.g. ``"chrome_devtools_remote"`` for Chrome DevTools)
+        """
         from cua_sandbox.interfaces.tunnel import TunnelInfo
 
+        target = (
+            f"localabstract:{sandbox_port}"
+            if isinstance(sandbox_port, str)
+            else f"tcp:{sandbox_port}"
+        )
         loop = asyncio.get_event_loop()
         result = await loop.run_in_executor(
             None,
             functools.partial(
                 subprocess.run,
-                [self._adb, "-s", self._serial, "forward", "tcp:0", f"tcp:{sandbox_port}"],
+                [self._adb, "-s", self._serial, "forward", "tcp:0", target],
                 capture_output=True,
                 check=False,
             ),

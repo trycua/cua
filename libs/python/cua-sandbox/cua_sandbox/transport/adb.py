@@ -204,11 +204,21 @@ class ADBTransport(Transport):
 
     # ── Tunnel ────────────────────────────────────────────────────────────────
 
-    async def forward_tunnel(self, sandbox_port: int) -> "TunnelInfo":
-        """Forward *sandbox_port* via ``adb forward tcp:<host> tcp:<sandbox>``."""
+    async def forward_tunnel(self, sandbox_port: int | str) -> "TunnelInfo":
+        """Forward a sandbox TCP port or abstract socket to a free host port.
+
+        - ``int`` → ``adb forward tcp:0 tcp:<sandbox_port>``
+        - ``str`` → ``adb forward tcp:0 localabstract:<sandbox_port>``
+          (e.g. ``"chrome_devtools_remote"`` for Chrome DevTools)
+        """
         from cua_sandbox.interfaces.tunnel import TunnelInfo
 
-        result = await self._adb_cmd_async("forward", "tcp:0", f"tcp:{sandbox_port}")
+        target = (
+            f"localabstract:{sandbox_port}"
+            if isinstance(sandbox_port, str)
+            else f"tcp:{sandbox_port}"
+        )
+        result = await self._adb_cmd_async("forward", "tcp:0", target)
         if result.returncode != 0:
             raise RuntimeError(f"adb forward failed: {result.stderr.decode(errors='replace')}")
         host_port = int(result.stdout.decode().strip())

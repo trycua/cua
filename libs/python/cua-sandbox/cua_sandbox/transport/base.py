@@ -66,7 +66,7 @@ class Transport(ABC):
     async def get_environment(self) -> str:
         """Return 'windows', 'mac', 'linux', or 'browser'."""
 
-    async def forward_tunnel(self, sandbox_port: int) -> "TunnelInfo":
+    async def forward_tunnel(self, sandbox_port: int | str) -> "TunnelInfo":
         """Forward *sandbox_port* to an available host port and return info.
 
         Subclasses that support tunnelling must override this method.
@@ -79,7 +79,7 @@ class Transport(ABC):
         )
 
     async def close_tunnel(self, info: "TunnelInfo") -> None:
-        """Release a previously forwarded port.  No-op by default."""
+        """Release a previously forwarded port or socket.  No-op by default."""
 
     async def get_display_url(self, *, share: bool = False) -> str:
         """Return a URL to view this sandbox's display.

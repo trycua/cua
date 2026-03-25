@@ -47,14 +47,14 @@ def _ls_names() -> list[str]:
     return [s["name"] for s in json.loads(r.stdout)]
 
 
-async def _wait_for_chrome(sb, timeout: int = 60) -> None:
-    """Wait until Chrome is responding to DevTools discovery on port 9222."""
+async def _wait_for_chrome(tunnel, timeout: int = 60) -> None:
+    """Wait until Chrome is responding to DevTools discovery on tunnel.port."""
     import urllib.request
 
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         try:
-            with urllib.request.urlopen("http://localhost:9222/json", timeout=2) as r:
+            with urllib.request.urlopen(f"{tunnel.url}/json", timeout=2) as r:
                 targets = json.loads(r.read())
                 if targets:
                     return
@@ -118,24 +118,25 @@ async def test_android_local_cdp():
             )
             await asyncio.sleep(3)  # let Chrome load
 
-            # ── 3. Forward devtools port via sb.tunnel ────────────────────────
-            async with sb.tunnel.forward(9222) as tunnel:
+            # ── 3. Forward Chrome devtools abstract socket via sb.tunnel ─────
+            # Chrome on Android exposes devtools on localabstract:chrome_devtools_remote,
+            # not on TCP 9222 — use the socket name directly.
+            async with sb.tunnel.forward("chrome_devtools_remote") as tunnel:
                 assert tunnel.port > 0
-                assert tunnel.sandbox_port == 9222
+                assert tunnel.sandbox_port == "chrome_devtools_remote"
                 assert tunnel.url.startswith("http://localhost:")
 
-                await _wait_for_chrome(sb, timeout=30)
+                await _wait_for_chrome(tunnel, timeout=30)
 
                 # ── 4. Discover the CDP target ────────────────────────────────
                 import urllib.request
 
-                with urllib.request.urlopen(f"http://localhost:{tunnel.port}/json", timeout=5) as r:
+                with urllib.request.urlopen(f"{tunnel.url}/json", timeout=5) as r:
                     targets = json.loads(r.read())
 
-                # Find our data: page (or any page — they all share localStorage origin)
+                # CDP WebSocket URLs use the host-side port
                 ws_url = targets[0]["webSocketDebuggerUrl"]
-                # Replace the port in the ws URL to match our forwarded port
-                ws_url = ws_url.replace(":9222/", f":{tunnel.port}/")
+                ws_url = ws_url.replace("localhost/", f"localhost:{tunnel.port}/")
 
                 # ── 5. Read localStorage via CDP ──────────────────────────────
                 raw = await _cdp_evaluate(
@@ -182,15 +183,17 @@ async def main():
             )
             await asyncio.sleep(3)
 
-            async with sb.tunnel.forward(9222) as t:
+            async with sb.tunnel.forward("chrome_devtools_remote") as t:
                 print(f"DevTools at {t.url}")
-                await _wait_for_chrome(sb, timeout=30)
+                await _wait_for_chrome(t, timeout=30)
                 import urllib.request
 
                 with urllib.request.urlopen(f"{t.url}/json", timeout=5) as r:
                     targets = json.loads(r.read())
                 print(f"CDP targets: {[x['url'] for x in targets]}")
-                ws_url = targets[0]["webSocketDebuggerUrl"].replace(":9222/", f":{t.port}/")
+                ws_url = targets[0]["webSocketDebuggerUrl"].replace(
+                    "localhost/", f"localhost:{t.port}/"
+                )
                 val = await _cdp_evaluate(ws_url, "localStorage.getItem('k')")
                 print(f"localStorage['k'] = {val!r}")
                 assert val == "v"

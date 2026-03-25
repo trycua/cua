@@ -51,7 +51,7 @@ class TunnelInfo:
 class _TunnelContext:
     """Returned by Tunnel.forward() — supports both await and async with."""
 
-    def __init__(self, transport: Transport, ports: tuple[int, ...]):
+    def __init__(self, transport: Transport, ports: tuple[int | str, ...]):
         self._t = transport
         self._ports = ports
         self._infos: List[TunnelInfo] = []
@@ -61,14 +61,14 @@ class _TunnelContext:
     def __await__(self):
         return self._open().__await__()
 
-    async def _open(self) -> Union[TunnelInfo, Dict[int, TunnelInfo]]:
+    async def _open(self) -> Union[TunnelInfo, Dict[int | str, TunnelInfo]]:
         for p in self._ports:
             info = await self._t.forward_tunnel(p)
             info._closer = self._close_one
             self._infos.append(info)
         return self._result()
 
-    def _result(self) -> Union[TunnelInfo, Dict[int, TunnelInfo]]:
+    def _result(self) -> Union[TunnelInfo, Dict[int | str, TunnelInfo]]:
         if len(self._infos) == 1:
             return self._infos[0]
         return {i.sandbox_port: i for i in self._infos}
@@ -93,13 +93,23 @@ class Tunnel:
     def __init__(self, transport: Transport):
         self._t = transport
 
-    def forward(self, *ports: int) -> _TunnelContext:
-        """Forward one or more sandbox ports to the host.
+    def forward(self, *ports: int | str) -> _TunnelContext:
+        """Forward one or more sandbox ports (or abstract sockets) to the host.
+
+        *ports* may be:
+        - ``int`` — TCP port inside the sandbox (e.g. ``8080``)
+        - ``str`` — Android abstract socket name (e.g. ``"chrome_devtools_remote"``)
 
         Returns a context manager (or awaitable) that yields:
-        - a single :class:`TunnelInfo` when one port is given
-        - a ``dict[sandbox_port, TunnelInfo]`` when multiple ports are given
+        - a single :class:`TunnelInfo` when one target is given
+        - a ``dict[sandbox_port, TunnelInfo]`` when multiple targets are given
+
+        Example — Chrome DevTools over ADB::
+
+            async with sb.tunnel.forward("chrome_devtools_remote") as t:
+                # http://localhost:<random>/json lists CDP targets
+                print(t.url)
         """
         if not ports:
-            raise ValueError("forward() requires at least one port")
+            raise ValueError("forward() requires at least one port or socket name")
         return _TunnelContext(self._t, ports)

@@ -86,7 +86,7 @@ python agent.py
 
 ## 4. Watch the Agent Live (Optional)
 
-To see what the agent is doing in real time, use a persistent sandbox instead of ephemeral so it stays alive long enough to open in the browser:
+Call `get_display_url(share=True)` to get a shareable browser link to the live desktop — no CLI needed:
 
 ```python
 import asyncio
@@ -94,26 +94,21 @@ from cua_sandbox import Sandbox, Image
 from agent import ComputerAgent
 
 async def main():
-    sb = await Sandbox.create(Image.linux(), name="my-agent-sandbox")
-    print(f"Sandbox: {sb.name}")  # copy this name
+    async with Sandbox.ephemeral(Image.linux()) as sb:
+        url = await sb.get_display_url(share=True)
+        print(f"Watch live: {url}")  # open this in your browser
 
-    agent = ComputerAgent(
-        model="cua/anthropic/claude-sonnet-4-5",
-        tools=[sb],
-    )
-    messages = [{"role": "user", "content": "Open Firefox and go to google.com"}]
-    async for result in agent.run(messages):
-        pass
-
-    await sb.delete()
+        agent = ComputerAgent(
+            model="cua/anthropic/claude-sonnet-4-5",
+            tools=[sb],
+        )
+        messages = [{"role": "user", "content": "Open Firefox and go to google.com"}]
+        async for result in agent.run(messages):
+            for item in result["output"]:
+                if item["type"] == "message":
+                    print(item["content"][0]["text"])
 
 asyncio.run(main())
-```
-
-While it's running, open the desktop in your browser:
-
-```bash
-cua sb vnc my-agent-sandbox
 ```
 
 ## 5. Clean Up

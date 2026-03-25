@@ -121,10 +121,10 @@ async with Sandbox.ephemeral(Image.linux()) as sb:   # or .macos() .windows() .a
     await sb.keyboard.type("Hello from Cua!")
 ```
 
-|                    | Linux container | Linux VM | macOS | Windows | Android |
-| ------------------ | --------------- | -------- | ----- | ------- | ------- |
-| **Cloud (cua.ai)** | ✅              | ✅       | ✅    | ✅      | ✅      |
-| **Local (QEMU)**   | ✅              | ✅       | ✅    | ✅      | ✅      |
+|                    | Linux container | Linux VM | macOS | Windows | Android | BYOI (.qcow2, .iso) |
+| ------------------ | --------------- | -------- | ----- | ------- | ------- | ------------------- |
+| **Cloud (cua.ai)** | ✅              | ✅       | ✅    | ✅      | ✅      | 🔜 soon             |
+| **Local (QEMU)**   | ✅              | ✅       | ✅    | ✅      | ✅      | ✅                  |
 
 **[Get Started](https://cua.ai/docs/cua/guide/get-started/set-up-sandbox)** | **[Examples](https://cua.ai/docs/cua/examples)** | **[API Reference](https://cua.ai/docs/cua/reference/agent-sdk)**
 

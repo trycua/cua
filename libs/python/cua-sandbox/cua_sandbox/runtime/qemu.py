@@ -392,7 +392,9 @@ class QEMUBaremetalRuntime(Runtime):
         if self._iso_path and use_qmp:
             await self._send_boot_key(info)
 
-        await self.is_ready(info)
+        # Windows and Android need much longer to boot (3–10 min)
+        boot_timeout = 600 if image.os_type in ("windows", "android") else 120
+        await self.is_ready(info, timeout=boot_timeout)
 
         if not ephemeral:
             from cua_sandbox import sandbox_state

@@ -494,6 +494,25 @@ class AndroidEmulatorRuntime(Runtime):
                 cfg["androidSdkPath"] = str(_sdk_path())
                 bw_config.write_text(_json.dumps(cfg, indent=2))
 
+        # ── 2b. Ensure build-tools is installed (required by bubblewrap) ────────
+        sdk = Path(cfg["androidSdkPath"])
+        sdkmanager = sdk / "cmdline-tools" / "latest" / "bin" / "sdkmanager"
+        if sdkmanager.exists() and not any(
+            (sdk / "build-tools").iterdir() if (sdk / "build-tools").exists() else []
+        ):
+            logger.info("Installing Android build-tools (required by bubblewrap) …")
+            subprocess.run(
+                [
+                    str(sdkmanager),
+                    f"--sdk_root={sdk}",
+                    "build-tools;34.0.0",
+                ],
+                input=b"y\n",
+                capture_output=True,
+                timeout=300,
+                env=env,
+            )
+
         # ── 3. Determine package ID and cache directory ──────────────────────
         if not package_name:
             host = urlparse(manifest_url).hostname or ""

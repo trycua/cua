@@ -27,6 +27,7 @@ from cua_sandbox.transport._grpc_emulator import (
     emulator_controller_pb2_grpc as pb2_grpc,
 )
 from cua_sandbox.transport.base import Transport
+from google.protobuf import empty_pb2  # noqa: F401 — must be loaded before emulator pb2
 
 
 def _find_adb(sdk_root: Optional[str] = None) -> str:

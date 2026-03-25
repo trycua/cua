@@ -27,7 +27,9 @@ Usage::
 
 from __future__ import annotations
 
+import random
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -58,6 +60,20 @@ if TYPE_CHECKING:
     from cua_sandbox.runtime.base import Runtime, RuntimeInfo
 
 _T = TypeVar("_T")
+
+
+@dataclass
+class SandboxInfo:
+    """Metadata for a local or cloud sandbox."""
+
+    name: str
+    status: str  # "running" | "suspended" | "stopped" | "provisioning"
+    source: str  # "cloud" | "lume" | "docker" | "qemu-baremetal" | "qemu-docker"
+    os_type: Optional[str] = None
+    host: Optional[str] = None
+    vnc_url: Optional[str] = None
+    api_url: Optional[str] = None
+    created_at: Optional[str] = None
 
 
 class _ConnectResult:
@@ -311,6 +327,7 @@ class Sandbox:
         name: str,
         *,
         api_key: Optional[str] = None,
+        local: bool = False,
         ws_url: Optional[str] = None,
         http_url: Optional[str] = None,
         container_name: Optional[str] = None,
@@ -348,6 +365,7 @@ class Sandbox:
             return await cls._create(
                 name=name,
                 ephemeral=False,
+                local=local,
                 api_key=api_key,
                 ws_url=ws_url,
                 http_url=http_url,
@@ -411,6 +429,389 @@ class Sandbox:
         finally:
             await sb.destroy()
 
+    # ── Lifecycle management ─────────────────────────────────────────────
+
+    @classmethod
+    async def list(
+        cls,
+        *,
+        local: bool = False,
+        api_key: Optional[str] = None,
+    ) -> "list[SandboxInfo]":
+        """List running and suspended sandboxes.
+
+        Args:
+            local: If True, list local sandboxes (Lume, Docker, QEMU).
+                   If False, list cloud sandboxes.
+            api_key: CUA API key for cloud sandboxes.
+        """
+        if local:
+            return await cls._list_local()
+        return await cls._list_cloud(api_key=api_key)
+
+    @classmethod
+    async def _list_local(cls) -> "list[SandboxInfo]":
+        import asyncio
+
+        from cua_sandbox.runtime.android_emulator import AndroidEmulatorRuntime
+        from cua_sandbox.runtime.docker import DockerRuntime
+        from cua_sandbox.runtime.lume import LumeRuntime
+        from cua_sandbox.runtime.qemu import QEMUBaremetalRuntime
+
+        async def _list_baremetal():
+            return await QEMUBaremetalRuntime().list()
+
+        async def _list_docker():
+            try:
+                return await DockerRuntime().list()
+            except Exception:
+                return []
+
+        async def _list_lume():
+            try:
+                return await LumeRuntime().list()
+            except Exception:
+                return []
+
+        async def _list_android():
+            try:
+                return await AndroidEmulatorRuntime().list()
+            except Exception:
+                return []
+
+        baremetal_vms, docker_vms, lume_vms, android_vms = await asyncio.gather(
+            _list_baremetal(), _list_docker(), _list_lume(), _list_android()
+        )
+
+        results: list[SandboxInfo] = []
+        for vm in baremetal_vms:
+            results.append(
+                SandboxInfo(
+                    name=vm["name"],
+                    status=vm["status"],
+                    source="qemu-baremetal",
+                    os_type=vm.get("os_type"),
+                    host=vm.get("host"),
+                    api_url=(
+                        f"http://{vm['host']}:{vm['api_port']}"
+                        if vm.get("host") and vm.get("api_port")
+                        else None
+                    ),
+                )
+            )
+        for vm in docker_vms:
+            results.append(
+                SandboxInfo(
+                    name=vm["name"],
+                    status=vm["status"],
+                    source=vm.get("runtime_type", "docker"),
+                    host="localhost",
+                )
+            )
+        for vm in lume_vms:
+            results.append(
+                SandboxInfo(
+                    name=vm["name"],
+                    status=vm["status"],
+                    source="lume",
+                    os_type=vm.get("os_type"),
+                    host=vm.get("ip_address"),
+                )
+            )
+        for vm in android_vms:
+            results.append(
+                SandboxInfo(
+                    name=vm["name"],
+                    status=vm["status"],
+                    source="androidemulator",
+                    os_type=vm.get("os_type"),
+                    host=vm.get("host"),
+                    api_url=(
+                        f"http://{vm['host']}:{vm['api_port']}"
+                        if vm.get("host") and vm.get("api_port")
+                        else None
+                    ),
+                )
+            )
+        return results
+
+    @classmethod
+    async def _list_cloud(cls, *, api_key: Optional[str] = None) -> "list[SandboxInfo]":
+        from cua_sandbox.transport.cloud import cloud_list_vms
+
+        vms = await cloud_list_vms(api_key=api_key)
+        results = []
+        for vm in vms:
+            raw_status = vm.get("status", "unknown")
+            results.append(
+                SandboxInfo(
+                    name=vm.get("name", ""),
+                    status=raw_status,
+                    source="cloud",
+                    os_type=vm.get("os_type") or vm.get("os"),
+                    created_at=vm.get("created_at"),
+                )
+            )
+        return results
+
+    @classmethod
+    async def get_info(
+        cls,
+        name: str,
+        *,
+        local: bool = False,
+        api_key: Optional[str] = None,
+    ) -> "SandboxInfo":
+        """Get metadata for a specific sandbox.
+
+        Args:
+            name: Sandbox name.
+            local: If True, look up in local runtimes.
+            api_key: CUA API key for cloud.
+        """
+        if local:
+            sandboxes = await cls._list_local()
+            match = next((s for s in sandboxes if s.name == name), None)
+            if match:
+                return match
+            # Fall back to state file
+            from cua_sandbox import sandbox_state
+
+            state = sandbox_state.load(name)
+            if state:
+                return SandboxInfo(
+                    name=name,
+                    status=state.get("status", "unknown"),
+                    source=state.get("runtime_type", "unknown"),
+                    os_type=state.get("os_type"),
+                    host=state.get("host"),
+                    api_url=(
+                        f"http://{state['host']}:{state['api_port']}"
+                        if state.get("host") and state.get("api_port")
+                        else None
+                    ),
+                )
+            raise ValueError(f"Local sandbox '{name}' not found.")
+        from cua_sandbox.transport.cloud import cloud_get_vm
+
+        vm = await cloud_get_vm(name, api_key=api_key)
+        return SandboxInfo(
+            name=vm.get("name", name),
+            status=vm.get("status", "unknown"),
+            source="cloud",
+            os_type=vm.get("os_type") or vm.get("os"),
+            created_at=vm.get("created_at"),
+        )
+
+    @classmethod
+    async def suspend(
+        cls,
+        name: str,
+        *,
+        local: bool = False,
+        api_key: Optional[str] = None,
+    ) -> None:
+        """Suspend a running sandbox (save state).
+
+        For local QEMU bare-metal: saves a QMP snapshot then quits the process.
+        For local Docker/QEMU-docker: pauses the container.
+        For local Lume: stops the Lume VM (Lume persists state).
+        For cloud: calls POST /v1/vms/{name}/stop.
+
+        Args:
+            name: Sandbox name.
+            local: If True, operate on a local sandbox.
+            api_key: CUA API key for cloud.
+        """
+        if local:
+            await cls._suspend_local(name)
+            return
+        from cua_sandbox.transport.cloud import cloud_vm_action
+
+        await cloud_vm_action(name, "stop", api_key=api_key)
+
+    @classmethod
+    async def _suspend_local(cls, name: str) -> None:
+        from cua_sandbox import sandbox_state
+        from cua_sandbox.runtime.lume import LumeRuntime
+
+        state = sandbox_state.load(name)
+        runtime_type = state.get("runtime_type") if state else None
+        if runtime_type == "lume":
+            await LumeRuntime().suspend(name)
+        elif runtime_type == "qemu-baremetal":
+            from cua_sandbox.runtime.qemu import QEMUBaremetalRuntime
+
+            rt = QEMUBaremetalRuntime()
+            if state:
+                rt.qmp_port = state.get("qmp_port", rt.qmp_port)
+            await rt.suspend(name)
+        elif runtime_type in ("docker", "qemu-docker"):
+            import subprocess
+
+            subprocess.run(["docker", "pause", name], capture_output=True)
+            sandbox_state.update(name, status="suspended")
+        else:
+            # Try docker pause as fallback
+            import subprocess
+
+            subprocess.run(["docker", "pause", name], capture_output=True)
+
+    @classmethod
+    async def resume(
+        cls,
+        name: str,
+        *,
+        local: bool = False,
+        api_key: Optional[str] = None,
+    ) -> "Sandbox":
+        """Resume a suspended sandbox and return a connected Sandbox.
+
+        Args:
+            name: Sandbox name.
+            local: If True, resume a local sandbox.
+            api_key: CUA API key for cloud.
+
+        Returns:
+            A connected Sandbox ready to use.
+        """
+        if local:
+            return await cls._resume_local(name)
+        from cua_sandbox.transport.cloud import cloud_vm_action
+
+        await cloud_vm_action(name, "run", api_key=api_key)
+        # Connect to the now-running cloud sandbox
+        sb = await cls._create(name=name, ephemeral=False, api_key=api_key)
+        return sb
+
+    @classmethod
+    async def _resume_local(cls, name: str) -> "Sandbox":
+        from cua_sandbox import sandbox_state
+        from cua_sandbox.transport.http import HTTPTransport
+
+        state = sandbox_state.load(name)
+        if state is None:
+            raise ValueError(f"No local sandbox named '{name}' found in state files.")
+        runtime_type = state.get("runtime_type")
+        if runtime_type == "lume":
+            from cua_sandbox.image import Image
+            from cua_sandbox.runtime.lume import LumeRuntime
+
+            image = Image.from_dict(state["image"])
+            rt = LumeRuntime()
+            rt_info = await rt.resume(image, name)
+        elif runtime_type == "qemu-baremetal":
+            from cua_sandbox.image import Image
+            from cua_sandbox.runtime.qemu import QEMUBaremetalRuntime
+
+            image = Image.from_dict(state["image"])
+            rt = QEMUBaremetalRuntime(
+                api_port=state.get("api_port", 8000),
+                vnc_display=state.get("vnc_display", 0),
+                memory_mb=state.get("memory_mb", 4096),
+                cpu_count=state.get("cpu_count", 2),
+                arch=state.get("arch", "x86_64"),
+                qmp_port=state.get("qmp_port", 4444),
+            )
+            rt_info = await rt.resume(image, name)
+        elif runtime_type in ("docker", "qemu-docker"):
+            import subprocess
+
+            subprocess.run(["docker", "unpause", name], capture_output=True)
+            api_port = state.get("api_port", 8000)
+            sandbox_state.update(name, status="running")
+            rt_info = None
+            transport = HTTPTransport(f"http://localhost:{api_port}")
+            sb = cls(transport, name=name, _ephemeral=False)
+            await sb._connect()
+            return sb
+        else:
+            raise ValueError(
+                f"Cannot resume sandbox '{name}': unknown runtime_type '{runtime_type}'"
+            )
+        transport = HTTPTransport(f"http://{rt_info.host}:{rt_info.api_port}")
+        sb = cls(transport, name=name, _ephemeral=False)
+        await sb._connect()
+        return sb
+
+    @classmethod
+    async def restart(
+        cls,
+        name: str,
+        *,
+        local: bool = False,
+        api_key: Optional[str] = None,
+    ) -> "Sandbox":
+        """Restart a sandbox (suspend then resume) and return a connected Sandbox.
+
+        Args:
+            name: Sandbox name.
+            local: If True, restart a local sandbox.
+            api_key: CUA API key for cloud.
+
+        Returns:
+            A connected Sandbox ready to use.
+        """
+        if local:
+            await cls._suspend_local(name)
+            return await cls._resume_local(name)
+        from cua_sandbox.transport.cloud import cloud_vm_action
+
+        await cloud_vm_action(name, "restart", api_key=api_key)
+        sb = await cls._create(name=name, ephemeral=False, api_key=api_key)
+        return sb
+
+    @classmethod
+    async def delete(
+        cls,
+        name: str,
+        *,
+        local: bool = False,
+        api_key: Optional[str] = None,
+    ) -> None:
+        """Permanently delete a sandbox.
+
+        For local sandboxes, stops the VM and removes the state file.
+        For cloud sandboxes, calls DELETE /v1/vms/{name}.
+
+        Args:
+            name: Sandbox name.
+            local: If True, delete a local sandbox.
+            api_key: CUA API key for cloud.
+        """
+        if local:
+            await cls._delete_local(name)
+            return
+        from cua_sandbox.transport.cloud import cloud_vm_action
+
+        await cloud_vm_action(name, "delete", api_key=api_key)
+
+    @classmethod
+    async def _delete_local(cls, name: str) -> None:
+        from cua_sandbox import sandbox_state
+
+        state = sandbox_state.load(name)
+        runtime_type = state.get("runtime_type") if state else None
+        if runtime_type == "lume":
+            from cua_sandbox.runtime.lume import LumeRuntime
+
+            await LumeRuntime().suspend(name)  # Lume stop = save state; no delete API assumed
+        elif runtime_type == "qemu-baremetal":
+            from cua_sandbox.runtime.qemu import QEMUBaremetalRuntime
+
+            await QEMUBaremetalRuntime().stop(name)  # stop() already deletes state file
+            return
+        elif runtime_type == "androidemulator":
+            from cua_sandbox.runtime.android_emulator import AndroidEmulatorRuntime
+
+            await AndroidEmulatorRuntime().stop(name)
+        elif runtime_type in ("docker", "qemu-docker"):
+            import subprocess
+
+            subprocess.run(["docker", "stop", name], capture_output=True)
+            subprocess.run(["docker", "rm", name], capture_output=True)
+        sandbox_state.delete(name)
+
     # ── Internal factory ─────────────────────────────────────────────────
 
     @classmethod
@@ -440,6 +841,44 @@ class Sandbox:
             from cua_sandbox.registry.resolve import resolve_image_kind
 
             image = resolve_image_kind(image)
+
+        # Local connect by name — read state file
+        if name and not image and local and not ws_url and not http_url:
+            from cua_sandbox import sandbox_state
+
+            state = sandbox_state.load(name)
+            if state is None:
+                raise ValueError(
+                    f"No local sandbox named '{name}' found. "
+                    f"Check ~/.cua/sandboxes/ or create it with Sandbox.create()."
+                )
+            if state.get("os_type") == "android":
+                grpc_port = state.get("grpc_port")
+                adb_serial = state.get("adb_serial") or f"emulator-{state['api_port'] - 1}"
+                sdk_root = state.get("sdk_root")
+                if grpc_port:
+                    from cua_sandbox.transport.grpc_emulator import (
+                        GRPCEmulatorTransport,
+                    )
+                    from google.protobuf import empty_pb2  # noqa: F401
+
+                    transport = GRPCEmulatorTransport(
+                        host=state["host"],
+                        grpc_port=grpc_port,
+                        serial=adb_serial,
+                        sdk_root=sdk_root,
+                    )
+                else:
+                    from cua_sandbox.transport.adb import ADBTransport
+
+                    transport = ADBTransport(serial=adb_serial, sdk_root=sdk_root)
+            else:
+                api_url = f"http://{state['host']}:{state['api_port']}"
+                transport = HTTPTransport(api_url)
+            sb = cls(transport, name=name, _ephemeral=False)
+            await sb._connect()
+            return sb
+
         if image and not runtime and local:
             # local=True with no runtime → auto-select based on image type
             runtime = _auto_runtime(image)
@@ -460,7 +899,7 @@ class Sandbox:
                 return sb
             runtime = _auto_runtime(image)
         if image and runtime:
-            sb_name = name or "cua-sandbox"
+            sb_name = name or _random_name()
             rt_info = await runtime.start(image, sb_name)
             if rt_info.environment == "android" and not rt_info.qmp_port:
                 if rt_info.grpc_port:
@@ -542,8 +981,48 @@ class Sandbox:
                 disk_gb=disk_gb,
                 region=region,
             )
+        # Write persistent state for local (non-ephemeral) sandboxes
+        if not ephemeral and rt_info and local:
+            from cua_sandbox import sandbox_state
+
+            runtime_type = type(runtime).__name__.lower().replace("runtime", "")
+            # Normalize to known types
+            _rt_map = {
+                "lume": "lume",
+                "docker": "docker",
+                "qemudocker": "qemu-docker",
+                "qemubaremetal": "qemu-baremetal",
+                "qemuwsl2": "qemu-wsl2",
+            }
+            rt_key = _rt_map.get(runtime_type, runtime_type)
+            _adb_serial = None
+            _sdk_root = None
+            if image.os_type == "android":
+                _adb_serial = f"emulator-{rt_info.api_port - 1}"
+                if hasattr(runtime, "_sdk") and runtime._sdk:
+                    _sdk_root = str(runtime._sdk)
+            sandbox_state.save(
+                sb_name,
+                runtime_type=rt_key,
+                image=image.to_dict(),
+                host=rt_info.host,
+                api_port=rt_info.api_port,
+                vnc_port=rt_info.vnc_port,
+                qmp_port=rt_info.qmp_port,
+                grpc_port=rt_info.grpc_port if hasattr(rt_info, "grpc_port") else None,
+                adb_serial=_adb_serial,
+                sdk_root=_sdk_root,
+                os_type=image.os_type,
+                status="running",
+            )
+
+        resolved_name = (rt_info.name if rt_info else None) or name
         sb = cls(
-            transport, name=name, _runtime=runtime, _runtime_info=rt_info, _ephemeral=ephemeral
+            transport,
+            name=resolved_name,
+            _runtime=runtime,
+            _runtime_info=rt_info,
+            _ephemeral=ephemeral,
         )
         await sb._connect()
         return sb
@@ -551,6 +1030,217 @@ class Sandbox:
     def __repr__(self) -> str:
         tname = type(self._transport).__name__
         return f"Sandbox(name={self.name!r}, transport={tname})"
+
+
+_ADJECTIVES = [
+    "amber",
+    "bold",
+    "calm",
+    "deft",
+    "eager",
+    "fast",
+    "glad",
+    "hazy",
+    "idle",
+    "jade",
+    "keen",
+    "lazy",
+    "mild",
+    "neat",
+    "odd",
+    "pale",
+    "quiet",
+    "rapid",
+    "soft",
+    "tidy",
+    "vast",
+    "warm",
+    "zany",
+    "agile",
+    "brave",
+    "crisp",
+    "dusty",
+    "elfin",
+    "fizzy",
+    "grim",
+    "hardy",
+    "icy",
+    "jolly",
+    "kinky",
+    "lofty",
+    "misty",
+    "noble",
+    "oaken",
+    "prim",
+    "quirky",
+    "rosy",
+    "stark",
+    "trim",
+    "umber",
+    "vivid",
+    "witty",
+    "xenial",
+    "young",
+    "zippy",
+    "arcane",
+    "brisk",
+    "chilly",
+    "dim",
+    "eerie",
+    "fleet",
+    "gnarly",
+    "hushed",
+    "inky",
+    "jumpy",
+    "knotty",
+    "lithe",
+    "murky",
+    "nifty",
+    "ornate",
+    "plush",
+    "quaint",
+    "ruddy",
+    "spry",
+    "tacit",
+    "ultra",
+    "vague",
+    "wily",
+    "exact",
+    "yare",
+    "zesty",
+    "arid",
+    "blunt",
+    "cobalt",
+    "dense",
+    "ember",
+    "faint",
+    "gaunt",
+    "hollow",
+    "irked",
+    "jaded",
+    "lunar",
+    "muted",
+    "nimble",
+    "opaque",
+    "prime",
+    "quiet",
+    "ringed",
+    "sable",
+    "tawny",
+    "upset",
+    "vexed",
+    "wooly",
+    "xenon",
+    "yonder",
+    "zingy",
+]
+_NOUNS = [
+    "bear",
+    "crane",
+    "deer",
+    "eagle",
+    "finch",
+    "gecko",
+    "hawk",
+    "ibis",
+    "jay",
+    "kite",
+    "lark",
+    "mink",
+    "newt",
+    "orca",
+    "puma",
+    "quail",
+    "raven",
+    "seal",
+    "toad",
+    "vole",
+    "wren",
+    "yak",
+    "zebra",
+    "ant",
+    "bison",
+    "carp",
+    "dingo",
+    "elk",
+    "fox",
+    "gull",
+    "heron",
+    "iguana",
+    "jackal",
+    "kudu",
+    "lemur",
+    "moose",
+    "narwhal",
+    "ocelot",
+    "parrot",
+    "quokka",
+    "rhino",
+    "swan",
+    "tapir",
+    "urial",
+    "viper",
+    "walrus",
+    "xerus",
+    "yabby",
+    "zorilla",
+    "alpaca",
+    "beetle",
+    "cobra",
+    "dugong",
+    "emu",
+    "ferret",
+    "gibbon",
+    "hyena",
+    "impala",
+    "junco",
+    "kakapo",
+    "lynx",
+    "marmot",
+    "numbat",
+    "osprey",
+    "possum",
+    "quetzal",
+    "rabbit",
+    "skunk",
+    "thrush",
+    "urubu",
+    "vulture",
+    "wombat",
+    "xenops",
+    "yaffle",
+    "zonkey",
+    "addax",
+    "booby",
+    "condor",
+    "dhole",
+    "egret",
+    "fossa",
+    "gannet",
+    "hoopoe",
+    "indri",
+    "jabiru",
+    "kookaburra",
+    "loris",
+    "magpie",
+    "nene",
+    "olm",
+    "pipit",
+    "quagga",
+    "roller",
+    "shrew",
+    "teal",
+    "uakari",
+    "vervet",
+    "weevil",
+    "xeme",
+    "yellowjacket",
+    "zorach",
+]
+
+
+def _random_name() -> str:
+    return f"{random.choice(_ADJECTIVES)}-{random.choice(_NOUNS)}"
 
 
 def _make_transport(

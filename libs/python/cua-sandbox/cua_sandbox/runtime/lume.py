@@ -8,9 +8,13 @@ from __future__ import annotations
 import asyncio
 import logging
 import subprocess
+from typing import TYPE_CHECKING
 
 import httpx
 from cua_sandbox.image import Image
+
+if TYPE_CHECKING:
+    pass
 from cua_sandbox.runtime.base import Runtime, RuntimeInfo
 from cua_sandbox.runtime.images import (
     LUME_API_PORT,
@@ -76,17 +80,80 @@ class LumeRuntime(Runtime):
                         "registry": parts[0],
                         "organization": parts[1],
                     }
-                try:
-                    await client.post(
+                # Use /lume/pull/start (async, returns 202 immediately) so we can
+                # poll progress while the pull runs in the background.
+                # Falls back to the synchronous /lume/pull if start returns 404.
+                start_resp = await client.post(
+                    f"{lume_url}/lume/pull/start",
+                    json=pull_payload,
+                    timeout=30,
+                )
+                if start_resp.status_code == 404:
+                    # Older lume without /pull/start — fall back to synchronous pull
+                    logger.info(
+                        "Lume does not support /pull/start, falling back to synchronous pull..."
+                    )
+                    pull_resp = await client.post(
                         f"{lume_url}/lume/pull",
                         json=pull_payload,
-                        timeout=600,
+                        timeout=1800,
                     )
-                except httpx.ReadError:
-                    # Lume closes the connection when pull starts asynchronously.
-                    pass
+                    if pull_resp.status_code >= 400:
+                        try:
+                            detail = pull_resp.json()
+                        except Exception:
+                            detail = pull_resp.text
+                        raise RuntimeError(f"Lume pull failed for '{name}': {detail}")
+                elif start_resp.status_code >= 400:
+                    try:
+                        detail = start_resp.json()
+                    except Exception:
+                        detail = start_resp.text
+                    raise RuntimeError(f"Lume pull/start failed for '{name}': {detail}")
+                else:
+                    # Poll /lume/vms/{name} until status leaves "pulling"
+                    logger.info(f"Pulling image for '{name}'...")
+                    pull_deadline = asyncio.get_event_loop().time() + 1800
+                    last_progress = -1.0
+                    while asyncio.get_event_loop().time() < pull_deadline:
+                        try:
+                            poll = await client.get(f"{lume_url}/lume/vms/{name}", timeout=10)
+                        except (httpx.ReadError, httpx.RemoteProtocolError, httpx.ConnectError):
+                            await asyncio.sleep(3)
+                            continue
+                        if poll.status_code == 200:
+                            data = poll.json()
+                            status = data.get("status", "")
+                            progress = data.get("downloadProgress")
+                            if progress is not None and progress != last_progress:
+                                print(f"\rPulling macOS image: {progress:.0f}%", end="", flush=True)
+                                last_progress = progress
+                            if status == "pulling":
+                                await asyncio.sleep(3)
+                                continue
+                            # Pull failed — lume surfaced an error via status
+                            if "error" in status.lower():
+                                raise RuntimeError(
+                                    f"Lume pull failed for '{name}': {data.get('message', status)}"
+                                )
+                            break
+                        elif poll.status_code >= 400:
+                            # VM not found — pull may have failed before creating the VM
+                            data = {}
+                            try:
+                                data = poll.json()
+                            except Exception:
+                                pass
+                            raise RuntimeError(
+                                f"Lume pull failed for '{name}': {data.get('message', poll.text)}"
+                            )
+                        await asyncio.sleep(3)
+                    else:
+                        raise TimeoutError(f"Lume pull for '{name}' did not complete within 1800s")
+                    if last_progress >= 0:
+                        print()  # newline after progress bar
                 logger.info(f"Running Lume VM {name}...")
-                await client.post(
+                run_resp = await client.post(
                     f"{lume_url}/lume/vms/{name}/run",
                     json={
                         "noDisplay": opts.get("no_display", True),
@@ -94,6 +161,12 @@ class LumeRuntime(Runtime):
                     },
                     timeout=120,
                 )
+                if run_resp.status_code >= 400:
+                    try:
+                        detail = run_resp.json()
+                    except Exception:
+                        detail = run_resp.text
+                    raise RuntimeError(f"Lume failed to run VM '{name}': {detail}")
 
             ip = await self._wait_for_ip(name, lume_url)
 
@@ -101,17 +174,74 @@ class LumeRuntime(Runtime):
         await self.is_ready(info)
         return info
 
-    async def _wait_for_ip(self, name: str, lume_url: str, timeout: float = 3600) -> str:
+    async def _wait_for_ip(self, name: str, lume_url: str, timeout: float = 300) -> str:
         deadline = asyncio.get_event_loop().time() + timeout
         async with httpx.AsyncClient(timeout=10) as client:
             while asyncio.get_event_loop().time() < deadline:
                 resp = await client.get(f"{lume_url}/lume/vms/{name}")
                 data = resp.json()
+                status = data.get("status", "")
+                if status == "stopped":
+                    raise RuntimeError(f"Lume VM '{name}' is stopped — failed to start")
                 ip = data.get("ip_address") or data.get("ipAddress")
                 if ip and ip != "unknown" and not ip.startswith("0.0.0.0"):
                     return ip
                 await asyncio.sleep(3)
         raise TimeoutError(f"Lume VM {name} did not get an IP within {timeout}s")
+
+    async def suspend(self, name: str) -> None:
+        """Stop (save state of) a Lume VM."""
+        lume_url = f"http://{self.lume_host}:{self.lume_port}"
+        async with httpx.AsyncClient(timeout=30) as client:
+            await client.post(f"{lume_url}/lume/vms/{name}/stop")
+
+    async def resume(self, image: "Image", name: str, **opts) -> RuntimeInfo:
+        """Start a stopped Lume VM and return its RuntimeInfo."""
+        lume_url = f"http://{self.lume_host}:{self.lume_port}"
+        async with httpx.AsyncClient(timeout=120) as client:
+            await client.post(
+                f"{lume_url}/lume/vms/{name}/run",
+                json={
+                    "noDisplay": opts.get("no_display", True),
+                    "sharedDirectories": opts.get("shared_directories", []),
+                },
+                timeout=120,
+            )
+        ip = await self._wait_for_ip(name, lume_url)
+        info = RuntimeInfo(host=ip, api_port=self.api_port, name=name)
+        await self.is_ready(info)
+        return info
+
+    async def list(self) -> list[dict]:
+        """List all Lume VMs."""
+        lume_url = f"http://{self.lume_host}:{self.lume_port}"
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                resp = await client.get(f"{lume_url}/lume/vms")
+                vms = resp.json()
+                if isinstance(vms, dict):
+                    vms = vms.get("vms", [])
+        except Exception:
+            return []
+        result = []
+        for vm in vms:
+            raw = vm.get("status", "").lower()
+            if raw == "running":
+                status = "running"
+            elif raw in ("stopped", "stop"):
+                status = "suspended"
+            else:
+                status = raw
+            result.append(
+                {
+                    "name": vm.get("name", ""),
+                    "status": status,
+                    "runtime_type": "lume",
+                    "os_type": "macos",
+                    "ip_address": vm.get("ip_address") or vm.get("ipAddress"),
+                }
+            )
+        return result
 
     async def stop(self, name: str) -> None:
         lume_url = f"http://{self.lume_host}:{self.lume_port}"

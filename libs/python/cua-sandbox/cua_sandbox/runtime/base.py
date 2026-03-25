@@ -4,9 +4,12 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 from cua_sandbox.image import Image
+
+if TYPE_CHECKING:
+    pass
 
 
 @dataclass
@@ -48,3 +51,18 @@ class Runtime(ABC):
     @abstractmethod
     async def is_ready(self, info: RuntimeInfo, timeout: float = 120) -> bool:
         """Wait until the computer-server inside is reachable."""
+
+    async def suspend(self, name: str) -> None:
+        """Suspend (pause/save state of) a running VM."""
+        raise NotImplementedError(f"{type(self).__name__} does not support suspend()")
+
+    async def resume(self, image: "Image", name: str, **opts) -> RuntimeInfo:
+        """Resume a suspended VM and return its RuntimeInfo."""
+        raise NotImplementedError(f"{type(self).__name__} does not support resume()")
+
+    async def list(self) -> list[dict]:
+        """List known VMs managed by this runtime.
+
+        Returns a list of dicts with at minimum: name, status.
+        """
+        raise NotImplementedError(f"{type(self).__name__} does not support list()")

@@ -112,6 +112,27 @@ class CloudTransport(Transport):
         ) as client:
             await client.delete(f"/v1/vms/{self._name}")
 
+    async def suspend_vm(self) -> None:
+        """Stop (suspend) the cloud VM."""
+        if not self._name:
+            return
+        assert self._api_client
+        await self._api_client.post(f"/v1/vms/{self._name}/stop")
+
+    async def resume_vm(self) -> None:
+        """Start (resume) the cloud VM."""
+        if not self._name:
+            return
+        assert self._api_client
+        await self._api_client.post(f"/v1/vms/{self._name}/run")
+
+    async def restart_vm(self) -> None:
+        """Restart the cloud VM."""
+        if not self._name:
+            return
+        assert self._api_client
+        await self._api_client.post(f"/v1/vms/{self._name}/restart")
+
     # ── Delegated methods ───────────────────────────────────────────────
 
     async def send(self, action: str, **params: Any) -> Any:
@@ -285,3 +306,69 @@ class CloudTransport(Transport):
         if not host:
             raise ValueError(f"Cannot resolve computer-server endpoint from VM info: {vm_info}")
         return f"http://{host}:8000"
+
+
+async def cloud_list_vms(
+    *, api_key: Optional[str] = None, base_url: Optional[str] = None
+) -> list[dict]:
+    """List all cloud VMs. Returns raw VM dicts from the API."""
+    from cua_sandbox._config import get_api_key, get_base_url
+
+    key = get_api_key(api_key)
+    if not key:
+        raise ValueError("No CUA API key. Set CUA_API_KEY or run cua.login().")
+    url = base_url or get_base_url()
+    async with httpx.AsyncClient(
+        base_url=url,
+        headers={"Authorization": f"Bearer {key}"},
+        timeout=30.0,
+    ) as client:
+        resp = await client.get("/v1/vms")
+        resp.raise_for_status()
+        data = resp.json()
+        return data if isinstance(data, list) else data.get("vms", [])
+
+
+async def cloud_get_vm(
+    name: str, *, api_key: Optional[str] = None, base_url: Optional[str] = None
+) -> dict:
+    """Get info for a single cloud VM by name."""
+    from cua_sandbox._config import get_api_key, get_base_url
+
+    key = get_api_key(api_key)
+    if not key:
+        raise ValueError("No CUA API key. Set CUA_API_KEY or run cua.login().")
+    url = base_url or get_base_url()
+    async with httpx.AsyncClient(
+        base_url=url,
+        headers={"Authorization": f"Bearer {key}"},
+        timeout=30.0,
+    ) as client:
+        resp = await client.get(f"/v1/vms/{name}")
+        resp.raise_for_status()
+        return resp.json()
+
+
+async def cloud_vm_action(
+    name: str,
+    action: str,
+    *,
+    api_key: Optional[str] = None,
+    base_url: Optional[str] = None,
+) -> None:
+    """POST /v1/vms/{name}/{action}. action is 'stop', 'run', 'restart', or 'delete'."""
+    from cua_sandbox._config import get_api_key, get_base_url
+
+    key = get_api_key(api_key)
+    if not key:
+        raise ValueError("No CUA API key. Set CUA_API_KEY or run cua.login().")
+    url = base_url or get_base_url()
+    async with httpx.AsyncClient(
+        base_url=url,
+        headers={"Authorization": f"Bearer {key}"},
+        timeout=30.0,
+    ) as client:
+        if action == "delete":
+            await client.delete(f"/v1/vms/{name}")
+        else:
+            await client.post(f"/v1/vms/{name}/{action}")

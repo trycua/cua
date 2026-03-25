@@ -611,6 +611,43 @@ class AndroidEmulatorRuntime(Runtime):
 
         raise TimeoutError(f"Android emulator {info.name} did not boot within {timeout}s")
 
+    async def list(self) -> list[dict]:
+        """List known Android emulator sandboxes from state files, checking if alive."""
+        import subprocess
+
+        from cua_sandbox import sandbox_state
+
+        states = [s for s in sandbox_state.list_all() if s.get("runtime_type") == "androidemulator"]
+        result = []
+        for s in states:
+            name = s["name"]
+            status = s.get("status", "unknown")
+            if status == "running":
+                try:
+                    alive = (
+                        subprocess.run(
+                            ["pgrep", "-f", f"qemu.*-avd {name}"],
+                            capture_output=True,
+                        ).returncode
+                        == 0
+                    )
+                    if not alive:
+                        status = "stopped"
+                        sandbox_state.update(name, status="stopped")
+                except FileNotFoundError:
+                    pass
+            result.append(
+                {
+                    "name": name,
+                    "status": status,
+                    "runtime_type": "androidemulator",
+                    "host": s.get("host"),
+                    "api_port": s.get("api_port"),
+                    "os_type": s.get("os_type"),
+                }
+            )
+        return result
+
     async def stop(self, name: str) -> None:
         if self._proc and self._proc.poll() is None:
             self._proc.terminate()

@@ -5,7 +5,10 @@ from __future__ import annotations
 import asyncio
 import logging
 import subprocess
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
+
+if TYPE_CHECKING:
+    from cua_sandbox.image import Image
 
 import httpx
 from cua_sandbox.image import Image
@@ -18,6 +21,21 @@ from cua_sandbox.runtime.images import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _find_free_port(start: int = 8000, end: int = 9000) -> int:
+    """Return the first TCP port in [start, end) not currently bound."""
+    import socket
+
+    for port in range(start, end):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            try:
+                s.bind(("", port))
+                return port
+            except OSError:
+                continue
+    raise RuntimeError(f"No free port found in range {start}–{end}")
 
 
 def _has_docker() -> bool:
@@ -102,16 +120,23 @@ class DockerRuntime(Runtime):
         # Remove existing container with same name
         subprocess.run(["docker", "rm", "-f", name], capture_output=True)
 
+        api_port = _find_free_port(self.api_port)
+        vnc_port = _find_free_port(api_port + 1)
+
         cmd = [
             "docker",
             "run",
             "-d",
             "--name",
             name,
+            "--label",
+            "cua.sandbox=true",
+            "--label",
+            f"cua.sandbox.name={name}",
             "-p",
-            f"{self.api_port}:{internal_api}",
+            f"{api_port}:{internal_api}",
             "-p",
-            f"{self.vnc_port}:{internal_vnc}",
+            f"{vnc_port}:{internal_vnc}",
             *extra_flags,
             docker_image,
         ]
@@ -123,8 +148,8 @@ class DockerRuntime(Runtime):
         container_id = result.stdout.strip()[:12]
         info = RuntimeInfo(
             host="localhost",
-            api_port=self.api_port,
-            vnc_port=self.vnc_port,
+            api_port=api_port,
+            vnc_port=vnc_port,
             container_id=container_id,
             name=name,
         )
@@ -135,6 +160,77 @@ class DockerRuntime(Runtime):
         subprocess.run(["docker", "stop", name], capture_output=True)
         if self.ephemeral:
             subprocess.run(["docker", "rm", name], capture_output=True)
+
+    async def suspend(self, name: str) -> None:
+        """Pause a running Docker container."""
+        subprocess.run(["docker", "pause", name], capture_output=True)
+
+    async def resume(self, image: "Image", name: str, **opts) -> RuntimeInfo:
+        """Unpause a paused Docker container and return its RuntimeInfo."""
+        subprocess.run(["docker", "unpause", name], capture_output=True)
+        # Inspect to get mapped ports
+        result = subprocess.run(
+            [
+                "docker",
+                "inspect",
+                "--format",
+                '{{(index (index .NetworkSettings.Ports "8000/tcp") 0).HostPort}}',
+                name,
+            ],
+            capture_output=True,
+            text=True,
+        )
+        api_port = int(result.stdout.strip()) if result.stdout.strip().isdigit() else self.api_port
+        result2 = subprocess.run(
+            [
+                "docker",
+                "inspect",
+                "--format",
+                '{{(index (index .NetworkSettings.Ports "5900/tcp") 0).HostPort}}',
+                name,
+            ],
+            capture_output=True,
+            text=True,
+        )
+        vnc_port = (
+            int(result2.stdout.strip()) if result2.stdout.strip().isdigit() else self.vnc_port
+        )
+        info = RuntimeInfo(host="localhost", api_port=api_port, vnc_port=vnc_port, name=name)
+        await self.is_ready(info)
+        return info
+
+    async def list(self) -> list[dict]:
+        """List Docker containers with the cua.sandbox=true label."""
+        result = subprocess.run(
+            [
+                "docker",
+                "ps",
+                "-a",
+                "--filter",
+                "label=cua.sandbox=true",
+                "--format",
+                "{{.Names}}\t{{.Status}}",
+            ],
+            capture_output=True,
+            text=True,
+        )
+        rows = []
+        for line in result.stdout.strip().splitlines():
+            if not line:
+                continue
+            parts = line.split("\t", 1)
+            name_col = parts[0].strip()
+            raw_status = parts[1].strip() if len(parts) > 1 else ""
+            if raw_status.startswith("Up"):
+                status = "running"
+            elif raw_status.startswith("Paused") or "(Paused)" in raw_status:
+                status = "suspended"
+            elif raw_status.startswith("Exited"):
+                status = "stopped"
+            else:
+                status = raw_status.lower()
+            rows.append({"name": name_col, "status": status, "runtime_type": "docker"})
+        return rows
 
     async def is_ready(self, info: RuntimeInfo, timeout: float = 120) -> bool:
         url = f"http://{info.host}:{info.api_port}/status"

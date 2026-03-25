@@ -8,12 +8,16 @@ Two modes:
 from __future__ import annotations
 
 import asyncio
+import json as _json
 import logging
 import platform as _plat
 import shutil
 import subprocess
 from pathlib import Path
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
+
+if TYPE_CHECKING:
+    from cua_sandbox.image import Image
 
 import httpx
 from cua_sandbox.image import Image
@@ -29,6 +33,34 @@ logger = logging.getLogger(__name__)
 # ── Storage directory for QEMU disk images ──────────────────────────────────
 
 QEMU_STORAGE_ROOT = Path.home() / ".cua" / "cua-sandbox" / "qemu-storage"
+
+
+async def _qmp_command(
+    host: str, port: int, command: str, arguments: Optional[dict] = None
+) -> dict:
+    """Send a single QMP command and return the response."""
+    reader, writer = await asyncio.open_connection(host, port)
+    try:
+        # Read greeting
+        await asyncio.wait_for(reader.readline(), timeout=5)
+        # Negotiate capabilities
+        writer.write(b'{"execute":"qmp_capabilities"}\n')
+        await writer.drain()
+        await asyncio.wait_for(reader.readline(), timeout=5)
+        # Send command
+        msg: dict = {"execute": command}
+        if arguments:
+            msg["arguments"] = arguments
+        writer.write((_json.dumps(msg) + "\n").encode())
+        await writer.drain()
+        raw = await asyncio.wait_for(reader.readline(), timeout=30)
+        return _json.loads(raw)
+    finally:
+        writer.close()
+        try:
+            await writer.wait_closed()
+        except Exception:
+            pass
 
 
 class QEMUDockerRuntime(DockerRuntime):
@@ -95,6 +127,29 @@ class QEMUDockerRuntime(DockerRuntime):
         Windows VMs take longer to boot (3-5 min), so default timeout is 300s.
         """
         return await super().is_ready(info, timeout=timeout)
+
+    async def suspend(self, name: str) -> None:
+        """Pause the Docker container running this QEMU VM."""
+        subprocess.run(["docker", "pause", name], capture_output=True)
+
+    async def resume(self, image: "Image", name: str, **opts) -> RuntimeInfo:
+        """Unpause the Docker container and return RuntimeInfo."""
+        subprocess.run(["docker", "unpause", name], capture_output=True)
+        result = subprocess.run(
+            [
+                "docker",
+                "inspect",
+                "--format",
+                '{{(index (index .NetworkSettings.Ports "8000/tcp") 0).HostPort}}',
+                name,
+            ],
+            capture_output=True,
+            text=True,
+        )
+        api_port = int(result.stdout.strip()) if result.stdout.strip().isdigit() else self.api_port
+        info = RuntimeInfo(host="localhost", api_port=api_port, vnc_port=self.vnc_port, name=name)
+        await self.is_ready(info)
+        return info
 
 
 class QEMUBaremetalRuntime(Runtime):
@@ -184,10 +239,12 @@ class QEMUBaremetalRuntime(Runtime):
 
         self._session_disk = Path(disk_path) if ephemeral else None
 
+        from cua_sandbox.runtime.docker import _find_free_port
+
         memory = opts.get("memory_mb", self.memory_mb)
         cpus = opts.get("cpu_count", self.cpu_count)
         vnc_display = opts.get("vnc_display", self.vnc_display)
-        hostfwd_port = opts.get("api_port", self.api_port)
+        hostfwd_port = opts.get("api_port") or _find_free_port(self.api_port)
         enable_kvm = opts.get("enable_kvm", True)
 
         # Detect guest server port from transport hint
@@ -293,9 +350,8 @@ class QEMUBaremetalRuntime(Runtime):
                 else:
                     cmd += ["-accel", "whpx"]
 
-            # QMP socket for direct VM control (when use_qmp_transport is set)
-            if self.use_qmp_transport:
-                cmd += ["-qmp", f"tcp:127.0.0.1:{self.qmp_port},server,nowait"]
+            # QMP socket — always enabled for VM management (suspend/resume)
+            cmd += ["-qmp", f"tcp:127.0.0.1:{self.qmp_port},server,nowait"]
 
         # Attach ISO as CD-ROM if booting from an ISO file
         if self._iso_path:
@@ -337,6 +393,27 @@ class QEMUBaremetalRuntime(Runtime):
             await self._send_boot_key(info)
 
         await self.is_ready(info)
+
+        if not ephemeral:
+            from cua_sandbox import sandbox_state
+
+            sandbox_state.save(
+                name,
+                runtime_type="qemu-baremetal",
+                image=image.to_dict(),
+                host="localhost",
+                api_port=hostfwd_port,
+                vnc_port=5900 + vnc_display,
+                qmp_port=self.qmp_port,
+                disk_path=str(disk_path) if disk_path else None,
+                os_type=image.os_type,
+                vnc_display=vnc_display,
+                memory_mb=memory,
+                cpu_count=cpus,
+                arch=self.arch,
+                status="running",
+            )
+
         return info
 
     async def _send_boot_key(self, info: RuntimeInfo) -> None:
@@ -465,7 +542,9 @@ class QEMUBaremetalRuntime(Runtime):
             # Fallback: find by name
             try:
                 if shutil.which("pkill"):
+                    # Match both standard QEMU VMs (-name {name}) and Android emulators (-avd {name})
                     subprocess.run(["pkill", "-f", f"qemu.*-name {name}"], capture_output=True)
+                    subprocess.run(["pkill", "-f", f"qemu.*-avd {name}"], capture_output=True)
                 else:
                     subprocess.run(
                         ["taskkill", "/F", "/FI", f"WINDOWTITLE eq {name}*"],
@@ -482,6 +561,10 @@ class QEMUBaremetalRuntime(Runtime):
                 logger.info(f"Removed session disk: {session_disk}")
             except OSError:
                 pass
+
+        from cua_sandbox import sandbox_state
+
+        sandbox_state.delete(name)
 
     async def is_ready(self, info: RuntimeInfo, timeout: float = 120) -> bool:
         if info.qmp_port and not info.agent_type:
@@ -507,6 +590,157 @@ class QEMUBaremetalRuntime(Runtime):
                     pass
                 await asyncio.sleep(3)
         raise TimeoutError(f"Bare-metal QEMU VM {info.name} not ready after {timeout}s")
+
+    async def suspend(self, name: str) -> None:
+        """Save VM state via QMP savevm then quit QEMU."""
+        from cua_sandbox import sandbox_state
+
+        state = sandbox_state.load(name)
+        qmp_port = state["qmp_port"] if state else self.qmp_port
+        try:
+            await _qmp_command("localhost", qmp_port, "stop")
+            await _qmp_command("localhost", qmp_port, "savevm", {"name": "cua-snapshot"})
+            await _qmp_command("localhost", qmp_port, "quit")
+        except Exception as e:
+            logger.warning(f"QMP savevm failed for {name}: {e}")
+            raise
+        sandbox_state.update(name, status="suspended")
+
+    async def resume(self, image: "Image", name: str, **opts) -> RuntimeInfo:
+        """Relaunch QEMU with -loadvm to restore saved state."""
+        from cua_sandbox import sandbox_state
+
+        state = sandbox_state.load(name)
+        if state is None:
+            raise ValueError(f"No state file found for sandbox '{name}'. Cannot resume.")
+
+        # Reconstruct runtime params from state
+        disk_path = state.get("disk_path")
+        if not disk_path:
+            raise ValueError(
+                f"State for '{name}' has no disk_path — cannot resume bare-metal QEMU."
+            )
+
+        api_port = state.get("api_port", self.api_port)
+        vnc_display = state.get("vnc_display", self.vnc_display)
+        memory = state.get("memory_mb", self.memory_mb)
+        cpus = state.get("cpu_count", self.cpu_count)
+        qmp_port = state.get("qmp_port", self.qmp_port)
+
+        # Rebuild minimal QEMU command with -loadvm
+        cmd = [
+            self._qemu_bin(),
+            "-name",
+            name,
+            "-machine",
+            "q35,smm=off",
+            "-m",
+            str(memory),
+            "-smp",
+            str(cpus),
+            "-cpu",
+            "qemu64,+ssse3,+sse4.1,+sse4.2,+popcnt",
+        ]
+
+        import platform as _platform
+
+        disk_ext = Path(disk_path).suffix.lower()
+        disk_fmt = {".qcow2": "qcow2", ".vhdx": "vhdx", ".raw": "raw", ".img": "raw"}.get(
+            disk_ext, "raw"
+        )
+        guest_port = 8000
+
+        cmd += [
+            "-drive",
+            f"file={disk_path},format={disk_fmt},if=virtio",
+            "-netdev",
+            f"user,id=net0,restrict=on,hostfwd=tcp:127.0.0.1:{api_port}-:{guest_port}",
+            "-device",
+            "virtio-net-pci,netdev=net0,mac=52:55:00:d1:55:01",
+            "-vnc",
+            f":{vnc_display}",
+            "-qmp",
+            f"tcp:127.0.0.1:{qmp_port},server,nowait",
+            "-loadvm",
+            "cua-snapshot",
+        ]
+
+        if _platform.system() != "Windows":
+            cmd.append("-daemonize")
+
+        # Acceleration
+        if _platform.system() == "Darwin":
+            host_arm = _platform.machine() in ("arm64", "aarch64")
+            if host_arm and self.arch == "x86_64":
+                cmd += ["-accel", "tcg"]
+            else:
+                cmd += ["-accel", "hvf"]
+        elif _platform.system() != "Windows":
+            cmd.append("-enable-kvm")
+
+        logger.info(f"Resuming bare-metal QEMU from snapshot: {' '.join(cmd)}")
+        if "-daemonize" in cmd:
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            if result.returncode != 0:
+                raise RuntimeError(f"QEMU resume failed: {result.stderr}")
+        else:
+            proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+            self._processes[name] = proc
+            import time
+
+            time.sleep(2)
+            if proc.poll() is not None:
+                stderr = proc.stderr.read().decode() if proc.stderr else ""
+                raise RuntimeError(f"QEMU resume failed (exit {proc.returncode}): {stderr}")
+
+        info = RuntimeInfo(
+            host="localhost",
+            api_port=api_port,
+            vnc_port=5900 + vnc_display,
+            name=name,
+        )
+        await self.is_ready(info)
+        sandbox_state.update(name, status="running")
+        return info
+
+    async def list(self) -> list[dict]:
+        """List known bare-metal QEMU sandboxes from state files, checking if alive."""
+        from cua_sandbox import sandbox_state
+
+        states = [s for s in sandbox_state.list_all() if s.get("runtime_type") == "qemu-baremetal"]
+        result = []
+        for s in states:
+            name = s["name"]
+            status = s.get("status", "unknown")
+            # Verify QEMU process is still running (standard VMs use -name, Android uses -avd)
+            if status == "running":
+                try:
+                    alive = (
+                        subprocess.run(
+                            ["pgrep", "-f", f"qemu.*-name {name}"], capture_output=True
+                        ).returncode
+                        == 0
+                        or subprocess.run(
+                            ["pgrep", "-f", f"qemu.*-avd {name}"], capture_output=True
+                        ).returncode
+                        == 0
+                    )
+                    if not alive:
+                        status = "stopped"
+                        sandbox_state.update(name, status="stopped")
+                except FileNotFoundError:
+                    pass
+            result.append(
+                {
+                    "name": name,
+                    "status": status,
+                    "runtime_type": "qemu-baremetal",
+                    "os_type": s.get("os_type"),
+                    "host": s.get("host"),
+                    "api_port": s.get("api_port"),
+                }
+            )
+        return result
 
     async def _is_ready_qmp(self, info: RuntimeInfo, timeout: float = 120) -> bool:
         """Wait until QMP socket is responsive (for VMs without computer-server)."""

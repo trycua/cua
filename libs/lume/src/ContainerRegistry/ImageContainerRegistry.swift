@@ -205,6 +205,11 @@ actor ProgressTracker {
     private var progressLogger = ProgressLogger(threshold: 0.01)
     private var totalFiles: Int = 0
     private var completedFiles: Int = 0
+    var onProgress: (@Sendable (Double) -> Void)? = nil
+
+    func setProgressHandler(_ handler: @escaping @Sendable (Double) -> Void) {
+        onProgress = handler
+    }
 
     // Download speed tracking
     private var startTime: Date = Date()
@@ -261,6 +266,7 @@ actor ProgressTracker {
             let overallAvgSpeed = totalElapsed > 0 ? Double(downloadedBytes) / totalElapsed : 0
 
             let progress = totalBytes > 0 ? Double(downloadedBytes) / Double(totalBytes) : 0.0
+            onProgress?(progress * 100.0)
             logSpeedProgress(
                 current: progress,
                 currentSpeed: currentSpeed,
@@ -770,6 +776,10 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
     ) async throws -> VMDirectory {
         guard !image.isEmpty else {
             throw ValidationError("Image name cannot be empty")
+        }
+
+        if let handler = progressHandler {
+            await downloadProgress.setProgressHandler(handler)
         }
 
         let home = Home()
@@ -4671,6 +4681,12 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
         let isChunked = diskLayers.count > 1
             || (diskLayers.count == 1 && diskLayers[0].annotations?[OCIAnnotation.partNumber] != nil)
 
+        // Set total download size so progress % is meaningful
+        let allLayers = manifest.layers + (manifest.config.map { [$0] } ?? [])
+        let totalDownloadBytes = allLayers.reduce(Int64(0)) { $0 + Int64($1.size) }
+        let totalFiles = allLayers.filter { $0.mediaType != "application/vnd.oci.empty.v1+json" }.count
+        await downloadProgress.setTotal(totalDownloadBytes, files: totalFiles)
+
         // ── Download config & aux (shared by both paths) ─────────────────────
         var configData: Data?
         if let configLayer = manifest.config {
@@ -4709,6 +4725,22 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
         // ── Process config ────────────────────────────────────────────────────
         var vmConfig: VMConfig?
         var diskUncompressedSize: UInt64?
+
+        if let data = configData {
+            Logger.info("Config layer raw JSON: \(String(data: data, encoding: .utf8) ?? "<not utf8>")")
+        }
+        Logger.info("Manifest layers: \(manifest.layers.map { "\($0.mediaType) size=\($0.size)" }.joined(separator: ", "))")
+        Logger.info("Manifest config mediaType: \(manifest.config?.mediaType ?? "nil")")
+
+        if let data = configData {
+            do {
+                let ociCfg = try JSONDecoder().decode(LumeOCIConfig.self, from: data)
+                Logger.info("Decoded LumeOCIConfig: os=\(ociCfg.os) hardwareModel=\(ociCfg.hardwareModel.prefix(20))...")
+                _ = ociCfg  // used below in the outer block
+            } catch {
+                Logger.info("WARNING: Failed to decode LumeOCIConfig: \(error)")
+            }
+        }
 
         if let data = configData,
             let ociCfg = try? JSONDecoder().decode(LumeOCIConfig.self, from: data)
@@ -4758,6 +4790,9 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
             encoder.outputFormatting = .prettyPrinted
             let data = try encoder.encode(cfg)
             try data.write(to: configDest)
+            Logger.info("Wrote config.json")
+        } else {
+            Logger.info("WARNING: vmConfig is nil, skipping config.json write")
         }
 
         // ── Process nvram ────────────────────────────────────────────────────
@@ -4765,6 +4800,8 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
             let nvramDest = destination.appendingPathComponent("nvram.bin")
             try FileManager.default.copyItem(at: nvramPath, to: nvramDest)
             Logger.info("Saved nvram.bin")
+        } else {
+            Logger.info("WARNING: nvramBlobPath is nil, skipping nvram.bin write")
         }
 
         // ── Process disk ──────────────────────────────────────────────────────

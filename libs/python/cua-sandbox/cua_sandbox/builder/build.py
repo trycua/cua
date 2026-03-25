@@ -17,19 +17,17 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import platform as _plat
 from pathlib import Path
 from typing import Optional
 
-from cua_sandbox.image import Image
 from cua_sandbox.builder.overlay import (
-    IMAGES_DIR,
     base_image_path,
     create_overlay,
     layers_hash,
     session_overlay_path,
     user_image_path,
 )
+from cua_sandbox.image import Image
 
 logger = logging.getLogger(__name__)
 
@@ -104,7 +102,7 @@ Write-Host "CUA Computer Server setup complete"
 '''
 
 # Linux equivalent
-SETUP_COMPUTER_SERVER_SH = r'''#!/bin/bash
+SETUP_COMPUTER_SERVER_SH = r"""#!/bin/bash
 set -e
 
 # Install uv
@@ -146,7 +144,7 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now cua-computer-server
 
 echo "CUA Computer Server setup complete"
-'''
+"""
 
 
 async def ensure_base_image(
@@ -163,9 +161,20 @@ async def ensure_base_image(
     """
     base_path = base_image_path(os_type, version)
 
+    _MIN_BASE_SIZE = {
+        "windows": 1 * 1024 * 1024 * 1024,  # 1 GB — incomplete install guard
+        "linux": 100 * 1024 * 1024,  # 100 MB
+    }
     if base_path.exists() and not force:
-        logger.info(f"Using cached base image: {base_path}")
-        return base_path
+        min_size = _MIN_BASE_SIZE.get(os_type, 0)
+        if base_path.stat().st_size >= min_size:
+            logger.info(f"Using cached base image: {base_path}")
+            return base_path
+        logger.warning(
+            f"Cached base image {base_path} is too small "
+            f"({base_path.stat().st_size} bytes < {min_size}), rebuilding."
+        )
+        base_path.unlink()
 
     logger.info(f"Building base image for {os_type} {version}...")
 
@@ -193,25 +202,19 @@ async def _build_windows_base(
     work_dir = base_path.parent / "build"
 
     # Phase 1: Unattended Windows install
-    raw_disk = build_image(config, windows_iso=windows_iso, work_dir=work_dir, product_key=product_key)
+    raw_disk = build_image(
+        config, windows_iso=windows_iso, work_dir=work_dir, product_key=product_key
+    )
 
     # Phase 2: Boot and install computer-server
     logger.info("Installing computer-server into base image...")
-    from cua_sandbox.builder.executor import LayerExecutor
-    from cua_sandbox.runtime.qemu import QEMUBaremetalRuntime
-
     # Boot the raw disk to install computer-server
     # First we need to boot without expecting computer-server (it's not installed yet)
     # We use a temporary overlay so we can retry if needed
     import shutil
+
     temp_disk = work_dir / "temp-boot.qcow2"
     shutil.copy2(raw_disk, temp_disk)
-
-    runtime = QEMUBaremetalRuntime(
-        api_port=18099,
-        memory_mb=config.ram_mb,
-        cpu_count=config.cpu,
-    )
 
     # Boot and wait for Windows to be accessible (but not computer-server — it's not installed)
     # We need to wait for Windows to boot then run the setup script
@@ -269,7 +272,6 @@ async def build_user_image(
 
     # Boot the overlay and execute layers
     from cua_sandbox.runtime.qemu import QEMUBaremetalRuntime
-    from cua_sandbox.runtime.base import RuntimeInfo
 
     runtime = QEMUBaremetalRuntime(api_port=18098, memory_mb=8192, cpu_count=4)
 
@@ -279,13 +281,16 @@ async def build_user_image(
 
         # Execute layers via computer-server
         from cua_sandbox.builder.executor import LayerExecutor
+
         executor = LayerExecutor(f"http://{info.host}:{info.api_port}")
         await executor.execute_layers(list(image._layers))
 
         # Shut down cleanly
         logger.info("Layers applied, shutting down build VM...")
         try:
-            await executor.run_command("shutdown /s /t 5" if image.os_type == "windows" else "sudo shutdown -h now")
+            await executor.run_command(
+                "shutdown /s /t 5" if image.os_type == "windows" else "sudo shutdown -h now"
+            )
         except Exception:
             pass
         await asyncio.sleep(10)
@@ -296,13 +301,18 @@ async def build_user_image(
 
     # Save layer metadata
     meta_path = user_path.with_suffix(".json")
-    meta_path.write_text(json.dumps({
-        "os_type": image.os_type,
-        "version": image.version,
-        "layers": list(image._layers),
-        "base": str(base_path),
-        "hash": lhash,
-    }, indent=2))
+    meta_path.write_text(
+        json.dumps(
+            {
+                "os_type": image.os_type,
+                "version": image.version,
+                "layers": list(image._layers),
+                "base": str(base_path),
+                "hash": lhash,
+            },
+            indent=2,
+        )
+    )
 
     return user_path
 

@@ -414,13 +414,23 @@ async def _main() -> None:
         sandboxes = []
         all_stats = []
         provision_times = []
-        for name in names:
-            sb = await Sandbox.connect(name=name)
-            st = SandboxStats(name=name, provision_time=0.0)
+
+        async def _reconnect(name: str):
+            try:
+                sb = await Sandbox.connect(name=name)
+                print(f"  [ok] {name}", flush=True)
+                return sb
+            except Exception as e:
+                print(f"  [!] {name}: {e}", flush=True)
+                return None
+
+        results = await asyncio.gather(*[_reconnect(n) for n in names])
+        for name, sb in zip(names, results):
+            if sb is None:
+                continue
             sandboxes.append(sb)
-            all_stats.append(st)
+            all_stats.append(SandboxStats(name=name, provision_time=0.0))
             provision_times.append(0.0)
-            print(f"  {name}")
 
         stop_event = asyncio.Event()
         t_start = time.monotonic()

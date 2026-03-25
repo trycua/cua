@@ -177,8 +177,8 @@ await sb.keyboard.press("ctrl+c")
 For long-running workflows, create a named sandbox instead of ephemeral:
 
 ```python
-# Launch via CLI
-# cua sb launch ubuntu:24.04 --local --json
+# Launch via CLI: cua sb launch ubuntu:24.04 --local --json
+# → {"name": "my-sandbox-name", "status": "ready"}
 
 # Connect from Python
 from cua_sandbox import Sandbox

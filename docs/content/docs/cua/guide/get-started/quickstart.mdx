@@ -113,7 +113,7 @@ asyncio.run(main())
 While it's running, open the desktop in your browser:
 
 ```bash
-cua vnc my-agent-sandbox
+cua sb vnc my-agent-sandbox
 ```
 
 ## 5. Clean Up
@@ -121,8 +121,8 @@ cua vnc my-agent-sandbox
 Ephemeral sandboxes delete themselves. For persistent sandboxes:
 
 ```bash
-cua list                        # show all running sandboxes
-cua delete my-agent-sandbox     # delete when done
+cua sb ls                           # show all running sandboxes
+cua sb delete my-agent-sandbox      # delete when done
 ```
 
 ## Next Steps

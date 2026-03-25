@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import subprocess
+import os
 from typing import TYPE_CHECKING
 
 import httpx
@@ -26,12 +26,22 @@ from cua_sandbox.runtime.images import (
 logger = logging.getLogger(__name__)
 
 
+def _lume_path() -> str | None:
+    """Return the path to the lume binary, or None if not found."""
+    # Check PATH first
+    import shutil
+
+    if shutil.which("lume"):
+        return "lume"
+    # Common install location not always in PATH (e.g. ~/.local/bin)
+    local_bin = os.path.expanduser("~/.local/bin/lume")
+    if os.path.isfile(local_bin) and os.access(local_bin, os.X_OK):
+        return local_bin
+    return None
+
+
 def _has_lume() -> bool:
-    try:
-        subprocess.run(["lume", "--version"], capture_output=True, check=True)
-        return True
-    except (subprocess.SubprocessError, FileNotFoundError):
-        return False
+    return _lume_path() is not None
 
 
 class LumeRuntime(Runtime):

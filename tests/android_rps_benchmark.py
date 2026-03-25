@@ -15,6 +15,7 @@ import asyncio
 import builtins
 import functools
 import math
+import os
 import statistics
 import time
 from dataclasses import dataclass, field
@@ -92,20 +93,22 @@ async def _provision(image: Image, idx: int) -> tuple[Sandbox, SandboxStats]:
 
 
 async def _provision_fleet(
-    image: Image, n: int
+    image: Image, n: int, parallel: int = 2
 ) -> tuple[list[Sandbox], list[SandboxStats], list[float]]:
-    tasks = [_provision(image, i) for i in range(n)]
-    raw = await asyncio.gather(*tasks, return_exceptions=True)
-
     sandboxes, stats, provision_times = [], [], []
-    for i, res in enumerate(raw):
-        if isinstance(res, Exception):
-            print(f"  [!] sandbox {i + 1} failed to provision: {res}")
-        else:
-            sb, st = res
-            sandboxes.append(sb)
-            stats.append(st)
-            provision_times.append(st.provision_time)
+
+    for batch_start in range(0, n, parallel):
+        batch = range(batch_start, min(batch_start + parallel, n))
+        tasks = [_provision(image, i) for i in batch]
+        raw = await asyncio.gather(*tasks, return_exceptions=True)
+        for i, res in zip(batch, raw):
+            if isinstance(res, Exception):
+                print(f"  [!] sandbox {i + 1} failed to provision: {res}")
+            else:
+                sb, st = res
+                sandboxes.append(sb)
+                stats.append(st)
+                provision_times.append(st.provision_time)
 
     return sandboxes, stats, provision_times
 
@@ -224,11 +227,14 @@ async def run_benchmark(
     duration: float,
     action: str,
     image: Image,
+    parallel: int = 2,
 ) -> BenchmarkResult:
 
     # ── Provision ──────────────────────────────────────────────────────────
     print(f"\n── Provisioning {n_sandboxes} sandbox(es) ──")
-    sandboxes, all_stats, provision_times = await _provision_fleet(image, n_sandboxes)
+    sandboxes, all_stats, provision_times = await _provision_fleet(
+        image, n_sandboxes, parallel=parallel
+    )
 
     if not sandboxes:
         raise RuntimeError("All sandboxes failed to provision — aborting benchmark.")
@@ -321,14 +327,22 @@ def print_report(result: BenchmarkResult) -> None:
 # ── CLI ───────────────────────────────────────────────────────────────────────
 
 
+_STATE_FILE = "/tmp/android_bench_sandboxes.txt"
+
+
 def _parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
         description="Measure max RPS for a fleet of Android sandboxes.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  python tests/android_rps_benchmark.py --sandboxes 2 --duration 30
-  python tests/android_rps_benchmark.py --sandboxes 8 --duration 60 --action step
+  # Full run (provision + load test + delete):
+  python tests/android_rps_benchmark.py --sandboxes 4 --duration 30
+
+  # Step-by-step:
+  python tests/android_rps_benchmark.py --sandboxes 4 --provision
+  python tests/android_rps_benchmark.py --continue
+  python tests/android_rps_benchmark.py --delete
         """,
     )
     p.add_argument(
@@ -344,6 +358,30 @@ Examples:
         help="'screenshot' = observation only; 'step' = tap + screenshot. Default: screenshot.",
     )
     p.add_argument("--android-version", default="14", help="Android version (default: 14).")
+    p.add_argument(
+        "--parallel",
+        type=int,
+        default=2,
+        metavar="N",
+        help="Number of sandboxes to provision concurrently (default: 2). Use 1 for fully sequential.",
+    )
+    mode = p.add_mutually_exclusive_group()
+    mode.add_argument(
+        "--provision",
+        action="store_true",
+        help=f"Provision sandboxes and save names to {_STATE_FILE}. No load test or delete.",
+    )
+    mode.add_argument(
+        "--continue",
+        dest="cont",
+        action="store_true",
+        help=f"Load sandbox names from {_STATE_FILE}, run load test, then delete.",
+    )
+    mode.add_argument(
+        "--delete",
+        action="store_true",
+        help=f"Delete sandboxes listed in {_STATE_FILE}.",
+    )
     return p.parse_args()
 
 
@@ -351,16 +389,105 @@ async def _main() -> None:
     args = _parse_args()
     image = Image.android(args.android_version)
 
+    # ── --delete ──────────────────────────────────────────────────────────
+    if args.delete:
+        try:
+            names = open(_STATE_FILE).read().split()
+        except FileNotFoundError:
+            print(f"No state file at {_STATE_FILE}")
+            return
+        print(f"── Deleting {len(names)} sandbox(es) from {_STATE_FILE} ──")
+        sandboxes = [Sandbox(name=n) for n in names]
+        await _destroy_fleet(sandboxes)
+        os.unlink(_STATE_FILE)
+        print("Done.")
+        return
+
+    # ── --continue ────────────────────────────────────────────────────────
+    if args.cont:
+        try:
+            names = open(_STATE_FILE).read().split()
+        except FileNotFoundError:
+            print(f"No state file at {_STATE_FILE} — run --provision first.")
+            return
+        print(f"── Reconnecting to {len(names)} sandbox(es) from {_STATE_FILE} ──")
+        sandboxes = []
+        all_stats = []
+        provision_times = []
+        for name in names:
+            sb = Sandbox(name=name)
+            st = SandboxStats(name=name, provision_time=0.0)
+            sandboxes.append(sb)
+            all_stats.append(st)
+            provision_times.append(0.0)
+            print(f"  {name}")
+
+        stop_event = asyncio.Event()
+        t_start = time.monotonic()
+        global _t_bench_start
+        _t_bench_start = t_start
+
+        print(
+            f"\n── Load test: max RPS × {args.duration}s ──\n  action={args.action}  sandboxes={len(sandboxes)}"
+        )
+        workers = [
+            asyncio.create_task(_worker(sb, st, stop_event, args.action))
+            for sb, st in zip(sandboxes, all_stats)
+        ]
+        reporter = asyncio.create_task(
+            _progress_reporter(all_stats, t_start, args.duration, stop_event)
+        )
+        await asyncio.sleep(args.duration)
+        stop_event.set()
+        for w in workers:
+            w.cancel()
+        reporter.cancel()
+        await asyncio.gather(*workers, reporter, return_exceptions=True)
+        elapsed = time.monotonic() - t_start
+
+        print(f"\n── Destroying {len(sandboxes)} sandbox(es) ──")
+        await _destroy_fleet(sandboxes)
+        os.unlink(_STATE_FILE)
+
+        total_reqs = sum(s.requests for s in all_stats)
+        total_errs = sum(s.errors for s in all_stats)
+        all_latencies = [lat for s in all_stats for lat in s.latencies]
+        result = BenchmarkResult(
+            achieved_rps=total_reqs / elapsed if elapsed > 0 else 0.0,
+            sandboxes=len(sandboxes),
+            duration=elapsed,
+            total_requests=total_reqs,
+            total_errors=total_errs,
+            provision_times=provision_times,
+            all_latencies=all_latencies,
+        )
+        print_report(result)
+        return
+
+    # ── --provision ───────────────────────────────────────────────────────
+    if args.provision:
+        print("Android RL Fleet Benchmark")
+        print(f"  sandboxes={args.sandboxes}  android={args.android_version}  mode=provision-only")
+        print(f"\n── Provisioning {args.sandboxes} sandbox(es) ──")
+        sandboxes, _, _ = await _provision_fleet(image, args.sandboxes, parallel=args.parallel)
+        names = [getattr(sb, "name", None) or f"sb-{i}" for i, sb in enumerate(sandboxes)]
+        with open(_STATE_FILE, "w") as f:
+            f.write("\n".join(names) + "\n")
+        print(f"\nSaved {len(names)} sandbox name(s) to {_STATE_FILE}")
+        print("Run with --continue to start the load test.")
+        return
+
+    # ── normal (all-in-one) ───────────────────────────────────────────────
     print("Android RL Fleet Benchmark")
     print(
         f"  sandboxes={args.sandboxes}  duration={args.duration}s  action={args.action}  android={args.android_version}"
     )
-
     result = await run_benchmark(
         n_sandboxes=args.sandboxes,
         duration=args.duration,
         action=args.action,
         image=image,
+        parallel=args.parallel,
     )
     print_report(result)
 

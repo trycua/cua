@@ -136,22 +136,23 @@ class _GymServer:
 
 
 async def _setup_chrome(sb) -> None:
-    """Disable Chrome first-run wizard and open the target URL.
+    """Prepare Chrome for automated use on a fresh emulator.
 
-    Writes the chrome-command-line flag file to suppress the account-setup
-    wizard, then launches Chrome.  On a fresh emulator this prevents the
-    'Welcome to Chrome' blocker from intercepting the intent URL.
+    Clears Chrome's app data so the first-run wizard (account setup screen)
+    does not block navigation to the target URL.  Also marks the FRE as
+    complete via SharedPreferences so subsequent launches don't re-show it.
     """
-    # Suppress FRE and sync prompts via command-line flags file
-    await sb.shell.run(
-        "echo 'chrome --no-first-run --no-default-browser-check "
-        "--disable-fre --disable-sync' "
-        "> /data/local/tmp/chrome-command-line"
-    )
-    # chrome-command-line is only honoured by debug-enabled Chrome; force-stop
-    # and re-launch so the flag file is picked up if supported.
-    await sb.shell.run("am force-stop com.android.chrome")
+    # Clear all Chrome data (removes FRE state, cookies, cache)
+    await sb.shell.run("pm clear com.android.chrome")
     await asyncio.sleep(0.5)
+
+    # Pre-seed the FRE-complete preference so Chrome boots straight to the URL.
+    # Works on AOSP / emulator builds where the prefs dir is accessible.
+    await sb.shell.run(
+        "mkdir -p /data/data/com.android.chrome/shared_prefs && "
+        'echo \'{"first_run_flow_complete":true,"metrics_reporting":false}\' '
+        "> /data/data/com.android.chrome/shared_prefs/Chrome.xml || true"
+    )
 
 
 # ── Test ──────────────────────────────────────────────────────────────────────

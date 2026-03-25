@@ -296,14 +296,16 @@ class LumeRuntime(Runtime):
                     return
                 password, port = m.group(1), m.group(2)
             vnc_env = f"VNC_PORT={port}\\nVNC_PASSWORD={password}"
+            # Write vnc.env and kill the computer-server process so launchd
+            # revives it with the new config.  launchctl kickstart -k fails
+            # silently from a non-GUI SSH session, so pkill is more reliable.
             proc = await asyncio.create_subprocess_exec(
                 _lume_path() or "lume",
                 "ssh",
                 name,
                 "--",
                 f"printf '{vnc_env}' > ~/.vnc.env && "
-                "launchctl kickstart -k "
-                "gui/$(id -u)/com.trycua.computer_server 2>/dev/null || true",
+                "pkill -f 'python.*computer_server' 2>/dev/null || true",
                 stdout=asyncio.subprocess.DEVNULL,
                 stderr=asyncio.subprocess.DEVNULL,
             )

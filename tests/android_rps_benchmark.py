@@ -361,9 +361,9 @@ Examples:
     p.add_argument(
         "--parallel",
         type=int,
-        default=2,
+        default=4,
         metavar="N",
-        help="Number of sandboxes to provision concurrently (default: 2). Use 1 for fully sequential.",
+        help="Number of sandboxes to provision concurrently (default: 4). Use 1 for fully sequential.",
     )
     mode = p.add_mutually_exclusive_group()
     mode.add_argument(
@@ -466,14 +466,38 @@ async def _main() -> None:
 
     # ── --provision ───────────────────────────────────────────────────────
     if args.provision:
+        # Resume: load existing names so we only provision what's missing
+        existing_names: list[str] = []
+        try:
+            existing_names = open(_STATE_FILE).read().split()
+            print(
+                f"Resuming: {len(existing_names)} already provisioned, "
+                f"targeting {args.sandboxes} total."
+            )
+        except FileNotFoundError:
+            pass
+
+        remaining = args.sandboxes - len(existing_names)
         print("Android RL Fleet Benchmark")
-        print(f"  sandboxes={args.sandboxes}  android={args.android_version}  mode=provision-only")
-        print(f"\n── Provisioning {args.sandboxes} sandbox(es) ──")
-        sandboxes, _, _ = await _provision_fleet(image, args.sandboxes, parallel=args.parallel)
-        names = [getattr(sb, "name", None) or f"sb-{i}" for i, sb in enumerate(sandboxes)]
+        print(
+            f"  sandboxes={args.sandboxes}  android={args.android_version}  "
+            f"mode=provision-only  remaining={remaining}"
+        )
+
+        if remaining <= 0:
+            print(f"Already have {len(existing_names)} sandboxes — nothing to provision.")
+            return
+
+        print(f"\n── Provisioning {remaining} more sandbox(es) (parallel={args.parallel}) ──")
+        new_sandboxes, _, _ = await _provision_fleet(image, remaining, parallel=args.parallel)
+        new_names = [
+            getattr(sb, "name", None) or f"sb-{len(existing_names) + i}"
+            for i, sb in enumerate(new_sandboxes)
+        ]
+        all_names = existing_names + new_names
         with open(_STATE_FILE, "w") as f:
-            f.write("\n".join(names) + "\n")
-        print(f"\nSaved {len(names)} sandbox name(s) to {_STATE_FILE}")
+            f.write("\n".join(all_names) + "\n")
+        print(f"\nSaved {len(all_names)} sandbox name(s) to {_STATE_FILE}")
         print("Run with --continue to start the load test.")
         return
 

@@ -19,15 +19,22 @@ import shutil
 import subprocess
 from io import BytesIO
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 import grpc
+
+# google.protobuf must be imported before the emulator pb2 stubs — do not reorder.
+from google.protobuf import empty_pb2  # noqa: F401 isort: skip
+
+# isort: split
 from cua_sandbox.transport._grpc_emulator import emulator_controller_pb2 as pb2
 from cua_sandbox.transport._grpc_emulator import (
     emulator_controller_pb2_grpc as pb2_grpc,
 )
 from cua_sandbox.transport.base import Transport
-from google.protobuf import empty_pb2  # noqa: F401 — must be loaded before emulator pb2
+
+if TYPE_CHECKING:
+    from cua_sandbox.interfaces.tunnel import TunnelInfo
 
 
 def _find_adb(sdk_root: Optional[str] = None) -> str:
@@ -233,3 +240,36 @@ class GRPCEmulatorTransport(Transport):
             return {}
 
         raise NotImplementedError(f"GRPCEmulatorTransport.send({action!r}) not implemented")
+
+    # ── Tunnel ────────────────────────────────────────────────────────────────
+
+    async def forward_tunnel(self, sandbox_port: int) -> "TunnelInfo":
+        """Forward *sandbox_port* via ``adb forward tcp:0 tcp:<sandbox>``."""
+        from cua_sandbox.interfaces.tunnel import TunnelInfo
+
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(
+            None,
+            functools.partial(
+                subprocess.run,
+                [self._adb, "-s", self._serial, "forward", "tcp:0", f"tcp:{sandbox_port}"],
+                capture_output=True,
+                check=False,
+            ),
+        )
+        if result.returncode != 0:
+            raise RuntimeError(f"adb forward failed: {result.stderr.decode(errors='replace')}")
+        host_port = int(result.stdout.decode().strip())
+        return TunnelInfo(host="localhost", port=host_port, sandbox_port=sandbox_port)
+
+    async def close_tunnel(self, info: "TunnelInfo") -> None:
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(
+            None,
+            functools.partial(
+                subprocess.run,
+                [self._adb, "-s", self._serial, "forward", "--remove", f"tcp:{info.port}"],
+                capture_output=True,
+                check=False,
+            ),
+        )

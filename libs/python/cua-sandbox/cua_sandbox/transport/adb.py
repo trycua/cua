@@ -10,7 +10,10 @@ import os
 import shutil
 import subprocess
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import TYPE_CHECKING, Any, Dict, Optional
+
+if TYPE_CHECKING:
+    from cua_sandbox.interfaces.tunnel import TunnelInfo
 
 from cua_sandbox.transport.base import Transport
 
@@ -198,3 +201,19 @@ class ADBTransport(Transport):
 
     async def get_environment(self) -> str:
         return "android"
+
+    # ── Tunnel ────────────────────────────────────────────────────────────────
+
+    async def forward_tunnel(self, sandbox_port: int) -> "TunnelInfo":
+        """Forward *sandbox_port* via ``adb forward tcp:<host> tcp:<sandbox>``."""
+        from cua_sandbox.interfaces.tunnel import TunnelInfo
+
+        result = await self._adb_cmd_async("forward", "tcp:0", f"tcp:{sandbox_port}")
+        if result.returncode != 0:
+            raise RuntimeError(f"adb forward failed: {result.stderr.decode(errors='replace')}")
+        host_port = int(result.stdout.decode().strip())
+        return TunnelInfo(host="localhost", port=host_port, sandbox_port=sandbox_port)
+
+    async def close_tunnel(self, info: "TunnelInfo") -> None:
+        """Remove the adb forward rule for *info.sandbox_port*."""
+        await self._adb_cmd_async("forward", "--remove", f"tcp:{info.port}")

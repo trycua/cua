@@ -7,7 +7,10 @@ underlying computer (local host, WebSocket to computer-server, or cloud API).
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any, Dict
+from typing import TYPE_CHECKING, Any, Dict
+
+if TYPE_CHECKING:
+    from cua_sandbox.interfaces.tunnel import TunnelInfo
 
 
 def convert_screenshot(png_bytes: bytes, format: str, quality: int) -> bytes:
@@ -62,6 +65,21 @@ class Transport(ABC):
     @abstractmethod
     async def get_environment(self) -> str:
         """Return 'windows', 'mac', 'linux', or 'browser'."""
+
+    async def forward_tunnel(self, sandbox_port: int) -> "TunnelInfo":
+        """Forward *sandbox_port* to an available host port and return info.
+
+        Subclasses that support tunnelling must override this method.
+        The returned :class:`~cua_sandbox.interfaces.tunnel.TunnelInfo` must
+        have ``host`` and ``port`` set to the host-side address.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} does not support port forwarding. "
+            "Supported transports: ADBTransport, GRPCEmulatorTransport, SSHTransport."
+        )
+
+    async def close_tunnel(self, info: "TunnelInfo") -> None:
+        """Release a previously forwarded port.  No-op by default."""
 
     async def get_display_url(self, *, share: bool = False) -> str:
         """Return a URL to view this sandbox's display.

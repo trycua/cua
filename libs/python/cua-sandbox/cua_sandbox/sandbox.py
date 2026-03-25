@@ -49,6 +49,7 @@ from cua_sandbox.interfaces import (
     Screen,
     Shell,
     Terminal,
+    Tunnel,
     Window,
 )
 from cua_sandbox.transport.base import Transport
@@ -215,6 +216,7 @@ class Sandbox:
         self.window = Window(transport)
         self.terminal = Terminal(transport)
         self.mobile = Mobile(transport)
+        self.tunnel = Tunnel(transport)
 
     async def _connect(self) -> None:
         await self._transport.connect()

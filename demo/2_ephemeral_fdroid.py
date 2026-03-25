@@ -8,14 +8,19 @@ Usage:
 """
 
 import asyncio
+from pathlib import Path
 
 from cua_sandbox import Sandbox
 from cua_sandbox.image import Image
 
 FDROID_APK = "https://f-droid.org/F-Droid.apk"
 
+OUT_DIR = Path(__file__).parent / "out"
+
 
 async def main():
+    OUT_DIR.mkdir(exist_ok=True)
+
     print("\n" + "=" * 50)
     print("  Ephemeral Android Sandbox — F-Droid")
     print("=" * 50 + "\n")
@@ -32,20 +37,18 @@ async def main():
         print(f"  Screen size : {w}x{h}")
 
         screenshot = await sb.screenshot(format="png")
-        out = "/tmp/fdroid_demo.png"
-        with open(out, "wb") as f:
-            f.write(screenshot)
-        print(f"  Screenshot  : saved to {out}  ({len(screenshot):,} bytes)")
+        out = OUT_DIR / "fdroid_home.png"
+        out.write_bytes(screenshot)
+        print(f"  Screenshot  : {out}  ({len(screenshot):,} bytes)")
 
         print("\nLaunching F-Droid...")
         await sb.shell.run("am start -n org.fdroid.fdroid/.views.main.MainActivity")
         await asyncio.sleep(3)
 
         screenshot2 = await sb.screenshot(format="png")
-        out2 = "/tmp/fdroid_demo_launched.png"
-        with open(out2, "wb") as f:
-            f.write(screenshot2)
-        print(f"  Screenshot  : saved to {out2}  ({len(screenshot2):,} bytes)")
+        out2 = OUT_DIR / "fdroid_launched.png"
+        out2.write_bytes(screenshot2)
+        print(f"  Screenshot  : {out2}  ({len(screenshot2):,} bytes)")
 
     print("\n✓ Sandbox destroyed\n")
     print("=" * 50 + "\n")

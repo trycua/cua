@@ -132,6 +132,28 @@ class _GymServer:
             self._proc = None
 
 
+# ── Chrome helpers ────────────────────────────────────────────────────────────
+
+
+async def _setup_chrome(sb) -> None:
+    """Disable Chrome first-run wizard and open the target URL.
+
+    Writes the chrome-command-line flag file to suppress the account-setup
+    wizard, then launches Chrome.  On a fresh emulator this prevents the
+    'Welcome to Chrome' blocker from intercepting the intent URL.
+    """
+    # Suppress FRE and sync prompts via command-line flags file
+    await sb.shell.run(
+        "echo 'chrome --no-first-run --no-default-browser-check "
+        "--disable-fre --disable-sync' "
+        "> /data/local/tmp/chrome-command-line"
+    )
+    # chrome-command-line is only honoured by debug-enabled Chrome; force-stop
+    # and re-launch so the flag file is picked up if supported.
+    await sb.shell.run("am force-stop com.android.chrome")
+    await asyncio.sleep(0.5)
+
+
 # ── Test ──────────────────────────────────────────────────────────────────────
 
 _SKIP_REASON = (
@@ -162,12 +184,13 @@ async def test_android_local_gym_pwa():
 
         async with Sandbox.connect(name, local=True) as sb:
             # ── 1. Open gym-pwa in Chrome ─────────────────────────────────────
+            await _setup_chrome(sb)
             await sb.shell.run(
                 f"am start -a android.intent.action.VIEW "
                 f"-n com.android.chrome/com.google.android.apps.chrome.Main "
                 f"-d '{EMULATOR_GYM_URL}'"
             )
-            await asyncio.sleep(4)  # let Chrome + Next.js load
+            await asyncio.sleep(5)  # let Chrome + Next.js load
 
             # Screenshot to confirm UI is visible
             shot = await sb.screenshot()
@@ -283,12 +306,13 @@ async def main():
         from cua_sandbox import Sandbox
 
         async with Sandbox.connect(name, local=True) as sb:
+            await _setup_chrome(sb)
             await sb.shell.run(
                 f"am start -a android.intent.action.VIEW "
                 f"-n com.android.chrome/com.google.android.apps.chrome.Main "
                 f"-d '{EMULATOR_GYM_URL}'"
             )
-            await asyncio.sleep(4)
+            await asyncio.sleep(5)
 
             start = _gym_request("POST", "/api/gym/start/add_item")
             print(f"Task: {start['prompt']}")

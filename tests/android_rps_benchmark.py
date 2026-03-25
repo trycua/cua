@@ -21,6 +21,7 @@ import time
 from dataclasses import dataclass, field
 
 from cua_sandbox import Image, Sandbox
+from cua_sandbox.transport.cloud import CloudTransport
 
 print = functools.partial(builtins.print, flush=True)
 
@@ -397,7 +398,7 @@ async def _main() -> None:
             print(f"No state file at {_STATE_FILE}")
             return
         print(f"── Deleting {len(names)} sandbox(es) from {_STATE_FILE} ──")
-        sandboxes = [Sandbox(name=n) for n in names]
+        sandboxes = [Sandbox(CloudTransport(name=n), name=n, _ephemeral=False) for n in names]
         await _destroy_fleet(sandboxes)
         os.unlink(_STATE_FILE)
         print("Done.")

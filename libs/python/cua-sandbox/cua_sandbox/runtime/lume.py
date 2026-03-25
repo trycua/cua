@@ -83,11 +83,33 @@ class LumeRuntime(Runtime):
                 # Use /lume/pull/start (async, returns 202 immediately) so we can
                 # poll progress while the pull runs in the background.
                 # Falls back to the synchronous /lume/pull if start returns 404.
-                start_resp = await client.post(
-                    f"{lume_url}/lume/pull/start",
-                    json=pull_payload,
-                    timeout=30,
-                )
+                try:
+                    start_resp = await client.post(
+                        f"{lume_url}/lume/pull/start",
+                        json=pull_payload,
+                        timeout=30,
+                    )
+                except (httpx.ReadError, httpx.RemoteProtocolError):
+                    # Lume v0.3.x may drop the connection on /pull/start too.
+                    # Check if the VM was created anyway.
+                    logger.info(
+                        f"Lume /pull/start connection dropped — checking if VM '{name}' was created..."
+                    )
+                    check = await client.get(f"{lume_url}/lume/vms/{name}", timeout=10)
+                    if check.status_code == 200 and check.json().get("status") not in (
+                        "",
+                        None,
+                        "error",
+                    ):
+                        logger.info(
+                            f"VM '{name}' exists after /pull/start connection drop — proceeding"
+                        )
+                        ip = await self._wait_for_ip(name, lume_url)
+                        return RuntimeInfo(host=ip, api_port=self.api_port, name=name)
+                    raise RuntimeError(
+                        f"Lume pull failed for '{name}': /pull/start connection dropped and VM not found"
+                        " (check GITHUB_TOKEN is set in lume's LaunchAgent plist)"
+                    )
                 if start_resp.status_code == 404:
                     # Older lume without /pull/start — fall back to synchronous pull
                     logger.info(

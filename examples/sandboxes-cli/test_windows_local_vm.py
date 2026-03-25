@@ -13,15 +13,12 @@ from __future__ import annotations
 
 import asyncio
 import json
-import platform
 import subprocess
 
 import pytest
 from cua_sandbox import Sandbox
 
 pytestmark = pytest.mark.asyncio
-
-IS_WINDOWS = platform.system() == "Windows"
 
 
 def _has_qemu() -> bool:
@@ -38,7 +35,6 @@ def _cua(*args: str) -> subprocess.CompletedProcess:
     return subprocess.run(["cua", *args], capture_output=True, text=True)
 
 
-@pytest.mark.skipif(not IS_WINDOWS, reason="Windows host only")
 @pytest.mark.skipif(not _has_qemu(), reason="QEMU not available")
 async def test_windows_local_vm():
     result = _cua("sb", "launch", "windows:11", "--local", "--json")

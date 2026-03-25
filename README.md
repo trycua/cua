@@ -69,6 +69,33 @@
 
 ---
 
+## Cua - Agentic UI Automation & Code Execution
+
+Build agents that see screens, click buttons, and complete tasks autonomously. One API for any VM or container image — cloud or local.
+
+<!-- <img src="img/cua-architecture.png" alt="Cua Architecture" width="100%"> -->
+
+```python
+# Requires Python 3.12 or 3.13
+from cua_sandbox import Sandbox, Image
+
+# Same API regardless of OS or runtime
+async with Sandbox.ephemeral(Image.linux()) as sb:   # or .macos() .windows() .android()
+    result = await sb.shell.run("echo hello")
+    screenshot = await sb.screenshot()
+    await sb.mouse.click(100, 200)
+    await sb.keyboard.type("Hello from Cua!")
+```
+
+|                    | Linux container | Linux VM | macOS | Windows | Android | BYOI (.qcow2, .iso) |
+| ------------------ | --------------- | -------- | ----- | ------- | ------- | ------------------- |
+| **Cloud (cua.ai)** | ✅              | ✅       | ✅    | ✅      | ✅      | 🔜 soon             |
+| **Local (QEMU)**   | ✅              | ✅       | ✅    | ✅      | ✅      | ✅                  |
+
+**[Get Started](https://cua.ai/docs/cua/guide/get-started/set-up-sandbox)** | **[Examples](https://cua.ai/docs/cua/examples)** | **[API Reference](https://cua.ai/docs/cua/reference/agent-sdk)**
+
+---
+
 ## CuaBot - Co-op computer-use for any agent
 
 <div align="center">
@@ -102,31 +129,6 @@ Built-in support for `agent-browser` and `agent-device` (iOS, Android) out of th
 <img height="64" alt="cuaXclawdbot_nbg" src="https://github.com/user-attachments/assets/8b92237d-6e9b-4b3a-ae9a-b3560622ec1d" />
 
 </div>
-
-## Cua - Agentic UI Automation & Code Execution
-
-Build agents that see screens, click buttons, and complete tasks autonomously. One API for any VM or container image — cloud or local.
-
-<!-- <img src="img/cua-architecture.png" alt="Cua Architecture" width="100%"> -->
-
-```python
-# Requires Python 3.12 or 3.13
-from cua_sandbox import Sandbox, Image
-
-# Same API regardless of OS or runtime
-async with Sandbox.ephemeral(Image.linux()) as sb:   # or .macos() .windows() .android()
-    result = await sb.shell.run("echo hello")
-    screenshot = await sb.screenshot()
-    await sb.mouse.click(100, 200)
-    await sb.keyboard.type("Hello from Cua!")
-```
-
-|                    | Linux container | Linux VM | macOS | Windows | Android | BYOI (.qcow2, .iso) |
-| ------------------ | --------------- | -------- | ----- | ------- | ------- | ------------------- |
-| **Cloud (cua.ai)** | ✅              | ✅       | ✅    | ✅      | ✅      | 🔜 soon             |
-| **Local (QEMU)**   | ✅              | ✅       | ✅    | ✅      | ✅      | ✅                  |
-
-**[Get Started](https://cua.ai/docs/cua/guide/get-started/set-up-sandbox)** | **[Examples](https://cua.ai/docs/cua/examples)** | **[API Reference](https://cua.ai/docs/cua/reference/agent-sdk)**
 
 ---
 

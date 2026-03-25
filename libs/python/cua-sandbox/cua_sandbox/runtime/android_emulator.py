@@ -399,6 +399,21 @@ class AndroidEmulatorRuntime(Runtime):
                     logger.warning(f"PWA APK install failed: {result.stderr}")
                 else:
                     logger.info(f"PWA APK installed: {result.stdout.strip()}")
+                # Suppress Chrome first-run wizard so the TWA opens immediately.
+                # set-debug-app makes Chrome honour the chrome-command-line file.
+                for cmd in [
+                    "am set-debug-app --persistent com.android.chrome",
+                    "mkdir -p /data/local/tmp && "
+                    "echo 'chrome --no-first-run --disable-fre "
+                    "--no-default-browser-check' "
+                    "> /data/local/tmp/chrome-command-line",
+                ]:
+                    subprocess.run(
+                        [adb, "-s", serial, "shell", cmd],
+                        capture_output=True,
+                        env=env,
+                        timeout=10,
+                    )
             elif lt == "run":
                 cmd = layer["command"]
                 logger.info(f"Running: {cmd}")

@@ -61,8 +61,9 @@ const resolvedFetchUrl =
     // against the address Chrome will actually use inside the emulator.
     const originUrl = new URL(manifestUrl);
     twa.packageId = packageId;
-    twa.host = originUrl.host; // e.g. "10.0.2.2:3000"
-    twa.startUrl = originUrl.pathname || '/';
+    twa.host = originUrl.host; // e.g. "cuaai--todo-gym-web.modal.run"
+    // startUrl comes from Web App Manifest start_url (already parsed by fromWebManifest).
+    // Do NOT override it with the manifest file path — that would open manifest.json.
     twa.manifestUrl = manifestUrl;
     twa.signingKey = { path: KEYSTORE, alias: KEYSTORE_ALIAS };
 

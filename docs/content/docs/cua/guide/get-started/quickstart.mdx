@@ -14,7 +14,7 @@ This guide gets you from zero to a working computer-use agent using Cua Cloud sa
 ## 1. Install the Cua CLI and SDKs
 
 ```bash
-pip install cua-cli cua-computer "cua-agent[all]"
+pip install cua-cli cua-sandbox "cua-agent[all]"
 ```
 
 ## 2. Authenticate
@@ -54,35 +54,22 @@ cua sandbox list
 Create a file `hello.py`:
 
 ```python
-import os
 import asyncio
-from computer import Computer
-
-# Load API key from environment (or set directly)
-os.environ["CUA_API_KEY"] = "sk_cua-api01_..."  # or use: cua auth env
-
-computer = Computer(
-    os_type="linux",
-    provider_type="cloud",
-    name="curious-fox-123"  # your sandbox name
-)
+from cua_sandbox import Sandbox, Image
 
 async def main():
-    await computer.run()  # Connect to the sandbox
-
-    try:
+    async with Sandbox.ephemeral(Image.linux()) as sb:
         # Take a screenshot
-        screenshot = await computer.interface.screenshot()
-        screenshot.save("screenshot.png")
+        screenshot = await sb.screenshot()
+        with open("screenshot.png", "wb") as f:
+            f.write(screenshot)
         print("Screenshot saved to screenshot.png")
 
         # Click at coordinates (100, 100)
-        await computer.interface.left_click(100, 100)
+        await sb.mouse.click(100, 100)
 
         # Type some text
-        await computer.interface.type_text("Hello from Cua!")
-    finally:
-        await computer.disconnect()
+        await sb.keyboard.type("Hello from Cua!")
 
 asyncio.run(main())
 ```
@@ -98,26 +85,15 @@ python hello.py
 Now let's add AI. Create `agent.py`:
 
 ```python
-import os
 import asyncio
-from computer import Computer
+from cua_sandbox import Sandbox, Image
 from agent import ComputerAgent
 
-os.environ["CUA_API_KEY"] = "sk_cua-api01_..."  # or use: cua auth env
-
-computer = Computer(
-    os_type="linux",
-    provider_type="cloud",
-    name="curious-fox-123"  # your sandbox name
-)
-
 async def main():
-    await computer.run()
-
-    try:
+    async with Sandbox.ephemeral(Image.linux()) as sb:
         agent = ComputerAgent(
             model="cua/anthropic/claude-sonnet-4.5",
-            tools=[computer],
+            tools=[sb],
         )
 
         messages = [{"role": "user", "content": "Open Firefox and go to google.com"}]
@@ -126,8 +102,6 @@ async def main():
             for item in result["output"]:
                 if item["type"] == "message":
                     print(item["content"][0]["text"])
-    finally:
-        await computer.disconnect()
 
 asyncio.run(main())
 ```
@@ -179,6 +153,6 @@ cua sandbox delete curious-fox-123
 
 ## Next Steps
 
-- [Using the Computer SDK](/cua/guide/get-started/using-computer-sdk) - Learn low-level computer control
+- [Using the Sandbox SDK](/cua/guide/get-started/using-sandbox-sdk) - Learn low-level sandbox control
 - [Using the Agent SDK](/cua/guide/get-started/using-agent-sdk) - Advanced AI agent configuration
 - [Self-Hosted Sandboxes](/cua/guide/get-started/self-hosted-sandboxes) - Run sandboxes locally with Docker

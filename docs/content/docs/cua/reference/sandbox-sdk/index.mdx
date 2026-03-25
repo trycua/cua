@@ -1,0 +1,168 @@
+---
+title: Sandbox SDK Reference
+description: Python API reference for cua-sandbox — creating and controlling sandboxes
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+**Package:** `cua-sandbox` | **Install:** `pip install cua-sandbox` | **Requires:** Python 3.12+
+
+## Classes
+
+| Class | Description |
+|-------|-------------|
+| [`Sandbox`](#sandbox) | Main class for creating and interacting with sandboxes |
+| [`Image`](#image) | Describes the OS image for a sandbox |
+| [`SandboxInfo`](#sandboxinfo) | Metadata about a running sandbox |
+
+---
+
+## Sandbox
+
+The main entry point. All constructors are async class methods.
+
+### Constructors
+
+#### `Sandbox.ephemeral(image, *, local=False, name=None, api_key=None)`
+
+Create a sandbox, yield it, then delete it on exit. Best for one-shot tasks.
+
+```python
+async with Sandbox.ephemeral(Image.linux()) as sb:
+    await sb.shell.run("echo hello")
+    screenshot = await sb.screenshot()
+```
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `image` | `Image` | OS image to run |
+| `local` | `bool` | `True` = local runtime (Docker/Lume/QEMU). `False` = Cua cloud (default) |
+| `name` | `str \| None` | Optional sandbox name (auto-generated if omitted) |
+| `api_key` | `str \| None` | Cua API key (uses `CUA_API_KEY` env var if omitted) |
+
+#### `Sandbox.create(image, *, local=False, name=None, api_key=None) → Sandbox`
+
+Create a persistent sandbox. You are responsible for calling `.delete()`.
+
+```python
+sb = await Sandbox.create(Image.linux(), local=True)
+await sb.shell.run("echo hello")
+await sb.delete()
+```
+
+#### `Sandbox.connect(name, *, local=False, api_key=None)`
+
+Connect to an already-running sandbox by name. Use as a context manager or call `.disconnect()` when done.
+
+```python
+async with Sandbox.connect("my-sandbox", local=True) as sb:
+    await sb.shell.run("echo connected")
+```
+
+### Instance Methods
+
+#### `await sb.screenshot() → bytes`
+
+Returns a PNG screenshot as bytes.
+
+```python
+png = await sb.screenshot()
+with open("shot.png", "wb") as f:
+    f.write(png)
+```
+
+#### `await sb.delete()`
+
+Stop and permanently delete the sandbox.
+
+#### `await sb.disconnect()`
+
+Disconnect the client without stopping the sandbox (it keeps running).
+
+### Sub-interfaces
+
+#### `sb.shell`
+
+Run commands in the sandbox.
+
+```python
+result = await sb.shell.run("ls -la /")
+print(result.stdout)       # command output
+print(result.returncode)   # exit code (int)
+print(result.success)      # True if returncode == 0
+```
+
+#### `sb.mouse`
+
+```python
+await sb.mouse.move(x, y)
+await sb.mouse.click(x, y)              # left click
+await sb.mouse.right_click(x, y)
+await sb.mouse.double_click(x, y)
+await sb.mouse.scroll(x, y, dx=0, dy=3)
+```
+
+#### `sb.keyboard`
+
+```python
+await sb.keyboard.type("Hello, world!")
+await sb.keyboard.press("Return")
+await sb.keyboard.press("ctrl+c")
+await sb.keyboard.press("cmd+space")    # macOS
+```
+
+---
+
+## Image
+
+Describes the OS image to run.
+
+### Factory Methods
+
+```python
+Image.linux(distro="ubuntu", version="24.04", kind="container")
+Image.linux(kind="vm")          # Full VM instead of container
+Image.macos(version="latest")
+Image.windows(version="11")
+Image.from_registry("ghcr.io/trycua/macos-tahoe-cua:latest")
+Image.from_file("/path/to/disk.qcow2", os_type="linux")
+```
+
+| `kind` | Description |
+|--------|-------------|
+| `"container"` | Lightweight Docker container (Linux only, default) |
+| `"vm"` | Full virtual machine |
+
+---
+
+## SandboxInfo
+
+Returned by `Sandbox.list()`.
+
+```python
+sandboxes = await Sandbox.list()
+for sb in sandboxes:
+    print(sb.name, sb.os_type, sb.source)
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | `str` | Sandbox name |
+| `os_type` | `str` | `"linux"`, `"macos"`, `"windows"`, `"android"` |
+| `source` | `str` | Runtime: `"cloud"`, `"docker"`, `"lume"`, `"qemu-baremetal"` |
+| `host` | `str` | Hostname |
+| `api_port` | `int` | API server port |
+
+---
+
+## CLI Integration
+
+The Sandbox SDK pairs with the `cua sb` CLI commands:
+
+```bash
+cua sb launch ubuntu:24.04 --local --json   # launch, print JSON with name
+cua sb ls --all                             # list running sandboxes
+cua sb delete <name> --local                # stop and delete
+```
+
+See the [CLI Reference](/cua/reference/cli) for full details.

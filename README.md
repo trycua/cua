@@ -111,14 +111,15 @@ Build agents that see screens, click buttons, and complete tasks autonomously. R
 
 ```python
 # Requires Python 3.12 or 3.13
-from computer import Computer
-from agent import ComputerAgent
+import asyncio
+from cua_sandbox import Sandbox, Image
 
-computer = Computer(os_type="linux", provider_type="cloud")
-agent = ComputerAgent(model="anthropic/claude-sonnet-4-5-20250929", computer=computer)
+async def main():
+    async with Sandbox.ephemeral(Image.linux()) as sb:
+        await sb.shell.run("echo 'Hello from Cua!'")
+        screenshot = await sb.screenshot()
 
-async for result in agent.run([{"role": "user", "content": "Open Firefox and search for Cua"}]):
-    print(result)
+asyncio.run(main())
 ```
 
 **[Get Started](https://cua.ai/docs/cua/guide/get-started/set-up-sandbox)** | **[Examples](https://cua.ai/docs/cua/examples)** | **[API Reference](https://cua.ai/docs/cua/reference/agent-sdk)**
@@ -168,8 +169,8 @@ lume run macos-sequoia-vanilla:latest
 | --------------------------------------------------------------------------- | ---------------------------------------------------------- |
 | [cuabot](https://docs.trycua.com/cuabot/guide/getting-started/introduction) | Multi-agent computer-use sandbox CLI                       |
 | [cua-agent](https://cua.ai/docs/cua/reference/agent-sdk)                    | AI agent framework for computer-use tasks                  |
-| [cua-computer](https://cua.ai/docs/cua/reference/computer-sdk)              | SDK for controlling desktop environments                   |
-| [cua-computer-server](https://cua.ai/docs/cua/reference/computer-sdk)       | Driver for UI interactions and code execution in sandboxes |
+| [cua-sandbox](https://cua.ai/docs/cua/reference/sandbox-sdk)                | SDK for creating and controlling sandboxes                 |
+| [cua-computer-server](https://cua.ai/docs/cua/reference/sandbox-sdk)        | Driver for UI interactions and code execution in sandboxes |
 | [cua-bench](https://cua.ai/docs/cuabench)                                   | Benchmarks and RL environments for computer-use            |
 | [lume](https://cua.ai/docs/lume)                                            | macOS/Linux VM management on Apple Silicon                 |
 | [lumier](https://cua.ai/docs/lume/guide/advanced/lumier)                    | Docker-compatible interface for Lume VMs                   |

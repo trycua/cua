@@ -90,24 +90,60 @@ class LumeRuntime(Runtime):
                         timeout=30,
                     )
                 except (httpx.ReadError, httpx.RemoteProtocolError):
-                    # Lume v0.3.x drops the HTTP connection during/after pull.
-                    # Poll until the VM appears (pull running in background).
-                    print("\rPulling macOS image (lume v0.3.x compat)...", end="", flush=True)
-                    deadline = asyncio.get_event_loop().time() + 1800
-                    while asyncio.get_event_loop().time() < deadline:
+                    # /pull/start not available in lume v0.3.x — fall back to sync /pull,
+                    # then run the VM and return directly (bypassing the async poll below).
+                    logger.info(
+                        "Lume /pull/start unavailable (v0.3.x), falling back to synchronous pull..."
+                    )
+                    print("\rPulling macOS image...", end="", flush=True)
+                    try:
+                        sync_resp = await client.post(
+                            f"{lume_url}/lume/pull",
+                            json=pull_payload,
+                            timeout=1800,
+                        )
+                        if sync_resp.status_code >= 400:
+                            try:
+                                detail = sync_resp.json()
+                            except Exception:
+                                detail = sync_resp.text
+                            raise RuntimeError(f"Lume pull failed for '{name}': {detail}")
+                    except (httpx.ReadError, httpx.RemoteProtocolError):
+                        # Lume v0.3.x drops the sync pull connection when done.
+                        # Verify the VM was created.
                         try:
                             check = await client.get(f"{lume_url}/lume/vms/{name}", timeout=10)
-                            if check.status_code == 200:
-                                status = check.json().get("status", "")
-                                if status not in ("", None, "error", "pulling"):
-                                    print()
-                                    logger.info(f"VM '{name}' ready after lume v0.3.x pull")
-                                    ip = await self._wait_for_ip(name, lume_url)
-                                    return RuntimeInfo(host=ip, api_port=self.api_port, name=name)
-                        except (httpx.ReadError, httpx.ConnectError):
-                            pass
-                        await asyncio.sleep(5)
-                    raise RuntimeError(f"Lume pull for '{name}' did not complete within 1800s")
+                            if check.status_code != 200 or check.json().get("status") in (
+                                "",
+                                None,
+                                "error",
+                            ):
+                                raise RuntimeError(
+                                    f"Lume pull failed for '{name}': connection dropped and VM not found"
+                                    " (check GITHUB_TOKEN is set in lume's LaunchAgent plist)"
+                                )
+                        except httpx.HTTPError as e:
+                            raise RuntimeError(f"Lume pull failed for '{name}': {e}") from e
+                    print()
+                    logger.info(f"Running Lume VM {name} (v0.3.x path)...")
+                    run_resp = await client.post(
+                        f"{lume_url}/lume/vms/{name}/run",
+                        json={
+                            "noDisplay": opts.get("no_display", True),
+                            "sharedDirectories": opts.get("shared_directories", []),
+                        },
+                        timeout=120,
+                    )
+                    if run_resp.status_code >= 400:
+                        try:
+                            detail = run_resp.json()
+                        except Exception:
+                            detail = run_resp.text
+                        raise RuntimeError(f"Lume failed to run VM '{name}': {detail}")
+                    ip = await self._wait_for_ip(name, lume_url)
+                    info = RuntimeInfo(host=ip, api_port=self.api_port, name=name)
+                    await self.is_ready(info)
+                    return info
                 if start_resp.status_code == 404:
                     # Older lume without /pull/start — fall back to synchronous pull
                     logger.info(

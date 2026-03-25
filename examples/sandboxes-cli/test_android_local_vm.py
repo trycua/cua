@@ -21,13 +21,12 @@ from cua_sandbox import Sandbox
 pytestmark = pytest.mark.asyncio
 
 
-def _has_android_sdk() -> bool:
+def _has_java() -> bool:
+    """Only Java must be pre-installed — the Android SDK auto-installs on first run."""
     try:
-        from cua_sandbox.runtime.android_emulator import _find_bin, _sdk_path
+        from cua_sandbox.runtime.android_emulator import _java_env
 
-        sdk = _sdk_path()
-        _find_bin(sdk, "emulator")
-        _find_bin(sdk, "adb")
+        _java_env()
         return True
     except Exception:
         return False
@@ -44,7 +43,7 @@ def _ls_names() -> list[str]:
     return [s["name"] for s in json.loads(r.stdout)]
 
 
-@pytest.mark.skipif(not _has_android_sdk(), reason="Android SDK not available")
+@pytest.mark.skipif(not _has_java(), reason="Java not found (required to auto-install Android SDK)")
 async def test_android_local_vm():
     result = _cua("sb", "launch", "android:14", "--local", "--json")
     assert result.returncode == 0, f"launch failed:\n{result.stderr}"

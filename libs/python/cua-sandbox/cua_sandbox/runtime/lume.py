@@ -93,11 +93,17 @@ class LumeRuntime(Runtime):
                     logger.info(
                         "Lume does not support /pull/start, falling back to synchronous pull..."
                     )
-                    pull_resp = await client.post(
-                        f"{lume_url}/lume/pull",
-                        json=pull_payload,
-                        timeout=1800,
-                    )
+                    try:
+                        pull_resp = await client.post(
+                            f"{lume_url}/lume/pull",
+                            json=pull_payload,
+                            timeout=1800,
+                        )
+                    except (httpx.ReadError, httpx.RemoteProtocolError) as e:
+                        raise RuntimeError(
+                            f"Lume pull failed for '{name}' (connection dropped — "
+                            f"check GITHUB_TOKEN is set in lume's environment): {e}"
+                        ) from e
                     if pull_resp.status_code >= 400:
                         try:
                             detail = pull_resp.json()

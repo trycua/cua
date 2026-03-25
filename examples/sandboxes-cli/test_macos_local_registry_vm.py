@@ -1,6 +1,6 @@
 """Launch a persistent local macOS VM from a trycua OCI registry image via the CLI.
 
-    cua sb launch ghcr.io/trycua/macos-tahoe-cua:latest --local --json
+    cua sb launch ghcr.io/trycua/macos-tahoe-cua@sha256:... --local --json
     # parse name from JSON output, connect with SDK, run assertions
     cua sb delete <name> --local
 
@@ -22,7 +22,7 @@ from cua_sandbox import Sandbox
 pytestmark = pytest.mark.asyncio
 
 IS_MACOS = platform.system() == "Darwin"
-IMAGE = "ghcr.io/trycua/macos-tahoe-cua:latest"
+IMAGE = "ghcr.io/trycua/macos-tahoe-cua@sha256:343919976167b7ffcf393b16ffccafbd02fc4d0176d31190c7428bd7c49d073d"
 
 
 def _has_lume() -> bool:

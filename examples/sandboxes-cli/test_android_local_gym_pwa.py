@@ -3,10 +3,10 @@
 Flow:
   1. Build + cache TWA APK from the gym-pwa keystore (bundled in repo)
   2. Launch android:14 emulator, install the signed TWA APK via pwa_install
-  3. Launch TWA app — no Chrome FRE, no browser UI
-  4. POST /gym/start/add_item  → seeds DB, returns task prompt
+  3. POST /gym/start/add_item  → seeds DB, returns session_id + task prompt
+  4. Launch TWA app with ?session=<session_id> — no Chrome FRE, no browser UI
   5. Agent taps the input, types the item, taps Add
-  6. GET /gym/evaluate          → { success, reward }
+  6. GET /gym/evaluate (x-session-id header) → { success, reward }
   7. Assert reward == 1.0
 
 The gym REST API (hosted on Modal) is the I/O channel.
@@ -61,15 +61,17 @@ def _has_keystore() -> bool:
 # ── Gym API helpers ───────────────────────────────────────────────────────────
 
 
-def _gym_request(method: str, path: str, body: dict | None = None) -> dict:
+def _gym_request(
+    method: str, path: str, body: dict | None = None, session_id: str | None = None
+) -> dict:
     url = f"{GYM_URL}{path}"
     data = json.dumps(body).encode() if body else None
-    req = urllib.request.Request(
-        url,
-        data=data,
-        method=method,
-        headers={"Content-Type": "application/json"} if data else {},
-    )
+    hdrs: dict[str, str] = {}
+    if data:
+        hdrs["Content-Type"] = "application/json"
+    if session_id:
+        hdrs["x-session-id"] = session_id
+    req = urllib.request.Request(url, data=data, method=method, headers=hdrs)
     with urllib.request.urlopen(req, timeout=15) as r:
         return json.loads(r.read())
 
@@ -100,7 +102,21 @@ async def test_android_local_gym_pwa():
         ),
         local=True,
     ) as sb:
-        # ── 1. Launch TWA (no Chrome FRE / browser UI) ────────────────────────
+        # ── 1. Seed via gym REST API (creates a fresh session) ────────────────
+        start = _gym_request("POST", "/api/gym/start/add_item")
+        assert start["success"], f"start failed: {start}"
+        assert "Buy groceries" in start["prompt"], f"unexpected prompt: {start['prompt']}"
+        session_id = start["sessionId"]
+
+        # ── 2. First launch to warm up Chrome / TWA runtime ──────────────────
+        await sb.shell.run(
+            f"am start -n {TWA_PACKAGE}/.LauncherActivity "
+            f"-a android.intent.action.MAIN "
+            f"-c android.intent.category.LAUNCHER"
+        )
+        await asyncio.sleep(10)
+
+        # ── 3. Re-launch so the app picks up the active session ───────────────
         await sb.shell.run(
             f"am start -n {TWA_PACKAGE}/.LauncherActivity "
             f"-a android.intent.action.MAIN "
@@ -110,19 +126,8 @@ async def test_android_local_gym_pwa():
 
         shot = await sb.screenshot()
         assert shot[:4] == b"\x89PNG"
-
-        # ── 2. Seed via gym REST API ──────────────────────────────────────────
-        start = _gym_request("POST", "/api/gym/start/add_item")
-        assert start["success"], f"start failed: {start}"
-        assert "Buy groceries" in start["prompt"], f"unexpected prompt: {start['prompt']}"
-
-        # ── 3. Reload TWA so the app picks up fresh DB state ─────────────────
-        await sb.shell.run(
-            f"am start -n {TWA_PACKAGE}/.LauncherActivity "
-            f"-a android.intent.action.MAIN "
-            f"-c android.intent.category.LAUNCHER"
-        )
-        await asyncio.sleep(3)
+        with open("/tmp/gym_pwa_pre_agent.png", "wb") as f:
+            f.write(shot)
 
         # ── 4. Agent: tap input, type, tap Add ────────────────────────────────
         w, h = await sb.screen.size()
@@ -134,54 +139,39 @@ async def test_android_local_gym_pwa():
         await asyncio.sleep(1)
 
         # ── 5. Evaluate ───────────────────────────────────────────────────────
-        result = _gym_request("GET", "/api/gym/evaluate")
+        result = _gym_request("GET", "/api/gym/evaluate", session_id=session_id)
         assert result["success"], f"eval failed: reward={result['reward']}, msg={result['message']}"
         assert result["reward"] == 1.0, f"expected reward 1.0, got {result['reward']}"
 
-        # ── 6. Bonus: CDP via tunnel if available ─────────────────────────────
-        await _try_cdp_verify(sb, "buy groceries")
+        # ── 6. CDP: verify item appears in DOM ────────────────────────────────
+        import websockets
 
-
-async def _try_cdp_verify(sb, expected_text: str) -> None:
-    """Optional DOM check via CDP; silently skips if unavailable."""
-    try:
         async with sb.tunnel.forward("chrome_devtools_remote") as t:
             with urllib.request.urlopen(f"{t.url}/json", timeout=3) as r:
                 targets = json.loads(r.read())
-            if not targets:
-                return
+            assert targets, "CDP: no targets found"
             ws_url = targets[0]["webSocketDebuggerUrl"].replace(
                 "localhost/", f"localhost:{t.port}/"
             )
-            result = await _cdp_evaluate(
-                ws_url,
-                "Array.from(document.querySelectorAll('li span')).map(e=>e.textContent)",
-            )
-            if isinstance(result, list):
-                texts = [item.lower() for item in result]
+            async with websockets.connect(ws_url) as ws:
+                await ws.send(
+                    json.dumps(
+                        {
+                            "id": 1,
+                            "method": "Runtime.evaluate",
+                            "params": {
+                                "expression": "Array.from(document.querySelectorAll('li span')).map(e=>e.textContent)",
+                                "returnByValue": True,
+                            },
+                        }
+                    )
+                )
+                raw = await asyncio.wait_for(ws.recv(), timeout=10)
+                resp = json.loads(raw)
+                texts = resp.get("result", {}).get("result", {}).get("value", [])
                 assert any(
-                    expected_text in item for item in texts
-                ), f"CDP: '{expected_text}' not found in {result}"
-    except Exception:
-        pass
-
-
-async def _cdp_evaluate(ws_url: str, expression: str) -> object:
-    import websockets
-
-    async with websockets.connect(ws_url) as ws:
-        await ws.send(
-            json.dumps(
-                {
-                    "id": 1,
-                    "method": "Runtime.evaluate",
-                    "params": {"expression": expression, "returnByValue": True},
-                }
-            )
-        )
-        raw = await asyncio.wait_for(ws.recv(), timeout=10)
-        resp = json.loads(raw)
-        return resp.get("result", {}).get("result", {}).get("value")
+                    "buy groceries" in item.lower() for item in texts
+                ), f"CDP: 'buy groceries' not found in {texts}"
 
 
 # ── Manual runner ─────────────────────────────────────────────────────────────
@@ -202,22 +192,16 @@ async def main():
         ),
         local=True,
     ) as sb:
+        start = _gym_request("POST", "/api/gym/start/add_item")
+        session_id = start["sessionId"]
+        print(f"Task: {start['prompt']}  session: {session_id}")
+
         await sb.shell.run(
             f"am start -n {TWA_PACKAGE}/.LauncherActivity "
             f"-a android.intent.action.MAIN "
             f"-c android.intent.category.LAUNCHER"
         )
         await asyncio.sleep(5)
-
-        start = _gym_request("POST", "/api/gym/start/add_item")
-        print(f"Task: {start['prompt']}")
-
-        await sb.shell.run(
-            f"am start -n {TWA_PACKAGE}/.LauncherActivity "
-            f"-a android.intent.action.MAIN "
-            f"-c android.intent.category.LAUNCHER"
-        )
-        await asyncio.sleep(3)
 
         w, h = await sb.screen.size()
         await sb.mobile.tap(w // 2, int(h * 0.18))
@@ -232,7 +216,7 @@ async def main():
             f.write(shot)
         print("Screenshot saved to /tmp/gym_pwa_after_add.png")
 
-        result = _gym_request("GET", "/api/gym/evaluate")
+        result = _gym_request("GET", "/api/gym/evaluate", session_id=session_id)
         print(
             f"Eval: success={result['success']} reward={result['reward']} msg={result['message']}"
         )

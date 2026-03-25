@@ -1,115 +1,98 @@
 ---
 title: What is Cua?
-description: Learn about Cua, the open-source platform for building computer-use agents
+description: Open-source sandboxes and agent framework for computer-use AI
 ---
 
-Cua is an open-source platform for building, benchmarking, and deploying agents that can use any computer, with isolated, self-hostable sandboxes (Docker, QEMU, Apple Vz).
+Cua lets you spin up isolated desktop environments — Linux, macOS, Windows, Android — and build agents that can see and control them. One SDK, any OS, cloud or local.
 
-<div className="not-prose relative rounded-xl overflow-hidden my-8 w-full">
-  <img src="/docs/img/hero.png" alt="Cua" className="w-full h-auto rounded-xl" />
-</div>
+```python
+import asyncio
+from cua_sandbox import Sandbox, Image
+from agent import ComputerAgent
 
-## The Cua Stack
+async def main():
+    async with Sandbox.ephemeral(Image.linux(), local=True) as sb:
+        agent = ComputerAgent(
+            model="cua/anthropic/claude-sonnet-4-5",
+            tools=[sb],
+        )
+        async for result in agent.run([{
+            "role": "user",
+            "content": "Open Firefox and search for 'open source computer use'",
+        }]):
+            for item in result["output"]:
+                if item["type"] == "message":
+                    print(item["content"][0]["text"])
 
-Cua consists of three main components:
-
-<div className="not-prose relative rounded-xl overflow-hidden my-8 w-full">
-  <img
-    src="/docs/img/cua-architecture.png"
-    alt="Cua Architecture"
-    className="w-full h-auto rounded-xl"
-  />
-</div>
-
-### 1. Desktop Sandboxes
-
-Isolated virtual environments where your agents can safely execute tasks:
-
-- **Cloud Sandboxes** - Managed Linux, Windows, and macOS environments hosted by Cua
-- **Local Sandboxes** - Docker containers, QEMU VMs, macOS VMs via Lume, or Windows Sandbox on your own machine
-
-### 2. Sandbox SDK
-
-A unified SDK for creating and controlling desktop environments programmatically:
-
-- Create sandboxes with a single line — cloud or local, any OS
-- Take screenshots and observe the screen
-- Simulate mouse clicks, movements, and scrolling
-- Type text and press keyboard shortcuts
-- Run shell commands and manage the filesystem
-- Works identically across Linux, macOS, Windows, and Android
-
-### 3. Agent Framework
-
-Build agents that see screens, click buttons, and complete tasks autonomously:
-
-- **100+ vision-language model options** through Cua VLM Router or direct provider access
-- **Pre-built agent loops** optimized for computer-use tasks
-- **Composable architecture** for combining grounding and planning models
-- **Built-in telemetry** for monitoring agent performance
-
-## How Computer-Use Agents Work
-
-Computer-use agents operate through a continuous loop:
-
-```
-┌─────────────────────────────────────────┐
-│  1. OBSERVE                             │
-│     Take a screenshot of the screen     │
-└──────────────────┬──────────────────────┘
-                   │
-                   ▼
-┌─────────────────────────────────────────┐
-│  2. UNDERSTAND                          │
-│     Vision-language model analyzes      │
-│     the screenshot and current goal     │
-└──────────────────┬──────────────────────┘
-                   │
-                   ▼
-┌─────────────────────────────────────────┐
-│  3. DECIDE                              │
-│     Determine the next action:          │
-│     click, type, scroll, etc.           │
-└──────────────────┬──────────────────────┘
-                   │
-                   ▼
-┌─────────────────────────────────────────┐
-│  4. ACT                                 │
-│     Execute the action on the computer  │
-└──────────────────┬──────────────────────┘
-                   │
-                   ▼
-              Loop back to 1
+asyncio.run(main())
 ```
 
-This cycle repeats until the agent completes its goal or determines it cannot proceed.
+## Install
 
-## Sandbox Options
+```bash
+pip install cua-sandbox "cua-agent[all]"
+```
 
-| Sandbox Type        | OS Support              | Best For                     | API Key Required |
-| ------------------- | ----------------------- | ---------------------------- | ---------------- |
-| **Cloud**           | Linux, Windows, macOS   | Production, teams, CI/CD     | Yes              |
-| **Docker**          | Linux                   | Local development            | No               |
-| **QEMU Docker**     | Linux, Windows, Android | Testing specific OS versions | No               |
-| **Lume (macOS)**    | macOS                   | macOS automation             | No               |
-| **Windows Sandbox** | Windows                 | Windows automation           | No               |
+No account needed to run locally with Docker. For cloud sandboxes and hosted models, get a free API key at [cua.ai](https://cua.ai/signin).
 
-## Why Cua?
+## What it includes
 
-- **Secure execution** - Run AI coding assistants and computer-use agents in sandboxed environments
-- **Self-hostable** - Deploy locally with Docker, QEMU, or Apple Virtualization
-- **Cross-platform** - Same API across Linux, Windows, and macOS sandboxes
-- **Visual understanding** - Agents see screens, adapt to UI changes, and complete complex tasks
+**Sandbox SDK** — create and control sandboxes programmatically. Same API everywhere:
 
-## Use Cases
+```python
+async with Sandbox.ephemeral(Image.linux()) as sb:   # cloud Linux container
+async with Sandbox.ephemeral(Image.macos()) as sb:   # cloud macOS VM
+async with Sandbox.ephemeral(Image.windows()) as sb: # cloud Windows VM
+async with Sandbox.ephemeral(Image.android()) as sb: # cloud Android VM
+async with Sandbox.ephemeral(Image.linux(), local=True) as sb:  # local Docker
+```
 
-- **AI coding assistants** - Isolated code execution environments for Claude Code, Codex CLI, OpenCode, and other AI coding tools
-- **Computer-use agents** - Build agents that interact with any desktop application autonomously
-- **Workflow automation** - Automate repetitive tasks across any application
-- **Testing** - Run end-to-end tests that interact with real UIs
-- **Benchmarks** - Evaluate agents on OSWorld, ScreenSpot, and other standardized tasks
-- **Research** - Build, evaluate, and train computer-use AI agents
+Inside any sandbox:
 
-## Getting Started
+```python
+await sb.shell.run("npm install")          # run shell commands
+await sb.screenshot()                      # capture the screen
+await sb.mouse.click(x, y)                # click
+await sb.keyboard.type("hello")            # type
+await sb.keyboard.press("ctrl+c")         # key combos
+await sb.mobile.tap(x, y)                 # Android touch
+async with sb.tunnel.forward(3000) as t:  # forward ports
+    print(t.url)
+```
 
-Ready to build your first agent? Continue to the [Quickstart](/cua/guide/get-started/quickstart) to get a computer-use agent running.
+**Agent SDK** — plug any vision-language model into a computer-use loop:
+
+```python
+agent = ComputerAgent(
+    model="cua/anthropic/claude-sonnet-4-5",  # or openai, gemini, qwen, ...
+    tools=[sb],
+)
+async for result in agent.run(messages): ...
+```
+
+**Image builder** — configure the environment before the sandbox starts:
+
+```python
+img = (
+    Image.linux()
+    .apt_install("curl", "ffmpeg")
+    .pip_install("playwright")
+    .env(API_KEY="...")
+    .run("playwright install chromium")
+)
+async with Sandbox.ephemeral(img) as sb: ...
+```
+
+## Use cases
+
+- **AI coding assistants** — safe isolated environments for Claude Code, Codex, and similar tools
+- **Browser and desktop automation** — agents that interact with any real UI
+- **Cross-platform testing** — run the same test against Linux, macOS, Windows, and Android
+- **Benchmarking** — evaluate agents on OSWorld, ScreenSpot, and custom task sets
+
+## Next
+
+- [Quickstart](/cua/guide/get-started/quickstart) — running in 5 minutes
+- [Sandbox Lifecycle](/cua/guide/sandbox/lifecycle) — ephemeral, persistent, connect
+- [Images](/cua/guide/sandbox/images) — customizing your environment
+- [Examples](/cua/examples/sandboxes/linux) — runnable samples for every OS

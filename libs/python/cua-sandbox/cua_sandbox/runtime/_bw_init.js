@@ -3,11 +3,12 @@
  * Non-interactive bubblewrap project initialiser.
  *
  * Usage:
- *   node _bw_init.js <manifest_url> <output_dir> <package_id>
+ *   node _bw_init.js <manifest_url> <output_dir> <package_id> \
+ *                    [keystore_path [keystore_alias [keystore_password]]]
  *
  * Generates twa-manifest.json in <output_dir> using @bubblewrap/core directly,
- * bypassing the interactive CLI.  A debug signing key (android.keystore) is
- * created in <output_dir> if one doesn't already exist.
+ * bypassing the interactive CLI.  keystore_path defaults to
+ * <output_dir>/android.keystore with alias "android" and password "android".
  */
 
 const path = require('path');
@@ -21,22 +22,24 @@ const BW_CLI = path.join(npmPrefix, '@bubblewrap', 'cli');
 const corePath = path.join(BW_CLI, 'node_modules', '@bubblewrap', 'core');
 const { TwaManifest } = require(path.join(corePath, 'dist/lib/TwaManifest'));
 
-const [, , manifestUrl, outputDir, packageId] = process.argv;
+const [, , manifestUrl, outputDir, packageId, keystorePath, keystoreAlias, keystorePassword] =
+  process.argv;
 if (!manifestUrl || !outputDir || !packageId) {
-  console.error('Usage: node _bw_init.js <manifest_url> <output_dir> <package_id>');
+  console.error(
+    'Usage: node _bw_init.js <manifest_url> <output_dir> <package_id> [keystore_path [alias [password]]]'
+  );
   process.exit(1);
 }
 
-const KEYSTORE = path.join(outputDir, 'android.keystore');
-const KEYSTORE_ALIAS = 'android';
-const KEYSTORE_PASS = 'android';
+const KEYSTORE = keystorePath || path.join(outputDir, 'android.keystore');
+const KEYSTORE_ALIAS = keystoreAlias || 'android';
+const KEYSTORE_PASS = keystorePassword || 'android';
 
 (async () => {
   try {
     console.log(`Fetching web manifest: ${manifestUrl}`);
     const twa = await TwaManifest.fromWebManifest(manifestUrl);
 
-    // Override package ID and signing key with debug defaults.
     twa.packageId = packageId;
     twa.signingKey = {
       path: KEYSTORE,

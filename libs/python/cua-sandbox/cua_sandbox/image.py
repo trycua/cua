@@ -281,20 +281,45 @@ class Image:
         self._check_os("apk_install")
         return self._add_layer({"type": "apk_install", "packages": list(apk_paths)})
 
-    def pwa_install(self, manifest_url: str) -> Image:
+    def pwa_install(
+        self,
+        manifest_url: str,
+        package_name: Optional[str] = None,
+        keystore: Optional[str] = None,
+        keystore_alias: str = "android",
+        keystore_password: str = "android",
+    ) -> "Image":
         """Build an APK from a PWA manifest URL via Bubblewrap and install it (Android only).
 
         Bubblewrap reads the Web App Manifest at *manifest_url*, generates a
-        Trusted Web Activity (TWA) APK, signs it with a debug key, and installs
-        it via adb.  Node.js and the Android SDK must be present on the host
-        (they are pre-installed in the cua Android image).
+        Trusted Web Activity (TWA) APK signed with *keystore*, and installs it
+        via adb.  The keystore's SHA-256 fingerprint must match what the server
+        serves from ``/.well-known/assetlinks.json`` so Chrome trusts the TWA
+        and skips the browser UI entirely.
 
         Args:
             manifest_url: Full URL to the PWA's ``manifest.json``.
-                          Example: ``"https://example.com/manifest.json"``
+                          Example: ``"http://10.0.2.2:3000/manifest.json"``
+            package_name: Android package ID.  Defaults to a reversed-hostname
+                          derivation (e.g. ``"com.example.app"``).
+            keystore:     Path to a ``*.keystore`` / ``*.jks`` file.  When
+                          omitted a fresh keystore is generated and cached under
+                          ``~/.cua/cua-sandbox/pwa-cache/``.  Pass the keystore
+                          bundled with your PWA repo so the fingerprint is
+                          deterministic and pre-loaded into ``assetlinks.json``.
+            keystore_alias:    Key alias inside the keystore (default ``"android"``).
+            keystore_password: Password for both the store and the key
+                               (default ``"android"``).
         """
         self._check_os("pwa_install")
-        return self._add_layer({"type": "pwa_install", "manifest_url": manifest_url})
+        layer: dict = {"type": "pwa_install", "manifest_url": manifest_url}
+        if package_name:
+            layer["package_name"] = package_name
+        if keystore:
+            layer["keystore"] = keystore
+        layer["keystore_alias"] = keystore_alias
+        layer["keystore_password"] = keystore_password
+        return self._add_layer(layer)
 
     def uv_install(self, *packages: str) -> Image:
         """Install Python packages via uv add into the cua-server project."""

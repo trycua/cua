@@ -1,21 +1,23 @@
-"""End-to-end test: gym-pwa running on the host, agent inside Android emulator.
+"""End-to-end test: gym-pwa running on the host, agent inside Android emulator as TWA.
 
 Flow:
-  1. Start gym-pwa Next.js server on the host (pnpm dev or node start)
-  2. Launch android:14 emulator via CLI
-  3. Open Chrome to http://10.0.2.2:3000 (host from inside emulator)
-  4. POST /gym/start/add_item  → seeds DB, returns task prompt
-  5. Agent taps the input, types the item, taps Add
-  6. GET /gym/evaluate          → { success, reward }
-  7. Assert reward == 1.0
+  1. Build + cache TWA APK from the gym-pwa keystore (bundled in repo)
+  2. Start gym-pwa Next.js server on the host (pnpm dev)
+  3. Launch android:14 emulator, install the signed TWA APK via pwa_install
+  4. Launch TWA app (am start com.cuaai.gymtodo) — no Chrome FRE, no browser UI
+  5. POST /gym/start/add_item  → seeds DB, returns task prompt
+  6. Agent taps the input, types the item, taps Add
+  7. GET /gym/evaluate          → { success, reward }
+  8. Assert reward == 1.0
 
 The gym REST API is the I/O channel — no CDP required for data in/out.
-CDP tunnel via sb.tunnel.forward("chrome_devtools_remote") is used as a
-bonus assertion when Chrome remote debugging is available.
+The TWA (Trusted Web Activity) is signed with android.keystore committed in the
+gym-pwa repo; /.well-known/assetlinks.json returns the matching SHA-256
+fingerprint by default so Chrome trusts it without showing the browser UI.
 
 Requires:
-  - Java (for Android SDK auto-install)
-  - Node + pnpm (for gym-pwa server)
+  - Java (for Android SDK auto-install and keytool)
+  - Node + npm + pnpm (for bubblewrap + gym-pwa server)
   - gym-pwa repo checked out at GYM_PWA_DIR (defaults to ~/gym-pwa)
 """
 
@@ -42,6 +44,10 @@ GYM_PORT = 3000
 GYM_URL = f"http://{GYM_HOST}:{GYM_PORT}"
 # 10.0.2.2 is the host loopback from inside the Android emulator
 EMULATOR_GYM_URL = "http://10.0.2.2:3000"
+TWA_PACKAGE = "com.cuaai.gymtodo"
+TWA_MANIFEST_URL = f"{EMULATOR_GYM_URL}/manifest.json"
+# android.keystore committed in the gym-pwa repo (password: "android")
+GYM_KEYSTORE = GYM_PWA_DIR / "android.keystore"
 
 
 # ── Prereq checks ─────────────────────────────────────────────────────────────
@@ -58,7 +64,7 @@ def _has_java() -> bool:
 
 
 def _has_gym_pwa() -> bool:
-    return (GYM_PWA_DIR / "package.json").exists()
+    return (GYM_PWA_DIR / "package.json").exists() and GYM_KEYSTORE.exists()
 
 
 def _has_pnpm() -> bool:
@@ -132,36 +138,13 @@ class _GymServer:
             self._proc = None
 
 
-# ── Chrome helpers ────────────────────────────────────────────────────────────
-
-
-async def _setup_chrome(sb) -> None:
-    """Prepare Chrome for automated use on a fresh emulator.
-
-    Clears Chrome's app data so the first-run wizard (account setup screen)
-    does not block navigation to the target URL.  Also marks the FRE as
-    complete via SharedPreferences so subsequent launches don't re-show it.
-    """
-    # Clear all Chrome data (removes FRE state, cookies, cache)
-    await sb.shell.run("pm clear com.android.chrome")
-    await asyncio.sleep(0.5)
-
-    # Pre-seed the FRE-complete preference so Chrome boots straight to the URL.
-    # Works on AOSP / emulator builds where the prefs dir is accessible.
-    await sb.shell.run(
-        "mkdir -p /data/data/com.android.chrome/shared_prefs && "
-        'echo \'{"first_run_flow_complete":true,"metrics_reporting":false}\' '
-        "> /data/data/com.android.chrome/shared_prefs/Chrome.xml || true"
-    )
-
-
 # ── Test ──────────────────────────────────────────────────────────────────────
 
 _SKIP_REASON = (
     "Java not found"
     if not _has_java()
     else (
-        "gym-pwa not found at GYM_PWA_DIR"
+        "gym-pwa not found at GYM_PWA_DIR (need package.json + android.keystore)"
         if not _has_gym_pwa()
         else "pnpm not found" if not _has_pnpm() else None
     )
@@ -170,28 +153,31 @@ _SKIP_REASON = (
 
 @pytest.mark.skipif(_SKIP_REASON is not None, reason=_SKIP_REASON or "")
 async def test_android_local_gym_pwa():
+    from cua_sandbox import Sandbox
+    from cua_sandbox.image import Image
+
     server = _GymServer()
     server.start()
 
     assert _wait_for_gym(timeout=60), "gym-pwa server did not start in time"
 
-    result = _cua("sb", "launch", "android:14", "--local", "--json")
-    assert result.returncode == 0, f"launch failed:\n{result.stderr}"
-    name = json.loads(result.stdout)["name"]
-    assert name in _ls_names()
-
-    try:
-        from cua_sandbox import Sandbox
-
-        async with Sandbox.connect(name, local=True) as sb:
-            # ── 1. Open gym-pwa in Chrome ─────────────────────────────────────
-            await _setup_chrome(sb)
+    # Launch emulator with TWA APK installed via pwa_install + committed keystore
+    async with Sandbox.ephemeral(
+        Image.android().pwa_install(
+            TWA_MANIFEST_URL,
+            package_name=TWA_PACKAGE,
+            keystore=str(GYM_KEYSTORE),
+        ),
+        local=True,
+    ) as sb:
+        try:
+            # ── 1. Launch TWA (no Chrome browser UI / FRE) ────────────────────
             await sb.shell.run(
-                f"am start -a android.intent.action.VIEW "
-                f"-n com.android.chrome/com.google.android.apps.chrome.Main "
-                f"-d '{EMULATOR_GYM_URL}'"
+                f"am start -n {TWA_PACKAGE}/.LauncherActivity "
+                f"-a android.intent.action.MAIN "
+                f"-c android.intent.category.LAUNCHER"
             )
-            await asyncio.sleep(5)  # let Chrome + Next.js load
+            await asyncio.sleep(5)  # let TWA + Next.js load
 
             # Screenshot to confirm UI is visible
             shot = await sb.screenshot()
@@ -203,11 +189,11 @@ async def test_android_local_gym_pwa():
             prompt = start["prompt"]
             assert "Buy groceries" in prompt, f"unexpected prompt: {prompt}"
 
-            # ── 3. Reload so the app picks up the fresh DB state ──────────────
+            # ── 3. Reload TWA so the app picks up the fresh DB state ──────────
             await sb.shell.run(
-                f"am start -a android.intent.action.VIEW "
-                f"-n com.android.chrome/com.google.android.apps.chrome.Main "
-                f"-d '{EMULATOR_GYM_URL}'"
+                f"am start -n {TWA_PACKAGE}/.LauncherActivity "
+                f"-a android.intent.action.MAIN "
+                f"-c android.intent.category.LAUNCHER"
             )
             await asyncio.sleep(3)
 
@@ -235,16 +221,16 @@ async def test_android_local_gym_pwa():
             # ── 6. Bonus: CDP tunnel if Chrome debugging is available ──────────
             await _try_cdp_verify(sb, "buy groceries")
 
-    finally:
-        server.stop()
-        _cua("sb", "delete", name, "--local")
-        assert name not in _ls_names()
+        finally:
+            server.stop()
 
 
 async def _try_cdp_verify(sb, expected_text: str) -> None:
     """Optional: verify the item exists in the DOM via CDP.
 
-    Silently skips if Chrome remote debugging is not available.
+    TWA apps expose Chrome DevTools on localabstract:chrome_devtools_remote
+    when running with a debug-enabled Chrome build.  Silently skips if
+    unavailable (production Chrome stable on most emulators).
     """
     try:
         async with sb.tunnel.forward("chrome_devtools_remote") as t:
@@ -263,9 +249,9 @@ async def _try_cdp_verify(sb, expected_text: str) -> None:
                 "Array.from(document.querySelectorAll('li span')).map(e=>e.textContent)",
             )
             if isinstance(result, list):
-                texts = [t.lower() for t in result]
+                texts = [item.lower() for item in result]
                 assert any(
-                    expected_text in t for t in texts
+                    expected_text in item for item in texts
                 ), f"CDP: '{expected_text}' not found in DOM items: {result}"
     except Exception:
         pass  # CDP not available — skip silently
@@ -293,35 +279,41 @@ async def _cdp_evaluate(ws_url: str, expression: str) -> object:
 
 
 async def main():
+    from cua_sandbox import Sandbox
+    from cua_sandbox.image import Image
+
     server = _GymServer()
     server.start()
     print(f"Waiting for gym-pwa at {GYM_URL} ...")
     assert _wait_for_gym(60), "server timeout"
     print("Server ready.")
 
-    r = _cua("sb", "launch", "android:14", "--local", "--json")
-    name = json.loads(r.stdout)["name"]
-    print(f"Sandbox: {name}")
-
-    try:
-        from cua_sandbox import Sandbox
-
-        async with Sandbox.connect(name, local=True) as sb:
-            await _setup_chrome(sb)
+    print(f"Launching emulator and installing TWA APK from {TWA_MANIFEST_URL} ...")
+    async with Sandbox.ephemeral(
+        Image.android().pwa_install(
+            TWA_MANIFEST_URL,
+            package_name=TWA_PACKAGE,
+            keystore=str(GYM_KEYSTORE),
+        ),
+        local=True,
+    ) as sb:
+        try:
+            # Launch TWA
             await sb.shell.run(
-                f"am start -a android.intent.action.VIEW "
-                f"-n com.android.chrome/com.google.android.apps.chrome.Main "
-                f"-d '{EMULATOR_GYM_URL}'"
+                f"am start -n {TWA_PACKAGE}/.LauncherActivity "
+                f"-a android.intent.action.MAIN "
+                f"-c android.intent.category.LAUNCHER"
             )
             await asyncio.sleep(5)
 
             start = _gym_request("POST", "/api/gym/start/add_item")
             print(f"Task: {start['prompt']}")
 
+            # Reload
             await sb.shell.run(
-                f"am start -a android.intent.action.VIEW "
-                f"-n com.android.chrome/com.google.android.apps.chrome.Main "
-                f"-d '{EMULATOR_GYM_URL}'"
+                f"am start -n {TWA_PACKAGE}/.LauncherActivity "
+                f"-a android.intent.action.MAIN "
+                f"-c android.intent.category.LAUNCHER"
             )
             await asyncio.sleep(3)
 
@@ -342,9 +334,8 @@ async def main():
             print(
                 f"Eval: success={result['success']} reward={result['reward']} msg={result['message']}"
             )
-    finally:
-        server.stop()
-        _cua("sb", "delete", name, "--local")
+        finally:
+            server.stop()
 
 
 if __name__ == "__main__":

@@ -375,20 +375,30 @@ class AndroidEmulatorRuntime(Runtime):
                         logger.info(f"APK installed: {result.stdout.strip()}")
             elif lt == "pwa_install":
                 manifest_url = layer["manifest_url"]
-                apk_path = await self._build_pwa_apk(manifest_url)
-                if apk_path:
-                    logger.info(f"Installing PWA APK: {apk_path}")
-                    result = subprocess.run(
-                        [adb, "-s", serial, "install", "-r", str(apk_path)],
-                        capture_output=True,
-                        text=True,
-                        env=env,
-                        timeout=120,
-                    )
-                    if result.returncode != 0:
-                        logger.warning(f"PWA APK install failed: {result.stderr}")
-                    else:
-                        logger.info(f"PWA APK installed: {result.stdout.strip()}")
+                pkg = layer.get("package_name")
+                ks = Path(layer["keystore"]) if layer.get("keystore") else None
+                ks_alias = layer.get("keystore_alias", "android")
+                ks_pass = layer.get("keystore_password", "android")
+                apk_path, fingerprint = await self._build_pwa_apk(
+                    manifest_url, pkg, ks, ks_alias, ks_pass
+                )
+                logger.info(
+                    f"PWA APK signing fingerprint (SHA-256): {fingerprint}\n"
+                    "  → Set TWA_SHA256_FINGERPRINT env var on your server to this value\n"
+                    f"    so /.well-known/assetlinks.json is trusted by Chrome."
+                )
+                logger.info(f"Installing PWA APK: {apk_path}")
+                result = subprocess.run(
+                    [adb, "-s", serial, "install", "-r", str(apk_path)],
+                    capture_output=True,
+                    text=True,
+                    env=env,
+                    timeout=120,
+                )
+                if result.returncode != 0:
+                    logger.warning(f"PWA APK install failed: {result.stderr}")
+                else:
+                    logger.info(f"PWA APK installed: {result.stdout.strip()}")
             elif lt == "run":
                 cmd = layer["command"]
                 logger.info(f"Running: {cmd}")
@@ -404,97 +414,170 @@ class AndroidEmulatorRuntime(Runtime):
                 logger.warning("pip_install not supported on Android emulator, skipping")
 
     @staticmethod
-    async def _build_pwa_apk(manifest_url: str) -> Optional[Path]:
-        """Build a signed debug APK from a PWA manifest URL using Bubblewrap.
+    async def _build_pwa_apk(
+        manifest_url: str,
+        package_name: Optional[str] = None,
+        keystore_path: Optional[Path] = None,
+        keystore_alias: str = "android",
+        keystore_password: str = "android",
+    ) -> tuple[Path, str]:
+        """Build a signed APK from a PWA manifest URL using Bubblewrap.
 
-        Requires bubblewrap to be installed and initialised (run ``bubblewrap``
-        once interactively so it can download the JDK/Android SDK and write
-        ``~/.bubblewrap/config.json``).  If that config is missing or bubblewrap
-        is not on PATH this method raises a RuntimeError with actionable
-        instructions rather than silently skipping.
+        Auto-installs bubblewrap if not on PATH and auto-configures
+        ``~/.bubblewrap/config.json`` from the already-known JDK and SDK paths,
+        so no manual interactive setup is required.
+
+        Returns ``(apk_path, sha256_fingerprint)`` where ``sha256_fingerprint``
+        is the colon-separated hex digest of the signing certificate — ready to
+        embed in the server's ``/.well-known/assetlinks.json``.
         """
+        import hashlib
         import json as _json
+        from urllib.parse import urlparse
 
+        env = _java_env()
+        java_home = env.get("JAVA_HOME", "")
+        jdk_bin = Path(java_home) / "bin" if java_home else Path(".")
+        keytool = str(jdk_bin / "keytool") if (jdk_bin / "keytool").exists() else "keytool"
+
+        # ── 1. Ensure bubblewrap CLI is on PATH ──────────────────────────────
         bw = shutil.which("bubblewrap")
         if not bw:
-            raise RuntimeError(
-                "bubblewrap not found on PATH.\n"
-                "Install it with:  npm install -g @bubblewrap/cli\n"
-                "Then run it once interactively so it can set up the JDK and Android SDK:\n"
-                "  mkdir /tmp/bw-init && cd /tmp/bw-init && bubblewrap init --manifest https://example.com/manifest.json"
+            node = shutil.which("node")
+            npm = shutil.which("npm")
+            if not node or not npm:
+                raise RuntimeError(
+                    "node/npm not found on PATH; required for pwa_install.\n"
+                    "Install Node.js: https://nodejs.org/"
+                )
+            logger.info("Installing @bubblewrap/cli …")
+            subprocess.run(
+                [npm, "install", "-g", "@bubblewrap/cli"],
+                check=True,
+                capture_output=True,
+                timeout=300,
             )
+            bw = shutil.which("bubblewrap")
+            if not bw:
+                raise RuntimeError(
+                    "bubblewrap still not found after npm install -g @bubblewrap/cli.\n"
+                    "Ensure npm global bin is on PATH."
+                )
 
+        # ── 2. Auto-configure ~/.bubblewrap/config.json ──────────────────────
         bw_config = Path.home() / ".bubblewrap" / "config.json"
-        if not bw_config.exists():
-            raise RuntimeError(
-                "Bubblewrap config not found at ~/.bubblewrap/config.json.\n"
-                "Run bubblewrap interactively once to complete setup:\n"
-                "  mkdir /tmp/bw-init && cd /tmp/bw-init && bubblewrap init --manifest https://example.com/manifest.json"
-            )
-        cfg = _json.loads(bw_config.read_text())
-        if not cfg.get("jdkPath") or not cfg.get("androidSdkPath"):
-            raise RuntimeError(
-                "Bubblewrap config is incomplete (missing jdkPath or androidSdkPath).\n"
-                "Re-run bubblewrap interactively to finish setup."
-            )
+        bw_config.parent.mkdir(parents=True, exist_ok=True)
+        if not bw_config.exists() or not _json.loads(bw_config.read_text()).get("jdkPath"):
+            sdk = _sdk_path()
+            if not java_home:
+                # Fall back: ask java itself for its home
+                try:
+                    r = subprocess.run(
+                        ["java", "-XshowSettings:property", "-version"],
+                        capture_output=True,
+                        text=True,
+                        timeout=5,
+                    )
+                    for line in (r.stdout + r.stderr).splitlines():
+                        if "java.home" in line:
+                            java_home = line.split("=", 1)[1].strip()
+                            break
+                except Exception:
+                    pass
+            cfg = {"jdkPath": java_home or str(jdk_bin.parent), "androidSdkPath": str(sdk)}
+            bw_config.write_text(_json.dumps(cfg, indent=2))
+            logger.info(f"Wrote ~/.bubblewrap/config.json: jdkPath={cfg['jdkPath']}")
+        else:
+            cfg = _json.loads(bw_config.read_text())
+            # Keep existing jdkPath but patch androidSdkPath if it points nowhere
+            if not Path(cfg.get("androidSdkPath", "")).exists():
+                cfg["androidSdkPath"] = str(_sdk_path())
+                bw_config.write_text(_json.dumps(cfg, indent=2))
 
-        # Use a stable cache dir keyed on the manifest URL so we don't rebuild
-        # every time.
-        import hashlib
+        # ── 3. Determine package ID and cache directory ──────────────────────
+        if not package_name:
+            host = urlparse(manifest_url).hostname or ""
+            parts = [p for p in reversed(host.split(".")) if p]
+            package_name = ".".join(parts) if parts else "com.cua.pwa"
 
-        url_hash = hashlib.sha256(manifest_url.encode()).hexdigest()[:12]
-        cache_dir = Path.home() / ".cua" / "cua-sandbox" / "pwa-cache" / url_hash
+        cache_key = hashlib.sha256(f"{manifest_url}|{package_name}".encode()).hexdigest()[:12]
+        cache_dir = Path.home() / ".cua" / "cua-sandbox" / "pwa-cache" / cache_key
+        fingerprint_file = cache_dir / "sha256.fingerprint"
         signed_apk = cache_dir / "app-release-signed.apk"
-        if signed_apk.exists():
-            logger.info(f"Using cached PWA APK: {signed_apk}")
-            return signed_apk
+
+        if signed_apk.exists() and fingerprint_file.exists():
+            fingerprint = fingerprint_file.read_text().strip()
+            logger.info(f"Using cached PWA APK: {signed_apk}  fingerprint: {fingerprint}")
+            return signed_apk, fingerprint
 
         cache_dir.mkdir(parents=True, exist_ok=True)
 
-        # Pre-create the debug keystore so bubblewrap build doesn't prompt.
-        keystore = cache_dir / "android.keystore"
-        if not keystore.exists():
-            jdk_bin = Path(cfg["jdkPath"]) / "bin"
-            # On macOS the JDK layout has bin under Contents/Home
-            if not (jdk_bin / "keytool").exists():
-                jdk_bin = Path(cfg["jdkPath"]) / "Contents" / "Home" / "bin"
-            keytool = str(jdk_bin / "keytool") if (jdk_bin / "keytool").exists() else "keytool"
-            subprocess.run(
-                [
-                    keytool,
-                    "-genkeypair",
-                    "-v",
-                    "-keystore",
-                    str(keystore),
-                    "-alias",
-                    "android",
-                    "-keyalg",
-                    "RSA",
-                    "-keysize",
-                    "2048",
-                    "-validity",
-                    "10000",
-                    "-storepass",
-                    "android",
-                    "-keypass",
-                    "android",
-                    "-dname",
-                    "CN=CUA PWA, OU=Dev, O=CUA, L=SF, S=CA, C=US",
-                ],
-                check=True,
-                capture_output=True,
-                timeout=30,
+        # ── 4. Resolve keystore ──────────────────────────────────────────────
+        if keystore_path:
+            keystore = Path(keystore_path)
+            if not keystore.exists():
+                raise RuntimeError(f"Keystore not found: {keystore}")
+        else:
+            keystore = cache_dir / "android.keystore"
+            if not keystore.exists():
+                logger.info("Generating signing keystore …")
+                subprocess.run(
+                    [
+                        keytool,
+                        "-genkeypair",
+                        "-v",
+                        "-keystore",
+                        str(keystore),
+                        "-alias",
+                        keystore_alias,
+                        "-keyalg",
+                        "RSA",
+                        "-keysize",
+                        "2048",
+                        "-validity",
+                        "10000",
+                        "-storepass",
+                        keystore_password,
+                        "-keypass",
+                        keystore_password,
+                        "-dname",
+                        "CN=CUA PWA, OU=Dev, O=CUA, L=SF, S=CA, C=US",
+                    ],
+                    check=True,
+                    capture_output=True,
+                    timeout=30,
+                )
+
+        # ── 5. Extract SHA-256 fingerprint from the keystore ─────────────────
+        fp_result = subprocess.run(
+            [
+                keytool,
+                "-list",
+                "-v",
+                "-keystore",
+                str(keystore),
+                "-alias",
+                keystore_alias,
+                "-storepass",
+                keystore_password,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        fingerprint = ""
+        for line in fp_result.stdout.splitlines():
+            if "SHA256:" in line:
+                fingerprint = line.split("SHA256:", 1)[1].strip()
+                break
+        if not fingerprint:
+            raise RuntimeError(
+                f"Could not extract SHA-256 fingerprint from keystore.\nkeytool output:\n{fp_result.stdout}"
             )
+        fingerprint_file.write_text(fingerprint)
+        logger.info(f"Keystore SHA-256 fingerprint: {fingerprint}")
 
-        # Step 1: generate twa-manifest.json non-interactively via a small
-        # Node.js helper that calls @bubblewrap/core directly.
-        from urllib.parse import urlparse
-
-        host = urlparse(manifest_url).hostname or ""
-        parts = host.split(".")
-        parts.reverse()
-        package_id = ".".join(p for p in parts if p) or "com.cua.pwa"
-
+        # ── 6. Generate twa-manifest.json via _bw_init.js ────────────────────
         bw_init_js = Path(__file__).parent / "_bw_init.js"
         node = shutil.which("node")
         if not node:
@@ -502,7 +585,16 @@ class AndroidEmulatorRuntime(Runtime):
 
         logger.info(f"Generating twa-manifest.json for {manifest_url} …")
         init_result = subprocess.run(
-            [node, str(bw_init_js), manifest_url, str(cache_dir), package_id],
+            [
+                node,
+                str(bw_init_js),
+                manifest_url,
+                str(cache_dir),
+                package_name,
+                str(keystore),
+                keystore_alias,
+                keystore_password,
+            ],
             capture_output=True,
             text=True,
             timeout=60,
@@ -510,7 +602,7 @@ class AndroidEmulatorRuntime(Runtime):
         if init_result.returncode != 0:
             raise RuntimeError(f"_bw_init.js failed for {manifest_url}:\n{init_result.stderr}")
 
-        # Step 2: bubblewrap update generates the Android project from twa-manifest.json.
+        # ── 7. bubblewrap update → Android project ───────────────────────────
         logger.info("Running bubblewrap update (generates Android project) …")
         update_result = subprocess.run(
             [bw, "update", "--skipPwaValidation"],
@@ -522,14 +614,13 @@ class AndroidEmulatorRuntime(Runtime):
         if update_result.returncode != 0:
             raise RuntimeError(f"bubblewrap update failed:\n{update_result.stderr}")
 
-        # Step 3: build the APK — pass keystore passwords via env vars so
-        # bubblewrap doesn't open an interactive readline prompt.
-        jdk_path = cfg["jdkPath"]
+        # ── 8. bubblewrap build → signed APK ─────────────────────────────────
+        jdk_path = cfg.get("jdkPath", java_home)
         bw_env = {
             **os.environ,
             "JAVA_HOME": jdk_path,
-            "BUBBLEWRAP_KEYSTORE_PASSWORD": "android",
-            "BUBBLEWRAP_KEY_PASSWORD": "android",
+            "BUBBLEWRAP_KEYSTORE_PASSWORD": keystore_password,
+            "BUBBLEWRAP_KEY_PASSWORD": keystore_password,
         }
         logger.info("Running bubblewrap build …")
         build_result = subprocess.run(
@@ -543,7 +634,6 @@ class AndroidEmulatorRuntime(Runtime):
         if build_result.returncode != 0:
             raise RuntimeError(f"bubblewrap build failed:\n{build_result.stderr}")
 
-        # Bubblewrap outputs app-release-signed.apk
         apks = list(cache_dir.rglob("*.apk"))
         if not apks:
             raise RuntimeError(
@@ -551,7 +641,7 @@ class AndroidEmulatorRuntime(Runtime):
                 f"stdout: {build_result.stdout}"
             )
         logger.info(f"PWA APK built: {apks[0]}")
-        return apks[0]
+        return apks[0], fingerprint
 
     @staticmethod
     async def _resolve_apk(apk_path: str) -> Path:

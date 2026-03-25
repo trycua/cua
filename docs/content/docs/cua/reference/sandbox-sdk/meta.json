@@ -1,5 +1,5 @@
 {
   "title": "Sandbox SDK",
   "icon": "Box",
-  "pages": ["index"]
+  "pages": ["index", "interfaces"]
 }

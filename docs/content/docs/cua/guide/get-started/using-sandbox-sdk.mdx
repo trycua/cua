@@ -209,8 +209,11 @@ await sb.delete()
 | `Image.windows()` | Windows 11 |
 | `Image.from_registry("ghcr.io/...")` | Custom OCI image |
 
-## Next Step
+## Next Steps
 
-Once you've verified your sandbox works, proceed to [Using the Agent SDK](/cua/guide/get-started/using-agent-sdk) to add AI automation.
-
-For more details, see the [Sandbox SDK Reference](/cua/reference/sandbox-sdk).
+- [Sandbox Lifecycle](/cua/guide/sandbox/lifecycle) — understand ephemeral, persistent, and connected sandboxes
+- [Images](/cua/guide/sandbox/images) — install packages and customize the environment
+- [Secrets & Environment Variables](/cua/guide/sandbox/secrets) — safely pass credentials into sandboxes
+- [Parallel Sandboxes](/cua/guide/sandbox/scale-out) — run multiple sandboxes concurrently
+- [Using the Agent SDK](/cua/guide/get-started/using-agent-sdk) — add AI automation
+- [Sandbox Interfaces Reference](/cua/reference/sandbox-sdk/interfaces) — full API for `sb.shell`, `sb.mouse`, `sb.tunnel`, `sb.mobile`, and more

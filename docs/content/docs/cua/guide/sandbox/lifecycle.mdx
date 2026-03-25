@@ -1,0 +1,146 @@
+---
+title: Sandbox Lifecycle
+description: Understand ephemeral, persistent, and connected sandboxes — and when to use each
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+A sandbox is an isolated virtual environment — a Linux container, macOS VM, Windows VM, or Android emulator — that your code can fully control. The Sandbox SDK gives you three lifecycle patterns depending on how long you need the sandbox to live.
+
+## The three patterns
+
+```
+┌─────────────────────────────────────────────────────────┐
+│  ephemeral      create / delete lifecycle in one block  │
+│                 sandbox is gone when the block exits    │
+│                                                         │
+│  create         you manage start and stop explicitly    │
+│                 sandbox persists across process exits   │
+│                                                         │
+│  connect        attach to an already-running sandbox    │
+│                 sandbox keeps running after disconnect  │
+└─────────────────────────────────────────────────────────┘
+```
+
+---
+
+## `Sandbox.ephemeral` — one-shot tasks
+
+Use this for scripts, CI jobs, and any task where you want the sandbox to disappear automatically when you're done. It's an async context manager: the sandbox is created on enter and destroyed on exit, even if an exception is raised.
+
+```python
+import asyncio
+from cua_sandbox import Sandbox, Image
+
+async def main():
+    async with Sandbox.ephemeral(Image.linux()) as sb:
+        result = await sb.shell.run("echo hello")
+        print(result.stdout)  # "hello\n"
+    # sandbox is deleted here — no cleanup needed
+
+asyncio.run(main())
+```
+
+**When to use:** scripts, tests, CI pipelines, one-off agent runs, any time you don't need state to survive past the current process.
+
+---
+
+## `Sandbox.create` — persistent sandbox
+
+Use this when you need the sandbox to outlive your Python process, or when you want to reuse it across multiple scripts without re-provisioning.
+
+```python
+import asyncio
+from cua_sandbox import Sandbox, Image
+
+async def main():
+    # Create and get back a handle — sandbox keeps running after this script exits
+    sb = await Sandbox.create(Image.linux(), name="my-dev-sandbox")
+    await sb.shell.run("apt-get install -y vim")
+    await sb.disconnect()  # drop the connection; sandbox stays running
+
+asyncio.run(main())
+```
+
+Later, reconnect from any process:
+
+```python
+async with Sandbox.connect("my-dev-sandbox") as sb:
+    result = await sb.shell.run("vim --version")
+    print(result.stdout)
+```
+
+When you're finished with a persistent sandbox, delete it explicitly:
+
+```python
+async with Sandbox.connect("my-dev-sandbox") as sb:
+    await sb.delete()
+```
+
+**When to use:** interactive development, long-running workflows, sandboxes that accumulate installed software or state, multi-step pipelines spread across separate scripts.
+
+---
+
+## `Sandbox.connect` — attach to existing
+
+Use this to attach to any sandbox that's already running, whether you started it from a previous script, the CLI, or another process.
+
+```python
+# Start a sandbox from the CLI
+# $ cua sb launch ubuntu:24.04 --name my-sandbox
+
+# Then connect from Python
+async with Sandbox.connect("my-sandbox") as sb:
+    await sb.shell.run("echo reconnected")
+# connection is dropped, but sandbox keeps running
+```
+
+<Callout type="info">
+`Sandbox.connect` never starts or stops the sandbox — it only manages the network connection. The sandbox continues running after `.disconnect()` or after the `async with` block exits.
+</Callout>
+
+---
+
+## Disconnect vs. Delete
+
+| Method | Effect on sandbox | Use when |
+|--------|------------------|----------|
+| `await sb.disconnect()` | Keeps running | You want to reconnect later |
+| `await sb.delete()` | Permanently destroyed | You're done with it entirely |
+
+Exiting an `ephemeral` context manager calls `delete()` automatically. Exiting a `connect` context manager calls `disconnect()` automatically.
+
+---
+
+## Listing running sandboxes
+
+```python
+sandboxes = await Sandbox.list()
+for info in sandboxes:
+    print(info.name, info.os_type, info.status)
+```
+
+List only local sandboxes:
+
+```python
+sandboxes = await Sandbox.list(local=True)
+```
+
+---
+
+## Cloud vs. local
+
+Every lifecycle pattern works both locally and on Cua Cloud. Pass `local=True` to run on your machine using Docker, Lume, or QEMU.
+
+```python
+# Cloud (default) — requires CUA_API_KEY
+async with Sandbox.ephemeral(Image.linux()) as sb: ...
+
+# Local Docker — no API key needed
+async with Sandbox.ephemeral(Image.linux(), local=True) as sb: ...
+
+# Local macOS VM — requires Lume on macOS
+async with Sandbox.ephemeral(Image.macos(), local=True) as sb: ...
+```
+
+See [Self-Hosted Sandboxes](/cua/guide/get-started/self-hosted-sandboxes) for local setup instructions.

@@ -5,10 +5,12 @@ description: Get a computer-use agent running in 5 minutes
 
 import { Callout } from 'fumadocs-ui/components/callout';
 
-This guide gets you from zero to a working computer-use agent using Cua Cloud sandboxes.
+This guide gets you from zero to a working computer-use agent.
 
 <Callout type="info">
-  **Prerequisites:** Python 3.12 or 3.13 and a free Cua account at [cua.ai](https://cua.ai/signin).
+  **No account? No problem.** Steps 1–4 below work fully offline with local Docker — no API key required. You only need a [Cua account](https://cua.ai/signin) to use cloud sandboxes (step 3 cloud option) or the AI agent (step 5).
+
+  **Prerequisites:** Python 3.12 or 3.13 and [Docker](https://docs.docker.com/get-docker/) (for local sandboxes) or a free Cua account for cloud.
 </Callout>
 
 ## 1. Install the Cua CLI and SDKs
@@ -51,24 +53,28 @@ cua sandbox list
 
 ## 4. Take a Screenshot (Hello World)
 
-Create a file `hello.py`:
+Create a file `hello.py`. Use `local=True` to run with Docker (no API key needed), or omit it to use a cloud sandbox:
 
 ```python
 import asyncio
 from cua_sandbox import Sandbox, Image
 
 async def main():
-    async with Sandbox.ephemeral(Image.linux()) as sb:
+    # local=True → Docker, no API key needed
+    # remove local=True → Cua Cloud, requires CUA_API_KEY
+    async with Sandbox.ephemeral(Image.linux(), local=True) as sb:
         # Take a screenshot
         screenshot = await sb.screenshot()
         with open("screenshot.png", "wb") as f:
             f.write(screenshot)
         print("Screenshot saved to screenshot.png")
 
-        # Click at coordinates (100, 100)
-        await sb.mouse.click(100, 100)
+        # Run a shell command
+        result = await sb.shell.run("uname -a")
+        print(result.stdout)
 
-        # Type some text
+        # Click and type
+        await sb.mouse.click(100, 100)
         await sb.keyboard.type("Hello from Cua!")
 
 asyncio.run(main())

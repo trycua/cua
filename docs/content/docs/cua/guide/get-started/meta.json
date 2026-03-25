@@ -8,6 +8,7 @@
     "quickstart",
     "using-sandbox-sdk",
     "using-agent-sdk",
-    "self-hosted-sandboxes"
+    "self-hosted-sandboxes",
+    "migrating-from-computer-sdk"
   ]
 }

@@ -455,10 +455,6 @@ async def _main() -> None:
         await asyncio.gather(*workers, reporter, return_exceptions=True)
         elapsed = time.monotonic() - t_start
 
-        print(f"\n── Destroying {len(sandboxes)} sandbox(es) ──")
-        await _destroy_fleet(sandboxes)
-        os.unlink(_STATE_FILE)
-
         total_reqs = sum(s.requests for s in all_stats)
         total_errs = sum(s.errors for s in all_stats)
         all_latencies = [lat for s in all_stats for lat in s.latencies]

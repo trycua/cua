@@ -36,6 +36,7 @@ dependencies = [
     "paramiko>=4.0.0",
     "grpcio==1.78.0",
     "protobuf==6.31.1",
+    "pycdlib>=1.14.0",
 ]
 
 [project.optional-dependencies]

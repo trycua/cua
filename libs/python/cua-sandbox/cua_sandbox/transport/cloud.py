@@ -8,12 +8,15 @@ the VM's computer-server endpoint.
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import Any, Dict, Optional
 
 import httpx
 from cua_sandbox._config import get_api_key, get_base_url
 from cua_sandbox.transport.base import Transport
 from cua_sandbox.transport.http import HTTPTransport
+
+logger = logging.getLogger(__name__)
 
 _POLL_INTERVAL = 2.0  # seconds between status polls
 _POLL_TIMEOUT = 600.0  # max seconds to wait for VM to be running
@@ -72,24 +75,38 @@ class CloudTransport(Transport):
         )
 
         if self._name:
+            logger.debug("[cloud] getting VM info for %r", self._name)
             vm_info = await self._get_vm(self._name)
+            logger.debug("[cloud] VM info: status=%r", vm_info.get("status"))
         else:
+            logger.debug("[cloud] creating new VM")
             vm_info = await self._create_vm()
             self._name = vm_info["name"]
+            logger.debug("[cloud] created VM %r", self._name)
 
         # Poll until running
+        logger.debug(
+            "[cloud] waiting for VM %r to be running (status=%r)", self._name, vm_info.get("status")
+        )
         vm_info = await self._wait_for_running(vm_info)
+        logger.debug("[cloud] VM %r is running", self._name)
 
         # Resolve computer-server endpoint — auth with CUA API key + container name
         cs_url = self._resolve_endpoint(vm_info)
+        logger.debug("[cloud] resolved endpoint: %s", cs_url)
         self._inner = HTTPTransport(cs_url, api_key=api_key, container_name=self._name)
+        logger.debug("[cloud] connecting inner HTTPTransport")
         await self._inner.connect()
+        logger.debug("[cloud] HTTPTransport connected")
 
         # Wait for computer-server to be reachable (it may lag behind VM "running" status)
+        logger.debug("[cloud] waiting for computer-server to be ready")
         await self._wait_for_server_ready()
+        logger.debug("[cloud] computer-server ready")
 
         # Apply image layers (e.g. APK installs) after server is ready
         if self._image and self._image._layers:
+            logger.debug("[cloud] applying image layers")
             await self._apply_image_layers()
 
     async def disconnect(self) -> None:
@@ -187,8 +204,8 @@ class CloudTransport(Transport):
         if not self._image:
             raise ValueError(
                 "Cannot create a cloud VM without an image. Use:\n"
-                "  sandbox(image=Image.linux())  or  sandbox(image=Image.windows())  or  sandbox(image=Image.macos())\n"
-                "Or connect to an existing VM by name: sandbox(name='my-vm')"
+                "  Sandbox.create(image=Image.linux())  or  Sandbox.create(image=Image.windows())  or  Sandbox.create(image=Image.macos())\n"
+                "Or connect to an existing VM by name: Sandbox.connect(name='my-vm')"
             )
         os_type = getattr(self._image, "os_type", None)
         if not os_type:
@@ -223,6 +240,9 @@ class CloudTransport(Transport):
             await asyncio.sleep(_POLL_INTERVAL)
             elapsed += _POLL_INTERVAL
             vm_info = await self._get_vm(self._name)  # type: ignore[arg-type]
+            logger.debug(
+                "[cloud] _wait_for_running: elapsed=%.0fs status=%r", elapsed, vm_info.get("status")
+            )
         return vm_info
 
     async def _wait_for_server_ready(self) -> None:
@@ -234,8 +254,16 @@ class CloudTransport(Transport):
             try:
                 await self._inner.get_screen_size()
                 return  # Server is ready
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code < 500:
+                    raise  # 4xx errors are not transient — fail fast
+                last_err = e
+                logger.debug("[cloud] _wait_for_server_ready: elapsed=%.0fs err=%r", elapsed, e)
+                await asyncio.sleep(_POLL_INTERVAL)
+                elapsed += _POLL_INTERVAL
             except Exception as e:
                 last_err = e
+                logger.debug("[cloud] _wait_for_server_ready: elapsed=%.0fs err=%r", elapsed, e)
                 await asyncio.sleep(_POLL_INTERVAL)
                 elapsed += _POLL_INTERVAL
         raise TimeoutError(

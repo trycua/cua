@@ -415,7 +415,7 @@ async def _main() -> None:
         all_stats = []
         provision_times = []
         for name in names:
-            sb = Sandbox(name=name)
+            sb = await Sandbox.connect(name=name)
             st = SandboxStats(name=name, provision_time=0.0)
             sandboxes.append(sb)
             all_stats.append(st)

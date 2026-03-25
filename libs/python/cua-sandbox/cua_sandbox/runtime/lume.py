@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import sys
 from typing import TYPE_CHECKING
 
 import httpx
@@ -105,7 +106,7 @@ class LumeRuntime(Runtime):
                     logger.info(
                         "Lume /pull/start unavailable (v0.3.x), falling back to synchronous pull..."
                     )
-                    print("\rPulling macOS image...", end="", flush=True)
+                    print("\rPulling macOS image...", end="", flush=True, file=sys.stderr)
                     try:
                         sync_resp = await client.post(
                             f"{lume_url}/lume/pull",
@@ -134,7 +135,7 @@ class LumeRuntime(Runtime):
                                 )
                         except httpx.HTTPError as e:
                             raise RuntimeError(f"Lume pull failed for '{name}': {e}") from e
-                    print()
+                    print(file=sys.stderr)
                     logger.info(f"Running Lume VM {name} (v0.3.x path)...")
                     run_resp = await client.post(
                         f"{lume_url}/lume/vms/{name}/run",
@@ -218,7 +219,12 @@ class LumeRuntime(Runtime):
                             status = data.get("status", "")
                             progress = data.get("downloadProgress")
                             if progress is not None and progress != last_progress:
-                                print(f"\rPulling macOS image: {progress:.0f}%", end="", flush=True)
+                                print(
+                                    f"\rPulling macOS image: {progress:.0f}%",
+                                    end="",
+                                    flush=True,
+                                    file=sys.stderr,
+                                )
                                 last_progress = progress
                             if status == "pulling":
                                 await asyncio.sleep(3)
@@ -243,7 +249,7 @@ class LumeRuntime(Runtime):
                     else:
                         raise TimeoutError(f"Lume pull for '{name}' did not complete within 1800s")
                     if last_progress >= 0:
-                        print()  # newline after progress bar
+                        print(file=sys.stderr)  # newline after progress bar
                 logger.info(f"Running Lume VM {name}...")
                 run_resp = await client.post(
                     f"{lume_url}/lume/vms/{name}/run",

@@ -22,7 +22,7 @@ from cua_sandbox import Sandbox
 pytestmark = pytest.mark.asyncio
 
 IS_MACOS = platform.system() == "Darwin"
-IMAGE = "ghcr.io/trycua/macos-tahoe-cua@sha256:343919976167b7ffcf393b16ffccafbd02fc4d0176d31190c7428bd7c49d073d"
+IMAGE = "ghcr.io/trycua/macos-tahoe-cua:latest"
 
 
 def _has_lume() -> bool:

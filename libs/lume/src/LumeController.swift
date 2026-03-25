@@ -764,6 +764,57 @@ final class LumeController {
         }
     }
 
+    /// Run agent-based Setup Assistant automation using Claude computer-use API
+    @MainActor
+    public func setupWithAgent(
+        name: String,
+        apiKey: String,
+        model: String = "claude-sonnet-4-6",
+        maxIterations: Int = 100,
+        systemPrompt: String? = nil,
+        storage: String? = nil,
+        vncPort: Int = 0,
+        noDisplay: Bool = false,
+        debug: Bool = false,
+        debugDir: String? = nil
+    ) async throws {
+        let normalizedName = normalizeVMName(name: name)
+        Logger.info(
+            "Running agent-based setup",
+            metadata: [
+                "name": normalizedName,
+                "model": model,
+                "maxIterations": "\(maxIterations)",
+                "debug": "\(debug)"
+            ])
+
+        do {
+            let vm = try get(name: normalizedName, storage: storage)
+
+            guard vm.config.os.lowercased() == "macos" else {
+                throw VMError.unsupportedOS("Unattended setup is only supported for macOS VMs, got: \(vm.config.os)")
+            }
+
+            let installer = UnattendedInstaller()
+            try await installer.installWithAgent(
+                vm: vm,
+                apiKey: apiKey,
+                model: model,
+                maxIterations: maxIterations,
+                systemPrompt: systemPrompt,
+                vncPort: vncPort,
+                noDisplay: noDisplay,
+                debug: debug,
+                debugDir: debugDir
+            )
+
+            Logger.info("Agent-based setup completed", metadata: ["name": normalizedName])
+        } catch {
+            Logger.error("Failed to run agent-based setup", metadata: ["error": error.localizedDescription])
+            throw error
+        }
+    }
+
     @MainActor
     public func delete(name: String, storage: String? = nil) async throws {
         let normalizedName = normalizeVMName(name: name)

@@ -35,20 +35,21 @@ from cua_sandbox.builder.windows_unattend import (
     create_unattend_iso,
     download_file,
     download_windows_iso,
-    generate_autounattend_xml,
-    _create_data_iso,
 )
 
 logger = logging.getLogger(__name__)
 
 WORK_DIR = Path.home() / ".cua" / "cua-sandbox" / "qemu-builder"
-VIRTIO_ISO_URL = "https://fedorapeople.org/groups/virt/virtio-win/direct-downloads/stable-virtio/virtio-win.iso"
+VIRTIO_ISO_URL = (
+    "https://fedorapeople.org/groups/virt/virtio-win/direct-downloads/stable-virtio/virtio-win.iso"
+)
 CHUNK_SIZE = 500 * 1024 * 1024  # 500 MB chunks for OCI layers
 
 
 @dataclass
 class QEMUImageConfig:
     """VM configuration stored as the OCI config blob."""
+
     guest_os: str = "windows"
     version: str = "11"
     cpu: int = 4
@@ -76,15 +77,22 @@ def create_qcow2(path: Path, size_gb: int) -> Path:
     """Create a qcow2 disk image."""
     path.parent.mkdir(parents=True, exist_ok=True)
     cmd = [
-        "qemu-img", "create", "-q", "-f", "qcow2",
-        "-o", "lazy_refcounts=on,preallocation=off",
-        str(path), f"{size_gb}G",
+        "qemu-img",
+        "create",
+        "-q",
+        "-f",
+        "qcow2",
+        "-o",
+        "lazy_refcounts=on,preallocation=off",
+        str(path),
+        f"{size_gb}G",
     ]
     # Try system qemu-img first, then portable
     try:
         subprocess.run(cmd, check=True, capture_output=True)
     except FileNotFoundError:
         from cua_sandbox.runtime.qemu_installer import qemu_bin
+
         cmd[0] = str(Path(qemu_bin("x86_64")).parent / "qemu-img")
         if not Path(cmd[0]).exists():
             cmd[0] = str(Path(qemu_bin("x86_64")).parent / "qemu-img.exe")
@@ -116,7 +124,10 @@ def _build_image_wsl2(
     Converts all Windows paths in the QEMU command to WSL /mnt/... paths,
     uses the WSL2 qemu-system-x86_64 with -enable-kvm and -cpu host.
     """
-    import socket, time, threading, urllib.request
+    import socket
+    import threading
+    import time
+    import urllib.request
 
     def _convert_arg(arg: str) -> str:
         """Convert Windows paths in a QEMU argument to WSL paths."""
@@ -151,12 +162,18 @@ def _build_image_wsl2(
             continue
 
         # Replace OVMF pflash with WSL2 native paths
-        if arg == "-drive" and i + 1 <= len(cmd) and "if=pflash" in cmd[i] if i < len(cmd) else False:
+        if (
+            arg == "-drive" and i + 1 <= len(cmd) and "if=pflash" in cmd[i]
+            if i < len(cmd)
+            else False
+        ):
             pass  # handled below
         if "if=pflash" in arg:
             if "readonly=on" in arg:
                 # OVMF code — use WSL2 native
-                wsl_cmd.append("if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.fd")
+                wsl_cmd.append(
+                    "if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.fd"
+                )
             else:
                 # EFI vars — create from WSL2 native template (must match OVMF_CODE_4M size)
                 wsl_efivars = _win_to_wsl(work_dir / "efivars-wsl.fd")
@@ -178,9 +195,15 @@ def _build_image_wsl2(
     wsl_efivars_win = work_dir / "efivars-wsl.fd"
     if not wsl_efivars_win.exists():
         subprocess.run(
-            ["wsl", "-e", "bash", "-c",
-             f"cp /usr/share/OVMF/OVMF_VARS_4M.fd '{_win_to_wsl(wsl_efivars_win)}'"],
-            check=True, capture_output=True,
+            [
+                "wsl",
+                "-e",
+                "bash",
+                "-c",
+                f"cp /usr/share/OVMF/OVMF_VARS_4M.fd '{_win_to_wsl(wsl_efivars_win)}'",
+            ],
+            check=True,
+            capture_output=True,
         )
 
     shell_cmd = " ".join(wsl_cmd)
@@ -189,7 +212,8 @@ def _build_image_wsl2(
     # Launch QEMU in WSL2
     proc = subprocess.Popen(
         ["wsl", "-e", "bash", "-c", shell_cmd],
-        stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
     )
     logger.info(f"QEMU WSL2 install running as PID {proc.pid}. Monitor via VNC on port 5900.")
 
@@ -212,7 +236,9 @@ def _build_image_wsl2(
         # Phase 1: boot keypresses (fewer needed with KVM — faster boot)
         for i in range(15):
             time.sleep(2)
-            if _qmp_cmd(b'{"execute":"send-key","arguments":{"keys":[{"type":"qcode","data":"ret"}]}}'):
+            if _qmp_cmd(
+                b'{"execute":"send-key","arguments":{"keys":[{"type":"qcode","data":"ret"}]}}'
+            ):
                 logger.info(f"Sent boot keypress ({i+1}/15)")
 
         # Phase 2: wait for CUA server (KVM is much faster, ~15-30 min)
@@ -297,8 +323,9 @@ def build_image(
     logger.info("Starting unattended Windows install via QEMU...")
     logger.info("This will take 30-60 minutes. Monitor via VNC on port 5900.")
 
-    from cua_sandbox.runtime.qemu_installer import qemu_bin
     import platform as _plat
+
+    from cua_sandbox.runtime.qemu_installer import qemu_bin
 
     qemu = qemu_bin(config.architecture)
     qemu_dir = Path(qemu).parent
@@ -307,6 +334,7 @@ def build_image(
     ovmf_code = None
     for candidate in [
         qemu_dir / "share" / "edk2-x86_64-code.fd",
+        qemu_dir.parent / "share" / "qemu" / "edk2-x86_64-code.fd",  # Homebrew: bin/../share/qemu/
         Path("/usr/share/OVMF/OVMF_CODE.fd"),
         Path("/usr/share/ovmf/OVMF_CODE.fd"),
         Path("/usr/share/qemu/edk2-x86_64-code.fd"),
@@ -325,6 +353,8 @@ def build_image(
     efivars = work_dir / "efivars.fd"
     if not efivars.exists():
         vars_template = qemu_dir / "share" / "edk2-i386-vars.fd"
+        if not vars_template.exists():
+            vars_template = qemu_dir.parent / "share" / "qemu" / "edk2-i386-vars.fd"
         if vars_template.exists():
             shutil.copy2(vars_template, efivars)
         else:
@@ -332,39 +362,62 @@ def build_image(
 
     cmd = [
         qemu,
-        "-name", "windows-install",
-        "-machine", "q35,smm=off",
-        "-m", str(config.ram_mb),
-        "-smp", str(config.cpu),
-        "-cpu", "qemu64,+ssse3,+sse4.1,+sse4.2,+popcnt",
+        "-name",
+        "windows-install",
+        "-machine",
+        "q35,smm=off",
+        "-m",
+        str(config.ram_mb),
+        "-smp",
+        str(config.cpu),
+        "-cpu",
+        "qemu64,+ssse3,+sse4.1,+sse4.2,+popcnt",
         # UEFI firmware
-        "-drive", f"if=pflash,format=raw,readonly=on,file={ovmf_code}",
-        "-drive", f"if=pflash,format=raw,file={efivars}",
+        "-drive",
+        f"if=pflash,format=raw,readonly=on,file={ovmf_code}",
+        "-drive",
+        f"if=pflash,format=raw,file={efivars}",
         # Main disk — virtio-blk (bootindex=0 so after reboot it boots from disk)
-        "-drive", f"file={disk_path},id=disk0,format=qcow2,if=none",
-        "-device", "virtio-blk-pci,drive=disk0,bootindex=0",
+        "-drive",
+        f"file={disk_path},id=disk0,format=qcow2,if=none",
+        "-device",
+        "virtio-blk-pci,drive=disk0,bootindex=0",
         # AHCI controller for all CDROMs (Q35 built-in IDE only supports 1 unit)
-        "-device", "ich9-ahci,id=sata",
+        "-device",
+        "ich9-ahci,id=sata",
         # Windows ISO — bootindex=0 so OVMF boots from it first
-        "-drive", f"file={win_iso},if=none,media=cdrom,readonly=on,id=cd0",
-        "-device", "ide-cd,drive=cd0,bus=sata.0,bootindex=1",
+        "-drive",
+        f"file={win_iso},if=none,media=cdrom,readonly=on,id=cd0",
+        "-device",
+        "ide-cd,drive=cd0,bus=sata.0,bootindex=1",
         # Unattend ISO (data-only: Autounattend.xml + setup script + startup.nsh)
-        "-drive", f"file={unattend_iso},if=none,media=cdrom,readonly=on,id=cd1",
-        "-device", "ide-cd,drive=cd1,bus=sata.1",
+        "-drive",
+        f"file={unattend_iso},if=none,media=cdrom,readonly=on,id=cd1",
+        "-device",
+        "ide-cd,drive=cd1,bus=sata.1",
         # VirtIO drivers ISO
-        "-drive", f"file={virtio_iso},if=none,media=cdrom,readonly=on,id=cd2",
-        "-device", "ide-cd,drive=cd2,bus=sata.2",
-        "-vnc", ":0",
+        "-drive",
+        f"file={virtio_iso},if=none,media=cdrom,readonly=on,id=cd2",
+        "-device",
+        "ide-cd,drive=cd2,bus=sata.2",
+        "-vnc",
+        ":0",
         # QMP monitor for sending keypresses (bypass "press any key to boot from CD")
-        "-qmp", "tcp:127.0.0.1:4444,server,nowait",
+        "-qmp",
+        "tcp:127.0.0.1:4444,server,nowait",
         # Network (localhost only, no firewall prompt)
-        "-netdev", "user,id=net0,hostfwd=tcp::18000-:8000",
-        "-device", "virtio-net-pci,netdev=net0,mac=52:55:00:d1:55:01",
+        "-netdev",
+        "user,id=net0,hostfwd=tcp::18000-:8000",
+        "-device",
+        "virtio-net-pci,netdev=net0,mac=52:55:00:d1:55:01",
         # Disable S3/S4 (avoids ACPI sleep issues during install) — same as dockur
-        "-global", "ICH9-LPC.disable_s3=1",
-        "-global", "ICH9-LPC.disable_s4=1",
+        "-global",
+        "ICH9-LPC.disable_s3=1",
+        "-global",
+        "ICH9-LPC.disable_s4=1",
         # RTC base localtime for Windows
-        "-rtc", "base=localtime",
+        "-rtc",
+        "base=localtime",
     ]
 
     # TPM (requires swtpm — not available on Windows)
@@ -372,23 +425,36 @@ def build_image(
         tpm_dir = work_dir / "tpm"
         tpm_dir.mkdir(exist_ok=True)
         cmd += [
-            "-chardev", f"socket,id=chrtpm,path={tpm_dir}/swtpm-sock",
-            "-tpmdev", "emulator,id=tpm0,chardev=chrtpm",
-            "-device", "tpm-tis,tpmdev=tpm0",
+            "-chardev",
+            f"socket,id=chrtpm,path={tpm_dir}/swtpm-sock",
+            "-tpmdev",
+            "emulator,id=tpm0,chardev=chrtpm",
+            "-device",
+            "tpm-tis,tpmdev=tpm0",
         ]
-        subprocess.Popen([
-            "swtpm", "socket",
-            "--tpmstate", f"dir={tpm_dir}",
-            "--ctrl", f"type=unixio,path={tpm_dir}/swtpm-sock",
-            "--tpm2",
-            "--log", f"file={tpm_dir}/swtpm.log",
-        ])
+        subprocess.Popen(
+            [
+                "swtpm",
+                "socket",
+                "--tpmstate",
+                f"dir={tpm_dir}",
+                "--ctrl",
+                f"type=unixio,path={tpm_dir}/swtpm-sock",
+                "--tpm2",
+                "--log",
+                f"file={tpm_dir}/swtpm.log",
+            ]
+        )
 
     # Hardware acceleration
     if use_wsl2:
         # WSL2 path: rewrite entire command for WSL2 with KVM
         return _build_image_wsl2(
-            config, cmd, disk_path, work_dir, proc_port=18000,
+            config,
+            cmd,
+            disk_path,
+            work_dir,
+            proc_port=18000,
         )
 
     # WHPX on Windows has MMIO emulation bugs with OVMF pflash drives,
@@ -409,7 +475,11 @@ def build_image(
         logger.info(f"QEMU install running as PID {proc.pid}. Monitor via VNC on port 5900.")
 
         # Background thread: send boot keypresses, then health-check server, then shutdown
-        import socket, time, threading, urllib.request
+        import socket
+        import threading
+        import time
+        import urllib.request
+
         def _qmp_cmd(cmd_json: bytes):
             """Send a QMP command and return."""
             try:
@@ -428,12 +498,14 @@ def build_image(
 
         def _boot_and_monitor():
             """Phase 1: send Enter keys for 30s to bypass boot prompts.
-               Phase 2: poll CUA server on port 18000 until it responds.
-               Phase 3: send ACPI shutdown via QMP."""
+            Phase 2: poll CUA server on port 18000 until it responds.
+            Phase 3: send ACPI shutdown via QMP."""
             # Phase 1: boot keypresses
             for i in range(15):
                 time.sleep(2)
-                if _qmp_cmd(b'{"execute":"send-key","arguments":{"keys":[{"type":"qcode","data":"ret"}]}}'):
+                if _qmp_cmd(
+                    b'{"execute":"send-key","arguments":{"keys":[{"type":"qcode","data":"ret"}]}}'
+                ):
                     logger.info(f"Sent boot keypress ({i+1}/15)")
 
             # Phase 2: wait for CUA server (up to 90 min for TCG installs)
@@ -506,7 +578,6 @@ def push_image(
     Chunks the disk into gzip-compressed ~500MB layers with part annotations.
     """
     import oras.provider
-
     from cua_sandbox.registry.media_types import QEMU_CONFIG, QEMU_DISK_GZIP
     from cua_sandbox.registry.ref import parse_ref
 
@@ -549,19 +620,23 @@ def push_image(
 
                 chunk_digest = f"sha256:{hashlib.sha256(compressed).hexdigest()}"
 
-                layers.append({
-                    "mediaType": QEMU_DISK_GZIP,
-                    "digest": chunk_digest,
-                    "size": len(compressed),
-                    "annotations": {
-                        "org.trycua.qemu.part.number": str(part_num),
-                        "org.trycua.qemu.part.total": str(part_total),
-                        "org.trycua.qemu.uncompressed-size": str(len(chunk_data)),
-                        "org.opencontainers.image.title": f"disk.qcow2.part.{part_num:04d}",
-                    },
-                })
+                layers.append(
+                    {
+                        "mediaType": QEMU_DISK_GZIP,
+                        "digest": chunk_digest,
+                        "size": len(compressed),
+                        "annotations": {
+                            "org.trycua.qemu.part.number": str(part_num),
+                            "org.trycua.qemu.part.total": str(part_total),
+                            "org.trycua.qemu.uncompressed-size": str(len(chunk_data)),
+                            "org.opencontainers.image.title": f"disk.qcow2.part.{part_num:04d}",
+                        },
+                    }
+                )
 
-                logger.info(f"  part {part_num}/{part_total}: {len(compressed) / 1024 / 1024:.1f} MB compressed")
+                logger.info(
+                    f"  part {part_num}/{part_total}: {len(compressed) / 1024 / 1024:.1f} MB compressed"
+                )
 
                 # Push blob
                 r.push_blob(full_repo, chunk_path, chunk_digest)
@@ -600,10 +675,9 @@ def pull_qemu_image(ref: str, dest_dir: Optional[Path] = None) -> tuple[QEMUImag
     Returns (config, disk_path).
     """
     import oras.provider
-
     from cua_sandbox.registry.cache import ImageCache
-    from cua_sandbox.registry.media_types import QEMU_CONFIG, QEMU_DISK, QEMU_DISK_GZIP
     from cua_sandbox.registry.manifest import get_manifest
+    from cua_sandbox.registry.media_types import QEMU_DISK, QEMU_DISK_GZIP
     from cua_sandbox.registry.ref import parse_ref
 
     registry, org, name, tag = parse_ref(ref)
@@ -621,7 +695,12 @@ def pull_qemu_image(ref: str, dest_dir: Optional[Path] = None) -> tuple[QEMUImag
     if disk_path.exists() and config_path.exists():
         logger.info(f"Using cached QEMU image: {dest_dir}")
         data = json.loads(config_path.read_text())
-        return QEMUImageConfig(**{k: v for k, v in data.items() if k in QEMUImageConfig.__dataclass_fields__}), disk_path
+        return (
+            QEMUImageConfig(
+                **{k: v for k, v in data.items() if k in QEMUImageConfig.__dataclass_fields__}
+            ),
+            disk_path,
+        )
 
     manifest = get_manifest(ref)
     r = oras.provider.Registry()
@@ -635,7 +714,9 @@ def pull_qemu_image(ref: str, dest_dir: Optional[Path] = None) -> tuple[QEMUImag
     else:
         config_data = {}
 
-    config = QEMUImageConfig(**{k: v for k, v in config_data.items() if k in QEMUImageConfig.__dataclass_fields__})
+    config = QEMUImageConfig(
+        **{k: v for k, v in config_data.items() if k in QEMUImageConfig.__dataclass_fields__}
+    )
 
     # Download and reassemble disk parts
     layers = manifest.get("layers", [])
@@ -701,11 +782,15 @@ def main():
     build_p.add_argument("--no-tpm", action="store_true", help="Disable TPM")
     build_p.add_argument("--work-dir", type=Path, help="Working directory")
     build_p.add_argument("--product-key", help="Windows product key")
-    build_p.add_argument("--wsl2", action="store_true", help="Run QEMU inside WSL2 with KVM acceleration")
+    build_p.add_argument(
+        "--wsl2", action="store_true", help="Run QEMU inside WSL2 with KVM acceleration"
+    )
 
     # push
     push_p = sub.add_parser("push", help="Push a qcow2 disk as OCI image")
-    push_p.add_argument("--ref", required=True, help="OCI reference (e.g. ghcr.io/trycua/win11:latest)")
+    push_p.add_argument(
+        "--ref", required=True, help="OCI reference (e.g. ghcr.io/trycua/win11:latest)"
+    )
     push_p.add_argument("--disk", required=True, help="Path to qcow2 disk")
     push_p.add_argument("--guest-os", default="windows")
     push_p.add_argument("--version", default="11")
@@ -735,17 +820,29 @@ def main():
 
     if args.command == "build":
         cfg = QEMUImageConfig(
-            guest_os="windows", version=args.windows_version,
-            cpu=args.cpu, ram_mb=args.ram, disk_size_gb=args.disk_size,
+            guest_os="windows",
+            version=args.windows_version,
+            cpu=args.cpu,
+            ram_mb=args.ram,
+            disk_size_gb=args.disk_size,
             tpm=not args.no_tpm,
         )
-        disk = build_image(cfg, windows_iso=args.iso_path, work_dir=args.work_dir, product_key=args.product_key, use_wsl2=args.wsl2)
+        disk = build_image(
+            cfg,
+            windows_iso=args.iso_path,
+            work_dir=args.work_dir,
+            product_key=args.product_key,
+            use_wsl2=args.wsl2,
+        )
         print(f"Built: {disk}")
 
     elif args.command == "push":
         cfg = QEMUImageConfig(
-            guest_os=args.guest_os, version=args.version,
-            cpu=args.cpu, ram_mb=args.ram, disk_size_gb=args.disk_size,
+            guest_os=args.guest_os,
+            version=args.version,
+            cpu=args.cpu,
+            ram_mb=args.ram,
+            disk_size_gb=args.disk_size,
             tpm=not args.no_tpm,
         )
         push_image(args.disk, args.ref, cfg)
@@ -757,11 +854,16 @@ def main():
 
     elif args.command == "build-and-push":
         cfg = QEMUImageConfig(
-            guest_os="windows", version=args.windows_version,
-            cpu=args.cpu, ram_mb=args.ram, disk_size_gb=args.disk_size,
+            guest_os="windows",
+            version=args.windows_version,
+            cpu=args.cpu,
+            ram_mb=args.ram,
+            disk_size_gb=args.disk_size,
             tpm=not args.no_tpm,
         )
-        disk = build_image(cfg, windows_iso=args.iso_path, product_key=args.product_key, use_wsl2=args.wsl2)
+        disk = build_image(
+            cfg, windows_iso=args.iso_path, product_key=args.product_key, use_wsl2=args.wsl2
+        )
         push_image(disk, args.ref, cfg)
 
     else:

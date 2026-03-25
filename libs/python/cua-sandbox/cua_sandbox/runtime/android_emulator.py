@@ -51,8 +51,9 @@ def _java_env() -> dict:
         return env
     # Check if java works without JAVA_HOME
     try:
-        subprocess.run(["java", "-version"], capture_output=True, timeout=5)
-        return env
+        result = subprocess.run(["java", "-version"], capture_output=True, timeout=5)
+        if result.returncode == 0:
+            return env
     except (subprocess.SubprocessError, FileNotFoundError):
         pass
     raise RuntimeError("Java not found. Install via: brew install openjdk")

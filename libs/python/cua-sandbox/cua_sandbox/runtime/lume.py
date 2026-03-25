@@ -389,6 +389,14 @@ class LumeRuntime(Runtime):
         async with httpx.AsyncClient(timeout=30) as client:
             await client.post(f"{lume_url}/lume/vms/{name}/stop")
 
+    async def delete(self, name: str) -> None:
+        """Stop and permanently delete a Lume VM."""
+        lume_url = f"http://{self.lume_host}:{self.lume_port}"
+        async with httpx.AsyncClient(timeout=60) as client:
+            # Stop first (ignore errors — VM may already be stopped)
+            await client.post(f"{lume_url}/lume/vms/{name}/stop")
+            await client.delete(f"{lume_url}/lume/vms/{name}")
+
     async def is_ready(self, info: RuntimeInfo, timeout: float = 120) -> bool:
         url = f"http://{info.host}:{info.api_port}/status"
         deadline = asyncio.get_event_loop().time() + timeout

@@ -795,7 +795,7 @@ class Sandbox:
         if runtime_type == "lume":
             from cua_sandbox.runtime.lume import LumeRuntime
 
-            await LumeRuntime().suspend(name)  # Lume stop = save state; no delete API assumed
+            await LumeRuntime().delete(name)
         elif runtime_type == "qemu-baremetal":
             from cua_sandbox.runtime.qemu import QEMUBaremetalRuntime
 

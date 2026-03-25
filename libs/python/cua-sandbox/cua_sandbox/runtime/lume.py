@@ -268,9 +268,49 @@ class LumeRuntime(Runtime):
 
             ip = await self._wait_for_ip(name, lume_url)
 
+        await self._deliver_vnc_config(name, lume_url)
         info = RuntimeInfo(host=ip, api_port=self.api_port, name=name)
         await self.is_ready(info)
         return info
+
+    async def _deliver_vnc_config(self, name: str, lume_url: str) -> None:
+        """Write the current VNC port/password into ~/.vnc.env inside the VM.
+
+        Lume v0.3.x doesn't auto-deliver VNC config via VirtioFS, so the
+        computer-server inside the VM may use a stale cached port from a
+        previous run.  We push the live values via `lume ssh` so the
+        computer-server always connects to the correct VNC endpoint.
+        """
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                resp = await client.get(f"{lume_url}/lume/vms/{name}")
+                data = resp.json()
+                vnc_url = data.get("vncUrl") or data.get("vnc_url")
+                if not vnc_url:
+                    return  # no VNC info — nothing to deliver
+                # Parse vnc://:PASSWORD@HOST:PORT
+                import re
+
+                m = re.match(r"vnc://:([^@]*)@[^:]+:(\d+)", vnc_url)
+                if not m:
+                    return
+                password, port = m.group(1), m.group(2)
+            vnc_env = f"VNC_PORT={port}\\nVNC_PASSWORD={password}"
+            proc = await asyncio.create_subprocess_exec(
+                _lume_path() or "lume",
+                "ssh",
+                name,
+                "--",
+                f"printf '{vnc_env}' > ~/.vnc.env && "
+                "launchctl kickstart -k "
+                "gui/$(id -u)/com.trycua.computer_server 2>/dev/null || true",
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+            await asyncio.wait_for(proc.wait(), timeout=30)
+            logger.info(f"Delivered VNC config to '{name}' (port {port})")
+        except Exception as exc:
+            logger.debug(f"VNC config delivery skipped for '{name}': {exc}")
 
     async def _wait_for_ip(self, name: str, lume_url: str, timeout: float = 300) -> str:
         deadline = asyncio.get_event_loop().time() + timeout
@@ -306,6 +346,7 @@ class LumeRuntime(Runtime):
                 timeout=120,
             )
         ip = await self._wait_for_ip(name, lume_url)
+        await self._deliver_vnc_config(name, lume_url)
         info = RuntimeInfo(host=ip, api_port=self.api_port, name=name)
         await self.is_ready(info)
         return info
@@ -346,39 +387,15 @@ class LumeRuntime(Runtime):
         async with httpx.AsyncClient(timeout=30) as client:
             await client.post(f"{lume_url}/lume/vms/{name}/stop")
 
-    async def is_ready(self, info: RuntimeInfo, timeout: float = 180) -> bool:
-        base_url = f"http://{info.host}:{info.api_port}"
+    async def is_ready(self, info: RuntimeInfo, timeout: float = 120) -> bool:
+        url = f"http://{info.host}:{info.api_port}/status"
         deadline = asyncio.get_event_loop().time() + timeout
         async with httpx.AsyncClient(timeout=5) as client:
-            # Phase 1: wait for HTTP server
             while asyncio.get_event_loop().time() < deadline:
                 try:
-                    resp = await client.get(f"{base_url}/status")
+                    resp = await client.get(url)
                     if resp.status_code == 200:
-                        logger.info(f"Lume VM {info.name} computer-server HTTP ready")
-                        break
-                except (
-                    httpx.ConnectError,
-                    httpx.ReadTimeout,
-                    httpx.ConnectTimeout,
-                    httpx.ReadError,
-                ):
-                    pass
-                await asyncio.sleep(3)
-            else:
-                raise TimeoutError(
-                    f"Lume VM {info.name} computer-server not ready after {timeout}s"
-                )
-
-            # Phase 2: wait for VNC (Screen Sharing starts later than the HTTP server)
-            while asyncio.get_event_loop().time() < deadline:
-                try:
-                    resp = await client.post(
-                        f"{base_url}/cmd",
-                        json={"command": "screenshot", "params": {"format": "png"}},
-                    )
-                    if resp.status_code == 200 and "error" not in resp.text.lower():
-                        logger.info(f"Lume VM {info.name} VNC ready")
+                        logger.info(f"Lume VM {info.name} computer-server is ready")
                         return True
                 except (
                     httpx.ConnectError,
@@ -388,5 +405,4 @@ class LumeRuntime(Runtime):
                 ):
                     pass
                 await asyncio.sleep(3)
-
-        raise TimeoutError(f"Lume VM {info.name} VNC not ready after {timeout}s")
+        raise TimeoutError(f"Lume VM {info.name} computer-server not ready after {timeout}s")

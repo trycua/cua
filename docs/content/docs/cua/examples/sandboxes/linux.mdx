@@ -1,0 +1,137 @@
+---
+title: Linux Sandboxes
+description: Run Linux containers and VMs — cloud or local
+# test-sources:
+#   examples/sandboxes/test_linux_cloud_container.py
+#   examples/sandboxes/test_linux_cloud_vm.py
+#   examples/sandboxes/test_linux_local_container.py
+#   examples/sandboxes/test_linux_local_vm.py
+---
+
+import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
+import { Callout } from 'fumadocs-ui/components/callout';
+
+Linux is available as either a lightweight **container** (Docker-backed, fast startup) or a full **VM** (QEMU, full kernel isolation). Both work locally and on Cua Cloud.
+
+| | Container | VM |
+|--|-----------|-----|
+| Startup | Fast (~5s) | Slower (~30s) |
+| Isolation | Process-level | Full kernel |
+| Local runtime | Docker | QEMU (Docker-wrapped or bare-metal) |
+| Cloud | `Image.linux()` | `Image.linux(kind="vm")` |
+
+---
+
+## Cloud Container
+
+<Callout type="info">Requires `CUA_API_KEY`. No local Docker or runtime needed.</Callout>
+
+```python
+# source: examples/sandboxes/test_linux_cloud_container.py
+import asyncio
+from cua_sandbox import Image, Sandbox
+
+
+async def main():
+    async with Sandbox.ephemeral(
+        Image.linux("ubuntu", "24.04"),
+        name="example-linux-cloud-container",
+    ) as sb:
+        result = await sb.shell.run("uname -s")
+        print(result.stdout.strip())  # "Linux"
+
+        screenshot = await sb.screenshot()
+        with open("screenshot.png", "wb") as f:
+            f.write(screenshot)
+
+
+asyncio.run(main())
+```
+
+## Cloud VM
+
+<Callout type="info">Requires `CUA_API_KEY`. Full VM — heavier than a container but with full kernel.</Callout>
+
+```python
+# source: examples/sandboxes/test_linux_cloud_vm.py
+import asyncio
+from cua_sandbox import Image, Sandbox
+
+
+async def main():
+    async with Sandbox.ephemeral(
+        Image.linux("ubuntu", "24.04", kind="vm"),
+        name="example-linux-cloud-vm",
+    ) as sb:
+        result = await sb.shell.run("uname -s")
+        print(result.stdout.strip())  # "Linux"
+
+        screenshot = await sb.screenshot()
+        with open("screenshot.png", "wb") as f:
+            f.write(screenshot)
+
+
+asyncio.run(main())
+```
+
+## Local Container
+
+<Callout type="info">Requires Docker. No API key needed.</Callout>
+
+```python
+# source: examples/sandboxes/test_linux_local_container.py
+import asyncio
+from cua_sandbox import Image, Sandbox
+
+
+async def main():
+    async with Sandbox.ephemeral(
+        Image.linux("ubuntu", "24.04"),
+        local=True,
+        name="example-linux-local-container",
+    ) as sb:
+        result = await sb.shell.run("uname -s")
+        print(result.stdout.strip())  # "Linux"
+
+        screenshot = await sb.screenshot()
+        with open("screenshot.png", "wb") as f:
+            f.write(screenshot)
+
+
+asyncio.run(main())
+```
+
+## Local VM
+
+<Callout type="info">Requires Docker (QEMU runs inside a Docker container). No API key needed.</Callout>
+
+```python
+# source: examples/sandboxes/test_linux_local_vm.py
+import asyncio
+from cua_sandbox import Image, Sandbox
+
+
+async def main():
+    async with Sandbox.ephemeral(
+        Image.linux("ubuntu", "24.04", kind="vm"),
+        local=True,
+        name="example-linux-local-vm",
+    ) as sb:
+        result = await sb.shell.run("uname -s")
+        print(result.stdout.strip())  # "Linux"
+
+        screenshot = await sb.screenshot()
+        with open("screenshot.png", "wb") as f:
+            f.write(screenshot)
+
+
+asyncio.run(main())
+```
+
+---
+
+## Container vs. VM — when to use which
+
+Use a **container** when you want fast iteration and don't need kernel-level isolation — CI jobs, web scraping, most agent tasks.
+
+Use a **VM** when you need a real kernel — testing kernel modules, `/dev/kvm` workloads, OS-level benchmarks like OSWorld, or when you need stronger isolation between runs.

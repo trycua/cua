@@ -1,0 +1,6 @@
+{
+  "title": "Sandboxes",
+  "description": "Runnable examples for every sandbox type",
+  "icon": "Monitor",
+  "pages": ["linux", "macos", "windows", "android", "custom-images"]
+}

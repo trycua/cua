@@ -105,22 +105,26 @@ Built-in support for `agent-browser` and `agent-device` (iOS, Android) out of th
 
 ## Cua - Agentic UI Automation & Code Execution
 
-Build agents that see screens, click buttons, and complete tasks autonomously. Run isolated code execution environments for AI coding assistants like Claude Code, Codex CLI, or OpenCode.
+Build agents that see screens, click buttons, and complete tasks autonomously. One API for any VM or container image — cloud or local.
 
 <!-- <img src="img/cua-architecture.png" alt="Cua Architecture" width="100%"> -->
 
 ```python
 # Requires Python 3.12 or 3.13
-import asyncio
 from cua_sandbox import Sandbox, Image
 
-async def main():
-    async with Sandbox.ephemeral(Image.linux()) as sb:
-        await sb.shell.run("echo 'Hello from Cua!'")
-        screenshot = await sb.screenshot()
-
-asyncio.run(main())
+# Same API regardless of OS or runtime
+async with Sandbox.ephemeral(Image.linux()) as sb:   # or .macos() .windows() .android()
+    result = await sb.shell.run("echo hello")
+    screenshot = await sb.screenshot()
+    await sb.mouse.click(100, 200)
+    await sb.keyboard.type("Hello from Cua!")
 ```
+
+|                    | Linux container | Linux VM | macOS | Windows | Android |
+| ------------------ | --------------- | -------- | ----- | ------- | ------- |
+| **Cloud (cua.ai)** | ✅              | ✅       | ✅    | ✅      | ✅      |
+| **Local (QEMU)**   | ✅              | ✅       | ✅    | ✅      | ✅      |
 
 **[Get Started](https://cua.ai/docs/cua/guide/get-started/set-up-sandbox)** | **[Examples](https://cua.ai/docs/cua/examples)** | **[API Reference](https://cua.ai/docs/cua/reference/agent-sdk)**
 

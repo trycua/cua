@@ -346,15 +346,39 @@ class LumeRuntime(Runtime):
         async with httpx.AsyncClient(timeout=30) as client:
             await client.post(f"{lume_url}/lume/vms/{name}/stop")
 
-    async def is_ready(self, info: RuntimeInfo, timeout: float = 120) -> bool:
-        url = f"http://{info.host}:{info.api_port}/status"
+    async def is_ready(self, info: RuntimeInfo, timeout: float = 180) -> bool:
+        base_url = f"http://{info.host}:{info.api_port}"
         deadline = asyncio.get_event_loop().time() + timeout
         async with httpx.AsyncClient(timeout=5) as client:
+            # Phase 1: wait for HTTP server
             while asyncio.get_event_loop().time() < deadline:
                 try:
-                    resp = await client.get(url)
+                    resp = await client.get(f"{base_url}/status")
                     if resp.status_code == 200:
-                        logger.info(f"Lume VM {info.name} computer-server is ready")
+                        logger.info(f"Lume VM {info.name} computer-server HTTP ready")
+                        break
+                except (
+                    httpx.ConnectError,
+                    httpx.ReadTimeout,
+                    httpx.ConnectTimeout,
+                    httpx.ReadError,
+                ):
+                    pass
+                await asyncio.sleep(3)
+            else:
+                raise TimeoutError(
+                    f"Lume VM {info.name} computer-server not ready after {timeout}s"
+                )
+
+            # Phase 2: wait for VNC (Screen Sharing starts later than the HTTP server)
+            while asyncio.get_event_loop().time() < deadline:
+                try:
+                    resp = await client.post(
+                        f"{base_url}/cmd",
+                        json={"command": "screenshot", "params": {"format": "png"}},
+                    )
+                    if resp.status_code == 200 and "error" not in resp.text.lower():
+                        logger.info(f"Lume VM {info.name} VNC ready")
                         return True
                 except (
                     httpx.ConnectError,
@@ -364,4 +388,5 @@ class LumeRuntime(Runtime):
                 ):
                     pass
                 await asyncio.sleep(3)
-        raise TimeoutError(f"Lume VM {info.name} computer-server not ready after {timeout}s")
+
+        raise TimeoutError(f"Lume VM {info.name} VNC not ready after {timeout}s")

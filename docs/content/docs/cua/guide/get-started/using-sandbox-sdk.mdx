@@ -26,8 +26,8 @@ uv pip install cua-sandbox
 
 ## Create a Sandbox
 
-<Tabs items={['Cloud Container', 'Cloud VM', 'Cloud macOS', 'Cloud Windows', 'Local Linux', 'Local macOS (Lume)', 'Local Windows', 'Local Android']}>
-  <Tab value="Cloud Container">
+<Tabs items={['Cloud Linux Container', 'Cloud Linux VM', 'Local Linux', 'Local macOS (Lume)', 'Local Windows', 'Local Android']}>
+  <Tab value="Cloud Linux Container">
     ```python
     import asyncio
     from cua_sandbox import Sandbox, Image
@@ -45,7 +45,7 @@ uv pip install cua-sandbox
     ```
     Requires `CUA_API_KEY` environment variable.
   </Tab>
-  <Tab value="Cloud VM">
+  <Tab value="Cloud Linux VM">
     ```python
     import asyncio
     from cua_sandbox import Sandbox, Image
@@ -54,42 +54,6 @@ uv pip install cua-sandbox
         async with Sandbox.ephemeral(Image.linux(kind="vm")) as sb:
             result = await sb.shell.run("uname -s")
             print(result.stdout)  # "Linux"
-
-            screenshot = await sb.screenshot()
-            with open("screenshot.png", "wb") as f:
-                f.write(screenshot)
-
-    asyncio.run(main())
-    ```
-    Requires `CUA_API_KEY` environment variable.
-  </Tab>
-  <Tab value="Cloud macOS">
-    ```python
-    import asyncio
-    from cua_sandbox import Sandbox, Image
-
-    async def main():
-        async with Sandbox.ephemeral(Image.macos()) as sb:
-            result = await sb.shell.run("sw_vers")
-            print(result.stdout)
-
-            screenshot = await sb.screenshot()
-            with open("screenshot.png", "wb") as f:
-                f.write(screenshot)
-
-    asyncio.run(main())
-    ```
-    Requires `CUA_API_KEY` environment variable. Works on any host OS — no Mac needed.
-  </Tab>
-  <Tab value="Cloud Windows">
-    ```python
-    import asyncio
-    from cua_sandbox import Sandbox, Image
-
-    async def main():
-        async with Sandbox.ephemeral(Image.windows()) as sb:
-            result = await sb.shell.run("ver")
-            print(result.stdout)
 
             screenshot = await sb.screenshot()
             with open("screenshot.png", "wb") as f:

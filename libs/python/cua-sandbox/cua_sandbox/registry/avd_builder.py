@@ -336,7 +336,6 @@ def pull_avd(
     The manifest index is resolved to the correct arch variant automatically.
     Returns (config, avd_dir) where avd_dir is the extracted ``.avd`` directory.
     """
-    import oras.provider
     from cua_sandbox.registry.manifest import get_manifest
     from cua_sandbox.registry.media_types import (
         ANDROID_AVD_TAR_GZIP,
@@ -347,19 +346,31 @@ def pull_avd(
     dest_avd_home.mkdir(parents=True, exist_ok=True)
 
     registry, org, name, tag = parse_ref(ref)
-    full_repo = f"{registry}/{org}/{name}"
 
     # get_manifest already resolves manifest indexes to the host arch
     manifest = get_manifest(ref)
 
+    # Fetch blobs directly via HTTP (avoids oras-py retry/auth spam)
+    from cua_sandbox.registry.manifest import _registry_token
+
+    def _fetch_blob_bytes(blob_digest: str) -> bytes:
+        import requests as _req
+
+        token = _registry_token(registry, f"{org}/{name}")
+        headers: dict = {}
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+        url = f"https://{registry}/v2/{org}/{name}/blobs/{blob_digest}"
+        r = _req.get(url, headers=headers, timeout=120, stream=True)
+        r.raise_for_status()
+        return r.content
+
     # Parse config
-    r = oras.provider.Registry()
     config_blob = manifest.get("config", {})
     config = AVDConfig()
     if config_blob.get("digest"):
         try:
-            resp = r.get_blob(full_repo, config_blob["digest"])
-            data = resp.json() if hasattr(resp, "json") else {}
+            data = json.loads(_fetch_blob_bytes(config_blob["digest"]))
             config = AVDConfig(
                 **{k: v for k, v in data.items() if k in AVDConfig.__dataclass_fields__}
             )
@@ -399,8 +410,7 @@ def pull_avd(
                 digest = layer["digest"]
                 size = layer.get("size", 0)
                 logger.info(f"  part {part_num}/{parts[-1][0]}: {size / 1024 / 1024:.1f} MB")
-                resp = r.get_blob(full_repo, digest)
-                out.write(gzip.decompress(resp.content))
+                out.write(gzip.decompress(_fetch_blob_bytes(digest)))
 
         # Extract the tar into dest_avd_home
         logger.info(f"Extracting AVD to {dest_avd_home} ...")

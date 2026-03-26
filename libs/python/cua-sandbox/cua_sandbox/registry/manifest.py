@@ -287,8 +287,14 @@ def detect_os(manifest: dict) -> Optional[str]:
         if "linux" in os_val:
             return "linux"
 
-    # lume/agoda media types → macOS
+    # Android AVD media types → android
     config_mt = manifest.get("config", {}).get("mediaType", "")
+    if config_mt == ANDROID_AVD_CONFIG:
+        return "android"
+    if any(layer.get("mediaType") == ANDROID_AVD_TAR_GZIP for layer in manifest.get("layers", [])):
+        return "android"
+
+    # lume/agoda media types → macOS
     if config_mt in (OCI_VM_CONFIG, OCI_VM_CONFIG_LEGACY):
         return "macos"
     if any(

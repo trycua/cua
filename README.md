@@ -73,11 +73,15 @@
 
 Build agents that see screens, click buttons, and complete tasks autonomously. One API for any VM or container image — cloud or local.
 
+```sh
+pip install cua
+```
+
 <!-- <img src="img/cua-architecture.png" alt="Cua Architecture" width="100%"> -->
 
 ```python
-# Requires Python 3.12 or 3.13
-from cua_sandbox import Sandbox, Image
+# Requires Python 3.11 or later
+from cua import Sandbox, Image
 
 # Same API regardless of OS or runtime
 async with Sandbox.ephemeral(Image.linux()) as sb:   # or .macos() .windows() .android()

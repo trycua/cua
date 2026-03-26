@@ -212,9 +212,16 @@ class QEMUBaremetalRuntime(Runtime):
 
         # If image has layers or no direct disk path, use the builder to resolve
         if not opts.get("disk_path") and not image._disk_path and image.kind == "vm":
-            from cua_sandbox.builder.build import create_session_disk
+            # Registry QEMU images: pull the disk first, then boot bare-metal
+            if image._registry:
+                from cua_sandbox.registry.qemu_builder import pull_qemu_image
 
-            disk_path = str(await create_session_disk(image, name))
+                _cfg, _disk = pull_qemu_image(image._registry)
+                disk_path = str(_disk)
+            else:
+                from cua_sandbox.builder.build import create_session_disk
+
+                disk_path = str(await create_session_disk(image, name))
         elif image._layers and (image._disk_path or opts.get("disk_path")):
             # Has a base disk AND user layers — build user image + session overlay
             from cua_sandbox.builder.build import create_session_disk

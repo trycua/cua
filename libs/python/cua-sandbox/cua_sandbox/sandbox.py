@@ -149,18 +149,22 @@ def _auto_runtime(image: Image) -> "Runtime":
 
         return QEMURuntime(mode="bare-metal")
 
-    # Linux VM or Windows VM → prefer Docker-wrapped QEMU; fall back to bare-metal
+    # Registry VM images (e.g. osworld) always use bare-metal QEMU.
+    if image._registry and image.kind == "vm" and not image._disk_path:
+        from cua_sandbox.runtime.qemu import QEMURuntime
+
+        return QEMURuntime(mode="bare-metal")
+
+    # Linux/Windows VM — prefer bare-metal QEMU when available, fall back to Docker.
     from cua_sandbox.runtime.qemu import QEMURuntime
 
-    if image.os_type == "windows":
-        # Windows bare-metal QEMU works on any host with qemu-system-x86_64
-        try:
-            from cua_sandbox.runtime.docker import _has_docker
+    try:
+        from cua_sandbox.runtime.qemu_installer import qemu_bin
 
-            if not _has_docker():
-                return QEMURuntime(mode="bare-metal")
-        except Exception:
-            pass
+        qemu_bin(image.os_type or "linux")
+        return QEMURuntime(mode="bare-metal")
+    except Exception:
+        pass
 
     return QEMURuntime(mode="docker")
 

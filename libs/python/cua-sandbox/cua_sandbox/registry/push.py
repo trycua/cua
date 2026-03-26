@@ -26,12 +26,11 @@ CLI usage:
       --kind container \\
       --agent-type androidworld
 
-  # Push a macOS lume VM and annotate it
+  # Push a macOS lume VM (standard cua-computer-server image — no agent-type needed)
   python -m cua_sandbox.registry.push \\
       --ref ghcr.io/trycua/macos-tahoe-cua:latest \\
       --source macos-tahoe-cua \\
-      --kind lume \\
-      --agent-type osworld
+      --kind lume
 """
 
 from __future__ import annotations
@@ -130,7 +129,9 @@ def push_lume_image(cfg: PushConfig) -> None:
     The ref is parsed into registry/organization/name:tag components that
     lume expects separately.
 
-    After the push, the manifest is annotated with org.trycua.agent_type.
+    Standard cua images (macos-tahoe-cua, etc.) run cua-computer-server and
+    do not need an agent_type annotation — leave cfg.agent_type as None for
+    those. Only set it for custom benchmark images (e.g. agent_type="osworld").
     """
     lume = _which("lume")
     if not lume:

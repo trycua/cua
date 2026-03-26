@@ -218,6 +218,12 @@ class QEMUBaremetalRuntime(Runtime):
 
                 _cfg, _disk = pull_qemu_image(image._registry)
                 disk_path = str(_disk)
+                # Auto-select the right QEMU binary for the pulled image's arch
+                _qemu_to_oci = {"aarch64": "arm64", "x86_64": "amd64"}
+                _pulled_oci = _qemu_to_oci.get(_cfg.architecture, "amd64")
+                _host_oci = "arm64" if _plat.machine().lower() in ("arm64", "aarch64") else "amd64"
+                if _pulled_oci == _host_oci:
+                    self.arch = _cfg.architecture
             else:
                 from cua_sandbox.builder.build import create_session_disk
 
@@ -289,6 +295,7 @@ class QEMUBaremetalRuntime(Runtime):
 
         # Build QEMU command — Android gets different machine/device config
         is_android = image.os_type == "android"
+        is_arm_guest = self.arch in ("aarch64", "arm64")
 
         if is_android:
             cmd = self._build_android_cmd(
@@ -301,6 +308,74 @@ class QEMUBaremetalRuntime(Runtime):
                 vnc_display,
                 enable_kvm,
             )
+        elif is_arm_guest:
+            # aarch64 guest — use 'virt' machine + UEFI (edk2-aarch64)
+            cmd = [
+                self._qemu_bin(),
+                "-name",
+                name,
+                "-machine",
+                "virt",
+                "-m",
+                str(memory),
+                "-smp",
+                str(cpus),
+                "-cpu",
+                (
+                    "host"
+                    if (_plat.system() == "Darwin" and _plat.machine() in ("arm64", "aarch64"))
+                    else "cortex-a72"
+                ),
+            ]
+            # UEFI firmware for aarch64
+            qemu_dir = Path(self._qemu_bin()).parent
+            aarch64_code = None
+            for candidate in [
+                qemu_dir / "share" / "edk2-aarch64-code.fd",
+                Path("/opt/homebrew/share/qemu/edk2-aarch64-code.fd"),
+                Path("/usr/share/AAVMF/AAVMF_CODE.fd"),
+                Path("/usr/share/qemu/edk2-aarch64-code.fd"),
+            ]:
+                if candidate.exists():
+                    aarch64_code = candidate
+                    break
+            if aarch64_code:
+                aarch64_vars = Path(disk_path).parent / "efivars-aarch64.fd"
+                if not aarch64_vars.exists():
+                    import shutil as _shutil
+
+                    vars_tmpl = qemu_dir / "share" / "edk2-arm-vars.fd"
+                    if vars_tmpl.exists():
+                        _shutil.copy2(vars_tmpl, aarch64_vars)
+                    else:
+                        aarch64_vars.write_bytes(b"\x00" * (64 * 1024))
+                cmd += [
+                    "-drive",
+                    f"if=pflash,format=raw,readonly=on,file={aarch64_code}",
+                    "-drive",
+                    f"if=pflash,format=raw,file={aarch64_vars}",
+                ]
+            cmd += [
+                "-drive",
+                f"file={disk_path},format={disk_fmt},if=virtio",
+                "-netdev",
+                f"user,id=net0,restrict=on,hostfwd=tcp:127.0.0.1:{hostfwd_port}-:{guest_port}",
+                "-device",
+                "virtio-net-pci,netdev=net0,mac=52:55:00:d1:55:01",
+                "-vnc",
+                f":{vnc_display}",
+            ]
+            if _plat.system() != "Windows":
+                cmd.append("-daemonize")
+            if enable_kvm:
+                if _plat.system() == "Darwin" and _plat.machine() in ("arm64", "aarch64"):
+                    # Apple Silicon: native arm64 guest → HVF acceleration
+                    cmd += ["-accel", "hvf"]
+                elif _plat.system() != "Windows":
+                    cmd.append("-enable-kvm")
+                else:
+                    cmd += ["-accel", "tcg"]
+            cmd += ["-qmp", f"tcp:127.0.0.1:{self.qmp_port},server,nowait"]
         else:
             cmd = [
                 self._qemu_bin(),

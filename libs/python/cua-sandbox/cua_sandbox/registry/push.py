@@ -68,6 +68,9 @@ class PushConfig:
     ram_mb: int = 8192
     disk_size_gb: int = 64
 
+    # Multi-arch: "arm64" | "amd64" | None (single-arch legacy push)
+    arch: Optional[str] = None
+
     # Extra manifest annotations
     extra_annotations: dict = field(default_factory=dict)
 
@@ -75,8 +78,9 @@ class PushConfig:
 def push_vm_image(cfg: PushConfig) -> None:
     """Push a qcow2 disk image to an OCI registry as a QEMU artifact.
 
-    Chunks the disk into gzip-compressed layers and stamps the manifest
-    with the agent_type annotation.
+    When cfg.arch is set, pushes a per-arch manifest and updates the
+    multi-arch manifest index at cfg.ref.  Otherwise pushes directly to ref.
+    The agent_type annotation is embedded in the manifest (no separate PUT needed).
     """
     from cua_sandbox.registry.qemu_builder import QEMUImageConfig, push_image
 
@@ -91,13 +95,7 @@ def push_vm_image(cfg: PushConfig) -> None:
         disk_size_gb=cfg.disk_size_gb,
     )
 
-    # push_image from qemu_builder does the chunking and OCI push.
-    # We extend the manifest annotations afterwards with agent_type.
-    push_image(disk_path, cfg.ref, config=vm_cfg)
-
-    if cfg.agent_type:
-        _annotate_manifest(cfg.ref, cfg.agent_type, cfg.extra_annotations)
-        logger.info(f"Annotated {cfg.ref} with {AGENT_TYPE_ANNOTATION}={cfg.agent_type}")
+    push_image(disk_path, cfg.ref, config=vm_cfg, arch=cfg.arch, agent_type=cfg.agent_type)
 
 
 def push_container_image(cfg: PushConfig) -> None:
@@ -295,6 +293,13 @@ def _main() -> None:
     parser.add_argument("--cpu", type=int, default=4)
     parser.add_argument("--ram-mb", type=int, default=8192)
     parser.add_argument("--disk-size-gb", type=int, default=64)
+    parser.add_argument(
+        "--arch",
+        default=None,
+        choices=["arm64", "amd64"],
+        help="OCI architecture for multi-arch push (arm64 or amd64). "
+        "When set, pushes a per-arch manifest and updates the manifest index at ref.",
+    )
 
     args = parser.parse_args()
 
@@ -309,6 +314,7 @@ def _main() -> None:
         cpu=args.cpu,
         ram_mb=args.ram_mb,
         disk_size_gb=args.disk_size_gb,
+        arch=args.arch,
     )
     push(cfg)
     print(f"Done: {args.ref}")

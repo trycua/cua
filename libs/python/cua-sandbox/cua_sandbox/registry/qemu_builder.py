@@ -568,14 +568,88 @@ def _sha256_file(path: Path) -> str:
     return h.hexdigest()
 
 
+def _host_oci_arch() -> str:
+    """Return the OCI architecture string for the current host."""
+    import platform as _plat
+
+    machine = _plat.machine().lower()
+    return "arm64" if machine in ("arm64", "aarch64") else "amd64"
+
+
+def _put_manifest_raw(r, full_repo: str, tag: str, manifest: dict) -> None:
+    """PUT an OCI manifest (any mediaType) via raw HTTP, bypassing oras-py schema validation."""
+    import oras.container as _oras_container
+
+    body = json.dumps(manifest).encode()
+    container = _oras_container.Container(f"{full_repo}:{tag}")
+    url = f"{r.prefix}://{container.manifest_url()}"
+    headers = {
+        "Content-Type": manifest.get("mediaType", "application/vnd.oci.image.index.v1+json"),
+        "Content-Length": str(len(body)),
+    }
+    resp = r.do_request(url, "PUT", headers=headers, data=body)
+    if resp.status_code not in (200, 201):
+        raise RuntimeError(f"PUT manifest failed ({resp.status_code}): {resp.text[:300]}")
+    logger.info(f"PUT manifest → {full_repo}:{tag} ({resp.status_code})")
+
+
+def _upsert_manifest_index(
+    r,
+    full_repo: str,
+    tag: str,
+    arch: str,
+    manifest_digest: str,
+    manifest_size: int,
+    agent_type: Optional[str],
+) -> None:
+    """Create or update a multi-arch OCI manifest index at ``full_repo:tag``."""
+    existing_manifests: list[dict] = []
+    try:
+        existing = r.get_manifest(f"{full_repo}:{tag}")
+        if existing.get("mediaType") == "application/vnd.oci.image.index.v1+json":
+            existing_manifests = [
+                m
+                for m in existing.get("manifests", [])
+                if m.get("platform", {}).get("architecture") != arch
+            ]
+    except Exception:
+        pass
+
+    new_entry: dict = {
+        "mediaType": "application/vnd.oci.image.manifest.v1+json",
+        "digest": manifest_digest,
+        "size": manifest_size,
+        "platform": {"os": "linux", "architecture": arch},
+    }
+    if agent_type:
+        new_entry["annotations"] = {"org.trycua.agent_type": agent_type}
+
+    index: dict = {
+        "schemaVersion": 2,
+        "mediaType": "application/vnd.oci.image.index.v1+json",
+        "manifests": existing_manifests + [new_entry],
+    }
+    if agent_type:
+        index["annotations"] = {"org.trycua.agent_type": agent_type}
+    _put_manifest_raw(r, full_repo, tag, index)
+
+
 def push_image(
     disk_path: str | Path,
     ref: str,
     config: Optional[QEMUImageConfig] = None,
+    *,
+    arch: Optional[str] = None,
+    agent_type: Optional[str] = None,
 ) -> None:
     """Push a qcow2 disk image to an OCI registry.
 
     Chunks the disk into gzip-compressed ~500MB layers with part annotations.
+
+    When ``arch`` is provided (``"arm64"`` or ``"amd64"``), the per-arch
+    manifest is pushed as ``ref-{arch}`` and the manifest index at ``ref`` is
+    updated, enabling multi-arch pulls.  When ``arch`` is ``None`` the image
+    is pushed directly to ``ref`` (legacy single-arch behaviour).
     """
     import os
 
@@ -588,6 +662,11 @@ def push_image(
         raise FileNotFoundError(f"Disk image not found: {disk_path}")
 
     config = config or QEMUImageConfig()
+    # Sync architecture field in config
+    if arch:
+        oci_to_qemu = {"arm64": "aarch64", "amd64": "x86_64"}
+        config.architecture = oci_to_qemu.get(arch, arch)
+
     registry, org, name, tag = parse_ref(ref)
     full_repo = f"{registry}/{org}/{name}"
 
@@ -658,8 +737,19 @@ def push_image(
             {"digest": config_digest, "size": len(config_data), "mediaType": QEMU_CONFIG},
         )
 
-        # Create and push manifest
+        # Build manifest
         import oras.container as _oras_container
+
+        manifest_annotations: dict = {
+            "org.trycua.qemu.guest-os": config.guest_os,
+            "org.trycua.qemu.version": config.version,
+            "org.trycua.qemu.disk-format": config.disk_format,
+            "org.trycua.qemu.uncompressed-disk-size": str(disk_size),
+        }
+        if arch:
+            manifest_annotations["org.trycua.qemu.architecture"] = arch
+        if agent_type:
+            manifest_annotations["org.trycua.agent_type"] = agent_type
 
         manifest = {
             "schemaVersion": 2,
@@ -670,23 +760,36 @@ def push_image(
                 "size": len(config_data),
             },
             "layers": layers,
-            "annotations": {
-                "org.trycua.qemu.guest-os": config.guest_os,
-                "org.trycua.qemu.version": config.version,
-                "org.trycua.qemu.disk-format": config.disk_format,
-                "org.trycua.qemu.uncompressed-disk-size": str(disk_size),
-            },
+            "annotations": manifest_annotations,
         }
 
-        r.upload_manifest(manifest, _oras_container.Container(f"{full_repo}:{tag}"))
-        logger.info(f"Pushed {ref} ({part_total} layers, {disk_size / 1024 / 1024:.0f} MB)")
+        if arch:
+            # Push per-arch manifest at ref-{arch}, then update the index at ref
+            arch_tag = f"{tag}-{arch}"
+            r.upload_manifest(manifest, _oras_container.Container(f"{full_repo}:{arch_tag}"))
+            logger.info(
+                f"Pushed {full_repo}:{arch_tag} ({part_total} layers, {disk_size / 1024 / 1024:.0f} MB)"
+            )
+
+            # Compute digest of manifest we just pushed for the index entry
+            manifest_body = json.dumps(manifest).encode()
+            manifest_digest = f"sha256:{hashlib.sha256(manifest_body).hexdigest()}"
+            _upsert_manifest_index(
+                r, full_repo, tag, arch, manifest_digest, len(manifest_body), agent_type
+            )
+            logger.info(f"Updated manifest index → {full_repo}:{tag}")
+        else:
+            r.upload_manifest(manifest, _oras_container.Container(f"{full_repo}:{tag}"))
+            logger.info(f"Pushed {ref} ({part_total} layers, {disk_size / 1024 / 1024:.0f} MB)")
 
 
 def pull_qemu_image(ref: str, dest_dir: Optional[Path] = None) -> tuple[QEMUImageConfig, Path]:
     """Pull a QEMU VM image from an OCI registry.
 
     Downloads gzip-compressed disk chunks, decompresses, and reassembles
-    into a qcow2 disk image.
+    into a qcow2 disk image.  If the ref resolves to a multi-arch manifest
+    index the correct arch variant is selected automatically based on the
+    host architecture.
 
     Returns (config, disk_path).
     """
@@ -697,9 +800,40 @@ def pull_qemu_image(ref: str, dest_dir: Optional[Path] = None) -> tuple[QEMUImag
 
     registry, org, name, tag = parse_ref(ref)
 
+    host_arch = _host_oci_arch()
+
     cache = ImageCache()
+    # Resolve manifest index before determining cache dir so arch is known
+    manifest = get_manifest(ref)
+    resolved_arch = host_arch
+
+    # If this is a manifest index, resolve to the arch-specific manifest
+    if manifest.get("mediaType") == "application/vnd.oci.image.index.v1+json":
+        manifests = manifest.get("manifests", [])
+        # Prefer exact host arch, fall back to amd64
+        chosen = None
+        for m in manifests:
+            if m.get("platform", {}).get("architecture") == host_arch:
+                chosen = m
+                break
+        if chosen is None:
+            for m in manifests:
+                if m.get("platform", {}).get("architecture") == "amd64":
+                    chosen = m
+                    break
+        if chosen is None and manifests:
+            chosen = manifests[0]
+        if chosen is None:
+            raise RuntimeError(f"No suitable arch variant found in manifest index for {ref}")
+        resolved_arch = chosen["platform"]["architecture"]
+        arch_tag = f"{tag}-{resolved_arch}"
+        logger.info(f"Resolving multi-arch index → {arch_tag} (host={host_arch})")
+        manifest = get_manifest(f"{registry}/{org}/{name}:{arch_tag}")
+
     if dest_dir is None:
-        dest_dir = cache.image_dir(registry, org, name, tag)
+        # Use arch-tagged subdirectory so arm64/amd64 don't overwrite each other
+        base_dir = cache.image_dir(registry, org, name, tag)
+        dest_dir = base_dir / resolved_arch
     dest_dir.mkdir(parents=True, exist_ok=True)
 
     disk_path = dest_dir / "disk.qcow2"
@@ -715,8 +849,6 @@ def pull_qemu_image(ref: str, dest_dir: Optional[Path] = None) -> tuple[QEMUImag
             ),
             disk_path,
         )
-
-    manifest = get_manifest(ref)
 
     from cua_sandbox.registry.manifest import _registry_token
 

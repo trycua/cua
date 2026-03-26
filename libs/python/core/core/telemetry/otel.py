@@ -48,10 +48,28 @@ _tokens_total: Optional[Any] = None  # Counter
 def is_otel_enabled() -> bool:
     """Check if OpenTelemetry is enabled.
 
-    Returns True unless CUA_TELEMETRY_DISABLED is set to a truthy value.
+    Canonical opt-out: ``CUA_TELEMETRY_ENABLED=false``.
+    ``CUA_TELEMETRY_DISABLED`` is deprecated — a warning is emitted on first
+    use and the value is honoured for backwards compatibility.
     """
-    disabled = os.environ.get("CUA_TELEMETRY_DISABLED", "").lower()
-    return disabled not in {"1", "true", "yes", "on"}
+    import warnings
+
+    disabled_val = os.environ.get("CUA_TELEMETRY_DISABLED", "")
+    if disabled_val:
+        warnings.warn(
+            "CUA_TELEMETRY_DISABLED is deprecated. " "Use CUA_TELEMETRY_ENABLED=false instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        if disabled_val.lower() in {"1", "true", "yes", "on"}:
+            return False
+
+    return os.environ.get("CUA_TELEMETRY_ENABLED", "true").lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
 
 
 def _get_otel_endpoint() -> str:

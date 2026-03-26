@@ -10,7 +10,6 @@ By default only local transport is tested. Set env vars to enable remote:
 
 from __future__ import annotations
 
-import asyncio
 import pytest
 
 pytestmark = pytest.mark.asyncio
@@ -19,6 +18,7 @@ pytestmark = pytest.mark.asyncio
 # ═══════════════════════════════════════════════════════════════════════════════
 # Screen
 # ═══════════════════════════════════════════════════════════════════════════════
+
 
 class TestScreen:
     async def test_screenshot_returns_png_bytes(self, any_sandbox):
@@ -44,6 +44,7 @@ class TestScreen:
 # ═══════════════════════════════════════════════════════════════════════════════
 # Mouse
 # ═══════════════════════════════════════════════════════════════════════════════
+
 
 class TestMouse:
     async def test_move(self, any_sandbox):
@@ -73,6 +74,7 @@ class TestMouse:
 # Keyboard
 # ═══════════════════════════════════════════════════════════════════════════════
 
+
 class TestKeyboard:
     async def test_type_text(self, any_sandbox):
         await any_sandbox.keyboard.type("hello")
@@ -92,6 +94,7 @@ class TestKeyboard:
 # Clipboard
 # ═══════════════════════════════════════════════════════════════════════════════
 
+
 class TestClipboard:
     async def test_set_and_get(self, any_sandbox):
         await any_sandbox.clipboard.set("cua-sandbox-test")
@@ -102,6 +105,7 @@ class TestClipboard:
 # ═══════════════════════════════════════════════════════════════════════════════
 # Shell
 # ═══════════════════════════════════════════════════════════════════════════════
+
 
 class TestShell:
     async def test_run_echo(self, any_sandbox):
@@ -119,6 +123,7 @@ class TestShell:
 # Window
 # ═══════════════════════════════════════════════════════════════════════════════
 
+
 class TestWindow:
     async def test_get_active_title(self, any_sandbox):
         title = await any_sandbox.window.get_active_title()
@@ -129,6 +134,7 @@ class TestWindow:
 # Environment / Dimensions
 # ═══════════════════════════════════════════════════════════════════════════════
 
+
 class TestEnvironment:
     async def test_get_environment(self, any_sandbox):
         env = await any_sandbox.get_environment()
@@ -138,6 +144,7 @@ class TestEnvironment:
 # ═══════════════════════════════════════════════════════════════════════════════
 # Localhost (separate from sandbox parametrization)
 # ═══════════════════════════════════════════════════════════════════════════════
+
 
 class TestLocalhost:
     async def test_screenshot(self, localhost_instance):

@@ -28,6 +28,7 @@ classifiers = [
 requires-python = ">=3.11,<3.14"
 
 dependencies = [
+    "cua-core>=0.1.18,<0.2.0",
     "cua-auto>=0.1.2",
     "websockets>=12.0",
     "httpx>=0.27.0",
@@ -83,10 +84,15 @@ asyncio_mode = "auto"
 testpaths = [
     "tests",
     "../../../examples/sandboxes",
+    "../../../examples/agents",
 ]
 
 [dependency-groups]
 dev = [
+    "cua-agent>=0.7.38",
     "pytest>=9.0.2",
     "pytest-asyncio>=1.3.0",
 ]
+
+[tool.uv.sources]
+cua-agent = { path = "../agent", editable = true }

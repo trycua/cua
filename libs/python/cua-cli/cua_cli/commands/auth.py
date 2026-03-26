@@ -3,7 +3,6 @@
 import argparse
 import os
 from pathlib import Path
-from typing import Any, Optional
 
 import aiohttp
 from core.http import cua_version_headers
@@ -334,7 +333,6 @@ def cmd_status(args: argparse.Namespace) -> int:
     ws = data.get("workspace", {})
     org = data.get("organization", {})
     credits = data.get("credits", {})
-    key_info = data.get("api_key", {})
 
     active_slug = get_active_workspace()
     active_label = f" [active: {active_slug}]" if active_slug else ""

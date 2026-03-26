@@ -13,7 +13,7 @@ cd libs/python/core
 pip install -e .
 
 # Run tests
-export CUA_TELEMETRY_DISABLED=1  # or $env:CUA_TELEMETRY_DISABLED="1" on Windows
+export CUA_TELEMETRY_ENABLED=false  # or $env:CUA_TELEMETRY_ENABLED="false" on Windows
 pytest tests/ -v
 ```
 
@@ -87,7 +87,7 @@ Tests run automatically on every PR via GitHub Actions (`.github/workflows/ci-py
 
 **ModuleNotFoundError**: Run `pip install -e .` in package directory
 
-**Tests fail in CI but pass locally**: Set `CUA_TELEMETRY_DISABLED=1`
+**Tests fail in CI but pass locally**: Set `CUA_TELEMETRY_ENABLED=false`
 
 **Async tests error**: Install `pytest-asyncio` and use `@pytest.mark.asyncio`
 

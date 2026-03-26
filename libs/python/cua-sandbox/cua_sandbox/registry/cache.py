@@ -42,11 +42,15 @@ class ImageCache:
             try:
                 parts = p.relative_to(self.root).parts
                 if len(parts) >= 4:
-                    images.append({
-                        "registry": parts[0], "org": parts[1],
-                        "name": parts[2], "tag": parts[3],
-                        "path": str(p.parent),
-                    })
+                    images.append(
+                        {
+                            "registry": parts[0],
+                            "org": parts[1],
+                            "name": parts[2],
+                            "tag": parts[3],
+                            "path": str(p.parent),
+                        }
+                    )
             except Exception:
                 pass
         return images

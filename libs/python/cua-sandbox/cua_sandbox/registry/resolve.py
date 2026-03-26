@@ -18,7 +18,6 @@ from cua_sandbox.registry.manifest import (
     ImageFormat,
     detect_format,
     detect_kind,
-    detect_os,
     detect_os_from_config,
     get_manifest,
 )
@@ -104,6 +103,7 @@ def pull_image(
     # QEMU format — use dedicated pull
     if fmt == ImageFormat.QEMU:
         from cua_sandbox.registry.qemu_builder import pull_qemu_image
+
         disk_path = dest_dir / "disk.qcow2"
         if not force and disk_path.exists():
             logger.info(f"Using cached QEMU image at {dest_dir}")

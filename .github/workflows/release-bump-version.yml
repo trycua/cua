@@ -8,6 +8,7 @@ on:
         required: true
         type: choice
         options:
+          - pypi/cua
           - pypi/agent
           - pypi/auto
           - pypi/bench
@@ -52,6 +53,10 @@ jobs:
         id: package
         run: |
           case "${{ inputs.service }}" in
+            "pypi/cua")
+              echo "directory=libs/python/cua" >> $GITHUB_OUTPUT
+              echo "type=python" >> $GITHUB_OUTPUT
+              ;;
             "pypi/agent")
               echo "directory=libs/python/agent" >> $GITHUB_OUTPUT
               echo "type=python" >> $GITHUB_OUTPUT
@@ -212,6 +217,15 @@ jobs:
           ALL_TAGS=$(git tag --points-at HEAD | tr '\n' ' ' | xargs)
           echo "Tags to push: $ALL_TAGS"
           echo "tags=$ALL_TAGS" >> $GITHUB_OUTPUT
+
+      - name: Capture bumped cua version
+        if: ${{ inputs.service == 'pypi/cua' }}
+        id: cua_version
+        run: |
+          cd libs/python/cua
+          VERSION=$(python -c "import tomllib; from pathlib import Path; data = tomllib.loads(Path('pyproject.toml').read_text()); print(data['project']['version'])")
+          echo "cua version: $VERSION"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Capture bumped agent version
         if: ${{ inputs.service == 'pypi/agent' }}

@@ -6,15 +6,11 @@ in ~/.cua/credentials. OAuth device flow deferred to a later stage.
 
 from __future__ import annotations
 
-import json
-import os
-import time
 import webbrowser
 from pathlib import Path
 from typing import Any, Dict, Optional
 
 import httpx
-
 from cua_sandbox._config import get_api_key, get_base_url
 
 _CUA_DIR = Path.home() / ".cua"

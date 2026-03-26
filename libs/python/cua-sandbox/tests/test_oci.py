@@ -9,7 +9,6 @@ fetch real manifests from ghcr.io and require network access.
 from __future__ import annotations
 
 import pytest
-
 from cua_sandbox.registry.manifest import (
     ImageFormat,
     detect_format,
@@ -31,36 +30,34 @@ from cua_sandbox.registry.media_types import (
 )
 from cua_sandbox.registry.ref import parse_ref
 
-
 # ═════════════════════════════════════════════════════════════════════════════
 # parse_ref
 # ═════════════════════════════════════════════════════════════════════════════
 
+
 class TestParseRef:
     def test_full_ref(self):
         assert parse_ref("ghcr.io/trycua/macos-sequoia-cua:latest") == (
-            "ghcr.io", "trycua", "macos-sequoia-cua", "latest"
+            "ghcr.io",
+            "trycua",
+            "macos-sequoia-cua",
+            "latest",
         )
 
     def test_org_name(self):
-        assert parse_ref("trycua/cua-xfce:v2") == (
-            "ghcr.io", "trycua", "cua-xfce", "v2"
-        )
+        assert parse_ref("trycua/cua-xfce:v2") == ("ghcr.io", "trycua", "cua-xfce", "v2")
 
     def test_short_name(self):
-        assert parse_ref("cua-xfce") == (
-            "ghcr.io", "trycua", "cua-xfce", "latest"
-        )
+        assert parse_ref("cua-xfce") == ("ghcr.io", "trycua", "cua-xfce", "latest")
 
     def test_short_name_with_tag(self):
-        assert parse_ref("cua-xfce:nightly") == (
-            "ghcr.io", "trycua", "cua-xfce", "nightly"
-        )
+        assert parse_ref("cua-xfce:nightly") == ("ghcr.io", "trycua", "cua-xfce", "nightly")
 
 
 # ═════════════════════════════════════════════════════════════════════════════
 # detect_format / detect_kind — synthetic manifests
 # ═════════════════════════════════════════════════════════════════════════════
+
 
 def _make_manifest(config_mt: str, layer_mts: list[str], **kwargs) -> dict:
     m = {
@@ -88,11 +85,14 @@ class TestDetectFormat:
         assert detect_format(m) == ImageFormat.LEGACY_LZ4
 
     def test_chunked_parts(self):
-        m = _make_manifest("application/json", [
-            f"{OCI_IMAGE_LAYER};part.number=1;part.total=3",
-            f"{OCI_IMAGE_LAYER};part.number=2;part.total=3",
-            f"{OCI_IMAGE_LAYER};part.number=3;part.total=3",
-        ])
+        m = _make_manifest(
+            "application/json",
+            [
+                f"{OCI_IMAGE_LAYER};part.number=1;part.total=3",
+                f"{OCI_IMAGE_LAYER};part.number=2;part.total=3",
+                f"{OCI_IMAGE_LAYER};part.number=3;part.total=3",
+            ],
+        )
         assert detect_format(m) == ImageFormat.CHUNKED_PARTS
 
     def test_container_oci(self):
@@ -126,9 +126,12 @@ class TestDetectKind:
         assert detect_kind(m) == "vm"
 
     def test_vm_chunked(self):
-        m = _make_manifest("application/json", [
-            f"{OCI_IMAGE_LAYER};part.number=1;part.total=2",
-        ])
+        m = _make_manifest(
+            "application/json",
+            [
+                f"{OCI_IMAGE_LAYER};part.number=1;part.total=2",
+            ],
+        )
         assert detect_kind(m) == "vm"
 
     def test_vm_qemu(self):
@@ -146,9 +149,13 @@ class TestDetectOs:
         assert detect_os(m) == "macos"
 
     def test_annotation_linux(self):
-        m = _make_manifest("application/json", [], annotations={
-            "org.trycua.lume.os": "Linux",
-        })
+        m = _make_manifest(
+            "application/json",
+            [],
+            annotations={
+                "org.trycua.lume.os": "Linux",
+            },
+        )
         assert detect_os(m) == "linux"
 
     def test_no_os(self):
@@ -160,19 +167,22 @@ class TestDetectOs:
 # get_layer_info
 # ═════════════════════════════════════════════════════════════════════════════
 
+
 class TestGetLayerInfo:
     def test_part_from_annotations(self):
         m = {
-            "layers": [{
-                "mediaType": OCI_VM_DISK,
-                "digest": "sha256:abc",
-                "size": 500_000_000,
-                "annotations": {
-                    "org.trycua.lume.part.number": "3",
-                    "org.trycua.lume.part.total": "10",
-                    "org.opencontainers.image.title": "disk.img.003",
-                },
-            }],
+            "layers": [
+                {
+                    "mediaType": OCI_VM_DISK,
+                    "digest": "sha256:abc",
+                    "size": 500_000_000,
+                    "annotations": {
+                        "org.trycua.lume.part.number": "3",
+                        "org.trycua.lume.part.total": "10",
+                        "org.opencontainers.image.title": "disk.img.003",
+                    },
+                }
+            ],
         }
         info = get_layer_info(m)
         assert len(info) == 1
@@ -213,7 +223,7 @@ class TestLiveRegistry:
         info = get_layer_info(manifest)
         assert len(info) > 0
         # Should have disk layers with part numbers
-        disk_parts = [l for l in info if l["part_number"] is not None]
+        disk_parts = [layer for layer in info if layer["part_number"] is not None]
         assert len(disk_parts) > 0
 
     def test_macos_chunked_parts(self):

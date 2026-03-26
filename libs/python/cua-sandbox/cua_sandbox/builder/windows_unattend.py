@@ -25,6 +25,7 @@ def download_file(url: str, dest: Path, description: str = "") -> Path:
     dest.parent.mkdir(parents=True, exist_ok=True)
     logger.info(f"Downloading {description or url} → {dest}")
     import urllib.request
+
     urllib.request.urlretrieve(url, str(dest))
     logger.info(f"Downloaded {dest.stat().st_size / 1024 / 1024:.0f} MB")
     return dest
@@ -56,8 +57,7 @@ def download_windows_iso(
         url = "https://go.microsoft.com/fwlink/?LinkId=691209"
     else:
         raise ValueError(
-            f"Cannot auto-download Windows {version}. "
-            f"Provide --iso-path to use your own ISO."
+            f"Cannot auto-download Windows {version}. " f"Provide --iso-path to use your own ISO."
         )
 
     logger.info(f"Downloading Windows {version} Enterprise Evaluation ISO...")
@@ -331,6 +331,7 @@ def create_unattend_iso(
     xml_path.write_text(xml, encoding="utf-8")
 
     from cua_sandbox.builder.build import SETUP_COMPUTER_SERVER_PS1
+
     setup_path = work_dir / "setup-cua-server.ps1"
     setup_path.write_text(SETUP_COMPUTER_SERVER_PS1, encoding="utf-8")
 

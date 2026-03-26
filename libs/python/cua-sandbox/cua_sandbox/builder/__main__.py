@@ -13,10 +13,9 @@ import argparse
 import asyncio
 import json
 import logging
-import sys
 from pathlib import Path
 
-from cua_sandbox.builder.overlay import IMAGES_DIR, base_image_path
+from cua_sandbox.builder.overlay import IMAGES_DIR
 
 
 def main():
@@ -45,12 +44,16 @@ def main():
 
     if args.command == "build-base":
         from cua_sandbox.builder.build import ensure_base_image
-        disk = asyncio.run(ensure_base_image(
-            args.os, args.version,
-            windows_iso=args.iso_path,
-            product_key=args.product_key,
-            force=args.force,
-        ))
+
+        disk = asyncio.run(
+            ensure_base_image(
+                args.os,
+                args.version,
+                windows_iso=args.iso_path,
+                product_key=args.product_key,
+                force=args.force,
+            )
+        )
         print(f"Base image: {disk}")
 
     elif args.command == "build":
@@ -59,8 +62,8 @@ def main():
             spec_str = Path(spec_str[1:]).read_text()
         spec = json.loads(spec_str)
 
-        from cua_sandbox.image import Image
         from cua_sandbox.builder.build import build_user_image, ensure_base_image
+        from cua_sandbox.image import Image
 
         image = Image.from_dict(spec)
         base = asyncio.run(ensure_base_image(image.os_type, image.version))

@@ -24,8 +24,7 @@ from cua_sandbox import Sandbox, Image
 
 async def take_screenshot():
     async with Sandbox.create(
-        os_type="linux",
-        provider_type="cloud",
+        Image.linux(),
         name="your-sandbox-name",
         api_key="your-api-key"
     ) as computer:

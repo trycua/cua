@@ -68,7 +68,7 @@ import signal
 import traceback
 
 from agent import ComputerAgent
-from cua_sandbox import Sandbox, Image, VMProviderType
+from cua_sandbox import Sandbox, Image
 from dotenv import load_dotenv
 
 logging.basicConfig(level=logging.INFO)
@@ -81,8 +81,7 @@ def handle_sigint(sig, frame):
 async def fill_application():
     try:
         async with Sandbox.create(
-            os_type="linux",
-            provider_type=VMProviderType.CLOUD,
+            Image.linux(),
             name="your-sandbox-name",  # Replace with your sandbox name
             api_key=os.environ["CUA_API_KEY"],
             verbosity=logging.INFO,
@@ -175,7 +174,7 @@ import signal
 import traceback
 
 from agent import ComputerAgent
-from cua_sandbox import Sandbox, Image, VMProviderType
+from cua_sandbox import Sandbox, Image
 from dotenv import load_dotenv
 
 logging.basicConfig(level=logging.INFO)
@@ -187,10 +186,9 @@ def handle_sigint(sig, frame):
 
 async def fill_application():
     try:
-        async with Sandbox.create(
-            os_type="linux",
-            provider_type=VMProviderType.DOCKER,
-            image="trycua/cua-xfce:latest",  # or "trycua/cua-ubuntu:latest"
+        async with Sandbox.ephemeral(
+            Image.linux(),
+            local=True,
             verbosity=logging.INFO,
         ) as computer:
 
@@ -275,7 +273,7 @@ import signal
 import traceback
 
 from agent import ComputerAgent
-from cua_sandbox import Sandbox, Image, VMProviderType
+from cua_sandbox import Sandbox, Image
 from dotenv import load_dotenv
 
 logging.basicConfig(level=logging.INFO)
@@ -288,8 +286,8 @@ def handle_sigint(sig, frame):
 async def fill_application():
     try:
         async with Sandbox.create(
-            os_type="macos",
-            provider_type=VMProviderType.LUME,
+            Image.macos(),
+            local=True,
             name="macos-sequoia-cua:latest",
             verbosity=logging.INFO,
         ) as computer:
@@ -375,7 +373,7 @@ import signal
 import traceback
 
 from agent import ComputerAgent
-from cua_sandbox import Sandbox, Image, VMProviderType
+from cua_sandbox import Sandbox, Image
 from dotenv import load_dotenv
 
 logging.basicConfig(level=logging.INFO)
@@ -388,8 +386,8 @@ def handle_sigint(sig, frame):
 async def fill_application():
     try:
         async with Sandbox.create(
-            os_type="windows",
-            provider_type=VMProviderType.WINDOWS_SANDBOX,
+            Image.windows(),
+            local=True,
             verbosity=logging.INFO,
         ) as computer:
 

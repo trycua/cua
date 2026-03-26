@@ -950,6 +950,8 @@ class Sandbox:
 
                 transport = OSWorldTransport(
                     f"http://{rt_info.host}:{rt_info.api_port}",
+                    qmp_host=rt_info.host,
+                    qmp_port=rt_info.qmp_port,
                 )
             elif rt_info.vnc_port and rt_info.ssh_port:
                 from cua_sandbox.transport.vncssh import VNCSSHTransport

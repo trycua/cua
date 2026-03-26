@@ -376,7 +376,7 @@ class QEMUBaremetalRuntime(Runtime):
                 stderr = proc.stderr.read().decode() if proc.stderr else ""
                 raise RuntimeError(f"QEMU launch failed (exit {proc.returncode}): {stderr}")
 
-        use_qmp = is_android or self.use_qmp_transport
+        use_qmp = is_android or self.use_qmp_transport or image._agent_type == "osworld"
         info = RuntimeInfo(
             host="localhost",
             api_port=hostfwd_port,

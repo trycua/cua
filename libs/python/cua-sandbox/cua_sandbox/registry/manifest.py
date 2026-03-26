@@ -14,6 +14,9 @@ from cua_sandbox.registry.media_types import (
     CONTAINER_CONFIG_TYPES,
     CONTAINER_LAYER_TYPES,
     LEGACY_DISK_CHUNK,
+    LUME_CONFIG,
+    LUME_DISK,
+    LUME_NVRAM,
     OCI_VM_CONFIG,
     OCI_VM_CONFIG_LEGACY,
     OCI_VM_DISK,
@@ -31,6 +34,7 @@ from cua_sandbox.registry.ref import parse_ref
 class ImageFormat(Enum):
     """Format of a VM image in the registry."""
 
+    LUME = "lume"  # trycua Lume macOS VM — gzip chunks, lume media types
     OCI_LAYERED = "oci-layered"  # agoda media types, gzip chunks with part annotations
     LEGACY_LZ4 = "legacy-lz4"  # trycua LZ4-chunked
     CHUNKED_PARTS = "chunked-parts"  # standard OCI layer type with ;part.number= in media type
@@ -97,7 +101,13 @@ def detect_format(manifest: dict) -> ImageFormat:
     config = manifest.get("config", {})
     config_mt = config.get("mediaType", "")
 
-    # OCI-layered (lume/agoda): config or disk layers use trycua.lume or legacy agoda types
+    # Lume native OCI format: config uses trycua.lume.config type
+    if config_mt == LUME_CONFIG:
+        return ImageFormat.LUME
+    if any(layer.get("mediaType") in (LUME_DISK, LUME_NVRAM) for layer in layers):
+        return ImageFormat.LUME
+
+    # OCI-layered (agoda/kubelet): config or disk layers use agoda media types
     if config_mt in (OCI_VM_CONFIG, OCI_VM_CONFIG_LEGACY):
         return ImageFormat.OCI_LAYERED
     if any(layer.get("mediaType") in (OCI_VM_DISK, OCI_VM_DISK_LEGACY) for layer in layers):
@@ -138,6 +148,7 @@ def detect_kind(manifest: dict) -> str:
     """Classify manifest as 'vm' or 'container'."""
     fmt = detect_format(manifest)
     if fmt in (
+        ImageFormat.LUME,
         ImageFormat.OCI_LAYERED,
         ImageFormat.LEGACY_LZ4,
         ImageFormat.CHUNKED_PARTS,

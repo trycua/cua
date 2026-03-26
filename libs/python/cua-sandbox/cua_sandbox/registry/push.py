@@ -1,7 +1,8 @@
 """Push VM disk images and container images to an OCI registry.
 
-Supports two image kinds:
-  - vm   : qcow2 disk → chunked QEMU OCI artifact (uses qemu_builder.push_image)
+Supports three image kinds:
+  - vm        : qcow2 disk → chunked QEMU OCI artifact (uses qemu_builder.push_image)
+  - lume      : macOS VM → pushed via `lume push` CLI, then annotated
   - container : Docker image → pushed via `docker push`, then annotated with
                 oras to stamp org.trycua.agent_type on the manifest
 
@@ -24,6 +25,13 @@ CLI usage:
       --source androidworld:latest \\
       --kind container \\
       --agent-type androidworld
+
+  # Push a macOS lume VM and annotate it
+  python -m cua_sandbox.registry.push \\
+      --ref ghcr.io/trycua/macos-tahoe-cua:latest \\
+      --source macos-tahoe-cua \\
+      --kind lume \\
+      --agent-type osworld
 """
 
 from __future__ import annotations
@@ -50,7 +58,7 @@ class PushConfig:
     """Local disk path (for vm kind) or Docker image name (for container kind)."""
 
     kind: str
-    """'vm' or 'container'."""
+    """'vm', 'lume', or 'container'."""
 
     agent_type: Optional[str] = None
     """Agent type to embed as org.trycua.agent_type manifest annotation."""
@@ -115,14 +123,54 @@ def push_container_image(cfg: PushConfig) -> None:
         logger.info(f"Annotated {ref} with {AGENT_TYPE_ANNOTATION}={cfg.agent_type}")
 
 
+def push_lume_image(cfg: PushConfig) -> None:
+    """Push a macOS lume VM to an OCI registry via the `lume push` CLI.
+
+    cfg.source is the lume VM name (as shown by `lume list`).
+    The ref is parsed into registry/organization/name:tag components that
+    lume expects separately.
+
+    After the push, the manifest is annotated with org.trycua.agent_type.
+    """
+    lume = _which("lume")
+    if not lume:
+        raise RuntimeError(
+            "lume CLI not found. Install from https://github.com/trycua/cua/tree/main/libs/lume"
+        )
+
+    from cua_sandbox.registry.ref import parse_ref
+
+    registry, org, name, tag = parse_ref(cfg.ref)
+
+    logger.info(f"Pushing lume VM '{cfg.source}' → {cfg.ref} via lume CLI...")
+    _run(
+        [
+            lume,
+            "push",
+            cfg.source,
+            f"{name}:{tag}",
+            "--registry",
+            registry,
+            "--organization",
+            org,
+        ]
+    )
+
+    if cfg.agent_type:
+        _annotate_manifest(cfg.ref, cfg.agent_type, cfg.extra_annotations)
+        logger.info(f"Annotated {cfg.ref} with {AGENT_TYPE_ANNOTATION}={cfg.agent_type}")
+
+
 def push(cfg: PushConfig) -> None:
-    """Dispatch to push_vm_image or push_container_image based on cfg.kind."""
+    """Dispatch to the appropriate push function based on cfg.kind."""
     if cfg.kind == "vm":
         push_vm_image(cfg)
+    elif cfg.kind == "lume":
+        push_lume_image(cfg)
     elif cfg.kind == "container":
         push_container_image(cfg)
     else:
-        raise ValueError(f"Unknown kind {cfg.kind!r}. Expected 'vm' or 'container'.")
+        raise ValueError(f"Unknown kind {cfg.kind!r}. Expected 'vm', 'lume', or 'container'.")
 
 
 # ── Internal helpers ─────────────────────────────────────────────────────────
@@ -198,7 +246,12 @@ def _main() -> None:
     parser.add_argument(
         "--source", required=True, help="Local disk path (vm) or Docker image name (container)"
     )
-    parser.add_argument("--kind", required=True, choices=["vm", "container"], help="Image kind")
+    parser.add_argument(
+        "--kind",
+        required=True,
+        choices=["vm", "lume", "container"],
+        help="Image kind: vm (QEMU qcow2), lume (macOS via lume CLI), or container (Docker)",
+    )
     parser.add_argument(
         "--agent-type", default=None, help="Agent type to annotate, e.g. osworld or androidworld"
     )

@@ -2,9 +2,11 @@
 
 VM image formats in the wild:
 
+  Lume (OCI):           gzip-chunked disk, trycua.lume media types,
+                        OCI config with os/hardwareModel/machineIdentifier
   OCI-layered (agoda):  gzip-compressed disk chunks, agoda media types,
                         annotations with part.number/offset/total
-  Legacy Lume (LZ4):    LZ4-chunked disk, trycua media types
+  Legacy Lume (LZ4):    LZ4-chunked disk, trycua.lume.*.lz4 media types
   Chunked-parts:        standard OCI layer type with ;part.number= in media type string
   Tart (Cirrus Labs):   compressed disk chunks, cirruslabs media types,
                         OCI config with os/architecture fields
@@ -19,6 +21,12 @@ Standard container images use OCI/Docker layer media types.
 QEMU_CONFIG = "application/vnd.trycua.qemu.config.v1+json"
 QEMU_DISK = "application/vnd.trycua.qemu.disk.v1"
 QEMU_DISK_GZIP = "application/vnd.trycua.qemu.disk.v1+gzip"
+
+# ── Lume macOS VM (cua) — native OCI format ──────────────────────────────────
+
+LUME_CONFIG = "application/vnd.trycua.lume.config.v1+json"
+LUME_DISK = "application/vnd.trycua.lume.disk.v1"
+LUME_NVRAM = "application/vnd.trycua.lume.nvram.v1"
 
 # ── Tart (Cirrus Labs) ───────────────────────────────────────────────────────
 
@@ -41,7 +49,7 @@ OCI_VM_AUX_LEGACY = "application/vnd.agoda.macosvz.aux.image.v1"
 
 LEGACY_DISK_CHUNK = "application/vnd.trycua.lume.disk.chunk.lz4"
 LEGACY_AUX = "application/vnd.trycua.lume.aux.image.v1"
-LEGACY_CONFIG = "application/vnd.trycua.lume.config.v1+json"
+LEGACY_CONFIG = "application/vnd.trycua.lume.config.v1+json"  # same as LUME_CONFIG
 
 # ── Standard OCI / Docker container ────────────────────────────────────────
 
@@ -58,6 +66,9 @@ VM_MEDIA_TYPES = frozenset(
         QEMU_CONFIG,
         QEMU_DISK,
         QEMU_DISK_GZIP,
+        LUME_CONFIG,
+        LUME_DISK,
+        LUME_NVRAM,
         OCI_VM_CONFIG,
         OCI_VM_DISK,
         OCI_VM_AUX,
@@ -73,10 +84,17 @@ VM_MEDIA_TYPES = frozenset(
     }
 )
 
-CONTAINER_LAYER_TYPES = frozenset({
-    OCI_IMAGE_LAYER, OCI_IMAGE_LAYER_NONDIST, DOCKER_IMAGE_LAYER,
-})
+CONTAINER_LAYER_TYPES = frozenset(
+    {
+        OCI_IMAGE_LAYER,
+        OCI_IMAGE_LAYER_NONDIST,
+        DOCKER_IMAGE_LAYER,
+    }
+)
 
-CONTAINER_CONFIG_TYPES = frozenset({
-    OCI_IMAGE_CONFIG, DOCKER_IMAGE_CONFIG,
-})
+CONTAINER_CONFIG_TYPES = frozenset(
+    {
+        OCI_IMAGE_CONFIG,
+        DOCKER_IMAGE_CONFIG,
+    }
+)

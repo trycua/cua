@@ -23,10 +23,12 @@ IMAGES_DIR = Path.home() / ".cua" / "cua-sandbox" / "images"
 def _qemu_img() -> str:
     """Resolve qemu-img binary."""
     import shutil
+
     found = shutil.which("qemu-img")
     if found:
         return found
     from cua_sandbox.runtime.qemu_installer import qemu_bin
+
     parent = Path(qemu_bin("x86_64")).parent
     for name in ["qemu-img", "qemu-img.exe"]:
         p = parent / name
@@ -39,9 +41,15 @@ def create_overlay(backing: Path, overlay: Path) -> Path:
     """Create a qcow2 overlay with the given backing file."""
     overlay.parent.mkdir(parents=True, exist_ok=True)
     cmd = [
-        _qemu_img(), "create", "-q",
-        "-f", "qcow2",
-        "-b", str(backing), "-F", "qcow2",
+        _qemu_img(),
+        "create",
+        "-q",
+        "-f",
+        "qcow2",
+        "-b",
+        str(backing),
+        "-F",
+        "qcow2",
         str(overlay),
     ]
     subprocess.run(cmd, check=True, capture_output=True)

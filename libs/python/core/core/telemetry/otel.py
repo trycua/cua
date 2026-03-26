@@ -57,8 +57,7 @@ def is_otel_enabled() -> bool:
     disabled_val = os.environ.get("CUA_TELEMETRY_DISABLED", "")
     if disabled_val:
         warnings.warn(
-            "CUA_TELEMETRY_DISABLED is deprecated. "
-            "Use CUA_TELEMETRY_ENABLED=false instead.",
+            "CUA_TELEMETRY_DISABLED is deprecated. " "Use CUA_TELEMETRY_ENABLED=false instead.",
             DeprecationWarning,
             stacklevel=2,
         )

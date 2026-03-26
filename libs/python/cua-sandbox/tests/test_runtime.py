@@ -444,7 +444,6 @@ async def test_lume_macos_tahoe_cua():
         assert len(screenshot) > 1000
 
 
-
 # ── 9. QEMU bare-metal error on missing binary ───────────────────────────────
 
 

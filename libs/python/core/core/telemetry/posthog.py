@@ -55,8 +55,7 @@ class PostHogTelemetryClient:
             import warnings
 
             warnings.warn(
-                "CUA_TELEMETRY_DISABLED is deprecated. "
-                "Use CUA_TELEMETRY_ENABLED=false instead.",
+                "CUA_TELEMETRY_DISABLED is deprecated. " "Use CUA_TELEMETRY_ENABLED=false instead.",
                 DeprecationWarning,
                 stacklevel=2,
             )

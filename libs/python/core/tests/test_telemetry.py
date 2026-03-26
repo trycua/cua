@@ -89,7 +89,9 @@ class TestPostHogTelemetryClient:
         mock_id_file.exists.return_value = False
         mock_config_dir = MagicMock()
         mock_config_dir.__truediv__.return_value = mock_id_file
-        mock_path.home.return_value.__truediv__.return_value.__truediv__.return_value = mock_config_dir
+        mock_path.home.return_value.__truediv__.return_value.__truediv__.return_value = (
+            mock_config_dir
+        )
 
         # Reset singleton
         PostHogTelemetryClient.destroy_client()
@@ -114,7 +116,9 @@ class TestPostHogTelemetryClient:
         mock_id_file.read_text.return_value.strip.return_value = existing_id
         mock_config_dir = MagicMock()
         mock_config_dir.__truediv__.return_value = mock_id_file
-        mock_path.home.return_value.__truediv__.return_value.__truediv__.return_value = mock_config_dir
+        mock_path.home.return_value.__truediv__.return_value.__truediv__.return_value = (
+            mock_config_dir
+        )
 
         # Reset singleton
         PostHogTelemetryClient.destroy_client()

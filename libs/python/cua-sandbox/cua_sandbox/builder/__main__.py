@@ -45,12 +45,16 @@ def main():
 
     if args.command == "build-base":
         from cua_sandbox.builder.build import ensure_base_image
-        disk = asyncio.run(ensure_base_image(
-            args.os, args.version,
-            windows_iso=args.iso_path,
-            product_key=args.product_key,
-            force=args.force,
-        ))
+
+        disk = asyncio.run(
+            ensure_base_image(
+                args.os,
+                args.version,
+                windows_iso=args.iso_path,
+                product_key=args.product_key,
+                force=args.force,
+            )
+        )
         print(f"Base image: {disk}")
 
     elif args.command == "build":

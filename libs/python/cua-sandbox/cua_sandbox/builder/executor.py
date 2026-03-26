@@ -38,6 +38,7 @@ class LayerExecutor:
             for line in resp.text.splitlines():
                 if line.startswith("data: "):
                     import json
+
                     try:
                         data = json.loads(line[6:])
                         if isinstance(data, dict):
@@ -115,7 +116,7 @@ class LayerExecutor:
         # Set persistent env vars via setx (Windows) or export (Linux)
         cmds = []
         for k, v in layer.get("variables", {}).items():
-            cmds.append(f"setx {k} \"{v}\"")
+            cmds.append(f'setx {k} "{v}"')
         return await self.run_command(" && ".join(cmds)) if cmds else {"returncode": 0}
 
     async def _exec_copy(self, layer: dict) -> dict:

@@ -54,6 +54,7 @@ except ImportError:
     def record_event(event_name: str, properties: dict | None = None) -> None:
         pass
 
+
 from cua_sandbox.image import Image
 from cua_sandbox.interfaces import (
     Clipboard,
@@ -959,9 +960,13 @@ class Sandbox:
                     disk_gb=disk_gb,
                     region=region,
                 )
-                sb = cls(transport, name=name, _ephemeral=ephemeral, _telemetry_enabled=telemetry_enabled)
+                sb = cls(
+                    transport, name=name, _ephemeral=ephemeral, _telemetry_enabled=telemetry_enabled
+                )
                 await sb._connect()
-                _record_sandbox_create(sb, image=image, local=False, ephemeral=bool(ephemeral), t_start=_t_start)
+                _record_sandbox_create(
+                    sb, image=image, local=False, ephemeral=bool(ephemeral), t_start=_t_start
+                )
                 return sb
             runtime = _auto_runtime(image)
         if image and runtime:
@@ -1092,7 +1097,9 @@ class Sandbox:
             _telemetry_enabled=telemetry_enabled,
         )
         await sb._connect()
-        _record_sandbox_create(sb, image=image, local=local, ephemeral=bool(ephemeral), t_start=_t_start)
+        _record_sandbox_create(
+            sb, image=image, local=local, ephemeral=bool(ephemeral), t_start=_t_start
+        )
         return sb
 
     def __repr__(self) -> str:

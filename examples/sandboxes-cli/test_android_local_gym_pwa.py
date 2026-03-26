@@ -40,7 +40,7 @@ GYM_PWA_DIR = Path(os.environ.get("GYM_PWA_DIR", Path.home() / "gym-pwa"))
 TWA_PACKAGE = "com.cuaai.gymtodo"
 TWA_MANIFEST_URL = f"{GYM_URL}/manifest.json"
 GYM_KEYSTORE = GYM_PWA_DIR / "android.keystore"
-BG_COLOR = "#4361ee"  # indigo — visually distinct from the default app chrome
+BG_COLOR = "#dbe4ff"  # light indigo tint — visually distinct without obscuring UI
 
 
 # ── Prereq checks ─────────────────────────────────────────────────────────────

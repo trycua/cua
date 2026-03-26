@@ -1022,6 +1022,21 @@ class ComputerAgent:
             )
             result = get_json(result)
 
+            # Debug: print LLM response
+            print(f"\n[DEBUG][LLM Response] usage={result.get('usage')}")
+            for idx, out_item in enumerate(result.get("output", [])):
+                item_type = out_item.get("type", "unknown")
+                if item_type == "computer_call":
+                    print(f"  [{idx}] computer_call: action={out_item.get('action')}, call_id={out_item.get('call_id')}")
+                elif item_type == "function_call":
+                    print(f"  [{idx}] function_call: name={out_item.get('name')}, args={out_item.get('arguments')}")
+                elif item_type == "message":
+                    content = out_item.get("content", [])
+                    text_parts = [c.get("text", "") for c in content if isinstance(c, dict) and c.get("text")]
+                    print(f"  [{idx}] message: {' '.join(text_parts)[:200]}")
+                else:
+                    print(f"  [{idx}] {item_type}: {str(out_item)[:200]}")
+
             # Lifecycle hook: Postprocess messages after the LLM call
             # Use cases:
             # - PII deanonymization (if you want tool calls to see PII)
@@ -1039,9 +1054,30 @@ class ComputerAgent:
 
             # Handle computer actions
             for item in result.get("output"):
+                item_type = item.get("type", "")
+                if item_type == "computer_call":
+                    action = item.get("action", {})
+                    print(f"\n[DEBUG][Action Execution] type={action.get('type')}, "
+                          f"args={{k: v for k, v in action.items() if k != 'type'}}")
+                elif item_type == "function_call":
+                    print(f"\n[DEBUG][Action Execution] function={item.get('name')}, "
+                          f"args={item.get('arguments')}")
+
                 partial_items = await self._handle_item(
                     item, self.computer_handler, ignore_call_ids=output_call_ids
                 )
+
+                if partial_items:
+                    for pi in partial_items:
+                        pi_type = pi.get("type", "")
+                        if pi_type == "computer_call_output":
+                            output = pi.get("output", {})
+                            has_image = "image_url" in output if isinstance(output, dict) else False
+                            print(f"[DEBUG][Action Result] computer_call_output: "
+                                  f"call_id={pi.get('call_id')}, has_screenshot={has_image}")
+                        else:
+                            print(f"[DEBUG][Action Result] {pi_type}: {str(pi)[:200]}")
+
                 new_items += partial_items
 
                 # Yield partial response if any

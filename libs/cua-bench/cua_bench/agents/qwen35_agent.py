@@ -39,8 +39,8 @@ if TYPE_CHECKING:
 
 @register_agent("qwen35")
 class Qwen35Agent(BaseAgent):
-    """Agent implementation using a Qwen3-VL model via the CUA Computer Agent SDK."""
-
+    """Agent implementation using a Qwen3.5 model via the CUA Computer Agent SDK."""
+    
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.model = kwargs.get("model", "openai/qwen3-vl")
@@ -115,7 +115,7 @@ class Qwen35Agent(BaseAgent):
             await session.execute_action(WaitAction(seconds=ms / 1000.0))
 
         async def get_dimensions():
-            return (1920, 1080)
+            return (1280, 800)
 
         async def get_environment():
             return "linux"
@@ -141,12 +141,12 @@ class Qwen35Agent(BaseAgent):
         logging_dir: Path | None = None,
         tracer=None,
     ) -> AgentResult:
-        """Run the task using the Qwen3.5 model via the CUA Computer Agent SDK."""
+        """Run the task using the Qwen3-VL model via the CUA Computer Agent SDK."""
         try:
             from agent import ComputerAgent
         except ImportError as e:
             raise RuntimeError(
-                "qwen35-agent requires the `cua-agent` package to be installed. "
+                "qwen3vl-agent requires the `cua-agent` package to be installed. "
                 "Install it with: pip install cua-agent"
             ) from e
 
@@ -197,6 +197,27 @@ class Qwen35Agent(BaseAgent):
                 sys.stdout.flush()
                 step += 1
 
+                # Debug: print LLM response and actions
+                print(f"\n[DEBUG][Step {step}] usage={result.get('usage')}")
+                for idx, out_item in enumerate(result.get("output", [])):
+                    item_type = out_item.get("type", "unknown")
+                    if item_type == "computer_call":
+                        action = out_item.get("action", {})
+                        print(f"  [{idx}] computer_call: action={action}")
+                    elif item_type == "function_call":
+                        print(f"  [{idx}] function_call: name={out_item.get('name')}, args={out_item.get('arguments')}")
+                    elif item_type == "computer_call_output":
+                        output = out_item.get("output", {})
+                        has_img = "image_url" in output if isinstance(output, dict) else False
+                        print(f"  [{idx}] computer_call_output: has_screenshot={has_img}")
+                    elif item_type == "message":
+                        content = out_item.get("content", [])
+                        texts = [c.get("text", "") for c in content if isinstance(c, dict) and c.get("text")]
+                        print(f"  [{idx}] message: {' '.join(texts)[:200]}")
+                    else:
+                        print(f"  [{idx}] {item_type}: {str(out_item)[:200]}")
+                sys.stdout.flush()
+
                 for k in total_usage:
                     total_usage[k] += result["usage"].get(k, 0)
 
@@ -239,8 +260,8 @@ class Qwen35Agent(BaseAgent):
 
             if task_completed:
                 failure_mode = FailureMode.NONE
-            elif step >= self.max_steps:
-                failure_mode = FailureMode.MAX_STEPS_EXCEEDED
+            # elif step >= self.max_steps:
+            #     failure_mode = FailureMode.MAX_STEPS_EXCEEDED
             else:
                 failure_mode = FailureMode.NONE
 

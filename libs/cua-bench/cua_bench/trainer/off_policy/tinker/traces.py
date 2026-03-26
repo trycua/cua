@@ -1,20 +1,3 @@
-"""Load cua-bench HuggingFace Dataset traces into structured Episode / Step objects.
-
-A single cua-bench task execution produces one HF Dataset directory containing
-rows of tracing events emitted by ``cua_bench.tracing.Tracing``:
-
-    reset       - initial screenshot after task setup
-    agent_step  - model output + post-action screenshot at each step
-    evaluate    - terminal reward returned by ``evaluate_task_fn``
-
-The reward is sparse: only the last step of an episode carries the terminal
-reward; all preceding steps get 0.0.
-
-The pre-action screenshot for step N is the post-action screenshot of step N-1
-(or the reset screenshot for step 0).  Both screenshots are stored on Step so
-that callers can choose which visual context to feed the model.
-"""
-
 from __future__ import annotations
 
 import json
@@ -111,7 +94,7 @@ def load_episode(trace_dir: str | Path) -> Optional[Episode]:
     from datasets import load_from_disk
 
     ds = load_from_disk(str(trace_dir))
-
+    
     # Group rows by event type for easy lookup.
     by_event: dict[str, list] = {}
     for row in ds:
@@ -173,7 +156,7 @@ def load_episode(trace_dir: str | Path) -> Optional[Episode]:
         if post_screenshot is not None:
             prev_screenshot = post_screenshot
 
-    trajectory_id = ds[0]["trajectory_id"] if len(ds) > 0 else ""
+    trajectory_id = ds[0]["trajectory_id"] if len(ds) > 0 and ds[0]["trajectory_id"] is not None else ""
     return Episode(
         trajectory_id=trajectory_id,
         task_description=task_description,

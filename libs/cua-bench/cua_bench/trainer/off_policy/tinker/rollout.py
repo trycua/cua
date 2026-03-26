@@ -1,17 +1,3 @@
-"""Spawn a cua-bench dataset run and block until all sessions complete.
-
-``run_rollouts`` is the single entry point.  It:
-
-1. Calls ``cb run dataset`` as a subprocess, capturing stdout/stderr.
-2. Parses the ``run-<id>`` token from the CLI output.
-3. Polls ``cua_bench.sessions.manager.list_sessions`` until every session
-   belonging to that run is in a terminal state (completed / failed / cancelled).
-4. Returns the ``(run_id, run_output_dir)`` pair so the caller can load traces.
-
-The poll uses the on-disk session store (``~/.local/state/cua-bench/runs.json``)
-directly — no subprocess needed for monitoring.
-"""
-
 from __future__ import annotations
 
 import os
@@ -50,8 +36,6 @@ def _all_sessions_terminal(run_id: str) -> bool:
 
     sessions = [s for s in list_sessions() if s.get("run_id") == run_id]
     if not sessions:
-        # Sessions may not have been registered yet if the runner is still
-        # starting containers; treat as "not done".
         return False
     return all(s.get("status") in _terminal_statuses() for s in sessions)
 
@@ -89,14 +73,10 @@ def run_rollouts(
         Seconds between session-state polls.
     extra_env:
         Additional environment variables merged into the subprocess environment.
-        Use this to pass ``OPENCUA_BASE_URL``, ``OPENAI_API_KEY``, etc. without
-        mutating the current process environment.
 
     Returns
     -------
     (run_id, run_output_dir)
-        ``run_output_dir`` is the XDG data directory that holds ``task_N_trace/``
-        subdirectories for each completed task.
 
     Raises
     ------
@@ -110,23 +90,17 @@ def run_rollouts(
     env = {**os.environ, **(extra_env or {})}
 
     cmd = [
-        "cb", "run", "dataset", str(tasks_path),
+        "cb", "run", "task", str(tasks_path),
         "--agent", agent,
         "--model", model,
         "--max-steps", str(max_steps),
+        "--with", "libs/python/agent/agent"
     ]
-    
-    # breakpoint()
 
     print(f"[rollout] Launching: {' '.join(cmd)}")
     proc = subprocess.run(cmd, capture_output=True, text=True, env=env)
 
     combined_output = proc.stdout + proc.stderr
-    
-    # print(combined_output)
-    
-    breakpoint()
-    
     run_id = _parse_run_id(combined_output)
 
     if run_id is None:

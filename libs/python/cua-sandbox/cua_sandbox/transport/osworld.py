@@ -236,10 +236,11 @@ class OSWorldTransport(Transport):
             env.vm_ip = vm_host
             env.server_port = vm_port
             env.http_server = self._base_url
+            env.cache_dir_base = "/tmp/osworld_cache"
             env.cache_dir = "/tmp/osworld_cache"
             import os
 
-            os.makedirs(env.cache_dir, exist_ok=True)
+            os.makedirs(env.cache_dir_base, exist_ok=True)
             from desktop_env.controllers.setup import SetupController  # type: ignore
 
             env.setup_controller = SetupController(

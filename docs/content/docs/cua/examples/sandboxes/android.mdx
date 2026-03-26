@@ -19,7 +19,7 @@ Android sandboxes expose the `sb.mobile` interface for touch input, gestures, an
 ```python
 # source: examples/sandboxes/test_android_cloud_vm.py
 import asyncio
-from cua_sandbox import Image, Sandbox
+from cua import Image, Sandbox
 
 
 async def main():
@@ -49,7 +49,7 @@ asyncio.run(main())
 ```python
 # source: examples/sandboxes/test_android_local_vm.py
 import asyncio
-from cua_sandbox import Image, Sandbox
+from cua import Image, Sandbox
 
 
 async def main():

@@ -24,7 +24,7 @@ Or install dependencies manually:
 
 ```bash
 pip install uvicorn fastapi
-pip install cua-sandbox
+pip install cua
 ```
 
 ## Starting the Server
@@ -54,7 +54,7 @@ The server exposes endpoints for screenshots, mouse/keyboard input, and other co
 Use `use_host_computer_server=True` to connect to a running computer server:
 
 ```python
-from cua_sandbox import Sandbox, Image
+from cua import Sandbox, Image
 
 # Connect to local computer server
 async with Sandbox.create(use_host_computer_server=True) as computer:
@@ -82,8 +82,8 @@ async with Sandbox.create(
 Run agents against your desktop:
 
 ```python
-from cua_sandbox import Sandbox, Image
-from agent import ComputerAgent
+from cua import Sandbox, Image
+from cua import ComputerAgent
 
 async with Sandbox.create(use_host_computer_server=True) as computer:
     agent = ComputerAgent(

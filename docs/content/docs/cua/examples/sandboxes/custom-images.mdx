@@ -22,8 +22,8 @@ Pull a Linux OCI VM image from `ghcr.io` and run it locally with `TartRuntime`. 
 ```python
 # source: examples/sandboxes/test_linux_local_registry_vm.py
 import asyncio
-from cua_sandbox import Image, Sandbox
-from cua_sandbox.runtime import TartRuntime
+from cua import Image, Sandbox
+from cua import TartRuntime
 
 
 async def main():
@@ -53,7 +53,7 @@ Pull a macOS OCI image. The SDK reads the OCI manifest to auto-select Lume as th
 ```python
 # source: examples/sandboxes/test_macos_local_registry_vm.py
 import asyncio
-from cua_sandbox import Image, Sandbox
+from cua import Image, Sandbox
 
 
 async def main():
@@ -81,7 +81,7 @@ Run any local disk image directly. Supported formats: `.qcow2`, `.vhdx`, `.raw`,
 
 ```python
 import asyncio
-from cua_sandbox import Image, Sandbox
+from cua import Image, Sandbox
 
 async def main():
     async with Sandbox.ephemeral(
@@ -113,8 +113,8 @@ Run the standard [OSWorld](https://os-world.github.io/) Ubuntu image using the O
 ```python
 # source: examples/sandboxes/test_linux_local_osworld_vm.py
 import asyncio
-from cua_sandbox import Image, Sandbox
-from cua_sandbox.runtime import QEMURuntime
+from cua import Image, Sandbox
+from cua import QEMURuntime
 
 OSWORLD_IMAGE = (
     "https://huggingface.co/datasets/xlangai/ubuntu_osworld/resolve/main/Ubuntu.qcow2.zip"

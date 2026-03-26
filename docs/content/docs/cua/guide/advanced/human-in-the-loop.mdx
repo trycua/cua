@@ -20,8 +20,8 @@ This opens a UI that shows pending completions. Select a completion to take cont
 Use `human/human` as the model:
 
 ```python
-from cua_sandbox import Sandbox, Image
-from agent import ComputerAgent
+from cua import Sandbox, Image
+from cua import ComputerAgent
 
 async with Sandbox.ephemeral(Image.linux()) as computer:
     agent = ComputerAgent(

@@ -17,7 +17,7 @@ Sometimes you don't want to rely on UI automation or shell commands—you just w
 Here's the basic pattern:
 
 ```python
-from cua_sandbox import Sandbox, Image
+from cua import Sandbox, Image
 
 async with Sandbox.ephemeral(Image.linux()) as computer:
     # First, install any packages you need
@@ -70,8 +70,8 @@ result = await computer.venv_cmd("data_env", "python /path/to/script.py")
 For cleaner code, use the decorator to mark functions for remote execution:
 
 ```python
-from cua_sandbox import Sandbox, Image
-from cua_sandbox.helpers import sandboxed
+from cua import Sandbox, Image
+from cua import sandboxed
 
 async with Sandbox.ephemeral(Image.linux()) as computer:
     await computer.venv_install("api_env", ["requests"])

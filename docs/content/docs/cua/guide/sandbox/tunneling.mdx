@@ -10,7 +10,7 @@ import { Callout } from 'fumadocs-ui/components/callout';
 ## Basic usage
 
 ```python
-from cua_sandbox import Sandbox, Image
+from cua import Sandbox, Image
 
 async with Sandbox.ephemeral(Image.linux()) as sb:
     # Start something inside the sandbox
@@ -73,7 +73,7 @@ async with sb.tunnel.forward("chrome_devtools_remote") as t:
 Forward the DevTools port from a sandbox browser to use CDP tools locally:
 
 ```python
-from cua_sandbox import Sandbox, Image
+from cua import Sandbox, Image
 
 async with Sandbox.ephemeral(Image.linux()) as sb:
     await sb.shell.run("google-chrome --remote-debugging-port=9222 --headless &")

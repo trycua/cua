@@ -10,8 +10,8 @@ description: Hook into agent lifecycle events for logging, cost tracking, and mo
 Pass callbacks when creating your agent:
 
 ```python
-from agent import ComputerAgent
-from agent.callbacks import LoggingCallback, BudgetManagerCallback
+from cua import ComputerAgent
+from cua import LoggingCallback, BudgetManagerCallback
 import logging
 
 agent = ComputerAgent(
@@ -45,7 +45,7 @@ agent = ComputerAgent(
 Logs agent lifecycle events with configurable verbosity:
 
 ```python
-from agent.callbacks import LoggingCallback
+from cua import LoggingCallback
 import logging
 
 agent = ComputerAgent(
@@ -69,7 +69,7 @@ Logs include API calls, computer actions, text responses, and usage statistics. 
 Tracks costs and stops execution when a budget limit is reached:
 
 ```python
-from agent.callbacks import BudgetManagerCallback
+from cua import BudgetManagerCallback
 
 agent = ComputerAgent(
     model="...",
@@ -96,7 +96,7 @@ When `raise_error=True`, the agent raises `BudgetExceededError` instead of stopp
 Limits how many screenshots are kept in the message history to prevent context overflow:
 
 ```python
-from agent.callbacks import ImageRetentionCallback
+from cua import ImageRetentionCallback
 
 agent = ComputerAgent(
     model="...",
@@ -119,7 +119,7 @@ Older screenshots are removed along with their associated computer call items.
 Saves complete agent conversations for debugging and analysis:
 
 ```python
-from agent.callbacks import TrajectorySaverCallback
+from cua import TrajectorySaverCallback
 
 agent = ComputerAgent(
     model="...",
@@ -146,7 +146,7 @@ See [Trajectories](/cua/guide/advanced/trajectories) for details on the saved fo
 Prepends custom instructions to every LLM call:
 
 ```python
-from agent.callbacks import PromptInstructionsCallback
+from cua import PromptInstructionsCallback
 
 agent = ComputerAgent(
     model="...",

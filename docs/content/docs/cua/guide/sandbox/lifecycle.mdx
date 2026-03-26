@@ -30,7 +30,7 @@ Use this for scripts, CI jobs, and any task where you want the sandbox to disapp
 
 ```python
 import asyncio
-from cua_sandbox import Sandbox, Image
+from cua import Sandbox, Image
 
 async def main():
     async with Sandbox.ephemeral(Image.linux()) as sb:
@@ -51,7 +51,7 @@ Use this when you need the sandbox to outlive your Python process, or when you w
 
 ```python
 import asyncio
-from cua_sandbox import Sandbox, Image
+from cua import Sandbox, Image
 
 async def main():
     # Create and get back a handle — sandbox keeps running after this script exits

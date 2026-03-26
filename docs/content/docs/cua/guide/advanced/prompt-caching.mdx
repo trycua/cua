@@ -10,8 +10,8 @@ description: Reduce costs and latency with provider-specific prompt caching
 Set `use_prompt_caching=True` when creating your agent:
 
 ```python
-from cua_sandbox import Sandbox, Image
-from agent import ComputerAgent
+from cua import Sandbox, Image
+from cua import ComputerAgent
 
 async with Sandbox.ephemeral(Image.linux()) as computer:
 

@@ -13,7 +13,7 @@ Because `Sandbox.ephemeral` and `Sandbox.create` are async, you can run many san
 
 ```python
 import asyncio
-from cua_sandbox import Sandbox, Image
+from cua import Sandbox, Image
 
 async def run_task(task: str) -> str:
     async with Sandbox.ephemeral(Image.linux()) as sb:
@@ -34,7 +34,7 @@ If you have a large batch, use a semaphore to cap the number of sandboxes runnin
 
 ```python
 import asyncio
-from cua_sandbox import Sandbox, Image
+from cua import Sandbox, Image
 
 MAX_CONCURRENT = 5
 
@@ -59,7 +59,7 @@ For dynamic workloads where tasks arrive at runtime, use `asyncio.Queue`:
 
 ```python
 import asyncio
-from cua_sandbox import Sandbox, Image
+from cua import Sandbox, Image
 
 async def worker(queue: asyncio.Queue, worker_id: int):
     while True:
@@ -97,7 +97,7 @@ A common pattern for visual testing — take screenshots across multiple environ
 
 ```python
 import asyncio
-from cua_sandbox import Sandbox, Image
+from cua import Sandbox, Image
 
 async def screenshot_env(image: Image, label: str) -> tuple[str, bytes]:
     async with Sandbox.ephemeral(image) as sb:
@@ -127,8 +127,8 @@ Run the same task across multiple sandboxes to compare model outputs or increase
 
 ```python
 import asyncio
-from cua_sandbox import Sandbox, Image
-from agent import ComputerAgent
+from cua import Sandbox, Image
+from cua import ComputerAgent
 
 async def run_agent(task: str, run_id: int) -> dict:
     async with Sandbox.ephemeral(Image.linux()) as sb:

@@ -22,7 +22,7 @@ macOS sandboxes are always VMs — either on Cua Cloud or locally via [Lume](htt
 ```python
 # source: examples/sandboxes/test_macos_cloud_vm.py
 import asyncio
-from cua_sandbox import Image, Sandbox
+from cua import Image, Sandbox
 
 
 async def main():
@@ -48,7 +48,7 @@ asyncio.run(main())
 ```python
 # source: examples/sandboxes/test_macos_local_vm.py
 import asyncio
-from cua_sandbox import Image, Sandbox
+from cua import Image, Sandbox
 
 
 async def main():
@@ -77,7 +77,7 @@ Pull a macOS image directly from the `ghcr.io/trycua` registry. The SDK reads th
 ```python
 # source: examples/sandboxes/test_macos_local_registry_vm.py
 import asyncio
-from cua_sandbox import Image, Sandbox
+from cua import Image, Sandbox
 
 
 async def main():

@@ -292,7 +292,7 @@ await sb.window.close()
 `Localhost` gives you the same interface as `Sandbox` but operates directly on the machine running Python, with no sandbox involved. Useful for local automation or testing.
 
 ```python
-from cua_sandbox import Localhost
+from cua import Localhost
 
 async with Localhost.connect() as host:
     result = await host.shell.run("echo hello")

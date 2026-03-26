@@ -20,12 +20,12 @@ Cua Agent Framework provides:
   <Tab value="Python">
     **Using uv (recommended):**
     ```bash
-    uv pip install "cua-agent[all]"
+    uv pip install "cua[all]"
     ```
 
     **Or with pip:**
     ```bash
-    pip install "cua-agent[all]"
+    pip install "cua[all]"
     ```
 
   </Tab>
@@ -49,8 +49,8 @@ Use Cua's inference API to access multiple model providers with a single API key
 ```python
 import os
 import asyncio
-from cua_sandbox import Sandbox, Image
-from agent import ComputerAgent
+from cua import Sandbox, Image
+from cua import ComputerAgent
 
 os.environ["CUA_API_KEY"] = "sk_cua-api01_..."
 
@@ -100,8 +100,8 @@ Use your own API keys from model providers like Anthropic, OpenAI, or others.
 
 ```python
 import asyncio
-from cua_sandbox import Sandbox, Image
-from agent import ComputerAgent
+from cua import Sandbox, Image
+from cua import ComputerAgent
 
 # Set your provider API key
 import os

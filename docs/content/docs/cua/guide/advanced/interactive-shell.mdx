@@ -29,7 +29,7 @@ The shell is fully interactive — arrow keys, tab completion, and `Ctrl+C` all 
 ## Python SDK
 
 ```python
-from cua_sandbox import Sandbox, Image
+from cua import Sandbox, Image
 
 async with Sandbox.create(provider_type="docker", name="my-container") as c:
     handle = await c.pty.create(

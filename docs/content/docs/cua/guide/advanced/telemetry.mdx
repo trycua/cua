@@ -47,8 +47,8 @@ export CUA_TELEMETRY_ENABLED=false
 Disable on individual objects:
 
 ```python
-from cua_sandbox import Sandbox, Image
-from agent import ComputerAgent
+from cua import Sandbox, Image
+from cua import ComputerAgent
 
 # Disable for Computer
 async with Sandbox.ephemeral(Image.linux(), telemetry_enabled=False) as computer:

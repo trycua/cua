@@ -46,15 +46,15 @@ Usage::
 | [`Localhost`](#localhost) | Direct host control via cua_auto — no sandboxing. |
 | [`Sandbox`](#sandbox) | A sandboxed computer environment. |
 | [`SandboxInfo`](#sandboxinfo) | Metadata for a local or cloud sandbox. |
-| [`CloudTransport`](#cloudtransport) | Transport that provisions / connects to a CUA cloud VM. |
+| [`CloudTransport`](#cloudtransport) | Transport that provisions / connects to a Cua cloud VM. |
 
 ## Functions
 
 | Function | Description |
 |----------|-------------|
-| [`login`](#login) | Open the CUA login page in a browser and store credentials. |
+| [`login`](#login) | Open the Cua login page in a browser and store credentials. |
 | [`whoami`](#whoami) | Return info about the authenticated user. |
-| [`configure`](#configure) | Set global configuration for the CUA SDK. |
+| [`configure`](#configure) | Set global configuration for the Cua SDK. |
 
 ---
 
@@ -499,7 +499,7 @@ automatically.
 |------|------|-------------|
 | `image` | `Any` | Image to run (e.g. ``Image.desktop("ubuntu")``). |
 | `name` | `Any` | Optional name to assign to the sandbox. |
-| `api_key` | `Any` | CUA API key for cloud sandboxes. |
+| `api_key` | `Any` | Cua API key for cloud sandboxes. |
 | `local` | `Any` | Use a local runtime instead of cloud. |
 | `runtime` | `Any` | Explicit runtime backend (DockerRuntime, QEMURuntime, etc.). |
 | `cpu` | `Any` | Number of CPUs for the cloud sandbox. |
@@ -532,7 +532,7 @@ manager, ``disconnect()`` is called on exit — the sandbox keeps running.
 | Name | Type | Description |
 |------|------|-------------|
 | `name` | `Any` | Name of the existing sandbox. |
-| `api_key` | `Any` | CUA API key for cloud sandboxes. |
+| `api_key` | `Any` | Cua API key for cloud sandboxes. |
 | `ws_url` | `Any` | WebSocket URL for a remote computer-server. |
 | `http_url` | `Any` | HTTP base URL for a remote computer-server. |
 | `container_name` | `Any` | Container name for cloud auth (HTTP transport). |
@@ -565,7 +565,7 @@ Create an ephemeral sandbox that is automatically destroyed on exit.
 |------|------|-------------|
 | `image` | `Any` | Image to run (e.g. ``Image.desktop("ubuntu")``). |
 | `name` | `Any` | Optional name to assign to the sandbox. |
-| `api_key` | `Any` | CUA API key for cloud sandboxes. |
+| `api_key` | `Any` | Cua API key for cloud sandboxes. |
 | `local` | `Any` | Use a local runtime instead of cloud. |
 | `runtime` | `Any` | Explicit runtime backend (DockerRuntime, QEMURuntime, etc.). |
 | `cpu` | `Any` | Number of CPUs for the cloud sandbox. |
@@ -594,7 +594,7 @@ List running and suspended sandboxes.
 | Name | Type | Description |
 |------|------|-------------|
 | `local` | `Any` | If True, list local sandboxes (Lume, Docker, QEMU). If False, list cloud sandboxes. |
-| `api_key` | `Any` | CUA API key for cloud sandboxes. |
+| `api_key` | `Any` | Cua API key for cloud sandboxes. |
 
 #### Sandbox.get_info
 
@@ -610,7 +610,7 @@ Get metadata for a specific sandbox.
 |------|------|-------------|
 | `name` | `Any` | Sandbox name. |
 | `local` | `Any` | If True, look up in local runtimes. |
-| `api_key` | `Any` | CUA API key for cloud. |
+| `api_key` | `Any` | Cua API key for cloud. |
 
 #### Sandbox.suspend
 
@@ -631,7 +631,7 @@ For cloud: calls POST /v1/vms/\{name\}/stop.
 |------|------|-------------|
 | `name` | `Any` | Sandbox name. |
 | `local` | `Any` | If True, operate on a local sandbox. |
-| `api_key` | `Any` | CUA API key for cloud. |
+| `api_key` | `Any` | Cua API key for cloud. |
 
 #### Sandbox.resume
 
@@ -647,7 +647,7 @@ Resume a suspended sandbox and return a connected Sandbox.
 |------|------|-------------|
 | `name` | `Any` | Sandbox name. |
 | `local` | `Any` | If True, resume a local sandbox. |
-| `api_key` | `Any` | CUA API key for cloud. |
+| `api_key` | `Any` | Cua API key for cloud. |
 
 **Returns:** A connected Sandbox ready to use.
 
@@ -665,7 +665,7 @@ Restart a sandbox (suspend then resume) and return a connected Sandbox.
 |------|------|-------------|
 | `name` | `Any` | Sandbox name. |
 | `local` | `Any` | If True, restart a local sandbox. |
-| `api_key` | `Any` | CUA API key for cloud. |
+| `api_key` | `Any` | Cua API key for cloud. |
 
 **Returns:** A connected Sandbox ready to use.
 
@@ -686,7 +686,7 @@ For cloud sandboxes, calls DELETE /v1/vms/\{name\}.
 |------|------|-------------|
 | `name` | `Any` | Sandbox name. |
 | `local` | `Any` | If True, delete a local sandbox. |
-| `api_key` | `Any` | CUA API key for cloud. |
+| `api_key` | `Any` | Cua API key for cloud. |
 
 ---
 
@@ -719,7 +719,7 @@ SandboxInfo(self, name: str, status: str, source: str, os_type: Optional[str] = 
 
 *Inherits from: Transport*
 
-Transport that provisions / connects to a CUA cloud VM.
+Transport that provisions / connects to a Cua cloud VM.
 
 ### Constructor
 
@@ -815,7 +815,7 @@ async def get_display_url(self, share: bool = False) -> str
 def login(base_url: Optional[str] = None) -> None
 ```
 
-Open the CUA login page in a browser and store credentials.
+Open the Cua login page in a browser and store credentials.
 
 This initiates a Clerk-based browser authentication flow.
 The user completes login in their browser, and the resulting
@@ -829,7 +829,7 @@ def whoami(api_key: Optional[str] = None) -> Dict[str, Any]
 
 Return info about the authenticated user.
 
-**Returns:** Dict with user info (id, email, etc.) from the CUA API.
+**Returns:** Dict with user info (id, email, etc.) from the Cua API.
 
 ## configure
 
@@ -837,14 +837,14 @@ Return info about the authenticated user.
 def configure(api_key: Optional[str] = None, base_url: Optional[str] = None) -> None
 ```
 
-Set global configuration for the CUA SDK.
+Set global configuration for the Cua SDK.
 
 **Parameters:**
 
 | Name | Type | Description |
 |------|------|-------------|
 | `api_key` | `Any` | API key for cloud sandboxes. |
-| `base_url` | `Any` | Base URL for the CUA cloud API. |
+| `base_url` | `Any` | Base URL for the Cua cloud API. |
 
 ---
 
@@ -856,7 +856,7 @@ All cua_auto calls are sync; async wrappers use asyncio.to_thread().
 
 Usage::
 
-    from cua_sandbox import localhost
+    from cua import localhost
 
     async with localhost() as host:
         await host.mouse.click(100, 200)
@@ -1011,7 +1011,7 @@ as interface objects backed by a Transport.
 
 Usage::
 
-    from cua_sandbox import Sandbox, Image
+    from cua import Sandbox, Image
 
     # Provision a new persistent sandbox
     sb = await Sandbox.create(Image.desktop("ubuntu"))
@@ -1372,7 +1372,7 @@ Return a URL to view this sandbox's display.
 
 *Inherits from: Transport*
 
-Transport that provisions / connects to a CUA cloud VM.
+Transport that provisions / connects to a Cua cloud VM.
 
 ### Constructor
 
@@ -1812,7 +1812,7 @@ automatically.
 |------|------|-------------|
 | `image` | `Any` | Image to run (e.g. ``Image.desktop("ubuntu")``). |
 | `name` | `Any` | Optional name to assign to the sandbox. |
-| `api_key` | `Any` | CUA API key for cloud sandboxes. |
+| `api_key` | `Any` | Cua API key for cloud sandboxes. |
 | `local` | `Any` | Use a local runtime instead of cloud. |
 | `runtime` | `Any` | Explicit runtime backend (DockerRuntime, QEMURuntime, etc.). |
 | `cpu` | `Any` | Number of CPUs for the cloud sandbox. |
@@ -1845,7 +1845,7 @@ manager, ``disconnect()`` is called on exit — the sandbox keeps running.
 | Name | Type | Description |
 |------|------|-------------|
 | `name` | `Any` | Name of the existing sandbox. |
-| `api_key` | `Any` | CUA API key for cloud sandboxes. |
+| `api_key` | `Any` | Cua API key for cloud sandboxes. |
 | `ws_url` | `Any` | WebSocket URL for a remote computer-server. |
 | `http_url` | `Any` | HTTP base URL for a remote computer-server. |
 | `container_name` | `Any` | Container name for cloud auth (HTTP transport). |
@@ -1878,7 +1878,7 @@ Create an ephemeral sandbox that is automatically destroyed on exit.
 |------|------|-------------|
 | `image` | `Any` | Image to run (e.g. ``Image.desktop("ubuntu")``). |
 | `name` | `Any` | Optional name to assign to the sandbox. |
-| `api_key` | `Any` | CUA API key for cloud sandboxes. |
+| `api_key` | `Any` | Cua API key for cloud sandboxes. |
 | `local` | `Any` | Use a local runtime instead of cloud. |
 | `runtime` | `Any` | Explicit runtime backend (DockerRuntime, QEMURuntime, etc.). |
 | `cpu` | `Any` | Number of CPUs for the cloud sandbox. |
@@ -1907,7 +1907,7 @@ List running and suspended sandboxes.
 | Name | Type | Description |
 |------|------|-------------|
 | `local` | `Any` | If True, list local sandboxes (Lume, Docker, QEMU). If False, list cloud sandboxes. |
-| `api_key` | `Any` | CUA API key for cloud sandboxes. |
+| `api_key` | `Any` | Cua API key for cloud sandboxes. |
 
 #### Sandbox.get_info
 
@@ -1923,7 +1923,7 @@ Get metadata for a specific sandbox.
 |------|------|-------------|
 | `name` | `Any` | Sandbox name. |
 | `local` | `Any` | If True, look up in local runtimes. |
-| `api_key` | `Any` | CUA API key for cloud. |
+| `api_key` | `Any` | Cua API key for cloud. |
 
 #### Sandbox.suspend
 
@@ -1944,7 +1944,7 @@ For cloud: calls POST /v1/vms/\{name\}/stop.
 |------|------|-------------|
 | `name` | `Any` | Sandbox name. |
 | `local` | `Any` | If True, operate on a local sandbox. |
-| `api_key` | `Any` | CUA API key for cloud. |
+| `api_key` | `Any` | Cua API key for cloud. |
 
 #### Sandbox.resume
 
@@ -1960,7 +1960,7 @@ Resume a suspended sandbox and return a connected Sandbox.
 |------|------|-------------|
 | `name` | `Any` | Sandbox name. |
 | `local` | `Any` | If True, resume a local sandbox. |
-| `api_key` | `Any` | CUA API key for cloud. |
+| `api_key` | `Any` | Cua API key for cloud. |
 
 **Returns:** A connected Sandbox ready to use.
 
@@ -1978,7 +1978,7 @@ Restart a sandbox (suspend then resume) and return a connected Sandbox.
 |------|------|-------------|
 | `name` | `Any` | Sandbox name. |
 | `local` | `Any` | If True, restart a local sandbox. |
-| `api_key` | `Any` | CUA API key for cloud. |
+| `api_key` | `Any` | Cua API key for cloud. |
 
 **Returns:** A connected Sandbox ready to use.
 
@@ -1999,7 +1999,7 @@ For cloud sandboxes, calls DELETE /v1/vms/\{name\}.
 |------|------|-------------|
 | `name` | `Any` | Sandbox name. |
 | `local` | `Any` | If True, delete a local sandbox. |
-| `api_key` | `Any` | CUA API key for cloud. |
+| `api_key` | `Any` | Cua API key for cloud. |
 
 ### sandbox
 
@@ -2024,7 +2024,7 @@ for cloud API or cloud-init consumption.
 
 Usage::
 
-    from cua_sandbox import Image
+    from cua import Image
 
     img = (
         Image.linux("ubuntu", "24.04")

@@ -24,9 +24,9 @@ Use the standard Computer tool when:
 The Browser Tool uses Playwright under the hood to control the browser:
 
 ```python
-from cua_sandbox import Sandbox, Image
-from agent import ComputerAgent
-from agent.tools import BrowserTool
+from cua import Sandbox, Image
+from cua import ComputerAgent
+from cua import BrowserTool
 
 # Create a computer instance
 async with Sandbox.ephemeral(Image.linux()) as computer:
@@ -85,7 +85,7 @@ await agent.run("Go back to the previous page")
 You can also call Browser Tool actions programmatically without an agent:
 
 ```python
-from agent.tools import BrowserTool
+from cua import BrowserTool
 
 browser = BrowserTool(interface=computer)
 
@@ -140,9 +140,9 @@ The `pause_and_memorize_fact` action lets the agent store information for later 
 Here's a complete example automating a web form:
 
 ```python
-from cua_sandbox import Sandbox, Image
-from agent import ComputerAgent
-from agent.tools import BrowserTool
+from cua import Sandbox, Image
+from cua import ComputerAgent
+from cua import BrowserTool
 
 async with Sandbox.ephemeral(Image.linux()) as computer:
     browser = BrowserTool(interface=computer)

@@ -15,13 +15,13 @@ The Sandbox SDK (`cua-sandbox`) lets you create and control sandboxes — take s
 ## Installation
 
 ```bash
-pip install cua-sandbox
+pip install cua
 ```
 
 Or with uv:
 
 ```bash
-uv pip install cua-sandbox
+uv pip install cua
 ```
 
 ## Create a Sandbox
@@ -30,7 +30,7 @@ uv pip install cua-sandbox
   <Tab value="Cloud Container">
     ```python
     import asyncio
-    from cua_sandbox import Sandbox, Image
+    from cua import Sandbox, Image
 
     async def main():
         async with Sandbox.ephemeral(Image.linux()) as sb:
@@ -48,7 +48,7 @@ uv pip install cua-sandbox
   <Tab value="Cloud VM">
     ```python
     import asyncio
-    from cua_sandbox import Sandbox, Image
+    from cua import Sandbox, Image
 
     async def main():
         async with Sandbox.ephemeral(Image.linux(kind="vm")) as sb:
@@ -66,7 +66,7 @@ uv pip install cua-sandbox
   <Tab value="Cloud macOS">
     ```python
     import asyncio
-    from cua_sandbox import Sandbox, Image
+    from cua import Sandbox, Image
 
     async def main():
         async with Sandbox.ephemeral(Image.macos()) as sb:
@@ -84,7 +84,7 @@ uv pip install cua-sandbox
   <Tab value="Cloud Windows">
     ```python
     import asyncio
-    from cua_sandbox import Sandbox, Image
+    from cua import Sandbox, Image
 
     async def main():
         async with Sandbox.ephemeral(Image.windows()) as sb:
@@ -102,7 +102,7 @@ uv pip install cua-sandbox
   <Tab value="Local Linux">
     ```python
     import asyncio
-    from cua_sandbox import Sandbox, Image
+    from cua import Sandbox, Image
 
     async def main():
         async with Sandbox.ephemeral(Image.linux(), local=True) as sb:
@@ -120,7 +120,7 @@ uv pip install cua-sandbox
   <Tab value="Local macOS (Lume)">
     ```python
     import asyncio
-    from cua_sandbox import Sandbox, Image
+    from cua import Sandbox, Image
 
     async def main():
         async with Sandbox.ephemeral(Image.macos(), local=True) as sb:
@@ -138,7 +138,7 @@ uv pip install cua-sandbox
   <Tab value="Local Windows">
     ```python
     import asyncio
-    from cua_sandbox import Sandbox, Image
+    from cua import Sandbox, Image
 
     async def main():
         async with Sandbox.ephemeral(Image.windows(), local=True) as sb:
@@ -156,7 +156,7 @@ uv pip install cua-sandbox
   <Tab value="Local Android">
     ```python
     import asyncio
-    from cua_sandbox import Sandbox, Image
+    from cua import Sandbox, Image
 
     async def main():
         async with Sandbox.ephemeral(Image.android(), local=True) as sb:
@@ -217,7 +217,7 @@ For long-running workflows, create a named sandbox instead of ephemeral:
 # → {"name": "my-sandbox-name", "status": "ready"}
 
 # Connect from Python
-from cua_sandbox import Sandbox
+from cua import Sandbox
 
 async with Sandbox.connect("my-sandbox-name", local=True) as sb:
     await sb.shell.run("echo connected")
@@ -226,7 +226,7 @@ async with Sandbox.connect("my-sandbox-name", local=True) as sb:
 Or manage the full lifecycle in Python:
 
 ```python
-from cua_sandbox import Sandbox, Image
+from cua import Sandbox, Image
 
 # Create and keep running
 sb = await Sandbox.create(Image.linux(), local=True)

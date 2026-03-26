@@ -29,7 +29,7 @@ Linux is available as either a lightweight **container** (Docker-backed, fast st
 ```python
 # source: examples/sandboxes/test_linux_cloud_container.py
 import asyncio
-from cua_sandbox import Image, Sandbox
+from cua import Image, Sandbox
 
 
 async def main():
@@ -55,7 +55,7 @@ asyncio.run(main())
 ```python
 # source: examples/sandboxes/test_linux_cloud_vm.py
 import asyncio
-from cua_sandbox import Image, Sandbox
+from cua import Image, Sandbox
 
 
 async def main():
@@ -81,7 +81,7 @@ asyncio.run(main())
 ```python
 # source: examples/sandboxes/test_linux_local_container.py
 import asyncio
-from cua_sandbox import Image, Sandbox
+from cua import Image, Sandbox
 
 
 async def main():
@@ -108,7 +108,7 @@ asyncio.run(main())
 ```python
 # source: examples/sandboxes/test_linux_local_vm.py
 import asyncio
-from cua_sandbox import Image, Sandbox
+from cua import Image, Sandbox
 
 
 async def main():

@@ -8,8 +8,8 @@ Instead of deploying and managing computer-use vision language models yourself o
 ## Setup
 
 ```python
-from cua_sandbox import Sandbox, Image
-from agent import ComputerAgent
+from cua import Sandbox, Image
+from cua import ComputerAgent
 
 async with Sandbox.ephemeral(Image.linux()) as computer:
     agent = ComputerAgent(

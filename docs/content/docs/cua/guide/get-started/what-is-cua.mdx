@@ -7,8 +7,8 @@ Cua lets you spin up isolated desktop environments — Linux, macOS, Windows, An
 
 ```python
 import asyncio
-from cua_sandbox import Sandbox, Image
-from agent import ComputerAgent
+from cua import Sandbox, Image
+from cua import ComputerAgent
 
 async def main():
     async with Sandbox.ephemeral(Image.linux(), local=True) as sb:
@@ -30,7 +30,7 @@ asyncio.run(main())
 ## Install
 
 ```bash
-pip install cua-sandbox "cua-agent[all]"
+pip install "cua[all]"
 ```
 
 No account needed to run locally with Docker. For cloud sandboxes and hosted models, get a free API key at [cua.ai](https://cua.ai/signin).

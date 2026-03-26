@@ -340,15 +340,17 @@ class QEMUBaremetalRuntime(Runtime):
                     aarch64_code = candidate
                     break
             if aarch64_code:
+                # aarch64 virt machine pflash1 must be exactly 64 MB
+                AARCH64_VARS_SIZE = 64 * 1024 * 1024
                 aarch64_vars = Path(disk_path).parent / "efivars-aarch64.fd"
-                if not aarch64_vars.exists():
+                if not aarch64_vars.exists() or aarch64_vars.stat().st_size != AARCH64_VARS_SIZE:
                     import shutil as _shutil
 
                     vars_tmpl = qemu_dir / "share" / "edk2-arm-vars.fd"
-                    if vars_tmpl.exists():
+                    if vars_tmpl.exists() and vars_tmpl.stat().st_size == AARCH64_VARS_SIZE:
                         _shutil.copy2(vars_tmpl, aarch64_vars)
                     else:
-                        aarch64_vars.write_bytes(b"\x00" * (64 * 1024))
+                        aarch64_vars.write_bytes(b"\x00" * AARCH64_VARS_SIZE)
                 cmd += [
                     "-drive",
                     f"if=pflash,format=raw,readonly=on,file={aarch64_code}",

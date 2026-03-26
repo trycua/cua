@@ -145,7 +145,10 @@ def create_gradio_ui() -> gr.Blocks:
             computer_args_str = "()"
 
         code = f"""import asyncio
-from computer import Computer
+try:
+    from computer import Computer
+except ImportError:
+    Computer = None  # type: ignore[assignment,misc]
 from agent import ComputerAgent
 
 async def main():

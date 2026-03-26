@@ -10,7 +10,12 @@ import uuid
 from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union, override
+from typing import Any, Dict, List, Optional, Union
+
+try:
+    from typing import override
+except ImportError:
+    from typing_extensions import override
 
 from PIL import Image, ImageDraw
 

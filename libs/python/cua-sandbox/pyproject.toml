@@ -25,7 +25,7 @@ classifiers = [
     "Programming Language :: Python :: 3.13",
     "Topic :: Software Development :: Libraries",
 ]
-requires-python = ">=3.12,<3.14"
+requires-python = ">=3.11,<3.14"
 
 dependencies = [
     "cua-core>=0.1.18,<0.2.0",

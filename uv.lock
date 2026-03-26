@@ -1064,7 +1064,6 @@ dependencies = [
     { name = "anyio" },
     { name = "asyncio" },
     { name = "certifi" },
-    { name = "cua-computer" },
     { name = "cua-core" },
     { name = "httpx" },
     { name = "litellm" },
@@ -1101,6 +1100,9 @@ cloud = [
     { name = "qwen-agent" },
     { name = "qwen-vl-utils" },
     { name = "yaspin" },
+]
+computer = [
+    { name = "cua-computer" },
 ]
 gemini = [
     { name = "google-genai" },
@@ -1167,7 +1169,7 @@ requires-dist = [
     { name = "blobfile", marker = "extra == 'all'", specifier = ">=3.0.0" },
     { name = "blobfile", marker = "extra == 'opencua-hf'", specifier = ">=3.0.0" },
     { name = "certifi", specifier = ">=2024.2.2" },
-    { name = "cua-computer", editable = "libs/python/computer" },
+    { name = "cua-computer", marker = "extra == 'computer'", editable = "libs/python/computer" },
     { name = "cua-core", editable = "libs/python/core" },
     { name = "cua-som", marker = "extra == 'omni'", editable = "libs/python/som" },
     { name = "einops", marker = "extra == 'all'" },
@@ -1217,7 +1219,7 @@ requires-dist = [
     { name = "yaspin", marker = "extra == 'cli'", specifier = ">=3.1.0" },
     { name = "yaspin", marker = "extra == 'cloud'", specifier = ">=3.1.0" },
 ]
-provides-extras = ["openai", "anthropic", "qwen", "omni", "uitars", "uitars-mlx", "uitars-hf", "glm45v-hf", "opencua-hf", "internvl-hf", "moondream3", "ui", "cli", "hud", "gemini", "cloud", "all"]
+provides-extras = ["computer", "openai", "anthropic", "qwen", "omni", "uitars", "uitars-mlx", "uitars-hf", "glm45v-hf", "opencua-hf", "internvl-hf", "moondream3", "ui", "cli", "hud", "gemini", "cloud", "all"]
 
 [[package]]
 name = "cua-auto"

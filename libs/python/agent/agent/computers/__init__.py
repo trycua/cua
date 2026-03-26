@@ -6,7 +6,13 @@ computer interface types, supporting both the ComputerHandler protocol and the
 Computer library interface.
 """
 
-from computer import Computer as cuaComputer
+try:
+    from computer import Computer as cuaComputer
+
+    from .cua import cuaComputerHandler
+except ImportError:
+    cuaComputer = None  # type: ignore[assignment,misc]
+    cuaComputerHandler = None  # type: ignore[assignment]
 
 try:
     from cua_sandbox import Sandbox as cuaSandbox
@@ -14,7 +20,6 @@ except ImportError:
     cuaSandbox = None  # type: ignore[assignment,misc]
 
 from .base import AsyncComputerHandler
-from .cua import cuaComputerHandler
 from .custom import CustomComputerHandler
 from .sandbox import SandboxComputerHandler
 
@@ -23,7 +28,7 @@ def is_agent_computer(computer):
     """Check if the given computer is a ComputerHandler or Cua Computer."""
     return (
         isinstance(computer, AsyncComputerHandler)
-        or isinstance(computer, cuaComputer)
+        or (cuaComputer is not None and isinstance(computer, cuaComputer))
         or (cuaSandbox is not None and isinstance(computer, cuaSandbox))
         or (isinstance(computer, dict))
     )  # and "screenshot" in computer)
@@ -45,7 +50,7 @@ async def make_computer_handler(computer):
     """
     if isinstance(computer, AsyncComputerHandler):
         return computer
-    if isinstance(computer, cuaComputer):
+    if cuaComputer is not None and isinstance(computer, cuaComputer):
         computer_handler = cuaComputerHandler(computer)
         await computer_handler._initialize()
         return computer_handler

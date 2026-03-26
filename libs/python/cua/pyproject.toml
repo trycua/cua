@@ -1,7 +1,7 @@
 [project]
 name = "cua"
 version = "0.1.2"
-description = "CUA — Computer-Use Agents: unified SDK meta-package"
+description = "Cua — Computer-Use Agents: unified SDK meta-package"
 readme = "README.md"
 license = "MIT"
 authors = [

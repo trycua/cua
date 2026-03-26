@@ -10,7 +10,6 @@ By default only local transport is tested. Set env vars to enable remote:
 
 from __future__ import annotations
 
-import asyncio
 
 import pytest
 

@@ -26,11 +26,11 @@ class TestHTTPTransport:
         assert env in ("windows", "mac", "linux", "browser")
 
     async def test_send_click(self, http_transport):
-        result = await http_transport.send("left_click", x=100, y=100)
+        await http_transport.send("left_click", x=100, y=100)
         # Should not raise
 
     async def test_send_type(self, http_transport):
-        result = await http_transport.send("type_text", text="hello")
+        await http_transport.send("type_text", text="hello")
 
     async def test_send_get_screen_size(self, http_transport):
         result = await http_transport.send("get_screen_size")

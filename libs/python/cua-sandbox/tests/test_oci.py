@@ -223,7 +223,7 @@ class TestLiveRegistry:
         info = get_layer_info(manifest)
         assert len(info) > 0
         # Should have disk layers with part numbers
-        disk_parts = [l for l in info if l["part_number"] is not None]
+        disk_parts = [layer for layer in info if layer["part_number"] is not None]
         assert len(disk_parts) > 0
 
     def test_macos_chunked_parts(self):

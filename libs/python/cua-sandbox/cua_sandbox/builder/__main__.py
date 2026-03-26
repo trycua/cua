@@ -13,10 +13,9 @@ import argparse
 import asyncio
 import json
 import logging
-import sys
 from pathlib import Path
 
-from cua_sandbox.builder.overlay import IMAGES_DIR, base_image_path
+from cua_sandbox.builder.overlay import IMAGES_DIR
 
 
 def main():

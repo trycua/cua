@@ -18,7 +18,6 @@ from cua_sandbox.registry.manifest import (
     ImageFormat,
     detect_format,
     detect_kind,
-    detect_os,
     detect_os_from_config,
     get_manifest,
 )

@@ -340,9 +340,15 @@ class QEMUBaremetalRuntime(Runtime):
                     aarch64_code = candidate
                     break
             if aarch64_code:
-                # aarch64 virt machine pflash1 must be exactly 64 MB
+                # aarch64 virt machine pflash1 must be exactly 64 MB.
+                # Include the code firmware path in the vars filename so that
+                # upgrading edk2 or changing the PCI device layout doesn't
+                # silently reuse stale boot entries from a prior firmware version.
                 AARCH64_VARS_SIZE = 64 * 1024 * 1024
-                aarch64_vars = Path(disk_path).parent / "efivars-aarch64.fd"
+                import hashlib as _hl
+
+                _cfg_key = _hl.md5(str(aarch64_code).encode()).hexdigest()[:8]
+                aarch64_vars = Path(disk_path).parent / f"efivars-aarch64-{_cfg_key}.fd"
                 if not aarch64_vars.exists() or aarch64_vars.stat().st_size != AARCH64_VARS_SIZE:
                     import shutil as _shutil
 

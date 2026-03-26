@@ -393,7 +393,7 @@ const customStyles = `
     margin: 8px 0;
     background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%);
     border: 1px solid #bae6fd;
-    border-radius: 8px;
+    border-radius: 10px;
     font-size: 13px;
     color: #0369a1;
     animation: fadeIn 0.2s ease-out;
@@ -486,7 +486,7 @@ const customStyles = `
     padding: 0;
     border: none;
     background: transparent;
-    border-radius: 6px;
+    border-radius: 10px;
     cursor: pointer;
     color: var(--copilot-kit-secondary-contrast-color, #666);
     transition: background-color 0.15s ease, color 0.15s ease;
@@ -534,11 +534,11 @@ const customStyles = `
     display: none !important;
   }
 
-  /* Fix corner radius consistency - all corners should match window's 0.75rem */
+  /* Fix corner radius consistency - match CDS panel radius (16px) */
   @media (min-width: 640px) {
     .copilotKitHeader {
-      border-top-left-radius: 0.75rem;
-      border-top-right-radius: 0.75rem;
+      border-top-left-radius: 16px;
+      border-top-right-radius: 16px;
     }
   }
 
@@ -552,9 +552,28 @@ const customStyles = `
     min-height: 0 !important;
   }
 
-  /* Match chat input radius to window */
+  /* Match chat input radius to CDS button radius (10px) */
   .copilotKitInput {
-    border-radius: 0.75rem;
+    border-radius: 10px;
+  }
+
+  /* CDS panel radius for the popup window */
+  .copilotKitPopup > div,
+  [class*="copilotKitPopup"] > div {
+    border-radius: 16px !important;
+  }
+
+  /* Match icon container radius from landing cards (rounded-2xl = 16px) */
+  .copilotKitButton {
+    border-radius: 16px !important;
+  }
+
+  /* Scroll-to-bottom button */
+  .copilotKitMessages button[class*="scroll"],
+  .copilotKitMessages button[aria-label*="scroll"],
+  [class*="ScrollToBottom"],
+  [class*="scrollToBottom"] {
+    border-radius: 10px !important;
   }
 
   /* Hide chat on mobile devices */

@@ -26,7 +26,7 @@ uv pip install cua-sandbox
 
 ## Create a Sandbox
 
-<Tabs items={['Cloud Container', 'Cloud VM', 'Cloud macOS', 'Cloud Windows', 'Local Docker', 'Local macOS (Lume)']}>
+<Tabs items={['Cloud Container', 'Cloud VM', 'Cloud macOS', 'Cloud Windows', 'Local Linux', 'Local macOS (Lume)', 'Local Windows', 'Local Android']}>
   <Tab value="Cloud Container">
     ```python
     import asyncio
@@ -99,7 +99,7 @@ uv pip install cua-sandbox
     ```
     Requires `CUA_API_KEY` environment variable.
   </Tab>
-  <Tab value="Local Docker">
+  <Tab value="Local Linux">
     ```python
     import asyncio
     from cua_sandbox import Sandbox, Image
@@ -115,7 +115,7 @@ uv pip install cua-sandbox
 
     asyncio.run(main())
     ```
-    Requires Docker. No API key needed.
+    Requires [Docker](https://docs.docker.com/get-docker/). No API key needed.
   </Tab>
   <Tab value="Local macOS (Lume)">
     ```python
@@ -133,7 +133,43 @@ uv pip install cua-sandbox
 
     asyncio.run(main())
     ```
-    Requires macOS host with [Lume](https://cua.ai/docs/lume) installed.
+    Requires macOS host with [Lume](/lume/guide/getting-started/introduction) installed.
+  </Tab>
+  <Tab value="Local Windows">
+    ```python
+    import asyncio
+    from cua_sandbox import Sandbox, Image
+
+    async def main():
+        async with Sandbox.ephemeral(Image.windows(), local=True) as sb:
+            result = await sb.shell.run("ver")
+            print(result.stdout)
+
+            screenshot = await sb.screenshot()
+            with open("screenshot.png", "wb") as f:
+                f.write(screenshot)
+
+    asyncio.run(main())
+    ```
+    Requires a Windows or Linux host with QEMU installed.
+  </Tab>
+  <Tab value="Local Android">
+    ```python
+    import asyncio
+    from cua_sandbox import Sandbox, Image
+
+    async def main():
+        async with Sandbox.ephemeral(Image.android(), local=True) as sb:
+            result = await sb.shell.run("getprop ro.build.version.release")
+            print(result.stdout)  # "14"
+
+            screenshot = await sb.screenshot()
+            with open("screenshot.png", "wb") as f:
+                f.write(screenshot)
+
+    asyncio.run(main())
+    ```
+    Requires Android SDK (emulator + platform-tools) or QEMU. No API key needed.
   </Tab>
 </Tabs>
 

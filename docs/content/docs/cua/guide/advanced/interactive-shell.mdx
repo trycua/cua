@@ -29,9 +29,9 @@ The shell is fully interactive — arrow keys, tab completion, and `Ctrl+C` all 
 ## Python SDK
 
 ```python
-from computer import Computer
+from cua_sandbox import Sandbox, Image
 
-async with Computer(provider_type="docker", name="my-container") as c:
+async with Sandbox.create(provider_type="docker", name="my-container") as c:
     handle = await c.pty.create(
         command="bash",
         cols=80,

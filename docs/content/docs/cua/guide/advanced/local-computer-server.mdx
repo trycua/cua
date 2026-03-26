@@ -24,7 +24,7 @@ Or install dependencies manually:
 
 ```bash
 pip install uvicorn fastapi
-pip install cua-computer
+pip install cua-sandbox
 ```
 
 ## Starting the Server
@@ -54,16 +54,14 @@ The server exposes endpoints for screenshots, mouse/keyboard input, and other co
 Use `use_host_computer_server=True` to connect to a running computer server:
 
 ```python
-from computer import Computer
+from cua_sandbox import Sandbox, Image
 
 # Connect to local computer server
-computer = Computer(use_host_computer_server=True)
-await computer.run()
-
-# Now you can control your desktop
-screenshot = await computer.interface.screenshot()
-await computer.interface.left_click(500, 300)
-await computer.interface.type_text("Hello from the agent!")
+async with Sandbox.create(use_host_computer_server=True) as computer:
+    # Now you can control your desktop
+    screenshot = await computer.interface.screenshot()
+    await computer.interface.left_click(500, 300)
+    await computer.interface.type_text("Hello from the agent!")
 ```
 
 ### Custom Host/Port
@@ -71,11 +69,12 @@ await computer.interface.type_text("Hello from the agent!")
 Connect to a computer server running on a different machine:
 
 ```python
-computer = Computer(
+async with Sandbox.create(
     use_host_computer_server=True,
     api_host="192.168.1.100",
     api_port=8000
-)
+) as computer:
+    ...
 ```
 
 ## With ComputerAgent
@@ -83,19 +82,17 @@ computer = Computer(
 Run agents against your desktop:
 
 ```python
-from computer import Computer
+from cua_sandbox import Sandbox, Image
 from agent import ComputerAgent
 
-computer = Computer(use_host_computer_server=True)
-await computer.run()
+async with Sandbox.create(use_host_computer_server=True) as computer:
+    agent = ComputerAgent(
+        model="anthropic/claude-sonnet-4-5-20250929",
+        tools=[computer]
+    )
 
-agent = ComputerAgent(
-    model="anthropic/claude-sonnet-4-5-20250929",
-    tools=[computer]
-)
-
-async for result in agent.run("Open Firefox and go to github.com"):
-    print(result)
+    async for result in agent.run("Open Firefox and go to github.com"):
+        print(result)
 ```
 
 ## Self-Hosted VMs
@@ -104,11 +101,12 @@ For VMs you manage yourself (e.g., Windows behind a VPN), install the computer s
 
 ```python
 # Connect to Windows VM running computer-server
-computer = Computer(
+async with Sandbox.create(
     use_host_computer_server=True,
     api_host="windows-vm.local",
     api_port=8000
-)
+) as computer:
+    ...
 ```
 
 See the [Windows App Behind VPN](/cua/examples/platform-specific/windows-app-behind-vpn) example for a complete walkthrough.

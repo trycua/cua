@@ -10,17 +10,16 @@ description: Reduce costs and latency with provider-specific prompt caching
 Set `use_prompt_caching=True` when creating your agent:
 
 ```python
-from computer import Computer
+from cua_sandbox import Sandbox, Image
 from agent import ComputerAgent
 
-computer = Computer(os_type="linux", provider_type="docker", image="trycua/cua-xfce:latest")
-await computer.run()
+async with Sandbox.ephemeral(Image.linux()) as computer:
 
-agent = ComputerAgent(
-    model="anthropic/claude-sonnet-4-5-20250929",
-    tools=[computer],
-    use_prompt_caching=True
-)
+    agent = ComputerAgent(
+        model="anthropic/claude-sonnet-4-5-20250929",
+        tools=[computer],
+        use_prompt_caching=True
+    )
 ```
 
 ## Provider Behavior

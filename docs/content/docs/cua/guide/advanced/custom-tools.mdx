@@ -73,7 +73,7 @@ The agent can now call `calculate` and `get_weather` alongside computer actions.
 For tools that should run inside the sandbox rather than on your host machine, use the `@sandboxed` decorator:
 
 ```python
-from computer.helpers import sandboxed
+from cua_sandbox.helpers import sandboxed
 
 @sandboxed()
 def read_file(path: str) -> str:
@@ -204,7 +204,7 @@ Pass multiple tools of different types:
 ```python
 from agent import ComputerAgent
 from agent.tools import BrowserTool
-from computer.helpers import sandboxed
+from cua_sandbox.helpers import sandboxed
 
 # Built-in tool
 browser = BrowserTool(interface=computer)
@@ -252,7 +252,7 @@ Here's a complete example with file management tools:
 
 ```python
 from agent import ComputerAgent
-from computer.helpers import sandboxed
+from cua_sandbox.helpers import sandboxed
 
 @sandboxed()
 def list_files(directory: str = ".") -> list:

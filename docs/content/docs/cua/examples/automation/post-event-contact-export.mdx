@@ -62,7 +62,7 @@ Create a `requirements.txt` file:
 
 ```text
 cua-agent
-cua-computer
+cua-sandbox
 python-dotenv>=1.0.0
 ```
 
@@ -135,7 +135,7 @@ import traceback
 from datetime import datetime
 
 from agent import ComputerAgent
-from computer import Computer, VMProviderType
+from cua_sandbox import Sandbox, Image, VMProviderType
 from dotenv import load_dotenv
 
 logging.basicConfig(level=logging.INFO)
@@ -231,7 +231,7 @@ async def scrape_linkedin_connections():
     print("=" * 80)
 
     try:
-        async with Computer(
+        async with Sandbox.create(
             os_type="linux",
             provider_type=VMProviderType.CLOUD,
             name=os.environ["CUA_CONTAINER_NAME"],  # Your sandbox name
@@ -393,8 +393,8 @@ if __name__ == "__main__":
   <Tab value="Linux on Docker">
 
 ```python
-# Same code as Cloud Sandbox, but change Computer initialization to:
-async with Computer(
+# Same code as Cloud Sandbox, but change Sandbox initialization to:
+async with Sandbox.create(
     os_type="linux",
     provider_type=VMProviderType.DOCKER,
     image="trycua/cua-xfce:latest",
@@ -408,8 +408,8 @@ And remove the `CUA_API_KEY` and `CUA_CONTAINER_NAME` requirements from `.env` a
   <Tab value="macOS Sandbox">
 
 ```python
-# Same code as Cloud Sandbox, but change Computer initialization to:
-async with Computer(
+# Same code as Cloud Sandbox, but change Sandbox initialization to:
+async with Sandbox.create(
     os_type="macos",
     provider_type=VMProviderType.LUME,
     name="macos-sequoia-cua:latest",
@@ -423,8 +423,8 @@ And remove the `CUA_API_KEY` and `CUA_CONTAINER_NAME` requirements from `.env` a
   <Tab value="Windows Sandbox">
 
 ```python
-# Same code as Cloud Sandbox, but change Computer initialization to:
-async with Computer(
+# Same code as Cloud Sandbox, but change Sandbox initialization to:
+async with Sandbox.create(
     os_type="windows",
     provider_type=VMProviderType.WINDOWS_SANDBOX,
     verbosity=logging.INFO,

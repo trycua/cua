@@ -96,7 +96,7 @@ Create a `requirements.txt` file:
 
 ```text
 cua-agent
-cua-computer
+cua-sandbox
 cua-som  # OmniParser for GUI element detection
 litellm>=1.0.0
 python-dotenv>=1.0.0
@@ -153,7 +153,7 @@ import signal
 import traceback
 
 from agent import ComputerAgent
-from computer import Computer, VMProviderType
+from cua_sandbox import Sandbox, Image, VMProviderType
 from dotenv import load_dotenv
 
 logging.basicConfig(level=logging.INFO)
@@ -169,7 +169,7 @@ async def complex_ui_navigation():
     with complex, multi-step navigation tasks.
     """
     try:
-        async with Computer(
+        async with Sandbox.create(
             os_type="linux",
             provider_type=VMProviderType.CLOUD,
             name=os.environ["CUA_SANDBOX_NAME"],
@@ -300,7 +300,7 @@ import signal
 import traceback
 
 from agent import ComputerAgent
-from computer import Computer, VMProviderType
+from cua_sandbox import Sandbox, Image, VMProviderType
 from dotenv import load_dotenv
 
 logging.basicConfig(level=logging.INFO)
@@ -316,7 +316,7 @@ async def complex_ui_navigation():
     with complex, multi-step navigation tasks.
     """
     try:
-        async with Computer(
+        async with Sandbox.create(
             os_type="linux",
             provider_type=VMProviderType.DOCKER,
             image="trycua/cua-xfce:latest",
@@ -424,7 +424,7 @@ import signal
 import traceback
 
 from agent import ComputerAgent
-from computer import Computer, VMProviderType
+from cua_sandbox import Sandbox, Image, VMProviderType
 from dotenv import load_dotenv
 
 logging.basicConfig(level=logging.INFO)
@@ -440,7 +440,7 @@ async def complex_ui_navigation():
     with complex, multi-step navigation tasks.
     """
     try:
-        async with Computer(
+        async with Sandbox.create(
             os_type="macos",
             provider_type=VMProviderType.LUME,
             name="macos-sequoia-cua:latest",

@@ -19,11 +19,11 @@ To run an agent loop simply do:
 ```python
 from agent import ComputerAgent
 import asyncio
-from computer import Computer
+from cua_sandbox import Sandbox, Image
 
 
 async def take_screenshot():
-    async with Computer(
+    async with Sandbox.create(
         os_type="linux",
         provider_type="cloud",
         name="your-sandbox-name",

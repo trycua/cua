@@ -10,16 +10,14 @@ description: Managing conversation history for multi-turn agent interactions
 Pass a message history to continue from previous context:
 
 ```python
-from computer import Computer
+from cua_sandbox import Sandbox, Image
 from agent import ComputerAgent
 
-computer = Computer(os_type="linux", provider_type="docker", image="trycua/cua-xfce:latest")
-await computer.run()
-
-agent = ComputerAgent(
-    model="anthropic/claude-sonnet-4-5-20250929",
-    tools=[computer]
-)
+async with Sandbox.ephemeral(Image.linux()) as computer:
+    agent = ComputerAgent(
+        model="anthropic/claude-sonnet-4-5-20250929",
+        tools=[computer]
+    )
 
 # First turn
 messages = [{"role": "user", "content": "Open Firefox"}]

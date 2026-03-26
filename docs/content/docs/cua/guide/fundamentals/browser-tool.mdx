@@ -24,16 +24,14 @@ Use the standard Computer tool when:
 The Browser Tool uses Playwright under the hood to control the browser:
 
 ```python
-from computer import Computer
+from cua_sandbox import Sandbox, Image
 from agent import ComputerAgent
 from agent.tools import BrowserTool
 
 # Create a computer instance
-computer = Computer(os_type="linux", provider_type="docker", image="trycua/cua-xfce:latest")
-await computer.run()
-
-# Create a browser tool from the computer interface
-browser = BrowserTool(interface=computer)
+async with Sandbox.ephemeral(Image.linux()) as computer:
+    # Create a browser tool from the computer interface
+    browser = BrowserTool(interface=computer)
 
 # Use with a browser-optimized model
 agent = ComputerAgent(
@@ -142,14 +140,12 @@ The `pause_and_memorize_fact` action lets the agent store information for later 
 Here's a complete example automating a web form:
 
 ```python
-from computer import Computer
+from cua_sandbox import Sandbox, Image
 from agent import ComputerAgent
 from agent.tools import BrowserTool
 
-computer = Computer(os_type="linux", provider_type="docker", image="trycua/cua-xfce:latest")
-await computer.run()
-
-browser = BrowserTool(interface=computer)
+async with Sandbox.ephemeral(Image.linux()) as computer:
+    browser = BrowserTool(interface=computer)
 
 agent = ComputerAgent(
     model="gemini-2.5-computer-use-preview-10-2025",

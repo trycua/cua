@@ -45,7 +45,7 @@
   "devDependencies": {
     "@types/node": "^22.15.17",
     "bumpp": "^10.1.0",
-    "happy-dom": "^20.0.11",
+    "happy-dom": "^20.8.8",
     "tsdown": "^0.14.1",
     "typescript": "^5.7.2",
     "vitest": "^4.0.14"

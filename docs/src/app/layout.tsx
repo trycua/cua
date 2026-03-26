@@ -6,7 +6,7 @@ import { PHProvider, PostHogPageView } from '@/providers/posthog-provider';
 import { CopilotKitProvider } from '@/providers/copilotkit-provider';
 import { AnalyticsTracker } from '@/components/analytics-tracker';
 import { CookieConsent } from '@/components/cookie-consent';
-import { Footer } from '@/components/footer';
+
 import { Suspense } from 'react';
 
 const geist = Geist({
@@ -67,7 +67,7 @@ export default function Layout({ children }: { children: ReactNode }) {
             >
               {children}
             </RootProvider>
-            <Footer />
+
           </CopilotKitProvider>
           <CookieConsent />
         </PHProvider>

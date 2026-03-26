@@ -1,6 +1,5 @@
 """Unit tests for config and auth modules."""
 
-
 from cua_sandbox._config import _global_config, configure, get_api_key, get_base_url
 
 

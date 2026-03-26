@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-
 from cua_sandbox.transport.base import Transport
 
 

@@ -127,8 +127,7 @@ Run the same task across multiple sandboxes to compare model outputs or increase
 
 ```python
 import asyncio
-from cua import Sandbox, Image
-from cua import ComputerAgent
+from cua import Sandbox, Image, ComputerAgent
 
 async def run_agent(task: str, run_id: int) -> dict:
     async with Sandbox.ephemeral(Image.linux()) as sb:

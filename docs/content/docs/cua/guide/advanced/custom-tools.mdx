@@ -251,8 +251,7 @@ The model sees the error message and can adjust its approach.
 Here's a complete example with file management tools:
 
 ```python
-from cua import ComputerAgent
-from cua import sandboxed
+from cua import ComputerAgent, sandboxed
 
 @sandboxed()
 def list_files(directory: str = ".") -> list:

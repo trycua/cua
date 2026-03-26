@@ -70,8 +70,7 @@ result = await computer.venv_cmd("data_env", "python /path/to/script.py")
 For cleaner code, use the decorator to mark functions for remote execution:
 
 ```python
-from cua import Sandbox, Image
-from cua import sandboxed
+from cua import Sandbox, Image, sandboxed
 
 async with Sandbox.ephemeral(Image.linux()) as computer:
     await computer.venv_install("api_env", ["requests"])

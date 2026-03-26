@@ -7,8 +7,7 @@ Cua lets you spin up isolated desktop environments — Linux, macOS, Windows, An
 
 ```python
 import asyncio
-from cua import Sandbox, Image
-from cua import ComputerAgent
+from cua import Sandbox, Image, ComputerAgent
 
 async def main():
     async with Sandbox.ephemeral(Image.linux(), local=True) as sb:

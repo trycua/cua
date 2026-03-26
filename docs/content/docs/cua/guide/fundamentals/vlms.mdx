@@ -10,8 +10,7 @@ A **Vision Language Model (VLM)** is the AI that powers your computer-use agent.
 Specify the model when creating your agent:
 
 ```python
-from cua import Sandbox, Image
-from cua import ComputerAgent
+from cua import Sandbox, Image, ComputerAgent
 
 async with Sandbox.ephemeral(Image.linux()) as computer:
     agent = ComputerAgent(

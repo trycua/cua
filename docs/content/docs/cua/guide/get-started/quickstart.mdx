@@ -62,8 +62,7 @@ Then create `agent.py`:
 
 ```python
 import asyncio
-from cua import Sandbox, Image
-from cua import ComputerAgent
+from cua import Sandbox, Image, ComputerAgent
 
 async def main():
     async with Sandbox.ephemeral(Image.linux()) as sb:
@@ -90,8 +89,7 @@ Call `get_display_url(share=True)` to get a shareable browser link to the live d
 
 ```python
 import asyncio
-from cua import Sandbox, Image
-from cua import ComputerAgent
+from cua import Sandbox, Image, ComputerAgent
 
 async def main():
     async with Sandbox.ephemeral(Image.linux()) as sb:

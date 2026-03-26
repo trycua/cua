@@ -82,8 +82,7 @@ async with Sandbox.create(
 Run agents against your desktop:
 
 ```python
-from cua import Sandbox, Image
-from cua import ComputerAgent
+from cua import Sandbox, Image, ComputerAgent
 
 async with Sandbox.create(use_host_computer_server=True) as computer:
     agent = ComputerAgent(

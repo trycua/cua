@@ -113,9 +113,10 @@ async def test_linux_local_osworld_registry_vm():
         assert screenshot[:4] == b"\x89PNG", "Expected PNG screenshot"
         print(f"Screenshot: {len(screenshot)} bytes")
 
-        # Screen dimensions (OSWorld images are 1920x1080)
+        # Screen dimensions — x86_64 image is 1920×1080; arm64 virtio-gpu defaults to 1280×800
         size = await transport.get_screen_size()
-        assert size["width"] == 1920 and size["height"] == 1080, f"Unexpected size: {size}"
+        assert size["width"] >= 800 and size["height"] >= 600, f"Unexpected size: {size}"
+        print(f"Screen size: {size['width']}x{size['height']}")
 
         # Shell execution via /execute
         result = await transport.send("execute", command=["uname", "-a"], shell=False)

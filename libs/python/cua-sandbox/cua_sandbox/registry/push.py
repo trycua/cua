@@ -224,25 +224,33 @@ def _annotate_manifest(ref: str, agent_type: str, extra: dict) -> None:
 
 
 def _annotate_via_oras_py(ref: str, annotations: dict) -> None:
-    """Patch OCI manifest annotations using oras-py."""
+    """Patch OCI manifest annotations via direct HTTP PUT."""
+    import json as _json
 
-    import oras.container as _oras_container
-    import oras.provider
-    from cua_sandbox.registry.manifest import get_manifest
+    import requests as _req
+    from cua_sandbox.registry.manifest import _registry_token, get_manifest
     from cua_sandbox.registry.ref import parse_ref
 
     registry, org, name, tag = parse_ref(ref)
-    full_repo = f"{registry}/{org}/{name}"
-    full_ref = f"{full_repo}:{tag}"
+    repo = f"{org}/{name}"
 
-    r = oras.provider.Registry()
     manifest = get_manifest(ref)
-
     existing = manifest.get("annotations") or {}
     manifest["annotations"] = {**existing, **annotations}
 
-    r.upload_manifest(manifest, _oras_container.Container(full_ref))
-    logger.info(f"Patched manifest annotations on {full_ref}")
+    body = _json.dumps(manifest).encode()
+    media_type = manifest.get("mediaType", "application/vnd.oci.image.manifest.v1+json")
+
+    token = _registry_token(registry, repo)
+    headers: dict = {"Content-Type": media_type, "Content-Length": str(len(body))}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+
+    url = f"https://{registry}/v2/{repo}/manifests/{tag}"
+    resp = _req.put(url, headers=headers, data=body, timeout=30)
+    if resp.status_code not in (200, 201):
+        raise RuntimeError(f"Manifest PUT failed ({resp.status_code}): {resp.text[:300]}")
+    logger.info(f"Patched manifest annotations on {registry}/{repo}:{tag}")
 
 
 def _run(cmd: list[str]) -> None:

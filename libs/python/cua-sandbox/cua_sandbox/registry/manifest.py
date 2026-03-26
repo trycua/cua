@@ -9,7 +9,6 @@ from __future__ import annotations
 from enum import Enum
 from typing import Optional
 
-import oras.provider
 from cua_sandbox.registry.media_types import (
     ANDROID_AVD_CONFIG,
     ANDROID_AVD_TAR_GZIP,
@@ -47,41 +46,104 @@ class ImageFormat(Enum):
     UNKNOWN = "unknown"
 
 
-def _make_registry(hostname: str) -> oras.provider.Registry:
-    """Create an oras Registry, authenticating from env vars or ~/.docker/config.json."""
+def _registry_token(hostname: str, repo: str) -> Optional[str]:
+    """Obtain a Bearer token for the registry, using available credentials.
+
+    Checks (in order):
+      1. ORAS_PASSWORD / REGISTRY_PASSWORD / GITHUB_TOKEN / GHCR_TOKEN env vars
+         paired with ORAS_USERNAME / REGISTRY_USERNAME (or the token itself as
+         username for GHCR anonymous-with-token flows).
+      2. ~/.docker/config.json  (base64 username:password in the 'auth' field).
+
+    Returns the Bearer token string, or None if no credentials are found.
+    Raises PermissionError immediately on a non-2xx auth response.
+    """
     import base64
     import json
     import os
     from pathlib import Path
 
-    r = oras.provider.Registry(hostname=hostname)
+    import requests
 
-    # 1. Explicit env vars take priority
-    username = os.environ.get("ORAS_USERNAME") or os.environ.get("REGISTRY_USERNAME")
+    username: Optional[str] = None
+    password: Optional[str] = None
+
+    # 1. Env vars
     password = (
         os.environ.get("ORAS_PASSWORD")
         or os.environ.get("REGISTRY_PASSWORD")
         or os.environ.get("GITHUB_TOKEN")
         or os.environ.get("GHCR_TOKEN")
     )
-    if username and password:
-        r.login(username=username, password=password, hostname=hostname)
-        return r
+    username = os.environ.get("ORAS_USERNAME") or os.environ.get("REGISTRY_USERNAME")
+    if password and not username:
+        username = password  # GHCR accepts token-as-username for PAT flows
 
-    # 2. Fall back to ~/.docker/config.json
-    docker_cfg = Path.home() / ".docker" / "config.json"
-    if docker_cfg.exists():
-        try:
-            cfg = json.loads(docker_cfg.read_text())
-            auth_b64 = cfg.get("auths", {}).get(hostname, {}).get("auth", "")
-            if auth_b64:
-                decoded = base64.b64decode(auth_b64).decode()
-                user, token = decoded.split(":", 1)
-                r.login(username=user, password=token, hostname=hostname)
-        except Exception:
-            pass
+    # 2. Docker config fallback
+    if not password:
+        docker_cfg = Path.home() / ".docker" / "config.json"
+        if docker_cfg.exists():
+            try:
+                cfg = json.loads(docker_cfg.read_text())
+                auth_b64 = cfg.get("auths", {}).get(hostname, {}).get("auth", "")
+                if auth_b64:
+                    decoded = base64.b64decode(auth_b64).decode()
+                    username, password = decoded.split(":", 1)
+            except Exception:
+                pass
 
-    return r
+    if not password:
+        return None
+
+    # Exchange credentials for a scoped Bearer token
+    scope = f"repository:{repo}:pull"
+    resp = requests.get(
+        f"https://{hostname}/token",
+        params={"scope": scope},
+        auth=(username, password),
+        timeout=15,
+    )
+    if resp.status_code == 401:
+        raise PermissionError(
+            f"Registry auth failed for {hostname}. "
+            "Set GITHUB_TOKEN (or ORAS_PASSWORD) to a token with read:packages scope."
+        )
+    resp.raise_for_status()
+    return resp.json().get("token")
+
+
+def _fetch_manifest_raw(registry: str, repo: str, ref: str) -> dict:
+    """Fetch an OCI manifest via direct HTTP, with auth and correct Accept headers.
+
+    Fails fast (no retries) with a clear error on auth failure.
+    Sends Accept headers for both manifest index and regular manifest so
+    registries return the index when present.
+    """
+
+    import requests
+
+    token = _registry_token(registry, repo)
+    headers: dict = {
+        "Accept": (
+            "application/vnd.oci.image.index.v1+json,"
+            "application/vnd.oci.image.manifest.v1+json,"
+            "application/vnd.docker.distribution.manifest.v2+json,"
+            "application/vnd.docker.distribution.manifest.list.v2+json"
+        )
+    }
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+
+    url = f"https://{registry}/v2/{repo}/manifests/{ref}"
+    resp = requests.get(url, headers=headers, timeout=30)
+
+    if resp.status_code == 401:
+        raise PermissionError(
+            f"Registry auth failed for {registry}/{repo}. "
+            "Set GITHUB_TOKEN (or ORAS_PASSWORD) to a token with read:packages scope."
+        )
+    resp.raise_for_status()
+    return resp.json()
 
 
 def get_manifest(ref: str, platform: Optional[str] = None) -> dict:
@@ -98,9 +160,8 @@ def get_manifest(ref: str, platform: Optional[str] = None) -> dict:
     import platform as _plat
 
     registry, org, name, tag = parse_ref(ref)
-    r = _make_registry(registry)
-    full = f"{registry}/{org}/{name}:{tag}"
-    manifest = r.get_manifest(full)
+    repo = f"{org}/{name}"
+    manifest = _fetch_manifest_raw(registry, repo, tag)
 
     # If it's a manifest index, resolve to a specific platform manifest
     if manifest.get("manifests"):
@@ -121,16 +182,14 @@ def get_manifest(ref: str, platform: Optional[str] = None) -> dict:
                 if "attestation" in annot.get("vnd.docker.reference.type", ""):
                     continue
                 digest = m["digest"]
-                full_repo = f"{registry}/{org}/{name}"
-                return r.get_manifest(f"{full_repo}@{digest}")
+                return _fetch_manifest_raw(registry, repo, digest)
 
         # Fallback: first non-attestation manifest
         for m in manifest["manifests"]:
             annot = m.get("annotations", {})
             if "attestation" not in annot.get("vnd.docker.reference.type", ""):
                 digest = m["digest"]
-                full_repo = f"{registry}/{org}/{name}"
-                return r.get_manifest(f"{full_repo}@{digest}")
+                return _fetch_manifest_raw(registry, repo, digest)
 
     return manifest
 
@@ -256,13 +315,23 @@ def detect_os_from_config(ref: str, manifest: dict) -> Optional[str]:
     if not digest:
         return None
 
-    r = oras.provider.Registry()
+    import requests as _requests
+
     registry, org, name, _tag = parse_ref(ref)
-    full_repo = f"{registry}/{org}/{name}"
+    repo = f"{org}/{name}"
+
+    def _fetch_blob(blob_digest: str) -> dict:
+        token = _registry_token(registry, repo)
+        headers: dict = {}
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+        url = f"https://{registry}/v2/{repo}/blobs/{blob_digest}"
+        r = _requests.get(url, headers=headers, timeout=30)
+        r.raise_for_status()
+        return r.json()
 
     try:
-        resp = r.get_blob(full_repo, digest)
-        data = resp.json() if hasattr(resp, "json") else {}
+        data = _fetch_blob(digest)
         # Standard OCI: "os" field; QEMU: "guest_os" field
         os_val = (data.get("os") or data.get("guest_os") or "").lower()
         if os_val in ("linux", "windows"):
@@ -276,8 +345,7 @@ def detect_os_from_config(ref: str, manifest: dict) -> Optional[str]:
     for layer in manifest.get("layers", []):
         if layer.get("mediaType") == TART_CONFIG:
             try:
-                resp = r.get_blob(full_repo, layer["digest"])
-                data = resp.json() if hasattr(resp, "json") else {}
+                data = _fetch_blob(layer["digest"])
                 os_val = (data.get("os") or "").lower()
                 if os_val in ("linux", "windows"):
                     return os_val

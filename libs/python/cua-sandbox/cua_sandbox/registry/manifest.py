@@ -47,6 +47,43 @@ class ImageFormat(Enum):
     UNKNOWN = "unknown"
 
 
+def _make_registry(hostname: str) -> oras.provider.Registry:
+    """Create an oras Registry, authenticating from env vars or ~/.docker/config.json."""
+    import base64
+    import json
+    import os
+    from pathlib import Path
+
+    r = oras.provider.Registry(hostname=hostname)
+
+    # 1. Explicit env vars take priority
+    username = os.environ.get("ORAS_USERNAME") or os.environ.get("REGISTRY_USERNAME")
+    password = (
+        os.environ.get("ORAS_PASSWORD")
+        or os.environ.get("REGISTRY_PASSWORD")
+        or os.environ.get("GITHUB_TOKEN")
+        or os.environ.get("GHCR_TOKEN")
+    )
+    if username and password:
+        r.login(username=username, password=password, hostname=hostname)
+        return r
+
+    # 2. Fall back to ~/.docker/config.json
+    docker_cfg = Path.home() / ".docker" / "config.json"
+    if docker_cfg.exists():
+        try:
+            cfg = json.loads(docker_cfg.read_text())
+            auth_b64 = cfg.get("auths", {}).get(hostname, {}).get("auth", "")
+            if auth_b64:
+                decoded = base64.b64decode(auth_b64).decode()
+                user, token = decoded.split(":", 1)
+                r.login(username=user, password=token, hostname=hostname)
+        except Exception:
+            pass
+
+    return r
+
+
 def get_manifest(ref: str, platform: Optional[str] = None) -> dict:
     """Fetch the OCI manifest for an image reference.
 
@@ -60,8 +97,8 @@ def get_manifest(ref: str, platform: Optional[str] = None) -> dict:
     """
     import platform as _plat
 
-    r = oras.provider.Registry()
     registry, org, name, tag = parse_ref(ref)
+    r = _make_registry(registry)
     full = f"{registry}/{org}/{name}:{tag}"
     manifest = r.get_manifest(full)
 

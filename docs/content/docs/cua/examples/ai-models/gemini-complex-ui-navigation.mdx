@@ -95,8 +95,7 @@ Install the required packages for OmniParser and Gemini 3:
 Create a `requirements.txt` file:
 
 ```text
-cua-agent
-cua-sandbox
+cua
 cua-som  # OmniParser for GUI element detection
 litellm>=1.0.0
 python-dotenv>=1.0.0
@@ -152,8 +151,7 @@ import os
 import signal
 import traceback
 
-from agent import ComputerAgent
-from cua_sandbox import Sandbox, Image
+from cua import ComputerAgent, Sandbox, Image
 from dotenv import load_dotenv
 
 logging.basicConfig(level=logging.INFO)
@@ -298,8 +296,7 @@ import os
 import signal
 import traceback
 
-from agent import ComputerAgent
-from cua_sandbox import Sandbox, Image
+from cua import ComputerAgent, Sandbox, Image
 from dotenv import load_dotenv
 
 logging.basicConfig(level=logging.INFO)
@@ -421,8 +418,7 @@ import os
 import signal
 import traceback
 
-from agent import ComputerAgent
-from cua_sandbox import Sandbox, Image
+from cua import ComputerAgent, Sandbox, Image
 from dotenv import load_dotenv
 
 logging.basicConfig(level=logging.INFO)

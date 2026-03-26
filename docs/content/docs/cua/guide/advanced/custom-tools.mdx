@@ -47,7 +47,7 @@ General models like Claude work with any tools you provide - no auto-wrapping oc
 The easiest way to add a tool is to pass a function with a docstring:
 
 ```python
-from agent import ComputerAgent
+from cua import ComputerAgent
 
 def calculate(a: int, b: int) -> int:
     """Calculate the sum of two integers"""
@@ -73,7 +73,7 @@ The agent can now call `calculate` and `get_weather` alongside computer actions.
 For tools that should run inside the sandbox rather than on your host machine, use the `@sandboxed` decorator:
 
 ```python
-from cua_sandbox.helpers import sandboxed
+from cua import sandboxed
 
 @sandboxed()
 def read_file(path: str) -> str:
@@ -105,7 +105,7 @@ See [Sandboxed Python](/cua/guide/advanced/sandboxed-python) for more details.
 For more control over tool schema and behavior, extend `BaseTool`:
 
 ```python
-from agent.tools import BaseTool, register_tool
+from cua.tools import BaseTool, register_tool
 from typing import Union
 
 @register_tool("database_query")
@@ -202,9 +202,9 @@ Sync functions are automatically run in a thread pool to avoid blocking.
 Pass multiple tools of different types:
 
 ```python
-from agent import ComputerAgent
-from agent.tools import BrowserTool
-from cua_sandbox.helpers import sandboxed
+from cua import ComputerAgent
+from cua.tools import BrowserTool
+from cua import sandboxed
 
 # Built-in tool
 browser = BrowserTool(interface=computer)
@@ -235,7 +235,7 @@ The agent decides which tool to use based on the task.
 Tools can raise exceptions, which are passed back to the model:
 
 ```python
-from agent.tools import ToolError
+from cua.tools import ToolError
 
 def divide(a: float, b: float) -> float:
     """Divide a by b"""
@@ -251,8 +251,7 @@ The model sees the error message and can adjust its approach.
 Here's a complete example with file management tools:
 
 ```python
-from agent import ComputerAgent
-from cua_sandbox.helpers import sandboxed
+from cua import ComputerAgent, sandboxed
 
 @sandboxed()
 def list_files(directory: str = ".") -> list:

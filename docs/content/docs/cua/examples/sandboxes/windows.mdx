@@ -19,7 +19,7 @@ Windows sandboxes run as full VMs. Cloud Windows works on any host OS. Local Win
 ```python
 # source: examples/sandboxes/test_windows_cloud_vm.py
 import asyncio
-from cua_sandbox import Image, Sandbox
+from cua import Image, Sandbox
 
 
 async def main():
@@ -47,7 +47,7 @@ The SDK automatically selects Hyper-V on Windows hosts with Hyper-V available, o
 ```python
 # source: examples/sandboxes/test_windows_local_vm.py
 import asyncio
-from cua_sandbox import Image, Sandbox
+from cua import Image, Sandbox
 
 
 async def main():

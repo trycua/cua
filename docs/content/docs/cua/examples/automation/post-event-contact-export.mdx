@@ -61,8 +61,7 @@ First, install the required dependencies:
 Create a `requirements.txt` file:
 
 ```text
-cua-agent
-cua-sandbox
+cua
 python-dotenv>=1.0.0
 ```
 
@@ -134,8 +133,7 @@ import signal
 import traceback
 from datetime import datetime
 
-from agent import ComputerAgent
-from cua_sandbox import Sandbox, Image
+from cua import ComputerAgent, Sandbox, Image
 from dotenv import load_dotenv
 
 logging.basicConfig(level=logging.INFO)

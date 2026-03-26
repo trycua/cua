@@ -222,7 +222,7 @@ jobs:
         if: steps.context.outputs.has_failed_run == 'true'
         run: |
           cat > /tmp/claude-prompt.txt << 'PROMPT_EOF'
-          You are Claude, an AI assistant that fixes CI failures in the CUA (Computer Use Agent) monorepo.
+          You are Claude, an AI assistant that fixes CI failures in the Cua (Computer Use Agent) monorepo.
 
           CONTEXT:
           - Repository: ${{ github.repository }}

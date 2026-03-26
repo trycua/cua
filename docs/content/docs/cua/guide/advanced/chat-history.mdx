@@ -10,8 +10,7 @@ description: Managing conversation history for multi-turn agent interactions
 Pass a message history to continue from previous context:
 
 ```python
-from cua_sandbox import Sandbox, Image
-from agent import ComputerAgent
+from cua import Sandbox, Image, ComputerAgent
 
 async with Sandbox.ephemeral(Image.linux()) as computer:
     agent = ComputerAgent(

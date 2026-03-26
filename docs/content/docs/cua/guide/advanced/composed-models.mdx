@@ -10,8 +10,7 @@ Some models excel at **grounding** (finding UI elements) but can't reason about 
 Use the `+` syntax to combine a grounding model with a planning model:
 
 ```python
-from cua_sandbox import Sandbox, Image
-from agent import ComputerAgent
+from cua import Sandbox, Image, ComputerAgent
 
 async with Sandbox.ephemeral(Image.linux()) as computer:
     # Format: grounding_model+planning_model

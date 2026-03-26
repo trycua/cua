@@ -10,7 +10,7 @@ The **Tracing API** records everything that happens on a Computer—screenshots,
 Start and stop tracing around any computer operations:
 
 ```python
-from cua_sandbox import Sandbox, Image
+from cua import Sandbox, Image
 
 async with Sandbox.ephemeral(Image.linux()) as computer:
     # Start tracing
@@ -147,8 +147,7 @@ Metadata appears in the trace alongside events, making it easy to correlate acti
 Tracing works alongside ComputerAgent—you get both agent-level information and detailed computer interaction logs:
 
 ```python
-from cua_sandbox import Sandbox, Image
-from agent import ComputerAgent
+from cua import Sandbox, Image, ComputerAgent
 
 async with Sandbox.ephemeral(Image.linux()) as computer:
     # Start tracing before agent runs

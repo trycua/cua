@@ -17,7 +17,7 @@ This guide gets you from zero to a working computer-use agent.
 ## 1. Install
 
 ```bash
-pip install cua-sandbox "cua-agent[all]"
+pip install cua
 ```
 
 ## 2. Hello World
@@ -26,7 +26,7 @@ Create `hello.py`:
 
 ```python
 import asyncio
-from cua_sandbox import Sandbox, Image
+from cua import Sandbox, Image
 
 async def main():
     # local=True uses Docker — no API key needed
@@ -62,8 +62,7 @@ Then create `agent.py`:
 
 ```python
 import asyncio
-from cua_sandbox import Sandbox, Image
-from agent import ComputerAgent
+from cua import Sandbox, Image, ComputerAgent
 
 async def main():
     async with Sandbox.ephemeral(Image.linux()) as sb:
@@ -90,8 +89,7 @@ Call `get_display_url(share=True)` to get a shareable browser link to the live d
 
 ```python
 import asyncio
-from cua_sandbox import Sandbox, Image
-from agent import ComputerAgent
+from cua import Sandbox, Image, ComputerAgent
 
 async def main():
     async with Sandbox.ephemeral(Image.linux()) as sb:

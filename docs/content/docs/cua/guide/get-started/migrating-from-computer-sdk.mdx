@@ -22,7 +22,7 @@ The new Sandbox SDK (`cua-sandbox`) unifies everything: one package creates the 
 pip install cua-computer
 
 # After
-pip install cua-sandbox
+pip install cua
 ```
 
 ## Import and instantiation
@@ -43,7 +43,7 @@ await computer.run()
 **After:**
 
 ```python
-from cua_sandbox import Sandbox, Image
+from cua import Sandbox, Image
 
 # Ephemeral (create + destroy automatically)
 async with Sandbox.ephemeral(Image.linux()) as sb:
@@ -84,7 +84,7 @@ The old SDK used a `provider_type` string to select the runtime. The new SDK use
 | `"docker"` with QEMU Android | `Sandbox.ephemeral(Image.android(), local=True)` |
 | `"lume"` | `Sandbox.ephemeral(Image.macos(), local=True)` |
 | `"windows_sandbox"` | `Sandbox.ephemeral(Image.windows(), local=True)` |
-| `use_host_computer_server=True` | `from cua_sandbox import Localhost; Localhost.connect()` |
+| `use_host_computer_server=True` | `from cua import Localhost; Localhost.connect()` |
 
 ## Before and after — full example
 
@@ -116,7 +116,7 @@ asyncio.run(main())
 
 ```python
 import asyncio
-from cua_sandbox import Sandbox, Image
+from cua import Sandbox, Image
 
 async def main():
     async with Sandbox.ephemeral(Image.linux(), local=True) as sb:

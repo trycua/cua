@@ -25,6 +25,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -39,6 +40,7 @@ GYM_PWA_DIR = Path(os.environ.get("GYM_PWA_DIR", Path.home() / "gym-pwa"))
 TWA_PACKAGE = "com.cuaai.gymtodo"
 TWA_MANIFEST_URL = f"{GYM_URL}/manifest.json"
 GYM_KEYSTORE = GYM_PWA_DIR / "android.keystore"
+BG_COLOR = "#4361ee"  # indigo — visually distinct from the default app chrome
 
 
 # ── Prereq checks ─────────────────────────────────────────────────────────────
@@ -102,51 +104,80 @@ async def test_android_local_gym_pwa():
         ),
         local=True,
     ) as sb:
-        # ── 1. Seed via gym REST API (creates a fresh session) ────────────────
-        start = _gym_request("POST", "/api/gym/start/add_item")
+        # ── 1. Seed via gym REST API (creates a fresh session + bg color) ─────
+        start = _gym_request("POST", "/api/gym/start/add_item", body={"bgColor": BG_COLOR})
         assert start["success"], f"start failed: {start}"
         assert "Buy groceries" in start["prompt"], f"unexpected prompt: {start['prompt']}"
         session_id = start["sessionId"]
 
-        # ── 2. First launch to warm up Chrome / TWA runtime ──────────────────
+        session_url = f"{GYM_URL}/?session={session_id}&bg={urllib.parse.quote(BG_COLOR, safe='')}"
+
+        # ── 2. Launch TWA to warm up Chrome / TWA runtime ────────────────────
         await sb.shell.run(
             f"am start -n {TWA_PACKAGE}/.LauncherActivity "
             f"-a android.intent.action.MAIN "
             f"-c android.intent.category.LAUNCHER"
         )
-        await asyncio.sleep(10)
 
-        # ── 3. Re-launch so the app picks up the active session ───────────────
-        await sb.shell.run(
-            f"am start -n {TWA_PACKAGE}/.LauncherActivity "
-            f"-a android.intent.action.MAIN "
-            f"-c android.intent.category.LAUNCHER"
-        )
-        await asyncio.sleep(5)
-
-        shot = await sb.screenshot()
-        assert shot[:4] == b"\x89PNG"
-        with open("/tmp/gym_pwa_pre_agent.png", "wb") as f:
-            f.write(shot)
-
-        # ── 4. Agent: tap input, type, tap Add ────────────────────────────────
-        w, h = await sb.screen.size()
-        await sb.mobile.tap(w // 2, int(h * 0.18))
-        await asyncio.sleep(0.5)
-        await sb.mobile.type_text("Buy groceries")
-        await asyncio.sleep(0.3)
-        await sb.mobile.tap(int(w * 0.85), int(h * 0.18))
-        await asyncio.sleep(1)
-
-        # ── 5. Evaluate ───────────────────────────────────────────────────────
-        result = _gym_request("GET", "/api/gym/evaluate", session_id=session_id)
-        assert result["success"], f"eval failed: reward={result['reward']}, msg={result['message']}"
-        assert result["reward"] == 1.0, f"expected reward 1.0, got {result['reward']}"
-
-        # ── 6. CDP: verify item appears in DOM ────────────────────────────────
+        # ── 3. Wait for CDP, then navigate to ?session=<id>&bg=<color> ───────
         import websockets
 
         async with sb.tunnel.forward("chrome_devtools_remote") as t:
+            # Poll until Chrome is ready
+            ws_url = None
+            for _ in range(60):
+                try:
+                    with urllib.request.urlopen(f"{t.url}/json", timeout=2) as r:
+                        targets = json.loads(r.read())
+                    if targets and targets[0].get("webSocketDebuggerUrl"):
+                        ws_url = targets[0]["webSocketDebuggerUrl"].replace(
+                            "localhost/", f"localhost:{t.port}/"
+                        )
+                        break
+                except Exception:
+                    pass
+                await asyncio.sleep(1)
+            assert ws_url, "CDP target never appeared"
+
+            # Navigate to session URL and wait for Page.loadEventFired
+            async with websockets.connect(ws_url) as ws:
+                await ws.send(json.dumps({"id": 1, "method": "Page.enable"}))
+                await ws.send(
+                    json.dumps({"id": 2, "method": "Page.navigate", "params": {"url": session_url}})
+                )
+                deadline = asyncio.get_event_loop().time() + 20
+                while asyncio.get_event_loop().time() < deadline:
+                    try:
+                        msg = json.loads(await asyncio.wait_for(ws.recv(), timeout=2))
+                        if msg.get("method") == "Page.loadEventFired":
+                            break
+                    except asyncio.TimeoutError:
+                        continue
+
+            await asyncio.sleep(6)  # let React render
+
+            shot = await sb.screenshot()
+            assert shot[:4] == b"\x89PNG"
+            with open("/tmp/gym_pwa_pre_agent.png", "wb") as f:
+                f.write(shot)
+
+            # ── 4. Agent: tap input, type, tap Add ────────────────────────────
+            w, h = await sb.screen.size()
+            await sb.mobile.tap(w // 2, int(h * 0.18))
+            await asyncio.sleep(0.5)
+            await sb.mobile.type_text("Buy groceries")
+            await asyncio.sleep(0.3)
+            await sb.mobile.tap(int(w * 0.85), int(h * 0.18))
+            await asyncio.sleep(1)
+
+            # ── 5. Evaluate ───────────────────────────────────────────────────
+            result = _gym_request("GET", "/api/gym/evaluate", session_id=session_id)
+            assert result[
+                "success"
+            ], f"eval failed: reward={result['reward']}, msg={result['message']}"
+            assert result["reward"] == 1.0, f"expected reward 1.0, got {result['reward']}"
+
+            # ── 6. CDP: verify item appears in DOM ────────────────────────────
             with urllib.request.urlopen(f"{t.url}/json", timeout=3) as r:
                 targets = json.loads(r.read())
             assert targets, "CDP: no targets found"
@@ -184,6 +215,8 @@ async def main():
     print(f"Using gym at {GYM_URL}")
     print(f"Building TWA APK from {TWA_MANIFEST_URL} ...")
 
+    import websockets
+
     async with Sandbox.ephemeral(
         Image.android().pwa_install(
             TWA_MANIFEST_URL,
@@ -192,34 +225,65 @@ async def main():
         ),
         local=True,
     ) as sb:
-        start = _gym_request("POST", "/api/gym/start/add_item")
+        start = _gym_request("POST", "/api/gym/start/add_item", body={"bgColor": BG_COLOR})
         session_id = start["sessionId"]
-        print(f"Task: {start['prompt']}  session: {session_id}")
+        session_url = f"{GYM_URL}/?session={session_id}&bg={urllib.parse.quote(BG_COLOR, safe='')}"
+        print(f"Task: {start['prompt']}  session: {session_id}  bg: {BG_COLOR}")
 
         await sb.shell.run(
             f"am start -n {TWA_PACKAGE}/.LauncherActivity "
             f"-a android.intent.action.MAIN "
             f"-c android.intent.category.LAUNCHER"
         )
-        await asyncio.sleep(5)
 
-        w, h = await sb.screen.size()
-        await sb.mobile.tap(w // 2, int(h * 0.18))
-        await asyncio.sleep(0.5)
-        await sb.mobile.type_text("Buy groceries")
-        await asyncio.sleep(0.3)
-        await sb.mobile.tap(int(w * 0.85), int(h * 0.18))
-        await asyncio.sleep(1)
+        async with sb.tunnel.forward("chrome_devtools_remote") as t:
+            ws_url = None
+            for _ in range(60):
+                try:
+                    with urllib.request.urlopen(f"{t.url}/json", timeout=2) as r:
+                        targets = json.loads(r.read())
+                    if targets and targets[0].get("webSocketDebuggerUrl"):
+                        ws_url = targets[0]["webSocketDebuggerUrl"].replace(
+                            "localhost/", f"localhost:{t.port}/"
+                        )
+                        break
+                except Exception:
+                    pass
+                await asyncio.sleep(1)
 
-        shot = await sb.screenshot()
-        with open("/tmp/gym_pwa_after_add.png", "wb") as f:
-            f.write(shot)
-        print("Screenshot saved to /tmp/gym_pwa_after_add.png")
+            async with websockets.connect(ws_url) as ws:
+                await ws.send(json.dumps({"id": 1, "method": "Page.enable"}))
+                await ws.send(
+                    json.dumps({"id": 2, "method": "Page.navigate", "params": {"url": session_url}})
+                )
+                deadline = asyncio.get_event_loop().time() + 20
+                while asyncio.get_event_loop().time() < deadline:
+                    try:
+                        msg = json.loads(await asyncio.wait_for(ws.recv(), timeout=2))
+                        if msg.get("method") == "Page.loadEventFired":
+                            break
+                    except asyncio.TimeoutError:
+                        continue
 
-        result = _gym_request("GET", "/api/gym/evaluate", session_id=session_id)
-        print(
-            f"Eval: success={result['success']} reward={result['reward']} msg={result['message']}"
-        )
+            await asyncio.sleep(3)
+
+            w, h = await sb.screen.size()
+            await sb.mobile.tap(w // 2, int(h * 0.18))
+            await asyncio.sleep(0.5)
+            await sb.mobile.type_text("Buy groceries")
+            await asyncio.sleep(0.3)
+            await sb.mobile.tap(int(w * 0.85), int(h * 0.18))
+            await asyncio.sleep(1)
+
+            shot = await sb.screenshot()
+            with open("/tmp/gym_pwa_after_add.png", "wb") as f:
+                f.write(shot)
+            print("Screenshot saved to /tmp/gym_pwa_after_add.png")
+
+            result = _gym_request("GET", "/api/gym/evaluate", session_id=session_id)
+            print(
+                f"Eval: success={result['success']} reward={result['reward']} msg={result['message']}"
+            )
 
 
 if __name__ == "__main__":

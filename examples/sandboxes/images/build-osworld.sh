@@ -124,8 +124,12 @@ elif [ "$ARCH" = "arm64" ]; then
       fi
       rm -f "$ZIP"
 
-      # Find the VMware disk file — .vmdk or possibly already .qcow2
-      VMDK=$(find "$EXTRACT_DIR" -name "*.vmdk" | head -1)
+      # Find the VMware disk descriptor (the non-split .vmdk, not -sNNN.vmdk)
+      # Split VMDKs have a small descriptor file (e.g. "Virtual Disk.vmdk") that
+      # references the extents; qemu-img needs the descriptor, not a split piece.
+      VMDK=$(find "$EXTRACT_DIR" -name "*.vmdk" ! -name "*-s[0-9]*.vmdk" | head -1)
+      # Fall back to any .vmdk if no descriptor found
+      [ -z "$VMDK" ] && VMDK=$(find "$EXTRACT_DIR" -name "*.vmdk" | head -1)
       RAW_QCOW2=$(find "$EXTRACT_DIR" -name "*.qcow2" | head -1)
 
       if [ -n "$RAW_QCOW2" ]; then

@@ -154,9 +154,23 @@ class Image:
         return cls(os_type="android", distro="android", version=version, kind=kind)
 
     @classmethod
-    def from_registry(cls, ref: str) -> Image:
-        """Create an image from a registry reference. kind is resolved after pull."""
-        return cls(os_type="linux", distro="registry", version="latest", kind=None, _registry=ref)
+    def from_registry(cls, ref: str, *, agent_type: Optional[str] = None) -> Image:
+        """Create an image from a registry reference. kind is resolved after pull.
+
+        Args:
+            ref: OCI registry reference, e.g. "ghcr.io/trycua/osworld:latest".
+            agent_type: Override the agent type (e.g. "osworld", "androidworld").
+                If None, the agent type is read from the manifest annotation
+                ``org.trycua.agent_type`` at pull time.
+        """
+        return cls(
+            os_type="linux",
+            distro="registry",
+            version="latest",
+            kind=None,
+            _registry=ref,
+            _agent_type=agent_type,
+        )
 
     @classmethod
     def from_file(

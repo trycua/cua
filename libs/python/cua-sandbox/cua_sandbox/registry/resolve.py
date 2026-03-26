@@ -18,7 +18,6 @@ from cua_sandbox.registry.manifest import (
     ImageFormat,
     detect_format,
     detect_kind,
-    detect_os,
     detect_os_from_config,
     get_manifest,
 )
@@ -40,6 +39,7 @@ def resolve_image_kind(image: Image) -> Image:
     manifest = get_manifest(image._registry)
     kind = detect_kind(manifest)
     os_type = detect_os_from_config(image._registry, manifest) or image.os_type
+    agent_type = image._agent_type or manifest.get("annotations", {}).get("org.trycua.agent_type")
 
     return Image(
         os_type=os_type,
@@ -52,6 +52,7 @@ def resolve_image_kind(image: Image) -> Image:
         _files=image._files,
         _registry=image._registry,
         _disk_path=image._disk_path,
+        _agent_type=agent_type,
     )
 
 
@@ -79,6 +80,7 @@ def pull_image(
     kind = detect_kind(manifest)
     os_type = detect_os_from_config(image._registry, manifest) or image.os_type
     fmt = detect_format(manifest)
+    agent_type = image._agent_type or manifest.get("annotations", {}).get("org.trycua.agent_type")
 
     resolved = Image(
         os_type=os_type,
@@ -91,6 +93,7 @@ def pull_image(
         _files=image._files,
         _registry=image._registry,
         _disk_path=image._disk_path,
+        _agent_type=agent_type,
     )
 
     # Cache the manifest
@@ -104,6 +107,7 @@ def pull_image(
     # QEMU format — use dedicated pull
     if fmt == ImageFormat.QEMU:
         from cua_sandbox.registry.qemu_builder import pull_qemu_image
+
         disk_path = dest_dir / "disk.qcow2"
         if not force and disk_path.exists():
             logger.info(f"Using cached QEMU image at {dest_dir}")

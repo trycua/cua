@@ -248,7 +248,7 @@ class QEMUBaremetalRuntime(Runtime):
         enable_kvm = opts.get("enable_kvm", True)
 
         # Detect guest server port from transport hint
-        guest_port = 5000 if image._agent_type == "osworld" else 8000
+        guest_port = 5000 if image._agent_type in ("osworld", "androidworld") else 8000
 
         # Detect disk format from extension
         disk_ext = Path(disk_path).suffix.lower()
@@ -571,8 +571,13 @@ class QEMUBaremetalRuntime(Runtime):
     async def is_ready(self, info: RuntimeInfo, timeout: float = 120) -> bool:
         if info.qmp_port and not info.agent_type:
             return await self._is_ready_qmp(info, timeout)
-        # For OSWorld, check the Flask server; for computer-server, check /status
-        endpoint = "/screenshot" if info.agent_type == "osworld" else "/status"
+        # For OSWorld/AndroidWorld, check the server health; for computer-server, check /status
+        if info.agent_type == "osworld":
+            endpoint = "/screenshot"
+        elif info.agent_type == "androidworld":
+            endpoint = "/health"
+        else:
+            endpoint = "/status"
         url = f"http://{info.host}:{info.api_port}{endpoint}"
         deadline = asyncio.get_event_loop().time() + timeout
         async with httpx.AsyncClient(timeout=10) as client:

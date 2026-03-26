@@ -577,6 +577,8 @@ def push_image(
 
     Chunks the disk into gzip-compressed ~500MB layers with part annotations.
     """
+    import os
+
     import oras.provider
     from cua_sandbox.registry.media_types import QEMU_CONFIG, QEMU_DISK_GZIP
     from cua_sandbox.registry.ref import parse_ref
@@ -589,7 +591,15 @@ def push_image(
     registry, org, name, tag = parse_ref(ref)
     full_repo = f"{registry}/{org}/{name}"
 
-    r = oras.provider.Registry()
+    r = oras.provider.Registry(hostname=registry)
+    username = os.environ.get("ORAS_USERNAME") or os.environ.get("REGISTRY_USERNAME")
+    password = (
+        os.environ.get("ORAS_PASSWORD")
+        or os.environ.get("REGISTRY_PASSWORD")
+        or os.environ.get("GITHUB_TOKEN")
+    )
+    if username and password:
+        r.login(username=username, password=password, hostname=registry)
 
     with tempfile.TemporaryDirectory() as tmp:
         tmp_dir = Path(tmp)
@@ -639,12 +649,18 @@ def push_image(
                 )
 
                 # Push blob
-                r.push_blob(full_repo, chunk_path, chunk_digest)
+                r.upload_blob(str(chunk_path), full_repo, layers[-1])
 
         # Push config blob
-        r.push_blob(full_repo, config_path, config_digest)
+        r.upload_blob(
+            str(config_path),
+            full_repo,
+            {"digest": config_digest, "size": len(config_data), "mediaType": QEMU_CONFIG},
+        )
 
         # Create and push manifest
+        import oras.container as _oras_container
+
         manifest = {
             "schemaVersion": 2,
             "mediaType": "application/vnd.oci.image.manifest.v1+json",
@@ -662,7 +678,7 @@ def push_image(
             },
         }
 
-        r.put_manifest(f"{full_repo}:{tag}", json.dumps(manifest))
+        r.upload_manifest(manifest, _oras_container.Container(f"{full_repo}:{tag}"))
         logger.info(f"Pushed {ref} ({part_total} layers, {disk_size / 1024 / 1024:.0f} MB)")
 
 
@@ -674,14 +690,12 @@ def pull_qemu_image(ref: str, dest_dir: Optional[Path] = None) -> tuple[QEMUImag
 
     Returns (config, disk_path).
     """
-    import oras.provider
     from cua_sandbox.registry.cache import ImageCache
     from cua_sandbox.registry.manifest import get_manifest
     from cua_sandbox.registry.media_types import QEMU_DISK, QEMU_DISK_GZIP
     from cua_sandbox.registry.ref import parse_ref
 
     registry, org, name, tag = parse_ref(ref)
-    full_repo = f"{registry}/{org}/{name}"
 
     cache = ImageCache()
     if dest_dir is None:
@@ -703,14 +717,27 @@ def pull_qemu_image(ref: str, dest_dir: Optional[Path] = None) -> tuple[QEMUImag
         )
 
     manifest = get_manifest(ref)
-    r = oras.provider.Registry()
+
+    from cua_sandbox.registry.manifest import _registry_token
+
+    def _fetch_blob(blob_digest: str) -> bytes:
+        import requests as _req
+
+        token = _registry_token(registry, f"{org}/{name}")
+        headers: dict = {}
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+        url = f"https://{registry}/v2/{org}/{name}/blobs/{blob_digest}"
+        r = _req.get(url, headers=headers, timeout=120, stream=True)
+        r.raise_for_status()
+        return r.content
 
     # Download config
     config_blob = manifest.get("config", {})
     if config_blob.get("digest"):
-        resp = r.get_blob(full_repo, config_blob["digest"])
-        config_path.write_bytes(resp.content)
-        config_data = resp.json() if hasattr(resp, "json") else {}
+        raw = _fetch_blob(config_blob["digest"])
+        config_path.write_bytes(raw)
+        config_data = json.loads(raw)
     else:
         config_data = {}
 
@@ -744,8 +771,7 @@ def pull_qemu_image(ref: str, dest_dir: Optional[Path] = None) -> tuple[QEMUImag
             size = layer.get("size", 0)
             logger.info(f"  part {part_num}/{total}: {size / 1024 / 1024:.1f} MB")
 
-            resp = r.get_blob(full_repo, digest)
-            data = resp.content
+            data = _fetch_blob(digest)
 
             # Decompress gzip if needed
             if mt == QEMU_DISK_GZIP or mt.endswith("+gzip"):

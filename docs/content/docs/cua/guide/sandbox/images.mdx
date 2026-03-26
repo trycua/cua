@@ -79,9 +79,30 @@ Image.android().apk_install("/path/to/app.apk")
 
 **Android — PWA (Trusted Web Activity)**
 
+`pwa_install` builds a signed TWA APK from a Web App Manifest URL using [Bubblewrap](https://github.com/GoogleChromeLabs/bubblewrap) and installs it into the emulator. The app opens full-screen with no browser chrome.
+
 ```python
-Image.android().pwa_install("https://example.com/manifest.json")
+Image.android().pwa_install(
+    "https://example.com/manifest.json",
+    package_name="com.example.myapp",   # optional — derived from hostname if omitted
+    keystore="/path/to/android.keystore",  # optional — auto-generated if omitted
+    keystore_alias="android",           # default: "android"
+    keystore_password="android",        # default: "android"
+)
 ```
+
+**How signing works.** Chrome will only open the PWA in TWA mode (no browser UI) when the APK's SHA-256 signing certificate matches the fingerprint served by the origin at `/.well-known/assetlinks.json`. To make this reliable across runs:
+
+1. Generate or commit a keystore to your repo.
+2. Extract the SHA-256 fingerprint with `keytool -list -v -keystore android.keystore`.
+3. Serve that fingerprint from `/.well-known/assetlinks.json` on your PWA host.
+4. Pass the keystore path to `pwa_install`.
+
+If you omit `keystore`, a fresh one is generated and cached under `~/.cua/cua-sandbox/pwa-cache/` alongside the built APK — convenient for local development, but the fingerprint will differ between machines.
+
+**System requirements.** Node.js ≥ 18 and Java ≤ 21 must be on `PATH` (Gradle does not support Java 22+). The Android SDK and Bubblewrap CLI are auto-installed on first use.
+
+**Built APKs are cached** by `(manifest_url, package_name)` under `~/.cua/cua-sandbox/pwa-cache/` and reused on subsequent runs.
 
 ### Python packages
 

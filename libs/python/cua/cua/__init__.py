@@ -21,7 +21,7 @@ Opt out of telemetry::
     export CUA_TELEMETRY_ENABLED=false
 """
 
-__version__ = "0.1.2"  # managed by bump2version — do not edit manually
+__version__ = "0.1.3"  # managed by bump2version — do not edit manually
 
 # ---------------------------------------------------------------------------
 # cua-sandbox surface

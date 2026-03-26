@@ -244,8 +244,10 @@ class OSWorldTransport(Transport):
             import os
 
             os.makedirs(env.cache_dir_base, exist_ok=True)
+            from desktop_env.controllers.python import PythonController  # type: ignore
             from desktop_env.controllers.setup import SetupController  # type: ignore
 
+            env.controller = PythonController(vm_ip=vm_host, server_port=vm_port)
             env.setup_controller = SetupController(
                 vm_ip=vm_host, server_port=vm_port, cache_dir=env.cache_dir
             )

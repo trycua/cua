@@ -13,14 +13,13 @@ pip install cua
 ```python
 from cua import Sandbox, Image, ComputerAgent
 
-# Ephemeral local sandbox
+# Ephemeral local sandbox with an agent
 async with Sandbox.ephemeral(Image.linux(), local=True) as sb:
     await sb.shell.run("uname -a")
 
-# Agent driving a sandbox
-agent = ComputerAgent(model="anthropic/claude-sonnet-4-5", tools=[sb])
-async for response in agent.run("Open the browser and go to example.com"):
-    print(response)
+    agent = ComputerAgent(model="anthropic/claude-sonnet-4-5", tools=[sb])
+    async for response in agent.run("Open the browser and go to example.com"):
+        print(response)
 ```
 
 ## What's included

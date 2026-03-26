@@ -13,7 +13,7 @@ cd libs/python/core
 pip install -e .
 
 # Run tests
-export CUA_TELEMETRY_ENABLED=false  # or $env:CUA_TELEMETRY_DISABLED="1" on Windows
+export CUA_TELEMETRY_ENABLED=false  # or $env:CUA_TELEMETRY_ENABLED="false" on Windows
 pytest tests/ -v
 ```
 

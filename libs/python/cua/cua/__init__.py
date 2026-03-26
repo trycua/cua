@@ -8,14 +8,13 @@ Quick start::
     import cua
     cua.configure(api_key="sk-...")
 
-    # Start an ephemeral sandbox
+    # Start an ephemeral sandbox and run an agent inside it
     async with Sandbox.ephemeral(Image.linux()) as sb:
         screenshot = await sb.screenshot()
 
-    # Run an agent
-    agent = ComputerAgent(model="anthropic/claude-sonnet-4-5", tools=[sb])
-    async for response in agent.run("Open the browser"):
-        print(response)
+        agent = ComputerAgent(model="anthropic/claude-sonnet-4-5", tools=[sb])
+        async for response in agent.run("Open the browser"):
+            print(response)
 
 Opt out of telemetry::
 

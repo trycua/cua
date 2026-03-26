@@ -250,6 +250,22 @@ def push_avd(
     logger.info(f"Manifest index updated: {full_repo}:{tag}")
 
 
+def _put_manifest_raw(r, full_repo: str, tag: str, manifest: dict) -> None:
+    """PUT an OCI manifest (any mediaType) via raw HTTP, bypassing oras-py schema validation."""
+    import json as _json
+
+    body = _json.dumps(manifest).encode()
+    url = f"{r.prefix}://{full_repo.lstrip('/')}/manifests/{tag}"
+    headers = {
+        "Content-Type": manifest.get("mediaType", "application/vnd.oci.image.index.v1+json"),
+        "Content-Length": str(len(body)),
+    }
+    resp = r.do_request(url, "PUT", headers=headers, data=body)
+    if resp.status_code not in (200, 201):
+        raise RuntimeError(f"PUT manifest failed ({resp.status_code}): {resp.text[:300]}")
+    logger.info(f"PUT manifest → {full_repo}:{tag} ({resp.status_code})")
+
+
 def _upsert_manifest_index(
     r,
     full_repo: str,
@@ -298,9 +314,9 @@ def _upsert_manifest_index(
         "manifests": existing_manifests + [new_entry],
         "annotations": index_annotations,
     }
-    import oras.container as _oras_container
-
-    r.upload_manifest(index, _oras_container.Container(f"{full_repo}:{tag}"))
+    # oras-py upload_manifest validates against the regular manifest schema
+    # (requires 'config'), which manifest indexes don't have. Use raw PUT.
+    _put_manifest_raw(r, full_repo, tag, index)
 
 
 # ── Pull ─────────────────────────────────────────────────────────────────────

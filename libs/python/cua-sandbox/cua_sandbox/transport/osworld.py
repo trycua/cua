@@ -238,6 +238,9 @@ class OSWorldTransport(Transport):
             env.http_server = self._base_url
             env.cache_dir_base = "/tmp/osworld_cache"
             env.cache_dir = "/tmp/osworld_cache"
+            env.enable_proxy = False
+            env.action_history = []
+            env.is_environment_used = False
             import os
 
             os.makedirs(env.cache_dir_base, exist_ok=True)

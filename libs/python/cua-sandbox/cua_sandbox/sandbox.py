@@ -913,7 +913,15 @@ class Sandbox:
         if image and runtime:
             sb_name = name or _random_name()
             rt_info = await runtime.start(image, sb_name)
-            if rt_info.environment == "android" and not rt_info.qmp_port:
+            if rt_info.agent_type == "androidworld":
+                # AndroidWorld bare-metal: server runs on host, api_port is the
+                # FastAPI port — NOT the ADB port. Use AndroidWorldTransport.
+                from cua_sandbox.transport.androidworld import AndroidWorldTransport
+
+                transport = AndroidWorldTransport(
+                    f"http://{rt_info.host}:{rt_info.api_port}",
+                )
+            elif rt_info.environment == "android" and not rt_info.qmp_port:
                 if rt_info.grpc_port:
                     from cua_sandbox.transport.grpc_emulator import (
                         GRPCEmulatorTransport,
@@ -941,12 +949,6 @@ class Sandbox:
                 from cua_sandbox.transport.osworld import OSWorldTransport
 
                 transport = OSWorldTransport(
-                    f"http://{rt_info.host}:{rt_info.api_port}",
-                )
-            elif rt_info.agent_type == "androidworld":
-                from cua_sandbox.transport.androidworld import AndroidWorldTransport
-
-                transport = AndroidWorldTransport(
                     f"http://{rt_info.host}:{rt_info.api_port}",
                 )
             elif rt_info.vnc_port and rt_info.ssh_port:

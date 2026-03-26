@@ -28,6 +28,11 @@ LUME_CONFIG = "application/vnd.trycua.lume.config.v1+json"
 LUME_DISK = "application/vnd.trycua.lume.disk.v1"
 LUME_NVRAM = "application/vnd.trycua.lume.nvram.v1"
 
+# ── Android AVD (cua) — pre-baked Android Virtual Device ─────────────────────
+
+ANDROID_AVD_CONFIG = "application/vnd.trycua.android.avd.config.v1+json"
+ANDROID_AVD_TAR_GZIP = "application/vnd.trycua.android.avd.tar.v1+gzip"
+
 # ── Tart (Cirrus Labs) ───────────────────────────────────────────────────────
 
 TART_CONFIG = "application/vnd.cirruslabs.tart.config.v1"
@@ -69,6 +74,8 @@ VM_MEDIA_TYPES = frozenset(
         LUME_CONFIG,
         LUME_DISK,
         LUME_NVRAM,
+        ANDROID_AVD_CONFIG,
+        ANDROID_AVD_TAR_GZIP,
         OCI_VM_CONFIG,
         OCI_VM_DISK,
         OCI_VM_AUX,

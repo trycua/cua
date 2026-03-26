@@ -57,7 +57,7 @@ class PushConfig:
     """Local disk path (for vm kind) or Docker image name (for container kind)."""
 
     kind: str
-    """'vm', 'lume', or 'container'."""
+    """'vm', 'lume', 'avd', or 'container'."""
 
     agent_type: Optional[str] = None
     """Agent type to embed as org.trycua.agent_type manifest annotation."""
@@ -162,16 +162,41 @@ def push_lume_image(cfg: PushConfig) -> None:
         logger.info(f"Annotated {cfg.ref} with {AGENT_TYPE_ANNOTATION}={cfg.agent_type}")
 
 
+def push_avd_image(cfg: PushConfig) -> None:
+    """Push a pre-baked Android AVD directory to an OCI registry.
+
+    cfg.source is the path to the ``<name>.avd`` directory.
+    Creates / updates a multi-arch manifest index at cfg.ref.
+    """
+    from cua_sandbox.registry.avd_builder import AVDConfig, push_avd
+
+    avd_dir = Path(cfg.source)
+    if not avd_dir.is_dir():
+        raise FileNotFoundError(f"AVD directory not found: {avd_dir}")
+
+    avd_cfg = AVDConfig(
+        api_level=33,
+        device_id="pixel_6",
+        android_world=(cfg.agent_type == "androidworld"),
+        agent_type=cfg.agent_type,
+    )
+    push_avd(avd_dir, cfg.ref, config=avd_cfg, agent_type=cfg.agent_type)
+
+
 def push(cfg: PushConfig) -> None:
     """Dispatch to the appropriate push function based on cfg.kind."""
     if cfg.kind == "vm":
         push_vm_image(cfg)
     elif cfg.kind == "lume":
         push_lume_image(cfg)
+    elif cfg.kind == "avd":
+        push_avd_image(cfg)
     elif cfg.kind == "container":
         push_container_image(cfg)
     else:
-        raise ValueError(f"Unknown kind {cfg.kind!r}. Expected 'vm', 'lume', or 'container'.")
+        raise ValueError(
+            f"Unknown kind {cfg.kind!r}. Expected 'vm', 'lume', 'avd', or 'container'."
+        )
 
 
 # ── Internal helpers ─────────────────────────────────────────────────────────
@@ -250,8 +275,8 @@ def _main() -> None:
     parser.add_argument(
         "--kind",
         required=True,
-        choices=["vm", "lume", "container"],
-        help="Image kind: vm (QEMU qcow2), lume (macOS via lume CLI), or container (Docker)",
+        choices=["vm", "lume", "avd", "container"],
+        help="Image kind: vm (QEMU qcow2), lume (macOS via lume CLI), avd (Android AVD dir), or container (Docker)",
     )
     parser.add_argument(
         "--agent-type", default=None, help="Agent type to annotate, e.g. osworld or androidworld"

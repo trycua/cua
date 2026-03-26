@@ -104,6 +104,15 @@ def pull_image(
         logger.info(f"Container image {image._registry} — use docker pull")
         return resolved, dest_dir
 
+    # Android AVD format — extract to ~/.cua/android-avd/
+    if fmt == ImageFormat.ANDROID_AVD:
+        from cua_sandbox.registry.avd_builder import pull_avd
+
+        avd_home = dest_dir.parent  # use the same cache hierarchy
+        avd_config, avd_path = pull_avd(image._registry, avd_home, force=force)
+        logger.info(f"Android AVD extracted to {avd_path}")
+        return resolved, avd_path
+
     # QEMU format — use dedicated pull
     if fmt == ImageFormat.QEMU:
         from cua_sandbox.registry.qemu_builder import pull_qemu_image

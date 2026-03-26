@@ -167,6 +167,19 @@ def _ensure_sdk() -> Path:
     return sdk
 
 
+def _find_free_server_port(preferred: int = 5000) -> int:
+    """Return a free TCP port, starting from preferred."""
+    for port in range(preferred, preferred + 100):
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                s.bind(("127.0.0.1", port))
+                return port
+        except OSError:
+            continue
+    raise RuntimeError(f"No free port found in range {preferred}-{preferred + 100}")
+
+
 def _find_free_emulator_port() -> int:
     """Return a free odd adb_port (console_port = adb_port - 1, must be even).
 
@@ -239,6 +252,7 @@ class AndroidEmulatorRuntime(Runtime):
         self.headless = headless
         self.grpc_port = grpc_port
         self._proc: Optional[subprocess.Popen] = None
+        self._aw_proc: Optional[subprocess.Popen] = None  # AndroidWorld server subprocess
         self._avd_name: Optional[str] = None
         self._sdk: Optional[Path] = None
 
@@ -267,6 +281,20 @@ class AndroidEmulatorRuntime(Runtime):
         env["ANDROID_SDK_ROOT"] = str(self._sdk)
         env["ANDROID_AVD_HOME"] = str(_AVD_HOME)
         env["ANDROID_EMULATOR_WAIT_TIME_BEFORE_KILL"] = "10"
+
+        # Pull AVD from OCI registry if the image has a registry reference
+        if image._registry:
+            from cua_sandbox.registry.avd_builder import pull_avd
+
+            logger.info(f"Pulling AndroidWorld AVD from {image._registry} ...")
+            avd_config, _ = pull_avd(image._registry, _AVD_HOME)
+            # Override runtime settings from the baked AVD config
+            if avd_config.api_level:
+                self.api_level = avd_config.api_level
+            if avd_config.arch:
+                arch = avd_config.arch
+                package = f"system-images;android-{self.api_level};{self.img_type};{arch}"
+                abi = f"{self.img_type}/{arch}"
 
         # Create AVD if it doesn't exist
         avd_dir = _AVD_HOME / f"{name}.avd"
@@ -344,11 +372,32 @@ class AndroidEmulatorRuntime(Runtime):
             name=name,
             environment="android",
             grpc_port=resolved_grpc_port,
+            agent_type=image._agent_type,
         )
 
-        # Install APKs from image layers
+        # Wait for boot, then apply image layers (APK installs, etc.)
         await self.is_ready(info)
         await self._apply_layers(image, adb, env)
+
+        # If this is an AndroidWorld image, launch the host-side FastAPI server
+        if image._agent_type == "androidworld":
+            console_port = self.adb_port - 1
+            server_port = await self._start_androidworld_server(
+                console_port=console_port,
+                grpc_port=resolved_grpc_port,
+                sdk=self._sdk,
+                adb=adb,
+            )
+            # Overwrite api_port so sandbox.py connects to the FastAPI server,
+            # not the ADB port. The ADB serial is known internally by the server.
+            info = RuntimeInfo(
+                host="localhost",
+                api_port=server_port,
+                name=name,
+                environment="android",
+                grpc_port=resolved_grpc_port,
+                agent_type="androidworld",
+            )
 
         return info
 
@@ -427,6 +476,62 @@ class AndroidEmulatorRuntime(Runtime):
             elif lt == "pip_install":
                 # pip install via termux or similar — skip for now
                 logger.warning("pip_install not supported on Android emulator, skipping")
+
+    async def _start_androidworld_server(
+        self,
+        console_port: int,
+        grpc_port: int,
+        sdk: Optional[Path],
+        adb: str,
+    ) -> int:
+        """Launch the AndroidWorld FastAPI server as a host subprocess.
+
+        Returns the port the server is listening on.
+        """
+        import sys
+
+        # Pick a free port for the server
+        server_port = _find_free_server_port(5000)
+
+        env = os.environ.copy()
+        env["AW_CONSOLE_PORT"] = str(console_port)
+        env["AW_GRPC_PORT"] = str(grpc_port)
+        env["AW_ADB_PATH"] = adb
+        env["AW_EMULATOR_SETUP"] = "false"  # assume pre-baked AVD
+        env["AW_FREEZE_DATETIME"] = "true"
+        env["AW_PORT"] = str(server_port)
+        env["AW_HOST"] = "0.0.0.0"
+
+        logger.info(f"Starting AndroidWorld server on port {server_port} ...")
+        self._aw_proc = subprocess.Popen(
+            [sys.executable, "-m", "cua_sandbox._androidworld_server"],
+            env=env,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+        )
+
+        # Wait for /health to respond
+        await self._wait_for_aw_server(server_port, timeout=120)
+        logger.info(f"AndroidWorld server ready on port {server_port}.")
+        return server_port
+
+    @staticmethod
+    async def _wait_for_aw_server(port: int, timeout: float = 120) -> None:
+        """Poll GET /health until the AndroidWorld server responds."""
+        import httpx
+
+        url = f"http://localhost:{port}/health"
+        deadline = asyncio.get_event_loop().time() + timeout
+        async with httpx.AsyncClient(timeout=5) as client:
+            while asyncio.get_event_loop().time() < deadline:
+                try:
+                    resp = await client.get(url)
+                    if resp.status_code == 200:
+                        return
+                except Exception:
+                    pass
+                await asyncio.sleep(3)
+        raise TimeoutError(f"AndroidWorld server did not become ready within {timeout}s")
 
     @staticmethod
     async def _build_pwa_apk(
@@ -795,6 +900,15 @@ class AndroidEmulatorRuntime(Runtime):
         return result
 
     async def stop(self, name: str) -> None:
+        # Stop AndroidWorld server first
+        if self._aw_proc and self._aw_proc.poll() is None:
+            self._aw_proc.terminate()
+            try:
+                self._aw_proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                self._aw_proc.kill()
+            self._aw_proc = None
+
         if self._proc and self._proc.poll() is None:
             self._proc.terminate()
             try:

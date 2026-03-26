@@ -11,6 +11,8 @@ from typing import Optional
 
 import oras.provider
 from cua_sandbox.registry.media_types import (
+    ANDROID_AVD_CONFIG,
+    ANDROID_AVD_TAR_GZIP,
     CONTAINER_CONFIG_TYPES,
     CONTAINER_LAYER_TYPES,
     LEGACY_DISK_CHUNK,
@@ -34,6 +36,7 @@ from cua_sandbox.registry.ref import parse_ref
 class ImageFormat(Enum):
     """Format of a VM image in the registry."""
 
+    ANDROID_AVD = "android-avd"  # trycua Android AVD — gzip-chunked tar, avd media types
     LUME = "lume"  # trycua Lume macOS VM — gzip chunks, lume media types
     OCI_LAYERED = "oci-layered"  # agoda media types, gzip chunks with part annotations
     LEGACY_LZ4 = "legacy-lz4"  # trycua LZ4-chunked
@@ -101,6 +104,12 @@ def detect_format(manifest: dict) -> ImageFormat:
     config = manifest.get("config", {})
     config_mt = config.get("mediaType", "")
 
+    # Android AVD: config uses trycua.android.avd.config type
+    if config_mt == ANDROID_AVD_CONFIG:
+        return ImageFormat.ANDROID_AVD
+    if any(layer.get("mediaType") == ANDROID_AVD_TAR_GZIP for layer in layers):
+        return ImageFormat.ANDROID_AVD
+
     # Lume native OCI format: config uses trycua.lume.config type
     if config_mt == LUME_CONFIG:
         return ImageFormat.LUME
@@ -148,6 +157,7 @@ def detect_kind(manifest: dict) -> str:
     """Classify manifest as 'vm' or 'container'."""
     fmt = detect_format(manifest)
     if fmt in (
+        ImageFormat.ANDROID_AVD,
         ImageFormat.LUME,
         ImageFormat.OCI_LAYERED,
         ImageFormat.LEGACY_LZ4,

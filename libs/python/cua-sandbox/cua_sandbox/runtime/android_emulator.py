@@ -513,15 +513,31 @@ class AndroidEmulatorRuntime(Runtime):
         env["AW_HOST"] = "0.0.0.0"
 
         # Allow android_world to live in a separate venv / source checkout.
-        python_bin = os.environ.get("AW_PYTHON") or sys.executable
+        # AW_PYTHON: python that has android_world + fastapi/uvicorn installed.
+        # If AW_PYTHON differs from sys.executable we run the server file directly
+        # (not as a module) so cua_sandbox doesn't need to be installed in that venv.
+        aw_python = os.environ.get("AW_PYTHON")
         aw_source_dir = os.environ.get("AW_SOURCE_DIR", "")
         if aw_source_dir:
             existing = env.get("PYTHONPATH", "")
             env["PYTHONPATH"] = f"{aw_source_dir}:{existing}" if existing else aw_source_dir
 
+        if aw_python and aw_python != sys.executable:
+            # Run the server script directly — avoids needing cua_sandbox in aw venv
+            import importlib.util
+
+            server_file = importlib.util.find_spec("cua_sandbox._androidworld_server")
+            if server_file and server_file.origin:
+                cmd = [aw_python, server_file.origin]
+            else:
+                # Fallback: resolve relative to this file
+                cmd = [aw_python, str(Path(__file__).parent / "_androidworld_server.py")]
+        else:
+            cmd = [sys.executable, "-m", "cua_sandbox._androidworld_server"]
+
         logger.info(f"Starting AndroidWorld server on port {server_port} ...")
         self._aw_proc = subprocess.Popen(
-            [python_bin, "-m", "cua_sandbox._androidworld_server"],
+            cmd,
             env=env,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.PIPE,
@@ -532,8 +548,7 @@ class AndroidEmulatorRuntime(Runtime):
         logger.info(f"AndroidWorld server ready on port {server_port}.")
         return server_port
 
-    @staticmethod
-    async def _wait_for_aw_server(port: int, timeout: float = 120) -> None:
+    async def _wait_for_aw_server(self, port: int, timeout: float = 120) -> None:
         """Poll GET /health until the AndroidWorld server responds."""
         import httpx
 
@@ -541,6 +556,14 @@ class AndroidEmulatorRuntime(Runtime):
         deadline = asyncio.get_event_loop().time() + timeout
         async with httpx.AsyncClient(timeout=5) as client:
             while asyncio.get_event_loop().time() < deadline:
+                # Fail fast if the server process has already exited
+                if self._aw_proc and self._aw_proc.poll() is not None:
+                    stderr = ""
+                    if self._aw_proc.stderr:
+                        stderr = self._aw_proc.stderr.read().decode(errors="replace")
+                    raise RuntimeError(
+                        f"AndroidWorld server exited (rc={self._aw_proc.returncode}):\n{stderr}"
+                    )
                 try:
                     resp = await client.get(url)
                     if resp.status_code == 200:
@@ -548,7 +571,11 @@ class AndroidEmulatorRuntime(Runtime):
                 except Exception:
                     pass
                 await asyncio.sleep(3)
-        raise TimeoutError(f"AndroidWorld server did not become ready within {timeout}s")
+        stderr = ""
+        if self._aw_proc and self._aw_proc.stderr:
+            self._aw_proc.terminate()
+            stderr = self._aw_proc.stderr.read().decode(errors="replace")
+        raise TimeoutError(f"AndroidWorld server did not become ready within {timeout}s\n{stderr}")
 
     @staticmethod
     async def _build_pwa_apk(

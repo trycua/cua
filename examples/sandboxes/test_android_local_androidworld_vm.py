@@ -3,26 +3,29 @@
 AndroidWorld is a benchmark of 116 tasks across 20 real Android apps, backed by
 a live Android emulator. This example shows how to:
 
-  1. Boot an AndroidWorld container/VM image
+  1. Boot an AndroidWorld AVD image (pre-baked OCI artifact on GHCR)
   2. Pick a task and retrieve its natural-language goal
   3. Run a minimal agent loop (screenshot → action → score)
   4. Score the result
-
---- Local container image (built from google-research/android_world Dockerfile) ---
-
-    image = Image.from_file(
-        "path/to/androidworld.qcow2",
-        os_type="android",
-        agent_type="androidworld",
-    )
-    async with Sandbox.ephemeral(image, local=True) as sb:
-        ...
 
 --- Registry image (agent_type resolved from manifest annotation) ---
 
     image = Image.from_registry("ghcr.io/trycua/androidworld:latest")
     async with Sandbox.ephemeral(image, local=True) as sb:
         ...
+
+The image is a pre-baked Android AVD (not a Docker container). The
+AndroidEmulatorRuntime pulls the AVD from GHCR, boots the native emulator
+with HVF acceleration (Apple Silicon) or KVM/HAXM (x86_64), then launches
+the AndroidWorld FastAPI server on the host.
+
+Prerequisites
+-------------
+android_world must be importable by the server process. If it lives outside
+the cua-sandbox virtualenv, set these env vars before running:
+
+    export AW_PYTHON=/path/to/aw-venv/bin/python   # venv that has android_world
+    export AW_SOURCE_DIR=/tmp/android_world          # OR: source-checkout path
 
 The AndroidWorldTransport exposes the full AndroidWorld task lifecycle:
   sb.androidworld.initialize_task(task_type, task_idx)

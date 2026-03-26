@@ -487,6 +487,16 @@ class AndroidEmulatorRuntime(Runtime):
         """Launch the AndroidWorld FastAPI server as a host subprocess.
 
         Returns the port the server is listening on.
+
+        The server requires ``android_world`` to be importable. If it lives in
+        a separate virtualenv, point to it via two env vars (set before
+        launching your script, or passed explicitly):
+
+          AW_PYTHON     – path to the Python executable that has android_world
+                          installed (default: sys.executable)
+          AW_SOURCE_DIR – directory to prepend to PYTHONPATH so that a source
+                          checkout of android_world (e.g. /tmp/android_world)
+                          is importable without installation
         """
         import sys
 
@@ -502,9 +512,16 @@ class AndroidEmulatorRuntime(Runtime):
         env["AW_PORT"] = str(server_port)
         env["AW_HOST"] = "0.0.0.0"
 
+        # Allow android_world to live in a separate venv / source checkout.
+        python_bin = os.environ.get("AW_PYTHON") or sys.executable
+        aw_source_dir = os.environ.get("AW_SOURCE_DIR", "")
+        if aw_source_dir:
+            existing = env.get("PYTHONPATH", "")
+            env["PYTHONPATH"] = f"{aw_source_dir}:{existing}" if existing else aw_source_dir
+
         logger.info(f"Starting AndroidWorld server on port {server_port} ...")
         self._aw_proc = subprocess.Popen(
-            [sys.executable, "-m", "cua_sandbox._androidworld_server"],
+            [python_bin, "-m", "cua_sandbox._androidworld_server"],
             env=env,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.PIPE,

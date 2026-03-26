@@ -64,7 +64,7 @@ export OPENAI_API_KEY="your-key"
 Gemini 2.5 Computer-Use is optimized for **browser automation** rather than full desktop control. Use it with the [Browser Tool](/cua/guide/fundamentals/browser-tool) for web-based tasks:
 
 ```python
-from cua import BrowserTool
+from cua.tools import BrowserTool
 
 # Use with BrowserTool for web automation
 agent = ComputerAgent(model="gemini-2.5-computer-use-preview-10-2025", tools=[browser])
@@ -81,7 +81,7 @@ For full desktop computer-use, consider Anthropic Claude or OpenAI instead.
 Fara is Microsoft's browser automation model, available via Azure ML. Like Gemini 2.5, it's designed for web tasks and works with the [Browser Tool](/cua/guide/fundamentals/browser-tool):
 
 ```python
-from cua import BrowserTool
+from cua.tools import BrowserTool
 
 agent = ComputerAgent(
     model="azure_ml/Fara-7B",

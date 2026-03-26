@@ -23,7 +23,7 @@ Pull a Linux OCI VM image from `ghcr.io` and run it locally with `TartRuntime`. 
 # source: examples/sandboxes/test_linux_local_registry_vm.py
 import asyncio
 from cua import Image, Sandbox
-from cua import TartRuntime
+from cua.runtime import TartRuntime
 
 
 async def main():
@@ -114,7 +114,7 @@ Run the standard [OSWorld](https://os-world.github.io/) Ubuntu image using the O
 # source: examples/sandboxes/test_linux_local_osworld_vm.py
 import asyncio
 from cua import Image, Sandbox
-from cua import QEMURuntime
+from cua.runtime import QEMURuntime
 
 OSWORLD_IMAGE = (
     "https://huggingface.co/datasets/xlangai/ubuntu_osworld/resolve/main/Ubuntu.qcow2.zip"

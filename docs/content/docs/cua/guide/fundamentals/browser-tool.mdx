@@ -26,7 +26,7 @@ The Browser Tool uses Playwright under the hood to control the browser:
 ```python
 from cua import Sandbox, Image
 from cua import ComputerAgent
-from cua import BrowserTool
+from cua.tools import BrowserTool
 
 # Create a computer instance
 async with Sandbox.ephemeral(Image.linux()) as computer:
@@ -85,7 +85,7 @@ await agent.run("Go back to the previous page")
 You can also call Browser Tool actions programmatically without an agent:
 
 ```python
-from cua import BrowserTool
+from cua.tools import BrowserTool
 
 browser = BrowserTool(interface=computer)
 
@@ -142,7 +142,7 @@ Here's a complete example automating a web form:
 ```python
 from cua import Sandbox, Image
 from cua import ComputerAgent
-from cua import BrowserTool
+from cua.tools import BrowserTool
 
 async with Sandbox.ephemeral(Image.linux()) as computer:
     browser = BrowserTool(interface=computer)

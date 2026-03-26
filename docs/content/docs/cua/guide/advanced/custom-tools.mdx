@@ -105,7 +105,7 @@ See [Sandboxed Python](/cua/guide/advanced/sandboxed-python) for more details.
 For more control over tool schema and behavior, extend `BaseTool`:
 
 ```python
-from cua import BaseTool, register_tool
+from cua.tools import BaseTool, register_tool
 from typing import Union
 
 @register_tool("database_query")
@@ -203,7 +203,7 @@ Pass multiple tools of different types:
 
 ```python
 from cua import ComputerAgent
-from cua import BrowserTool
+from cua.tools import BrowserTool
 from cua import sandboxed
 
 # Built-in tool
@@ -235,7 +235,7 @@ The agent decides which tool to use based on the task.
 Tools can raise exceptions, which are passed back to the model:
 
 ```python
-from cua import ToolError
+from cua.tools import ToolError
 
 def divide(a: float, b: float) -> float:
     """Divide a by b"""

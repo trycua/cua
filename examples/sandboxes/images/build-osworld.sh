@@ -39,6 +39,16 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 
+# Locate qemu-img (brew, system, or bundled with Android SDK emulator)
+QEMU_IMG="qemu-img"
+for _candidate in \
+    "$(command -v qemu-img 2>/dev/null)" \
+    "/opt/homebrew/bin/qemu-img" \
+    "/usr/local/bin/qemu-img" \
+    "${HOME}/.cua/android-sdk/emulator/qemu-img"; do
+  [ -x "$_candidate" ] && { QEMU_IMG="$_candidate"; break; }
+done
+
 : "${GITHUB_USERNAME:?Set GITHUB_USERNAME to your GitHub username}"
 : "${GITHUB_TOKEN:?Set GITHUB_TOKEN (gh auth token) before pushing}"
 
@@ -124,7 +134,7 @@ elif [ "$ARCH" = "arm64" ]; then
         rm -rf "$EXTRACT_DIR"
       elif [ -n "$VMDK" ]; then
         echo "==> Converting VMware disk to qcow2: $(basename "$VMDK") → Ubuntu-arm64.qcow2 ..."
-        qemu-img convert -p -f vmdk -O qcow2 "$VMDK" "$QCOW2"
+        "$QEMU_IMG" convert -p -f vmdk -O qcow2 "$VMDK" "$QCOW2"
         rm -rf "$EXTRACT_DIR"
       else
         echo "ERROR: Could not find a .vmdk or .qcow2 inside ${EXTRACT_DIR}"

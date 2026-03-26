@@ -137,9 +137,18 @@ def push_avd(
     if agent_type:
         config.agent_type = agent_type
 
+    import os
+
     registry, org, name, tag = parse_ref(ref)
     full_repo = f"{registry}/{org}/{name}"
-    r = oras.provider.Registry()
+    r = oras.provider.Registry(hostname=registry)
+
+    # Authenticate if credentials are available
+    username = os.environ.get("ORAS_USERNAME") or os.environ.get("REGISTRY_USERNAME")
+    password = os.environ.get("ORAS_PASSWORD") or os.environ.get("REGISTRY_PASSWORD")
+    if username and password:
+        r.login(username=username, password=password, hostname=registry)
+        logger.info(f"Authenticated to {registry} as {username}")
 
     with tempfile.TemporaryDirectory() as tmp:
         tmp_dir = Path(tmp)
@@ -189,10 +198,14 @@ def push_avd(
                 logger.info(
                     f"  part {part_num}/{part_total}: {len(compressed) / 1024 / 1024:.1f} MB"
                 )
-                r.push_blob(full_repo, chunk_path, chunk_digest)
+                r.upload_blob(str(chunk_path), full_repo, layers[-1])
 
         # 4. Push config blob
-        r.push_blob(full_repo, config_path, config_digest)
+        r.upload_blob(
+            str(config_path),
+            full_repo,
+            {"digest": config_digest, "size": len(config_data), "mediaType": ANDROID_AVD_CONFIG},
+        )
 
         # 5. Build per-arch manifest
         annotations = {
@@ -219,7 +232,9 @@ def push_avd(
 
         # Push per-arch manifest as a tagged ref (e.g. :latest-arm64 / :latest-amd64)
         arch_tag = f"{tag}-{oci_arch}"
-        r.put_manifest(f"{full_repo}:{arch_tag}", manifest_json)
+        import oras.container as _oras_container
+
+        r.upload_manifest(manifest, _oras_container.Container(f"{full_repo}:{arch_tag}"))
         logger.info(f"Pushed {full_repo}:{arch_tag} ({part_total} layers, {oci_arch})")
 
     # 6. Update / create the manifest index at :tag
@@ -283,7 +298,9 @@ def _upsert_manifest_index(
         "manifests": existing_manifests + [new_entry],
         "annotations": index_annotations,
     }
-    r.put_manifest(f"{full_repo}:{tag}", json.dumps(index))
+    import oras.container as _oras_container
+
+    r.upload_manifest(index, _oras_container.Container(f"{full_repo}:{tag}"))
 
 
 # ── Pull ─────────────────────────────────────────────────────────────────────

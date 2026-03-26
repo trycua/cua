@@ -225,8 +225,8 @@ def _annotate_manifest(ref: str, agent_type: str, extra: dict) -> None:
 
 def _annotate_via_oras_py(ref: str, annotations: dict) -> None:
     """Patch OCI manifest annotations using oras-py."""
-    import json
 
+    import oras.container as _oras_container
     import oras.provider
     from cua_sandbox.registry.manifest import get_manifest
     from cua_sandbox.registry.ref import parse_ref
@@ -241,7 +241,7 @@ def _annotate_via_oras_py(ref: str, annotations: dict) -> None:
     existing = manifest.get("annotations") or {}
     manifest["annotations"] = {**existing, **annotations}
 
-    r.put_manifest(full_ref, json.dumps(manifest))
+    r.upload_manifest(manifest, _oras_container.Container(full_ref))
     logger.info(f"Patched manifest annotations on {full_ref}")
 
 

@@ -228,7 +228,7 @@ class OSWorldTransport(Transport):
 
         # Import osworld evaluators (host-side, reads VM state via HTTP/adb)
         try:
-            from desktop_env.envs.desktop_env import DesktopEnv  # type: ignore
+            from desktop_env.desktop_env import DesktopEnv  # type: ignore
 
             vm_host = self._base_url.split("://", 1)[-1].split(":")[0]
             vm_port = int(self._base_url.rsplit(":", 1)[-1])

@@ -1,0 +1,109 @@
+---
+title: macOS Sandboxes
+description: Run macOS VMs — cloud or local via Lume, with managed or registry images
+# test-sources:
+#   examples/sandboxes/test_macos_cloud_vm.py
+#   examples/sandboxes/test_macos_local_vm.py
+#   examples/sandboxes/test_macos_local_registry_vm.py
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+macOS sandboxes are always VMs — either on Cua Cloud or locally via [Lume](https://github.com/trycua/cua/tree/main/libs/lume) (Apple Virtualization framework). Cloud macOS works on any host OS — no Mac required.
+
+**Supported versions:** `"26"` / `"tahoe"` (default), `"15"` / `"sequoia"`
+
+---
+
+## Cloud macOS VM
+
+<Callout type="info">Requires `CUA_API_KEY`. Works on any host OS — Linux, Windows, or macOS.</Callout>
+
+```python
+# source: examples/sandboxes/test_macos_cloud_vm.py
+import asyncio
+from cua_sandbox import Image, Sandbox
+
+
+async def main():
+    async with Sandbox.ephemeral(
+        Image.macos("26"),
+        name="example-macos-cloud-vm",
+    ) as sb:
+        result = await sb.shell.run("sw_vers")
+        print(result.stdout.strip())
+
+        screenshot = await sb.screenshot()
+        with open("screenshot.png", "wb") as f:
+            f.write(screenshot)
+
+
+asyncio.run(main())
+```
+
+## Local macOS VM
+
+<Callout type="info">Requires macOS host with [Lume](https://github.com/trycua/cua/tree/main/libs/lume) installed. No API key needed.</Callout>
+
+```python
+# source: examples/sandboxes/test_macos_local_vm.py
+import asyncio
+from cua_sandbox import Image, Sandbox
+
+
+async def main():
+    async with Sandbox.ephemeral(
+        Image.macos("26"),
+        local=True,
+        name="example-macos-local-vm",
+    ) as sb:
+        result = await sb.shell.run("sw_vers")
+        print(result.stdout.strip())
+
+        screenshot = await sb.screenshot()
+        with open("screenshot.png", "wb") as f:
+            f.write(screenshot)
+
+
+asyncio.run(main())
+```
+
+## Local macOS VM from OCI Registry
+
+Pull a macOS image directly from the `ghcr.io/trycua` registry. The SDK reads the OCI manifest to resolve the image kind and auto-selects Lume.
+
+<Callout type="info">Requires macOS host with Lume installed.</Callout>
+
+```python
+# source: examples/sandboxes/test_macos_local_registry_vm.py
+import asyncio
+from cua_sandbox import Image, Sandbox
+
+
+async def main():
+    async with Sandbox.ephemeral(
+        Image.from_registry("ghcr.io/trycua/macos-tahoe-cua:latest"),
+        local=True,
+        name="example-macos-local-registry-vm",
+    ) as sb:
+        result = await sb.shell.run("sw_vers")
+        print(result.stdout.strip())
+
+        screenshot = await sb.screenshot()
+        with open("screenshot.png", "wb") as f:
+            f.write(screenshot)
+
+
+asyncio.run(main())
+```
+
+---
+
+## Choosing a version
+
+```python
+Image.macos()        # macOS Tahoe (26) — latest, default
+Image.macos("26")    # macOS Tahoe
+Image.macos("15")    # macOS Sequoia
+Image.macos("sequoia")  # also Sequoia
+```

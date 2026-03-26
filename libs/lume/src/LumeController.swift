@@ -24,6 +24,44 @@ final class SharedVM {
     }
 }
 
+// MARK: - Pull Progress Tracker
+
+/// Tracks async pull progress keyed by VM name. Shared singleton used by
+/// handlePullStart (writer) and handleGetVM (reader) across the same process.
+actor PullProgressTracker {
+    static let shared = PullProgressTracker()
+
+    private var progress: [String: Double] = [:]
+    private var errors: [String: String] = [:]
+
+    func setProgress(_ value: Double, for name: String) {
+        progress[name] = value
+        errors.removeValue(forKey: name)
+    }
+
+    func setError(_ message: String, for name: String) {
+        errors[name] = message
+        progress.removeValue(forKey: name)
+    }
+
+    func complete(for name: String) {
+        progress.removeValue(forKey: name)
+        errors.removeValue(forKey: name)
+    }
+
+    func getProgress(for name: String) -> Double? {
+        return progress[name]
+    }
+
+    func getError(for name: String) -> String? {
+        return errors[name]
+    }
+
+    func isPulling(_ name: String) -> Bool {
+        return progress[name] != nil
+    }
+}
+
 /// Entrypoint for Commands and API server
 final class LumeController {
     // MARK: - Properties

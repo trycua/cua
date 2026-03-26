@@ -1,0 +1,136 @@
+---
+title: Migrating from the Computer SDK
+description: Move from cua-computer to cua-sandbox — the new unified Cua SDK
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+<Callout type="warn" title="Computer SDK is deprecated">
+`cua-computer` is deprecated and will no longer receive new features. All new development is happening in `cua-sandbox`. This guide shows you how to migrate.
+</Callout>
+
+## Why the change?
+
+The old Computer SDK (`cua-computer`) required you to separately provision a sandbox (via the CLI or cloud dashboard) and then connect to it with a `Computer` object. This split made the API more confusing than necessary — two packages to install, two different concepts to understand.
+
+The new Sandbox SDK (`cua-sandbox`) unifies everything: one package creates the sandbox, controls it, and cleans it up. The API surface is also cleaner — sub-objects (`sb.mouse`, `sb.keyboard`, `sb.shell`) instead of a flat `computer.interface.*` namespace.
+
+## Package rename
+
+```bash
+# Before
+pip install cua-computer
+
+# After
+pip install cua-sandbox
+```
+
+## Import and instantiation
+
+**Before:**
+
+```python
+from computer import Computer
+
+computer = Computer(
+    os_type="linux",
+    provider_type="cloud",
+    name="my-sandbox-name"
+)
+await computer.run()
+```
+
+**After:**
+
+```python
+from cua_sandbox import Sandbox, Image
+
+# Ephemeral (create + destroy automatically)
+async with Sandbox.ephemeral(Image.linux()) as sb:
+    ...
+
+# Connect to an existing sandbox by name
+async with Sandbox.connect("my-sandbox-name") as sb:
+    ...
+```
+
+## Method mapping
+
+| Computer SDK | Sandbox SDK |
+|---|---|
+| `await computer.run()` | Handled by `Sandbox.ephemeral()` / `.create()` / `.connect()` |
+| `await computer.disconnect()` | `await sb.disconnect()` |
+| `await computer.stop()` | `await sb.delete()` |
+| `await computer.interface.screenshot()` | `await sb.screenshot()` |
+| `await computer.interface.left_click(x, y)` | `await sb.mouse.click(x, y)` |
+| `await computer.interface.right_click(x, y)` | `await sb.mouse.right_click(x, y)` |
+| `await computer.interface.double_click(x, y)` | `await sb.mouse.double_click(x, y)` |
+| `await computer.interface.move(x, y)` | `await sb.mouse.move(x, y)` |
+| `await computer.interface.scroll(x, y, clicks)` | `await sb.mouse.scroll(x, y, dy=clicks)` |
+| `await computer.interface.type_text("text")` | `await sb.keyboard.type("text")` |
+| `await computer.interface.key("Enter")` | `await sb.keyboard.press("Return")` |
+| `await computer.interface.get_screen_size()` | `await sb.screen.size()` |
+
+## Provider mapping
+
+The old SDK used a `provider_type` string to select the runtime. The new SDK uses `Image` factory methods and the `local` flag.
+
+| Computer SDK `provider_type` | Sandbox SDK |
+|---|---|
+| `"cloud"` | `Sandbox.ephemeral(Image.linux())` (default) |
+| `"docker"` with Linux image | `Sandbox.ephemeral(Image.linux(), local=True)` |
+| `"docker"` with QEMU Linux | `Sandbox.ephemeral(Image.linux(kind="vm"), local=True)` |
+| `"docker"` with QEMU Windows | `Sandbox.ephemeral(Image.windows(), local=True)` |
+| `"docker"` with QEMU Android | `Sandbox.ephemeral(Image.android(), local=True)` |
+| `"lume"` | `Sandbox.ephemeral(Image.macos(), local=True)` |
+| `"windows_sandbox"` | `Sandbox.ephemeral(Image.windows(), local=True)` |
+| `use_host_computer_server=True` | `from cua_sandbox import Localhost; Localhost.connect()` |
+
+## Before and after — full example
+
+**Before:**
+
+```python
+import asyncio
+from computer import Computer
+
+computer = Computer(
+    os_type="linux",
+    provider_type="docker",
+    image="trycua/cua-xfce:latest"
+)
+
+async def main():
+    await computer.run()
+    try:
+        screenshot = await computer.interface.screenshot()
+        await computer.interface.left_click(100, 100)
+        await computer.interface.type_text("Hello!")
+    finally:
+        await computer.disconnect()
+
+asyncio.run(main())
+```
+
+**After:**
+
+```python
+import asyncio
+from cua_sandbox import Sandbox, Image
+
+async def main():
+    async with Sandbox.ephemeral(Image.linux(), local=True) as sb:
+        screenshot = await sb.screenshot()
+        await sb.mouse.click(100, 100)
+        await sb.keyboard.type("Hello!")
+
+asyncio.run(main())
+```
+
+## Agent SDK
+
+The Agent SDK (`cua-agent`) currently uses `cua-computer` internally. Migration of the agent SDK to `cua-sandbox` is in progress. For now, you can use both packages side by side — `cua-sandbox` for sandbox control and `cua-agent` for AI agent orchestration.
+
+## Getting help
+
+If you run into anything not covered here, [open an issue](https://github.com/trycua/cua/issues) or check the [Sandbox SDK Reference](/cua/reference/sandbox-sdk).

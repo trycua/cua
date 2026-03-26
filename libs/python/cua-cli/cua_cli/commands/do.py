@@ -18,7 +18,6 @@ import sys
 import tempfile
 from datetime import datetime
 from pathlib import Path
-from typing import Any
 
 # Ensure stdout/stderr can handle Unicode emojis on Windows
 if sys.platform == "win32":
@@ -41,7 +40,7 @@ _SKIP_WINDOW_TITLES = {
     "Chrome Legacy Window",
 }
 
-PROVIDERS = ("cloud", "cloudv2", "lume", "lumier", "docker", "winsandbox", "host")
+PROVIDERS = ("cloud", "cloudv2", "local", "lume", "lumier", "docker", "winsandbox", "host")
 _REMOTE_PROVIDERS = ("cloud", "cloudv2", "lume", "lumier", "docker", "winsandbox")
 
 
@@ -91,51 +90,37 @@ class _PtyUnavailable(Exception):
 
 
 async def _get_api_url(provider_type: str, name: str) -> str:
-    """Resolve the computer-server API URL for the target VM."""
-    from computer.providers.base import VMProviderType
-    from computer.providers.factory import VMProviderFactory
-
+    """Resolve the computer-server API URL for the target sandbox."""
     if provider_type == "host":
         return "http://localhost:8000"
 
+    if provider_type == "local":
+        from cua_sandbox import sandbox_state
+
+        state = sandbox_state.load(name)
+        if not state:
+            raise ValueError(f"Local sandbox '{name}' not found. Check ~/.cua/sandboxes/")
+        return f"http://{state['host']}:{state['api_port']}"
+
     if provider_type in ("cloud", "cloudv2"):
         from cua_cli.auth.store import get_api_key
+        from cua_sandbox.transport.cloud import CloudTransport, cloud_get_vm
 
         api_key = get_api_key()
         if not api_key:
             raise ValueError("Not authenticated. Run 'cua auth login' first")
-        ptype = VMProviderType.CLOUDV2 if provider_type == "cloudv2" else VMProviderType.CLOUD
-        provider = VMProviderFactory.create_provider(ptype, api_key=api_key)
-        async with provider:
-            vm = await provider.get_vm(name)
-            if not vm:
-                raise ValueError(f"VM not found: {name}")
-            url = vm.get("api_url") or vm.get("server_url")
-            if not url:
-                raise ValueError(f"VM '{name}' has no API URL (is it running?)")
-            return url
+        vm = await cloud_get_vm(name, api_key=api_key)
+        if not vm:
+            raise ValueError(f"VM not found: {name}")
+        return CloudTransport._resolve_endpoint(vm)
 
-    if provider_type == "docker":
-        provider = VMProviderFactory.create_provider(VMProviderType.DOCKER)
-        async with provider:
-            vm = await provider.get_vm(name)
-            if vm.get("status") == "not_found":
-                raise ValueError(f"Docker container not found: {name}")
-            ports = vm.get("ports", {})
-            for key in ("8000/tcp", "5000/tcp"):
-                if key in ports:
-                    return f"http://localhost:{ports[key]}"
-            return "http://localhost:8000"
+    # Legacy local provider types — map to sandbox state file lookup
+    if provider_type in ("lume", "lumier", "docker", "winsandbox"):
+        from cua_sandbox import sandbox_state
 
-    if provider_type in ("lume", "lumier"):
-        ptype = VMProviderType.LUME if provider_type == "lume" else VMProviderType.LUMIER
-        provider = VMProviderFactory.create_provider(ptype)
-        async with provider:
-            vm = await provider.get_vm(name)
-            ip = vm.get("ip_address") or "localhost"
-            return f"http://{ip}:8000"
-
-    if provider_type == "winsandbox":
+        state = sandbox_state.load(name)
+        if state:
+            return f"http://{state['host']}:{state['api_port']}"
         return "http://localhost:8000"
 
     raise ValueError(f"Unknown provider: {provider_type}")
@@ -640,63 +625,49 @@ def _cmd_ls(args: argparse.Namespace) -> int:
 
     explicit_provider = getattr(args, "provider", None)
 
+    async def _list_all() -> int:
+        from cua_cli.auth.store import get_api_key
+        from cua_sandbox import Sandbox
+
+        print("  host  [local]")
+
+        try:
+            local_sandboxes = await Sandbox.list(local=True)
+            for s in local_sandboxes:
+                print(f"  {s.name}  [{s.status}]  {s.source}")
+        except Exception:
+            pass
+
+        try:
+            api_key = get_api_key()
+            if api_key:
+                cloud_sandboxes = await Sandbox.list(local=False, api_key=api_key)
+                for s in cloud_sandboxes:
+                    print(f"  {s.name}  [{s.status}]  cloud")
+        except Exception:
+            pass
+
+        return 0
+
     async def _list_one(ptype: str) -> int:
-        from computer.providers.base import VMProviderType
-        from computer.providers.factory import VMProviderFactory
+        from cua_cli.auth.store import get_api_key
+        from cua_sandbox import Sandbox
 
         if ptype == "host":
             print("  host  [local]")
             return 0
 
-        kwargs: dict[str, Any] = {}
-        if ptype in ("cloud", "cloudv2"):
-            from cua_cli.auth.store import get_api_key
-
-            api_key = get_api_key()
-            if not api_key:
-                return _fail("Not authenticated. Run 'cua auth login' first")
-            kwargs["api_key"] = api_key
-
+        local = ptype in ("local", "lume", "lumier", "docker", "winsandbox")
         try:
-            enum_type = VMProviderType(ptype)
-        except ValueError:
-            return _fail(f"Unknown provider: {ptype}")
-
-        try:
-            provider = VMProviderFactory.create_provider(enum_type, **kwargs)
-            async with provider:
-                vms = await provider.list_vms()
+            api_key = None if local else get_api_key()
+            sandboxes = await Sandbox.list(local=local, api_key=api_key)
+            if not sandboxes:
+                print(f"No sandboxes found for provider '{ptype}'")
+                return 0
+            for s in sandboxes:
+                print(f"  {s.name}  [{s.status}]")
         except Exception as e:
             return _fail(str(e))
-
-        if not vms:
-            print(f"No VMs found for provider '{ptype}'")
-            return 0
-
-        for vm in vms:
-            print(f"  {vm.get('name', '?')}  [{vm.get('status', '?')}]")
-        return 0
-
-    async def _list_all() -> int:
-        from computer.providers.base import VMProviderType
-        from computer.providers.factory import VMProviderFactory
-        from cua_cli.auth.store import get_api_key
-
-        print("  host  [local]")
-
-        api_key = get_api_key()
-        if api_key:
-            try:
-                provider = VMProviderFactory.create_provider(
-                    VMProviderType.CLOUDV2, api_key=api_key
-                )
-                async with provider:
-                    vms = await provider.list_vms()
-                for vm in vms:
-                    print(f"  {vm.get('name', '?')}  [{vm.get('status', '?')}]  cloudv2")
-            except Exception:
-                pass
-
         return 0
 
     if explicit_provider:

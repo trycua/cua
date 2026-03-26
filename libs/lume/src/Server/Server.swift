@@ -228,6 +228,12 @@ final class Server {
                     return try await self.handlePull(request.body)
                 }),
             Route(
+                method: "POST", path: "/lume/pull/start",
+                handler: { [weak self] request in
+                    guard let self else { throw HTTPError.internalError }
+                    return try await self.handlePullStart(request.body)
+                }),
+            Route(
                 method: "POST", path: "/lume/prune",
                 handler: { [weak self] _ in
                     guard let self else { throw HTTPError.internalError }

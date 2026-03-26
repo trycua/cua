@@ -6,8 +6,8 @@
   "pages": [
     "what-is-cua",
     "quickstart",
-    "using-computer-sdk",
+    "using-sandbox-sdk",
     "using-agent-sdk",
-    "self-hosted-sandboxes"
+    "migrating-from-computer-sdk"
   ]
 }

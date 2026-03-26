@@ -1,0 +1,219 @@
+---
+title: Using the Sandbox SDK
+description: Create sandboxes and perform basic interactions with cua-sandbox
+---
+
+import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
+import { Callout } from 'fumadocs-ui/components/callout';
+
+<Callout type="info">
+  **Prerequisites:** Python 3.12 or 3.13 and a free Cua account at [cua.ai](https://cua.ai/signin) for cloud sandboxes.
+</Callout>
+
+The Sandbox SDK (`cua-sandbox`) lets you create and control sandboxes — take screenshots, run shell commands, click, type, and more. Use it to verify your sandbox works before adding AI agents.
+
+## Installation
+
+```bash
+pip install cua-sandbox
+```
+
+Or with uv:
+
+```bash
+uv pip install cua-sandbox
+```
+
+## Create a Sandbox
+
+<Tabs items={['Cloud Container', 'Cloud VM', 'Cloud macOS', 'Cloud Windows', 'Local Docker', 'Local macOS (Lume)']}>
+  <Tab value="Cloud Container">
+    ```python
+    import asyncio
+    from cua_sandbox import Sandbox, Image
+
+    async def main():
+        async with Sandbox.ephemeral(Image.linux()) as sb:
+            result = await sb.shell.run("uname -s")
+            print(result.stdout)  # "Linux"
+
+            screenshot = await sb.screenshot()
+            with open("screenshot.png", "wb") as f:
+                f.write(screenshot)
+
+    asyncio.run(main())
+    ```
+    Requires `CUA_API_KEY` environment variable.
+  </Tab>
+  <Tab value="Cloud VM">
+    ```python
+    import asyncio
+    from cua_sandbox import Sandbox, Image
+
+    async def main():
+        async with Sandbox.ephemeral(Image.linux(kind="vm")) as sb:
+            result = await sb.shell.run("uname -s")
+            print(result.stdout)  # "Linux"
+
+            screenshot = await sb.screenshot()
+            with open("screenshot.png", "wb") as f:
+                f.write(screenshot)
+
+    asyncio.run(main())
+    ```
+    Requires `CUA_API_KEY` environment variable.
+  </Tab>
+  <Tab value="Cloud macOS">
+    ```python
+    import asyncio
+    from cua_sandbox import Sandbox, Image
+
+    async def main():
+        async with Sandbox.ephemeral(Image.macos()) as sb:
+            result = await sb.shell.run("sw_vers")
+            print(result.stdout)
+
+            screenshot = await sb.screenshot()
+            with open("screenshot.png", "wb") as f:
+                f.write(screenshot)
+
+    asyncio.run(main())
+    ```
+    Requires `CUA_API_KEY` environment variable. Works on any host OS — no Mac needed.
+  </Tab>
+  <Tab value="Cloud Windows">
+    ```python
+    import asyncio
+    from cua_sandbox import Sandbox, Image
+
+    async def main():
+        async with Sandbox.ephemeral(Image.windows()) as sb:
+            result = await sb.shell.run("ver")
+            print(result.stdout)
+
+            screenshot = await sb.screenshot()
+            with open("screenshot.png", "wb") as f:
+                f.write(screenshot)
+
+    asyncio.run(main())
+    ```
+    Requires `CUA_API_KEY` environment variable.
+  </Tab>
+  <Tab value="Local Docker">
+    ```python
+    import asyncio
+    from cua_sandbox import Sandbox, Image
+
+    async def main():
+        async with Sandbox.ephemeral(Image.linux(), local=True) as sb:
+            result = await sb.shell.run("uname -s")
+            print(result.stdout)  # "Linux"
+
+            screenshot = await sb.screenshot()
+            with open("screenshot.png", "wb") as f:
+                f.write(screenshot)
+
+    asyncio.run(main())
+    ```
+    Requires Docker. No API key needed.
+  </Tab>
+  <Tab value="Local macOS (Lume)">
+    ```python
+    import asyncio
+    from cua_sandbox import Sandbox, Image
+
+    async def main():
+        async with Sandbox.ephemeral(Image.macos(), local=True) as sb:
+            result = await sb.shell.run("sw_vers")
+            print(result.stdout)
+
+            screenshot = await sb.screenshot()
+            with open("screenshot.png", "wb") as f:
+                f.write(screenshot)
+
+    asyncio.run(main())
+    ```
+    Requires macOS host with [Lume](https://cua.ai/docs/lume) installed.
+  </Tab>
+</Tabs>
+
+## Common Operations
+
+### Shell Commands
+
+```python
+result = await sb.shell.run("echo hello")
+print(result.stdout)      # "hello\n"
+print(result.returncode)  # 0
+print(result.success)     # True
+```
+
+### Screenshots
+
+```python
+png_bytes = await sb.screenshot()
+with open("screenshot.png", "wb") as f:
+    f.write(png_bytes)
+```
+
+### Mouse & Keyboard
+
+```python
+# Click
+await sb.mouse.click(100, 200)          # left click
+await sb.mouse.right_click(100, 200)    # right click
+await sb.mouse.double_click(100, 200)   # double click
+await sb.mouse.move(100, 200)           # move without clicking
+await sb.mouse.scroll(100, 200, dy=3)   # scroll
+
+# Keyboard
+await sb.keyboard.type("Hello, world!")
+await sb.keyboard.press("Return")
+await sb.keyboard.press("ctrl+c")
+```
+
+## Persistent Sandboxes
+
+For long-running workflows, create a named sandbox instead of ephemeral:
+
+```python
+# Launch via CLI: cua sb launch ubuntu:24.04 --local --json
+# → {"name": "my-sandbox-name", "status": "ready"}
+
+# Connect from Python
+from cua_sandbox import Sandbox
+
+async with Sandbox.connect("my-sandbox-name", local=True) as sb:
+    await sb.shell.run("echo connected")
+```
+
+Or manage the full lifecycle in Python:
+
+```python
+from cua_sandbox import Sandbox, Image
+
+# Create and keep running
+sb = await Sandbox.create(Image.linux(), local=True)
+await sb.shell.run("echo running")
+# ... do more work ...
+await sb.delete()
+```
+
+## Image Types
+
+| Image | Description |
+|-------|-------------|
+| `Image.linux()` | Ubuntu 24.04 container (default) |
+| `Image.linux(kind="vm")` | Ubuntu 24.04 full VM |
+| `Image.macos()` | macOS (latest) |
+| `Image.windows()` | Windows 11 |
+| `Image.from_registry("ghcr.io/...")` | Custom OCI image |
+
+## Next Steps
+
+- [Sandbox Lifecycle](/cua/guide/sandbox/lifecycle) — understand ephemeral, persistent, and connected sandboxes
+- [Images](/cua/guide/sandbox/images) — install packages and customize the environment
+- [Secrets & Environment Variables](/cua/guide/sandbox/secrets) — safely pass credentials into sandboxes
+- [Parallel Sandboxes](/cua/guide/sandbox/scale-out) — run multiple sandboxes concurrently
+- [Using the Agent SDK](/cua/guide/get-started/using-agent-sdk) — add AI automation
+- [Sandbox Interfaces Reference](/cua/reference/sandbox-sdk/interfaces) — full API for `sb.shell`, `sb.mouse`, `sb.tunnel`, `sb.mobile`, and more

@@ -1,0 +1,85 @@
+---
+title: Tunneling
+description: Forward ports and sockets from a sandbox to your local machine
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+`sb.tunnel.forward()` exposes a port (or Android abstract socket) running inside a sandbox on your local host. Useful for hitting a web server, connecting a debugger, or scraping CDP targets from a headless browser.
+
+## Basic usage
+
+```python
+from cua_sandbox import Sandbox, Image
+
+async with Sandbox.ephemeral(Image.linux()) as sb:
+    # Start something inside the sandbox
+    await sb.shell.run("python3 -m http.server 8080 &")
+
+    async with sb.tunnel.forward(8080) as t:
+        print(t.url)   # http://localhost:49823
+        print(t.host, t.port)  # localhost, 49823
+        # make requests to t.url from your local machine
+```
+
+The tunnel is closed automatically when the `async with` block exits.
+
+## Multiple ports
+
+Pass multiple ports to get a `dict[port, TunnelInfo]`:
+
+```python
+async with sb.tunnel.forward(8080, 9222) as tunnels:
+    app_url      = tunnels[8080].url
+    devtools_url = tunnels[9222].url
+```
+
+## Manual close
+
+If you need the tunnel outside a `with` block, `await` it directly and close manually:
+
+```python
+t = await sb.tunnel.forward(8080)
+print(t.url)
+# ... do work ...
+await t.close()
+```
+
+## Android abstract sockets
+
+For Android sandboxes, pass a socket name string instead of a port number:
+
+```python
+async with sb.tunnel.forward("chrome_devtools_remote") as t:
+    # Connect a CDP client to t.url
+    print(t.url)  # http://localhost:<random>
+```
+
+<Callout type="info">
+  Abstract socket names are Linux-only (Android). On Linux/macOS sandboxes use integer port numbers.
+</Callout>
+
+## TunnelInfo fields
+
+| Field | Type | Description |
+|---|---|---|
+| `host` | `str` | Always `"localhost"` |
+| `port` | `int` | The host-side port assigned |
+| `sandbox_port` | `int \| str` | The original port/socket inside the sandbox |
+| `url` | `str` | Shorthand `http://{host}:{port}` |
+
+## Chrome DevTools example
+
+Forward the DevTools port from a sandbox browser to use CDP tools locally:
+
+```python
+from cua_sandbox import Sandbox, Image
+
+async with Sandbox.ephemeral(Image.linux()) as sb:
+    await sb.shell.run("google-chrome --remote-debugging-port=9222 --headless &")
+
+    async with sb.tunnel.forward(9222) as t:
+        import httpx
+        targets = httpx.get(f"{t.url}/json").json()
+        print(targets)
+```

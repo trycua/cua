@@ -11,6 +11,8 @@ The Computer Server exposes multiple interfaces simultaneously:
 - **HTTP/WebSocket** - REST API and WebSocket for programmatic access
 - **MCP via HTTP** - Model Context Protocol over streamable HTTP at `/mcp` endpoint
 
+> **Android emulators** also expose the emulator's built-in **EmulatorController gRPC service** on port 8554 (via `-grpc 8554` launch flag). Local Android sandboxes (`AndroidEmulatorRuntime`) use `GRPCEmulatorTransport` to call `getScreenshot()` directly on this service, bypassing the computer-server HTTP layer entirely. Benchmark: p50 ~20ms, ~49 RPS vs ADB-backed HTTP p50 ~519ms, ~1.8 RPS.
+
 ## Installation
 
 ```bash

@@ -24,13 +24,13 @@ import os
 import litellm
 
 from agent import ComputerAgent
-from computer import Computer
+from cua_sandbox import Sandbox, Image
 from lmnr import Laminar, LaminarLiteLLMCallback # [!code highlight]
 
 Laminar.initialize() # [!code highlight]
 litellm.callbacks.append(LaminarLiteLLMCallback()) # [!code highlight]
 
-computer = Computer(
+computer = await Sandbox.create(
     os_type="linux",
     provider_type="cloud",
     name=os.getenv("CUA_CONTAINER_NAME"),

@@ -47,15 +47,12 @@ export CUA_TELEMETRY_ENABLED=false
 Disable on individual objects:
 
 ```python
-from computer import Computer
+from cua_sandbox import Sandbox, Image
 from agent import ComputerAgent
 
 # Disable for Computer
-computer = Computer(
-    os_type="linux",
-    provider_type="docker",
-    telemetry_enabled=False
-)
+async with Sandbox.ephemeral(Image.linux(), telemetry_enabled=False) as computer:
+    pass
 
 # Disable for Agent
 agent = ComputerAgent(

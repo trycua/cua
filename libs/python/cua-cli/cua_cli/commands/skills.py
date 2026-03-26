@@ -485,33 +485,28 @@ async def _record_skill_async(args: argparse.Namespace) -> int:
     # Build VNC URL with recording parameters
     if args.sandbox:
         # Get sandbox VNC URL
-        from computer.providers.cloud.provider import CloudProvider
         from cua_cli.auth.store import require_api_key
+        from cua_sandbox.transport.cloud import cloud_get_vm
 
-        cloud_api_key = require_api_key()
-        provider_inst = CloudProvider(api_key=cloud_api_key)
+        try:
+            vm = await cloud_get_vm(args.sandbox, api_key=require_api_key())
+        except Exception:
+            vm = None
+        if not vm or vm.get("status") == "not_found":
+            print_error(f"Sandbox not found: {args.sandbox}")
+            server.close()
+            return 1
+        if vm.get("status") != "running":
+            print_error(f"Sandbox is not running (status: {vm.get('status')})")
+            server.close()
+            return 1
+        host = vm.get("host", f"{args.sandbox}.sandbox.cua.ai")
+        password = vm.get("password", "")
+        from urllib.parse import quote
 
-        async with provider_inst:
-            vms = await provider_inst.list_vms()
-            sandbox = next((vm for vm in vms if vm.get("name") == args.sandbox), None)
-
-            if not sandbox:
-                print_error(f"Sandbox not found: {args.sandbox}")
-                server.close()
-                return 1
-
-            if sandbox.get("status") != "running":
-                print_error(f"Sandbox is not running (status: {sandbox.get('status')})")
-                server.close()
-                return 1
-
-            host = sandbox.get("host", f"{args.sandbox}.sandbox.cua.ai")
-            password = sandbox.get("password", "")
-            from urllib.parse import quote
-
-            base_url = (
-                f"https://{host}/vnc.html?autoconnect=true&password={quote(password)}&show_dot=true"
-            )
+        base_url = (
+            f"https://{host}/vnc.html?autoconnect=true&password={quote(password)}&show_dot=true"
+        )
     else:
         base_url = args.vnc_url
 

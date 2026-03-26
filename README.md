@@ -69,6 +69,34 @@
 
 ---
 
+## Cua - Agent-Ready Sandboxes for Any OS
+
+Build agents that see screens, click buttons, and complete tasks autonomously. One API for any VM or container image — cloud or local.
+
+<!-- <img src="img/cua-architecture.png" alt="Cua Architecture" width="100%"> -->
+
+```python
+# Requires Python 3.12 or 3.13
+from cua_sandbox import Sandbox, Image
+
+# Same API regardless of OS or runtime
+async with Sandbox.ephemeral(Image.linux()) as sb:   # or .macos() .windows() .android()
+    result = await sb.shell.run("echo hello")
+    screenshot = await sb.screenshot()
+    await sb.mouse.click(100, 200)
+    await sb.keyboard.type("Hello from Cua!")
+    await sb.mobile.gesture((100, 500), (100, 200))  # multi-touch gestures
+```
+
+|                    | Linux container | Linux VM | macOS | Windows | Android | BYOI (.qcow2, .iso) |
+| ------------------ | --------------- | -------- | ----- | ------- | ------- | ------------------- |
+| **Cloud (cua.ai)** | ✅              | ✅       | ✅    | ✅      | ✅      | 🔜 soon             |
+| **Local (QEMU)**   | ✅              | ✅       | ✅    | ✅      | ✅      | ✅                  |
+
+**[Get Started](https://cua.ai/docs/cua/guide/get-started/set-up-sandbox)** | **[Examples](https://cua.ai/docs/cua/examples)** | **[API Reference](https://cua.ai/docs/cua/reference/agent-sdk)**
+
+---
+
 ## CuaBot - Co-op computer-use for any agent
 
 <div align="center">
@@ -102,26 +130,6 @@ Built-in support for `agent-browser` and `agent-device` (iOS, Android) out of th
 <img height="64" alt="cuaXclawdbot_nbg" src="https://github.com/user-attachments/assets/8b92237d-6e9b-4b3a-ae9a-b3560622ec1d" />
 
 </div>
-
-## Cua - Agentic UI Automation & Code Execution
-
-Build agents that see screens, click buttons, and complete tasks autonomously. Run isolated code execution environments for AI coding assistants like Claude Code, Codex CLI, or OpenCode.
-
-<!-- <img src="img/cua-architecture.png" alt="Cua Architecture" width="100%"> -->
-
-```python
-# Requires Python 3.12 or 3.13
-from computer import Computer
-from agent import ComputerAgent
-
-computer = Computer(os_type="linux", provider_type="cloud")
-agent = ComputerAgent(model="anthropic/claude-sonnet-4-5-20250929", computer=computer)
-
-async for result in agent.run([{"role": "user", "content": "Open Firefox and search for Cua"}]):
-    print(result)
-```
-
-**[Get Started](https://cua.ai/docs/cua/guide/get-started/set-up-sandbox)** | **[Examples](https://cua.ai/docs/cua/examples)** | **[API Reference](https://cua.ai/docs/cua/reference/agent-sdk)**
 
 ---
 
@@ -168,8 +176,8 @@ lume run macos-sequoia-vanilla:latest
 | --------------------------------------------------------------------------- | ---------------------------------------------------------- |
 | [cuabot](https://docs.trycua.com/cuabot/guide/getting-started/introduction) | Multi-agent computer-use sandbox CLI                       |
 | [cua-agent](https://cua.ai/docs/cua/reference/agent-sdk)                    | AI agent framework for computer-use tasks                  |
-| [cua-computer](https://cua.ai/docs/cua/reference/computer-sdk)              | SDK for controlling desktop environments                   |
-| [cua-computer-server](https://cua.ai/docs/cua/reference/computer-sdk)       | Driver for UI interactions and code execution in sandboxes |
+| [cua-sandbox](https://cua.ai/docs/cua/reference/sandbox-sdk)                | SDK for creating and controlling sandboxes                 |
+| [cua-computer-server](https://cua.ai/docs/cua/reference/sandbox-sdk)        | Driver for UI interactions and code execution in sandboxes |
 | [cua-bench](https://cua.ai/docs/cuabench)                                   | Benchmarks and RL environments for computer-use            |
 | [lume](https://cua.ai/docs/lume)                                            | macOS/Linux VM management on Apple Silicon                 |
 | [lumier](https://cua.ai/docs/lume/guide/advanced/lumier)                    | Docker-compatible interface for Lume VMs                   |

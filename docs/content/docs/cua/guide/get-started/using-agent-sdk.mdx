@@ -6,7 +6,7 @@ description: Add AI automation with vision-language models
 import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
 import { Callout } from 'fumadocs-ui/components/callout';
 
-Now that you've verified your sandbox works with the Computer SDK, use an Agent to automate complex tasks. The agent interacts with the computer environment using a vision-language model to understand the UI and execute actions.
+Now that you've verified your sandbox works with the Sandbox SDK, use an Agent to automate complex tasks. The agent interacts with the computer environment using a vision-language model to understand the UI and execute actions.
 
 Cua Agent Framework provides:
 
@@ -49,24 +49,16 @@ Use Cua's inference API to access multiple model providers with a single API key
 ```python
 import os
 import asyncio
-from computer import Computer
+from cua_sandbox import Sandbox, Image
 from agent import ComputerAgent
 
 os.environ["CUA_API_KEY"] = "sk_cua-api01_..."
 
-computer = Computer(
-    os_type="linux",  # or "windows" or "macos"
-    provider_type="cloud",
-    name="your-sandbox-name"  # from CLI or website
-)
-
 async def main():
-    await computer.run()  # Connect to the sandbox
-
-    try:
+    async with Sandbox.ephemeral(Image.linux()) as sb:
         agent = ComputerAgent(
             model="cua/anthropic/claude-sonnet-4.5",  # Cua-routed model
-            tools=[computer],
+            tools=[sb],
             max_trajectory_budget=5.0
         )
 
@@ -76,8 +68,6 @@ async def main():
             for item in result["output"]:
                 if item["type"] == "message":
                     print(item["content"][0]["text"])
-    finally:
-        await computer.disconnect()
 
 asyncio.run(main())
 ```
@@ -109,29 +99,21 @@ asyncio.run(main())
 Use your own API keys from model providers like Anthropic, OpenAI, or others.
 
 ```python
-import os
 import asyncio
-from computer import Computer
+from cua_sandbox import Sandbox, Image
 from agent import ComputerAgent
 
 # Set your provider API key
+import os
 os.environ["ANTHROPIC_API_KEY"] = "sk-ant-..."  # For Anthropic
 # OR
 os.environ["OPENAI_API_KEY"] = "sk-..."  # For OpenAI
 
-computer = Computer(
-    os_type="linux",  # or "windows" or "macos"
-    provider_type="cloud",
-    name="your-sandbox-name"  # from CLI or website
-)
-
 async def main():
-    await computer.run()  # Launch & connect to the sandbox
-
-    try:
+    async with Sandbox.ephemeral(Image.linux()) as sb:
         agent = ComputerAgent(
             model="anthropic/claude-sonnet-4-5-20250929",  # Direct provider model
-            tools=[computer],
+            tools=[sb],
             max_trajectory_budget=5.0
         )
 
@@ -141,8 +123,6 @@ async def main():
             for item in result["output"]:
                 if item["type"] == "message":
                     print(item["content"][0]["text"])
-    finally:
-        await computer.disconnect()
 
 asyncio.run(main())
 ```

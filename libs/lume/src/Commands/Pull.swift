@@ -57,5 +57,6 @@ struct Pull: AsyncParsableCommand {
             password: password,
             force: force
         )
+        print()
     }
 }

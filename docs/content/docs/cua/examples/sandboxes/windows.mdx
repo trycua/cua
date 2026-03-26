@@ -1,0 +1,68 @@
+---
+title: Windows Sandboxes
+description: Run Windows 11 VMs — cloud or local via Hyper-V / QEMU
+# test-sources:
+#   examples/sandboxes/test_windows_cloud_vm.py
+#   examples/sandboxes/test_windows_local_vm.py
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+Windows sandboxes run as full VMs. Cloud Windows works on any host OS. Local Windows uses Hyper-V on Windows hosts, or QEMU as a fallback.
+
+---
+
+## Cloud Windows VM
+
+<Callout type="info">Requires `CUA_API_KEY`. Works on any host OS — no Windows needed.</Callout>
+
+```python
+# source: examples/sandboxes/test_windows_cloud_vm.py
+import asyncio
+from cua_sandbox import Image, Sandbox
+
+
+async def main():
+    async with Sandbox.ephemeral(
+        Image.windows("11"),
+        name="example-windows-cloud-vm",
+    ) as sb:
+        result = await sb.shell.run("ver")
+        print(result.stdout.strip())
+
+        screenshot = await sb.screenshot()
+        with open("screenshot.png", "wb") as f:
+            f.write(screenshot)
+
+
+asyncio.run(main())
+```
+
+## Local Windows VM
+
+<Callout type="info">Requires a Windows host with Hyper-V, or QEMU installed. No API key needed.</Callout>
+
+The SDK automatically selects Hyper-V on Windows hosts with Hyper-V available, otherwise falls back to QEMU.
+
+```python
+# source: examples/sandboxes/test_windows_local_vm.py
+import asyncio
+from cua_sandbox import Image, Sandbox
+
+
+async def main():
+    async with Sandbox.ephemeral(
+        Image.windows("11"),
+        local=True,
+        name="example-windows-local-vm",
+    ) as sb:
+        result = await sb.shell.run("ver")
+        print(result.stdout.strip())
+
+        screenshot = await sb.screenshot()
+        with open("screenshot.png", "wb") as f:
+            f.write(screenshot)
+
+
+asyncio.run(main())
+```

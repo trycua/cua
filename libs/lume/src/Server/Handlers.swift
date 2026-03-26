@@ -26,6 +26,29 @@ extension Server {
         // Record telemetry
         TelemetryClient.shared.record(event: TelemetryEvent.apiVMGet)
 
+        // Check if an async pull is in progress for this VM name
+        let pullProgress = await PullProgressTracker.shared.getProgress(for: name)
+        let pullError = await PullProgressTracker.shared.getError(for: name)
+
+        if let errorMsg = pullError {
+            // Pull failed — surface the error
+            return .badRequest(message: "Pull failed for '\(name)': \(errorMsg)")
+        }
+
+        if let progress = pullProgress {
+            // Pull in progress — return a synthetic "pulling" status without hitting disk
+            let responseBody: [String: AnyEncodable] = [
+                "name": AnyEncodable(name),
+                "status": AnyEncodable("pulling"),
+                "downloadProgress": AnyEncodable(progress),
+            ]
+            return try HTTPResponse(
+                statusCode: .ok,
+                headers: ["Content-Type": "application/json"],
+                body: JSONEncoder().encode(responseBody)
+            )
+        }
+
         do {
             let vmController = LumeController()
             // Use getDetails() for consistent status including provisioning state
@@ -34,6 +57,57 @@ extension Server {
         } catch {
             return .badRequest(message: error.localizedDescription)
         }
+    }
+
+    func handlePullStart(_ body: Data?) async throws -> HTTPResponse {
+        guard let body = body,
+            let request = try? JSONDecoder().decode(PullRequest.self, from: body)
+        else {
+            return HTTPResponse(
+                statusCode: .badRequest,
+                headers: ["Content-Type": "application/json"],
+                body: try JSONEncoder().encode(APIError(message: "Invalid request body"))
+            )
+        }
+
+        let imageName = request.image.split(separator: ":").first.map(String.init) ?? request.image
+        TelemetryClient.shared.record(event: TelemetryEvent.apiPull, properties: [
+            "image_name": imageName
+        ])
+
+        let vmName = request.name ?? imageName
+        await PullProgressTracker.shared.setProgress(0.0, for: vmName)
+
+        Task.detached { @MainActor @Sendable in
+            do {
+                let vmController = LumeController()
+                try await vmController.pullImage(
+                    image: request.image,
+                    name: request.name,
+                    registry: request.registry,
+                    organization: request.organization,
+                    storage: request.storage,
+                    progressHandler: { pct in
+                        Task { await PullProgressTracker.shared.setProgress(pct, for: vmName) }
+                    }
+                )
+                await PullProgressTracker.shared.complete(for: vmName)
+                Logger.info("Async pull completed", metadata: ["name": vmName])
+            } catch {
+                await PullProgressTracker.shared.setError(error.localizedDescription, for: vmName)
+                Logger.error("Async pull failed", metadata: ["name": vmName, "error": error.localizedDescription])
+            }
+        }
+
+        return HTTPResponse(
+            statusCode: .accepted,
+            headers: ["Content-Type": "application/json"],
+            body: try JSONEncoder().encode([
+                "message": AnyEncodable("Pull started"),
+                "name": AnyEncodable(vmName),
+                "image": AnyEncodable(request.image),
+            ])
+        )
     }
 
     func handleCreateVM(_ body: Data?) async throws -> HTTPResponse {
@@ -442,14 +516,20 @@ extension Server {
         ])
 
         do {
+            let vmName = request.name ?? (request.image.split(separator: ":").first.map(String.init) ?? request.image)
+            await PullProgressTracker.shared.setProgress(0.0, for: vmName)
             let vmController = LumeController()
             try await vmController.pullImage(
                 image: request.image,
                 name: request.name,
                 registry: request.registry,
                 organization: request.organization,
-                storage: request.storage
+                storage: request.storage,
+                progressHandler: { pct in
+                    Task { await PullProgressTracker.shared.setProgress(pct, for: vmName) }
+                }
             )
+            await PullProgressTracker.shared.complete(for: vmName)
 
             return HTTPResponse(
                 statusCode: .ok,
@@ -461,6 +541,8 @@ extension Server {
                 ])
             )
         } catch {
+            let vmName = request.name ?? (request.image.split(separator: ":").first.map(String.init) ?? request.image)
+            await PullProgressTracker.shared.setError(error.localizedDescription, for: vmName)
             return HTTPResponse(
                 statusCode: .badRequest,
                 headers: ["Content-Type": "application/json"],

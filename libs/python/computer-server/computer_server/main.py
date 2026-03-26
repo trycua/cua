@@ -161,6 +161,7 @@ handlers = {
     "find_element": accessibility_handler.find_element,
     # Shell commands
     "run_command": automation_handler.run_command,
+    "multitouch_gesture": automation_handler.multitouch_gesture,
     # File system commands
     "file_exists": file_handler.file_exists,
     "directory_exists": file_handler.directory_exists,

@@ -1,0 +1,303 @@
+---
+title: Sandbox Interfaces
+description: Reference for all sb.* sub-interfaces — shell, mouse, keyboard, screen, clipboard, tunnel, mobile, terminal, window
+---
+
+Every `Sandbox` instance exposes a set of sub-interfaces for interacting with the running environment. This page documents all of them.
+
+---
+
+## `sb.shell` — command execution
+
+Run shell commands and get their output.
+
+```python
+result = await sb.shell.run("ls -la /")
+print(result.stdout)       # standard output
+print(result.stderr)       # standard error
+print(result.returncode)   # exit code (int)
+print(result.success)      # True if returncode == 0
+```
+
+### `await sb.shell.run(command, *, timeout=60) → CommandResult`
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `command` | `str` | Shell command to run |
+| `timeout` | `int` | Seconds before the command is killed (default: 60) |
+
+`CommandResult` fields:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `stdout` | `str` | Standard output |
+| `stderr` | `str` | Standard error |
+| `returncode` | `int` | Exit code |
+| `success` | `bool` | `True` if `returncode == 0` |
+
+Multi-line scripts work naturally:
+
+```python
+result = await sb.shell.run("""
+    cd /tmp
+    echo "hello" > file.txt
+    cat file.txt
+""")
+print(result.stdout)  # "hello\n"
+```
+
+---
+
+## `sb.mouse` — mouse control
+
+All coordinates are in pixels, with `(0, 0)` at the top-left corner.
+
+```python
+await sb.mouse.move(x, y)
+await sb.mouse.click(x, y)                    # left click
+await sb.mouse.right_click(x, y)
+await sb.mouse.double_click(x, y)
+await sb.mouse.scroll(x, y, dx=0, dy=3)       # scroll down 3 units
+await sb.mouse.drag(x1, y1, x2, y2)           # click-and-drag
+await sb.mouse.mouse_down(x, y)               # hold button
+await sb.mouse.mouse_up(x, y)                 # release button
+```
+
+### `await sb.mouse.click(x, y, button="left")`
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `x`, `y` | `int` | Pixel coordinates |
+| `button` | `str` | `"left"` (default), `"right"`, `"middle"` |
+
+### `await sb.mouse.scroll(x, y, dx=0, dy=0)`
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `x`, `y` | `int` | Position to scroll at |
+| `dx` | `int` | Horizontal scroll units (positive = right) |
+| `dy` | `int` | Vertical scroll units (positive = down) |
+
+---
+
+## `sb.keyboard` — keyboard control
+
+```python
+await sb.keyboard.type("Hello, world!")        # type a string
+await sb.keyboard.press("Return")              # press a key
+await sb.keyboard.press("ctrl+c")             # key combo
+await sb.keyboard.press("cmd+space")          # macOS: Spotlight
+await sb.keyboard.press("super+d")            # Windows: show desktop
+await sb.keyboard.key_down("shift")           # hold a key
+await sb.keyboard.key_up("shift")             # release a held key
+```
+
+### `await sb.keyboard.press(keys)`
+
+`keys` can be a string shorthand or a list:
+
+```python
+await sb.keyboard.press("ctrl+c")
+await sb.keyboard.press(["ctrl", "c"])         # equivalent
+await sb.keyboard.press("Return")
+await sb.keyboard.press("Escape")
+await sb.keyboard.press("Tab")
+await sb.keyboard.press("F5")
+```
+
+Common modifier keys: `ctrl`, `shift`, `alt`, `cmd` (macOS), `super` (Windows/Linux).
+
+---
+
+## `sb.screen` — screen info
+
+```python
+png_bytes = await sb.screenshot()             # convenience method on Sandbox
+b64_str   = await sb.screenshot_base64()      # base64-encoded PNG string
+width, height = await sb.screen.size()        # screen dimensions in pixels
+```
+
+### `await sb.screenshot() → bytes`
+
+Returns a PNG image as raw bytes.
+
+```python
+png = await sb.screenshot()
+with open("shot.png", "wb") as f:
+    f.write(png)
+```
+
+### `await sb.screenshot_base64() → str`
+
+Returns a base64-encoded PNG string, ready to embed in HTML or pass to LLM vision APIs.
+
+```python
+b64 = await sb.screenshot_base64()
+# use directly in an OpenAI / Anthropic vision message
+```
+
+### `await sb.screen.size() → tuple[int, int]`
+
+Returns `(width, height)` of the sandbox display.
+
+```python
+w, h = await sb.screen.size()
+cx, cy = w // 2, h // 2  # center of screen
+await sb.mouse.click(cx, cy)
+```
+
+---
+
+## `sb.clipboard` — clipboard access
+
+Read and write the sandbox clipboard.
+
+```python
+await sb.clipboard.write("Hello from Python")
+text = await sb.clipboard.read()
+print(text)  # "Hello from Python"
+```
+
+### `await sb.clipboard.write(text: str)`
+
+Writes a string to the clipboard.
+
+### `await sb.clipboard.read() → str`
+
+Returns the current clipboard contents as a string.
+
+---
+
+## `sb.tunnel` — port forwarding
+
+Forward ports from inside the sandbox to `localhost` on the host. Useful for accessing web servers, databases, or Chrome DevTools running inside the sandbox.
+
+```python
+async with sb.tunnel.forward(8080) as tunnel:
+    print(tunnel.url)  # "http://localhost:<random-port>"
+    # make requests to the forwarded port
+    import httpx
+    r = httpx.get(tunnel.url)
+```
+
+Forward multiple ports at once:
+
+```python
+async with sb.tunnel.forward(8080, 9222) as tunnels:
+    app_url      = tunnels[8080].url
+    devtools_url = tunnels[9222].url
+```
+
+### `sb.tunnel.forward(*ports) → async context manager`
+
+Returns a context manager. On enter, starts forwarding; on exit, tears down the tunnel.
+
+| Value | Type | Description |
+|-------|------|-------------|
+| `*ports` | `int` | One or more ports to forward from the sandbox |
+
+The context manager yields:
+- A single `TunnelInfo` when one port is passed
+- A `dict[int, TunnelInfo]` when multiple ports are passed
+
+`TunnelInfo` fields:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `url` | `str` | `http://localhost:<host-port>` |
+| `host_port` | `int` | The randomly assigned host port |
+| `sandbox_port` | `int` | The original port inside the sandbox |
+
+---
+
+## `sb.mobile` — touch and gestures (Android)
+
+Available on Android sandboxes only. Uses ADB under the hood.
+
+```python
+await sb.mobile.tap(x, y)
+await sb.mobile.long_press(x, y, duration_ms=1000)
+await sb.mobile.double_tap(x, y)
+await sb.mobile.swipe(x1, y1, x2, y2, duration_ms=300)
+await sb.mobile.scroll_up()
+await sb.mobile.scroll_down()
+await sb.mobile.scroll_left()
+await sb.mobile.scroll_right()
+```
+
+### Multi-touch gestures
+
+Use `sb.mobile.gesture()` for multi-finger interactions like pinch-to-zoom:
+
+```python
+w, h = await sb.screen.size()
+cx, cy = w // 2, h // 2
+
+# Pinch open (zoom in) — two fingers moving outward
+await sb.mobile.gesture(
+    (cx - 20, cy), (cx - 200, cy),   # finger 0: start → end
+    (cx + 20, cy), (cx + 200, cy),   # finger 1: start → end
+)
+
+# Pinch close (zoom out) — two fingers moving inward
+await sb.mobile.gesture(
+    (cx - 200, cy), (cx - 20, cy),
+    (cx + 200, cy), (cx + 20, cy),
+)
+```
+
+### `await sb.mobile.gesture(*points)`
+
+Takes an even number of `(x, y)` tuples: alternating start and end points for each finger.
+
+```python
+# Two fingers: finger0_start, finger0_end, finger1_start, finger1_end
+await sb.mobile.gesture(
+    (x0_start, y0_start), (x0_end, y0_end),
+    (x1_start, y1_start), (x1_end, y1_end),
+)
+```
+
+---
+
+## `sb.terminal` — interactive PTY shell
+
+Open an interactive terminal session with full PTY support. Use this when you need to run interactive programs that expect a real terminal.
+
+```python
+term = await sb.terminal.open()
+await term.send("python3\n")
+output = await term.read()
+await term.send("print('hello')\n")
+output = await term.read()
+print(output)
+await term.close()
+```
+
+---
+
+## `sb.window` — window management
+
+Control the sandbox window (mainly relevant for VNC/desktop sessions).
+
+```python
+await sb.window.maximize()
+await sb.window.close()
+```
+
+---
+
+## `Localhost` — direct host control
+
+`Localhost` gives you the same interface as `Sandbox` but operates directly on the machine running Python, with no sandbox involved. Useful for local automation or testing.
+
+```python
+from cua_sandbox import Localhost
+
+async with Localhost.connect() as host:
+    result = await host.shell.run("echo hello")
+    await host.mouse.click(100, 200)
+    png = await host.screenshot()
+```
+
+All `sb.*` interfaces (`shell`, `mouse`, `keyboard`, `screen`, `clipboard`) are available on a `Localhost` instance. `tunnel` and `mobile` are not applicable.

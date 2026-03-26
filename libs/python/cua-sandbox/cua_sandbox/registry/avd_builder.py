@@ -254,8 +254,11 @@ def _put_manifest_raw(r, full_repo: str, tag: str, manifest: dict) -> None:
     """PUT an OCI manifest (any mediaType) via raw HTTP, bypassing oras-py schema validation."""
     import json as _json
 
+    import oras.container as _oras_container
+
     body = _json.dumps(manifest).encode()
-    url = f"{r.prefix}://{full_repo.lstrip('/')}/manifests/{tag}"
+    container = _oras_container.Container(f"{full_repo}:{tag}")
+    url = f"{r.prefix}://{container.manifest_url()}"
     headers = {
         "Content-Type": manifest.get("mediaType", "application/vnd.oci.image.index.v1+json"),
         "Content-Length": str(len(body)),

@@ -364,6 +364,10 @@ class QEMUBaremetalRuntime(Runtime):
                 f"user,id=net0,restrict=on,hostfwd=tcp:127.0.0.1:{hostfwd_port}-:{guest_port}",
                 "-device",
                 "virtio-net-pci,netdev=net0,mac=52:55:00:d1:55:01",
+                # virtio-gpu is required for the virt machine — without it X11
+                # has no display and pyautogui/osworld server can't start.
+                "-device",
+                "virtio-gpu-pci",
                 "-vnc",
                 f":{vnc_display}",
             ]

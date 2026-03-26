@@ -23,6 +23,7 @@ jobs:
           - mcp-server
           - som
           - cua-auto
+          - cua-sandbox
 
     steps:
       - name: Checkout code

@@ -28,6 +28,7 @@ Usage::
 from __future__ import annotations
 
 import random
+import time
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import (
@@ -39,6 +40,19 @@ from typing import (
     Optional,
     TypeVar,
 )
+
+try:
+    from core.telemetry import is_telemetry_enabled, record_event
+
+    _TELEMETRY_AVAILABLE = True
+except ImportError:
+    _TELEMETRY_AVAILABLE = False
+
+    def is_telemetry_enabled() -> bool:
+        return False
+
+    def record_event(event_name: str, properties: dict | None = None) -> None:
+        pass
 
 from cua_sandbox.image import Image
 from cua_sandbox.interfaces import (
@@ -165,6 +179,31 @@ def _auto_runtime(image: Image) -> "Runtime":
     return QEMURuntime(mode="docker")
 
 
+def _record_sandbox_create(
+    sb: Any,
+    *,
+    image: Optional[Any],
+    local: bool,
+    ephemeral: bool,
+    t_start: float,
+) -> None:
+    """Fire a sandbox_create PostHog event if telemetry is enabled."""
+    if not sb.telemetry_enabled or not _TELEMETRY_AVAILABLE or not is_telemetry_enabled():
+        return
+    props: dict = {
+        "name": sb.name,
+        "local": local,
+        "ephemeral": ephemeral,
+        "duration_seconds": round(time.monotonic() - t_start, 3),
+    }
+    if image is not None:
+        props["os_type"] = image.os_type
+        props["image_kind"] = image.kind
+    if sb._runtime is not None:
+        props["runtime_type"] = type(sb._runtime).__name__
+    record_event("sandbox_create", props)
+
+
 class Sandbox:
     """A sandboxed computer environment.
 
@@ -202,12 +241,14 @@ class Sandbox:
         _runtime: Optional[Runtime] = None,
         _runtime_info: Optional[RuntimeInfo] = None,
         _ephemeral: Optional[bool] = None,
+        _telemetry_enabled: bool = True,
     ):
         self._transport = transport
         self.name = name
         self._runtime = _runtime
         self._runtime_info = _runtime_info
         self._ephemeral = _ephemeral
+        self.telemetry_enabled = _telemetry_enabled
         self.screen = Screen(transport)
         self.mouse = Mouse(transport)
         self.keyboard = Keyboard(transport)
@@ -230,6 +271,8 @@ class Sandbox:
 
     async def destroy(self) -> None:
         """Disconnect and permanently delete the sandbox (VM/container)."""
+        if self.telemetry_enabled and _TELEMETRY_AVAILABLE and is_telemetry_enabled():
+            record_event("sandbox_destroy", {"name": self.name, "ephemeral": self._ephemeral})
         await self._transport.disconnect()
         if isinstance(self._transport, CloudTransport):
             await self._transport.delete_vm()
@@ -295,6 +338,7 @@ class Sandbox:
         memory_mb: Optional[int] = None,
         disk_gb: Optional[int] = None,
         region: str = "us-east-1",
+        telemetry_enabled: bool = True,
     ) -> "Sandbox":
         """Provision a new persistent sandbox and return it connected.
 
@@ -312,6 +356,7 @@ class Sandbox:
             memory_mb: Memory in MB for the cloud sandbox.
             disk_gb: Disk size in GB for the cloud sandbox.
             region: Cloud region (default ``"us-east-1"``).
+            telemetry_enabled: Set to False to disable telemetry for this instance.
 
         Example::
 
@@ -331,6 +376,7 @@ class Sandbox:
             memory_mb=memory_mb,
             disk_gb=disk_gb,
             region=region,
+            telemetry_enabled=telemetry_enabled,
         )
 
     @classmethod
@@ -347,6 +393,7 @@ class Sandbox:
         memory_mb: Optional[int] = None,
         disk_gb: Optional[int] = None,
         region: str = "us-east-1",
+        telemetry_enabled: bool = True,
     ) -> "_ConnectResult":
         """Connect to an existing sandbox by name.
 
@@ -386,6 +433,7 @@ class Sandbox:
                 memory_mb=memory_mb,
                 disk_gb=disk_gb,
                 region=region,
+                telemetry_enabled=telemetry_enabled,
             )
 
         return _ConnectResult(_factory)
@@ -404,6 +452,7 @@ class Sandbox:
         memory_mb: Optional[int] = None,
         disk_gb: Optional[int] = None,
         region: str = "us-east-1",
+        telemetry_enabled: bool = True,
     ) -> AsyncIterator["Sandbox"]:
         """Create an ephemeral sandbox that is automatically destroyed on exit.
 
@@ -435,6 +484,7 @@ class Sandbox:
             memory_mb=memory_mb,
             disk_gb=disk_gb,
             region=region,
+            telemetry_enabled=telemetry_enabled,
         )
         try:
             yield sb
@@ -843,8 +893,10 @@ class Sandbox:
         memory_mb: Optional[int] = None,
         disk_gb: Optional[int] = None,
         region: str = "us-east-1",
+        telemetry_enabled: bool = True,
     ) -> "Sandbox":
         """Internal workhorse — all public factories delegate here."""
+        _t_start = time.monotonic()
         if ephemeral is None:
             ephemeral = bool(image)
 
@@ -887,8 +939,9 @@ class Sandbox:
             else:
                 api_url = f"http://{state['host']}:{state['api_port']}"
                 transport = HTTPTransport(api_url)
-            sb = cls(transport, name=name, _ephemeral=False)
+            sb = cls(transport, name=name, _ephemeral=False, _telemetry_enabled=telemetry_enabled)
             await sb._connect()
+            _record_sandbox_create(sb, image=None, local=local, ephemeral=False, t_start=_t_start)
             return sb
 
         if image and not runtime and local:
@@ -906,8 +959,9 @@ class Sandbox:
                     disk_gb=disk_gb,
                     region=region,
                 )
-                sb = cls(transport, name=name, _ephemeral=ephemeral)
+                sb = cls(transport, name=name, _ephemeral=ephemeral, _telemetry_enabled=telemetry_enabled)
                 await sb._connect()
+                _record_sandbox_create(sb, image=image, local=False, ephemeral=bool(ephemeral), t_start=_t_start)
                 return sb
             runtime = _auto_runtime(image)
         if image and runtime:
@@ -1035,8 +1089,10 @@ class Sandbox:
             _runtime=runtime,
             _runtime_info=rt_info,
             _ephemeral=ephemeral,
+            _telemetry_enabled=telemetry_enabled,
         )
         await sb._connect()
+        _record_sandbox_create(sb, image=image, local=local, ephemeral=bool(ephemeral), t_start=_t_start)
         return sb
 
     def __repr__(self) -> str:

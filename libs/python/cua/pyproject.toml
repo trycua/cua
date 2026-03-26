@@ -1,0 +1,68 @@
+[project]
+name = "cua"
+version = "0.1.0"
+description = "CUA — Computer-Use Agents: unified SDK meta-package"
+readme = "README.md"
+license = "MIT"
+authors = [
+    { name = "TryCua", email = "hello@trycua.com" }
+]
+keywords = [
+    "computer-use",
+    "sandbox",
+    "agents",
+    "automation",
+    "vm",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Libraries",
+]
+# Intersection of sub-package constraints: agent/cli require >=3.12
+requires-python = ">=3.12,<3.14"
+
+dependencies = [
+    "cua-sandbox>=0.1.1",
+    "cua-agent[cloud]>=0.7.38",
+    "cua-cli>=0.1.8",
+]
+
+[project.optional-dependencies]
+omni    = ["cua-agent[omni]"]
+cloud   = ["cua-agent[cloud]"]
+ui      = ["cua-agent[ui]"]
+uitars  = ["cua-agent[uitars]"]
+uitars-mlx = ["cua-agent[uitars-mlx]"]
+uitars-hf  = ["cua-agent[uitars-hf]"]
+all     = ["cua-agent[all]", "cua-cli[all]"]
+
+[project.urls]
+Homepage      = "https://github.com/trycua/cua"
+Documentation = "https://docs.trycua.com"
+Repository    = "https://github.com/trycua/cua"
+Issues        = "https://github.com/trycua/cua/issues"
+
+# No [project.scripts] — cua-cli already registers 'cua = "cua_cli.main:main"'
+
+[build-system]
+requires      = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build]
+include = [
+    "cua/**",
+    "README.md",
+    "LICENSE",
+]
+exclude = [
+    "cua/**/__pycache__",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["cua"]

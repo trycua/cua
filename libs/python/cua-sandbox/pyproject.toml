@@ -28,6 +28,7 @@ classifiers = [
 requires-python = ">=3.11,<3.14"
 
 dependencies = [
+    "cua-core>=0.1.18,<0.2.0",
     "cua-auto>=0.1.2",
     "websockets>=12.0",
     "httpx>=0.27.0",

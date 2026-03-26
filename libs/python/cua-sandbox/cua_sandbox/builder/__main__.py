@@ -59,8 +59,8 @@ def main():
             spec_str = Path(spec_str[1:]).read_text()
         spec = json.loads(spec_str)
 
-        from cua_sandbox.image import Image
         from cua_sandbox.builder.build import build_user_image, ensure_base_image
+        from cua_sandbox.image import Image
 
         image = Image.from_dict(spec)
         base = asyncio.run(ensure_base_image(image.os_type, image.version))

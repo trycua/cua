@@ -9,7 +9,6 @@ fetch real manifests from ghcr.io and require network access.
 from __future__ import annotations
 
 import pytest
-
 from cua_sandbox.registry.manifest import (
     ImageFormat,
     detect_format,
@@ -30,7 +29,6 @@ from cua_sandbox.registry.media_types import (
     QEMU_DISK_GZIP,
 )
 from cua_sandbox.registry.ref import parse_ref
-
 
 # ═════════════════════════════════════════════════════════════════════════════
 # parse_ref

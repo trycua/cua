@@ -3,10 +3,9 @@
 from __future__ import annotations
 
 import pytest
-
-from cua_sandbox.agent import SandboxHandler, LocalhostHandler, is_sandbox
-from cua_sandbox.sandbox import Sandbox
+from cua_sandbox.agent import LocalhostHandler, SandboxHandler, is_sandbox
 from cua_sandbox.localhost import Localhost
+from cua_sandbox.sandbox import Sandbox
 
 pytestmark = pytest.mark.asyncio
 

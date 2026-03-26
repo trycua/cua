@@ -14,7 +14,6 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 import httpx
-
 from cua_sandbox._config import get_api_key, get_base_url
 
 _CUA_DIR = Path.home() / ".cua"

@@ -30,7 +30,9 @@ class GCSImageRegistry: ImageRegistry, @unchecked Sendable {
     func pull(
         image: String,
         name: String?,
-        locationName: String?
+        locationName: String?,
+        force: Bool = false,
+        progressHandler: (@Sendable (Double) -> Void)? = nil
     ) async throws -> VMDirectory {
         // Parse image name and tag
         let components = image.split(separator: ":")

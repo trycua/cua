@@ -19,6 +19,7 @@ class TestTelemetryEnabled:
         # Remove any environment variables that might affect the test
         monkeypatch.delenv("CUA_TELEMETRY", raising=False)
         monkeypatch.delenv("CUA_TELEMETRY_ENABLED", raising=False)
+        monkeypatch.delenv("CUA_TELEMETRY_DISABLED", raising=False)
 
         from core.telemetry import is_telemetry_enabled
 
@@ -44,6 +45,7 @@ class TestTelemetryEnabled:
     @pytest.mark.parametrize("value", ["1", "true", "yes", "on"])
     def test_telemetry_enabled_with_various_values(self, monkeypatch, value):
         """Test that telemetry respects various enable values."""
+        monkeypatch.delenv("CUA_TELEMETRY_DISABLED", raising=False)
         monkeypatch.setenv("CUA_TELEMETRY_ENABLED", value)
 
         from core.telemetry import is_telemetry_enabled
@@ -82,15 +84,14 @@ class TestPostHogTelemetryClient:
         """Test that installation ID is generated if not exists."""
         from core.telemetry.posthog import PostHogTelemetryClient
 
-        # Mock file system
+        # Mock file system: Path.home() / ".config" / "cua" / "installation_id"
         mock_id_file = MagicMock()
         mock_id_file.exists.return_value = False
-        mock_storage_dir = MagicMock()
-        mock_storage_dir.__truediv__.return_value = mock_id_file
-
-        mock_core_dir = MagicMock()
-        mock_core_dir.__truediv__.return_value = mock_storage_dir
-        mock_path.return_value.parent.parent = mock_core_dir
+        mock_config_dir = MagicMock()
+        mock_config_dir.__truediv__.return_value = mock_id_file
+        mock_path.home.return_value.__truediv__.return_value.__truediv__.return_value = (
+            mock_config_dir
+        )
 
         # Reset singleton
         PostHogTelemetryClient.destroy_client()
@@ -109,17 +110,15 @@ class TestPostHogTelemetryClient:
 
         existing_id = "test-installation-id-123"
 
-        # Mock file system
+        # Mock file system: Path.home() / ".config" / "cua" / "installation_id"
         mock_id_file = MagicMock()
         mock_id_file.exists.return_value = True
-        mock_id_file.read_text.return_value = existing_id
-
-        mock_storage_dir = MagicMock()
-        mock_storage_dir.__truediv__.return_value = mock_id_file
-
-        mock_core_dir = MagicMock()
-        mock_core_dir.__truediv__.return_value = mock_storage_dir
-        mock_path.return_value.parent.parent = mock_core_dir
+        mock_id_file.read_text.return_value.strip.return_value = existing_id
+        mock_config_dir = MagicMock()
+        mock_config_dir.__truediv__.return_value = mock_id_file
+        mock_path.home.return_value.__truediv__.return_value.__truediv__.return_value = (
+            mock_config_dir
+        )
 
         # Reset singleton
         PostHogTelemetryClient.destroy_client()
@@ -159,6 +158,7 @@ class TestPostHogTelemetryClient:
         from core.telemetry.posthog import PostHogTelemetryClient
 
         # Enable telemetry
+        monkeypatch.delenv("CUA_TELEMETRY_DISABLED", raising=False)
         monkeypatch.setenv("CUA_TELEMETRY_ENABLED", "true")
 
         # Mock file system

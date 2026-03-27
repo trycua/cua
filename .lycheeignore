@@ -2,3 +2,5 @@ https://cua.ai/
 https://api.cua.ai/
 # Google Cloud Console links have HTTP/2 protocol issues with automated checkers
 https://console.cloud.google.com/*
+# hud.ai rate-limits automated link checkers (429)
+https://www.hud.ai/*

@@ -10,7 +10,7 @@ description: Save and analyze agent execution for debugging and training
 Enable trajectory saving with the `trajectory_dir` parameter:
 
 ```python
-from agent import ComputerAgent
+from cua import ComputerAgent
 
 agent = ComputerAgent(
     model="anthropic/claude-sonnet-4-5-20250929",
@@ -163,7 +163,7 @@ Common issues trajectories help identify:
 ## Example: Saving and Analyzing
 
 ```python
-from agent import ComputerAgent
+from cua import ComputerAgent
 from pathlib import Path
 import json
 

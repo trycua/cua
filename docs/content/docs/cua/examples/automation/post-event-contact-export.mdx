@@ -61,8 +61,7 @@ First, install the required dependencies:
 Create a `requirements.txt` file:
 
 ```text
-cua-agent
-cua-computer
+cua
 python-dotenv>=1.0.0
 ```
 
@@ -134,8 +133,7 @@ import signal
 import traceback
 from datetime import datetime
 
-from agent import ComputerAgent
-from computer import Computer, VMProviderType
+from cua import ComputerAgent, Sandbox, Image
 from dotenv import load_dotenv
 
 logging.basicConfig(level=logging.INFO)
@@ -231,9 +229,8 @@ async def scrape_linkedin_connections():
     print("=" * 80)
 
     try:
-        async with Computer(
-            os_type="linux",
-            provider_type=VMProviderType.CLOUD,
+        async with Sandbox.create(
+            Image.linux(),
             name=os.environ["CUA_CONTAINER_NAME"],  # Your sandbox name
             api_key=os.environ["CUA_API_KEY"],
             verbosity=logging.INFO,
@@ -393,11 +390,10 @@ if __name__ == "__main__":
   <Tab value="Linux on Docker">
 
 ```python
-# Same code as Cloud Sandbox, but change Computer initialization to:
-async with Computer(
-    os_type="linux",
-    provider_type=VMProviderType.DOCKER,
-    image="trycua/cua-xfce:latest",
+# Same code as Cloud Sandbox, but change Sandbox initialization to:
+async with Sandbox.ephemeral(
+    Image.linux(),
+    local=True,
     verbosity=logging.INFO,
 ) as computer:
 ```
@@ -408,10 +404,10 @@ And remove the `CUA_API_KEY` and `CUA_CONTAINER_NAME` requirements from `.env` a
   <Tab value="macOS Sandbox">
 
 ```python
-# Same code as Cloud Sandbox, but change Computer initialization to:
-async with Computer(
-    os_type="macos",
-    provider_type=VMProviderType.LUME,
+# Same code as Cloud Sandbox, but change Sandbox initialization to:
+async with Sandbox.create(
+    Image.macos(),
+    local=True,
     name="macos-sequoia-cua:latest",
     verbosity=logging.INFO,
 ) as computer:
@@ -423,10 +419,10 @@ And remove the `CUA_API_KEY` and `CUA_CONTAINER_NAME` requirements from `.env` a
   <Tab value="Windows Sandbox">
 
 ```python
-# Same code as Cloud Sandbox, but change Computer initialization to:
-async with Computer(
-    os_type="windows",
-    provider_type=VMProviderType.WINDOWS_SANDBOX,
+# Same code as Cloud Sandbox, but change Sandbox initialization to:
+async with Sandbox.create(
+    Image.windows(),
+    local=True,
     verbosity=logging.INFO,
 ) as computer:
 ```

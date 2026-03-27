@@ -1,0 +1,6 @@
+{
+  "title": "Sandbox",
+  "description": "Working with sandboxes",
+  "icon": "Box",
+  "pages": ["lifecycle", "images", "secrets", "scale-out", "interactive-shell", "tunneling"]
+}

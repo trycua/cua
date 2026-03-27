@@ -140,6 +140,11 @@ def main():
             metavar="PATH",
             help="Mount and pip install a local package into the agent container (can be repeated)",
         )
+        parser.add_argument(
+            "--verbose",
+            action="store_true",
+            help="Print full docker command and pip install output (useful for debugging --with)",
+        )
 
     # cb run task <path>
     run_task_parser = run_subparsers.add_parser(

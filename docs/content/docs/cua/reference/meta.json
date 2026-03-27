@@ -2,5 +2,5 @@
   "title": "Reference",
   "description": "SDK and CLI API reference",
   "icon": "FileText",
-  "pages": ["desktop-sandbox", "computer-sdk", "agent-sdk", "cli"]
+  "pages": ["desktop-sandbox", "sandbox-sdk", "agent-sdk", "cli"]
 }

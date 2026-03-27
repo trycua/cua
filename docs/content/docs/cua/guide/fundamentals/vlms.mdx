@@ -10,16 +10,13 @@ A **Vision Language Model (VLM)** is the AI that powers your computer-use agent.
 Specify the model when creating your agent:
 
 ```python
-from computer import Computer
-from agent import ComputerAgent
+from cua import Sandbox, Image, ComputerAgent
 
-computer = Computer(os_type="linux", provider_type="docker", image="trycua/cua-xfce:latest")
-await computer.run()
-
-agent = ComputerAgent(
-    model="anthropic/claude-sonnet-4-5-20250929",
-    tools=[computer]
-)
+async with Sandbox.ephemeral(Image.linux()) as computer:
+    agent = ComputerAgent(
+        model="anthropic/claude-sonnet-4-5-20250929",
+        tools=[computer]
+    )
 
 async for result in agent.run("Open Firefox and search for 'Cua'"):
     print(result)
@@ -66,7 +63,7 @@ export OPENAI_API_KEY="your-key"
 Gemini 2.5 Computer-Use is optimized for **browser automation** rather than full desktop control. Use it with the [Browser Tool](/cua/guide/fundamentals/browser-tool) for web-based tasks:
 
 ```python
-from agent.tools import BrowserTool
+from cua.tools import BrowserTool
 
 # Use with BrowserTool for web automation
 agent = ComputerAgent(model="gemini-2.5-computer-use-preview-10-2025", tools=[browser])
@@ -83,7 +80,7 @@ For full desktop computer-use, consider Anthropic Claude or OpenAI instead.
 Fara is Microsoft's browser automation model, available via Azure ML. Like Gemini 2.5, it's designed for web tasks and works with the [Browser Tool](/cua/guide/fundamentals/browser-tool):
 
 ```python
-from agent.tools import BrowserTool
+from cua.tools import BrowserTool
 
 agent = ComputerAgent(
     model="azure_ml/Fara-7B",

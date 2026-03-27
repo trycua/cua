@@ -17,12 +17,10 @@ Sometimes you don't want to rely on UI automation or shell commands—you just w
 Here's the basic pattern:
 
 ```python
-from computer import Computer
+from cua import Sandbox, Image
 
-computer = Computer(os_type="linux", provider_type="docker", image="trycua/cua-xfce:latest")
-await computer.run()
-
-# First, install any packages you need
+async with Sandbox.ephemeral(Image.linux()) as computer:
+    # First, install any packages you need
 await computer.venv_install("my_env", ["requests", "pandas"])
 
 # Define a function to run remotely
@@ -72,13 +70,10 @@ result = await computer.venv_cmd("data_env", "python /path/to/script.py")
 For cleaner code, use the decorator to mark functions for remote execution:
 
 ```python
-from computer import Computer
-from computer.helpers import sandboxed
+from cua import Sandbox, Image, sandboxed
 
-computer = Computer(os_type="linux", provider_type="docker", image="trycua/cua-xfce:latest")
-await computer.run()
-
-await computer.venv_install("api_env", ["requests"])
+async with Sandbox.ephemeral(Image.linux()) as computer:
+    await computer.venv_install("api_env", ["requests"])
 
 @sandboxed("api_env")
 def call_api(endpoint, payload):

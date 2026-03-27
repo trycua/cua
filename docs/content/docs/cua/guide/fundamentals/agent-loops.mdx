@@ -17,15 +17,14 @@ An **agent loop** runs iteratively until a task is complete:
 To run an agent loop simply do:
 
 ```python
-from agent import ComputerAgent
+from cua import ComputerAgent
 import asyncio
-from computer import Computer
+from cua import Sandbox, Image
 
 
 async def take_screenshot():
-    async with Computer(
-        os_type="linux",
-        provider_type="cloud",
+    async with Sandbox.create(
+        Image.linux(),
         name="your-sandbox-name",
         api_key="your-api-key"
     ) as computer:

@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 
 /// Manages the application's home directory and virtual machine directories.
@@ -218,6 +219,84 @@ final class Home {
             try fileManager.copyItem(atPath: sourceDir.dir.path, toPath: destDir.dir.path)
         } catch {
             throw HomeError.directoryCreationFailed(path: destDir.dir.path)
+        }
+    }
+
+    /// Clones a VM directory using APFS clonefile for disk.img and regular copy for small files
+    /// - Parameters:
+    ///   - sourceName: Name of the source VM
+    ///   - destName: Name for the destination VM
+    ///   - sourceLocation: Optional name of the source location
+    ///   - destLocation: Optional name of the destination location
+    /// - Throws: HomeError if the clone operation fails
+    func cloneVMDirectory(
+        from sourceName: String,
+        to destName: String,
+        sourceLocation: String? = nil,
+        destLocation: String? = nil
+    ) throws {
+        let sourceDir = try getVMDirectory(sourceName, storage: sourceLocation)
+        let destDir = try getVMDirectory(destName, storage: destLocation)
+
+        // Check if destination directory exists at all
+        if destDir.exists() {
+            throw HomeError.directoryAlreadyExists(path: destDir.dir.path)
+        }
+
+        // Create the destination directory
+        do {
+            try fileManager.createDirectory(
+                atPath: destDir.dir.path,
+                withIntermediateDirectories: true
+            )
+        } catch {
+            throw HomeError.directoryCreationFailed(path: destDir.dir.path)
+        }
+
+        // Enumerate files in the source directory and copy/clone each one
+        let sourceURL = sourceDir.dir.url
+        let destURL = destDir.dir.url
+        let contents: [URL]
+        do {
+            contents = try fileManager.contentsOfDirectory(
+                at: sourceURL,
+                includingPropertiesForKeys: nil
+            )
+        } catch {
+            throw HomeError.directoryCreationFailed(path: sourceDir.dir.path)
+        }
+
+        for fileURL in contents {
+            let fileName = fileURL.lastPathComponent
+            let destFileURL = destURL.appendingPathComponent(fileName)
+
+            if fileName == "disk.img" {
+                // Use clonefile(2) for disk.img (instant APFS copy-on-write)
+                let result = Darwin.clonefile(
+                    fileURL.path,
+                    destFileURL.path,
+                    0
+                )
+                if result != 0 {
+                    // Fallback to regular copy if clonefile fails (e.g., cross-volume)
+                    Logger.info(
+                        "clonefile failed for disk.img, falling back to regular copy",
+                        metadata: ["errno": "\(errno)"]
+                    )
+                    do {
+                        try fileManager.copyItem(at: fileURL, to: destFileURL)
+                    } catch {
+                        throw HomeError.directoryCreationFailed(path: destDir.dir.path)
+                    }
+                }
+            } else {
+                // Regular copy for small files (config.json, nvram.bin, etc.)
+                do {
+                    try fileManager.copyItem(at: fileURL, to: destFileURL)
+                } catch {
+                    throw HomeError.directoryCreationFailed(path: destDir.dir.path)
+                }
+            }
         }
     }
 

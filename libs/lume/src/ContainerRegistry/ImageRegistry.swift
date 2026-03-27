@@ -7,11 +7,14 @@ protocol ImageRegistry: Sendable {
     ///   - image: Image reference (format: name:tag)
     ///   - name: Optional VM name (defaults to image name without tag)
     ///   - locationName: Optional storage location name or direct path
+    ///   - force: Force re-download even if image exists locally
     /// - Returns: The VM directory where the image was pulled
     func pull(
         image: String,
         name: String?,
-        locationName: String?
+        locationName: String?,
+        force: Bool,
+        progressHandler: (@Sendable (Double) -> Void)?
     ) async throws -> VMDirectory
 
     /// Push a VM to the registry
@@ -42,8 +45,8 @@ protocol ImageRegistry: Sendable {
 
 // Default implementations for optional parameters
 extension ImageRegistry {
-    func pull(image: String, name: String? = nil, locationName: String? = nil) async throws -> VMDirectory {
-        try await pull(image: image, name: name, locationName: locationName)
+    func pull(image: String, name: String? = nil, locationName: String? = nil, force: Bool = false, progressHandler: (@Sendable (Double) -> Void)? = nil) async throws -> VMDirectory {
+        try await pull(image: image, name: name, locationName: locationName, force: force, progressHandler: progressHandler)
     }
 
     func push(

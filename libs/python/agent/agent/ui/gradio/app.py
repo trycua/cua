@@ -31,7 +31,11 @@ import gradio as gr
 # Import from agent package
 from agent import ComputerAgent
 from agent.types import AgentResponse, Messages
-from computer import Computer
+
+try:
+    from computer import Computer
+except ImportError:
+    Computer = None  # type: ignore[assignment,misc]
 from gradio.components.chatbot import MetadataDict
 
 # Global variables

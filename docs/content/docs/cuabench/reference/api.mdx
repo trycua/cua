@@ -3795,7 +3795,7 @@ Failure mode for agent execution.
 
 *Inherits from: BaseAgent*
 
-Agent implementation using the CUA Computer Agent SDK.
+Agent implementation using the Cua Computer Agent SDK.
 
 ### Constructor
 
@@ -3824,7 +3824,7 @@ def name() -> str
 async def perform_task(self, task_description: str, session: DesktopSession, logging_dir: Path | None = None, tracer = None) -> AgentResult
 ```
 
-Perform a task using the CUA Computer Agent.
+Perform a task using the Cua Computer Agent.
 
 **Parameters:**
 
@@ -4127,7 +4127,7 @@ Sessions module for async container management.
 
 *Inherits from: ABC*
 
-Base class for session providers (Docker, CUA Cloud, etc.).
+Base class for session providers (Docker, Cua Cloud, etc.).
 
 ### Methods
 
@@ -4226,7 +4226,7 @@ Create a session provider for the specified provider.
 
 | Name | Type | Description |
 |------|------|-------------|
-| `provider_name` | `Any` | Name of the provider: - "local": Run locally using Docker (webtop) or QEMU/KVM (winarena) - "cloud": Run on CUA Cloud (GCP Batch for webtop, Azure Batch for winarena) - "docker": (legacy) Alias for "local" |
+| `provider_name` | `Any` | Name of the provider: - "local": Run locally using Docker (webtop) or QEMU/KVM (winarena) - "cloud": Run on Cua Cloud (GCP Batch for webtop, Azure Batch for winarena) - "docker": (legacy) Alias for "local" |
 | `env_type` | `Any` | Optional environment type hint ("webtop" or "winarena"). Used by local provider to select appropriate backend. |
 
 **Returns:** SessionProvider instance
@@ -4721,7 +4721,7 @@ Telemetry module for cua-bench.
 
 This module provides analytics for tracking feature usage, user workflows,
 and system performance. All telemetry is routed through cua-core's PostHog
-infrastructure for consistency across the CUA ecosystem.
+infrastructure for consistency across the Cua ecosystem.
 
 Events tracked:
 - Tier 1 (Core): command_invoked, task_execution_started, task_evaluation_completed, batch_job_started

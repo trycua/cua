@@ -8,7 +8,10 @@ import os
 from contextlib import contextmanager
 from typing import Any, Dict, List, Optional, Union
 
-from computer import Computer
+try:
+    from computer import Computer
+except ImportError:
+    Computer = None  # type: ignore[assignment,misc]
 
 from ..agent import ComputerAgent
 

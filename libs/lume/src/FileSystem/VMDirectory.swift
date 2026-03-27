@@ -311,7 +311,8 @@ extension VMDirectory {
         provisioningOperation: String? = nil,
         vncUrl: String?,
         ipAddress: String?,
-        sshAvailable: Bool? = nil
+        sshAvailable: Bool? = nil,
+        downloadProgress: Double? = nil
     ) -> VMDetails? {
         guard let config = try? loadConfig() else {
             return nil
@@ -331,7 +332,8 @@ extension VMDirectory {
             sshAvailable: sshAvailable,
             locationName: locationName,
             sharedDirectories: nil,
-            networkMode: config.networkMode.description
+            networkMode: config.networkMode.description,
+            downloadProgress: downloadProgress
         )
     }
 }

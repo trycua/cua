@@ -10,17 +10,14 @@ Some models excel at **grounding** (finding UI elements) but can't reason about 
 Use the `+` syntax to combine a grounding model with a planning model:
 
 ```python
-from computer import Computer
-from agent import ComputerAgent
+from cua import Sandbox, Image, ComputerAgent
 
-computer = Computer(os_type="linux", provider_type="docker", image="trycua/cua-xfce:latest")
-await computer.run()
-
-# Format: grounding_model+planning_model
-agent = ComputerAgent(
-    model="huggingface-local/HelloKKMe/GTA1-7B+anthropic/claude-sonnet-4-5-20250929",
-    tools=[computer]
-)
+async with Sandbox.ephemeral(Image.linux()) as computer:
+    # Format: grounding_model+planning_model
+    agent = ComputerAgent(
+        model="huggingface-local/HelloKKMe/GTA1-7B+anthropic/claude-sonnet-4-5-20250929",
+        tools=[computer]
+    )
 ```
 
 Cua uses a two-stage approach:

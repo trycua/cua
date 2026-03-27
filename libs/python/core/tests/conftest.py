@@ -39,5 +39,5 @@ def disable_telemetry(monkeypatch):
 
     Use this fixture to ensure telemetry is disabled during tests.
     """
-    monkeypatch.setenv("CUA_TELEMETRY_DISABLED", "1")
+    monkeypatch.setenv("CUA_TELEMETRY_ENABLED", "false")
     yield

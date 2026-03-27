@@ -43,7 +43,25 @@ class PostHogTelemetryClient:
 
     @classmethod
     def is_telemetry_enabled(cls) -> bool:
-        """True if telemetry is currently active for this process."""
+        """True if telemetry is currently active for this process.
+
+        Canonical opt-out: ``CUA_TELEMETRY_ENABLED=false``.
+        ``CUA_TELEMETRY_DISABLED`` is deprecated — a warning is emitted on
+        first use and the value is honoured for backwards compatibility.
+        """
+        # Deprecated env var: CUA_TELEMETRY_DISABLED
+        disabled_val = os.environ.get("CUA_TELEMETRY_DISABLED", "")
+        if disabled_val:
+            import warnings
+
+            warnings.warn(
+                "CUA_TELEMETRY_DISABLED is deprecated. " "Use CUA_TELEMETRY_ENABLED=false instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            if disabled_val.lower() in {"1", "true", "yes", "on"}:
+                return False
+
         return os.environ.get("CUA_TELEMETRY_ENABLED", "true").lower() in {
             "1",
             "true",
@@ -54,21 +72,15 @@ class PostHogTelemetryClient:
     def _get_or_create_installation_id(self) -> str:
         """Get or create a unique installation ID that persists across runs.
 
-        The ID is always stored within the core library directory itself,
-        ensuring it persists regardless of how the library is used.
+        Stored in ``~/.config/cua/installation_id`` (XDG-compliant) so that
+        the ID survives package upgrades and is shared across venvs.
 
         This ID is not tied to any personal information.
         """
-        # Get the core library directory (where this file is located)
         try:
-            # Find the core module directory using this file's location
-            core_module_dir = Path(
-                __file__
-            ).parent.parent  # core/telemetry/posthog_client.py -> core/telemetry -> core
-            storage_dir = core_module_dir / ".storage"
-            storage_dir.mkdir(exist_ok=True)
-
-            id_file = storage_dir / "installation_id"
+            config_dir = Path.home() / ".config" / "cua"
+            config_dir.mkdir(parents=True, exist_ok=True)
+            id_file = config_dir / "installation_id"
 
             # Try to read existing ID
             if id_file.exists():

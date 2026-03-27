@@ -212,6 +212,8 @@ class TaskRunner:
         provider_type: Optional[str] = None,
         # Dev mode: list of local package paths to mount and install
         dev_paths: Optional[List[str]] = None,
+        # Verbose mode: print full docker command and pip install output
+        verbose: bool = False,
     ) -> TaskResult:
         """Run a task with 2-container architecture.
 
@@ -322,6 +324,7 @@ class TaskRunner:
                 output_dir=output_dir,
                 is_simulated=is_simulated,
                 dev_paths=dev_paths,
+                verbose=verbose,
             )
 
             # 3.5. Start streaming agent logs to file if requested
@@ -785,6 +788,7 @@ class TaskRunner:
         output_dir: Optional[str],
         is_simulated: bool = False,
         dev_paths: Optional[List[str]] = None,
+        verbose: bool = False,
     ) -> ContainerInfo:
         """Start the agent container.
 
@@ -882,9 +886,17 @@ class TaskRunner:
                 abs_path = Path(dev_path).absolute()
                 container_path = f"/app/dev_{i}"
                 volumes.append(f"{abs_path}:{container_path}:ro")
-                # Copy to tmp first since pip needs a writable source dir to build
+                # Copy to tmp first since pip needs a writable source dir to build.
+                # Use --force-reinstall so the local version always replaces an
+                # already-installed package of the same version (e.g. the one
+                # baked into the Docker image).  --no-deps skips re-downloading
+                # transitive dependencies that are already present.
+                if verbose:
+                    pip_cmd = f"pip install --force-reinstall --no-deps /tmp/dev_{i}"
+                else:
+                    pip_cmd = f"pip install --force-reinstall --no-deps /tmp/dev_{i} 2>&1 | tail -1"
                 install_parts.append(
-                    f"(cp -r {container_path} /tmp/dev_{i} && pip install /tmp/dev_{i} 2>&1 | tail -1)"
+                    f"(echo '[--with] installing {dev_path}' && cp -r {container_path} /tmp/dev_{i} && {pip_cmd})"
                 )
             dev_install_cmd = " && ".join(install_parts) + " && "
 
@@ -914,6 +926,10 @@ class TaskRunner:
         if dev_paths and dev_install_cmd:
             original_cmd = " ".join(command)
             command = ["bash", "-c", f"{dev_install_cmd}{original_cmd}"]
+
+        if verbose:
+            print(f"[--verbose] agent container command: {command}")
+            print(f"[--verbose] volumes: {volumes}")
 
         # Start container (not detached - we want to wait for it)
         return await start_container(

@@ -1,39 +1,36 @@
-"""Main entry point for CUA CLI."""
+"""Main entry point for Cua CLI."""
 
 import argparse
 import logging
 import sys
+import time
 
 from cua_cli import __version__
 from cua_cli.commands import auth, do, image, mcp, platform, sandbox, skills, trajectory
+from cua_cli.commands import workspace as workspace_cmd
 from cua_cli.utils.output import print_error
+
+try:
+    from core.telemetry import is_telemetry_enabled, record_event
+
+    _TELEMETRY_AVAILABLE = True
+except ImportError:
+    _TELEMETRY_AVAILABLE = False
+
+    def is_telemetry_enabled() -> bool:  # type: ignore[misc]
+        return False
+
+    def record_event(event_name: str, properties: dict | None = None) -> None:  # type: ignore[misc]
+        pass
 
 
 def create_parser() -> argparse.ArgumentParser:
     """Create the main argument parser with all subcommands."""
     parser = argparse.ArgumentParser(
         prog="cua",
-        description="CUA CLI - Unified command-line interface for Computer-Use Agents",
+        description="Cua CLI - Unified command-line interface for Computer-Use Agents",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Examples:
-  cua auth login              Authenticate via browser
-  cua auth login --api-key    Authenticate with API key
-  cua auth status             Show account info and credits
-  cua sb list                 List all sandboxes
-  cua sb create --os linux    Create a new Linux sandbox
-  cua image list              List cloud images
-  cua image list --local      List local images
-  cua image create linux-docker   Create a local image
-  cua image shell <name>      Interactive shell into image
-  cua platform list           Show available platforms
-  cua do switch docker my-ct  Select automation target VM
-  cua do screenshot           Take a screenshot
-  cua do click 100 200        Click at coordinates
-  cua do type "hello"         Type text
-
-For more information, visit https://docs.trycua.com
-""",
+        epilog="For more information, visit https://docs.trycua.com",
     )
 
     parser.add_argument(
@@ -55,6 +52,7 @@ For more information, visit https://docs.trycua.com
     do.register_parser(subparsers)
     do.register_host_consent_parser(subparsers)
     trajectory.register_parser(subparsers)
+    workspace_cmd.register_parser(subparsers)
 
     return parser
 
@@ -64,7 +62,7 @@ def main() -> int:
     # Suppress noisy INFO logs from dependencies (computer, core.telemetry, etc.)
     # Must set on specific loggers since they configure their own handlers at import time
     logging.basicConfig(level=logging.WARNING)
-    for name in ("computer", "core", "core.telemetry"):
+    for name in ("computer", "core", "core.telemetry", "httpx", "httpcore", "cua_sandbox"):
         logging.getLogger(name).setLevel(logging.WARNING)
 
     parser = create_parser()
@@ -74,35 +72,55 @@ def main() -> int:
         parser.print_help()
         return 0
 
+    subcommand = getattr(args, "subcommand", None)
+    _t_start = time.monotonic()
+    exit_code = 0
     try:
         # Dispatch to command modules
         if args.command == "auth":
-            return auth.execute(args)
+            exit_code = auth.execute(args)
         elif args.command in ("sandbox", "sb"):
-            return sandbox.execute(args)
+            exit_code = sandbox.execute(args)
         elif args.command in ("image", "img"):
-            return image.execute(args)
+            exit_code = image.execute(args)
         elif args.command == "platform":
-            return platform.execute(args)
+            exit_code = platform.execute(args)
         elif args.command == "skills":
-            return skills.execute(args)
+            exit_code = skills.execute(args)
         elif args.command == "serve-mcp":
-            return mcp.execute(args)
+            exit_code = mcp.execute(args)
         elif args.command == "do":
-            return do.execute(args)
+            exit_code = do.execute(args)
         elif args.command == "do-host-consent":
-            return do.execute_host_consent(args)
+            exit_code = do.execute_host_consent(args)
         elif args.command in ("trajectory", "traj"):
-            return trajectory.execute(args)
+            exit_code = trajectory.execute(args)
+        elif args.command in ("workspace", "ws"):
+            exit_code = workspace_cmd.execute(args)
         else:
             print_error(f"Unknown command: {args.command}")
-            return 1
+            exit_code = 1
+        return exit_code
     except KeyboardInterrupt:
         print_error("Operation cancelled")
-        return 130
+        exit_code = 130
+        return exit_code
     except Exception as e:
         print_error(str(e))
-        return 1
+        exit_code = 1
+        return exit_code
+    finally:
+        if _TELEMETRY_AVAILABLE and is_telemetry_enabled():
+            record_event(
+                "cli_command",
+                {
+                    "command": args.command,
+                    "subcommand": subcommand,
+                    "status": "success" if exit_code == 0 else "error",
+                    "exit_code": exit_code,
+                    "duration_seconds": round(time.monotonic() - _t_start, 3),
+                },
+            )
 
 
 if __name__ == "__main__":

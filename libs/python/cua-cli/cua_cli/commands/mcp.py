@@ -205,25 +205,22 @@ async def _register_sandbox_tools(server: "FastMCP", permissions: set[Permission
         @server.tool()
         async def sandbox_list(ctx: Context) -> str:
             """List all cloud sandboxes."""
-            from computer.providers import VMProviderFactory, VMProviderType
-            from cua_cli.auth.store import require_api_key
+            from cua_cli.auth.store import get_api_key
+            from cua_sandbox import Sandbox
 
-            api_key = require_api_key()
-            provider = VMProviderFactory.create_provider(VMProviderType.CLOUD, api_key=api_key)
-            async with provider:
-                vms = await provider.list_vms()
-                return json.dumps(
-                    [
-                        {
-                            "name": vm.name,
-                            "status": vm.status,
-                            "os_type": vm.os_type,
-                            "created_at": vm.created_at,
-                        }
-                        for vm in vms
-                    ],
-                    indent=2,
-                )
+            sandboxes = await Sandbox.list(api_key=get_api_key())
+            return json.dumps(
+                [
+                    {
+                        "name": s.name,
+                        "status": s.status,
+                        "os_type": s.os_type,
+                        "created_at": s.created_at,
+                    }
+                    for s in sandboxes
+                ],
+                indent=2,
+            )
 
     if Permission.SANDBOX_CREATE in permissions:
 
@@ -241,22 +238,27 @@ async def _register_sandbox_tools(server: "FastMCP", permissions: set[Permission
                 size: VM size (small, medium, large, xlarge)
                 region: Region (north-america, europe, asia)
             """
-            from computer.providers import VMProviderFactory, VMProviderType
-            from cua_cli.auth.store import require_api_key
+            from cua_cli.auth.store import get_api_key
+            from cua_sandbox import Image, Sandbox
 
-            api_key = require_api_key()
-            provider = VMProviderFactory.create_provider(VMProviderType.CLOUD, api_key=api_key)
-            async with provider:
-                vm = await provider.create_vm(os_type=os_type, size=size, region=region)
-                return json.dumps(
-                    {
-                        "name": vm.name,
-                        "status": vm.status,
-                        "os_type": vm.os_type,
-                        "message": f"Created sandbox: {vm.name}",
-                    },
-                    indent=2,
-                )
+            if os_type == "macos":
+                image = Image.macos("26")
+            elif os_type == "windows":
+                image = Image.windows("11")
+            else:
+                image = Image.linux("ubuntu", "24.04")
+            sb = await Sandbox.create(image, api_key=get_api_key(), region=region)
+            name = sb.name
+            await sb.disconnect()
+            return json.dumps(
+                {
+                    "name": name,
+                    "status": "ready",
+                    "os_type": os_type,
+                    "message": f"Created sandbox: {name}",
+                },
+                indent=2,
+            )
 
     if Permission.SANDBOX_GET in permissions:
 
@@ -267,28 +269,22 @@ async def _register_sandbox_tools(server: "FastMCP", permissions: set[Permission
             Args:
                 name: Sandbox name
             """
-            from computer.providers import VMProviderFactory, VMProviderType
-            from cua_cli.auth.store import require_api_key
+            from cua_cli.auth.store import get_api_key
+            from cua_sandbox import Sandbox
 
-            api_key = require_api_key()
-            provider = VMProviderFactory.create_provider(VMProviderType.CLOUD, api_key=api_key)
-            async with provider:
-                vm = await provider.get_vm(name)
-                if not vm:
-                    return json.dumps({"error": f"Sandbox not found: {name}"})
+            try:
+                info = await Sandbox.get_info(name, api_key=get_api_key())
                 return json.dumps(
                     {
-                        "name": vm.name,
-                        "status": vm.status,
-                        "os_type": vm.os_type,
-                        "size": getattr(vm, "size", None),
-                        "region": getattr(vm, "region", None),
-                        "created_at": vm.created_at,
-                        "vnc_url": getattr(vm, "vnc_url", None),
-                        "server_url": getattr(vm, "server_url", None),
+                        "name": info.name,
+                        "status": info.status,
+                        "os_type": info.os_type,
+                        "created_at": info.created_at,
                     },
                     indent=2,
                 )
+            except Exception as e:
+                return json.dumps({"error": str(e)})
 
     if Permission.SANDBOX_START in permissions:
 
@@ -299,14 +295,11 @@ async def _register_sandbox_tools(server: "FastMCP", permissions: set[Permission
             Args:
                 name: Sandbox name
             """
-            from computer.providers import VMProviderFactory, VMProviderType
-            from cua_cli.auth.store import require_api_key
+            from cua_cli.auth.store import get_api_key
+            from cua_sandbox import Sandbox
 
-            api_key = require_api_key()
-            provider = VMProviderFactory.create_provider(VMProviderType.CLOUD, api_key=api_key)
-            async with provider:
-                await provider.run_vm(name)
-                return json.dumps({"success": True, "message": f"Started sandbox: {name}"})
+            await Sandbox.resume(name, api_key=get_api_key())
+            return json.dumps({"success": True, "message": f"Started sandbox: {name}"})
 
     if Permission.SANDBOX_STOP in permissions:
 
@@ -317,14 +310,11 @@ async def _register_sandbox_tools(server: "FastMCP", permissions: set[Permission
             Args:
                 name: Sandbox name
             """
-            from computer.providers import VMProviderFactory, VMProviderType
-            from cua_cli.auth.store import require_api_key
+            from cua_cli.auth.store import get_api_key
+            from cua_sandbox import Sandbox
 
-            api_key = require_api_key()
-            provider = VMProviderFactory.create_provider(VMProviderType.CLOUD, api_key=api_key)
-            async with provider:
-                await provider.stop_vm(name)
-                return json.dumps({"success": True, "message": f"Stopped sandbox: {name}"})
+            await Sandbox.suspend(name, api_key=get_api_key())
+            return json.dumps({"success": True, "message": f"Stopped sandbox: {name}"})
 
     if Permission.SANDBOX_RESTART in permissions:
 
@@ -335,14 +325,11 @@ async def _register_sandbox_tools(server: "FastMCP", permissions: set[Permission
             Args:
                 name: Sandbox name
             """
-            from computer.providers import VMProviderFactory, VMProviderType
-            from cua_cli.auth.store import require_api_key
+            from cua_cli.auth.store import get_api_key
+            from cua_sandbox import Sandbox
 
-            api_key = require_api_key()
-            provider = VMProviderFactory.create_provider(VMProviderType.CLOUD, api_key=api_key)
-            async with provider:
-                await provider.restart_vm(name)
-                return json.dumps({"success": True, "message": f"Restarted sandbox: {name}"})
+            await Sandbox.restart(name, api_key=get_api_key())
+            return json.dumps({"success": True, "message": f"Restarted sandbox: {name}"})
 
     if Permission.SANDBOX_SUSPEND in permissions:
 
@@ -353,14 +340,11 @@ async def _register_sandbox_tools(server: "FastMCP", permissions: set[Permission
             Args:
                 name: Sandbox name
             """
-            from computer.providers import VMProviderFactory, VMProviderType
-            from cua_cli.auth.store import require_api_key
+            from cua_cli.auth.store import get_api_key
+            from cua_sandbox import Sandbox
 
-            api_key = require_api_key()
-            provider = VMProviderFactory.create_provider(VMProviderType.CLOUD, api_key=api_key)
-            async with provider:
-                await provider.suspend_vm(name)
-                return json.dumps({"success": True, "message": f"Suspended sandbox: {name}"})
+            await Sandbox.suspend(name, api_key=get_api_key())
+            return json.dumps({"success": True, "message": f"Suspended sandbox: {name}"})
 
     if Permission.SANDBOX_DELETE in permissions:
 
@@ -371,14 +355,11 @@ async def _register_sandbox_tools(server: "FastMCP", permissions: set[Permission
             Args:
                 name: Sandbox name
             """
-            from computer.providers import VMProviderFactory, VMProviderType
-            from cua_cli.auth.store import require_api_key
+            from cua_cli.auth.store import get_api_key
+            from cua_sandbox import Sandbox
 
-            api_key = require_api_key()
-            provider = VMProviderFactory.create_provider(VMProviderType.CLOUD, api_key=api_key)
-            async with provider:
-                await provider.delete_vm(name)
-                return json.dumps({"success": True, "message": f"Deleted sandbox: {name}"})
+            await Sandbox.delete(name, api_key=get_api_key())
+            return json.dumps({"success": True, "message": f"Deleted sandbox: {name}"})
 
     if Permission.SANDBOX_VNC in permissions:
 
@@ -389,19 +370,16 @@ async def _register_sandbox_tools(server: "FastMCP", permissions: set[Permission
             Args:
                 name: Sandbox name
             """
-            from computer.providers import VMProviderFactory, VMProviderType
-            from cua_cli.auth.store import require_api_key
+            from cua_cli.auth.store import get_api_key
+            from cua_sandbox import Sandbox
 
-            api_key = require_api_key()
-            provider = VMProviderFactory.create_provider(VMProviderType.CLOUD, api_key=api_key)
-            async with provider:
-                vm = await provider.get_vm(name)
-                if not vm:
-                    return json.dumps({"error": f"Sandbox not found: {name}"})
-                vnc_url = getattr(vm, "vnc_url", None)
-                if not vnc_url:
-                    return json.dumps({"error": "VNC URL not available"})
+            try:
+                sb = await Sandbox.connect(name, api_key=get_api_key())
+                vnc_url = await sb.get_display_url(share=True)
+                await sb.disconnect()
                 return json.dumps({"vnc_url": vnc_url})
+            except Exception as e:
+                return json.dumps({"error": str(e)})
 
 
 async def _register_computer_tools(
@@ -417,25 +395,18 @@ async def _register_computer_tools(
 
     async def _get_server_url(sandbox_name: str) -> Optional[str]:
         """Get the computer-server URL for a sandbox."""
-        from computer.providers import VMProviderFactory, VMProviderType
-
         name = sandbox_name or default_sandbox
         if not name:
             raise ValueError("No sandbox specified. Use --sandbox or set CUA_SANDBOX env var")
-
         api_key = get_api_key()
         if not api_key:
             raise ValueError("Not authenticated. Run 'cua auth login' first")
+        from cua_sandbox.transport.cloud import CloudTransport, cloud_get_vm
 
-        provider = VMProviderFactory.create_provider(VMProviderType.CLOUD, api_key=api_key)
-        async with provider:
-            vm = await provider.get_vm(name)
-            if not vm:
-                raise ValueError(f"Sandbox not found: {name}")
-            server_url = getattr(vm, "server_url", None)
-            if not server_url:
-                raise ValueError(f"Sandbox {name} is not running or has no server URL")
-            return server_url
+        vm = await cloud_get_vm(name, api_key=api_key)
+        if not vm:
+            raise ValueError(f"Sandbox not found: {name}")
+        return CloudTransport._resolve_endpoint(vm)
 
     async def _send_command(sandbox_name: str, command: str, params: dict) -> dict:
         """Send a command to the computer-server."""

@@ -1,8 +1,10 @@
-import Darwin
 import Foundation
-import Network
+import NIOCore
+import NIOPosix
+import NIOHTTP1
 
 // MARK: - Error Types
+
 enum PortError: Error, LocalizedError {
     case alreadyInUse(port: UInt16)
 
@@ -14,11 +16,117 @@ enum PortError: Error, LocalizedError {
     }
 }
 
+// MARK: - NIO Channel Handler
+
+/// Accumulates HTTP/1.1 request parts delivered by NIOHTTP1's decoder (which
+/// already handles Content-Length / chunked-encoding reassembly), then
+/// dispatches the complete request to the Server's route handlers.
+private final class HTTPChannelHandler: ChannelInboundHandler, @unchecked Sendable {
+    typealias InboundIn = HTTPServerRequestPart
+    typealias OutboundOut = HTTPServerResponsePart
+
+    private var requestHead: HTTPRequestHead?
+    private var bodyBuffer: ByteBuffer = ByteBuffer()
+    private let server: Server
+
+    init(server: Server) {
+        self.server = server
+    }
+
+    func channelRead(context: ChannelHandlerContext, data: NIOAny) {
+        switch unwrapInboundIn(data) {
+        case .head(let head):
+            requestHead = head
+            bodyBuffer.clear()
+        case .body(var buf):
+            bodyBuffer.writeBuffer(&buf)
+        case .end:
+            guard let head = requestHead else { return }
+            let bodyData: Data? =
+                bodyBuffer.readableBytes > 0 ? Data(bodyBuffer.readableBytesView) : nil
+            var headers: [String: String] = [:]
+            for (name, value) in head.headers {
+                headers[name.description] = value
+            }
+            let request = HTTPRequest(
+                method: head.method.rawValue,
+                path: head.uri,
+                headers: headers,
+                body: bodyData
+            )
+            Logger.info(
+                "Received request",
+                metadata: [
+                    "method": request.method,
+                    "path": request.path,
+                    "body": String(data: bodyData ?? Data(), encoding: .utf8) ?? "",
+                ])
+
+            // Bridge to Swift concurrency via an EventLoopPromise so that
+            // ChannelHandlerContext (non-Sendable) is only ever accessed on
+            // the event loop — never sent across actor boundaries.
+            let promise = context.eventLoop.makePromise(of: HTTPResponse.self)
+            let srv = server
+            Task {
+                do {
+                    let response = try await srv.handleRequest(request)
+                    promise.succeed(response)
+                } catch {
+                    promise.succeed(srv.errorResponse(error))
+                }
+            }
+            promise.futureResult.whenComplete { result in
+                let response: HTTPResponse
+                switch result {
+                case .success(let r): response = r
+                case .failure(let e): response = srv.errorResponse(e)
+                }
+                HTTPChannelHandler.writeResponse(response, to: context)
+            }
+        }
+    }
+
+    private static func writeResponse(_ response: HTTPResponse, to context: ChannelHandlerContext) {
+        var nioHeaders = HTTPHeaders()
+        for (k, v) in response.headers {
+            nioHeaders.add(name: k, value: v)
+        }
+        if let body = response.body {
+            nioHeaders.replaceOrAdd(name: "Content-Length", value: "\(body.count)")
+        }
+        let status = HTTPResponseStatus(statusCode: response.statusCode.rawValue)
+        let head = HTTPResponseHead(version: .http1_1, status: status, headers: nioHeaders)
+
+        Logger.info(
+            "Sending response",
+            metadata: [
+                "statusCode": "\(response.statusCode.rawValue)",
+                "body": String(data: response.body ?? Data(), encoding: .utf8) ?? "",
+            ])
+
+        context.eventLoop.execute {
+            context.write(NIOAny(HTTPServerResponsePart.head(head)), promise: nil)
+            if let body = response.body {
+                var buf = context.channel.allocator.buffer(capacity: body.count)
+                buf.writeBytes(body)
+                context.write(NIOAny(HTTPServerResponsePart.body(.byteBuffer(buf))), promise: nil)
+            }
+            context.writeAndFlush(NIOAny(HTTPServerResponsePart.end(nil)), promise: nil)
+        }
+    }
+
+    func errorCaught(context: ChannelHandlerContext, error: Error) {
+        Logger.error("Channel error", metadata: ["error": error.localizedDescription])
+        context.close(promise: nil)
+    }
+}
+
 // MARK: - Server Class
-@MainActor
-final class Server {
+
+final class Server: @unchecked Sendable {
 
     // MARK: - Route Type
+
     private struct Route {
         let method: String
         let path: String
@@ -27,64 +135,46 @@ final class Server {
         func matches(_ request: HTTPRequest) -> Bool {
             if method != request.method { return false }
 
-            // Handle path parameters
             let routeParts = path.split(separator: "/")
             let requestParts = request.path.split(separator: "/")
 
             if routeParts.count != requestParts.count { return false }
 
             for (routePart, requestPart) in zip(routeParts, requestParts) {
-                if routePart.hasPrefix(":") { continue }  // Path parameter
+                if routePart.hasPrefix(":") { continue }
                 if routePart != requestPart { return false }
             }
 
             return true
         }
 
-        func extractParams(_ request: HTTPRequest) -> [String: String] {
-            var params: [String: String] = [:]
-            let routeParts = path.split(separator: "/")
-            
-            // Split request path to remove query parameters
-            let requestPathOnly = request.path.split(separator: "?", maxSplits: 1)[0]
-            let requestParts = requestPathOnly.split(separator: "/")
-
-            for (routePart, requestPart) in zip(routeParts, requestParts) {
-                if routePart.hasPrefix(":") {
-                    let paramName = String(routePart.dropFirst())
-                    params[paramName] = String(requestPart)
-                }
-            }
-
-            return params
-        }
     }
 
     // MARK: - Properties
-    private let port: NWEndpoint.Port
+
+    private let portNumber: UInt16
     private let controller: LumeController
-    private var isRunning = false
-    private var listener: NWListener?
     private var routes: [Route]
+    private var serverChannel: (any Channel)?
+    private var eventLoopGroup: (any EventLoopGroup)?
 
     // MARK: - Initialization
+
     init(port: UInt16 = 7777) {
-        self.port = NWEndpoint.Port(rawValue: port)!
+        self.portNumber = port
         self.controller = LumeController()
         self.routes = []
-
-        // Define API routes after self is fully initialized
         self.setupRoutes()
     }
 
     // MARK: - Route Setup
+
     private func setupRoutes() {
         routes = [
             Route(
                 method: "GET", path: "/lume/vms",
                 handler: { [weak self] request in
                     guard let self else { throw HTTPError.internalError }
-                    // Extract storage from query params if present
                     let storage = self.extractQueryParam(request: request, name: "storage")
                     return try await self.handleListVMs(storage: storage)
                 }),
@@ -92,38 +182,22 @@ final class Server {
                 method: "GET", path: "/lume/vms/:name",
                 handler: { [weak self] request in
                     guard let self else { throw HTTPError.internalError }
-                    let params = Route(
-                        method: "GET", path: "/lume/vms/:name",
-                        handler: { _ in
-                            HTTPResponse(statusCode: .ok, body: "")
-                        }
-                    ).extractParams(request)
+                    let params = self.extractPathParams(pattern: "/lume/vms/:name", from: request)
                     guard let name = params["name"] else {
                         return HTTPResponse(statusCode: .badRequest, body: "Missing VM name")
                     }
-
-                    // Extract storage from query params if present
                     let storage = self.extractQueryParam(request: request, name: "storage")
-
                     return try await self.handleGetVM(name: name, storage: storage)
                 }),
             Route(
                 method: "DELETE", path: "/lume/vms/:name",
                 handler: { [weak self] request in
                     guard let self else { throw HTTPError.internalError }
-                    let params = Route(
-                        method: "DELETE", path: "/lume/vms/:name",
-                        handler: { _ in
-                            HTTPResponse(statusCode: .ok, body: "")
-                        }
-                    ).extractParams(request)
+                    let params = self.extractPathParams(pattern: "/lume/vms/:name", from: request)
                     guard let name = params["name"] else {
                         return HTTPResponse(statusCode: .badRequest, body: "Missing VM name")
                     }
-
-                    // Extract storage from query params if present
                     let storage = self.extractQueryParam(request: request, name: "storage")
-
                     return try await self.handleDeleteVM(name: name, storage: storage)
                 }),
             Route(
@@ -142,12 +216,7 @@ final class Server {
                 method: "PATCH", path: "/lume/vms/:name",
                 handler: { [weak self] request in
                     guard let self else { throw HTTPError.internalError }
-                    let params = Route(
-                        method: "PATCH", path: "/lume/vms/:name",
-                        handler: { _ in
-                            HTTPResponse(statusCode: .ok, body: "")
-                        }
-                    ).extractParams(request)
+                    let params = self.extractPathParams(pattern: "/lume/vms/:name", from: request)
                     guard let name = params["name"] else {
                         return HTTPResponse(statusCode: .badRequest, body: "Missing VM name")
                     }
@@ -157,12 +226,7 @@ final class Server {
                 method: "POST", path: "/lume/vms/:name/run",
                 handler: { [weak self] request in
                     guard let self else { throw HTTPError.internalError }
-                    let params = Route(
-                        method: "POST", path: "/lume/vms/:name/run",
-                        handler: { _ in
-                            HTTPResponse(statusCode: .ok, body: "")
-                        }
-                    ).extractParams(request)
+                    let params = self.extractPathParams(pattern: "/lume/vms/:name/run", from: request)
                     guard let name = params["name"] else {
                         return HTTPResponse(statusCode: .badRequest, body: "Missing VM name")
                     }
@@ -172,44 +236,33 @@ final class Server {
                 method: "POST", path: "/lume/vms/:name/stop",
                 handler: { [weak self] request in
                     guard let self else { throw HTTPError.internalError }
-                    let params = Route(
-                        method: "POST", path: "/lume/vms/:name/stop",
-                        handler: { _ in
-                            HTTPResponse(statusCode: .ok, body: "")
-                        }
-                    ).extractParams(request)
+                    let params = self.extractPathParams(
+                        pattern: "/lume/vms/:name/stop", from: request)
                     guard let name = params["name"] else {
                         return HTTPResponse(statusCode: .badRequest, body: "Missing VM name")
                     }
-
-                    Logger.info("Processing stop VM request", metadata: ["method": request.method, "path": request.path])
-
-                    // Extract storage from the request body
+                    Logger.info(
+                        "Processing stop VM request",
+                        metadata: ["method": request.method, "path": request.path])
                     var storage: String? = nil
                     if let bodyData = request.body, !bodyData.isEmpty {
                         do {
-                            if let json = try JSONSerialization.jsonObject(with: bodyData) as? [String: Any],
-                               let bodyStorage = json["storage"] as? String {
+                            if let json = try JSONSerialization.jsonObject(with: bodyData)
+                                as? [String: Any],
+                                let bodyStorage = json["storage"] as? String
+                            {
                                 storage = bodyStorage
-                                Logger.info("Extracted storage from request body", metadata: ["storage": bodyStorage])
                             }
-                        } catch {
-                            Logger.error("Failed to parse request body JSON", metadata: ["error": error.localizedDescription])
-                        }
+                        } catch {}
                     }
-
                     return try await self.handleStopVM(name: name, storage: storage)
                 }),
             Route(
                 method: "POST", path: "/lume/vms/:name/setup",
                 handler: { [weak self] request in
                     guard let self else { throw HTTPError.internalError }
-                    let params = Route(
-                        method: "POST", path: "/lume/vms/:name/setup",
-                        handler: { _ in
-                            HTTPResponse(statusCode: .ok, body: "")
-                        }
-                    ).extractParams(request)
+                    let params = self.extractPathParams(
+                        pattern: "/lume/vms/:name/setup", from: request)
                     guard let name = params["name"] else {
                         return HTTPResponse(statusCode: .badRequest, body: "Missing VM name")
                     }
@@ -228,6 +281,12 @@ final class Server {
                     return try await self.handlePull(request.body)
                 }),
             Route(
+                method: "POST", path: "/lume/pull/start",
+                handler: { [weak self] request in
+                    guard let self else { throw HTTPError.internalError }
+                    return try await self.handlePullStart(request.body)
+                }),
+            Route(
                 method: "POST", path: "/lume/prune",
                 handler: { [weak self] _ in
                     guard let self else { throw HTTPError.internalError }
@@ -239,7 +298,6 @@ final class Server {
                     guard let self else { throw HTTPError.internalError }
                     return try await self.handleGetImages(request)
                 }),
-            // New config endpoint
             Route(
                 method: "GET", path: "/lume/config",
                 handler: { [weak self] _ in
@@ -268,41 +326,28 @@ final class Server {
                 method: "DELETE", path: "/lume/config/locations/:name",
                 handler: { [weak self] request in
                     guard let self else { throw HTTPError.internalError }
-                    let params = Route(
-                        method: "DELETE", path: "/lume/config/locations/:name",
-                        handler: { _ in
-                            HTTPResponse(statusCode: .ok, body: "")
-                        }
-                    ).extractParams(request)
+                    let params = self.extractPathParams(
+                        pattern: "/lume/config/locations/:name", from: request)
                     guard let name = params["name"] else {
                         return HTTPResponse(statusCode: .badRequest, body: "Missing location name")
                     }
                     return try await self.handleRemoveLocation(name)
                 }),
-            
-            // Logs retrieval route
             Route(
                 method: "GET", path: "/lume/logs",
                 handler: { [weak self] request in
                     guard let self else { throw HTTPError.internalError }
-                    
-                    // Extract query parameters
-                    let type = self.extractQueryParam(request: request, name: "type") // "info", "error", or "all"
+                    let type = self.extractQueryParam(request: request, name: "type")
                     let linesParam = self.extractQueryParam(request: request, name: "lines")
-                    let lines = linesParam.flatMap { Int($0) } // Convert to Int if present
-                    
+                    let lines = linesParam.flatMap { Int($0) }
                     return try await self.handleGetLogs(type: type, lines: lines)
                 }),
             Route(
                 method: "POST", path: "/lume/config/locations/default/:name",
                 handler: { [weak self] request in
                     guard let self else { throw HTTPError.internalError }
-                    let params = Route(
-                        method: "POST", path: "/lume/config/locations/default/:name",
-                        handler: { _ in
-                            HTTPResponse(statusCode: .ok, body: "")
-                        }
-                    ).extractParams(request)
+                    let params = self.extractPathParams(
+                        pattern: "/lume/config/locations/default/:name", from: request)
                     guard let name = params["name"] else {
                         return HTTPResponse(statusCode: .badRequest, body: "Missing location name")
                     }
@@ -314,7 +359,6 @@ final class Server {
                     guard let self else { throw HTTPError.internalError }
                     return try await self.handlePush(request.body)
                 }),
-            // Host status endpoint for orchestrator health checks
             Route(
                 method: "GET", path: "/lume/host/status",
                 handler: { [weak self] _ in
@@ -324,302 +368,99 @@ final class Server {
         ]
     }
 
-    // Helper to extract query parameters from the URL
+    // MARK: - Helpers
+
     private func extractQueryParam(request: HTTPRequest, name: String) -> String? {
-        // Extract only the query part by splitting on '?'
         let parts = request.path.split(separator: "?", maxSplits: 1)
-        guard parts.count > 1 else { return nil } // No query parameters
-        
+        guard parts.count > 1 else { return nil }
         let queryString = String(parts[1])
-        // Create a placeholder URL with the query string
-        if let urlComponents = URLComponents(string: "http://placeholder.com?"+queryString),
-           let queryItems = urlComponents.queryItems
+        if let urlComponents = URLComponents(string: "http://placeholder.com?" + queryString),
+            let queryItems = urlComponents.queryItems
         {
             return queryItems.first(where: { $0.name == name })?.value?.removingPercentEncoding
         }
         return nil
     }
 
-    // MARK: - Port Utilities
-    private func isPortAvailable(port: Int) async -> Bool {
-        // Create a socket
-        let socketFD = socket(AF_INET, SOCK_STREAM, 0)
-        if socketFD == -1 {
-            return false
-        }
-
-        // Set socket options to allow reuse
-        var value: Int32 = 1
-        if setsockopt(
-            socketFD, SOL_SOCKET, SO_REUSEADDR, &value, socklen_t(MemoryLayout<Int32>.size)) == -1
-        {
-            close(socketFD)
-            return false
-        }
-
-        // Set up the address structure
-        var addr = sockaddr_in()
-        addr.sin_family = sa_family_t(AF_INET)
-        addr.sin_port = UInt16(port).bigEndian
-        addr.sin_addr.s_addr = INADDR_ANY.bigEndian
-
-        // Bind to the port
-        let bindResult = withUnsafePointer(to: &addr) { addrPtr in
-            addrPtr.withMemoryRebound(to: sockaddr.self, capacity: 1) { addrPtr in
-                Darwin.bind(socketFD, addrPtr, socklen_t(MemoryLayout<sockaddr_in>.size))
+    private func extractPathParams(pattern: String, from request: HTTPRequest) -> [String: String] {
+        var params: [String: String] = [:]
+        let routeParts = pattern.split(separator: "/")
+        let requestPathOnly = request.path.split(separator: "?", maxSplits: 1)[0]
+        let requestParts = requestPathOnly.split(separator: "/")
+        for (routePart, requestPart) in zip(routeParts, requestParts) {
+            if routePart.hasPrefix(":") {
+                params[String(routePart.dropFirst())] = String(requestPart)
             }
         }
-
-        // Clean up
-        close(socketFD)
-
-        // If bind failed, the port is in use
-        return bindResult == 0
+        return params
     }
 
     // MARK: - Server Lifecycle
+
     func start() async throws {
-        // First check if the port is already in use
-        if !(await isPortAvailable(port: Int(port.rawValue))) {
-            // Don't log anything here, just throw the error
-            throw PortError.alreadyInUse(port: port.rawValue)
-        }
+        let group = MultiThreadedEventLoopGroup(numberOfThreads: System.coreCount)
+        eventLoopGroup = group
+        let srv = self
 
-        let parameters = NWParameters.tcp
-        listener = try NWListener(using: parameters, on: port)
-
-        // Create an actor to safely manage state transitions
-        actor StartupState {
-            var error: Error?
-            var isComplete = false
-
-            func setError(_ error: Error) {
-                self.error = error
-                self.isComplete = true
-            }
-
-            func setComplete() {
-                self.isComplete = true
-            }
-
-            func checkStatus() -> (isComplete: Bool, error: Error?) {
-                return (isComplete, error)
-            }
-        }
-
-        let startupState = StartupState()
-
-        // Set up a state update handler to detect port binding errors
-        listener?.stateUpdateHandler = { state in
-            Task {
-                switch state {
-                case .setup:
-                    // Initial state, no action needed
-                    Logger.info("Listener setup", metadata: ["port": "\(self.port.rawValue)"])
-                    break
-                case .waiting(let error):
-                    // Log the full error details to see what we're getting
-                    Logger.error(
-                        "Listener waiting",
-                        metadata: [
-                            "error": error.localizedDescription,
-                            "debugDescription": error.debugDescription,
-                            "localizedDescription": error.localizedDescription,
-                            "port": "\(self.port.rawValue)",
-                        ])
-
-                    // Check for different port in use error messages
-                    if error.debugDescription.contains("Address already in use")
-                        || error.localizedDescription.contains("in use")
-                        || error.localizedDescription.contains("address already in use")
-                    {
-                        Logger.error(
-                            "Port conflict detected", metadata: ["port": "\(self.port.rawValue)"])
-                        await startupState.setError(
-                            PortError.alreadyInUse(port: self.port.rawValue))
-                    } else {
-                        // Wait for a short period to see if the listener recovers
-                        // Some network errors are transient
-                        try? await Task.sleep(nanoseconds: 1_000_000_000)  // 1 second
-
-                        // If we're still waiting after delay, consider it an error
-                        if case .waiting = await self.listener?.state {
-                            await startupState.setError(error)
-                        }
-                    }
-                case .failed(let error):
-                    // Log the full error details
-                    Logger.error(
-                        "Listener failed",
-                        metadata: [
-                            "error": error.localizedDescription,
-                            "debugDescription": error.debugDescription,
-                            "port": "\(self.port.rawValue)",
-                        ])
-                    await startupState.setError(error)
-                case .ready:
-                    // Listener successfully bound to port
-                    Logger.info("Listener ready", metadata: ["port": "\(self.port.rawValue)"])
-                    await startupState.setComplete()
-                case .cancelled:
-                    // Listener was cancelled
-                    Logger.info("Listener cancelled", metadata: ["port": "\(self.port.rawValue)"])
-                    break
-                @unknown default:
-                    Logger.info(
-                        "Unknown listener state",
-                        metadata: ["state": "\(state)", "port": "\(self.port.rawValue)"])
-                    break
+        let bootstrap = ServerBootstrap(group: group)
+            .serverChannelOption(ChannelOptions.backlog, value: 256)
+            .serverChannelOption(ChannelOptions.socketOption(.so_reuseaddr), value: 1)
+            .childChannelInitializer { channel in
+                channel.pipeline.configureHTTPServerPipeline().flatMap {
+                    channel.pipeline.addHandler(HTTPChannelHandler(server: srv))
                 }
             }
-        }
 
-        listener?.newConnectionHandler = { [weak self] connection in
-            Task { @MainActor [weak self] in
-                guard let self else { return }
-                self.handleConnection(connection)
-            }
-        }
-
-        listener?.start(queue: .main)
-
-        // Wait for either successful startup or an error
-        var status: (isComplete: Bool, error: Error?) = (false, nil)
-        repeat {
-            try await Task.sleep(nanoseconds: 100_000_000)  // 100ms
-            status = await startupState.checkStatus()
-        } while !status.isComplete
-
-        // If there was a startup error, throw it
-        if let error = status.error {
-            self.stop()
+        do {
+            let channel = try await bootstrap.bind(host: "127.0.0.1", port: Int(portNumber)).get()
+            serverChannel = channel
+            Logger.info("Server started", metadata: ["port": "\(portNumber)"])
+            try await channel.closeFuture.get()
+        } catch let ioError as IOError where ioError.errnoCode == EADDRINUSE {
+            try? await group.shutdownGracefully()
+            throw PortError.alreadyInUse(port: portNumber)
+        } catch {
+            try? await group.shutdownGracefully()
             throw error
         }
-
-        isRunning = true
-
-        Logger.info("Server started", metadata: ["port": "\(port.rawValue)"])
-
-        // Keep the server running
-        while isRunning {
-            try await Task.sleep(nanoseconds: 1_000_000_000)
-        }
+        try? await group.shutdownGracefully()
     }
 
     func stop() {
-        isRunning = false
-        listener?.cancel()
-    }
-
-    // MARK: - Connection Handling
-    private func handleConnection(_ connection: NWConnection) {
-        connection.stateUpdateHandler = { [weak self] state in
-            switch state {
-            case .ready:
-                Task { @MainActor [weak self] in
-                    guard let self else { return }
-                    self.receiveData(connection)
-                }
-            case .failed(let error):
-                Logger.error("Connection failed", metadata: ["error": error.localizedDescription])
-                connection.cancel()
-            case .cancelled:
-                // Connection is already cancelled, no need to cancel again
-                break
-            default:
-                break
-            }
+        serverChannel?.close(promise: nil)
+        if let group = eventLoopGroup {
+            Task { try? await group.shutdownGracefully() }
         }
-        connection.start(queue: .main)
-    }
-
-    private func receiveData(_ connection: NWConnection) {
-        connection.receive(minimumIncompleteLength: 1, maximumLength: 65536) {
-            [weak self] content, _, isComplete, error in
-            if let error = error {
-                Logger.error("Receive error", metadata: ["error": error.localizedDescription])
-                connection.cancel()
-                return
-            }
-
-            guard let data = content, !data.isEmpty else {
-                if isComplete {
-                    connection.cancel()
-                }
-                return
-            }
-
-            Task { @MainActor [weak self] in
-                guard let self else { return }
-                do {
-                    let response = try await self.handleRequest(data)
-                    self.send(response, on: connection)
-                } catch {
-                    let errorResponse = self.errorResponse(error)
-                    self.send(errorResponse, on: connection)
-                }
-            }
-        }
-    }
-
-    private func send(_ response: HTTPResponse, on connection: NWConnection) {
-        let data = response.serialize()
-        Logger.info(
-            "Serialized response", metadata: ["data": String(data: data, encoding: .utf8) ?? ""])
-        connection.send(
-            content: data,
-            completion: .contentProcessed { [weak connection] error in
-                if let error = error {
-                    Logger.error(
-                        "Failed to send response", metadata: ["error": error.localizedDescription])
-                } else {
-                    Logger.info("Response sent successfully")
-                }
-                if connection?.state != .cancelled {
-                    connection?.cancel()
-                }
-            })
     }
 
     // MARK: - Request Handling
-    private func handleRequest(_ data: Data) async throws -> HTTPResponse {
-        Logger.info(
-            "Received request data", metadata: ["data": String(data: data, encoding: .utf8) ?? ""])
 
-        guard let request = HTTPRequest(data: data) else {
-            Logger.error("Failed to parse request")
-            return HTTPResponse(statusCode: .badRequest, body: "Invalid request")
-        }
-
+    func handleRequest(_ request: HTTPRequest) async throws -> HTTPResponse {
         Logger.info(
             "Parsed request",
             metadata: [
                 "method": request.method,
                 "path": request.path,
-                "headers": "\(request.headers)",
                 "body": String(data: request.body ?? Data(), encoding: .utf8) ?? "",
             ])
 
-        // Find matching route
         guard let route = routes.first(where: { $0.matches(request) }) else {
             return HTTPResponse(statusCode: .notFound, body: "Not found")
         }
 
-        // Handle the request
         let response = try await route.handler(request)
 
         Logger.info(
             "Sending response",
             metadata: [
                 "statusCode": "\(response.statusCode.rawValue)",
-                "headers": "\(response.headers)",
                 "body": String(data: response.body ?? Data(), encoding: .utf8) ?? "",
             ])
 
         return response
     }
 
-    private func errorResponse(_ error: Error) -> HTTPResponse {
+    func errorResponse(_ error: Error) -> HTTPResponse {
         HTTPResponse(
             statusCode: .internalServerError,
             headers: ["Content-Type": "application/json"],

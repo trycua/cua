@@ -399,7 +399,7 @@ class ComputerAgent:
                 self.callbacks.append(TelemetryCallback(self, **self.telemetry_enabled))
 
             # OpenTelemetry callback (operational metrics - Four Golden Signals)
-            # Users can disable via CUA_TELEMETRY_DISABLED=true env var
+            # Users can disable via CUA_TELEMETRY_ENABLED=false env var
             self.callbacks.append(OtelCallback(self))
 
         self.tool_schemas = []

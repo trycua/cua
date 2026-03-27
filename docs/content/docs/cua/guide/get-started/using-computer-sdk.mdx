@@ -6,6 +6,10 @@ description: Connect to your sandbox and perform basic interactions
 import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
 import { Callout } from 'fumadocs-ui/components/callout';
 
+<Callout type="error" title="Deprecated">
+  The Computer SDK (`cua-computer`) is deprecated. New projects should use [`cua-sandbox`](/cua/guide/get-started/using-sandbox-sdk) instead. See the [migration guide](/cua/guide/get-started/migrating-from-computer-sdk) to update existing code.
+</Callout>
+
 <Callout type="warn" title="Python Version Compatibility">
   Cua packages require **Python 3.12 or 3.13**. Python 3.14 is not currently supported due to
   dependency compatibility issues (pydantic-core/PyO3 compatibility). If you encounter build errors

@@ -1,0 +1,98 @@
+[project]
+name = "cua-sandbox"
+version = "0.1.2"
+description = "CUA Sandbox — ephemeral and persistent sandboxed computer environments"
+readme = "README.md"
+license = "MIT"
+authors = [
+    { name = "TryCua", email = "hello@trycua.com" }
+]
+keywords = [
+    "sandbox",
+    "computer-use",
+    "automation",
+    "vm",
+    "container",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Libraries",
+]
+requires-python = ">=3.11,<3.14"
+
+dependencies = [
+    "cua-core>=0.1.18,<0.2.0",
+    "cua-auto>=0.1.2",
+    "websockets>=12.0",
+    "httpx>=0.27.0",
+    "oras>=0.2.40",
+    "vncdotool>=1.2.0",
+    "paramiko>=4.0.0",
+    "grpcio==1.78.0",
+    "protobuf==6.31.1",
+    "pycdlib>=1.14.0",
+]
+
+[project.optional-dependencies]
+auth = [
+    "webbrowser-open>=0.0.1",
+]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+    "ruff>=0.1.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/trycua/cua"
+Repository = "https://github.com/trycua/cua"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build]
+include = [
+    "cua_sandbox/**",
+    "README.md",
+    "LICENSE",
+]
+exclude = [
+    "cua_sandbox/**/__pycache__",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["cua_sandbox"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W"]
+ignore = ["E501"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = [
+    "tests",
+    "../../../examples/sandboxes",
+    "../../../examples/agents",
+]
+
+[dependency-groups]
+dev = [
+    "cua-agent>=0.7.38",
+    "pytest>=9.0.2",
+    "pytest-asyncio>=1.3.0",
+]
+
+[tool.uv.sources]
+cua-agent = { path = "../agent", editable = true }

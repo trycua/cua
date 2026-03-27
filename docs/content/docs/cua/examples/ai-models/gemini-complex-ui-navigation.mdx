@@ -95,8 +95,7 @@ Install the required packages for OmniParser and Gemini 3:
 Create a `requirements.txt` file:
 
 ```text
-cua-agent
-cua-computer
+cua
 cua-som  # OmniParser for GUI element detection
 litellm>=1.0.0
 python-dotenv>=1.0.0
@@ -152,8 +151,7 @@ import os
 import signal
 import traceback
 
-from agent import ComputerAgent
-from computer import Computer, VMProviderType
+from cua import ComputerAgent, Sandbox, Image
 from dotenv import load_dotenv
 
 logging.basicConfig(level=logging.INFO)
@@ -169,9 +167,8 @@ async def complex_ui_navigation():
     with complex, multi-step navigation tasks.
     """
     try:
-        async with Computer(
-            os_type="linux",
-            provider_type=VMProviderType.CLOUD,
+        async with Sandbox.create(
+            Image.linux(),
             name=os.environ["CUA_SANDBOX_NAME"],
             api_key=os.environ["CUA_API_KEY"],
             verbosity=logging.INFO,
@@ -299,8 +296,7 @@ import os
 import signal
 import traceback
 
-from agent import ComputerAgent
-from computer import Computer, VMProviderType
+from cua import ComputerAgent, Sandbox, Image
 from dotenv import load_dotenv
 
 logging.basicConfig(level=logging.INFO)
@@ -316,10 +312,9 @@ async def complex_ui_navigation():
     with complex, multi-step navigation tasks.
     """
     try:
-        async with Computer(
-            os_type="linux",
-            provider_type=VMProviderType.DOCKER,
-            image="trycua/cua-xfce:latest",
+        async with Sandbox.ephemeral(
+            Image.linux(),
+            local=True,
             verbosity=logging.INFO,
         ) as computer:
 
@@ -423,8 +418,7 @@ import os
 import signal
 import traceback
 
-from agent import ComputerAgent
-from computer import Computer, VMProviderType
+from cua import ComputerAgent, Sandbox, Image
 from dotenv import load_dotenv
 
 logging.basicConfig(level=logging.INFO)
@@ -440,9 +434,9 @@ async def complex_ui_navigation():
     with complex, multi-step navigation tasks.
     """
     try:
-        async with Computer(
-            os_type="macos",
-            provider_type=VMProviderType.LUME,
+        async with Sandbox.create(
+            Image.macos(),
+            local=True,
             name="macos-sequoia-cua:latest",
             verbosity=logging.INFO,
         ) as computer:

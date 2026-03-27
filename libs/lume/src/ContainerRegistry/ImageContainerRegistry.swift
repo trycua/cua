@@ -882,6 +882,7 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
             try await pullOCI(
                 manifest: manifest,
                 manifestId: manifestId,
+                imageName: imageName,
                 repository: "\(self.organization)/\(imageName)",
                 token: token,
                 to: tempVMDir
@@ -4666,6 +4667,7 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
     private func pullOCI(
         manifest: Manifest,
         manifestId: String,
+        imageName: String,
         repository: String,
         token: String,
         to destination: URL
@@ -4679,6 +4681,8 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
             Logger.info("OCI cache hit — copying from cache instead of downloading")
             try copyFromOCICache(manifest: manifest, manifestId: manifestId, to: destination)
             Logger.info("OCI cache copy complete")
+            try cleanupOldVersions(currentManifestId: manifestId, image: imageName)
+            try saveImageMetadata(image: imageName, manifestId: manifestId)
             return
         }
 
@@ -4714,6 +4718,7 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
                 FileManager.default.fileExists(atPath: cached.path)
             {
                 Logger.info("Config layer found in cache, skipping download (\(configLayer.digest.prefix(19))…)")
+                await downloadProgress.addProgress(Int64(configLayer.size))
                 blobDest = cached
             } else {
                 blobDest = tempDir.appendingPathComponent(
@@ -4745,6 +4750,7 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
                 FileManager.default.fileExists(atPath: cached.path)
             {
                 Logger.info("Nvram layer found in cache, skipping download (\(nvramLayer.digest.prefix(19))…)")
+                await downloadProgress.addProgress(Int64(nvramLayer.size))
                 blobDest = cached
             } else {
                 blobDest = tempDir.appendingPathComponent(
@@ -4926,8 +4932,14 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
                             Logger.info(
                                 "Chunk \(idx) found in cache, skipping download (\(chunk.digest.prefix(19))…)"
                             )
-                            blobDest = cached
-                            return (idx, blobDest, chunkOffset, true)
+                            await self.downloadProgress.addProgress(Int64(chunk.size))
+                            // Copy to a unique temp path to avoid sibling .raw race when
+                            // multiple pulls decompress the same cached file concurrently.
+                            let tmpCopy = tempDir.appendingPathComponent(
+                                UUID().uuidString + ".gz")
+                            try FileManager.default.copyItem(at: cached, to: tmpCopy)
+                            blobDest = tmpCopy
+                            return (idx, blobDest, chunkOffset, false)
                         } else {
                             blobDest = tempDir.appendingPathComponent(
                                 chunk.digest.replacingOccurrences(of: ":", with: "_"))
@@ -4984,7 +4996,12 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
                 Logger.info(
                     "Single disk layer found in cache, skipping download (\(singleDiskLayer.digest.prefix(19))…)"
                 )
-                blobDest = cached
+                await downloadProgress.addProgress(Int64(singleDiskLayer.size))
+                // Copy to a unique temp path to avoid sibling .raw race when
+                // multiple pulls decompress the same cached file concurrently.
+                let tmpCopy = tempDir.appendingPathComponent(UUID().uuidString + ".gz")
+                try FileManager.default.copyItem(at: cached, to: tmpCopy)
+                blobDest = tmpCopy
             } else {
                 blobDest = tempDir.appendingPathComponent(
                     singleDiskLayer.digest.replacingOccurrences(of: ":", with: "_"))
@@ -5019,6 +5036,13 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
                 try FileManager.default.copyItem(at: blobDest, to: diskDest)
                 Logger.info("Saved disk.img (uncompressed)")
             }
+        }
+
+        // Register this OCI image in metadata so getImages() can discover it and
+        // cleanupOldVersions can remove superseded manifests.
+        if cachingEnabled {
+            try cleanupOldVersions(currentManifestId: manifestId, image: imageName)
+            try saveImageMetadata(image: imageName, manifestId: manifestId)
         }
 
         Logger.info("OCI pull complete")
@@ -5145,14 +5169,23 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
             try diskHandle.truncate(atOffset: totalSize)
             try diskHandle.close()
 
+            let copyTempDir = FileManager.default.temporaryDirectory
+                .appendingPathComponent("lume_oci_copy_\(UUID().uuidString)")
+            try FileManager.default.createDirectory(
+                at: copyTempDir, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: copyTempDir) }
             for (idx, chunk) in sortedChunks.enumerated() {
                 let cached = getCachedLayerPath(manifestId: manifestId, digest: chunk.digest)
                 let chunkOffset = UInt64(chunk.annotations?[OCIAnnotation.partOffset] ?? "0") ?? 0
                 Logger.info(
                     "Decompressing cached chunk \(idx + 1)/\(sortedChunks.count) from cache")
+                // Copy to unique temp path to avoid sibling .raw race with concurrent pulls.
+                let tmpCopy = copyTempDir.appendingPathComponent(UUID().uuidString + ".gz")
+                try FileManager.default.copyItem(at: cached, to: tmpCopy)
+                defer { try? FileManager.default.removeItem(at: tmpCopy) }
                 let handle = try FileHandle(forWritingTo: diskDest)
                 let _ = try gunzipChunkAndWriteSparse(
-                    inputPath: cached, outputHandle: handle, startOffset: chunkOffset)
+                    inputPath: tmpCopy, outputHandle: handle, startOffset: chunkOffset)
                 try handle.close()
             }
             Logger.info("Disk image reassembled from \(sortedChunks.count) cached chunks")
@@ -5164,8 +5197,16 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
                 FileManager.default.createFile(atPath: diskDest.path, contents: nil)
                 let diskHandle = try FileHandle(forWritingTo: diskDest)
                 try diskHandle.truncate(atOffset: uncompSize)
+                // Copy to unique temp path to avoid sibling .raw race with concurrent pulls.
+                let singleCopyTempDir = FileManager.default.temporaryDirectory
+                    .appendingPathComponent("lume_oci_copy_\(UUID().uuidString)")
+                try FileManager.default.createDirectory(
+                    at: singleCopyTempDir, withIntermediateDirectories: true)
+                defer { try? FileManager.default.removeItem(at: singleCopyTempDir) }
+                let tmpCopy = singleCopyTempDir.appendingPathComponent(UUID().uuidString + ".gz")
+                try FileManager.default.copyItem(at: cached, to: tmpCopy)
                 let _ = try gunzipChunkAndWriteSparse(
-                    inputPath: cached, outputHandle: diskHandle, startOffset: 0)
+                    inputPath: tmpCopy, outputHandle: diskHandle, startOffset: 0)
                 try diskHandle.close()
                 Logger.info("Disk image decompressed (sparse) from cache")
             } else {

@@ -30,10 +30,7 @@ In pytest, use the bundled helper::
 
 from __future__ import annotations
 
-import os
 import platform
-import shutil
-import subprocess
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -115,28 +112,9 @@ def _host_arch() -> str:
 
 
 def _has_docker() -> bool:
-    # Probe common install locations in addition to PATH — SSH sessions often
-    # have a stripped PATH that omits /usr/local/bin (e.g. OrbStack on macOS).
-    _DOCKER_CANDIDATES = [
-        "docker",
-        "/usr/local/bin/docker",
-        "/opt/homebrew/bin/docker",
-        "/usr/bin/docker",
-        str(os.path.expanduser("~/.docker/bin/docker")),
-    ]
-    for candidate in _DOCKER_CANDIDATES:
-        cmd = shutil.which(candidate) or candidate
-        try:
-            subprocess.run(
-                [cmd, "info"],
-                capture_output=True,
-                check=True,
-                timeout=10,
-            )
-            return True
-        except (subprocess.SubprocessError, FileNotFoundError, OSError):
-            continue
-    return False
+    from cua_sandbox.runtime.docker import _has_docker as _docker_check
+
+    return _docker_check()
 
 
 def _has_kvm() -> bool:
@@ -182,99 +160,66 @@ def _x86_guest_hw_accel() -> tuple[bool, str]:
 
 
 def _has_lume() -> bool:
-    if shutil.which("lume"):
-        return True
-    local_bin = os.path.expanduser("~/.local/bin/lume")
-    return os.path.isfile(local_bin) and os.access(local_bin, os.X_OK)
+    from cua_sandbox.runtime.lume import _has_lume as _lume_check
+
+    return _lume_check()
 
 
 def _has_android_sdk() -> bool:
-    """Return True if the Android emulator binary is already present.
+    """Return True if the Android emulator binary is present.
 
-    Uses the same search order as AndroidEmulatorRuntime._sdk_path() so the
-    result here matches what the runtime will actually find at boot time.
+    Delegates to android_emulator._sdk_path() — the exact same logic the
+    runtime uses at boot — then checks that emulator/emulator exists there.
     """
-    import os
-    from pathlib import Path
 
-    # 1. Explicit env vars
-    for env in ("ANDROID_HOME", "ANDROID_SDK_ROOT"):
-        val = os.environ.get(env)
-        if val and Path(val).exists():
-            sdk = Path(val)
-            if (sdk / "emulator" / "emulator").exists():
-                return True
+    from cua_sandbox.runtime.android_emulator import _sdk_path
 
-    # 2. Common install locations (same list as _sdk_path in android_emulator.py)
-    candidates = [
-        Path.home() / "Library" / "Android" / "sdk",  # Android Studio macOS
-        Path("/opt/android"),  # docker-android
-        Path.home() / "Android" / "Sdk",  # Linux
-    ]
-    for p in candidates:
-        if (p / "emulator").exists() and (p / "emulator" / "emulator").exists():
-            return True
-
-    # 3. CUA auto-install location (~/.cua/android-sdk) — the fallback _SDK_ROOT
-    cua_sdk = Path.home() / ".cua" / "android-sdk"
-    return (cua_sdk / "emulator" / "emulator").exists()
+    sdk = _sdk_path()
+    return (sdk / "emulator" / "emulator").exists()
 
 
 def _has_java() -> bool:
     """Return True if a usable JRE is found.
 
-    Mirrors the Homebrew path search in AndroidEmulatorRuntime._java_env()
-    so the result is consistent with what the runtime will use at boot.
+    Calls android_emulator._java_env() — the exact same probe the runtime uses.
+    Returns False if _java_env() raises (Java not found).
     """
-    from pathlib import Path
+    from cua_sandbox.runtime.android_emulator import _java_env
 
-    # 1. JAVA_HOME already set
-    if shutil.which("java"):
-        try:
-            r = subprocess.run(["java", "-version"], capture_output=True, timeout=5)
-            if r.returncode == 0:
-                return True
-        except (subprocess.SubprocessError, FileNotFoundError, OSError):
-            pass
-
-    # 2. Homebrew OpenJDK — checked in the same order as android_emulator._java_env()
-    brew_candidates = [
-        Path("/opt/homebrew/opt/openjdk/bin/java"),  # Apple Silicon, latest
-        Path("/usr/local/opt/openjdk/bin/java"),  # Intel Mac, latest
-    ]
-    # Also accept any versioned openjdk (openjdk@17, openjdk@21, etc.)
-    for prefix in (Path("/opt/homebrew/opt"), Path("/usr/local/opt")):
-        if prefix.exists():
-            for d in sorted(prefix.glob("openjdk*")):
-                brew_candidates.append(d / "bin" / "java")
-
-    for java_bin in brew_candidates:
-        if java_bin.exists() and os.access(java_bin, os.X_OK):
-            try:
-                r = subprocess.run([str(java_bin), "-version"], capture_output=True, timeout=5)
-                if r.returncode == 0:
-                    return True
-            except (subprocess.SubprocessError, OSError):
-                continue
-
-    return False
-
-
-def _has_hyperv() -> bool:
     try:
-        r = subprocess.run(
-            ["powershell", "-Command", "Get-Command New-VM -ErrorAction Stop"],
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-        return r.returncode == 0
-    except (subprocess.SubprocessError, FileNotFoundError, OSError):
+        _java_env()
+        return True
+    except RuntimeError:
         return False
 
 
+def _has_hyperv() -> bool:
+    from cua_sandbox.runtime.hyperv import _has_hyperv as _hyperv_check
+
+    return _hyperv_check()
+
+
 def _has_qemu() -> bool:
-    return bool(shutil.which("qemu-system-x86_64") or shutil.which("qemu-system-aarch64"))
+    """Return True if a QEMU binary is available.
+
+    Delegates to qemu_installer.qemu_bin() which checks PATH, Homebrew,
+    MacPorts, and the cached portable install — the same resolution the
+    runtime uses at boot time.
+    """
+    arch = _host_arch()
+    from cua_sandbox.runtime.qemu_installer import qemu_bin
+
+    try:
+        qemu_bin(arch)
+        return True
+    except RuntimeError:
+        # Also try the other arch — a cross-arch QEMU is still useful
+        other = "x86_64" if arch == "arm64" else "arm64"
+        try:
+            qemu_bin(other)
+            return True
+        except RuntimeError:
+            return False
 
 
 # ---------------------------------------------------------------------------

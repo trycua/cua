@@ -39,11 +39,29 @@ def _find_free_port(start: int = 8000, end: int = 9000) -> int:
 
 
 def _has_docker() -> bool:
-    try:
-        subprocess.run(["docker", "info"], capture_output=True, check=True, timeout=10)
-        return True
-    except (subprocess.SubprocessError, FileNotFoundError):
-        return False
+    """Return True if a Docker daemon is reachable.
+
+    Probes common install locations in addition to PATH — SSH sessions often
+    have a stripped PATH that omits /usr/local/bin (e.g. OrbStack on macOS).
+    """
+    import os
+    import shutil
+
+    candidates = [
+        "docker",
+        "/usr/local/bin/docker",
+        "/opt/homebrew/bin/docker",
+        "/usr/bin/docker",
+        os.path.expanduser("~/.docker/bin/docker"),
+    ]
+    for candidate in candidates:
+        cmd = shutil.which(candidate) or candidate
+        try:
+            subprocess.run([cmd, "info"], capture_output=True, check=True, timeout=10)
+            return True
+        except (subprocess.SubprocessError, FileNotFoundError, OSError):
+            continue
+    return False
 
 
 def _has_kvm() -> bool:

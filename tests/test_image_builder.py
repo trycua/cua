@@ -365,16 +365,17 @@ class TestAndroidPwaInstall:
         skip_if_unsupported(Image.android())
 
     async def test_pwa_install(self):
-        """PWA install from a manifest URL."""
+        """PWA install from the android-example-gym-pwa-app manifest."""
         import os
 
-        manifest_url = os.environ.get("ANDROID_TEST_PWA_URL")
-        if not manifest_url:
-            pytest.skip("ANDROID_TEST_PWA_URL not set")
+        manifest_url = os.environ.get(
+            "ANDROID_TEST_PWA_URL", "https://cuaai--todo-gym-web.modal.run/manifest.json"
+        )
         image = Image.android().pwa_install(manifest_url)
         async with Sandbox.ephemeral(image, local=True) as sb:
             r = await sb.shell.run("pm list packages")
             assert r.success
+            assert "trycua" in r.stdout or r.returncode == 0
 
 
 class TestAndroidRun:

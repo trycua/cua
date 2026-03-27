@@ -359,13 +359,19 @@ class AndroidEmulatorRuntime(Runtime):
         # Write image env vars to a persistent file so every subsequent
         # adb shell command (including those from the transport) can source it.
         if image._env:
-            exports = "\n".join(f"export {k}={v!r}" for k, v in image._env)
+            import tempfile
+
+            exports = "\n".join(f"export {k}={v}" for k, v in image._env) + "\n"
+            with tempfile.NamedTemporaryFile(mode="w", suffix=".sh", delete=False) as f:
+                f.write(exports)
+                tmp_path = f.name
             subprocess.run(
-                [adb, "-s", serial, "shell", f"printf '{exports}\\n' > /data/local/tmp/.cua_env"],
+                [adb, "-s", serial, "push", tmp_path, "/data/local/tmp/.cua_env"],
                 capture_output=True,
                 env=env,
                 timeout=10,
             )
+            Path(tmp_path).unlink(missing_ok=True)
 
         for layer in image._layers:
             lt = layer["type"]

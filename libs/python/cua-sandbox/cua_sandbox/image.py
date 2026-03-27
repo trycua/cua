@@ -413,6 +413,33 @@ class Image:
                 lines.append(layer["command"])
         return "\n".join(lines) + "\n"
 
+    def local_support(self):  # -> RuntimeSupport (lazy import avoids circular dep)
+        """Check whether this image can run locally on the current host.
+
+        Returns a :class:`~cua_sandbox.runtime.compat.RuntimeSupport` describing:
+
+        - ``supported``  — runtime is available or auto-installable on this OS
+        - ``hw_accel``   — hardware acceleration (HVF / KVM / Hyper-V) is available
+        - ``runtime_installed`` — runtime binary found right now (no install needed)
+        - ``auto_installable`` — SDK can install the runtime automatically
+        - ``reason``     — human-readable explanation
+
+        In tests, use the bundled helper instead of checking manually::
+
+            from cua_sandbox.runtime.compat import skip_if_unsupported
+
+            async def test_something():
+                skip_if_unsupported(Image.macos())
+                async with Sandbox.ephemeral(Image.macos(), local=True) as sb:
+                    ...
+        """
+        from cua_sandbox.runtime.compat import (  # noqa: F401
+            RuntimeSupport,
+            check_local_support,
+        )
+
+        return check_local_support(self)
+
     def __repr__(self) -> str:
         reg = f", registry={self._registry!r}" if self._registry else ""
         return (

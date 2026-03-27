@@ -40,22 +40,72 @@ from cua_sandbox import (
 )
 
 # ---------------------------------------------------------------------------
-# cua-agent surface (lazy to avoid import-time side effects when only
-# sandbox symbols are needed)
+# Runtime compatibility helpers — lazily imported so older cua-sandbox
+# releases that pre-date compat.py still work.
 # ---------------------------------------------------------------------------
+try:
+    from cua_sandbox.runtime.compat import (
+        RuntimeSupport,
+        check_local_support,
+        skip_if_unsupported,
+    )
+except ImportError:  # cua-sandbox < compat.py introduction
+    RuntimeSupport = None  # type: ignore[assignment,misc]
+    check_local_support = None  # type: ignore[assignment]
+    skip_if_unsupported = None  # type: ignore[assignment]
+
+# ---------------------------------------------------------------------------
+# Lazy imports — runtime classes, interface types, agent surface.
+# These are pulled in on first attribute access so that `import cua` stays
+# fast even when heavy optional deps (grpcio, vncdotool, …) are not installed.
+# ---------------------------------------------------------------------------
+
+_RUNTIME_NAMES: dict[str, tuple[str, str]] = {
+    # name -> (module, attr)
+    "DockerRuntime": ("cua_sandbox.runtime.docker", "DockerRuntime"),
+    "QEMURuntime": ("cua_sandbox.runtime.qemu", "QEMURuntime"),
+    "LumeRuntime": ("cua_sandbox.runtime.lume", "LumeRuntime"),
+    "AndroidEmulatorRuntime": ("cua_sandbox.runtime.android_emulator", "AndroidEmulatorRuntime"),
+    "HyperVRuntime": ("cua_sandbox.runtime.hyperv", "HyperVRuntime"),
+    "RuntimeInfo": ("cua_sandbox.runtime.base", "RuntimeInfo"),
+}
+
+_INTERFACE_NAMES: dict[str, tuple[str, str]] = {
+    "Shell": ("cua_sandbox.interfaces.shell", "Shell"),
+    "CommandResult": ("cua_sandbox.interfaces.shell", "CommandResult"),
+    "Mouse": ("cua_sandbox.interfaces.mouse", "Mouse"),
+    "Keyboard": ("cua_sandbox.interfaces.keyboard", "Keyboard"),
+    "Screen": ("cua_sandbox.interfaces.screen", "Screen"),
+    "Clipboard": ("cua_sandbox.interfaces.clipboard", "Clipboard"),
+    "Tunnel": ("cua_sandbox.interfaces.tunnel", "Tunnel"),
+    "TunnelInfo": ("cua_sandbox.interfaces.tunnel", "TunnelInfo"),
+    "Mobile": ("cua_sandbox.interfaces.mobile", "Mobile"),
+    "Terminal": ("cua_sandbox.interfaces.terminal", "Terminal"),
+    "Window": ("cua_sandbox.interfaces.window", "Window"),
+}
+
+_AGENT_NAMES: dict[str, tuple[str, str]] = {
+    "ComputerAgent": ("agent", "ComputerAgent"),
+    "AgentResponse": ("agent", "AgentResponse"),
+    "Messages": ("agent", "Messages"),
+    "register_agent": ("agent", "register_agent"),
+}
+
+_LAZY: dict[str, tuple[str, str]] = {**_RUNTIME_NAMES, **_INTERFACE_NAMES, **_AGENT_NAMES}
 
 
 def __getattr__(name: str):
-    _AGENT_NAMES = {"ComputerAgent", "AgentResponse", "Messages", "register_agent"}
-    if name in _AGENT_NAMES:
-        import agent as _agent
+    if name in _LAZY:
+        mod_path, attr = _LAZY[name]
+        import importlib
 
-        return getattr(_agent, name)
+        mod = importlib.import_module(mod_path)
+        return getattr(mod, attr)
     raise AttributeError(f"module 'cua' has no attribute {name!r}")
 
 
 __all__ = [
-    # cua-sandbox
+    # cua-sandbox core
     "configure",
     "login",
     "whoami",
@@ -66,6 +116,29 @@ __all__ = [
     "Localhost",
     "localhost",
     "CloudTransport",
+    # runtime compat (always available)
+    "RuntimeSupport",
+    "check_local_support",
+    "skip_if_unsupported",
+    # runtime classes (lazy)
+    "DockerRuntime",
+    "QEMURuntime",
+    "LumeRuntime",
+    "AndroidEmulatorRuntime",
+    "HyperVRuntime",
+    "RuntimeInfo",
+    # interface types (lazy)
+    "Shell",
+    "CommandResult",
+    "Mouse",
+    "Keyboard",
+    "Screen",
+    "Clipboard",
+    "Tunnel",
+    "TunnelInfo",
+    "Mobile",
+    "Terminal",
+    "Window",
     # cua-agent (lazy)
     "ComputerAgent",
     "AgentResponse",

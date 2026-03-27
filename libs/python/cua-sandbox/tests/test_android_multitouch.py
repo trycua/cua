@@ -49,6 +49,7 @@ import pytest
 import pytest_asyncio
 from cua_sandbox.image import Image
 from cua_sandbox.runtime.android_emulator import AndroidEmulatorRuntime
+from cua_sandbox.runtime.compat import skip_if_unsupported
 from cua_sandbox.sandbox import Sandbox
 
 # ── Config ─────────────────────────────────────────────────────────────────
@@ -142,6 +143,8 @@ async def local_android_sb():
     APK, escalate to root, launch the app, and yield the ready Sandbox.
     Shared across all local tests so we only pay the boot cost once.
     """
+    skip_if_unsupported(Image.android(str(_API_LEVEL)))
+
     apk = _get_apk()
 
     runtime = AndroidEmulatorRuntime(
@@ -431,6 +434,7 @@ class TestAndroidMultitouchLocal(_MultitouchTests):
 # ══════════════════════════════════════════════════════════════════════════════
 
 skip_no_api_key = pytest.mark.skipif(not _API_KEY, reason="CUA_TEST_API_KEY not set")
+# Note: cloud Android tests are gated by API key only — hardware compat is the cloud's concern.
 
 
 @pytest_asyncio.fixture(scope="session", loop_scope="session")

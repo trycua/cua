@@ -109,8 +109,8 @@ class LayerExecutor:
     async def _exec_run(self, layer: dict) -> dict:
         cmd = layer["command"]
         if not self._is_windows():
-            # Run with sudo so image-build commands have root access (like Dockerfile RUN)
-            cmd = f"sudo sh -c {_sh_quote(cmd)}"
+            # Source env profile (if present) then run with sudo for root access
+            cmd = f"sudo bash -c '. /etc/profile.d/cua-env.sh 2>/dev/null; {_bash_escape(cmd)}'"
         return await self.run_command(cmd)
 
     async def _exec_apt_install(self, layer: dict) -> dict:
@@ -219,6 +219,12 @@ class LayerExecutor:
         return {"success": True, "return_code": 0}
 
 
+def _bash_escape(s: str) -> str:
+    """Escape a command string for embedding inside single-quoted bash -c '...'."""
+    # Replace single quotes: end the single-quote, add escaped single-quote, restart
+    return s.replace("'", "'\\''")
+
+
 def _sh_quote(s: str) -> str:
     """Wrap string in single quotes, escaping any existing single quotes."""
-    return "'" + s.replace("'", "'\\''") + "'"
+    return "'" + _bash_escape(s) + "'"

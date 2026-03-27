@@ -153,7 +153,7 @@ class DockerRuntime(Runtime):
 
         # Expose additional ports from image._ports
         for port in getattr(image, "_ports", ()):
-            host_p = _find_free_port(port)
+            host_p = _find_free_port(port, port + 1000)
             extra_flags += ["-p", f"{host_p}:{port}"]
 
         # Remove existing container with same name
@@ -196,16 +196,30 @@ class DockerRuntime(Runtime):
         await self.is_ready(info)
 
         # Apply image layers and files via computer-server
-        has_work = image._layers or getattr(image, "_files", ())
-        if has_work:
+        env_items = getattr(image, "_env", ())
+        file_items = getattr(image, "_files", ())
+        has_work = image._layers or file_items
+        if has_work or env_items:
             from cua_sandbox.builder.executor import LayerExecutor
 
             executor = LayerExecutor(f"http://{info.host}:{info.api_port}", os_type=image.os_type)
+
+            # Write env vars to a sourceable profile script so run layers can access them
+            if env_items and image.os_type != "windows":
+                env_lines = "\n".join(f'export {k}="{v}"' for k, v in env_items)
+                env_script = f"#!/bin/sh\n{env_lines}\n"
+                import base64 as _b64
+
+                env_b64 = _b64.b64encode(env_script.encode()).decode()
+                await executor.write_file("/etc/profile.d/cua-env.sh", env_b64)
+                await executor.run_command("sudo chmod 644 /etc/profile.d/cua-env.sh")
+
+            # Apply files before layers so later run layers can reference copied files
+            for src, dst in file_items:
+                await executor.execute_layers([{"type": "copy", "src": src, "dst": dst}])
+
             if image._layers:
                 await executor.execute_layers(list(image._layers))
-            # Copy files from image._files
-            for src, dst in getattr(image, "_files", ()):
-                await executor.execute_layers([{"type": "copy", "src": src, "dst": dst}])
 
         return info
 

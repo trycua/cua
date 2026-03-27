@@ -328,8 +328,20 @@ class LumeRuntime(Runtime):
                         f'/usr/libexec/PlistBuddy -c "Set :EnvironmentVariables:{k} {safe_v}" {plist} 2>/dev/null || '
                         f'/usr/libexec/PlistBuddy -c "Add :EnvironmentVariables:{k} string {safe_v}" {plist}'
                     )
-                # Reload the launchd service so it picks up the new env
-                await executor.run_command(f"launchctl unload {plist} && launchctl load {plist}")
+                # Reload via lume ssh from the host — launchctl unload would kill
+                # computer-server mid-execution if run from inside via /cmd.
+                lume_bin = _lume_path() or "lume"
+                reload_cmd = f"launchctl unload {plist} && launchctl load {plist}"
+                proc = await asyncio.create_subprocess_exec(
+                    lume_bin,
+                    "ssh",
+                    info.name,
+                    "--",
+                    reload_cmd,
+                    stdout=asyncio.subprocess.DEVNULL,
+                    stderr=asyncio.subprocess.DEVNULL,
+                )
+                await asyncio.wait_for(proc.wait(), timeout=30)
                 await self.is_ready(info)  # wait for computer-server to come back
             else:
                 sudo = "sudo"

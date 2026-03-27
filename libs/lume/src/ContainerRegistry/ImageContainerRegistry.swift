@@ -881,6 +881,7 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
             Logger.debug("Pulling OCI-compliant image")
             try await pullOCI(
                 manifest: manifest,
+                manifestId: manifestId,
                 repository: "\(self.organization)/\(imageName)",
                 token: token,
                 to: tempVMDir
@@ -4664,6 +4665,7 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
     /// Pull an OCI-compliant image (kubelet format) into `destination` as a Lume VM directory.
     private func pullOCI(
         manifest: Manifest,
+        manifestId: String,
         repository: String,
         token: String,
         to destination: URL
@@ -4671,6 +4673,20 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
         Logger.info("Downloading OCI-compliant layers")
         try FileManager.default.createDirectory(
             at: destination, withIntermediateDirectories: true)
+
+        // ── Top-level OCI cache check ─────────────────────────────────────────
+        if cachingEnabled && validateOCICache(manifest: manifest, manifestId: manifestId) {
+            Logger.info("OCI cache hit — copying from cache instead of downloading")
+            try copyFromOCICache(manifest: manifest, manifestId: manifestId, to: destination)
+            Logger.info("OCI cache copy complete")
+            return
+        }
+
+        // Ensure cache directory exists for this image when caching is enabled
+        if cachingEnabled {
+            let cacheDir = getImageCacheDirectory(manifestId: manifestId)
+            try FileManager.default.createDirectory(at: cacheDir, withIntermediateDirectories: true)
+        }
 
         let tempDir = FileManager.default.temporaryDirectory
             .appendingPathComponent("lume_oci_\(UUID().uuidString)")
@@ -4691,35 +4707,63 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
         // ── Download config & aux (shared by both paths) ─────────────────────
         var configData: Data?
         if let configLayer = manifest.config {
-            let blobDest = tempDir.appendingPathComponent(
-                configLayer.digest.replacingOccurrences(of: ":", with: "_"))
-            Logger.info("Downloading config layer (\(configLayer.digest.prefix(19))…)")
-            try await downloadLayer(
-                repository: repository,
-                digest: configLayer.digest,
-                mediaType: configLayer.mediaType,
-                token: token,
-                to: blobDest,
-                maxRetries: 5,
-                progress: downloadProgress
-            )
+            let cachedConfigPath = cachingEnabled
+                ? getCachedLayerPath(manifestId: manifestId, digest: configLayer.digest) : nil
+            let blobDest: URL
+            if let cached = cachedConfigPath,
+                FileManager.default.fileExists(atPath: cached.path)
+            {
+                Logger.info("Config layer found in cache, skipping download (\(configLayer.digest.prefix(19))…)")
+                blobDest = cached
+            } else {
+                blobDest = tempDir.appendingPathComponent(
+                    configLayer.digest.replacingOccurrences(of: ":", with: "_"))
+                Logger.info("Downloading config layer (\(configLayer.digest.prefix(19))…)")
+                try await downloadLayer(
+                    repository: repository,
+                    digest: configLayer.digest,
+                    mediaType: configLayer.mediaType,
+                    token: token,
+                    to: blobDest,
+                    maxRetries: 5,
+                    progress: downloadProgress
+                )
+                // Save to cache
+                if let cached = cachedConfigPath {
+                    try? FileManager.default.copyItem(at: blobDest, to: cached)
+                }
+            }
             configData = try Data(contentsOf: blobDest)
         }
 
         var nvramBlobPath: URL?
         if let nvramLayer = manifest.layers.first(where: { $0.mediaType == OCIMediaType.nvram }) {
-            let blobDest = tempDir.appendingPathComponent(
-                nvramLayer.digest.replacingOccurrences(of: ":", with: "_"))
-            Logger.info("Downloading nvram layer (\(nvramLayer.digest.prefix(19))…)")
-            try await downloadLayer(
-                repository: repository,
-                digest: nvramLayer.digest,
-                mediaType: nvramLayer.mediaType,
-                token: token,
-                to: blobDest,
-                maxRetries: 5,
-                progress: downloadProgress
-            )
+            let cachedNvramPath = cachingEnabled
+                ? getCachedLayerPath(manifestId: manifestId, digest: nvramLayer.digest) : nil
+            let blobDest: URL
+            if let cached = cachedNvramPath,
+                FileManager.default.fileExists(atPath: cached.path)
+            {
+                Logger.info("Nvram layer found in cache, skipping download (\(nvramLayer.digest.prefix(19))…)")
+                blobDest = cached
+            } else {
+                blobDest = tempDir.appendingPathComponent(
+                    nvramLayer.digest.replacingOccurrences(of: ":", with: "_"))
+                Logger.info("Downloading nvram layer (\(nvramLayer.digest.prefix(19))…)")
+                try await downloadLayer(
+                    repository: repository,
+                    digest: nvramLayer.digest,
+                    mediaType: nvramLayer.mediaType,
+                    token: token,
+                    to: blobDest,
+                    maxRetries: 5,
+                    progress: downloadProgress
+                )
+                // Save to cache
+                if let cached = cachedNvramPath {
+                    try? FileManager.default.copyItem(at: blobDest, to: cached)
+                }
+            }
             nvramBlobPath = blobDest
         }
 
@@ -4839,7 +4883,8 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
             }
 
             // Download chunks in parallel (4 concurrent)
-            try await withThrowingTaskGroup(of: (Int, URL, UInt64).self) { group in
+            // Result tuple: (chunkIndex, blobPath, chunkOffset, isFromCache)
+            try await withThrowingTaskGroup(of: (Int, URL, UInt64, Bool).self) { group in
                 let maxConcurrent = 4
                 var enqueued = 0
 
@@ -4850,7 +4895,8 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
                             Logger.error("Task group unexpectedly empty while throttling downloads")
                             continue
                         }
-                        let (completedIdx, completedPath, completedOffset) = result
+                        let (completedIdx, completedPath, completedOffset, completedFromCache) =
+                            result
                         await pullProgress.updateStatus(
                             id: "chunk-\(completedIdx)", status: .decompressing)
                         let handle = try FileHandle(forWritingTo: diskDest)
@@ -4858,7 +4904,9 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
                             inputPath: completedPath, outputHandle: handle,
                             startOffset: completedOffset)
                         try handle.close()
-                        try? FileManager.default.removeItem(at: completedPath)
+                        if !completedFromCache {
+                            try? FileManager.default.removeItem(at: completedPath)
+                        }
                         await pullProgress.markDone(id: "chunk-\(completedIdx)")
                     }
 
@@ -4866,26 +4914,48 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
                         UInt64(chunk.annotations?[OCIAnnotation.partOffset] ?? "0") ?? 0
 
                     group.addTask {
-                        let blobDest = tempDir.appendingPathComponent(
-                            chunk.digest.replacingOccurrences(of: ":", with: "_"))
-                        await pullProgress.updateStatus(
-                            id: "chunk-\(idx)", status: .downloading)
-                        try await self.downloadLayer(
-                            repository: repository,
-                            digest: chunk.digest,
-                            mediaType: chunk.mediaType,
-                            token: token,
-                            to: blobDest,
-                            maxRetries: 5,
-                            progress: self.downloadProgress
-                        )
-                        return (idx, blobDest, chunkOffset)
+                        let cachedChunkPath = self.cachingEnabled
+                            ? self.getCachedLayerPath(manifestId: manifestId, digest: chunk.digest)
+                            : nil
+                        let blobDest: URL
+                        if let cached = cachedChunkPath,
+                            FileManager.default.fileExists(atPath: cached.path)
+                        {
+                            await pullProgress.updateStatus(
+                                id: "chunk-\(idx)", status: .downloading)
+                            Logger.info(
+                                "Chunk \(idx) found in cache, skipping download (\(chunk.digest.prefix(19))…)"
+                            )
+                            blobDest = cached
+                            return (idx, blobDest, chunkOffset, true)
+                        } else {
+                            blobDest = tempDir.appendingPathComponent(
+                                chunk.digest.replacingOccurrences(of: ":", with: "_"))
+                            await pullProgress.updateStatus(
+                                id: "chunk-\(idx)", status: .downloading)
+                            try await self.downloadLayer(
+                                repository: repository,
+                                digest: chunk.digest,
+                                mediaType: chunk.mediaType,
+                                token: token,
+                                to: blobDest,
+                                maxRetries: 5,
+                                progress: self.downloadProgress
+                            )
+                            // Save chunk to cache
+                            if let cached = cachedChunkPath {
+                                try? FileManager.default.copyItem(at: blobDest, to: cached)
+                            }
+                            return (idx, blobDest, chunkOffset, false)
+                        }
                     }
                     enqueued += 1
                 }
 
                 // Drain remaining
-                for try await (completedIdx, completedPath, completedOffset) in group {
+                for try await (completedIdx, completedPath, completedOffset, completedFromCache)
+                    in group
+                {
                     await pullProgress.updateStatus(
                         id: "chunk-\(completedIdx)", status: .decompressing)
                     let handle = try FileHandle(forWritingTo: diskDest)
@@ -4893,7 +4963,9 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
                         inputPath: completedPath, outputHandle: handle,
                         startOffset: completedOffset)
                     try handle.close()
-                    try? FileManager.default.removeItem(at: completedPath)
+                    if !completedFromCache {
+                        try? FileManager.default.removeItem(at: completedPath)
+                    }
                     await pullProgress.markDone(id: "chunk-\(completedIdx)")
                 }
             }
@@ -4903,18 +4975,35 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
 
         } else if let singleDiskLayer = diskLayers.first {
             // ── Single-blob fallback (backward compat) ───────────────────────
-            let blobDest = tempDir.appendingPathComponent(
-                singleDiskLayer.digest.replacingOccurrences(of: ":", with: "_"))
-            Logger.info("Downloading single disk layer (\(singleDiskLayer.digest.prefix(19))…)")
-            try await downloadLayer(
-                repository: repository,
-                digest: singleDiskLayer.digest,
-                mediaType: singleDiskLayer.mediaType,
-                token: token,
-                to: blobDest,
-                maxRetries: 5,
-                progress: downloadProgress
-            )
+            let cachedDiskPath = cachingEnabled
+                ? getCachedLayerPath(manifestId: manifestId, digest: singleDiskLayer.digest) : nil
+            let blobDest: URL
+            if let cached = cachedDiskPath,
+                FileManager.default.fileExists(atPath: cached.path)
+            {
+                Logger.info(
+                    "Single disk layer found in cache, skipping download (\(singleDiskLayer.digest.prefix(19))…)"
+                )
+                blobDest = cached
+            } else {
+                blobDest = tempDir.appendingPathComponent(
+                    singleDiskLayer.digest.replacingOccurrences(of: ":", with: "_"))
+                Logger.info(
+                    "Downloading single disk layer (\(singleDiskLayer.digest.prefix(19))…)")
+                try await downloadLayer(
+                    repository: repository,
+                    digest: singleDiskLayer.digest,
+                    mediaType: singleDiskLayer.mediaType,
+                    token: token,
+                    to: blobDest,
+                    maxRetries: 5,
+                    progress: downloadProgress
+                )
+                // Save to cache
+                if let cached = cachedDiskPath {
+                    try? FileManager.default.copyItem(at: blobDest, to: cached)
+                }
+            }
 
             let uncompSizeStr = singleDiskLayer.annotations?["org.trycua.lume.content.uncompressed-size"]
             if let sizeStr = uncompSizeStr, let uncompSize = UInt64(sizeStr), uncompSize > 0 {
@@ -4933,6 +5022,157 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
         }
 
         Logger.info("OCI pull complete")
+    }
+
+    /// Returns true when every OCI layer for this manifest is already in the local cache.
+    /// When this returns true, `copyFromOCICache` can reconstruct the VM directory without
+    /// any network activity.
+    private func validateOCICache(manifest: Manifest, manifestId: String) -> Bool {
+        guard cachingEnabled else { return false }
+
+        // Check config layer
+        if let configLayer = manifest.config {
+            let cached = getCachedLayerPath(manifestId: manifestId, digest: configLayer.digest)
+            guard FileManager.default.fileExists(atPath: cached.path) else { return false }
+        }
+
+        // Check all disk / nvram layers
+        for layer in manifest.layers {
+            guard layer.mediaType != "application/vnd.oci.empty.v1+json" else { continue }
+            let cached = getCachedLayerPath(manifestId: manifestId, digest: layer.digest)
+            guard FileManager.default.fileExists(atPath: cached.path) else {
+                Logger.debug("OCI cache miss for layer \(layer.digest.prefix(19))…")
+                return false
+            }
+        }
+
+        Logger.debug("OCI cache fully valid for manifestId: \(manifestId)")
+        return true
+    }
+
+    /// Copies all OCI layers from the local cache into `destination`, producing the same
+    /// VM directory layout that `pullOCI` would create via network download.
+    private func copyFromOCICache(manifest: Manifest, manifestId: String, to destination: URL)
+        throws
+    {
+        Logger.info("Copying OCI image from layer cache")
+
+        // ── Config ────────────────────────────────────────────────────────────
+        if let configLayer = manifest.config {
+            let cached = getCachedLayerPath(manifestId: manifestId, digest: configLayer.digest)
+            let configData = try Data(contentsOf: cached)
+            if let ociCfg = try? JSONDecoder().decode(LumeOCIConfig.self, from: configData) {
+                let hardwareModel = Data(base64Encoded: ociCfg.hardwareModel)
+                let machineIdentifier = Data(base64Encoded: ociCfg.machineIdentifier)
+                let ann = manifest.annotations
+                let cpuCount = ann?["org.trycua.lume.cpu-count"].flatMap(Int.init)
+                let memorySize = ann?["org.trycua.lume.memory-size"].flatMap(UInt64.init)
+                let display = ann?["org.trycua.lume.display"] ?? "1920x1080"
+                let netModeStr = ann?["org.trycua.lume.network-mode"] ?? "nat"
+
+                let diskLayers = manifest.layers.filter { $0.mediaType == OCIMediaType.disk }
+                var diskUncompressedSize: UInt64?
+                if let totalSizeStr = ann?["org.trycua.lume.total-uncompressed-size"],
+                    let totalSize = UInt64(totalSizeStr)
+                {
+                    diskUncompressedSize = totalSize
+                } else {
+                    diskUncompressedSize = diskLayers.compactMap {
+                        $0.annotations?["org.trycua.lume.content.uncompressed-size"].flatMap(
+                            UInt64.init)
+                    }.reduce(0, +)
+                }
+                let diskSize =
+                    ann?["org.trycua.lume.disk-size"].flatMap(UInt64.init) ?? diskUncompressedSize
+
+                if let vmConfig = try? VMConfig(
+                    os: ociCfg.os,
+                    cpuCount: cpuCount,
+                    memorySize: memorySize,
+                    diskSize: diskSize,
+                    display: display,
+                    hardwareModel: hardwareModel,
+                    machineIdentifier: machineIdentifier,
+                    networkMode: NetworkMode.parse(netModeStr) ?? .nat
+                ) {
+                    let encoder = JSONEncoder()
+                    encoder.outputFormatting = .prettyPrinted
+                    try encoder.encode(vmConfig).write(
+                        to: destination.appendingPathComponent("config.json"))
+                    Logger.info("Wrote config.json from cache")
+                }
+            }
+        }
+
+        // ── NVRAM ─────────────────────────────────────────────────────────────
+        if let nvramLayer = manifest.layers.first(where: { $0.mediaType == OCIMediaType.nvram }) {
+            let cached = getCachedLayerPath(manifestId: manifestId, digest: nvramLayer.digest)
+            try FileManager.default.copyItem(
+                at: cached, to: destination.appendingPathComponent("nvram.bin"))
+            Logger.info("Copied nvram.bin from cache")
+        }
+
+        // ── Disk ──────────────────────────────────────────────────────────────
+        let diskDest = destination.appendingPathComponent("disk.img")
+        let diskLayers = manifest.layers.filter { $0.mediaType == OCIMediaType.disk }
+        let isChunked =
+            diskLayers.count > 1
+            || (diskLayers.count == 1
+                && diskLayers[0].annotations?[OCIAnnotation.partNumber] != nil)
+
+        if isChunked {
+            let sortedChunks = diskLayers.sorted {
+                let a = Int($0.annotations?[OCIAnnotation.partNumber] ?? "0") ?? 0
+                let b = Int($1.annotations?[OCIAnnotation.partNumber] ?? "0") ?? 0
+                return a < b
+            }
+
+            let ann = manifest.annotations
+            let totalSize: UInt64
+            if let totalSizeStr = ann?["org.trycua.lume.total-uncompressed-size"],
+                let ts = UInt64(totalSizeStr)
+            {
+                totalSize = ts
+            } else {
+                totalSize = sortedChunks.compactMap {
+                    $0.annotations?["org.trycua.lume.content.uncompressed-size"].flatMap(
+                        UInt64.init)
+                }.reduce(0, +)
+            }
+
+            FileManager.default.createFile(atPath: diskDest.path, contents: nil)
+            let diskHandle = try FileHandle(forWritingTo: diskDest)
+            try diskHandle.truncate(atOffset: totalSize)
+            try diskHandle.close()
+
+            for (idx, chunk) in sortedChunks.enumerated() {
+                let cached = getCachedLayerPath(manifestId: manifestId, digest: chunk.digest)
+                let chunkOffset = UInt64(chunk.annotations?[OCIAnnotation.partOffset] ?? "0") ?? 0
+                Logger.info(
+                    "Decompressing cached chunk \(idx + 1)/\(sortedChunks.count) from cache")
+                let handle = try FileHandle(forWritingTo: diskDest)
+                let _ = try gunzipChunkAndWriteSparse(
+                    inputPath: cached, outputHandle: handle, startOffset: chunkOffset)
+                try handle.close()
+            }
+            Logger.info("Disk image reassembled from \(sortedChunks.count) cached chunks")
+        } else if let singleDiskLayer = diskLayers.first {
+            let cached = getCachedLayerPath(manifestId: manifestId, digest: singleDiskLayer.digest)
+            let uncompSizeStr = singleDiskLayer.annotations?[
+                "org.trycua.lume.content.uncompressed-size"]
+            if let sizeStr = uncompSizeStr, let uncompSize = UInt64(sizeStr), uncompSize > 0 {
+                FileManager.default.createFile(atPath: diskDest.path, contents: nil)
+                let diskHandle = try FileHandle(forWritingTo: diskDest)
+                try diskHandle.truncate(atOffset: uncompSize)
+                let _ = try gunzipChunkAndWriteSparse(
+                    inputPath: cached, outputHandle: diskHandle, startOffset: 0)
+                try diskHandle.close()
+                Logger.info("Disk image decompressed (sparse) from cache")
+            } else {
+                try FileManager.default.copyItem(at: cached, to: diskDest)
+                Logger.info("Saved disk.img (uncompressed) from cache")
+            }
+        }
     }
 }
 

@@ -1157,7 +1157,8 @@ final class LumeController {
         storage: String? = nil,
         username: String? = nil,
         password: String? = nil,
-        force: Bool = false
+        force: Bool = false,
+        progressHandler: (@Sendable (Double) -> Void)? = nil
     ) async throws {
         do {
             // Split the image to get name and tag
@@ -1198,7 +1199,8 @@ final class LumeController {
                 image: image,
                 name: vmName,
                 locationName: storage,
-                force: force)
+                force: force,
+                progressHandler: progressHandler)
 
             Logger.debug(
                 "Setting new VM mac address",

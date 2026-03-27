@@ -1093,6 +1093,7 @@ async def _cmd_run_task_async(args) -> int:
             stream_agent_logs=True,  # Stream logs to run.log
             provider_type=provider_type,  # Pass detected provider type
             dev_paths=getattr(args, "dev_paths", None),
+            verbose=getattr(args, "verbose", False),
         )
 
         if result.success:
@@ -1323,6 +1324,14 @@ async def _cmd_run_task_detached(args) -> int:
     # Add provider type to command (will be passed to subprocess which calls run_task)
     if provider_type in ("simulated", "webtop"):
         cmd.extend(["--provider-type", "simulated"])
+
+    # Forward --with paths to subprocess
+    for dev_path in getattr(args, "dev_paths", None) or []:
+        cmd.extend(["--with", dev_path])
+
+    # Forward --verbose
+    if getattr(args, "verbose", False):
+        cmd.append("--verbose")
 
     # Start background process
     # Set environment variables for UTF-8 encoding on Windows

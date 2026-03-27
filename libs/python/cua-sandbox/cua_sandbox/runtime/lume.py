@@ -331,7 +331,10 @@ class LumeRuntime(Runtime):
                 # Reload via lume ssh from the host — launchctl unload would kill
                 # computer-server mid-execution if run from inside via /cmd.
                 lume_bin = _lume_path() or "lume"
-                reload_cmd = f"launchctl unload {plist} && launchctl load {plist}"
+                reload_cmd = (
+                    "launchctl bootout gui/$(id -u)/com.trycua.computer_server 2>/dev/null; "
+                    f"launchctl bootstrap gui/$(id -u) {plist}"
+                )
                 proc = await asyncio.create_subprocess_exec(
                     lume_bin,
                     "ssh",

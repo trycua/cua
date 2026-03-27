@@ -128,7 +128,7 @@ class DockerRuntime(Runtime):
         for v in self.volumes:
             extra_flags += ["-v", v]
 
-        # Environment variables
+        # Environment variables (from DockerRuntime constructor)
         for k, val in self.environment.items():
             extra_flags += ["-e", f"{k}={val}"]
 
@@ -146,6 +146,11 @@ class DockerRuntime(Runtime):
 
         # Stop timeout
         extra_flags += ["--stop-timeout", str(self.stop_timeout)]
+
+        # Expose additional ports from image._ports
+        for port in getattr(image, "_ports", ()):
+            host_p = _find_free_port(port)
+            extra_flags += ["-p", f"{host_p}:{port}"]
 
         # Remove existing container with same name
         docker = _docker_bin()
@@ -186,12 +191,21 @@ class DockerRuntime(Runtime):
         )
         await self.is_ready(info)
 
-        # Apply image layers (apt_install, pip_install, run, env, etc.) via computer-server
-        if image._layers:
+        # Apply image layers and image attributes via computer-server
+        has_work = image._layers or getattr(image, "_env", ()) or getattr(image, "_files", ())
+        if has_work:
             from cua_sandbox.builder.executor import LayerExecutor
 
-            executor = LayerExecutor(f"http://{info.host}:{info.api_port}")
-            await executor.execute_layers(list(image._layers))
+            executor = LayerExecutor(f"http://{info.host}:{info.api_port}", os_type=image.os_type)
+            if image._layers:
+                await executor.execute_layers(list(image._layers))
+            # Apply env vars from image._env
+            env_vars = dict(getattr(image, "_env", ()))
+            if env_vars:
+                await executor.execute_layers([{"type": "env", "variables": env_vars}])
+            # Copy files from image._files
+            for src, dst in getattr(image, "_files", ()):
+                await executor.execute_layers([{"type": "copy", "src": src, "dst": dst}])
 
         return info
 

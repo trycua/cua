@@ -1,4 +1,4 @@
-"""Layer executor — boots a QEMU VM and runs Image layers via computer-server API.
+"""Layer executor — runs Image layers via computer-server API.
 
 Given a running computer-server at some URL, translates each Image layer dict
 into shell commands and executes them sequentially.
@@ -6,7 +6,10 @@ into shell commands and executes them sequentially.
 
 from __future__ import annotations
 
+import base64
+import json
 import logging
+import os
 from typing import Any
 
 import httpx
@@ -17,9 +20,10 @@ logger = logging.getLogger(__name__)
 class LayerExecutor:
     """Execute Image layer specs against a running computer-server."""
 
-    def __init__(self, base_url: str, timeout: float = 600):
+    def __init__(self, base_url: str, timeout: float = 600, os_type: str = "linux"):
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
+        self.os_type = os_type  # "linux", "macos", "windows", "android"
 
     async def run_command(self, command: str, timeout: float | None = None) -> dict:
         """Run a shell command via computer-server and return the result."""
@@ -37,8 +41,6 @@ class LayerExecutor:
             result: dict[str, Any] = {}
             for line in resp.text.splitlines():
                 if line.startswith("data: "):
-                    import json
-
                     try:
                         data = json.loads(line[6:])
                         if isinstance(data, dict):
@@ -46,6 +48,30 @@ class LayerExecutor:
                     except (json.JSONDecodeError, ValueError):
                         pass
 
+            return result
+
+    async def write_file(self, path: str, content_b64: str, timeout: float | None = None) -> dict:
+        """Write a file via computer-server write_bytes command."""
+        t = timeout or self.timeout
+        async with httpx.AsyncClient(timeout=t) as client:
+            resp = await client.post(
+                f"{self.base_url}/cmd",
+                json={
+                    "command": "write_bytes",
+                    "params": {"path": path, "content_b64": content_b64},
+                },
+                timeout=t,
+            )
+            resp.raise_for_status()
+            result: dict[str, Any] = {}
+            for line in resp.text.splitlines():
+                if line.startswith("data: "):
+                    try:
+                        data = json.loads(line[6:])
+                        if isinstance(data, dict):
+                            result.update(data)
+                    except (json.JSONDecodeError, ValueError):
+                        pass
             return result
 
     async def execute_layer(self, layer: dict) -> dict:
@@ -77,16 +103,26 @@ class LayerExecutor:
 
     # ── Per-layer-type handlers ──────────────────────────────────────────
 
+    def _is_windows(self) -> bool:
+        return self.os_type == "windows"
+
     async def _exec_run(self, layer: dict) -> dict:
-        return await self.run_command(layer["command"])
+        cmd = layer["command"]
+        if not self._is_windows():
+            # Run with sudo so image-build commands have root access (like Dockerfile RUN)
+            cmd = f"sudo sh -c {_sh_quote(cmd)}"
+        return await self.run_command(cmd)
 
     async def _exec_apt_install(self, layer: dict) -> dict:
         pkgs = " ".join(layer["packages"])
-        return await self.run_command(f"sudo apt-get update && sudo apt-get install -y {pkgs}")
+        return await self.run_command(
+            f"sudo DEBIAN_FRONTEND=noninteractive apt-get update -qq && "
+            f"sudo DEBIAN_FRONTEND=noninteractive apt-get install -y {pkgs}"
+        )
 
     async def _exec_brew_install(self, layer: dict) -> dict:
         pkgs = " ".join(layer["packages"])
-        return await self.run_command(f"brew install {pkgs}")
+        return await self.run_command(f"brew install {pkgs}", timeout=900)
 
     async def _exec_choco_install(self, layer: dict) -> dict:
         pkgs = " ".join(layer["packages"])
@@ -104,22 +140,85 @@ class LayerExecutor:
 
     async def _exec_uv_install(self, layer: dict) -> dict:
         pkgs = " ".join(layer["packages"])
+        if self._is_windows():
+            return await self.run_command(
+                f"uv add --directory %USERPROFILE%\\cua-server {pkgs}",
+                timeout=600,
+            )
+        # Linux/macOS: install uv if missing, then install packages system-wide
         return await self.run_command(
-            f"uv add --directory %USERPROFILE%\\cua-server {pkgs}",
+            f"command -v uv >/dev/null 2>&1 || "
+            f"(curl -LsSf https://astral.sh/uv/install.sh | sh && "
+            f'export PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH") && '
+            f"uv pip install --system {pkgs}",
             timeout=600,
         )
 
     async def _exec_pip_install(self, layer: dict) -> dict:
         pkgs = " ".join(layer["packages"])
-        return await self.run_command(f"pip install {pkgs}", timeout=600)
+        if self._is_windows():
+            return await self.run_command(f"pip install {pkgs}", timeout=600)
+        return await self.run_command(f"pip3 install --break-system-packages {pkgs}", timeout=600)
 
     async def _exec_env(self, layer: dict) -> dict:
-        # Set persistent env vars via setx (Windows) or export (Linux)
-        cmds = []
-        for k, v in layer.get("variables", {}).items():
-            cmds.append(f'setx {k} "{v}"')
-        return await self.run_command(" && ".join(cmds)) if cmds else {"returncode": 0}
+        variables = layer.get("variables", {})
+        if not variables:
+            return {"success": True, "return_code": 0}
+        if self._is_windows():
+            cmds = [f'setx {k} "{v}"' for k, v in variables.items()]
+            return await self.run_command(" && ".join(cmds))
+        # Linux/macOS: append to /etc/environment for persistence
+        lines = "\n".join(f'{k}="{v}"' for k, v in variables.items())
+        cmd = f"sudo sh -c 'cat >> /etc/environment << EOF\n{lines}\nEOF'"
+        return await self.run_command(cmd)
 
     async def _exec_copy(self, layer: dict) -> dict:
-        # copy is handled differently — needs file transfer, not shell
-        raise NotImplementedError("copy layers require file transfer (not yet implemented)")
+        src = layer["src"]
+        dst = layer["dst"]
+        if not os.path.exists(src):
+            return {"success": False, "return_code": 1, "error": f"Source not found: {src}"}
+        with open(src, "rb") as f:
+            content_b64 = base64.b64encode(f.read()).decode()
+        # Ensure destination directory exists
+        dst_dir = dst.rsplit("/", 1)[0] if "/" in dst else dst.rsplit("\\", 1)[0]
+        if dst_dir:
+            if self._is_windows():
+                await self.run_command(f'mkdir "{dst_dir}"')
+            else:
+                await self.run_command(f"sudo mkdir -p {dst_dir}")
+        result = await self.write_file(dst, content_b64)
+        if not result.get("success", False):
+            return {"success": False, "return_code": 1, "error": result.get("error", "")}
+        return {"success": True, "return_code": 0}
+
+    async def _exec_expose(self, layer: dict) -> dict:
+        # Expose is a no-op at layer execution time — ports are mapped by the runtime
+        return {"success": True, "return_code": 0}
+
+    async def _exec_apk_install(self, layer: dict) -> dict:
+        # APK install: transfer the APK file to the device and install via adb
+        apk_paths = layer.get("packages", [])
+        results = []
+        for apk_path in apk_paths:
+            if not os.path.exists(apk_path):
+                return {
+                    "success": False,
+                    "return_code": 1,
+                    "error": f"APK not found: {apk_path}",
+                }
+            remote_path = f"/data/local/tmp/{os.path.basename(apk_path)}"
+            with open(apk_path, "rb") as f:
+                content_b64 = base64.b64encode(f.read()).decode()
+            await self.write_file(remote_path, content_b64)
+            r = await self.run_command(f"pm install -r {remote_path}", timeout=120)
+            results.append(r)
+        return results[-1] if results else {"success": True, "return_code": 0}
+
+    async def _exec_pwa_install(self, layer: dict) -> dict:
+        # PWA install — just a placeholder; actual install happens via the sandbox
+        return {"success": True, "return_code": 0}
+
+
+def _sh_quote(s: str) -> str:
+    """Wrap string in single quotes, escaping any existing single quotes."""
+    return "'" + s.replace("'", "'\\''") + "'"

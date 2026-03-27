@@ -168,33 +168,10 @@ def build_batch(
 
     For each task, episodes are grouped and advantage is computed as:
         advantage = episode.terminal_reward - mean(task_rewards)
-
-    Each trajectory is converted to a message list (with the latest
-    ``max_images`` screenshots), rendered into a prompt via the renderer,
-    and then used to build a Datum.
-
-    Parameters
-    ----------
-    renderer:
-        Tinker cookbook renderer for converting messages to ModelInput prompts.
-    episodes:
-        Collected rollout episodes from ``traces.load_run``.
-    sampling_client:
-        Tinker ``SamplingClient`` from the current policy snapshot.
-    sampling_params:
-        Sampling parameters for reference log-prob computation.
-    tokenizer:
-        HuggingFace tokenizer matching the base model.
-    gamma:
-        Not used directly (trajectory-level rewards), kept for API compat.
-    max_images:
-        Maximum number of recent images to include per trajectory.
-
-    Returns
-    -------
-    List of ``tinker.types.Datum`` ready for ``train_step``.
     """
     task_groups = _group_episodes_by_task(episodes)
+    
+    breakpoint()
 
     # --- Build prompts and submit reference log-prob requests in bulk ---
     # Each entry: (episode, advantage, prompt, action_ids, future)

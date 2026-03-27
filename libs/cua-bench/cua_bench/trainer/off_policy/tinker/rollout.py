@@ -54,7 +54,7 @@ def _run_single_rollout(
     env = {**os.environ, **(extra_env or {})}
 
     cmd = [
-        "cb", "run", "task", str(tasks_path),
+        "cb", "run", "dataset", str(tasks_path),
         "--agent", agent,
         "--model", model,
         "--max-steps", str(max_steps),
@@ -116,39 +116,6 @@ def run_rollouts(
     extra_env: dict[str, str] | None = None,
 ) -> list[tuple[str, Path]]:
     """Run cua-bench rollouts and block until all sessions finish.
-
-    Parameters
-    ----------
-    tasks_path:
-        Path to the task environment directory passed to ``cb run task``.
-    agent:
-        Agent name from the cua-bench registry (e.g. ``"opencua"``).
-    model:
-        litellm model string forwarded to the agent (e.g. ``"openai/opencua"``).
-    max_steps:
-        Maximum agent steps per episode.
-    num_rollouts:
-        Number of times to run the same task.  GRPO requires group_size > 1,
-        so this should be >= 2 to guarantee multiple trajectories per task.
-    timeout:
-        Maximum seconds to wait for all sessions to reach a terminal state.
-    poll_interval:
-        Seconds between session-state polls.
-    extra_env:
-        Additional environment variables merged into the subprocess environment.
-
-    Returns
-    -------
-    List of ``(run_id, run_output_dir)`` tuples, one per rollout.
-
-    Raises
-    ------
-    RuntimeError
-        If the run_id cannot be parsed from CLI output.
-    TimeoutError
-        If sessions do not finish within *timeout* seconds.
-    FileNotFoundError
-        If the run output directory does not exist after sessions finish.
     """
     results: list[tuple[str, Path]] = []
     for i in range(num_rollouts):

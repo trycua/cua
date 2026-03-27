@@ -198,7 +198,7 @@ class Qwen35Agent(BaseAgent):
                 step += 1
 
                 # Debug: print LLM response and actions
-                print(f"\n[DEBUG][Step {step}] usage={result.get('usage')}")
+                # print(f"\n[DEBUG][Step {step}] usage={result.get('usage')}")
                 for idx, out_item in enumerate(result.get("output", [])):
                     item_type = out_item.get("type", "unknown")
                     if item_type == "computer_call":
@@ -213,9 +213,9 @@ class Qwen35Agent(BaseAgent):
                     elif item_type == "message":
                         content = out_item.get("content", [])
                         texts = [c.get("text", "") for c in content if isinstance(c, dict) and c.get("text")]
-                        print(f"  [{idx}] message: {' '.join(texts)[:200]}")
+                        print(f"  [{idx}] message: {' '.join(texts)}")
                     else:
-                        print(f"  [{idx}] {item_type}: {str(out_item)[:200]}")
+                        print(f"  [{idx}] {item_type}: {str(out_item)}")
                 sys.stdout.flush()
 
                 for k in total_usage:

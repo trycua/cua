@@ -132,6 +132,10 @@ class DockerRuntime(Runtime):
         for k, val in self.environment.items():
             extra_flags += ["-e", f"{k}={val}"]
 
+        # Environment variables from image.env() calls
+        for k, val in getattr(image, "_env", ()):
+            extra_flags += ["-e", f"{k}={val}"]
+
         # Devices (e.g. /dev/kvm)
         for d in self.devices:
             extra_flags += ["--device", d]
@@ -191,18 +195,14 @@ class DockerRuntime(Runtime):
         )
         await self.is_ready(info)
 
-        # Apply image layers and image attributes via computer-server
-        has_work = image._layers or getattr(image, "_env", ()) or getattr(image, "_files", ())
+        # Apply image layers and files via computer-server
+        has_work = image._layers or getattr(image, "_files", ())
         if has_work:
             from cua_sandbox.builder.executor import LayerExecutor
 
             executor = LayerExecutor(f"http://{info.host}:{info.api_port}", os_type=image.os_type)
             if image._layers:
                 await executor.execute_layers(list(image._layers))
-            # Apply env vars from image._env
-            env_vars = dict(getattr(image, "_env", ()))
-            if env_vars:
-                await executor.execute_layers([{"type": "env", "variables": env_vars}])
             # Copy files from image._files
             for src, dst in getattr(image, "_files", ()):
                 await executor.execute_layers([{"type": "copy", "src": src, "dst": dst}])

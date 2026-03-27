@@ -179,8 +179,9 @@ class LayerExecutor:
             cmds = [f'setx {k} "{v}"' for k, v in variables.items()]
             return await self.run_command(" && ".join(cmds))
         # Linux/macOS: append to /etc/environment for persistence
+        sudo = "echo lume | sudo -S" if self.os_type == "macos" else "sudo"
         lines = "\n".join(f'{k}="{v}"' for k, v in variables.items())
-        cmd = f"sudo sh -c 'cat >> /etc/environment << EOF\n{lines}\nEOF'"
+        cmd = f"{sudo} sh -c 'cat >> /etc/environment << EOF\n{lines}\nEOF'"
         return await self.run_command(cmd)
 
     async def _exec_copy(self, layer: dict) -> dict:
@@ -206,10 +207,11 @@ class LayerExecutor:
         result = await self.write_file(tmp_path, content_b64)
         if not result.get("success", False):
             return {"success": False, "return_code": 1, "error": result.get("error", "")}
+        sudo = "echo lume | sudo -S" if self.os_type == "macos" else "sudo"
         dst_dir = posixpath.dirname(dst)
         if dst_dir and dst_dir != "/":
-            await self.run_command(f"sudo mkdir -p {dst_dir}")
-        r = await self.run_command(f"sudo mv {tmp_path} {dst}")
+            await self.run_command(f"{sudo} mkdir -p {dst_dir}")
+        r = await self.run_command(f"{sudo} mv {tmp_path} {dst}")
         rc = r.get("return_code", r.get("returncode", -1))
         return {"success": rc == 0, "return_code": rc, "stderr": r.get("stderr", "")}
 

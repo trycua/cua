@@ -673,6 +673,7 @@ class AndroidEmulatorRuntime(Runtime):
             ],
             capture_output=True,
             text=True,
+            env=env,
             timeout=60,
         )
         if init_result.returncode != 0:
@@ -685,6 +686,7 @@ class AndroidEmulatorRuntime(Runtime):
             capture_output=True,
             text=True,
             cwd=str(cache_dir),
+            env=env,
             timeout=300,
         )
         if update_result.returncode != 0:
@@ -696,7 +698,7 @@ class AndroidEmulatorRuntime(Runtime):
         contents_home = jdk_bundle / "Contents" / "Home"
         gradle_java_home = str(contents_home) if contents_home.exists() else str(jdk_bundle)
         bw_env = {
-            **os.environ,
+            **env,
             "JAVA_HOME": gradle_java_home,
             "BUBBLEWRAP_KEYSTORE_PASSWORD": keystore_password,
             "BUBBLEWRAP_KEY_PASSWORD": keystore_password,

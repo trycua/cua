@@ -883,7 +883,7 @@ class TaskRunner:
                 volumes.append(f"{abs_path}:{container_path}:ro")
                 # Copy to tmp first since pip needs a writable source dir to build
                 install_parts.append(
-                    f"(cp -r {container_path} /tmp/dev_{i} && pip install /tmp/dev_{i} 2>&1 | tail -1)"
+                    f"(cp -r {container_path} /tmp/dev_{i} && pip install --force-reinstall --no-deps /tmp/dev_{i} 2>&1 | tail -1)"
                 )
             dev_install_cmd = " && ".join(install_parts) + " && "
 

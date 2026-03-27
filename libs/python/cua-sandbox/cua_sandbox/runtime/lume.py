@@ -159,6 +159,7 @@ class LumeRuntime(Runtime):
                     ip = await self._wait_for_ip(name, lume_url)
                     info = RuntimeInfo(host=ip, api_port=self.api_port, name=name)
                     await self.is_ready(info)
+                    await self._apply_image_layers(image, info)
                     return info
                 if start_resp.status_code == 404:
                     # Older lume without /pull/start — fall back to synchronous pull
@@ -276,7 +277,33 @@ class LumeRuntime(Runtime):
         await self._deliver_vnc_config(name, lume_url)
         info = RuntimeInfo(host=ip, api_port=self.api_port, name=name)
         await self.is_ready(info)
+        await self._apply_image_layers(image, info)
         return info
+
+    async def _apply_image_layers(self, image: "Image", info: RuntimeInfo) -> None:
+        """Apply image layers (run, brew_install, env, copy, etc.) via computer-server."""
+        env_items = getattr(image, "_env", ())
+        file_items = getattr(image, "_files", ())
+        has_work = image._layers or file_items
+        if not has_work and not env_items:
+            return
+        from cua_sandbox.builder.executor import LayerExecutor
+
+        executor = LayerExecutor(f"http://{info.host}:{info.api_port}", os_type=image.os_type)
+        if env_items and image.os_type != "windows":
+            await executor.run_command(
+                "printf '#!/bin/sh\\n' | sudo tee /etc/profile.d/cua-env.sh > /dev/null"
+            )
+            for k, v in env_items:
+                safe_v = v.replace("'", "'\\''")
+                await executor.run_command(
+                    f"printf 'export {k}=\"{safe_v}\"\\n' "
+                    f"| sudo tee -a /etc/profile.d/cua-env.sh > /dev/null"
+                )
+        for src, dst in file_items:
+            await executor.execute_layers([{"type": "copy", "src": src, "dst": dst}])
+        if image._layers:
+            await executor.execute_layers(list(image._layers))
 
     async def _deliver_vnc_config(self, name: str, lume_url: str) -> None:
         """Write the current VNC port/password into ~/.vnc.env inside the VM.

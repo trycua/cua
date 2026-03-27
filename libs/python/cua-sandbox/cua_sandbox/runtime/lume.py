@@ -315,16 +315,29 @@ class LumeRuntime(Runtime):
 
         executor = LayerExecutor(f"http://{info.host}:{info.api_port}", os_type=image.os_type)
         if env_items and image.os_type != "windows":
-            sudo = "echo lume | sudo -S" if image.os_type == "macos" else "sudo"
-            await executor.run_command(
-                f"printf '#!/bin/sh\\n' | {sudo} tee /etc/profile.d/cua-env.sh > /dev/null"
-            )
-            for k, v in env_items:
-                safe_v = v.replace("'", "'\\''")
+            if image.os_type == "macos":
+                # macOS: write to ~/.zshenv (sourced by all zsh invocations) and
+                # set via launchctl setenv so new processes inherit the values.
+                for k, v in env_items:
+                    safe_v = v.replace("'", "'\\''")
+                    await executor.run_command(
+                        f"echo 'export {k}=\"{safe_v}\"' >> ~/.zshenv && "
+                        f"launchctl setenv {k} '{safe_v}'"
+                    )
+                # Restart computer-server so it inherits the new env vars
+                await executor.run_command("pkill -f 'python.*computer_server' 2>/dev/null || true")
+                await self.is_ready(info)  # wait for launchd to revive it
+            else:
+                sudo = "sudo"
                 await executor.run_command(
-                    f"printf 'export {k}=\"{safe_v}\"\\n' "
-                    f"| {sudo} tee -a /etc/profile.d/cua-env.sh > /dev/null"
+                    f"printf '#!/bin/sh\\n' | {sudo} tee /etc/profile.d/cua-env.sh > /dev/null"
                 )
+                for k, v in env_items:
+                    safe_v = v.replace("'", "'\\''")
+                    await executor.run_command(
+                        f"printf 'export {k}=\"{safe_v}\"\\n' "
+                        f"| {sudo} tee -a /etc/profile.d/cua-env.sh > /dev/null"
+                    )
         for src, dst in file_items:
             await executor.execute_layers([{"type": "copy", "src": src, "dst": dst}])
         if image._layers:

@@ -185,6 +185,14 @@ class DockerRuntime(Runtime):
             name=name,
         )
         await self.is_ready(info)
+
+        # Apply image layers (apt_install, pip_install, run, env, etc.) via computer-server
+        if image._layers:
+            from cua_sandbox.builder.executor import LayerExecutor
+
+            executor = LayerExecutor(f"http://{info.host}:{info.api_port}")
+            await executor.execute_layers(list(image._layers))
+
         return info
 
     async def stop(self, name: str) -> None:

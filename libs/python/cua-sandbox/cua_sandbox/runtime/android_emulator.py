@@ -655,7 +655,7 @@ class AndroidEmulatorRuntime(Runtime):
 
         # ── 6. Generate twa-manifest.json via _bw_init.js ────────────────────
         bw_init_js = Path(__file__).parent / "_bw_init.js"
-        node = shutil.which("node")
+        node = shutil.which("node", path=augmented_path)
         if not node:
             raise RuntimeError("node not found on PATH; required for pwa_install")
 

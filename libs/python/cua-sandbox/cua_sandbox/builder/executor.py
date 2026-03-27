@@ -82,7 +82,7 @@ class LayerExecutor:
 
     async def _exec_apt_install(self, layer: dict) -> dict:
         pkgs = " ".join(layer["packages"])
-        return await self.run_command(f"apt-get update && apt-get install -y {pkgs}")
+        return await self.run_command(f"sudo apt-get update && sudo apt-get install -y {pkgs}")
 
     async def _exec_brew_install(self, layer: dict) -> dict:
         pkgs = " ".join(layer["packages"])

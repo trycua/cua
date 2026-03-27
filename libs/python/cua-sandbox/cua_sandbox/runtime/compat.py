@@ -133,9 +133,40 @@ def _has_kvm() -> bool:
     return _host_os() == "linux" and Path("/dev/kvm").exists()
 
 
-def _has_hvf() -> bool:
-    """Apple Hypervisor.framework — present on all Apple Silicon Macs."""
+def _has_hvf_for_arm64_guest() -> bool:
+    """HVF for ARM64 guests (macOS VMs, ARM Android) — Apple Silicon only."""
     return _host_os() == "darwin" and _host_arch() == "arm64"
+
+
+def _has_hvf_for_x86_guest() -> bool:
+    """HVF for x86_64 guests (Windows, Linux VMs) — Intel Macs only.
+
+    On Apple Silicon, QEMU must use TCG software emulation for x86_64 guests
+    because HVF does not support cross-architecture virtualisation.
+    On Intel Macs, QEMU can use HVF (-accel hvf) for x86_64 guests.
+    """
+    return _host_os() == "darwin" and _host_arch() == "x86_64"
+
+
+def _x86_guest_hw_accel() -> tuple[bool, str]:
+    """Return (hw_accel, reason) for an x86_64 guest on the current host."""
+    os_ = _host_os()
+    arch = _host_arch()
+    if os_ == "linux" and _has_kvm():
+        return True, "KVM hardware acceleration."
+    if os_ == "darwin" and arch == "x86_64":
+        return True, "Apple Hypervisor.framework (HVF) via QEMU -accel hvf on Intel Mac."
+    if os_ == "windows" and _has_hyperv():
+        return True, "Hyper-V hardware acceleration."
+    if os_ == "darwin" and arch == "arm64":
+        return False, (
+            "QEMU cannot use HVF for x86_64 guests on Apple Silicon — TCG software emulation only. "
+            "Expect slow performance."
+        )
+    return False, (
+        f"No hardware acceleration for x86_64 guest on {os_}/{arch}. "
+        "Enable KVM (Linux) or Hyper-V (Windows) for acceleration."
+    )
 
 
 def _has_lume() -> bool:
@@ -277,20 +308,15 @@ def check_local_support(image: "Image") -> RuntimeSupport:
         docker_ok = _has_docker()
         qemu_ok = _has_qemu()
         installed = docker_ok or qemu_ok
-        hw = _has_kvm()
+        hw, hw_reason = _x86_guest_hw_accel()
         runtime = "docker+qemu" if docker_ok else ("qemu" if qemu_ok else "qemu")
         if not installed:
             reason = (
                 "No runtime for Linux VMs found. "
                 "Install Docker (preferred) or qemu-system-x86_64."
             )
-        elif not hw:
-            reason = (
-                f"Linux VM will run without hardware acceleration on {os_}/{arch}. "
-                "KVM (/dev/kvm) is only available on Linux hosts."
-            )
         else:
-            reason = "Linux VM with KVM hardware acceleration."
+            reason = f"Linux VM via QEMU. {hw_reason}"
         return RuntimeSupport(
             supported=installed,
             hw_accel=hw,
@@ -371,20 +397,15 @@ def check_local_support(image: "Image") -> RuntimeSupport:
         docker_ok = _has_docker()
         qemu_ok = _has_qemu()
         installed = docker_ok or qemu_ok
-        hw = _has_kvm()  # only on Linux
+        hw, hw_reason = _x86_guest_hw_accel()
         runtime = "docker+qemu" if docker_ok else ("qemu" if qemu_ok else "qemu")
         if not installed:
             reason = (
                 "No runtime for Windows VMs found. "
                 "Install Docker (preferred) or qemu-system-x86_64."
             )
-        elif not hw:
-            reason = (
-                f"Windows VM will run via QEMU without hardware acceleration on {os_}/{arch}. "
-                "Expect slow boot times. Enable Hyper-V (Windows) or KVM (Linux) for acceleration."
-            )
         else:
-            reason = "Windows VM via QEMU with KVM hardware acceleration."
+            reason = f"Windows VM via QEMU. {hw_reason}"
         return RuntimeSupport(
             supported=installed,
             hw_accel=hw,
@@ -416,13 +437,20 @@ def check_local_support(image: "Image") -> RuntimeSupport:
             )
         sdk_ok = _has_android_sdk()
         java_ok = _has_java()
-        # HW accel: HVF on Apple Silicon, KVM on Linux x86_64
-        # x86_64 macOS (Intel): no hardware accel for ARM64 guest, very slow
+        # HW accel matrix for Android:
+        #   Apple Silicon (arm64): HVF for ARM64 Android system images
+        #   Intel Mac (x86_64):    HVF for x86_64 Android system images
+        #   Linux x86_64 w/ KVM:   KVM for x86_64 Android system images
         if os_ == "darwin" and arch == "arm64":
-            hw = True  # HVF for ARM64 Android images
+            hw = True
             hw_reason = "Apple Hypervisor.framework (HVF) with ARM64 Android system image."
+        elif os_ == "darwin" and arch == "x86_64":
+            hw = True
+            hw_reason = (
+                "Apple Hypervisor.framework (HVF) with x86_64 Android system image on Intel Mac."
+            )
         elif os_ == "linux" and _has_kvm():
-            hw = True  # KVM for x86_64 Android images
+            hw = True
             hw_reason = "KVM with x86_64 Android system image."
         else:
             hw = False

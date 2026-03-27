@@ -113,8 +113,14 @@ class LayerExecutor:
         elif self.os_type == "linux":
             # Linux containers run as a non-root user; use sudo for root access
             cmd = f"sudo bash -c '. /etc/profile.d/cua-env.sh 2>/dev/null; {_bash_escape(cmd)}'"
+        elif self.os_type == "macos":
+            # macOS VMs: default password is "lume"; pipe it to sudo -S for root access
+            cmd = (
+                f"echo lume | sudo -S bash -c "
+                f"'. /etc/profile.d/cua-env.sh 2>/dev/null; {_bash_escape(cmd)}'"
+            )
         else:
-            # macOS/Android: run directly (sudo requires a password in macOS VMs)
+            # Android: run directly
             cmd = f"bash -c '. /etc/profile.d/cua-env.sh 2>/dev/null; {_bash_escape(cmd)}'"
         return await self.run_command(cmd)
 

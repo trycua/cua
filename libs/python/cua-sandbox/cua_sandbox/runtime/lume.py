@@ -291,14 +291,15 @@ class LumeRuntime(Runtime):
 
         executor = LayerExecutor(f"http://{info.host}:{info.api_port}", os_type=image.os_type)
         if env_items and image.os_type != "windows":
+            sudo = "echo lume | sudo -S" if image.os_type == "macos" else "sudo"
             await executor.run_command(
-                "printf '#!/bin/sh\\n' | sudo tee /etc/profile.d/cua-env.sh > /dev/null"
+                f"printf '#!/bin/sh\\n' | {sudo} tee /etc/profile.d/cua-env.sh > /dev/null"
             )
             for k, v in env_items:
                 safe_v = v.replace("'", "'\\''")
                 await executor.run_command(
                     f"printf 'export {k}=\"{safe_v}\"\\n' "
-                    f"| sudo tee -a /etc/profile.d/cua-env.sh > /dev/null"
+                    f"| {sudo} tee -a /etc/profile.d/cua-env.sh > /dev/null"
                 )
         for src, dst in file_items:
             await executor.execute_layers([{"type": "copy", "src": src, "dst": dst}])

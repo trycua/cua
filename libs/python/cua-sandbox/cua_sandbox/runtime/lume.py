@@ -94,12 +94,17 @@ class LumeRuntime(Runtime):
                 # Use /lume/pull/start (async, returns 202 immediately) so we can
                 # poll progress while the pull runs in the background.
                 # Falls back to the synchronous /lume/pull if start returns 404.
+                #
+                # Use a fresh client for the pull POST — Lume's HTTP server closes
+                # the connection after a 4xx GET response, and reusing the same
+                # httpx connection causes the POST body to arrive empty.
                 try:
-                    start_resp = await client.post(
-                        f"{lume_url}/lume/pull/start",
-                        json=pull_payload,
-                        timeout=30,
-                    )
+                    async with httpx.AsyncClient(timeout=30) as pull_client:
+                        start_resp = await pull_client.post(
+                            f"{lume_url}/lume/pull/start",
+                            json=pull_payload,
+                            timeout=30,
+                        )
                 except (httpx.ReadError, httpx.RemoteProtocolError):
                     # /pull/start not available in lume v0.3.x — fall back to sync /pull,
                     # then run the VM and return directly (bypassing the async poll below).

@@ -340,9 +340,13 @@ class TestAndroidApkInstall:
     def setup_method(self):
         skip_if_unsupported(Image.android())
 
-    async def test_apk_install(self, tmp_path):
-        """Basic APK install — uses a minimal test APK."""
-        pytest.skip("Requires a real APK file path — provide via ANDROID_TEST_APK env var")
+    async def test_apk_install(self):
+        """Basic APK install — downloads F-Droid APK from URL."""
+        image = Image.android().apk_install("https://f-droid.org/F-Droid.apk")
+        async with Sandbox.ephemeral(image, local=True) as sb:
+            r = await sb.shell.run("pm list packages")
+            assert r.success
+            assert "org.fdroid" in r.stdout
 
     async def test_apk_install_from_env(self):
         import os

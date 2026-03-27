@@ -72,6 +72,7 @@ class ADBTransport(Transport):
     async def send(self, action: str, **params: Any) -> Any:
         if action in ("shell", "execute", "run_command"):
             cmd = params.get("command", "")
+            cmd = f". /data/local/tmp/.cua_env 2>/dev/null; {cmd}"
             result = await self._adb_cmd_async("shell", cmd)
             return {
                 "stdout": result.stdout.decode(errors="replace"),

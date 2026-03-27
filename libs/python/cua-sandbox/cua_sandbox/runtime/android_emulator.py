@@ -355,6 +355,18 @@ class AndroidEmulatorRuntime(Runtime):
     async def _apply_layers(self, image: Image, adb: str, env: dict) -> None:
         """Apply image layers post-boot (APK installs, shell commands, etc.)."""
         serial = f"emulator-{self.adb_port - 1}"
+
+        # Write image env vars to a persistent file so every subsequent
+        # adb shell command (including those from the transport) can source it.
+        if image._env:
+            exports = "\n".join(f"export {k}={v!r}" for k, v in image._env)
+            subprocess.run(
+                [adb, "-s", serial, "shell", f"printf '{exports}\\n' > /data/local/tmp/.cua_env"],
+                capture_output=True,
+                env=env,
+                timeout=10,
+            )
+
         for layer in image._layers:
             lt = layer["type"]
             if lt == "apk_install":

@@ -316,17 +316,21 @@ class LumeRuntime(Runtime):
         executor = LayerExecutor(f"http://{info.host}:{info.api_port}", os_type=image.os_type)
         if env_items and image.os_type != "windows":
             if image.os_type == "macos":
-                # macOS: write to ~/.zshenv (sourced by all zsh invocations) and
-                # set via launchctl setenv so new processes inherit the values.
+                # macOS: computer-server runs under launchd with an explicit
+                # EnvironmentVariables dict in its plist.  launchctl setenv is
+                # ignored by such services, so we must add vars to the plist
+                # directly via PlistBuddy, then unload/load the service.
+                plist = "~/Library/LaunchAgents/com.trycua.computer_server.plist"
                 for k, v in env_items:
-                    safe_v = v.replace("'", "'\\''")
+                    safe_v = v.replace('"', '\\"')
+                    # Use Set if key exists, Add otherwise
                     await executor.run_command(
-                        f"echo 'export {k}=\"{safe_v}\"' >> ~/.zshenv && "
-                        f"launchctl setenv {k} '{safe_v}'"
+                        f'/usr/libexec/PlistBuddy -c "Set :EnvironmentVariables:{k} {safe_v}" {plist} 2>/dev/null || '
+                        f'/usr/libexec/PlistBuddy -c "Add :EnvironmentVariables:{k} string {safe_v}" {plist}'
                     )
-                # Restart computer-server so it inherits the new env vars
-                await executor.run_command("pkill -f 'python.*computer_server' 2>/dev/null || true")
-                await self.is_ready(info)  # wait for launchd to revive it
+                # Reload the launchd service so it picks up the new env
+                await executor.run_command(f"launchctl unload {plist} && launchctl load {plist}")
+                await self.is_ready(info)  # wait for computer-server to come back
             else:
                 sudo = "sudo"
                 await executor.run_command(

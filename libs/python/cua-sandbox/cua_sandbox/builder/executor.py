@@ -28,7 +28,7 @@ class LayerExecutor:
             # computer-server uses SSE on /cmd
             resp = await client.post(
                 f"{self.base_url}/cmd",
-                json={"command": "run_command", "command_args": command, "timeout": int(t)},
+                json={"command": "run_command", "params": {"command": command}},
                 timeout=t,
             )
             resp.raise_for_status()
@@ -63,8 +63,9 @@ class LayerExecutor:
             lt = layer["type"]
             logger.info(f"Executing layer {i + 1}/{len(layers)}: {lt}")
             result = await self.execute_layer(layer)
-            rc = result.get("returncode", result.get("return_code", -1))
-            if rc not in (0, None):
+            rc = result.get("return_code", result.get("returncode", -1))
+            success = result.get("success", rc == 0)
+            if not success or rc not in (0, None):
                 logger.error(f"Layer {lt} failed (rc={rc}): {result.get('stderr', '')}")
                 raise RuntimeError(
                     f"Layer {i + 1} ({lt}) failed with exit code {rc}: "

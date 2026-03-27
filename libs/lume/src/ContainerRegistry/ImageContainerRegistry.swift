@@ -772,7 +772,8 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
         image: String,
         name: String?,
         locationName: String? = nil,
-        force: Bool = false
+        force: Bool = false,
+        progressHandler: (@Sendable (Double) -> Void)? = nil
     ) async throws -> VMDirectory {
         guard !image.isEmpty else {
             throw ValidationError("Image name cannot be empty")

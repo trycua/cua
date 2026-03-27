@@ -165,6 +165,7 @@ class GRPCEmulatorTransport(Transport):
         if action in ("shell", "execute", "run_command"):
             assert self._adb is not None, "Transport not connected"
             cmd = params.get("command", "")
+            cmd = f". /data/local/tmp/.cua_env 2>/dev/null; {cmd}"
             timeout = float(params.get("timeout", 15))
             loop = asyncio.get_event_loop()
             result = await loop.run_in_executor(

@@ -367,15 +367,25 @@ class TestAndroidPwaInstall:
     async def test_pwa_install(self):
         """PWA install from the android-example-gym-pwa-app manifest."""
         import os
+        import tempfile
+        import urllib.request
 
         manifest_url = os.environ.get(
             "ANDROID_TEST_PWA_URL", "https://cuaai--todo-gym-web.modal.run/manifest.json"
         )
-        image = Image.android().pwa_install(manifest_url)
+        keystore_url = "https://raw.githubusercontent.com/trycua/android-example-gym-pwa-app/main/android.keystore"
+        with tempfile.NamedTemporaryFile(suffix=".keystore", delete=False) as f:
+            urllib.request.urlretrieve(keystore_url, f.name)
+            keystore_path = f.name
+        image = Image.android().pwa_install(
+            manifest_url,
+            keystore=keystore_path,
+            keystore_alias="android",
+            keystore_password="android",
+        )
         async with Sandbox.ephemeral(image, local=True) as sb:
             r = await sb.shell.run("pm list packages")
             assert r.success
-            assert "trycua" in r.stdout or r.returncode == 0
 
 
 class TestAndroidRun:

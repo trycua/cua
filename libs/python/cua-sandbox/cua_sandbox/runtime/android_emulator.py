@@ -484,10 +484,16 @@ class AndroidEmulatorRuntime(Runtime):
         keytool = str(jdk_bin / "keytool") if (jdk_bin / "keytool").exists() else "keytool"
 
         # ── 1. Ensure bubblewrap CLI is on PATH ──────────────────────────────
-        bw = shutil.which("bubblewrap")
+        # Augment PATH with common Homebrew node locations so shutil.which finds them
+        # even when the process was launched without a login shell.
+        extra_node_paths = ["/opt/homebrew/bin", "/usr/local/bin"]
+        augmented_path = os.pathsep.join(extra_node_paths) + os.pathsep + env.get("PATH", "")
+        env["PATH"] = augmented_path
+
+        bw = shutil.which("bubblewrap", path=augmented_path)
         if not bw:
-            node = shutil.which("node")
-            npm = shutil.which("npm")
+            node = shutil.which("node", path=augmented_path)
+            npm = shutil.which("npm", path=augmented_path)
             if not node or not npm:
                 raise RuntimeError(
                     "node/npm not found on PATH; required for pwa_install.\n"

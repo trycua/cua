@@ -38,11 +38,12 @@ def _find_free_port(start: int = 8000, end: int = 9000) -> int:
     raise RuntimeError(f"No free port found in range {start}–{end}")
 
 
-def _has_docker() -> bool:
-    """Return True if a Docker daemon is reachable.
+def _docker_bin() -> str:
+    """Return the resolved path to the docker CLI binary.
 
     Probes common install locations in addition to PATH — SSH sessions often
     have a stripped PATH that omits /usr/local/bin (e.g. OrbStack on macOS).
+    Raises RuntimeError if docker is not found.
     """
     import os
     import shutil
@@ -55,13 +56,24 @@ def _has_docker() -> bool:
         os.path.expanduser("~/.docker/bin/docker"),
     ]
     for candidate in candidates:
-        cmd = shutil.which(candidate) or candidate
+        resolved = shutil.which(candidate) or candidate
         try:
-            subprocess.run([cmd, "info"], capture_output=True, check=True, timeout=10)
-            return True
+            subprocess.run([resolved, "info"], capture_output=True, check=True, timeout=10)
+            return resolved
         except (subprocess.SubprocessError, FileNotFoundError, OSError):
             continue
-    return False
+    raise RuntimeError(
+        "Docker not found. Install from https://docker.com or ensure the docker CLI is on PATH."
+    )
+
+
+def _has_docker() -> bool:
+    """Return True if a Docker daemon is reachable."""
+    try:
+        _docker_bin()
+        return True
+    except RuntimeError:
+        return False
 
 
 def _has_kvm() -> bool:
@@ -136,13 +148,14 @@ class DockerRuntime(Runtime):
         extra_flags += ["--stop-timeout", str(self.stop_timeout)]
 
         # Remove existing container with same name
-        subprocess.run(["docker", "rm", "-f", name], capture_output=True)
+        docker = _docker_bin()
+        subprocess.run([docker, "rm", "-f", name], capture_output=True)
 
         api_port = _find_free_port(self.api_port)
         vnc_port = _find_free_port(api_port + 1)
 
         cmd = [
-            "docker",
+            docker,
             "run",
             "-d",
             "--name",
@@ -175,21 +188,23 @@ class DockerRuntime(Runtime):
         return info
 
     async def stop(self, name: str) -> None:
-        subprocess.run(["docker", "stop", name], capture_output=True)
+        docker = _docker_bin()
+        subprocess.run([docker, "stop", name], capture_output=True)
         if self.ephemeral:
-            subprocess.run(["docker", "rm", name], capture_output=True)
+            subprocess.run([docker, "rm", name], capture_output=True)
 
     async def suspend(self, name: str) -> None:
         """Pause a running Docker container."""
-        subprocess.run(["docker", "pause", name], capture_output=True)
+        subprocess.run([_docker_bin(), "pause", name], capture_output=True)
 
     async def resume(self, image: "Image", name: str, **opts) -> RuntimeInfo:
         """Unpause a paused Docker container and return its RuntimeInfo."""
-        subprocess.run(["docker", "unpause", name], capture_output=True)
+        docker = _docker_bin()
+        subprocess.run([docker, "unpause", name], capture_output=True)
         # Inspect to get mapped ports
         result = subprocess.run(
             [
-                "docker",
+                docker,
                 "inspect",
                 "--format",
                 '{{(index (index .NetworkSettings.Ports "8000/tcp") 0).HostPort}}',
@@ -201,7 +216,7 @@ class DockerRuntime(Runtime):
         api_port = int(result.stdout.strip()) if result.stdout.strip().isdigit() else self.api_port
         result2 = subprocess.run(
             [
-                "docker",
+                docker,
                 "inspect",
                 "--format",
                 '{{(index (index .NetworkSettings.Ports "5900/tcp") 0).HostPort}}',
@@ -221,7 +236,7 @@ class DockerRuntime(Runtime):
         """List Docker containers with the cua.sandbox=true label."""
         result = subprocess.run(
             [
-                "docker",
+                _docker_bin(),
                 "ps",
                 "-a",
                 "--filter",

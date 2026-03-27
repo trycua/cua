@@ -278,7 +278,11 @@ class Sandbox:
         if isinstance(self._transport, CloudTransport):
             await self._transport.delete_vm()
         if self._runtime and self._runtime_info:
-            await self._runtime.stop(self._runtime_info.name or self.name or "cua-sandbox")
+            vm_name = self._runtime_info.name or self.name or "cua-sandbox"
+            if self._ephemeral and hasattr(self._runtime, "delete"):
+                await self._runtime.delete(vm_name)
+            else:
+                await self._runtime.stop(vm_name)
 
     async def screenshot(
         self, text: Optional[str] = None, format: str = "png", quality: int = 95

@@ -108,9 +108,14 @@ class LayerExecutor:
 
     async def _exec_run(self, layer: dict) -> dict:
         cmd = layer["command"]
-        if not self._is_windows():
-            # Source env profile (if present) then run with sudo for root access
+        if self._is_windows():
+            pass
+        elif self.os_type == "linux":
+            # Linux containers run as a non-root user; use sudo for root access
             cmd = f"sudo bash -c '. /etc/profile.d/cua-env.sh 2>/dev/null; {_bash_escape(cmd)}'"
+        else:
+            # macOS/Android: run directly (sudo requires a password in macOS VMs)
+            cmd = f"bash -c '. /etc/profile.d/cua-env.sh 2>/dev/null; {_bash_escape(cmd)}'"
         return await self.run_command(cmd)
 
     async def _exec_apt_install(self, layer: dict) -> dict:

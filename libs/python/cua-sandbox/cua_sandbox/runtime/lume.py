@@ -99,12 +99,7 @@ class LumeRuntime(Runtime):
                 # the connection after a 4xx GET response, and reusing the same
                 # httpx connection causes the POST body to arrive empty.
                 try:
-                    async with httpx.AsyncClient(timeout=30) as pull_client:
-                        start_resp = await pull_client.post(
-                            f"{lume_url}/lume/pull/start",
-                            json=pull_payload,
-                            timeout=30,
-                        )
+                    start_resp = await self._pull_start_with_retry(lume_url, pull_payload)
                 except (httpx.ReadError, httpx.RemoteProtocolError):
                     # /pull/start not available in lume v0.3.x — fall back to sync /pull,
                     # then run the VM and return directly (bypassing the async poll below).
@@ -279,6 +274,35 @@ class LumeRuntime(Runtime):
         await self.is_ready(info)
         await self._apply_image_layers(image, info)
         return info
+
+    async def _pull_start_with_retry(
+        self, lume_url: str, payload: dict, retries: int = 3
+    ) -> httpx.Response:
+        """POST /lume/pull/start with retry for spurious 'Invalid request body' 400s.
+
+        Lume's custom HTTP server reads with minimumIncompleteLength=1, so on a
+        fresh TCP connection the body can arrive after the first receive() returns,
+        causing a spurious 400.  A brief pause + retry recovers reliably.
+        """
+        last_resp: httpx.Response | None = None
+        for attempt in range(retries):
+            if attempt > 0:
+                await asyncio.sleep(1)
+            async with httpx.AsyncClient(timeout=30) as pull_client:
+                resp = await pull_client.post(
+                    f"{lume_url}/lume/pull/start",
+                    json=payload,
+                    timeout=30,
+                )
+            if resp.status_code != 400 or "Invalid request body" not in resp.text:
+                return resp  # success or a real error
+            logger.warning(
+                "pull/start got 'Invalid request body' (attempt %d/%d), retrying...",
+                attempt + 1,
+                retries,
+            )
+            last_resp = resp
+        return last_resp  # type: ignore[return-value]
 
     async def _apply_image_layers(self, image: "Image", info: RuntimeInfo) -> None:
         """Apply image layers (run, brew_install, env, copy, etc.) via computer-server."""

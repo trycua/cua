@@ -10,7 +10,15 @@ struct HTTPRequest {
     let path: String
     let headers: [String: String]
     let body: Data?
-    
+
+    /// Memberwise init used by the NIO handler (components already parsed).
+    init(method: String, path: String, headers: [String: String], body: Data?) {
+        self.method = method
+        self.path = path
+        self.headers = headers
+        self.body = body
+    }
+
     init?(data: Data) {
         guard let requestString = String(data: data, encoding: .utf8) else { return nil }
         let components = requestString.components(separatedBy: "\r\n\r\n")

@@ -572,9 +572,20 @@ class AndroidEmulatorRuntime(Runtime):
 
         # ── 3. Determine package ID and cache directory ──────────────────────
         if not package_name:
+            import re
+
             host = urlparse(manifest_url).hostname or ""
             parts = [p for p in reversed(host.split(".")) if p]
-            package_name = ".".join(parts) if parts else "com.cua.pwa"
+            # Sanitize each part: replace non-alphanumeric/underscore chars with _,
+            # prefix with _ if starts with a digit (invalid Java identifier start).
+            sanitized = []
+            for part in parts:
+                part = re.sub(r"[^a-zA-Z0-9_]", "_", part)
+                if part and part[0].isdigit():
+                    part = "_" + part
+                if part:
+                    sanitized.append(part)
+            package_name = ".".join(sanitized) if sanitized else "com.cua.pwa"
 
         cache_key = hashlib.sha256(f"{manifest_url}|{package_name}".encode()).hexdigest()[:12]
         cache_dir = Path.home() / ".cua" / "cua-sandbox" / "pwa-cache" / cache_key

@@ -34,6 +34,10 @@ class TrainingConfig:
     log_path: str = "/tmp/tinker-cua-rl"
     ttl_seconds: Optional[int] = 604800  # 7 days
 
+    # --- GRPO rollout ---
+    # Number of rollouts per task per epoch (must be >= 2 for GRPO).
+    num_rollouts: int = 2
+
     # --- GRPO hyperparameters ---
     grpo: GRPOConfig = field(default_factory=GRPOConfig)
 
@@ -129,28 +133,42 @@ def run(config: TrainingConfig) -> None:
         # 2. Snapshot current weights for reference logprobs
         sampling_client = training_client.save_weights_and_get_sampling_client()
 
-        # 3. Rollout
-        print("[loop] Collecting rollouts...")
-        run_id, run_dir = rollout.run_rollouts(
+        # 3. Rollout (run num_rollouts times for GRPO group diversity)
+        print(f"[loop] Collecting {config.num_rollouts} rollout(s)...")
+        rollout_results = rollout.run_rollouts(
             tasks_path=config.tasks_path,
             agent=config.agent,
             model=config.model,
             max_steps=config.max_steps_per_episode,
+            num_rollouts=config.num_rollouts,
             extra_env=config.rollout_env or None,
         )
 
-        # 4. Load traces
-        episodes = traces.load_run(run_dir)
+        run_ids = [r[0] for r in rollout_results]
+        run_dirs = [r[1] for r in rollout_results]
+
+        # 4. Load traces from all rollout runs
+        episodes = traces.load_runs(run_dirs)
         if not episodes:
-            print(f"[loop] No valid episodes in {run_dir}. Skipping epoch.")
+            print(f"[loop] No valid episodes across {len(run_dirs)} runs. Skipping epoch.")
             continue
-        # breakpoint()
+
+        # Validate GRPO group sizes — warn if any task has only 1 trajectory
+        task_groups: dict[str, int] = {}
+        for ep in episodes:
+            task_groups[ep.task_description] = task_groups.get(ep.task_description, 0) + 1
+        singleton_tasks = [t for t, c in task_groups.items() if c < 2]
+        if singleton_tasks:
+            print(
+                f"[loop] Warning: {len(singleton_tasks)} task(s) have < 2 trajectories "
+                f"(GRPO needs group_size > 1). These will be skipped."
+            )
 
         rewards_P = [ep.terminal_reward for ep in episodes]
         avg_reward = sum(rewards_P) / len(rewards_P)
         print(
-            f"[loop] {len(episodes)} episodes | "
-            f"avg_reward={avg_reward:.4f} | run={run_id}"
+            f"[loop] {len(episodes)} episodes across {len(run_ids)} runs | "
+            f"avg_reward={avg_reward:.4f}"
         )
         metrics["reward/total"] = avg_reward
 
@@ -216,6 +234,8 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--epochs", type=int, default=20)
     p.add_argument("--save-every", type=int, default=5)
     p.add_argument("--log-path", default="/tmp/tinker-cua-rl")
+    p.add_argument("--num-rollouts", type=int, default=2,
+                   help="Number of rollouts per task per epoch (>= 2 for GRPO)")
     p.add_argument("--gamma", type=float, default=0.99)
     p.add_argument("--lr", type=float, default=1e-5)
     p.add_argument("--resume-from", default=None,
@@ -237,6 +257,7 @@ if __name__ == "__main__":
         epochs=args.epochs,
         save_every=args.save_every,
         log_path=args.log_path,
+        num_rollouts=args.num_rollouts,
         resume_from=args.resume_from,
         grpo=GRPOConfig(
             gamma=args.gamma,

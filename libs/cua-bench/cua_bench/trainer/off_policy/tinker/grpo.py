@@ -7,7 +7,7 @@ if TYPE_CHECKING:
     from tinker import SamplingClient, TrainingClient
     import tinker.types as tt
 
-    from .traces import Episode, Step
+    from .traces import Episode
 
 from PIL import Image
 
@@ -68,14 +68,15 @@ def _build_trajectory_messages(
     """Build a chat-style message list for the full trajectory.
 
     Keeps the latest ``max_images`` screenshots so the prompt stays bounded.
-    Each step contributes its pre_screenshot (the observation the model saw)
+    Each step contributes its screenshot (the observation the model saw)
     and the action_text it produced.  The task description is included as the
     initial user instruction.
     """
-    # Collect (image, action_text) pairs from all steps
+    # Collect (image, action_text) pairs from steps that have screenshots
     step_entries: list[tuple[Image.Image, str]] = []
     for step in episode.steps:
-        step_entries.append((step.pre_screenshot, step.action_text))
+        if step.screenshot is not None:
+            step_entries.append((step.screenshot, step.action_text))
 
     # Keep only the latest max_images steps
     if len(step_entries) > max_images:

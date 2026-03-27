@@ -11,14 +11,10 @@ from PIL import Image
 @dataclass
 class Step:
     step_num: int
-    # Screenshot visible to the model *before* it produced this action.
-    pre_screenshot: Image.Image
-    # Screenshot captured *after* the action was executed.
-    post_screenshot: Image.Image
+    # Screenshot (observation) visible to the model at this step.
+    screenshot: Optional[Image.Image]
     # Raw text reconstructed from the ComputerAgent output items (thinking + action).
     action_text: str
-    # Sparse reward: 0.0 for non-terminal steps; terminal_reward for the last step.
-    reward: float
 
 
 @dataclass
@@ -94,7 +90,7 @@ def load_episode(trace_dir: str | Path) -> Optional[Episode]:
     from datasets import load_from_disk
 
     ds = load_from_disk(str(trace_dir))
-    
+
     # Group rows by event type for easy lookup.
     by_event: dict[str, list] = {}
     for row in ds:
@@ -110,7 +106,7 @@ def load_episode(trace_dir: str | Path) -> Optional[Episode]:
     else:
         terminal_reward = float(raw_result)
 
-    # Task description and initial screenshot come from the reset event.
+    # Task description comes from the reset event.
     task_description = ""
     reset_screenshot: Optional[Image.Image] = None
     for reset_row in by_event.get("reset", []):
@@ -128,35 +124,28 @@ def load_episode(trace_dir: str | Path) -> Optional[Episode]:
     )
 
     steps: list[Step] = []
-    prev_screenshot = reset_screenshot  # carries forward between steps
+    prev_screenshot = reset_screenshot
 
     for i, row in enumerate(agent_steps):
         data = json.loads(row["data_json"])
         images = row.get("data_images") or []
         post_screenshot = _as_pil(images[0]) if images else None
 
-        # We need a valid pre-screenshot to build a useful training datum.
-        if prev_screenshot is None:
-            # Skip steps without visual context and advance the cursor.
-            if post_screenshot is not None:
-                prev_screenshot = post_screenshot
-            continue
-
-        is_terminal = i == len(agent_steps) - 1
         steps.append(
             Step(
                 step_num=data.get("step", i + 1),
-                pre_screenshot=prev_screenshot,
-                post_screenshot=post_screenshot or prev_screenshot,
+                screenshot=prev_screenshot,
                 action_text=_extract_action_text(data.get("output", [])),
-                reward=terminal_reward if is_terminal else 0.0,
             )
         )
 
+        # Advance screenshot cursor: use post_screenshot if available.
         if post_screenshot is not None:
             prev_screenshot = post_screenshot
 
     trajectory_id = ds[0]["trajectory_id"] if len(ds) > 0 and ds[0]["trajectory_id"] is not None else ""
+    assert isinstance(trajectory_id, str), f"trajectory_id is not a string: {trajectory_id}"
+
     return Episode(
         trajectory_id=trajectory_id,
         task_description=task_description,
@@ -182,3 +171,15 @@ def load_run(run_dir: str | Path) -> list[Episode]:
             # Non-fatal: log and continue so one bad trace doesn't abort the epoch.
             print(f"[traces] Warning: could not load {trace_dir}: {exc}")
     return episodes
+
+
+def load_runs(run_dirs: list[str | Path]) -> list[Episode]:
+    """Load episodes from multiple run directories and merge them.
+
+    This is needed for GRPO where group_size > 1 requires multiple
+    trajectories per task, collected across repeated rollouts.
+    """
+    all_episodes: list[Episode] = []
+    for run_dir in run_dirs:
+        all_episodes.extend(load_run(run_dir))
+    return all_episodes

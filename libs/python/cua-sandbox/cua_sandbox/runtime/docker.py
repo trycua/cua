@@ -206,13 +206,16 @@ class DockerRuntime(Runtime):
 
             # Write env vars to a sourceable profile script so run layers can access them
             if env_items and image.os_type != "windows":
-                env_lines = "\n".join(f'export {k}="{v}"' for k, v in env_items)
-                env_script = f"#!/bin/sh\n{env_lines}\n"
-                import base64 as _b64
-
-                env_b64 = _b64.b64encode(env_script.encode()).decode()
-                await executor.write_file("/etc/profile.d/cua-env.sh", env_b64)
-                await executor.run_command("sudo chmod 644 /etc/profile.d/cua-env.sh")
+                # Build the script line by line using sudo tee to handle root-owned /etc/profile.d
+                await executor.run_command(
+                    "printf '#!/bin/sh\\n' | sudo tee /etc/profile.d/cua-env.sh > /dev/null"
+                )
+                for k, v in env_items:
+                    safe_v = v.replace("'", "'\\''")
+                    await executor.run_command(
+                        f"printf 'export {k}=\"{safe_v}\"\\n' "
+                        f"| sudo tee -a /etc/profile.d/cua-env.sh > /dev/null"
+                    )
 
             # Apply files before layers so later run layers can reference copied files
             for src, dst in file_items:

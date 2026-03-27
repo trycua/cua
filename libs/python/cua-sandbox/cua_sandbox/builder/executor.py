@@ -179,17 +179,28 @@ class LayerExecutor:
             return {"success": False, "return_code": 1, "error": f"Source not found: {src}"}
         with open(src, "rb") as f:
             content_b64 = base64.b64encode(f.read()).decode()
-        # Ensure destination directory exists
-        dst_dir = dst.rsplit("/", 1)[0] if "/" in dst else dst.rsplit("\\", 1)[0]
-        if dst_dir:
-            if self._is_windows():
+        if self._is_windows():
+            dst_dir = dst.rsplit("\\", 1)[0] if "\\" in dst else dst.rsplit("/", 1)[0]
+            if dst_dir:
                 await self.run_command(f'mkdir "{dst_dir}"')
-            else:
-                await self.run_command(f"sudo mkdir -p {dst_dir}")
-        result = await self.write_file(dst, content_b64)
+            result = await self.write_file(dst, content_b64)
+            if not result.get("success", False):
+                return {"success": False, "return_code": 1, "error": result.get("error", "")}
+            return {"success": True, "return_code": 0}
+        # Linux/macOS: write to temp then sudo mv to handle root-owned destinations
+        import posixpath
+
+        basename = posixpath.basename(dst)
+        tmp_path = f"/tmp/_cua_copy_{basename}"
+        result = await self.write_file(tmp_path, content_b64)
         if not result.get("success", False):
             return {"success": False, "return_code": 1, "error": result.get("error", "")}
-        return {"success": True, "return_code": 0}
+        dst_dir = posixpath.dirname(dst)
+        if dst_dir and dst_dir != "/":
+            await self.run_command(f"sudo mkdir -p {dst_dir}")
+        r = await self.run_command(f"sudo mv {tmp_path} {dst}")
+        rc = r.get("return_code", r.get("returncode", -1))
+        return {"success": rc == 0, "return_code": rc, "stderr": r.get("stderr", "")}
 
     async def _exec_expose(self, layer: dict) -> dict:
         # Expose is a no-op at layer execution time — ports are mapped by the runtime

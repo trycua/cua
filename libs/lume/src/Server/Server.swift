@@ -62,16 +62,26 @@ private final class HTTPChannelHandler: ChannelInboundHandler, @unchecked Sendab
                     "body": String(data: bodyData ?? Data(), encoding: .utf8) ?? "",
                 ])
 
-            let ctx = context
+            // Bridge to Swift concurrency via an EventLoopPromise so that
+            // ChannelHandlerContext (non-Sendable) is only ever accessed on
+            // the event loop — never sent across actor boundaries.
+            let promise = context.eventLoop.makePromise(of: HTTPResponse.self)
             let srv = server
-            Task { @MainActor in
+            Task {
                 do {
                     let response = try await srv.handleRequest(request)
-                    HTTPChannelHandler.writeResponse(response, to: ctx)
+                    promise.succeed(response)
                 } catch {
-                    let response = srv.errorResponse(error)
-                    HTTPChannelHandler.writeResponse(response, to: ctx)
+                    promise.succeed(srv.errorResponse(error))
                 }
+            }
+            promise.futureResult.whenComplete { result in
+                let response: HTTPResponse
+                switch result {
+                case .success(let r): response = r
+                case .failure(let e): response = srv.errorResponse(e)
+                }
+                HTTPChannelHandler.writeResponse(response, to: context)
             }
         }
     }
@@ -113,8 +123,7 @@ private final class HTTPChannelHandler: ChannelInboundHandler, @unchecked Sendab
 
 // MARK: - Server Class
 
-@MainActor
-final class Server {
+final class Server: @unchecked Sendable {
 
     // MARK: - Route Type
 

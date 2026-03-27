@@ -148,19 +148,6 @@ final class Server: @unchecked Sendable {
             return true
         }
 
-        func extractParams(_ request: HTTPRequest) -> [String: String] {
-            var params: [String: String] = [:]
-            let routeParts = path.split(separator: "/")
-            let requestPathOnly = request.path.split(separator: "?", maxSplits: 1)[0]
-            let requestParts = requestPathOnly.split(separator: "/")
-
-            for (routePart, requestPart) in zip(routeParts, requestParts) {
-                if routePart.hasPrefix(":") {
-                    params[String(routePart.dropFirst())] = String(requestPart)
-                }
-            }
-            return params
-        }
     }
 
     // MARK: - Properties
@@ -169,6 +156,7 @@ final class Server: @unchecked Sendable {
     private let controller: LumeController
     private var routes: [Route]
     private var serverChannel: (any Channel)?
+    private var eventLoopGroup: (any EventLoopGroup)?
 
     // MARK: - Initialization
 
@@ -411,6 +399,7 @@ final class Server: @unchecked Sendable {
 
     func start() async throws {
         let group = MultiThreadedEventLoopGroup(numberOfThreads: System.coreCount)
+        eventLoopGroup = group
         let srv = self
 
         let bootstrap = ServerBootstrap(group: group)
@@ -434,10 +423,14 @@ final class Server: @unchecked Sendable {
             try? await group.shutdownGracefully()
             throw error
         }
+        try? await group.shutdownGracefully()
     }
 
     func stop() {
         serverChannel?.close(promise: nil)
+        if let group = eventLoopGroup {
+            Task { try? await group.shutdownGracefully() }
+        }
     }
 
     // MARK: - Request Handling

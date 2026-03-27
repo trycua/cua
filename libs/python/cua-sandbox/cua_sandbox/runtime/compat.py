@@ -115,16 +115,28 @@ def _host_arch() -> str:
 
 
 def _has_docker() -> bool:
-    try:
-        subprocess.run(
-            ["docker", "info"],
-            capture_output=True,
-            check=True,
-            timeout=10,
-        )
-        return True
-    except (subprocess.SubprocessError, FileNotFoundError, OSError):
-        return False
+    # Probe common install locations in addition to PATH — SSH sessions often
+    # have a stripped PATH that omits /usr/local/bin (e.g. OrbStack on macOS).
+    _DOCKER_CANDIDATES = [
+        "docker",
+        "/usr/local/bin/docker",
+        "/opt/homebrew/bin/docker",
+        "/usr/bin/docker",
+        str(os.path.expanduser("~/.docker/bin/docker")),
+    ]
+    for candidate in _DOCKER_CANDIDATES:
+        cmd = shutil.which(candidate) or candidate
+        try:
+            subprocess.run(
+                [cmd, "info"],
+                capture_output=True,
+                check=True,
+                timeout=10,
+            )
+            return True
+        except (subprocess.SubprocessError, FileNotFoundError, OSError):
+            continue
+    return False
 
 
 def _has_kvm() -> bool:

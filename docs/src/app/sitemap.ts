@@ -14,7 +14,9 @@ export default function sitemap(): MetadataRoute.Sitemap {
 
     return {
       url: `${baseUrl}${url}`,
-      lastModified: new Date(),
+      lastModified: page.data.lastModified
+        ? new Date(page.data.lastModified)
+        : undefined,
       changeFrequency: 'weekly' as const,
       priority: url === '/docs' ? 1.0 : 0.8,
     };
@@ -23,7 +25,7 @@ export default function sitemap(): MetadataRoute.Sitemap {
   // Add main docs page if not included
   const mainDocsPage = {
     url: `${baseUrl}/docs`,
-    lastModified: new Date(),
+    lastModified: docPages[0]?.lastModified,
     changeFrequency: 'weekly' as const,
     priority: 1.0,
   };

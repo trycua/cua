@@ -22,10 +22,16 @@ export default function sitemap(): MetadataRoute.Sitemap {
     };
   });
 
-  // Add main docs page if not included
+  // Add main docs page with the most recent lastModified across all doc pages
+  const latestModified = docPages.reduce<Date | undefined>((latest, page) => {
+    if (!page.lastModified) return latest;
+    if (!latest) return page.lastModified;
+    return page.lastModified > latest ? page.lastModified : latest;
+  }, undefined);
+
   const mainDocsPage = {
     url: `${baseUrl}/docs`,
-    lastModified: docPages[0]?.lastModified,
+    lastModified: latestModified,
     changeFrequency: 'weekly' as const,
     priority: 1.0,
   };

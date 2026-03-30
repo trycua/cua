@@ -116,8 +116,8 @@ class CloudTransport(Transport):
         await self._wait_for_server_ready()
         logger.debug("[cloud] computer-server ready")
 
-        # Apply image layers (e.g. APK installs) after server is ready
-        if self._image and self._image._layers:
+        # Apply env vars and image layers (e.g. APK installs) after server is ready
+        if self._image and (self._image._layers or self._image._env):
             logger.debug("[cloud] applying image layers")
             await self._apply_image_layers()
 
@@ -192,6 +192,18 @@ class CloudTransport(Transport):
 
     async def send(self, action: str, **params: Any) -> Any:
         assert self._inner, "Transport not connected"
+        # Source .cua_env before run_command on Android (same as ADB/gRPC transports)
+        if (
+            action == "run_command"
+            and "command" in params
+            and self._image
+            and self._image.os_type == "android"
+        ):
+            params = dict(params)
+            params["command"] = (
+                "[ -f /data/local/tmp/.cua_env ] && . /data/local/tmp/.cua_env; "
+                + params["command"]
+            )
         return await self._inner.send(action, **params)
 
     async def screenshot(self, format: str = "png", quality: int = 95) -> bytes:
@@ -210,7 +222,7 @@ class CloudTransport(Transport):
         if not self._name:
             raise ValueError("Transport not connected — no VM name available")
         if not share:
-            return f"https://cua.ai/connect/incus/{self._name}"
+            return f"https://cua.ai/connect/{self._name}"
         vm_info = await self._get_vm(self._name)
         password = vm_info.get("password", "")
         for ep in vm_info.get("endpoints", []):
@@ -323,56 +335,132 @@ class CloudTransport(Transport):
         )
 
     async def _apply_image_layers(self) -> None:
-        """Apply image layers (APK installs, shell commands) after the VM is ready."""
+        """Apply env vars and image layers (APK installs, PWA, shell commands) after the VM is ready."""
         import base64
         import hashlib
         import urllib.request
         from pathlib import Path
 
         assert self._inner
+
+        # Apply environment variables by writing a .cua_env sourced file
+        if self._image._env:
+            import shlex
+
+            lines = []
+            for k, v in self._image._env:
+                lines.append(f"export {k}={shlex.quote(v)}")
+            env_content = "\n".join(lines) + "\n"
+            await self._inner.send(
+                "write_bytes",
+                path="/data/local/tmp/.cua_env",
+                content_b64=base64.b64encode(env_content.encode()).decode(),
+            )
+            logger.debug("[cloud] wrote %d env vars to .cua_env", len(self._image._env))
+
         for layer in self._image._layers:
             lt = layer["type"]
             if lt == "apk_install":
                 for apk in layer["packages"]:
-                    dest = "/data/local/tmp/cua_install.apk"
-                    # Resolve APK to local bytes (download URL if needed)
-                    if apk.startswith(("http://", "https://")):
-                        cache_dir = Path.home() / ".cua" / "cua-sandbox" / "apk-cache"
-                        cache_dir.mkdir(parents=True, exist_ok=True)
-                        cache_file = cache_dir / (
-                            hashlib.sha256(apk.encode()).hexdigest()[:16] + ".apk"
-                        )
-                        if not cache_file.exists():
-                            urllib.request.urlretrieve(apk, cache_file)
-                        apk_bytes = cache_file.read_bytes()
-                    else:
-                        apk_bytes = Path(apk).read_bytes()
-                    # Push to device via write_bytes (base64), then install
-                    await self._inner.send(
-                        "write_bytes",
-                        path=dest,
-                        content_b64=base64.b64encode(apk_bytes).decode(),
-                    )
-                    # Install; on signature mismatch uninstall existing and retry.
-                    # The script always exits 0 so run_command does not raise.
-                    await self._inner.send(
-                        "run_command",
-                        command=(
-                            f"out=$(pm install -r {dest} 2>&1); "
-                            f'if echo "$out" | grep -q INSTALL_FAILED_UPDATE_INCOMPATIBLE; then '
-                            f'  pkg=$(echo "$out" | sed -n "s/.*Package \\(\\S*\\) signatures.*/\\1/p"); '
-                            f'  pm uninstall "$pkg"; pm install -r {dest}; '
-                            f'else echo "$out"; fi; true'
-                        ),
-                        timeout=90,
-                    )
+                    await self._install_apk(apk)
+            elif lt == "pwa_install":
+                await self._install_pwa(layer)
             elif lt == "run":
                 await self._inner.send("run_command", command=layer["command"], timeout=60)
+
+    async def _install_apk(self, apk: str) -> None:
+        """Download (if URL) and install an APK via the computer-server."""
+        import base64
+        import hashlib
+        import urllib.request
+        from pathlib import Path
+
+        dest = "/data/local/tmp/cua_install.apk"
+        if apk.startswith(("http://", "https://")):
+            cache_dir = Path.home() / ".cua" / "cua-sandbox" / "apk-cache"
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            cache_file = cache_dir / (
+                hashlib.sha256(apk.encode()).hexdigest()[:16] + ".apk"
+            )
+            if not cache_file.exists():
+                urllib.request.urlretrieve(apk, cache_file)
+            apk_bytes = cache_file.read_bytes()
+        else:
+            apk_bytes = Path(apk).read_bytes()
+
+        await self._inner.send(
+            "write_bytes",
+            path=dest,
+            content_b64=base64.b64encode(apk_bytes).decode(),
+        )
+        await self._inner.send(
+            "run_command",
+            command=(
+                f"out=$(pm install -r {dest} 2>&1); "
+                f'if echo "$out" | grep -q INSTALL_FAILED_UPDATE_INCOMPATIBLE; then '
+                f'  pkg=$(echo "$out" | sed -n "s/.*Package \\(\\S*\\) signatures.*/\\1/p"); '
+                f'  pm uninstall "$pkg"; pm install -r {dest}; '
+                f'else echo "$out"; fi; true'
+            ),
+            timeout=90,
+        )
+
+    async def _install_pwa(self, layer: dict) -> None:
+        """Build PWA APK on the host using bubblewrap, then push and install.
+
+        Auto-installs Android SDK and bubblewrap if not present (same as local runtime).
+        """
+        import base64
+        from pathlib import Path
+
+        from cua_sandbox.runtime.android_emulator import (
+            AndroidEmulatorRuntime,
+            _ensure_sdk,
+        )
+
+        # Ensure Android SDK is available (auto-installs if missing)
+        _ensure_sdk()
+
+        manifest_url = layer["manifest_url"]
+        pkg = layer.get("package_name")
+        ks = Path(layer["keystore"]) if layer.get("keystore") else None
+        ks_alias = layer.get("keystore_alias", "android")
+        ks_pass = layer.get("keystore_password", "android")
+
+        # Build APK on host (auto-installs bubblewrap via npm if missing)
+        runtime = AndroidEmulatorRuntime.__new__(AndroidEmulatorRuntime)
+        apk_path, fingerprint = await runtime._build_pwa_apk(
+            manifest_url, pkg, ks, ks_alias, ks_pass
+        )
+        logger.info(
+            f"[cloud] PWA APK built: {apk_path} (fingerprint: {fingerprint})"
+        )
+
+        apk_bytes = Path(apk_path).read_bytes()
+        dest = "/data/local/tmp/cua_pwa.apk"
+        await self._inner.send(
+            "write_bytes",
+            path=dest,
+            content_b64=base64.b64encode(apk_bytes).decode(),
+        )
+        await self._inner.send(
+            "run_command",
+            command=f"pm install -r {dest} 2>&1; true",
+            timeout=120,
+        )
+        # Suppress Chrome first-run wizard for TWA
+        for cmd in [
+            "am set-debug-app --persistent com.android.chrome",
+            "mkdir -p /data/local/tmp && "
+            "echo 'chrome --no-first-run --disable-fre --no-default-browser-check' "
+            "> /data/local/tmp/chrome-command-line",
+        ]:
+            await self._inner.send("run_command", command=cmd, timeout=10)
 
     @staticmethod
     def _resolve_endpoint(vm_info: dict) -> str:
         """Build the computer-server HTTP URL from VM info."""
-        # Prefer explicit endpoints array (Incus VMs)
+        # Prefer explicit endpoints array
         for ep in vm_info.get("endpoints", []):
             if ep.get("name") in ("computer-server", "api"):
                 host = ep["host"]

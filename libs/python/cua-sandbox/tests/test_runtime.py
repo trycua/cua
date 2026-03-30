@@ -548,7 +548,6 @@ async def test_cloud_linux_ephemeral():
     """Cloud sandbox: Sandbox.ephemeral with linux image (local=False)."""
     async with Sandbox.ephemeral(
         Image.linux("ubuntu", "24.04"),
-        name="cua-test-cloud-linux",
     ) as sb:
         result = await sb.shell.run("uname -s")
         assert result.success
@@ -563,7 +562,6 @@ async def test_cloud_android_ephemeral():
     """Cloud sandbox: Sandbox.ephemeral with android image (local=False)."""
     async with Sandbox.ephemeral(
         Image.android("14"),
-        name="cua-test-cloud-android",
     ) as sb:
         screenshot = await sb.screenshot()
         assert screenshot[:4] == b"\x89PNG"

@@ -169,6 +169,7 @@ final class Server: @unchecked Sendable {
     private let controller: LumeController
     private var routes: [Route]
     private var serverChannel: (any Channel)?
+    private var eventLoopGroup: (any EventLoopGroup)?
 
     // MARK: - Initialization
 
@@ -411,6 +412,7 @@ final class Server: @unchecked Sendable {
 
     func start() async throws {
         let group = MultiThreadedEventLoopGroup(numberOfThreads: System.coreCount)
+        eventLoopGroup = group
         let srv = self
 
         let bootstrap = ServerBootstrap(group: group)
@@ -434,10 +436,14 @@ final class Server: @unchecked Sendable {
             try? await group.shutdownGracefully()
             throw error
         }
+        try? await group.shutdownGracefully()
     }
 
     func stop() {
         serverChannel?.close(promise: nil)
+        if let group = eventLoopGroup {
+            Task { try? await group.shutdownGracefully() }
+        }
     }
 
     // MARK: - Request Handling

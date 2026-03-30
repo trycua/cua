@@ -465,7 +465,7 @@ class CloudTransport(Transport):
                 "am set-debug-app --persistent com.android.chrome",
                 "mkdir -p /data/local/tmp && "
                 "echo 'chrome --no-first-run --disable-fre --no-default-browser-check "
-                f"--disable-digital-asset-link-verification-for-url=\"{origin}\"' "
+                f'--disable-digital-asset-link-verification-for-url="{origin}"\' '
                 "> /data/local/tmp/chrome-command-line",
             ]:
                 await self._inner.send("run_command", command=cmd, timeout=10)
@@ -474,7 +474,7 @@ class CloudTransport(Transport):
     async def _build_pwa2apk(
         manifest_url: str,
         package_name: str | None = None,
-        keystore_path: "Path | None" = None,
+        keystore_path: str | None = None,
         keystore_alias: str = "android",
         keystore_password: str = "android",
     ) -> tuple:
@@ -506,7 +506,6 @@ class CloudTransport(Transport):
 
         # Build via the pwa2apk Node API directly
         import hashlib
-        import json
         from pathlib import Path
 
         # Check if pwa2apk is installed globally or locally
@@ -531,16 +530,12 @@ class CloudTransport(Transport):
                 timeout=60,
             )
             if clone_result.returncode != 0:
-                raise RuntimeError(
-                    f"Failed to clone pwa2apk: {clone_result.stderr}"
-                )
+                raise RuntimeError(f"Failed to clone pwa2apk: {clone_result.stderr}")
 
         # Build the args for the CLI
         import os
 
-        cache_key = hashlib.sha256(
-            f"{manifest_url}|{package_name or ''}".encode()
-        ).hexdigest()[:12]
+        cache_key = hashlib.sha256(f"{manifest_url}|{package_name or ''}".encode()).hexdigest()[:12]
         output_apk = Path.home() / ".cua" / "pwa2apk-cache" / f"{cache_key}.apk"
         output_apk.parent.mkdir(parents=True, exist_ok=True)
 
@@ -548,7 +543,8 @@ class CloudTransport(Transport):
             node,
             str(pwa2apk_dir / "src" / "cli.js"),
             manifest_url,
-            "--output", str(output_apk),
+            "--output",
+            str(output_apk),
         ]
         if package_name:
             cmd.extend(["--package", package_name])
@@ -563,12 +559,14 @@ class CloudTransport(Transport):
                 # Linux
                 "/usr/lib/jvm/java-17-openjdk-amd64",
                 "/usr/lib/jvm/java-21-openjdk-amd64",
-                # macOS (Homebrew ARM)
-                "/opt/homebrew/opt/openjdk/libexec/openjdk.jdk/Contents/Home",
+                # macOS (Homebrew ARM) — prefer @17/@21 over unversioned (may be JDK 25+)
+                "/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home",
                 "/opt/homebrew/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home",
+                "/opt/homebrew/opt/openjdk/libexec/openjdk.jdk/Contents/Home",
                 # macOS (Homebrew Intel)
-                "/usr/local/opt/openjdk/libexec/openjdk.jdk/Contents/Home",
+                "/usr/local/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home",
                 "/usr/local/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home",
+                "/usr/local/opt/openjdk/libexec/openjdk.jdk/Contents/Home",
             ]:
                 if Path(jdk).exists():
                     env["JAVA_HOME"] = jdk

@@ -308,22 +308,25 @@ class Sandbox:
         )
 
     async def destroy(self) -> None:
-        """Disconnect and permanently delete the sandbox (VM/container).
+        """Disconnect and permanently delete the sandbox (VM/container)."""
+        if self._has_snapshots:
+            import logging
 
-        If a snapshot was taken from this sandbox, it is stopped instead of
-        deleted so that forks created from the snapshot remain valid.
-        """
+            logging.getLogger(__name__).warning(
+                "Destroying sandbox %s which has snapshots — "
+                "forks referencing those snapshots will break. "
+                "Use Sandbox.ephemeral() which auto-stops instead of deleting "
+                "when snapshots exist.",
+                self.name,
+            )
         if self.telemetry_enabled and _TELEMETRY_AVAILABLE and is_telemetry_enabled():
             record_event("sandbox_destroy", {"name": self.name, "ephemeral": self._ephemeral})
         await self._transport.disconnect()
         if isinstance(self._transport, CloudTransport):
-            if self._has_snapshots:
-                await self._transport.suspend_vm()
-            else:
-                await self._transport.delete_vm()
+            await self._transport.delete_vm()
         if self._runtime and self._runtime_info:
             vm_name = self._runtime_info.name or self.name or "cua-sandbox"
-            if self._ephemeral and hasattr(self._runtime, "delete") and not self._has_snapshots:
+            if self._ephemeral and hasattr(self._runtime, "delete"):
                 await self._runtime.delete(vm_name)
             else:
                 await self._runtime.stop(vm_name)
@@ -538,7 +541,11 @@ class Sandbox:
         try:
             yield sb
         finally:
-            await sb.destroy()
+            if sb._has_snapshots and sb.name:
+                # Stop instead of delete so forks can reference the snapshots.
+                await cls.suspend(sb.name, local=local, api_key=api_key)
+            else:
+                await sb.destroy()
 
     # ── Lifecycle management ─────────────────────────────────────────────
 

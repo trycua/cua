@@ -412,13 +412,23 @@ class AndroidEmulatorRuntime(Runtime):
                 ks = Path(layer["keystore"]) if layer.get("keystore") else None
                 ks_alias = layer.get("keystore_alias", "android")
                 ks_pass = layer.get("keystore_password", "android")
-                apk_path, fingerprint = await self._build_pwa_apk(
-                    manifest_url, pkg, ks, ks_alias, ks_pass
-                )
+                builder = layer.get("builder", "pwa2apk")
+
+                if builder == "pwa2apk":
+                    # Import cloud transport's pwa2apk builder (works without a sandbox)
+                    from cua_sandbox.transport.cloud import CloudTransport
+
+                    apk_path, fingerprint = await CloudTransport._build_pwa2apk(
+                        manifest_url, pkg, ks, ks_alias, ks_pass
+                    )
+                else:
+                    apk_path, fingerprint = await self._build_pwa_apk(
+                        manifest_url, pkg, ks, ks_alias, ks_pass
+                    )
+
                 logger.info(
-                    f"PWA APK signing fingerprint (SHA-256): {fingerprint}\n"
-                    "  → Set TWA_SHA256_FINGERPRINT env var on your server to this value\n"
-                    f"    so /.well-known/assetlinks.json is trusted by Chrome."
+                    f"PWA APK built ({builder}): {apk_path}\n"
+                    f"  SHA-256 fingerprint: {fingerprint}"
                 )
                 logger.info(f"Installing PWA APK: {apk_path}")
                 result = subprocess.run(
@@ -432,21 +442,26 @@ class AndroidEmulatorRuntime(Runtime):
                     logger.warning(f"PWA APK install failed: {result.stderr}")
                 else:
                     logger.info(f"PWA APK installed: {result.stdout.strip()}")
-                # Suppress Chrome first-run wizard so the TWA opens immediately.
-                # set-debug-app makes Chrome honour the chrome-command-line file.
-                for cmd in [
-                    "am set-debug-app --persistent com.android.chrome",
-                    "mkdir -p /data/local/tmp && "
-                    "echo 'chrome --no-first-run --disable-fre "
-                    "--no-default-browser-check' "
-                    "> /data/local/tmp/chrome-command-line",
-                ]:
-                    subprocess.run(
-                        [adb, "-s", serial, "shell", cmd],
-                        capture_output=True,
-                        env=env,
-                        timeout=10,
-                    )
+
+                # For bubblewrap TWA, set Chrome flags.  pwa2apk doesn't need this.
+                if builder == "bubblewrap":
+                    from urllib.parse import urlparse
+
+                    origin = f"{urlparse(manifest_url).scheme}://{urlparse(manifest_url).netloc}"
+                    for cmd in [
+                        "am set-debug-app --persistent com.android.chrome",
+                        "mkdir -p /data/local/tmp && "
+                        "echo 'chrome --no-first-run --disable-fre "
+                        "--no-default-browser-check "
+                        f"--disable-digital-asset-link-verification-for-url=\"{origin}\"' "
+                        "> /data/local/tmp/chrome-command-line",
+                    ]:
+                        subprocess.run(
+                            [adb, "-s", serial, "shell", cmd],
+                            capture_output=True,
+                            env=env,
+                            timeout=10,
+                        )
             elif lt == "run":
                 cmd = layer["command"]
                 logger.info(f"Running: {cmd}")

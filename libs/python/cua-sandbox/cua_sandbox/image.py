@@ -291,31 +291,39 @@ class Image:
         keystore: Optional[str] = None,
         keystore_alias: str = "android",
         keystore_password: str = "android",
+        builder: str = "pwa2apk",
     ) -> "Image":
-        """Build an APK from a PWA manifest URL via Bubblewrap and install it (Android only).
+        """Build an APK from a PWA manifest URL and install it (Android only).
 
-        Bubblewrap reads the Web App Manifest at *manifest_url*, generates a
-        Trusted Web Activity (TWA) APK signed with *keystore*, and installs it
-        via adb.  The keystore's SHA-256 fingerprint must match what the server
-        serves from ``/.well-known/assetlinks.json`` so Chrome trusts the TWA
-        and skips the browser UI entirely.
+        Two builder backends are supported:
+
+        * ``"pwa2apk"`` (default) — generates a lightweight WebView-based APK.
+          No Chrome dependency, no "Running in Chrome" banner, no Digital Asset
+          Links needed.  ~10 KB APK.
+        * ``"bubblewrap"`` — generates a Chrome Trusted Web Activity (TWA) APK.
+          Requires Chrome on the device and a matching
+          ``/.well-known/assetlinks.json`` on the server.  Shows a mandatory
+          "Running in Chrome" privacy disclosure on every launch.
 
         Args:
-            manifest_url: Full URL to the PWA's ``manifest.json``.
+            manifest_url: Full URL to the PWA's ``manifest.json`` or
+                          ``manifest.webmanifest``.
                           Example: ``"http://10.0.2.2:3000/manifest.json"``
             package_name: Android package ID.  Defaults to a reversed-hostname
                           derivation (e.g. ``"com.example.app"``).
             keystore:     Path to a ``*.keystore`` / ``*.jks`` file.  When
-                          omitted a fresh keystore is generated and cached under
-                          ``~/.cua/cua-sandbox/pwa-cache/``.  Pass the keystore
-                          bundled with your PWA repo so the fingerprint is
-                          deterministic and pre-loaded into ``assetlinks.json``.
+                          omitted a fresh keystore is generated and cached.
+                          Pass the keystore bundled with your PWA repo so the
+                          fingerprint is deterministic.
             keystore_alias:    Key alias inside the keystore (default ``"android"``).
             keystore_password: Password for both the store and the key
                                (default ``"android"``).
+            builder:      ``"pwa2apk"`` (default) or ``"bubblewrap"``.
         """
+        if builder not in ("pwa2apk", "bubblewrap"):
+            raise ValueError(f"builder must be 'pwa2apk' or 'bubblewrap', got {builder!r}")
         self._check_os("pwa_install")
-        layer: dict = {"type": "pwa_install", "manifest_url": manifest_url}
+        layer: dict = {"type": "pwa_install", "manifest_url": manifest_url, "builder": builder}
         if package_name:
             layer["package_name"] = package_name
         if keystore:
@@ -404,14 +412,21 @@ class Image:
                     lines.append(f"adb install {apk}")
             elif lt == "pwa_install":
                 manifest_url = layer["manifest_url"]
-                lines.append(
-                    # Install bubblewrap CLI (once), init a TWA project from the
-                    # manifest URL, build a debug APK, then install it via adb.
-                    f"npm install -g @bubblewrap/cli 2>/dev/null || true\n"
-                    f"_BWW_DIR=$(mktemp -d)\n"
-                    f"(cd \"$_BWW_DIR\" && bubblewrap init --manifest '{manifest_url}' --directory . --skipPwaValidation && bubblewrap build --skipSigning)\n"
-                    f'adb install "$_BWW_DIR/app-release-unsigned.apk"'
-                )
+                builder = layer.get("builder", "pwa2apk")
+                if builder == "pwa2apk":
+                    lines.append(
+                        f"# pwa2apk: WebView APK (no Chrome dependency)\n"
+                        f"pwa2apk '{manifest_url}' --output /tmp/pwa.apk\n"
+                        f"adb install /tmp/pwa.apk"
+                    )
+                else:
+                    lines.append(
+                        f"# bubblewrap: Chrome TWA APK\n"
+                        f"npm install -g @bubblewrap/cli 2>/dev/null || true\n"
+                        f"_BWW_DIR=$(mktemp -d)\n"
+                        f"(cd \"$_BWW_DIR\" && bubblewrap init --manifest '{manifest_url}' --directory . --skipPwaValidation && bubblewrap build --skipSigning)\n"
+                        f'adb install "$_BWW_DIR/app-release-unsigned.apk"'
+                    )
             elif lt == "run":
                 lines.append(layer["command"])
         return "\n".join(lines) + "\n"

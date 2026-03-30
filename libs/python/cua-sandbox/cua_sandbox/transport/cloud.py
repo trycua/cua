@@ -408,33 +408,39 @@ class CloudTransport(Transport):
         )
 
     async def _install_pwa(self, layer: dict) -> None:
-        """Build PWA APK on the host using bubblewrap, then push and install.
+        """Build PWA APK on the host, then push and install.
 
-        Auto-installs Android SDK and bubblewrap if not present (same as local runtime).
+        Supports two builders:
+        - "pwa2apk" (default): WebView-based APK, no Chrome dependency or banners.
+        - "bubblewrap": Chrome TWA APK, requires asset links and shows Chrome disclosure.
         """
         import base64
         from pathlib import Path
 
-        from cua_sandbox.runtime.android_emulator import (
-            AndroidEmulatorRuntime,
-            _ensure_sdk,
-        )
-
-        # Ensure Android SDK is available (auto-installs if missing)
-        _ensure_sdk()
-
+        builder = layer.get("builder", "pwa2apk")
         manifest_url = layer["manifest_url"]
         pkg = layer.get("package_name")
         ks = Path(layer["keystore"]) if layer.get("keystore") else None
         ks_alias = layer.get("keystore_alias", "android")
         ks_pass = layer.get("keystore_password", "android")
 
-        # Build APK on host (auto-installs bubblewrap via npm if missing)
-        runtime = AndroidEmulatorRuntime.__new__(AndroidEmulatorRuntime)
-        apk_path, fingerprint = await runtime._build_pwa_apk(
-            manifest_url, pkg, ks, ks_alias, ks_pass
-        )
-        logger.info(f"[cloud] PWA APK built: {apk_path} (fingerprint: {fingerprint})")
+        if builder == "pwa2apk":
+            apk_path, fingerprint = await self._build_pwa2apk(
+                manifest_url, pkg, ks, ks_alias, ks_pass
+            )
+        else:
+            from cua_sandbox.runtime.android_emulator import (
+                AndroidEmulatorRuntime,
+                _ensure_sdk,
+            )
+
+            _ensure_sdk()
+            runtime = AndroidEmulatorRuntime.__new__(AndroidEmulatorRuntime)
+            apk_path, fingerprint = await runtime._build_pwa_apk(
+                manifest_url, pkg, ks, ks_alias, ks_pass
+            )
+
+        logger.info(f"[cloud] PWA APK built ({builder}): {apk_path} (fingerprint: {fingerprint})")
 
         apk_bytes = Path(apk_path).read_bytes()
         dest = "/data/local/tmp/cua_pwa.apk"
@@ -448,14 +454,138 @@ class CloudTransport(Transport):
             command=f"pm install -r {dest} 2>&1; true",
             timeout=120,
         )
-        # Suppress Chrome first-run wizard for TWA
-        for cmd in [
-            "am set-debug-app --persistent com.android.chrome",
-            "mkdir -p /data/local/tmp && "
-            "echo 'chrome --no-first-run --disable-fre --no-default-browser-check' "
-            "> /data/local/tmp/chrome-command-line",
+
+        # For bubblewrap TWA, suppress Chrome first-run and set asset link bypass.
+        # For pwa2apk WebView, none of this is needed.
+        if builder == "bubblewrap":
+            from urllib.parse import urlparse
+
+            origin = f"{urlparse(manifest_url).scheme}://{urlparse(manifest_url).netloc}"
+            for cmd in [
+                "am set-debug-app --persistent com.android.chrome",
+                "mkdir -p /data/local/tmp && "
+                "echo 'chrome --no-first-run --disable-fre --no-default-browser-check "
+                f"--disable-digital-asset-link-verification-for-url=\"{origin}\"' "
+                "> /data/local/tmp/chrome-command-line",
+            ]:
+                await self._inner.send("run_command", command=cmd, timeout=10)
+
+    @staticmethod
+    async def _build_pwa2apk(
+        manifest_url: str,
+        package_name: str | None = None,
+        keystore_path: "Path | None" = None,
+        keystore_alias: str = "android",
+        keystore_password: str = "android",
+    ) -> tuple:
+        """Build a WebView-based APK using pwa2apk (no Chrome dependency)."""
+        import shutil
+        import subprocess
+
+        node = shutil.which("node")
+        if not node:
+            raise RuntimeError("node not found on PATH; required for pwa2apk")
+
+        # Find pwa2apk — check common locations
+        pwa2apk_cli = None
+        for candidate in [
+            shutil.which("pwa2apk"),
+            # npm global
+            *([] if not shutil.which("npm") else []),
         ]:
-            await self._inner.send("run_command", command=cmd, timeout=10)
+            if candidate:
+                pwa2apk_cli = candidate
+                break
+
+        # Fall back to requiring it as a node module
+        if not pwa2apk_cli:
+            # Try npx
+            npx = shutil.which("npx")
+            if npx:
+                pwa2apk_cli = npx
+
+        # Build via the pwa2apk Node API directly
+        import hashlib
+        import json
+        from pathlib import Path
+
+        # Check if pwa2apk is installed globally or locally
+        pwa2apk_dir = None
+        for p in [
+            Path.home() / ".cua" / "pwa2apk",
+            Path("/tmp/pwa2apk"),
+        ]:
+            if (p / "src" / "index.js").exists():
+                pwa2apk_dir = p
+                break
+
+        if not pwa2apk_dir:
+            # Auto-clone pwa2apk
+            logger.info("Cloning pwa2apk...")
+            pwa2apk_dir = Path.home() / ".cua" / "pwa2apk"
+            pwa2apk_dir.mkdir(parents=True, exist_ok=True)
+            subprocess.run(
+                ["git", "clone", "https://github.com/trycua/pwa2apk.git", str(pwa2apk_dir)],
+                capture_output=True,
+                timeout=60,
+            )
+
+        # Build the args for the CLI
+        import os
+
+        cache_key = hashlib.sha256(
+            f"{manifest_url}|{package_name or ''}".encode()
+        ).hexdigest()[:12]
+        output_apk = Path.home() / ".cua" / "pwa2apk-cache" / f"{cache_key}.apk"
+        output_apk.parent.mkdir(parents=True, exist_ok=True)
+
+        cmd = [
+            node,
+            str(pwa2apk_dir / "src" / "cli.js"),
+            manifest_url,
+            "--output", str(output_apk),
+        ]
+        if package_name:
+            cmd.extend(["--package", package_name])
+        if keystore_path:
+            cmd.extend(["--keystore", str(keystore_path)])
+            cmd.extend(["--keystore-alias", keystore_alias])
+            cmd.extend(["--keystore-password", keystore_password])
+
+        env = {**os.environ}
+        if "JAVA_HOME" not in env:
+            for jdk in [
+                "/usr/lib/jvm/java-17-openjdk-amd64",
+                "/usr/lib/jvm/java-21-openjdk-amd64",
+            ]:
+                if Path(jdk).exists():
+                    env["JAVA_HOME"] = jdk
+                    break
+
+        logger.info(f"Building APK with pwa2apk: {manifest_url}")
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=300,
+        )
+        if result.returncode != 0:
+            raise RuntimeError(
+                f"pwa2apk build failed:\nstdout: {result.stdout}\nstderr: {result.stderr}"
+            )
+
+        # Extract fingerprint from output
+        fingerprint = ""
+        for line in result.stdout.splitlines():
+            if "SHA-256:" in line:
+                fingerprint = line.split("SHA-256:", 1)[1].strip()
+                break
+
+        if not output_apk.exists():
+            raise RuntimeError(f"pwa2apk did not produce APK at {output_apk}")
+
+        return output_apk, fingerprint
 
     @staticmethod
     def _resolve_endpoint(vm_info: dict) -> str:

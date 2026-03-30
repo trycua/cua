@@ -36,5 +36,7 @@ class Mouse:
         self, start_x: int, start_y: int, end_x: int, end_y: int, button: str = "left"
     ) -> None:
         await self._t.send(
-            "drag", start_x=start_x, start_y=start_y, end_x=end_x, end_y=end_y, button=button
+            "drag",
+            path=[[start_x, start_y], [end_x, end_y]],
+            button=button,
         )

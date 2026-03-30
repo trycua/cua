@@ -70,6 +70,8 @@ def _sdk_path() -> Path:
         Path.home() / "Library" / "Android" / "sdk",  # Android Studio (macOS)
         Path("/opt/android"),  # docker-android
         Path.home() / "Android" / "Sdk",  # Linux
+        Path(os.environ.get("LOCALAPPDATA", "")) / "Android" / "Sdk",  # Android Studio (Windows)
+        Path.home() / "AppData" / "Local" / "Android" / "Sdk",  # Windows fallback
     ]
     for p in common:
         if (p / "emulator").exists():
@@ -81,9 +83,12 @@ def _ensure_sdk() -> Path:
     """Ensure Android SDK command-line tools, emulator, and platform-tools are installed."""
     sdk = _sdk_path()
 
-    emulator_bin = sdk / "emulator" / "emulator"
-    sdkmanager_bin = sdk / "cmdline-tools" / "latest" / "bin" / "sdkmanager"
-    adb_bin = sdk / "platform-tools" / "adb"
+    _win = _plat.system().lower() == "windows"
+    _ext = ".exe" if _win else ""
+    _bat = ".bat" if _win else ""
+    emulator_bin = sdk / "emulator" / f"emulator{_ext}"
+    sdkmanager_bin = sdk / "cmdline-tools" / "latest" / "bin" / f"sdkmanager{_bat}"
+    adb_bin = sdk / "platform-tools" / f"adb{_ext}"
 
     if emulator_bin.exists() and adb_bin.exists():
         return sdk
@@ -98,10 +103,10 @@ def _ensure_sdk() -> Path:
             tools_url = f"https://dl.google.com/android/repository/commandlinetools-mac-{_CMDLINE_TOOLS_VERSION}_latest.zip"
         elif system == "linux":
             tools_url = f"https://dl.google.com/android/repository/commandlinetools-linux-{_CMDLINE_TOOLS_VERSION}_latest.zip"
+        elif system == "windows":
+            tools_url = f"https://dl.google.com/android/repository/commandlinetools-win-{_CMDLINE_TOOLS_VERSION}_latest.zip"
         else:
-            raise RuntimeError(
-                "Android SDK auto-install not supported on Windows. Install Android Studio manually."
-            )
+            raise RuntimeError(f"Android SDK auto-install not supported on {system}.")
 
         import urllib.request
         import zipfile
@@ -121,7 +126,7 @@ def _ensure_sdk() -> Path:
         for f in (sdk / "cmdline-tools" / "latest" / "bin").iterdir():
             f.chmod(0o755)
 
-    sdkmanager_bin = sdk / "cmdline-tools" / "latest" / "bin" / "sdkmanager"
+    sdkmanager_bin = sdk / "cmdline-tools" / "latest" / "bin" / f"sdkmanager{_bat}"
     if not sdkmanager_bin.exists():
         raise RuntimeError(f"sdkmanager not found at {sdkmanager_bin}")
 
@@ -190,15 +195,18 @@ def _find_free_emulator_port() -> int:
 
 
 def _find_bin(sdk: Path, name: str) -> str:
-    """Find a binary in the SDK."""
-    candidates = [
-        sdk / "emulator" / name,
-        sdk / "platform-tools" / name,
-        sdk / "cmdline-tools" / "latest" / "bin" / name,
+    """Find a binary in the SDK, handling .exe/.bat on Windows."""
+    exts = ["", ".exe", ".bat"] if _plat.system().lower() == "windows" else [""]
+    dirs = [
+        sdk / "emulator",
+        sdk / "platform-tools",
+        sdk / "cmdline-tools" / "latest" / "bin",
     ]
-    for c in candidates:
-        if c.exists():
-            return str(c)
+    for d in dirs:
+        for ext in exts:
+            c = d / f"{name}{ext}"
+            if c.exists():
+                return str(c)
     # Fall back to PATH
     found = shutil.which(name)
     if found:
@@ -355,6 +363,31 @@ class AndroidEmulatorRuntime(Runtime):
     async def _apply_layers(self, image: Image, adb: str, env: dict) -> None:
         """Apply image layers post-boot (APK installs, shell commands, etc.)."""
         serial = f"emulator-{self.adb_port - 1}"
+
+        # Write image env vars to a persistent file so every subsequent
+        # adb shell command (including those from the transport) can source it.
+        if image._env:
+            import re
+            import shlex
+            import tempfile
+
+            lines = []
+            for k, v in image._env:
+                if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", k):
+                    raise ValueError(f"Invalid environment variable name: {k!r}")
+                lines.append(f"export {k}={shlex.quote(v)}")
+            exports = "\n".join(lines) + "\n"
+            with tempfile.NamedTemporaryFile(mode="w", suffix=".sh", delete=False) as f:
+                f.write(exports)
+                tmp_path = f.name
+            subprocess.run(
+                [adb, "-s", serial, "push", tmp_path, "/data/local/tmp/.cua_env"],
+                capture_output=True,
+                env=env,
+                timeout=10,
+            )
+            Path(tmp_path).unlink(missing_ok=True)
+
         for layer in image._layers:
             lt = layer["type"]
             if lt == "apk_install":
@@ -466,10 +499,16 @@ class AndroidEmulatorRuntime(Runtime):
         keytool = str(jdk_bin / "keytool") if (jdk_bin / "keytool").exists() else "keytool"
 
         # ── 1. Ensure bubblewrap CLI is on PATH ──────────────────────────────
-        bw = shutil.which("bubblewrap")
+        # Augment PATH with common Homebrew node locations so shutil.which finds them
+        # even when the process was launched without a login shell.
+        extra_node_paths = ["/opt/homebrew/bin", "/usr/local/bin"]
+        augmented_path = os.pathsep.join(extra_node_paths) + os.pathsep + env.get("PATH", "")
+        env["PATH"] = augmented_path
+
+        bw = shutil.which("bubblewrap", path=augmented_path)
         if not bw:
-            node = shutil.which("node")
-            npm = shutil.which("npm")
+            node = shutil.which("node", path=augmented_path)
+            npm = shutil.which("npm", path=augmented_path)
             if not node or not npm:
                 raise RuntimeError(
                     "node/npm not found on PATH; required for pwa_install.\n"
@@ -548,9 +587,20 @@ class AndroidEmulatorRuntime(Runtime):
 
         # ── 3. Determine package ID and cache directory ──────────────────────
         if not package_name:
+            import re
+
             host = urlparse(manifest_url).hostname or ""
             parts = [p for p in reversed(host.split(".")) if p]
-            package_name = ".".join(parts) if parts else "com.cua.pwa"
+            # Sanitize each part: replace non-alphanumeric/underscore chars with _,
+            # prefix with _ if starts with a digit (invalid Java identifier start).
+            sanitized = []
+            for part in parts:
+                part = re.sub(r"[^a-zA-Z0-9_]", "_", part)
+                if part and part[0].isdigit():
+                    part = "_" + part
+                if part:
+                    sanitized.append(part)
+            package_name = ".".join(sanitized) if sanitized else "com.cua.pwa"
 
         cache_key = hashlib.sha256(f"{manifest_url}|{package_name}".encode()).hexdigest()[:12]
         cache_dir = Path.home() / ".cua" / "cua-sandbox" / "pwa-cache" / cache_key
@@ -631,7 +681,7 @@ class AndroidEmulatorRuntime(Runtime):
 
         # ── 6. Generate twa-manifest.json via _bw_init.js ────────────────────
         bw_init_js = Path(__file__).parent / "_bw_init.js"
-        node = shutil.which("node")
+        node = shutil.which("node", path=augmented_path)
         if not node:
             raise RuntimeError("node not found on PATH; required for pwa_install")
 
@@ -649,6 +699,7 @@ class AndroidEmulatorRuntime(Runtime):
             ],
             capture_output=True,
             text=True,
+            env=env,
             timeout=60,
         )
         if init_result.returncode != 0:
@@ -661,6 +712,7 @@ class AndroidEmulatorRuntime(Runtime):
             capture_output=True,
             text=True,
             cwd=str(cache_dir),
+            env=env,
             timeout=300,
         )
         if update_result.returncode != 0:
@@ -672,7 +724,7 @@ class AndroidEmulatorRuntime(Runtime):
         contents_home = jdk_bundle / "Contents" / "Home"
         gradle_java_home = str(contents_home) if contents_home.exists() else str(jdk_bundle)
         bw_env = {
-            **os.environ,
+            **env,
             "JAVA_HOME": gradle_java_home,
             "BUBBLEWRAP_KEYSTORE_PASSWORD": keystore_password,
             "BUBBLEWRAP_KEY_PASSWORD": keystore_password,

@@ -49,6 +49,7 @@ import pytest
 import pytest_asyncio
 from cua_sandbox.image import Image
 from cua_sandbox.runtime.android_emulator import AndroidEmulatorRuntime
+from cua_sandbox.runtime.compat import skip_if_unsupported
 from cua_sandbox.sandbox import Sandbox
 
 # ── Config ─────────────────────────────────────────────────────────────────
@@ -141,7 +142,13 @@ async def local_android_sb():
     Boot a single AndroidEmulatorRuntime via Sandbox.ephemeral(), install the TouchTest
     APK, escalate to root, launch the app, and yield the ready Sandbox.
     Shared across all local tests so we only pay the boot cost once.
+
+    The compatibility gate lives here (not in the autouse reset fixture) so that
+    cloud tests, which have their own API-key gate and don't depend on a local
+    emulator, are not affected when local Android support is absent.
     """
+    skip_if_unsupported(Image.android(str(_API_LEVEL)))
+
     apk = _get_apk()
 
     runtime = AndroidEmulatorRuntime(
@@ -162,12 +169,17 @@ async def local_android_sb():
 
 
 @pytest_asyncio.fixture(autouse=True)
-async def _reset_between_tests(request, local_android_sb: Sandbox):
-    """Clear logcat + app event counter before every local test."""
+async def _reset_between_tests(request):
+    """Clear logcat + app event counter before every local test.
+
+    Resolves local_android_sb lazily so that cloud tests (which don't request
+    the local emulator fixture) don't trigger emulator boot or the compat skip.
+    """
     if "local_android_sb" not in request.fixturenames:
         yield
         return
-    await _reset(local_android_sb)
+    sb = request.getfixturevalue("local_android_sb")
+    await _reset(sb)
     yield
 
 
@@ -431,6 +443,7 @@ class TestAndroidMultitouchLocal(_MultitouchTests):
 # ══════════════════════════════════════════════════════════════════════════════
 
 skip_no_api_key = pytest.mark.skipif(not _API_KEY, reason="CUA_TEST_API_KEY not set")
+# Note: cloud Android tests are gated by API key only — hardware compat is the cloud's concern.
 
 
 @pytest_asyncio.fixture(scope="session", loop_scope="session")

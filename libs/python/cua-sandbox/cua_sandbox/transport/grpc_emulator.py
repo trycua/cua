@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import functools
+import platform
 import shutil
 import subprocess
 from io import BytesIO
@@ -39,9 +40,10 @@ if TYPE_CHECKING:
 
 def _find_adb(sdk_root: Optional[str] = None) -> str:
     if sdk_root:
-        candidate = Path(sdk_root) / "platform-tools" / "adb"
-        if candidate.exists():
-            return str(candidate)
+        for ext in (".exe", "") if platform.system().lower() == "windows" else ("",):
+            candidate = Path(sdk_root) / "platform-tools" / f"adb{ext}"
+            if candidate.exists():
+                return str(candidate)
     found = shutil.which("adb")
     if found:
         return found
@@ -165,6 +167,7 @@ class GRPCEmulatorTransport(Transport):
         if action in ("shell", "execute", "run_command"):
             assert self._adb is not None, "Transport not connected"
             cmd = params.get("command", "")
+            cmd = f"[ -f /data/local/tmp/.cua_env ] && . /data/local/tmp/.cua_env; {cmd}"
             timeout = float(params.get("timeout", 15))
             loop = asyncio.get_event_loop()
             result = await loop.run_in_executor(

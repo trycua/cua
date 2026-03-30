@@ -270,6 +270,41 @@ class Sandbox:
         """Drop the transport connection. The sandbox keeps running."""
         await self._transport.disconnect()
 
+    async def snapshot(self, name: str | None = None, stateful: bool = False) -> "Image":
+        """Snapshot this sandbox's current state. Returns an Image.
+
+        The returned Image can be passed to Sandbox.create() or Sandbox.ephemeral()
+        to boot a new sandbox from the snapshot (COW fork — instant on btrfs).
+
+        Args:
+            name: Optional human-readable name for the snapshot.
+            stateful: Whether to capture memory state (VMs only).
+
+        Returns:
+            An Image with _snapshot_source set, ready to pass to Sandbox.ephemeral().
+        """
+        from cua_sandbox.transport.cloud import CloudTransport
+
+        if not isinstance(self._transport, CloudTransport):
+            raise NotImplementedError("Snapshots are only supported for cloud sandboxes")
+
+        image_desc = await self._transport.create_snapshot(name=name, stateful=stateful)
+        from cua_sandbox.image import Image as ImageCls
+
+        # Get the original image from the transport for os_type/distro/version
+        src_image = getattr(self._transport, "_image", None)
+
+        # Prefer the original image's os_type/distro/version — image_desc["kind"]
+        # is the snapshot kind (e.g. "vm"), not the OS type, and would misclassify
+        # the image for OS-gated builder methods and compat checks.
+        return ImageCls(
+            os_type=src_image.os_type if src_image else image_desc.get("os_type", "linux"),
+            distro=src_image.distro if src_image else image_desc.get("distro", "ubuntu"),
+            version=src_image.version if src_image else image_desc.get("version", "24.04"),
+            kind=src_image.kind if src_image else image_desc.get("kind"),
+            _snapshot_source=image_desc,
+        )
+
     async def destroy(self) -> None:
         """Disconnect and permanently delete the sandbox (VM/container)."""
         if self.telemetry_enabled and _TELEMETRY_AVAILABLE and is_telemetry_enabled():
@@ -278,7 +313,11 @@ class Sandbox:
         if isinstance(self._transport, CloudTransport):
             await self._transport.delete_vm()
         if self._runtime and self._runtime_info:
-            await self._runtime.stop(self._runtime_info.name or self.name or "cua-sandbox")
+            vm_name = self._runtime_info.name or self.name or "cua-sandbox"
+            if self._ephemeral and hasattr(self._runtime, "delete"):
+                await self._runtime.delete(vm_name)
+            else:
+                await self._runtime.stop(vm_name)
 
     async def screenshot(
         self, text: Optional[str] = None, format: str = "png", quality: int = 95

@@ -47,8 +47,18 @@ class LocalTransport(Transport):
                 p.get("x"), p.get("y"), p.get("button", "left")
             ),
             "mouse_up": lambda p: mouse.mouse_up(p.get("x"), p.get("y"), p.get("button", "left")),
-            "drag": lambda p: mouse.drag(
-                p["start_x"], p["start_y"], p["end_x"], p["end_y"], p.get("button", "left")
+            "drag": lambda p: (
+                mouse.drag(
+                    p["path"][0][0],
+                    p["path"][0][1],
+                    p["path"][-1][0],
+                    p["path"][-1][1],
+                    p.get("button", "left"),
+                )
+                if "path" in p
+                else mouse.drag(
+                    p["start_x"], p["start_y"], p["end_x"], p["end_y"], p.get("button", "left")
+                )
             ),
             # Keyboard
             "type_text": lambda p: keyboard.type_text(p["text"]),

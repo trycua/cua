@@ -13,7 +13,10 @@ class Clipboard:
 
     async def get(self) -> str:
         """Return the current clipboard text."""
-        return await self._t.send("copy_to_clipboard")
+        result = await self._t.send("copy_to_clipboard")
+        if isinstance(result, dict):
+            return result.get("content", "")
+        return result
 
     async def set(self, text: str) -> None:
         """Set the clipboard text."""

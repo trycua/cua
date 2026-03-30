@@ -35,16 +35,26 @@ async def connect_all(names: list[str]) -> list[tuple[str, Sandbox]]:
     """Connect to each VM sequentially so output is ordered and easy to read."""
     print(f"Connecting to {len(names)} VMs (sequential, timeout={CONNECT_TIMEOUT}s each)...\n")
     sandboxes = []
+    connect_times: list[float] = []
     for i, name in enumerate(names, 1):
         print(f"  [{i:>3}/{len(names)}] {name} ...", end=" ", flush=True)
+        t0 = time.monotonic()
         try:
             sb = await asyncio.wait_for(Sandbox.connect(name=name), timeout=CONNECT_TIMEOUT)
-            print("✓", flush=True)
+            elapsed = time.monotonic() - t0
+            connect_times.append(elapsed)
+            print(f"✓  {elapsed*1000:.0f}ms", flush=True)
             sandboxes.append((name, sb))
         except asyncio.TimeoutError:
             print("✗ timeout", flush=True)
         except Exception as e:
             print(f"✗ {e}", flush=True)
+    if connect_times:
+        connect_times.sort()
+        p50 = connect_times[len(connect_times) // 2] * 1000
+        p95 = connect_times[int(len(connect_times) * 0.95)] * 1000
+        avg = sum(connect_times) / len(connect_times) * 1000
+        print(f"\n  Connect  avg={avg:.0f}ms  p50={p50:.0f}ms  p95={p95:.0f}ms")
     return sandboxes
 
 
@@ -60,13 +70,13 @@ async def run_step(name: str, sb: Sandbox) -> float:
 # ── main ─────────────────────────────────────────────────────────────────────
 
 
-async def main(n: int | None = None, rounds: int = ROUNDS):
+async def main(n: int | None = None, rounds: int = ROUNDS, concurrency: int = CONCURRENCY):
     OUT_DIR.mkdir(exist_ok=True)
 
     names = load_names(n)
     print(f"\n{'='*50}")
     print("  Fleet Throughput Demo")
-    print(f"  {len(names)} VMs  |  {rounds} rounds each  |  concurrency={CONCURRENCY}")
+    print(f"  {len(names)} VMs  |  {rounds} rounds each  |  concurrency={concurrency}")
     print(f"{'='*50}\n")
 
     sandboxes = await connect_all(names)
@@ -76,12 +86,12 @@ async def main(n: int | None = None, rounds: int = ROUNDS):
         print("No VMs connected — exiting.")
         return
 
-    # Run ROUNDS of tap+screenshot across all VMs concurrently
-    sem = asyncio.Semaphore(CONCURRENCY)
+    # Run rounds of tap+screenshot across all VMs concurrently
+    sem = asyncio.Semaphore(concurrency)
     total_steps = 0
     latencies: list[float] = []
 
-    print(f"Running {rounds} rounds of tap+screenshot (concurrency={CONCURRENCY})...\n")
+    print(f"Running {rounds} rounds of tap+screenshot (concurrency={concurrency})...\n")
     t_start = time.monotonic()
 
     for round_num in range(1, rounds + 1):
@@ -137,5 +147,11 @@ if __name__ == "__main__":
     parser.add_argument(
         "--rounds", type=int, default=ROUNDS, help=f"Rounds per VM (default: {ROUNDS})"
     )
+    parser.add_argument(
+        "--concurrency",
+        type=int,
+        default=CONCURRENCY,
+        help=f"Parallel commands (default: {CONCURRENCY})",
+    )
     args = parser.parse_args()
-    asyncio.run(main(n=args.n, rounds=args.rounds))
+    asyncio.run(main(n=args.n, rounds=args.rounds, concurrency=args.concurrency))

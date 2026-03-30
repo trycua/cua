@@ -1,303 +1,330 @@
 ---
-title: Sandbox Interfaces
-description: Reference for all sb.* sub-interfaces — shell, mouse, keyboard, screen, clipboard, tunnel, mobile, terminal, window
+title: Interfaces Reference
+description: Auto-generated reference for all cua-sandbox interface classes. Do not edit manually � run scripts/gen_interface_docs.py to regenerate.
 ---
 
-Every `Sandbox` instance exposes a set of sub-interfaces for interacting with the running environment. This page documents all of them.
+import { Callout } from "fumadocs-ui/components/callout";
 
----
+<Callout type="info">
+  This page is auto-generated from the Python source docstrings.
+  Run `python scripts/gen_interface_docs.py` to regenerate after editing interface code.
+</Callout>
 
-## `sb.shell` — command execution
+The sandbox exposes the following interface objects on every `Sandbox` instance:
 
-Run shell commands and get their output.
-
-```python
-result = await sb.shell.run("ls -la /")
-print(result.stdout)       # standard output
-print(result.stderr)       # standard error
-print(result.returncode)   # exit code (int)
-print(result.success)      # True if returncode == 0
-```
-
-### `await sb.shell.run(command, *, timeout=60) → CommandResult`
-
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `command` | `str` | Shell command to run |
-| `timeout` | `int` | Seconds before the command is killed (default: 60) |
-
-`CommandResult` fields:
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `stdout` | `str` | Standard output |
-| `stderr` | `str` | Standard error |
-| `returncode` | `int` | Exit code |
-| `success` | `bool` | `True` if `returncode == 0` |
-
-Multi-line scripts work naturally:
-
-```python
-result = await sb.shell.run("""
-    cd /tmp
-    echo "hello" > file.txt
-    cat file.txt
-""")
-print(result.stdout)  # "hello\n"
-```
+| Attribute | Class | Purpose |
+|-----------|-------|---------|
+| `sb.shell` | `Shell` | Run shell commands |
+| `sb.mouse` | `Mouse` | Mouse control |
+| `sb.keyboard` | `Keyboard` | Keyboard control |
+| `sb.screen` | `Screen` | Screenshots and screen info |
+| `sb.clipboard` | `Clipboard` | Clipboard read/write |
+| `sb.tunnel` | `Tunnel` | Port forwarding |
+| `sb.terminal` | `Terminal` | PTY terminal sessions |
+| `sb.window` | `Window` | Window management |
+| `sb.mobile` | `Mobile` | Mobile-specific actions |
 
 ---
 
-## `sb.mouse` — mouse control
 
-All coordinates are in pixels, with `(0, 0)` at the top-left corner.
+## `Shell`
 
-```python
-await sb.mouse.move(x, y)
-await sb.mouse.click(x, y)                    # left click
-await sb.mouse.right_click(x, y)
-await sb.mouse.double_click(x, y)
-await sb.mouse.scroll(x, y, dx=0, dy=3)       # scroll down 3 units
-await sb.mouse.drag(x1, y1, x2, y2)           # click-and-drag
-await sb.mouse.mouse_down(x, y)               # hold button
-await sb.mouse.mouse_up(x, y)                 # release button
-```
+Shell command execution.
 
-### `await sb.mouse.click(x, y, button="left")`
+### Methods
 
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `x`, `y` | `int` | Pixel coordinates |
-| `button` | `str` | `"left"` (default), `"right"`, `"middle"` |
+#### `async run(command: str, timeout: int = 30) -> CommandResult`
 
-### `await sb.mouse.scroll(x, y, dx=0, dy=0)`
+Run a shell command and return the result.
 
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `x`, `y` | `int` | Position to scroll at |
-| `dx` | `int` | Horizontal scroll units (positive = right) |
-| `dy` | `int` | Vertical scroll units (positive = down) |
 
 ---
 
-## `sb.keyboard` — keyboard control
 
-```python
-await sb.keyboard.type("Hello, world!")        # type a string
-await sb.keyboard.press("Return")              # press a key
-await sb.keyboard.press("ctrl+c")             # key combo
-await sb.keyboard.press("cmd+space")          # macOS: Spotlight
-await sb.keyboard.press("super+d")            # Windows: show desktop
-await sb.keyboard.key_down("shift")           # hold a key
-await sb.keyboard.key_up("shift")             # release a held key
-```
+## `CommandResult`
 
-### `await sb.keyboard.press(keys)`
+### Fields
 
-`keys` can be a string shorthand or a list:
+| Name | Type |
+|------|------|
+| `stdout` | `str` |
+| `stderr` | `str` |
+| `returncode` | `int` |
 
-```python
-await sb.keyboard.press("ctrl+c")
-await sb.keyboard.press(["ctrl", "c"])         # equivalent
-await sb.keyboard.press("Return")
-await sb.keyboard.press("Escape")
-await sb.keyboard.press("Tab")
-await sb.keyboard.press("F5")
-```
+### Methods
 
-Common modifier keys: `ctrl`, `shift`, `alt`, `cmd` (macOS), `super` (Windows/Linux).
+#### `@property
+success() -> bool`
+
 
 ---
 
-## `sb.screen` — screen info
 
-```python
-png_bytes = await sb.screenshot()             # convenience method on Sandbox
-b64_str   = await sb.screenshot_base64()      # base64-encoded PNG string
-width, height = await sb.screen.size()        # screen dimensions in pixels
-```
+## `Mouse`
 
-### `await sb.screenshot() → bytes`
+Mouse control.
 
-Returns a PNG image as raw bytes.
+### Methods
 
-```python
-png = await sb.screenshot()
-with open("shot.png", "wb") as f:
-    f.write(png)
-```
+#### `async click(x: int, y: int, button: str = 'left') -> None`
 
-### `await sb.screenshot_base64() → str`
+#### `async right_click(x: int, y: int) -> None`
 
-Returns a base64-encoded PNG string, ready to embed in HTML or pass to LLM vision APIs.
+#### `async double_click(x: int, y: int) -> None`
 
-```python
-b64 = await sb.screenshot_base64()
-# use directly in an OpenAI / Anthropic vision message
-```
+#### `async move(x: int, y: int) -> None`
 
-### `await sb.screen.size() → tuple[int, int]`
+#### `async scroll(x: int, y: int, scroll_x: int = 0, scroll_y: int = 3) -> None`
 
-Returns `(width, height)` of the sandbox display.
+#### `async mouse_down(x: int, y: int, button: str = 'left') -> None`
 
-```python
-w, h = await sb.screen.size()
-cx, cy = w // 2, h // 2  # center of screen
-await sb.mouse.click(cx, cy)
-```
+#### `async mouse_up(x: int, y: int, button: str = 'left') -> None`
+
+#### `async drag(start_x: int, start_y: int, end_x: int, end_y: int, button: str = 'left') -> None`
+
 
 ---
 
-## `sb.clipboard` — clipboard access
 
-Read and write the sandbox clipboard.
+## `Keyboard`
 
-```python
-await sb.clipboard.write("Hello from Python")
-text = await sb.clipboard.read()
-print(text)  # "Hello from Python"
-```
+Keyboard control.
 
-### `await sb.clipboard.write(text: str)`
+### Methods
 
-Writes a string to the clipboard.
+#### `async type(text: str) -> None`
 
-### `await sb.clipboard.read() → str`
+Type a string of text.
 
-Returns the current clipboard contents as a string.
+#### `async keypress(keys: Union[List[str], str]) -> None`
 
----
+Press a key combination (e.g. ["ctrl", "c"] or "enter").
 
-## `sb.tunnel` — port forwarding
+#### `async key_down(key: str) -> None`
 
-Forward ports from inside the sandbox to `localhost` on the host. Useful for accessing web servers, databases, or Chrome DevTools running inside the sandbox.
+#### `async key_up(key: str) -> None`
 
-```python
-async with sb.tunnel.forward(8080) as tunnel:
-    print(tunnel.url)  # "http://localhost:<random-port>"
-    # make requests to the forwarded port
-    import httpx
-    r = httpx.get(tunnel.url)
-```
-
-Forward multiple ports at once:
-
-```python
-async with sb.tunnel.forward(8080, 9222) as tunnels:
-    app_url      = tunnels[8080].url
-    devtools_url = tunnels[9222].url
-```
-
-### `sb.tunnel.forward(*ports) → async context manager`
-
-Returns a context manager. On enter, starts forwarding; on exit, tears down the tunnel.
-
-| Value | Type | Description |
-|-------|------|-------------|
-| `*ports` | `int` | One or more ports to forward from the sandbox |
-
-The context manager yields:
-- A single `TunnelInfo` when one port is passed
-- A `dict[int, TunnelInfo]` when multiple ports are passed
-
-`TunnelInfo` fields:
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `url` | `str` | `http://localhost:<host-port>` |
-| `host_port` | `int` | The randomly assigned host port |
-| `sandbox_port` | `int` | The original port inside the sandbox |
 
 ---
 
-## `sb.mobile` — touch and gestures (Android)
 
-Available on Android sandboxes only. Uses ADB under the hood.
+## `Screen`
 
-```python
-await sb.mobile.tap(x, y)
-await sb.mobile.long_press(x, y, duration_ms=1000)
-await sb.mobile.double_tap(x, y)
-await sb.mobile.swipe(x1, y1, x2, y2, duration_ms=300)
-await sb.mobile.scroll_up()
-await sb.mobile.scroll_down()
-await sb.mobile.scroll_left()
-await sb.mobile.scroll_right()
-```
+Screen capture and info.
 
-### Multi-touch gestures
+### Methods
 
-Use `sb.mobile.gesture()` for multi-finger interactions like pinch-to-zoom:
+#### `async screenshot(format: str = 'png', quality: int = 95) -> bytes`
 
-```python
-w, h = await sb.screen.size()
-cx, cy = w // 2, h // 2
+Capture a screenshot and return raw image bytes.
 
-# Pinch open (zoom in) — two fingers moving outward
-await sb.mobile.gesture(
-    (cx - 20, cy), (cx - 200, cy),   # finger 0: start → end
-    (cx + 20, cy), (cx + 200, cy),   # finger 1: start → end
-)
+Args:
+    format: "png" (lossless, default) or "jpeg" (lossy, ~5-10x smaller).
+    quality: JPEG quality 1-95, ignored for PNG.
 
-# Pinch close (zoom out) — two fingers moving inward
-await sb.mobile.gesture(
-    (cx - 200, cy), (cx - 20, cy),
-    (cx + 200, cy), (cx + 20, cy),
-)
-```
+#### `async screenshot_base64(format: str = 'png', quality: int = 95) -> str`
 
-### `await sb.mobile.gesture(*points)`
+Capture a screenshot and return as a base64-encoded string.
 
-Takes an even number of `(x, y)` tuples: alternating start and end points for each finger.
+#### `async size() -> Tuple[int, int]`
 
-```python
-# Two fingers: finger0_start, finger0_end, finger1_start, finger1_end
-await sb.mobile.gesture(
-    (x0_start, y0_start), (x0_end, y0_end),
-    (x1_start, y1_start), (x1_end, y1_end),
-)
-```
+Return (width, height) of the screen.
+
 
 ---
 
-## `sb.terminal` — interactive PTY shell
 
-Open an interactive terminal session with full PTY support. Use this when you need to run interactive programs that expect a real terminal.
+## `Clipboard`
 
-```python
-term = await sb.terminal.open()
-await term.send("python3\n")
-output = await term.read()
-await term.send("print('hello')\n")
-output = await term.read()
-print(output)
-await term.close()
-```
+Clipboard read/write.
 
----
+### Methods
 
-## `sb.window` — window management
+#### `async get() -> str`
 
-Control the sandbox window (mainly relevant for VNC/desktop sessions).
+Return the current clipboard text.
 
-```python
-await sb.window.maximize()
-await sb.window.close()
-```
+#### `async set(text: str) -> None`
+
+Set the clipboard text.
+
 
 ---
 
-## `Localhost` — direct host control
 
-`Localhost` gives you the same interface as `Sandbox` but operates directly on the machine running Python, with no sandbox involved. Useful for local automation or testing.
+## `Tunnel`
 
-```python
-from cua import Localhost
+Port-forwarding interface — exposes sandbox ports on the host.
 
-async with Localhost.connect() as host:
-    result = await host.shell.run("echo hello")
-    await host.mouse.click(100, 200)
-    png = await host.screenshot()
-```
+### Methods
 
-All `sb.*` interfaces (`shell`, `mouse`, `keyboard`, `screen`, `clipboard`) are available on a `Localhost` instance. `tunnel` and `mobile` are not applicable.
+#### `forward(*ports) -> _TunnelContext`
+
+Forward one or more sandbox ports (or abstract sockets) to the host.
+
+*ports* may be:
+- ``int`` — TCP port inside the sandbox (e.g. ``8080``)
+- ``str`` — Android abstract socket name (e.g. ``"chrome_devtools_remote"``)
+
+Returns a context manager (or awaitable) that yields:
+- a single :class:`TunnelInfo` when one target is given
+- a ``dict[sandbox_port, TunnelInfo]`` when multiple targets are given
+
+Example — Chrome DevTools over ADB::
+
+    async with sb.tunnel.forward("chrome_devtools_remote") as t:
+        # http://localhost:&lt;random&gt;/json lists CDP targets
+        print(t.url)
+
+
+---
+
+
+## `TunnelInfo`
+
+A single forwarded port.
+
+### Methods
+
+#### `@property
+url() -> str`
+
+#### `async close() -> None`
+
+Close this tunnel (no-op if already closed or inside a context manager).
+
+
+---
+
+
+## `Terminal`
+
+PTY terminal sessions.
+
+### Methods
+
+#### `async create(shell: str = 'bash', cols: int = 80, rows: int = 24) -> dict`
+
+Create a new PTY session. Returns &#123;"pid": int, "cols": int, "rows": int&#125;.
+
+#### `async send_input(pid: int, data: str) -> None`
+
+Send input to a PTY session.
+
+#### `async resize(pid: int, cols: int, rows: int) -> None`
+
+Resize a PTY session.
+
+#### `async close(pid: int) -> Optional[int]`
+
+Close a PTY session. Returns exit code.
+
+
+---
+
+
+## `Window`
+
+Window management.
+
+### Methods
+
+#### `async get_active_title() -> str`
+
+Return the title of the currently focused window.
+
+
+---
+
+
+## `Mobile`
+
+Mobile (Android) touch and hardware-key control.
+
+All touch coordinates are in screen pixels.  Single-touch methods use
+``input tap/swipe`` via ``adb shell``.  Multi-touch gestures delegate to
+the ``multitouch_gesture`` transport action, which uses ``adb root`` +
+MT Protocol B ``sendevent`` for reliable injection on both local and cloud
+transports.
+
+### Methods
+
+#### `async tap(x: int, y: int) -> None`
+
+#### `async long_press(x: int, y: int, duration_ms: int = 1000) -> None`
+
+#### `async double_tap(x: int, y: int, delay: float = 0.1) -> None`
+
+#### `async type_text(text: str) -> None`
+
+#### `async swipe(x1: int, y1: int, x2: int, y2: int, duration_ms: int = 300) -> None`
+
+#### `async scroll_up(x: int, y: int, distance: int = 600, duration_ms: int = 400) -> None`
+
+#### `async scroll_down(x: int, y: int, distance: int = 600, duration_ms: int = 400) -> None`
+
+#### `async scroll_left(x: int, y: int, distance: int = 400, duration_ms: int = 300) -> None`
+
+#### `async scroll_right(x: int, y: int, distance: int = 400, duration_ms: int = 300) -> None`
+
+#### `async fling(x1: int, y1: int, x2: int, y2: int) -> None`
+
+#### `async gesture(duration_ms: int = 400, steps: int = 0, *finger_paths) -> None`
+
+Inject an arbitrary N-finger gesture via MT Protocol B ``sendevent``.
+
+Each positional argument is a sequence of ``(x, y)`` waypoints for one
+finger.  Pass an even number of ``(x, y)`` tuples and they are paired
+into start/end positions per finger::
+
+    # two-finger pinch-out
+    await mobile.gesture(
+        (cx - 20, cy), (cx - 200, cy),   # finger 0
+        (cx + 20, cy), (cx + 200, cy),   # finger 1
+    )
+
+Delegates to the ``multitouch_gesture`` transport action, which uses
+``adb root`` + MT Protocol B ``sendevent`` for reliable injection on
+both local ADB and cloud HTTP transports.
+
+Args:
+    *finger_paths: Alternating start/end ``(x, y)`` tuples, two per finger.
+                   Must have an even length &gt;= 4 (at least 2 fingers × 2 points).
+    duration_ms:   Total gesture duration in milliseconds.
+    steps:         Interpolation steps (0 = auto: duration_ms // 20, min 5).
+
+#### `async pinch_in(cx: int, cy: int, spread: int = 300, duration_ms: int = 400) -> None`
+
+Pinch-in (zoom out) with two real simultaneous fingers.
+
+#### `async pinch_out(cx: int, cy: int, spread: int = 300, duration_ms: int = 400) -> None`
+
+Pinch-out (zoom in) with two real simultaneous fingers.
+
+#### `async key(keycode: int) -> None`
+
+#### `async home() -> None`
+
+#### `async back() -> None`
+
+#### `async recents() -> None`
+
+#### `async power() -> None`
+
+#### `async volume_up() -> None`
+
+#### `async volume_down() -> None`
+
+#### `async enter() -> None`
+
+#### `async backspace() -> None`
+
+#### `async wake() -> None`
+
+#### `async notifications() -> None`
+
+#### `async close_notifications() -> None`
+
+
+---
+

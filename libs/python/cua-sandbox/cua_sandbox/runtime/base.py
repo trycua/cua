@@ -3,13 +3,23 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Optional
 
 from cua_sandbox.image import Image
 
 if TYPE_CHECKING:
     pass
+
+
+@dataclass
+class CheckpointInfo:
+    """Metadata for a saved checkpoint / snapshot of a sandbox."""
+
+    name: str
+    runtime_type: str
+    created_at: float = 0.0
+    metadata: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -66,3 +76,28 @@ class Runtime(ABC):
         Returns a list of dicts with at minimum: name, status.
         """
         raise NotImplementedError(f"{type(self).__name__} does not support list()")
+
+    # ── Checkpoint / fork primitives ─────────────────────────────────────────
+
+    async def ensure_base(self, image: "Image", base_name: str) -> CheckpointInfo:
+        """Pull/build image into a stopped base sandbox if not already present.
+
+        Idempotent. First call does the full pull; subsequent calls return
+        immediately. The base sandbox is never started — it only serves as a
+        fork source for ephemeral VMs.
+        """
+        raise NotImplementedError(f"{type(self).__name__} does not support ensure_base()")
+
+    async def fork(self, base_name: str, new_name: str, **opts) -> None:
+        """Create a new sandbox from a base/checkpoint using CoW where possible."""
+        raise NotImplementedError(f"{type(self).__name__} does not support fork()")
+
+    async def checkpoint(self, name: str, checkpoint_name: str, **opts) -> CheckpointInfo:
+        """Capture the current state of a running sandbox as a named checkpoint."""
+        raise NotImplementedError(f"{type(self).__name__} does not support checkpoint()")
+
+    async def list_checkpoints(self) -> list[CheckpointInfo]:
+        raise NotImplementedError(f"{type(self).__name__} does not support list_checkpoints()")
+
+    async def delete_checkpoint(self, checkpoint_name: str) -> None:
+        raise NotImplementedError(f"{type(self).__name__} does not support delete_checkpoint()")

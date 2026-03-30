@@ -15,7 +15,8 @@ _HARNESS_DIR = Path(__file__).parent
 def tasks() -> list[cb.Task]:
     return [
         cb.Task(
-            description='The given schematic shows a cascaded active filter system implemented with a TL072 dual op-amp. The first stage is a Sallen-Key high-pass filter followed by a Sallen-Key low-pass filter.\n\nModify the circuit to lower the cutoff frequency of the low-pass stage by changing the low-pass capacitor from 47nF to 100nF. In addition, add a 10kΩ load resistor from the final output node (Vo2) to ground to evaluate its behavior under practical loading conditions. Keep all other components unchanged and provide the updated schematic.',
+            description='''The given schematic shows a cascaded active filter system implemented with a TL072 dual op-amp. The first stage is a Sallen-Key high-pass filter followed by a Sallen-Key low-pass filter.
+Modify the circuit to lower the cutoff frequency of the low-pass stage by changing the low-pass capacitor from 47nF to 100nF. In addition, add a 10kΩ load resistor from the final output node (Vo2) to ground to evaluate its behavior under practical loading conditions. Keep all other components unchanged and provide the updated schematic.''',
             metadata={"difficulty": 'medium', "submission_id": _SUBMISSION_ID},
         )
     ]

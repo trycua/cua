@@ -15,7 +15,7 @@ _HARNESS_DIR = Path(__file__).parent
 def tasks() -> list[cb.Task]:
     return [
         cb.Task(
-            description='Modify the discrete BJT-based H-bridge motor driver shown in the attached schematic to improve switching behavior and reduce motor noise. Add a 100 nF ceramic capacitor across the motor terminals to suppress high-frequency switching spikes and electromagnetic interference (EMI). Add two 10 kΩ pull-down resistors on the two control input lines so the bridge defaults to OFF when the inputs are floating. Keep all existing components and connections unchanged.',
+            description='''Modify the discrete BJT-based H-bridge motor driver shown in the attached schematic to improve switching behavior and reduce motor noise. Add a 100 nF ceramic capacitor across the motor terminals to suppress high-frequency switching spikes and electromagnetic interference (EMI). Add two 10 kΩ pull-down resistors on the two control input lines so the bridge defaults to OFF when the inputs are floating. Keep all existing components and connections unchanged.''',
             metadata={"difficulty": 'medium', "submission_id": _SUBMISSION_ID},
         )
     ]

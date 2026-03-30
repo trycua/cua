@@ -15,7 +15,7 @@ _HARNESS_DIR = Path(__file__).parent
 def tasks() -> list[cb.Task]:
     return [
         cb.Task(
-            description='Modify the existing uA7805 regulated 5V power supply by adding a power-on indicator LED with a 1 kΩ series resistor across the 5V output to indicate when the supply is active. Add a 1 kΩ minimum load resistor across the 5V output to help maintain stable regulation. Also add a 1N4001 diode between the regulator output and input to protect the regulator. Keep all existing components and connections unchanged.',
+            description='''Modify the existing uA7805 regulated 5V power supply by adding a power-on indicator LED with a 1 kΩ series resistor across the 5V output to indicate when the supply is active. Add a 1 kΩ minimum load resistor across the 5V output to help maintain stable regulation. Also add a 1N4001 diode between the regulator output and input to protect the regulator. Keep all existing components and connections unchanged.''',
             metadata={"difficulty": 'medium', "submission_id": _SUBMISSION_ID},
         )
     ]

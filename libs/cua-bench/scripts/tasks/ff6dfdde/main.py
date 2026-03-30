@@ -15,7 +15,13 @@ _HARNESS_DIR = Path(__file__).parent
 def tasks() -> list[cb.Task]:
     return [
         cb.Task(
-            description='Design a circuit in KiCad using the chip ISO1211 to connect a 24V field input digital signal in a noisy environment to a 3.3V microcontroller.  \n\t• From the field input, add in a low pass filter with a resistor of 2.5k and capacitor of 10nF before connecting to the SENSE pin. \n\t• The SENSE pin should also be connected to pin 7 with a 562 ohm resistor.\n\t• The second side of the digital isolator will be used to directly interface to the microcontroller.\n\t• ENABLE should be tied to the microcontroller power for robustness in a noisy environment.\n\t• The ground on the field side of the isolator should be connected to FGND, and the ground on the microcontroller side should be connected to GND1.\nClearly label the FIELD_INPUT, the HEAT_SINK connection on pin 5, and the circuit OUTPUT to the microcontroller.',
+            description='''Design a circuit in KiCad using the chip ISO1211 to connect a 24V field input digital signal in a noisy environment to a 3.3V microcontroller.  
+  - From the field input, add in a low pass filter with a resistor of 2.5k and capacitor of 10nF before connecting to the SENSE pin. 
+  - The SENSE pin should also be connected to pin 7 with a 562 ohm resistor.
+  - The second side of the digital isolator will be used to directly interface to the microcontroller.
+  - ENABLE should be tied to the microcontroller power for robustness in a noisy environment.
+  - The ground on the field side of the isolator should be connected to FGND, and the ground on the microcontroller side should be connected to GND1.
+Clearly label the FIELD_INPUT, the HEAT_SINK connection on pin 5, and the circuit OUTPUT to the microcontroller.''',
             metadata={"difficulty": 'easy', "submission_id": _SUBMISSION_ID},
         )
     ]

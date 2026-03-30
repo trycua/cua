@@ -15,7 +15,7 @@ _HARNESS_DIR = Path(__file__).parent
 def tasks() -> list[cb.Task]:
     return [
         cb.Task(
-            description='Modify the circuit to set the pole frequency to 4kHz but keep the passband gain the same.',
+            description='''Modify the circuit to set the pole frequency to 4kHz but keep the passband gain the same.''',
             metadata={"difficulty": 'easy', "submission_id": _SUBMISSION_ID},
         )
     ]

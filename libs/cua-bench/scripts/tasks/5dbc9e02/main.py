@@ -15,7 +15,7 @@ _HARNESS_DIR = Path(__file__).parent
 def tasks() -> list[cb.Task]:
     return [
         cb.Task(
-            description='Design a 555 timer-based LED flasher circuit in astable mode using an NE555P. Use a 1kΩ resistor for R1, a 50kΩ resistor for R2, and a 10µF electrolytic capacitor for C1 to set the timing. Include a 0.01µF decoupling capacitor on the control pin, a 330Ω current-limiting resistor for the LED, and screw terminals for power input and signal output.',
+            description='''Design a 555 timer-based LED flasher circuit in astable mode using an NE555P. Use a 1kΩ resistor for R1, a 50kΩ resistor for R2, and a 10µF electrolytic capacitor for C1 to set the timing. Include a 0.01µF decoupling capacitor on the control pin, a 330Ω current-limiting resistor for the LED, and screw terminals for power input and signal output.''',
             metadata={"difficulty": 'easy', "submission_id": _SUBMISSION_ID},
         )
     ]

@@ -15,7 +15,7 @@ _HARNESS_DIR = Path(__file__).parent
 def tasks() -> list[cb.Task]:
     return [
         cb.Task(
-            description='Modify R2 to produce an output of 1.8V. Use a reference voltage (Vref) of 1.275V for your calculation. Select R2 to the closest standard E96 1% resistor value.',
+            description='''Modify R2 to produce an output of 1.8V.  Select R2 to the closest standard E96 1% resistor value.''',
             metadata={"difficulty": 'easy', "submission_id": _SUBMISSION_ID},
         )
     ]

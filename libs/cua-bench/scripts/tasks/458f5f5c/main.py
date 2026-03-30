@@ -15,7 +15,14 @@ _HARNESS_DIR = Path(__file__).parent
 def tasks() -> list[cb.Task]:
     return [
         cb.Task(
-            description='Design a microphone preamplifier that conditions a raw mic signal into a clean, ADC-safe input for a 3.3 V microcontroller.\nUse an LM741 op-amp powered from a +12 V single supply. Create a mid-rail bias reference using three 56 kΩ resistors, and AC-couple the microphone input with a 4.7 µF electrolytic capacitor into the biased input stage. Configure adjustable gain using a 50 kΩ potentiometer (RV1) in the feedback path, and include a 1.1 kΩ resistor and a 4.7 µF capacitor connected to the inverting input as part of the gain-setting and low-frequency shaping network. At the output, include a 1.1 kΩ load resistor and AC-couple the output using a 4.7 µF capacitor. After the coupling capacitor, add an ADC interface that attenuates the signal using an 18 kΩ / 1.1 kΩ divider and clamps the ADC node with two Schottky diodes to the 3.3 V rail and ground for input protection. Tie all grounds together and generate the complete schematic.',
+            description='''Design a microphone preamplifier that conditions a raw mic signal into a clean, ADC-safe input for a 3.3 V microcontroller.
+* The circuit connects to the microphone using a 2-pole audio jack connector with both tip and shield switches. The connect detect terminals are not used and are simply shorted to each other.
+* Use one 56k kΩ resistor to provide a power bias to the microphone.
+* Use an LM741 op-amp powered from a +12 V single supply in a non-inverting configuration. Use two other 56 kΩ resistors to create a mid-rail bias reference for the opamp input.  A 4.7 µF electrolytic capacitor is used to AC-couple the microphone signal into the biased opamp input. 
+* Configure adjustable gain using a 50 kΩ potentiometer (RV1) in the feedback path, and include a 1.1 kΩ resistor and a 4.7 µF capacitor connected to the inverting input as part of the gain-setting and low-frequency shaping network. 
+* At the output, include a 1.1 kΩ load resistor and AC-couple the output using a 4.7 µF capacitor. 
+* After the coupling capacitor, add an ADC interface that strongly attenuates the signal using an 18 kΩ / 1.1 kΩ divider and clamps the ADC node with two Schottky diodes to the 3.3 V rail and ground for input protection. 
+* Tie all grounds together and generate the complete schematic.''',
             metadata={"difficulty": 'medium', "submission_id": _SUBMISSION_ID},
         )
     ]

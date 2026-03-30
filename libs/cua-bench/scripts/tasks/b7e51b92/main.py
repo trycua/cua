@@ -15,7 +15,7 @@ _HARNESS_DIR = Path(__file__).parent
 def tasks() -> list[cb.Task]:
     return [
         cb.Task(
-            description='Design a dual-rail schematic using an LM358 configured as an inverting amplifier with a 10x gain and a grounded buffer. Connect the non-inverting input of the first stage to ground via a 1kΩ resistor (R1), apply the input signal through a 1kΩ resistor (R3) to the inverting input, and place a 10kΩ feedback resistor (R2) between the output and inverting input. For the second stage, create a unity-gain buffer by shorting the output to the inverting input while grounding the non-inverting input, and ensure the entire IC is powered at ±15V.',
+            description='''Design a dual-rail schematic using an LM358 configured as an inverting amplifier with a 10x gain and a grounded buffer. Connect the non-inverting input of the first stage to ground via a 1kΩ resistor (R1), apply the input signal through a 1kΩ resistor (R3) to the inverting input, and place a 10kΩ feedback resistor (R2) between the output and inverting input. For the second stage, create a unity-gain buffer by shorting the output to the inverting input while grounding the non-inverting input, and ensure the entire IC is powered at ±15V.''',
             metadata={"difficulty": 'easy', "submission_id": _SUBMISSION_ID},
         )
     ]

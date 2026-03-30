@@ -15,7 +15,7 @@ _HARNESS_DIR = Path(__file__).parent
 def tasks() -> list[cb.Task]:
     return [
         cb.Task(
-            description='Design a transistor-based astable multivibrator circuit. Use two BF457 NPN transistors. For the timing network, use two 10kΩ base resistors and two 10µF electrolytic capacitors. Each collector should drive an LED through a 330Ω current-limiting resistor.',
+            description='''Design a transistor-based astable multivibrator circuit. Use two BF457 NPN transistors. For the timing network, use two 10kΩ base resistors and two 10µF electrolytic capacitors. Each collector should drive an LED through a 330Ω current-limiting resistor.''',
             metadata={"difficulty": 'easy', "submission_id": _SUBMISSION_ID},
         )
     ]

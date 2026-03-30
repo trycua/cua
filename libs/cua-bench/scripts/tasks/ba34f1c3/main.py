@@ -15,7 +15,7 @@ _HARNESS_DIR = Path(__file__).parent
 def tasks() -> list[cb.Task]:
     return [
         cb.Task(
-            description='Draw a KiCad schematic for a voltage reference circuit using the AD586.  It must be powered off an analog 9V power supply. The reference needs to be low noise, so connect a 1 uF capacitor to the noise reduction pin. We also need very high accuracy output, so connect an external 10k trim resistor to the IC as well. Finally, clearly label the output.',
+            description='''Draw a KiCad schematic for a voltage reference circuit using the AD586.  It must be powered off an analog 9V power supply. The reference needs to be low noise, so connect a 1 uF capacitor to the noise reduction pin. We also need very high accuracy output, so connect an external 10k trim resistor to the IC as well. Finally, clearly label the output.''',
             metadata={"difficulty": 'easy', "submission_id": _SUBMISSION_ID},
         )
     ]

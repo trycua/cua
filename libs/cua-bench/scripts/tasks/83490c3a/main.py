@@ -15,7 +15,14 @@ _HARNESS_DIR = Path(__file__).parent
 def tasks() -> list[cb.Task]:
     return [
         cb.Task(
-            description='Design a power tree in Kicad with the following attributes:  \n\t• Convert the input voltage of +12V to the backbone power of 3.3V by using the voltage switching module OKI-78SR-3.3/1.5-W36E-C.\n\t• From the 3.3V power, use LDO regulators from the LT1761 series to create voltages of 2.5V, 1.8V, and 1.2V.\n\t\t○ To reduce noise, connect a 0.01uF capacitor to the BYPASS pin of each LDO.\n\t• To reduce noise and increase stability for each voltage rail, add additional capacitors. For the switching module and each LDO, add for each\n\t\t○ An unpolarized input bypass capacitor of 1uF\n\t\t○ A polarized output capacitor of 10uF\n\t• Label the output voltages as 3p3V, 2p5V, 1p8V, and 1p2V respectively.',
+            description='''Design a power tree in Kicad with the following attributes:  
+  - Convert the input voltage of +12V to the backbone power of 3.3V by using the voltage switching module OKI-78SR-3.3/1.5-W36E-C.
+  - From the 3.3V power, use LDO regulators from the LT1761 series to create voltages of 2.5V, 1.8V, and 1.2V.
+    - To reduce noise, connect a 0.01uF capacitor to the BYPASS pin of each LDO.
+  - To reduce noise and increase stability for each voltage rail, add additional capacitors. For the switching module and each LDO, add for each
+    - An unpolarized input bypass capacitor of 1uF
+    - A polarized output capacitor of 10uF
+  - Label the output voltages as 3p3V, 2p5V, 1p8V, and 1p2V respectively.''',
             metadata={"difficulty": 'medium', "submission_id": _SUBMISSION_ID},
         )
     ]

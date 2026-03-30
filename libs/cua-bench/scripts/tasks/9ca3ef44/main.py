@@ -15,7 +15,7 @@ _HARNESS_DIR = Path(__file__).parent
 def tasks() -> list[cb.Task]:
     return [
         cb.Task(
-            description='Modify the value of R1 to center the DC bias of the electret microphone output and provide the maximum, non-distorted voltage output range. Treat the electret microphone as a current sink with a typical draw of 0.5 mA.',
+            description='''Modify the value of R1 to center the DC bias of the electret microphone output and provide the maximum, non-distorted voltage output range. Treat the electret microphone as a current sink with a typical draw of 0.5 mA.''',
             metadata={"difficulty": 'medium', "submission_id": _SUBMISSION_ID},
         )
     ]

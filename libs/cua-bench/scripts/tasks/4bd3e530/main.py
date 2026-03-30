@@ -15,7 +15,7 @@ _HARNESS_DIR = Path(__file__).parent
 def tasks() -> list[cb.Task]:
     return [
         cb.Task(
-            description='Give me a KiCad schematic for a simple +5V LED flasher using a 2N3904 transistor where a 2-lead self-flashing LED drives a second brighter LED. Use a 1k resistor and 100uF capacitor in the collector timing network, and use 10k and 4.7k resistors to bias the base and load the output.',
+            description='''Give me a KiCad schematic for a simple +5V LED flasher using a 2N3904 transistor where a 2-lead self-flashing LED drives a second brighter LED. Use a 1k resistor and 100uF capacitor in the collector timing network, and use 10k and 4.7k resistors to bias the base and load the output.''',
             metadata={"difficulty": 'easy', "submission_id": _SUBMISSION_ID},
         )
     ]

@@ -15,7 +15,7 @@ _HARNESS_DIR = Path(__file__).parent
 def tasks() -> list[cb.Task]:
     return [
         cb.Task(
-            description='Modify the overall gain of the circuit by changing R10 to 2.80kOhm.',
+            description='''Modify the overall gain of the circuit by changing R10 to 2.80kOhm.''',
             metadata={"difficulty": 'medium', "submission_id": _SUBMISSION_ID},
         )
     ]

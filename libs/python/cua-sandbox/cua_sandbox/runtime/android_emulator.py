@@ -83,9 +83,12 @@ def _ensure_sdk() -> Path:
     """Ensure Android SDK command-line tools, emulator, and platform-tools are installed."""
     sdk = _sdk_path()
 
-    emulator_bin = sdk / "emulator" / "emulator"
-    sdkmanager_bin = sdk / "cmdline-tools" / "latest" / "bin" / "sdkmanager"
-    adb_bin = sdk / "platform-tools" / "adb"
+    _win = _plat.system().lower() == "windows"
+    _ext = ".exe" if _win else ""
+    _bat = ".bat" if _win else ""
+    emulator_bin = sdk / "emulator" / f"emulator{_ext}"
+    sdkmanager_bin = sdk / "cmdline-tools" / "latest" / "bin" / f"sdkmanager{_bat}"
+    adb_bin = sdk / "platform-tools" / f"adb{_ext}"
 
     if emulator_bin.exists() and adb_bin.exists():
         return sdk
@@ -100,9 +103,11 @@ def _ensure_sdk() -> Path:
             tools_url = f"https://dl.google.com/android/repository/commandlinetools-mac-{_CMDLINE_TOOLS_VERSION}_latest.zip"
         elif system == "linux":
             tools_url = f"https://dl.google.com/android/repository/commandlinetools-linux-{_CMDLINE_TOOLS_VERSION}_latest.zip"
+        elif system == "windows":
+            tools_url = f"https://dl.google.com/android/repository/commandlinetools-win-{_CMDLINE_TOOLS_VERSION}_latest.zip"
         else:
             raise RuntimeError(
-                "Android SDK auto-install not supported on Windows. Install Android Studio manually."
+                f"Android SDK auto-install not supported on {system}."
             )
 
         import urllib.request
@@ -123,7 +128,7 @@ def _ensure_sdk() -> Path:
         for f in (sdk / "cmdline-tools" / "latest" / "bin").iterdir():
             f.chmod(0o755)
 
-    sdkmanager_bin = sdk / "cmdline-tools" / "latest" / "bin" / "sdkmanager"
+    sdkmanager_bin = sdk / "cmdline-tools" / "latest" / "bin" / f"sdkmanager{_bat}"
     if not sdkmanager_bin.exists():
         raise RuntimeError(f"sdkmanager not found at {sdkmanager_bin}")
 

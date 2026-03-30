@@ -413,28 +413,21 @@ def check_local_support(image: "Image") -> RuntimeSupport:
             )
 
         installed = sdk_ok and java_ok
-        # SDK auto-installs on macOS and Linux but not Windows
-        auto = (not installed) and os_ != "windows"
+        auto = not installed  # SDK auto-installs on all platforms if Java is present
 
         if not java_ok:
             reason = (
-                "Java not found. Install via: brew install openjdk  (macOS) "
-                "or  apt install default-jdk  (Linux). " + hw_reason
+                "Java not found. Install via: brew install openjdk  (macOS), "
+                "apt install default-jdk  (Linux), or "
+                "winget install EclipseAdoptium.Temurin.21.JDK  (Windows). " + hw_reason
             )
         elif not sdk_ok:
-            if os_ == "windows":
-                reason = (
-                    "Android SDK not found. Install Android Studio manually. " + hw_reason
-                )
-            else:
-                reason = "Android SDK not found but will be auto-installed on first boot. " + hw_reason
+            reason = "Android SDK not found but will be auto-installed on first boot. " + hw_reason
         else:
             reason = "Android SDK installed. " + hw_reason
 
-        # On Windows, we need the SDK pre-installed; on macOS/Linux it auto-installs
-        can_run = installed if os_ == "windows" else True
         return RuntimeSupport(
-            supported=can_run,
+            supported=True,  # SDK auto-installs on all platforms if Java is present
             hw_accel=hw,
             runtime_installed=installed,
             auto_installable=auto and java_ok,

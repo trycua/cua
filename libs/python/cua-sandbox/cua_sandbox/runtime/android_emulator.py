@@ -197,15 +197,18 @@ def _find_free_emulator_port() -> int:
 
 
 def _find_bin(sdk: Path, name: str) -> str:
-    """Find a binary in the SDK."""
-    candidates = [
-        sdk / "emulator" / name,
-        sdk / "platform-tools" / name,
-        sdk / "cmdline-tools" / "latest" / "bin" / name,
+    """Find a binary in the SDK, handling .exe/.bat on Windows."""
+    exts = ["", ".exe", ".bat"] if _plat.system().lower() == "windows" else [""]
+    dirs = [
+        sdk / "emulator",
+        sdk / "platform-tools",
+        sdk / "cmdline-tools" / "latest" / "bin",
     ]
-    for c in candidates:
-        if c.exists():
-            return str(c)
+    for d in dirs:
+        for ext in exts:
+            c = d / f"{name}{ext}"
+            if c.exists():
+                return str(c)
     # Fall back to PATH
     found = shutil.which(name)
     if found:

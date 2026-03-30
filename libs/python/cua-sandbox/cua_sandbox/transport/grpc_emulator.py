@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import functools
+import platform
 import shutil
 import subprocess
 from io import BytesIO
@@ -39,9 +40,10 @@ if TYPE_CHECKING:
 
 def _find_adb(sdk_root: Optional[str] = None) -> str:
     if sdk_root:
-        candidate = Path(sdk_root) / "platform-tools" / "adb"
-        if candidate.exists():
-            return str(candidate)
+        for ext in (".exe", "") if platform.system().lower() == "windows" else ("",):
+            candidate = Path(sdk_root) / "platform-tools" / f"adb{ext}"
+            if candidate.exists():
+                return str(candidate)
     found = shutil.which("adb")
     if found:
         return found

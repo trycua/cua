@@ -1,21 +1,19 @@
-"""End-to-end test: gym-pwa on Modal, agent inside Android emulator as TWA.
+"""End-to-end test: gym-pwa on Modal, agent inside Android emulator as WebView app.
 
 Flow:
-  1. Build + cache TWA APK from the gym-pwa keystore (bundled in repo)
-  2. Launch android:14 emulator, install the signed TWA APK via pwa_install
+  1. Build + cache WebView APK from the PWA manifest via pwa2apk (no Chrome dependency)
+  2. Launch android:14 emulator, install the signed APK via pwa_install(builder="pwa2apk")
   3. POST /gym/start/add_item  → seeds DB, returns session_id + task prompt
-  4. Launch TWA app with ?session=<session_id> — no Chrome FRE, no browser UI
+  4. Launch app with session URL via deep-link intent — no Chrome banner, no FRE
   5. Agent taps the input, types the item, taps Add
   6. GET /gym/evaluate (x-session-id header) → { success, reward }
   7. Assert reward == 1.0
 
 The gym REST API (hosted on Modal) is the I/O channel.
-The TWA is signed with android.keystore from the gym-pwa repo; the Modal
-deployment serves the matching fingerprint from /.well-known/assetlinks.json.
+pwa2apk generates a WebView APK — no assetlinks.json required.
 
 Requires:
   - Java (for Android SDK auto-install + keytool)
-  - Node + npm (for bubblewrap)
   - gym-pwa repo checked out at GYM_PWA_DIR (defaults to ~/gym-pwa)
     — only needed for the android.keystore file
 """
@@ -101,7 +99,7 @@ async def test_android_local_gym_pwa():
             TWA_MANIFEST_URL,
             package_name=TWA_PACKAGE,
             keystore=str(GYM_KEYSTORE),
-            builder="bubblewrap",  # needs Chrome TWA for DevTools Protocol
+            builder="pwa2apk",  # WebView APK — no Chrome, no banner
         ),
         local=True,
     ) as sb:
@@ -113,97 +111,40 @@ async def test_android_local_gym_pwa():
 
         session_url = f"{GYM_URL}/?session={session_id}&bg={urllib.parse.quote(BG_COLOR, safe='')}"
 
-        # ── 2. Launch TWA to warm up Chrome / TWA runtime ────────────────────
+        # ── 2. Launch app directly to the session URL via VIEW intent ─────────
+        # pwa2apk WebView apps handle http/https VIEW intents natively.
         await sb.shell.run(
-            f"am start -n {TWA_PACKAGE}/.LauncherActivity "
-            f"-a android.intent.action.MAIN "
-            f"-c android.intent.category.LAUNCHER"
+            f"am start -a android.intent.action.VIEW "
+            f"-d '{session_url}' "
+            f"-n {TWA_PACKAGE}/.MainActivity"
         )
 
-        # ── 3. Wait for CDP, then navigate to ?session=<id>&bg=<color> ───────
-        import websockets
+        # Wait for WebView to load the React app
+        await asyncio.sleep(8)
 
-        async with sb.tunnel.forward("chrome_devtools_remote") as t:
-            # Poll until Chrome is ready
-            ws_url = None
-            for _ in range(60):
-                try:
-                    with urllib.request.urlopen(f"{t.url}/json", timeout=2) as r:
-                        targets = json.loads(r.read())
-                    if targets and targets[0].get("webSocketDebuggerUrl"):
-                        ws_url = targets[0]["webSocketDebuggerUrl"].replace(
-                            "localhost/", f"localhost:{t.port}/"
-                        )
-                        break
-                except Exception:
-                    pass
-                await asyncio.sleep(1)
-            assert ws_url, "CDP target never appeared"
+        shot = await sb.screenshot()
+        assert shot[:4] == b"\x89PNG"
+        with open("/tmp/gym_pwa_pre_agent.png", "wb") as f:
+            f.write(shot)
 
-            # Navigate to session URL and wait for Page.loadEventFired
-            async with websockets.connect(ws_url) as ws:
-                await ws.send(json.dumps({"id": 1, "method": "Page.enable"}))
-                await ws.send(
-                    json.dumps({"id": 2, "method": "Page.navigate", "params": {"url": session_url}})
-                )
-                deadline = asyncio.get_event_loop().time() + 20
-                while asyncio.get_event_loop().time() < deadline:
-                    try:
-                        msg = json.loads(await asyncio.wait_for(ws.recv(), timeout=2))
-                        if msg.get("method") == "Page.loadEventFired":
-                            break
-                    except asyncio.TimeoutError:
-                        continue
+        # Verify no Chrome disclosure banner in the UI
+        await sb.shell.run("uiautomator dump /sdcard/ui.xml")
+        dump = await sb.shell.run("cat /sdcard/ui.xml")
+        assert "Running in Chrome" not in dump.stdout, "Should not show Chrome banner"
 
-            await asyncio.sleep(6)  # let React render
+        # ── 3. Agent: tap input, type item, tap Add ───────────────────────────
+        w, h = await sb.screen.size()
+        await sb.mobile.tap(w // 2, int(h * 0.18))
+        await asyncio.sleep(0.5)
+        await sb.mobile.type_text("Buy groceries")
+        await asyncio.sleep(0.3)
+        await sb.mobile.tap(int(w * 0.85), int(h * 0.18))
+        await asyncio.sleep(1)
 
-            shot = await sb.screenshot()
-            assert shot[:4] == b"\x89PNG"
-            with open("/tmp/gym_pwa_pre_agent.png", "wb") as f:
-                f.write(shot)
-
-            # ── 4. Agent: tap input, type, tap Add ────────────────────────────
-            w, h = await sb.screen.size()
-            await sb.mobile.tap(w // 2, int(h * 0.18))
-            await asyncio.sleep(0.5)
-            await sb.mobile.type_text("Buy groceries")
-            await asyncio.sleep(0.3)
-            await sb.mobile.tap(int(w * 0.85), int(h * 0.18))
-            await asyncio.sleep(1)
-
-            # ── 5. Evaluate ───────────────────────────────────────────────────
-            result = _gym_request("GET", "/api/gym/evaluate", session_id=session_id)
-            assert result[
-                "success"
-            ], f"eval failed: reward={result['reward']}, msg={result['message']}"
-            assert result["reward"] == 1.0, f"expected reward 1.0, got {result['reward']}"
-
-            # ── 6. CDP: verify item appears in DOM ────────────────────────────
-            with urllib.request.urlopen(f"{t.url}/json", timeout=3) as r:
-                targets = json.loads(r.read())
-            assert targets, "CDP: no targets found"
-            ws_url = targets[0]["webSocketDebuggerUrl"].replace(
-                "localhost/", f"localhost:{t.port}/"
-            )
-            async with websockets.connect(ws_url) as ws:
-                await ws.send(
-                    json.dumps(
-                        {
-                            "id": 1,
-                            "method": "Runtime.evaluate",
-                            "params": {
-                                "expression": "Array.from(document.querySelectorAll('li span')).map(e=>e.textContent)",
-                                "returnByValue": True,
-                            },
-                        }
-                    )
-                )
-                raw = await asyncio.wait_for(ws.recv(), timeout=10)
-                resp = json.loads(raw)
-                texts = resp.get("result", {}).get("result", {}).get("value", [])
-                assert any(
-                    "buy groceries" in item.lower() for item in texts
-                ), f"CDP: 'buy groceries' not found in {texts}"
+        # ── 4. Evaluate via REST API ──────────────────────────────────────────
+        result = _gym_request("GET", "/api/gym/evaluate", session_id=session_id)
+        assert result["success"], f"eval failed: reward={result['reward']}, msg={result['message']}"
+        assert result["reward"] == 1.0, f"expected reward 1.0, got {result['reward']}"
 
 
 # ── Manual runner ─────────────────────────────────────────────────────────────
@@ -214,16 +155,14 @@ async def main():
     from cua_sandbox.image import Image
 
     print(f"Using gym at {GYM_URL}")
-    print(f"Building TWA APK from {TWA_MANIFEST_URL} ...")
-
-    import websockets
+    print(f"Building WebView APK from {TWA_MANIFEST_URL} via pwa2apk ...")
 
     async with Sandbox.ephemeral(
         Image.android().pwa_install(
             TWA_MANIFEST_URL,
             package_name=TWA_PACKAGE,
             keystore=str(GYM_KEYSTORE),
-            builder="bubblewrap",  # needs Chrome TWA for DevTools Protocol
+            builder="pwa2apk",
         ),
         local=True,
     ) as sb:
@@ -233,59 +172,29 @@ async def main():
         print(f"Task: {start['prompt']}  session: {session_id}  bg: {BG_COLOR}")
 
         await sb.shell.run(
-            f"am start -n {TWA_PACKAGE}/.LauncherActivity "
-            f"-a android.intent.action.MAIN "
-            f"-c android.intent.category.LAUNCHER"
+            f"am start -a android.intent.action.VIEW "
+            f"-d '{session_url}' "
+            f"-n {TWA_PACKAGE}/.MainActivity"
         )
+        await asyncio.sleep(8)
 
-        async with sb.tunnel.forward("chrome_devtools_remote") as t:
-            ws_url = None
-            for _ in range(60):
-                try:
-                    with urllib.request.urlopen(f"{t.url}/json", timeout=2) as r:
-                        targets = json.loads(r.read())
-                    if targets and targets[0].get("webSocketDebuggerUrl"):
-                        ws_url = targets[0]["webSocketDebuggerUrl"].replace(
-                            "localhost/", f"localhost:{t.port}/"
-                        )
-                        break
-                except Exception:
-                    pass
-                await asyncio.sleep(1)
+        w, h = await sb.screen.size()
+        await sb.mobile.tap(w // 2, int(h * 0.18))
+        await asyncio.sleep(0.5)
+        await sb.mobile.type_text("Buy groceries")
+        await asyncio.sleep(0.3)
+        await sb.mobile.tap(int(w * 0.85), int(h * 0.18))
+        await asyncio.sleep(1)
 
-            async with websockets.connect(ws_url) as ws:
-                await ws.send(json.dumps({"id": 1, "method": "Page.enable"}))
-                await ws.send(
-                    json.dumps({"id": 2, "method": "Page.navigate", "params": {"url": session_url}})
-                )
-                deadline = asyncio.get_event_loop().time() + 20
-                while asyncio.get_event_loop().time() < deadline:
-                    try:
-                        msg = json.loads(await asyncio.wait_for(ws.recv(), timeout=2))
-                        if msg.get("method") == "Page.loadEventFired":
-                            break
-                    except asyncio.TimeoutError:
-                        continue
+        shot = await sb.screenshot()
+        with open("/tmp/gym_pwa_after_add.png", "wb") as f:
+            f.write(shot)
+        print("Screenshot saved to /tmp/gym_pwa_after_add.png")
 
-            await asyncio.sleep(3)
-
-            w, h = await sb.screen.size()
-            await sb.mobile.tap(w // 2, int(h * 0.18))
-            await asyncio.sleep(0.5)
-            await sb.mobile.type_text("Buy groceries")
-            await asyncio.sleep(0.3)
-            await sb.mobile.tap(int(w * 0.85), int(h * 0.18))
-            await asyncio.sleep(1)
-
-            shot = await sb.screenshot()
-            with open("/tmp/gym_pwa_after_add.png", "wb") as f:
-                f.write(shot)
-            print("Screenshot saved to /tmp/gym_pwa_after_add.png")
-
-            result = _gym_request("GET", "/api/gym/evaluate", session_id=session_id)
-            print(
-                f"Eval: success={result['success']} reward={result['reward']} msg={result['message']}"
-            )
+        result = _gym_request("GET", "/api/gym/evaluate", session_id=session_id)
+        print(
+            f"Eval: success={result['success']} reward={result['reward']} msg={result['message']}"
+        )
 
 
 if __name__ == "__main__":

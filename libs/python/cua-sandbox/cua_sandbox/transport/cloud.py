@@ -524,11 +524,16 @@ class CloudTransport(Transport):
             logger.info("Cloning pwa2apk...")
             pwa2apk_dir = Path.home() / ".cua" / "pwa2apk"
             pwa2apk_dir.mkdir(parents=True, exist_ok=True)
-            subprocess.run(
+            clone_result = subprocess.run(
                 ["git", "clone", "https://github.com/trycua/pwa2apk.git", str(pwa2apk_dir)],
                 capture_output=True,
+                text=True,
                 timeout=60,
             )
+            if clone_result.returncode != 0:
+                raise RuntimeError(
+                    f"Failed to clone pwa2apk: {clone_result.stderr}"
+                )
 
         # Build the args for the CLI
         import os
@@ -555,8 +560,15 @@ class CloudTransport(Transport):
         env = {**os.environ}
         if "JAVA_HOME" not in env:
             for jdk in [
+                # Linux
                 "/usr/lib/jvm/java-17-openjdk-amd64",
                 "/usr/lib/jvm/java-21-openjdk-amd64",
+                # macOS (Homebrew ARM)
+                "/opt/homebrew/opt/openjdk/libexec/openjdk.jdk/Contents/Home",
+                "/opt/homebrew/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home",
+                # macOS (Homebrew Intel)
+                "/usr/local/opt/openjdk/libexec/openjdk.jdk/Contents/Home",
+                "/usr/local/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home",
             ]:
                 if Path(jdk).exists():
                     env["JAVA_HOME"] = jdk

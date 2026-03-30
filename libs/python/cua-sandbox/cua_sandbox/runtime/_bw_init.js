@@ -71,17 +71,19 @@ const resolvedFetchUrl =
     // fall back to the SVG so bubblewrap update doesn't fail on missing icons.
     if (twa.maskableIconUrl && twa.maskableIconUrl.endsWith('.png')) {
       try {
-        const { execSync: _exec } = require('child_process');
-        const status = _exec(`curl -s -o /dev/null -w '%{http_code}' '${twa.maskableIconUrl}'`, {
-          timeout: 10000,
-        })
+        const { execFileSync } = require('child_process');
+        const status = execFileSync(
+          'curl', ['-s', '-o', '/dev/null', '-w', '%{http_code}', '--', twa.maskableIconUrl],
+          { timeout: 10000 }
+        )
           .toString()
           .trim();
         if (status === '404') {
           const svgUrl = twa.maskableIconUrl.replace(/\.png$/, '.svg');
-          const svgStatus = _exec(`curl -s -o /dev/null -w '%{http_code}' '${svgUrl}'`, {
-            timeout: 10000,
-          })
+          const svgStatus = execFileSync(
+            'curl', ['-s', '-o', '/dev/null', '-w', '%{http_code}', '--', svgUrl],
+            { timeout: 10000 }
+          )
             .toString()
             .trim();
           if (svgStatus === '200') {

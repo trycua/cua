@@ -416,6 +416,7 @@ class Image:
                 if builder == "pwa2apk":
                     lines.append(
                         f"# pwa2apk: WebView APK (no Chrome dependency)\n"
+                        f"command -v pwa2apk >/dev/null 2>&1 || npm install -g pwa2apk 2>/dev/null || true\n"
                         f"pwa2apk '{manifest_url}' --output /tmp/pwa.apk\n"
                         f"adb install /tmp/pwa.apk"
                     )

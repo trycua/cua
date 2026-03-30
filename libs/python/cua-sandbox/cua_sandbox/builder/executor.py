@@ -120,8 +120,8 @@ class LayerExecutor:
                 f"'. /etc/profile.d/cua-env.sh 2>/dev/null; {_bash_escape(cmd)}'"
             )
         else:
-            # Android: run directly
-            cmd = f"bash -c '. /etc/profile.d/cua-env.sh 2>/dev/null; {_bash_escape(cmd)}'"
+            # Android: stock Android uses mksh/sh, not bash; env file is pushed by android_emulator
+            cmd = f"sh -c '. /data/local/tmp/.cua_env 2>/dev/null; {_bash_escape(cmd)}'"
         return await self.run_command(cmd)
 
     async def _exec_apt_install(self, layer: dict) -> dict:

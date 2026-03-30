@@ -175,7 +175,10 @@ def _has_android_sdk() -> bool:
     from cua_sandbox.runtime.android_emulator import _sdk_path
 
     sdk = _sdk_path()
-    return (sdk / "emulator" / "emulator").exists()
+    return (
+        (sdk / "emulator" / "emulator").exists()
+        or (sdk / "emulator" / "emulator.exe").exists()  # Windows
+    )
 
 
 def _has_java() -> bool:
@@ -377,21 +380,6 @@ def check_local_support(image: "Image") -> RuntimeSupport:
 
     # ── Android VM ────────────────────────────────────────────────────────
     if guest == "android":
-        if os_ == "windows":
-            return RuntimeSupport(
-                supported=False,
-                hw_accel=False,
-                runtime_installed=False,
-                auto_installable=False,
-                runtime_name="android_emulator",
-                host_os=os_,
-                host_arch=arch,
-                guest_os=guest,
-                reason=(
-                    "Android emulator auto-install is not supported on Windows. "
-                    "Install Android Studio manually."
-                ),
-            )
         sdk_ok = _has_android_sdk()
         java_ok = _has_java()
         # HW accel matrix for Android:
@@ -409,6 +397,14 @@ def check_local_support(image: "Image") -> RuntimeSupport:
         elif os_ == "linux" and _has_kvm():
             hw = True
             hw_reason = "KVM with x86_64 Android system image."
+        elif os_ == "windows":
+            # WHPX (Windows Hypervisor Platform) is used by the Android emulator on Windows
+            hw = _has_hyperv()  # WHPX requires Hyper-V / Windows Hypervisor Platform
+            hw_reason = (
+                "Windows Hypervisor Platform (WHPX) acceleration."
+                if hw
+                else "WHPX not available. Emulator will use software rendering (slow)."
+            )
         else:
             hw = False
             hw_reason = (
@@ -417,8 +413,8 @@ def check_local_support(image: "Image") -> RuntimeSupport:
             )
 
         installed = sdk_ok and java_ok
-        # SDK auto-installs on macOS and Linux
-        auto = not installed  # if not installed, can we auto-install?
+        # SDK auto-installs on macOS and Linux but not Windows
+        auto = (not installed) and os_ != "windows"
 
         if not java_ok:
             reason = (
@@ -426,12 +422,19 @@ def check_local_support(image: "Image") -> RuntimeSupport:
                 "or  apt install default-jdk  (Linux). " + hw_reason
             )
         elif not sdk_ok:
-            reason = "Android SDK not found but will be auto-installed on first boot. " + hw_reason
+            if os_ == "windows":
+                reason = (
+                    "Android SDK not found. Install Android Studio manually. " + hw_reason
+                )
+            else:
+                reason = "Android SDK not found but will be auto-installed on first boot. " + hw_reason
         else:
             reason = "Android SDK installed. " + hw_reason
 
+        # On Windows, we need the SDK pre-installed; on macOS/Linux it auto-installs
+        can_run = installed if os_ == "windows" else True
         return RuntimeSupport(
-            supported=True,  # SDK auto-installs on macOS/Linux if Java is present
+            supported=can_run,
             hw_accel=hw,
             runtime_installed=installed,
             auto_installable=auto and java_ok,

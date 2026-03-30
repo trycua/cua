@@ -70,6 +70,8 @@ def _sdk_path() -> Path:
         Path.home() / "Library" / "Android" / "sdk",  # Android Studio (macOS)
         Path("/opt/android"),  # docker-android
         Path.home() / "Android" / "Sdk",  # Linux
+        Path(os.environ.get("LOCALAPPDATA", "")) / "Android" / "Sdk",  # Android Studio (Windows)
+        Path.home() / "AppData" / "Local" / "Android" / "Sdk",  # Windows fallback
     ]
     for p in common:
         if (p / "emulator").exists():
@@ -361,7 +363,15 @@ class AndroidEmulatorRuntime(Runtime):
         if image._env:
             import tempfile
 
-            exports = "\n".join(f"export {k}={v}" for k, v in image._env) + "\n"
+            import re
+            import shlex
+
+            lines = []
+            for k, v in image._env:
+                if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", k):
+                    raise ValueError(f"Invalid environment variable name: {k!r}")
+                lines.append(f"export {k}={shlex.quote(v)}")
+            exports = "\n".join(lines) + "\n"
             with tempfile.NamedTemporaryFile(mode="w", suffix=".sh", delete=False) as f:
                 f.write(exports)
                 tmp_path = f.name

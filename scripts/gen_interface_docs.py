@@ -198,8 +198,24 @@ def collect_all() -> list[ClassInfo]:
 
 
 def _escape_mdx(text: str) -> str:
-    """Escape <> in doc text so MDX doesn't treat them as JSX tags."""
-    return text.replace("<", r"\<").replace(">", r"\>")
+    """Escape <> in doc text so MDX doesn't treat them as JSX tags.
+
+    Preserves content inside backtick code spans and fenced code blocks.
+    """
+    import re
+
+    # Split on backtick-delimited segments (`` ` `` or ``` `` ```)
+    # Odd-indexed segments are inside backticks — leave them alone
+    parts = re.split(r"(```.+?```|``.+?``|`.+?`)", text, flags=re.DOTALL)
+    for i, part in enumerate(parts):
+        if i % 2 == 0:  # outside code
+            parts[i] = (
+                part.replace("<", "&lt;")
+                .replace(">", "&gt;")
+                .replace("{", "&#123;")
+                .replace("}", "&#125;")
+            )
+    return "".join(parts)
 
 
 def _render_method(m: MethodInfo) -> str:
@@ -242,7 +258,7 @@ title: Interfaces Reference
 description: Auto-generated reference for all cua-sandbox interface classes. Do not edit manually — run scripts/gen_interface_docs.py to regenerate.
 ---
 
-import {{ Callout }} from "fumadocs-ui/components/callout";
+import { Callout } from "fumadocs-ui/components/callout";
 
 <Callout type="info">
   This page is auto-generated from the Python source docstrings.
@@ -261,7 +277,7 @@ The sandbox exposes the following interface objects on every `Sandbox` instance:
 | `sb.tunnel` | `Tunnel` | Port forwarding |
 | `sb.terminal` | `Terminal` | PTY terminal sessions |
 | `sb.window` | `Window` | Window management |
-| `sb.mobile` | `Mobile` | Mobile-specific actions (Android) |
+| `sb.mobile` | `Mobile` | Mobile-specific actions |
 
 ---
 

@@ -1,9 +1,9 @@
 ---
 title: Interfaces Reference
-description: Auto-generated reference for all cua-sandbox interface classes. Do not edit manually — run scripts/gen_interface_docs.py to regenerate.
+description: Auto-generated reference for all cua-sandbox interface classes. Do not edit manually � run scripts/gen_interface_docs.py to regenerate.
 ---
 
-import {{ Callout }} from "fumadocs-ui/components/callout";
+import { Callout } from "fumadocs-ui/components/callout";
 
 <Callout type="info">
   This page is auto-generated from the Python source docstrings.
@@ -22,7 +22,7 @@ The sandbox exposes the following interface objects on every `Sandbox` instance:
 | `sb.tunnel` | `Tunnel` | Port forwarding |
 | `sb.terminal` | `Terminal` | PTY terminal sessions |
 | `sb.window` | `Window` | Window management |
-| `sb.mobile` | `Mobile` | Mobile-specific actions (Android) |
+| `sb.mobile` | `Mobile` | Mobile-specific actions |
 
 ---
 
@@ -173,7 +173,7 @@ Returns a context manager (or awaitable) that yields:
 Example — Chrome DevTools over ADB::
 
     async with sb.tunnel.forward("chrome_devtools_remote") as t:
-        # http://localhost:\<random\>/json lists CDP targets
+        # http://localhost:&lt;random&gt;/json lists CDP targets
         print(t.url)
 
 
@@ -205,7 +205,7 @@ PTY terminal sessions.
 
 #### `async create(shell: str = 'bash', cols: int = 80, rows: int = 24) -> dict`
 
-Create a new PTY session. Returns {"pid": int, "cols": int, "rows": int}.
+Create a new PTY session. Returns &#123;"pid": int, "cols": int, "rows": int&#125;.
 
 #### `async send_input(pid: int, data: str) -> None`
 
@@ -289,7 +289,7 @@ both local ADB and cloud HTTP transports.
 
 Args:
     *finger_paths: Alternating start/end ``(x, y)`` tuples, two per finger.
-                   Must have an even length \>= 4 (at least 2 fingers × 2 points).
+                   Must have an even length &gt;= 4 (at least 2 fingers × 2 points).
     duration_ms:   Total gesture duration in milliseconds.
     steps:         Interpolation steps (0 = auto: duration_ms // 20, min 5).
 

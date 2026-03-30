@@ -1,0 +1,116 @@
+---
+title: Snapshots
+description: Capture sandbox state and boot new sandboxes from snapshots instantly
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+A snapshot captures the full disk state of a running sandbox. It returns a new `Image` that you can pass to `Sandbox.create()` or `Sandbox.ephemeral()` to boot a fresh sandbox from that point — with all installed packages, files, and configuration intact.
+
+## Quick example
+
+```python
+import asyncio
+from cua import Sandbox, Image
+
+async def main():
+    # 1. Create a sandbox and install software
+    async with Sandbox.ephemeral(Image.linux("ubuntu", "24.04")) as sb:
+        await sb.shell.run("apt-get update -qq && apt-get install -y -qq cowsay")
+
+        # 2. Snapshot — returns an Image
+        cowsay_image = await sb.snapshot(name="with-cowsay")
+
+    # 3. Boot from snapshot — cowsay is already installed
+    async with Sandbox.ephemeral(cowsay_image) as sb2:
+        result = await sb2.shell.run("/usr/games/cowsay hello from snapshot!")
+        print(result.stdout)
+
+asyncio.run(main())
+```
+
+---
+
+## `sb.snapshot()`
+
+```python
+image = await sb.snapshot(name="my-snapshot", stateful=False)
+```
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `name` | `str \| None` | `None` | Optional human-readable label for the snapshot |
+| `stateful` | `bool` | `False` | Capture memory state in addition to disk (VMs only) |
+
+**Returns:** an `Image` that can be passed directly to `Sandbox.ephemeral()` or `Sandbox.create()`.
+
+<Callout type="info">
+Snapshots are currently supported on Cua Cloud sandboxes. Local sandboxes (Docker, Lume, QEMU) have limited support for snapshots.
+</Callout>
+
+---
+
+## Use cases
+
+### Pre-baked environments
+
+Avoid repeating slow setup steps (package installs, model downloads, database migrations) by snapshotting once and forking many times:
+
+```python
+# Build the base image once
+async with Sandbox.ephemeral(Image.linux()) as sb:
+    await sb.shell.run("apt-get update && apt-get install -y python3-pip ffmpeg")
+    await sb.shell.run("pip install torch transformers")
+    ml_image = await sb.snapshot(name="ml-ready")
+
+# Fork it for each experiment — no reinstall needed
+for lr in [0.001, 0.01, 0.1]:
+    async with Sandbox.ephemeral(ml_image) as sb:
+        await sb.shell.run(f"python train.py --lr {lr}")
+```
+
+### Android snapshots
+
+Snapshot works with Android sandboxes too. Sideload APKs or configure the emulator once, then fork:
+
+```python
+FDROID_APK = "https://f-droid.org/F-Droid.apk"
+
+async with Sandbox.ephemeral(Image.android("14").apk_install(FDROID_APK)) as sb:
+    fdroid_image = await sb.snapshot(name="with-fdroid")
+
+# Fork — F-Droid is already installed
+async with Sandbox.ephemeral(fdroid_image) as sb2:
+    result = await sb2.shell.run("pm list packages org.fdroid.fdroid")
+    assert "org.fdroid.fdroid" in result.stdout
+```
+
+### State isolation
+
+Each fork gets its own copy of the disk. Changes in one fork never affect another or the original snapshot:
+
+```python
+async with Sandbox.ephemeral(Image.linux()) as sb:
+    await sb.shell.run("echo original > /tmp/data.txt")
+    base = await sb.snapshot(name="base")
+
+# Fork A writes a file
+async with Sandbox.ephemeral(base) as a:
+    await a.shell.run("echo fork-a >> /tmp/data.txt")
+
+# Fork B doesn't see Fork A's changes
+async with Sandbox.ephemeral(base) as b:
+    result = await b.shell.run("cat /tmp/data.txt")
+    print(result.stdout)  # "original\n" — no trace of fork-a
+```
+
+---
+
+## Performance
+
+| Operation | Typical time |
+|-----------|-------------|
+| Create + install packages | 30–120 s |
+| Fork from snapshot | 1–5 s |
+
+On backends that use copy-on-write storage, forking is nearly instant regardless of how large the disk image is. On `dir` storage backends, the fork performs a full copy, so it may be slower for large images.

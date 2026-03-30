@@ -83,11 +83,12 @@ class LumeRuntime(Runtime):
 
         lume_url = f"http://{self.lume_host}:{self.lume_port}"
 
-        # Fast path — VM already running (e.g. non-ephemeral resume)
+        # Fast path — VM already exists
         async with httpx.AsyncClient(timeout=30) as client:
             resp = await client.get(f"{lume_url}/lume/vms/{name}")
             vm = resp.json() if resp.status_code == 200 else {}
-        if vm.get("status") == "running":
+        existing_status = vm.get("status")
+        if existing_status == "running":
             logger.info(f"Lume VM {name} already running")
             ip = await self._wait_for_ip(name, lume_url)
             await self._deliver_vnc_config(name, lume_url)
@@ -95,6 +96,10 @@ class LumeRuntime(Runtime):
             await self.is_ready(info)
             await self._apply_image_layers(image, info)
             return info
+        if existing_status in ("stopped", "suspended"):
+            # Resume the existing stopped VM rather than colliding with a clone
+            logger.info(f"Lume VM {name} exists (stopped) — resuming")
+            return await self.resume(image, name, **opts)
 
         oci_ref = image._registry or MACOS_VERSION_IMAGES.get(image.version or "") or MACOS_SEQUOIA
 
@@ -135,10 +140,12 @@ class LumeRuntime(Runtime):
     # ── Checkpoint / fork primitives ─────────────────────────────────────────
 
     async def ensure_base(self, image: Image, base_name: str):  # -> CheckpointInfo
-        """Pull image into a stopped golden VM if it doesn't exist yet.
+        """Pull an OCI image into a stopped golden base VM, if it doesn't exist yet.
 
-        Idempotent — if a VM named *base_name* already exists (stopped), returns
-        immediately.  The base VM is never started; it only serves as a fork source.
+        Idempotent — if *base_name* already exists and is stopped, returns
+        immediately.  Raises if the base VM is running, because cloning a live VM
+        can produce dirty or inconsistent clones (same constraint as cloud snapshots).
+        The base VM is never started; it only serves as a fork source.
         """
         import time
 
@@ -149,8 +156,12 @@ class LumeRuntime(Runtime):
             resp = await client.get(f"{lume_url}/lume/vms/{base_name}")
         if resp.status_code == 200:
             vm = resp.json()
-            if vm.get("status") in ("stopped", "running"):
-                logger.info(f"Base VM '{base_name}' already exists — skipping pull")
+            if vm.get("status") == "running":
+                raise RuntimeError(
+                    f"Base VM '{base_name}' is running — stop it before using as a clone source"
+                )
+            if vm.get("status") in ("stopped", "suspended"):
+                logger.info(f"Base VM '{base_name}' already exists (stopped) — skipping pull")
                 return CheckpointInfo(name=base_name, runtime_type="lume", created_at=time.time())
 
         oci_ref = image._registry or MACOS_VERSION_IMAGES.get(image.version or "") or MACOS_SEQUOIA
@@ -168,7 +179,11 @@ class LumeRuntime(Runtime):
         return CheckpointInfo(name=base_name, runtime_type="lume", created_at=time.time())
 
     async def fork(self, base_name: str, new_name: str, **opts) -> None:
-        """Clone *base_name* → *new_name* via APFS clonefile (instant)."""
+        """Clone a stopped VM *base_name* → *new_name* via APFS clonefile (instant).
+
+        The source VM must be stopped before calling this — cloning a running VM
+        risks dirty state or clone failures (mirrors cloud snapshot behaviour).
+        """
         lume_url = f"http://{self.lume_host}:{self.lume_port}"
         logger.info(f"Cloning base VM '{base_name}' → '{new_name}'")
         async with httpx.AsyncClient(timeout=60) as client:
@@ -185,13 +200,44 @@ class LumeRuntime(Runtime):
             raise RuntimeError(f"Lume clone '{base_name}' → '{new_name}' failed: {detail}")
         logger.info(f"Cloned '{base_name}' → '{new_name}' successfully")
 
+    # Prefix used to distinguish checkpoint VMs from ordinary sandboxes
+    _CHECKPOINT_PREFIX = "cua-ckpt-"
+
     async def checkpoint(self, name: str, checkpoint_name: str, **opts):  # -> CheckpointInfo
-        """Clone a running VM into a stopped checkpoint (non-destructive)."""
+        """Stop *name*, clone it into a checkpoint, then restart *name*.
+
+        Mirrors the cloud behaviour (stop → snapshot → restart) so clones are
+        always taken from a clean stopped state.
+        """
         import time
 
         from cua_sandbox.runtime.base import CheckpointInfo
 
-        await self.fork(name, checkpoint_name)
+        lume_url = f"http://{self.lume_host}:{self.lume_port}"
+
+        # Enforce the naming prefix so list/delete_checkpoint stay scoped
+        if not checkpoint_name.startswith(
+            self._CHECKPOINT_PREFIX
+        ) and not checkpoint_name.startswith("cua-base-"):
+            checkpoint_name = f"{self._CHECKPOINT_PREFIX}{checkpoint_name}"
+
+        # Determine whether the source VM is running so we can restart it after
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.get(f"{lume_url}/lume/vms/{name}")
+            vm = resp.json() if resp.status_code == 200 else {}
+        was_running = vm.get("status") == "running"
+
+        if was_running:
+            logger.info(f"Stopping '{name}' before checkpoint clone")
+            await self.stop(name)
+
+        try:
+            await self.fork(name, checkpoint_name)
+        finally:
+            if was_running:
+                logger.info(f"Restarting '{name}' after checkpoint clone")
+                await self._run_vm(name, lume_url, opts)
+
         return CheckpointInfo(
             name=checkpoint_name,
             runtime_type="lume",
@@ -200,7 +246,7 @@ class LumeRuntime(Runtime):
         )
 
     async def list_checkpoints(self):  # -> list[CheckpointInfo]
-        """Return all stopped VMs whose names start with 'cua-base-' or contain a checkpoint prefix."""
+        """Return VMs that are checkpoints (cua-base-* or cua-ckpt-* prefix)."""
         import time
 
         from cua_sandbox.runtime.base import CheckpointInfo
@@ -209,10 +255,18 @@ class LumeRuntime(Runtime):
         return [
             CheckpointInfo(name=v["name"], runtime_type="lume", created_at=time.time())
             for v in vms
-            if v["name"].startswith("cua-base-") or v.get("status") == "suspended"
+            if v["name"].startswith("cua-base-") or v["name"].startswith(self._CHECKPOINT_PREFIX)
         ]
 
     async def delete_checkpoint(self, checkpoint_name: str) -> None:
+        """Delete a checkpoint VM. Only operates on cua-base-* / cua-ckpt-* names."""
+        if not checkpoint_name.startswith("cua-base-") and not checkpoint_name.startswith(
+            self._CHECKPOINT_PREFIX
+        ):
+            raise ValueError(
+                f"'{checkpoint_name}' does not look like a checkpoint "
+                f"(expected 'cua-base-' or '{self._CHECKPOINT_PREFIX}' prefix)"
+            )
         await self.delete(checkpoint_name)
 
     # ── Internal pull helper ──────────────────────────────────────────────────
@@ -368,13 +422,20 @@ class LumeRuntime(Runtime):
                 # EnvironmentVariables dict in its plist.  launchctl setenv is
                 # ignored by such services, so we must add vars to the plist
                 # directly via PlistBuddy, then unload/load the service.
+                import re as _re
+
                 plist = "~/Library/LaunchAgents/com.trycua.computer_server.plist"
                 for k, v in env_items:
-                    safe_v = v.replace('"', '\\"')
+                    # Validate key: must be a safe identifier (alphanumeric + _)
+                    if not _re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", k):
+                        raise ValueError(f"Unsafe env var name: {k!r}")
+                    # Escape value for PlistBuddy: single-quote the shell arg,
+                    # and escape any single quotes within the value itself.
+                    safe_v = v.replace("'", "'\\''")
                     # Use Set if key exists, Add otherwise
                     await executor.run_command(
-                        f'/usr/libexec/PlistBuddy -c "Set :EnvironmentVariables:{k} {safe_v}" {plist} 2>/dev/null || '
-                        f'/usr/libexec/PlistBuddy -c "Add :EnvironmentVariables:{k} string {safe_v}" {plist}'
+                        f"/usr/libexec/PlistBuddy -c 'Set :EnvironmentVariables:{k} {safe_v}' {plist} 2>/dev/null || "
+                        f"/usr/libexec/PlistBuddy -c 'Add :EnvironmentVariables:{k} string {safe_v}' {plist}"
                     )
                 # Reload via lume ssh from the host — launchctl unload would kill
                 # computer-server mid-execution if run from inside via /cmd.
@@ -395,14 +456,21 @@ class LumeRuntime(Runtime):
                 await asyncio.wait_for(proc.wait(), timeout=30)
                 await self.is_ready(info)  # wait for computer-server to come back
             else:
+                import re as _re
+                import shlex as _shlex
+
                 sudo = "sudo"
+                # Validate all keys up front
+                for k, _ in env_items:
+                    if not _re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", k):
+                        raise ValueError(f"Unsafe env var name: {k!r}")
                 await executor.run_command(
                     f"printf '#!/bin/sh\\n' | {sudo} tee /etc/profile.d/cua-env.sh > /dev/null"
                 )
                 for k, v in env_items:
-                    safe_v = v.replace("'", "'\\''")
+                    quoted_v = _shlex.quote(v)
                     await executor.run_command(
-                        f"printf 'export {k}=\"{safe_v}\"\\n' "
+                        f"printf 'export {k}=%s\\n' {quoted_v} "
                         f"| {sudo} tee -a /etc/profile.d/cua-env.sh > /dev/null"
                     )
         for src, dst in file_items:

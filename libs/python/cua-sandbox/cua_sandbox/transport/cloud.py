@@ -92,11 +92,18 @@ class CloudTransport(Transport):
         logger.debug("[cloud] VM %r is running", self._name)
 
         # Resolve computer-server endpoint — auth with CUA API key + container name.
-        # In local dev mode, the API replaces .cua.sh endpoints with direct IPs once
-        # the container IP is known. If we still get .cua.sh, keep polling.
+        # In local-dev mode the API initially returns .cua.sh placeholder URLs and
+        # replaces them with direct IPs once the container IP is known, so we poll
+        # until we get a non-.cua.sh address.  On prod the reverse-proxy .cua.sh URL
+        # is the real endpoint, so we skip this loop entirely.
         cs_url = self._resolve_endpoint(vm_info)
+        _is_local_dev = not self._base_url.rstrip("/").endswith("cua.sh") and (
+            "localhost" in self._base_url
+            or "127.0.0.1" in self._base_url
+            or "0.0.0.0" in self._base_url
+        )
         poll_elapsed = 0.0
-        while cs_url.endswith(".cua.sh") or ".cua.sh:" in cs_url:
+        while _is_local_dev and (cs_url.endswith(".cua.sh") or ".cua.sh:" in cs_url):
             if poll_elapsed >= 120:
                 break  # Fall through — _wait_for_server_ready will handle the error
             await asyncio.sleep(3)
@@ -337,9 +344,6 @@ class CloudTransport(Transport):
     async def _apply_image_layers(self) -> None:
         """Apply env vars and image layers (APK installs, PWA, shell commands) after the VM is ready."""
         import base64
-        import hashlib
-        import urllib.request
-        from pathlib import Path
 
         assert self._inner
 
@@ -379,9 +383,7 @@ class CloudTransport(Transport):
         if apk.startswith(("http://", "https://")):
             cache_dir = Path.home() / ".cua" / "cua-sandbox" / "apk-cache"
             cache_dir.mkdir(parents=True, exist_ok=True)
-            cache_file = cache_dir / (
-                hashlib.sha256(apk.encode()).hexdigest()[:16] + ".apk"
-            )
+            cache_file = cache_dir / (hashlib.sha256(apk.encode()).hexdigest()[:16] + ".apk")
             if not cache_file.exists():
                 urllib.request.urlretrieve(apk, cache_file)
             apk_bytes = cache_file.read_bytes()
@@ -432,9 +434,7 @@ class CloudTransport(Transport):
         apk_path, fingerprint = await runtime._build_pwa_apk(
             manifest_url, pkg, ks, ks_alias, ks_pass
         )
-        logger.info(
-            f"[cloud] PWA APK built: {apk_path} (fingerprint: {fingerprint})"
-        )
+        logger.info(f"[cloud] PWA APK built: {apk_path} (fingerprint: {fingerprint})")
 
         apk_bytes = Path(apk_path).read_bytes()
         dest = "/data/local/tmp/cua_pwa.apk"

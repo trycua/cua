@@ -294,10 +294,14 @@ class Sandbox:
         # Get the original image from the transport for os_type/distro/version
         src_image = getattr(self._transport, "_image", None)
 
+        # Prefer the original image's os_type/distro/version — image_desc["kind"]
+        # is the snapshot kind (e.g. "vm"), not the OS type, and would misclassify
+        # the image for OS-gated builder methods and compat checks.
         return ImageCls(
-            os_type=image_desc.get("kind", src_image.os_type if src_image else "linux"),
-            distro=src_image.distro if src_image else "ubuntu",
-            version=src_image.version if src_image else "24.04",
+            os_type=src_image.os_type if src_image else image_desc.get("os_type", "linux"),
+            distro=src_image.distro if src_image else image_desc.get("distro", "ubuntu"),
+            version=src_image.version if src_image else image_desc.get("version", "24.04"),
+            kind=src_image.kind if src_image else image_desc.get("kind"),
             _snapshot_source=image_desc,
         )
 

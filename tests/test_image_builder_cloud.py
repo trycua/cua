@@ -7,12 +7,12 @@ Run with:
     CUA_API_KEY=sk-dev-test-key-local-12345 CUA_BASE_URL=http://localhost:8082 \
     pytest tests/test_image_builder_cloud.py -v -s
 """
+
 from __future__ import annotations
 
 import os
 
 import pytest
-
 from cua import Image, Sandbox
 
 pytestmark = pytest.mark.asyncio
@@ -83,7 +83,9 @@ async def test_android_pwa_install():
         "ANDROID_TEST_PWA_URL",
         "https://cuaai--todo-gym-web.modal.run/manifest.json",
     )
-    keystore_url = "https://raw.githubusercontent.com/trycua/android-example-gym-pwa-app/main/android.keystore"
+    keystore_url = (
+        "https://raw.githubusercontent.com/trycua/android-example-gym-pwa-app/main/android.keystore"
+    )
     with tempfile.NamedTemporaryFile(suffix=".keystore", delete=False) as f:
         urllib.request.urlretrieve(keystore_url, f.name)
         keystore_path = f.name

@@ -172,17 +172,31 @@ class LayerExecutor:
         return await self.run_command(f"pip3 install --break-system-packages {pkgs}", timeout=600)
 
     async def _exec_env(self, layer: dict) -> dict:
+        import re as _re
+
         variables = layer.get("variables", {})
         if not variables:
             return {"success": True, "return_code": 0}
         if self._is_windows():
             cmds = [f'setx {k} "{v}"' for k, v in variables.items()]
             return await self.run_command(" && ".join(cmds))
-        # Linux/macOS: append to /etc/environment for persistence
+        # Validate keys before composing any shell commands
+        for k in variables:
+            if not _re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", k):
+                raise ValueError(f"Unsafe env var name: {k!r}")
+        # Linux/macOS: append to /etc/environment for persistence.
+        # Write each line as a separate printf call so values are treated as
+        # literals — no heredoc expansion, no quote stripping.
         sudo = "echo lume | sudo -S" if self.os_type == "macos" else "sudo"
-        lines = "\n".join(f'{k}="{v}"' for k, v in variables.items())
-        cmd = f"{sudo} sh -c 'cat >> /etc/environment << EOF\n{lines}\nEOF'"
-        return await self.run_command(cmd)
+        result: dict = {"success": True, "return_code": 0}
+        for k, v in variables.items():
+            safe_v = v.replace("'", "'\\''")
+            result = await self.run_command(
+                f"printf '%s=%s\\n' '{k}' '{safe_v}' | {sudo} tee -a /etc/environment > /dev/null"
+            )
+            if not result.get("success"):
+                return result
+        return result
 
     async def _exec_copy(self, layer: dict) -> dict:
         src = layer["src"]
@@ -210,8 +224,8 @@ class LayerExecutor:
         sudo = "echo lume | sudo -S" if self.os_type == "macos" else "sudo"
         dst_dir = posixpath.dirname(dst)
         if dst_dir and dst_dir != "/":
-            await self.run_command(f"{sudo} mkdir -p {dst_dir}")
-        r = await self.run_command(f"{sudo} mv {tmp_path} {dst}")
+            await self.run_command(f"{sudo} mkdir -p {_sh_quote(dst_dir)}")
+        r = await self.run_command(f"{sudo} mv {_sh_quote(tmp_path)} {_sh_quote(dst)}")
         rc = r.get("return_code", r.get("returncode", -1))
         return {"success": rc == 0, "return_code": rc, "stderr": r.get("stderr", "")}
 

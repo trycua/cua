@@ -168,8 +168,20 @@ final class Server: @unchecked Sendable {
     private let portNumber: UInt16
     private let controller: LumeController
     private var routes: [Route]
-    private var serverChannel: (any Channel)?
-    private var eventLoopGroup: (any EventLoopGroup)?
+    // _channelLock guards both _serverChannel and _eventLoopGroup, which are
+    // written in start() and read in stop() — potentially from different tasks.
+    private let _channelLock = NSLock()
+    private var _serverChannel: (any Channel)?
+    private var _eventLoopGroup: (any EventLoopGroup)?
+
+    private var serverChannel: (any Channel)? {
+        get { _channelLock.withLock { _serverChannel } }
+        set { _channelLock.withLock { _serverChannel = newValue } }
+    }
+    private var eventLoopGroup: (any EventLoopGroup)? {
+        get { _channelLock.withLock { _eventLoopGroup } }
+        set { _channelLock.withLock { _eventLoopGroup = newValue } }
+    }
 
     // MARK: - Initialization
 

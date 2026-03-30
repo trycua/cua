@@ -9,13 +9,13 @@ Run against local dev stack:
     CUA_API_KEY=sk-dev-test-key-local-12345 CUA_BASE_URL=http://localhost:8082 \
     pytest tests/test_snapshots.py -v -s
 """
+
 from __future__ import annotations
 
 import os
 import time
 
 import pytest
-
 from cua_sandbox import Image, Sandbox
 
 pytestmark = pytest.mark.asyncio
@@ -31,13 +31,14 @@ async def test_snapshot_linux():
     t_create_start = time.monotonic()
 
     async with Sandbox.ephemeral(Image.linux("ubuntu", "24.04")) as sb:
-        t_create = time.monotonic() - t_create_start
-
         # Install something unique
         result = await sb.shell.run(
             "apt-get update -qq && apt-get install -y -qq cowsay", timeout=120
         )
         assert result.success, f"Install failed: {result.stderr}"
+
+        # Measure create+install time only after install completes
+        t_create = time.monotonic() - t_create_start
 
         # Verify it works
         result = await sb.shell.run("/usr/games/cowsay hello")
@@ -61,9 +62,9 @@ async def test_snapshot_linux():
 
         print(f"\nCreate+install: {t_create:.1f}s, Fork from snapshot: {t_fork:.1f}s")
         # Fork should be faster than original create + install
-        assert t_fork < t_create, (
-            f"Fork ({t_fork:.1f}s) should be faster than create ({t_create:.1f}s)"
-        )
+        assert (
+            t_fork < t_create
+        ), f"Fork ({t_fork:.1f}s) should be faster than create ({t_create:.1f}s)"
 
 
 @pytest.mark.skipif(not _has_cua_api_key(), reason="CUA_API_KEY not set")
@@ -72,9 +73,7 @@ async def test_snapshot_android():
     FDROID_APK = "https://f-droid.org/F-Droid.apk"
     t_create_start = time.monotonic()
 
-    async with Sandbox.ephemeral(
-        Image.android("14").apk_install(FDROID_APK)
-    ) as sb:
+    async with Sandbox.ephemeral(Image.android("14").apk_install(FDROID_APK)) as sb:
         t_create = time.monotonic() - t_create_start
 
         # Verify F-Droid installed (sb.shell.run on android → adb shell)

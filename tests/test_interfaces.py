@@ -50,16 +50,20 @@ async def _shell(sb, cmd: str, timeout: int = 30) -> str:
 
 
 async def _start_http_server(sb, port: int) -> None:
-    """Start a minimal Python HTTP echo server inside the sandbox."""
-    await sb.shell.run(
-        f'python3 -c "'
-        f"import http.server as h, socketserver as ss; "
-        f"ss.TCPServer(('0.0.0.0',{port}),type('H',(h.BaseHTTPRequestHandler,),"
-        f"{{'do_GET':lambda s:(s.send_response(200),s.send_header('Content-Type','text/plain')"
-        f",s.end_headers(),s.wfile.write(b'ok'))}}"
-        f')).serve_forever()" &',
-        timeout=5,
+    """Start a minimal Python HTTP echo server inside the sandbox.
+
+    Uses python3 with POSIX background operator on Linux/macOS.
+    macOS VMs ship python3; Linux containers have it in the base image.
+    """
+    server_code = (
+        "import http.server as h, socketserver as ss; "
+        f"ss.TCPServer(('0.0.0.0',{port}),"
+        "type('H',(h.BaseHTTPRequestHandler,),"
+        "{'do_GET':lambda s:(s.send_response(200),s.send_header('Content-Type','text/plain')"
+        ",s.end_headers(),s.wfile.write(b'ok'))})"
+        ").serve_forever()"
     )
+    await sb.shell.run(f'python3 -c "{server_code}" &', timeout=5)
     await asyncio.sleep(1)
 
 

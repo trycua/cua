@@ -175,10 +175,9 @@ def _has_android_sdk() -> bool:
     from cua_sandbox.runtime.android_emulator import _sdk_path
 
     sdk = _sdk_path()
-    return (
-        (sdk / "emulator" / "emulator").exists()
-        or (sdk / "emulator" / "emulator.exe").exists()  # Windows
-    )
+    return (sdk / "emulator" / "emulator").exists() or (
+        sdk / "emulator" / "emulator.exe"
+    ).exists()  # Windows
 
 
 def _has_java() -> bool:
@@ -427,7 +426,7 @@ def check_local_support(image: "Image") -> RuntimeSupport:
             reason = "Android SDK installed. " + hw_reason
 
         return RuntimeSupport(
-            supported=True,  # SDK auto-installs on all platforms if Java is present
+            supported=java_ok,  # Java is a hard prerequisite; SDK auto-installs if Java is present
             hw_accel=hw,
             runtime_installed=installed,
             auto_installable=auto and java_ok,

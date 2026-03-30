@@ -50,9 +50,16 @@ try:
         skip_if_unsupported,
     )
 except ImportError:  # cua-sandbox < compat.py introduction
-    RuntimeSupport = None  # type: ignore[assignment,misc]
-    check_local_support = None  # type: ignore[assignment]
-    skip_if_unsupported = None  # type: ignore[assignment]
+
+    def _missing_compat(*_args, **_kwargs):  # type: ignore[misc]
+        raise ImportError(
+            "cua_sandbox.runtime.compat is not available in this version of cua-sandbox. "
+            "Upgrade cua-sandbox to use RuntimeSupport, check_local_support, or skip_if_unsupported."
+        )
+
+    RuntimeSupport = _missing_compat  # type: ignore[assignment,misc]
+    check_local_support = _missing_compat  # type: ignore[assignment]
+    skip_if_unsupported = _missing_compat  # type: ignore[assignment]
 
 # ---------------------------------------------------------------------------
 # Lazy imports — runtime classes, interface types, agent surface.

@@ -142,6 +142,10 @@ async def local_android_sb():
     Boot a single AndroidEmulatorRuntime via Sandbox.ephemeral(), install the TouchTest
     APK, escalate to root, launch the app, and yield the ready Sandbox.
     Shared across all local tests so we only pay the boot cost once.
+
+    The compatibility gate lives here (not in the autouse reset fixture) so that
+    cloud tests, which have their own API-key gate and don't depend on a local
+    emulator, are not affected when local Android support is absent.
     """
     skip_if_unsupported(Image.android(str(_API_LEVEL)))
 
@@ -165,12 +169,17 @@ async def local_android_sb():
 
 
 @pytest_asyncio.fixture(autouse=True)
-async def _reset_between_tests(request, local_android_sb: Sandbox):
-    """Clear logcat + app event counter before every local test."""
+async def _reset_between_tests(request):
+    """Clear logcat + app event counter before every local test.
+
+    Resolves local_android_sb lazily so that cloud tests (which don't request
+    the local emulator fixture) don't trigger emulator boot or the compat skip.
+    """
     if "local_android_sb" not in request.fixturenames:
         yield
         return
-    await _reset(local_android_sb)
+    sb = request.getfixturevalue("local_android_sb")
+    await _reset(sb)
     yield
 
 

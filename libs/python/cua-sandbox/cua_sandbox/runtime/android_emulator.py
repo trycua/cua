@@ -106,9 +106,7 @@ def _ensure_sdk() -> Path:
         elif system == "windows":
             tools_url = f"https://dl.google.com/android/repository/commandlinetools-win-{_CMDLINE_TOOLS_VERSION}_latest.zip"
         else:
-            raise RuntimeError(
-                f"Android SDK auto-install not supported on {system}."
-            )
+            raise RuntimeError(f"Android SDK auto-install not supported on {system}.")
 
         import urllib.request
         import zipfile
@@ -369,10 +367,9 @@ class AndroidEmulatorRuntime(Runtime):
         # Write image env vars to a persistent file so every subsequent
         # adb shell command (including those from the transport) can source it.
         if image._env:
-            import tempfile
-
             import re
             import shlex
+            import tempfile
 
             lines = []
             for k, v in image._env:

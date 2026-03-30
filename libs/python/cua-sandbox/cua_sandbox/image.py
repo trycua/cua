@@ -237,6 +237,7 @@ class Image:
             _registry=self._registry,
             _disk_path=self._disk_path,
             _agent_type=self._agent_type,
+            _snapshot_source=self._snapshot_source,
         )
 
     def _with(self, **kwargs) -> Image:
@@ -253,6 +254,7 @@ class Image:
             "_registry": self._registry,
             "_disk_path": self._disk_path,
             "_agent_type": self._agent_type,
+            "_snapshot_source": self._snapshot_source,
         }
         fields.update(kwargs)
         return Image(**fields)

@@ -195,34 +195,53 @@ class DockerRuntime(Runtime):
         )
         await self.is_ready(info)
 
-        # Apply image layers and files via computer-server
+        # Apply image layers and files via computer-server.
+        # If any provisioning step fails, stop and remove the half-baked container
+        # so callers don't get a broken sandbox silently left running.
         env_items = getattr(image, "_env", ())
         file_items = getattr(image, "_files", ())
         has_work = image._layers or file_items
         if has_work or env_items:
-            from cua_sandbox.builder.executor import LayerExecutor
+            try:
+                from cua_sandbox.builder.executor import LayerExecutor
 
-            executor = LayerExecutor(f"http://{info.host}:{info.api_port}", os_type=image.os_type)
-
-            # Write env vars to a sourceable profile script so run layers can access them
-            if env_items and image.os_type != "windows":
-                # Build the script line by line using sudo tee to handle root-owned /etc/profile.d
-                await executor.run_command(
-                    "printf '#!/bin/sh\\n' | sudo tee /etc/profile.d/cua-env.sh > /dev/null"
+                executor = LayerExecutor(
+                    f"http://{info.host}:{info.api_port}", os_type=image.os_type
                 )
-                for k, v in env_items:
-                    safe_v = v.replace("'", "'\\''")
+
+                # Write env vars to a sourceable profile script so run layers can access them
+                if env_items and image.os_type != "windows":
+                    import re as _re
+                    import shlex as _shlex
+
+                    # Validate all keys up front
+                    for k, _ in env_items:
+                        if not _re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", k):
+                            raise ValueError(f"Unsafe env var name: {k!r}")
                     await executor.run_command(
-                        f"printf 'export {k}=\"{safe_v}\"\\n' "
-                        f"| sudo tee -a /etc/profile.d/cua-env.sh > /dev/null"
+                        "printf '#!/bin/sh\\n' | sudo tee /etc/profile.d/cua-env.sh > /dev/null"
                     )
+                    for k, v in env_items:
+                        quoted_v = _shlex.quote(v)
+                        await executor.run_command(
+                            f"printf 'export {k}=%s\\n' {quoted_v} "
+                            f"| sudo tee -a /etc/profile.d/cua-env.sh > /dev/null"
+                        )
 
-            # Apply files before layers so later run layers can reference copied files
-            for src, dst in file_items:
-                await executor.execute_layers([{"type": "copy", "src": src, "dst": dst}])
+                # Apply files before layers so later run layers can reference copied files
+                for src, dst in file_items:
+                    await executor.execute_layers([{"type": "copy", "src": src, "dst": dst}])
 
-            if image._layers:
-                await executor.execute_layers(list(image._layers))
+                if image._layers:
+                    await executor.execute_layers(list(image._layers))
+            except Exception:
+                # Tear down the container so it doesn't linger in a broken state
+                try:
+                    docker = _docker_bin()
+                    subprocess.run([docker, "rm", "-f", name], capture_output=True)
+                except Exception:
+                    pass
+                raise
 
         return info
 

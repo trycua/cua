@@ -270,6 +270,37 @@ class Sandbox:
         """Drop the transport connection. The sandbox keeps running."""
         await self._transport.disconnect()
 
+    async def snapshot(self, name: str | None = None, stateful: bool = False) -> "Image":
+        """Snapshot this sandbox's current state. Returns an Image.
+
+        The returned Image can be passed to Sandbox.create() or Sandbox.ephemeral()
+        to boot a new sandbox from the snapshot (COW fork — instant on btrfs).
+
+        Args:
+            name: Optional human-readable name for the snapshot.
+            stateful: Whether to capture memory state (VMs only).
+
+        Returns:
+            An Image with _snapshot_source set, ready to pass to Sandbox.ephemeral().
+        """
+        from cua_sandbox.transport.cloud import CloudTransport
+
+        if not isinstance(self._transport, CloudTransport):
+            raise NotImplementedError("Snapshots are only supported for cloud sandboxes")
+
+        image_desc = await self._transport.create_snapshot(name=name, stateful=stateful)
+        from cua_sandbox.image import Image as ImageCls
+
+        # Get the original image from the transport for os_type/distro/version
+        src_image = getattr(self._transport, "_image", None)
+
+        return ImageCls(
+            os_type=image_desc.get("kind", src_image.os_type if src_image else "linux"),
+            distro=src_image.distro if src_image else "ubuntu",
+            version=src_image.version if src_image else "24.04",
+            _snapshot_source=image_desc,
+        )
+
     async def destroy(self) -> None:
         """Disconnect and permanently delete the sandbox (VM/container)."""
         if self.telemetry_enabled and _TELEMETRY_AVAILABLE and is_telemetry_enabled():

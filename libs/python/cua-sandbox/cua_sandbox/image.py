@@ -120,6 +120,7 @@ class Image:
     _registry: Optional[str] = None  # OCI registry reference
     _disk_path: Optional[str] = None  # local disk file path (qcow2, vhdx, raw)
     _agent_type: Optional[str] = None  # e.g. "osworld" for OSWorld Flask server
+    _snapshot_source: Optional[Dict[str, Any]] = None  # set by Sandbox.snapshot()
 
     # ── Constructors ─────────────────────────────────────────────────────
 

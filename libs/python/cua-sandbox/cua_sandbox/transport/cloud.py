@@ -91,8 +91,20 @@ class CloudTransport(Transport):
         vm_info = await self._wait_for_running(vm_info)
         logger.debug("[cloud] VM %r is running", self._name)
 
-        # Resolve computer-server endpoint — auth with CUA API key + container name
+        # Resolve computer-server endpoint — auth with CUA API key + container name.
+        # In local dev mode, the API replaces .cua.sh endpoints with direct IPs once
+        # the container IP is known. If we still get .cua.sh, keep polling.
         cs_url = self._resolve_endpoint(vm_info)
+        poll_elapsed = 0.0
+        while cs_url.endswith(".cua.sh") or ".cua.sh:" in cs_url:
+            if poll_elapsed >= 120:
+                break  # Fall through — _wait_for_server_ready will handle the error
+            await asyncio.sleep(3)
+            poll_elapsed += 3
+            vm_info = await self._get_vm(self._name)
+            cs_url = self._resolve_endpoint(vm_info)
+            logger.debug("[cloud] re-resolving endpoint: %s (%.0fs)", cs_url, poll_elapsed)
+
         logger.debug("[cloud] resolved endpoint: %s", cs_url)
         self._inner = HTTPTransport(cs_url, api_key=api_key, container_name=self._name)
         logger.debug("[cloud] connecting inner HTTPTransport")
@@ -116,6 +128,32 @@ class CloudTransport(Transport):
         if self._api_client:
             await self._api_client.aclose()
             self._api_client = None
+
+    async def create_snapshot(self, name: str | None = None, stateful: bool = False) -> dict:
+        """Create a snapshot of this VM. Returns an image descriptor dict."""
+        assert self._api_client and self._name
+        resp = await self._api_client.post(
+            f"/v1/vms/{self._name}/snapshot",
+            json={"name": name or "", "stateful": stateful},
+            timeout=600.0,  # snapshot can take minutes on dir storage
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        # Poll until snapshot is ready
+        image_desc = data.get("image", data)
+        snap_name = image_desc.get("snapshot", "")
+        if snap_name:
+            await self._wait_for_snapshot_ready(snap_name)
+        return image_desc
+
+    async def _wait_for_snapshot_ready(self, snapshot_name: str, timeout: float = 120) -> None:
+        """Wait for snapshot to be ready.
+
+        The API's snapshot endpoint is now synchronous — it blocks until the
+        Kopf operator finishes the snapshot.  This method is kept as a no-op
+        for compatibility.
+        """
+        return
 
     async def delete_vm(self) -> None:
         """Delete the cloud VM via the platform API."""
@@ -207,6 +245,20 @@ class CloudTransport(Transport):
                 "  Sandbox.create(image=Image.linux())  or  Sandbox.create(image=Image.windows())  or  Sandbox.create(image=Image.macos())\n"
                 "Or connect to an existing VM by name: Sandbox.connect(name='my-vm')"
             )
+
+        # Fork path: image came from sb.snapshot() — create VM from snapshot
+        snap_source = getattr(self._image, "_snapshot_source", None)
+        if snap_source:
+            body = {
+                "source": "snapshot",
+                "instance": snap_source["instance"],
+                "snapshot": snap_source["snapshot"],
+                "instanceType": snap_source.get("instanceType", "vm"),
+            }
+            resp = await self._api_client.post("/v1/vms", json=body)
+            resp.raise_for_status()
+            return resp.json()
+
         os_type = getattr(self._image, "os_type", None)
         if not os_type:
             raise ValueError(

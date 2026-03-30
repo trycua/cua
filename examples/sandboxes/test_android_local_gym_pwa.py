@@ -101,6 +101,7 @@ async def test_android_local_gym_pwa():
             TWA_MANIFEST_URL,
             package_name=TWA_PACKAGE,
             keystore=str(GYM_KEYSTORE),
+            builder="bubblewrap",  # needs Chrome TWA for DevTools Protocol
         ),
         local=True,
     ) as sb:
@@ -222,6 +223,7 @@ async def main():
             TWA_MANIFEST_URL,
             package_name=TWA_PACKAGE,
             keystore=str(GYM_KEYSTORE),
+            builder="bubblewrap",  # needs Chrome TWA for DevTools Protocol
         ),
         local=True,
     ) as sb:

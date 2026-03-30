@@ -249,6 +249,7 @@ class Sandbox:
         self._runtime = _runtime
         self._runtime_info = _runtime_info
         self._ephemeral = _ephemeral
+        self._has_snapshots = False
         self.telemetry_enabled = _telemetry_enabled
         self.screen = Screen(transport)
         self.mouse = Mouse(transport)
@@ -289,6 +290,7 @@ class Sandbox:
             raise NotImplementedError("Snapshots are only supported for cloud sandboxes")
 
         image_desc = await self._transport.create_snapshot(name=name, stateful=stateful)
+        self._has_snapshots = True
         from cua_sandbox.image import Image as ImageCls
 
         # Get the original image from the transport for os_type/distro/version
@@ -306,15 +308,22 @@ class Sandbox:
         )
 
     async def destroy(self) -> None:
-        """Disconnect and permanently delete the sandbox (VM/container)."""
+        """Disconnect and permanently delete the sandbox (VM/container).
+
+        If a snapshot was taken from this sandbox, it is stopped instead of
+        deleted so that forks created from the snapshot remain valid.
+        """
         if self.telemetry_enabled and _TELEMETRY_AVAILABLE and is_telemetry_enabled():
             record_event("sandbox_destroy", {"name": self.name, "ephemeral": self._ephemeral})
         await self._transport.disconnect()
         if isinstance(self._transport, CloudTransport):
-            await self._transport.delete_vm()
+            if self._has_snapshots:
+                await self._transport.suspend_vm()
+            else:
+                await self._transport.delete_vm()
         if self._runtime and self._runtime_info:
             vm_name = self._runtime_info.name or self.name or "cua-sandbox"
-            if self._ephemeral and hasattr(self._runtime, "delete"):
+            if self._ephemeral and hasattr(self._runtime, "delete") and not self._has_snapshots:
                 await self._runtime.delete(vm_name)
             else:
                 await self._runtime.stop(vm_name)

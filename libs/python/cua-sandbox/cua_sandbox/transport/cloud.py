@@ -326,8 +326,8 @@ class CloudTransport(Transport):
                 await self._inner.get_screen_size()
                 return  # Server is ready
             except httpx.HTTPStatusError as e:
-                if e.response.status_code < 500:
-                    raise  # 4xx errors are not transient — fail fast
+                if e.response.status_code < 500 and e.response.status_code != 404:
+                    raise  # 4xx errors (except 404) are not transient — fail fast
                 last_err = e
                 logger.debug("[cloud] _wait_for_server_ready: elapsed=%.0fs err=%r", elapsed, e)
                 await asyncio.sleep(_POLL_INTERVAL)

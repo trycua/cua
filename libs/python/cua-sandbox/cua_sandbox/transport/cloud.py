@@ -113,7 +113,11 @@ class CloudTransport(Transport):
             logger.debug("[cloud] re-resolving endpoint: %s (%.0fs)", cs_url, poll_elapsed)
 
         logger.debug("[cloud] resolved endpoint: %s", cs_url)
-        self._inner = HTTPTransport(cs_url, api_key=api_key, container_name=self._name)
+        # For forks, the computer-server inside still has the source container's
+        # credentials (baked into the snapshot). Use the source name for auth.
+        snap_source = getattr(self._image, "_snapshot_source", None) if self._image else None
+        auth_name = snap_source["instance"] if snap_source else self._name
+        self._inner = HTTPTransport(cs_url, api_key=api_key, container_name=auth_name)
         logger.debug("[cloud] connecting inner HTTPTransport")
         await self._inner.connect()
         logger.debug("[cloud] HTTPTransport connected")
@@ -449,11 +453,13 @@ class CloudTransport(Transport):
             path=dest,
             content_b64=base64.b64encode(apk_bytes).decode(),
         )
+        logger.debug(f"[cloud] installing APK: pm install -r {dest}")
         await self._inner.send(
             "run_command",
             command=f"pm install -r {dest} 2>&1; true",
             timeout=120,
         )
+        logger.debug("[cloud] APK installed")
 
         # For bubblewrap TWA, suppress Chrome first-run and set asset link bypass.
         # For pwa2apk WebView, none of this is needed.

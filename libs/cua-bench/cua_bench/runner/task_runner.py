@@ -883,7 +883,15 @@ class TaskRunner:
         if dev_paths:
             install_parts = []
             for i, dev_path in enumerate(dev_paths):
-                abs_path = Path(dev_path).absolute()
+                abs_path = Path(dev_path).resolve()
+                if not abs_path.exists():
+                    raise FileNotFoundError(
+                        f"--with path does not exist: {dev_path} (resolved to {abs_path})"
+                    )
+                if not (abs_path / "pyproject.toml").exists() and not (abs_path / "setup.py").exists():
+                    raise FileNotFoundError(
+                        f"--with path is not an installable package (no pyproject.toml or setup.py): {abs_path}"
+                    )
                 container_path = f"/app/dev_{i}"
                 volumes.append(f"{abs_path}:{container_path}:ro")
                 # Copy to tmp first since pip needs a writable source dir to build.

@@ -137,14 +137,47 @@ def _build_nous_system(functions: List[Dict[str, Any]]) -> Optional[Dict[str, An
 
 
 def _parse_tool_call_from_text(text: str) -> Optional[Dict[str, Any]]:
-    """Extract JSON object within <tool_call>...</tool_call> from model text."""
+    """Extract a tool call from <tool_call>...</tool_call> in model text.
+
+    Handles two formats:
+    1. JSON: ``<tool_call>{"name": "computer", "arguments": {...}}</tool_call>``
+    2. XML-style (qwen35-4b): ``<tool_call><function=computer><parameter=action>left_click</parameter>...</tool_call>``
+    """
+    # --- Format 1: JSON ---
     m = re.search(r"<tool_call>\s*(\{[\s\S]*?\})\s*</tool_call>", text)
-    if not m:
-        return None
-    try:
-        return json.loads(m.group(1))
-    except Exception:
-        return None
+    if m:
+        try:
+            return json.loads(m.group(1))
+        except Exception:
+            pass
+
+    # --- Format 2: XML-style <function=name><parameter=key>value</parameter> ---
+    fn_match = re.search(
+        r"<tool_call>\s*<function=(\w+)>([\s\S]*?)</function>\s*</tool_call>", text
+    )
+    if fn_match:
+        fn_name = fn_match.group(1)
+        params_block = fn_match.group(2)
+        # Extract all <parameter=key>value</parameter> pairs
+        params: Dict[str, Any] = {}
+        for pm in re.finditer(
+            r"<parameter=(\w+)>\s*([\s\S]*?)\s*</parameter>", params_block
+        ):
+            key = pm.group(1)
+            val = pm.group(2).strip()
+            # Try to parse as JSON (for arrays/numbers), fall back to string
+            try:
+                params[key] = json.loads(val)
+            except (json.JSONDecodeError, ValueError):
+                params[key]  = val
+        # The XML format uses <parameter=type> for the action field name,
+        # but the Qwen tool schema calls it "action".  Remap if we got
+        # "type" that looks like an action name rather than a literal type.
+        if "type" in params and "action" not in params:
+            params["action"] = params.pop("type")
+        return {"name": fn_name, "arguments": params}
+
+    return None
 
 
 async def _unnormalize_coordinate(args: Dict[str, Any], dims: Tuple[int, int]) -> Dict[str, Any]:
@@ -241,7 +274,7 @@ def convert_qwen_tool_args_to_computer_action(args: Dict[str, Any]) -> Optional[
     return None
 
 
-@register_agent(models=r"(?i)qwen35.*")
+@register_agent(models=r"(?i).*qwen35.*", priority=1)
 class Qwen35Config(AsyncAgentConfig):
     async def predict_step(
         self,
@@ -264,6 +297,8 @@ class Qwen35Config(AsyncAgentConfig):
             messages,
             allow_images_in_tool_results=False,
         )
+        
+        # print(f"The number of items in the converted_msgs: {len(converted_msgs)}")
 
         # Build function schemas from tools array
         function_schemas = []
@@ -287,6 +322,8 @@ class Qwen35Config(AsyncAgentConfig):
         # If no tools provided or no computer tool found, use default QWEN3_COMPUTER_TOOL
         if not function_schemas:
             function_schemas = [QWEN3_5_COMPUTER_TOOL["function"]]
+            
+        # print(f"[qwen35] function_schemas: {function_schemas}")
 
         # Prepend Nous-generated system if available
         nous_system = _build_nous_system(function_schemas)
@@ -391,6 +428,27 @@ class Qwen35Config(AsyncAgentConfig):
                         part["min_pixels"] = MIN_PIXELS
                         part["max_pixels"] = MAX_PIXELS
                         last_rw, last_rh = rw, rh
+                        
+        for i, msg in enumerate(completion_messages):
+            role = msg.get("role")
+            content = msg.get("content")
+            if isinstance(content, list):
+                step_content = []
+                for item in content:
+                    item_type = item.get("type")
+                    if item_type == "text":
+                        step_content.append(item.get('text'))
+                    elif item_type == "image_url":
+                        step_content.append("Image URL: " + item.get('image_url').get('url')[:100])
+            else:
+                item = content
+                step_content = ""
+                if isinstance(item, dict) and item.get("type") == "image_url":
+                    step_content = "Image URL: " + item.get('image_url').get('url')[:100]
+                else:
+                    step_content = content
+                    
+            print(f"Step {i}: Role: {role}, Content: {step_content}")
 
         api_kwargs: Dict[str, Any] = {
             "model": model,
@@ -439,12 +497,36 @@ class Qwen35Config(AsyncAgentConfig):
         if tool_call and isinstance(tool_call, dict):
             fn_name = tool_call.get("name") or "computer"
             raw_args = tool_call.get("arguments") or {}
+
+            # Preserve thinking text surrounding the <tool_call> block
+            # thinking_text = re.sub(
+            #     r"<tool_call>[\s\S]*?</tool_call>", "", content_text
+            # ).replace("</think>", "").strip()
+            # if thinking_text:
+            #     output_items.append({
+            #         "type": "message",
+            #         "role": "assistant",
+            #         "content": [{"type": "output_text", "text": thinking_text}],
+            #     })
+            
+            output_items.append({
+                "type": "message",
+                "role": "assistant",
+                "content": [{"type": "output_text", "text": content_text}],
+            })
+
             # Unnormalize coordinates to actual screen size using last resized dims
             if last_rw is None or last_rh is None:
                 raise RuntimeError(
                     "No screenshots found to derive dimensions for coordinate unnormalization."
                 )
             args = await _unnormalize_coordinate(raw_args, (last_rw, last_rh))
+
+            # Convert Qwen format to Computer Calls format if this is a computer tool
+            if fn_name == "computer":
+                converted_action = convert_qwen_tool_args_to_computer_action(args)
+                if converted_action:
+                    args = converted_action
 
             # Build an OpenAI-style tool call so we can reuse the converter
             fake_cm = {
@@ -461,9 +543,18 @@ class Qwen35Config(AsyncAgentConfig):
                 ],
             }
             output_items.extend(convert_completion_messages_to_responses_items([fake_cm]))
+            
         elif tool_calls_array:
             # Priority 2: Use tool_calls field if present (Ollama Cloud format)
-            # Process and unnormalize coordinates in tool calls
+            # Preserve thinking text as assistant message
+            thinking_text = content_text.replace("</think>", "").strip() if content_text else ""
+            if thinking_text:
+                output_items.append({
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": thinking_text}],
+                })
+
             processed_tool_calls = []
             for tc in tool_calls_array:
                 function = tc.get("function", {})
@@ -494,12 +585,11 @@ class Qwen35Config(AsyncAgentConfig):
                         }
                     )
                 except json.JSONDecodeError:
-                    # Keep original if parsing fails
                     processed_tool_calls.append(tc)
 
             fake_cm = {
                 "role": "assistant",
-                "content": content_text if content_text else "",
+                "content": "",
                 "tool_calls": processed_tool_calls,
             }
             output_items.extend(convert_completion_messages_to_responses_items([fake_cm]))
@@ -512,7 +602,7 @@ class Qwen35Config(AsyncAgentConfig):
         return {"output": (pre_output_items + output_items), "usage": usage}
 
     def get_capabilities(self) -> List[AgentCapability]:
-        return ["step"]
+        return ["click", "step"]
 
     async def predict_click(
         self, model: str, image_b64: str, instruction: str, **kwargs
@@ -527,7 +617,7 @@ class Qwen35Config(AsyncAgentConfig):
         reduced_tool = {
             "type": "function",
             "function": {
-                **QWEN35_COMPUTER_TOOL["function"],
+                **QWEN3_5_COMPUTER_TOOL["function"],
                 "parameters": {**QWEN3_5_COMPUTER_TOOL["function"]["parameters"],
                     "type": "object",
                     "properties": {

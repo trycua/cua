@@ -187,9 +187,23 @@ def generate_autounattend_xml(
           <Key>VK7JG-NPHTM-C97JM-9MPGT-3V66T</Key>
         </ProductKey>"""
 
-    # Server uses image index 2 (Standard with Desktop Experience)
-    # Desktop uses index 1
-    image_index = "2" if is_server else "1"
+    # Image selection: use /IMAGE/NAME for reliability (index varies by ISO).
+    # For server eval ISOs, standard pattern is:
+    #   "Windows Server 2022 Standard Evaluation (Desktop Experience)"
+    # For desktop: /IMAGE/INDEX = 1 (single-edition ISOs)
+    _server_image_names = {
+        "server-2022": "Windows Server 2022 Standard Evaluation (Desktop Experience)",
+        "server-2025": "Windows Server 2025 Standard Evaluation (Desktop Experience)",
+        "server-2019": "Windows Server 2019 SERVERDATACENTEREVAL",
+    }
+    if is_server:
+        image_name = _server_image_names.get(version)
+        # Use /IMAGE/NAME for server (more reliable than index)
+        image_select_key = "/IMAGE/NAME"
+        image_select_value = image_name or f"Windows Server {version.split('-')[1]} Standard Evaluation (Desktop Experience)"
+    else:
+        image_select_key = "/IMAGE/INDEX"
+        image_select_value = "1"
 
     virtio_section = ""
     if include_virtio_drivers:
@@ -280,8 +294,8 @@ def generate_autounattend_xml(
           </InstallTo>
           <InstallFrom>
             <MetaData wcm:action="add">
-              <Key>/IMAGE/INDEX</Key>
-              <Value>{image_index}</Value>
+              <Key>{image_select_key}</Key>
+              <Value>{image_select_value}</Value>
             </MetaData>
           </InstallFrom>
           <InstallToAvailablePartition>false</InstallToAvailablePartition>

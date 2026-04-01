@@ -51,7 +51,12 @@ def _resolve_server_eval_url(server_version: str, culture: str = "en-us", countr
     eval_url = f"https://www.microsoft.com/en-us/evalcenter/download-{server_version}"
     logger.info(f"Parsing Microsoft Eval Center: {eval_url}")
 
-    req = urllib.request.Request(eval_url, headers={"User-Agent": "Mozilla/5.0"})
+    headers = {
+        "User-Agent": "Mozilla/5.0 (X11; Linux x86_64; rv:128.0) Gecko/20100101 Firefox/128.0",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.5",
+    }
+    req = urllib.request.Request(eval_url, headers=headers)
     with urllib.request.urlopen(req, timeout=30) as resp:
         html = resp.read().decode("utf-8", errors="replace")
 
@@ -75,7 +80,7 @@ def _resolve_server_eval_url(server_version: str, culture: str = "en-us", countr
     logger.info(f"Resolved download link: {download_link}")
 
     # Follow redirect to get the actual ISO URL
-    req2 = urllib.request.Request(download_link, method="HEAD", headers={"User-Agent": "Mozilla/5.0"})
+    req2 = urllib.request.Request(download_link, method="HEAD", headers=headers)
     with urllib.request.urlopen(req2, timeout=30) as resp2:
         final_url = resp2.url
 

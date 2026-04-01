@@ -28,13 +28,17 @@ protocol VMVirtualizationService {
     func pause() async throws
     func resume() async throws
     func getVirtualMachine() -> Any
+    func waitForGuestStop() async -> Error?
 }
 
 /// Base implementation of VMVirtualizationService using VZVirtualMachine
 @MainActor
-class BaseVirtualizationService: VMVirtualizationService {
+class BaseVirtualizationService: NSObject, VMVirtualizationService, VZVirtualMachineDelegate {
     let virtualMachine: VZVirtualMachine
     let recoveryMode: Bool  // Store whether we should start in recovery mode
+
+    private var guestStopContinuation: CheckedContinuation<Error?, Never>?
+    private var pendingGuestStop: (fired: Bool, error: Error?) = (false, nil)
 
     var state: VZVirtualMachine.State {
         virtualMachine.state
@@ -43,6 +47,43 @@ class BaseVirtualizationService: VMVirtualizationService {
     init(virtualMachine: VZVirtualMachine, recoveryMode: Bool = false) {
         self.virtualMachine = virtualMachine
         self.recoveryMode = recoveryMode
+        super.init()
+        self.virtualMachine.delegate = self
+    }
+
+    func waitForGuestStop() async -> Error? {
+        if pendingGuestStop.fired {
+            return pendingGuestStop.error
+        }
+        return await withCheckedContinuation { continuation in
+            guestStopContinuation = continuation
+        }
+    }
+
+    // MARK: - VZVirtualMachineDelegate
+
+    nonisolated func guestDidStop(_ virtualMachine: VZVirtualMachine) {
+        Task { @MainActor in
+            Logger.info("Guest initiated shutdown")
+            if let continuation = guestStopContinuation {
+                guestStopContinuation = nil
+                continuation.resume(returning: nil)
+            } else {
+                pendingGuestStop = (true, nil)
+            }
+        }
+    }
+
+    nonisolated func virtualMachine(_ virtualMachine: VZVirtualMachine, didStopWithError error: Error) {
+        Task { @MainActor in
+            Logger.error("Guest stopped with error", metadata: ["error": error.localizedDescription])
+            if let continuation = guestStopContinuation {
+                guestStopContinuation = nil
+                continuation.resume(returning: error)
+            } else {
+                pendingGuestStop = (true, error)
+            }
+        }
     }
 
     func start() async throws {

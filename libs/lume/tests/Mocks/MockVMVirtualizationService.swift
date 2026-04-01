@@ -62,4 +62,8 @@ final class MockVMVirtualizationService: VMVirtualizationService {
     func getVirtualMachine() -> Any {
         return "mock_vm"
     }
+
+    func waitForGuestStop() async -> Error? {
+        return nil
+    }
 } 

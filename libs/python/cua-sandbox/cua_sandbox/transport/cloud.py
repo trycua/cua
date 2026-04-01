@@ -18,7 +18,7 @@ from cua_sandbox.transport.http import HTTPTransport
 
 logger = logging.getLogger(__name__)
 
-_POLL_INTERVAL = 2.0  # seconds between status polls
+_POLL_INTERVAL = 0.5  # seconds between status polls
 _POLL_TIMEOUT = 600.0  # max seconds to wait for VM to be running
 
 
@@ -74,6 +74,9 @@ class CloudTransport(Transport):
             timeout=30.0,
         )
 
+        import time as _time
+        _t0 = _time.monotonic()
+
         if self._name:
             logger.debug("[cloud] getting VM info for %r", self._name)
             vm_info = await self._get_vm(self._name)
@@ -82,14 +85,12 @@ class CloudTransport(Transport):
             logger.debug("[cloud] creating new VM")
             vm_info = await self._create_vm()
             self._name = vm_info["name"]
-            logger.debug("[cloud] created VM %r", self._name)
+            logger.info("[cloud] created VM %r in %.1fs", self._name, _time.monotonic() - _t0)
 
         # Poll until running
-        logger.debug(
-            "[cloud] waiting for VM %r to be running (status=%r)", self._name, vm_info.get("status")
-        )
+        _t1 = _time.monotonic()
         vm_info = await self._wait_for_running(vm_info)
-        logger.debug("[cloud] VM %r is running", self._name)
+        logger.info("[cloud] VM %r running after %.1fs (wait=%.1fs)", self._name, _time.monotonic() - _t0, _time.monotonic() - _t1)
 
         # Resolve computer-server endpoint — auth with CUA API key + container name.
         # In local-dev mode the API initially returns .cua.sh placeholder URLs and
@@ -106,17 +107,17 @@ class CloudTransport(Transport):
         while _is_local_dev and (cs_url.endswith(".cua.sh") or ".cua.sh:" in cs_url):
             if poll_elapsed >= 120:
                 break  # Fall through — _wait_for_server_ready will handle the error
-            await asyncio.sleep(3)
-            poll_elapsed += 3
+            await asyncio.sleep(0.5)
+            poll_elapsed += 0.5
             vm_info = await self._get_vm(self._name)
             cs_url = self._resolve_endpoint(vm_info)
             logger.debug("[cloud] re-resolving endpoint: %s (%.0fs)", cs_url, poll_elapsed)
 
-        logger.debug("[cloud] resolved endpoint: %s", cs_url)
-        # For forks, the computer-server inside still has the source container's
-        # credentials (baked into the snapshot). Use the source name for auth.
-        snap_source = getattr(self._image, "_snapshot_source", None) if self._image else None
-        auth_name = snap_source["instance"] if snap_source else self._name
+        logger.info("[cloud] endpoint resolved in %.1fs: %s", _time.monotonic() - _t0, cs_url)
+        # Use the fork's own name for auth (not the parent's).  The Kopf
+        # operator creates a K8s secret for the fork with its own credentials,
+        # and the Go API maps the fork's API key to the fork's container name.
+        auth_name = self._name
         self._inner = HTTPTransport(cs_url, api_key=api_key, container_name=auth_name)
         logger.debug("[cloud] connecting inner HTTPTransport")
         await self._inner.connect()
@@ -125,7 +126,7 @@ class CloudTransport(Transport):
         # Wait for computer-server to be reachable (it may lag behind VM "running" status)
         logger.debug("[cloud] waiting for computer-server to be ready")
         await self._wait_for_server_ready()
-        logger.debug("[cloud] computer-server ready")
+        logger.info("[cloud] computer-server ready in %.1fs total", _time.monotonic() - _t0)
 
         # Apply env vars and image layers (e.g. APK installs) after server is ready
         if self._image and (self._image._layers or self._image._env):
@@ -321,17 +322,38 @@ class CloudTransport(Transport):
         return vm_info
 
     async def _wait_for_server_ready(self) -> None:
-        """Poll the computer-server until it responds (retries on connection/HTTP errors)."""
+        """Poll the computer-server until it responds.
+
+        First, quickly check if the HTTP server is accepting connections (any
+        response, even 404).  Then verify with get_screen_size which needs the
+        emulator.  This two-phase approach lets the SDK proceed as soon as the
+        server process is up, overlapping with emulator boot.
+        """
         assert self._inner
         elapsed = 0.0
         last_err: Optional[Exception] = None
+
+        # Phase 1: wait for HTTP port to accept connections (fast — just needs
+        # the Python process to start, not the emulator).
+        while elapsed < _POLL_TIMEOUT:
+            try:
+                resp = await self._inner._client.get("/", timeout=2.0)
+                # Any response means the server is up
+                logger.debug("[cloud] server HTTP up (status=%d) at %.1fs", resp.status_code, elapsed)
+                break
+            except Exception as e:
+                last_err = e
+                await asyncio.sleep(_POLL_INTERVAL)
+                elapsed += _POLL_INTERVAL
+
+        # Phase 2: wait for get_screen_size (needs emulator running)
         while elapsed < _POLL_TIMEOUT:
             try:
                 await self._inner.get_screen_size()
-                return  # Server is ready
+                return  # Fully ready
             except httpx.HTTPStatusError as e:
                 if e.response.status_code < 500 and e.response.status_code != 404:
-                    raise  # 4xx errors (except 404) are not transient — fail fast
+                    raise
                 last_err = e
                 logger.debug("[cloud] _wait_for_server_ready: elapsed=%.0fs err=%r", elapsed, e)
                 await asyncio.sleep(_POLL_INTERVAL)

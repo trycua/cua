@@ -31,6 +31,58 @@ def download_file(url: str, dest: Path, description: str = "") -> Path:
     return dest
 
 
+def _resolve_server_eval_url(server_version: str, culture: str = "en-us", country: str = "US") -> str:
+    """Resolve Windows Server evaluation ISO download URL from Microsoft's eval center.
+
+    Adapted from quickemu/quickget's download_windows_server() which is itself
+    adapted from the Mido project (https://github.com/ElliotKillick/Mido).
+
+    Args:
+        server_version: e.g. "windows-server-2022", "windows-server-2025"
+        culture: Language culture code, e.g. "en-us"
+        country: Country code, e.g. "US"
+
+    Returns:
+        Direct download URL for the ISO.
+    """
+    import re
+    import urllib.request
+
+    eval_url = f"https://www.microsoft.com/en-us/evalcenter/download-{server_version}"
+    logger.info(f"Parsing Microsoft Eval Center: {eval_url}")
+
+    req = urllib.request.Request(eval_url, headers={"User-Agent": "Mozilla/5.0"})
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        html = resp.read().decode("utf-8", errors="replace")
+
+    # Extract go.microsoft.com/fwlink links with the matching culture
+    pattern = rf"https://go\.microsoft\.com/fwlink/p/\?LinkID=\d+&clcid=0x[0-9a-f]+&culture={re.escape(culture)}&country={re.escape(country)}"
+    links = re.findall(pattern, html)
+
+    if not links:
+        # Fallback: try any English link
+        pattern_fallback = r"https://go\.microsoft\.com/fwlink/p/\?LinkID=\d+&clcid=0x[0-9a-f]+&culture=en-us&country=US"
+        links = re.findall(pattern_fallback, html)
+
+    if not links:
+        raise RuntimeError(
+            f"Could not find download link on {eval_url}. "
+            f"Microsoft may have changed the page layout."
+        )
+
+    # First link is typically the x64 ISO
+    download_link = links[0]
+    logger.info(f"Resolved download link: {download_link}")
+
+    # Follow redirect to get the actual ISO URL
+    req2 = urllib.request.Request(download_link, method="HEAD", headers={"User-Agent": "Mozilla/5.0"})
+    with urllib.request.urlopen(req2, timeout=30) as resp2:
+        final_url = resp2.url
+
+    logger.info(f"Final ISO URL: {final_url}")
+    return final_url
+
+
 def download_windows_iso(
     version: str = "11",
     dest: Optional[Path] = None,
@@ -55,9 +107,32 @@ def download_windows_iso(
         url = "https://go.microsoft.com/fwlink/?linkid=2334167&clcid=0x409"
     elif version == "10":
         url = "https://go.microsoft.com/fwlink/?LinkId=691209"
+    elif version in ("server-2022", "2022"):
+        version = "server-2022"
+        iso_file = dest_dir / f"windows-{version}.iso"
+        if iso_file.exists():
+            logger.info(f"Using cached ISO: {iso_file}")
+            return iso_file
+        url = _resolve_server_eval_url("windows-server-2022")
+    elif version in ("server-2025", "2025"):
+        version = "server-2025"
+        iso_file = dest_dir / f"windows-{version}.iso"
+        if iso_file.exists():
+            logger.info(f"Using cached ISO: {iso_file}")
+            return iso_file
+        url = _resolve_server_eval_url("windows-server-2025")
+    elif version in ("server-2019", "2019"):
+        version = "server-2019"
+        iso_file = dest_dir / f"windows-{version}.iso"
+        if iso_file.exists():
+            logger.info(f"Using cached ISO: {iso_file}")
+            return iso_file
+        url = _resolve_server_eval_url("windows-server-2019")
     else:
         raise ValueError(
-            f"Cannot auto-download Windows {version}. " f"Provide --iso-path to use your own ISO."
+            f"Cannot auto-download Windows {version}. "
+            f"Supported: 10, 11, server-2022, server-2025, server-2019. "
+            f"Or provide --iso-path to use your own ISO."
         )
 
     logger.info(f"Downloading Windows {version} Enterprise Evaluation ISO...")
@@ -72,23 +147,47 @@ def generate_autounattend_xml(
     product_key: Optional[str] = None,
     *,
     include_virtio_drivers: bool = True,
+    version: str = "11",
 ) -> str:
-    """Generate a Windows 11 Autounattend.xml for unattended installation.
+    """Generate a Windows Autounattend.xml for unattended installation.
 
     Args:
-        product_key: Windows product key. Defaults to Win11 Pro generic key.
+        product_key: Windows product key. If None, uses generic key for edition.
         include_virtio_drivers: Include VirtIO driver paths in WinPE pass.
             Set False for Hyper-V (has enlightened drivers built-in).
+        version: Windows version - "11", "10", "server-2022", "server-2025", etc.
     """
+    is_server = version.startswith("server-")
+
+    # KMS Generic Volume License Keys (GVLKs) for Server editions
+    # https://learn.microsoft.com/en-us/windows-server/get-started/kms-client-activation-keys
+    _server_gvlks = {
+        "server-2025": "TVRH6-WHNXV-R9WG3-9XRFY-MY832",  # Standard
+        "server-2022": "VDYBN-27WPP-V4HQT-9VMD4-VMK7H",  # Standard
+        "server-2019": "N69G4-B89J2-4G8F4-WWYCC-J464C",  # Standard
+    }
+
     key_section = ""
     if product_key:
         key_section = f"""<ProductKey>
           <Key>{product_key}</Key>
         </ProductKey>"""
+    elif is_server:
+        # Server editions: omit key for eval, or use GVLK for volume license
+        gvlk = _server_gvlks.get(version)
+        if gvlk:
+            key_section = f"""<ProductKey>
+          <Key>{gvlk}</Key>
+        </ProductKey>"""
+        # If no GVLK found, omit key entirely (eval mode)
     else:
         key_section = """<ProductKey>
           <Key>VK7JG-NPHTM-C97JM-9MPGT-3V66T</Key>
         </ProductKey>"""
+
+    # Server uses image index 2 (Standard with Desktop Experience)
+    # Desktop uses index 1
+    image_index = "2" if is_server else "1"
 
     virtio_section = ""
     if include_virtio_drivers:
@@ -177,6 +276,12 @@ def generate_autounattend_xml(
             <DiskID>0</DiskID>
             <PartitionID>3</PartitionID>
           </InstallTo>
+          <InstallFrom>
+            <MetaData wcm:action="add">
+              <Key>/IMAGE/INDEX</Key>
+              <Value>{image_index}</Value>
+            </MetaData>
+          </InstallFrom>
           <InstallToAvailablePartition>false</InstallToAvailablePartition>
         </OSImage>
       </ImageInstall>
@@ -314,19 +419,23 @@ def create_unattend_iso(
     *,
     include_virtio_drivers: bool = True,
     include_startup_nsh: bool = True,
+    version: str = "11",
 ) -> Path:
     """Create a small data-only ISO containing Autounattend.xml + setup script.
 
     Args:
         include_virtio_drivers: Include VirtIO driver paths (QEMU needs them, Hyper-V doesn't).
         include_startup_nsh: Include UEFI shell startup.nsh (QEMU/OVMF needs it, Hyper-V doesn't).
+        version: Windows version for autounattend generation.
     """
     unattend_iso = work_dir / "unattend.iso"
     if unattend_iso.exists():
         logger.info(f"Using cached unattend ISO: {unattend_iso}")
         return unattend_iso
 
-    xml = generate_autounattend_xml(product_key, include_virtio_drivers=include_virtio_drivers)
+    xml = generate_autounattend_xml(
+        product_key, include_virtio_drivers=include_virtio_drivers, version=version
+    )
     xml_path = work_dir / "Autounattend.xml"
     xml_path.write_text(xml, encoding="utf-8")
 

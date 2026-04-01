@@ -178,13 +178,10 @@ def generate_autounattend_xml(
           <Key>{product_key}</Key>
         </ProductKey>"""
     elif is_server:
-        # Server editions: omit key for eval, or use GVLK for volume license
-        gvlk = _server_gvlks.get(version)
-        if gvlk:
-            key_section = f"""<ProductKey>
-          <Key>{gvlk}</Key>
-        </ProductKey>"""
-        # If no GVLK found, omit key entirely (eval mode)
+        # Server eval ISOs: omit product key entirely. The eval ISO has its own
+        # built-in eval key. GVLKs are for volume license media only.
+        # Users with SPLA can inject their GVLK via the product_key parameter.
+        pass
     else:
         key_section = """<ProductKey>
           <Key>VK7JG-NPHTM-C97JM-9MPGT-3V66T</Key>

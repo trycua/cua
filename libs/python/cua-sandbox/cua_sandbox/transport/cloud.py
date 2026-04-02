@@ -74,9 +74,6 @@ class CloudTransport(Transport):
             timeout=30.0,
         )
 
-        import time as _time
-        _t0 = _time.monotonic()
-
         if self._name:
             logger.debug("[cloud] getting VM info for %r", self._name)
             vm_info = await self._get_vm(self._name)
@@ -85,12 +82,11 @@ class CloudTransport(Transport):
             logger.debug("[cloud] creating new VM")
             vm_info = await self._create_vm()
             self._name = vm_info["name"]
-            logger.info("[cloud] created VM %r in %.1fs", self._name, _time.monotonic() - _t0)
+            logger.debug("[cloud] created VM %r", self._name)
 
         # Poll until running
-        _t1 = _time.monotonic()
         vm_info = await self._wait_for_running(vm_info)
-        logger.info("[cloud] VM %r running after %.1fs (wait=%.1fs)", self._name, _time.monotonic() - _t0, _time.monotonic() - _t1)
+        logger.debug("[cloud] VM %r is running", self._name)
 
         # Resolve computer-server endpoint — auth with CUA API key + container name.
         # In local-dev mode the API initially returns .cua.sh placeholder URLs and
@@ -113,7 +109,7 @@ class CloudTransport(Transport):
             cs_url = self._resolve_endpoint(vm_info)
             logger.debug("[cloud] re-resolving endpoint: %s (%.0fs)", cs_url, poll_elapsed)
 
-        logger.info("[cloud] endpoint resolved in %.1fs: %s", _time.monotonic() - _t0, cs_url)
+        logger.debug("[cloud] resolved endpoint: %s", cs_url)
         # Use the fork's own name for auth (not the parent's).  The Kopf
         # operator creates a K8s secret for the fork with its own credentials,
         # and the Go API maps the fork's API key to the fork's container name.
@@ -126,7 +122,7 @@ class CloudTransport(Transport):
         # Wait for computer-server to be reachable (it may lag behind VM "running" status)
         logger.debug("[cloud] waiting for computer-server to be ready")
         await self._wait_for_server_ready()
-        logger.info("[cloud] computer-server ready in %.1fs total", _time.monotonic() - _t0)
+        logger.debug("[cloud] computer-server ready")
 
         # Apply env vars and image layers (e.g. APK installs) after server is ready
         if self._image and (self._image._layers or self._image._env):

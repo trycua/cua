@@ -286,46 +286,6 @@ def _build_image_wsl2(
 # ── Full build ──────────────────────────────────────────────────────────────
 
 
-def export_for_incus(disk_path: Path, config: QEMUImageConfig) -> Path:
-    """Export a built disk image as an Incus-importable image.
-
-    Creates metadata.tar.xz alongside the disk.qcow2, ready for:
-        incus image import metadata.tar.xz disk.qcow2 --alias <name>
-
-    Returns the metadata.tar.xz path.
-    """
-    import tarfile
-    import time
-
-    output_dir = disk_path.parent
-    metadata_dir = output_dir / "incus-metadata"
-    metadata_dir.mkdir(exist_ok=True)
-
-    version_label = config.version.replace("-", " ").title()
-    metadata = {
-        "architecture": "x86_64",
-        "creation_date": int(time.time()),
-        "properties": {
-            "description": f"Windows {version_label} - CUA",
-            "os": "Windows",
-            "release": config.version,
-            "variant": "cua-server" if config.version.startswith("server-") else "cua-desktop",
-        },
-    }
-
-    import yaml  # noqa: F811
-
-    metadata_yaml = metadata_dir / "metadata.yaml"
-    metadata_yaml.write_text(yaml.dump(metadata, default_flow_style=False))
-
-    metadata_tar = output_dir / "metadata.tar.xz"
-    with tarfile.open(metadata_tar, "w:xz") as tar:
-        tar.add(metadata_yaml, arcname="metadata.yaml")
-
-    logger.info(f"Incus metadata created: {metadata_tar}")
-    logger.info(f"Import with: incus image import {metadata_tar} {disk_path} --alias windows-{config.version}-cua")
-    return metadata_tar
-
 
 def build_image(
     config: Optional[QEMUImageConfig] = None,
@@ -830,10 +790,6 @@ def main():
         "--wsl2", action="store_true", help="Run QEMU inside WSL2 with KVM acceleration"
     )
     build_p.add_argument("--qemu-bin", help="Custom QEMU binary path (e.g. /opt/incus/bin/qemu-system-x86_64)")
-    build_p.add_argument(
-        "--export-incus", action="store_true",
-        help="Export as Incus-importable image (metadata.tar.xz + disk.qcow2)"
-    )
 
     # push
     push_p = sub.add_parser("push", help="Push a qcow2 disk as OCI image")
@@ -885,10 +841,6 @@ def main():
             use_wsl2=args.wsl2,
         )
         print(f"Built: {disk}")
-
-        if getattr(args, "export_incus", False):
-            export_for_incus(disk, cfg)
-            print(f"Exported Incus image to: {disk.parent}")
 
     elif args.command == "push":
         cfg = QEMUImageConfig(

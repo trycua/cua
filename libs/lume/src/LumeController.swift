@@ -1122,7 +1122,8 @@ final class LumeController {
                 usbMassStoragePaths: usbMassStoragePaths,
                 networkMode: networkMode,
                 clipboard: clipboard)
-            Logger.info("VM started successfully", metadata: ["name": normalizedName])
+            SharedVM.shared.removeVM(name: normalizedName)
+            Logger.info("VM exited", metadata: ["name": normalizedName])
         } catch {
             SharedVM.shared.removeVM(name: normalizedName)
             Logger.error("Failed to run VM", metadata: ["error": error.localizedDescription])

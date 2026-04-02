@@ -62,4 +62,40 @@ final class MockVMVirtualizationService: VMVirtualizationService {
     func getVirtualMachine() -> Any {
         return "mock_vm"
     }
-} 
+
+    private var guestStopContinuation: CheckedContinuation<Error?, Never>?
+    private var pendingGuestStopResult: Error??
+
+    func waitForGuestStop() async -> Error? {
+        if let result = pendingGuestStopResult {
+            pendingGuestStopResult = nil
+            currentState = .stopped
+            return result
+        }
+        return await withCheckedContinuation { continuation in
+            guestStopContinuation = continuation
+        }
+    }
+
+    /// Simulate a normal guest shutdown.
+    func simulateGuestStop() {
+        currentState = .stopped
+        if let continuation = guestStopContinuation {
+            guestStopContinuation = nil
+            continuation.resume(returning: nil)
+        } else {
+            pendingGuestStopResult = .some(nil)
+        }
+    }
+
+    /// Simulate a guest crash with the given error.
+    func simulateGuestError(_ error: Error) {
+        currentState = .stopped
+        if let continuation = guestStopContinuation {
+            guestStopContinuation = nil
+            continuation.resume(returning: error)
+        } else {
+            pendingGuestStopResult = .some(error)
+        }
+    }
+}

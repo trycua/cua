@@ -325,9 +325,24 @@ class VM {
                 await clipboardWatcher?.start()
             }
 
-            while true {
-                try await Task.sleep(nanoseconds: UInt64(1e9))
+            // Block until the guest OS shuts down or crashes
+            let guestError = await service.waitForGuestStop()
+
+            // Clean up after guest stop
+            await clipboardWatcher?.stop()
+            clipboardWatcher = nil
+            virtualizationService = nil
+            vncService.stop()
+
+            Logger.info("Releasing file lock after guest stop", metadata: ["name": vmDirContext.name])
+            flock(fileHandle.fileDescriptor, LOCK_UN)
+            try? fileHandle.close()
+            unlockConfigFile()
+
+            if let guestError {
+                throw guestError
             }
+            Logger.info("Guest initiated shutdown", metadata: ["name": vmDirContext.name])
         } catch {
             Logger.error(
                 "Failed in VM.run",
@@ -1051,9 +1066,17 @@ class VM {
                 }
             }
 
-            while true {
-                try await Task.sleep(nanoseconds: UInt64(1e9))
+            let guestError = await service.waitForGuestStop()
+
+            virtualizationService = nil
+            vncService.stop()
+            flock(fileHandle.fileDescriptor, LOCK_UN)
+            try? fileHandle.close()
+
+            if let guestError {
+                throw guestError
             }
+            Logger.info("Guest initiated shutdown", metadata: ["name": vmDirContext.name])
         } catch {
             Logger.error(
                 "Failed to create/start VM with USB storage",

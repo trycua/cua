@@ -62,7 +62,7 @@ QWEN3_5_COMPUTER_TOOL: Dict[str, Any] = {
                         "triple_click",
                         "scroll",
                         "hscroll",
-                        "screenshot",
+                        # "screenshot",
                         "wait",
                         # "terminate",
                         # "answer",
@@ -540,20 +540,26 @@ class Qwen35Config(AsyncAgentConfig):
                             "arguments": json.dumps(args),
                         },
                     }
-                ],
+                ]
             }
             output_items.extend(convert_completion_messages_to_responses_items([fake_cm]))
             
         elif tool_calls_array:
             # Priority 2: Use tool_calls field if present (Ollama Cloud format)
             # Preserve thinking text as assistant message
-            thinking_text = content_text.replace("</think>", "").strip() if content_text else ""
-            if thinking_text:
-                output_items.append({
-                    "type": "message",
-                    "role": "assistant",
-                    "content": [{"type": "output_text", "text": thinking_text}],
-                })
+            # thinking_text = content_text.replace("</think>", "").strip() if content_text else ""
+            # if thinking_text:
+            #     output_items.append({
+            #         "type": "message",
+            #         "role": "assistant",
+            #         "content": [{"type": "output_text", "text": thinking_text}],
+            #     })
+            
+            output_items.append({
+                "type": "message",
+                "role": "assistant",
+                "content": [{"type": "output_text", "text": content_text}],
+            })
 
             processed_tool_calls = []
             for tc in tool_calls_array:
@@ -593,6 +599,7 @@ class Qwen35Config(AsyncAgentConfig):
                 "tool_calls": processed_tool_calls,
             }
             output_items.extend(convert_completion_messages_to_responses_items([fake_cm]))
+            
         else:
             # No tool calls found in either format, return text response
             fake_cm = {"role": "assistant", "content": content_text}

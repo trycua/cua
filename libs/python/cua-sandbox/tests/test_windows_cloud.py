@@ -114,8 +114,8 @@ async def test_windows_server_snapshot_fork():
 
             # Snapshot
             t_snap_start = time.monotonic()
-            resp = await client.post(f"/v1/vms/{vm_name}/snapshots")
-            assert resp.status_code in (200, 201), f"Snapshot failed: {resp.text}"
+            resp = await client.post(f"/v1/vms/{vm_name}/snapshot")
+            assert resp.status_code in (200, 201, 202), f"Snapshot failed: {resp.status_code} {resp.text}"
             snapshot_data = resp.json()
             snapshot_name = snapshot_data.get("name", "")
             t_snap = time.monotonic() - t_snap_start
@@ -124,8 +124,12 @@ async def test_windows_server_snapshot_fork():
             # Fork from snapshot
             t_fork_start = time.monotonic()
             resp = await client.post(
-                f"/v1/vms/{vm_name}/snapshots/{snapshot_name}/fork",
-                json={"region": "us-east-1"},
+                "/v1/vms/fork",
+                json={
+                    "source": "snapshot",
+                    "instance": vm_name,
+                    "snapshot": snapshot_name,
+                },
             )
             assert resp.status_code in (200, 201, 202), f"Fork failed: {resp.status_code} {resp.text}"
             fork_name = resp.json()["name"]

@@ -342,7 +342,18 @@ class CloudTransport(Transport):
                 await asyncio.sleep(_POLL_INTERVAL)
                 elapsed += _POLL_INTERVAL
 
-        # Phase 2: wait for get_screen_size (needs emulator running)
+        # Check if this is a Windows server (no screen_size endpoint)
+        try:
+            status_resp = await self._inner._client.get("/status", timeout=5.0)
+            if status_resp.status_code == 200:
+                status_data = status_resp.json()
+                if status_data.get("os_type") == "windows":
+                    logger.debug("[cloud] Windows server detected, skipping screen_size check")
+                    return  # Windows servers are ready after Phase 1
+        except Exception:
+            pass  # Fall through to Phase 2
+
+        # Phase 2: wait for get_screen_size (needs emulator/display running)
         while elapsed < _POLL_TIMEOUT:
             try:
                 await self._inner.get_screen_size()

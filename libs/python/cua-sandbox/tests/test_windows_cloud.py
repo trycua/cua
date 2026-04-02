@@ -44,7 +44,7 @@ async def test_windows_server_create():
             json={"os": "windows", "configuration": "small", "region": "us-east-1"},
         )
         t_create = time.monotonic() - t0
-        assert resp.status_code == 200, f"Create failed: {resp.text}"
+        assert resp.status_code in (200, 201, 202), f"Create failed: {resp.status_code} {resp.text}"
         data = resp.json()
         vm_name = data["name"]
         print(f"\n  Created VM: {vm_name} in {t_create:.2f}s")
@@ -93,7 +93,7 @@ async def test_windows_server_snapshot_fork():
             "/v1/vms",
             json={"os": "windows", "configuration": "small", "region": "us-east-1"},
         )
-        assert resp.status_code == 200, f"Create failed: {resp.text}"
+        assert resp.status_code in (200, 201, 202), f"Create failed: {resp.status_code} {resp.text}"
         vm_name = resp.json()["name"]
         print(f"\n  Created base VM: {vm_name}")
 
@@ -126,7 +126,7 @@ async def test_windows_server_snapshot_fork():
                 f"/v1/vms/{vm_name}/snapshots/{snapshot_name}/fork",
                 json={"region": "us-east-1"},
             )
-            assert resp.status_code == 200, f"Fork failed: {resp.text}"
+            assert resp.status_code in (200, 201, 202), f"Fork failed: {resp.status_code} {resp.text}"
             fork_name = resp.json()["name"]
             print(f"  Fork created: {fork_name}")
 

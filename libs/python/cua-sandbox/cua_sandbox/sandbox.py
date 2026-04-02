@@ -164,18 +164,22 @@ def _auto_runtime(image: Image) -> "Runtime":
 
         return QEMURuntime(mode="bare-metal")
 
-    # Linux VM or Windows VM → prefer Docker-wrapped QEMU; fall back to bare-metal
+    # Registry VM images (e.g. osworld) always use bare-metal QEMU.
+    if image._registry and image.kind == "vm" and not image._disk_path:
+        from cua_sandbox.runtime.qemu import QEMURuntime
+
+        return QEMURuntime(mode="bare-metal")
+
+    # Linux/Windows VM — prefer bare-metal QEMU when available, fall back to Docker.
     from cua_sandbox.runtime.qemu import QEMURuntime
 
-    if image.os_type == "windows":
-        # Windows bare-metal QEMU works on any host with qemu-system-x86_64
-        try:
-            from cua_sandbox.runtime.docker import _has_docker
+    try:
+        from cua_sandbox.runtime.qemu_installer import qemu_bin
 
-            if not _has_docker():
-                return QEMURuntime(mode="bare-metal")
-        except Exception:
-            pass
+        qemu_bin(image.os_type or "linux")
+        return QEMURuntime(mode="bare-metal")
+    except Exception:
+        pass
 
     return QEMURuntime(mode="docker")
 
@@ -1027,7 +1031,15 @@ class Sandbox:
         if image and runtime:
             sb_name = name or _random_name()
             rt_info = await runtime.start(image, sb_name)
-            if rt_info.environment == "android" and not rt_info.qmp_port:
+            if rt_info.agent_type == "androidworld":
+                # AndroidWorld bare-metal: server runs on host, api_port is the
+                # FastAPI port — NOT the ADB port. Use AndroidWorldTransport.
+                from cua_sandbox.transport.androidworld import AndroidWorldTransport
+
+                transport = AndroidWorldTransport(
+                    f"http://{rt_info.host}:{rt_info.api_port}",
+                )
+            elif rt_info.environment == "android" and not rt_info.qmp_port:
                 if rt_info.grpc_port:
                     from cua_sandbox.transport.grpc_emulator import (
                         GRPCEmulatorTransport,
@@ -1056,6 +1068,8 @@ class Sandbox:
 
                 transport = OSWorldTransport(
                     f"http://{rt_info.host}:{rt_info.api_port}",
+                    qmp_host=rt_info.host,
+                    qmp_port=rt_info.qmp_port,
                 )
             elif rt_info.vnc_port and rt_info.ssh_port:
                 from cua_sandbox.transport.vncssh import VNCSSHTransport

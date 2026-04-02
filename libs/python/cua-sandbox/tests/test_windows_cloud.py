@@ -58,7 +58,8 @@ async def test_windows_server_create():
                 if resp.status_code == 200:
                     vm = resp.json()
                     status = vm.get("status", "")
-                    ip_address = vm.get("ip", "") or vm.get("vm_ip", "")
+                    # IP is in endpoints[].host (LOCAL_DEV_INCUS replaces .cua.sh with direct IP)
+                    ip_address = _extract_ip(vm)
                     if status.lower() == "running" and ip_address:
                         break
                 await _sleep(1)
@@ -103,11 +104,11 @@ async def test_windows_server_snapshot_fork():
                 resp = await client.get(f"/v1/vms/{vm_name}")
                 if resp.status_code == 200:
                     vm = resp.json()
-                    if vm.get("ip") or vm.get("vm_ip"):
+                    if _extract_ip(vm):
                         break
                 await _sleep(1)
             t_base_ip = time.monotonic() - t0
-            base_ip = vm.get("ip") or vm.get("vm_ip", "")
+            base_ip = _extract_ip(vm)
             print(f"  Base VM IP: {base_ip} ({t_base_ip:.1f}s)")
             assert base_ip, "Base VM never got IP"
 
@@ -136,7 +137,7 @@ async def test_windows_server_snapshot_fork():
                 resp = await client.get(f"/v1/vms/{fork_name}")
                 if resp.status_code == 200:
                     fvm = resp.json()
-                    fork_ip = fvm.get("ip") or fvm.get("vm_ip", "")
+                    fork_ip = _extract_ip(fvm)
                     if fork_ip:
                         break
                 await _sleep(1)
@@ -158,6 +159,22 @@ async def test_windows_server_snapshot_fork():
                 except Exception:
                     pass
             print(f"  Cleaned up")
+
+
+def _extract_ip(vm: dict) -> str:
+    """Extract IP from VM response — checks endpoints, ip, vm_ip fields."""
+    import re
+    # Direct IP fields
+    for key in ("ip", "vm_ip"):
+        val = vm.get(key, "")
+        if val and re.match(r"\d+\.\d+\.\d+\.\d+", val):
+            return val
+    # IP from endpoints (LOCAL_DEV_INCUS mode replaces .cua.sh hosts with IPs)
+    for ep in vm.get("endpoints", []):
+        host = ep.get("host", "")
+        if re.match(r"\d+\.\d+\.\d+\.\d+", host):
+            return host
+    return ""
 
 
 async def _sleep(seconds: float):

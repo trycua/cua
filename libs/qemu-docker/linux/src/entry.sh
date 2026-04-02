@@ -19,7 +19,10 @@ if [ -d "/golden" ] && [ -z "$(ls -A /storage 2>/dev/null)" ]; then
     echo "Overlay setup complete (hard links)."
   else
     echo "Hard links not supported, falling back to full copy..."
-    cp -a /golden/. /storage/
+    if ! cp -a /golden/. /storage/; then
+      echo "ERROR: overlay copy failed, cannot proceed."
+      exit 1
+    fi
     echo "Overlay setup complete (full copy)."
   fi
 fi

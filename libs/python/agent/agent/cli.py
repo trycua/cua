@@ -341,6 +341,7 @@ Examples:
     provider_api_keys = {
         "openai/": "OPENAI_API_KEY",
         "anthropic/": "ANTHROPIC_API_KEY",
+        "novita/": "NOVITA_API_KEY",
     }
 
     # Find matching provider and check for API key

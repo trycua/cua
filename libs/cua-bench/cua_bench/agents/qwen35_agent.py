@@ -43,7 +43,7 @@ class Qwen35Agent(BaseAgent):
     
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self.model = kwargs.get("model", "openai/qwen3-vl")
+        self.model = kwargs.get("model", "openai/qwen35-4b")
         self.base_url = kwargs.get("base_url") or os.environ.get("OPENAI_ENDPOINT")
         self.api_key = kwargs.get("api_key") or os.environ.get("OPENAI_API_KEY", "EMPTY")
         self.max_steps = kwargs.get("max_steps", 50)
@@ -141,12 +141,12 @@ class Qwen35Agent(BaseAgent):
         logging_dir: Path | None = None,
         tracer=None,
     ) -> AgentResult:
-        """Run the task using the Qwen3-VL model via the CUA Computer Agent SDK."""
+        """Run the task using the Qwen3.5 model via the CUA Computer Agent SDK."""
         try:
             from agent import ComputerAgent
         except ImportError as e:
             raise RuntimeError(
-                "qwen3vl-agent requires the `cua-agent` package to be installed. "
+                "qwen35-agent requires the `cua-agent` package to be installed. "
                 "Install it with: pip install cua-agent"
             ) from e
 

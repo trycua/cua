@@ -173,6 +173,7 @@ class Qwen3VLAgent(BaseAgent):
             tools=[custom_computer],
             only_n_most_recent_images=3,
             trajectory_dir=trajectory_dir,
+            telemetry_enabled=False,
             instructions=(
                 "Use the provided computer to complete the task as described. "
                 "When the task is complete, indicate so clearly by outputting 'DONE'."
@@ -260,8 +261,8 @@ class Qwen3VLAgent(BaseAgent):
 
             if task_completed:
                 failure_mode = FailureMode.NONE
-            # elif step >= self.max_steps:
-            #     failure_mode = FailureMode.MAX_STEPS_EXCEEDED
+            elif step >= self.max_steps:
+                failure_mode = FailureMode.MAX_STEPS_EXCEEDED
             else:
                 failure_mode = FailureMode.NONE
 

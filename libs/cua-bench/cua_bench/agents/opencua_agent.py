@@ -115,7 +115,7 @@ class OpenCUAAgent(BaseAgent):
             await session.execute_action(WaitAction(seconds=ms / 1000.0))
 
         async def get_dimensions():
-            return (1024, 768)
+            return (1280, 800)
 
         async def get_environment():
             return "linux"
@@ -181,6 +181,7 @@ class OpenCUAAgent(BaseAgent):
             tools=[custom_computer],
             only_n_most_recent_images=3,
             trajectory_dir=trajectory_dir,
+            telemetry_enabled=False,
             instructions=(
                 "Use the provided computer to complete the task as described. "
                 "When the task is complete, indicate so clearly by outputting 'DONE'."

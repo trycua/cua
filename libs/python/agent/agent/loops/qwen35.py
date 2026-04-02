@@ -497,17 +497,6 @@ class Qwen35Config(AsyncAgentConfig):
         if tool_call and isinstance(tool_call, dict):
             fn_name = tool_call.get("name") or "computer"
             raw_args = tool_call.get("arguments") or {}
-
-            # Preserve thinking text surrounding the <tool_call> block
-            # thinking_text = re.sub(
-            #     r"<tool_call>[\s\S]*?</tool_call>", "", content_text
-            # ).replace("</think>", "").strip()
-            # if thinking_text:
-            #     output_items.append({
-            #         "type": "message",
-            #         "role": "assistant",
-            #         "content": [{"type": "output_text", "text": thinking_text}],
-            #     })
             
             output_items.append({
                 "type": "message",
@@ -545,15 +534,6 @@ class Qwen35Config(AsyncAgentConfig):
             output_items.extend(convert_completion_messages_to_responses_items([fake_cm]))
             
         elif tool_calls_array:
-            # Priority 2: Use tool_calls field if present (Ollama Cloud format)
-            # Preserve thinking text as assistant message
-            # thinking_text = content_text.replace("</think>", "").strip() if content_text else ""
-            # if thinking_text:
-            #     output_items.append({
-            #         "type": "message",
-            #         "role": "assistant",
-            #         "content": [{"type": "output_text", "text": thinking_text}],
-            #     })
             
             output_items.append({
                 "type": "message",

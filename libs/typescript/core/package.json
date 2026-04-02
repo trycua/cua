@@ -47,7 +47,7 @@
     "@types/node": "^22.15.17",
     "@types/ws": "^8.18.1",
     "bumpp": "^10.1.0",
-    "happy-dom": "^20.0.11",
+    "happy-dom": "^20.8.8",
     "tsdown": "^0.11.9",
     "tsx": "^4.19.4",
     "typescript": "^5.8.3",

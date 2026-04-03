@@ -12,6 +12,21 @@ cleanup() {
 # Install trap for signals
 trap cleanup SIGTERM SIGINT SIGHUP SIGQUIT
 
+# Detect overlay mode: /golden exists (read-only base) but /storage is empty
+# This enables running multiple isolated sessions from a single golden image
+if [ -d "/golden" ] && [ ! -f "/storage/linux.boot" ]; then
+    echo "Overlay mode detected, setting up copy-on-write..."
+    # Try hard links first (instant, shares disk blocks until modified)
+    # Fall back to regular copy if hard links fail (e.g., cross-filesystem)
+    if cp -al /golden/. /storage/ 2>/dev/null; then
+        echo "Overlay setup complete (using hard links)."
+    else
+        echo "Hard links not supported, falling back to regular copy..."
+        cp -a /golden/. /storage/
+        echo "Overlay setup complete (using copy)."
+    fi
+fi
+
 # Start the VM in the background
 echo "Starting Ubuntu VM..."
 /usr/bin/tini -s /run/entry.sh &

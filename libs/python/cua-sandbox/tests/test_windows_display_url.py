@@ -137,16 +137,25 @@ async def test_windows_gateway_shows_desktop():
             await page.screenshot(path=str(initial_path))
             P(f"  Saved: {initial_path}")
 
-            # Wait for Guacamole canvas
-            P("  Waiting for canvas...")
-            try:
-                await page.wait_for_selector("canvas", timeout=30000)
-            except Exception as e:
+            # Wait for Guacamole to establish the RDP session.
+            # The canvas exists immediately but is 0x0 until RDP renders.
+            # Windows RDP handshake can take 15-30s.
+            P("  Waiting for RDP session (up to 60s)...")
+            for attempt in range(12):
+                await page.wait_for_timeout(5000)
+                canvas_size = await page.evaluate("""() => {
+                    const c = document.querySelector('canvas');
+                    return c ? { w: c.width, h: c.height } : null;
+                }""")
+                P(f"    attempt {attempt+1}: canvas={canvas_size}")
+                if canvas_size and canvas_size["w"] > 0 and canvas_size["h"] > 0:
+                    break
+            else:
                 err_path = SCREENSHOT_DIR / "windows_gateway_error.png"
                 await page.screenshot(path=str(err_path))
                 content = await page.content()
                 P(f"  Page HTML (500 chars): {content[:500]}")
-                pytest.fail(f"Guacamole canvas not found: {e}")
+                pytest.fail(f"Canvas never got non-zero size after 60s")
 
             # Wait for RDP desktop to render
             P("  Waiting 15s for RDP desktop...")

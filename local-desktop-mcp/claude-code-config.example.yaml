@@ -1,0 +1,40 @@
+# Example Claude Code Configuration
+# Copy the mcpServers section to your Claude Code config file
+#
+# Common config locations:
+# - Linux: ~/.config/claude-code/config.yaml
+# - macOS: ~/Library/Application Support/claude-code/config.yaml
+# - Windows: %APPDATA%\claude-code\config.yaml
+
+mcpServers:
+  # Local Desktop Control - Direct control of your local PC
+  local-desktop:
+    command: python3
+    args:
+      - /home/user/cua/local-desktop-mcp/server.py
+    env:
+      # Computer server connection settings
+      CUA_API_HOST: localhost
+      CUA_API_PORT: "8000"
+
+  # Optional: Remote Desktop Control
+  # Uncomment to control a remote computer
+  # remote-desktop:
+  #   command: python3
+  #   args:
+  #     - /home/user/cua/local-desktop-mcp/server.py
+  #   env:
+  #     CUA_API_HOST: 192.168.1.100  # Remote computer IP
+  #     CUA_API_PORT: "8000"
+
+# You can also add other MCP servers here
+# mcpServers:
+#   filesystem:
+#     command: npx
+#     args: ["-y", "@modelcontextprotocol/server-filesystem", "/home/user"]
+#
+#   github:
+#     command: npx
+#     args: ["-y", "@modelcontextprotocol/server-github"]
+#     env:
+#       GITHUB_TOKEN: your-token-here

@@ -130,7 +130,10 @@ class CloudTransport(Transport):
 
         async def _connect_and_wait_ready(cs_url: str, api_key: str) -> None:
             """Create inner HTTPTransport and wait for server readiness."""
-            auth_name = self._name
+            # Forks inherit the source container's credentials from the
+            # snapshot, so auth must use the source instance name.
+            snap_source = getattr(self._image, "_snapshot_source", None) if self._image else None
+            auth_name = snap_source["instance"] if snap_source else self._name
             self._inner = HTTPTransport(cs_url, api_key=api_key, container_name=auth_name)
             await self._inner.connect()
             await self._wait_for_server_ready()

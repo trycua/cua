@@ -128,68 +128,12 @@ class CloudTransport(Transport):
                 cs_url = self._resolve_endpoint(vm_info)
             return vm_info, cs_url
 
-        async def _tcp_probe_and_http_ready(cs_url: str, api_key: str) -> None:
-            """Probe the CUA server endpoint using fast TCP check then HTTP."""
-            # Parse host:port from URL
-            from urllib.parse import urlparse
-            parsed = urlparse(cs_url)
-            host = parsed.hostname or ""
-            port = parsed.port or (443 if parsed.scheme == "https" else 8000)
-
-            # Phase 0: fast TCP probe (0.3s timeout per attempt, 0.2s interval)
-            elapsed = 0.0
-            while elapsed < _POLL_TIMEOUT:
-                try:
-                    _, writer = await asyncio.wait_for(
-                        asyncio.open_connection(host, port), timeout=0.3
-                    )
-                    writer.close()
-                    await writer.wait_closed()
-                    logger.debug("[cloud] TCP port %d open at %.1fs", port, elapsed)
-                    break
-                except (OSError, asyncio.TimeoutError):
-                    await asyncio.sleep(0.2)
-                    elapsed += 0.2
-
-            # Phase 1: HTTP validation
+        async def _connect_and_wait_ready(cs_url: str, api_key: str) -> None:
+            """Create inner HTTPTransport and wait for server readiness."""
             auth_name = self._name
             self._inner = HTTPTransport(cs_url, api_key=api_key, container_name=auth_name)
             await self._inner.connect()
-
-            http_elapsed = 0.0
-            while http_elapsed < _POLL_TIMEOUT - elapsed:
-                try:
-                    resp = await self._inner._client.get("/", timeout=2.0)
-                    logger.debug("[cloud] server HTTP up (status=%d) at %.1fs", resp.status_code, elapsed + http_elapsed)
-                    break
-                except Exception:
-                    await asyncio.sleep(_POLL_INTERVAL)
-                    http_elapsed += _POLL_INTERVAL
-
-            # Check if Windows (skip screen_size)
-            try:
-                status_resp = await self._inner._client.get("/status", timeout=5.0)
-                if status_resp.status_code == 200:
-                    status_data = status_resp.json()
-                    if status_data.get("os_type") == "windows":
-                        logger.debug("[cloud] Windows server detected, skipping screen_size check")
-                        return
-            except Exception:
-                pass
-
-            # Phase 2: wait for get_screen_size (emulator/display)
-            while http_elapsed < _POLL_TIMEOUT - elapsed:
-                try:
-                    await self._inner.get_screen_size()
-                    return
-                except httpx.HTTPStatusError as e:
-                    if e.response.status_code < 500 and e.response.status_code != 404:
-                        raise
-                    await asyncio.sleep(_POLL_INTERVAL)
-                    http_elapsed += _POLL_INTERVAL
-                except Exception:
-                    await asyncio.sleep(_POLL_INTERVAL)
-                    http_elapsed += _POLL_INTERVAL
+            await self._wait_for_server_ready()
 
         # Run VM status polling, endpoint resolution, and server probe in
         # parallel.  As soon as the API returns a direct-IP endpoint (even
@@ -217,7 +161,7 @@ class CloudTransport(Transport):
                             resolved_url = url
                             logger.debug("[cloud] early endpoint: %s at %.1fs — starting probe", url, elapsed)
                             probe_task = asyncio.create_task(
-                                _tcp_probe_and_http_ready(url, api_key)
+                                _connect_and_wait_ready(url, api_key)
                             )
                 except (ValueError, KeyError):
                     pass
@@ -245,7 +189,7 @@ class CloudTransport(Transport):
         if probe_task is not None:
             await probe_task
         else:
-            await _tcp_probe_and_http_ready(cs_url, api_key)
+            await _connect_and_wait_ready(cs_url, api_key)
 
         logger.debug("[cloud] computer-server ready")
 

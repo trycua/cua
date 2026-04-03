@@ -191,17 +191,61 @@ class CloudTransport(Transport):
                     await asyncio.sleep(_POLL_INTERVAL)
                     http_elapsed += _POLL_INTERVAL
 
-        # Run endpoint resolution and server probe in parallel.
-        # _poll_until_running_and_resolved gets us the URL as soon as the
-        # API has a direct IP.  _tcp_probe_and_http_ready starts probing the
-        # CUA server immediately — overlapping with the remaining VM boot.
-        resolve_task = asyncio.ensure_future(_poll_until_running_and_resolved())
+        # Run VM status polling, endpoint resolution, and server probe in
+        # parallel.  As soon as the API returns a direct-IP endpoint (even
+        # while CRD status is still "creating"), start TCP-probing the CUA
+        # server.  This overlaps the kopf handler's credential injection
+        # and DNS setup with the CUA server boot.
 
-        # Wait for endpoint to be resolved, then start probing
-        vm_info, cs_url = await resolve_task
+        server_ready: asyncio.Event = asyncio.Event()
+        probe_task: Optional[asyncio.Task] = None
+        resolved_url: Optional[str] = None
+
+        async def _poll_and_probe() -> tuple[dict, str]:
+            """Poll VM status; start TCP/HTTP probe as soon as we have a direct IP."""
+            nonlocal vm_info, probe_task, resolved_url
+            elapsed = 0.0
+            is_running = vm_info.get("status") in ("running", "ready")
+
+            while elapsed < _POLL_TIMEOUT:
+                # Try to extract a direct-IP endpoint
+                try:
+                    url = self._resolve_endpoint(vm_info)
+                    if not (_is_local_dev and ".cua.sh" in url):
+                        # Got a direct IP — start probing if not already
+                        if probe_task is None:
+                            resolved_url = url
+                            logger.debug("[cloud] early endpoint: %s at %.1fs — starting probe", url, elapsed)
+                            probe_task = asyncio.create_task(
+                                _tcp_probe_and_http_ready(url, api_key)
+                            )
+                except (ValueError, KeyError):
+                    pass
+
+                if is_running and resolved_url:
+                    return vm_info, resolved_url
+
+                await asyncio.sleep(_POLL_INTERVAL)
+                elapsed += _POLL_INTERVAL
+                vm_info = await self._get_vm(self._name)
+                is_running = vm_info.get("status") in ("running", "ready")
+
+            if not is_running:
+                raise TimeoutError(
+                    f"VM {self._name!r} did not become running within {_POLL_TIMEOUT}s "
+                    f"(last status: {vm_info.get('status')})"
+                )
+            url = resolved_url or self._resolve_endpoint(vm_info)
+            return vm_info, url
+
+        vm_info, cs_url = await _poll_and_probe()
         logger.debug("[cloud] resolved endpoint: %s", cs_url)
 
-        await _tcp_probe_and_http_ready(cs_url, api_key)
+        # If probe was started early, wait for it; otherwise start now
+        if probe_task is not None:
+            await probe_task
+        else:
+            await _tcp_probe_and_http_ready(cs_url, api_key)
 
         logger.debug("[cloud] computer-server ready")
 

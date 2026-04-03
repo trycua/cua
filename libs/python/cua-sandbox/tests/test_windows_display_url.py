@@ -115,6 +115,16 @@ async def test_windows_gateway_shows_desktop():
         P(f"  display_url: {display_url}")
         assert "token=" in display_url
 
+        # In local dev, rewrite the gateway host to localhost
+        # (the .cua.sh DNS won't resolve on the dev node)
+        gateway_override = os.environ.get("RDP_GATEWAY_URL")
+        if gateway_override:
+            from urllib.parse import urlparse, parse_qs, urlencode
+            parsed = urlparse(display_url)
+            token = parse_qs(parsed.query).get("token", [""])[0]
+            display_url = f"{gateway_override}/?token={token}"
+            P(f"  rewritten url: {display_url}")
+
         # Load in Playwright
         async with async_playwright() as pw:
             browser = await pw.chromium.launch(headless=True)

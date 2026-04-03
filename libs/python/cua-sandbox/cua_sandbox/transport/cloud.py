@@ -18,7 +18,7 @@ from cua_sandbox.transport.http import HTTPTransport
 
 logger = logging.getLogger(__name__)
 
-_POLL_INTERVAL = 2.0  # seconds between status polls
+_POLL_INTERVAL = 0.5  # seconds between status polls
 _POLL_TIMEOUT = 600.0  # max seconds to wait for VM to be running
 
 
@@ -84,47 +84,116 @@ class CloudTransport(Transport):
             self._name = vm_info["name"]
             logger.debug("[cloud] created VM %r", self._name)
 
-        # Poll until running
-        logger.debug(
-            "[cloud] waiting for VM %r to be running (status=%r)", self._name, vm_info.get("status")
-        )
-        vm_info = await self._wait_for_running(vm_info)
-        logger.debug("[cloud] VM %r is running", self._name)
-
-        # Resolve computer-server endpoint — auth with CUA API key + container name.
-        # In local-dev mode the API initially returns .cua.sh placeholder URLs and
-        # replaces them with direct IPs once the container IP is known, so we poll
-        # until we get a non-.cua.sh address.  On prod the reverse-proxy .cua.sh URL
-        # is the real endpoint, so we skip this loop entirely.
-        cs_url = self._resolve_endpoint(vm_info)
         _is_local_dev = not self._base_url.rstrip("/").endswith("cua.sh") and (
             "localhost" in self._base_url
             or "127.0.0.1" in self._base_url
             or "0.0.0.0" in self._base_url
         )
-        poll_elapsed = 0.0
-        while _is_local_dev and (cs_url.endswith(".cua.sh") or ".cua.sh:" in cs_url):
-            if poll_elapsed >= 120:
-                break  # Fall through — _wait_for_server_ready will handle the error
-            await asyncio.sleep(3)
-            poll_elapsed += 3
-            vm_info = await self._get_vm(self._name)
-            cs_url = self._resolve_endpoint(vm_info)
-            logger.debug("[cloud] re-resolving endpoint: %s (%.0fs)", cs_url, poll_elapsed)
 
+        # ── Parallel path: resolve endpoint + probe server while waiting for "running" ──
+        # The VM is booting; we can start probing its CUA server as soon as the
+        # API gives us an IP-based endpoint, without waiting for the full CRD
+        # status to transition to "running".
+
+        async def _poll_until_running_and_resolved() -> tuple[dict, str]:
+            """Poll VM status AND resolve a usable endpoint URL in one loop."""
+            nonlocal vm_info
+            elapsed = 0.0
+            cs_url = ""
+            is_running = vm_info.get("status") in ("running", "ready")
+
+            while elapsed < _POLL_TIMEOUT:
+                # Try to extract a direct-IP endpoint from current vm_info
+                try:
+                    url = self._resolve_endpoint(vm_info)
+                    if not (_is_local_dev and (".cua.sh" in url)):
+                        cs_url = url
+                except (ValueError, KeyError):
+                    pass
+
+                if is_running and cs_url:
+                    return vm_info, cs_url
+
+                await asyncio.sleep(_POLL_INTERVAL)
+                elapsed += _POLL_INTERVAL
+                vm_info = await self._get_vm(self._name)
+                is_running = vm_info.get("status") in ("running", "ready")
+
+            if not is_running:
+                raise TimeoutError(
+                    f"VM {self._name!r} did not become running within {_POLL_TIMEOUT}s "
+                    f"(last status: {vm_info.get('status')})"
+                )
+            if not cs_url:
+                cs_url = self._resolve_endpoint(vm_info)
+            return vm_info, cs_url
+
+        async def _connect_and_wait_ready(cs_url: str, api_key: str) -> None:
+            """Create inner HTTPTransport and wait for server readiness."""
+            # Forks inherit the source container's credentials from the
+            # snapshot, so auth must use the source instance name.
+            snap_source = getattr(self._image, "_snapshot_source", None) if self._image else None
+            auth_name = snap_source["instance"] if snap_source else self._name
+            self._inner = HTTPTransport(cs_url, api_key=api_key, container_name=auth_name)
+            await self._inner.connect()
+            await self._wait_for_server_ready()
+
+        # Run VM status polling, endpoint resolution, and server probe in
+        # parallel.  As soon as the API returns a direct-IP endpoint (even
+        # while CRD status is still "creating"), start TCP-probing the CUA
+        # server.  This overlaps the kopf handler's credential injection
+        # and DNS setup with the CUA server boot.
+
+        server_ready: asyncio.Event = asyncio.Event()
+        probe_task: Optional[asyncio.Task] = None
+        resolved_url: Optional[str] = None
+
+        async def _poll_and_probe() -> tuple[dict, str]:
+            """Poll VM status; start TCP/HTTP probe as soon as we have a direct IP."""
+            nonlocal vm_info, probe_task, resolved_url
+            elapsed = 0.0
+            is_running = vm_info.get("status") in ("running", "ready")
+
+            while elapsed < _POLL_TIMEOUT:
+                # Try to extract a direct-IP endpoint
+                try:
+                    url = self._resolve_endpoint(vm_info)
+                    if not (_is_local_dev and ".cua.sh" in url):
+                        # Got a direct IP — start probing if not already
+                        if probe_task is None:
+                            resolved_url = url
+                            logger.debug("[cloud] early endpoint: %s at %.1fs — starting probe", url, elapsed)
+                            probe_task = asyncio.create_task(
+                                _connect_and_wait_ready(url, api_key)
+                            )
+                except (ValueError, KeyError):
+                    pass
+
+                if is_running and resolved_url:
+                    return vm_info, resolved_url
+
+                await asyncio.sleep(_POLL_INTERVAL)
+                elapsed += _POLL_INTERVAL
+                vm_info = await self._get_vm(self._name)
+                is_running = vm_info.get("status") in ("running", "ready")
+
+            if not is_running:
+                raise TimeoutError(
+                    f"VM {self._name!r} did not become running within {_POLL_TIMEOUT}s "
+                    f"(last status: {vm_info.get('status')})"
+                )
+            url = resolved_url or self._resolve_endpoint(vm_info)
+            return vm_info, url
+
+        vm_info, cs_url = await _poll_and_probe()
         logger.debug("[cloud] resolved endpoint: %s", cs_url)
-        # For forks, the computer-server inside still has the source container's
-        # credentials (baked into the snapshot). Use the source name for auth.
-        snap_source = getattr(self._image, "_snapshot_source", None) if self._image else None
-        auth_name = snap_source["instance"] if snap_source else self._name
-        self._inner = HTTPTransport(cs_url, api_key=api_key, container_name=auth_name)
-        logger.debug("[cloud] connecting inner HTTPTransport")
-        await self._inner.connect()
-        logger.debug("[cloud] HTTPTransport connected")
 
-        # Wait for computer-server to be reachable (it may lag behind VM "running" status)
-        logger.debug("[cloud] waiting for computer-server to be ready")
-        await self._wait_for_server_ready()
+        # If probe was started early, wait for it; otherwise start now
+        if probe_task is not None:
+            await probe_task
+        else:
+            await _connect_and_wait_ready(cs_url, api_key)
+
         logger.debug("[cloud] computer-server ready")
 
         # Apply env vars and image layers (e.g. APK installs) after server is ready
@@ -321,17 +390,49 @@ class CloudTransport(Transport):
         return vm_info
 
     async def _wait_for_server_ready(self) -> None:
-        """Poll the computer-server until it responds (retries on connection/HTTP errors)."""
+        """Poll the computer-server until it responds.
+
+        First, quickly check if the HTTP server is accepting connections (any
+        response, even 404).  Then verify with get_screen_size which needs the
+        emulator.  This two-phase approach lets the SDK proceed as soon as the
+        server process is up, overlapping with emulator boot.
+        """
         assert self._inner
         elapsed = 0.0
         last_err: Optional[Exception] = None
+
+        # Phase 1: wait for HTTP port to accept connections (fast — just needs
+        # the Python process to start, not the emulator).
+        while elapsed < _POLL_TIMEOUT:
+            try:
+                resp = await self._inner._client.get("/", timeout=2.0)
+                # Any response means the server is up
+                logger.debug("[cloud] server HTTP up (status=%d) at %.1fs", resp.status_code, elapsed)
+                break
+            except Exception as e:
+                last_err = e
+                await asyncio.sleep(_POLL_INTERVAL)
+                elapsed += _POLL_INTERVAL
+
+        # Check if this is a Windows server (no screen_size endpoint)
+        try:
+            status_resp = await self._inner._client.get("/status", timeout=5.0)
+            if status_resp.status_code == 200:
+                status_data = status_resp.json()
+                if status_data.get("os_type") == "windows":
+                    logger.debug("[cloud] Windows server detected, skipping screen_size check")
+                    return  # Windows servers are ready after Phase 1
+        except Exception:
+            pass  # Fall through to Phase 2
+
+        # Phase 2: wait for get_screen_size (needs emulator/display running)
         while elapsed < _POLL_TIMEOUT:
             try:
                 await self._inner.get_screen_size()
-                return  # Server is ready
+                return  # Fully ready
             except httpx.HTTPStatusError as e:
                 if e.response.status_code < 500 and e.response.status_code != 404:
-                    raise  # 4xx errors (except 404) are not transient — fail fast
+                    raise
                 last_err = e
                 logger.debug("[cloud] _wait_for_server_ready: elapsed=%.0fs err=%r", elapsed, e)
                 await asyncio.sleep(_POLL_INTERVAL)

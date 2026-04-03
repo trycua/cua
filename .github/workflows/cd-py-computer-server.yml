@@ -27,7 +27,7 @@ permissions:
 
 jobs:
   prepare:
-    runs-on: macos-latest
+    runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.get-version.outputs.version }}
     steps:
@@ -73,19 +73,56 @@ jobs:
     secrets:
       PYPI_TOKEN: ${{ secrets.PYPI_TOKEN }}
 
+  build-binaries:
+    needs: prepare
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            artifact_name: cua-computer-server-linux-x86_64
+            binary_name: cua-computer-server
+          - os: windows-latest
+            artifact_name: cua-computer-server-windows-x86_64.exe
+            binary_name: cua-computer-server.exe
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          pip install pyinstaller
+          pip install -e libs/python/computer-server
+
+      - name: Build binary with PyInstaller
+        run: |
+          cd libs/python/computer-server
+          pyinstaller --onefile --name "${{ matrix.binary_name }}" run_server.py
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: libs/python/computer-server/dist/${{ matrix.binary_name }}
+
   set-env-variables:
     needs: [prepare, publish]
-    runs-on: macos-latest
+    runs-on: ubuntu-latest
     steps:
       - name: Set environment variables for use in other jobs
         run: |
           echo "COMPUTER_VERSION=${{ needs.prepare.outputs.version }}" >> $GITHUB_ENV
 
   create-release:
-    needs: [prepare, publish]
+    needs: [prepare, publish, build-binaries]
     uses: ./.github/workflows/release-github-reusable.yml
     with:
       tag_name: "computer-server-v${{ needs.prepare.outputs.version }}"
       release_name: "cua-computer-server v${{ needs.prepare.outputs.version }}"
       module_path: "libs/python/computer-server"
       body: ""
+      attach_artifacts: true

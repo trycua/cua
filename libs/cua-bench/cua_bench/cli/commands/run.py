@@ -1798,6 +1798,7 @@ async def _cmd_run_dataset_async(args) -> int:
             cmd,
             stdout=log_handle,
             stderr=subprocess.STDOUT,
+            start_new_session=True,  # Detach from parent so child survives parent exit
             env=env_vars,
         )
         # Close the parent's copy of the fd; the subprocess has its own inherited copy.

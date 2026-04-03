@@ -84,44 +84,125 @@ class CloudTransport(Transport):
             self._name = vm_info["name"]
             logger.debug("[cloud] created VM %r", self._name)
 
-        # Poll until running
-        vm_info = await self._wait_for_running(vm_info)
-        logger.debug("[cloud] VM %r is running", self._name)
-
-        # Resolve computer-server endpoint — auth with CUA API key + container name.
-        # In local-dev mode the API initially returns .cua.sh placeholder URLs and
-        # replaces them with direct IPs once the container IP is known, so we poll
-        # until we get a non-.cua.sh address.  On prod the reverse-proxy .cua.sh URL
-        # is the real endpoint, so we skip this loop entirely.
-        cs_url = self._resolve_endpoint(vm_info)
         _is_local_dev = not self._base_url.rstrip("/").endswith("cua.sh") and (
             "localhost" in self._base_url
             or "127.0.0.1" in self._base_url
             or "0.0.0.0" in self._base_url
         )
-        poll_elapsed = 0.0
-        while _is_local_dev and (cs_url.endswith(".cua.sh") or ".cua.sh:" in cs_url):
-            if poll_elapsed >= 120:
-                break  # Fall through — _wait_for_server_ready will handle the error
-            await asyncio.sleep(0.5)
-            poll_elapsed += 0.5
-            vm_info = await self._get_vm(self._name)
-            cs_url = self._resolve_endpoint(vm_info)
-            logger.debug("[cloud] re-resolving endpoint: %s (%.0fs)", cs_url, poll_elapsed)
 
+        # ── Parallel path: resolve endpoint + probe server while waiting for "running" ──
+        # The VM is booting; we can start probing its CUA server as soon as the
+        # API gives us an IP-based endpoint, without waiting for the full CRD
+        # status to transition to "running".
+
+        async def _poll_until_running_and_resolved() -> tuple[dict, str]:
+            """Poll VM status AND resolve a usable endpoint URL in one loop."""
+            nonlocal vm_info
+            elapsed = 0.0
+            cs_url = ""
+            is_running = vm_info.get("status") in ("running", "ready")
+
+            while elapsed < _POLL_TIMEOUT:
+                # Try to extract a direct-IP endpoint from current vm_info
+                try:
+                    url = self._resolve_endpoint(vm_info)
+                    if not (_is_local_dev and (".cua.sh" in url)):
+                        cs_url = url
+                except (ValueError, KeyError):
+                    pass
+
+                if is_running and cs_url:
+                    return vm_info, cs_url
+
+                await asyncio.sleep(_POLL_INTERVAL)
+                elapsed += _POLL_INTERVAL
+                vm_info = await self._get_vm(self._name)
+                is_running = vm_info.get("status") in ("running", "ready")
+
+            if not is_running:
+                raise TimeoutError(
+                    f"VM {self._name!r} did not become running within {_POLL_TIMEOUT}s "
+                    f"(last status: {vm_info.get('status')})"
+                )
+            if not cs_url:
+                cs_url = self._resolve_endpoint(vm_info)
+            return vm_info, cs_url
+
+        async def _tcp_probe_and_http_ready(cs_url: str, api_key: str) -> None:
+            """Probe the CUA server endpoint using fast TCP check then HTTP."""
+            # Parse host:port from URL
+            from urllib.parse import urlparse
+            parsed = urlparse(cs_url)
+            host = parsed.hostname or ""
+            port = parsed.port or (443 if parsed.scheme == "https" else 8000)
+
+            # Phase 0: fast TCP probe (0.3s timeout per attempt, 0.2s interval)
+            elapsed = 0.0
+            while elapsed < _POLL_TIMEOUT:
+                try:
+                    _, writer = await asyncio.wait_for(
+                        asyncio.open_connection(host, port), timeout=0.3
+                    )
+                    writer.close()
+                    await writer.wait_closed()
+                    logger.debug("[cloud] TCP port %d open at %.1fs", port, elapsed)
+                    break
+                except (OSError, asyncio.TimeoutError):
+                    await asyncio.sleep(0.2)
+                    elapsed += 0.2
+
+            # Phase 1: HTTP validation
+            auth_name = self._name
+            self._inner = HTTPTransport(cs_url, api_key=api_key, container_name=auth_name)
+            await self._inner.connect()
+
+            http_elapsed = 0.0
+            while http_elapsed < _POLL_TIMEOUT - elapsed:
+                try:
+                    resp = await self._inner._client.get("/", timeout=2.0)
+                    logger.debug("[cloud] server HTTP up (status=%d) at %.1fs", resp.status_code, elapsed + http_elapsed)
+                    break
+                except Exception:
+                    await asyncio.sleep(_POLL_INTERVAL)
+                    http_elapsed += _POLL_INTERVAL
+
+            # Check if Windows (skip screen_size)
+            try:
+                status_resp = await self._inner._client.get("/status", timeout=5.0)
+                if status_resp.status_code == 200:
+                    status_data = status_resp.json()
+                    if status_data.get("os_type") == "windows":
+                        logger.debug("[cloud] Windows server detected, skipping screen_size check")
+                        return
+            except Exception:
+                pass
+
+            # Phase 2: wait for get_screen_size (emulator/display)
+            while http_elapsed < _POLL_TIMEOUT - elapsed:
+                try:
+                    await self._inner.get_screen_size()
+                    return
+                except httpx.HTTPStatusError as e:
+                    if e.response.status_code < 500 and e.response.status_code != 404:
+                        raise
+                    await asyncio.sleep(_POLL_INTERVAL)
+                    http_elapsed += _POLL_INTERVAL
+                except Exception:
+                    await asyncio.sleep(_POLL_INTERVAL)
+                    http_elapsed += _POLL_INTERVAL
+
+        # Run endpoint resolution and server probe in parallel.
+        # _poll_until_running_and_resolved gets us the URL as soon as the
+        # API has a direct IP.  _tcp_probe_and_http_ready starts probing the
+        # CUA server immediately — overlapping with the remaining VM boot.
+        resolve_task = asyncio.ensure_future(_poll_until_running_and_resolved())
+
+        # Wait for endpoint to be resolved, then start probing
+        vm_info, cs_url = await resolve_task
         logger.debug("[cloud] resolved endpoint: %s", cs_url)
-        # Use the fork's own name for auth (not the parent's).  The Kopf
-        # operator creates a K8s secret for the fork with its own credentials,
-        # and the Go API maps the fork's API key to the fork's container name.
-        auth_name = self._name
-        self._inner = HTTPTransport(cs_url, api_key=api_key, container_name=auth_name)
-        logger.debug("[cloud] connecting inner HTTPTransport")
-        await self._inner.connect()
-        logger.debug("[cloud] HTTPTransport connected")
 
-        # Wait for computer-server to be reachable (it may lag behind VM "running" status)
-        logger.debug("[cloud] waiting for computer-server to be ready")
-        await self._wait_for_server_ready()
+        await _tcp_probe_and_http_ready(cs_url, api_key)
+
         logger.debug("[cloud] computer-server ready")
 
         # Apply env vars and image layers (e.g. APK installs) after server is ready

@@ -304,6 +304,10 @@ class CloudTransport(Transport):
         if not share:
             return f"https://cua.ai/connect/{self._name}"
         vm_info = await self._get_vm(self._name)
+        # Windows VMs: API returns a pre-built display_url with encrypted RDP token
+        display_url = vm_info.get("display_url")
+        if display_url:
+            return display_url
         password = vm_info.get("password", "")
         for ep in vm_info.get("endpoints", []):
             if ep.get("name") == "vnc":
@@ -313,8 +317,8 @@ class CloudTransport(Transport):
                     url += f"/?password={password}"
                 return url
         raise ValueError(
-            f"VM '{self._name}' has no VNC endpoint. "
-            "Only Android and desktop VMs expose a VNC endpoint."
+            f"VM '{self._name}' has no display endpoint. "
+            "Only Android, Linux, and Windows VMs expose a display endpoint."
         )
 
     # ── Helpers ─────────────────────────────────────────────────────────

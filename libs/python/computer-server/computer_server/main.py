@@ -229,6 +229,9 @@ class AuthenticationManager:
     def __init__(self):
         self.sessions: Dict[str, Dict[str, Any]] = {}
         self.container_name = os.environ.get("CONTAINER_NAME")
+        self.api_base_url = os.environ.get(
+            "CUA_BASE_URL_AUTH", "https://www.cua.ai"
+        ).rstrip("/")
 
     def _hash_credentials(self, container_name: str, api_key: str) -> str:
         """Create a hash of container name and API key for session identification"""
@@ -282,7 +285,7 @@ class AuthenticationManager:
                 headers = {"Authorization": f"Bearer {api_key}", **cua_version_headers()}
 
                 async with session.get(
-                    f"https://www.cua.ai/api/vm/auth?container_name={container_name}",
+                    f"{self.api_base_url}/api/vm/auth?container_name={container_name}",
                     headers=headers,
                 ) as resp:
                     is_valid = resp.status == 200 and bool((await resp.text()).strip())

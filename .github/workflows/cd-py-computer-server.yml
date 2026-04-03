@@ -27,7 +27,7 @@ permissions:
 
 jobs:
   prepare:
-    runs-on: macos-latest
+    runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.get-version.outputs.version }}
     steps:
@@ -73,19 +73,70 @@ jobs:
     secrets:
       PYPI_TOKEN: ${{ secrets.PYPI_TOKEN }}
 
+  build-binaries:
+    needs: prepare
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            artifact_name: cua-computer-server-linux-x86_64
+            zip_name: cua-computer-server-linux-x86_64.tar.gz
+            dir_name: cua-computer-server
+          - os: windows-latest
+            artifact_name: cua-computer-server-windows-x86_64
+            zip_name: cua-computer-server-windows-x86_64.zip
+            dir_name: cua-computer-server
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          pip install pyinstaller
+          pip install -e libs/python/computer-server
+
+      - name: Build binary with PyInstaller (onedir — fast startup)
+        run: |
+          cd libs/python/computer-server
+          pyinstaller --onedir --name "${{ matrix.dir_name }}" --console --noconfirm --clean --collect-all computer_server --hidden-import uvicorn.logging --hidden-import uvicorn.protocols.http --hidden-import uvicorn.protocols.http.auto --hidden-import uvicorn.protocols.http.h11_impl --hidden-import uvicorn.protocols.websockets --hidden-import uvicorn.protocols.websockets.auto --hidden-import uvicorn.lifespan --hidden-import uvicorn.lifespan.on --hidden-import PIL._tkinter_finder run_server.py
+
+      - name: Create archive (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          cd libs/python/computer-server/dist
+          tar czf "${{ matrix.zip_name }}" "${{ matrix.dir_name }}"/
+
+      - name: Create archive (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          cd libs/python/computer-server/dist
+          7z a "${{ matrix.zip_name }}" "${{ matrix.dir_name }}/"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: libs/python/computer-server/dist/${{ matrix.zip_name }}
+
   set-env-variables:
     needs: [prepare, publish]
-    runs-on: macos-latest
+    runs-on: ubuntu-latest
     steps:
       - name: Set environment variables for use in other jobs
         run: |
           echo "COMPUTER_VERSION=${{ needs.prepare.outputs.version }}" >> $GITHUB_ENV
 
   create-release:
-    needs: [prepare, publish]
+    needs: [prepare, publish, build-binaries]
     uses: ./.github/workflows/release-github-reusable.yml
     with:
       tag_name: "computer-server-v${{ needs.prepare.outputs.version }}"
       release_name: "cua-computer-server v${{ needs.prepare.outputs.version }}"
       module_path: "libs/python/computer-server"
       body: ""
+      attach_artifacts: true

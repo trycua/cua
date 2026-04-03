@@ -38,11 +38,41 @@ def _find_free_port(start: int = 8000, end: int = 9000) -> int:
     raise RuntimeError(f"No free port found in range {start}–{end}")
 
 
+def _docker_bin() -> str:
+    """Return the resolved path to the docker CLI binary.
+
+    Probes common install locations in addition to PATH — SSH sessions often
+    have a stripped PATH that omits /usr/local/bin (e.g. OrbStack on macOS).
+    Raises RuntimeError if docker is not found.
+    """
+    import os
+    import shutil
+
+    candidates = [
+        "docker",
+        "/usr/local/bin/docker",
+        "/opt/homebrew/bin/docker",
+        "/usr/bin/docker",
+        os.path.expanduser("~/.docker/bin/docker"),
+    ]
+    for candidate in candidates:
+        resolved = shutil.which(candidate) or candidate
+        try:
+            subprocess.run([resolved, "info"], capture_output=True, check=True, timeout=10)
+            return resolved
+        except (subprocess.SubprocessError, FileNotFoundError, OSError):
+            continue
+    raise RuntimeError(
+        "Docker not found. Install from https://docker.com or ensure the docker CLI is on PATH."
+    )
+
+
 def _has_docker() -> bool:
+    """Return True if a Docker daemon is reachable."""
     try:
-        subprocess.run(["docker", "info"], capture_output=True, check=True, timeout=10)
+        _docker_bin()
         return True
-    except (subprocess.SubprocessError, FileNotFoundError):
+    except RuntimeError:
         return False
 
 
@@ -98,8 +128,12 @@ class DockerRuntime(Runtime):
         for v in self.volumes:
             extra_flags += ["-v", v]
 
-        # Environment variables
+        # Environment variables (from DockerRuntime constructor)
         for k, val in self.environment.items():
+            extra_flags += ["-e", f"{k}={val}"]
+
+        # Environment variables from image.env() calls
+        for k, val in getattr(image, "_env", ()):
             extra_flags += ["-e", f"{k}={val}"]
 
         # Devices (e.g. /dev/kvm)
@@ -117,14 +151,20 @@ class DockerRuntime(Runtime):
         # Stop timeout
         extra_flags += ["--stop-timeout", str(self.stop_timeout)]
 
+        # Expose additional ports from image._ports
+        for port in getattr(image, "_ports", ()):
+            host_p = _find_free_port(port, port + 1000)
+            extra_flags += ["-p", f"{host_p}:{port}"]
+
         # Remove existing container with same name
-        subprocess.run(["docker", "rm", "-f", name], capture_output=True)
+        docker = _docker_bin()
+        subprocess.run([docker, "rm", "-f", name], capture_output=True)
 
         api_port = _find_free_port(self.api_port)
         vnc_port = _find_free_port(api_port + 1)
 
         cmd = [
-            "docker",
+            docker,
             "run",
             "-d",
             "--name",
@@ -154,24 +194,75 @@ class DockerRuntime(Runtime):
             name=name,
         )
         await self.is_ready(info)
+
+        # Apply image layers and files via computer-server.
+        # If any provisioning step fails, stop and remove the half-baked container
+        # so callers don't get a broken sandbox silently left running.
+        env_items = getattr(image, "_env", ())
+        file_items = getattr(image, "_files", ())
+        has_work = image._layers or file_items
+        if has_work or env_items:
+            try:
+                from cua_sandbox.builder.executor import LayerExecutor
+
+                executor = LayerExecutor(
+                    f"http://{info.host}:{info.api_port}", os_type=image.os_type
+                )
+
+                # Write env vars to a sourceable profile script so run layers can access them
+                if env_items and image.os_type != "windows":
+                    import re as _re
+                    import shlex as _shlex
+
+                    # Validate all keys up front
+                    for k, _ in env_items:
+                        if not _re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", k):
+                            raise ValueError(f"Unsafe env var name: {k!r}")
+                    await executor.run_command(
+                        "printf '#!/bin/sh\\n' | sudo tee /etc/profile.d/cua-env.sh > /dev/null"
+                    )
+                    for k, v in env_items:
+                        quoted_v = _shlex.quote(v)
+                        await executor.run_command(
+                            f"printf 'export {k}=%s\\n' {quoted_v} "
+                            f"| sudo tee -a /etc/profile.d/cua-env.sh > /dev/null"
+                        )
+
+                # Apply files before layers so later run layers can reference copied files
+                for src, dst in file_items:
+                    await executor.execute_layers([{"type": "copy", "src": src, "dst": dst}])
+
+                if image._layers:
+                    await executor.execute_layers(list(image._layers))
+            except Exception:
+                # Tear down the container so it doesn't linger in a broken state
+                try:
+                    docker = _docker_bin()
+                    subprocess.run([docker, "rm", "-f", name], capture_output=True)
+                except Exception:
+                    pass
+                raise
+
         return info
 
     async def stop(self, name: str) -> None:
-        subprocess.run(["docker", "stop", name], capture_output=True)
+        docker = _docker_bin()
+        subprocess.run([docker, "stop", name], capture_output=True)
         if self.ephemeral:
-            subprocess.run(["docker", "rm", name], capture_output=True)
+            subprocess.run([docker, "rm", name], capture_output=True)
 
     async def suspend(self, name: str) -> None:
         """Pause a running Docker container."""
-        subprocess.run(["docker", "pause", name], capture_output=True)
+        subprocess.run([_docker_bin(), "pause", name], capture_output=True)
 
     async def resume(self, image: "Image", name: str, **opts) -> RuntimeInfo:
         """Unpause a paused Docker container and return its RuntimeInfo."""
-        subprocess.run(["docker", "unpause", name], capture_output=True)
+        docker = _docker_bin()
+        subprocess.run([docker, "unpause", name], capture_output=True)
         # Inspect to get mapped ports
         result = subprocess.run(
             [
-                "docker",
+                docker,
                 "inspect",
                 "--format",
                 '{{(index (index .NetworkSettings.Ports "8000/tcp") 0).HostPort}}',
@@ -183,7 +274,7 @@ class DockerRuntime(Runtime):
         api_port = int(result.stdout.strip()) if result.stdout.strip().isdigit() else self.api_port
         result2 = subprocess.run(
             [
-                "docker",
+                docker,
                 "inspect",
                 "--format",
                 '{{(index (index .NetworkSettings.Ports "5900/tcp") 0).HostPort}}',
@@ -203,7 +294,7 @@ class DockerRuntime(Runtime):
         """List Docker containers with the cua.sandbox=true label."""
         result = subprocess.run(
             [
-                "docker",
+                _docker_bin(),
                 "ps",
                 "-a",
                 "--filter",

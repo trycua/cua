@@ -148,6 +148,19 @@ final class Server: @unchecked Sendable {
             return true
         }
 
+        func extractParams(_ request: HTTPRequest) -> [String: String] {
+            var params: [String: String] = [:]
+            let routeParts = path.split(separator: "/")
+            let requestPathOnly = request.path.split(separator: "?", maxSplits: 1)[0]
+            let requestParts = requestPathOnly.split(separator: "/")
+
+            for (routePart, requestPart) in zip(routeParts, requestParts) {
+                if routePart.hasPrefix(":") {
+                    params[String(routePart.dropFirst())] = String(requestPart)
+                }
+            }
+            return params
+        }
     }
 
     // MARK: - Properties
@@ -155,8 +168,20 @@ final class Server: @unchecked Sendable {
     private let portNumber: UInt16
     private let controller: LumeController
     private var routes: [Route]
-    private var serverChannel: (any Channel)?
-    private var eventLoopGroup: (any EventLoopGroup)?
+    // _channelLock guards both _serverChannel and _eventLoopGroup, which are
+    // written in start() and read in stop() — potentially from different tasks.
+    private let _channelLock = NSLock()
+    private var _serverChannel: (any Channel)?
+    private var _eventLoopGroup: (any EventLoopGroup)?
+
+    private var serverChannel: (any Channel)? {
+        get { _channelLock.withLock { _serverChannel } }
+        set { _channelLock.withLock { _serverChannel = newValue } }
+    }
+    private var eventLoopGroup: (any EventLoopGroup)? {
+        get { _channelLock.withLock { _eventLoopGroup } }
+        set { _channelLock.withLock { _eventLoopGroup = newValue } }
+    }
 
     // MARK: - Initialization
 

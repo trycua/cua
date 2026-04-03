@@ -50,7 +50,7 @@ def get_api_key(override: Optional[str] = None) -> Optional[str]:
 
 
 def get_base_url() -> str:
-    return _global_config.base_url
+    return os.environ.get("CUA_BASE_URL") or _global_config.base_url
 
 
 def _read_credentials_key() -> Optional[str]:

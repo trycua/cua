@@ -41,6 +41,21 @@ def _lume_path() -> str | None:
     return None
 
 
+def _base_vm_name(oci_ref: str) -> str:
+    """Return a stable base-VM name for an OCI image ref (12-char sha256 prefix)."""
+    import hashlib
+
+    digest = hashlib.sha256(oci_ref.encode()).hexdigest()[:12]
+    return f"cua-base-{digest}"
+
+
+def _resp_detail(resp: "httpx.Response") -> str:
+    try:
+        return str(resp.json())
+    except Exception:
+        return resp.text
+
+
 def _has_lume() -> bool:
     return _lume_path() is not None
 
@@ -67,211 +82,401 @@ class LumeRuntime(Runtime):
             )
 
         lume_url = f"http://{self.lume_host}:{self.lume_port}"
+
+        # Fast path — VM already exists
         async with httpx.AsyncClient(timeout=30) as client:
             resp = await client.get(f"{lume_url}/lume/vms/{name}")
-            vm = resp.json()
-
-            if vm.get("status") == "running":
-                logger.info(f"Lume VM {name} already running")
-            else:
-                oci_ref = (
-                    image._registry
-                    or MACOS_VERSION_IMAGES.get(image.version or "")
-                    or MACOS_SEQUOIA
-                )
-                logger.info(f"Pulling {oci_ref} via Lume...")
-                # Lume's pull API expects image="name:tag" with registry/organization
-                # passed separately — passing a full ref causes double-prefixing of the org.
-                pull_payload: dict = {"image": oci_ref, "name": name}
-                parts = oci_ref.split("/")
-                if len(parts) >= 3 and "." in parts[0]:
-                    pull_payload = {
-                        "image": "/".join(parts[2:]),
-                        "name": name,
-                        "registry": parts[0],
-                        "organization": parts[1],
-                    }
-                # Use /lume/pull/start (async, returns 202 immediately) so we can
-                # poll progress while the pull runs in the background.
-                # Falls back to the synchronous /lume/pull if start returns 404.
-                try:
-                    start_resp = await client.post(
-                        f"{lume_url}/lume/pull/start",
-                        json=pull_payload,
-                        timeout=30,
-                    )
-                except (httpx.ReadError, httpx.RemoteProtocolError):
-                    # /pull/start not available in lume v0.3.x — fall back to sync /pull,
-                    # then run the VM and return directly (bypassing the async poll below).
-                    logger.info(
-                        "Lume /pull/start unavailable (v0.3.x), falling back to synchronous pull..."
-                    )
-                    print("\rPulling macOS image...", end="", flush=True, file=sys.stderr)
-                    try:
-                        sync_resp = await client.post(
-                            f"{lume_url}/lume/pull",
-                            json=pull_payload,
-                            timeout=1800,
-                        )
-                        if sync_resp.status_code >= 400:
-                            try:
-                                detail = sync_resp.json()
-                            except Exception:
-                                detail = sync_resp.text
-                            raise RuntimeError(f"Lume pull failed for '{name}': {detail}")
-                    except (httpx.ReadError, httpx.RemoteProtocolError):
-                        # Lume v0.3.x drops the sync pull connection when done.
-                        # Verify the VM was created.
-                        try:
-                            check = await client.get(f"{lume_url}/lume/vms/{name}", timeout=10)
-                            if check.status_code != 200 or check.json().get("status") in (
-                                "",
-                                None,
-                                "error",
-                            ):
-                                raise RuntimeError(
-                                    f"Lume pull failed for '{name}': connection dropped and VM not found"
-                                    " (check GITHUB_TOKEN is set in lume's LaunchAgent plist)"
-                                )
-                        except httpx.HTTPError as e:
-                            raise RuntimeError(f"Lume pull failed for '{name}': {e}") from e
-                    print(file=sys.stderr)
-                    logger.info(f"Running Lume VM {name} (v0.3.x path)...")
-                    run_resp = await client.post(
-                        f"{lume_url}/lume/vms/{name}/run",
-                        json={
-                            "noDisplay": opts.get("no_display", True),
-                            "sharedDirectories": opts.get("shared_directories", []),
-                        },
-                        timeout=120,
-                    )
-                    if run_resp.status_code >= 400:
-                        try:
-                            detail = run_resp.json()
-                        except Exception:
-                            detail = run_resp.text
-                        raise RuntimeError(f"Lume failed to run VM '{name}': {detail}")
-                    ip = await self._wait_for_ip(name, lume_url)
-                    info = RuntimeInfo(host=ip, api_port=self.api_port, name=name)
-                    await self.is_ready(info)
-                    return info
-                if start_resp.status_code == 404:
-                    # Older lume without /pull/start — fall back to synchronous pull
-                    logger.info(
-                        "Lume does not support /pull/start, falling back to synchronous pull..."
-                    )
-                    try:
-                        pull_resp = await client.post(
-                            f"{lume_url}/lume/pull",
-                            json=pull_payload,
-                            timeout=1800,
-                        )
-                    except (httpx.ReadError, httpx.RemoteProtocolError):
-                        # Lume v0.3.x drops the HTTP connection after pull
-                        # completes. Check if the VM was actually created.
-                        logger.info(
-                            f"Lume sync pull connection dropped — checking if VM '{name}' was created..."
-                        )
-                        try:
-                            check = await client.get(f"{lume_url}/lume/vms/{name}", timeout=10)
-                            if check.status_code == 200:
-                                vm_data = check.json()
-                                if vm_data.get("status") not in ("", None, "error"):
-                                    logger.info(
-                                        f"VM '{name}' exists after connection drop — pull succeeded"
-                                    )
-                                    # fall through to run the VM
-                                    pull_resp = check  # dummy, not used further
-                            else:
-                                raise RuntimeError(
-                                    f"Lume pull failed for '{name}': connection dropped and VM not found"
-                                    " (check GITHUB_TOKEN is set in lume's LaunchAgent plist)"
-                                )
-                        except httpx.HTTPError as check_err:
-                            raise RuntimeError(
-                                f"Lume pull failed for '{name}': connection dropped and could not verify VM: {check_err}"
-                            ) from check_err
-                    if pull_resp.status_code >= 400:
-                        try:
-                            detail = pull_resp.json()
-                        except Exception:
-                            detail = pull_resp.text
-                        raise RuntimeError(f"Lume pull failed for '{name}': {detail}")
-                elif start_resp.status_code >= 400:
-                    try:
-                        detail = start_resp.json()
-                    except Exception:
-                        detail = start_resp.text
-                    raise RuntimeError(f"Lume pull/start failed for '{name}': {detail}")
-                else:
-                    # Poll /lume/vms/{name} until status leaves "pulling"
-                    logger.info(f"Pulling image for '{name}'...")
-                    pull_deadline = asyncio.get_event_loop().time() + 1800
-                    last_progress = -1.0
-                    while asyncio.get_event_loop().time() < pull_deadline:
-                        try:
-                            poll = await client.get(f"{lume_url}/lume/vms/{name}", timeout=10)
-                        except (httpx.ReadError, httpx.RemoteProtocolError, httpx.ConnectError):
-                            await asyncio.sleep(3)
-                            continue
-                        if poll.status_code == 200:
-                            data = poll.json()
-                            status = data.get("status", "")
-                            progress = data.get("downloadProgress")
-                            if progress is not None and progress != last_progress:
-                                print(
-                                    f"\rPulling macOS image: {progress:.0f}%",
-                                    end="",
-                                    flush=True,
-                                    file=sys.stderr,
-                                )
-                                last_progress = progress
-                            if status == "pulling":
-                                await asyncio.sleep(3)
-                                continue
-                            # Pull failed — lume surfaced an error via status
-                            if "error" in status.lower():
-                                raise RuntimeError(
-                                    f"Lume pull failed for '{name}': {data.get('message', status)}"
-                                )
-                            break
-                        elif poll.status_code >= 400:
-                            # VM not found — pull may have failed before creating the VM
-                            data = {}
-                            try:
-                                data = poll.json()
-                            except Exception:
-                                pass
-                            raise RuntimeError(
-                                f"Lume pull failed for '{name}': {data.get('message', poll.text)}"
-                            )
-                        await asyncio.sleep(3)
-                    else:
-                        raise TimeoutError(f"Lume pull for '{name}' did not complete within 1800s")
-                    if last_progress >= 0:
-                        print(file=sys.stderr)  # newline after progress bar
-                logger.info(f"Running Lume VM {name}...")
-                run_resp = await client.post(
-                    f"{lume_url}/lume/vms/{name}/run",
-                    json={
-                        "noDisplay": opts.get("no_display", True),
-                        "sharedDirectories": opts.get("shared_directories", []),
-                    },
-                    timeout=120,
-                )
-                if run_resp.status_code >= 400:
-                    try:
-                        detail = run_resp.json()
-                    except Exception:
-                        detail = run_resp.text
-                    raise RuntimeError(f"Lume failed to run VM '{name}': {detail}")
-
+            vm = resp.json() if resp.status_code == 200 else {}
+        existing_status = vm.get("status")
+        if existing_status == "running":
+            logger.info(f"Lume VM {name} already running")
             ip = await self._wait_for_ip(name, lume_url)
+            await self._deliver_vnc_config(name, lume_url)
+            info = RuntimeInfo(host=ip, api_port=self.api_port, name=name)
+            await self.is_ready(info)
+            await self._apply_image_layers(image, info)
+            return info
+        if existing_status in ("stopped", "suspended"):
+            # Resume the existing stopped VM rather than colliding with a clone
+            logger.info(f"Lume VM {name} exists (stopped) — resuming")
+            return await self.resume(image, name, **opts)
 
+        oci_ref = image._registry or MACOS_VERSION_IMAGES.get(image.version or "") or MACOS_SEQUOIA
+
+        # Pull-once + clone: ensure a stopped base VM exists, then clone it
+        # (APFS clonefile — instant).  First call takes ~155s; subsequent calls
+        # return in <1s regardless of image size.
+        base_name = _base_vm_name(oci_ref)
+        await self.ensure_base(image, base_name)
+        await self.fork(base_name, name)
+
+        # Run the cloned VM
+        await self._run_vm(name, lume_url, opts)
+        ip = await self._wait_for_ip(name, lume_url)
         await self._deliver_vnc_config(name, lume_url)
         info = RuntimeInfo(host=ip, api_port=self.api_port, name=name)
         await self.is_ready(info)
+        await self._apply_image_layers(image, info)
         return info
+
+    async def _run_vm(self, name: str, lume_url: str, opts: dict) -> None:
+        """POST /lume/vms/{name}/run and raise on failure."""
+        async with httpx.AsyncClient(timeout=120) as client:
+            run_resp = await client.post(
+                f"{lume_url}/lume/vms/{name}/run",
+                json={
+                    "noDisplay": opts.get("no_display", True),
+                    "sharedDirectories": opts.get("shared_directories", []),
+                },
+                timeout=120,
+            )
+        if run_resp.status_code >= 400:
+            try:
+                detail = run_resp.json()
+            except Exception:
+                detail = run_resp.text
+            raise RuntimeError(f"Lume failed to run VM '{name}': {detail}")
+
+    # ── Checkpoint / fork primitives ─────────────────────────────────────────
+
+    async def ensure_base(self, image: Image, base_name: str):  # -> CheckpointInfo
+        """Pull an OCI image into a stopped golden base VM, if it doesn't exist yet.
+
+        Idempotent — if *base_name* already exists and is stopped, returns
+        immediately.  Raises if the base VM is running, because cloning a live VM
+        can produce dirty or inconsistent clones (same constraint as cloud snapshots).
+        The base VM is never started; it only serves as a fork source.
+        """
+        import time
+
+        from cua_sandbox.runtime.base import CheckpointInfo
+
+        lume_url = f"http://{self.lume_host}:{self.lume_port}"
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.get(f"{lume_url}/lume/vms/{base_name}")
+        if resp.status_code == 200:
+            vm = resp.json()
+            if vm.get("status") == "running":
+                raise RuntimeError(
+                    f"Base VM '{base_name}' is running — stop it before using as a clone source"
+                )
+            if vm.get("status") in ("stopped", "suspended"):
+                logger.info(f"Base VM '{base_name}' already exists (stopped) — skipping pull")
+                return CheckpointInfo(name=base_name, runtime_type="lume", created_at=time.time())
+
+        oci_ref = image._registry or MACOS_VERSION_IMAGES.get(image.version or "") or MACOS_SEQUOIA
+        logger.info(f"Pulling base image '{oci_ref}' → '{base_name}' (first time only)...")
+        pull_payload: dict = {"image": oci_ref, "name": base_name}
+        parts = oci_ref.split("/")
+        if len(parts) >= 3 and "." in parts[0]:
+            pull_payload = {
+                "image": "/".join(parts[2:]),
+                "name": base_name,
+                "registry": parts[0],
+                "organization": parts[1],
+            }
+        await self._pull_vm(base_name, lume_url, pull_payload)
+        return CheckpointInfo(name=base_name, runtime_type="lume", created_at=time.time())
+
+    async def fork(self, base_name: str, new_name: str, **opts) -> None:
+        """Clone a stopped VM *base_name* → *new_name* via APFS clonefile (instant).
+
+        The source VM must be stopped before calling this — cloning a running VM
+        risks dirty state or clone failures (mirrors cloud snapshot behaviour).
+        """
+        lume_url = f"http://{self.lume_host}:{self.lume_port}"
+        logger.info(f"Cloning base VM '{base_name}' → '{new_name}'")
+        async with httpx.AsyncClient(timeout=60) as client:
+            resp = await client.post(
+                f"{lume_url}/lume/vms/clone",
+                json={"name": base_name, "newName": new_name},
+                timeout=60,
+            )
+        if resp.status_code >= 400:
+            try:
+                detail = resp.json()
+            except Exception:
+                detail = resp.text
+            raise RuntimeError(f"Lume clone '{base_name}' → '{new_name}' failed: {detail}")
+        logger.info(f"Cloned '{base_name}' → '{new_name}' successfully")
+
+    # Prefix used to distinguish checkpoint VMs from ordinary sandboxes
+    _CHECKPOINT_PREFIX = "cua-ckpt-"
+
+    async def checkpoint(self, name: str, checkpoint_name: str, **opts):  # -> CheckpointInfo
+        """Stop *name*, clone it into a checkpoint, then restart *name*.
+
+        Mirrors the cloud behaviour (stop → snapshot → restart) so clones are
+        always taken from a clean stopped state.
+        """
+        import time
+
+        from cua_sandbox.runtime.base import CheckpointInfo
+
+        lume_url = f"http://{self.lume_host}:{self.lume_port}"
+
+        # Enforce the naming prefix so list/delete_checkpoint stay scoped
+        if not checkpoint_name.startswith(
+            self._CHECKPOINT_PREFIX
+        ) and not checkpoint_name.startswith("cua-base-"):
+            checkpoint_name = f"{self._CHECKPOINT_PREFIX}{checkpoint_name}"
+
+        # Determine whether the source VM is running so we can restart it after
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.get(f"{lume_url}/lume/vms/{name}")
+            vm = resp.json() if resp.status_code == 200 else {}
+        was_running = vm.get("status") == "running"
+
+        if was_running:
+            logger.info(f"Stopping '{name}' before checkpoint clone")
+            await self.stop(name)
+
+        try:
+            await self.fork(name, checkpoint_name)
+        finally:
+            if was_running:
+                logger.info(f"Restarting '{name}' after checkpoint clone")
+                await self._run_vm(name, lume_url, opts)
+
+        return CheckpointInfo(
+            name=checkpoint_name,
+            runtime_type="lume",
+            created_at=time.time(),
+            metadata={"source": name},
+        )
+
+    async def list_checkpoints(self):  # -> list[CheckpointInfo]
+        """Return VMs that are checkpoints (cua-base-* or cua-ckpt-* prefix)."""
+        import time
+
+        from cua_sandbox.runtime.base import CheckpointInfo
+
+        vms = await self.list()
+        return [
+            CheckpointInfo(name=v["name"], runtime_type="lume", created_at=time.time())
+            for v in vms
+            if v["name"].startswith("cua-base-") or v["name"].startswith(self._CHECKPOINT_PREFIX)
+        ]
+
+    async def delete_checkpoint(self, checkpoint_name: str) -> None:
+        """Delete a checkpoint VM. Only operates on cua-base-* / cua-ckpt-* names."""
+        if not checkpoint_name.startswith("cua-base-") and not checkpoint_name.startswith(
+            self._CHECKPOINT_PREFIX
+        ):
+            raise ValueError(
+                f"'{checkpoint_name}' does not look like a checkpoint "
+                f"(expected 'cua-base-' or '{self._CHECKPOINT_PREFIX}' prefix)"
+            )
+        await self.delete(checkpoint_name)
+
+    # ── Internal pull helper ──────────────────────────────────────────────────
+
+    async def _pull_vm(self, name: str, lume_url: str, pull_payload: dict) -> None:
+        """Pull an OCI image into a stopped VM named *name*.
+
+        Tries /lume/pull/start (async with progress polling) first, falls back
+        to the synchronous /lume/pull for older lume versions.
+        """
+        async with httpx.AsyncClient(timeout=30) as client:
+            try:
+                start_resp = await self._pull_start_with_retry(lume_url, pull_payload)
+            except (httpx.ReadError, httpx.RemoteProtocolError):
+                # lume v0.3.x — sync pull
+                logger.info("Lume /pull/start unavailable, falling back to synchronous pull...")
+                print("\rPulling macOS image...", end="", flush=True, file=sys.stderr)
+                try:
+                    sync_resp = await client.post(
+                        f"{lume_url}/lume/pull", json=pull_payload, timeout=1800
+                    )
+                    if sync_resp.status_code >= 400:
+                        raise RuntimeError(
+                            f"Lume pull failed for '{name}': {_resp_detail(sync_resp)}"
+                        )
+                except (httpx.ReadError, httpx.RemoteProtocolError):
+                    check = await client.get(f"{lume_url}/lume/vms/{name}", timeout=10)
+                    if check.status_code != 200 or check.json().get("status") in (
+                        "",
+                        None,
+                        "error",
+                    ):
+                        raise RuntimeError(
+                            f"Lume pull failed for '{name}': connection dropped and VM not found"
+                            " (check GITHUB_TOKEN is set in lume's LaunchAgent plist)"
+                        )
+                print(file=sys.stderr)
+                return
+
+            if start_resp.status_code == 404:
+                # Older lume without /pull/start
+                try:
+                    pull_resp = await client.post(
+                        f"{lume_url}/lume/pull", json=pull_payload, timeout=1800
+                    )
+                except (httpx.ReadError, httpx.RemoteProtocolError):
+                    check = await client.get(f"{lume_url}/lume/vms/{name}", timeout=10)
+                    if check.status_code != 200 or check.json().get("status") in (
+                        "",
+                        None,
+                        "error",
+                    ):
+                        raise RuntimeError(
+                            f"Lume pull failed for '{name}': connection dropped and VM not found"
+                        )
+                    return
+                if pull_resp.status_code >= 400:
+                    raise RuntimeError(f"Lume pull failed for '{name}': {_resp_detail(pull_resp)}")
+                return
+
+            if start_resp.status_code >= 400:
+                raise RuntimeError(
+                    f"Lume pull/start failed for '{name}': {_resp_detail(start_resp)}"
+                )
+
+            # Poll until pull completes
+            logger.info(f"Pulling image for '{name}'...")
+            pull_deadline = asyncio.get_event_loop().time() + 1800
+            last_progress = -1.0
+            while asyncio.get_event_loop().time() < pull_deadline:
+                try:
+                    poll = await client.get(f"{lume_url}/lume/vms/{name}", timeout=10)
+                except (httpx.ReadError, httpx.RemoteProtocolError, httpx.ConnectError):
+                    await asyncio.sleep(3)
+                    continue
+                if poll.status_code == 200:
+                    data = poll.json()
+                    status = data.get("status", "")
+                    progress = data.get("downloadProgress")
+                    if progress is not None and progress != last_progress:
+                        print(
+                            f"\rPulling macOS image: {progress:.0f}%",
+                            end="",
+                            flush=True,
+                            file=sys.stderr,
+                        )
+                        last_progress = progress
+                    if status == "pulling":
+                        await asyncio.sleep(3)
+                        continue
+                    if "error" in status.lower():
+                        raise RuntimeError(
+                            f"Lume pull failed for '{name}': {data.get('message', status)}"
+                        )
+                    break
+                elif poll.status_code >= 400:
+                    data = {}
+                    try:
+                        data = poll.json()
+                    except Exception:
+                        pass
+                    raise RuntimeError(
+                        f"Lume pull failed for '{name}': {data.get('message', poll.text)}"
+                    )
+                await asyncio.sleep(3)
+            else:
+                raise TimeoutError(f"Lume pull for '{name}' did not complete within 1800s")
+            if last_progress >= 0:
+                print(file=sys.stderr)
+
+    async def _pull_start_with_retry(
+        self, lume_url: str, payload: dict, retries: int = 3
+    ) -> httpx.Response:
+        """POST /lume/pull/start with retry for spurious 'Invalid request body' 400s.
+
+        Lume's custom HTTP server reads with minimumIncompleteLength=1, so on a
+        fresh TCP connection the body can arrive after the first receive() returns,
+        causing a spurious 400.  A brief pause + retry recovers reliably.
+        """
+        last_resp: httpx.Response | None = None
+        for attempt in range(retries):
+            if attempt > 0:
+                await asyncio.sleep(1)
+            async with httpx.AsyncClient(timeout=30) as pull_client:
+                resp = await pull_client.post(
+                    f"{lume_url}/lume/pull/start",
+                    json=payload,
+                    timeout=30,
+                )
+            if resp.status_code != 400 or "Invalid request body" not in resp.text:
+                return resp  # success or a real error
+            logger.warning(
+                "pull/start got 'Invalid request body' (attempt %d/%d), retrying...",
+                attempt + 1,
+                retries,
+            )
+            last_resp = resp
+        return last_resp  # type: ignore[return-value]
+
+    async def _apply_image_layers(self, image: "Image", info: RuntimeInfo) -> None:
+        """Apply image layers (run, brew_install, env, copy, etc.) via computer-server."""
+        env_items = getattr(image, "_env", ())
+        file_items = getattr(image, "_files", ())
+        has_work = image._layers or file_items
+        if not has_work and not env_items:
+            return
+        from cua_sandbox.builder.executor import LayerExecutor
+
+        executor = LayerExecutor(f"http://{info.host}:{info.api_port}", os_type=image.os_type)
+        if env_items and image.os_type != "windows":
+            if image.os_type == "macos":
+                # macOS: computer-server runs under launchd with an explicit
+                # EnvironmentVariables dict in its plist.  launchctl setenv is
+                # ignored by such services, so we must add vars to the plist
+                # directly via PlistBuddy, then unload/load the service.
+                import re as _re
+
+                plist = "~/Library/LaunchAgents/com.trycua.computer_server.plist"
+                for k, v in env_items:
+                    # Validate key: must be a safe identifier (alphanumeric + _)
+                    if not _re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", k):
+                        raise ValueError(f"Unsafe env var name: {k!r}")
+                    # Escape value for PlistBuddy: single-quote the shell arg,
+                    # and escape any single quotes within the value itself.
+                    safe_v = v.replace("'", "'\\''")
+                    # Use Set if key exists, Add otherwise
+                    await executor.run_command(
+                        f"/usr/libexec/PlistBuddy -c 'Set :EnvironmentVariables:{k} {safe_v}' {plist} 2>/dev/null || "
+                        f"/usr/libexec/PlistBuddy -c 'Add :EnvironmentVariables:{k} string {safe_v}' {plist}"
+                    )
+                # Reload via lume ssh from the host — launchctl unload would kill
+                # computer-server mid-execution if run from inside via /cmd.
+                lume_bin = _lume_path() or "lume"
+                reload_cmd = (
+                    "launchctl bootout gui/$(id -u)/com.trycua.computer_server 2>/dev/null; "
+                    f"launchctl bootstrap gui/$(id -u) {plist}"
+                )
+                proc = await asyncio.create_subprocess_exec(
+                    lume_bin,
+                    "ssh",
+                    info.name,
+                    "--",
+                    reload_cmd,
+                    stdout=asyncio.subprocess.DEVNULL,
+                    stderr=asyncio.subprocess.DEVNULL,
+                )
+                await asyncio.wait_for(proc.wait(), timeout=30)
+                await self.is_ready(info)  # wait for computer-server to come back
+            else:
+                import re as _re
+                import shlex as _shlex
+
+                sudo = "sudo"
+                # Validate all keys up front
+                for k, _ in env_items:
+                    if not _re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", k):
+                        raise ValueError(f"Unsafe env var name: {k!r}")
+                await executor.run_command(
+                    f"printf '#!/bin/sh\\n' | {sudo} tee /etc/profile.d/cua-env.sh > /dev/null"
+                )
+                for k, v in env_items:
+                    quoted_v = _shlex.quote(v)
+                    await executor.run_command(
+                        f"printf 'export {k}=%s\\n' {quoted_v} "
+                        f"| {sudo} tee -a /etc/profile.d/cua-env.sh > /dev/null"
+                    )
+        for src, dst in file_items:
+            await executor.execute_layers([{"type": "copy", "src": src, "dst": dst}])
+        if image._layers:
+            await executor.execute_layers(list(image._layers))
 
     async def _deliver_vnc_config(self, name: str, lume_url: str) -> None:
         """Write the current VNC port/password into ~/.vnc.env inside the VM.

@@ -14,16 +14,24 @@ export default function sitemap(): MetadataRoute.Sitemap {
 
     return {
       url: `${baseUrl}${url}`,
-      lastModified: new Date(),
+      lastModified: page.data.lastModified
+        ? new Date(page.data.lastModified)
+        : undefined,
       changeFrequency: 'weekly' as const,
       priority: url === '/docs' ? 1.0 : 0.8,
     };
   });
 
-  // Add main docs page if not included
+  // Add main docs page with the most recent lastModified across all doc pages
+  const latestModified = docPages.reduce<Date | undefined>((latest, page) => {
+    if (!page.lastModified) return latest;
+    if (!latest) return page.lastModified;
+    return page.lastModified > latest ? page.lastModified : latest;
+  }, undefined);
+
   const mainDocsPage = {
     url: `${baseUrl}/docs`,
-    lastModified: new Date(),
+    lastModified: latestModified,
     changeFrequency: 'weekly' as const,
     priority: 1.0,
   };

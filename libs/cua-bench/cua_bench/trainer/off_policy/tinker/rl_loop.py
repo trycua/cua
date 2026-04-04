@@ -16,17 +16,26 @@ from tinker_cookbook import checkpoint_utils, model_info, renderers
 
 @dataclass
 class TrainingConfig:
+    # --- Mode ---
+    # "online" = collect rollouts via `cb run` each epoch.
+    # "offline" = use pre-collected run IDs (skip rollout collection).
+    mode: str = "online"
+
     # --- Model ---
     base_model: str = "Qwen/Qwen3-8B"
     lora_rank: int = 16
     lora_seed: int = 42
 
-    # --- Agent / rollout ---
+    # --- Agent / rollout (online mode) ---
     tasks_path: str = "tasks/"
     agent: str = "opencua"
     model: str = "openai/opencua"
     max_steps_per_episode: int = 50
     vllm_base_url: str = "http://localhost:30000/v1"
+
+    # --- Offline mode ---
+    # List of pre-collected run IDs to train on. Reused every epoch.
+    offline_run_ids: list[str] = field(default_factory=list)
 
     # --- Training loop ---
     epochs: int = 20
@@ -67,6 +76,13 @@ def run(config: TrainingConfig) -> None:
     from transformers import AutoTokenizer
 
     from . import traces, rollout, grpo, checkpoints
+    from .rollout import _get_run_output_dir
+
+    if config.mode not in ("online", "offline"):
+        raise ValueError(f"Unknown mode {config.mode!r}. Must be 'online' or 'offline'.")
+
+    if config.mode == "offline" and not config.offline_run_ids:
+        raise ValueError("offline mode requires at least one run ID in offline_run_ids.")
 
     api_key = config.tinker_api_key or os.environ.get("TINKER_API_KEY")
     if not api_key:
@@ -133,19 +149,30 @@ def run(config: TrainingConfig) -> None:
         # 2. Snapshot current weights for reference logprobs
         sampling_client = training_client.save_weights_and_get_sampling_client()
 
-        # 3. Rollout (run num_rollouts times for GRPO group diversity)
-        print(f"[loop] Collecting {config.num_rollouts} rollout(s)...")
-        rollout_results = rollout.run_rollouts(
-            tasks_path=config.tasks_path,
-            agent=config.agent,
-            model=config.model,
-            max_steps=config.max_steps_per_episode,
-            num_rollouts=config.num_rollouts,
-            extra_env=config.rollout_env or None,
-        )
-
-        run_ids = [r[0] for r in rollout_results]
-        run_dirs = [r[1] for r in rollout_results]
+        # 3. Collect or resolve rollout data
+        if config.mode == "online":
+            print(f"[loop] Collecting {config.num_rollouts} rollout(s)...")
+            rollout_results = rollout.run_rollouts(
+                tasks_path=config.tasks_path,
+                agent=config.agent,
+                model=config.model,
+                max_steps=config.max_steps_per_episode,
+                num_rollouts=config.num_rollouts,
+                extra_env=config.rollout_env or None,
+            )
+            run_ids = [r[0] for r in rollout_results]
+            run_dirs = [r[1] for r in rollout_results]
+        else:
+            # Offline: reuse pre-collected run IDs every epoch
+            run_ids = list(config.offline_run_ids)
+            run_dirs = [_get_run_output_dir(rid) for rid in run_ids]
+            missing = [d for d in run_dirs if not d.exists()]
+            if missing:
+                raise FileNotFoundError(
+                    f"Offline run directories not found: {missing}. "
+                    "Check that the run IDs are correct and traces exist on disk."
+                )
+            print(f"[loop] Offline mode: using {len(run_ids)} pre-collected run(s)")
 
         # 4. Load traces from all rollout runs
         episodes = traces.load_runs(run_dirs)
@@ -223,6 +250,8 @@ def _build_parser() -> argparse.ArgumentParser:
         description="Off-policy RL training loop using Tinker (GRPO-style).",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
+    p.add_argument("--mode", choices=["online", "offline"], default="online",
+                   help="'online' collects rollouts via cb run; 'offline' uses pre-collected run IDs")
     p.add_argument("--base-model", default="Qwen/Qwen3-8B")
     p.add_argument("--lora-rank", type=int, default=16)
     p.add_argument("--tasks-path", default="tasks/")
@@ -236,6 +265,8 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--log-path", default="/tmp/tinker-cua-rl")
     p.add_argument("--num-rollouts", type=int, default=2,
                    help="Number of rollouts per task per epoch (>= 2 for GRPO)")
+    p.add_argument("--offline-run-ids", nargs="*", default=[],
+                   help="Run IDs for offline mode (reused every epoch)")
     p.add_argument("--gamma", type=float, default=0.99)
     p.add_argument("--lr", type=float, default=1e-5)
     p.add_argument("--resume-from", default=None,
@@ -247,6 +278,7 @@ if __name__ == "__main__":
     args = _build_parser().parse_args()
 
     config = TrainingConfig(
+        mode=args.mode,
         base_model=args.base_model,
         lora_rank=args.lora_rank,
         tasks_path=args.tasks_path,
@@ -258,6 +290,7 @@ if __name__ == "__main__":
         save_every=args.save_every,
         log_path=args.log_path,
         num_rollouts=args.num_rollouts,
+        offline_run_ids=args.offline_run_ids,
         resume_from=args.resume_from,
         grpo=GRPOConfig(
             gamma=args.gamma,

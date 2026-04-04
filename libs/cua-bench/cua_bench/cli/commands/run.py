@@ -1325,9 +1325,10 @@ async def _cmd_run_task_detached(args) -> int:
     if provider_type in ("simulated", "webtop"):
         cmd.extend(["--provider-type", "simulated"])
 
-    # Forward --with paths to subprocess
+    # Forward --with paths to subprocess (resolve to absolute so CWD changes don't matter)
     for dev_path in getattr(args, "dev_paths", None) or []:
-        cmd.extend(["--with", dev_path])
+        abs_dev_path = str(Path(dev_path).resolve())
+        cmd.extend(["--with", abs_dev_path])
 
     # Forward --verbose
     if getattr(args, "verbose", False):

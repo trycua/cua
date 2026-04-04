@@ -169,8 +169,17 @@ async def _execute_simulated_interactive(args, env_path: Path) -> int:
         print(f"{CYAN}Loading environment: {env_path}{RESET}")
         env = make(str(env_path))
 
-        # Set headless to False for interactive mode
-        env.headless = False
+        # Set headless to False for interactive mode (fall back if no display available)
+        import os
+        import sys
+        has_display = (
+            sys.platform == "darwin"
+            or bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
+        )
+        if not has_display:
+            print(f"{GREY}No graphical display detected. Running in headless mode.{RESET}")
+            
+        env.headless = not has_display
         env.print_actions = True
         # Apply max steps if provided
         if getattr(args, "max_steps", None) is not None:

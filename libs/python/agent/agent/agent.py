@@ -639,7 +639,7 @@ class ComputerAgent:
         for callback in self.callbacks:
             if hasattr(callback, "on_run_continue"):
                 should_continue = await callback.on_run_continue(kwargs, old_items, new_items)
-                if not should_continue:
+                if not should_continue: 
                     return False
         return True
 
@@ -1022,9 +1022,6 @@ class ComputerAgent:
             )
             result = get_json(result)
 
-            # Lifecycle hook: Postprocess messages after the LLM call
-            # Use cases:
-            # - PII deanonymization (if you want tool calls to see PII)
             result["output"] = await self._on_llm_end(result.get("output", []))
             await self._on_responses(loop_kwargs, result)
 
@@ -1033,7 +1030,7 @@ class ComputerAgent:
 
             # Add agent response to new_items
             new_items += result.get("output")
-
+            
             # Get output call ids
             output_call_ids = get_output_call_ids(result.get("output", []))
 
@@ -1042,6 +1039,15 @@ class ComputerAgent:
                 partial_items = await self._handle_item(
                     item, self.computer_handler, ignore_call_ids=output_call_ids
                 )
+
+                if partial_items:
+                    for pi in partial_items:
+                        pi_type = pi.get("type", "")
+                        if pi_type == "computer_call_output":
+                            output = pi.get("output", {})
+                            has_image = "image_url" in output if isinstance(output, dict) else False
+                       
+
                 new_items += partial_items
 
                 # Yield partial response if any

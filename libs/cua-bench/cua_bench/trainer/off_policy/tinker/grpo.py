@@ -146,7 +146,7 @@ def _build_datum(
             "target_tokens": TensorData.from_torch(torch.tensor(target_tokens)),
             "logprobs": TensorData.from_torch(torch.tensor(padded_logprobs)),
             "advantages": TensorData.from_torch(torch.tensor(padded_advantages)),
-        },
+        }
     )
 
 
@@ -182,15 +182,15 @@ def build_batch(
             advantage = _trajectory_advantage(ep, task_episodes)
 
             # Skip if advantage is exactly zero (all same reward in group)
-            if advantage == 0.0:
-                continue
-
+            # if advantage == 0.0:
+            #     continue
+            
             # Build trajectory-level messages with latest N images
             messages = _build_trajectory_messages(ep, max_images=max_images)
-
+            
             # Use renderer to convert messages into a ModelInput prompt
             prompt = renderer.build_generation_prompt(messages)
-
+            
             # Tokenize the last action text as the "action" to train on
             last_step = ep.steps[-1] if ep.steps else None
             if last_step is None:

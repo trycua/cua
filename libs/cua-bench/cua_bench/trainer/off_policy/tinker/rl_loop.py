@@ -8,6 +8,7 @@ from typing import Optional
 
 from .grpo import GRPOConfig
 from tinker_cookbook import checkpoint_utils, model_info, renderers
+from tinker_cookbook.image_processing_utils import get_image_processor
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -73,7 +74,7 @@ def run(config: TrainingConfig) -> None:
     """
     from tinker import ServiceClient
     import tinker.types as tt
-    from transformers import AutoTokenizer
+    from transformers import AutoTokenizer, AutoProcessor
 
     from . import traces, rollout, grpo, checkpoints
     from .rollout import _get_run_output_dir
@@ -116,8 +117,10 @@ def run(config: TrainingConfig) -> None:
         config.base_model, trust_remote_code=True
     )
     
+    image_processor = get_image_processor(config.base_model)
+    
     renderer_name = model_info.get_recommended_renderer_name(config.base_model)
-    renderer = renderers.get_renderer(renderer_name, tokenizer)
+    renderer = renderers.get_renderer(renderer_name, tokenizer=tokenizer, image_processor=image_processor)
 
     # --- Sampling params for reference logprobs ---
     sampling_params = tt.SamplingParams(max_tokens=1)
@@ -143,7 +146,7 @@ def run(config: TrainingConfig) -> None:
                 log_path=config.log_path,
                 kind="state",
                 loop_state={"epoch": epoch - 1},
-                ttl_seconds=config.ttl_seconds,
+                ttl_seconds=config.ttl_seconds
             )
 
         # 2. Snapshot current weights for reference logprobs
@@ -176,6 +179,9 @@ def run(config: TrainingConfig) -> None:
 
         # 4. Load traces from all rollout runs
         episodes = traces.load_runs(run_dirs)
+        
+        breakpoint()
+        
         if not episodes:
             print(f"[loop] No valid episodes across {len(run_dirs)} runs. Skipping epoch.")
             continue
@@ -209,7 +215,7 @@ def run(config: TrainingConfig) -> None:
             sampling_params=sampling_params,
             tokenizer=tokenizer,
             gamma=config.grpo.gamma,
-            max_images=config.grpo.max_images,
+            max_images=config.grpo.max_images
         )
 
         # 6. Training step

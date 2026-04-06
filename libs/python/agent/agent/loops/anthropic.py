@@ -1667,14 +1667,14 @@ def _convert_completion_to_responses_items(
     return responses_items
 
 
-def _add_cache_control(completion_messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def _add_cache_control(completion_messages: List[Dict[str, Any]], max_markers: int = 4) -> List[Dict[str, Any]]:
     """Add cache control to completion messages"""
     num_writes = 0
     for message in completion_messages:
         message["cache_control"] = {"type": "ephemeral"}
         num_writes += 1
-        # Cache control has a maximum of 4 blocks
-        if num_writes >= 4:
+        # Cache control has a maximum of max_markers blocks
+        if num_writes >= max_markers:
             break
 
     return completion_messages
@@ -1790,8 +1790,12 @@ class AnthropicHostedToolsConfig(AsyncAgentConfig):
         if use_prompt_caching:
             # First combine messages to reduce number of blocks
             completion_messages = _combine_completion_messages(completion_messages)
-            # Then add cache control, anthropic requires explicit "cache_control" dicts
-            completion_messages = _add_cache_control(completion_messages)
+            # Reserve 1 cache slot for tools (first in prefix order), rest for messages
+            msg_slots = 3 if anthropic_tools else 4
+            completion_messages = _add_cache_control(completion_messages, max_markers=msg_slots)
+            # Cache tool definitions — tools are first in the prefix hierarchy
+            if anthropic_tools:
+                anthropic_tools[-1]["cache_control"] = {"type": "ephemeral"}
 
         # Prepare API call kwargs
         api_kwargs = {

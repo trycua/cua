@@ -1921,6 +1921,7 @@ Task: Click {instruction}. Output ONLY a click action on the target element.""",
             "model": model,
             "messages": messages,
             "tools": [computer_tool],
+            "tool_choice": {"type": "any"},
             "stream": False,
             "max_tokens": 100,  # Keep response short for click prediction
             "headers": {"anthropic-beta": tool_config["beta_flag"]},

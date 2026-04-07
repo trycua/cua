@@ -131,7 +131,9 @@ async def _map_computer_tool_to_anthropic(computer_tool: Any, tool_version: str)
     }
 
 
-async def _prepare_tools_for_anthropic(tool_schemas: List[Dict[str, Any]], model: str) -> Tools:
+async def _prepare_tools_for_anthropic(
+    tool_schemas: List[Dict[str, Any]], model: str, use_prompt_caching: bool = False
+) -> Tools:
     """Prepare tools for Anthropic API format."""
     tool_config = _get_tool_config_for_model(model)
     anthropic_tools = []
@@ -154,6 +156,10 @@ async def _prepare_tools_for_anthropic(tool_schemas: List[Dict[str, Any]], model
                     "input_schema": function_schema.get("parameters", {}),
                 }
             )
+
+    # Cache the entire tools prefix by marking the last tool
+    if use_prompt_caching and anthropic_tools:
+        anthropic_tools[-1]["cache_control"] = {"type": "ephemeral"}
 
     return anthropic_tools
 

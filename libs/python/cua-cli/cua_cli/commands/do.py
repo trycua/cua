@@ -800,9 +800,7 @@ def _cmd_snapshot(args: argparse.Namespace) -> int:
                 "1. Write a 1-2 sentence summary of what is currently on screen.\n"
                 "2. List every interactive element visible (buttons, links, inputs, "
                 "menus, checkboxes, dropdowns, etc.) with its center coordinates "
-                "in image pixels (origin = top-left). Be precise.\n\n"
-                "Respond in this exact JSON format:\n"
-                '{"summary": "...", "elements": [{"name": "...", "type": "...", "x": N, "y": N}, ...]}\n'
+                "in image pixels (origin = top-left). Be precise."
             )
             if extra:
                 prompt += f"\nAdditional instructions: {extra}"
@@ -827,28 +825,50 @@ def _cmd_snapshot(args: argparse.Namespace) -> int:
                         ],
                     }
                 ],
+                output_format={
+                    "type": "json_schema",
+                    "json_schema": {
+                        "name": "snapshot_analysis",
+                        "strict": True,
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "summary": {"type": "string"},
+                                "elements": {
+                                    "type": "array",
+                                    "items": {
+                                        "type": "object",
+                                        "properties": {
+                                            "name": {"type": "string"},
+                                            "type": {"type": "string"},
+                                            "x": {"type": "integer"},
+                                            "y": {"type": "integer"},
+                                        },
+                                        "required": ["name", "type", "x", "y"],
+                                        "additionalProperties": False,
+                                    },
+                                },
+                            },
+                            "required": ["summary", "elements"],
+                            "additionalProperties": False,
+                        },
+                    },
+                },
             )
 
-            raw = response.content[0].text.strip()
-            # Try to parse JSON; fall back to raw text
-            try:
-                parsed = json.loads(raw)
-                summary = parsed.get("summary", "")
-                elements = parsed.get("elements", [])
-                print(f"✅ snapshot — {save_path}")
+            parsed = json.loads(response.content[0].text)
+            summary = parsed["summary"]
+            elements = parsed["elements"]
+            print(f"✅ snapshot — {save_path}")
+            print()
+            print(summary)
+            if elements:
                 print()
-                print(summary)
-                if elements:
-                    print()
-                    print("Interactive elements:")
-                    for el in elements:
-                        print(
-                            f"  • {el.get('name', '?')} [{el.get('type', '?')}]  ({el.get('x', '?')}, {el.get('y', '?')})"
-                        )
-            except json.JSONDecodeError:
-                print(f"✅ snapshot — {save_path}")
-                print()
-                print(raw)
+                print("Interactive elements:")
+                for el in elements:
+                    print(
+                        f"  • {el['name']} [{el['type']}]  ({el['x']}, {el['y']})"
+                    )
 
         except ImportError:
             await _print_context(state["provider"], state.get("name", ""), state)

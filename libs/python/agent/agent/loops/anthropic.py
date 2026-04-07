@@ -1792,6 +1792,9 @@ class AnthropicHostedToolsConfig(AsyncAgentConfig):
             completion_messages = _combine_completion_messages(completion_messages)
             # Then add cache control, anthropic requires explicit "cache_control" dicts
             completion_messages = _add_cache_control(completion_messages)
+            # Cache tool definitions — they are identical every turn
+            if anthropic_tools:
+                anthropic_tools[-1]["cache_control"] = {"type": "ephemeral"}
 
         # Prepare API call kwargs
         api_kwargs = {

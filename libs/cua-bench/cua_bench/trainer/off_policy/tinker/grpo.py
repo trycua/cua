@@ -9,8 +9,6 @@ if TYPE_CHECKING:
 
     from .traces import Episode
 
-from PIL import Image
-
 from tinker_cookbook import renderers
 
 # ---------------------------------------------------------------------------
@@ -61,91 +59,73 @@ def _trajectory_advantage(
 # ---------------------------------------------------------------------------
 
 
-def _build_trajectory_messages(
+def _retained_steps(episode: "Episode", max_images: int = 3) -> list:
+    """Return the latest ``max_images`` steps that have a screenshot."""
+    steps = [s for s in episode.steps if s.screenshot is not None]
+    if len(steps) > max_images:
+        steps = steps[-max_images:]
+    return steps
+
+
+def _build_messages_up_to_obs(
     episode: "Episode",
-    max_images: int = 3,
+    steps: list,
+    up_to: int,
 ) -> list[dict]:
-    """Build a chat-style message list for the full trajectory.
-
-    Keeps the latest ``max_images`` screenshots so the prompt stays bounded.
-    Each step contributes its screenshot (the observation the model saw)
-    and the action_text it produced.  The task description is included as the
-    initial user instruction.
+    """Build messages including obs+actions for steps[:up_to] and only the
+    observation (screenshot) at steps[up_to].  The action at ``up_to`` is
+    excluded — it becomes the training target.
     """
-    # Collect (image, action_text) pairs from steps that have screenshots
-    step_entries: list[tuple[Image.Image, str]] = []
-    for step in episode.steps:
-        if step.screenshot is not None:
-            step_entries.append((step.screenshot, step.action_text))
-
-    # Keep only the latest max_images steps
-    if len(step_entries) > max_images:
-        step_entries = step_entries[-max_images:]
-
-    # Build the message list
-    content_parts: list[dict] = []
-
-    # Task instruction as text
-    content_parts.append({"type": "text", "text": episode.task_description})
-
-    # Add image + action pairs
-    for img, action_text in step_entries:
-        content_parts.append({"type": "image", "image": img.convert("RGB")})
-        content_parts.append({"type": "text", "text": action_text})
-
-    messages = [{"role": "user", "content": content_parts}]
-    return messages
+    content: list[dict] = [{"type": "text", "text": episode.task_description}]
+    for k, step in enumerate(steps):
+        if k < up_to:
+            content.append({"type": "image", "image": step.screenshot.convert("RGB")})
+            content.append({"type": "text", "text": step.action_text})
+        elif k == up_to:
+            content.append({"type": "image", "image": step.screenshot.convert("RGB")})
+            break
+    return [{"role": "user", "content": content}]
 
 
 # ---------------------------------------------------------------------------
-# Datum construction (matches GRPO reference pattern)
+# Datum construction (multi-turn, per-token masking)
 # ---------------------------------------------------------------------------
 
 
 def _build_datum(
-    prompt: "tt.ModelInput",
-    advantage: float,
+    model_input: "tt.ModelInput",
+    target_tokens: list[int],
     ref_logprobs: list[float],
-    action_ids: list[int],
+    advantages: list[float],
 ) -> Optional["tt.Datum"]:
     """Assemble a single Tinker Datum for one trajectory.
 
-    Layout follows the GRPO reference:
-        model_input = prompt.append(action_tokens)
-        target_tokens = [0]*ob_len + action_ids
-        logprobs      = [0]*ob_len + ref_logprobs
-        advantages    = [0]*ob_len + [advantage]*action_len
+    Unlike the single-action variant, this accepts pre-computed per-token
+    arrays so that callers can mask observation tokens (advantage = 0) and
+    only train on action tokens scattered throughout the sequence.
+
+    All four arrays must have the same length (``model_input.length``).
     """
     import torch
     import tinker.types as tt
     from tinker.types.tensor_data import TensorData
 
-    if not action_ids:
+    if not any(a != 0.0 for a in advantages):
         return None
 
-    ob_len = prompt.length - 1
-
-    # Full model input: prompt + action tokens (shifted by 1 for next-token prediction)
-    model_input = prompt.append(tt.EncodedTextChunk(tokens=action_ids[:-1]))
-
-    # Aligned training arrays (padded over the observation prefix)
-    target_tokens = [0] * ob_len + action_ids
-    padded_logprobs = [0.0] * ob_len + ref_logprobs
-    padded_advantages = [0.0] * ob_len + [advantage] * len(action_ids)
-
-    assert model_input.length == len(target_tokens) == len(padded_logprobs) == len(padded_advantages), (
+    assert model_input.length == len(target_tokens) == len(ref_logprobs) == len(advantages), (
         f"model_input.length: {model_input.length}, "
         f"len(target_tokens): {len(target_tokens)}, "
-        f"len(padded_logprobs): {len(padded_logprobs)}, "
-        f"len(padded_advantages): {len(padded_advantages)}"
+        f"len(ref_logprobs): {len(ref_logprobs)}, "
+        f"len(advantages): {len(advantages)}"
     )
 
     return tt.Datum(
         model_input=model_input,
         loss_fn_inputs={
             "target_tokens": TensorData.from_torch(torch.tensor(target_tokens)),
-            "logprobs": TensorData.from_torch(torch.tensor(padded_logprobs)),
-            "advantages": TensorData.from_torch(torch.tensor(padded_advantages)),
+            "logprobs": TensorData.from_torch(torch.tensor(ref_logprobs)),
+            "advantages": TensorData.from_torch(torch.tensor(advantages)),
         }
     )
 
@@ -164,74 +144,114 @@ def build_batch(
     gamma: float = 1.0,
     max_images: int = 3,
 ) -> list["tt.Datum"]:
-    """Convert episodes into a training batch (GRPO-style).
+    """Convert episodes into a training batch (GRPO-style, multi-turn).
 
     For each task, episodes are grouped and advantage is computed as:
         advantage = episode.terminal_reward - mean(task_rewards)
-    """
-    task_groups = _group_episodes_by_task(episodes)
-    
-    breakpoint()
 
-    # --- Build prompts and submit reference log-prob requests in bulk ---
-    # Each entry: (episode, advantage, prompt, action_ids, future)
-    pending: list[tuple] = []
+    Every step's action tokens are trained on (not just the last step).
+    Observation / system-prompt tokens are masked (advantage = 0).
+    One datum is produced per trajectory.
+    """
+    import tinker.types as tt
+
+    task_groups = _group_episodes_by_task(episodes)
+
+    # --- Phase 1: compute action spans and submit ref-logprob futures ---
+    # Each entry stores everything needed to build a datum once futures resolve.
+    PendingEntry = tuple  # (ep, advantage, steps, action_spans, base_prompt, future)
+    pending: list[PendingEntry] = []
 
     for task_desc, task_episodes in task_groups.items():
         for ep in task_episodes:
             advantage = _trajectory_advantage(ep, task_episodes)
-
-            # Skip if advantage is exactly zero (all same reward in group)
-            # if advantage == 0.0:
-            #     continue
             
-            # Build trajectory-level messages with latest N images
-            messages = _build_trajectory_messages(ep, max_images=max_images)
-            
-            # Use renderer to convert messages into a ModelInput prompt
-            prompt = renderer.build_generation_prompt(messages)
-            
-            # Tokenize the last action text as the "action" to train on
-            last_step = ep.steps[-1] if ep.steps else None
-            if last_step is None:
-                continue
-            action_ids = tokenizer.encode(last_step.action_text, add_special_tokens=False)
-            if not action_ids:
+            steps = _retained_steps(ep, max_images=max_images)
+            if not steps:
                 continue
 
-            # Submit async — do NOT call .result() yet; batch all futures first.
-            future = sampling_client.sample(
-                prompt=prompt,
-                num_samples=1,
-                sampling_params=sampling_params,
-            )
-            pending.append((ep, advantage, prompt, action_ids, future))
+            # Compute action token spans via incremental rendering.
+            # For each step k, render up to step k's observation to find
+            # where its action tokens begin in the full sequence.
+            action_spans: list[tuple[int, list[int]]] = []  # (target_start, action_ids)
+            for k, step in enumerate(steps):
+                obs_msgs = _build_messages_up_to_obs(ep, steps, k)
+                obs_prompt = renderer.build_generation_prompt(obs_msgs)
+                action_ids_k = tokenizer.encode(
+                    step.action_text, add_special_tokens=False
+                )
+                if action_ids_k:
+                    # In the target array, position i predicts token i+1.
+                    # The model at position (obs_len - 1) predicts the first
+                    # action token, so the target starts at obs_len - 1.
+                    action_spans.append((obs_prompt.length - 1, action_ids_k))
 
-    # --- Collect futures and build datums ---
-    datums: list = []
-    skipped_zero_advantage = 0
+            if not action_spans:
+                continue
+            
+            # Build model_input: TODO: check whether we need to render everything up to the last observation
+            # (which includes all prior obs+actions), then append the last
+            # step's action tokens (minus the final one for next-token shift).
+            # base_prompt = renderer.build_generation_prompt(
+            #     _build_messages_up_to_obs(ep, steps, len(steps) - 1)
+            # )
+            # last_action_ids = action_spans[-1][1]
+            # model_input = base_prompt.append(
+            #     tt.EncodedTextChunk(tokens=last_action_ids[:-1])
+            # )
 
-    for ep, advantage, prompt, action_ids, future in pending:
+            # # Submit ref-logprob request with the full trajectory prompt
+            # # (same pattern as the original single-action code).
+            # future = sampling_client.sample(
+            #     prompt=model_input,
+            #     num_samples=1,
+            #     sampling_params=sampling_params,
+            # )
+            # pending.append(
+            #     (ep, advantage, steps, action_spans, model_input, future)
+            # )
+
+    # --- Phase 2: collect futures and assemble datums ---
+    datums: list[tt.Datum] = []
+
+    for ep, advantage, steps, action_spans, model_input, future in pending:
+        total_len = model_input.length
+
+        # Retrieve reference logprobs
         sample_result = future.result()
-        # Extract logprobs from the sampling response
-        ref_logprobs: list[float] = []
+        ref_logprobs_raw: list[float] = []
         if sample_result.sequences:
             seq = sample_result.sequences[0]
             if seq.logprobs is not None:
-                ref_logprobs = seq.logprobs
+                ref_logprobs_raw = list(seq.logprobs)
 
-        # Pad or truncate ref_logprobs to match action_ids length
-        if len(ref_logprobs) < len(action_ids):
-            ref_logprobs = ref_logprobs + [0.0] * (len(action_ids) - len(ref_logprobs))
-        elif len(ref_logprobs) > len(action_ids):
-            ref_logprobs = ref_logprobs[: len(action_ids)]
+        # Pad / truncate to total action token count
+        total_action_tokens = sum(len(aids) for _, aids in action_spans)
+        if len(ref_logprobs_raw) < total_action_tokens:
+            ref_logprobs_raw += [0.0] * (total_action_tokens - len(ref_logprobs_raw))
+        elif len(ref_logprobs_raw) > total_action_tokens:
+            ref_logprobs_raw = ref_logprobs_raw[:total_action_tokens]
 
-        datum = _build_datum(prompt, advantage, ref_logprobs, action_ids)
+        # Build per-token arrays (observation positions stay zero = masked)
+        target_tokens = [0] * total_len
+        per_token_logprobs = [0.0] * total_len
+        per_token_advantages = [0.0] * total_len
+
+        lp_offset = 0
+        for target_start, action_ids_k in action_spans:
+            for t, aid in enumerate(action_ids_k):
+                pos = target_start + t
+                if 0 <= pos < total_len:
+                    target_tokens[pos] = aid
+                    per_token_logprobs[pos] = ref_logprobs_raw[lp_offset + t]
+                    per_token_advantages[pos] = advantage
+            lp_offset += len(action_ids_k)
+
+        datum = _build_datum(
+            model_input, target_tokens, per_token_logprobs, per_token_advantages
+        )
         if datum is not None:
             datums.append(datum)
-
-    if skipped_zero_advantage > 0:
-        print(f"[grpo] Skipped {skipped_zero_advantage} datums with zero advantage")
 
     return datums
 
@@ -266,7 +286,7 @@ def train_step(
         learning_rate=config.learning_rate,
         beta1=config.beta1,
         beta2=config.beta2,
-        eps=config.eps,
+        eps=config.eps
     )
 
     # Submit both futures before blocking — lands in same Tinker cycle

@@ -275,6 +275,12 @@ def _build_parser() -> argparse.ArgumentParser:
                    help="Run IDs for offline mode (reused every epoch)")
     p.add_argument("--gamma", type=float, default=0.99)
     p.add_argument("--lr", type=float, default=1e-5)
+    p.add_argument("--beta1", type=float, default=0.9,
+                   help="AdamW beta1")
+    p.add_argument("--beta2", type=float, default=0.95,
+                   help="AdamW beta2")
+    p.add_argument("--max-images", type=int, default=3,
+                   help="Maximum number of recent screenshots to keep per trajectory")
     p.add_argument("--resume-from", default=None,
                    help="tinker:// checkpoint path to resume from")
     return p
@@ -301,6 +307,9 @@ if __name__ == "__main__":
         grpo=GRPOConfig(
             gamma=args.gamma,
             learning_rate=args.lr,
+            beta1=args.beta1,
+            beta2=args.beta2,
+            max_images=args.max_images,
         ),
     )
 

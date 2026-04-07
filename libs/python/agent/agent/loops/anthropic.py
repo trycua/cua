@@ -1673,11 +1673,18 @@ def _add_cache_control(completion_messages: List[Dict[str, Any]]) -> List[Dict[s
     for message in completion_messages:
         message["cache_control"] = {"type": "ephemeral"}
         num_writes += 1
-        # Cache control has a maximum of 4 blocks
-        if num_writes >= 4:
+        # Reserve 1 breakpoint for tools, so use at most 3 for messages
+        if num_writes >= 3:
             break
 
     return completion_messages
+
+
+def _add_cache_control_to_tools(tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Add cache_control to the last tool so the entire tools prefix is cached."""
+    if tools:
+        tools[-1]["cache_control"] = {"type": "ephemeral"}
+    return tools
 
 
 def _combine_completion_messages(completion_messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -1792,6 +1799,8 @@ class AnthropicHostedToolsConfig(AsyncAgentConfig):
             completion_messages = _combine_completion_messages(completion_messages)
             # Then add cache control, anthropic requires explicit "cache_control" dicts
             completion_messages = _add_cache_control(completion_messages)
+            if anthropic_tools:
+                anthropic_tools = _add_cache_control_to_tools(anthropic_tools)
 
         # Prepare API call kwargs
         api_kwargs = {
@@ -1891,22 +1900,20 @@ class AnthropicHostedToolsConfig(AsyncAgentConfig):
         # Construct messages in OpenAI chat completion format for liteLLM
         messages = [
             {
+                "role": "system",
+                "content": """<role>You are a UI grounding expert that identifies and clicks on UI elements in screenshots.</role>
+
+<rules>
+- Act autonomously. Never ask for confirmation.
+- Output ONLY a single click action on the target element. No text responses.
+</rules>""",
+            },
+            {
                 "role": "user",
                 "content": [
                     {
                         "type": "text",
-                        "text": f"""You are a UI grounding expert. Follow these guidelines:
-
-1. NEVER ask for confirmation. Complete all tasks autonomously.
-2. Do NOT send messages like "I need to confirm before..." or "Do you want me to continue?" - just proceed.
-3. When the user asks you to interact with something (like clicking a chat or typing a message), DO IT without asking.
-4. Only use the formal safety check mechanism for truly dangerous operations (like deleting important files).
-5. For normal tasks like clicking buttons, typing in chat boxes, filling forms - JUST DO IT.
-6. The user has already given you permission by running this agent. No further confirmation is needed.
-7. Be decisive and action-oriented. Complete the requested task fully.
-
-Remember: You are expected to complete tasks autonomously. The user trusts you to do what they asked.
-Task: Click {instruction}. Output ONLY a click action on the target element.""",
+                        "text": f"<task>Click on: {instruction}</task>",
                     },
                     {
                         "type": "image_url",
@@ -1921,6 +1928,7 @@ Task: Click {instruction}. Output ONLY a click action on the target element.""",
             "model": model,
             "messages": messages,
             "tools": [computer_tool],
+            "tool_choice": {"type": "any"},
             "stream": False,
             "max_tokens": 100,  # Keep response short for click prediction
             "headers": {"anthropic-beta": tool_config["beta_flag"]},

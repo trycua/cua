@@ -272,7 +272,7 @@ class ComputerAgent:
         trajectory_dir: Optional[str | Path | dict] = None,
         max_retries: Optional[int] = 3,
         screenshot_delay: Optional[float | int] = 0.5,
-        use_prompt_caching: Optional[bool] = False,
+        use_prompt_caching: Optional[bool] = True,
         max_trajectory_budget: Optional[float | dict] = None,
         telemetry_enabled: Optional[bool] = True,
         trust_remote_code: Optional[bool] = False,

@@ -1667,15 +1667,43 @@ def _convert_completion_to_responses_items(
     return responses_items
 
 
+def _add_cache_control_to_tools(tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Add cache_control to the last tool to cache the entire tools prefix."""
+    if tools:
+        tools[-1]["cache_control"] = {"type": "ephemeral"}
+    return tools
+
+
 def _add_cache_control(completion_messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Add cache control to completion messages"""
-    num_writes = 0
-    for message in completion_messages:
-        message["cache_control"] = {"type": "ephemeral"}
-        num_writes += 1
-        # Cache control has a maximum of 4 blocks
-        if num_writes >= 4:
-            break
+    """Add cache control to completion messages.
+
+    Distributes up to 3 breakpoints (1 reserved for tools):
+    - 1 on the first message (anchors system/initial context)
+    - remaining near the end of the conversation (maximizes cached prefix)
+    """
+    if not completion_messages:
+        return completion_messages
+
+    max_message_breakpoints = 3  # 1 of the 4 total is used for tools
+    n = len(completion_messages)
+
+    if n <= max_message_breakpoints:
+        # Short conversation: mark every message
+        for msg in completion_messages:
+            msg["cache_control"] = {"type": "ephemeral"}
+    else:
+        # Place first breakpoint on the first message
+        indices = [0]
+        # Place remaining breakpoints near the end to cache max prefix
+        remaining = max_message_breakpoints - 1
+        for i in range(remaining):
+            # e.g., for 2 remaining: second-to-last and last non-new message
+            idx = max(1, n - remaining + i)
+            if idx not in indices:
+                indices.append(idx)
+        for idx in indices:
+            if idx < n:
+                completion_messages[idx]["cache_control"] = {"type": "ephemeral"}
 
     return completion_messages
 
@@ -1790,7 +1818,10 @@ class AnthropicHostedToolsConfig(AsyncAgentConfig):
         if use_prompt_caching:
             # First combine messages to reduce number of blocks
             completion_messages = _combine_completion_messages(completion_messages)
-            # Then add cache control, anthropic requires explicit "cache_control" dicts
+            # Cache the tools prefix so tool definitions aren't re-processed each turn
+            if anthropic_tools:
+                anthropic_tools = _add_cache_control_to_tools(anthropic_tools)
+            # Then add cache control to messages, anthropic requires explicit "cache_control" dicts
             completion_messages = _add_cache_control(completion_messages)
 
         # Prepare API call kwargs

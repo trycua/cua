@@ -67,8 +67,8 @@
     "model_name": {
       "type": "string",
       "title": "Model Name",
-      "description": "The AI model to use for computer tasks (e.g., anthropic/claude-sonnet-4-20250514, openai/gpt-4o)",
-      "default": "anthropic/claude-sonnet-4-20250514",
+      "description": "The AI model to use for computer tasks (e.g., anthropic/claude-sonnet-4-6, openai/gpt-4o)",
+      "default": "anthropic/claude-sonnet-4-6",
       "required": false
     },
     "max_images": {

@@ -109,7 +109,7 @@ class CloudProvider(SessionProvider):
 
         # Build eval request
         agent_name = kwargs.get("agent", "cua-agent")
-        model = kwargs.get("model", "anthropic/claude-sonnet-4-20250514")
+        model = kwargs.get("model", "anthropic/claude-sonnet-4-6")
         max_steps = kwargs.get("max_steps", 50)
         task_index = kwargs.get("task_index")
         parallelism = kwargs.get("parallelism", 10)

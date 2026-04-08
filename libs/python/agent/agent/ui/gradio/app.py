@@ -115,10 +115,10 @@ MODEL_MAPPINGS = {
         "OpenAI: Computer-Use Preview": "openai/computer-use-preview",
     },
     "anthropic": {
-        "default": "anthropic/claude-3-7-sonnet-20250219",
-        "Anthropic: Claude 4 Opus (20250514)": "anthropic/claude-opus-4-20250514",
-        "Anthropic: Claude 4 Sonnet (20250514)": "anthropic/claude-sonnet-4-20250514",
-        "Anthropic: Claude 3.7 Sonnet (20250219)": "anthropic/claude-3-7-sonnet-20250219",
+        "default": "anthropic/claude-sonnet-4-6",
+        "Anthropic: Claude Opus 4.6": "anthropic/claude-opus-4-6",
+        "Anthropic: Claude Sonnet 4.6": "anthropic/claude-sonnet-4-6",
+        "Anthropic: Claude Sonnet 4.5": "anthropic/claude-sonnet-4-5-20250929",
     },
     "omni": {
         "default": "omniparser+openai/gpt-4o",

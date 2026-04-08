@@ -1667,14 +1667,13 @@ def _convert_completion_to_responses_items(
     return responses_items
 
 
-def _add_cache_control(completion_messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def _add_cache_control(completion_messages: List[Dict[str, Any]], max_breakpoints: int = 4) -> List[Dict[str, Any]]:
     """Add cache control to completion messages"""
     num_writes = 0
     for message in completion_messages:
         message["cache_control"] = {"type": "ephemeral"}
         num_writes += 1
-        # Cache control has a maximum of 4 blocks
-        if num_writes >= 4:
+        if num_writes >= max_breakpoints:
             break
 
     return completion_messages
@@ -1788,10 +1787,13 @@ class AnthropicHostedToolsConfig(AsyncAgentConfig):
         )
         scale_x, scale_y = scale_factors
         if use_prompt_caching:
+            # Cache the tools prefix (1 breakpoint on the last tool)
+            if anthropic_tools:
+                anthropic_tools[-1]["cache_control"] = {"type": "ephemeral"}
             # First combine messages to reduce number of blocks
             completion_messages = _combine_completion_messages(completion_messages)
-            # Then add cache control, anthropic requires explicit "cache_control" dicts
-            completion_messages = _add_cache_control(completion_messages)
+            # Use remaining breakpoints (max 3) on messages
+            completion_messages = _add_cache_control(completion_messages, max_breakpoints=3)
 
         # Prepare API call kwargs
         api_kwargs = {

@@ -795,22 +795,51 @@ def _cmd_snapshot(args: argparse.Namespace) -> int:
             import anthropic as _anthropic
 
             client = _anthropic.Anthropic(api_key=api_key)
+            img_b64 = base64.b64encode(img_bytes).decode()
+
+            snapshot_tool = {
+                "name": "report_snapshot",
+                "description": "Report the analysis of a screenshot including a summary and interactive elements.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "summary": {
+                            "type": "string",
+                            "description": "1-2 sentence summary of what is currently on screen",
+                        },
+                        "elements": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "name": {"type": "string", "description": "Element label or text"},
+                                    "type": {"type": "string", "description": "Element type (button, link, input, etc.)"},
+                                    "x": {"type": "integer", "description": "Center x coordinate in pixels"},
+                                    "y": {"type": "integer", "description": "Center y coordinate in pixels"},
+                                },
+                                "required": ["name", "type", "x", "y"],
+                            },
+                            "description": "All interactive elements visible on screen",
+                        },
+                    },
+                    "required": ["summary", "elements"],
+                },
+            }
+
             prompt = (
-                "You are analyzing a screenshot for an AI agent.\n"
-                "1. Write a 1-2 sentence summary of what is currently on screen.\n"
-                "2. List every interactive element visible (buttons, links, inputs, "
-                "menus, checkboxes, dropdowns, etc.) with its center coordinates "
-                "in image pixels (origin = top-left). Be precise.\n\n"
-                "Respond in this exact JSON format:\n"
-                '{"summary": "...", "elements": [{"name": "...", "type": "...", "x": N, "y": N}, ...]}\n'
+                "Analyze this screenshot for an AI agent. "
+                "Identify a summary of the screen and every interactive element "
+                "(buttons, links, inputs, menus, checkboxes, dropdowns, etc.) "
+                "with its center coordinates in image pixels (origin = top-left). Be precise."
             )
             if extra:
                 prompt += f"\nAdditional instructions: {extra}"
 
-            img_b64 = base64.b64encode(img_bytes).decode()
             response = client.messages.create(
                 model="claude-haiku-4-5-20251001",
                 max_tokens=1024,
+                tools=[snapshot_tool],
+                tool_choice={"type": "tool", "name": "report_snapshot"},
                 messages=[
                     {
                         "role": "user",
@@ -829,26 +858,19 @@ def _cmd_snapshot(args: argparse.Namespace) -> int:
                 ],
             )
 
-            raw = response.content[0].text.strip()
-            # Try to parse JSON; fall back to raw text
-            try:
-                parsed = json.loads(raw)
-                summary = parsed.get("summary", "")
-                elements = parsed.get("elements", [])
-                print(f"✅ snapshot — {save_path}")
+            tool_input = response.content[0].input
+            summary = tool_input["summary"]
+            elements = tool_input["elements"]
+            print(f"✅ snapshot — {save_path}")
+            print()
+            print(summary)
+            if elements:
                 print()
-                print(summary)
-                if elements:
-                    print()
-                    print("Interactive elements:")
-                    for el in elements:
-                        print(
-                            f"  • {el.get('name', '?')} [{el.get('type', '?')}]  ({el.get('x', '?')}, {el.get('y', '?')})"
-                        )
-            except json.JSONDecodeError:
-                print(f"✅ snapshot — {save_path}")
-                print()
-                print(raw)
+                print("Interactive elements:")
+                for el in elements:
+                    print(
+                        f"  • {el.get('name', '?')} [{el.get('type', '?')}]  ({el.get('x', '?')}, {el.get('y', '?')})"
+                    )
 
         except ImportError:
             await _print_context(state["provider"], state.get("name", ""), state)

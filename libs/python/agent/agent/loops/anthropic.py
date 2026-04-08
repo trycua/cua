@@ -1793,6 +1793,11 @@ class AnthropicHostedToolsConfig(AsyncAgentConfig):
             # Then add cache control, anthropic requires explicit "cache_control" dicts
             completion_messages = _add_cache_control(completion_messages)
 
+            # Cache tool definitions — place breakpoint on the last tool so the
+            # entire tools prefix is cached (tools are first in the cache hierarchy).
+            if anthropic_tools:
+                anthropic_tools[-1]["cache_control"] = {"type": "ephemeral"}
+
         # Prepare API call kwargs
         api_kwargs = {
             "model": model,

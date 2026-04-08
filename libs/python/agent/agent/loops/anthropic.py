@@ -482,16 +482,16 @@ def _convert_responses_items_to_completion_messages(
                 scroll_y = action.get("scroll_y", 0)
                 # Determine direction and amount from scroll values
                 if scroll_x > 0:
-                    direction = "left"
+                    direction = "right"
                     amount = scroll_x
                 elif scroll_x < 0:
-                    direction = "right"
+                    direction = "left"
                     amount = -scroll_x
                 elif scroll_y > 0:
-                    direction = "up"
+                    direction = "down"
                     amount = scroll_y
                 elif scroll_y < 0:
-                    direction = "down"
+                    direction = "up"
                     amount = -scroll_y
                 else:
                     direction = "down"

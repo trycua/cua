@@ -18,6 +18,7 @@ from typing import (
     Optional,
     Set,
     Tuple,
+    Type,
     Union,
     cast,
 )
@@ -26,6 +27,7 @@ import litellm
 import litellm.utils
 from core.telemetry import is_telemetry_enabled, record_event
 from litellm.responses.utils import Usage
+from pydantic import BaseModel
 
 from .adapters import (
     AzureMLAdapter,
@@ -254,6 +256,28 @@ async def _predict_step_with_retry(
     raise last_exc  # unreachable, but satisfies type checkers
 
 
+def _pydantic_model_to_response_format(output_type: Type[BaseModel]) -> dict:
+    """Convert a Pydantic BaseModel class to a response_format dict for LLM APIs."""
+    return {
+        "type": "json_schema",
+        "json_schema": {
+            "name": output_type.__name__,
+            "schema": output_type.model_json_schema(),
+        },
+    }
+
+
+def _extract_text_from_output_item(item: dict) -> Optional[str]:
+    """Extract text content from a ResponseOutputMessageParam item."""
+    content = item.get("content", [])
+    for block in content:
+        if isinstance(block, dict) and block.get("type") == "output_text":
+            return block.get("text", "")
+        elif hasattr(block, "type") and getattr(block, "type", None) == "output_text":
+            return getattr(block, "text", "")
+    return None
+
+
 class ComputerAgent:
     """
     Main agent class that automatically selects the appropriate agent loop
@@ -278,6 +302,7 @@ class ComputerAgent:
         trust_remote_code: Optional[bool] = False,
         api_key: Optional[str] = None,
         api_base: Optional[str] = None,
+        output_type: Optional[Type[BaseModel]] = None,
         **additional_generation_kwargs,
     ):
         """
@@ -300,6 +325,7 @@ class ComputerAgent:
             trust_remote_code: If set, trust remote code when loading local models. Disabled by default.
             api_key: Optional API key override for the model provider
             api_base: Optional API base URL override for the model provider
+            output_type: Optional Pydantic BaseModel class for structured outputs. When set, the LLM is instructed to return JSON conforming to the schema, and the final text response is parsed into an instance of this model.
             **additional_generation_kwargs: Additional arguments passed to the model provider
         """
         # If the loop is "human/human", we need to prefix a grounding model fallback
@@ -322,6 +348,7 @@ class ComputerAgent:
         self.trust_remote_code = trust_remote_code
         self.api_key = api_key
         self.api_base = api_base
+        self.output_type = output_type
 
         # == Add built-in callbacks ==
 
@@ -905,6 +932,7 @@ class ComputerAgent:
         stream: bool = False,
         api_key: Optional[str] = None,
         api_base: Optional[str] = None,
+        output_type: Optional[Type[BaseModel]] = None,
         **additional_generation_kwargs,
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """
@@ -915,6 +943,7 @@ class ComputerAgent:
             stream: Whether to stream the response
             api_key: Optional API key override for the model provider
             api_base: Optional API base URL override for the model provider
+            output_type: Optional Pydantic BaseModel class for structured outputs. Overrides the constructor-level output_type if provided.
             **additional_generation_kwargs: Additional arguments passed to the model provider
 
         Returns:
@@ -937,6 +966,13 @@ class ComputerAgent:
             merged_kwargs["api_key"] = api_key if api_key is not None else self.api_key
         if (api_base is not None) or (self.api_base is not None):
             merged_kwargs["api_base"] = api_base if api_base is not None else self.api_base
+
+        # Resolve structured output type (run-level overrides constructor-level)
+        effective_output_type = output_type if output_type is not None else self.output_type
+        if effective_output_type is not None:
+            merged_kwargs["response_format"] = _pydantic_model_to_response_format(
+                effective_output_type
+            )
 
         old_items = self._process_input(messages)
         new_items = []
@@ -1062,6 +1098,24 @@ class ComputerAgent:
                     }
 
         await self._on_run_end(loop_kwargs, old_items, new_items)
+
+        # Parse structured output from the final assistant message
+        if effective_output_type is not None and new_items:
+            for item in reversed(new_items):
+                if item.get("role") == "assistant":
+                    text_content = _extract_text_from_output_item(item)
+                    if text_content:
+                        parsed = effective_output_type.model_validate_json(text_content)
+                        yield {
+                            "output_parsed": parsed,
+                            "output": [],
+                            "usage": Usage(
+                                prompt_tokens=0,
+                                completion_tokens=0,
+                                total_tokens=0,
+                            ),
+                        }
+                    break
 
     async def predict_click(
         self, instruction: str, image_b64: Optional[str] = None

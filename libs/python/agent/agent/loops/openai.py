@@ -224,6 +224,12 @@ class OpenAIComputerUseConfig:
         # Prepare tools for OpenAI API
         openai_tools = await _prepare_tools_for_openai(tools, model=model)
 
+        # Translate response_format to Responses API text.format parameter
+        response_format = kwargs.pop("response_format", None)
+        text_format = None
+        if response_format is not None:
+            text_format = {"format": response_format}
+
         # Prepare API call kwargs
         api_kwargs = {
             "model": model,
@@ -236,6 +242,10 @@ class OpenAIComputerUseConfig:
             "request_timeout": kwargs.pop("request_timeout", 120),
             **kwargs,
         }
+
+        # Add text format for structured outputs if specified
+        if text_format is not None:
+            api_kwargs["text"] = text_format
 
         # Call API start hook
         if _on_api_start:

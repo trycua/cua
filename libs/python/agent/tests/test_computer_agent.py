@@ -125,6 +125,78 @@ class TestComputerAgentTypes:
         assert AgentResponse is not None
 
 
+class TestComputerAgentStructuredOutputs:
+    """Test ComputerAgent structured outputs support."""
+
+    @patch("agent.agent.litellm")
+    def test_agent_initialization_with_output_type(self, mock_litellm, disable_telemetry):
+        """Test that agent can be initialized with output_type parameter."""
+        from pydantic import BaseModel
+
+        from agent import ComputerAgent
+
+        class MyOutput(BaseModel):
+            title: str
+            score: int
+
+        agent = ComputerAgent(
+            model="anthropic/claude-sonnet-4-5-20250929",
+            output_type=MyOutput,
+        )
+
+        assert agent is not None
+        assert agent.output_type is MyOutput
+
+    @patch("agent.agent.litellm")
+    def test_agent_initialization_without_output_type(self, mock_litellm, disable_telemetry):
+        """Test that output_type defaults to None."""
+        from agent import ComputerAgent
+
+        agent = ComputerAgent(model="anthropic/claude-sonnet-4-5-20250929")
+        assert agent.output_type is None
+
+    def test_pydantic_model_to_response_format(self):
+        """Test conversion of Pydantic model to response_format dict."""
+        from pydantic import BaseModel
+
+        from agent.agent import _pydantic_model_to_response_format
+
+        class TestModel(BaseModel):
+            name: str
+            value: int
+
+        result = _pydantic_model_to_response_format(TestModel)
+
+        assert result["type"] == "json_schema"
+        assert result["json_schema"]["name"] == "TestModel"
+        assert "properties" in result["json_schema"]["schema"]
+        assert "name" in result["json_schema"]["schema"]["properties"]
+        assert "value" in result["json_schema"]["schema"]["properties"]
+
+    def test_extract_text_from_output_item_dict(self):
+        """Test extracting text from a dict-based output item."""
+        from agent.agent import _extract_text_from_output_item
+
+        item = {
+            "role": "assistant",
+            "type": "message",
+            "content": [
+                {"type": "output_text", "text": '{"title": "test", "score": 42}'}
+            ],
+        }
+
+        result = _extract_text_from_output_item(item)
+        assert result == '{"title": "test", "score": 42}'
+
+    def test_extract_text_from_output_item_no_text(self):
+        """Test extracting text from an item with no text content."""
+        from agent.agent import _extract_text_from_output_item
+
+        item = {"role": "assistant", "type": "message", "content": []}
+        result = _extract_text_from_output_item(item)
+        assert result is None
+
+
 class TestComputerAgentIntegration:
     """Test ComputerAgent integration with Computer tool (SRP: Integration within package)."""
 

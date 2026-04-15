@@ -709,6 +709,9 @@ class GeminiComputerUseConfig(AsyncAgentConfig):
         # Create client with CUA routing support (detects cua/ prefix automatically)
         client, model = _create_gemini_client(model, genai, kwargs)
 
+        # Pop response_format — structured outputs not yet supported for Gemini
+        kwargs.pop("response_format", None)
+
         # Extract Gemini 3-specific parameters
         # thinking_level: Use types.ThinkingLevel enum values (e.g., "LOW", "HIGH", "MEDIUM", "MINIMAL")
         # media_resolution: Use types.MediaResolution enum values (e.g., "MEDIA_RESOLUTION_LOW", "MEDIA_RESOLUTION_HIGH")

@@ -44,7 +44,7 @@ class CuaAgent(BaseAgent):
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self.model = kwargs.get("model", "anthropic/claude-sonnet-4-20250514")
+        self.model = kwargs.get("model", "anthropic/claude-sonnet-4-6")
         self.max_steps = kwargs.get("max_steps", 100)
         # Number of times to retry the entire task when a transient API error occurs.
         # Task-level retry restarts agent.run() from scratch but does NOT reset the

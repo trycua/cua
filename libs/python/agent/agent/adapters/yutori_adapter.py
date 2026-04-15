@@ -19,9 +19,11 @@ class YutoriAdapter(CustomLLM):
         self.api_key = api_key or os.environ.get("YUTORI_API_KEY")
 
     def _normalize_model(self, model: str) -> str:
-        """Strip the yutori/ prefix to get the bare model name."""
+        """Strip the yutori/ prefix and default bare 'n1' to 'n1-latest'."""
         if model.startswith("yutori/"):
-            return model[len("yutori/") :]
+            model = model[len("yutori/") :]
+        if model == "n1":
+            return "n1-latest"
         return model
 
     def _resolve_api_key(self, kwargs: dict | None = None) -> str:

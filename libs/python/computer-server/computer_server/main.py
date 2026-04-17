@@ -29,6 +29,15 @@ from .handlers.factory import HandlerFactory
 # Authentication session TTL (in seconds). Override via env var CUA_AUTH_TTL_SECONDS. Default: 60s
 AUTH_SESSION_TTL_SECONDS: int = int(os.environ.get("CUA_AUTH_TTL_SECONDS", "60"))
 
+# When true, requests are rejected if CONTAINER_NAME is not set on the server (instead of
+# falling through to local development mode). The rejection status code is configurable.
+UNAVAILABLE_WITHOUT_CONTAINER_NAME: bool = os.environ.get(
+    "UNAVAILABLE_WITHOUT_CONTAINER_NAME", ""
+).lower().strip() in ["1", "true", "yes", "y", "on"]
+UNAVAILABLE_WITHOUT_CONTAINER_NAME_RESPONSE_STATUS_CODE: int = int(
+    os.environ.get("UNAVAILABLE_WITHOUT_CONTAINER_NAME_RESPONSE_STATUS_CODE", "503")
+)
+
 try:
     from agent import ComputerAgent
 
@@ -264,6 +273,22 @@ async def websocket_endpoint(websocket: WebSocket):
     # Check if CONTAINER_NAME is set (indicating cloud provider)
     server_container_name = os.environ.get("CONTAINER_NAME")
 
+    # Reject connections when CONTAINER_NAME is required but unset
+    if not server_container_name and UNAVAILABLE_WITHOUT_CONTAINER_NAME:
+        logger.warning(
+            "Rejecting WebSocket: CONTAINER_NAME not set and UNAVAILABLE_WITHOUT_CONTAINER_NAME enabled"
+        )
+        await websocket.send_json(
+            {
+                "success": False,
+                "error": "Service unavailable: CONTAINER_NAME not set",
+                "status_code": UNAVAILABLE_WITHOUT_CONTAINER_NAME_RESPONSE_STATUS_CODE,
+            }
+        )
+        await websocket.close()
+        manager.disconnect(websocket)
+        return
+
     # If cloud provider, perform authentication handshake
     if server_container_name:
         try:
@@ -410,6 +435,13 @@ async def cmd_endpoint(
     # Check if CONTAINER_NAME is set (indicating cloud provider)
     server_container_name = os.environ.get("CONTAINER_NAME")
 
+    # Reject requests when CONTAINER_NAME is required but unset
+    if not server_container_name and UNAVAILABLE_WITHOUT_CONTAINER_NAME:
+        raise HTTPException(
+            status_code=UNAVAILABLE_WITHOUT_CONTAINER_NAME_RESPONSE_STATUS_CODE,
+            detail="Service unavailable: CONTAINER_NAME not set",
+        )
+
     # If cloud provider, perform authentication
     if server_container_name:
         logger.info(
@@ -493,6 +525,11 @@ async def agent_response_endpoint(
 
     # Authenticate via AuthenticationManager if running in cloud (CONTAINER_NAME set)
     container_name = os.environ.get("CONTAINER_NAME")
+    if not container_name and UNAVAILABLE_WITHOUT_CONTAINER_NAME:
+        raise HTTPException(
+            status_code=UNAVAILABLE_WITHOUT_CONTAINER_NAME_RESPONSE_STATUS_CODE,
+            detail="Service unavailable: CONTAINER_NAME not set",
+        )
     if container_name:
         is_public = os.environ.get("CUA_ENABLE_PUBLIC_PROXY", "").lower().strip() in [
             "1",
